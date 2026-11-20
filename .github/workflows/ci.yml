@@ -110,9 +110,10 @@ jobs:
           test -n "$crates"
           cargo clean $(printf -- '-p %s ' $crates) $CLEAN_ARGS
       - run: cargo build
-      # Full workspace suite: runtime lib tests plus the `neoc` binary's CLI
-      # integration tests and Gherkin spec.
-      - run: cargo test --workspace
+      # neoc's own suite: runtime lib tests plus the `neoc` binary's CLI
+      # integration tests and Gherkin spec. The AgentOS crates' tests need bun and darklua
+      # (see CONTRIBUTING.md), which this job does not install, so they are not run here.
+      - run: cargo test -p neoc -p neoc-vm
       # Docker-dependent suites (sqlx_mysql, sqlx_postgres,
       # testcontainers_modules) are excluded: they need a live Docker daemon.
       - name: Script suites (neoc run)

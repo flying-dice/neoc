@@ -78,7 +78,7 @@ A change is done when all of these hold:
   composition root and the only crate that sees them all. `neoc-vm` is a support library, not an adapter: the
   per-app Lua VM (mlua on LuaJIT, vendored), depending on no other crate here (the `neoc` CLI is its other client, and
   `neoc`/`neoc-vm` never depend on an `agentos-*` crate). Among the `agentos-*` crates only the `lua` adapter may depend
-  on it (it reaches mlua through neoc-vm's re-export, so mlua stays in one crate). Enforced by `bun run lint:deps` (`scripts/check-deps.ts`,
+  on it (it reaches mlua through neoc-vm's re-export, so mlua stays out of every agentos crate). Enforced by `bun run lint:deps` (`scripts/check-deps.ts`,
   an allow-list over `cargo metadata`) and `cargo deny check` (`deny.toml`: each framework crate is pinned to its
   adapter). A new crate must be placed in the allow-list on purpose.
 - **Rust hygiene** (`[workspace.lints]`): clippy pedantic with `-D warnings`; `unsafe_code` is forbidden;
@@ -91,10 +91,7 @@ A change is done when all of these hold:
   modules an app can read and write other apps' data and the host's own database under `~/.agentos`. There are **no
   permissions** and **no budgets** (no CPU, memory or time limits): a runaway app (a loop that never yields, a
   `std:thread` worker) can hang the host, not just itself, and can outlive its uninstall, because unloading aborts
-  work only at the points where the app yields to the host. That is accepted. **Open until NEOC-120 lands:** the adapter
-  calls app code (tools, handlers, views, requests) with `call_async`, which on LuaJIT still aborts the host when an app
-  raises an error value whose `__tostring` makes a protected call and then fails (`CLAUDE.md`, "Embedding the VM"); the
-  guarded entry point from NEOC-120 closes it. It reaches the host through the `app` table (typed by the generated LuaCATS definitions in `types/generated/luals/`) and
+  work only at the points where the app yields to the host. That is accepted. It reaches the host through the `app` table (typed by the generated LuaCATS definitions in `types/generated/luals/`) and
   through **every `std:`, `lib:` and `vnd:` module of `neoc-vm`** (`require("std:fs")`, `require("lib:json")`,
   `require("vnd:hyper")`, ...: files, network, servers, tasks, threads, SQLite, TLS), next to `@agentos/app` and
   `@agentos/ui`. What an app starts (tasks, servers, workers) belongs to it: unloading or replacing the app aborts
@@ -110,6 +107,10 @@ A change is done when all of these hold:
   cyclic or absurdly shared table handed back to the host is an error (never a stack overflow), a Lua number can
   not panic a module or size an unbounded allocation (an error instead: a host panic aborts every app), and chunks
   load as text only.
+- **Open until NEOC-120 lands: an app can abort the host.** The adapter calls app code (tools, handlers, views,
+  write-backs, transaction bodies) with `call_async`, which on LuaJIT still aborts the process when an app raises an
+  error value whose `__tostring` makes a protected call and then fails (`CLAUDE.md`, "Embedding the VM"). The guarded
+  entry point from NEOC-120 closes it; the adapter switches to it then.
 - **The client runs no app code.** The renderer draws view trees and sends events; nothing executable crosses the
   wire. Kit knowledge of apps, and app knowledge in the client, are both bugs.
 - **Agent and tool output is untrusted:** render it as text. No `{@html}` or `innerHTML` for it (the only `{@html}` is

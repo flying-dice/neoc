@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Guidance for Claude (and any LLM agent) working in **neoc**: one Cargo workspace holding a Lua runtime.
+Guidance for Claude (and any LLM agent) working in **neoc**: one Cargo workspace holding a Lua runtime and, next to it, AgentOS (see "AgentOS" below).
 
 - **Runtime** (`crates/neoc-vm`): an embedded LuaJIT engine backed by Rust. Scripts run in a VM with a curated module surface (`std:*`, `lib:*`, `vnd:*`). The unsafe halves of the Lua standard library are stripped; everything else comes through explicit modules. Not a security boundary.
 - **Binary** (`crates/neoc`): the thin `neoc` CLI over the runtime. `run` only.
@@ -18,7 +18,7 @@ The AgentOS adapter (`crates/agentos-lua`) is an embedder of `neoc-vm`: AgentOS 
 ## Layout
 
 ```
-crates/neoc/                 # the `neoc` binary (the AgentOS host is the other bin, `agentos-host`)
+crates/neoc/                 # the `neoc` binary (the AgentOS crates add `agentos-host` and the `agentos-codegen` tool)
   src/main.rs                # CLI entry: `run`, embedded-payload executables
   tests/                     # Lua suites (*.test.lua, *.spec.lua), cli.rs, cucumber.rs
 crates/neoc-vm/              # the runtime library
@@ -39,7 +39,7 @@ crates/neoc-vm/              # the runtime library
 types/luals/                 # GENERATED LuaCATS definitions, one file per module (`lib/json.lua` for `lib:json`)
 types/luals-plugin.lua       # lua-language-server plugin: require("lib:json") -> types/luals/lib/json.lua
 types/fixtures/              # lua-language-server fixtures: usage.lua (clean) and negative/ (expect-error)
-.luarc.json                  # lua-language-server config for the repo (LuaJIT, library = types/luals, the plugin)
+.luarc.json                  # lua-language-server config for the repo (LuaJIT, libraries types/luals and types/generated/luals, the plugin)
 tooling/cli/                 # Gherkin spec for the CLI, run against the built binary
 ```
 

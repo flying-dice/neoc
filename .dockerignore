@@ -5,8 +5,8 @@
 target
 **/*.log
 
-# AgentOS (the host, apps, client and kit): the neoc image builds only the `neoc` binary, and no Rust code
-# reads these. The `crates/` sources stay: cargo loads every workspace member's manifest.
+# AgentOS (the host, apps, client and kit): the neoc image builds only the `neoc` binary, and `cargo build --bin neoc`
+# reads none of these (the AgentOS crates' tests read `apps/`; they are not built here). The `crates/` sources stay: cargo loads every workspace member's manifest.
 node_modules
 **/node_modules
 dist

@@ -48,7 +48,8 @@ crates/
   agentos-lua          adapter: runs apps as Lua 5.1, one VM per app: the app API modules, views, the call queue
   neoc-vm               support library (not an adapter): the Lua VM (LuaJIT) on mlua, the per-app environment, the
                         `std:`/`lib:`/`vnd:` modules, the lifecycle of what apps spawn; depends on no other
-                        crate, only `lua` may depend on it
+                        crate; among the agentos crates only `lua` may depend on it (and the
+                        `neoc` CLI, which is not part of the hexagon)
   agentos-sqlite        adapter: per-app rusqlite DBs, migrations, live queries via commit hooks
   agentos-mcp           adapter: rmcp server, dynamic tool list, per-agent bearer identity
   agentos-acp           adapter: agent-client-protocol client, agent processes
@@ -63,7 +64,7 @@ crates/
   domain depends on nothing framework-shaped. Enforced by `scripts/check-deps` (an allow-list over `cargo metadata`)
   plus `cargo-deny` bans.
 - **Hygiene:**
-  - `[workspace.dependencies]`, with exact pins for the fast movers (`rmcp`, `agent-client-protocol`, `mlua`);
+  - `[workspace.dependencies]`, with exact pins for the fast movers (`rmcp`, `agent-client-protocol`); `mlua` is declared by `neoc-vm` and `neoc`;
   - `[workspace.lints]`: clippy pedantic, `unsafe_code = "forbid"`, and `unwrap`/`expect`/`panic` denied outside tests;
   - `thiserror` per library crate, `anyhow` only in the binary.
 - **Tests per layer:**
@@ -74,7 +75,7 @@ crates/
   - `cargo nextest`.
 - **Crates** (versions in `host-stack.md`):
   - runtime: tokio, axum;
-  - Lua: mlua (`luajit`, `vendored`, `async`, `serialize`, `send`), in `neoc-vm` only (apps are Lua 5.1 source);
+  - Lua: mlua (`luajit`, `vendored`, `async`, `serialize`, `send`), in `neoc-vm` and the `neoc` CLI, never in an agentos crate (apps are Lua 5.1 source);
   - SQLite: rusqlite (bundled);
   - protocols: rmcp, agent-client-protocol;
   - fetch: reqwest (rustls);
@@ -93,7 +94,7 @@ crates/
   Users can also add an app by URL; the host shows a preview, then a confirmation that it runs on this host and its
   tools reach agents. A later installer bundles host, client and apps.
 - **Isolation between apps, not a sandbox from the host** (details in `host-stack.md` §1):
-  - one Lua 5.1 VM per app and one environment table per app: an allow-list of base functions, no `load*`,
+  - one Lua VM per app (the apps' source is Lua 5.1) and one environment table per app: an allow-list of base functions, no `load*`,
     `getfenv`/`setfenv`, read-only standard libraries, text-only chunks, a locked string metatable. Apps cannot reach
     each other's state;
   - `require` knows `@agentos/app`, `@agentos/ui` (an app's own modules are bundled at build time) and **every

@@ -23,7 +23,7 @@ Run before every push. Loop until everything below is clean.
    bun run lint         # atomic layers, test ids, conflict markers, cargo fmt + clippy -D warnings, crate direction
                         # (check-deps), cargo deny, lua-language-server, StyLua, codegen:check, eslint
    bun run typecheck    # cargo check --workspace --all-targets, tsc on types/, svelte-check (required testid props)
-   bun run test         # cargo nextest run --workspace, then bun test (types, client, kit)
+   bun run test         # cargo nextest over the agentos crates, then bun test (types, client, kit)
    bun run test:e2e     # required if the change touches anything rendered (packages/ui, the client, apps, stories,
                         # e2e/), and always before asking for a merge; needs a Mac for the baselines
    ```

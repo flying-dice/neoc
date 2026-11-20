@@ -20,7 +20,7 @@ Rules of thumb:
   use case, not an adapter. An adapter translates (SQLite rows, mlua values, HTTP, ACP messages) and holds no policy.
 - A new need from the outside world is a **port** in `agentos-application::ports` first, with a fake in `testing`, then an
   adapter. A driving adapter (`http`, `mcp`, `agui`) calls use cases, never reaches an adapter.
-- A framework crate appears only in its adapter (`deny.toml` pins it with `wrappers`): mlua in `neoc-vm` (the `lua` adapter reaches it through neoc-vm's re-export), rusqlite in
+- A framework crate appears only in its adapter (`deny.toml` pins it with `wrappers`): mlua in `neoc-vm` and the `neoc` CLI (the `lua` adapter reaches it through neoc-vm's re-export), rusqlite in
   `sqlite`, rmcp in `mcp`, agent-client-protocol in `acp`, axum in the driving adapters and the host. A new crate must
   be added to `scripts/check-deps.ts` on purpose.
 - Dependencies are declared once in `[workspace.dependencies]` with pins for the fast movers (`rmcp`, `agent-client-protocol`,
@@ -68,7 +68,7 @@ Rules of thumb:
 
 ## Tests
 
-`cargo nextest run --workspace`. Domain: unit tests. Application: use cases against the fakes in `testing`, no mocking
+`cargo nextest run --workspace --exclude neoc --exclude neoc-vm`. Domain: unit tests. Application: use cases against the fakes in `testing`, no mocking
 library. Adapters: integration tests in `tests/` through the real library. Host: `crates/agentos-host/tests` start the real
 wiring on an ephemeral loopback port. Test the failure path beside the success path; a bug fix gets a regression test in the
 layer where it lived. See `docs/TESTING.md`.

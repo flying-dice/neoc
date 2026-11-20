@@ -6,7 +6,7 @@ tested where it lives, in Rust, with fakes for the ports.
 
 | Layer                | What                                                                                                             | Where                                                                        | Command                                                                               |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| Rust                 | domain, use cases (against port fakes), adapters, the host end to end                                            | `crates/*/src`, `crates/*/tests`                                             | `cargo nextest run --workspace`                                                       |
+| Rust                 | domain, use cases (against port fakes), adapters, the host end to end                                            | `crates/*/src`, `crates/*/tests`                                             | `cargo nextest run --workspace --exclude neoc --exclude neoc-vm`                                             |
 | Client and kit unit  | the renderer core (peer, expressions, ops, drafts, sources, offline), the shell's channel, kit logic             | `*.test.ts` next to the code                                                 | `bun run test` (runs `bun test` in `client/` and `packages/ui`, and `bun test types`) |
 | Lua check and format | every app and fixture checks clean with lua-language-server against the generated LuaCATS API; StyLua formatting | `scripts/lint-lua.ts`, `scripts/stylua.ts`                                   | `bun run lint:lua`, `bun run lint:stylua`                                             |
 | Stories              | every screen and state of the shell, the renderer and the kit, in isolation                                      | `client/` and `packages/ui` Storybooks (`*.stories.svelte`)                  | `bun run storybook` in the package                                                    |
@@ -20,7 +20,7 @@ snapshots deliberately with `bun run test:e2e:update`, then open the changed PNG
 
 ## Rust
 
-`cargo nextest run --workspace`, one convention per layer (the hexagon in `docs/architecture/ARCHITECTURE.md` §2):
+`cargo nextest run --workspace --exclude neoc --exclude neoc-vm` (neoc's crates have their own gate: `cargo test -p neoc -p neoc-vm`), one convention per layer (the hexagon in `docs/architecture/ARCHITECTURE.md` §2):
 
 - **Domain** (`agentos-domain`): plain unit tests, no framework, no I/O.
 - **Application** (`agentos-application`): use cases tested against the in-memory port fakes in `agentos_application::testing`
@@ -38,7 +38,7 @@ snapshots deliberately with `bun run test:e2e:update`, then open the changed PNG
   workers stop. `call_invariants.rs` and `turns.rs` pin what a call into the VM may and may not do (when it lends
   the VM, `db:tx`, a host call Lua cannot suspend at), each with the script that broke it. `chaos.rs` generates
   scripts (seeded, deterministic) that combine a leaf (waits, database, key-value, mutex, state, notify, windows), a
-  context where Lua 5.1 cannot yield, and controls (`pcall`, coroutines, plain yields, tasks, nested `db:tx`, errors) in
+  context where the engine cannot yield, and controls (`pcall`, coroutines, plain yields, tasks, nested `db:tx`, errors) in
   a read-only, writable, concurrent or own-server call, and checks that nothing was written read-only, nothing
   interleaved, no acknowledged write was lost, `db:tx` success means committed, the app and its database still answer,
   and the host did not panic; 600 cases take about a second. `CHAOS_CASES=20000` (and `CHAOS_SEED`) go further, and
