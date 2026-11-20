@@ -6,8 +6,9 @@
 //! profile unwinds, but a panic inside a native callback still ends the call it was made in and a stack
 //! overflow or an allocation failure aborts the process regardless).
 //!
-//! The harness records panics with a hook (mlua catches a callback's panic and re-raises it at the
-//! outermost call, so a recorded panic also cannot be hidden by `pcall`) and a watchdog turns a hang
+//! The harness records panics with a hook (mlua turns a callback's panic into a Lua error that `pcall`
+//! returns as a string, and outside `pcall` resumes the unwind at the outermost call; the hook sees the
+//! panic either way, so neither hides it) and a watchdog turns a hang
 //! into a failure that names the call. Allocation failures and stack overflows abort the process: that
 //! is a failure too, the test binary dies on the call it printed last (`HOSTILE_TRACE=1`).
 //!
@@ -91,6 +92,10 @@ const POOL: &str = r#"
         ("["):rep(3000), ("{"):rep(3000), ("("):rep(3000), ("<a>"):rep(2000), ("(?:"):rep(2000),
         ("{a,"):rep(130) .. "a" .. ("}"):rep(130), ("a?"):rep(2000),
         ("{% for i in [1] %}"):rep(500), ("{% if true %}"):rep(500), "{{ 1" .. (" + 1"):rep(3000) .. " }}",
+        -- Tera 1.20 panics on these: `i64::MIN % -1`, and a macro call as an operand of arithmetic or of `<`
+        -- (`lib:template` refuses the second and catches the first)
+        "{{ (0 - 9223372036854775807 - 1) % -1 }}",
+        "{% macro m() %}1{% endmacro m %}{{ 1 + self::m() }}{% if self::m() > 0 %}a{% endif %}",
     }
 "#;
 
@@ -149,6 +154,19 @@ impl Harness {
                     .await
             })
         }));
+        if outcome.is_ok() {
+            // a panic inside Tera that `lib:template` caught and returned as an error is not a failure: the
+            // call completed. (One that unwound through the call still is.)
+            let mut recorded = self.panics.lock().unwrap();
+            let mut at = before;
+            while at < recorded.len() {
+                if recorded[at].contains("/tera-") {
+                    recorded.remove(at);
+                } else {
+                    at += 1;
+                }
+            }
+        }
         if outcome.is_err() && self.panics.lock().unwrap().len() == before {
             self.panics.lock().unwrap().push(format!(
                 "{}: unwound without a recorded message",
@@ -564,4 +582,81 @@ fn deeply_nested_glob_patterns_are_an_error_in_every_entry_point() {
         lines.iter().all(|l| l.contains("glob pattern")),
         "{lines:#?}"
     );
+}
+
+/// Render `source` with `lib:template` on a 2 MiB thread and return its error; a stack overflow aborts the
+/// test binary, so reaching the assertion is the proof.
+fn template_error_on_small_stack(source: String) -> String {
+    on_small_stack(move || {
+        let lua = make_engine().unwrap();
+        let (out, err): (Option<String>, Option<String>) = lua
+            .load(r#"return require("lib:template").render(..., {})"#)
+            .call(source)
+            .unwrap();
+        assert!(out.is_none(), "rendered {out:?}");
+        err.unwrap()
+    })
+}
+
+/// `lib:template` bounds what it renders. A chain of twenty thousand macros, none recursive, once overflowed the
+/// guard's own walk (it recursed once per macro), and a cycle check that restarted at every macro took minutes.
+#[test]
+fn a_chain_of_twenty_thousand_macros_is_refused_without_overflowing() {
+    let mut src = String::new();
+    for i in 0..20_000 {
+        src.push_str(&format!(
+            "{{% macro m{i}() %}}{{{{ self::m{}() }}}}{{% endmacro m{i} %}}",
+            i + 1
+        ));
+    }
+    src.push_str("{% macro m20000() %}end{% endmacro m20000 %}{{ self::m0() }}");
+    let started = std::time::Instant::now();
+    let err = template_error_on_small_stack(src);
+    assert!(err.contains("too complex"), "{err}");
+    assert!(
+        started.elapsed() < Duration::from_secs(60),
+        "took {:?}",
+        started.elapsed()
+    );
+}
+
+/// Tera evaluates the arguments of a macro call before it enters the macro, but a call inside an argument is
+/// still nested in the call around it: eight levels of arguments in each of 23 macros went through the guard as
+/// siblings and aborted a debug build on 2 MiB.
+#[test]
+fn macro_calls_nested_in_arguments_are_counted_as_nested() {
+    let nested = |callee: usize| {
+        format!(
+            "{}1{}",
+            format!("self::m{callee}(x=").repeat(8),
+            ")".repeat(8)
+        )
+    };
+    let mut src = String::new();
+    for i in 0..23 {
+        src.push_str(&format!(
+            "{{% macro m{i}(x) %}}{{{{ {} }}}}{{% endmacro m{i} %}}",
+            nested(i + 1)
+        ));
+    }
+    src.push_str("{% macro m23(x) %}{{ nope }}{% endmacro m23 %}{{ self::m0(x=1) }}");
+    assert!(template_error_on_small_stack(src).contains("too complex"));
+}
+
+/// A macro that never stops calling itself, directly, through blocks, through another macro and through
+/// argument nesting, ends in an ordinary render error on 2 MiB.
+#[test]
+fn unbounded_macro_recursion_is_a_render_error_on_a_small_stack() {
+    for src in [
+        "{% macro f(n) %}{{ self::f(n=n) }}{% endmacro f %}{{ self::f(n=1) }}",
+        "{% macro f(n) %}{% for i in [1] %}{% if true %}{% for j in [1] %}{{ self::f(n=n) }}{% endfor %}{% endif %}{% endfor %}{% endmacro f %}{{ self::f(n=1) }}",
+        "{% macro a() %}{{ self::b() }}{% endmacro a %}{% macro b() %}{{ self::a() }}{% endmacro b %}{{ self::a() }}",
+        "{% macro f(x) %}{{ self::f(x=self::f(x=self::f(x=1))) }}{% endmacro f %}{{ self::f(x=1) }}",
+    ] {
+        let err = template_error_on_small_stack(src.to_owned());
+        assert!(
+            err.contains("levels deep") || err.contains("too complex"),
+            "{src:.50}: {err}"
+        );
+    }
 }

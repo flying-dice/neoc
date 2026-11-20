@@ -198,30 +198,147 @@ describe("template.add_filter", function()
             expect(t:render({ x = "compiled" })).toBe("compiled")
         end)
 
-        test("a macro that calls itself is refused", function()
-            local out, err = template.compile("{% macro m() %}{{ self::m() }}{% endmacro m %}")
+        test("a macro that calls itself without end is an error at render, not an abort", function()
+            local t = template.compile("{% macro m() %}{{ self::m() }}{% endmacro m %}{{ self::m() }}")
+            expect(t ~= nil).toBe(true)
+            local out, err = t:render({})
             expect(out).toBeNil()
-            expect(err).toContain("template.compile:")
+            expect(err).toContain("levels deep")
+            -- and it can be rendered again
+            out, err = t:render({})
+            expect(out).toBeNil()
+            expect(err).toContain("levels deep")
         end)
 
-        test("a self-call is found wherever the syntax tree can hide it", function()
+        test("an unbounded self-call is bounded wherever the syntax tree can hide it", function()
             local bodies = {
                 "{% set x = self::m() %}{{ x }}",
-                "{% for i in self::m() %}{% endfor %}",
-                "{% for i in [1] %}{% else %}{{ self::m() }}{% endfor %}",
+                "{% for i in [] %}x{% else %}{{ self::m() }}{% endfor %}",
                 "{% if false %}{% elif self::m() %}x{% endif %}",
                 "{% if false %}x{% else %}{{ self::m() }}{% endif %}",
                 "{% filter upper %}{{ self::m() }}{% endfilter %}",
-                "{{ 1 + self::m() }}",
                 "{{ [self::m()] | length }}",
-                "{{ f(a=self::m()) }}",
+                "{{ range(end=self::m()) | length }}",
                 "{{ 1 in [self::m()] }}",
+                "{{ 'a' ~ 'b' }}{{ self::m() | upper }}",
             }
             for _, body in ipairs(bodies) do
-                local out, err = template.compile("{% macro m() %}" .. body .. "{% endmacro m %}{{ self::m() }}")
+                local out, err = template.render("{% macro m() %}" .. body .. "{% endmacro m %}{{ self::m() }}", {})
                 expect(out).toBeNil()
-                expect(err).toContain("calls itself")
+                expect(err).toContain("levels deep")
             end
+        end)
+
+        test("mutual recursion is bounded", function()
+            local src = "{% macro a() %}{{ self::b() }}{% endmacro a %}{% macro b() %}x{{ self::a() }}{% endmacro b %}{{ self::a() }}"
+            local out, err = template.render(src, {})
+            expect(out).toBeNil()
+            expect(err).toContain("levels deep")
+        end)
+
+        test("infinite recursion inside a std:thread worker is a Lua error", function()
+            local thread = require("std:thread")
+            local w = thread.spawn({
+                source = [[
+                    local template = require("lib:template")
+                    local out, err = template.render(
+                        "{% macro f(n) %}{% for i in [1] %}{{ self::f(n=n) }}{% endfor %}{% endmacro f %}{{ self::f(n=1) }}", {})
+                    return tostring(out) .. "|" .. tostring(err)
+                ]],
+            })
+            local result = w:await()
+            expect(result).toContain("nil|template.render:")
+            expect(result).toContain("levels deep")
+        end)
+
+        test("a macro that terminates on its data renders", function()
+            local src = "{% macro fact(n) %}{% if n <= 1 %}1{% else %}{{ n }}*{{ self::fact(n=n-1) }}{% endif %}"
+                .. "{% endmacro fact %}{{ self::fact(n=10) }}"
+            expect(template.render(src, {})).toBe("10*9*8*7*6*5*4*3*2*1")
+        end)
+
+        test("a tree renders with a macro that calls itself", function()
+            local src = "{% macro node(t) %}<li>{{ t.name }}{% if t.children %}<ul>"
+                .. "{% for c in t.children %}{{ self::node(t=c) }}{% endfor %}</ul>{% endif %}</li>{% endmacro node %}"
+                .. "<ul>{{ self::node(t=tree) }}</ul>"
+            local tree = { name = "a", children = { { name = "b", children = {} },
+                { name = "c", children = { { name = "d", children = {} } } } } }
+            expect(template.render(src, { tree = tree })).toBe(
+                "<ul><li>a<ul><li>b</li><li>c<ul><li>d</li></ul></li></ul></li></ul>")
+        end)
+
+        test("a tree nine levels deep renders and ten is past the bound", function()
+            local src = "{% macro node(t) %}<li>{{ t.name }}{% if t.children %}<ul>"
+                .. "{% for c in t.children %}{{ self::node(t=c) }}{% endfor %}</ul>{% endif %}</li>{% endmacro node %}"
+                .. "<ul>{{ self::node(t=tree) }}</ul>"
+            local function tree(depth)
+                local t = { name = "leaf", children = {} }
+                for i = 1, depth - 1 do t = { name = "n" .. i, children = { t } } end
+                return t
+            end
+            expect(template.render(src, { tree = tree(9) })).toContain("leaf")
+            local out, err = template.render(src, { tree = tree(10) })
+            expect(out).toBeNil()
+            expect(err).toContain("9 levels deep")
+        end)
+
+        test("a recursion just past its bound is an error and just inside it renders", function()
+            local function fact(n)
+                return "{% macro fact(n) %}{% if n <= 1 %}1{% else %}{{ n }}*{{ self::fact(n=n-1) }}{% endif %}"
+                    .. "{% endmacro fact %}{{ self::fact(n=" .. n .. ") }}"
+            end
+            expect(template.render(fact(13), {})).toContain("13*12*")
+            local over, err = template.render(fact(14), {})
+            expect(over).toBeNil()
+            expect(err).toContain("levels deep")
+        end)
+
+        test("a macro call as an operand of arithmetic or an ordering comparison is refused", function()
+            local m = "{% macro m() %}1{% endmacro m %}"
+            for _, shape in ipairs({
+                "{{ 1 + self::m() }}",
+                "{{ self::m() * 2 }}",
+                "{% if self::m() > 0 %}a{% endif %}",
+                "{% if 0 <= self::m() %}a{% endif %}",
+            }) do
+                local out, err = template.render(m .. shape, {})
+                expect(out).toBeNil()
+                expect(err).toContain("cannot be an operand")
+            end
+            expect(template.render(m .. '{% if self::m() == "1" %}a{% endif %}', {})).toBe("a")
+        end)
+
+        test("a panic inside the renderer is an error, and the engine survives it", function()
+            local out, err = template.render("{{ (0 - 9223372036854775807 - 1) % -1 }}", {})
+            expect(out).toBeNil()
+            expect(err).toContain("template engine failed")
+            expect(template.render("{{ 1 + 1 }}", {})).toBe("2")
+        end)
+
+        test("a chain of twenty thousand macros is refused quickly, not overflowed", function()
+            local parts = {}
+            for i = 0, 19999 do
+                parts[#parts + 1] = "{% macro m" .. i .. "() %}{{ self::m" .. (i + 1) .. "() }}{% endmacro m" .. i .. " %}"
+            end
+            parts[#parts + 1] = "{% macro m20000() %}end{% endmacro m20000 %}{{ self::m0() }}"
+            local out, err = template.render(table.concat(parts), {})
+            expect(out).toBeNil()
+            expect(err).toContain("too complex")
+        end)
+
+        test("macro calls nested in macro-call arguments count as nested", function()
+            local function nested(callee, k)
+                return ("self::" .. callee .. "(x="):rep(k) .. "1" .. (")"):rep(k)
+            end
+            local parts = {}
+            for i = 0, 22 do
+                parts[#parts + 1] = "{% macro m" .. i .. "(x) %}{{ " .. nested("m" .. (i + 1), 8)
+                    .. " }}{% endmacro m" .. i .. " %}"
+            end
+            parts[#parts + 1] = "{% macro m23(x) %}{{ nope }}{% endmacro m23 %}{{ self::m0(x=1) }}"
+            local out, err = template.render(table.concat(parts), {})
+            expect(out).toBeNil()
+            expect(err).toContain("too complex")
         end)
 
         test("a macro that calls another macro is accepted", function()
