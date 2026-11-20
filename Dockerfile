@@ -7,7 +7,7 @@ WORKDIR /src
 # The whole workspace is needed: the `neoc` bin pulls neoc-vm.
 # `crates/neoc/Cargo.toml` declares a `[[test]]` target, so
 # `crates/neoc/tests` must stay in the context. `.dockerignore` keeps
-# target/, .git, and docs out. BuildKit cache mounts give dep + incremental
+# target/ and .git out. BuildKit cache mounts give dep + incremental
 # caching without the brittle per-crate stub trick (target/ is a cache mount,
 # so the binary is copied out before the RUN ends).
 COPY . .
