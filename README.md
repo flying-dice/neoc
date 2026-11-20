@@ -10,7 +10,7 @@ neoc used to be a language that compiled to Lua. That is gone; the runtime is th
 
 ```sh
 # From source (any platform with the pinned Rust toolchain)
-cargo install --path crates/neoc
+cargo install --locked --path crates/neoc
 ```
 
 Releases ship Linux x86_64 and Windows x86_64 binaries. The install scripts download them from GitHub Releases:
@@ -20,7 +20,7 @@ Releases ship Linux x86_64 and Windows x86_64 binaries. The install scripts down
 curl -fsSL https://raw.githubusercontent.com/flying-dice/neoc/main/scripts/install.sh | bash
 
 # Windows x86_64 (PowerShell)
-# irm https://raw.githubusercontent.com/flying-dice/neoc/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/flying-dice/neoc/main/scripts/install.ps1 | iex
 ```
 
 While the repository is private, the raw script URL, the GitHub API and the release downloads need authentication, so the scripts only work once the repository is public (or with a download you authenticate yourself). `NEOC_INSTALL_DIR` (default `~/.neoc/bin`) sets where the binary goes. `NEOC_VERSION=vX.Y.Z` installs a specific release.

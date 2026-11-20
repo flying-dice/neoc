@@ -57,8 +57,8 @@ GitHub Actions (`.github/workflows/ci.yml`) runs similar checks on pushes to `ma
 
 1. Branch from `main`: `issues/{key}-{slug}` (e.g. `issues/NEOC-6-std-task`).
 2. Run the [pre-PR checks](#pre-pr-checks) locally.
-3. Self-review with the `pr-self-review` skill and post the `Self-review` note on the PR for the head SHA.
-4. Open the PR into `main` (before or after step 3). One module or one well-scoped change per PR. Say why in the description, not only what. Reference the Jira key (`Refs NEOC-<n>`).
+3. Open the PR into `main` (a draft is fine). One module or one well-scoped change per PR. Say why in the description, not only what. Reference the Jira key (`Refs NEOC-<n>`).
+4. Self-review with the `pr-self-review` skill and post the `Self-review` note on the PR for the head SHA.
 5. Hand off to an independent `pr-review` pass: a fresh reviewer with no session context, who posts a verdict note for the head SHA (`READY TO MERGE` or `CHANGES NEEDED`). Fix and re-run from step 2 until `READY TO MERGE`.
 6. Squash-merge only on `READY TO MERGE` for the current head, then delete the branch.
 
