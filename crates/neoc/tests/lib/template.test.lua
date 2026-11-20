@@ -169,4 +169,60 @@ describe("template.add_filter", function()
         expect(err).toContain("recursive render")
         expect(err).toContain("recurse_render")
     end)
+
+    describe("hostile templates", function()
+        test("include, import and extends are refused", function()
+            for _, src in ipairs({
+                '{% include "other" %}',
+                '{% import "other" as o %}',
+                '{% extends "base" %}',
+            }) do
+                local out, err = template.compile(src)
+                expect(out).toBeNil()
+                expect(err).toContain("template.compile:")
+            end
+        end)
+
+        test("a template that names another is refused with the reason", function()
+            local out, err = template.compile('{% include "other" %}')
+            expect(out).toBeNil()
+            expect(err).toContain("not supported")
+        end)
+
+        test("a refused template does not break the ones compiled after it", function()
+            template.compile('{% extends "base" %}')
+            template.compile('{% import "other" as o %}')
+            local out = template.render("{{ x }}", { x = "still works" })
+            expect(out).toBe("still works")
+            local t = template.compile("{{ x }}")
+            expect(t:render({ x = "compiled" })).toBe("compiled")
+        end)
+
+        test("a macro that calls itself is refused", function()
+            local out, err = template.compile("{% macro m() %}{{ self::m() }}{% endmacro m %}")
+            expect(out).toBeNil()
+            expect(err).toContain("template.compile:")
+        end)
+
+        test("deeply nested blocks are refused", function()
+            local src = ("{% if true %}"):rep(100) .. ("{% endif %}"):rep(100)
+            local out, err = template.compile(src)
+            expect(out).toBeNil()
+            expect(err).toContain("too complex")
+        end)
+
+        test("range with a zero step or an enormous length is an error", function()
+            local out, err = template.render("{% for i in range(end=5, step_by=0) %}{{ i }}{% endfor %}", {})
+            expect(out).toBeNil()
+            expect(err).toContain("step_by")
+            out, err = template.render("{% for i in range(end=1000000000000) %}{% endfor %}", {})
+            expect(out).toBeNil()
+            expect(err).toContain("range")
+        end)
+
+        test("range still works for ordinary bounds", function()
+            local out = template.render("{% for i in range(start=1, end=4) %}{{ i }}{% endfor %}", {})
+            expect(out).toBe("123")
+        end)
+    end)
 end)

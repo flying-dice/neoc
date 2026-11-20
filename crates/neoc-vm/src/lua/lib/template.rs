@@ -31,12 +31,11 @@
 //!
 //! ## Filter callback bridge
 //!
-//! `tera::Filter` is synchronous and has no Lua-aware parameter. We publish the
-//! active `&Lua` on a thread-local pointer for the duration of one `render`
-//! call so `LuaFilter::filter` can re-enter Lua. The pointer is set inside an
-//! mlua callback that already holds `&Lua`, and is cleared via RAII before the
-//! callback returns. Tera invokes filters synchronously inside `render` — no
-//! filter ever outlives the call.
+//! `tera::Filter` is synchronous and has no Lua-aware parameter. We publish a
+//! clone of the active `Lua` handle (a cheap reference-counted handle to the same VM) on a thread-local
+//! for the duration of one `render` call so `LuaFilter::filter` can re-enter Lua. The handle is set inside
+//! an mlua callback that already holds the `Lua`, and is restored via RAII before the callback returns.
+//! Tera invokes filters synchronously inside `render` — no filter ever outlives the call.
 //!
 //! ## Re-entrant render guard
 //!
@@ -48,8 +47,8 @@
 //! instead of blocking. Cleared via RAII so a panic in tera or in a filter
 //! still releases the flag.
 
-use std::cell::Cell;
-use std::collections::HashMap;
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -59,7 +58,8 @@ use mlua::{
     Function, Lua, LuaSerdeExt, MetaMethod, RegistryKey, Table, UserData, UserDataMethods, Value,
 };
 use parking_lot::Mutex;
-use tera::{Context, Filter as TeraFilter, Tera, Value as TeraValue};
+use tera::ast::{Expr, ExprVal, FunctionCall, Node};
+use tera::{Context, Filter as TeraFilter, Function as TeraFunction, Tera, Value as TeraValue};
 use tracing::instrument;
 
 use crate::lua::facade::Module;
@@ -83,23 +83,23 @@ const RECURSIVE_RENDER_MSG: &str =
 // ---------------------------------------------------------------------------
 
 thread_local! {
-    static LUA_PTR: Cell<*const Lua> = const { Cell::new(std::ptr::null()) };
+    static ACTIVE_LUA: RefCell<Option<Lua>> = const { RefCell::new(None) };
     static IN_RENDER: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Publish `lua` on the thread-local for the duration of `f`. RAII restores
-/// the previous pointer so the LUA_PTR slot remains correct across panics.
+/// the previous handle so the `ACTIVE_LUA` slot remains correct across panics.
 fn with_active_lua<F, R>(lua: &Lua, f: F) -> R
 where
     F: FnOnce() -> R,
 {
-    struct Guard(*const Lua);
+    struct Guard(Option<Lua>);
     impl Drop for Guard {
         fn drop(&mut self) {
-            LUA_PTR.with(|c| c.set(self.0));
+            ACTIVE_LUA.with(|c| *c.borrow_mut() = self.0.take());
         }
     }
-    let prev = LUA_PTR.with(|c| c.replace(lua as *const Lua));
+    let prev = ACTIVE_LUA.with(|c| c.borrow_mut().replace(lua.clone()));
     let _g = Guard(prev);
     f()
 }
@@ -108,17 +108,12 @@ fn borrow_active_lua<F, R>(f: F) -> Result<R, String>
 where
     F: FnOnce(&Lua) -> Result<R, String>,
 {
-    LUA_PTR.with(|c| {
-        let p = c.get();
-        if p.is_null() {
-            return Err("no active Lua state".to_string());
-        }
-        // SAFETY: pointer was published by `with_active_lua` which guarantees
-        // the referent outlives every nested `tera.render` call. See module
-        // docstring.
-        let lua: &Lua = unsafe { &*p };
-        f(lua)
-    })
+    // Clone the handle out so no `RefCell` borrow is held while `f` runs Lua code.
+    let active = ACTIVE_LUA.with(|c| c.borrow().clone());
+    match active {
+        Some(lua) => f(&lua),
+        None => Err("no active Lua state".to_string()),
+    }
 }
 
 /// RAII guard rejecting recursive entry into a render call. See module
@@ -161,6 +156,7 @@ impl Engine {
     fn new() -> Self {
         let mut tera = Tera::default();
         tera.autoescape_on(vec![ESCAPE_SUFFIX]);
+        tera.register_function("range", BoundedRange);
         // Tera 1.x errors on undefined `{{ var }}` lookups by default — the
         // AC-required strict-variables behaviour. `{% if undef %}` falls back
         // to falsy (not "empty string"), so the AC is met without a flag.
@@ -199,6 +195,440 @@ impl Engine {
         let n = self.counter.fetch_add(1, Ordering::Relaxed);
         format!("t{n}")
     }
+}
+
+// ---------------------------------------------------------------------------
+// What Tera would let abort the host, and what this module refuses instead.
+//
+// - `range(step_by=0)` loops forever pushing onto a `Vec`, and `range(end=1e18)` allocates until the
+//   allocator aborts. `range` is replaced by [`BoundedRange`].
+// - Tera has no recursion limit: a macro that calls itself (directly or through another macro) or a
+//   template that `include`s itself overflows the Rust stack, which aborts the host. Recursion needs a
+//   macro that names itself or a template that names another; templates here have internal names no
+//   script can legitimately know, so `include`, `import` and `extends` are refused outright, and the
+//   macros of one template are checked for call cycles ([`check_renderable`]).
+// - Parsing, walking and rendering are recursive over the syntax tree, so a template that nests deeply
+//   overflows the stack of a 2 MiB worker thread: `{% for %}` x 500, `{% if %}` x 500, `{{ 1 + 1 + ... }}`
+//   with 20 000 terms. [`check_complexity`] reads the source (before Tera sees it) and refuses blocks nested
+//   more than [`MAX_BLOCK_DEPTH`] deep, tags with more than [`MAX_OPERATORS`] operators or nested more than
+//   [`MAX_NESTING`] brackets, and [`check_renderable`] refuses a template whose blocks and macro calls stack
+//   more than [`MAX_RENDER_DEPTH`] deep when rendered. Each limit sits at a third or less of where an
+//   unoptimised build overflows 2 MiB (tested at the limits, on a 2 MiB thread).
+// ---------------------------------------------------------------------------
+
+/// Block tags (`for`, `if`, `macro`, `block`, `filter`) that may be open at once.
+const MAX_BLOCK_DEPTH: usize = 24;
+/// Binary operators (`+ - * / % == != < > <= >=`, `and`, `or`, `in`) one tag may hold.
+const MAX_OPERATORS: usize = 48;
+/// Parentheses and brackets one tag may have open at once.
+const MAX_NESTING: usize = 24;
+/// The most blocks and macro calls that may be live at once while rendering (a macro call counts as two).
+const MAX_RENDER_DEPTH: usize = 48;
+
+/// The most elements `range()` may produce (16 Mi).
+const MAX_RANGE_LEN: usize = 1 << 24;
+
+/// Tera's `range(start, end, step_by)` with the two ways it kills a process closed: a zero step is an
+/// error, and so is a range longer than [`MAX_RANGE_LEN`].
+struct BoundedRange;
+
+impl BoundedRange {
+    fn arg(
+        args: &HashMap<String, TeraValue>,
+        key: &str,
+        default: Option<usize>,
+    ) -> tera::Result<usize> {
+        match args.get(key) {
+            Some(v) => v
+                .as_u64()
+                .and_then(|n| usize::try_from(n).ok())
+                .ok_or_else(|| {
+                    tera::Error::msg(format!(
+                        "Function `range` received {key}={v} but `{key}` can only be a number"
+                    ))
+                }),
+            None => default.ok_or_else(|| {
+                tera::Error::msg(format!(
+                    "Function `range` was called without a `{key}` argument"
+                ))
+            }),
+        }
+    }
+}
+
+impl TeraFunction for BoundedRange {
+    fn call(&self, args: &HashMap<String, TeraValue>) -> tera::Result<TeraValue> {
+        let start = Self::arg(args, "start", Some(0))?;
+        let step_by = Self::arg(args, "step_by", Some(1))?;
+        let end = Self::arg(args, "end", None)?;
+        if start > end {
+            return Err(tera::Error::msg(
+                "Function `range` was called with a `start` argument greater than the `end` one",
+            ));
+        }
+        if step_by == 0 {
+            return Err(tera::Error::msg(
+                "Function `range` was called with a `step_by` of 0",
+            ));
+        }
+        let len = (end - start).div_ceil(step_by);
+        if len > MAX_RANGE_LEN {
+            return Err(tera::Error::msg(format!(
+                "Function `range` would produce {len} values (the most it produces is {MAX_RANGE_LEN})"
+            )));
+        }
+        let mut out = Vec::new();
+        out.try_reserve_exact(len)
+            .map_err(|e| tera::Error::msg(format!("Function `range`: {e}")))?;
+        let mut i = start;
+        while i < end {
+            out.push(TeraValue::from(i));
+            i += step_by;
+        }
+        Ok(TeraValue::Array(out))
+    }
+}
+
+/// A macro call: the macro's name and how many blocks were open around the call.
+struct Call {
+    name: String,
+    depth: usize,
+}
+
+/// What walking one template's syntax tree found.
+#[derive(Default)]
+struct Scan {
+    /// An `include`, `import` or `extends` tag.
+    names_another_template: bool,
+    /// The macros the code being walked (the template's own, or one macro's) calls.
+    calls: Vec<Call>,
+    /// Blocks open around the node being walked, and the most that were open at once.
+    depth: usize,
+    peak: usize,
+}
+
+/// What the macros of a template call, and how deep their own blocks go.
+struct MacroInfo {
+    calls: Vec<Call>,
+    peak: usize,
+}
+
+impl Scan {
+    fn nodes(&mut self, nodes: &[Node], macros: &mut HashMap<String, MacroInfo>) {
+        for node in nodes {
+            self.node(node, macros);
+        }
+    }
+
+    /// Walk the body of a block: one level deeper.
+    fn block(&mut self, body: &[Node], macros: &mut HashMap<String, MacroInfo>) {
+        self.depth += 1;
+        self.peak = self.peak.max(self.depth);
+        self.nodes(body, macros);
+        self.depth -= 1;
+    }
+
+    fn node(&mut self, node: &Node, macros: &mut HashMap<String, MacroInfo>) {
+        match node {
+            Node::Extends(..) | Node::Include(..) | Node::ImportMacro(..) => {
+                self.names_another_template = true;
+            }
+            Node::VariableBlock(_, e) => self.expr(e),
+            Node::Set(_, set) => self.expr(&set.value),
+            Node::FilterSection(_, section, _) => {
+                self.call(&section.filter);
+                self.block(&section.body, macros);
+            }
+            Node::Block(_, b, _) => self.block(&b.body, macros),
+            Node::Forloop(_, l, _) => {
+                self.expr(&l.container);
+                self.block(&l.body, macros);
+                if let Some(empty) = &l.empty_body {
+                    self.block(empty, macros);
+                }
+            }
+            Node::If(i, _) => {
+                for (_, cond, body) in &i.conditions {
+                    self.expr(cond);
+                    self.block(body, macros);
+                }
+                if let Some((_, body)) = &i.otherwise {
+                    self.block(body, macros);
+                }
+            }
+            Node::MacroDefinition(_, def, _) => {
+                // the calls inside a macro belong to that macro, not to the code around it, and its blocks
+                // start again from zero
+                let outer = (std::mem::take(&mut self.calls), self.depth, self.peak);
+                (self.depth, self.peak) = (0, 0);
+                for default in def.args.values().flatten() {
+                    self.expr(default);
+                }
+                self.nodes(&def.body, macros);
+                let info = macros.entry(def.name.clone()).or_insert(MacroInfo {
+                    calls: Vec::new(),
+                    peak: 0,
+                });
+                info.calls.append(&mut self.calls);
+                info.peak = info.peak.max(self.peak);
+                (self.calls, self.depth, self.peak) = outer;
+            }
+            Node::Super
+            | Node::Text(_)
+            | Node::Raw(..)
+            | Node::Break(_)
+            | Node::Continue(_)
+            | Node::Comment(..) => {}
+        }
+    }
+
+    fn call(&mut self, f: &FunctionCall) {
+        for e in f.args.values() {
+            self.expr(e);
+        }
+    }
+
+    fn expr(&mut self, e: &Expr) {
+        self.val(&e.val);
+        for f in &e.filters {
+            self.call(f);
+        }
+    }
+
+    fn val(&mut self, v: &ExprVal) {
+        match v {
+            ExprVal::MacroCall(m) => {
+                self.calls.push(Call {
+                    name: m.name.clone(),
+                    depth: self.depth,
+                });
+                for e in m.args.values() {
+                    self.expr(e);
+                }
+            }
+            ExprVal::FunctionCall(f) => self.call(f),
+            ExprVal::Math(m) => {
+                self.expr(&m.lhs);
+                self.expr(&m.rhs);
+            }
+            ExprVal::Logic(l) => {
+                self.expr(&l.lhs);
+                self.expr(&l.rhs);
+            }
+            ExprVal::In(i) => {
+                self.expr(&i.lhs);
+                self.expr(&i.rhs);
+            }
+            ExprVal::Test(t) => t.args.iter().for_each(|e| self.expr(e)),
+            ExprVal::Array(items) => items.iter().for_each(|e| self.expr(e)),
+            ExprVal::StringConcat(c) => c.values.iter().for_each(|v| self.val(v)),
+            ExprVal::String(_)
+            | ExprVal::Int(_)
+            | ExprVal::Float(_)
+            | ExprVal::Bool(_)
+            | ExprVal::Ident(_) => {}
+        }
+    }
+}
+
+/// Refuse a template that could overflow the stack when rendered (see the section comment above).
+fn check_renderable(tera: &Tera, name: &str) -> Result<(), String> {
+    let tpl = tera.get_template(name).map_err(|e| format_tera_error(&e))?;
+    let mut scan = Scan::default();
+    let mut macros: HashMap<String, MacroInfo> = HashMap::new();
+    scan.nodes(&tpl.ast, &mut macros);
+    if scan.names_another_template {
+        return Err(
+            "`include`, `import` and `extends` are not supported: a template cannot name another"
+                .into(),
+        );
+    }
+    // a macro that reaches itself through any chain of calls is unbounded recursion
+    for (start, info) in &macros {
+        let mut seen: HashSet<&str> = HashSet::new();
+        let mut stack: Vec<&str> = info.calls.iter().map(|c| c.name.as_str()).collect();
+        while let Some(m) = stack.pop() {
+            if m == start {
+                return Err(format!(
+                    "macro `{start}` calls itself: recursive macros are not supported"
+                ));
+            }
+            if seen.insert(m)
+                && let Some(next) = macros.get(m)
+            {
+                stack.extend(next.calls.iter().map(|c| c.name.as_str()));
+            }
+        }
+    }
+    // no cycles: the deepest chain of blocks and macro calls is finite, and it must be shallow
+    let mut memo: HashMap<&str, usize> = HashMap::new();
+    let top = reach(scan.peak, &scan.calls, &macros, &mut memo);
+    if top > MAX_RENDER_DEPTH {
+        return Err(format!(
+            "template too complex: blocks and macro calls nest {top} deep when rendered (the most is {MAX_RENDER_DEPTH})"
+        ));
+    }
+    Ok(())
+}
+
+/// How deep rendering goes below code that holds `peak` blocks and makes `calls`: the deepest of its own blocks
+/// and, for each call, the blocks around it, the call itself (two levels) and the callee's own depth.
+fn reach<'a>(
+    peak: usize,
+    calls: &'a [Call],
+    macros: &'a HashMap<String, MacroInfo>,
+    memo: &mut HashMap<&'a str, usize>,
+) -> usize {
+    let mut deepest = peak;
+    for call in calls {
+        let below = if let Some(known) = memo.get(call.name.as_str()) {
+            *known
+        } else if let Some(info) = macros.get(&call.name) {
+            let depth = reach(info.peak, &info.calls, macros, memo);
+            memo.insert(call.name.as_str(), depth);
+            depth
+        } else {
+            0
+        };
+        deepest = deepest.max(call.depth + 2 + below);
+    }
+    deepest
+}
+
+/// Refuse source that nests too deeply for the recursive parser, walker and renderer (see the section comment
+/// above). It reads tags the way Tera's grammar delimits them (`{{ }}`, `{% %}`, `{# #}`, quoted strings inside
+/// a tag, the body of `{% raw %}` as text) and is a count, not a parse, so it runs before Tera does.
+fn check_complexity(src: &str) -> Result<(), String> {
+    let bytes = src.as_bytes();
+    let mut depth = 0usize;
+    let mut at = 0;
+    while let Some(open) = find(bytes, at, b"{").filter(|&i| i + 1 < bytes.len()) {
+        let kind = bytes[open + 1];
+        if !matches!(kind, b'{' | b'%' | b'#') {
+            at = open + 1;
+            continue;
+        }
+        let body = open + 2;
+        if kind == b'#' {
+            at = find(bytes, body, b"#}").map_or(bytes.len(), |end| end + 2);
+            continue;
+        }
+        let close: &[u8] = if kind == b'{' { b"}}" } else { b"%}" };
+        let end = scan_tag(bytes, body, close)?;
+        at = end;
+        if kind != b'%' {
+            continue;
+        }
+        match first_word(bytes, body) {
+            b"for" | b"if" | b"macro" | b"block" | b"filter" => {
+                depth += 1;
+                if depth > MAX_BLOCK_DEPTH {
+                    return Err(format!(
+                        "template too complex: blocks are nested more than {MAX_BLOCK_DEPTH} deep"
+                    ));
+                }
+            }
+            b"endfor" | b"endif" | b"endmacro" | b"endblock" | b"endfilter" => {
+                depth = depth.saturating_sub(1);
+            }
+            b"raw" => at = skip_raw(bytes, at),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Where `needle` first occurs in `bytes` at or after `from`.
+fn find(bytes: &[u8], from: usize, needle: &[u8]) -> Option<usize> {
+    bytes
+        .get(from..)?
+        .windows(needle.len())
+        .position(|w| w == needle)
+        .map(|i| i + from)
+}
+
+/// The first word of a tag body (after spaces and a whitespace-control `-`).
+fn first_word(bytes: &[u8], body: usize) -> &[u8] {
+    let rest = bytes.get(body..).unwrap_or_default();
+    let start = rest
+        .iter()
+        .position(|b| !b.is_ascii_whitespace() && *b != b'-')
+        .unwrap_or(rest.len());
+    let word = &rest[start..];
+    let len = word
+        .iter()
+        .position(|b| !(b.is_ascii_alphanumeric() || *b == b'_'))
+        .unwrap_or(word.len());
+    &word[..len]
+}
+
+/// Walk one tag from `body` to its `close`, counting operators and nesting; returns where the tag ends. An unterminated tag ends at the end of the source (Tera reports it), after the same checks.
+fn scan_tag(bytes: &[u8], body: usize, close: &[u8]) -> Result<usize, String> {
+    let (mut i, mut quote, mut operators, mut nesting) = (body, None, 0usize, 0usize);
+    while i < bytes.len() {
+        let c = bytes[i];
+        if let Some(q) = quote {
+            if c == q {
+                quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        if bytes[i..].starts_with(close) {
+            return Ok(i + close.len());
+        }
+        match c {
+            b'"' | b'\'' | b'`' => quote = Some(c),
+            b'(' | b'[' => {
+                nesting += 1;
+                if nesting > MAX_NESTING {
+                    return Err(format!(
+                        "template too complex: more than {MAX_NESTING} parentheses or brackets nested in one tag"
+                    ));
+                }
+            }
+            b')' | b']' => nesting = nesting.saturating_sub(1),
+            b'+' | b'-' | b'*' | b'/' | b'%' | b'=' | b'<' | b'>' => operators += 1,
+            c if c.is_ascii_alphabetic() => {
+                let word = &bytes[i..];
+                let len = word
+                    .iter()
+                    .position(|b| !(b.is_ascii_alphanumeric() || *b == b'_'))
+                    .unwrap_or(word.len());
+                if matches!(&word[..len], b"and" | b"or" | b"in") {
+                    operators += 1;
+                }
+                // a word is read whole, so `android` is not `and`
+                i += len;
+                if operators > MAX_OPERATORS {
+                    return Err(too_many_operators());
+                }
+                continue;
+            }
+            _ => {}
+        }
+        if operators > MAX_OPERATORS {
+            return Err(too_many_operators());
+        }
+        i += 1;
+    }
+    Ok(bytes.len())
+}
+
+fn too_many_operators() -> String {
+    format!("template too complex: more than {MAX_OPERATORS} operators in one tag")
+}
+
+/// Where the text of a `{% raw %}` block ends: just past its `{% endraw %}` (or the end of the source).
+fn skip_raw(bytes: &[u8], from: usize) -> usize {
+    let mut at = from;
+    while let Some(open) = find(bytes, at, b"{%") {
+        if first_word(bytes, open + 2) == b"endraw" {
+            return find(bytes, open + 2, b"%}").map_or(bytes.len(), |end| end + 2);
+        }
+        at = open + 2;
+    }
+    bytes.len()
 }
 
 // ---------------------------------------------------------------------------
@@ -355,10 +785,21 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
 #[instrument(name = "template.compile", target = "lua::lib::template", skip_all)]
 fn compile_impl(lua: &Lua, engine: &Engine, src: String) -> mlua::Result<(Value, Value)> {
+    if let Err(e) = check_complexity(&src) {
+        return from_err(lua, "template.compile", e);
+    }
     let name = engine.next_template_name();
     let mut guard = engine.lock();
     if let Err(e) = guard.add_raw_template(&name, &src) {
+        // Tera keeps a template whose `extends` or `import` it could not resolve, and then fails every later
+        // `add_raw_template` while building the inheritance chains. The name is never handed out: drop it.
+        guard.templates.remove(&name);
         return from_err(lua, "template.compile", format_tera_error(&e));
+    }
+    if let Err(e) = check_renderable(&guard, &name) {
+        // drop the refused source: the name is never handed out, so nothing else would
+        guard.templates.remove(&name);
+        return from_err(lua, "template.compile", e);
     }
     drop(guard);
     ok(
@@ -383,6 +824,7 @@ fn render_impl(
         return Err(RECURSIVE_RENDER_MSG.to_string());
     };
     let autoescape = read_autoescape(opts.as_ref())?;
+    check_complexity(&src)?;
     let ctx_obj = build_context(lua, &ctx)?;
     let name = if autoescape {
         ONE_OFF_ESCAPED
@@ -392,7 +834,13 @@ fn render_impl(
 
     let mut guard = engine.lock();
     if let Err(e) = guard.add_raw_template(name, &src) {
+        // see `compile_impl`: a template Tera half-added would break every later one
+        guard.templates.remove(name);
         return Err(format_tera_error(&e));
+    }
+    if let Err(e) = check_renderable(&guard, name) {
+        guard.templates.remove(name);
+        return Err(e);
     }
     let render_result = with_active_lua(lua, || guard.render(name, &ctx_obj));
     drop(guard);
@@ -571,6 +1019,191 @@ mod tests {
             .unwrap();
         lua.globals().set("template", m).unwrap();
         lua
+    }
+
+    fn render_err(src: &str) -> String {
+        let lua = engine();
+        let (v, e): (Value, String) = lua
+            .load("return template.render(...)")
+            .call((src, lua.create_table().unwrap()))
+            .unwrap_or_else(|e| panic!("{src}: threw {e}"));
+        assert!(matches!(v, Value::Nil), "{src}: rendered {v:?}");
+        e
+    }
+
+    /// `range(step_by=0)` looped forever growing a `Vec`; `range(end=1e18)` allocated until the allocator
+    /// aborted.
+    #[test]
+    fn range_with_a_zero_step_or_an_absurd_length_is_an_error() {
+        assert!(
+            render_err("{% for i in range(end=10, step_by=0) %}{{ i }}{% endfor %}")
+                .contains("step_by")
+        );
+        assert!(
+            render_err("{% for i in range(end=1000000000000000000) %}x{% endfor %}")
+                .contains("the most it produces")
+        );
+        assert!(
+            render_err("{% for i in range(end=10, step_by=-1) %}{% endfor %}").contains("step_by")
+        );
+        // and range still works
+        let lua = engine();
+        let out: String = lua
+            .load(r#"return template.render("{% for i in range(start=1, end=10, step_by=3) %}{{ i }},{% endfor %}", {})"#)
+            .eval()
+            .unwrap();
+        assert_eq!(out, "1,4,7,");
+    }
+
+    /// Tera has no recursion limit: these overflowed the Rust stack (an abort).
+    #[test]
+    fn recursive_macros_and_self_including_templates_are_refused() {
+        let direct = "{% macro f(n) %}{{ self::f(n=n) }}{% endmacro f %}{{ self::f(n=1) }}";
+        assert!(render_err(direct).contains("calls itself"));
+        let mutual = "{% macro a() %}{{ self::b() }}{% endmacro a %}{% macro b() %}x{{ self::a() }}{% endmacro b %}{{ self::a() }}";
+        assert!(render_err(mutual).contains("calls itself"));
+        let nested = "{% macro f() %}{% if true %}{% for i in range(end=2) %}{{ self::f() | upper }}{% endfor %}{% endif %}{% endmacro f %}";
+        assert!(render_err(nested).contains("calls itself"));
+        assert!(render_err(r#"{% include "__one_off" %}"#).contains("not supported"));
+        assert!(!render_err(r#"{% import "t0" as m %}"#).is_empty());
+        // compile refuses them too, and a plain macro still works
+        let lua = engine();
+        let (v, e): (Value, String) = lua
+            .load("return template.compile(...)")
+            .call(direct)
+            .unwrap();
+        assert!(matches!(v, Value::Nil) && e.contains("calls itself"), "{e}");
+        let out: String = lua
+            .load(r#"return template.render("{% macro hi(n) %}hi {{ n }}{% endmacro hi %}{{ self::hi(n=1) }}", {})"#)
+            .eval()
+            .unwrap();
+        assert_eq!(out, "hi 1");
+    }
+
+    fn render_ok(src: &str) -> String {
+        let lua = engine();
+        let (out, e): (Option<String>, Option<String>) = lua
+            .load("return template.render(...)")
+            .call((src, lua.create_table().unwrap()))
+            .unwrap_or_else(|e| panic!("{src:.60}: threw {e}"));
+        out.unwrap_or_else(|| panic!("{src:.60}: {e:?}"))
+    }
+
+    /// Tera recurses over the syntax tree with no limit. Each of these overflowed a 2 MiB stack (the default of
+    /// a test thread and of a runtime worker) and aborted the host.
+    #[test]
+    fn templates_that_nest_or_chain_too_deeply_are_refused_not_overflowed() {
+        let cases = [
+            format!(
+                "{}x{}",
+                "{% for i in [1] %}".repeat(500),
+                "{% endfor %}".repeat(500)
+            ),
+            format!(
+                "{}x{}",
+                "{% if true %}".repeat(500),
+                "{% endif %}".repeat(500)
+            ),
+            format!("{{{{ 1{} }}}}", " + 1".repeat(20_000)),
+            format!(
+                "{{% if true{} %}}x{{% endif %}}",
+                " and true".repeat(20_000)
+            ),
+            format!("{{{{ {}1{} }}}}", "(".repeat(5_000), ")".repeat(5_000)),
+            format!("{{{{ {}1{} }}}}", "[".repeat(5_000), "]".repeat(5_000)),
+            // an unterminated one is Tera's to report, but it must not recurse either
+            "{{ 1".to_owned() + &" + 1".repeat(20_000),
+        ];
+        for src in &cases {
+            let e = render_err(src);
+            assert!(e.contains("too complex"), "{src:.60}: {e}");
+            let lua = engine();
+            let (v, e): (Value, String) = lua
+                .load("return template.compile(...)")
+                .call(src.as_str())
+                .unwrap();
+            assert!(
+                matches!(v, Value::Nil) && e.contains("too complex"),
+                "compile {src:.60}: {e}"
+            );
+        }
+    }
+
+    /// A chain of macros, none recursive, each calling the next: the render nests as deep as the chain is long.
+    #[test]
+    fn a_long_chain_of_macros_is_refused() {
+        let mut src = String::new();
+        for i in 0..1000 {
+            src.push_str(&format!(
+                "{{% macro m{i}() %}}{{{{ self::m{}() }}}}{{% endmacro m{i} %}}",
+                i + 1
+            ));
+        }
+        src.push_str("{% macro m1000() %}x{% endmacro m1000 %}{{ self::m0() }}");
+        assert!(render_err(&src).contains("nest"), "refused for its depth");
+    }
+
+    /// The limits are where the stack is still safe: a template at each of them renders on this 2 MiB thread.
+    #[test]
+    fn templates_at_the_limits_render() {
+        let blocks = format!(
+            "{}x{}",
+            "{% for i in [1] %}".repeat(super::MAX_BLOCK_DEPTH),
+            "{% endfor %}".repeat(super::MAX_BLOCK_DEPTH)
+        );
+        assert_eq!(render_ok(&blocks), "x");
+        let sum = format!("{{{{ 1{} }}}}", " + 1".repeat(super::MAX_OPERATORS - 1));
+        assert_eq!(render_ok(&sum), super::MAX_OPERATORS.to_string());
+        let conditions = format!(
+            "{{% if true{} %}}y{{% endif %}}",
+            " and true".repeat(super::MAX_OPERATORS - 1)
+        );
+        assert_eq!(render_ok(&conditions), "y");
+        let nested = format!(
+            "{{{{ {}1{} }}}}",
+            "(".repeat(super::MAX_NESTING),
+            ")".repeat(super::MAX_NESTING)
+        );
+        assert_eq!(render_ok(&nested), "1");
+        // macros and blocks together, down to the render depth limit: the worst case a template can hold
+        // four macros, four calls (two levels each) and four runs of `half` blocks fill the limit exactly
+        let half = (super::MAX_RENDER_DEPTH - 8) / 4;
+        let (open, close) = ("{% if true %}".repeat(half), "{% endif %}".repeat(half));
+        let mut chain = String::new();
+        for i in 0..3 {
+            chain.push_str(&format!(
+                "{{% macro m{i}() %}}{open}{{{{ self::m{}() }}}}{close}{{% endmacro m{i} %}}",
+                i + 1
+            ));
+        }
+        chain.push_str(&format!(
+            "{{% macro m3() %}}{open}z{close}{{% endmacro m3 %}}{{{{ self::m0() }}}}"
+        ));
+        assert_eq!(render_ok(&chain), "z");
+    }
+
+    /// The scan reads tags like Tera: text, strings and comments are not tags, raw blocks are text.
+    #[test]
+    fn the_complexity_scan_ignores_what_is_not_code() {
+        let braces = "{{ \"{% for %}\" }}";
+        assert_eq!(render_ok(braces), "{% for %}");
+        let long_string = format!("{{{{ \"{}\" | length }}}}", "+ and ( ".repeat(5_000));
+        assert_eq!(render_ok(&long_string), "40000");
+        assert_eq!(
+            render_ok(&format!("{{# {} #}}ok", "{% for i in x %}".repeat(100))),
+            "ok"
+        );
+        let raw = format!(
+            "{{% raw %}}{}{{% endraw %}}done",
+            "{% for i in [1] %}".repeat(100)
+        );
+        assert!(render_ok(&raw).ends_with("done"));
+        // `android` and `order` are words, not `and` and `or`
+        let words = format!(
+            "{{% set android = 1 %}}{{{{ android{} }}}}",
+            " + android".repeat(40)
+        );
+        assert_eq!(render_ok(&words), "41");
     }
 
     #[test]
