@@ -44,9 +44,13 @@ cargo run -p neoc -- run \
 cargo bench -p neoc-vm --features bench --bench lib --bench vnd -- --test
 scripts/check-toolchain-pin.sh
 cargo deny check
+cargo run -p neoc-vm --example luals -- --check
+NEOC_REQUIRE_LUALS=1 cargo test -p neoc-vm --test luals
 ```
 
 The Lua list leaves out the suites that need a Docker daemon (`sqlx_mysql`, `sqlx_postgres`, `testcontainers_modules`). With Docker running, run every suite instead: `cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.lua' 'crates/neoc/tests/**/*.spec.lua'`.
+
+The last two lines are the editor types. `luals -- --check` fails when `types/luals/` (the generated LuaCATS definitions, one file per module, found by `types/luals-plugin.lua`) no longer matches what the modules record; fix it with `cargo run -p neoc-vm --example luals` and commit the result. The `luals` test runs the positive and negative fixtures in `types/fixtures/` through lua-language-server, which must be installed at the pinned version (`LUALS_VERSION` in `crates/neoc-vm/tests/luals.rs`; `brew install lua-language-server` gives the current release, which may differ, or take the release binary of that version from the lua-language-server GitHub releases); without `NEOC_REQUIRE_LUALS=1` it skips with a notice when the tool is missing or not that version, so a plain `cargo test --workspace` still passes without it.
 
 The bench line compiles every bench and runs each body once, with no timing. It catches stale bench code the other checks never build. To time a module, drop `-- --test` and name it: `cargo bench -p neoc-vm --features bench --bench lib <name>`.
 
@@ -84,8 +88,9 @@ Scope is optional (a module or a subsystem). Subject is imperative, lowercase, n
 Example: a `lib:foo` module. Pick the namespace first (see [CLAUDE.md](CLAUDE.md#modules)). Copy the shape of a small existing module such as `crates/neoc-vm/src/lua/lib/hex.rs`; don't write one from scratch.
 
 1. **Module file.** `crates/neoc-vm/src/lua/lib/foo.rs` exports `pub fn module(lua: &Lua) -> mlua::Result<Table>` and a `declare` that builds the surface through the `Module` facade (`crates/neoc-vm/src/lua/facade.rs`). Each function carries its name, parameter types and a one-line description. Fallible functions return `(value, err)`.
-2. **Register.** Add `pub mod foo;` to `crates/neoc-vm/src/lua/lib/mod.rs` and a `modules.insert("lib:foo".into(), lib::foo::module(lua)?)` line in `registry()` in `crates/neoc-vm/src/lua/modules.rs`, both alphabetical. Add `foo` to the `declared` and `runtime_tables` lists in that file's tests and update the registered-module count they assert.
+2. **Register.** Add `pub mod foo;` to `crates/neoc-vm/src/lua/lib/mod.rs` and a `modules.insert("lib:foo".into(), lib::foo::module(lua)?)` line in `registry()` in `crates/neoc-vm/src/lua/modules.rs`, both alphabetical. Add `foo` to the `declared` list in that file and to the `runtime_tables` list in its tests, and update the registered-module count the tests assert (`declared_modules_match_registered_keys`, `every_module_yields_valid_definitions`).
 3. **Rust tests.** A `#[cfg(test)] mod tests` in the module file, driving the full engine from `crate::lua::sandbox::make_engine()`. Run: `cargo test -p neoc-vm foo`.
+   The drift tests in `modules.rs` (`definitions_cover_runtime_table_keys`, `recorded_members_exist_on_live_values`, `every_named_type_is_declared`) hold what `declare` records to the live module: record every function with its real return shape (`Result<T, string>` for `(value, err)`, `()` for nothing, `(A, B)` for several values of its own, a `...` among them (or alone) for every value a Lua function it calls returned), end a function that takes trailing arguments with `("...", "LuaValue")`, and record each resource type's methods, fields (`field`) and the constructors on its sub-table (`static_fn`). A type a unit test can build goes in `INSTANCES`, one it cannot (Docker, a running server) in `NOT_BUILT` with the reason.
 4. **Benches.** A `#[cfg(feature = "bench")] pub fn benches(c: &mut Criterion)` with three tiers: `library` (pure Rust), `into_out_lua` (marshalling cost) and `through_lua` (the full user path). Add it to the `criterion_group!` in `crates/neoc-vm/benches/lib/lib.rs`. Run: `cargo bench -p neoc-vm --features bench --bench lib foo`.
 5. **Lua test.** `crates/neoc/tests/lib/foo.test.lua`, using `lib:test`:
 
@@ -107,9 +112,10 @@ Example: a `lib:foo` module. Pick the namespace first (see [CLAUDE.md](CLAUDE.md
    ```
 
    Run: `cargo run -p neoc -- run crates/neoc/tests/lib/foo.test.lua`. Per exported function: a happy path, one test per distinct error, and an empty or zero value where it applies.
-6. **README.** Add the module to the list in the README modules table, alphabetical within its namespace.
+6. **Types.** Run `cargo run -p neoc-vm --example luals` to write `types/luals/lib/foo.lua`, commit it, and add a `require("lib:foo")` line (and a few correct calls) to `types/fixtures/usage.lua`; a wrong call goes in `types/fixtures/negative/wrong_use.lua` with `-- expect-error: <code>` on the line, where `<code>` is the lua-language-server diagnostic (`missing-parameter`, `undefined-field`, ...); the test compares the code.
+7. **README.** Add the module to the list in the README modules table, alphabetical within its namespace.
 
-Extending an existing module follows the same steps: add the function and register it on the table, add the Rust and Lua cases, and extend the bench group.
+Extending an existing module follows the same steps: add the function and register it on the table, add the Rust and Lua cases, extend the bench group, and re-run the `luals` example (the `luals` test fails on stale definitions) with a call in `types/fixtures/usage.lua`.
 
 ## How to release
 

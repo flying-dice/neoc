@@ -19,10 +19,16 @@ crates/neoc-vm/              # the runtime library
   tests/script_parse.rs      # compiles (never runs) every Lua script, Docker or not
   src/errors.rs              # runtime error types (NeocError)
   src/lua/sandbox.rs         # engine construction, stripped globals
-  src/lua/facade.rs          # Module builder: registration, spans, (value, error)
+  src/lua/facade.rs          # Module builder: registration, spans, (value, error), the LuaCATS emitter
   src/lua/modules.rs         # module registration + `require`
   src/lua/{std,lib,vnd}/     # one file per module
+  examples/luals.rs          # writes (or `-- --check`s) the LuaCATS definitions in types/luals/
+  tests/luals.rs             # drift check of types/luals/, no colon in a file name, the lua-language-server fixtures
   benches/                   # Criterion suites (lib/, vnd/), behind the `bench` feature
+types/luals/                 # GENERATED LuaCATS definitions, one file per module (`lib/json.lua` for `lib:json`)
+types/luals-plugin.lua       # lua-language-server plugin: require("lib:json") -> types/luals/lib/json.lua
+types/fixtures/              # lua-language-server fixtures: usage.lua (clean) and negative/ (expect-error)
+.luarc.json                  # lua-language-server config for the repo (LuaJIT, library = types/luals, the plugin)
 tooling/cli/                 # Gherkin spec for the CLI, run against the built binary
 ```
 
@@ -82,12 +88,13 @@ Priority order, 1 > 2 > 3 > 4:
 - **Resources.** OS resources are `UserData` handles with methods. Operations across several handles are free functions on the module table.
 - **No speculative abstractions.** Add a helper only when 3+ call sites exist.
 - A module's tracing target is `lua::lib::<module>` whatever its namespace.
+- **Types.** Every module's `declare` records its surface (functions, parameter and return types, docs, resource types with their methods, fields and constructors) and that record is the source of the editor types in `types/luals/`, never edited by hand: `cargo run -p neoc-vm --example luals` regenerates, `-- --check` fails on drift. Keep the record true to the runtime; the drift tests in `modules.rs` check, in both directions, that the live module table and the recorded functions and fields agree and that a live value of each resource type and its recorded members agree (every recorded member exists; for a plain table or a userdata whose methods sit in a table, every live method is recorded; a userdata with fields is checked one way only), and that every named type has a class. They do not check parameter or return types against the runtime, and the types they cannot build (`NOT_BUILT`: the database servers and Docker) are not held to a live value. The vocabulary is `string`, `number`, `bool`, `()` (nothing), `LuaValue` (opaque, `any`), a trailing `?` for optional, `Result<T, string>` for `(value, err)`, `(A, B)` for several returns (a `...` in it, or alone, for any number: `Task:await`), a trailing `("...", "LuaValue")` for variadic arguments, and a type's own name for a resource type.
 
 Adding a module: see [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-new-module).
 
 ## Tests
 
-- **Rust:** `#[cfg(test)] mod tests` next to the code. Integration tests in `tests/` only where they cross crate boundaries, plus `crates/neoc-vm/tests/hostile_inputs.rs` (every module called with hostile values, fails on any panic) and `forged_len.rs`.
+- **Rust:** `#[cfg(test)] mod tests` next to the code. Integration tests in `tests/` only where they cross crate boundaries, plus `crates/neoc-vm/tests/luals.rs` (the generated definitions and the lua-language-server fixtures), `crates/neoc-vm/tests/hostile_inputs.rs` (every module called with hostile values, fails on any panic) and `forged_len.rs`.
 - **Lua:** a new module gets `crates/neoc/tests/<ns>/<name>.test.lua`, run with `neoc run`. (Not every existing module has one yet: `std:net`, `std:workers` and `lib:test` have none, and `std:task` uses a `.spec.lua`.) Per exported function: one happy path, one test per distinct error condition, and an empty or zero value where it applies. The outer `describe` is the bare module name.
 - **CLI spec:** `tooling/cli/*.feature`, driven by `crates/neoc/tests/cucumber.rs`.
 - **Benches:** three tiers per module (`library`, `into_out_lua`, `through_lua`), behind the `bench` feature.

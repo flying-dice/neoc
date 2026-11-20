@@ -224,18 +224,19 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             &[],
             "string",
             "Return the absolute path to the temp file; stable across calls and does not consume the handle.",
-        )
-        .method(
+        );
+        t.method(
             "keep",
             &[],
             "Result<string, string>",
             "Consume the handle and keep the file on disk past drop, returning the path.",
-        )
-        .method(
-            "close",
-            &[],
-            "()",
-            "Release the handle eagerly; idempotent.",
+        );
+        t.method("close", &[], "()", "Release the handle eagerly; idempotent.");
+        t.static_fn(
+            "new",
+            &[("opts", "LuaValue?")],
+            "Result<TempFile, string>",
+            "Create a temp file; `opts` is `{ prefix?, suffix?, dir? }`. Deleted on close.",
         );
     });
 
@@ -245,18 +246,24 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             &[],
             "string",
             "Return the absolute path to the temp directory as a string.",
-        )
-        .method(
+        );
+        t.method(
             "keep",
             &[],
             "Result<string, string>",
             "Consume the handle and keep the directory on disk past drop, returning the path.",
-        )
-        .method(
+        );
+        t.method(
             "close",
             &[],
             "Result<bool, string>",
             "Remove the directory eagerly, surfacing unlink errors; idempotent.",
+        );
+        t.static_fn(
+            "new",
+            &[("opts", "LuaValue?")],
+            "Result<TempDir, string>",
+            "Create a temp directory; `opts` is `{ prefix?, suffix?, dir? }`. Deleted on close.",
         );
     });
 

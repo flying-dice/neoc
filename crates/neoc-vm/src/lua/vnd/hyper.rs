@@ -76,7 +76,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// registered byte-for-byte as before and only its signature is recorded via
 /// [`crate::lua::facade::Module::record_fn`]. The `ServerHandle` and `Request`
 /// userdata types keep their own `impl UserData` (fields and methods unchanged)
-/// and have their method surface recorded via
+/// and have their methods and fields recorded via
 /// [`crate::lua::facade::Module::userdata`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:hyper")?;
@@ -117,9 +117,12 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.set("serve", lua.create_function(serve)?)?;
     m.record_fn(
         "serve",
-        &[("listener", "LuaValue"), ("handler", "LuaValue")],
+        &[
+            ("listener", "std_net.TcpListener"),
+            ("handler", "fun(req: vnd_hyper.Request): string|table|nil"),
+        ],
         "Result<ServerHandle, string>",
-        "Attach `handler` to `listener` and start accepting HTTP connections.",
+        "Attach `handler` to `listener` and start accepting HTTP connections. The handler returns a body string, `{ status?, body?, headers? }`, or nothing (an empty 200).",
     );
 
     m.userdata("ServerHandle", |s| {
@@ -144,10 +147,23 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     });
 
     m.userdata("Request", |r| {
+        r.field("method", "string", "The HTTP method (`GET`).");
+        r.field("path", "string", "The request path, without the query string.");
+        r.field("body", "string", "The raw request body.");
+        r.field("is_json", "bool", "Whether the `Content-Type` header is `application/json`.");
+        r.field("headers", "LuaValue", "The request headers as a `{ [name]: value }` table.");
+        r.field(
+            "json",
+            "LuaValue",
+            concat!(
+                "The body parsed as JSON (a JSON handle or scalar), ",
+                "or nil when it is empty or invalid."
+            ),
+        );
         r.method(
             "header",
             &[("name", "string")],
-            "LuaValue",
+            "string?",
             "Look up a request header by name (case-insensitive); returns the value string or nil when absent.",
         );
     });
@@ -329,8 +345,8 @@ struct HandlerResponse {
     headers: Vec<(String, String)>,
 }
 
-/// Handlers may return either a plain string (treated as a 200 body) or a
-/// table `{status, body, headers}`. Anything else is an error.
+/// Handlers may return a plain string (treated as a 200 body), a table
+/// `{status, body, headers}`, or nothing (an empty 200). Anything else is an error.
 fn decode_handler_response(v: Value) -> mlua::Result<HandlerResponse> {
     match v {
         Value::String(s) => Ok(HandlerResponse {

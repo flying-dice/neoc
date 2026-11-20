@@ -239,6 +239,12 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             &[],
             "string",
             "Return the algorithm name this hasher was constructed with.",
+        )
+        .static_fn(
+            "new",
+            &[("algo", "string")],
+            "Result<Hasher, string>",
+            "Start an incremental hash under `algo` (see `hash.algorithms()`).",
         );
     });
 

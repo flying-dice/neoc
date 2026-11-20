@@ -331,7 +331,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     )?;
     m.record_fn(
         "spawn",
-        &[("fn_or_thread", "LuaValue"), ("args", "LuaValue")],
+        &[("fn_or_thread", "LuaValue"), ("...", "LuaValue")],
         "Task",
         "Spawn a function or coroutine. The first synchronous slice runs immediately; a yield runs the continuation as a separate task.",
     );
@@ -387,7 +387,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     )?;
     m.record_fn(
         "defer",
-        &[("fn_or_thread", "LuaValue"), ("args", "LuaValue")],
+        &[("fn_or_thread", "LuaValue"), ("...", "LuaValue")],
         "Task",
         "Queue a function to run after the current synchronous batch. Deferred tasks execute in FIFO order.",
     );
@@ -422,7 +422,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         &[
             ("secs", "number"),
             ("fn_or_thread", "LuaValue"),
-            ("args", "LuaValue"),
+            ("...", "LuaValue"),
         ],
         "Task",
         "Schedule a function to run after `secs` seconds. `delay(0, ...)` is equivalent to `defer(...)`.",
@@ -490,8 +490,8 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         .method(
             "await",
             &[],
-            "Result<LuaValue, string>",
-            "Wait for the task to finish. Returns its values on success, `(nil, error)` on error, or `(nil, \"cancelled\")` if cancelled.",
+            "(LuaValue?, ...)",
+            "Wait for the task to finish. Returns every value the task returned on success, `(nil, error)` on error, or `(nil, \"cancelled\")` if cancelled.",
         );
     });
 

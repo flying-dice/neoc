@@ -61,6 +61,21 @@ The source in [`crates/neoc-vm/src/lua/`](crates/neoc-vm/src/lua) is the catalog
 - `lib:test` is the test runner: a script named `*.test.lua` or `*.spec.lua` runs under it when passed to `neoc run`.
 - `lib:compile` bundles a script and the runtime into a standalone executable.
 
+## Editor types
+
+This repository contains [LuaCATS](https://luals.github.io/wiki/annotations/) definitions for every module in [`types/luals/`](types/luals), one file per module (`lib/json.lua` for `lib:json`, `vnd/rusqlite.lua` for `vnd:rusqlite`), generated from the modules' own signatures. [lua-language-server](https://luals.github.io/) gives completion, hover docs and type checks of `require("lib:json")` and the rest once it can find them. Its `require` search cannot map a name with a colon to a file, so [`types/luals-plugin.lua`](types/luals-plugin.lua) does that. Point both at your copy of the repository:
+
+```jsonc
+// .luarc.json
+{
+  "runtime.version": "LuaJIT",
+  "workspace.library": ["path/to/neoc/types/luals"],
+  "runtime.plugin": "path/to/neoc/types/luals-plugin.lua"
+}
+```
+
+Inside this repository nothing is needed: its own [`.luarc.json`](.luarc.json) already does it. VS Code with the sumneko Lua extension reads `.luarc.json` from the workspace root and should pick both settings up. Whether it asks you to trust the plugin (it only turns `lib:json` into a file path) may depend on the extension version and VS Code's Workspace Trust; allow it if asked. lua-language-server runs a plugin's `ResolveRequire` only when every configured plugin defines it, so this plugin cannot sit next to a plugin that lacks one (it would silently stop resolving `lib:json`). Other editors need the same two settings in their lua-language-server configuration. The definitions live in the source tree, not in the release binaries or the Docker image. `cargo run -p neoc-vm --example luals` regenerates them.
+
 ## Contributing
 
 [CONTRIBUTING.md](CONTRIBUTING.md) covers building, testing, adding a module and releasing. [CLAUDE.md](CLAUDE.md) holds the module design rules.

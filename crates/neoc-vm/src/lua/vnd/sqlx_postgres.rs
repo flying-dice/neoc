@@ -76,21 +76,21 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.userdata("Database", |d| {
         d.method(
             "execute",
-            &[("sql", "string"), ("params", "LuaValue")],
+            &[("sql", "string"), ("...", "LuaValue")],
             "Result<number, string>",
             "Execute a SQL statement, binding trailing arguments to `$1, $2, …` placeholders; returns rows affected.",
         )
         .method(
             "query",
-            &[("sql", "string"), ("params", "LuaValue")],
+            &[("sql", "string"), ("...", "LuaValue")],
             "Result<LuaValue, string>",
-            "Execute a SELECT and return all rows as a 1-indexed table of column-keyed row tables.",
+            "Execute a SELECT and return all rows as a 1-indexed table of column-keyed row tables. A column of an unsupported type raises; cast it to text in SQL.",
         )
         .method(
             "query_one",
-            &[("sql", "string"), ("params", "LuaValue")],
+            &[("sql", "string"), ("...", "LuaValue")],
             "Result<LuaValue, string>",
-            "Execute a SELECT and return the first matching row, or nil when none matched.",
+            "Execute a SELECT and return the first matching row, or nil when none matched. A column of an unsupported type raises; cast it to text in SQL.",
         )
         .method(
             "close",

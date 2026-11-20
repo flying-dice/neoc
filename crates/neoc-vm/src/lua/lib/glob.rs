@@ -62,8 +62,8 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.record_fn(
         "scan",
         &[("pattern", "string"), ("opts", "LuaValue?")],
-        "Result<LuaValue, string>",
-        "Compile `pattern`, walk the filesystem, and return all matching paths plus any per-entry walk errors.",
+        "(LuaValue, LuaValue)",
+        "Compile `pattern`, walk the filesystem, and return `(paths, errors)`: all matching paths, plus a list of `{ path, error }` rows for the entries the walk could not read (nil when there are none). A bad pattern or directory returns `(nil, message)` instead.",
     );
 
     m.userdata("Glob", |g| {
@@ -76,8 +76,14 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         .method(
             "scan",
             &[("opts", "LuaValue?")],
-            "LuaValue",
-            "Walk the filesystem and return all paths matching this pattern, plus any per-entry walk errors.",
+            "(LuaValue, LuaValue)",
+            "Walk the filesystem and return `(paths, errors)` as `glob.scan` does: the matching paths, plus a list of `{ path, error }` rows for the entries the walk could not read (nil when there are none). A bad directory returns `(nil, message)` instead.",
+        )
+        .static_fn(
+            "new",
+            &[("pattern", "string")],
+            "Result<Glob, string>",
+            "Compile one glob pattern.",
         );
     });
 
@@ -94,7 +100,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             "LuaValue",
             "1-based indices of every pattern in the set that matches `path`.",
         )
-        .method("len", &[], "number", "Number of patterns in the set.");
+        .method("len", &[], "number", "Number of patterns in the set.")
+        .static_fn(
+            "new",
+            &[("patterns", "LuaValue")],
+            "Result<GlobSet, string>",
+            "Compile a list of glob patterns into one matcher.",
+        );
     });
 
     Ok(m)

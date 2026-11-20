@@ -962,7 +962,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.userdata("Object", |o| {
         o.method(
             "get",
-            &[("path", "LuaValue")],
+            &[("path", "LuaValue"), ("...", "LuaValue")],
             "LuaValue",
             "Walk a path of segments and return the leaf node.",
         )
@@ -991,7 +991,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.userdata("Array", |a| {
         a.method(
             "get",
-            &[("path", "LuaValue")],
+            &[("path", "LuaValue"), ("...", "LuaValue")],
             "LuaValue",
             "Walk a path starting from a 1-based index.",
         )

@@ -201,7 +201,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// channel prefix) and recorded with
 /// [`crate::lua::facade::Module::record_fn`], exactly as `lib:base64`'s
 /// `decode*` functions are. `algorithms` builds a Lua table — there is no
-/// `NeocType` for `Vec`, and it carried no span in the hand-written form, so
+/// `DeclType` for `Vec`, and it carried no span in the hand-written form, so
 /// routing it through `func` would add one — and is likewise set verbatim and
 /// recorded as `LuaValue`, mirroring `lib:hmac`'s `algorithms`.
 ///

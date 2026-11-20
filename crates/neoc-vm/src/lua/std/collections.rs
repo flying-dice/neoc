@@ -101,8 +101,8 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             .method(
                 "with_lock",
                 &[("f", "LuaValue")],
-                "LuaValue",
-                "Acquire the lock, call `f`, release, and return `f`'s result.",
+                "...",
+                "Acquire the lock, call `f`, release, and return every value `f` returns.",
             );
         Ok(())
     })?;

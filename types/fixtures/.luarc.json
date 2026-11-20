@@ -1,0 +1,17 @@
+{
+  "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
+  "runtime.version": "LuaJIT",
+  "workspace.library": [
+    "../luals"
+  ],
+  "workspace.checkThirdParty": false,
+  "diagnostics.disable": [
+    "lowercase-global"
+  ],
+  "diagnostics.unusedLocalExclude": [
+    "_*"
+  ],
+  "type.checkTableShape": true,
+  "hint.enable": false,
+  "runtime.plugin": "../luals-plugin.lua"
+}
