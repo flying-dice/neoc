@@ -9,7 +9,7 @@
 ---@class lib_http
 local M = {}
 
---- Serve the files matching `glob_pattern` over HTTP/1.1; `opts.host` / `opts.port` set the bind address (default `0.0.0.0:8080`). Blocks until Ctrl-C, or until an embedder shuts the script down.
+--- Serve the files matching `glob_pattern` over HTTP/1.1; `opts.host` / `opts.port` set the bind address (default `0.0.0.0:8080`). Blocks until Ctrl-C, or until an embedder stops the script's background work or shuts it down.
 ---@param glob_pattern string
 ---@param opts? any
 function M.serve_static(glob_pattern, opts) end

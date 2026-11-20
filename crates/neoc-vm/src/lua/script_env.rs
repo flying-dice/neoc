@@ -13,12 +13,13 @@
 //! - the **libraries** (`string`, `table`, `math`, `coroutine`, `bit`) are private copies (`coroutine.create`,
 //!   `resume` and `wrap` are versions that let an async host call run inside a coroutine of the script's own and
 //!   let a script resume only the coroutines it made, see `async_coroutines.lua`), so the host may add
-//!   to them (the prelude's `table.clone`, `utf8`) before [`freeze`], and the script can never reach the
+//!   its own functions to them before [`freeze`], and the script can never reach the
 //!   engine's own shared tables;
 //! - [`freeze`] then replaces every library in the environment with an empty read-only proxy whose
 //!   `__index` is the copy: assigning to it fails (the key is absent, so `__newindex` always fires), its
 //!   metatable is locked (`getmetatable` returns a string, `setmetatable` is refused), and `rawset` is
-//!   replaced by a version that refuses the proxies.
+//!   replaced by a version that refuses the proxies, as are `table.insert`, `table.remove`, `table.sort` and `table.move`
+//!   (LuaJIT's versions store with raw sets, which skip `__newindex`: see `guarded_table.lua`).
 //!
 //! Known limits of a proxy: `pairs(string)` and `next(string)` see no entries (LuaJIT's default mode, like Lua 5.1,
 //! has no `__pairs`), and `rawget(string, "len")` is `nil`; the functions are all reachable by name.
@@ -28,9 +29,10 @@
 
 use std::sync::Arc;
 
-use crate::lua::lifecycle::{DRIVEN, OWNED};
 use mlua::{Lua, Table, Value};
 use parking_lot::Mutex;
+
+use crate::lua::sandbox::load_source;
 
 /// Base functions a script gets, copied from the engine's globals (after `xpcall` was replaced by its guarded
 /// version, see `guarded_xpcall.lua`). `rawset` is installed by [`freeze`], not copied.
@@ -67,7 +69,7 @@ fn copy(lua: &Lua, source: &Table) -> mlua::Result<Table> {
 }
 
 /// A fresh environment: the base functions, private copies of the libraries and `_G` pointing at itself.
-/// Run the prelude in it, then [`freeze`] it.
+/// Add the host's own functions to it if there are any, then [`freeze`] it.
 ///
 /// # Errors
 /// Fails when the engine's globals are not the ones [`make_bare_engine`](crate::lua::sandbox::make_bare_engine) sets up.
@@ -174,17 +176,15 @@ fn splitmix(x: u64) -> u64 {
 fn install_async_coroutines(lua: &Lua, copy: &Table, raw: &Table) -> mlua::Result<()> {
     let pending = Value::LightUserData(Lua::poll_pending());
     // the coroutines the script made, and those whose driver is somewhere else (which the task scheduler shares:
-    // `lifecycle::mark_driven`). Both are keyed weakly, so a coroutine is not kept alive by being listed; `driven`
+    // [`mark_driven`]). Both are keyed weakly, so a coroutine is not kept alive by being listed; `driven`
     // is also valued weakly, so a driver thread nobody refers to any more (its call was dropped) clears the entry
     // instead of refusing the coroutine for ever (see `async_coroutines.lua`)
     let owned = weak_table(lua, "k")?;
     let driven = weak_table(lua, "kv")?;
     lua.set_named_registry_value(OWNED, owned.clone())?;
     lua.set_named_registry_value(DRIVEN, driven.clone())?;
-    let wrappers: Table = lua
-        .load(include_str!("async_coroutines.lua"))
+    let wrappers: Table = load_source(lua, include_str!("async_coroutines.lua"))
         .set_name("=async_coroutines")
-        .set_mode(mlua::chunk::ChunkMode::Text)
         .call((pending, raw.clone(), driven, owned))?;
     for name in ["create", "resume", "wrap"] {
         copy.raw_set(name, wrappers.raw_get::<Value>(name)?)?;
@@ -219,8 +219,60 @@ fn read_only(lua: &Lua, name: &str, target: Table) -> mlua::Result<Table> {
     Ok(proxy)
 }
 
+/// Where the Lua registry keeps the table of coroutines the script made (`async_coroutines.lua`): the only ones it may
+/// resume.
+const OWNED: &str = "neoc.owned_coroutines";
+
+/// Where the Lua registry keeps the table of coroutines whose driver is somewhere else (`async_coroutines.lua`).
+const DRIVEN: &str = "neoc.driven_coroutines";
+
+/// A table of the script environment kept in the registry (the ones [`new_env`] installs); `None` outside it (a worker, a test), which has no such tables.
+fn environment_table(lua: &Lua, name: &str) -> mlua::Result<Option<mlua::Table>> {
+    match lua.named_registry_value::<mlua::Value>(name)? {
+        mlua::Value::Nil => Ok(None),
+        mlua::Value::Table(table) => Ok(Some(table)),
+        other => Err(mlua::Error::runtime(format!(
+            "the registry entry `{name}` is a {}, not a table",
+            other.type_name()
+        ))),
+    }
+}
+
+/// A coroutine the script made and handed to the task scheduler (`task.spawn`, `task.defer`, `task.delay`): the
+/// scheduler drives it from here on, and the script may no longer resume it itself, as with a coroutine that is
+/// running; two drivers of one coroutine would fight over the host call it is waiting at. Without a script environment
+/// (the registry tables it keeps are missing: a worker, a test, `neoc run`) it does nothing.
+///
+/// # Errors
+/// The coroutine is not one the script made (a thread it reached through `coroutine.running()`: the host's own),
+/// or it is already being driven (a thread is waiting at its host call, or the scheduler has it).
+pub fn mark_driven(lua: &Lua, thread: &mlua::Thread) -> mlua::Result<()> {
+    let (Some(owned), Some(driven)) = (
+        environment_table(lua, OWNED)?,
+        environment_table(lua, DRIVEN)?,
+    ) else {
+        return Ok(());
+    };
+    if !owned.raw_get::<bool>(thread.clone()).unwrap_or(false) {
+        return Err(mlua::Error::runtime(
+            "cannot schedule a coroutine that is not yours: only one made by coroutine.create or coroutine.wrap",
+        ));
+    }
+    let live = match driven.raw_get::<mlua::Value>(thread.clone())? {
+        mlua::Value::Boolean(true) => true,
+        mlua::Value::Thread(driver) => driver.status() == mlua::thread::ThreadStatus::Resumable,
+        _ => false,
+    };
+    if live {
+        return Err(mlua::Error::runtime(
+            "cannot schedule a coroutine that is already running",
+        ));
+    }
+    driven.raw_set(thread.clone(), true)
+}
+
 /// Seal `env`: every table in it other than `_G` becomes a read-only proxy and `rawset` refuses them.
-/// Call it after the host's own additions (the prelude) and before the script runs.
+/// Call it after the host's own additions and before the script runs.
 ///
 /// # Errors
 /// Fails when a proxy or the guarded `rawset` cannot be created.
@@ -234,6 +286,9 @@ pub fn freeze(lua: &Lua, env: &Table) -> mlua::Result<()> {
         })
         .collect();
     for (name, library) in libraries {
+        if name == "table" {
+            guard_table_writes(lua, &library, &guarded)?;
+        }
         let proxy = read_only(lua, &name, library)?;
         guarded.raw_set(proxy.clone(), true)?;
         env.raw_set(name, proxy)?;
@@ -246,6 +301,20 @@ pub fn freeze(lua: &Lua, env: &Table) -> mlua::Result<()> {
         Ok(table)
     })?;
     env.raw_set("rawset", raw_set)
+}
+
+/// Put versions of `table.insert`, `table.remove`, `table.sort` and `table.move` in the script's copy of `table` that refuse a
+/// frozen table (`guarded.proxy == true`): the engine's own store with raw sets, past a proxy's `__newindex`.
+fn guard_table_writes(lua: &Lua, copy: &Table, guarded: &Table) -> mlua::Result<()> {
+    let writers = ["insert", "remove", "sort", "move"];
+    let [insert, remove, sort, mv] = writers.map(|name| copy.raw_get::<Value>(name));
+    let guards: Table = load_source(lua, include_str!("guarded_table.lua"))
+        .set_name("=guarded_table")
+        .call((guarded.clone(), insert?, remove?, sort?, mv?))?;
+    for name in writers {
+        copy.raw_set(name, guards.raw_get::<Value>(name)?)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -466,6 +535,50 @@ mod tests {
         // nothing was added to the engine's own tables either
         let real: Value = rig.lua.load("return string.evil").eval().unwrap();
         assert!(matches!(real, Value::Nil));
+    }
+
+    /// LuaJIT's `table.insert`, `table.remove`, `table.sort` and `table.move` store with raw sets, past a proxy's `__newindex`:
+    /// each is refused on a frozen library, in each spelling, and works on the script's own tables.
+    #[test]
+    fn the_table_functions_refuse_a_frozen_library_and_work_on_a_plain_table() {
+        let rig = Rig::new();
+        for library in ["string", "table", "math", "coroutine", "bit"] {
+            rig.denied(&format!("table.insert({library}, 'x')"));
+            rig.denied(&format!("table.insert({library}, 1, 'x')"));
+            rig.denied(&format!("table.remove({library})"));
+            rig.denied(&format!("table.remove({library}, 1)"));
+            rig.denied(&format!("table.sort({library})"));
+            rig.denied(&format!(
+                "table.sort({library}, function(a, b) return a < b end)"
+            ));
+            rig.denied(&format!("setmetatable({library}, nil)"));
+            // into a frozen library as the target, and out of it (a read, which is allowed)
+            rig.denied(&format!("table.move({{ 'a', 'b' }}, 1, 2, 1, {library})"));
+            rig.denied(&format!("table.move({library}, 1, 2, 3)"));
+        }
+        assert_eq!(
+            rig.string(
+                "local to = table.move({ 'a', 'b' }, 1, 2, 2, { 'x' }) return table.concat(to, ',') .. '|' \
+                 .. #table.move(string, 1, 2, 1, {})"
+            ),
+            "x,a,b|0"
+        );
+        assert_eq!(
+            rig.string(
+                "local t = { 2, 1 } table.insert(t, 3) table.sort(t) local x = table.remove(t, 1) \
+                 return table.concat(t, ',') .. '|' .. x"
+            ),
+            "2,3|1"
+        );
+        // the refusal names the table, and a non-table argument is the engine's own error
+        assert!(
+            rig.string("return select(2, pcall(table.insert, string, 'x'))")
+                .contains("read-only")
+        );
+        assert!(
+            rig.string("return select(2, pcall(table.insert, nil, 'x'))")
+                .contains("bad argument")
+        );
     }
 
     #[test]

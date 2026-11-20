@@ -13,7 +13,6 @@ use walkdir::WalkDir;
 
 use crate::lua::facade::Module;
 use crate::lua::lifecycle::Life;
-use crate::lua::std::workers::ShutdownSignal;
 
 const MAX_HEADER_LINE: u64 = 8192;
 const MAX_HEADERS: usize = 100;
@@ -42,7 +41,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.async_func(
         "serve_static",
         &[("glob_pattern", "string"), ("opts", "LuaValue?")],
-        "Serve the files matching `glob_pattern` over HTTP/1.1; `opts.host` / `opts.port` set the bind address (default `0.0.0.0:8080`). Blocks until Ctrl-C, or until an embedder shuts the script down.",
+        "Serve the files matching `glob_pattern` over HTTP/1.1; `opts.host` / `opts.port` set the bind address (default `0.0.0.0:8080`). Blocks until Ctrl-C, or until an embedder stops the script's background work or shuts it down.",
         |lua, args: (String, Option<Table>)| serve_static(lua, args),
     )?;
     Ok(m)
@@ -74,16 +73,21 @@ async fn serve_static(lua: Lua, (glob_pattern, opts): (String, Option<Table>)) -
         files.len()
     );
 
-    // runs until the script is shut down (its `Life` closes), the process-wide shutdown signal fires (the CLI
-    // fires it on Ctrl-C; a library call installs no signal handler of its own) or the call is dropped; in
-    // each case the listener and every open connection go with it (the connections belong to the serve
-    // loop, see `serve_loop`)
+    // Runs until Ctrl-C (a fresh SIGINT, as ever: this call listens for it itself), until the script's registry
+    // stops its background work or shuts down (an embedder unloading or replacing the script) or until the
+    // call is dropped. In each case the listener and every open connection go with it (the connections
+    // belong to the serve loop, see `serve_loop`).
     let life = Life::of(&lua);
-    let signal = ShutdownSignal::current();
+    let stopped = life.stopped();
     tokio::select! {
         _ = serve_loop(listener, files, index) => {},
+        () = stopped => {},
         () = life.closed() => {},
-        () = signal.wait() => {},
+        result = tokio::signal::ctrl_c() => {
+            if let Err(e) = result {
+                tracing::error!("signal error: {e}");
+            }
+        },
     }
 
     Ok(())

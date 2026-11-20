@@ -25,9 +25,9 @@ use tokio::sync::Notify;
 
 use crate::lua::facade::Module;
 use crate::lua::lifecycle::{
-    Life, Role, async_function, async_method, first_slice, has_entry, inbound, inherited,
-    mark_driven, resumed,
+    Life, Pruned, Role, async_function, async_method, entrance, first_slice, inherited,
 };
+use crate::lua::script_env::mark_driven;
 
 // ---------------------------------------------------------------------------
 // Task outcome — stored once the task reaches a terminal state
@@ -159,18 +159,42 @@ fn outcome_to_multi(lua: &Lua, outcome: &TaskOutcome) -> mlua::Result<MultiValue
 
 pub struct Scheduler {
     life: Life,
+    /// This engine's own tasks: what [`Scheduler::wait_all`] aborts, and what is aborted when the engine
+    /// (and so the scheduler) is dropped, as a worker's tasks end with the worker. The same tasks are registered
+    /// with the [`Life`], which aborts them when an embedder shuts the script down.
+    handles: Mutex<Pruned<tokio::task::AbortHandle>>,
     prev_defer: Mutex<Option<Arc<TaskInner>>>,
-    tasks: Mutex<Vec<Arc<TaskInner>>>,
+    /// Tasks that are still running, or that failed and nobody has awaited yet (what [`Scheduler::wait_all`] reports);
+    /// the others are forgotten as the list grows, so a script that spawns for ever does not keep every outcome.
+    tasks: Mutex<Pruned<Arc<TaskInner>>>,
     had_errors: AtomicBool,
 }
 
+impl Default for Scheduler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for Scheduler {
+    fn drop(&mut self) {
+        self.abort_own();
+    }
+}
+
 impl Scheduler {
-    /// A scheduler whose tasks register with `life`.
+    /// A scheduler with a registry of its own.
+    pub fn new() -> Self {
+        Self::with_life(Life::new())
+    }
+
+    /// A scheduler whose tasks also register with `life`.
     pub fn with_life(life: Life) -> Self {
         Self {
             life,
+            handles: Mutex::new(Pruned::new()),
             prev_defer: Mutex::new(None),
-            tasks: Mutex::new(Vec::new()),
+            tasks: Mutex::new(Pruned::new()),
             had_errors: AtomicBool::new(false),
         }
     }
@@ -179,19 +203,52 @@ impl Scheduler {
         &self,
         future: impl std::future::Future<Output = ()> + Send + 'static,
     ) -> tokio::task::AbortHandle {
-        self.life.spawn(future).abort_handle()
+        let abort = self.life.spawn(future).abort_handle();
+        self.handles
+            .lock()
+            .push(abort.clone(), |handle| !handle.is_finished());
+        abort
+    }
+
+    /// Take a task the script is starting into the scheduler, or, when the script was shut down, cancel it
+    /// without running its first slice (`false`).
+    fn admit(&self, inner: &Arc<TaskInner>) -> bool {
+        if self.life.is_closed() {
+            inner.complete(TaskOutcome::Cancelled);
+            return false;
+        }
+        self.track(inner);
+        true
+    }
+
+    fn abort_own(&self) {
+        for handle in std::mem::take(&mut self.handles.lock().items) {
+            handle.abort();
+        }
     }
 
     fn track(&self, inner: &Arc<TaskInner>) {
-        self.tasks.lock().push(inner.clone());
+        self.tasks.lock().push(inner.clone(), |task| {
+            !task.is_finished()
+                || (!task.awaited.load(Ordering::Relaxed)
+                    && matches!(&*task.outcome.lock(), Some(TaskOutcome::Err(_))))
+        });
     }
 
-    /// Clean up in-flight tasks after the main script exits: abort everything registered with the
-    /// engine's [`Life`], then report un-awaited task errors to stderr.
-    pub fn wait_all(&self) {
-        self.life.shutdown();
+    /// Clean up in-flight tasks after the main script exits.
+    ///
+    /// Lua async operations (`task.wait`, etc.) cannot be driven after the
+    /// main `exec_async` context returns — their `AsyncThread` streams
+    /// block inside the Lua VM lock and never yield. Neither
+    /// `tokio::time::timeout` nor an abort can interrupt a task that is
+    /// synchronously blocked. This aborts this scheduler's tasks and only those: servers, workers and listeners the script
+    /// started stay up for whatever runs next, and the engine's [`Life`] stays open.
+    ///
+    /// After that, reports un-awaited task errors to stderr.
+    pub async fn wait_all(&self) {
+        self.abort_own();
 
-        let tasks = std::mem::take(&mut *self.tasks.lock());
+        let tasks = std::mem::take(&mut self.tasks.lock().items);
         for inner in &tasks {
             if inner.awaited.load(Ordering::Relaxed) {
                 continue;
@@ -300,7 +357,9 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
                 .app_data_ref::<Scheduler>()
                 .ok_or_else(|| mlua::Error::external("task.spawn: no Scheduler in app data"))?;
 
-            scheduler.track(&inner);
+            if !scheduler.admit(&inner) {
+                return Ok(TaskHandle { inner });
+            }
 
             // the first slice runs inside this call, but a wait it stops at is not this call's: see
             // `lifecycle::resumed`. What the call may do is what its task may do: see `Inherited`.
@@ -328,17 +387,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
                 Ok(vals) => {
                     if matches!(thread.status(), ThreadStatus::Resumable) {
                         let inner_clone = inner.clone();
-                        let lua = lua.clone();
+                        let entrance = entrance(lua);
                         let abort = scheduler.spawn_task(async move {
                             // a slice that stopped at a plain yield carries no leaf: the continuation takes
                             // its turn before it resumes Lua (lifecycle rule 5)
-                            let outcome = resumed(
-                                &lua,
-                                from,
-                                carried,
-                                drive_thread(thread, MultiValue::new()),
-                            )
-                            .await;
+                            let outcome = entrance
+                                .resumed(from, carried, drive_thread(thread, MultiValue::new()))
+                                .await;
                             inner_clone.complete(outcome);
                         });
                         *inner.abort.lock() = Some(abort);
@@ -373,12 +428,14 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
                 .app_data_ref::<Scheduler>()
                 .ok_or_else(|| mlua::Error::external("task.defer: no Scheduler in app data"))?;
 
-            scheduler.track(&inner);
+            if !scheduler.admit(&inner) {
+                return Ok(TaskHandle { inner });
+            }
 
             let prev = scheduler.prev_defer.lock().clone();
             let from = inherited();
             let inner_clone = inner.clone();
-            let lua = lua.clone();
+            let entrance = entrance(lua);
             let abort = scheduler.spawn_task(async move {
                 if let Some(prev_inner) = prev {
                     let notify = prev_inner.notify.clone();
@@ -395,7 +452,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
                 // until the current synchronous Lua batch yields. Since
                 // cancel() runs synchronously before the yield, is_finished()
                 // is guaranteed to reflect it once status() returns.
-                if !has_entry(&lua) {
+                if !entrance.is_set() {
                     tokio::task::block_in_place(|| {
                         let _ = thread.status();
                     });
@@ -403,13 +460,14 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
                 // With one, the turn is taken first (the spawner's call has ended by then) and
                 // cancellation is checked inside it.
-                let outcome = inbound(&lua, from, async {
-                    if inner_clone.is_finished() {
-                        return None;
-                    }
-                    Some(drive_thread(thread, args).await)
-                })
-                .await;
+                let outcome = entrance
+                    .inbound(from, async {
+                        if inner_clone.is_finished() {
+                            return None;
+                        }
+                        Some(drive_thread(thread, args).await)
+                    })
+                    .await;
                 if let Some(outcome) = outcome {
                     inner_clone.complete(outcome);
                 }
@@ -439,14 +497,16 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
                 .app_data_ref::<Scheduler>()
                 .ok_or_else(|| mlua::Error::external("task.delay: no Scheduler in app data"))?;
 
-            scheduler.track(&inner);
+            if !scheduler.admit(&inner) {
+                return Ok(TaskHandle { inner });
+            }
 
             let from = inherited();
             let inner_clone = inner.clone();
-            let lua = lua.clone();
+            let entrance = entrance(lua);
             let abort = scheduler.spawn_task(async move {
                 tokio::time::sleep(delay).await;
-                let outcome = inbound(&lua, from, drive_thread(thread, args)).await;
+                let outcome = entrance.inbound(from, drive_thread(thread, args)).await;
                 inner_clone.complete(outcome);
             });
 
@@ -701,7 +761,7 @@ mod tests {
                 .expect("exec");
 
                 let scheduler = e.app_data_ref::<super::Scheduler>().unwrap();
-                scheduler.wait_all();
+                scheduler.wait_all().await;
             });
             tx.send(()).ok();
         });
@@ -724,7 +784,7 @@ mod tests {
             .expect("exec");
 
             let scheduler = e.app_data_ref::<super::Scheduler>().unwrap();
-            scheduler.wait_all();
+            scheduler.wait_all().await;
             assert!(scheduler.had_task_errors(), "should flag un-awaited errors");
         });
     }
@@ -745,7 +805,7 @@ mod tests {
             .expect("exec");
 
             let scheduler = e.app_data_ref::<super::Scheduler>().unwrap();
-            scheduler.wait_all();
+            scheduler.wait_all().await;
             assert!(
                 !scheduler.had_task_errors(),
                 "awaited errors should not flag"

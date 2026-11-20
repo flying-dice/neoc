@@ -11,16 +11,23 @@
 //! - **[`Life`]**, a per-VM registry of everything the script spawned. The embedder calls
 //!   [`Life::shutdown`] when the script is unloaded or replaced: every registered task is aborted (which drops
 //!   the listeners, pools and Lua threads it held), and nothing registers after that.
-//! - **[`CallEntry`]**, the way a Lua callback that nobody called (an HTTP request arriving at a
-//!   `vnd:hyper` server, a continuing `std:task` coroutine) takes its turn. The embedder serialises the
-//!   calls into one VM; [`inbound`] makes those callbacks queue like any other call. A call is a *baton*:
-//!   while it holds it, no other call runs in the VM. [`scoped`] is the one place the baton is handed back: when
+//! - **[`CallEntry`]**, the way a Lua callback that nobody called takes its turn. The embedder serialises the
+//!   calls into one VM, and every callback joins the queue like any other call: [`request`] for an HTTP request
+//!   arriving at a `vnd:hyper` server, [`inbound`] for a deferred or delayed `std:task` function, [`resumed`] for
+//!   the continuation of a `std:task` coroutine (after [`first_slice`], its first slice). A call is a *baton*:
+//!   while it holds it, no other call runs in the VM. [`scoped`] runs a call that holds a baton; the baton is handed
+//!   back in one place, the gate every call goes through (`run_call`, which [`scoped`] and [`resumed`] share): when
 //!   the call suspends at a wait that does not use the VM (a timer, the network, a worker: an [`idle`] wait) it
 //!   releases the baton and takes it again afterwards, so a `while true do task.wait(1) end` loop does not stop the
 //!   script's host, and a script can call its own listener from a task. Between two waits a call is atomic.
 //!
+//!   **Threading rule for a [`Baton`].** [`Baton::poll_unpark`], [`Baton::can_park`], [`Baton::park`] and
+//!   [`Baton::idle_at`] are called while the call's task-local slot is mutably borrowed. A `Baton` that calls
+//!   [`turn_id`] or [`inherited`] from one of them panics with a `RefCell` borrow error: keep what those need in
+//!   the baton itself.
+//!
 //!   **Who lends, and when.** A wait that cannot suspend the call must not lend the baton: the script goes on
-//!   running, and so must the restrictions the embedder attaches to the turn. The wait fails with an error the
+//!   running, and so must whatever the embedder attaches to the turn (a limit on what the call may do, say). The wait fails with an error the
 //!   script may catch. On LuaJIT (the engine of this VM) the places that *refuse* a yield are the C functions that
 //!   call back into Lua (a `string.gsub` replacement function or table, a `table.sort` comparator), `string.format`
 //!   of a `__tostring` and the message handler of `xpcall` (it runs on the C stack of the error), and any
@@ -28,7 +35,7 @@
 //!   `xpcall` (its protected function), every metamethod, `tostring()` and `for ... in` iterator functions, so
 //!   those are ordinary suspensions that lend (PUC Lua 5.1 refused all of them). The VM cannot see whether Lua
 //!   managed to yield, so the rules are structural, and an embedder is expected to check them with generated
-//!   programs over every boundary (`tests/embedding.rs` lists the boundaries, and an adapter's chaos test
+//!   programs over every boundary (`tests/embedding.rs` lists the boundaries, and a generated-program test
 //!   generates programs out of them):
 //!
 //!   1. **Every async host function is a leaf.** It is made by [`async_function`] or [`async_method`] (the only
@@ -43,32 +50,35 @@
 //!   3. **A leaf the script ran past is *abandoned*.** If anything else happens instead (another leaf starts
 //!      polling, the call ends, the first slice of a task stops somewhere else) the yield failed: Lua refused it at
 //!      a C boundary. The leaf's future is dropped on the spot, so whatever it held (a database gate, a mutex
-//!      guard, a transaction) is released, and a coroutine the script resumes later finds the leaf gone: its host
+//!      guard, an open section of the embedder's) is released, and a coroutine the script resumes later finds the leaf gone: its host
 //!      call raises "abandoned". A host call that Lua could not suspend is therefore over, not left half-done.
 //!   4. **A call lends the baton only when it really suspended at an idle wait:** its future returned `Pending`,
 //!      the innermost suspended leaf is an idle wait, the call's waker was *not* woken during that poll (mlua
 //!      wakes it itself when the script calls a plain `coroutine.yield()`, which waits for nothing), and the baton
 //!      still agrees ([`Baton::can_park`], asked at the moment of lending, not only before the wait began: an
-//!      embedder refuses it while it has a section open that must not lend the turn).
+//!      embedder refuses it while it is in a state that must not lend the turn).
 //!
-//!   5. **Script code runs only in a poll that holds the turn.** Every poll of a call goes through one gate in
-//!      [`scoped`]: a poll that is not resuming into a suspended leaf (the leaf takes the turn itself when it ends)
+//!   5. **Script code runs only in a poll that holds the turn.** Every poll of a call goes through one gate
+//!      (`run_call`, behind [`scoped`] and [`resumed`]): a poll that is not resuming into a suspended leaf (the leaf takes the turn itself when it ends)
 //!      first takes the turn, and does not run script code until it has it. A call resumed anywhere else (at a plain
 //!      yield, or into a leaf that is gone) therefore queues for the turn instead of running in someone else's.
-//!   6. **A script resumes only the coroutines it made, and only while nobody else drives them.**
+//!   6. **A script resumes only the coroutines it made, and only while nobody else drives them.** This rule is
+//!      kept by the [script environment](crate::lua::script_env) (its `coroutine` library); a script that runs on
+//!      the engine's own `coroutine` (`make_engine_in` and no environment) is not held to it, and [`mark_driven`](crate::lua::script_env::mark_driven)
+//!      accepts every coroutine there.
 //!      `coroutine.create` and `coroutine.wrap` record their coroutine in a weak-keyed *owned* set
 //!      (`async_coroutines.lua`); `coroutine.resume` of any other thread is refused with "cannot resume non-suspended
 //!      coroutine", as for a coroutine that is running. A script can hold other threads (`coroutine.running()` returns
 //!      the top-level thread of a call, a task's thread), but the refusal is the default, so there is no list of host
 //!      threads to keep complete. (On LuaJIT a `pcall` or `xpcall` runs in the thread that called it, so inside a
 //!      coroutine the script made `coroutine.running()` is that coroutine, which it may resume.) A coroutine of its own is
-//!      refused too while someone else drives it: a thread is waiting at its host call, or [`mark_driven`] gave it to
+//!      refused too while someone else drives it: a thread is waiting at its host call, or [`mark_driven`](crate::lua::script_env::mark_driven) gave it to
 //!      the task scheduler (`task.spawn`, `defer` and `delay` take only coroutines the script made).
 //!      A coroutine whose resumer's call was dropped while it waited is released when the collector clears the dead
 //!      thread from `driven` (a weak-valued table): the call is never resumed, so nothing can drive the coroutine
 //!      meanwhile, and a later resume finds its host call abandoned (rule 3).
 //!
-//!      Rule 5 is the second line of defence, and no script reaches it today: the one way a call finds its leaf gone
+//!      Rule 5 is the second line of defence, and no script in a script environment reaches it today: the one way a call finds its leaf gone
 //!      was another call resuming a thread parked at it, which rule 6 refuses for every thread the script did not
 //!      make and for every one that is waiting at a host call. It stays because it costs one gate and guards the
 //!      invariant itself (script code runs only with the turn) rather than the ways to break it; the unit test
@@ -77,7 +87,7 @@
 //!   **Quiet calls.** A wait made by [`Role::Timer`] (`task.wait`, a `std:time` sleep) tells the baton so
 //!   ([`Baton::idle_at`] with [`IdleKind::Timer`]): a call asleep there has nothing in flight and runs no script
 //!   code until it asks for its turn back. An embedder uses that to tell a call that may still be acting on the world
-//!   from one that is asleep (to bound a restriction it applies to what the script's own server receives, say).
+//!   from one that is asleep (to decide how to treat a request that reaches the script's own server, say).
 //!
 //!   A leaf never carries a baton: [`hold`] looks the baton up in the call that polls it. A host call that was
 //!   suspended by one call and is resumed by another therefore runs in the turn of whoever resumed it, as Lua's
@@ -110,16 +120,54 @@ use parking_lot::Mutex;
 use tokio::{sync::watch, task::AbortHandle};
 
 /// The tasks a script spawned, abortable together. Cheap to clone: every clone is the same registry.
+///
+/// Aborting is cooperative: a task is stopped at its next `.await`, so a `std:thread` worker in a loop that never
+/// yields to the executor (`while true do end`) keeps its VM and a runtime thread after [`Life::shutdown`].
 #[derive(Clone)]
 pub struct Life {
     inner: Arc<LifeInner>,
 }
 
+/// The least a registry holds before it looks for finished entries to drop.
+const MIN_PRUNE: usize = 64;
+
+/// A list that drops its dead entries when it has doubled since the last time it did, so adding is O(1) amortised.
+pub(crate) struct Pruned<T> {
+    pub(crate) items: Vec<T>,
+    prune_at: usize,
+}
+
+impl<T> Pruned<T> {
+    pub(crate) const fn new() -> Self {
+        Self {
+            items: Vec::new(),
+            prune_at: MIN_PRUNE,
+        }
+    }
+
+    pub(crate) fn push(&mut self, item: T, alive: impl Fn(&T) -> bool) {
+        self.items.push(item);
+        if self.items.len() >= self.prune_at {
+            self.items.retain(alive);
+            self.prune_at = (self.items.len() * 2).max(MIN_PRUNE);
+        }
+    }
+}
+
+/// What runs when a registry stops its background work or shuts down.
+struct Release {
+    /// Is there still something to release? (A release for an object the script has dropped is not kept.)
+    alive: Box<dyn Fn() -> bool + Send>,
+    run: Box<dyn FnOnce() + Send>,
+}
+
 struct LifeInner {
     closed: AtomicBool,
-    tasks: Mutex<Vec<AbortHandle>>,
-    on_shutdown: Mutex<Vec<Box<dyn FnOnce() + Send>>>,
+    tasks: Mutex<Pruned<AbortHandle>>,
+    releases: Mutex<Pruned<Release>>,
     closed_tx: watch::Sender<bool>,
+    /// Counts [`Life::stop_background`] calls (a shutdown is one).
+    stopped_tx: watch::Sender<u64>,
 }
 
 impl Default for Life {
@@ -132,12 +180,14 @@ impl Life {
     #[must_use]
     pub fn new() -> Self {
         let (closed_tx, _) = watch::channel(false);
+        let (stopped_tx, _) = watch::channel(0);
         Self {
             inner: Arc::new(LifeInner {
                 closed: AtomicBool::new(false),
-                tasks: Mutex::new(vec![]),
-                on_shutdown: Mutex::new(vec![]),
+                tasks: Mutex::new(Pruned::new()),
+                releases: Mutex::new(Pruned::new()),
                 closed_tx,
+                stopped_tx,
             }),
         }
     }
@@ -168,48 +218,81 @@ impl Life {
         let handle = tokio::spawn(future);
         let abort = handle.abort_handle();
         let mut tasks = self.inner.tasks.lock();
-        tasks.retain(|t| !t.is_finished());
         if self.inner.closed.load(Ordering::SeqCst) {
             abort.abort();
         } else {
-            tasks.push(abort);
+            tasks.push(abort, |t| !t.is_finished());
         }
         handle
     }
 
-    /// Run `release` when [`Life::shutdown`] runs (at once when it already has): for what a script holds that
-    /// dropping the tasks does not free, because a Lua object holds it too (a listener's socket).
+    /// Run `release` when [`Life::shutdown`] or [`Life::stop_background`] runs (at once when the registry is
+    /// already shut down): for what a script holds that dropping the tasks does not free. It is kept until then.
+    /// For something the script can drop, use [`Life::on_shutdown_with`], which does not keep it.
     pub fn on_shutdown(&self, release: impl FnOnce() + Send + 'static) {
-        let mut releases = self.inner.on_shutdown.lock();
+        self.register(Release {
+            alive: Box::new(|| true),
+            run: Box::new(release),
+        });
+    }
+
+    /// [`Life::on_shutdown`] for something the script owns through `owner` (a listener's socket): `release` gets
+    /// the owner if it is still alive when the registry shuts down, and the registry keeps no more than a weak
+    /// reference, so a script that binds and drops listeners in a loop does not grow it.
+    pub fn on_shutdown_with<T: Send + Sync + 'static>(
+        &self,
+        owner: &Arc<T>,
+        release: impl FnOnce(Arc<T>) + Send + 'static,
+    ) {
+        let weak = Arc::downgrade(owner);
+        let alive = weak.clone();
+        self.register(Release {
+            alive: Box::new(move || alive.strong_count() > 0),
+            run: Box::new(move || {
+                if let Some(owner) = weak.upgrade() {
+                    release(owner);
+                }
+            }),
+        });
+    }
+
+    fn register(&self, release: Release) {
+        let mut releases = self.inner.releases.lock();
         if self.inner.closed.load(Ordering::SeqCst) {
             drop(releases);
-            release();
+            (release.run)();
         } else {
-            releases.push(Box::new(release));
+            releases.push(release, |r| (r.alive)());
         }
     }
 
     /// Abort everything registered and run the releases, but stay open: the script keeps running and may start
-    /// new work. A replacement version that wants the old one's port is loaded after this.
+    /// new work. A replacement version that wants the old one's port is loaded after this. That covers what the
+    /// script started (tasks, workers, `vnd:hyper` servers, `std:net` listeners) and a `lib:http` static server
+    /// it is blocked in (see [`Life::stopped`]).
     pub fn stop_background(&self) {
         let (tasks, releases) = {
             let mut tasks = self.inner.tasks.lock();
-            let mut releases = self.inner.on_shutdown.lock();
-            (std::mem::take(&mut *tasks), std::mem::take(&mut *releases))
+            let mut releases = self.inner.releases.lock();
+            (
+                std::mem::take(&mut tasks.items),
+                std::mem::take(&mut releases.items),
+            )
         };
         for task in tasks {
             task.abort();
         }
         for release in releases {
-            release();
+            (release.run)();
         }
+        self.inner.stopped_tx.send_modify(|stops| *stops += 1);
     }
 
     /// Abort everything registered, run the releases and refuse anything new. Idempotent.
     pub fn shutdown(&self) {
         {
             let _tasks = self.inner.tasks.lock();
-            let _releases = self.inner.on_shutdown.lock();
+            let _releases = self.inner.releases.lock();
             self.inner.closed.store(true, Ordering::SeqCst);
         }
         self.stop_background();
@@ -228,20 +311,18 @@ impl Life {
         let _ = rx.wait_for(|closed| *closed).await;
     }
 
-    /// Tasks registered and not yet finished.
-    #[must_use]
-    pub fn live_tasks(&self) -> usize {
-        self.inner
-            .tasks
-            .lock()
-            .iter()
-            .filter(|t| !t.is_finished())
-            .count()
+    /// A future that resolves at the next [`Life::stop_background`] (or [`Life::shutdown`]), counted from now:
+    /// for a call that blocks in work the registry cannot abort because it is the call itself (`serve_static`).
+    pub fn stopped(&self) -> impl Future<Output = ()> + Send + 'static {
+        let mut rx = self.inner.stopped_tx.subscribe();
+        async move {
+            let _ = rx.changed().await;
+        }
     }
 }
 
 /// What a piece of work a call starts (a `std:task` coroutine, a deferred or delayed function) takes from the
-/// call that started it: a value the embedder defines (a restriction the starting call runs under, say) and the
+/// call that started it: a value the embedder defines (a limit the starting call runs under, say) and the
 /// VM carries without looking inside. [`Baton::inherited`] hands it over when work starts, and the embedder
 /// reads it back with [`Inherited::get`] when that work asks for its own turn ([`CallEntry::enter`],
 /// [`CallEntry::detached`]). The default is empty: nothing is inherited.
@@ -259,12 +340,6 @@ impl Inherited {
     #[must_use]
     pub fn get<T: Any + Send + Sync>(&self) -> Option<&T> {
         self.0.as_deref().and_then(|value| value.downcast_ref())
-    }
-
-    /// Does this carry nothing?
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.0.is_none()
     }
 }
 
@@ -345,7 +420,7 @@ pub trait CallEntry: Send + Sync + 'static {
     fn enter(&self, inherited: Inherited) -> BoxFuture<'static, Box<dyn Baton>>;
 
     /// Wait for the VM to be free and take it, for a request that arrives from outside (to the script's own
-    /// listener). It has no origin to inherit from, so the embedder decides how far to trust it. Like
+    /// listener). It has no origin to inherit from, so the embedder decides what it may do. Like
     /// [`CallEntry::enter`], it must be awaited inside a [`Life`] task (a closed VM never grants the turn).
     fn request(&self) -> BoxFuture<'static, Box<dyn Baton>>;
 
@@ -575,23 +650,61 @@ pub fn turn_id() -> Option<u64> {
         .flatten()
 }
 
-/// Is there a [`CallEntry`] on this engine (an embedder that serialises calls)?
+/// The engine's [`CallEntry`], taken out of the engine. Work a script starts (a `std:task` task) keeps this, not
+/// the [`Lua`]: a task must not keep its engine alive, or a worker's tasks would outlive the worker.
+#[derive(Clone)]
+pub struct Entrance(Option<Arc<dyn CallEntry>>);
+
+/// The [`Entrance`] of `lua`: empty without a [`CallEntry`].
 #[must_use]
-pub fn has_entry(lua: &Lua) -> bool {
-    lua.app_data_ref::<Entry>().is_some()
+pub fn entrance(lua: &Lua) -> Entrance {
+    Entrance(lua.app_data_ref::<Entry>().map(|entry| entry.0.clone()))
+}
+
+impl Entrance {
+    /// Is there an embedder that serialises calls?
+    #[must_use]
+    pub fn is_set(&self) -> bool {
+        self.0.is_some()
+    }
+
+    /// [`inbound`] without the engine.
+    pub async fn inbound<F: Future>(&self, inherited: Inherited, future: F) -> F::Output {
+        match &self.0 {
+            Some(entry) => {
+                let baton = entry.enter(inherited).await;
+                scoped(baton, future).await
+            }
+            None => future.await,
+        }
+    }
+
+    /// [`resumed`] without the engine.
+    pub async fn resumed<F: Future>(
+        &self,
+        inherited: Inherited,
+        mut carried: Carried,
+        future: F,
+    ) -> F::Output {
+        let detached = carried
+            .baton
+            .take()
+            .or_else(|| self.0.as_ref().map(|entry| entry.detached(inherited)));
+        match detached {
+            Some(baton) => {
+                let slot = Slot::new(Some(baton));
+                slot.borrow_mut().suspended = std::mem::take(&mut carried.leaves);
+                run_call(slot, future).await
+            }
+            None => future.await,
+        }
+    }
 }
 
 /// Run a Lua callback nobody called (a deferred or delayed function) as a call of its own, with what it takes
 /// from the call that started it: it waits for its turn first. Without a [`CallEntry`] it just runs.
 pub async fn inbound<F: Future>(lua: &Lua, inherited: Inherited, future: F) -> F::Output {
-    let entry = lua.app_data_ref::<Entry>().map(|entry| entry.0.clone());
-    match entry {
-        Some(entry) => {
-            let baton = entry.enter(inherited).await;
-            scoped(baton, future).await
-        }
-        None => future.await,
-    }
+    entrance(lua).inbound(inherited, future).await
 }
 
 /// Run the handler of a request that arrived from outside (to the script's own listener) as a call of its own:
@@ -635,21 +748,10 @@ impl Drop for Carried {
 pub async fn resumed<F: Future>(
     lua: &Lua,
     inherited: Inherited,
-    mut carried: Carried,
+    carried: Carried,
     future: F,
 ) -> F::Output {
-    let detached = carried.baton.take().or_else(|| {
-        lua.app_data_ref::<Entry>()
-            .map(|entry| entry.0.detached(inherited))
-    });
-    match detached {
-        Some(baton) => {
-            let slot = Slot::new(Some(baton));
-            slot.borrow_mut().suspended = std::mem::take(&mut carried.leaves);
-            run_call(slot, future).await
-        }
-        None => future.await,
-    }
+    entrance(lua).resumed(inherited, carried, future).await
 }
 
 /// Run the synchronous first slice of a coroutine (`task.spawn`) inside the spawning call, but *not as* that
@@ -664,10 +766,12 @@ pub fn first_slice<R>(
     slice: impl FnOnce() -> R,
     suspended: impl FnOnce(&R) -> bool,
 ) -> (R, Carried) {
-    let entry = lua.app_data_ref::<Entry>().map(|entry| entry.0.clone());
-    let detached = entry
-        .as_ref()
-        .map(|entry| entry.detached(inherited.clone()));
+    // without an embedder there are no leaves to keep or abandon: the slice is just a resume, as it always was
+    let Some(entry) = lua.app_data_ref::<Entry>().map(|entry| entry.0.clone()) else {
+        return (slice(), Carried::default());
+    };
+    let detached = Some(entry.detached(inherited.clone()));
+    let entry = Some(entry);
     let (out, kept, left, continuation) = HELD.sync_scope(Slot::new(detached), || {
         let out = slice();
         let kept = suspended(&out);
@@ -705,7 +809,7 @@ pub fn first_slice<R>(
 ///
 /// # Errors
 /// The call cannot wait ([`Baton::can_park`] said no): the wait is refused and `future` is not polled.
-pub(crate) async fn idle<F: Future>(future: F) -> mlua::Result<F::Output> {
+pub async fn idle<F: Future>(future: F) -> mlua::Result<F::Output> {
     idle_kind(IdleKind::Other, future).await
 }
 
@@ -738,7 +842,7 @@ async fn idle_kind<F: Future>(kind: IdleKind, future: F) -> mlua::Result<F::Outp
 /// Make sure the running call holds the VM before it goes on. A call holds it unless it is parked at a wait,
 /// or is a detached coroutine continuation (see [`resumed`]). The baton asked is the one of the call that is
 /// polling, which is not necessarily the one that started this future (see the module docs).
-pub(crate) async fn hold() {
+pub async fn hold() {
     std::future::poll_fn(|cx| {
         HELD.try_with(|slot| {
             let mut slot = slot.borrow_mut();
@@ -760,7 +864,7 @@ pub(crate) async fn hold() {
 /// into Lua values, by mlua, always happens with the turn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
-    /// It uses the VM (the embedder's state, a database it owns): it takes the turn before its body runs, so the body
+    /// It uses the VM (state the embedder protects with its turn): it takes the turn before its body runs, so the body
     /// never has to ask.
     Vm,
     /// It waits for something that does not use the VM (a timer, a socket, a worker): the whole body is an
@@ -775,58 +879,6 @@ pub enum Role {
     /// turn back when they end, and [`hold`] before it runs script code or touches the embedder's state before its
     /// first wait (`Mutex:with_lock` waits for the lock, which takes the turn, then runs Lua).
     Mixed,
-}
-
-/// Where the Lua registry keeps the table of coroutines the script made (`async_coroutines.lua`): the only ones it may
-/// resume.
-pub(crate) const OWNED: &str = "neoc.owned_coroutines";
-
-/// Where the Lua registry keeps the table of coroutines whose driver is somewhere else (`async_coroutines.lua`).
-pub(crate) const DRIVEN: &str = "neoc.driven_coroutines";
-
-/// A table of the script environment kept in the registry (see [`crate::lua::script_env`]); `None` outside it (a worker, a test), which has no such tables.
-fn environment_table(lua: &Lua, name: &str) -> mlua::Result<Option<mlua::Table>> {
-    match lua.named_registry_value::<mlua::Value>(name)? {
-        mlua::Value::Nil => Ok(None),
-        mlua::Value::Table(table) => Ok(Some(table)),
-        other => Err(mlua::Error::runtime(format!(
-            "the registry entry `{name}` is a {}, not a table",
-            other.type_name()
-        ))),
-    }
-}
-
-/// A coroutine the script made and handed to the task scheduler (`task.spawn`, `task.defer`, `task.delay`): the
-/// scheduler drives it from here on, and the script may no longer resume it itself, as with a coroutine that is
-/// running; two drivers of one coroutine would fight over the host call it is waiting at. Without a script environment
-/// (a worker, a test) it does nothing.
-///
-/// # Errors
-/// The coroutine is not one the script made (a thread it reached through `coroutine.running()`: the host's own),
-/// or it is already being driven (a thread is waiting at its host call, or the scheduler has it).
-pub fn mark_driven(lua: &Lua, thread: &mlua::Thread) -> mlua::Result<()> {
-    let (Some(owned), Some(driven)) = (
-        environment_table(lua, OWNED)?,
-        environment_table(lua, DRIVEN)?,
-    ) else {
-        return Ok(());
-    };
-    if !owned.raw_get::<bool>(thread.clone()).unwrap_or(false) {
-        return Err(mlua::Error::runtime(
-            "cannot schedule a coroutine that is not yours: only one made by coroutine.create or coroutine.wrap",
-        ));
-    }
-    let live = match driven.raw_get::<mlua::Value>(thread.clone())? {
-        mlua::Value::Boolean(true) => true,
-        mlua::Value::Thread(driver) => driver.status() == mlua::thread::ThreadStatus::Resumable,
-        _ => false,
-    };
-    if live {
-        return Err(mlua::Error::runtime(
-            "cannot schedule a coroutine that is already running",
-        ));
-    }
-    driven.raw_set(thread.clone(), true)
 }
 
 /// A leaf's future, in a cell the call can empty from outside when the leaf is abandoned.
@@ -956,7 +1008,7 @@ mod tests {
         waiting: Option<BoxFuture<'static, tokio::sync::OwnedMutexGuard<()>>>,
         inside: Arc<AtomicUsize>,
         most: Arc<AtomicUsize>,
-        /// Refuse to park (an open transaction, say).
+        /// Refuse to park (the embedder is in a state that must not lend the turn).
         refuse_park: Arc<AtomicBool>,
         idle: Arc<Mutex<Vec<IdleKind>>>,
     }
@@ -1060,6 +1112,76 @@ mod tests {
         })
     }
 
+    /// The registry drops its finished tasks and the releases of what the script dropped as it goes, in amortised
+    /// O(1) per spawn: a script that spawns and finishes tasks (or binds and drops listeners) for ever does not
+    /// grow it, and spawning is not a walk over every live task.
+    #[tokio::test]
+    async fn the_registry_forgets_what_finished_and_what_was_dropped() {
+        let life = Life::new();
+        for _ in 0..5000 {
+            life.spawn(async {}).await.unwrap();
+        }
+        let held = life.inner.tasks.lock().items.len();
+        assert!(
+            held <= 2 * MIN_PRUNE,
+            "{held} finished tasks are still held"
+        );
+
+        for _ in 0..5000 {
+            let owner = Arc::new(());
+            life.on_shutdown_with(&owner, |_| {});
+        }
+        let kept = life.inner.releases.lock().items.len();
+        assert!(
+            kept <= 2 * MIN_PRUNE,
+            "{kept} releases of dropped owners are still held"
+        );
+
+        // an owner that is alive when the registry shuts down is released with it; one that is gone is not
+        let released = Arc::new(AtomicUsize::new(0));
+        let alive = Arc::new(());
+        let counter = released.clone();
+        life.on_shutdown_with(&alive, move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+        });
+        let gone = Arc::new(());
+        let counter = released.clone();
+        life.on_shutdown_with(&gone, move |_| {
+            counter.fetch_add(10, Ordering::SeqCst);
+        });
+        drop(gone);
+        life.shutdown();
+        assert_eq!(released.load(Ordering::SeqCst), 1);
+        // after the shutdown a release for a live owner runs at once
+        let counter = released.clone();
+        life.on_shutdown_with(&alive, move |_| {
+            counter.fetch_add(100, Ordering::SeqCst);
+        });
+        assert_eq!(released.load(Ordering::SeqCst), 101);
+    }
+
+    /// Spawning does not slow down with the number of live tasks (it once scanned them all each time).
+    #[tokio::test]
+    async fn spawning_many_live_tasks_is_linear() {
+        let time = |n: usize| {
+            let life = Life::new();
+            let start = std::time::Instant::now();
+            for _ in 0..n {
+                life.spawn(std::future::pending::<()>());
+            }
+            let took = start.elapsed();
+            life.shutdown();
+            took
+        };
+        let _warm = time(2000);
+        let (small, large) = (time(4000), time(32000));
+        // 8 times the tasks: linear is about 8 times the time, a scan per spawn is about 64
+        assert!(
+            large < small * 24 + Duration::from_millis(50),
+            "4000 spawns took {small:?}, 32000 took {large:?}"
+        );
+    }
+
     #[tokio::test]
     async fn spawned_tasks_are_aborted_at_shutdown_and_later_spawns_never_run() {
         let life = Life::new();
@@ -1068,11 +1190,9 @@ mod tests {
             let _tx = tx; // dropped when the task is dropped
             std::future::pending::<()>().await;
         });
-        assert_eq!(life.live_tasks(), 1);
         life.shutdown();
         assert!(task.await.expect_err("aborted").is_cancelled());
         assert!(rx.await.is_err(), "the aborted task's state was dropped");
-        assert_eq!(life.live_tasks(), 0);
 
         let late = life.spawn(std::future::pending::<()>());
         assert!(late.await.expect_err("aborted at once").is_cancelled());
@@ -1707,7 +1827,7 @@ mod tests {
             async move {
                 inbound(&lua, Inherited::default(), async {
                     // the wait is allowed when it starts, and by the time it is pending the call may not wait
-                    // (a transaction was opened where the wait was left in flight)
+                    // (the embedder's state changed where the wait was left in flight)
                     let _ = leaf(Role::Wait, async move {
                         refuse_park.store(true, Ordering::SeqCst);
                         tokio::time::sleep(Duration::from_secs(60)).await;

@@ -281,7 +281,11 @@ impl Cache {
     ) -> mlua::Result<()> {
         if let Some(cb) = &self.on_evict {
             for (key, entry) in evicted {
-                cb.call::<()>((key_to_value(lua, &key)?, entry.value))?;
+                crate::lua::sandbox::call_guarded::<()>(
+                    lua,
+                    cb,
+                    (key_to_value(lua, &key)?, entry.value),
+                )?;
             }
         }
         Ok(())

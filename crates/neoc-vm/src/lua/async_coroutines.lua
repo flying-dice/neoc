@@ -27,7 +27,7 @@
 -- WHO MAY RESUME WHAT. A script reaches threads it did not make: `coroutine.running()` returns the thread it runs in,
 -- which may be the top-level thread of a call the host is driving or a task's thread (a `pcall` runs in the thread that
 -- called it, so inside a coroutine of the script's own it is that coroutine, which the script may resume). Resuming one of those from another call would run its code in the wrong call (a
--- `readOnly` call writing state, a task that never finishes). So a script drives only what it made itself: `create` and
+-- call acting under another call's restrictions, a task that never finishes). So a script drives only what it made itself: `create` and
 -- `wrap` record the coroutine in `owned` (weak keys), and `resume` refuses everything else with Lua's own "cannot resume
 -- non-suspended coroutine", as it does for a coroutine that is running. The refusal is by default, so no thread the host
 -- or a module makes internally has to be found and marked: the host machinery uses the raw primitives captured below.

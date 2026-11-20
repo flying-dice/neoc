@@ -42,7 +42,7 @@ const STRIPPED_GLOBALS: &[&str] = &[
 /// `pcall`, ...). IO/OS/PACKAGE/DEBUG/JIT/FFI never load — they are sandbox
 /// hazards and our `fs`/`os`/`process` modules cover their legitimate uses.
 /// The unsafe parts of BASE and STRING are then stripped
-/// (see [`STRIPPED_GLOBALS`]) and the custom `require` is installed.
+/// (see `STRIPPED_GLOBALS`) and the custom `require` is installed.
 ///
 /// # Errors
 /// Fails when the engine, a library or a module cannot be set up.
@@ -52,7 +52,8 @@ pub fn make_engine() -> mlua::Result<Lua> {
 
 /// [`make_engine`] whose spawned work (tasks, servers, workers) registers with `life`: an embedder that
 /// shuts the script down calls [`Life::shutdown`], and a `std:thread` worker joins the registry of the engine
-/// that started it.
+/// that started it. Dropping the engine is not a shutdown: a `vnd:hyper` server's accept loop and its
+/// connections hold the VM they call into, so they (and the VM) outlive the drop until [`Life::shutdown`].
 ///
 /// # Errors
 /// Fails when the engine, a library or a module cannot be set up.
@@ -61,6 +62,41 @@ pub fn make_engine_in(life: Life) -> mlua::Result<Lua> {
     install_runtime_state(&lua, life);
     modules::install(&lua)?;
     Ok(lua)
+}
+
+/// The engine of a worker script offered only the `allowed` modules: what `std:thread` builds for a worker whose
+/// parent used [`modules::install_allowed`].
+///
+/// # Errors
+/// Fails when the engine, a library or a module cannot be set up.
+pub(crate) fn make_engine_with(life: Life, allowed: &[&str]) -> mlua::Result<Lua> {
+    let lua = base_engine()?;
+    install_runtime_state(&lua, life);
+    modules::install_allowed(&lua, allowed)?;
+    Ok(lua)
+}
+
+/// How an embedder builds the engine of a `std:thread` worker its script starts: given the script's [`Life`] (the
+/// worker's tasks, servers and workers join it), the engine, offered what the embedder offers its scripts. Without
+/// one, a worker is built like [`make_engine`] (or like its parent, when the parent used
+/// [`modules::install_allowed`], which installs one).
+pub type WorkerEngineFn = std::sync::Arc<dyn Fn(Life) -> mlua::Result<Lua> + Send + Sync>;
+
+struct WorkerEngine(WorkerEngineFn);
+
+/// Install the [`WorkerEngineFn`] of this engine's scripts. An embedder that offers its scripts a subset of the
+/// modules through its own `require` must call this, or its workers get every module.
+pub fn set_worker_engine(lua: &Lua, factory: WorkerEngineFn) {
+    lua.set_app_data(WorkerEngine(factory));
+}
+
+/// How `std:thread` builds a worker's engine for the script that runs in `lua`: the engine's [`WorkerEngineFn`]
+/// (installed by [`set_worker_engine`], or by [`modules::install_allowed`]), else a full one.
+pub(crate) fn worker_engine_builder(lua: &Lua) -> WorkerEngineFn {
+    match lua.app_data_ref::<WorkerEngine>() {
+        Some(factory) => factory.0.clone(),
+        None => std::sync::Arc::new(make_engine_in),
+    }
 }
 
 /// What the `std:`/`lib:`/`vnd:` modules keep per engine: the registry of what the script spawns and the
@@ -104,9 +140,8 @@ fn base_engine() -> mlua::Result<Lua> {
 /// `guarded_xpcall.lua`): on LuaJIT a handler that errors after a protected call of its own is called again by
 /// its own error, until a stack overflow that is past the stack of a 2 MiB thread.
 fn install_guarded_xpcall(lua: &Lua) -> mlua::Result<()> {
-    lua.load(include_str!("guarded_xpcall.lua"))
+    load_source(lua, include_str!("guarded_xpcall.lua"))
         .set_name("=guarded_xpcall")
-        .set_mode(ChunkMode::Text)
         .exec()
 }
 
@@ -144,6 +179,44 @@ fn strip_unsafe_globals(lua: &Lua) -> mlua::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Call a script function from Rust, with `args`, so that an error it raises reaches the caller as a Lua error with
+/// text, whatever the error value is. Use this, not `Function::call`, wherever a host function calls a callback the
+/// script gave it: on LuaJIT an error value whose `__tostring` makes a protected call and then fails sends the
+/// message handler of a plain `Function::call` into a recursion that overflows a runtime worker's stack and
+/// aborts the process (`guarded_call.lua`). It is not for a call that may suspend (`call_async`).
+///
+/// # Errors
+/// The function raised: the error is its message (a value that is not text is converted without running a
+/// `__tostring` that fails).
+pub fn call_guarded<R: mlua::FromLuaMulti>(
+    lua: &Lua,
+    function: &mlua::Function,
+    args: impl mlua::IntoLuaMulti,
+) -> mlua::Result<R> {
+    const KEY: &str = "neoc.guarded_call";
+    let trampoline = match lua.named_registry_value::<Value>(KEY)? {
+        Value::Function(f) => f,
+        _ => {
+            let f: mlua::Function = load_source(lua, include_str!("guarded_call.lua"))
+                .set_name("=guarded_call")
+                .eval()?;
+            lua.set_named_registry_value(KEY, f.clone())?;
+            f
+        }
+    };
+    let mut returned: mlua::MultiValue = trampoline.call((function.clone(), args))?;
+    let ok = matches!(returned.pop_front(), Some(Value::Boolean(true)));
+    if ok {
+        R::from_lua_multi(returned, lua)
+    } else {
+        let message = match returned.pop_front() {
+            Some(Value::String(s)) => s.to_string_lossy(),
+            _ => "<error object>".to_owned(),
+        };
+        Err(mlua::Error::runtime(message))
+    }
 }
 
 /// Convert a Rust `i64` to a Lua number.

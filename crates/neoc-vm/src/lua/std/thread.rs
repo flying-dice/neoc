@@ -46,9 +46,9 @@ use tokio::sync::{Mutex, mpsc};
 use tracing::instrument;
 
 use crate::lua::facade::Module;
-use crate::lua::lib::log::{LogFn, LogSink, set_log_sink};
+use crate::lua::lib::log::{LogFn, log_sink, set_log_sink};
 use crate::lua::lifecycle::{Life, Role, async_method};
-use crate::lua::sandbox::{from_err, load_source, make_engine_in, ok};
+use crate::lua::sandbox::{WorkerEngineFn, from_err, load_source, ok, worker_engine_builder};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(declare(lua)?.into_table())
@@ -360,15 +360,18 @@ fn spawn(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
     // registered with the script that started it: shutting the script down aborts the worker, whose VM,
     // listeners and pools go with it. A worker's own tasks and servers join the same registry.
     let life = Life::of(lua);
-    let log_sink = lua.app_data_ref::<LogSink>().map(|sink| sink.0.clone());
+    let log_sink = log_sink(lua);
     let join = life.spawn(run_worker(
         name,
         source,
         args,
         worker_channel,
         shared,
-        life.clone(),
-        log_sink,
+        WorkerHost {
+            life: life.clone(),
+            log_sink,
+            build_engine: worker_engine_builder(lua),
+        },
     ));
     let abort = join.abort_handle();
 
@@ -426,19 +429,27 @@ fn read_shared(opts: &Table) -> Result<Vec<SharedEntry>, String> {
     }
 }
 
+/// What a worker takes from the script that started it, none of it holding the parent's engine.
+struct WorkerHost {
+    /// The registry the worker's tasks, servers and workers join.
+    life: Life,
+    log_sink: Option<LogFn>,
+    /// Builds the worker's engine: offered what the parent was offered.
+    build_engine: WorkerEngineFn,
+}
+
 async fn run_worker(
     name: String,
     source: String,
     args: serde_json::Value,
     parent_channel: Channel,
     shared: Vec<SharedEntry>,
-    life: Life,
-    log_sink: Option<LogFn>,
+    host: WorkerHost,
 ) -> mlua::Result<serde_json::Value> {
     // the worker gets the same module set as its parent, spawns into the parent's registry and logs where
     // the parent logs
-    let lua = make_engine_in(life)?;
-    if let Some(sink) = log_sink {
+    let lua = (host.build_engine)(host.life)?;
+    if let Some(sink) = host.log_sink {
         set_log_sink(&lua, sink);
     }
 

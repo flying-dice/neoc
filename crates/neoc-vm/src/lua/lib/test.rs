@@ -356,18 +356,23 @@ fn make_matcher(lua: &Lua, value: Value) -> mlua::Result<Table> {
         },
     )?;
 
-    // toThrow() — value must be a callable that raises an error
-    register_matcher(lua, &m, "toThrow", value, |actual, _: ()| match actual {
-        Value::Function(f) => match f.call::<Value>(()) {
-            Err(_) => Ok(()),
-            Ok(_) => Err(mlua::Error::RuntimeError(
-                "expected function to throw, but it returned normally".into(),
+    // toThrow() — value must be a callable that raises an error. The call goes through `call_guarded`: the error
+    // value is not turned into text by mlua's own message handler (see `guarded_call.lua`).
+    let thrower = value;
+    m.set(
+        "toThrow",
+        lua.create_function(move |lua, (): ()| match &thrower {
+            Value::Function(f) => match crate::lua::sandbox::call_guarded::<Value>(lua, f, ()) {
+                Err(_) => Ok(()),
+                Ok(_) => Err(mlua::Error::RuntimeError(
+                    "expected function to throw, but it returned normally".into(),
+                )),
+            },
+            _ => Err(mlua::Error::RuntimeError(
+                "toThrow requires a function value".into(),
             )),
-        },
-        _ => Err(mlua::Error::RuntimeError(
-            "toThrow requires a function value".into(),
-        )),
-    })?;
+        })?,
+    )?;
 
     Ok(m)
 }

@@ -78,15 +78,40 @@ fn bind(addr: &str) -> Result<TcpListener, String> {
     TcpListener::from_std(std_listener).map_err(|e| format!("from_std: {e}"))
 }
 
-/// The socket behind a [`Listener`]: taken out (and so dropped, which closes it once the tasks that were
-/// accepting on it are gone too) when the script is shut down.
-#[derive(Default)]
-pub struct ListenerSlot(parking_lot::Mutex<Option<Arc<TcpListener>>>);
+/// The socket behind a [`Listener`], the only strong owner of it that the library keeps: a `vnd:hyper` server's
+/// accept loop polls it through [`ListenerSlot::poll_accept`] rather than holding a clone of the socket, so
+/// taking it out ([`ListenerSlot::close`], which a script's shutdown does) drops the socket on the spot and
+/// frees the port before the shutdown returns, not when the runtime next gets to the aborted task.
+pub struct ListenerSlot(parking_lot::Mutex<Option<TcpListener>>);
 
 impl ListenerSlot {
-    fn close(&self) {
+    /// Release the socket. Whoever accepts on the slot after this gets a `NotConnected` error.
+    pub fn close(&self) {
         self.0.lock().take();
     }
+
+    /// Poll for the next connection, or a `NotConnected` error once the slot is closed.
+    pub fn poll_accept(
+        &self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<(tokio::net::TcpStream, SocketAddr)>> {
+        match self.0.lock().as_ref() {
+            Some(listener) => listener.poll_accept(cx),
+            None => std::task::Poll::Ready(Err(closed())),
+        }
+    }
+
+    /// The address the socket is bound to, or `NotConnected` once the slot is closed.
+    pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
+        match self.0.lock().as_ref() {
+            Some(listener) => listener.local_addr(),
+            None => Err(closed()),
+        }
+    }
+}
+
+fn closed() -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::NotConnected, "the listener is closed")
 }
 
 /// Lua-facing TCP listener handle. Named `Listener` on the Rust side to
@@ -101,27 +126,21 @@ pub struct Listener(Arc<ListenerSlot>);
 
 impl Listener {
     fn new(lua: &Lua, listener: TcpListener) -> Self {
-        let slot = Arc::new(ListenerSlot(parking_lot::Mutex::new(Some(Arc::new(
-            listener,
-        )))));
-        let weak = Arc::downgrade(&slot);
-        Life::of(lua).on_shutdown(move || {
-            if let Some(slot) = weak.upgrade() {
-                slot.close();
-            }
-        });
+        let slot = Arc::new(ListenerSlot(parking_lot::Mutex::new(Some(listener))));
+        // a weak reference: a script that drops a listener (and binds the next) leaves nothing registered
+        Life::of(lua).on_shutdown_with(&slot, |slot| slot.close());
         Self(slot)
     }
-    /// The socket, or `None` once the script was shut down.
-    pub fn arc(&self) -> Option<Arc<TcpListener>> {
-        self.0.0.lock().clone()
+
+    /// The slot that owns the socket: share this, not a clone of the socket, with whatever should end when the
+    /// script is shut down.
+    #[must_use]
+    pub fn slot(&self) -> Arc<ListenerSlot> {
+        self.0.clone()
     }
+
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
-        self.arc()
-            .ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::NotConnected, "the listener is closed")
-            })?
-            .local_addr()
+        self.0.local_addr()
     }
 }
 

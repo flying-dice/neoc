@@ -32,6 +32,7 @@
 
 use std::cmp::max;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use mlua::{Lua, Table};
 use strsim::levenshtein;
@@ -218,12 +219,23 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
 }
 
 /// Install the `require` global over only the modules named in `allowed` (`"lib:json"`, ...); any other
-/// spec fails as unknown. A seam for exposing a subset of the modules to a script.
+/// spec fails as unknown. A seam for exposing a subset of the modules to a script. A `std:thread` worker the
+/// script starts is built with the same subset (this installs the engine's
+/// [worker engine](crate::lua::sandbox::set_worker_engine); call that afterwards to replace it).
 ///
 /// # Errors
 /// Fails when a module cannot be built.
 pub fn install_allowed(lua: &Lua, allowed: &[&str]) -> mlua::Result<()> {
-    install_filtered(lua, Some(allowed))
+    install_filtered(lua, Some(allowed))?;
+    let allowed: Vec<String> = allowed.iter().map(|name| (*name).to_owned()).collect();
+    crate::lua::sandbox::set_worker_engine(
+        lua,
+        Arc::new(move |life| {
+            let names: Vec<&str> = allowed.iter().map(String::as_str).collect();
+            crate::lua::sandbox::make_engine_with(life, &names)
+        }),
+    );
+    Ok(())
 }
 
 fn install_filtered(lua: &Lua, allowed: Option<&[&str]>) -> mlua::Result<()> {

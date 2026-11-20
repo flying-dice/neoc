@@ -22,7 +22,7 @@
 //!    `tracing` span named `"<stem>.<name>"` at target
 //!    `"lua::lib::<module>"` around the call body, matching the old
 //!    `#[instrument(name = …, target = …, skip_all)]` attribute. See
-//!    [`dyn_span`].
+//!    `dyn_span`.
 //! 3. **The registered Lua surface.** The functions and userdata types land
 //!    on the table exactly as `lua.create_function` / `lua.create_userdata`
 //!    would place them.

@@ -369,7 +369,7 @@ fn is_reserved_key(k: &str) -> bool {
 
 /// Where an embedder wants `lib:log` lines instead of stderr: called with the level name and the formatted
 /// line.
-pub struct LogSink(pub LogFn);
+struct LogSink(LogFn);
 
 /// A function that takes a `lib:log` line: the level name and the formatted line.
 pub type LogFn = std::sync::Arc<dyn Fn(&str, &str) + Send + Sync>;
@@ -378,6 +378,11 @@ pub type LogFn = std::sync::Arc<dyn Fn(&str, &str) + Send + Sync>;
 /// same sink.
 pub fn set_log_sink(lua: &Lua, sink: LogFn) {
     lua.set_app_data(LogSink(sink));
+}
+
+/// The sink [`set_log_sink`] installed in this engine, for a worker the script starts to log to as well.
+pub(crate) fn log_sink(lua: &Lua) -> Option<LogFn> {
+    lua.app_data_ref::<LogSink>().map(|sink| sink.0.clone())
 }
 
 fn write_line(format: Format, lvl: LogLevel, msg: &str, fields: &Map<String, Json>) {
