@@ -397,7 +397,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.set(
         "delay",
         lua.create_function(|lua, (secs, fn_val, args): (f64, Value, MultiValue)| {
-            let secs = secs.max(0.0);
+            let delay = crate::lua::limits::sleep_duration(secs);
             let thread = into_thread(lua, fn_val, "task.delay")?;
             let inner = Arc::new(TaskInner::new());
             let scheduler = lua
@@ -408,7 +408,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
             let inner_clone = inner.clone();
             let abort = scheduler.spawn_task(async move {
-                tokio::time::sleep(std::time::Duration::from_secs_f64(secs)).await;
+                tokio::time::sleep(delay).await;
                 let outcome = drive_thread(thread, args).await;
                 inner_clone.complete(outcome);
             });
@@ -430,13 +430,14 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     // task.wait(secs) — yield current coroutine for secs seconds.
     // Must be called from within a coroutine (spawned task or deferred task).
-    // Negative values are clamped to 0. Returns elapsed time as a float.
+    // Negative and NaN values are clamped to 0, and a delay past 100 years (infinity included) to 100 years.
+    // Returns elapsed time as a float.
     m.set(
         "wait",
         lua.create_async_function(|_, secs: f64| async move {
-            let secs = secs.max(0.0);
+            let delay = crate::lua::limits::sleep_duration(secs);
             let start = tokio::time::Instant::now();
-            tokio::time::sleep(std::time::Duration::from_secs_f64(secs)).await;
+            tokio::time::sleep(delay).await;
             Ok(start.elapsed().as_secs_f64())
         })?,
     )?;
@@ -444,7 +445,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "wait",
         &[("secs", "number")],
         "number",
-        "Yield the current coroutine for `secs` seconds (clamped to 0). Returns the actual elapsed time.",
+        "Yield the current coroutine for `secs` seconds (NaN and negative clamp to 0, over 100 years clamps to 100 years). Returns the actual elapsed time.",
     );
 
     // task.cancel(handle) — flat Roblox-compatible function; delegates to handle:cancel().
@@ -532,6 +533,46 @@ mod tests {
                 .expect("wait");
             assert!(elapsed >= 0.05, "elapsed={elapsed}");
             assert!(elapsed < 0.5, "elapsed={elapsed}");
+        });
+    }
+
+    /// `Duration::from_secs_f64` panics on infinity and on anything past ~1.8e19 s. Every such argument must be
+    /// a clamped sleep, not a panic.
+    #[test]
+    fn hostile_wait_and_delay_durations_clamp_instead_of_panicking() {
+        rt().block_on(async {
+            let e = engine();
+            let (waits, pending): (i64, bool) = e
+                .load(
+                    r#"
+                    local task = require("std:task")
+                    local hostile = { 0/0, -1/0, -1, -1e300, 1/0, 1e300, 1.8e19, 2^63 }
+                    local handles = {}
+                    for _, secs in ipairs(hostile) do
+                        handles[#handles + 1] = task.delay(secs, function() end)
+                        handles[#handles + 1] = task.spawn(function() task.wait(secs) end)
+                    end
+                    task.wait(0.05)
+                    -- NaN and negatives are zero (done); infinite and huge ones are still sleeping
+                    local done, still = 0, false
+                    for i, h in ipairs(handles) do
+                        if h:is_finished() then done = done + 1 else still = true end
+                        h:cancel()
+                    end
+                    return done, still
+                "#,
+                )
+                .eval_async()
+                .await
+                .expect("hostile durations");
+            assert!(
+                waits >= 6,
+                "NaN and negative sleeps finish at once, got {waits} finished"
+            );
+            assert!(
+                pending,
+                "an infinite sleep is clamped to a long one, not to zero"
+            );
         });
     }
 
