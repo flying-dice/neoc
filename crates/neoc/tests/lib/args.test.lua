@@ -268,6 +268,17 @@ describe("args.help", function()
             expect(helped.help_text).toContain("tool")
         end)
 
+        test("subcommands keep -h and --help when the top level claims -h", function()
+            local spec = { name = "t", flags = { { name = "host", short = "h", type = "string" } }, subcommands = {
+                run = { description = "run it", flags = {} },
+                serve = { description = "serve it", flags = { { name = "hash", short = "h", type = "string" } } },
+            } }
+            expect(args.parse({ "run", "--help" }, spec).help_text).toContain("run it")
+            expect(args.parse({ "run", "-h" }, spec).help_text).toContain("run it")
+            expect(args.parse({ "serve", "--help" }, spec).help_text).toContain("serve it")
+            expect(args.parse({ "serve", "-h", "abc" }, spec).serve.hash).toBe("abc")
+        end)
+
         test("without such a flag -h is still help", function()
             local helped = args.parse({ "-h" }, { name = "t", description = "tool", flags = {} })
             expect(helped.help).toBe(true)

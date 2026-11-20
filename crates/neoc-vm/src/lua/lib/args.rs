@@ -99,7 +99,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 fn parse(lua: &Lua, argv_tbl: &Table, config_tbl: &Table) -> Result<Table, String> {
     let argv = read_argv(argv_tbl)?;
     let spec = read_command(config_tbl, true)?;
-    let cmd = build_command(&spec);
+    let cmd = build_command(&spec, false);
     match cmd.try_get_matches_from(argv) {
         Ok(matches) => build_parsed_table(lua, &spec, &matches).map_err(|e| e.to_string()),
         Err(err)
@@ -117,7 +117,7 @@ fn parse(lua: &Lua, argv_tbl: &Table, config_tbl: &Table) -> Result<Table, Strin
 
 fn help(config_tbl: &Table) -> Result<String, String> {
     let spec = read_command(config_tbl, true)?;
-    let mut cmd = build_command(&spec);
+    let mut cmd = build_command(&spec, false);
     Ok(cmd.render_help().to_string())
 }
 
@@ -378,7 +378,9 @@ fn stringify<E: std::fmt::Display>(e: E) -> String {
 // Build clap::Command from CommandSpec
 // ---------------------------------------------------------------------------
 
-fn build_command(spec: &CommandSpec) -> Command {
+/// `help_disabled`: an ancestor claimed `-h`, which in clap 4.6 switches the built-in help off for every
+/// command below it too.
+fn build_command(spec: &CommandSpec, help_disabled: bool) -> Command {
     let mut cmd = Command::new(spec.name.clone()).no_binary_name(true);
     if let Some(desc) = &spec.description {
         cmd = cmd.about(desc.clone());
@@ -387,14 +389,19 @@ fn build_command(spec: &CommandSpec) -> Command {
     for flag in &spec.flags {
         cmd = cmd.arg(build_arg(flag));
     }
-    // a flag that claims `-h` (`--host`, say) takes the short from clap's built-in help; `--help` stays
-    if spec.flags.iter().any(|f| f.short == Some('h')) {
-        cmd = cmd.disable_help_flag(true).arg(
-            Arg::new("help")
-                .long("help")
-                .action(ArgAction::Help)
-                .help("Print help"),
-        );
+    // A flag that claims `-h` (`--host`, say) takes the short from clap's built-in help and `--help` stays.
+    // Clap's `disable_help_flag` also reaches the commands below, so each of those that does not claim `-h`
+    // itself gets the full `-h`/`--help` back.
+    let claims_h = spec.flags.iter().any(|f| f.short == Some('h'));
+    if claims_h || help_disabled {
+        let mut help = Arg::new("help")
+            .long("help")
+            .action(ArgAction::Help)
+            .help("Print help");
+        if !claims_h {
+            help = help.short('h');
+        }
+        cmd = cmd.disable_help_flag(true).arg(help);
     }
 
     if spec.subcommands.is_empty() {
@@ -416,7 +423,7 @@ fn build_command(spec: &CommandSpec) -> Command {
     } else {
         cmd = cmd.subcommand_required(true);
         for sub in &spec.subcommands {
-            cmd = cmd.subcommand(build_command(sub));
+            cmd = cmd.subcommand(build_command(sub, help_disabled || claims_h));
         }
     }
 
@@ -731,6 +738,33 @@ mod tests {
             assert!(t.get::<bool>("help").unwrap(), "{argv}");
             assert!(t.get::<String>("help_text").unwrap().contains("tool"));
         }
+        // subcommands keep their help when the top level claims `-h`, and one that claims it too keeps `--help`
+        let top = r#"{ name = "t", flags = { { name = "host", short = "h", type = "string" } }, subcommands = {
+            run = { description = "run it", flags = {} },
+            serve = { description = "serve it", flags = { { name = "hash", short = "h", type = "string" } } },
+        } }"#;
+        for (argv, text) in [
+            (r#"{"run","--help"}"#, "run it"),
+            (r#"{"run","-h"}"#, "run it"),
+            (r#"{"serve","--help"}"#, "serve it"),
+        ] {
+            let (parsed, err) = parse_call(&lua, &format!("return args.parse({argv}, {top})"));
+            let t = parsed
+                .as_table()
+                .unwrap_or_else(|| panic!("{argv}: {err:?}"));
+            assert!(t.get::<bool>("help").unwrap(), "{argv}");
+            assert!(
+                t.get::<String>("help_text").unwrap().contains(text),
+                "{argv}"
+            );
+        }
+        let (parsed, err) = parse_call(
+            &lua,
+            &format!(r#"return args.parse({{"serve","-h","abc"}}, {top})"#),
+        );
+        assert!(matches!(err, mlua::Value::Nil), "{err:?}");
+        let serve: Table = parsed.as_table().unwrap().get("serve").unwrap();
+        assert_eq!(serve.get::<String>("hash").unwrap(), "abc");
         // and a flag claiming `-h` does not turn `-h` into a help request
         let (parsed, _) = parse_call(
             &lua,
