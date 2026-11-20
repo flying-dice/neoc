@@ -331,6 +331,7 @@ const ORDINARY: &[(&str, &str)] = &[
         "local function f() error('boom') end local function g() f() end g()",
     ),
     ("string at level 0", "error('boom', 0)"),
+    ("string with a NUL", "error('with\\0nul', 0)"),
     (
         "string at level 2",
         "local function f() error('boom', 2) end f()",
@@ -693,5 +694,86 @@ fn a_coroutine_given_to_a_task_runs_yields_arguments_and_stops() {
         tokio::time::timeout(std::time::Duration::from_secs(5), scheduler.wait_all())
             .await
             .expect("the tasks ended with the script");
+    });
+}
+
+/// The callbacks a module runs synchronously on a script's behalf (a `lib:template` filter, a `lib:vcr` wrapped
+/// function), and a `lib:test` suite body that fails (not only its tests).
+#[test]
+fn a_failing_filter_wrapped_function_and_suite_body_survive_an_error_value_whose_tostring_fails() {
+    isolated(
+        "a_failing_filter_wrapped_function_and_suite_body_survive_an_error_value_whose_tostring_fails",
+        || {
+            runtime().block_on(async {
+                let lua = make_engine().unwrap();
+                let path = std::env::temp_dir().join(format!("neoc-guarded-vcr-{}.json", std::process::id()));
+                let source = format!(
+                    r#"{HOSTILE}
+                    local out = {{}}
+                    local template = require("lib:template")
+                    template.add_filter("boom", function() hostile() end)
+                    local rendered, e = template.render("{{{{ x | boom }}}}", {{ x = 1 }})
+                    out[1] = tostring(rendered) .. ":" .. tostring(e)
+                    local vcr = require("lib:vcr").cassette {{ path = {path:?}, mode = "record" }}
+                    local ok, e2 = pcall(vcr:wrap("boom", function() hostile() end))
+                    out[2] = tostring(ok) .. ":" .. tostring(e2)
+                    local t = require("lib:test")
+                    local ok3, e3 = pcall(function() t.describe("suite", function() hostile() end) end)
+                    out[3] = tostring(ok3) .. ":" .. tostring(e3)
+                    return out"#
+                );
+                let f = load_source(&lua, source).into_function().unwrap();
+                let out: mlua::Table = call_guarded_async(&lua, &f, ()).await.unwrap();
+                let _ = std::fs::remove_file(&path);
+                for index in 1..=3 {
+                    let got: String = out.get(index).unwrap();
+                    // the synchronous guard (`call_guarded`) says `<error object>`, the async one says why
+                    assert!(got.contains("error object"), "{index}: {got}");
+                }
+            });
+        },
+    );
+}
+
+/// An engine that was not built by neoc-vm has nothing to guard with: the call says so.
+#[test]
+fn an_engine_not_built_by_neoc_vm_is_refused_with_a_message() {
+    runtime().block_on(async {
+        let lua = Lua::new();
+        let f = lua.load("return 1").into_function().unwrap();
+        let e = call_guarded_async::<i64>(&lua, &f, ()).await.unwrap_err();
+        assert!(text(&e).contains("not built by neoc-vm"), "{e}");
+    });
+}
+
+/// A coroutine of the script's own that fails with an ordinary error reports just its message; a table with no
+/// `__tostring` or `__name` is named by its type.
+#[test]
+fn a_failing_coroutine_task_reports_its_message_and_a_bare_table_its_type() {
+    runtime().block_on(async {
+        let lua = make_engine().unwrap();
+        let source = r#"
+            local task = require("std:task")
+            local function fails(f)
+              local _, _, e = pcall(function() return task.spawn(coroutine.create(f)):await() end)
+              return (tostring(e):gsub("0x%x+", "0xP"))
+            end
+            return table.concat({
+              fails(function() task.wait(0) error("plain", 0) end),
+              fails(function() error(42, 0) end),
+              fails(function() error(setmetatable({}, {}), 0) end),
+              fails(function() error(setmetatable({}, { __tostring = function() return {} end }), 0) end),
+            }, "|")"#;
+        let f = load_source(&lua, source).into_function().unwrap();
+        let out: String = call_guarded_async(&lua, &f, ()).await.unwrap();
+        let parts: Vec<&str> = out.split('|').collect();
+        assert_eq!(parts[0], "runtime error: plain");
+        assert_eq!(parts[1], "runtime error: 42");
+        assert_eq!(parts[2], "runtime error: table: 0xP");
+        assert!(
+            parts[3].starts_with("runtime error: error object's __tostring"),
+            "{}",
+            parts[3]
+        );
     });
 }

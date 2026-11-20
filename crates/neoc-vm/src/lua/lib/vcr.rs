@@ -163,7 +163,7 @@ fn record_call(
 ) -> mlua::Result<MultiValue> {
     let json_args = args.iter().map(to_json).collect();
     let f: mlua::Function = lua.registry_value(reg_key)?;
-    let result: MultiValue = f.call(args)?;
+    let result: MultiValue = crate::lua::sandbox::call_guarded(lua, &f, args)?;
     let json_result = result.iter().map(to_json).collect();
 
     let mut locked = tape.lock();

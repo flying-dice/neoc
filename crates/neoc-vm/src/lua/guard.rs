@@ -162,6 +162,10 @@ fn failure(lua: &Lua, raised: Option<Value>) -> Error {
         Value::String(text) => text.to_string_lossy(),
         other => convert(lua, other),
     };
+    // mlua reads the text as a C string: it ends at the first NUL
+    if let Some(end) = text.find('\0') {
+        text.truncate(end);
+    }
     if let Some(traceback) = traceback {
         text.push('\n');
         text.push_str(&traceback);

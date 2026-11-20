@@ -239,7 +239,7 @@ impl Scheduler {
     /// Clean up in-flight tasks after the main script exits.
     ///
     /// Lua async operations (`task.wait`, etc.) cannot be driven after the
-    /// main `exec_async` context returns — their `AsyncThread` streams
+    /// main chunk's call returns — their `AsyncThread` streams
     /// block inside the Lua VM lock and never yield. Neither
     /// `tokio::time::timeout` nor an abort can interrupt a task that is
     /// synchronously blocked. This aborts this scheduler's tasks and only those: servers, workers and listeners the script

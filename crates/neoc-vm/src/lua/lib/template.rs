@@ -1020,8 +1020,7 @@ impl TeraFilter for LuaFilter {
                 let lv = lua.to_value(v).map_err(|e| format!("args.{k}: {e}"))?;
                 args_tbl.set(k.as_str(), lv).map_err(|e| e.to_string())?;
             }
-            let out: Value = func
-                .call((lua_value, args_tbl))
+            let out: Value = crate::lua::sandbox::call_guarded(lua, &func, (lua_value, args_tbl))
                 .map_err(|e| e.to_string())?;
             let json: TeraValue =
                 serde_json::to_value(&out).map_err(|e| format!("return value: {e}"))?;
