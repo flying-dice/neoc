@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use globset::{Glob as GsGlob, GlobMatcher, GlobSet as GsSet, GlobSetBuilder};
+use globset::{Glob as GsGlob, GlobSet as GsSet, GlobSetBuilder};
 use mlua::{Lua, MetaMethod, Table, UserData, UserDataMethods, Value};
 use tracing::instrument;
 use walkdir::WalkDir;
@@ -103,15 +103,16 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 #[derive(Clone)]
 pub struct GlobHandle {
     pattern: String,
-    matcher: GlobMatcher,
+    /// A set of one: `Glob::compile_matcher` compiles with `expect`, which panics (and a panic aborts the host)
+    /// on a pattern whose regex the engine refuses, such as deeply nested alternations.
+    matcher: GsSet,
 }
 
 impl GlobHandle {
     fn compile(pattern: &str) -> Result<Self, String> {
-        let g = GsGlob::new(pattern).map_err(|e| e.to_string())?;
         Ok(Self {
             pattern: pattern.to_owned(),
-            matcher: g.compile_matcher(),
+            matcher: single(pattern)?,
         })
     }
 
@@ -131,6 +132,66 @@ impl UserData for GlobHandle {
             Ok(this.pattern.clone())
         });
     }
+}
+
+/// The longest glob pattern the VM compiles, in bytes. Real patterns are a few dozen bytes; the bound only
+/// keeps a hostile one from reaching globset's recursive parser.
+pub(crate) const MAX_PATTERN_BYTES: usize = 4096;
+
+/// The deepest `{...}` alternation nesting a pattern may have. globset recurses once per level (in its parser
+/// and in the regex it builds), and a stack overflow aborts the host; the regex engine refuses far less than
+/// this anyway (`{a,` nested 130 deep), so no real pattern is affected.
+pub(crate) const MAX_BRACE_DEPTH: usize = 32;
+
+/// The most `{` a pattern may contain, nested or not.
+pub(crate) const MAX_BRACES: usize = 256;
+
+/// Refuse a pattern that is too long or has too many or too deeply nested alternations, before globset sees
+/// it. Counts every unescaped `{` and `}` even inside a character class: that can only over-count.
+pub(crate) fn check_pattern(pattern: &str) -> Result<(), String> {
+    if pattern.len() > MAX_PATTERN_BYTES {
+        return Err(format!(
+            "glob pattern too long ({} bytes, at most {MAX_PATTERN_BYTES})",
+            pattern.len()
+        ));
+    }
+    let (mut depth, mut braces, mut escaped) = (0_usize, 0_usize, false);
+    for c in pattern.chars() {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' => escaped = true,
+            '{' => {
+                depth += 1;
+                braces += 1;
+                if depth > MAX_BRACE_DEPTH {
+                    return Err(format!(
+                        "glob pattern nests `{{` more than {MAX_BRACE_DEPTH} deep"
+                    ));
+                }
+                if braces > MAX_BRACES {
+                    return Err(format!("glob pattern has more than {MAX_BRACES} `{{`"));
+                }
+            }
+            '}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// The one way the VM compiles a glob (`lib:glob`, `lib:archive`'s `include`, `lib:http`'s `serve_static`):
+/// the pattern is bounded first ([`check_pattern`]), and `Glob::compile_matcher`, which panics on a pattern
+/// whose regex the engine refuses, is never used. Every failure is the `Err`.
+pub(crate) fn compile(pattern: &str) -> Result<GsGlob, String> {
+    check_pattern(pattern)?;
+    GsGlob::new(pattern).map_err(|e| e.to_string())
+}
+
+/// `pattern` compiled, as a set of one, without a path to a panic: every failure is the `Err`.
+fn single(pattern: &str) -> Result<GsSet, String> {
+    let mut builder = GlobSetBuilder::new();
+    builder.add(compile(pattern)?);
+    builder.build().map_err(|e| e.to_string())
 }
 
 fn glob_new(lua: &Lua, pattern: String) -> mlua::Result<(Value, Value)> {
@@ -202,7 +263,7 @@ fn set_new(lua: &Lua, patterns: Table) -> mlua::Result<(Value, Value)> {
     }
     let mut builder = GlobSetBuilder::new();
     for p in &pats {
-        let g = match GsGlob::new(p) {
+        let g = match compile(p) {
             Ok(g) => g,
             Err(e) => return err(lua, format!("glob.GlobSet.new: {e}")),
         };
@@ -302,7 +363,7 @@ fn build_ignore_set(tbl: &Table, prefix: &str) -> Result<GsSet, String> {
     let mut builder = GlobSetBuilder::new();
     for pair in tbl.clone().pairs::<i64, String>() {
         let (_, p) = pair.map_err(|e| format!("{prefix}: ignore: {e}"))?;
-        let g = GsGlob::new(&p).map_err(|e| format!("{prefix}: ignore: {e}"))?;
+        let g = compile(&p).map_err(|e| format!("{prefix}: ignore: {e}"))?;
         builder.add(g);
     }
     builder
@@ -313,7 +374,7 @@ fn build_ignore_set(tbl: &Table, prefix: &str) -> Result<GsSet, String> {
 fn run_scan(
     lua: &Lua,
     pattern: &str,
-    matcher: &GlobMatcher,
+    matcher: &GsSet,
     opts: Option<Table>,
     prefix: &str,
 ) -> mlua::Result<(Value, Value)> {
@@ -353,7 +414,7 @@ fn run_scan(
 /// allocation lives in here.
 fn collect_matches(
     pattern: &str,
-    matcher: &GlobMatcher,
+    matcher: &GsSet,
     scan: &ScanOpts,
     absolute_root: Option<&Path>,
 ) -> (Vec<String>, Vec<(String, String)>) {
@@ -530,13 +591,13 @@ pub fn benches(c: &mut criterion::Criterion) {
     // Pattern compile + single match — pure globset path, no mlua.
     g.bench_function("library/compile_and_match", |b| {
         b.iter(|| {
-            let m = GsGlob::new("src/**/*.rs").unwrap().compile_matcher();
+            let m = single("src/**/*.rs").unwrap();
             let _ = m.is_match(black_box("src/lua/lib/glob.rs"));
         });
     });
 
     // Compiled matcher reused — dominant cost should be the match itself.
-    let matcher = GsGlob::new("src/**/*.rs").unwrap().compile_matcher();
+    let matcher = single("src/**/*.rs").unwrap();
     g.bench_function("library/match_only", |b| {
         b.iter(|| {
             let _ = matcher.is_match(black_box("src/lua/lib/glob.rs"));
@@ -565,6 +626,7 @@ pub fn benches(c: &mut criterion::Criterion) {
 
 #[cfg(test)]
 mod tests {
+    use super::{MAX_BRACE_DEPTH, MAX_BRACES, MAX_PATTERN_BYTES, compile};
     use mlua::{Lua, Table, Value};
 
     fn engine() -> Lua {
@@ -572,6 +634,34 @@ mod tests {
         let m: Table = lua.load(r#"return require("lib:glob")"#).eval().unwrap();
         lua.globals().set("glob", m).unwrap();
         lua
+    }
+
+    /// The bounds of the shared compile helper: a pattern at each limit still compiles, one past it is refused
+    /// (every entry point that compiles a glob goes through it).
+    #[test]
+    fn the_shared_helper_bounds_length_and_alternation_nesting() {
+        let nested = |n: usize| format!("{}a{}", "{a,".repeat(n), "}".repeat(n));
+        assert!(compile(&nested(MAX_BRACE_DEPTH)).is_ok());
+        assert!(
+            compile(&nested(MAX_BRACE_DEPTH + 1))
+                .unwrap_err()
+                .contains("nests")
+        );
+        let flat = |n: usize| "{a,b}".repeat(n);
+        assert!(compile(&flat(MAX_BRACES)).is_ok());
+        assert!(
+            compile(&flat(MAX_BRACES + 1))
+                .unwrap_err()
+                .contains("more than")
+        );
+        assert!(compile(&"a".repeat(MAX_PATTERN_BYTES)).is_ok());
+        assert!(
+            compile(&"a".repeat(MAX_PATTERN_BYTES + 1))
+                .unwrap_err()
+                .contains("too long")
+        );
+        // an escaped brace is not an alternation
+        assert!(compile(&"\\{".repeat(MAX_BRACES + 1)).is_ok());
     }
 
     #[test]
@@ -587,6 +677,31 @@ mod tests {
             .eval()
             .unwrap();
         assert!(!no);
+    }
+
+    /// `Glob::compile_matcher` compiles with `expect`: this pattern made globset panic ("regex compilation
+    /// shouldn't fail"), and a panic aborts the host. It is a Lua error now, through every entry point.
+    #[test]
+    fn a_pattern_whose_regex_is_refused_is_an_error_not_a_panic() {
+        let lua = engine();
+        let pattern = format!("{}a{}", "{a,".repeat(130), "}".repeat(130));
+        lua.globals().set("pattern", pattern).unwrap();
+        for call in [
+            "glob.is_match(pattern, 'a')",
+            "glob.Glob.new(pattern)",
+            "glob.GlobSet.new({ pattern })",
+            "glob.scan(pattern, { cwd = '.' })",
+        ] {
+            let (val, e): (Value, Option<String>) = lua
+                .load(format!("return {call}"))
+                .eval()
+                .unwrap_or_else(|e| panic!("{call}: {e}"));
+            assert!(matches!(val, Value::Nil), "{call}: {val:?}");
+            assert!(
+                e.is_some_and(|e| e.contains("glob")),
+                "{call}: no error message"
+            );
+        }
     }
 
     #[test]

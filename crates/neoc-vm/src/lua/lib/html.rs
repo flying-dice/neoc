@@ -78,7 +78,9 @@ fn unescape_str(s: &str) -> String {
 
         // Cap the scan window so unbalanced `&` followed by long runs of
         // non-`;` bytes does not degrade to O(n²).
-        let scan_len = after_amp.len().min(ENTITY_BODY_MAX + 1);
+        // `floor_char_boundary`: the window may end inside a multi-byte character (`AT&T Ünïcödé`), and
+        // slicing a `str` mid-character panics.
+        let scan_len = after_amp.floor_char_boundary(ENTITY_BODY_MAX + 1);
         let semi = after_amp[..scan_len].find(';');
 
         match semi.and_then(|s| decode_entity(&after_amp[..s]).map(|c| (c, s))) {
@@ -151,6 +153,23 @@ mod tests {
         let m: mlua::Table = lua.load(r#"return require("lib:html")"#).eval().unwrap();
         lua.globals().set("html", m).unwrap();
         lua
+    }
+
+    #[test]
+    fn unescape_is_utf8_safe_when_the_scan_window_ends_inside_a_character() {
+        let lua = engine();
+        // `&` followed by multi-byte characters so byte 9 after it is mid-character, in every alignment
+        for pad in 0..4 {
+            let src = format!("AT&T {}Ünïcödé 🦀🦀🦀 &amp; &#x1F980;", "x".repeat(pad));
+            let want = format!("AT&T {}Ünïcödé 🦀🦀🦀 & 🦀", "x".repeat(pad));
+            let s: String = lua.load("return html.unescape(...)").call(src).unwrap();
+            assert_eq!(s, want, "pad {pad}");
+        }
+        let s: String = lua
+            .load("return html.unescape('&ÜÜÜÜÜÜÜÜ;')")
+            .eval()
+            .unwrap();
+        assert_eq!(s, "&ÜÜÜÜÜÜÜÜ;");
     }
 
     #[test]
