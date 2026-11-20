@@ -28,3 +28,8 @@ module_name_repetitions = "allow"
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+
+# mlua 0.12.2 vendored unmodified in `vendor/mlua`; the fix for NEOC-124 follows as its own commit
+# (`vendor/mlua-patches/`). Remove this table once an upstream release carries the guard.
+[patch.crates-io]
+mlua = { path = "vendor/mlua" }
