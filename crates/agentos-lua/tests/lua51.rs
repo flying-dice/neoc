@@ -349,7 +349,8 @@ async fn host_calls_that_await_work_inside_pcall_coroutines_and_event_handlers()
 async fn the_proxies_apps_index_never_yield_so_they_work_anywhere() {
     // app.state, a window's state / client / env, and a source handle are tables with __index / __newindex
     // functions: they are plain synchronous Rust functions (PUC Lua 5.1 could not yield across a metamethod, which is
-    // why; LuaJIT can, but a proxy that waited would still be a footgun), so reading one never lends the turn
+    // why; LuaJIT can). What shows that they never wait is a place where LuaJIT refuses a yield: a `string.gsub`
+    // callback. A proxy that suspended would fail there with "attempt to yield across C-call boundary".
     let src = r#"
         local ui = require("@agentos/ui")
         local s = app.state { n = 0, items = {} }
@@ -366,7 +367,8 @@ async fn the_proxies_apps_index_never_yield_so_they_work_anywhere() {
           local viaPcall = select(2, pcall(function() s.n = s.n + 1 return s.n end))
           app.kv:set("n", s.n)
           s.n = app.kv:get("n") + 1
-          return { n = s.n, viaPcall = viaPcall }
+          local inGsub, why = pcall(string.gsub, "a", "a", function() s.n = s.n + 1 return tostring(s.n) end)
+          return { n = s.n, viaPcall = viaPcall, inGsub = inGsub, why = tostring(why) }
         end }
     "#;
     let host_modules =
@@ -377,7 +379,9 @@ async fn the_proxies_apps_index_never_yield_so_they_work_anywhere() {
         .await
         .unwrap();
     let out = vm.call_tool("bump", json!({}), &agent_ctx(0), false).await.unwrap();
-    assert_eq!(out, json!({"n": 3, "viaPcall": 2}));
+    assert_eq!(out["n"], 4, "{out}");
+    assert_eq!(out["viaPcall"], 2, "{out}");
+    assert_eq!(out["inGsub"], true, "a state proxy waited where the engine cannot yield: {out}");
     assert_eq!(vm.window_names(), ["main"]);
 }
 
@@ -457,38 +461,46 @@ async fn host_calls_in_metamethods_and_iterators_yield() {
 }
 
 /// The test above shows that a call in a metamethod or an iterator works, not that it suspended (`app.kv:get` can be
-/// ready on its first poll). A sleep always suspends, so here the call that makes it must lend the turn: a second
-/// tool gets in while the first sleeps 4 x 150 ms, which it could not if the first held the turn throughout.
+/// ready on its first poll). A sleep always suspends, so here the call that makes it must lend the turn. Each context
+/// has a tool of its own that sleeps 300 ms inside it, and a second tool is called 50 ms in: it gets in at once, which
+/// it could not if the first held the turn. (One tool with all four would let the second call land in the first nap
+/// only.)
 #[tokio::test]
 async fn a_host_call_in_a_metamethod_or_iterator_lends_the_turn_while_it_waits() {
     let src = r#"
         local time = require("std:time")
-        local function nap() time.sleep(time.Duration.from_millis(150)) return "x" end
-        app.tools.register { name = "slow", run = function()
-          local mt = setmetatable({}, {
-            __index = function() return nap() end,
-            __add = function() return nap() end,
-            __tostring = function() return nap() end,
-          })
-          for _ in function() return nil, nap() end do end
-          return { index = mt.x, add = mt + 1, tostring = tostring(mt) }
+        local function nap() time.sleep(time.Duration.from_millis(300)) return "x" end
+        app.tools.register { name = "index", run = function()
+          return setmetatable({}, { __index = function() return nap() end }).x
+        end }
+        app.tools.register { name = "add", run = function()
+          return setmetatable({}, { __add = function() return nap() end }) + 1
+        end }
+        app.tools.register { name = "tostring", run = function()
+          return tostring(setmetatable({}, { __tostring = function() return nap() end }))
+        end }
+        app.tools.register { name = "iterator", run = function()
+          for _ in function() nap() return nil end do end
+          return "x"
         end }
         app.tools.register { name = "ping", run = function() return "pong" end }
     "#;
     let vm = load(src).await;
     let ctx = agent_ctx(0);
-    let first = vm.call_tool("slow", json!({}), &ctx, false);
-    let second = async {
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        let started = Instant::now();
-        let out = vm.call_tool("ping", json!({}), &ctx, false).await.unwrap();
-        (out, started.elapsed())
-    };
-    let (slow_out, (pong, waited)) = tokio::join!(first, second);
-    assert_eq!(slow_out.unwrap(), json!({ "index": "x", "add": "x", "tostring": "x" }));
-    assert_eq!(pong, json!("pong"));
-    assert!(
-        waited < Duration::from_millis(100),
-        "the second call waited {waited:?}: the first held the turn"
-    );
+    for context in ["index", "add", "tostring", "iterator"] {
+        let first = vm.call_tool(context, json!({}), &ctx, false);
+        let second = async {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let started = Instant::now();
+            let out = vm.call_tool("ping", json!({}), &ctx, false).await.unwrap();
+            (out, started.elapsed())
+        };
+        let (done, (pong, waited)) = tokio::join!(first, second);
+        assert_eq!(done.unwrap(), json!("x"), "{context}");
+        assert_eq!(pong, json!("pong"));
+        assert!(
+            waited < Duration::from_millis(150),
+            "{context}: the second call waited {waited:?}: the first held the turn"
+        );
+    }
 }
