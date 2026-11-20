@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
 /**
  * Checks every Lua app and fixture with lua-language-server (LuaLS) `--check` against the generated definitions
- * (config: .luarc.json, definitions: types/generated/luals, written by `bun run codegen`).
+ * (config: .luarc.json; definitions: types/generated/luals for `@agentos/*`, written by agentos-codegen, and
+ * types/luals for the std:/lib:/vnd: modules, written by `cargo run -p neoc-vm --example luals` and found through
+ * types/luals-plugin.lua; `bun run codegen` writes both).
  *
  *  1. Positive: every `.lua` file the config does not ignore (apps, lua/prelude.lua, the example app fixture) must
  *     check clean.

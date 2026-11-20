@@ -78,17 +78,6 @@ const GENERATED_DIR: &str = "types/generated";
 /// Files under [`GENERATED_DIR`] that another generator writes (`bun run codegen` runs all of them).
 const WRITTEN_ELSEWHERE: &[&str] = &["types/generated/prelude.lua"];
 
-/// Where `agentos-luavm`'s `luals` example writes the definitions of the `std:`, `lib:` and `vnd:` modules, one
-/// file per module named after its registry key (`lib:json.lua`). That example checks its own files; this crate
-/// depends on no VM crate, so it only knows not to call them orphans.
-const MODULE_DEFINITIONS_DIR: &str = "types/generated/luals/";
-
-/// Whether `path` is a module definition file written by the `luals` example.
-fn is_module_definition(path: &str) -> bool {
-    path.strip_prefix(MODULE_DEFINITIONS_DIR)
-        .is_some_and(|name| ["std:", "lib:", "vnd:"].iter().any(|namespace| name.starts_with(namespace)))
-}
-
 /// The generated files under `root` that are missing or differ from what the generator would write now, and the
 /// files under `types/generated` that no generator writes any more.
 #[must_use]
@@ -108,9 +97,7 @@ pub fn stale(root: &Path) -> Vec<String> {
         found
             .into_iter()
             .filter(|path| {
-                !files.iter().any(|f| f.path == path)
-                    && !WRITTEN_ELSEWHERE.contains(&path.as_str())
-                    && !is_module_definition(path)
+                !files.iter().any(|f| f.path == path) && !WRITTEN_ELSEWHERE.contains(&path.as_str())
             })
             .map(|path| format!("{path} (orphaned: no generator writes it; delete it)")),
     );
@@ -158,12 +145,13 @@ mod tests {
         fs::write(dir.join("types/generated/ui.luau"), "-- old output").unwrap();
         fs::create_dir_all(dir.join("types/generated/luals/old")).unwrap();
         fs::write(dir.join("types/generated/luals/old/extra.lua"), "-- old output").unwrap();
-        // the prelude is another generator's (scripts/codegen-lua.ts), and so are the module definitions
-        // (`agentos-luavm`'s `luals` example, which checks them itself)
+        // the prelude is another generator's (scripts/codegen-lua.ts)
         fs::write(dir.join("types/generated/prelude.lua"), "-- copy").unwrap();
+        // the module definitions are neoc-vm's `luals` example's, in types/luals: a copy left here is an orphan
         fs::write(dir.join("types/generated/luals/lib:json.lua"), "---@meta").unwrap();
         let flagged = stale(&dir);
-        assert_eq!(flagged.len(), 2, "{flagged:?}");
+        assert_eq!(flagged.len(), 3, "{flagged:?}");
+        assert!(flagged.iter().any(|p| p.starts_with("types/generated/luals/lib:json.lua")), "{flagged:?}");
         assert!(flagged.iter().any(|p| p.starts_with("types/generated/ui.luau")), "{flagged:?}");
         assert!(flagged.iter().any(|p| p.starts_with("types/generated/luals/old/extra.lua")), "{flagged:?}");
         fs::remove_dir_all(dir).unwrap();
