@@ -146,7 +146,7 @@ pub fn session_state(resp: &NewSessionResponse, tools_connected: bool) -> Sessio
                 })
                 .collect(),
         }),
-        config: resp.config_options.as_deref().map(config_options).unwrap_or_default(),
+        config: resp.config_options.as_deref().map_or_default(config_options),
         ..SessionState::default()
     }
 }

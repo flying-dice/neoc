@@ -815,7 +815,7 @@ impl AppVm {
             // closed by the guard if this call is dropped at a host call
             let scope = track.then(|| TrackGuard::begin(&self.shared.tracker));
             let result = handler.call_async::<LuaValue>(arg).await;
-            let deps = scope.map(TrackGuard::finish).unwrap_or_default();
+            let deps = scope.map_or_default(TrackGuard::finish);
             let out = result.map_err(|e| script(&e))?;
             Ok((lua_to_json(&out).map_err(|e| VmError::BadValue(e.to_string()))?, deps))
         })

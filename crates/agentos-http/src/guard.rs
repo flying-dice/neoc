@@ -37,7 +37,7 @@ pub type InterfaceIps = Arc<dyn Fn() -> Vec<IpAddr> + Send + Sync>;
 /// The IP addresses of every network interface of this machine.
 #[must_use]
 pub fn system_interface_ips() -> Vec<IpAddr> {
-    if_addrs::get_if_addrs().map(|all| all.into_iter().map(|i| i.ip()).collect()).unwrap_or_default()
+    if_addrs::get_if_addrs().map_or_default(|all| all.into_iter().map(|i| i.ip()).collect())
 }
 
 /// The machine's hostname, lowercased (`None` if it has none we can read).

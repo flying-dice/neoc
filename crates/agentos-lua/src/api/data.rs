@@ -459,7 +459,7 @@ fn install_sources(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
                 declare(&s, &lua, sql, |_| SourceKind::Row { key, rev, writable, has_write, conflict })
                     .await?;
             if let Some(write) = write {
-                let id = s.sources.lock().last().map(|d| d.id.0.clone()).unwrap_or_default();
+                let id = s.sources.lock().last().map_or_default(|d| d.id.0.clone());
                 s.writers.lock().insert(id, write);
             }
             Ok(factory)

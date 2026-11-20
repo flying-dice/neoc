@@ -76,8 +76,7 @@ fn object(s: &Value, root: &str) -> String {
     let required: Vec<&str> = s
         .get("required")
         .and_then(Value::as_array)
-        .map(|a| a.iter().filter_map(Value::as_str).collect())
-        .unwrap_or_default();
+        .map_or_default(|a| a.iter().filter_map(Value::as_str).collect());
     if let Some(props) = s.get("properties").and_then(Value::as_object) {
         let sorted: std::collections::BTreeMap<_, _> = props.iter().collect();
         let fields: Vec<String> = sorted

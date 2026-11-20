@@ -256,9 +256,9 @@ fn rows_delta(
         }
         keys.push(k);
     }
-    let dropped: Vec<Value> = prev
-        .map(|p| p.keys.iter().filter(|k| !hashes.contains_key(&key_string(k))).cloned().collect())
-        .unwrap_or_default();
+    let dropped: Vec<Value> = prev.map_or_default(|p| {
+        p.keys.iter().filter(|k| !hashes.contains_key(&key_string(k))).cloned().collect()
+    });
     let unchanged = !force
         && prev.is_some_and(|p| p.keys == keys && p.total == total && p.from == from)
         && changed.is_empty()

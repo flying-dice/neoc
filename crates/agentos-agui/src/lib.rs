@@ -146,7 +146,7 @@ async fn run(
         Err(e) => return chat_failure(&e),
     };
     // a stream of a revoked device ends here; dropping it lets the chat service cancel a run nothing waits on
-    let revoked = device.map(|Extension(d)| streams.token_for(&d.id)).unwrap_or_default();
+    let revoked = device.map_or_default(|Extension(d)| streams.token_for(&d.id));
     let stream =
         RunStream { events, chat, thread_id, run_id }.take_until(revoked.cancelled_owned()).map(|e| {
             let data = serde_json::to_string(&e)

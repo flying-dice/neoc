@@ -587,7 +587,7 @@ async fn verify(
     };
     let have: BTreeSet<i64> = rows.iter().filter_map(|r| r["v"].as_i64()).collect();
     let numbers = |key: &str| -> BTreeSet<i64> {
-        report[key].as_array().map(|a| a.iter().filter_map(Value::as_i64).collect()).unwrap_or_default()
+        report[key].as_array().map_or_default(|a| a.iter().filter_map(Value::as_i64).collect())
     };
 
     // the program's own checks: (a) writes in a read-only call, (b) another call inside a step that cannot suspend

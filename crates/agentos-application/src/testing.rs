@@ -114,7 +114,7 @@ impl ScriptedData {
         }
         let all = self.0.rows.lock().unwrap();
         let best = all.iter().filter(|(k, _)| sql.contains(k.as_str())).max_by_key(|(k, _)| k.len());
-        let rows = best.map(|(_, r)| r.clone()).unwrap_or_default();
+        let rows = best.map_or_default(|(_, r)| r.clone());
         if sql.contains("count(*) as n from (") {
             return Ok(vec![json!({ "n": rows.len() })]);
         }

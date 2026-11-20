@@ -215,7 +215,7 @@ fn patch_of(st: &mut State, source: &str, update: &SourceUpdate) -> Option<Sourc
                 _ => None,
             };
             if let (Some(row), Some(key_col)) = (&d.row, key_col) {
-                let key = row.get(&key_col).map(wire_key).unwrap_or_default();
+                let key = row.get(&key_col).map_or_default(wire_key);
                 let fields: Vec<String> =
                     st.bound.iter().filter(|b| b.source == source).map(|b| b.field.clone()).collect();
                 for field in fields {

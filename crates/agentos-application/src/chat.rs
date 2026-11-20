@@ -274,7 +274,7 @@ impl Inner {
         raw_input: Option<&Value>,
     ) {
         self.close_messages();
-        let arguments = raw_input.map(Value::to_string).unwrap_or_default();
+        let arguments = raw_input.map_or_default(Value::to_string);
         let meta = ToolMeta { title: title.to_owned(), kind, status };
         self.messages.push(ThreadMessage::Assistant {
             id: id.to_owned(),
@@ -802,7 +802,7 @@ async fn turn(chat: Arc<ChatService>, thread: Arc<Thread>, session_id: String, p
         if inner.run.is_some() {
             inner.close_messages();
             let (thread_id, run_id) =
-                (thread.id.clone(), inner.run.as_ref().map(|r| r.run_id.clone()).unwrap_or_default());
+                (thread.id.clone(), inner.run.as_ref().map_or_default(|r| r.run_id.clone()));
             match result {
                 Ok(StopReason::Refusal) => {
                     inner.error_message(chat.p.random.as_ref(), "The agent declined this request.");

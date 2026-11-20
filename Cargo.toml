@@ -67,6 +67,9 @@ panic = "deny"
 module_name_repetitions = "allow"
 missing_errors_doc = "allow"
 must_use_candidate = "allow"
+# new in clippy 1.100's pedantic group: `assert!(x.is_empty())` is the idiom for the AgentOS tests; the lint's
+# `assert_eq!(x, [] as [T; 0])` needs a type annotation on every site
+assert_is_empty = "allow"
 
 # neoc's release build (the `neoc` CLI): thin LTO, symbols stripped.
 [profile.release]

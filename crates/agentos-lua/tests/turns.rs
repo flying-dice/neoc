@@ -743,7 +743,7 @@ async fn get_path(addr: &str, path: &str) -> String {
         .unwrap();
     let mut out = String::new();
     stream.read_to_string(&mut out).await.unwrap();
-    out.split_once("\r\n\r\n").map(|(_, body)| body.to_owned()).unwrap_or_default()
+    out.split_once("\r\n\r\n").map_or_default(|(_, body)| body.to_owned())
 }
 
 // ---- a cancelled emit -------------------------------------------------------------------------------------------
