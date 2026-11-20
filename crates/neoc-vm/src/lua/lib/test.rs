@@ -11,6 +11,7 @@ use mlua::{Lua, Table, Value};
 
 use crate::lua::facade::Module;
 use crate::lua::lifecycle::{Role, async_function};
+use crate::lua::sandbox::call_guarded_async;
 
 const STATE_KEY: &str = "_NEOC_TEST";
 
@@ -125,7 +126,7 @@ fn register_suite_fns(lua: &Lua, m: &mut Module<'_>) -> mlua::Result<()> {
                 println!("\n{name}");
                 let state: Table = lua.named_registry_value(STATE_KEY)?;
                 state.set("current_suite", lua.create_string(name.as_bytes())?)?;
-                let result = f.call_async::<()>(()).await;
+                let result = call_guarded_async::<()>(&lua, &f, ()).await;
                 state.set("current_suite", Value::Nil)?;
                 result
             },
@@ -151,7 +152,7 @@ fn register_suite_fns(lua: &Lua, m: &mut Module<'_>) -> mlua::Result<()> {
             };
             arm_watchdog(&label);
             let watchdog = WatchdogGuard;
-            let outcome = f.call_async::<()>(()).await;
+            let outcome = call_guarded_async::<()>(&lua, &f, ()).await;
             drop(watchdog);
             match outcome {
                 Ok(_) => {

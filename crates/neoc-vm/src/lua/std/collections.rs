@@ -290,14 +290,19 @@ impl UserData for Mutex {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         // `with_lock(fn)` — acquire the lock, call `fn` with no args, release
         // even if `fn` errors, and return whatever `fn` returned.
-        async_method(methods, "with_lock", Role::Mixed, |_, this, f: Function| {
-            let mu = this.0.clone();
-            async move {
-                // waiting for the lock does not use the VM (and the holder may need it to finish)
-                let _guard = idle(mu.inner.lock()).await?;
-                f.call_async::<MultiValue>(()).await
-            }
-        });
+        async_method(
+            methods,
+            "with_lock",
+            Role::Mixed,
+            |lua, this, f: Function| {
+                let mu = this.0.clone();
+                async move {
+                    // waiting for the lock does not use the VM (and the holder may need it to finish)
+                    let _guard = idle(mu.inner.lock()).await?;
+                    crate::lua::sandbox::call_guarded_async::<MultiValue>(&lua, &f, ()).await
+                }
+            },
+        );
     }
 }
 

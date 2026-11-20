@@ -19,11 +19,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures::StreamExt as _;
 use mlua::thread::ThreadStatus;
-use mlua::{Lua, MultiValue, Table, Thread, UserData, UserDataMethods, Value};
+use mlua::{Lua, MultiValue, Table, Thread, UserData, UserDataMethods, Value, WeakLua};
 use parking_lot::Mutex;
 use tokio::sync::Notify;
 
 use crate::lua::facade::Module;
+use crate::lua::guard::{Guarded, into_call_result};
 use crate::lua::lifecycle::{
     Life, Pruned, Role, async_function, async_method, entrance, first_slice, inherited,
 };
@@ -282,16 +283,19 @@ fn validate_thread(thread: &Thread, kind: &'static str) -> mlua::Result<()> {
     }
 }
 
-fn into_thread(lua: &Lua, val: Value, kind: &'static str) -> mlua::Result<Thread> {
+/// The host thread that runs a task (see `guard`): a function runs under `xpcall` and the engine's message
+/// handler, a coroutine the script made is driven from a thread of the host's, so that an error never reaches mlua as
+/// a value with a metatable.
+fn into_guarded_thread(lua: &Lua, val: Value, kind: &'static str) -> mlua::Result<Guarded> {
     match val {
         // a thread of the host's: the script holds no handle to it that `coroutine.resume` accepts
-        Value::Function(f) => lua.create_thread(f),
+        Value::Function(f) => Guarded::function(lua, f),
         Value::Thread(t) => {
             validate_thread(&t, kind)?;
             // a coroutine the script made: the scheduler drives it from here on, so the script may not
             // resume it too
             mark_driven(lua, &t)?;
-            Ok(t)
+            Guarded::coroutine(lua, t)
         }
         other => Err(mlua::Error::external(format!(
             "{kind}: expected function or thread, got {}",
@@ -309,20 +313,33 @@ fn into_thread(lua: &Lua, val: Value, kind: &'static str) -> mlua::Result<Thread
 // them through tokio's poll/wake mechanism without surfacing them as yields.
 // ---------------------------------------------------------------------------
 
-async fn drive_thread(thread: Thread, args: MultiValue) -> TaskOutcome {
+async fn drive_thread(lua: WeakLua, thread: Thread, args: MultiValue) -> TaskOutcome {
     let mut stream = match thread.into_async::<MultiValue>(args) {
         Ok(stream) => stream,
         Err(e) => return TaskOutcome::Err(e.to_string()),
     };
-    let mut last: Option<Vec<Value>> = None;
+    let mut last: Option<MultiValue> = None;
     loop {
         match stream.next().await {
-            Some(Ok(vals)) => last = Some(vals.into_vec()),
+            Some(Ok(vals)) => last = Some(vals),
             Some(Err(e)) => return TaskOutcome::Err(e.to_string()),
             None => break,
         }
     }
-    TaskOutcome::Ok(last.unwrap_or_default())
+    settled(&lua, last.unwrap_or_default())
+}
+
+/// The outcome of a task whose thread returned `returned`: what the thread body answered (see `guard`). A task does
+/// not keep its engine alive (it holds the engine weakly, as the thread it drives does): if the engine is gone the
+/// task has nothing to report to.
+fn settled(lua: &WeakLua, returned: MultiValue) -> TaskOutcome {
+    let Some(lua) = lua.try_upgrade() else {
+        return TaskOutcome::Cancelled;
+    };
+    match into_call_result(&lua, returned) {
+        Ok(vals) => TaskOutcome::Ok(vals.into_vec()),
+        Err(e) => TaskOutcome::Err(e.to_string()),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -351,7 +368,8 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.set(
         "spawn",
         lua.create_function(|lua, (fn_val, args): (Value, MultiValue)| {
-            let thread = into_thread(lua, fn_val, "task.spawn")?;
+            let guarded = into_guarded_thread(lua, fn_val, "task.spawn")?;
+            let (thread, first_args) = guarded.into_parts(args);
             let inner = Arc::new(TaskInner::new());
             let scheduler = lua
                 .app_data_ref::<Scheduler>()
@@ -377,7 +395,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             let (first, carried) = first_slice(
                 lua,
                 from.clone(),
-                || thread.resume::<MultiValue>(args),
+                || thread.resume::<MultiValue>(first_args),
                 |slice| {
                     matches!(slice, Ok(vals) if stopped_at_wait(vals)
                         && thread.status() == ThreadStatus::Resumable)
@@ -388,17 +406,22 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
                     if matches!(thread.status(), ThreadStatus::Resumable) {
                         let inner_clone = inner.clone();
                         let entrance = entrance(lua);
+                        let lua = lua.weak();
                         let abort = scheduler.spawn_task(async move {
                             // a slice that stopped at a plain yield carries no leaf: the continuation takes
                             // its turn before it resumes Lua (lifecycle rule 5)
                             let outcome = entrance
-                                .resumed(from, carried, drive_thread(thread, MultiValue::new()))
+                                .resumed(
+                                    from,
+                                    carried,
+                                    drive_thread(lua, thread, MultiValue::new()),
+                                )
                                 .await;
                             inner_clone.complete(outcome);
                         });
                         *inner.abort.lock() = Some(abort);
                     } else {
-                        inner.complete(TaskOutcome::Ok(vals.into_vec()));
+                        inner.complete(settled(&lua.weak(), vals));
                     }
                 }
                 Err(e) => {
@@ -422,7 +445,8 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.set(
         "defer",
         lua.create_function(|lua, (fn_val, args): (Value, MultiValue)| {
-            let thread = into_thread(lua, fn_val, "task.defer")?;
+            let guarded = into_guarded_thread(lua, fn_val, "task.defer")?;
+            let (thread, first_args) = guarded.into_parts(args);
             let inner = Arc::new(TaskInner::new());
             let scheduler = lua
                 .app_data_ref::<Scheduler>()
@@ -436,6 +460,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             let from = inherited();
             let inner_clone = inner.clone();
             let entrance = entrance(lua);
+            let lua = lua.weak();
             let abort = scheduler.spawn_task(async move {
                 if let Some(prev_inner) = prev {
                     let notify = prev_inner.notify.clone();
@@ -465,7 +490,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
                         if inner_clone.is_finished() {
                             return None;
                         }
-                        Some(drive_thread(thread, args).await)
+                        Some(drive_thread(lua, thread, first_args).await)
                     })
                     .await;
                 if let Some(outcome) = outcome {
@@ -491,7 +516,8 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "delay",
         lua.create_function(|lua, (secs, fn_val, args): (f64, Value, MultiValue)| {
             let delay = crate::lua::limits::sleep_duration(secs);
-            let thread = into_thread(lua, fn_val, "task.delay")?;
+            let guarded = into_guarded_thread(lua, fn_val, "task.delay")?;
+            let (thread, first_args) = guarded.into_parts(args);
             let inner = Arc::new(TaskInner::new());
             let scheduler = lua
                 .app_data_ref::<Scheduler>()
@@ -504,9 +530,12 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             let from = inherited();
             let inner_clone = inner.clone();
             let entrance = entrance(lua);
+            let lua = lua.weak();
             let abort = scheduler.spawn_task(async move {
                 tokio::time::sleep(delay).await;
-                let outcome = entrance.inbound(from, drive_thread(thread, args)).await;
+                let outcome = entrance
+                    .inbound(from, drive_thread(lua, thread, first_args))
+                    .await;
                 inner_clone.complete(outcome);
             });
 

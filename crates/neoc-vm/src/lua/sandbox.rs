@@ -6,6 +6,8 @@ use mlua::{IntoLua, Lua, StdLib, Value};
 use crate::lua::lifecycle::Life;
 use crate::lua::modules;
 
+pub use crate::lua::guard::call_guarded_async;
+
 /// Globals removed after the standard libraries load.
 ///
 /// Each is a sandbox hazard: runtime code loading (`load`, `loadstring`,
@@ -140,6 +142,8 @@ fn base_engine() -> mlua::Result<Lua> {
         mlua::LuaOptions::new(),
     )?;
     strip_unsafe_globals(&lua)?;
+    // before `xpcall` is replaced: the guarded thread bodies use the builtin
+    crate::lua::guard::install(&lua)?;
     install_guarded_xpcall(&lua)?;
     Ok(lua)
 }
@@ -193,7 +197,7 @@ fn strip_unsafe_globals(lua: &Lua) -> mlua::Result<()> {
 /// text, whatever the error value is. Use this, not `Function::call`, wherever a host function calls a callback the
 /// script gave it: on LuaJIT an error value whose `__tostring` makes a protected call and then fails sends the
 /// message handler of a plain `Function::call` into a recursion that overflows a runtime worker's stack and
-/// aborts the process (`guarded_call.lua`). It is not for a call that may suspend (`call_async`).
+/// aborts the process (`guarded_call.lua`). It is not for a call that may suspend: that is [`call_guarded_async`].
 ///
 /// # Errors
 /// The function raised: the error is its message (a value that is not text is converted without running a

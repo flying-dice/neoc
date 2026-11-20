@@ -318,3 +318,224 @@ fn run_kills_a_hung_test_after_the_per_test_timeout() {
     assert!(stdout.contains("spins forever"), "got: {stdout}");
     assert!(stdout.contains("timed out after 1s"), "got: {stdout}");
 }
+
+// NEOC-120: an error value whose `__tostring` makes a protected call and then fails used to abort the process
+// (a stack overflow in mlua's message handler) wherever a script error reached mlua unguarded. Each of these
+// runs the binary, so a regression is a failed test and not a dead harness.
+
+const HOSTILE: &str = "local mt = {}\n\
+    mt.__tostring = function() pcall(error, \"x\") error(setmetatable({}, mt)) end\n";
+
+/// `neoc run <name>` in `dir` (a relative path keeps the chunk name short), with its stderr.
+fn run_script(dir: &Path, name: &str) -> (Option<i32>, String) {
+    let out = Command::new(BIN)
+        .arg("run")
+        .arg(name)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    (
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn run_main_chunk_with_an_error_value_whose_tostring_fails_reports_it() {
+    let dir = tempdir().unwrap();
+    write(
+        dir.path(),
+        "hostile.lua",
+        &format!("{HOSTILE}error(setmetatable({{}}, mt))\n"),
+    );
+    let (code, stderr) = run_script(dir.path(), "hostile.lua");
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert_eq!(
+        stderr,
+        "runtime error: error object's __tostring failed\nstack traceback:\n\t[C]: in function 'error'\n\t[string \"hostile.lua\"]:3: in main chunk\n"
+    );
+}
+
+#[test]
+fn run_main_chunk_that_fails_after_a_wait_with_such_a_value_reports_it() {
+    let dir = tempdir().unwrap();
+    write(
+        dir.path(),
+        "late.lua",
+        &format!("{HOSTILE}require(\"std:task\").wait(0)\nerror(setmetatable({{}}, mt))\n"),
+    );
+    let (code, stderr) = run_script(dir.path(), "late.lua");
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(
+        stderr.contains("runtime error: error object's __tostring failed\nstack traceback:"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn run_eval_with_such_a_value_reports_it() {
+    let out = Command::new(BIN)
+        .arg("run")
+        .arg("--eval")
+        .arg(format!("{HOSTILE}error(setmetatable({{}}, mt))"))
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "stderr: {stderr}");
+    assert!(
+        stderr.contains("error object's __tostring failed"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn run_failing_tasks_and_workers_with_such_a_value_report_them_and_exit_nonzero() {
+    let dir = tempdir().unwrap();
+    write(
+        dir.path(),
+        "task.lua",
+        &format!(
+            "{HOSTILE}local task = require(\"std:task\")\n\
+             task.spawn(function() task.wait(0) error(setmetatable({{}}, mt)) end)\n\
+             task.wait(0.05)\n"
+        ),
+    );
+    let (code, stderr) = run_script(dir.path(), "task.lua");
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(
+        stderr.starts_with(
+            "error in un-awaited task: runtime error: error object's __tostring failed\nstack traceback:\n\t[C]: in function 'error'"
+        ),
+        "stderr: {stderr}"
+    );
+
+    write(
+        dir.path(),
+        "worker.lua",
+        &format!(
+            "local w = assert(require(\"std:thread\").spawn {{ source = [[{HOSTILE}error(setmetatable({{}}, mt))]] }})\n\
+             local v, e = w:await()\n\
+             print(v, e)\n"
+        ),
+    );
+    let out = Command::new(BIN)
+        .arg("run")
+        .arg("worker.lua")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stdout)
+            .starts_with("nil\tthread.await: runtime error: error object's __tostring failed"),
+        "{out:?}"
+    );
+}
+
+#[test]
+fn run_a_failing_test_body_with_such_a_value_fails_the_test() {
+    let dir = tempdir().unwrap();
+    write(
+        dir.path(),
+        "hostile.test.lua",
+        &format!(
+            "{HOSTILE}local t = require(\"lib:test\")\n\
+             t.test(\"fails\", function() error(setmetatable({{}}, mt)) end)\n\
+             t.test(\"passes\", function() end)\n"
+        ),
+    );
+    let out = Command::new(BIN)
+        .arg("run")
+        .arg("hostile.test.lua")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("fails") && stdout.contains("error object's __tostring failed"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("1 passed, 1 failed"), "{stdout}");
+}
+
+#[test]
+fn compile_bundle_with_such_a_value_reports_it() {
+    let dir = tempdir().unwrap();
+    write(
+        dir.path(),
+        "main.lua",
+        &format!("{HOSTILE}error(setmetatable({{}}, mt))\n"),
+    );
+    let app_name = if cfg!(windows) { "app.exe" } else { "app" };
+    write(
+        dir.path(),
+        "build.lua",
+        &format!(
+            "assert(require(\"lib:compile\").bundle({{ entrypoint = \"main.lua\", output = \"{app_name}\" }}))\n"
+        ),
+    );
+    let build = Command::new(BIN)
+        .arg("run")
+        .arg("build.lua")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(build.status.success(), "{build:?}");
+    let out = Command::new(dir.path().join(app_name)).output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("error object's __tostring failed"),
+        "{out:?}"
+    );
+}
+
+/// What `neoc run` printed for these before the guard (taken from `main` at 7aeeafd), exactly: the text of the
+/// error, its traceback, and the exit code.
+#[test]
+fn run_prints_ordinary_errors_exactly_as_it_did() {
+    let dir = tempdir().unwrap();
+    let cases: &[(&str, &str, &str)] = &[
+        (
+            "string.lua",
+            "local function f() error(\"boom\") end\nlocal function g() f() end\ng()\n",
+            "runtime error: [string \"string.lua\"]:1: boom\nstack traceback:\n\t[C]: in function 'error'\n\t[string \"string.lua\"]:1: in upvalue 'f'\n\t[string \"string.lua\"]:2: in local 'g'\n\t[string \"string.lua\"]:3: in main chunk\n",
+        ),
+        (
+            "table.lua",
+            "error(setmetatable({}, { __tostring = function() return \"custom\" end }))\n",
+            "runtime error: custom\nstack traceback:\n\t[C]: in function 'error'\n\t[string \"table.lua\"]:1: in main chunk\n",
+        ),
+        (
+            "vm.lua",
+            "local x = nil\nx.y = 1\n",
+            "runtime error: [string \"vm.lua\"]:2: attempt to index local 'x' (a nil value)\nstack traceback:\n\t[string \"vm.lua\"]: in main chunk\n",
+        ),
+        (
+            "number.lua",
+            "error(42)\n",
+            "runtime error: [string \"number.lua\"]:1: 42\nstack traceback:\n\t[C]: in function 'error'\n\t[string \"number.lua\"]:1: in main chunk\n",
+        ),
+        (
+            "host.lua",
+            "require(\"std:task\").spawn(5)\n",
+            "task.spawn: expected function or thread, got integer\nstack traceback:\n\t[C]: in field 'spawn'\n\t[string \"host.lua\"]:1: in main chunk\n\n",
+        ),
+        (
+            "late.lua",
+            "require(\"std:task\").wait(0)\nerror(\"late\")\n",
+            "runtime error: [string \"late.lua\"]:2: late\nstack traceback:\n\t[C]: in function 'error'\n\t[string \"late.lua\"]:2: in main chunk\n",
+        ),
+        (
+            "task.lua",
+            "local task = require(\"std:task\")\ntask.spawn(function() task.wait(0) error(\"in task\") end)\ntask.wait(0.05)\n",
+            "error in un-awaited task: runtime error: [string \"task.lua\"]:2: in task\nstack traceback:\n\t[C]: in function 'error'\n\t[string \"task.lua\"]:2: in function <[string \"task.lua\"]:2>\n",
+        ),
+    ];
+    for (name, source, expected) in cases {
+        write(dir.path(), name, source);
+        let (code, stderr) = run_script(dir.path(), name);
+        assert_eq!(code, Some(1), "{name}: {stderr}");
+        assert_eq!(&stderr, expected, "{name}");
+    }
+}

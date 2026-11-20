@@ -138,6 +138,13 @@ fn engine_with_args(user_args: &[String]) -> mlua::Lua {
     engine
 }
 
+/// Runs a script's main chunk. An error value is never turned into text by mlua's own handler (which runs its
+/// `__tostring`, and aborts the process when that fails the wrong way): see `neoc_vm::lua::guard`.
+async fn exec_guarded(engine: &mlua::Lua, chunk: mlua::chunk::Chunk<'_>) -> mlua::Result<()> {
+    let main = chunk.into_function()?;
+    lua::sandbox::call_guarded_async(engine, &main, ()).await
+}
+
 /// Drains any tasks spawned via `std:task` that outlive the main script. Exits
 /// with code 1 if any of them errored.
 async fn drain_scheduler(engine: &mlua::Lua) {
@@ -193,11 +200,8 @@ async fn run(paths: &[String], user_args: &[String]) {
 
         let engine = engine_with_args(user_args);
 
-        if let Err(e) = lua::sandbox::load_source(&engine, &source)
-            .set_name(path.as_str())
-            .exec_async()
-            .await
-        {
+        let chunk = lua::sandbox::load_source(&engine, &source).set_name(path.as_str());
+        if let Err(e) = exec_guarded(&engine, chunk).await {
             report_script_error(&e, &source, path);
         }
 
@@ -255,11 +259,8 @@ async fn run_eval(source: &str, user_args: &[String]) {
 
     let engine = engine_with_args(user_args);
 
-    if let Err(e) = lua::sandbox::load_source(&engine, source)
-        .set_name("<eval>")
-        .exec_async()
-        .await
-    {
+    let chunk = lua::sandbox::load_source(&engine, source).set_name("<eval>");
+    if let Err(e) = exec_guarded(&engine, chunk).await {
         report_script_error(&e, source, "<eval>");
     }
 
@@ -297,10 +298,8 @@ async fn run_embedded(payload: &[u8]) {
 
     let engine = engine_with_args(&user_args);
 
-    if let Err(e) = lua::sandbox::load_source(&engine, payload)
-        .exec_async()
-        .await
-    {
+    let chunk = lua::sandbox::load_source(&engine, payload);
+    if let Err(e) = exec_guarded(&engine, chunk).await {
         report_error(NeocError::Runtime(e.to_string()));
     }
 

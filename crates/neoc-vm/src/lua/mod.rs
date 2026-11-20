@@ -7,6 +7,7 @@
 //! `crate::lua::vnd::hyper` → `vnd:hyper`, etc.); `modules.rs` builds the
 //! `require` registry that ties them together.
 pub mod facade;
+pub mod guard;
 pub mod lib;
 pub mod lifecycle;
 pub(crate) mod limits;

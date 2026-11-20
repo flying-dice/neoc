@@ -48,7 +48,9 @@ use tracing::instrument;
 use crate::lua::facade::Module;
 use crate::lua::lib::log::{LogFn, log_sink, set_log_sink};
 use crate::lua::lifecycle::{Life, Role, async_method};
-use crate::lua::sandbox::{WorkerEngineFn, from_err, load_source, ok, worker_engine_builder};
+use crate::lua::sandbox::{
+    WorkerEngineFn, call_guarded_async, from_err, load_source, ok, worker_engine_builder,
+};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(declare(lua)?.into_table())
@@ -475,10 +477,8 @@ async fn run_worker(
     }
 
     let arg_value = lua.to_value(&args)?;
-    let result: Value = load_source(&lua, &source)
-        .set_name(&name)
-        .call_async(arg_value)
-        .await?;
+    let main = load_source(&lua, &source).set_name(&name).into_function()?;
+    let result: Value = call_guarded_async(&lua, &main, arg_value).await?;
     serde_json::to_value(&result).map_err(mlua::Error::external)
 }
 
