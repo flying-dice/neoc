@@ -7,7 +7,7 @@
 //!   registered (the generated `ui` constructors). A host module runs once, in the app's own environment (so
 //!   it sees the same polyfills), and is cached; a cycle is an error.
 //! - `require("std:<name>")`, `require("lib:<name>")` and `require("vnd:<name>")` are the library modules of
-//!   `agentos-luavm` (neoc's own spelling: `std:task`, `lib:json`, `vnd:hyper`, ...). Each is built for the app
+//!   `neoc-vm` (neoc's own spelling: `std:task`, `lib:json`, `vnd:hyper`, ...). Each is built for the app
 //!   on first use in the app's VM and cached, so every `require` of one module in an app sees one table and
 //!   two apps never share one.
 //!
@@ -17,11 +17,16 @@
 //! cannot yield from is the one thing a metamethod or a C boundary on Lua 5.1 must be.
 
 use crate::vm::Shared;
-use agentos_luavm::{
+use neoc_vm::{
     lua::{modules, sandbox::load_source},
     mlua::{self, Lua, Value as LuaValue},
 };
 use std::sync::Arc;
+
+/// The modules of the VM library that an app is not offered: `lib:test` (a test harness that prints to stdout),
+/// `lib:compile` (builds standalone executables) and `std:workers` (a process-wide shutdown signal). Which
+/// modules a script may have is the embedder's policy; the library offers all of them (`modules::names`).
+pub(crate) const NOT_FOR_APPS: &[&str] = &["lib:test", "lib:compile", "std:workers"];
 
 /// What a `require` may name, for the error message of one that names something else.
 const ALLOWED: &str = "\"@agentos/app\", \"@agentos/ui\" and the std:, lib: and vnd: modules";
@@ -63,10 +68,11 @@ fn library(lua: &Lua, sh: &Arc<Shared>, spec: &str) -> mlua::Result<LuaValue> {
     if let Some(done) = sh.modules.lock().get(spec) {
         return Ok(done.clone());
     }
-    let built = modules::build(lua, spec).ok_or_else(|| {
-        let known: Vec<&str> = modules::names().collect();
-        modules::unknown_module(spec, &known)
-    })??;
+    let known = || modules::names().filter(|name| !NOT_FOR_APPS.contains(name)).collect::<Vec<&str>>();
+    if NOT_FOR_APPS.contains(&spec) {
+        return Err(modules::unknown_module(spec, &known()));
+    }
+    let built = modules::build(lua, spec).ok_or_else(|| modules::unknown_module(spec, &known()))??;
     let value = LuaValue::Table(built);
     sh.modules.lock().insert(spec.to_owned(), value.clone());
     Ok(value)

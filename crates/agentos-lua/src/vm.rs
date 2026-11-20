@@ -1,7 +1,7 @@
 //! One sandboxed Lua 5.1 VM per app.
 //!
-//! The VM is a bare `agentos-luavm` engine with the app's own environment table (see
-//! `agentos_luavm::lua::app_env`): the prelude's polyfills, the `app` capability table and a `require` that
+//! The VM is a bare `neoc-vm` engine with the app's own environment table (see
+//! `neoc_vm::lua::script_env`): the prelude's polyfills, the `app` capability table and a `require` that
 //! knows only the host modules. Nothing in it is budgeted (no CPU, memory or time limits: the host is a
 //! homelab's own and apps are meant to do real work); it then runs the app's entry. After that the host
 //! calls into it: tools, write-back callbacks, events. One call runs in a VM at a time (an app is
@@ -20,13 +20,13 @@ use agentos_application::{
     ports::{AgentCard, AgentRoster, AppData, AppPackage, CallContext, MenuCommand, ViewEffect},
 };
 use agentos_domain::{time, tool_schema, AppDecl, AppId, Notification, ToolSpec};
-use agentos_luavm::mlua;
-use agentos_luavm::{
+use neoc_vm::mlua;
+use neoc_vm::{
     lua::{
-        app_env,
         lib::log::set_log_sink,
         lifecycle::{self, set_entry, Baton, BoxFuture, CallEntry, IdleKind, Inherited, Life},
-        sandbox::{install_runtime_state, load_source, make_bare_engine},
+        sandbox::{install_runtime_state, load_source, make_bare_engine, set_worker_engine},
+        script_env,
     },
     mlua::{Function, Lua, Table, Value as LuaValue},
 };
@@ -291,7 +291,16 @@ impl Shared {
 }
 
 /// Where a call came from, which decides what restricts it.
+/// What the VM carries from a call to the work it starts (`Inherited`): the read-only restriction, which is
+/// the adapter's policy, not the library's.
 #[derive(Clone, Copy)]
+struct ReadOnly(bool);
+
+fn inherits_read_only(from: &Inherited) -> bool {
+    from.get::<ReadOnly>().is_some_and(|r| r.0)
+}
+
+#[derive(Clone)]
 enum Via {
     /// Through the host (a tool, an event, a write-back): `read_only` is what the caller requires.
     Host { read_only: bool },
@@ -311,7 +320,7 @@ struct Parked {
 /// `readOnly` flag and state tracking are unambiguous. Ending a call, or abandoning it (its caller gave up),
 /// rolls back a transaction it left open, so the database's write gate is free the moment the call is over.
 ///
-/// It is also the call's *baton* (see `agentos_luavm::lua::lifecycle`): at a wait that does not use the VM
+/// It is also the call's *baton* (see `neoc_vm::lua::lifecycle`): at a wait that does not use the VM
 /// (`task.wait`, the network, a worker) the call sets its own state aside and lets the next call in, then
 /// takes the gate and its state back.
 pub(crate) struct Turn {
@@ -347,7 +356,7 @@ impl Turn {
         let held = gate.clone().lock_owned().await;
         let (inbound, read_only) = match via {
             Via::Host { read_only } => (false, read_only),
-            Via::Task(from) => (true, from.read_only),
+            Via::Task(from) => (true, inherits_read_only(&from)),
             // The count is read before the flag. Stopping sets the flag before it aborts anything, and aborting is
             // what removes a read-only call from the count, so a request that finds the count empty because its
             // caller was cut off finds the flag set.
@@ -424,7 +433,7 @@ impl Baton for Turn {
     }
 
     fn inherited(&self) -> Inherited {
-        Inherited { read_only: self.read_only }
+        Inherited::new(ReadOnly(self.read_only))
     }
 
     fn can_park(&self) -> std::result::Result<(), String> {
@@ -507,7 +516,7 @@ struct Entry {
 
 impl CallEntry for Entry {
     fn detached(&self, inherited: Inherited) -> Box<dyn Baton> {
-        Box::new(Turn::detached(self.shared.clone(), self.gate.clone(), inherited.read_only))
+        Box::new(Turn::detached(self.shared.clone(), self.gate.clone(), inherits_read_only(&inherited)))
     }
 
     fn enter(&self, inherited: Inherited) -> BoxFuture<'static, Box<dyn Baton>> {
@@ -563,6 +572,20 @@ impl AppVm {
         // what the `std:`/`lib:`/`vnd:` modules keep per VM (the task scheduler, the registry of what the app
         // spawns), and where `lib:log` writes: the host's tracing, with the app's id
         install_runtime_state(&lua, life.clone());
+        // a `std:thread` worker an app starts is offered what the app is offered: the library's module list
+        // without the ones an app is not given (`require::NOT_FOR_APPS`)
+        set_worker_engine(
+            &lua,
+            Arc::new(|life| {
+                let lua = make_bare_engine()?;
+                install_runtime_state(&lua, life);
+                let offered: Vec<&str> = neoc_vm::lua::modules::names()
+                    .filter(|name| !crate::require::NOT_FOR_APPS.contains(name))
+                    .collect();
+                neoc_vm::lua::modules::install_allowed(&lua, &offered)?;
+                Ok(lua)
+            }),
+        );
         let log_app = app.clone();
         set_log_sink(
             &lua,
@@ -611,7 +634,7 @@ impl AppVm {
         // a request to the app's own server or the next slice of one of its tasks takes its turn like any call
         set_entry(&lua, Arc::new(Entry { shared: shared.clone(), gate: gate.clone() }));
 
-        let env = app_env::new_env(&lua).map_err(|e| load_err(&e))?;
+        let env = script_env::new_env(&lua).map_err(|e| load_err(&e))?;
         let vm = Self { app: app.clone(), lua, shared, gate };
         vm.in_call(false, vm.boot(env)).await.map_err(|e| match e {
             BootError::Lua(e) => load_err(&e),
@@ -627,7 +650,7 @@ impl AppVm {
             .set_name("=prelude")
             .set_environment(env.clone())
             .call::<()>(env.clone())?;
-        app_env::freeze(&self.lua, &env)?;
+        script_env::freeze(&self.lua, &env)?;
         *self.shared.env.lock() = Some(env.clone());
         api::install(&self.lua, &self.shared, &env)?;
         let entry = self.shared.package.entry.clone();
@@ -875,7 +898,7 @@ mod tests {
     async fn a_request_that_arrives_once_the_background_work_is_stopped_is_read_only() {
         let vm = vm().await;
         let entry = Entry { shared: vm.shared.clone(), gate: vm.gate.clone() };
-        let read_only = || async { entry.request().await.inherited().read_only };
+        let read_only = || async { inherits_read_only(&entry.request().await.inherited()) };
         assert!(!read_only().await, "control: with no read-only call acting a request is an ordinary one");
 
         // a reload begins: the listeners are gone, and what is left reaching the server is the straggler of a call
@@ -892,7 +915,7 @@ mod tests {
         // control: before the shutdown both take their turn at once
         drop(tokio::time::timeout(patience, entry.request()).await.expect("a request takes its turn"));
         drop(
-            tokio::time::timeout(patience, entry.enter(Inherited { read_only: false }))
+            tokio::time::timeout(patience, entry.enter(Inherited::new(ReadOnly(false))))
                 .await
                 .expect("a task takes its turn"),
         );
@@ -906,7 +929,7 @@ mod tests {
             "a request ran after the shutdown"
         );
         assert!(
-            tokio::time::timeout(patience, entry.enter(Inherited { read_only: false })).await.is_err(),
+            tokio::time::timeout(patience, entry.enter(Inherited::new(ReadOnly(false)))).await.is_err(),
             "a task ran after the shutdown"
         );
         tokio::time::timeout(patience, vm.in_call(false, async {})).await.expect("the gate is free");

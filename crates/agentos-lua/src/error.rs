@@ -1,6 +1,6 @@
 //! Errors from app code: reported with the app's file and line, never a panic in the host.
 
-use agentos_luavm::mlua;
+use neoc_vm::mlua;
 use std::fmt;
 
 /// A failure inside app code (or a host call it made).

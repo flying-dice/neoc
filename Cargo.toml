@@ -19,7 +19,6 @@ neoc-vm = { path = "crates/neoc-vm" }
 agentos-domain      = { path = "crates/agentos-domain" }
 agentos-application = { path = "crates/agentos-application" }
 agentos-lua        = { path = "crates/agentos-lua" }
-agentos-luavm       = { path = "crates/agentos-luavm" }
 agentos-sqlite      = { path = "crates/agentos-sqlite" }
 agentos-fetch       = { path = "crates/agentos-fetch" }
 agentos-mcp         = { path = "crates/agentos-mcp" }
@@ -30,8 +29,6 @@ agentos-codegen     = { path = "crates/agentos-codegen" }
 # external
 anyhow      = "1.0"
 async-trait = "0.1"
-# Standard PUC Lua 5.1, vendored (agentos-luavm). Never `luau` here: the two features cannot coexist.
-mlua        = { version = "0.12.2", features = ["lua51", "vendored", "async", "serialize", "send", "macros"] }
 notify      = "8.2"
 parking_lot = "0.12"
 rusqlite    = { version = "0.43.0", features = ["bundled", "hooks", "limits"] }

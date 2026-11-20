@@ -2,7 +2,8 @@
 name = "agentos-agui"
 description = "Adapter: the /agui HTTP + SSE endpoints for agent chats (events and run input live in the domain)."
 version.workspace = true
-edition.workspace = true
+edition = "2021"
+rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]

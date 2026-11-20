@@ -1,4 +1,4 @@
-//! Driven adapter: Lua 5.1 apps (mlua, on `agentos-luavm`) behind the `AppRuntime` port.
+//! Driven adapter: Lua 5.1 apps (mlua, on `neoc-vm`) behind the `AppRuntime` port.
 //!
 //! One VM per app, with the host-provided `app` table (see [`api`]), a `require` for `@agentos/app`, `@agentos/ui`
 //! and every `std:`/`lib:`/`vnd:` module of the VM library, tracked `app.state`, one call at a time per VM

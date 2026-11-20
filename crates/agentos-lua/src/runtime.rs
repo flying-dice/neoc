@@ -13,8 +13,8 @@ use agentos_application::{
     PortError,
 };
 use agentos_domain::AppId;
-use agentos_luavm::lua::lifecycle::Life;
 use async_trait::async_trait;
+use neoc_vm::lua::lifecycle::Life;
 use parking_lot::RwLock;
 use serde_json::{Map, Value};
 use std::{

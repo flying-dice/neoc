@@ -19,7 +19,7 @@ use agentos_application::{
     data::{DataTx, ExecOutcome, Params, PortResult},
     PortError,
 };
-use agentos_luavm::lua::lifecycle::Life;
+use neoc_vm::lua::lifecycle::Life;
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 

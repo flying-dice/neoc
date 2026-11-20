@@ -21,8 +21,8 @@ use crate::{
     vm::{Effect, Shared, ShellEffect},
 };
 use agentos_application::PortError;
-use agentos_luavm::mlua;
-use agentos_luavm::mlua::Lua;
+use neoc_vm::mlua;
+use neoc_vm::mlua::Lua;
 use std::{future::Future, sync::Arc};
 
 /// Install the `app` table and `require` into the app's environment (they are globals of its chunks, not of

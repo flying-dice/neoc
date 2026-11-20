@@ -7,8 +7,8 @@
 //! Values are held as Lua values (functions and tables are fine), but only assignment to a field is
 //! tracked: change a nested table by assigning the field again.
 
-use agentos_luavm::mlua;
-use agentos_luavm::mlua::{Function, Lua, Table, Value as LuaValue};
+use neoc_vm::mlua;
+use neoc_vm::mlua::{Function, Lua, Table, Value as LuaValue};
 use parking_lot::Mutex;
 use std::{
     collections::BTreeSet,

@@ -43,9 +43,9 @@ async fn none_of_the_escape_hatches_exist_in_the_apps_environment() {
 
 #[tokio::test]
 async fn text_only_loading_binary_chunks_never_run() {
-    let bytecode = agentos_luavm::mlua::Lua::new()
+    let bytecode = neoc_vm::mlua::Lua::new()
         .load("return string.dump(function() return 7 end)")
-        .eval::<agentos_luavm::mlua::LuaString>()
+        .eval::<neoc_vm::mlua::LuaString>()
         .unwrap()
         .as_bytes()
         .to_vec();

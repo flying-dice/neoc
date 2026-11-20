@@ -2,7 +2,8 @@
 name = "agentos-http"
 description = "Adapter: axum. /rpc JSON-RPC-over-WebSocket peer (+ Origin/Host guard) and static serving of the built client."
 version.workspace = true
-edition.workspace = true
+edition = "2021"
+rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]

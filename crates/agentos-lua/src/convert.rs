@@ -9,8 +9,8 @@
 //!   error instead of gigabytes of JSON that no Lua table accounts for.
 
 use agentos_application::data::Params;
-use agentos_luavm::mlua;
-use agentos_luavm::mlua::{Lua, Table, Value as LuaValue};
+use neoc_vm::mlua;
+use neoc_vm::mlua::{Lua, Table, Value as LuaValue};
 use serde_json::{Map, Number, Value};
 use std::collections::HashSet;
 

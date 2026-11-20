@@ -2,7 +2,8 @@
 name = "agentos-application"
 description = "Ports (traits) + use cases. Depends on the domain and nothing else but async-trait/serde_json/thiserror."
 version.workspace = true
-edition.workspace = true
+edition = "2021"
+rust-version.workspace = true
 publish.workspace = true
 
 [features]

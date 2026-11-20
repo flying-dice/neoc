@@ -25,9 +25,9 @@ use agentos_application::{
     data::{ExecOutcome, Params, QueryInfo, SqlMigration},
     live::{Conflict, SourceDef, SourceId, SourceKind, TotalMode},
 };
-use agentos_luavm::lua::lifecycle::{async_function, turn_id, Role};
-use agentos_luavm::mlua;
-use agentos_luavm::mlua::{FromLuaMulti, Function, IntoLuaMulti, Lua, Table, Value as LuaValue};
+use neoc_vm::lua::lifecycle::{async_function, turn_id, Role};
+use neoc_vm::mlua;
+use neoc_vm::mlua::{FromLuaMulti, Function, IntoLuaMulti, Lua, Table, Value as LuaValue};
 use serde_json::{json, Value};
 use std::{future::Future, sync::Arc};
 

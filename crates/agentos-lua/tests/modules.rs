@@ -11,8 +11,8 @@ use agentos_application::{
 };
 use agentos_domain::{AppId, Notification};
 use agentos_lua::LuaRuntime;
-use agentos_luavm::lua::modules;
 use common::{agent_ctx, built_package, db, id, load, package};
+use neoc_vm::lua::modules;
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 use std::{
