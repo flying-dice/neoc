@@ -15,6 +15,15 @@
 //! db:close()
 //! ```
 //!
+//! ## One statement per call
+//!
+//! `execute`, `query` and `query_one` (on a `Database` and on a `Statement`)
+//! take exactly one SQL statement. A second statement is an error
+//! (`rusqlite.execute: Multiple statements provided`), as is SQL that is empty
+//! or only a comment (`SQL is empty or comment only`). rusqlite 0.32 silently
+//! ran the first statement and dropped the rest. There is no `execute_batch`:
+//! run a script one statement per call.
+//!
 //! ## Why sync (and not async)
 //!
 //! libsqlite3 is a synchronous C library — every call returns instantly with
