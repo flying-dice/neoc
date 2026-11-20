@@ -153,17 +153,26 @@ const CASES: &[Case] = &[
     (
         "tostring_resumes_a_coroutine_that_fails_with_the_same_value",
         || {
-            // `error_traceback_thread` -> `__tostring` -> a coroutine failing with the same value -> ... through mlua
+            // `error_traceback_thread` -> `__tostring` -> `Thread::resume` (a host function, so the resume goes
+            // through mlua: Lua's own `coroutine.resume` never calls `__tostring`) of a coroutine failing with the
+            // same value -> `error_traceback_thread` -> ... The recursion is mlua's, one nested resume per level
             let lua = make_engine().unwrap();
+            lua.globals()
+                .set(
+                    "RESUME",
+                    lua.create_function(|_, thread: Thread| thread.resume::<()>(()))
+                        .unwrap(),
+                )
+                .unwrap();
             let thread: Thread = lua
                 .load(
                     r#"local mt = {}
-                   mt.__tostring = function(self)
-                     local co = coroutine.create(function() error(setmetatable({}, mt)) end)
-                     coroutine.resume(co)
-                     return "x"
-                   end
-                   return coroutine.create(function() error(setmetatable({}, mt)) end)"#,
+                       mt.__tostring = function(self)
+                         local co = coroutine.create(function() error(setmetatable({}, mt)) end)
+                         pcall(RESUME, co)
+                         return "x"
+                       end
+                       return coroutine.create(function() error(setmetatable({}, mt)) end)"#,
                 )
                 .eval()
                 .unwrap();

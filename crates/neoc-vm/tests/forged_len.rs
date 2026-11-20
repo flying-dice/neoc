@@ -1,9 +1,12 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test harness
-//! `#t` of a table is whatever border Lua finds, and a script can forge a table whose `#` is 2^29 while it holds
-//! four rows. A buffer presized from it asks the allocator for gigabytes, and a failed allocation aborts the host
-//! (on a machine that cannot back the request: a laptop overcommits, so the call below passes there even when the
-//! code is wrong). A test allocator would need `unsafe` to see the request, which the crate does not use; instead
-//! [`no_buffer_is_presized_from_a_table_length`] reads the source of the crate for the pattern.
+//! `#t` of a table is whatever border Lua finds. On LuaJIT a script could forge a table whose `#` was 2^29 while it
+//! held four rows, and a buffer presized from it asked the allocator for gigabytes: a failed allocation aborts the
+//! host (on a machine that cannot back the request; a laptop overcommits, so a call passes there even when the code
+//! is wrong). Luau's `#` does not probe the hash part for a chain of integer keys, so the same forgery reports a small
+//! border there: [`a_table_that_claims_a_huge_length_does_not_size_a_buffer`] checks that, as a canary (red if a
+//! forged `#` is possible again), and still runs the functions over the forged table. A test allocator would need
+//! `unsafe` to see the request, which the crate does not use; instead [`no_buffer_is_presized_from_a_table_length`]
+//! reads the source of the crate for the pattern.
 
 use neoc_vm::lua::sandbox::make_engine;
 
@@ -28,9 +31,10 @@ fn a_table_that_claims_a_huge_length_does_not_size_a_buffer() {
         .load(format!("{FORGE} return #huge('x')"))
         .eval()
         .unwrap();
+    // on LuaJIT this was 335544320 (the premise of the test); Luau reports the border it finds in the array part
     assert!(
-        forged > 1e8,
-        "the forged table reports {forged}: the test would prove nothing"
+        forged < 1e6,
+        "the forged table reports {forged}: a forged `#` is possible again, so the calls below size buffers from it"
     );
     // every function of lib:diff and lib:args that reads a table of rows or arguments
     lua.load(format!(
