@@ -12,6 +12,7 @@ use http_body_util::{BodyExt, Full};
 use hyper::{Request as HyperRequest, Uri};
 use hyper_util::rt::TokioIo;
 use mlua::{Lua, Table, Value};
+use std::future::Future;
 use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio_rustls::{
@@ -21,60 +22,83 @@ use tokio_rustls::{
         pki_types::{CertificateDer, ServerName, pem::PemObject},
     },
 };
-use tracing::instrument;
+use tracing::Instrument;
 
 use crate::lua::sandbox::{from_err, ok};
 
-#[instrument(name = "hyper.get", target = "lua::lib::hyper", skip_all)]
-pub(super) async fn get(
+// Each entry point reads its options table in the synchronous part of the call, before it builds the future that
+// performs the request. A script table can run script code when it is read (a `__index`), which can call the same
+// entry point again: read inside the future, every level would stack another polled future on the C stack (about
+// 20 KiB a level in release, about 150 KiB in debug, with Luau's C-call limit at 200 levels), and read here each
+// level is a few hundred bytes. `thread.spawn` reads its options the same way (`prepare_spawn`).
+
+type Request = (
+    &'static str,
+    String,
+    String,
+    Option<Vec<u8>>,
+    Vec<(String, String)>,
+    Option<String>,
+);
+
+pub(super) fn get(
     lua: Lua,
     (url, opts): (String, Option<Table>),
+) -> impl Future<Output = mlua::Result<(Value, Value)>> + Send + 'static {
+    let prepared: Result<Request, String> = opts.as_ref().map(ca_from_opts).transpose().map(|ca| {
+        (
+            "hyper.get",
+            "GET".into(),
+            url,
+            None,
+            Vec::new(),
+            ca.flatten(),
+        )
+    });
+    send(lua, "hyper.get", prepared)
+}
+
+pub(super) fn post(
+    lua: Lua,
+    opts: Table,
+) -> impl Future<Output = mlua::Result<(Value, Value)>> + Send + 'static {
+    let prepared = extract_opts(&opts).map(|(url, body, headers, ca_pem)| {
+        ("hyper.post", "POST".into(), url, body, headers, ca_pem)
+    });
+    send(lua, "hyper.post", prepared)
+}
+
+pub(super) fn request(
+    lua: Lua,
+    opts: Table,
+) -> impl Future<Output = mlua::Result<(Value, Value)>> + Send + 'static {
+    let prepared = opts
+        .get::<String>("method")
+        .map_err(|e| e.to_string())
+        .and_then(|method| {
+            extract_opts(&opts).map(|(url, body, headers, ca_pem)| {
+                ("hyper.request", method, url, body, headers, ca_pem)
+            })
+        });
+    send(lua, "hyper.request", prepared)
+}
+
+/// The future of a prepared request, or the `(nil, err)` of options that could not be read. Holds no script table.
+async fn send(
+    lua: Lua,
+    prefix: &'static str,
+    prepared: Result<Request, String>,
 ) -> mlua::Result<(Value, Value)> {
-    let ca_pem = match opts.as_ref().map(ca_from_opts).transpose() {
-        Ok(ca) => ca.flatten(),
-        Err(e) => return from_err(&lua, "hyper.get", e),
-    };
-    perform(
-        &lua,
-        "hyper.get",
-        "GET".into(),
-        url,
-        None,
-        Vec::new(),
-        ca_pem,
-    )
-    .await
-}
-
-#[instrument(name = "hyper.post", target = "lua::lib::hyper", skip_all)]
-pub(super) async fn post(lua: Lua, opts: Table) -> mlua::Result<(Value, Value)> {
-    let (url, body, headers, ca_pem) = match extract_opts(&opts) {
-        Ok(parts) => parts,
-        Err(e) => return from_err(&lua, "hyper.post", e),
-    };
-    perform(
-        &lua,
-        "hyper.post",
-        "POST".into(),
-        url,
-        body,
-        headers,
-        ca_pem,
-    )
-    .await
-}
-
-#[instrument(name = "hyper.request", target = "lua::lib::hyper", skip_all)]
-pub(super) async fn request(lua: Lua, opts: Table) -> mlua::Result<(Value, Value)> {
-    let method: String = match opts.get("method") {
-        Ok(v) => v,
-        Err(e) => return from_err(&lua, "hyper.request", e),
-    };
-    let (url, body, headers, ca_pem) = match extract_opts(&opts) {
-        Ok(parts) => parts,
-        Err(e) => return from_err(&lua, "hyper.request", e),
-    };
-    perform(&lua, "hyper.request", method, url, body, headers, ca_pem).await
+    match prepared {
+        Ok((prefix, method, url, body, headers, ca_pem)) => {
+            perform(&lua, prefix, method, url, body, headers, ca_pem)
+                .instrument(
+                    tracing::info_span!(target: "lua::lib::hyper", "hyper.client", call = prefix),
+                )
+                .await
+        }
+        Err(e) => from_err(&lua, prefix, e),
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -27,6 +27,10 @@ const STRIPPED_GLOBALS: &[&str] = &[
     "gcinfo",
     "require",
     "string.dump",
+    // Luau's `coroutine.close` kills a suspended thread whoever made it: in `neoc run` that is a task's thread, whose
+    // `await` would then return nothing at all. LuaJIT had none. The function is kept for a script environment, whose
+    // `close` holds it to the ownership rule of `resume` (see `STASHED_CLOSE`).
+    "coroutine.close",
     "io",
     "os",
     "package",
@@ -140,6 +144,7 @@ fn base_engine() -> mlua::Result<Lua> {
         StdLib::COROUTINE | StdLib::TABLE | StdLib::STRING | StdLib::MATH | StdLib::BIT,
         mlua::LuaOptions::new(),
     )?;
+    stash_coroutine_close(&lua)?;
     strip_unsafe_globals(&lua)?;
     Ok(lua)
 }
@@ -160,9 +165,67 @@ fn lock_string_metatable(lua: &Lua) -> mlua::Result<()> {
 /// Luau's loader checks the bytecode version and does not verify the instructions (LuaJIT's did not either), so a
 /// crafted chunk is treated as able to corrupt memory: every entry point that runs script-supplied source goes
 /// through here and refuses binary chunks.
+///
+/// A leading UTF-8 byte-order mark is dropped and a first line that starts with `#` (a shebang) is blanked, with its
+/// newline kept so line numbers do not move: LuaJIT's loader skipped both, Luau's lexer rejects both, and `neoc run
+/// script.lua` of an executable script with `#!/usr/bin/env neoc` must go on working (see [`prepare_script`]).
 #[track_caller]
 pub fn load_source<'a>(lua: &Lua, source: impl AsChunk + 'a) -> Chunk<'a> {
-    lua.load(source).set_mode(ChunkMode::Text)
+    lua.load(Prepared(source)).set_mode(ChunkMode::Text)
+}
+
+/// `source` without a leading UTF-8 byte-order mark, and with a first line that starts with `#` emptied (its newline
+/// stays, so line numbers are those of the file).
+#[must_use]
+pub fn prepare_script(source: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    let without_bom = source.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(source);
+    if without_bom.first() == Some(&b'#') {
+        let rest = without_bom
+            .iter()
+            .position(|&b| b == b'\n')
+            .map_or(&[][..], |newline| &without_bom[newline..]);
+        return std::borrow::Cow::Owned(rest.to_vec());
+    }
+    std::borrow::Cow::Borrowed(without_bom)
+}
+
+/// A chunk source passed through [`prepare_script`].
+struct Prepared<S>(S);
+
+impl<S: AsChunk> AsChunk for Prepared<S> {
+    fn name(&self) -> Option<String> {
+        self.0.name()
+    }
+
+    fn environment(&self, lua: &Lua) -> mlua::Result<Option<mlua::Table>> {
+        self.0.environment(lua)
+    }
+
+    fn mode(&self) -> Option<ChunkMode> {
+        self.0.mode()
+    }
+
+    fn source<'a>(&self) -> std::io::Result<std::borrow::Cow<'a, [u8]>>
+    where
+        Self: 'a,
+    {
+        Ok(match self.0.source()? {
+            std::borrow::Cow::Borrowed(bytes) => prepare_script(bytes),
+            std::borrow::Cow::Owned(bytes) => {
+                std::borrow::Cow::Owned(prepare_script(&bytes).into_owned())
+            }
+        })
+    }
+}
+
+/// Where the registry keeps Luau's own `coroutine.close`, taken out of `coroutine` before the strip: the script
+/// environment's `close` (`async_coroutines.lua`) calls it after its ownership check.
+pub(crate) const STASHED_CLOSE: &str = "neoc.coroutine_close";
+
+fn stash_coroutine_close(lua: &Lua) -> mlua::Result<()> {
+    let coroutine: mlua::Table = lua.globals().raw_get("coroutine")?;
+    let close: Value = coroutine.raw_get("close")?;
+    lua.set_named_registry_value(STASHED_CLOSE, close)
 }
 
 fn strip_unsafe_globals(lua: &Lua) -> mlua::Result<()> {
@@ -332,7 +395,7 @@ mod tests {
              'collectgarbage', 'gcinfo', 'io', 'os', 'package', 'debug', 'utf8', 'buffer', 'vector', 'integer' }";
         let probe = format!(
             "local found = {{}} for _, n in ipairs({names}) do if _G[n] ~= nil then found[#found + 1] = n end end \
-             if string.dump then found[#found + 1] = 'string.dump' end return table.concat(found, ',') .. '|' .. type(require)"
+             if string.dump then found[#found + 1] = 'string.dump' end if coroutine.close then found[#found + 1] = 'coroutine.close' end return table.concat(found, ',') .. '|' .. type(require)"
         );
         let full: String = make_engine().unwrap().load(&probe).eval().unwrap();
         assert_eq!(
@@ -387,6 +450,47 @@ mod tests {
             .expect_err("bytecode must not load")
             .to_string();
         assert!(err.contains("binary"), "got: {err}");
+    }
+
+    #[test]
+    fn given_a_shebang_or_a_byte_order_mark_when_loaded_as_source_then_it_runs_and_lines_stay() {
+        let lua = engine();
+        for (name, source) in [
+            (
+                "shebang",
+                "#!/usr/bin/env neoc\nreturn debug_line()".to_owned(),
+            ),
+            ("bom", "\u{feff}return debug_line()".to_owned()),
+            (
+                "bom and shebang",
+                "\u{feff}#!/usr/bin/env neoc\nreturn debug_line()".to_owned(),
+            ),
+        ] {
+            lua.globals()
+                .set("debug_line", lua.create_function(|_, ()| Ok(1)).unwrap())
+                .unwrap();
+            let n: i64 = load_source(&lua, &source)
+                .eval()
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!(n, 1, "{name}");
+        }
+        // the shebang line keeps its newline, so an error on line 2 says line 2
+        let err = load_source(&lua, "#!/usr/bin/env neoc\nerror('boom')")
+            .set_name("=script")
+            .exec()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("script:2: boom"), "{err}");
+        // a file that is only a shebang, with or without a newline
+        for source in ["#!x", "#!x\n", "\u{feff}#!x"] {
+            load_source(&lua, source)
+                .exec()
+                .unwrap_or_else(|e| panic!("{source:?}: {e}"));
+        }
+        // only the first line: a later `#` is still a syntax error
+        assert!(load_source(&lua, "return 1\n#!x").exec().is_err());
+        // bytecode still starts with its version byte and is still refused
+        assert!(load_source(&lua, luau_bytecode()).exec().is_err());
     }
 
     #[test]

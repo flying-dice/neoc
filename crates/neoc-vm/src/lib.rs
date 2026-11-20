@@ -8,3 +8,6 @@ pub mod lua;
 /// The `mlua` this crate is built on, re-exported so a program that embeds the VM names the one binding (and
 /// version) the engine, the modules and the hooks in [`lua::lifecycle`] speak.
 pub use mlua;
+
+/// The stack every thread that polls a VM needs; see [`lua::lifecycle::VM_THREAD_STACK`].
+pub use lua::lifecycle::VM_THREAD_STACK;

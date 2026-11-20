@@ -33,9 +33,9 @@
 -- or a module makes internally has to be found and marked: the host machinery uses the raw primitives captured below.
 -- A coroutine of its own is refused only while somebody else drives it (`driven`, see `is_driven`).
 
-local pending, raw, driven, owned = ...
+local pending, raw, driven, owned, close = ...
 local select, unpack, error, type = select, unpack, error, type
-local create, resume, yield, status, running, close = raw.create, raw.resume, raw.yield, raw.status, raw.running, raw.close
+local create, resume, yield, status, running = raw.create, raw.resume, raw.yield, raw.status, raw.running
 
 -- A coroutine whose host call is in flight is *running*, as far as the script can tell: the thread that resumed it
 -- waits for it. `driven` (a table with weak keys *and* weak values, shared with the task scheduler) maps such a
@@ -109,10 +109,11 @@ end
 
 -- `coroutine.close` is Luau's (LuaJIT had none): it kills a suspended coroutine, so it is held to the same rule as
 -- `resume`: a script closes only what it made and nobody else drives (a scheduler task's thread, or the thread of
--- another call, would otherwise be killed from outside).
+-- another call, would otherwise be killed from outside, and a task's `await` would return neither a value nor an
+-- error). `close` is the function `sandbox::base_engine` stashed before it stripped `coroutine.close` from the engine.
 function M.close(co)
   if type(co) ~= "thread" then
-    return close(co) -- Luau's own "bad argument"
+    return close(co) -- Luau's own "invalid argument #1 to 'close'"
   end
   if not resumable(co) then
     error("cannot close a coroutine that is not yours", 2)

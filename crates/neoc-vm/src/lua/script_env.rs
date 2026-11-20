@@ -11,16 +11,18 @@
 //!   `setfenv`, `newproxy`, `collectgarbage`, `require`, `print` (it writes to the process's stdout), no `typeof`
 //!   (it names the host's userdata types, where `type` says `userdata`) and no `os`/`debug`/`buffer`/`vector`/`utf8`;
 //! - the **libraries** (`string`, `table`, `math`, `coroutine`, `bit32`) are private copies (`coroutine.create`,
-//!   `resume` and `wrap` are versions that let an async host call run inside a coroutine of the script's own and
-//!   let a script resume only the coroutines it made, see `async_coroutines.lua`), so the host may add
+//!   `resume`, `wrap` and `close` are versions that let an async host call run inside a coroutine of the script's own
+//!   and let a script resume or close only the coroutines it made, see `async_coroutines.lua`; `neoc run`'s engine has
+//!   no `coroutine.close` at all), so the host may add
 //!   its own functions to them before [`freeze`], and the script can never reach the
 //!   engine's own shared tables;
 //! - [`freeze`] then marks every library in the environment read-only with Luau's own `readonly` table flag:
-//!   assigning to it, `rawset`, `table.insert`, `table.sort`, `table.move`, `table.clear` and `table.freeze`, and
-//!   `setmetatable` on it, all fail with "attempt to modify a readonly table" (`table.remove` too, except that on a table
+//!   assigning to it, `rawset`, `table.insert`, `table.sort`, `table.move`, `table.clear` and `setmetatable` on it
+//!   all fail with "attempt to modify a readonly table" (`table.freeze` says "table is already frozen"; `table.remove` too, except that on a table
 //!   with no array part, which a library is, it removes nothing and raises nothing). LuaJIT had no such flag: the
 //!   libraries were empty proxies behind a guarded `rawset` and guarded `table` writers, which Luau makes redundant,
-//!   and `pairs(string)` saw nothing; it sees the functions now. The flag is set on the table itself, not on a proxy.
+//!   and `pairs(string)` saw nothing; it sees the functions now. The flag is set on the table itself, except for a
+//!   host table that has a metatable, which is replaced by a read-only proxy (see [`freeze`]).
 //!
 //! The string metatable is a different matter: it is shared by every string in the engine, and
 //! [`make_bare_engine`](crate::lua::sandbox::make_bare_engine) locks it.
@@ -170,7 +172,7 @@ fn splitmix(x: u64) -> u64 {
 }
 
 /// Replace `create`, `resume`, `wrap` and `close` in the script's copy of `coroutine` with versions that let an async host call
-/// inside a coroutine of the script's own reach the executor, and that refuse to resume a coroutine the script did not
+/// inside a coroutine of the script's own reach the executor, and that refuse to resume or close a coroutine the script did not
 /// make (see `async_coroutines.lua`).
 fn install_async_coroutines(lua: &Lua, copy: &Table, raw: &Table) -> mlua::Result<()> {
     let pending = Value::LightUserData(Lua::poll_pending());
@@ -182,9 +184,10 @@ fn install_async_coroutines(lua: &Lua, copy: &Table, raw: &Table) -> mlua::Resul
     let driven = weak_table(lua, "kv")?;
     lua.set_named_registry_value(OWNED, owned.clone())?;
     lua.set_named_registry_value(DRIVEN, driven.clone())?;
+    let close: Value = lua.named_registry_value(crate::lua::sandbox::STASHED_CLOSE)?;
     let wrappers: Table = load_source(lua, include_str!("async_coroutines.lua"))
         .set_name("=async_coroutines")
-        .call((pending, raw.clone(), driven, owned))?;
+        .call((pending, raw.clone(), driven, owned, close))?;
     for name in ["create", "resume", "wrap", "close"] {
         copy.raw_set(name, wrappers.raw_get::<Value>(name)?)?;
     }
@@ -252,28 +255,63 @@ pub fn mark_driven(lua: &Lua, thread: &mlua::Thread) -> mlua::Result<()> {
     driven.raw_set(thread.clone(), true)
 }
 
-/// Seal `env`: every table in it other than `_G` becomes read-only (Luau's `readonly` table flag).
-/// Call it after the host's own additions and before the script runs.
+/// Seal `env`: every table in it other than `_G` becomes read-only. Call it after the host's own additions and
+/// before the script runs.
+///
+/// A table with no metatable (the libraries) is flagged `readonly` itself. A table **with** a metatable (an object the
+/// host added, with `__index` methods or a `__newindex`) is replaced in the environment by a read-only proxy over it:
+/// the flag alone would leave the script `getmetatable(host).__index = ...` (a write the host's own table and every
+/// other environment holding it would see) and a `__newindex` function that takes writes to absent keys past the flag.
+/// The proxy is empty, reads through to the table, refuses every write, and locks its metatable (`getmetatable`
+/// answers a string), as every library was behind a proxy on LuaJIT. (A plain table is flagged *itself*, not wrapped:
+/// an embedder that shares one between environments, or changes it later, gets a read-only table everywhere, and its
+/// own `set` fails on it.)
 ///
 /// # Errors
-/// None today; the `Result` is kept so that a failure to seal (an engine without the flag) stays an error.
-pub fn freeze(_lua: &Lua, env: &Table) -> mlua::Result<()> {
-    // a key that is not a string is skipped, as it always was; a value that is a table is flagged *itself*, not a
-    // proxy: an embedder that shares one table between environments, or changes it later, gets a read-only table
-    // everywhere, and its own `set` fails on it
-    for (name, value) in env.pairs::<String, Value>().flatten() {
-        if let Value::Table(library) = value
-            && name != "_G"
-        {
-            library.set_readonly(true);
+/// A proxy could not be created.
+pub fn freeze(lua: &Lua, env: &Table) -> mlua::Result<()> {
+    // a key that is not a string or a number is skipped; a number key is its text here (`pairs::<String, _>`)
+    let tables: Vec<(String, Table)> = env
+        .pairs::<String, Value>()
+        .flatten()
+        .filter_map(|(name, value)| match value {
+            Value::Table(table) if name != "_G" => Some((name, table)),
+            _ => None,
+        })
+        .collect();
+    for (name, table) in tables {
+        if table.metatable().is_some() {
+            env.raw_set(name.as_str(), read_only(lua, &name, table)?)?;
+        } else {
+            table.set_readonly(true);
         }
     }
     Ok(())
 }
 
+/// A read-only view of `target`: an empty read-only table whose `__index` is `target`, whose `__newindex` raises, and
+/// whose metatable is locked.
+fn read_only(lua: &Lua, name: &str, target: Table) -> mlua::Result<Table> {
+    let message = format!("attempt to modify the readonly table `{name}`");
+    let meta = lua.create_table()?;
+    meta.raw_set("__index", target)?;
+    meta.raw_set(
+        "__newindex",
+        lua.create_function(move |_, _: mlua::MultiValue| -> mlua::Result<()> {
+            Err(mlua::Error::runtime(message.clone()))
+        })?,
+    )?;
+    meta.raw_set("__metatable", format!("readonly {name}"))?;
+    meta.set_readonly(true);
+    let proxy = lua.create_table()?;
+    proxy.set_metatable(Some(meta))?;
+    proxy.set_readonly(true);
+    Ok(proxy)
+}
+
 #[cfg(test)]
 mod tests {
-    use mlua::{Lua, Table, Value, chunk::ChunkMode};
+    use mlua::{Function, Lua, Table, Value, chunk::ChunkMode};
 
     use super::{freeze, new_env};
     use crate::lua::sandbox::make_bare_engine;
@@ -487,8 +525,9 @@ mod tests {
         assert!(matches!(real, Value::Nil));
     }
 
-    /// `table.insert`, `table.remove`, `table.sort` and `table.move` check Luau's `readonly` flag themselves (LuaJIT's
-    /// stored with raw sets, past a proxy): each is refused on a frozen library, in each spelling, and works on the
+    /// `table.insert`, `table.sort` and `table.move` check Luau's `readonly` flag themselves (LuaJIT's stored with raw
+    /// sets, past a proxy): each is refused on a frozen library, in each spelling (`table.remove` is the exception,
+    /// asserted below: it removes nothing from a table with no array part and raises nothing), and works on the
     /// script's own tables.
     #[test]
     fn the_table_functions_refuse_a_frozen_library_and_work_on_a_plain_table() {
@@ -580,6 +619,56 @@ mod tests {
         assert_eq!(rig.string("return ('x'):rep(3) .. ('Ab'):lower()"), "xxxab");
         let real: Value = rig.lua.load("return string.evil").eval().unwrap();
         assert!(matches!(real, Value::Nil));
+    }
+
+    /// An object the host adds before `freeze` (a table with `__index` methods and a `__newindex`) cannot be changed by
+    /// the script in either of the spellings the readonly flag alone left open.
+    #[test]
+    fn a_host_table_with_a_metatable_cannot_be_rewritten_by_the_script() {
+        let lua = make_bare_engine().expect("engine");
+        let env = new_env(&lua).expect("env");
+        let host: Table = lua
+            .load(
+                "local writes = {} return setmetatable({}, {
+                   __index = { greet = function() return 'hi' end },
+                   __newindex = function(t, k, v) rawset(writes, k, v) end,
+                 })",
+            )
+            .eval()
+            .unwrap();
+        env.set("host", host.clone()).unwrap();
+        freeze(&lua, &env).expect("freeze");
+        let run = |source: &str| {
+            lua.load(source)
+                .set_mode(ChunkMode::Text)
+                .set_environment(env.clone())
+                .eval::<Value>()
+        };
+        // the shared metatable: `getmetatable` answers a string, so there is nothing to write `__index` into
+        for source in [
+            "getmetatable(host).__index = { greet = function() return 'pwned' end }",
+            "getmetatable(host).__index.greet = function() return 'pwned' end",
+            "setmetatable(host, {})",
+        ] {
+            assert!(run(source).is_err(), "{source} must fail");
+        }
+        // a write to an absent key does not reach the host's `__newindex`
+        let err = run("host.injected = 'yes'").unwrap_err().to_string();
+        assert!(err.contains("readonly"), "{err}");
+        assert!(run("rawset(host, 'injected', 'yes')").is_err());
+        let read = |source: &str| match run(source).unwrap() {
+            Value::String(s) => s.to_string_lossy(),
+            other => format!("{other:?}"),
+        };
+        assert_eq!(
+            read("return host.greet() .. tostring(host.injected)"),
+            "hinil"
+        );
+        // and the host's own table, which every other environment would hold, is untouched
+        let greet: Function = host.get("greet").unwrap();
+        assert_eq!(greet.call::<String>(()).unwrap(), "hi");
+        assert!(host.metatable().is_some());
+        assert!(host.raw_get::<Value>("injected").unwrap().is_nil());
     }
 
     #[test]

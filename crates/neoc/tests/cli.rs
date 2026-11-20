@@ -29,6 +29,84 @@ fn run_lua_script_executes() {
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ran lua");
 }
 
+/// LuaJIT's loader skipped a first `#` line and a UTF-8 byte-order mark; Luau's lexer rejects both, so neoc's chunk
+/// loader (`sandbox::load_source`) does it: an executable script and a file saved with a BOM keep running, and an
+/// error on line 3 of a file with a shebang still says line 3.
+#[test]
+fn run_lua_script_with_a_shebang_or_a_bom_executes_and_keeps_its_line_numbers() {
+    let dir = tempdir().unwrap();
+    for (name, source) in [
+        (
+            "shebang.lua",
+            "#!/usr/bin/env neoc\nprint(\"shebang ok\")\n",
+        ),
+        ("bom.lua", "\u{feff}print(\"bom ok\")\n"),
+        (
+            "both.lua",
+            "\u{feff}#!/usr/bin/env neoc\nprint(\"both ok\")\n",
+        ),
+    ] {
+        let src = write(dir.path(), name, source);
+        let out = Command::new(BIN).arg("run").arg(&src).output().unwrap();
+        assert!(
+            out.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains(" ok"),
+            "{name}"
+        );
+    }
+    let src = write(
+        dir.path(),
+        "line3.lua",
+        "#!/usr/bin/env neoc\nlocal x = 1\nerror(\"on line 3\")\n",
+    );
+    let out = Command::new(BIN).arg("run").arg(&src).output().unwrap();
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains(":3: on line 3"),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// `neoc run` builds its runtime with `neoc_vm::VM_THREAD_STACK` and runs the script on a worker: a script that recurses
+/// to Luau's 200-level C limit through Rust host functions ends in an error it can catch, in a debug build too (on
+/// tokio's 2 MiB workers, or the main thread, a nested `Mutex:with_lock` and a `lib:cache` `on_evict` that re-enters the
+/// cache abort the process there).
+#[test]
+fn run_survives_recursion_through_rust_host_functions_on_its_own_threads() {
+    let dir = tempdir().unwrap();
+    let src = write(
+        dir.path(),
+        "nest.lua",
+        r#"local Mutex = require("std:collections").Mutex
+local depth = 0
+local function nest() depth = depth + 1 return Mutex.new():with_lock(nest) end
+local ok = pcall(nest)
+print("with_lock", ok, depth > 100)
+local cache
+local evicted = 0
+cache = require("lib:cache").Cache.new { max_size = 1, on_evict = function() evicted = evicted + 1 cache:set("k" .. evicted, evicted) end }
+cache:set("a", 1)
+local ok2 = pcall(function() cache:set("b", 2) end)
+print("on_evict", ok2, evicted > 100)
+"#,
+    );
+    let out = Command::new(BIN).arg("run").arg(&src).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "status {:?}\nstdout: {stdout}\nstderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(stdout.contains("with_lock\tfalse\ttrue"), "{stdout}");
+    assert!(stdout.contains("on_evict\tfalse\ttrue"), "{stdout}");
+}
+
 #[test]
 fn run_passes_script_args_as_neoc_args() {
     let dir = tempdir().unwrap();
@@ -212,7 +290,7 @@ fn compile_bundle_runs_standalone_with_arguments() {
     write(
         dir.path(),
         "main.lua",
-        "print(\"standalone:\" .. #_NEOC_ARGS .. \":\" .. table.concat(_NEOC_ARGS, \",\"))\n",
+        "#!/usr/bin/env neoc\nprint(\"standalone:\" .. #_NEOC_ARGS .. \":\" .. table.concat(_NEOC_ARGS, \",\"))\n",
     );
     // `bundle` writes exactly the path it is given, so name the output as the
     // platform expects an executable.

@@ -408,6 +408,22 @@ async fn pcall_and_xpcall_suspend_natively_on_the_default_engine() {
     assert_eq!(out.get::<String>("f").unwrap(), "in a task");
 }
 
+/// Luau's `coroutine.close` kills a suspended thread whoever made it. In `neoc run` (no script environment, so no
+/// ownership rule) that would let a script close a task's thread and leave `await` with neither a value nor an error:
+/// the engine has no `close` (LuaJIT had none), and a script environment has the owned one.
+#[test]
+fn the_default_engine_has_no_coroutine_close_and_a_script_environment_has_the_owned_one() {
+    let lua = make_engine().expect("engine");
+    let on_engine: String = lua
+        .load("return type(coroutine.close)")
+        .eval()
+        .expect("script");
+    assert_eq!(on_engine, "nil");
+    let (bare, env) = sealed();
+    let in_env = run_in(&bare, &env, "return type(coroutine.close)").unwrap();
+    assert_eq!(in_env.as_string().unwrap().to_str().unwrap(), "function");
+}
+
 /// Luau runs an `xpcall` handler at the point of the error, once: a handler that fails is not run again with its own
 /// error, the `xpcall` answers `error in error handling` (LuaJIT re-ran it, and a handler that made a protected call
 /// of its own and then failed re-ran itself until the C stack was gone, which needed a per-coroutine bound in the
@@ -590,7 +606,7 @@ fn the_sealed_environment_holds_on_luau() {
     ] {
         assert!(run_in(&lua, &env, write).is_err(), "{write} must fail");
     }
-    // nothing landed in a proxy either
+    // nothing landed in a library
     let landed: f64 = run_in(
         &lua,
         &env,
@@ -694,6 +710,12 @@ async fn a_script_resumes_only_the_coroutines_it_made() {
                local made = { coroutine.resume(mine) }
                local wrapped = coroutine.wrap(function() coroutine.yield(1) return 2 end)
                local closed_own = coroutine.close(mine)
+               -- one of its own that the scheduler drives is not its to close either (it would kill a task from outside)
+               local driven = coroutine.create(function() task.wait(0.3) return "done" end)
+               task.spawn(driven)
+               local close_driven = { pcall(coroutine.close, driven) }
+               -- and a value that is not a thread gets Luau's own argument error
+               local close_number = { pcall(coroutine.close, 7) }
                return {
                  status = status,
                  refused = (not attempt[2]) and (not with_args[2]),
@@ -703,6 +725,8 @@ async fn a_script_resumes_only_the_coroutines_it_made() {
                  ran_at_the_end = ran,
                  made = made[1] and made[2],
                  closed_own = closed_own,
+                 close_driven_refused = (not close_driven[1]) and tostring(close_driven[2]):find("not yours", 1, true) ~= nil,
+                 close_number = tostring(close_number[2]),
                  wrapped = wrapped(),
                }"#,
         )
@@ -716,6 +740,12 @@ async fn a_script_resumes_only_the_coroutines_it_made() {
     assert!(out.get::<bool>("refused").unwrap());
     assert!(out.get::<bool>("close_refused").unwrap());
     assert!(out.get::<bool>("closed_own").unwrap());
+    assert!(out.get::<bool>("close_driven_refused").unwrap());
+    assert!(
+        out.get::<String>("close_number")
+            .unwrap()
+            .contains("invalid argument #1 to 'close'")
+    );
     assert_eq!(
         out.get::<String>("msg").unwrap(),
         "cannot resume non-suspended coroutine"

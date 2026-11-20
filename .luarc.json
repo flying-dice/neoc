@@ -12,6 +12,9 @@
   "diagnostics.disable": [
     "lowercase-global"
   ],
+  "diagnostics.globals": [
+    "bit32"
+  ],
   "diagnostics.unusedLocalExclude": [
     "_*"
   ],

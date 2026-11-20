@@ -146,7 +146,8 @@ fn write_doc(out: &mut String, doc: &str) {
     }
 }
 
-/// Reserved words of Lua 5.1 and of LuaJIT (`goto`): not usable as a
+/// Reserved words of Lua 5.1 and of Lua 5.2+ (`goto`, which the editor tooling may be configured for; Luau treats it
+/// as an identifier): not usable as a
 /// parameter or function name in a definition file.
 const LUA_KEYWORDS: &[&str] = &[
     "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "goto", "if", "in",
@@ -1656,7 +1657,7 @@ mod tests {
         );
     }
 
-    /// Reserved words are escaped in function, parameter and field names (including LuaJIT's `goto`), and a
+    /// Reserved words are escaped in function, parameter and field names (including `goto`, reserved in Lua 5.2+), and a
     /// near miss is left alone.
     #[test]
     fn reserved_words_are_escaped_everywhere() {
@@ -1694,7 +1695,7 @@ mod tests {
             meta.contains("function ud_Thing:then_(until_) end"),
             "{meta}"
         );
-        // the output is still valid LuaJIT
+        // the output is still valid Lua (it loads on the engine, Luau)
         lua.load(meta.as_str()).into_function().expect("valid Lua");
     }
 

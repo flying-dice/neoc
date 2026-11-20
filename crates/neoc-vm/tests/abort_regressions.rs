@@ -1,18 +1,30 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test harness
-//! Recursions that abort the process on LuaJIT and must be an error a script (or the embedder) can catch on Luau.
+//! Error values and recursions that abort the process on LuaJIT and must be an error a script (or the embedder) can
+//! catch on Luau.
 //!
 //! LuaJIT 2.1 has no C-call depth limit, and mlua's error handler and LuaJIT's `xpcall` handler call an error
 //! value's `__tostring` while they run: a `__tostring` that makes a protected call and then raises itself was
-//! called again by its own error until the C stack of a runtime worker (2 MiB) was gone, and the process aborted
-//! (NEOC-120; main closed it with a guard layer, `guarded_xpcall.lua` and `call_guarded`, which the switch to Luau
-//! removes). A script that recursed through a host function that calls back into Lua (`string.gsub`, a module that
-//! runs a callback) aborted the same way.
+//! called again by its own error until the C stack of a runtime worker was gone, and the process aborted (NEOC-120).
+//! A script that recursed through a host function that calls back into Lua (`string.gsub`, a module that runs a
+//! callback, a request whose options table is read inside the future) aborted the same way. The first version of this
+//! file (17 cases), copied onto main 7aeeafd0 with its guards, aborted in 14 of them and hung in one (the tail-call form
+//! of `tostring_recursion`, since changed); main's `xpcall` guard and `call_guarded` covered only
+//! `xpcall_handler_recursion` and `lib_test_to_throw_message_handler`.
 //!
-//! Each case here runs in a **child process** (this test binary, run again with `NEOC_ABORT_CASE`) on a **2 MiB
-//! thread**, so a case that still aborts fails its own test (the child dies on a signal) instead of taking the whole
-//! test binary with it. A case passes when the child exits normally and reports what it caught.
+//! Each case here runs in a **child process** (this test binary, run again with `NEOC_ABORT_CASE`) on a thread of a
+//! **stated size**, so a case that still aborts fails its own test (the child dies on a signal) instead of taking the
+//! whole test binary with it, and one that hangs is killed after [`TIMEOUT`]. The size is set by the parent for each
+//! child, never inherited from the environment: `neoc_vm::VM_THREAD_STACK` in a debug build (what `neoc run` and an
+//! embedder following `lifecycle.rs` give every thread that polls a VM) and 2 MiB in a release build (tokio's default,
+//! what an embedder that ignores the constant gets). A case passes when the child exits normally and reports what it
+//! caught. To measure how much a case needs, run the child binary yourself: `NEOC_ABORT_CASE=<case>
+//! NEOC_ABORT_STACK_KIB=<n> <test binary> --exact child --nocapture`.
 
-use std::process::Command;
+use std::{
+    io::Read,
+    process::{Command, Stdio},
+    time::{Duration, Instant},
+};
 
 use mlua::{Function, Table, Thread, Value};
 use neoc_vm::lua::sandbox::make_engine;
@@ -25,8 +37,12 @@ const POISON: &str = r#"
       error(setmetatable({}, poison_mt))
     end
     local function poison() return setmetatable({}, poison_mt) end
-    -- a table whose every read raises the poison: a hostile options table, or response
-    local function poisoned() return setmetatable({}, { __index = function() error(poison()) end }) end
+    -- a table whose every read raises the poison: a hostile options table, or response. `reads` counts the reads
+    -- that ran, so a case can tell that the host really read the table (and did not refuse it as empty)
+    local reads = 0
+    local function poisoned()
+      return setmetatable({}, { __index = function() reads = reads + 1 error(poison()) end })
+    end
 "#;
 
 /// What a case reports: the error it caught, or what the script returned.
@@ -106,14 +122,14 @@ const CASES: &[Case] = &[
         script(
             r#"local thread = require("std:thread")
                local ok, w, err = pcall(thread.spawn, poisoned())
-               return "spawn: " .. tostring(ok) .. "," .. type(w) .. "," .. type(err)"#,
+               return "spawn: " .. tostring(ok) .. "," .. type(w) .. "," .. tostring(err) .. ",reads:" .. reads"#,
         )
     }),
     ("hyper_request_with_a_poisoned_options_table", || {
         script(
             r#"local hyper = require("vnd:hyper")
                local ok, r, err = pcall(hyper.request, poisoned())
-               return "request: " .. tostring(ok) .. "," .. type(r) .. "," .. type(err)"#,
+               return "request: " .. tostring(ok) .. "," .. type(r) .. "," .. tostring(err) .. ",reads:" .. reads"#,
         )
     }),
     ("hyper_handler_returns_the_poison", || {
@@ -227,9 +243,50 @@ const CASES: &[Case] = &[
             )
         },
     ),
+    ("with_lock_nested_in_itself", || {
+        // `Mutex:with_lock` runs its body with `call_async` inside its own future: each level is another polled future
+        script(
+            r#"local Mutex = require("std:collections").Mutex
+               local depth = 0
+               local function nest() depth = depth + 1 return Mutex.new():with_lock(nest) end
+               local ok, e = pcall(nest)
+               return "with_lock: " .. tostring(ok) .. "," .. tostring(e) .. ",depth>100:" .. tostring(depth > 100)"#,
+        )
+    }),
+    ("hyper_request_options_recursion", || {
+        // an options table whose `__index` calls `hyper.request` again with another such table: the options are read
+        // before the future is built, so a level is small
+        script(
+            r#"local hyper = require("vnd:hyper")
+               local depth = 0
+               local function opts()
+                 local first = true -- only the first read recurses: a level is one deeper, not several
+                 return setmetatable({}, {
+                   __index = function() if first then first = false depth = depth + 1 pcall(hyper.request, opts()) end end,
+                 })
+               end
+               local ok, r, e = pcall(hyper.request, opts())
+               return "hyper.request recursion: " .. tostring(ok) .. ",depth>50:" .. tostring(depth > 50)"#,
+        )
+    }),
+    ("thread_spawn_options_recursion", || {
+        script(
+            r#"local thread = require("std:thread")
+               local depth = 0
+               local function opts()
+                 local first = true -- only the first read recurses: `prepare_spawn` reads several options
+                 return setmetatable({}, {
+                   __index = function() if first then first = false depth = depth + 1 pcall(thread.spawn, opts()) end end,
+                 })
+               end
+               local ok, w, e = pcall(thread.spawn, opts())
+               return "thread.spawn recursion: " .. tostring(ok) .. ",depth>50:" .. tostring(depth > 50)"#,
+        )
+    }),
     ("tostring_recursion_through_a_metamethod", || {
         script(
-            r#"local t = setmetatable({}, { __tostring = function(self) return tostring(self) end })
+            r#"-- not a tail call (`return tostring(self)` is one, and LuaJIT loops on it for ever instead of aborting)
+               local t = setmetatable({}, { __tostring = function(self) return (tostring(self)) end })
                local ok, e = pcall(tostring, t)
                return "tostring: " .. tostring(ok) .. "," .. tostring(e)"#,
         )
@@ -247,11 +304,11 @@ fn child() {
         .iter()
         .find(|(n, _)| *n == name)
         .expect("unknown case");
-    // 2 MiB, the stack of a runtime worker (`NEOC_ABORT_STACK_KIB` only to measure how much a case needs)
-    let kib = std::env::var("NEOC_ABORT_STACK_KIB")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(2048);
+    // set by the parent for every child (see the header), never defaulted here
+    let kib: usize = std::env::var("NEOC_ABORT_STACK_KIB")
+        .expect("NEOC_ABORT_STACK_KIB is set by the parent")
+        .parse()
+        .expect("NEOC_ABORT_STACK_KIB is a number");
     let outcome = std::thread::Builder::new()
         .stack_size(kib * 1024)
         .spawn(*run)
@@ -264,20 +321,63 @@ fn child() {
     }
 }
 
-/// Run `name` in a child process and return what it reported. A child that aborts, is killed by a signal or fails
-/// to report is a failed test, with the child's own output.
+/// How long a child may run: a hang (a recursion that never ends, as `return tostring(self)` does on LuaJIT) fails
+/// the test instead of stalling the suite.
+const TIMEOUT: Duration = Duration::from_secs(60);
+
+/// The thread size the parent gives every child: what an embedder that follows `lifecycle.rs` gives a thread that
+/// polls a VM in a debug build, and tokio's default in a release build.
+fn stack_kib() -> usize {
+    if cfg!(debug_assertions) {
+        neoc_vm::VM_THREAD_STACK / 1024
+    } else {
+        2048
+    }
+}
+
+/// Run `name` in a child process and return what it reported. A child that aborts, is killed by a signal, hangs or
+/// fails to report is a failed test, with the child's own output.
 fn in_child(name: &str) -> String {
-    let out = Command::new(std::env::current_exe().unwrap())
+    let mut child = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "child", "--nocapture", "--test-threads=1"])
         .env("NEOC_ABORT_CASE", name)
-        .output()
+        .env("NEOC_ABORT_STACK_KIB", stack_kib().to_string())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .unwrap();
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    let drain = |mut pipe: Box<dyn Read + Send>| {
+        std::thread::spawn(move || {
+            let mut text = String::new();
+            let _ = pipe.read_to_string(&mut text);
+            text
+        })
+    };
+    let stdout = drain(Box::new(child.stdout.take().unwrap()));
+    let stderr = drain(Box::new(child.stderr.take().unwrap()));
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break Some(status);
+        }
+        if started.elapsed() > TIMEOUT {
+            let _ = child.kill();
+            let _ = child.wait();
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let stdout = stdout.join().unwrap();
+    let stderr = stderr.join().unwrap();
+    let status = status.unwrap_or_else(|| {
+        panic!(
+            "{name}: the child hung (killed after {TIMEOUT:?})\nstdout: {stdout}\nstderr: {stderr}"
+        )
+    });
     assert!(
-        out.status.success(),
-        "{name}: the child process did not survive ({:?})\nstdout: {stdout}\nstderr: {stderr}",
-        out.status
+        status.success(),
+        "{name}: the child process did not survive ({status:?}) with {} KiB of stack\nstdout: {stdout}\nstderr: {stderr}",
+        stack_kib()
     );
     stdout
         .lines()
@@ -320,12 +420,12 @@ survives!(
 survives!(
     thread_spawn_with_a_poisoned_options_table,
     "thread_spawn_with_a_poisoned_options_table",
-    "spawn: true,nil,string"
+    "spawn: true,nil,thread.spawn: runtime error: error in error handling,reads:1"
 );
 survives!(
     hyper_request_with_a_poisoned_options_table,
     "hyper_request_with_a_poisoned_options_table",
-    "request: true,nil,string"
+    "request: true,nil,hyper.request: runtime error: error in error handling,reads:1"
 );
 survives!(
     hyper_handler_returns_the_poison,
@@ -340,7 +440,7 @@ survives!(
 survives!(
     xpcall_handler_recursion,
     "xpcall_handler_recursion",
-    "error in error handling"
+    "returned: xpcall answered: error in error handling"
 );
 survives!(
     lib_test_to_throw_message_handler,
@@ -364,43 +464,36 @@ survives!(
     "sort: false",
     "overflow"
 );
-/// The first of two cases that need more than 2 MiB in a **debug** build: each level of `Lua -> lib:cache (Rust) -> on_evict
-/// (Lua)` takes about 25 KiB of Rust stack there (about 1 KiB in release), and Luau stops the recursion at 200 C
-/// levels with "C stack overflow", which is 5 MiB of frames in debug and 0.2 MiB in release. Measured: the child aborts
-/// at 2, 3 and 4 MiB in debug, survives at 6 MiB in debug and at 2 MiB in release. Run it with
-/// `cargo test --release -p neoc-vm --test abort_regressions`.
-#[test]
-#[cfg_attr(
-    debug_assertions,
-    ignore = "a debug build needs ~5 MiB of stack to reach Luau's C-call limit through a host function; run with --release"
-)]
-fn neoc_host_function_running_a_callback_recurses_into_itself() {
-    let outcome = in_child("neoc_host_function_running_a_callback_recurses_into_itself");
-    // Luau's "C stack overflow" is raised in the deepest call; the message handler that runs there fails in turn
-    // (it is that deep), and what comes back to the script is `error in error handling`
-    assert!(
-        outcome.contains("on_evict: false")
-            && outcome.contains("depth>100:true")
-            && (outcome.contains("overflow") || outcome.contains("error in error handling")),
-        "{outcome}"
-    );
-}
-/// The same as the case above through an async host function (`lib:test`'s `describe`): 8 MiB in debug, 2 MiB in release.
-#[test]
-#[cfg_attr(
-    debug_assertions,
-    ignore = "a debug build needs ~8 MiB of stack to reach Luau's C-call limit through a host function; run with --release"
-)]
-fn async_host_function_running_a_callback_recurses_into_itself() {
-    let outcome = in_child("async_host_function_running_a_callback_recurses_into_itself");
-    assert!(
-        outcome.contains("describe: false")
-            && outcome.contains("depth>100:true")
-            && outcome.contains("C stack overflow"),
-        "{outcome}"
-    );
-}
-
+survives!(
+    neoc_host_function_running_a_callback_recurses_into_itself,
+    "neoc_host_function_running_a_callback_recurses_into_itself",
+    "on_evict: false",
+    "depth>100:true"
+);
+survives!(
+    async_host_function_running_a_callback_recurses_into_itself,
+    "async_host_function_running_a_callback_recurses_into_itself",
+    "describe: false",
+    "depth>100:true"
+);
+survives!(
+    with_lock_nested_in_itself,
+    "with_lock_nested_in_itself",
+    "with_lock: false",
+    "depth>100:true"
+);
+survives!(
+    hyper_request_options_recursion,
+    "hyper_request_options_recursion",
+    "hyper.request recursion:",
+    "depth>50:true"
+);
+survives!(
+    thread_spawn_options_recursion,
+    "thread_spawn_options_recursion",
+    "thread.spawn recursion:",
+    "depth>50:true"
+);
 survives!(
     tostring_recursion_through_a_metamethod,
     "tostring_recursion_through_a_metamethod",
