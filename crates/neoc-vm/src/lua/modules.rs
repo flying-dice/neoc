@@ -36,6 +36,7 @@ use std::collections::HashMap;
 use mlua::{Lua, Table};
 use strsim::levenshtein;
 
+use crate::lua::facade::Module;
 use crate::lua::{lib, std as stdmod, vnd};
 
 /// Soft cap on how many namespace members a `require` error inlines before it
@@ -204,68 +205,89 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
+/// Declares every module through the facade, in registry order, so each one's
+/// recorded surface can be read.
+///
+/// Mirrors [`registry`] (a test holds the two together): a module appears here
+/// by its `declare`, which both builds its table and records its signatures,
+/// docs and types.
+fn declared(lua: &Lua) -> mlua::Result<Vec<Module<'_>>> {
+    Ok(vec![
+        stdmod::collections::declare(lua)?,
+        stdmod::env::declare(lua)?,
+        stdmod::fs::declare(lua)?,
+        stdmod::io::declare(lua)?,
+        stdmod::net::declare(lua)?,
+        stdmod::task::declare(lua)?,
+        stdmod::thread::declare(lua)?,
+        stdmod::time::declare(lua)?,
+        stdmod::workers::declare(lua)?,
+        lib::archive::declare(lua)?,
+        lib::args::declare(lua)?,
+        lib::base64::declare(lua)?,
+        lib::cache::declare(lua)?,
+        lib::chrono::declare(lua)?,
+        lib::compile::declare(lua)?,
+        lib::compress::declare(lua)?,
+        lib::crypto::declare(lua)?,
+        lib::csv::declare(lua)?,
+        lib::diff::declare(lua)?,
+        lib::glob::declare(lua)?,
+        lib::hash::declare(lua)?,
+        lib::hex::declare(lua)?,
+        lib::hmac::declare(lua)?,
+        lib::html::declare(lua)?,
+        lib::http::declare(lua)?,
+        lib::ini::declare(lua)?,
+        lib::json::declare(lua)?,
+        lib::log::declare(lua)?,
+        lib::mime::declare(lua)?,
+        lib::pkey::declare(lua)?,
+        lib::random::declare(lua)?,
+        lib::regex::declare(lua)?,
+        lib::semver::declare(lua)?,
+        lib::template::declare(lua)?,
+        lib::tempfile::declare(lua)?,
+        lib::test::declare(lua)?,
+        lib::text::declare(lua)?,
+        lib::unicode::declare(lua)?,
+        lib::url::declare(lua)?,
+        lib::vcr::declare(lua)?,
+        vnd::hyper::declare(lua)?,
+        vnd::jsonschema::declare(lua)?,
+        vnd::quick_xml::declare(lua)?,
+        vnd::rusqlite::declare(lua)?,
+        vnd::serde_json::declare(lua)?,
+        vnd::serde_yaml::declare(lua)?,
+        vnd::sqlx_mysql::declare(lua)?,
+        vnd::sqlx_postgres::declare(lua)?,
+        vnd::testcontainers_modules::declare(lua)?,
+        vnd::toml::declare(lua)?,
+    ])
+}
+
+/// The `LuaCATS` definition file of every module, as `(registry_key, text)` in
+/// registry order.
+///
+/// The text is a `---@meta` file for lua-language-server
+/// (`cargo run -p neoc-vm --example luals` writes it to `types/luals/<key>.lua`,
+/// so `require("lib:json")` resolves to it): each function's parameters,
+/// returns and docs, and the resource types it hands out.
+///
+/// # Errors
+/// Fails when a module cannot be built, or its recording disagrees with the
+/// live table of one of its types.
+pub fn luals_metas(lua: &Lua) -> mlua::Result<Vec<(String, String)>> {
+    declared(lua)?
+        .iter()
+        .map(|m| Ok((m.name().to_string(), m.luals_meta()?)))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::lua::sandbox::make_engine;
-
-    /// Declares every facade module, in registry order. The recorded surface
-    /// stays available to tooling; tests use it to check that the recording and
-    /// the live tables agree.
-    fn declared(lua: &Lua) -> mlua::Result<Vec<crate::lua::facade::Module<'_>>> {
-        Ok(vec![
-            stdmod::collections::declare(lua)?,
-            stdmod::env::declare(lua)?,
-            stdmod::fs::declare(lua)?,
-            stdmod::io::declare(lua)?,
-            stdmod::net::declare(lua)?,
-            stdmod::task::declare(lua)?,
-            stdmod::thread::declare(lua)?,
-            stdmod::time::declare(lua)?,
-            stdmod::workers::declare(lua)?,
-            lib::archive::declare(lua)?,
-            lib::args::declare(lua)?,
-            lib::base64::declare(lua)?,
-            lib::cache::declare(lua)?,
-            lib::chrono::declare(lua)?,
-            lib::compile::declare(lua)?,
-            lib::compress::declare(lua)?,
-            lib::crypto::declare(lua)?,
-            lib::csv::declare(lua)?,
-            lib::diff::declare(lua)?,
-            lib::glob::declare(lua)?,
-            lib::hash::declare(lua)?,
-            lib::hex::declare(lua)?,
-            lib::hmac::declare(lua)?,
-            lib::html::declare(lua)?,
-            lib::http::declare(lua)?,
-            lib::ini::declare(lua)?,
-            lib::json::declare(lua)?,
-            lib::log::declare(lua)?,
-            lib::mime::declare(lua)?,
-            lib::pkey::declare(lua)?,
-            lib::random::declare(lua)?,
-            lib::regex::declare(lua)?,
-            lib::semver::declare(lua)?,
-            lib::template::declare(lua)?,
-            lib::tempfile::declare(lua)?,
-            lib::test::declare(lua)?,
-            lib::text::declare(lua)?,
-            lib::unicode::declare(lua)?,
-            lib::url::declare(lua)?,
-            lib::vcr::declare(lua)?,
-            vnd::hyper::declare(lua)?,
-            vnd::jsonschema::declare(lua)?,
-            vnd::quick_xml::declare(lua)?,
-            vnd::rusqlite::declare(lua)?,
-            vnd::serde_json::declare(lua)?,
-            vnd::serde_yaml::declare(lua)?,
-            vnd::sqlx_mysql::declare(lua)?,
-            vnd::sqlx_postgres::declare(lua)?,
-            vnd::testcontainers_modules::declare(lua)?,
-            vnd::toml::declare(lua)?,
-        ])
-    }
 
     /// The declared (facade) set equals the registered `require` keys exactly:
     /// no duplicates in either list, none missing either way, 50 in all. Each
@@ -308,8 +330,341 @@ mod tests {
         }
     }
 
+    /// Every module yields a definition file: `---@meta`, a module class named after its key, the
+    /// `require` return, and valid Lua 5.1 syntax (lua-language-server drops a file it cannot parse).
+    #[test]
+    fn every_module_yields_valid_definitions() {
+        let lua = make_engine().expect("engine");
+        let metas = luals_metas(&lua).expect("metas");
+        assert_eq!(metas.len(), 50);
+        for (key, meta) in &metas {
+            let class = key.replace(':', "_");
+            assert!(meta.starts_with("---@meta\n"), "{key}: not a meta file");
+            assert!(
+                meta.contains(&format!("---@class {class}\n")),
+                "{key}: no module class {class}"
+            );
+            assert!(
+                meta.ends_with(&format!("---@type {class}\nreturn M\n")),
+                "{key}: does not return the module"
+            );
+            lua.load(meta.as_str())
+                .set_name(key)
+                .into_function()
+                .unwrap_or_else(|e| panic!("{key}: {e}\n{meta}"));
+        }
+    }
+
+    /// Every type a definition file names (in a `---@param`, `---@return` or `---@field`) is a primitive or a class
+    /// the same file declares: a recorded type name with no class would be an unknown type in lua-language-server,
+    /// and `luals_type` turns any unknown name into `<module>.<Name>` without complaint.
+    #[test]
+    fn every_named_type_is_declared() {
+        let lua = make_engine().expect("engine");
+        for (key, meta) in luals_metas(&lua).expect("metas") {
+            let declared: Vec<&str> = meta
+                .lines()
+                .filter_map(|l| l.strip_prefix("---@class "))
+                .collect();
+            for line in meta.lines() {
+                // where the type sits among the words of the line: `@param name type`, `@return type`, `@field name type`
+                let type_word = if line.starts_with("---@return ") {
+                    1
+                } else if line.starts_with("---@param ") || line.starts_with("---@field ") {
+                    2
+                } else {
+                    continue;
+                };
+                let ty = line
+                    .split_whitespace()
+                    .nth(type_word)
+                    .unwrap_or("")
+                    .trim_end_matches('?');
+                let known = matches!(ty, "string" | "number" | "boolean" | "any" | "nil" | "err")
+                    || declared.contains(&ty);
+                assert!(
+                    known,
+                    "{key}: `{line}` names `{ty}`, which no class declares"
+                );
+            }
+        }
+    }
+
+    /// One Lua expression per recorded resource type, building a value that has every field set, so the test below
+    /// can hold the records to the implementation.
+    const INSTANCES: &[(&str, &str, &str)] = &[
+        (
+            "lib:cache",
+            "Cache",
+            r#"require("lib:cache").Cache.new({ max_size = 2 })"#,
+        ),
+        (
+            "lib:chrono",
+            "Date",
+            r#"require("lib:chrono").Date.new(2026, 5, 20)"#,
+        ),
+        (
+            "lib:chrono",
+            "Time",
+            r#"require("lib:chrono").Time.new(1, 2, 3)"#,
+        ),
+        (
+            "lib:chrono",
+            "DateTime",
+            r#"require("lib:chrono").DateTime.new(2026, 5, 20, 1, 2, 3)"#,
+        ),
+        (
+            "lib:chrono",
+            "ZonedDateTime",
+            r#"require("lib:chrono").ZonedDateTime.parse("2026-05-20T01:02:03+01:00[Europe/London]")"#,
+        ),
+        (
+            "lib:chrono",
+            "Duration",
+            r#"require("lib:chrono").Duration.of({ hours = 1 })"#,
+        ),
+        (
+            "lib:csv",
+            "CsvReader",
+            r#"require("lib:csv").reader(require("std:io").from_string("a\n1\n"), { headers = true })"#,
+        ),
+        (
+            "lib:csv",
+            "CsvWriter",
+            r#"require("lib:csv").writer({ headers = { "a" } })"#,
+        ),
+        (
+            "lib:glob",
+            "Glob",
+            r#"require("lib:glob").Glob.new("*.lua")"#,
+        ),
+        (
+            "lib:glob",
+            "GlobSet",
+            r#"require("lib:glob").GlobSet.new({ "*.lua" })"#,
+        ),
+        (
+            "lib:hash",
+            "Hasher",
+            r#"require("lib:hash").Hasher.new("sha256")"#,
+        ),
+        (
+            "lib:hmac",
+            "Hmac",
+            r#"require("lib:hmac").Hmac.new("sha256", "key")"#,
+        ),
+        ("lib:json", "Object", r#"require("lib:json").object()"#),
+        ("lib:json", "Array", r#"require("lib:json").array()"#),
+        ("lib:log", "Logger", r#"require("lib:log").new()"#),
+        (
+            "lib:pkey",
+            "KeyPair",
+            r#"require("lib:pkey").KeyPair.generate("ed25519")"#,
+        ),
+        (
+            "lib:pkey",
+            "PublicKey",
+            r#"require("lib:pkey").KeyPair.generate("ed25519"):public_key()"#,
+        ),
+        (
+            "lib:regex",
+            "Pattern",
+            r#"require("lib:regex").Pattern.new("a+")"#,
+        ),
+        (
+            "lib:semver",
+            "Version",
+            r#"require("lib:semver").Version.parse("1.2.3-alpha.1+build.5")"#,
+        ),
+        (
+            "lib:semver",
+            "VersionReq",
+            r#"require("lib:semver").VersionReq.parse(">=1.2")"#,
+        ),
+        ("lib:test", "Matcher", r#"require("lib:test").expect(1)"#),
+        (
+            "lib:tempfile",
+            "TempFile",
+            r#"require("lib:tempfile").TempFile.new()"#,
+        ),
+        (
+            "lib:tempfile",
+            "TempDir",
+            r#"require("lib:tempfile").TempDir.new()"#,
+        ),
+        (
+            "lib:template",
+            "Template",
+            r#"require("lib:template").compile("hello")"#,
+        ),
+        (
+            "lib:url",
+            "Url",
+            r#"require("lib:url").Url.parse("https://u:p@example.com:8443/a/b?q=1#frag")"#,
+        ),
+        (
+            "std:collections",
+            "Map",
+            r#"require("std:collections").Map.new()"#,
+        ),
+        (
+            "std:collections",
+            "Counter",
+            r#"require("std:collections").Counter.new(1)"#,
+        ),
+        (
+            "std:collections",
+            "Mutex",
+            r#"require("std:collections").Mutex.new()"#,
+        ),
+        (
+            "std:io",
+            "ReaderHandle",
+            r#"require("std:io").from_string("x")"#,
+        ),
+        (
+            "std:net",
+            "TcpListener",
+            r#"require("std:net").TcpListener.bind("127.0.0.1:0")"#,
+        ),
+        (
+            "std:task",
+            "Task",
+            r#"require("std:task").spawn(function() end)"#,
+        ),
+        (
+            "std:thread",
+            "WorkerHandle",
+            r#"require("std:thread").spawn({ source = "return 1" })"#,
+        ),
+        (
+            "std:time",
+            "Duration",
+            r#"require("std:time").Duration.from_secs(1)"#,
+        ),
+        (
+            "std:workers",
+            "ShutdownSignal",
+            r#"require("std:workers").on_shutdown()"#,
+        ),
+        (
+            "std:time",
+            "Instant",
+            r#"require("std:time").Instant.now()"#,
+        ),
+        (
+            "vnd:jsonschema",
+            "Schema",
+            r#"require("vnd:jsonschema").compile("{}")"#,
+        ),
+        (
+            "vnd:jsonschema",
+            "ValidationResult",
+            r#"require("vnd:jsonschema").compile("{}"):validate(1)"#,
+        ),
+        (
+            "vnd:rusqlite",
+            "Database",
+            r#"require("vnd:rusqlite").open(":memory:")"#,
+        ),
+        (
+            "vnd:rusqlite",
+            "Statement",
+            r#"require("vnd:rusqlite").open(":memory:"):prepare("select 1")"#,
+        ),
+    ];
+
+    /// The recorded types `INSTANCES` leaves out, each with why: a value of one needs something a unit test here
+    /// does not have (a running server, a task scheduler loop, a worker, a database server, Docker). Their records
+    /// are the only ones not held to the implementation.
+    const NOT_BUILT: &[(&str, &str, &str)] = &[
+        (
+            "std:io",
+            "WriterHandle",
+            "a writer opens a file for writing, and a unit test leaves no file behind",
+        ),
+        (
+            "std:thread",
+            "Channel",
+            "exists only inside a spawned worker",
+        ),
+        (
+            "vnd:hyper",
+            "ServerHandle",
+            "a server is started by `serve` on a bound listener inside a running app",
+        ),
+        (
+            "vnd:hyper",
+            "Request",
+            "exists only inside a request handler",
+        ),
+        ("vnd:sqlx_mysql", "Database", "needs a MySQL server"),
+        ("vnd:sqlx_mysql", "Statement", "needs a MySQL server"),
+        ("vnd:sqlx_postgres", "Database", "needs a PostgreSQL server"),
+        (
+            "vnd:testcontainers_modules",
+            "MysqlContainer",
+            "needs a Docker daemon",
+        ),
+        (
+            "vnd:testcontainers_modules",
+            "PostgresContainer",
+            "needs a Docker daemon",
+        ),
+        (
+            "vnd:testcontainers_modules",
+            "GenericContainer",
+            "needs a Docker daemon",
+        ),
+    ];
+
+    /// Every method and field a module records for a resource type exists on a live value of that type. A record
+    /// with no implementation behind it (`Time:add`, once) is a call lua-language-server accepts and the VM
+    /// refuses; this is the mirror of `check_statics_recorded`, which holds the other direction for sub-tables.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recorded_members_exist_on_live_values() {
+        let lua = make_engine().expect("engine");
+        let mut seen = Vec::new();
+        for module in declared(&lua).expect("declared") {
+            for (type_name, methods, fields) in module.recorded_members() {
+                let key = module.name();
+                seen.push((key.to_string(), type_name.clone()));
+                let Some((_, _, expr)) = INSTANCES
+                    .iter()
+                    .find(|(k, t, _)| *k == key && *t == type_name)
+                else {
+                    assert!(
+                        NOT_BUILT
+                            .iter()
+                            .any(|(k, t, _)| *k == key && *t == type_name),
+                        "{key}: `{type_name}` is neither built by INSTANCES nor listed in NOT_BUILT"
+                    );
+                    continue;
+                };
+                let names: Vec<String> = methods.iter().chain(fields.iter()).cloned().collect();
+                let probe = format!(
+                    "local v = ({expr})\nlocal missing = {{}}\nfor _, name in ipairs(...) do\n  if v[name] == nil then missing[#missing + 1] = name end\nend\nreturn table.concat(missing, \", \")"
+                );
+                let missing: String = lua.load(probe.as_str()).call(names).unwrap_or_else(|e| {
+                    panic!("{key}: building a `{type_name}` with `{expr}`: {e}")
+                });
+                assert!(
+                    missing.is_empty(),
+                    "{key}: `{type_name}` records {missing}, which a live value does not have"
+                );
+            }
+        }
+        for (key, type_name, _) in INSTANCES.iter().chain(NOT_BUILT.iter()) {
+            let known = seen.iter().any(|(k, t)| k == key && t == type_name);
+            assert!(
+                known,
+                "{key}: `{type_name}` is listed but no module records it"
+            );
+        }
+    }
+
     /// Builds every facade-migrated module's runtime `require(...)` table,
-    /// paired with its registry key, in the same order as [`declared`].
+    /// paired with its registry key, in the same order as [`luals_metas`].
     /// The two lists line up by index so a test can cross-check a module's
     /// live surface against its recorded surface.
     fn runtime_tables(lua: &Lua) -> Vec<(String, Table)> {
@@ -373,36 +728,46 @@ mod tests {
     }
 
     /// Every top-level key on a module's live `require(...)` table must be
-    /// covered by that module's recorded surface. This is the guard that turns
-    /// a missing `record_fn` into a CI failure: register a free function with
+    /// covered by that module's definitions. This is the guard that turns a
+    /// missing `record_fn` into a failure: register a free function with
     /// `set` but forget to record its signature and the key is present at
-    /// runtime yet absent from the recording, so this fails.
+    /// runtime yet absent from the definition file, so this fails.
     ///
-    /// The check is one-directional (live keys ⊆ recorded surface): the
-    /// recording may carry extra entries the base table lacks — most notably
+    /// The check is one-directional (live keys ⊆ definitions): the definitions
+    /// may carry extra entries the base table lacks — most notably
     /// `std:thread`'s `parent` / `shared`, injected only inside a spawned
-    /// worker — and that is fine.
+    /// worker — and that is fine. The shape of the assertion per key:
+    ///
+    /// - a function value must appear as `function M.<key>(`;
+    /// - a table value (a constructor sub-table such as `chrono.Date`) must
+    ///   appear as a `---@field <key> ` on the module class;
+    /// - any other value (a former const such as `json.null`) must appear as
+    ///   a `---@field <key> `.
     #[test]
-    fn recorded_surface_covers_runtime_table_keys() {
+    fn definitions_cover_runtime_table_keys() {
         let lua = make_engine().expect("engine");
-        let declared = declared(&lua).expect("declared");
+        let metas = luals_metas(&lua).expect("metas");
         let tables = runtime_tables(&lua);
 
         assert_eq!(
-            declared.len(),
+            metas.len(),
             tables.len(),
-            "declared modules and runtime tables drifted out of sync"
+            "definitions and runtime tables drifted out of sync"
         );
 
-        for (module, (tkey, table)) in declared.iter().zip(tables.iter()) {
-            assert_eq!(module.name(), tkey, "declared / table ordering drifted");
-            let names = module.declared_names();
+        for ((mkey, meta), (tkey, table)) in metas.iter().zip(tables.iter()) {
+            assert_eq!(mkey, tkey, "definition / table ordering drifted");
 
             for pair in table.clone().pairs::<String, mlua::Value>() {
-                let (key, _) = pair.expect("module table pair");
+                let (key, value) = pair.expect("module table pair");
+
+                let needle = match value {
+                    mlua::Value::Function(_) => format!("function M.{key}("),
+                    _ => format!("---@field {key} "),
+                };
                 assert!(
-                    names.contains(&key),
-                    "{tkey}: key {key:?} is on the live table but not in its recorded surface"
+                    meta.contains(&needle),
+                    "{mkey}: key {key:?} has no `{needle}` in its definitions:\n{meta}"
                 );
             }
         }

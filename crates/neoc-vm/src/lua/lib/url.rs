@@ -119,7 +119,17 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     );
 
     m.userdata("Url", |u| {
-        u.method(
+        u.field("scheme", "string", "The scheme, lower-cased (`https`).")
+            .field("username", "string", "The username, or an empty string.")
+            .field("password", "string?", "The password, or nil.")
+            .field("host", "string?", "The host, or nil for a URL without one.")
+            .field("port", "number?", "The explicit port, or nil when it is the scheme's default.")
+            .field("path", "string", "The percent-encoded path.")
+            .field("query", "string?", "The query string without the `?`, or nil.")
+            .field("fragment", "string?", "The fragment without the `#`, or nil.")
+            .field("origin", "string", "The serialised origin (`https://example.com:8080`).")
+            .field("href", "string", "The whole URL as a string.")
+            .method(
             "resolve",
             &[("reference", "string")],
             "Result<Url, string>",
@@ -172,7 +182,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             &[],
             "LuaValue",
             "Query as a map. Last value wins on repeated keys.",
-        );
+        )
+            .static_fn(
+                "parse",
+                &[("s", "string")],
+                "Result<Url, string>",
+                "Parse an absolute URL. Returns `(nil, err)` when it is invalid.",
+            );
     });
 
     Ok(m)

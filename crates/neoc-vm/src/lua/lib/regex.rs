@@ -147,6 +147,12 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             &[("text", "string"), ("limit", "number?")],
             "Result<LuaValue, string>",
             "Split `text` on every match. `limit` caps the parts (`0`/`nil` unlimited); negative limits return `(nil, err)`.",
+        )
+        .static_fn(
+            "new",
+            &[("pattern", "string"), ("flags", "string?")],
+            "Result<Pattern, string>",
+            "Compile `pattern`, with optional flags (`i`, `m`, `s`, `x`).",
         );
     });
 

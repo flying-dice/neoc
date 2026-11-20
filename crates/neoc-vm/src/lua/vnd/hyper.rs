@@ -144,7 +144,21 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     });
 
     m.userdata("Request", |r| {
-        r.method(
+        r.field("method", "string", "The HTTP method (`GET`).")
+            .field("path", "string", "The request path with its query string.")
+            .field("body", "string", "The raw request body.")
+            .field("is_json", "bool", "Whether the body parses as JSON.")
+            .field(
+                "headers",
+                "LuaValue",
+                "The request headers as a `{ [name]: value }` table.",
+            )
+            .field(
+                "json",
+                "LuaValue",
+                "The body parsed as JSON (a JSON handle or scalar), or nil when it is empty or invalid.",
+            )
+            .method(
             "header",
             &[("name", "string")],
             "LuaValue",

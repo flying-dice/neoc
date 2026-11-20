@@ -89,8 +89,9 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// and `expect` returns a matcher table whose chained assertions raise
 /// `mlua::Error::RuntimeError` directly — none use the `(value, error)` idiom
 /// or an `#[instrument]` span, so the facade's `func` / `try_func` path does
-/// not apply. The matcher methods live on a plain returned table, not a
-/// userdata type. The free functions' signatures are recorded via
+/// not apply. The matcher functions live on a plain returned table, not a
+/// userdata type; they are recorded as a `Matcher` type's `function`s. The free
+/// functions' signatures are recorded via
 /// [`crate::lua::facade::Module::record_fn`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:test")?;
@@ -186,9 +187,39 @@ fn register_expect(lua: &Lua, m: &mut Module<'_>) -> mlua::Result<()> {
     m.record_fn(
         "expect",
         &[("value", "LuaValue")],
-        "LuaValue",
+        "Matcher",
         "Wrap `value` in a matcher table exposing dot-syntax assertions (`toBe`, `toBeNil`, `toBeTruthy`, `toBeFalsy`, `toContain`, `toThrow`).",
     );
+    // The matcher is a plain table of closures, not a userdata; its functions are
+    // recorded so the definitions can type `expect(x).toBe(y)`.
+    m.userdata("Matcher", |t| {
+        t.function(
+            "toBe",
+            &[("expected", "LuaValue")],
+            "()",
+            "Assert the value equals `expected` (strict, no coercion).",
+        )
+        .function("toBeNil", &[], "()", "Assert the value is nil.")
+        .function(
+            "toBeTruthy",
+            &[],
+            "()",
+            "Assert the value is neither nil nor false.",
+        )
+        .function("toBeFalsy", &[], "()", "Assert the value is nil or false.")
+        .function(
+            "toContain",
+            &[("item", "LuaValue")],
+            "()",
+            "Assert a string contains the substring `item`, or a table holds the value `item`.",
+        )
+        .function(
+            "toThrow",
+            &[],
+            "()",
+            "Assert the value is a function that raises when called.",
+        );
+    });
     Ok(())
 }
 
