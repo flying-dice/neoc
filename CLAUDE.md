@@ -11,7 +11,9 @@ Read [README.md](README.md) for what neoc is and [CONTRIBUTING.md](CONTRIBUTING.
 
 ## AgentOS
 
-This repository also holds **AgentOS**, an iPadOS-style virtual desktop for agents (to be renamed vos): the host (`crates/agentos-*`, the `agentos-host` binary), the apps (`apps/`, plain Lua 5.1 run on `neoc-vm`), the client (`client/`) and the UI kit (`packages/ui`). It has its own gate, boundaries, test layout and skills, all governed by [AGENTS.md](AGENTS.md), which stays as it is: read it before touching any of that. Its skills are the `agentos-*` ones in `.claude/skills/` (`agentos-pre-commit`, `agentos-clean-code-review`, `agentos-refactor`, `agentos-code-review`); the unprefixed `pre-commit`, `clean-code-review` and `refactor` are neoc's.
+This repository also holds **AgentOS**, an iPadOS-style virtual desktop for agents (to be renamed vos): the host (`crates/agentos-*`, the `agentos-host` binary), the apps (`apps/`, plain Lua 5.1 run on `neoc-vm`), the client (`client/`) and the UI kit (`packages/ui`). It has its own gate, boundaries, test layout and skills, all governed by [AGENTS.md](AGENTS.md), which stays as it is: read it before touching any of that. Its skills are in `.claude/skills/`: the `agentos-*` ones (`agentos-pre-commit`, `agentos-clean-code-review`, `agentos-refactor`, `agentos-code-review`) and the AgentOS-only `app-design`, `coding-styleguide`, `prebuild-synthetic-ux`, `postbuild-synthetic-usability`, `verify-change`; the unprefixed `pre-commit`, `clean-code-review` and `refactor` (and `change-review`, `pr-review`, `pr-self-review`, ...) are neoc's. `AGENTS.md` is imported below, so its rules load with this file; where it and this file differ (Jira project, merge policy, review skills), NEOC-115 settles it, and for the neoc crates this file wins.
+
+@AGENTS.md
 
 The AgentOS adapter (`crates/agentos-lua`) is an embedder of `neoc-vm`: AgentOS policy (apps, `readOnly`, views, `app.*`, the `@agentos/*` modules) stays in that adapter and never moves into `neoc-vm`. The AgentOS crates keep edition 2021 and inherit the workspace lint table; the neoc crates do not yet (see "Rust style").
 
@@ -49,14 +51,14 @@ The crate boundary is enforced by `Cargo.toml`. `neoc-vm` owns the `mlua`/`tokio
 
 ```sh
 cargo build                                          # debug build
-cargo test --workspace                               # Rust, CLI integration and the Gherkin spec
+cargo test -p neoc -p neoc-vm                         # Rust, CLI integration and the Gherkin spec
 cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.lua' 'crates/neoc/tests/**/*.spec.lua'   # all Lua suites (Docker ones need a daemon)
 cargo bench -p neoc-vm --features bench --bench lib --bench vnd -- --test   # bench smoke
 cargo clippy --workspace --all-targets               # lint
 cargo fmt --check                                    # formatting
 ```
 
-`--workspace` also builds and tests the AgentOS crates, whose tests need `bun` and `darklua` on `PATH`; `-p neoc -p neoc-vm` limits a command to neoc's own crates. The full pre-PR gate, including the Lua suite set that needs no Docker, is in [CONTRIBUTING.md](CONTRIBUTING.md#pre-pr-checks).
+`--workspace` would also build and test the AgentOS crates, whose tests need `bun` and `darklua` on `PATH`; the neoc gate names `-p neoc -p neoc-vm`, and the AgentOS crates have the gate in `AGENTS.md`. The full pre-PR gate, including the Lua suite set that needs no Docker, is in [CONTRIBUTING.md](CONTRIBUTING.md#pre-pr-checks).
 
 ## Modules
 
@@ -125,7 +127,7 @@ Adding a module: see [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-new-module).
 
 ## Rust style
 
-- Edition 2024 for the neoc crates (the AgentOS crates set edition 2021 themselves). The workspace lint table (`unsafe_code = forbid`, clippy pedantic, `unwrap`/`expect`/`panic` denied) is inherited by the AgentOS crates only; the neoc crates do not inherit it yet (see their `[lints.cargo]` comment: adopting it means ~700 pedantic findings and six `unsafe` blocks). `neoc-vm` forbids `unsafe` outside tests (`lib.rs`); the `neoc` binary crate still has some, in its CLI test helper.
+- Edition 2024 for the neoc crates (the AgentOS crates set edition 2021 themselves). The workspace lint table (`unsafe_code = forbid`, clippy pedantic, `unwrap`/`expect`/`panic` denied) is inherited by the AgentOS crates only; the neoc crates do not inherit it yet (see their `[lints.cargo]` comment: the ~700 pedantic findings and six `unsafe` blocks it mentions were counted against neoc's earlier table, which did not deny `unwrap`/`expect`/`panic`; this one is stricter). `neoc-vm` forbids `unsafe` outside tests (`lib.rs`); the `neoc` binary crate still has some, in its CLI test helper.
 - `clippy::all` + `clippy::pedantic`; warnings are errors (`RUSTFLAGS="-D warnings"`). Use `#[allow(...)]` with a comment when you must.
 - `thiserror` for library error enums; the CLI renders them with `miette`. No `unwrap()` / `expect()` in library code.
 - `///` on public items is full, normal English. Everywhere else, write tight: cut filler, keep every fact. Never abbreviate code, API names, types, commands, paths or error text.

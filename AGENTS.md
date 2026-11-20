@@ -92,7 +92,7 @@ A change is done when all of these hold:
   permissions** and **no budgets** (no CPU, memory or time limits): a runaway app (a loop that never yields, a
   `std:thread` worker) can hang the host, not just itself, and can outlive its uninstall, because unloading aborts
   work only at the points where the app yields to the host. That is accepted. It reaches the host through the `app` table (typed by the generated LuaCATS definitions in `types/generated/luals/`) and
-  through **every `std:`, `lib:` and `vnd:` module of `neoc-vm`** (`require("std:fs")`, `require("lib:json")`,
+  through **every `std:`, `lib:` and `vnd:` module of `neoc-vm` except `lib:test`, `lib:compile` and `std:workers`** (`require("std:fs")`, `require("lib:json")`,
   `require("vnd:hyper")`, ...: files, network, servers, tasks, threads, SQLite, TLS), next to `@agentos/app` and
   `@agentos/ui`. What an app starts (tasks, servers, workers) belongs to it: unloading or replacing the app aborts
   it and closes its listeners, and what a task or a request handler runs queues behind the app's other calls (one
@@ -107,10 +107,17 @@ A change is done when all of these hold:
   cyclic or absurdly shared table handed back to the host is an error (never a stack overflow), a Lua number can
   not panic a module or size an unbounded allocation (an error instead: a host panic aborts every app), and chunks
   load as text only.
-- **Open until NEOC-120 lands: an app can abort the host.** The adapter calls app code (tools, handlers, views,
-  write-backs, transaction bodies) with `call_async`, which on LuaJIT still aborts the process when an app raises an
-  error value whose `__tostring` makes a protected call and then fails (`CLAUDE.md`, "Embedding the VM"). The guarded
-  entry point from NEOC-120 closes it; the adapter switches to it then.
+- **Open (NEOC-120, NEOC-123, NEOC-124): an app can abort the host.** On LuaJIT an app that raises an error value
+  whose `__tostring` makes a protected call and then fails (`mt.__tostring = function() pcall(error, "x")
+  error(setmetatable({}, mt)) end`) overflows the stack in the engine's message handler and aborts the process; the PUC
+  Lua 5.1 this host ran on before reported a catchable "C stack overflow". Reproduced paths: the entry chunk
+  (`exec_async`), a field read of an app table that has a metatable (mlua's own protected `Table::get`, for example the
+  table given to `app.tool`, at install) and the adapter's `call_async` sites (tools, events, handlers, views,
+  write-backs, transaction bodies, task bodies). What closes what: NEOC-120's guarded entry point covers the
+  `call_async` sites once the adapter switches to it; the entry chunk and mlua's own table reads are covered only by the
+  mlua patch (NEOC-124, pending the owner's decision NEOC-123). Until both are in, any app can take the host down.
+  `crates/agentos-lua/tests/poison.rs` has one test per path; the ones that abort are `#[ignore]`d with the tickets and
+  are meant to turn on with the fix. (A Tera panic in `lib:template` also aborts under `release-host`: NEOC-125.)
 - **The client runs no app code.** The renderer draws view trees and sends events; nothing executable crosses the
   wire. Kit knowledge of apps, and app knowledge in the client, are both bugs.
 - **Agent and tool output is untrusted:** render it as text. No `{@html}` or `innerHTML` for it (the only `{@html}` is
@@ -164,7 +171,7 @@ bun run test:e2e        # all Storybooks + desktop + journeys, headless, against
                         # AGENTOS_PORT_BASE=9100 for a second worktree (Storybook = base, e2e host = base + 10)
 bun run test:e2e:update # rebaseline snapshots (then look at them)
 bun run storybooks list # every Storybook (client, packages/ui); each package: bun run storybook
-bun run codegen         # regenerate types/generated/* (incl. ui.lua, prelude.lua) and docs/reference/components.md from the Rust schema
+bun run codegen         # regenerate types/generated/* (incl. ui.lua, prelude.lua), types/luals/ (the std:/lib:/vnd: module definitions) and docs/reference/components.md from the Rust schema
 bun run codegen:check   # fails when they are stale (part of bun run lint)
 bun scripts/design-audit.ts <page>  # static styleguide audit of a built-in shell page's styles
 ```
