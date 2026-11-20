@@ -8,7 +8,7 @@
 `.gitignore` excludes it, and Cargo ignores a dependency's lockfile). The root `Cargo.toml` applies it with
 `[patch.crates-io]`; `mlua-sys` and `mlua_derive` still come from crates.io. It is not a workspace member.
 
-The first commit that added it is the registry source byte for byte; the changes are the patches in
+The first commit that added it is the registry source minus those two files, unchanged; the changes are the patches in
 `vendor/mlua-patches/`, applied on top.
 
 ### Patches
@@ -19,8 +19,8 @@ The first commit that added it is the registry source byte for byte; the changes
 
 ### Why 0001
 
-mlua runs every protected call it makes for Rust (`Table::get`, a conversion, `Function::call`, `call_async`,
-`exec`) under a message handler that turns a non-string error value into text with `luaL_tolstring`, which runs
+mlua runs the protected calls it makes for Rust (`Table::get`, a conversion, `Function::call`, `call_async`,
+`exec`: `protect_lua!` and `Function::call`) under a message handler that turns a non-string error value into text with `luaL_tolstring`, which runs
 the value's `__tostring`. LuaJIT sets `L->status` to `LUA_ERRERR` while a handler runs, so an error raised inside it
 is answered with "error in error handling". A `pcall` inside the handler that catches an error clears that status,
 and a later error is then handed to the same handler again. This aborts the process ("stack overflow, aborting"):
@@ -31,7 +31,7 @@ mt.__tostring = function() pcall(error, "x") error(setmetatable({}, mt)) end
 -- any host function that reads a table whose __index raises setmetatable({}, mt)
 ```
 
-PUC Lua 5.1 answered with a catchable error. The patch (`error_traceback` is used on every backend, the fix only on
+The patch (`error_traceback` is used on every backend, the fix only on
 `feature = "luajit"`) does two things:
 
 1. `__tostring` runs through `lua_pcall` with no message handler, so an error it raises is caught where it is
@@ -43,7 +43,9 @@ PUC Lua 5.1 answered with a catchable error. The patch (`error_traceback` is use
    level would otherwise get a fresh flag each time. A nested conversion that is not an attack loses its text for
    the same reason, which is the price of that.
 
-The flag cannot leak: the protected call returns to the handler in every case (it catches every Lua error), so the
+Known edges: a memory error raised inside the conversion itself (`__tostring` allocating until `LUA_ERRMEM`) is
+answered with `error in error handling` instead of being propagated as a memory error; neoc sets no memory limit,
+so only a real out-of-memory reaches it. The flag cannot leak: the protected call returns to the handler in every case (it catches every Lua error), so the
 reset after it always runs, and it does not depend on Rust destructors running while Lua unwinds, which mlua does
 not promise on every backend.
 
@@ -55,5 +57,5 @@ git apply -p1 /path/to/vendor/mlua-patches/0001-isolate-tostring-in-the-luajit-m
 ```
 
 The paths in the patch are relative to the mlua root (`src/state/extra.rs`, `src/util/error.rs`). The tests are in
-`crates/neoc-vm/tests/mlua_error_handler.rs`. As of 0.12.2 (the latest release) and upstream `main` the handler has
-no guard of its own. Remove `[patch.crates-io]`, `vendor/mlua` and this directory when a release carries one.
+`crates/neoc-vm/tests/mlua_error_handler.rs`. On 2026-11-20 the latest release was 0.12.2 and upstream `main`
+had the same `error_traceback`, with no guard of its own. Remove `[patch.crates-io]`, `vendor/mlua` and this directory when a release carries one.

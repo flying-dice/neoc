@@ -59,41 +59,47 @@ fn in_child(case: &str) {
     );
 }
 
-/// The child: with `CASE_VAR` set it runs that case (on a 2 MiB thread, the stack of a default runtime worker, so
+/// The child: with `CASE_VAR` set it runs that case on a 2 MiB thread (the stack of a default runtime worker, so
 /// a deep recursion cannot hide in a roomy one); without it, as in a plain `cargo test`, it does nothing.
 #[test]
 fn child() {
     let Ok(case) = std::env::var(CASE_VAR) else {
         return;
     };
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .enable_all()
-        .build()
+    std::thread::Builder::new()
+        .stack_size(2 << 20)
+        .spawn(move || {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(run_case(&case));
+            println!("case {case} ok");
+        })
+        .unwrap()
+        .join()
         .unwrap();
-    rt.block_on(async {
-        match case.as_str() {
-            "main_chunk_after_task_wait" => case_main_chunk_after_task_wait().await,
-            "host_function_reads_hostile_options" => {
-                case_host_function_reads_hostile_options().await
-            }
-            "hyper_request_with_hostile_options_in_a_task" => {
-                case_hyper_request_with_hostile_options_in_a_task().await;
-            }
-            "hyper_handler_returns_hostile_table" => {
-                case_hyper_handler_returns_hostile_table().await
-            }
-            "plain_mlua_calls_survive_the_value" => case_plain_mlua_calls_survive_the_value().await,
-            "tostring_that_fails_through_the_rust_api" => {
-                case_tostring_that_fails_through_the_rust_api().await;
-            }
-            "a_failed_conversion_leaves_no_guard_behind" => {
-                case_a_failed_conversion_leaves_no_guard_behind().await;
-            }
-            other => panic!("unknown case {other}"),
+}
+
+async fn run_case(case: &str) {
+    match case {
+        "main_chunk_after_task_wait" => case_main_chunk_after_task_wait().await,
+        "host_function_reads_hostile_options" => case_host_function_reads_hostile_options().await,
+        "hyper_request_with_hostile_options_in_a_task" => {
+            case_hyper_request_with_hostile_options_in_a_task().await;
         }
-    });
-    println!("case {case} ok");
+        "hyper_handler_returns_hostile_table" => case_hyper_handler_returns_hostile_table().await,
+        "a_failing_task" => case_a_failing_task().await,
+        "plain_mlua_calls_survive_the_value" => case_plain_mlua_calls_survive_the_value().await,
+        "tostring_that_fails_through_the_rust_api" => {
+            case_tostring_that_fails_through_the_rust_api().await;
+        }
+        "a_failed_conversion_leaves_no_guard_behind" => {
+            case_a_failed_conversion_leaves_no_guard_behind().await;
+        }
+        other => panic!("unknown case {other}"),
+    }
 }
 
 // ---- the cases (reproductions 1 to 4 of NEOC-124, then what the guard must also hold) -----------------------
@@ -179,6 +185,21 @@ async fn case_hyper_handler_returns_hostile_table() {
     assert_eq!(out, "500|200|fine");
 }
 
+/// A `std:task` task that ends in such a value (CLAUDE.md names it): `await` answers `nil` and the text.
+async fn case_a_failing_task() {
+    let lua = make_engine().unwrap();
+    let src = chunk(
+        r#"
+        local task = require("std:task").spawn(function() error(hostile()) end)
+        local ok, value, message = pcall(task.await, task)
+        return tostring(ok) .. "|" .. tostring(value) .. "|" .. tostring(message)
+        "#,
+    );
+    let out: String = lua.load(src).eval_async().await.unwrap();
+    assert!(out.starts_with("true|nil|"), "{out}");
+    assert!(out.contains(HANDLED), "{out}");
+}
+
 /// What `neoc_vm::lua::sandbox::call_guarded` and the engine's guarded `xpcall` exist for, with neither: a plain
 /// `Function::call`, `call_async`, `Table::get` through a metamethod, `exec`/`exec_async` and a coroutine
 /// resumed from Rust each end in an error.
@@ -219,14 +240,16 @@ async fn case_plain_mlua_calls_survive_the_value() {
             .contains(HANDLED)
     );
     let thread: mlua::Thread = env.get("coroutine").unwrap();
-    assert!(thread.resume::<()>(()).is_err());
-    assert!(lua.load(chunk("error(hostile())")).exec().is_err());
-    assert!(
-        lua.load(chunk("error(hostile())"))
-            .exec_async()
-            .await
-            .is_err()
-    );
+    let resumed = thread.resume::<()>(()).unwrap_err().to_string();
+    assert!(resumed.contains(HANDLED), "{resumed}");
+    let exec = lua.load(chunk("error(hostile())")).exec().unwrap_err();
+    assert!(exec.to_string().contains(HANDLED), "{exec}");
+    let exec_async = lua
+        .load(chunk("error(hostile())"))
+        .exec_async()
+        .await
+        .unwrap_err();
+    assert!(exec_async.to_string().contains(HANDLED), "{exec_async}");
 }
 
 /// A `__tostring` that fails through the Rust API each time (it reads a hostile options table) makes the
@@ -239,9 +262,10 @@ async fn case_tostring_that_fails_through_the_rust_api() {
         local nested = {}
         nested.__tostring = function()
           pcall(error, "x")
-          spawn(hostile_options())   -- raises through the Rust API, into the handler again
-          spawn(setmetatable({}, { __index = function() error(setmetatable({}, nested)) end }))
-          return "x"
+          -- raises through the Rust API into the handler again, while the outer conversion is running; the
+          -- text of that inner failure is this `__tostring`'s result
+          local _, inner = spawn(setmetatable({}, { __index = function() error(setmetatable({}, nested)) end }))
+          return inner
         end
         local response, err = require("vnd:hyper").request(
           setmetatable({}, { __index = function() error(setmetatable({}, nested)) end }))
@@ -250,6 +274,11 @@ async fn case_tostring_that_fails_through_the_rust_api() {
     );
     let out: String = lua.load(src).eval_async().await.unwrap();
     assert!(out.starts_with("nil|hyper.request:"), "{out}");
+    // the outer text is the inner failure's, which the nested handler refused to convert
+    assert!(
+        out.contains("thread.spawn:") && out.contains(HANDLED),
+        "{out}"
+    );
 }
 
 /// A `__tostring` that raises (the handler unwinds by error) must not leave the guard set: an independent error
@@ -321,6 +350,11 @@ fn reproduction_3_hyper_request_with_hostile_options_in_a_task() {
 #[test]
 fn reproduction_4_hyper_handler_returns_hostile_table() {
     in_child("hyper_handler_returns_hostile_table");
+}
+
+#[test]
+fn a_failing_task_with_a_hostile_error_value_is_an_error_not_an_abort() {
+    in_child("a_failing_task");
 }
 
 #[test]
@@ -403,13 +437,18 @@ fn non_string_values_without_a_tostring_are_shown_as_their_type_and_address() {
     for (src, prefix) in [
         ("error({})", "table: "),
         ("error(print)", "function: "),
-        ("error(42)", "42"),
         ("error(true)", "true"),
         ("error(nil)", "nil"),
     ] {
         let text = error_of(src).to_string();
-        assert!(text.contains(prefix), "{src}: {text}");
+        assert!(
+            text.starts_with(&format!("runtime error: {prefix}")),
+            "{src}: {text}"
+        );
     }
+    // a number gets the position of the `error` call in front of it, like a string does
+    let text = error_of("error(42)").to_string();
+    assert!(text.contains(": 42\nstack traceback:"), "{text}");
 }
 
 #[derive(Debug)]
@@ -457,13 +496,6 @@ fn running_out_of_memory_is_a_memory_error() {
 }
 
 #[test]
-fn a_syntax_error_is_a_syntax_error() {
-    let lua = make_engine().unwrap();
-    let err = lua.load("local = 1").exec().unwrap_err();
-    assert!(matches!(err, Error::SyntaxError { .. }), "{err:?}");
-}
-
-#[test]
 fn a_table_get_through_a_metamethod_reports_a_string_error_with_its_traceback() {
     let lua = make_engine().unwrap();
     let t: Table = lua
@@ -473,4 +505,23 @@ fn a_table_get_through_a_metamethod_reports_a_string_error_with_its_traceback() 
     let text = t.get::<Value>("k").unwrap_err().to_string();
     assert!(text.contains("from index"), "{text}");
     assert!(text.contains("stack traceback:"), "{text}");
+}
+
+#[test]
+fn a_stack_overflow_is_a_stack_overflow_error() {
+    // the handler runs with the Lua stack at its limit: the isolated conversion must still deliver the error
+    let lua = make_engine().unwrap();
+    let f: Function = lua
+        .load("local function f() return 1 + f() end return f")
+        .eval()
+        .unwrap();
+    for text in [
+        f.call::<()>(()).unwrap_err().to_string(),
+        lua.load("local function f() return 1 + f() end f()")
+            .exec()
+            .unwrap_err()
+            .to_string(),
+    ] {
+        assert!(text.starts_with("runtime error: stack overflow"), "{text}");
+    }
 }

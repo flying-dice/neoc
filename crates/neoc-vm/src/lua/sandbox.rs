@@ -191,9 +191,12 @@ fn strip_unsafe_globals(lua: &Lua) -> mlua::Result<()> {
 
 /// Call a script function from Rust, with `args`, so that an error it raises reaches the caller as a Lua error with
 /// text, whatever the error value is. Use this, not `Function::call`, wherever a host function calls a callback the
-/// script gave it: on LuaJIT an error value whose `__tostring` makes a protected call and then fails sends the
+/// script gave it: on stock mlua an error value whose `__tostring` makes a protected call and then fails sends the
 /// message handler of a plain `Function::call` into a recursion that overflows a runtime worker's stack and
-/// aborts the process (`guarded_call.lua`). It is not for a call that may suspend (`call_async`).
+/// aborts the process (`guarded_call.lua`). The vendored mlua (`vendor/README.md`, NEOC-124) no longer aborts
+/// there, so what this still gives is the error without mlua's handler in the way: a value whose `__tostring`
+/// fails is `<error object>` here, where the handler answers `error in error handling`. It is not for a call
+/// that may suspend (`call_async`).
 ///
 /// # Errors
 /// The function raised: the error is its message (a value that is not text is converted without running a

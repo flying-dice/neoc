@@ -372,11 +372,12 @@ unsafe fn tostring_isolated(state: *mut ffi::lua_State) -> *const std::os::raw::
     // `extra` is null only for a foreign Lua state (`Lua::try_from_ptr`): isolated, but not guarded against nesting
     let nested = !extra.is_null() && (*extra).in_error_handler;
     if !nested {
+        // Set the flag last: only `lua_pcall` below is known to return to us, a push could raise
+        ffi::lua_pushcfunction(state, tostring_value);
+        ffi::lua_pushvalue(state, top);
         if !extra.is_null() {
             (*extra).in_error_handler = true;
         }
-        ffi::lua_pushcfunction(state, tostring_value);
-        ffi::lua_pushvalue(state, top);
         let status = ffi::lua_pcall(state, 1, 1, 0);
         if !extra.is_null() {
             (*extra).in_error_handler = false;

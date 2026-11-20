@@ -497,8 +497,9 @@ fn an_xpcall_handler_that_fails_is_run_again_as_on_luajit_up_to_a_bound() {
 }
 
 /// The same recursion through mlua's own message handler, which runs a value's `__tostring` to make the text of
-/// an error: it aborts a runtime worker unless the host call that runs script code goes through `call_guarded`
-/// (`lib:test`'s `toThrow` and `lib:cache`'s `on_evict` do, and so must an embedder's).
+/// an error. Stock mlua aborts a runtime worker unless the host call that runs script code goes through
+/// `call_guarded` (`lib:test`'s `toThrow` and `lib:cache`'s `on_evict` do); the vendored mlua (NEOC-124,
+/// `tests/mlua_error_handler.rs`) no longer aborts, and `call_guarded` is kept as it was.
 #[test]
 fn an_error_value_whose_tostring_fails_cannot_overflow_the_stack_through_a_host_call() {
     std::thread::Builder::new()
