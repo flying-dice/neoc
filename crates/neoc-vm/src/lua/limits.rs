@@ -13,7 +13,8 @@
 
 use std::time::Duration;
 
-/// The largest buffer, in bytes (or characters), that one Lua number may size: 1 GiB.
+/// The largest buffer, counted in bytes or in characters (so up to four times as many bytes for text), that one
+/// Lua number may size: 1 Gi.
 pub(crate) const MAX_BUFFER: usize = 1 << 30;
 
 /// The longest a `task.wait` / `task.delay` sleeps: 100 years. Longer (and infinite) is clamped to this,
@@ -68,6 +69,17 @@ mod tests {
     fn sizes_are_bounded() {
         assert_eq!(size(0, "n"), Ok(0));
         assert_eq!(size(16, "n"), Ok(16));
+        assert_eq!(size(MAX_BUFFER as i64, "n"), Ok(MAX_BUFFER));
+        assert!(
+            size(-1, "n")
+                .unwrap_err()
+                .contains("n must be non-negative")
+        );
+        assert!(
+            size(MAX_BUFFER as i64 + 1, "n")
+                .unwrap_err()
+                .contains("too large")
+        );
         assert!(size(-1, "n").is_err());
         assert!(size(i64::MAX, "n").is_err());
         assert!(size(MAX_BUFFER as i64 + 1, "n").is_err());

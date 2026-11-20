@@ -220,6 +220,46 @@ describe("template.add_filter", function()
             expect(err).toContain("range")
         end)
 
+        test("a refused one-off render does not break the next render", function()
+            local out, err = template.render('{% extends "base" %}', {})
+            expect(out).toBeNil()
+            expect(err).toContain("template.render:")
+            out = template.render("{{ x }}", { x = "ok" })
+            expect(out).toBe("ok")
+        end)
+
+        test("limits are exact: 48 operators pass, 49 are refused", function()
+            local function sum(operators)
+                return "{{ 1" .. (" + 1"):rep(operators) .. " }}"
+            end
+            expect(template.render(sum(48), {})).toBe("49")
+            local out, err = template.render(sum(49), {})
+            expect(out).toBeNil()
+            expect(err).toContain("too complex")
+        end)
+
+        test("comparisons, signs and keyword arguments are not over-counted", function()
+            local alternatives = {}
+            for i = 1, 20 do alternatives[#alternatives + 1] = "x == " .. i end
+            local cond = table.concat(alternatives, " or ")
+            expect(template.render("{% if " .. cond .. " %}hit{% endif %}", { x = 20 })).toBe("hit")
+            local negatives = {}
+            for i = 1, 60 do negatives[#negatives + 1] = "-" .. i end
+            expect(template.render("{% set l = [" .. table.concat(negatives, ", ") .. "] %}{{ l | length }}", {}))
+                .toBe("60")
+            expect(template.render("{% if x >= 1 and x <= 3 and x != 2 %}in{% endif %}", { x = 3 })).toBe("in")
+        end)
+
+        test("limits are exact: 24 nested blocks pass, 25 are refused", function()
+            local function nest(n)
+                return ("{% if true %}"):rep(n) .. "x" .. ("{% endif %}"):rep(n)
+            end
+            expect(template.render(nest(24), {})).toBe("x")
+            local out, err = template.render(nest(25), {})
+            expect(out).toBeNil()
+            expect(err).toContain("too complex")
+        end)
+
         test("range still works for ordinary bounds", function()
             local out = template.render("{% for i in range(start=1, end=4) %}{{ i }}{% endfor %}", {})
             expect(out).toBe("123")

@@ -198,4 +198,13 @@ describe("io", function()
         end)
     end)
 
+
+    describe("read size", function()
+        test("a request far past what can be allocated returns what the reader has", function()
+            local reader = io.from_string("hello")
+            local data, err = reader:read(2 ^ 40)
+            expect(err).toBeNil()
+            expect(data).toBe("hello")
+        end)
+    end)
 end)

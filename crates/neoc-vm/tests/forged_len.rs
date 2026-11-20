@@ -2,7 +2,7 @@
 //! `#t` of a table is whatever border Lua finds, and a script can forge a table whose `#` is 2^29 while it holds
 //! four rows. A buffer presized from it asks the allocator for gigabytes, and a failed allocation aborts the host
 //! (on a machine that cannot back the request: a laptop overcommits, so the call below passes there even when the
-//! code is wrong). `unsafe` is forbidden, so no test allocator can see the request; instead
+//! code is wrong). A test allocator would need `unsafe` to see the request, which the crate does not use; instead
 //! [`no_buffer_is_presized_from_a_table_length`] reads the source of the crate for the pattern.
 
 use neoc_vm::lua::sandbox::make_engine;

@@ -1,5 +1,8 @@
 //! JSON value handles — `lib:json`.
 //!
+//! Limits: a Lua value becomes JSON at most 127 levels deep (what `serde_json` reads back) (a table that contains itself is an error),
+//! and `Array:set` pads at most 1 Mi `null`s past the end.
+//!
 //! Foundation that `vnd:serde_json::from_str` returns: a parsed JSON body
 //! lives as one `JsonValue` tree in Rust memory (built out of `String`,
 //! `Vec`, `BTreeMap`, `i64`, `f64`, `bool` — pure std), addressed from Lua
@@ -732,10 +735,10 @@ pub fn lua_value_to_json_value(v: &Value) -> mlua::Result<JsonValue> {
     Ok(json)
 }
 
-/// How deep a Lua value may nest when it becomes JSON: `serde_json`'s own parse limit, so what this module
-/// writes it can read back. A table that contains itself (or just nests this far) is an error, not the
+/// How deep a Lua value may nest when it becomes JSON: one under `serde_json`'s parse limit of 128 (which
+/// refuses the 128th level), so what this module writes it can read back. A table that contains itself (or just nests this far) is an error, not the
 /// stack overflow that would abort the host.
-pub const MAX_DEPTH: usize = 128;
+pub const MAX_DEPTH: usize = 127;
 
 /// How many `null`s `Array:set` may pad when the index is past the end (1 Mi).
 pub const MAX_ARRAY_GAP: usize = 1 << 20;
@@ -1169,7 +1172,7 @@ mod tests {
     }
 
     /// A table that contains itself recursed until the Rust stack overflowed (an abort); so did one nested
-    /// a million deep.
+    /// a hundred thousand deep.
     #[test]
     fn cyclic_and_very_deep_tables_are_an_error_not_a_stack_overflow() {
         let lua = engine();

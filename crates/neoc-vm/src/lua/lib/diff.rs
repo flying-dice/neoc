@@ -1279,13 +1279,7 @@ mod tests {
 
     #[test]
     fn a_huge_context_is_clamped_not_an_overflow_panic() {
-        for src in [
-            "1e300",
-            "2^63",
-            "2^53",
-            "math.maxinteger or 9007199254740992",
-            "1.8e19",
-        ] {
+        for src in ["1e300", "2^63", "2^53", "2^53 + 2", "1.8e19"] {
             let lua = crate::lua::sandbox::make_engine().expect("engine");
             let (hunks, _): (mlua::Value, mlua::Value) = lua
                 .load(format!(

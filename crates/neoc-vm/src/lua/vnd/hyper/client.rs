@@ -461,15 +461,23 @@ mod tests {
         for (script, needle) in [
             (
                 r#"return require("vnd:hyper").get("https://localhost:1/", { ca_pem = "nonsense" })"#,
-                "ca_pem",
+                "ca_pem holds no certificate",
+            ),
+            (
+                r#"return require("vnd:hyper").get("https://localhost:1/", { ca_pem = "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n" })"#,
+                "ca_pem holds an unusable certificate",
             ),
             (
                 r#"return require("vnd:hyper").get("ftp://localhost/")"#,
                 "only http:// and https://",
             ),
             (
-                r#"return require("vnd:hyper").get("https://localhost:1/", { ca_pem = 5 })"#,
-                "ca_pem",
+                r#"return require("vnd:hyper").get("https://localhost:1/", { ca_pem = {} })"#,
+                "ca_pem must be a string",
+            ),
+            (
+                r#"return require("vnd:hyper").get("http:///no-host")"#,
+                "hyper.get:",
             ),
         ] {
             let (body, err) = run(&lua, script).await;
@@ -479,7 +487,7 @@ mod tests {
     }
 
     /// A real HTTPS request to a public host, verified by the platform trust store (no `ca_pem`). It needs
-    /// network access, which the project's test runs have; offline it fails with a `tls` or connect error.
+    /// network access (it is not ignored); offline it fails with a `tls` or connect error.
     #[tokio::test]
     async fn https_request_to_a_public_host_is_verified_by_the_platform() {
         let lua = make_engine().expect("engine");

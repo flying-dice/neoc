@@ -3,6 +3,10 @@
 //! Dual surface: `Glob` / `GlobSet` UserData (compiled, reusable) plus flat
 //! `is_match` / `scan` convenience functions. Backed by `globset` for the
 //! automaton and `walkdir` for filesystem traversal.
+//!
+//! Every pattern goes through one bounded compile (also used by `lib:archive`'s `include` and
+//! `lib:http`'s `serve_static`): at most 4096 bytes, 256 `{` and 32 levels of `{...}` nesting. A longer or
+//! deeper pattern is an error, as is one whose regex the engine refuses.
 
 use std::path::{Path, PathBuf};
 
@@ -139,15 +143,15 @@ impl UserData for GlobHandle {
 pub(crate) const MAX_PATTERN_BYTES: usize = 4096;
 
 /// The deepest `{...}` alternation nesting a pattern may have. globset recurses once per level (in its parser
-/// and in the regex it builds), and a stack overflow aborts the host; the regex engine refuses far less than
-/// this anyway (`{a,` nested 130 deep), so no real pattern is affected.
+/// and in the regex it builds), and a stack overflow aborts the host. Real patterns nest a level or two.
 pub(crate) const MAX_BRACE_DEPTH: usize = 32;
 
 /// The most `{` a pattern may contain, nested or not.
 pub(crate) const MAX_BRACES: usize = 256;
 
 /// Refuse a pattern that is too long or has too many or too deeply nested alternations, before globset sees
-/// it. Counts every unescaped `{` and `}` even inside a character class: that can only over-count.
+/// it. Counts every unescaped `{` and `}` without parsing character classes, so `[{]` counts as a brace and
+/// a `}` inside a class closes one; the total length bound keeps either error small.
 pub(crate) fn check_pattern(pattern: &str) -> Result<(), String> {
     if pattern.len() > MAX_PATTERN_BYTES {
         return Err(format!(
@@ -679,8 +683,10 @@ mod tests {
         assert!(!no);
     }
 
-    /// `Glob::compile_matcher` compiles with `expect`: this pattern made globset panic ("regex compilation
-    /// shouldn't fail"), and a panic aborts the host. It is a Lua error now, through every entry point.
+    /// `Glob::compile_matcher` compiles with `expect`, which panics when globset's regex is refused, and a panic
+    /// aborts the host. Every entry point now builds a `GlobSet` and returns the error instead. This pattern is
+    /// refused by `check_pattern` first (nothing within the bounds is known to reach the build error), so the
+    /// test pins that each entry point reports an error, not that one particular guard fired.
     #[test]
     fn a_pattern_whose_regex_is_refused_is_an_error_not_a_panic() {
         let lua = engine();

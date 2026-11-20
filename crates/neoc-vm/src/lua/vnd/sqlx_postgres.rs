@@ -2,8 +2,8 @@
 //!
 //! Connection strings are standard Postgres URLs:
 //! `postgres://user:pass@host:5432/dbname`. **TLS is not enabled in this
-//! build** — connect to plaintext servers only (consistent with `lib.hyper`
-//! being HTTP-only).
+//! build** — connect to plaintext servers only (`vnd:hyper` is the only
+//! module with a TLS stack).
 //!
 //! Postgres uses positional placeholders `$1, $2, …` (not `?`):
 //!

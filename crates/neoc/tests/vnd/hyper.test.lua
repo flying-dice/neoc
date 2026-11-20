@@ -204,10 +204,10 @@ describe("hyper", function()
             local resp, err = hyper.request({
                 method = "GET",
                 url    = "https://example.com/",
-                ca_pem = 5,
+                ca_pem = {},
             })
             expect(resp).toBeNil()
-            expect(err).toContain("ca_pem")
+            expect(err).toContain("ca_pem must be a string")
         end)
     end)
 

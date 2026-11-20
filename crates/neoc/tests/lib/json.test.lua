@@ -802,4 +802,35 @@ describe("json", function()
             end).toThrow()
         end)
     end)
+
+    describe("nesting limit", function()
+        local function nested(depth)
+            local v = {}
+            for _ = 2, depth do v = { v } end
+            return v
+        end
+
+        test("127 levels are accepted and 128 are refused", function()
+            local a = json.array()
+            local ok127 = pcall(a.push, a, nested(127))
+            local ok128, err = pcall(a.push, a, nested(128))
+            expect(ok127).toBe(true)
+            expect(ok128).toBe(false)
+            expect(tostring(err)).toContain("levels deep")
+        end)
+    end)
+
+    describe("padding limit", function()
+        test("Array:set at the largest allowed gap works and one past it is refused", function()
+            local a = json.array()
+            a:push(1)
+            local ok_at = pcall(a.set, a, 1 + 2 ^ 20, "x")
+            expect(ok_at).toBe(true)
+            local b = json.array()
+            b:push(1)
+            local ok_over, err = pcall(b.set, b, 2 + 2 ^ 20, "x")
+            expect(ok_over).toBe(false)
+            expect(tostring(err)).toContain("too far past the end")
+        end)
+    end)
 end)

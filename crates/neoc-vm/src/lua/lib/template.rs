@@ -212,13 +212,15 @@ impl Engine {
 //   with 20 000 terms. [`check_complexity`] reads the source (before Tera sees it) and refuses blocks nested
 //   more than [`MAX_BLOCK_DEPTH`] deep, tags with more than [`MAX_OPERATORS`] operators or nested more than
 //   [`MAX_NESTING`] brackets, and [`check_renderable`] refuses a template whose blocks and macro calls stack
-//   more than [`MAX_RENDER_DEPTH`] deep when rendered. Each limit sits at a third or less of where an
-//   unoptimised build overflows 2 MiB (tested at the limits, on a 2 MiB thread).
+//   more than [`MAX_RENDER_DEPTH`] deep when rendered. The limits sit well below where AgentOS measured an
+//   unoptimised build overflowing 2 MiB; templates at each limit render in the tests below, and the sweep in
+//   `tests/hostile_inputs.rs` feeds templates nested far past them to a 2 MiB thread.
 // ---------------------------------------------------------------------------
 
 /// Block tags (`for`, `if`, `macro`, `block`, `filter`) that may be open at once.
 const MAX_BLOCK_DEPTH: usize = 24;
-/// Binary operators (`+ - * / % == != < > <= >=`, `and`, `or`, `in`) one tag may hold.
+/// Binary operators (`+ - * / %`, `== != < > <= >=`, `and`, `or`, `in`; each comparison counts once, a sign
+/// or a lone `=` not at all) one tag may hold.
 const MAX_OPERATORS: usize = 48;
 /// Parentheses and brackets one tag may have open at once.
 const MAX_NESTING: usize = 24;
@@ -588,7 +590,20 @@ fn scan_tag(bytes: &[u8], body: usize, close: &[u8]) -> Result<usize, String> {
                 }
             }
             b')' | b']' => nesting = nesting.saturating_sub(1),
-            b'+' | b'-' | b'*' | b'/' | b'%' | b'=' | b'<' | b'>' => operators += 1,
+            b'+' | b'*' | b'/' | b'%' | b'<' | b'>' => operators += 1,
+            // `==` and `!=` are one operator each, a lone `=` (a `set` or a keyword argument) is none, and the
+            // `=` of `<=` and `>=` belongs to the `<` or `>` already counted
+            b'!' if bytes.get(i + 1) == Some(&b'=') => operators += 1,
+            b'=' if bytes.get(i + 1) == Some(&b'=')
+                && !matches!(
+                    i.checked_sub(1).map(|p| bytes[p]),
+                    Some(b'<' | b'>' | b'!' | b'=')
+                ) =>
+            {
+                operators += 1;
+            }
+            // binary minus only: a sign (`-1`, `{%- ... -%}`, `(-x)`) follows no operand
+            b'-' if follows_operand(bytes, body, i) => operators += 1,
             c if c.is_ascii_alphabetic() => {
                 let word = &bytes[i..];
                 let len = word
@@ -613,6 +628,19 @@ fn scan_tag(bytes: &[u8], body: usize, close: &[u8]) -> Result<usize, String> {
         i += 1;
     }
     Ok(bytes.len())
+}
+
+/// Whether the last non-space byte before `at` (not before `body`) ends an operand, so a `-` there is a
+/// subtraction and not a sign.
+fn follows_operand(bytes: &[u8], body: usize, at: usize) -> bool {
+    bytes[body..at]
+        .iter()
+        .rev()
+        .find(|b| !b.is_ascii_whitespace())
+        .is_some_and(|b| {
+            b.is_ascii_alphanumeric()
+                || matches!(b, b'_' | b')' | b']' | b'"' | b'\'' | b'`' | b'.')
+        })
 }
 
 fn too_many_operators() -> String {

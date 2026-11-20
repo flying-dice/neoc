@@ -6,6 +6,10 @@
 //!
 //! Behaviour follows clap defaults — booleans are presence-only, error wording
 //! is clap's, help formatting tracks clap's renderer version.
+//!
+//! A spec clap would panic on is an error instead: duplicate or reserved flag names (`help`,
+//! `__positional`, `__rest`), a clashing or `-h` short, a long name starting with `-`, a subcommand named
+//! `help`.
 
 use std::collections::HashSet;
 

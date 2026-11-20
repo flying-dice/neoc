@@ -537,7 +537,8 @@ mod tests {
     }
 
     /// `Duration::from_secs_f64` panics on infinity and on anything past ~1.8e19 s. Every such argument must be
-    /// a clamped sleep, not a panic.
+    /// a clamped sleep, not a panic. (A panic inside a spawned task is swallowed by the runtime, so this test
+    /// pins the observable shape; `limits::tests::sleeps_never_panic` is the check that fails on the old code.)
     #[test]
     fn hostile_wait_and_delay_durations_clamp_instead_of_panicking() {
         rt().block_on(async {

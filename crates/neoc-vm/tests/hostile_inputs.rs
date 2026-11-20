@@ -14,7 +14,7 @@
 //! The sweep and the other tests here run on a 2 MiB thread (the stack of a default runtime worker): a
 //! recursion that only fits a bigger stack is a stack overflow, which aborts the host, so it fails here.
 //!
-//! Not swept: `std:thread`, `std:net` and the network modules (`vnd:hyper`, `vnd:sqlx_*`), which open
+//! Not swept: `std:thread`, `std:net` and the network modules (`vnd:hyper`, `vnd:sqlx_*`, `vnd:testcontainers_modules`), which open
 //! sockets or spawn workers, `std:workers` (a process-wide Ctrl-C signal) and `std:task` (its sleeps are covered by `std/task.rs` tests). The sweep
 //! runs in a scratch working directory.
 

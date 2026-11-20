@@ -150,7 +150,7 @@ bytes = "1"
 # async/await machinery on top adds overhead with no IO to overlap. Both
 # ultimately link the same vendored libsqlite3-sys.
 # `mysql`/`postgres` are pure-Rust drivers; TLS is intentionally not enabled here
-# (consistent with `lib.http` being HTTP-only).
+# (only the `vnd:hyper` client carries a TLS stack, see `tokio-rustls` above).
 # `mysql-rsa` keeps MySQL's `caching_sha2_password` working over a plain
 # connection (sqlx 0.9 made the RSA key exchange opt-in; 0.8 always included it).
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "mysql", "mysql-rsa", "postgres"] }
@@ -234,7 +234,8 @@ required-features = ["bench"]
 
 # The root `[workspace.lints]` table (clippy pedantic, `unsafe_code = "deny"`) was
 # imported with the old compiler crates and never inherited here: opting in
-# today means ~700 pedantic findings and six `unsafe` blocks. Adopting it is its
-# own change, so silence cargo's "missing lints inheritance" nag until then.
+# today means ~700 pedantic findings. (`neoc-vm` has no `unsafe` outside tests and
+# forbids it in `lib.rs`; the `neoc` crate has the rest.) Adopting
+# it is its own change, so silence cargo's "missing lints inheritance" nag until then.
 [lints.cargo]
 missing_lints_inheritance = "allow"
