@@ -56,6 +56,10 @@ The bench line compiles every bench and runs each body once, with no timing. It 
 
 GitHub Actions (`.github/workflows/ci.yml`) runs similar checks on pushes to `main`, plus `cargo deny check advisories`, the release-binary cross builds and the Docker image build. It is not a gate and is not relied on: the local run is the verification.
 
+## Patched dependencies
+
+`mlua` is vendored in `vendor/mlua` and applied with `[patch.crates-io]` in the root `Cargo.toml`; [vendor/README.md](vendor/README.md) says which release, what was changed and how to re-apply it. `cargo deny check` covers it like any other crate (a `path` source is not checked). Change `vendor/mlua` only through a patch in `vendor/mlua-patches/`, and drop the patch table once an upstream release carries the fix.
+
 ## Branching and PRs
 
 `main` is the only long-lived branch.

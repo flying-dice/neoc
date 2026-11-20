@@ -94,6 +94,10 @@ pub(crate) struct ExtraData {
     pub(super) thread_event_callback: Option<ThreadEventCallback>,
     pub(super) thread_event_state: *mut ffi::lua_State,
 
+    // Set while `error_traceback` converts an error value to text (it runs `__tostring`)
+    #[cfg(feature = "luajit")]
+    pub(crate) in_error_handler: bool,
+
     #[cfg(feature = "luau")]
     pub(crate) running_gc: bool,
     #[cfg(feature = "luau")]
@@ -215,6 +219,8 @@ impl ExtraData {
             compiler: None,
             #[cfg(feature = "luau-jit")]
             enable_jit: true,
+            #[cfg(feature = "luajit")]
+            in_error_handler: false,
             #[cfg(feature = "luau")]
             running_gc: false,
             #[cfg(feature = "luau")]

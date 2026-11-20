@@ -329,6 +329,14 @@ pub(crate) unsafe extern "C-unwind" fn error_traceback(state: *mut ffi::lua_Stat
     }
 
     if get_internal_userdata::<WrappedFailure>(state, -1, ptr::null()).is_null() {
+        // On LuaJIT, `__tostring` runs isolated from this handler (see `tostring_isolated`)
+        #[cfg(feature = "luajit")]
+        let s = tostring_isolated(state);
+        #[cfg(feature = "luajit")]
+        if s.is_null() {
+            return 1;
+        }
+        #[cfg(not(feature = "luajit"))]
         let s = ffi::luaL_tolstring(state, -1, ptr::null_mut());
         if ffi::lua_checkstack(state, ffi::LUA_TRACEBACK_STACK) != 0 {
             ffi::luaL_traceback(state, state, s, 0);
@@ -337,6 +345,49 @@ pub(crate) unsafe extern "C-unwind" fn error_traceback(state: *mut ffi::lua_Stat
     }
 
     1
+}
+
+// Turns the error value on top of the stack into text for `error_traceback`, leaving the text above it and
+// returning it. Returns null when it could not, after replacing the error value with "error in error handling".
+//
+// LuaJIT sets `L->status` to `LUA_ERRERR` while a message handler runs, so an error raised inside the handler
+// is answered with "error in error handling" instead of calling the handler again. A `pcall` inside `__tostring`
+// that catches an error resets that status, so a later error from the same `__tostring` is handed to this
+// handler again, which runs `__tostring` again, until the C stack is gone and the process aborts. Two guards:
+//   1) `__tostring` runs under its own protected call with no message handler, so an error it raises is caught
+//      here and is never handed back to this handler. The flag below is set only around that call, which always
+//      returns here (it catches every Lua error), so a failing `__tostring` cannot leave it set.
+//   2) The flag is per Lua state (all of its coroutines): a protected call made by a `__tostring` (through the
+//      Rust API) that fails runs this handler nested, which then refuses to run another `__tostring`. Without it
+//      a `__tostring` that fails through the Rust API every time recurses just as deeply.
+#[cfg(feature = "luajit")]
+unsafe fn tostring_isolated(state: *mut ffi::lua_State) -> *const std::os::raw::c_char {
+    unsafe extern "C-unwind" fn tostring_value(state: *mut ffi::lua_State) -> c_int {
+        ffi::luaL_tolstring(state, 1, ptr::null_mut());
+        1
+    }
+
+    let top = ffi::lua_gettop(state);
+    let extra = crate::state::ExtraData::get(state);
+    // `extra` is null only for a foreign Lua state (`Lua::try_from_ptr`): isolated, but not guarded against nesting
+    let nested = !extra.is_null() && (*extra).in_error_handler;
+    if !nested {
+        if !extra.is_null() {
+            (*extra).in_error_handler = true;
+        }
+        ffi::lua_pushcfunction(state, tostring_value);
+        ffi::lua_pushvalue(state, top);
+        let status = ffi::lua_pcall(state, 1, 1, 0);
+        if !extra.is_null() {
+            (*extra).in_error_handler = false;
+        }
+        if status == ffi::LUA_OK {
+            return ffi::lua_tolstring(state, -1, ptr::null_mut());
+        }
+    }
+    ffi::lua_settop(state, top - 1);
+    ffi::lua_pushstring(state, cstr!("error in error handling"));
+    ptr::null()
 }
 
 // A variant of `error_traceback` that can safely inspect another (yielded) thread stack

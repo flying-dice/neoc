@@ -318,3 +318,33 @@ fn run_kills_a_hung_test_after_the_per_test_timeout() {
     assert!(stdout.contains("spins forever"), "got: {stdout}");
     assert!(stdout.contains("timed out after 1s"), "got: {stdout}");
 }
+
+#[test]
+fn run_fails_cleanly_when_the_script_raises_an_error_value_that_defeats_its_own_tostring() {
+    // NEOC-124: on LuaJIT an error value whose `__tostring` makes a protected call and then raises again sent
+    // mlua's message handler into a recursion that aborted the process (SIGABRT, no exit code). It is a
+    // script error now: exit code 1 and the message on stderr.
+    let dir = tempdir().unwrap();
+    let src = write(
+        dir.path(),
+        "hostile.lua",
+        "local mt = {}\n\
+         mt.__tostring = function() pcall(error, \"x\") error(setmetatable({}, mt)) end\n\
+         require(\"std:task\").wait(0)\n\
+         error(setmetatable({}, mt))\n",
+    );
+
+    let out = Command::new(BIN).arg("run").arg(&src).output().unwrap();
+
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("error in error handling"),
+        "stderr: {stderr}"
+    );
+}
