@@ -660,3 +660,27 @@ fn unbounded_macro_recursion_is_a_render_error_on_a_small_stack() {
         );
     }
 }
+
+/// One large call cycle: a ring of sixty thousand macros. The cost of an edge must not grow with the size of the
+/// cycle (a membership scan per edge took 12.6 s in debug); the recursion is bounded at run time, so the render
+/// is an ordinary error.
+#[test]
+fn a_ring_of_sixty_thousand_macros_is_planned_in_linear_time() {
+    let n = 60_000;
+    let mut src = String::new();
+    for i in 0..n {
+        src.push_str(&format!(
+            "{{% macro m{i}() %}}{{{{ self::m{}() }}}}{{% endmacro m{i} %}}",
+            (i + 1) % n
+        ));
+    }
+    src.push_str("{{ self::m0() }}");
+    let started = std::time::Instant::now();
+    let err = template_error_on_small_stack(src);
+    assert!(err.contains("levels deep"), "{err:.200}");
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "took {:?}",
+        started.elapsed()
+    );
+}

@@ -24,10 +24,13 @@
 //!   the 48 levels after the cycle's own call overhead (a factorial whose call sits in one `if` gets 13
 //!   frames, a tree walk with the call under an `if` and a `for` 9), and past that the render fails with
 //!   `macro recursion is more than N levels deep`.
-//! - A macro call may not be an operand of arithmetic or of `<` `>` `<=` `>=` (Tera panics evaluating it);
-//!   `set` its result first.
+//! - A bare macro call may not be an operand of arithmetic or of `<` `>` `<=` `>=` (Tera panics evaluating
+//!   it); `set` its result first, or filter it (`self::m() | int + 1` is fine).
 //! - `range()` yields at most 16 Mi elements and rejects a zero step.
-//! - A panic inside Tera (`i64::MIN % -1` computed from a context value, say) is a render error.
+//! - A panic inside Tera (`i64::MIN % -1` computed from a context value, say) is a render error. That relies on
+//!   `catch_unwind`, so it holds only under `panic = "unwind"` (neoc's profile): an embedder built with
+//!   `panic = "abort"` still aborts on these panics, and a caught panic still prints the panic hook's message
+//!   to stderr.
 //!
 //! ## Design decisions (locked in #12)
 //!
@@ -431,9 +434,10 @@ impl Scan {
         }
     }
 
-    /// An operand of arithmetic or of an ordering comparison: a macro call there is refused.
+    /// An operand of arithmetic or of an ordering comparison: a bare macro call there is refused. With a
+    /// filter (`self::m() | int + 1`) Tera evaluates the call first and does not panic.
     fn operand(&mut self, e: &Expr) {
-        if matches!(e.val, ExprVal::MacroCall(_)) {
+        if matches!(e.val, ExprVal::MacroCall(_)) && e.filters.is_empty() {
             self.macro_call_operand = true;
         }
         self.expr(e);
@@ -603,7 +607,14 @@ fn plan_macros(
         .collect();
     let mut reach = vec![0_usize; names.len()];
     let mut plan = Plan::default();
-    for (id, members) in call_cycles(&edges).iter().enumerate() {
+    let components = call_cycles(&edges);
+    let mut component = vec![0_usize; names.len()];
+    for (id, members) in components.iter().enumerate() {
+        for &v in members {
+            component[v] = id;
+        }
+    }
+    for (id, members) in components.iter().enumerate() {
         let recursive =
             members.len() > 1 || edges[members[0]].iter().any(|&(w, _)| w == members[0]);
         let (mut cost, mut tail) = (0_usize, 0_usize);
@@ -611,7 +622,7 @@ fn plan_macros(
             let info = &macros[names[v]];
             tail = tail.max(info.peak);
             for &(w, depth) in &edges[v] {
-                if members.contains(&w) {
+                if component[w] == id {
                     cost = cost.max(depth + 2);
                 } else {
                     tail = tail.max(depth + 2 + reach[w]);
@@ -1322,12 +1333,16 @@ fn json_type_name(v: &serde_json::Value) -> &'static str {
 /// the failing-filter context both surface in the final Lua error string.
 /// Tera's top-level `Error::Display` only shows its own layer.
 fn format_tera_error(e: &tera::Error) -> String {
+    // the recursion guard is an implementation detail: its error reads "macro recursion is more than N levels
+    // deep", without Tera's "Function call '...' failed" wrapper naming the guard
+    let guard = format!("Function call '{DEPTH_GUARD}' failed");
     let mut parts = vec![e.to_string()];
     let mut src: Option<&dyn std::error::Error> = std::error::Error::source(e);
     while let Some(s) = src {
         parts.push(s.to_string());
         src = s.source();
     }
+    parts.retain(|part| *part != guard);
     parts.join(": ")
 }
 
@@ -1439,7 +1454,13 @@ mod tests {
     #[test]
     fn unbounded_macro_recursion_and_self_including_templates_are_errors() {
         let direct = "{% macro f(n) %}{{ self::f(n=n) }}{% endmacro f %}{{ self::f(n=1) }}";
-        assert!(render_err(direct).contains("levels deep"));
+        let direct_err = render_err(direct);
+        assert!(direct_err.contains("levels deep"));
+        assert!(
+            !direct_err.contains("neoc macro recursion limit"),
+            "{direct_err}"
+        );
+        assert!(direct_err.ends_with("macro recursion is more than 20 levels deep"));
         let mutual = "{% macro a() %}{{ self::b() }}{% endmacro a %}{% macro b() %}x{{ self::a() }}{% endmacro b %}{{ self::a() }}";
         assert!(render_err(mutual).contains("levels deep"));
         let nested = "{% macro f() %}{% if true %}{% for i in range(end=2) %}{{ self::f() | upper }}{% endfor %}{% endif %}{% endmacro f %}{{ self::f() }}";
@@ -1491,8 +1512,9 @@ mod tests {
         );
     }
 
-    /// Tera 1.20 panics (`unreachable!`) when a macro call is an operand of arithmetic or of an ordering
-    /// comparison; nothing valid is lost by refusing it where it can be seen. An `==` or `and` operand is fine.
+    /// Tera 1.20 panics (`unreachable!`) when a bare macro call is an operand of arithmetic or of an ordering
+    /// comparison; nothing valid is lost by refusing it where it can be seen. An `==` or `and` operand is
+    /// fine, and so is a filtered call (`self::m() | int + 1`).
     #[test]
     fn a_macro_call_as_an_arithmetic_or_ordering_operand_is_refused() {
         let m = "{% macro m() %}1{% endmacro m %}";
@@ -1515,6 +1537,12 @@ mod tests {
                 "{m}{{% set x = self::m() %}}{{{{ x | int + 1 }}}}"
             )),
             "2"
+        );
+        // a filtered call is evaluated first and does not panic: it renders
+        assert_eq!(render_ok(&format!("{m}{{{{ self::m() | int + 1 }}}}")), "2");
+        assert_eq!(
+            render_ok(&format!("{m}{{% if self::m() | int > 0 %}}a{{% endif %}}")),
+            "a"
         );
     }
 

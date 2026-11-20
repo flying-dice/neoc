@@ -308,6 +308,19 @@ describe("template.add_filter", function()
             expect(template.render(m .. '{% if self::m() == "1" %}a{% endif %}', {})).toBe("a")
         end)
 
+        test("a filtered macro call as an operand renders", function()
+            local m = "{% macro m() %}1{% endmacro m %}"
+            expect(template.render(m .. "{{ self::m() | int + 1 }}", {})).toBe("2")
+            expect(template.render(m .. "{% if self::m() | int > 0 %}a{% endif %}", {})).toBe("a")
+        end)
+
+        test("the recursion error does not name the guard", function()
+            local out, err = template.render("{% macro f() %}{{ self::f() }}{% endmacro f %}{{ self::f() }}", {})
+            expect(out).toBeNil()
+            expect(err).toContain("macro recursion is more than 20 levels deep")
+            expect(err:find("neoc macro recursion limit", 1, true)).toBeNil()
+        end)
+
         test("a panic inside the renderer is an error, and the engine survives it", function()
             local out, err = template.render("{{ (0 - 9223372036854775807 - 1) % -1 }}", {})
             expect(out).toBeNil()
