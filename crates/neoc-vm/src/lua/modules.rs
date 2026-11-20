@@ -296,6 +296,7 @@ pub fn luals_metas(lua: &Lua) -> mlua::Result<Vec<(String, String)>> {
 mod tests {
     use super::*;
     use crate::lua::sandbox::make_engine;
+    use mlua::Value;
 
     /// The declared (facade) set equals the registered `require` keys exactly:
     /// no duplicates in either list, none missing either way, 50 in all. Each
@@ -363,39 +364,48 @@ mod tests {
         }
     }
 
-    /// Every type a definition file names (in a `---@param`, `---@return` or `---@field`) is a primitive or a class
-    /// the same file declares: a recorded type name with no class would be an unknown type in lua-language-server,
-    /// and `luals_type` turns any unknown name into `<module>.<Name>` without complaint.
+    /// Every type a definition file names (in a `---@param`, `---@return` or `---@field`) is a primitive or a
+    /// class some definition file declares (its own, or another module's such as `std_net.TcpListener`): a
+    /// recorded type name with no class would be an unknown type in lua-language-server, and `luals_type`
+    /// turns any unknown name into `<module>.<Name>` without complaint.
     #[test]
     fn every_named_type_is_declared() {
         let lua = make_engine().expect("engine");
+        let metas = luals_metas(&lua).expect("metas");
+        let classes: Vec<&str> = metas
+            .iter()
+            .flat_map(|(_, meta)| meta.lines().filter_map(|l| l.strip_prefix("---@class ")))
+            .collect();
         let mut checked = 0;
-        for (key, meta) in luals_metas(&lua).expect("metas") {
-            let declared: Vec<&str> = meta
-                .lines()
-                .filter_map(|l| l.strip_prefix("---@class "))
-                .collect();
+        for (key, meta) in &metas {
             for line in meta.lines() {
-                // where the type sits among the words of the line: `@param name type`, `@return type`, `@field name type`
-                let type_word = if line.starts_with("---@return ") {
-                    1
-                } else if line.starts_with("---@param ") || line.starts_with("---@field ") {
-                    2
+                // the type text: the rest of a `@return` or `@param name` line, one word after `@field name`
+                let text = if let Some(rest) = line.strip_prefix("---@return ") {
+                    rest
+                } else if let Some(rest) = line.strip_prefix("---@param ") {
+                    rest.split_once(' ').map_or("", |(_, ty)| ty)
+                } else if let Some(rest) = line.strip_prefix("---@field ") {
+                    rest.split_whitespace().nth(1).unwrap_or("")
                 } else {
                     continue;
                 };
-                let ty = line
-                    .split_whitespace()
-                    .nth(type_word)
-                    .unwrap_or("")
-                    .trim_end_matches('?');
-                let known = matches!(ty, "string" | "number" | "boolean" | "any" | "nil" | "err")
-                    || declared.contains(&ty);
-                assert!(
-                    known,
-                    "{key}: `{line}` names `{ty}`, which no class declares"
-                );
-                checked += 1;
+                // names of types in `text`: split on everything a type expression is made of
+                for ty in text.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.')) {
+                    // an `err` label after a return type, or a parameter name inside `fun(req: ...)`
+                    let ty = ty.trim_matches('.');
+                    if ty.is_empty() || matches!(ty, "err" | "req" | "fun") {
+                        continue;
+                    }
+                    let known = matches!(
+                        ty,
+                        "string" | "number" | "boolean" | "any" | "nil" | "table"
+                    ) || classes.contains(&ty);
+                    assert!(
+                        known,
+                        "{key}: `{line}` names `{ty}`, which no class declares"
+                    );
+                    checked += 1;
+                }
             }
         }
         // a changed annotation prefix would make the loop skip every line and pass
@@ -550,6 +560,36 @@ mod tests {
             r#"require("std:thread").spawn({ source = "return 1" })"#,
         ),
         (
+            "std:io",
+            "WriterHandle",
+            r#"(function()
+                _KEEP = require("lib:tempfile").TempDir.new()
+                return require("std:fs").open({ path = _KEEP:path() .. "/w.txt", mode = "w" })
+            end)()"#,
+        ),
+        (
+            "vnd:hyper",
+            "ServerHandle",
+            r#"(function()
+                local listener = assert(require("std:net").TcpListener.bind("127.0.0.1:0"))
+                local server = assert(require("vnd:hyper").serve(listener, function() return "ok" end))
+                return server, function() server:close() end
+            end)()"#,
+        ),
+        (
+            "vnd:hyper",
+            "Request",
+            r#"(function()
+                local hyper = require("vnd:hyper")
+                local listener = assert(require("std:net").TcpListener.bind("127.0.0.1:0"))
+                local seen
+                local server = assert(hyper.serve(listener, function(req) seen = req return "ok" end))
+                assert(hyper.post({ url = "http://" .. listener:addr() .. "/probe", body = "{}" }))
+                server:close()
+                return seen
+            end)()"#,
+        ),
+        (
             "std:time",
             "Duration",
             r#"require("std:time").Duration.from_secs(1)"#,
@@ -586,30 +626,10 @@ mod tests {
         ),
     ];
 
-    /// The recorded types `INSTANCES` leaves out, each with why: a value of one needs something a unit test here
-    /// does not have (a file a writer would leave behind, a running server, a worker, a database server, Docker). Their records
-    /// are the only ones not held to the implementation.
+    /// The recorded types nothing here builds, each with why: a database server or Docker. Their records are the
+    /// only ones not held to the implementation. (`std:thread` `Channel` exists only inside a worker and is checked
+    /// there, see `CHANNEL_PROBE`.)
     const NOT_BUILT: &[(&str, &str, &str)] = &[
-        (
-            "std:io",
-            "WriterHandle",
-            "a writer opens a file for writing, and a unit test leaves no file behind",
-        ),
-        (
-            "std:thread",
-            "Channel",
-            "exists only inside a spawned worker",
-        ),
-        (
-            "vnd:hyper",
-            "ServerHandle",
-            "a server is started by `serve` on a bound listener inside a running app",
-        ),
-        (
-            "vnd:hyper",
-            "Request",
-            "exists only inside a request handler",
-        ),
         ("vnd:sqlx_mysql", "Database", "needs a MySQL server"),
         ("vnd:sqlx_mysql", "Statement", "needs a MySQL server"),
         ("vnd:sqlx_postgres", "Database", "needs a PostgreSQL server"),
@@ -630,17 +650,59 @@ mod tests {
         ),
     ];
 
-    /// Every method and field a module records for a resource type exists on a live value of that type. A record
-    /// with no implementation behind it (`Time:add`, once) is a call lua-language-server accepts and the VM
-    /// refuses; this is the mirror of `check_statics_recorded`, which holds the other direction for sub-tables.
+    /// Run inside a spawned worker, where `std:thread`'s `parent` channel exists: the recorded members of a
+    /// `Channel` that the live channel lacks, as a string. The names arrive as the worker's argument.
+    const CHANNEL_PROBE: &str = r#"
+        local thread = require("std:thread")
+        local missing = {}
+        for _, name in ipairs((...)) do
+          if thread.parent[name] == nil then missing[#missing + 1] = name end
+        end
+        return table.concat(missing, ", ")
+    "#;
+
+    /// Every method and field a module records for a resource type exists on a live value of that type, and
+    /// (for a value that is a plain table or a userdata whose methods sit in a table) every live method is
+    /// recorded. A record with no implementation behind it (`Time:add`, once) is a call lua-language-server
+    /// accepts and the VM refuses; a live method nobody recorded is a false `undefined-field` for every script
+    /// that uses it. A userdata with fields keeps its members in a function, so only the first direction holds
+    /// for it.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn recorded_members_exist_on_live_values() {
         let lua = make_engine().expect("engine");
         let mut seen = Vec::new();
+        let mut both_ways = 0;
         for module in declared(&lua).expect("declared") {
             for (type_name, methods, fields) in module.recorded_members() {
                 let key = module.name();
                 seen.push((key.to_string(), type_name.clone()));
+                let names: Vec<String> = methods.iter().chain(fields.iter()).cloned().collect();
+
+                if (key, type_name.as_str()) == ("std:thread", "Channel") {
+                    let source = lua
+                        .create_table()
+                        .and_then(|opts| {
+                            opts.set("source", CHANNEL_PROBE)?;
+                            opts.set("args", names.clone())?;
+                            Ok(opts)
+                        })
+                        .expect("opts");
+                    let (missing, err): (Option<String>, Option<String>) = lua
+                        .load(
+                            r#"local opts = ...
+                            return assert(require("std:thread").spawn(opts)):await()"#,
+                        )
+                        .call_async(source)
+                        .await
+                        .expect("worker");
+                    let missing = missing.unwrap_or_else(|| panic!("worker failed: {err:?}"));
+                    assert!(
+                        missing.is_empty(),
+                        "{key}: `Channel` records {missing}, which a live channel does not have"
+                    );
+                    continue;
+                }
+
                 let Some((_, _, expr)) = INSTANCES
                     .iter()
                     .find(|(k, t, _)| *k == key && *t == type_name)
@@ -653,17 +715,60 @@ mod tests {
                     );
                     continue;
                 };
-                let names: Vec<String> = methods.iter().chain(fields.iter()).cloned().collect();
-                let probe = format!(
-                    "local v = ({expr})\nlocal missing = {{}}\nfor _, name in ipairs(...) do\n  if v[name] == nil then missing[#missing + 1] = name end\nend\nreturn table.concat(missing, \", \")"
-                );
-                let missing: String = lua.load(probe.as_str()).call(names).unwrap_or_else(|e| {
-                    panic!("{key}: building a `{type_name}` with `{expr}`: {e}")
-                });
+
+                // the value, and optionally a second value: a function that cleans up after it
+                let (value, cleanup): (Value, Value) = lua
+                    .load(format!("return {expr}"))
+                    .eval_async()
+                    .await
+                    .unwrap_or_else(|e| {
+                        panic!("{key}: building a `{type_name}` with `{expr}`: {e}")
+                    });
+                let probe = "local v, names = ...\nlocal missing = {}\nfor _, name in ipairs(names) do\n  if v[name] == nil then missing[#missing + 1] = name end\nend\nreturn table.concat(missing, \", \")";
+                let missing: String = lua
+                    .load(probe)
+                    .call_async((value.clone(), names.clone()))
+                    .await
+                    .unwrap_or_else(|e| panic!("{key}: probing a `{type_name}`: {e}"));
                 assert!(
                     missing.is_empty(),
                     "{key}: `{type_name}` records {missing}, which a live value does not have"
                 );
+
+                // the other direction: what the value has, other than what was recorded
+                let live: Option<Vec<String>> = match &value {
+                    Value::Table(t) => Some(
+                        t.clone()
+                            .pairs::<String, Value>()
+                            .map(|p| p.expect("pair").0)
+                            .collect(),
+                    ),
+                    Value::UserData(ud) => match ud
+                        .metatable()
+                        .and_then(|mt| mt.get::<Value>(mlua::MetaMethod::Index))
+                    {
+                        Ok(Value::Table(t)) => Some(
+                            t.pairs::<String, Value>()
+                                .map(|p| p.expect("pair").0)
+                                .collect(),
+                        ),
+                        _ => None,
+                    },
+                    other => panic!("{key}: `{type_name}` built as {other:?}"),
+                };
+                if let Some(live) = live {
+                    let unrecorded: Vec<&String> =
+                        live.iter().filter(|n| !names.contains(n)).collect();
+                    assert!(
+                        unrecorded.is_empty(),
+                        "{key}: a live `{type_name}` has {unrecorded:?}, which is not recorded"
+                    );
+                    both_ways += 1;
+                }
+
+                if let Value::Function(cleanup) = cleanup {
+                    cleanup.call_async::<()>(()).await.expect("cleanup");
+                }
             }
         }
         for (key, type_name, _) in INSTANCES.iter().chain(NOT_BUILT.iter()) {
@@ -673,6 +778,7 @@ mod tests {
                 "{key}: `{type_name}` is listed but no module records it"
             );
         }
+        assert!(both_ways > 15, "only {both_ways} types held both ways");
     }
 
     /// Builds every facade-migrated module's runtime `require(...)` table,
@@ -739,22 +845,46 @@ mod tests {
         }
     }
 
-    /// Every top-level key on a module's live `require(...)` table must be
-    /// covered by that module's definitions. This is the guard that turns a
-    /// missing `record_fn` into a failure: register a free function with
-    /// `set` but forget to record its signature and the key is present at
-    /// runtime yet absent from the definition file, so this fails.
+    /// The names of the `---@field`s of a module's own class (`lib_json`), not of one of its resource
+    /// classes (`lib_json.Object`).
+    fn module_fields(key: &str, meta: &str) -> Vec<String> {
+        let class = format!("---@class {}", key.replace(':', "_"));
+        let mut lines = meta.lines().skip_while(|l| *l != class);
+        assert!(
+            lines.next().is_some(),
+            "{key}: no `{class}` in its definitions"
+        );
+        lines
+            .take_while(|l| l.starts_with("---@field "))
+            .map(|l| {
+                let name = l.split_whitespace().nth(1).unwrap_or("");
+                name.trim_end_matches('?').to_string()
+            })
+            .collect()
+    }
+
+    /// The names of the module's own functions (`function M.<name>(`).
+    fn module_functions(meta: &str) -> Vec<String> {
+        meta.lines()
+            .filter_map(|l| l.strip_prefix("function M."))
+            .filter_map(|l| l.split('(').next())
+            .map(String::from)
+            .collect()
+    }
+
+    /// Module keys the definitions record that the base `require(...)` table does not have:
+    /// `std:thread`'s `parent` and `shared` are injected only inside a spawned worker.
+    const WORKER_ONLY: &[(&str, &str)] = &[("std:thread", "parent"), ("std:thread", "shared")];
+
+    /// A module's live `require(...)` table and its definitions describe the same keys, in both
+    /// directions.
     ///
-    /// The check is one-directional (live keys ⊆ definitions): the definitions
-    /// may carry extra entries the base table lacks — most notably
-    /// `std:thread`'s `parent` / `shared`, injected only inside a spawned
-    /// worker — and that is fine. The shape of the assertion per key:
-    ///
-    /// - a function value must appear as `function M.<key>(`;
-    /// - a table value (a constructor sub-table such as `chrono.Date`) must
-    ///   appear as a `---@field <key> ` on the module class;
-    /// - any other value (a former const such as `json.null`) must appear as
-    ///   a `---@field <key> `.
+    /// - Every live key is recorded: a function as `function M.<key>(`, anything else (a constructor
+    ///   sub-table such as `chrono.Date`, a constant such as `json.null`) as a `---@field <key>` of the
+    ///   module class. A free function registered with `set` and never `record_fn`ed fails here.
+    /// - Every recorded function is a live function and every recorded field of the module class is a live
+    ///   key (the worker-only ones above excepted). A `record_fn` with no `set` behind it, a call the
+    ///   editor accepts and the VM refuses, fails here.
     #[test]
     fn definitions_cover_runtime_table_keys() {
         let lua = make_engine().expect("engine");
@@ -767,22 +897,47 @@ mod tests {
             "definitions and runtime tables drifted out of sync"
         );
 
+        let mut checked = 0;
         for ((mkey, meta), (tkey, table)) in metas.iter().zip(tables.iter()) {
             assert_eq!(mkey, tkey, "definition / table ordering drifted");
+            let fields = module_fields(mkey, meta);
+            let functions = module_functions(meta);
 
+            let mut live = Vec::new();
             for pair in table.clone().pairs::<String, mlua::Value>() {
                 let (key, value) = pair.expect("module table pair");
-
-                let needle = match value {
-                    mlua::Value::Function(_) => format!("function M.{key}("),
-                    _ => format!("---@field {key} "),
+                let recorded = match value {
+                    mlua::Value::Function(_) => functions.contains(&key),
+                    _ => fields.contains(&key),
                 };
                 assert!(
-                    meta.contains(&needle),
-                    "{mkey}: key {key:?} has no `{needle}` in its definitions:\n{meta}"
+                    recorded,
+                    "{mkey}: key {key:?} is live but not recorded as a function or a module field:\n{meta}"
                 );
+                live.push(key);
+                checked += 1;
+            }
+
+            for name in functions.iter().chain(fields.iter()) {
+                let worker_only = WORKER_ONLY.contains(&(mkey.as_str(), name.as_str()));
+                assert!(
+                    live.contains(name) || worker_only,
+                    "{mkey}: `{name}` is recorded but the live module table has no such key"
+                );
+                if let Some(mlua::Value::Function(_)) = table
+                    .get::<Option<mlua::Value>>(name.as_str())
+                    .expect("get")
+                {
+                    assert!(
+                        functions.contains(name),
+                        "{mkey}: `{name}` is a live function but recorded as a field"
+                    );
+                } else if functions.contains(name) {
+                    panic!("{mkey}: `{name}` is recorded as a function but is not one live");
+                }
             }
         }
+        assert!(checked > 200, "only {checked} live keys checked");
     }
 
     #[test]

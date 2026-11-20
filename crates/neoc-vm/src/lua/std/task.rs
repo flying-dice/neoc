@@ -490,8 +490,8 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         .method(
             "await",
             &[],
-            "Result<LuaValue, string>",
-            "Wait for the task to finish. Returns its values on success, `(nil, error)` on error, or `(nil, \"cancelled\")` if cancelled.",
+            "(LuaValue?, ...)",
+            "Wait for the task to finish. Returns every value the task returned on success, `(nil, error)` on error, or `(nil, \"cancelled\")` if cancelled.",
         );
     });
 

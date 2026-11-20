@@ -326,7 +326,12 @@ fn record_userdata(m: &mut Module<'_>) {
                 "Result<string, string>",
                 "Format via a strftime pattern.",
             )
-            .method("to_rfc3339", &[], "string", "RFC 3339 timestamp string.")
+            .method(
+                "to_rfc3339",
+                &[],
+                "(string, ())",
+                "RFC 3339 timestamp string (returned as `(string, nil)`).",
+            )
             .static_fn(
                 "parse",
                 &[("s", "string")],
@@ -353,7 +358,12 @@ fn record_userdata(m: &mut Module<'_>) {
                 "Total span in seconds (calendar-agnostic units only).",
             )
             .method("negate", &[], "Duration", "Return the sign-flipped span.")
-            .method("abs", &[], "Duration", "Return the absolute span.")
+            .method(
+                "abs",
+                &[],
+                "(Duration, ())",
+                "Return the absolute span (returned as `(span, nil)`).",
+            )
             .static_fn(
                 "of",
                 &[("units", "LuaValue")],

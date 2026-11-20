@@ -119,76 +119,76 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     );
 
     m.userdata("Url", |u| {
-        u.field("scheme", "string", "The scheme, lower-cased (`https`).")
-            .field("username", "string", "The username, or an empty string.")
-            .field("password", "string?", "The password, or nil.")
-            .field("host", "string?", "The host, or nil for a URL without one.")
-            .field("port", "number?", "The explicit port, or nil when it is the scheme's default.")
-            .field("path", "string", "The percent-encoded path.")
-            .field("query", "string?", "The query string without the `?`, or nil.")
-            .field("fragment", "string?", "The fragment without the `#`, or nil.")
-            .field("origin", "string", "The serialised origin (`https://example.com:8080`).")
-            .field("href", "string", "The whole URL as a string.")
-            .method(
+        u.field("scheme", "string", "The scheme, lower-cased (`https`).");
+        u.field("username", "string", "The username, or an empty string.");
+        u.field("password", "string?", "The password, or nil.");
+        u.field("host", "string?", "The host, or nil for a URL without one.");
+        u.field("port", "number?", "The explicit port, or nil when it is the scheme's default.");
+        u.field("path", "string", "The percent-encoded path.");
+        u.field("query", "string?", "The query string without the `?`, or nil.");
+        u.field("fragment", "string?", "The fragment without the `#`, or nil.");
+        u.field("origin", "string", "The serialised origin (`https://example.com:8080`).");
+        u.field("href", "string", "The whole URL as a string.");
+        u.method(
             "resolve",
             &[("reference", "string")],
             "Result<Url, string>",
             "Resolve `reference` against this URL using RFC 3986 § 5 rules.",
-        )
-        .method(
+        );
+        u.method(
             "with_scheme",
             &[("scheme", "string")],
             "Result<Url, string>",
             "Return a new `Url` with the scheme replaced. Most special/non-special swaps are rejected by the spec.",
-        )
-        .method(
+        );
+        u.method(
             "with_host",
             &[("host", "string")],
             "Result<Url, string>",
             "Return a new `Url` with the host replaced. Returns `(nil, err)` if the host is malformed for the scheme.",
-        )
-        .method(
+        );
+        u.method(
             "with_port",
             &[("port", "number?")],
             "Result<Url, string>",
             "Return a new `Url` with the port set (or cleared when `nil`). `port` must be an integer in `0..=65535`.",
-        )
-        .method(
+        );
+        u.method(
             "with_path",
             &[("path", "string")],
             "Url",
             "Return a new `Url` with the path replaced. Always succeeds — the path is re-encoded against the WHATWG path set.",
-        )
-        .method(
+        );
+        u.method(
             "with_query",
             &[("query", "string?")],
             "Url",
             "Return a new `Url` with the query string replaced (or cleared when `nil`).",
-        )
-        .method(
+        );
+        u.method(
             "with_fragment",
             &[("fragment", "string?")],
             "Url",
             "Return a new `Url` with the fragment replaced (or cleared when `nil`).",
-        )
-        .method(
+        );
+        u.method(
             "query_pairs",
             &[],
             "LuaValue",
             "Query pairs in order, including any repeated keys.",
-        )
-        .method(
+        );
+        u.method(
             "query_map",
             &[],
             "LuaValue",
             "Query as a map. Last value wins on repeated keys.",
-        )
-            .static_fn(
-                "parse",
-                &[("s", "string")],
-                "Result<Url, string>",
-                "Parse an absolute URL. Returns `(nil, err)` when it is invalid.",
-            );
+        );
+        u.static_fn(
+            "parse",
+            &[("s", "string")],
+            "Result<Url, string>",
+            "Parse an absolute URL. Returns `(nil, err)` when it is invalid.",
+        );
     });
 
     Ok(m)

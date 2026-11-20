@@ -44,20 +44,33 @@ fn main() -> ExitCode {
     };
     if check {
         let drifted = stale(&out, &files);
-        if drifted.is_empty() {
+        let left_over = orphans(&out, &files);
+        if drifted.is_empty() && left_over.is_empty() {
             println!(
                 "luals --check OK ({} module definition files up to date)",
                 files.len()
             );
             return ExitCode::SUCCESS;
         }
-        eprintln!(
-            "luals --check FAILED: a module's surface changed but these definition files were not regenerated:"
-        );
-        for path in drifted {
-            eprintln!("  {OUT_DIR}/{path}");
+        if !drifted.is_empty() {
+            eprintln!(
+                "luals --check FAILED: a module's surface changed but these definition files were not regenerated:"
+            );
+            for path in &drifted {
+                eprintln!("  {OUT_DIR}/{path}");
+            }
         }
-        eprintln!("run `cargo run -p neoc-vm --example luals` and commit the result");
+        if !left_over.is_empty() {
+            eprintln!(
+                "luals --check FAILED: no module writes these definition files any more (a module was renamed or dropped):"
+            );
+            for path in &left_over {
+                eprintln!("  {OUT_DIR}/{path}");
+            }
+        }
+        eprintln!(
+            "run `cargo run -p neoc-vm --example luals` and commit the result (it deletes the left-over files)"
+        );
         return ExitCode::FAILURE;
     }
     match write(&out, &files) {
@@ -96,26 +109,19 @@ fn write(out: &Path, files: &[(String, String)]) -> io::Result<()> {
     Ok(())
 }
 
-/// The file names that are missing or differ from `files`, and the module definition files that no
-/// module writes any more.
+/// The file names that are missing or differ from `files`.
 fn stale(out: &Path, files: &[(String, String)]) -> Vec<String> {
-    let mut stale: Vec<String> = files
+    files
         .iter()
         .filter(|(name, text)| {
             fs::read_to_string(out.join(name)).ok().as_deref() != Some(text.as_str())
         })
         .map(|(name, _)| name.clone())
-        .collect();
-    stale.extend(
-        orphans(out, files)
-            .into_iter()
-            .map(|name| format!("{name} (orphaned: no module writes it; delete it)")),
-    );
-    stale
+        .collect()
 }
 
-/// Every file under `out` (as a path relative to it, with `/`) that `files` does not list: `out` holds
-/// generated definitions and nothing else.
+/// Every `.lua` file under `out` (as a path relative to it, with `/`) that `files` does not list: `out` holds
+/// generated definitions. Other files (a `.DS_Store`, a README) are not ours to judge or delete.
 fn orphans(out: &Path, files: &[(String, String)]) -> Vec<String> {
     let mut found = Vec::new();
     collect(out, "", &mut found);
@@ -132,7 +138,9 @@ fn collect(dir: &Path, prefix: &str, found: &mut Vec<String>) {
         let name = format!("{prefix}{}", entry.file_name().to_string_lossy());
         if entry.path().is_dir() {
             collect(&entry.path(), &format!("{name}/"), found);
-        } else {
+        } else if entry.path().extension().is_some_and(|e| e == "lua")
+            && !entry.file_name().to_string_lossy().starts_with('.')
+        {
             found.push(name);
         }
     }

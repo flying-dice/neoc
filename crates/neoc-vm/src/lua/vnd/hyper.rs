@@ -117,9 +117,12 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.set("serve", lua.create_function(serve)?)?;
     m.record_fn(
         "serve",
-        &[("listener", "LuaValue"), ("handler", "LuaValue")],
+        &[
+            ("listener", "std_net.TcpListener"),
+            ("handler", "fun(req: vnd_hyper.Request): string|table"),
+        ],
         "Result<ServerHandle, string>",
-        "Attach `handler` to `listener` and start accepting HTTP connections.",
+        "Attach `handler` to `listener` and start accepting HTTP connections. The handler returns a body string, or `{ status?, body?, headers? }`.",
     );
 
     m.userdata("ServerHandle", |s| {
@@ -144,24 +147,24 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     });
 
     m.userdata("Request", |r| {
-        r.field("method", "string", "The HTTP method (`GET`).")
-            .field("path", "string", "The request path, without the query string.")
-            .field("body", "string", "The raw request body.")
-            .field("is_json", "bool", "Whether the `Content-Type` header is `application/json`.")
-            .field(
+        r.field("method", "string", "The HTTP method (`GET`).");
+        r.field("path", "string", "The request path, without the query string.");
+        r.field("body", "string", "The raw request body.");
+        r.field("is_json", "bool", "Whether the `Content-Type` header is `application/json`.");
+        r.field(
                 "headers",
                 "LuaValue",
                 "The request headers as a `{ [name]: value }` table.",
-            )
-            .field(
+            );
+        r.field(
                 "json",
                 "LuaValue",
                 "The body parsed as JSON (a JSON handle or scalar), or nil when it is empty or invalid.",
-            )
-            .method(
+            );
+        r.method(
             "header",
             &[("name", "string")],
-            "LuaValue",
+            "string?",
             "Look up a request header by name (case-insensitive); returns the value string or nil when absent.",
         );
     });

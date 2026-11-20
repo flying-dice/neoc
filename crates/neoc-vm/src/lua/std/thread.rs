@@ -98,7 +98,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     m.const_(
         "parent",
-        "LuaValue",
+        "Channel?",
         "The `Channel` to the parent VM inside a spawned worker; nil at the top level.",
     )
     .const_(

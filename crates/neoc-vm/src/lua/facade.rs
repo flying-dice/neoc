@@ -167,7 +167,8 @@ fn luals_ident(name: &str) -> String {
 /// The recorded vocabulary is the facade's own (see [`DeclType`]): `string`,
 /// `number`, `bool`, `LuaValue` (the opaque dynamic value), a trailing `?` for
 /// an optional, and any other name for a type this module declares, which
-/// resolves under `scope`.
+/// resolves under `scope`. A name with a dot (the class of another module) or a
+/// `fun(...)` type is written as it is.
 fn luals_param_type(ty: &str, scope: &str) -> (String, bool) {
     let ty = luals_type(ty, scope);
     match ty.strip_suffix('?') {
@@ -183,6 +184,9 @@ fn luals_type(ty: &str, scope: &str) -> String {
         "bool" => "boolean".to_string(),
         "LuaValue" => "any".to_string(),
         "()" => "nil".to_string(),
+        VARIADIC => "any ...".to_string(),
+        // a class of another module (`std_net.TcpListener`) or a function type is written as it is
+        other if other.contains('.') || other.starts_with("fun(") => other.to_string(),
         other => match other.strip_suffix('?') {
             Some(base) => format!("{}?", luals_type(base, scope)),
             None => format!("{scope}.{other}"),
@@ -194,8 +198,10 @@ fn luals_type(ty: &str, scope: &str) -> String {
 ///
 /// `()` returns nothing. `Result<T, string>` is the runtime's `(value, error)`
 /// idiom: `T?` then `string? err` (a `()` value is `nil`). `(A, B)` is a
-/// function that returns several values of its own, one `---@return` each.
-/// Anything else is one value.
+/// function that returns several values of its own, one `---@return` each, and
+/// a `...` in it (or alone) is any number of further values (`---@return any ...`),
+/// for a function that hands back whatever a Lua function returned. Anything else
+/// is one value.
 fn luals_returns(ret: &str, scope: &str) -> Vec<String> {
     let ret = ret.trim();
     if ret == "()" {
