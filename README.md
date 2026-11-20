@@ -74,7 +74,7 @@ This repository contains [LuaCATS](https://luals.github.io/wiki/annotations/) de
 }
 ```
 
-Inside this repository nothing is needed: its own [`.luarc.json`](.luarc.json) already does it. VS Code with the sumneko Lua extension reads `.luarc.json` from the workspace root and should pick both settings up; whether it asks you to trust the plugin (it only turns `lib:json` into a file path) depends on the extension version and VS Code's Workspace Trust, which I have not verified, so allow it if asked. lua-language-server runs a plugin's `ResolveRequire` only when every configured plugin defines it, so this plugin cannot sit next to a plugin that lacks one (it would silently stop resolving `lib:json`). Other editors need the same two settings in their lua-language-server configuration. The definitions live in the source tree, not in the release binaries or the Docker image. `cargo run -p neoc-vm --example luals` regenerates them.
+Inside this repository nothing is needed: its own [`.luarc.json`](.luarc.json) already does it. VS Code with the sumneko Lua extension reads `.luarc.json` from the workspace root and should pick both settings up. Whether it asks you to trust the plugin (it only turns `lib:json` into a file path) may depend on the extension version and VS Code's Workspace Trust; allow it if asked. lua-language-server runs a plugin's `ResolveRequire` only when every configured plugin defines it, so this plugin cannot sit next to a plugin that lacks one (it would silently stop resolving `lib:json`). Other editors need the same two settings in their lua-language-server configuration. The definitions live in the source tree, not in the release binaries or the Docker image. `cargo run -p neoc-vm --example luals` regenerates them.
 
 ## Contributing
 

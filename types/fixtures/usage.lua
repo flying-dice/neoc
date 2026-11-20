@@ -139,6 +139,31 @@ local server = assert(hyper.serve(listener, function(req)
 end))
 print(server:addr(), server:wait(), thread.parent and thread.parent:send(1))
 
+-- a handler that returns only on some branches answers the rest with an empty 200
+local quiet_listener = assert(net.TcpListener.bind("127.0.0.1:0"))
+print(hyper.serve(quiet_listener, function(req)
+  if req.path == "/hello" then
+    return "hello"
+  end
+end))
+
+-- the SQL parameters of the network databases are trailing arguments too
+---@param mysql vnd_sqlx_mysql.Database
+---@param mysql_statement vnd_sqlx_mysql.Statement
+---@param postgres vnd_sqlx_postgres.Database
+local function network_databases(mysql, mysql_statement, postgres)
+  print(mysql:execute("INSERT INTO t VALUES (?, ?)", 1, 2))
+  print(mysql:query("SELECT * FROM t WHERE a = ? AND b = ?", 1, 2))
+  print(mysql:query_one("SELECT * FROM t WHERE a = ?", 1))
+  print(mysql_statement:execute(1, 2))
+  print(mysql_statement:query(1, 2))
+  print(mysql_statement:query_one(1))
+  print(postgres:execute("INSERT INTO t VALUES ($1, $2)", 1, 2))
+  print(postgres:query("SELECT * FROM t WHERE a = $1 AND b = $2", 1, 2))
+  print(postgres:query_one("SELECT * FROM t WHERE a = $1", 1))
+end
+print(network_databases)
+
 -- an HTTP handler reads the fields of its request
 ---@param req vnd_hyper.Request
 local function handler(req)

@@ -55,9 +55,9 @@ function M.post(opts) end
 ---@return string? err
 function M.request(opts) end
 
---- Attach `handler` to `listener` and start accepting HTTP connections. The handler returns a body string, or `{ status?, body?, headers? }`.
+--- Attach `handler` to `listener` and start accepting HTTP connections. The handler returns a body string, `{ status?, body?, headers? }`, or nothing (an empty 200).
 ---@param listener std_net.TcpListener
----@param handler fun(req: vnd_hyper.Request): string|table
+---@param handler fun(req: vnd_hyper.Request): string|table|nil
 ---@return vnd_hyper.ServerHandle?
 ---@return string? err
 function M.serve(listener, handler) end
