@@ -7,9 +7,11 @@
 //! Behaviour follows clap defaults — booleans are presence-only, error wording
 //! is clap's, help formatting tracks clap's renderer version.
 //!
-//! A spec clap would panic on is an error instead: duplicate or reserved flag names (`help`,
-//! `__positional`, `__rest`), a clashing or `-h` short, a long name starting with `-`, a subcommand named
-//! `help`.
+//! A spec clap would panic on (a debug build; a release build accepted it with an unspecified winner) is an
+//! error instead: duplicate or reserved flag names (`help`, `__positional`, `__rest`), two flags with the same
+//! short, a short that is `-`, `=` or whitespace, a long name starting with `-`, a subcommand named `help`.
+//! A flag may claim the short `-h` (for `--host`, say): it takes it from the built-in help, which keeps
+//! `--help`.
 
 use std::collections::HashSet;
 
@@ -190,12 +192,6 @@ fn validate_flags(flags: &[FlagSpec], ctx: &str) -> Result<(), String> {
             ));
         }
         if let Some(c) = flag.short {
-            if c == 'h' {
-                return Err(format!(
-                    "{}: short alias '-h' is the built-in help",
-                    err_ctx(ctx)
-                ));
-            }
             if c == '-' || c.is_whitespace() || c == '=' {
                 return Err(format!(
                     "{}: flag '--{name}' short alias {c:?} is not allowed",
@@ -390,6 +386,15 @@ fn build_command(spec: &CommandSpec) -> Command {
 
     for flag in &spec.flags {
         cmd = cmd.arg(build_arg(flag));
+    }
+    // a flag that claims `-h` (`--host`, say) takes the short from clap's built-in help; `--help` stays
+    if spec.flags.iter().any(|f| f.short == Some('h')) {
+        cmd = cmd.disable_help_flag(true).arg(
+            Arg::new("help")
+                .long("help")
+                .action(ArgAction::Help)
+                .help("Print help"),
+        );
     }
 
     if spec.subcommands.is_empty() {
@@ -649,9 +654,9 @@ mod tests {
         lua.load(src).eval().expect("eval parse_call")
     }
 
-    /// Duplicate or reserved ids, a clashing short or a dashed long made clap panic while it built the
-    /// command (debug assertions) or when a getter read the wrong type; the spec is script input, so each
-    /// is an ordinary `(nil, err)` instead.
+    /// Duplicate or reserved ids, a clashing short or a dashed long made clap panic in a debug build while
+    /// it built the command (a release build accepted them silently, with an unspecified winner) or when a
+    /// getter read the wrong type; the spec is script input, so each is an ordinary `(nil, err)` instead.
     #[test]
     fn hostile_specs_are_errors_not_clap_panics() {
         let lua = lua_with_args();
@@ -660,7 +665,6 @@ mod tests {
             r#"{name="t",flags={help={type="boolean"}}}"#,
             r#"{name="t",flags={__positional={type="number"}}}"#,
             r#"{name="t",flags={__rest={type="string"}}}"#,
-            r#"{name="t",flags={{name="a",short="h",type="boolean"}}}"#,
             r#"{name="t",flags={{name="a",short="b",type="boolean"},{name="b",short="b",type="boolean"}}}"#,
             r#"{name="t",flags={{name="--a",type="boolean"}}}"#,
             r#"{name="t",flags={{name="a",short="-",type="boolean"}}}"#,
@@ -693,6 +697,53 @@ mod tests {
         );
         assert!(matches!(err, mlua::Value::Nil), "{err:?}");
         assert!(parsed.as_table().unwrap().get::<bool>("b").unwrap());
+    }
+
+    /// `-h` is the usual short for `--host`: a flag that claims it takes it from clap's built-in help, which
+    /// keeps `--help`. Commands whose flags do not claim it still answer `-h`.
+    #[test]
+    fn a_flag_may_claim_the_short_h() {
+        let lua = lua_with_args();
+        let (parsed, err) = parse_call(
+            &lua,
+            r#"return args.parse({"-h", "example.org", "-p", "80"}, { name = "t", flags = {
+                { name = "host", short = "h", type = "string" }, { name = "port", short = "p", type = "number" } } })"#,
+        );
+        assert!(matches!(err, mlua::Value::Nil), "{err:?}");
+        let t = parsed.as_table().unwrap();
+        assert_eq!(t.get::<String>("host").unwrap(), "example.org");
+        assert_eq!(t.get::<f64>("port").unwrap(), 80.0);
+        // `--help` still works for it, and so does `-h` where no flag claimed it
+        for (argv, flag) in [
+            (
+                r#"{"--help"}"#,
+                r#"{ name = "host", short = "h", type = "string" }"#,
+            ),
+            (r#"{"-h"}"#, r#"{ name = "all", type = "boolean" }"#),
+        ] {
+            let (parsed, _) = parse_call(
+                &lua,
+                &format!(
+                    r#"return args.parse({argv}, {{ name = "t", description = "tool", flags = {{ {flag} }} }})"#
+                ),
+            );
+            let t = parsed.as_table().unwrap();
+            assert!(t.get::<bool>("help").unwrap(), "{argv}");
+            assert!(t.get::<String>("help_text").unwrap().contains("tool"));
+        }
+        // and a flag claiming `-h` does not turn `-h` into a help request
+        let (parsed, _) = parse_call(
+            &lua,
+            r#"return args.parse({"-h", "x"}, { name = "t", flags = { { name = "host", short = "h", type = "string" } } })"#,
+        );
+        assert!(
+            parsed
+                .as_table()
+                .unwrap()
+                .get::<Option<bool>>("help")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

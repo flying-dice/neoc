@@ -255,4 +255,37 @@ describe("args.help", function()
         expect(text).toContain("build")
         expect(text).toContain("Build the project")
     end)
+
+    describe("the short -h", function()
+        test("a flag can claim -h and --help still prints help", function()
+            local spec = { name = "t", description = "tool", flags = {
+                { name = "host", short = "h", type = "string" },
+            } }
+            local parsed = args.parse({ "-h", "example.org" }, spec)
+            expect(parsed.host).toBe("example.org")
+            local helped = args.parse({ "--help" }, spec)
+            expect(helped.help).toBe(true)
+            expect(helped.help_text).toContain("tool")
+        end)
+
+        test("without such a flag -h is still help", function()
+            local helped = args.parse({ "-h" }, { name = "t", description = "tool", flags = {} })
+            expect(helped.help).toBe(true)
+        end)
+    end)
+
+    describe("refused specs", function()
+        test("a duplicate flag name is an error", function()
+            local parsed, err = args.parse({}, { name = "t", flags = {
+                { name = "a", type = "boolean" }, { name = "a", type = "string" } } })
+            expect(parsed).toBeNil()
+            expect(err).toContain("declared twice")
+        end)
+
+        test("a flag named help is an error", function()
+            local parsed, err = args.parse({}, { name = "t", flags = { help = { type = "boolean" } } })
+            expect(parsed).toBeNil()
+            expect(err).toContain("reserved")
+        end)
+    end)
 end)
