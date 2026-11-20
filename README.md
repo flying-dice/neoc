@@ -63,17 +63,18 @@ The source in [`crates/neoc-vm/src/lua/`](crates/neoc-vm/src/lua) is the catalog
 
 ## Editor types
 
-This repository contains [LuaCATS](https://luals.github.io/wiki/annotations/) definitions for every module in [`types/luals/`](types/luals), one file per module named after its `require` key (`lib:json.lua`), generated from the modules' own signatures. Point [lua-language-server](https://luals.github.io/) at them for completion, hover docs and type checks of `require("lib:json")` and the rest:
+This repository contains [LuaCATS](https://luals.github.io/wiki/annotations/) definitions for every module in [`types/luals/`](types/luals), one file per module (`lib/json.lua` for `lib:json`, `vnd/rusqlite.lua` for `vnd:rusqlite`), generated from the modules' own signatures. [lua-language-server](https://luals.github.io/) gives completion, hover docs and type checks of `require("lib:json")` and the rest once it can find them. Its `require` search cannot map a name with a colon to a file, so [`types/luals-plugin.lua`](types/luals-plugin.lua) does that. Point both at your copy of the repository:
 
 ```jsonc
 // .luarc.json
 {
   "runtime.version": "LuaJIT",
-  "workspace.library": ["path/to/neoc/types/luals"]
+  "workspace.library": ["path/to/neoc/types/luals"],
+  "runtime.plugin": "path/to/neoc/types/luals-plugin.lua"
 }
 ```
 
-This repository's own [`.luarc.json`](.luarc.json) does that. The definitions live in the source tree, not in the release binaries or the Docker image. The file names contain a colon, which Windows file systems do not allow, so the folder cannot be checked out on Windows itself; use WSL or another non-NTFS file system. `cargo run -p neoc-vm --example luals` regenerates the folder.
+Inside this repository nothing is needed: its own [`.luarc.json`](.luarc.json) already does it. VS Code with the sumneko Lua extension reads `.luarc.json` from the workspace root, loads the plugin and asks once whether to trust it (it only turns `lib:json` into a file path); answer yes. Other editors need the same two settings in their lua-language-server configuration. The definitions live in the source tree, not in the release binaries or the Docker image. `cargo run -p neoc-vm --example luals` regenerates them.
 
 ## Contributing
 

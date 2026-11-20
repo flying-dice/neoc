@@ -1,5 +1,5 @@
 -- Correct use of the `std:`, `lib:` and `vnd:` modules. The luals test (`cargo test -p neoc-vm --test luals`)
--- requires this file to check clean against the generated module definitions (types/luals/<key>.lua); the
+-- requires this file to check clean against the generated module definitions (types/luals/<ns>/<name>.lua, found by types/luals-plugin.lua); the
 -- matching wrong uses are in negative/wrong_use.lua. If the definitions stop loading or stop matching a module's
 -- real surface, this file (or that one) fails.
 --

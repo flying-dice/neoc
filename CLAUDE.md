@@ -23,11 +23,12 @@ crates/neoc-vm/              # the runtime library
   src/lua/modules.rs         # module registration + `require`
   src/lua/{std,lib,vnd}/     # one file per module
   examples/luals.rs          # writes (or `-- --check`s) the LuaCATS definitions in types/luals/
-  tests/luals.rs             # drift check of types/luals/ + the lua-language-server fixtures
+  tests/luals.rs             # drift check of types/luals/, no colon in a file name, the lua-language-server fixtures
   benches/                   # Criterion suites (lib/, vnd/), behind the `bench` feature
-types/luals/                 # GENERATED LuaCATS definitions, one file per module key (`lib:json.lua`)
+types/luals/                 # GENERATED LuaCATS definitions, one file per module (`lib/json.lua` for `lib:json`)
+types/luals-plugin.lua       # lua-language-server plugin: require("lib:json") -> types/luals/lib/json.lua
 types/fixtures/              # lua-language-server fixtures: usage.lua (clean) and negative/ (expect-error)
-.luarc.json                  # lua-language-server config for the repo (LuaJIT, library = types/luals)
+.luarc.json                  # lua-language-server config for the repo (LuaJIT, library = types/luals, the plugin)
 tooling/cli/                 # Gherkin spec for the CLI, run against the built binary
 ```
 

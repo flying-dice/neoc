@@ -266,13 +266,21 @@ fn declared(lua: &Lua) -> mlua::Result<Vec<Module<'_>>> {
     ])
 }
 
+/// Where a module's definition file goes, relative to the definitions folder: `lib:json` becomes
+/// `lib/json.lua`. A colon is not allowed in a Windows file name, so the file is not named after the key;
+/// `types/luals-plugin.lua` maps `require("lib:json")` to it for lua-language-server.
+#[must_use]
+pub fn luals_file(key: &str) -> String {
+    format!("{}.lua", key.replace(':', "/"))
+}
+
 /// The `LuaCATS` definition file of every module, as `(registry_key, text)` in
 /// registry order.
 ///
 /// The text is a `---@meta` file for lua-language-server
-/// (`cargo run -p neoc-vm --example luals` writes it to `types/luals/<key>.lua`,
-/// so `require("lib:json")` resolves to it): each function's parameters,
-/// returns and docs, and the resource types it hands out.
+/// (`cargo run -p neoc-vm --example luals` writes it to `types/luals/<ns>/<name>.lua`,
+/// see [`luals_file`], and a plugin makes `require("lib:json")` resolve to it): each
+/// function's parameters, returns and docs, and the resource types it hands out.
 ///
 /// # Errors
 /// Fails when a module cannot be built, or its recording disagrees with the

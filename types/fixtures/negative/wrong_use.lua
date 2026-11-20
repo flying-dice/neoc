@@ -1,6 +1,6 @@
 -- Deliberately wrong uses of the `std:`, `lib:` and `vnd:` modules. The luals test requires lua-language-server to
 -- report a diagnostic on every line marked `expect-error`, and none elsewhere. If the module definitions
--- (types/luals/<key>.lua) stop loading, `require("lib:json")` is `any` again, nothing here is flagged and the
+-- (types/luals/<ns>/<name>.lua) or the plugin that finds them stop loading, `require("lib:json")` is `any` again, nothing here is flagged and the
 -- test fails.
 local base64 = require("lib:base64")
 local chrono = require("lib:chrono")

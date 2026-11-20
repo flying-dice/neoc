@@ -1,13 +1,13 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test harness
-//! Holds the generated `LuaCATS` definitions (`types/luals/<key>.lua`) to two things.
+//! Holds the generated `LuaCATS` definitions (`types/luals/<ns>/<name>.lua`, resolved from `require("<ns>:<name>")` by `types/luals-plugin.lua`) to two things.
 //!
 //! 1. They are what the modules record now: a module whose surface changed without
 //!    `cargo run -p neoc-vm --example luals` fails here, and so does a definition file no module writes
 //!    any more (the example's `--check` reports the same two things).
 //! 2. lua-language-server accepts correct use and flags misuse. `types/fixtures/usage.lua` must check clean and
 //!    every line of `types/fixtures/negative/*.lua` marked `-- expect-error` must be flagged, and no other
-//!    line. The negative half also fails when the definitions do not load: `require("lib:json")` is then `any`
-//!    and nothing is flagged.
+//!    line. The negative half also fails when the definitions or the plugin do not load: `require("lib:json")` is
+//!    then `any` and nothing is flagged.
 //!
 //! Half 2 needs `lua-language-server` (`brew install lua-language-server`, pinned below: its diagnostics
 //! change between releases). Without it the test prints a skip notice and passes; set `NEOC_REQUIRE_LUALS=1`
@@ -36,29 +36,59 @@ fn definitions() -> Vec<(String, String)> {
     modules::luals_metas(&make_engine().unwrap()).unwrap()
 }
 
+/// Every file under `dir` as a path relative to it, with `/`.
+fn files_under(dir: &Path, prefix: &str, found: &mut Vec<String>) {
+    for entry in fs::read_dir(dir).unwrap().flatten() {
+        let name = format!("{prefix}{}", entry.file_name().to_string_lossy());
+        if entry.path().is_dir() {
+            files_under(&entry.path(), &format!("{name}/"), found);
+        } else {
+            found.push(name);
+        }
+    }
+}
+
 #[test]
 fn committed_definitions_match_the_modules() {
     let dir = root().join("types/luals");
     let definitions = definitions();
-    for entry in fs::read_dir(&dir).unwrap().flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
+    let mut on_disk = Vec::new();
+    files_under(&dir, "", &mut on_disk);
+    for name in &on_disk {
         assert!(
             definitions
                 .iter()
-                .any(|(key, _)| format!("{key}.lua") == name),
-            "{} is left over: no module writes it, delete it",
-            entry.path().display()
+                .any(|(key, _)| modules::luals_file(key) == *name),
+            "types/luals/{name} is left over: no module writes it, delete it"
         );
     }
     for (key, text) in definitions {
-        let file = dir.join(format!("{key}.lua"));
-        let on_disk = fs::read_to_string(&file).unwrap_or_default();
+        let file = dir.join(modules::luals_file(&key));
+        let current = fs::read_to_string(&file).unwrap_or_default();
         assert!(
-            on_disk == text,
+            current == text,
             "{} is stale: run `cargo run -p neoc-vm --example luals` and commit the result",
             file.display()
         );
     }
+}
+
+/// A colon is not allowed in a Windows file name: no tracked file may have one, so the repository clones there.
+#[test]
+fn no_file_name_in_the_repository_has_a_colon() {
+    let output = std::process::Command::new("git")
+        .args(["ls-files"])
+        .current_dir(root())
+        .output();
+    let Ok(output) = output else {
+        return; // not a git checkout, nothing to check
+    };
+    if !output.status.success() {
+        return;
+    }
+    let listed = String::from_utf8_lossy(&output.stdout);
+    let bad: Vec<&str> = listed.lines().filter(|l| l.contains(':')).collect();
+    assert!(bad.is_empty(), "file names with a colon: {bad:?}");
 }
 
 #[test]

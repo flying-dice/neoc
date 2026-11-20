@@ -5,8 +5,8 @@
 //! the signature + doc for each function (and, for resource handles, each
 //! method, field and constructor). The recording is dumped as a `LuaCATS`
 //! definition file by [`Module::luals_meta`]: `cargo run -p neoc-vm --example luals`
-//! writes one per module to `types/luals/`, so `require("lib:json")` has
-//! completion and diagnostics in lua-language-server. There is no reverse
+//! writes one per module to `types/luals/`, and a lua-language-server plugin
+//! makes `require("lib:json")` resolve to it, with completion and diagnostics. There is no reverse
 //! mapping: the Rust source is the source of truth.
 //!
 //! Three things the facade preserves byte-for-byte versus the hand-written
@@ -619,9 +619,8 @@ impl<'l> Module<'l> {
     /// one class per resource type and one for the module table, then the
     /// module table's functions.
     ///
-    /// The file is named after the registry key (`lib:json.lua`), which is how
-    /// lua-language-server resolves `require("lib:json")`; the caller writes
-    /// it. Classes are `<ns>_<stem>` for the module (`lib_json`) and
+    /// The caller writes it to the path [`crate::lua::modules::luals_file`] gives
+    /// for the registry key (`lib/json.lua`). Classes are `<ns>_<stem>` for the module (`lib_json`) and
     /// `<ns>_<stem>.<Type>` for each type it declares; a type with a sub-table
     /// of functions or constants on the module (`Duration.from_secs`,
     /// `Duration.ZERO`) also gets a `<Type>Statics` class, the type of that

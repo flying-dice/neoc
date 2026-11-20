@@ -50,7 +50,7 @@ NEOC_REQUIRE_LUALS=1 cargo test -p neoc-vm --test luals
 
 The Lua list leaves out the suites that need a Docker daemon (`sqlx_mysql`, `sqlx_postgres`, `testcontainers_modules`). With Docker running, run every suite instead: `cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.lua' 'crates/neoc/tests/**/*.spec.lua'`.
 
-The last two lines are the editor types. `luals -- --check` fails when `types/luals/` (the generated LuaCATS definitions, one file per module) no longer matches what the modules record; fix it with `cargo run -p neoc-vm --example luals` and commit the result. The `luals` test runs the positive and negative fixtures in `types/fixtures/` through lua-language-server, which must be installed at the pinned version (`LUALS_VERSION` in `crates/neoc-vm/tests/luals.rs`; `brew install lua-language-server` gives the current release, which may differ, or take the release binary of that version from the lua-language-server GitHub releases); without `NEOC_REQUIRE_LUALS=1` it skips with a notice when the tool is missing or not that version, so a plain `cargo test --workspace` still passes without it.
+The last two lines are the editor types. `luals -- --check` fails when `types/luals/` (the generated LuaCATS definitions, one file per module, found by `types/luals-plugin.lua`) no longer matches what the modules record; fix it with `cargo run -p neoc-vm --example luals` and commit the result. The `luals` test runs the positive and negative fixtures in `types/fixtures/` through lua-language-server, which must be installed at the pinned version (`LUALS_VERSION` in `crates/neoc-vm/tests/luals.rs`; `brew install lua-language-server` gives the current release, which may differ, or take the release binary of that version from the lua-language-server GitHub releases); without `NEOC_REQUIRE_LUALS=1` it skips with a notice when the tool is missing or not that version, so a plain `cargo test --workspace` still passes without it.
 
 The bench line compiles every bench and runs each body once, with no timing. It catches stale bench code the other checks never build. To time a module, drop `-- --test` and name it: `cargo bench -p neoc-vm --features bench --bench lib <name>`.
 
@@ -112,7 +112,7 @@ Example: a `lib:foo` module. Pick the namespace first (see [CLAUDE.md](CLAUDE.md
    ```
 
    Run: `cargo run -p neoc -- run crates/neoc/tests/lib/foo.test.lua`. Per exported function: a happy path, one test per distinct error, and an empty or zero value where it applies.
-6. **Types.** Run `cargo run -p neoc-vm --example luals` to write `types/luals/lib:foo.lua`, commit it, and add a `require("lib:foo")` line (and a few correct calls) to `types/fixtures/usage.lua`; a wrong call goes in `types/fixtures/negative/wrong_use.lua` with `-- expect-error` on the line.
+6. **Types.** Run `cargo run -p neoc-vm --example luals` to write `types/luals/lib/foo.lua`, commit it, and add a `require("lib:foo")` line (and a few correct calls) to `types/fixtures/usage.lua`; a wrong call goes in `types/fixtures/negative/wrong_use.lua` with `-- expect-error` on the line.
 7. **README.** Add the module to the list in the README modules table, alphabetical within its namespace.
 
 Extending an existing module follows the same steps: add the function and register it on the table, add the Rust and Lua cases, extend the bench group, and re-run the `luals` example (the `luals` test fails on stale definitions) with a call in `types/fixtures/usage.lua`.

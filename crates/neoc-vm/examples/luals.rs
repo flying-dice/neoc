@@ -1,14 +1,15 @@
 //! Writes the `LuaCATS` definition file of every `std:`, `lib:` and `vnd:` module to
-//! `types/luals/<key>.lua` (`lib:json.lua`, ...), or with `--check` fails when they are stale.
+//! `types/luals/<ns>/<name>.lua` (`lib/json.lua` for `lib:json`, ...), or with `--check` fails when they are
+//! stale.
 //!
 //! ```sh
 //! cargo run -p neoc-vm --example luals            # regenerate
 //! cargo run -p neoc-vm --example luals -- --check # fail on drift (a pre-PR check)
 //! ```
 //!
-//! lua-language-server resolves `require("lib:json")` to the file of that name in a `workspace.library`
-//! directory (`.luarc.json`), so the file name is the registry key. The definitions come from each module's
-//! recorded surface (`neoc_vm::lua::facade`).
+//! A colon is not allowed in a Windows file name, so the files are not named after the registry key; the
+//! plugin `types/luals-plugin.lua` (`runtime.plugin` in `.luarc.json`) maps `require("lib:json")` to its file.
+//! The definitions come from each module's recorded surface (`neoc_vm::lua::facade`).
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -19,10 +20,6 @@ use neoc_vm::lua::sandbox::make_engine;
 
 /// Where the definitions go, relative to the repository root.
 const OUT_DIR: &str = "types/luals";
-
-/// The namespaces a module key can start with; a file in [`OUT_DIR`] that starts with one and is not
-/// generated is left over from a module that was renamed or dropped.
-const NAMESPACES: [&str; 3] = ["std:", "lib:", "vnd:"];
 
 fn main() -> ExitCode {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -75,23 +72,26 @@ fn main() -> ExitCode {
     }
 }
 
-/// `(file name, contents)` for every module.
+/// `(path relative to OUT_DIR, contents)` for every module.
 fn definitions() -> mlua::Result<Vec<(String, String)>> {
     let lua = make_engine()?;
     let metas = modules::luals_metas(&lua)?;
     Ok(metas
         .into_iter()
-        .map(|(key, text)| (format!("{key}.lua"), text))
+        .map(|(key, text)| (modules::luals_file(&key), text))
         .collect())
 }
 
 fn write(out: &Path, files: &[(String, String)]) -> io::Result<()> {
-    fs::create_dir_all(out)?;
     for path in orphans(out, files) {
         fs::remove_file(out.join(path))?;
     }
     for (name, text) in files {
-        fs::write(out.join(name), text)?;
+        let path = out.join(name);
+        if let Some(dir) = path.parent() {
+            fs::create_dir_all(dir)?;
+        }
+        fs::write(path, text)?;
     }
     Ok(())
 }
@@ -114,17 +114,26 @@ fn stale(out: &Path, files: &[(String, String)]) -> Vec<String> {
     stale
 }
 
-/// The module-named files in `out` that `files` does not list.
+/// Every file under `out` (as a path relative to it, with `/`) that `files` does not list: `out` holds
+/// generated definitions and nothing else.
 fn orphans(out: &Path, files: &[(String, String)]) -> Vec<String> {
-    let Ok(entries) = fs::read_dir(out) else {
-        return Vec::new();
-    };
-    let mut found: Vec<String> = entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .filter(|name| NAMESPACES.iter().any(|ns| name.starts_with(ns)))
-        .filter(|name| !files.iter().any(|(written, _)| written == name))
-        .collect();
+    let mut found = Vec::new();
+    collect(out, "", &mut found);
+    found.retain(|name| !files.iter().any(|(written, _)| written == name));
     found.sort();
     found
+}
+
+fn collect(dir: &Path, prefix: &str, found: &mut Vec<String>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let name = format!("{prefix}{}", entry.file_name().to_string_lossy());
+        if entry.path().is_dir() {
+            collect(&entry.path(), &format!("{name}/"), found);
+        } else {
+            found.push(name);
+        }
+    }
 }
