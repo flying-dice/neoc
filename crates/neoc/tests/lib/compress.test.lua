@@ -138,6 +138,14 @@ describe("compress", function()
             { "brotli", 5, "1be30200c4dc467d255d28039fb7d5c9552762b10eaab02c0d9bbe60ff514b9107e7ba1121a65c6aeb630a04" },
             { "brotli", 11, "1be302f8c5e6469d9208850df46f1577559cb3580735583478838d58ecff411acf736e38582de5525b1f9300" },
         }
+        test("zlib level 0 (stored) header is 7801", function()
+            -- The one level the upgrade changed: miniz_oxide 0.9 writes 7801
+            -- where 0.8 wrote 081d. Both decode; the bytes are pinned here.
+            local out, err = compress.encode("zlib", "", { level = 0 })
+            expect(err).toBeNil()
+            expect(hex.encode(out)).toBe("7801010000ffff00000001")
+        end)
+
         for _, p in ipairs(pinned) do
             test(p[1] .. " level " .. p[2] .. " output is stable", function()
                 local out, err = compress.encode(p[1], data, { level = p[2] })

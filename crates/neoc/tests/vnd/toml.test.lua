@@ -79,6 +79,18 @@ describe("toml", function()
             expect(val.x.b).toBe(2)
         end)
 
+        test("decodes the TOML 1.1 escape-key string escape", function()
+            local val, err = toml.decode_string('x = "\\e"')
+            expect(err).toBeNil()
+            expect(val.x).toBe("\27")
+        end)
+
+        test("decodes TOML 1.1 times without seconds", function()
+            local val, err = toml.decode_string("t = 07:32\n")
+            expect(err).toBeNil()
+            expect(val.t).toBeTruthy()
+        end)
+
         test("decodes boolean values", function()
             local val, err = toml.decode_string("enabled = true\n")
             expect(err).toBeNil()

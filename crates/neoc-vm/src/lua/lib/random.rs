@@ -186,6 +186,62 @@ fn uniform_u128(span: u128) -> Result<u128, String> {
     }
 }
 
+/// Batches OS entropy for exact uniform draws below a small span: one
+/// `getrandom` call fills a chunk of `u32` draws instead of one call (and 16
+/// bytes) per character. Rejection sampling is unchanged, so every draw is
+/// exactly uniform, and a failed refill is still an error.
+struct SmallDraws {
+    buf: Vec<u8>,
+    pos: usize,
+    chunk: usize,
+}
+
+impl SmallDraws {
+    /// `expected` is the number of draws the caller will need (a hint that
+    /// sizes the first chunk, capped at 4 KiB).
+    fn new(expected: usize) -> Self {
+        Self {
+            buf: Vec::new(),
+            pos: 0,
+            chunk: expected.saturating_mul(4).clamp(16, 4096),
+        }
+    }
+
+    fn next_u32(&mut self) -> Result<u32, String> {
+        if self.pos + 4 > self.buf.len() {
+            self.buf.resize(self.chunk, 0);
+            fill_random(&mut self.buf)?;
+            self.pos = 0;
+        }
+        let bytes = [
+            self.buf[self.pos],
+            self.buf[self.pos + 1],
+            self.buf[self.pos + 2],
+            self.buf[self.pos + 3],
+        ];
+        self.pos += 4;
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    /// Exactly uniform index in `[0, len)`; `len` must be > 0.
+    fn below(&mut self, len: usize) -> Result<usize, String> {
+        let Ok(span) = u64::try_from(len) else {
+            return Ok(uniform_u128(len as u128)? as usize);
+        };
+        if span > 1 << 32 {
+            return Ok(uniform_u128(u128::from(span))? as usize);
+        }
+        // Reject draws in the partial bucket above `limit` (no modulo bias).
+        let limit = (1u64 << 32) - ((1u64 << 32) % span);
+        loop {
+            let draw = u64::from(self.next_u32()?);
+            if draw < limit {
+                return Ok((draw % span) as usize);
+            }
+        }
+    }
+}
+
 fn random_string(n: i64, alphabet: Option<mlua::LuaString>) -> Result<String, String> {
     if n < 0 {
         return Err("length must be non-negative".to_string());
@@ -208,11 +264,10 @@ fn random_string(n: i64, alphabet: Option<mlua::LuaString>) -> Result<String, St
         return Err("alphabet must be non-empty".to_string());
     }
     let mut out = String::with_capacity(n as usize);
+    // Exactly uniform over the alphabet (rejection sampling, no modulo bias).
+    let mut draws = SmallDraws::new(n as usize);
     for _ in 0..n {
-        // Exactly uniform over the alphabet (rejection sampling, no modulo
-        // bias), by the same draw `random_int` uses.
-        let idx = uniform_u128(alpha.len() as u128)? as usize;
-        out.push(alpha[idx]);
+        out.push(alpha[draws.below(alpha.len())?]);
     }
     Ok(out)
 }
@@ -430,6 +485,19 @@ mod tests {
             lua.load(r#"return rng.random_int(10, 5)"#).eval().unwrap();
         assert!(v.is_none());
         assert!(e.unwrap().starts_with("random.random_int:"));
+    }
+
+    #[test]
+    fn small_draws_stay_in_range_and_cover_every_index() {
+        // A span that does not divide 2^32 (3) exercises the rejection path;
+        // every index must appear and none may fall outside the span.
+        let mut draws = super::SmallDraws::new(8);
+        let mut seen = [0u32; 3];
+        for _ in 0..3000 {
+            seen[draws.below(3).unwrap()] += 1;
+        }
+        assert!(seen.iter().all(|&c| c > 800), "uneven draws: {seen:?}");
+        assert_eq!(draws.below(1).unwrap(), 0);
     }
 
     #[test]
