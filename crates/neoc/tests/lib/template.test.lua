@@ -204,6 +204,32 @@ describe("template.add_filter", function()
             expect(err).toContain("template.compile:")
         end)
 
+        test("a self-call is found wherever the syntax tree can hide it", function()
+            local bodies = {
+                "{% set x = self::m() %}{{ x }}",
+                "{% for i in self::m() %}{% endfor %}",
+                "{% for i in [1] %}{% else %}{{ self::m() }}{% endfor %}",
+                "{% if false %}{% elif self::m() %}x{% endif %}",
+                "{% if false %}x{% else %}{{ self::m() }}{% endif %}",
+                "{% filter upper %}{{ self::m() }}{% endfilter %}",
+                "{{ 1 + self::m() }}",
+                "{{ [self::m()] | length }}",
+                "{{ f(a=self::m()) }}",
+                "{{ 1 in [self::m()] }}",
+            }
+            for _, body in ipairs(bodies) do
+                local out, err = template.compile("{% macro m() %}" .. body .. "{% endmacro m %}{{ self::m() }}")
+                expect(out).toBeNil()
+                expect(err).toContain("calls itself")
+            end
+        end)
+
+        test("a macro that calls another macro is accepted", function()
+            local t = template.compile(
+                "{% macro a() %}A{% endmacro a %}{% macro b() %}{{ self::a() }}B{% endmacro b %}{{ self::b() }}")
+            expect(t:render({})).toBe("AB")
+        end)
+
         test("deeply nested blocks are refused", function()
             local src = ("{% if true %}"):rep(100) .. ("{% endif %}"):rep(100)
             local out, err = template.compile(src)
