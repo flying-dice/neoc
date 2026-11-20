@@ -55,7 +55,8 @@ chacha20poly1305 = "0.11"
 # share the `signature` 3.x Signer/Verifier traits and the `pkcs8` 0.11 /
 # `spki` 0.8 encoding layer already in the tree transitively (pulled by `rsa`,
 # itself a sqlx-mysql auth dependency):
-#   ed25519-dalek — Ed25519, the modern default. `rand_core` for keygen off the
+#   ed25519-dalek — Ed25519, the modern default. `rand_core` + `digest` (the
+#                   fallible `Generate` impl) for keygen off the
 #                   same `SysRng` `lib:random` uses; `pkcs8`/`pem` for PKCS#8 +
 #                   SPKI. Default `zeroize` stays on so secret keys wipe on drop.
 #   p256          — ECDSA over NIST P-256. Default `ecdsa` + `sha256` give ES256
@@ -66,7 +67,7 @@ chacha20poly1305 = "0.11"
 #                   (Marvin timing side-channel in RSA sign) does not apply.
 # `pkcs8`/`spki` (pinned to the in-tree versions) give the EncodePrivateKey /
 # EncodePublicKey traits + their PEM emitters, used uniformly across all three.
-ed25519-dalek = { version = "3", features = ["pkcs8", "pem", "rand_core"] }
+ed25519-dalek = { version = "3", features = ["pkcs8", "pem", "rand_core", "digest"] }
 p256 = { version = "0.14", features = ["pem"] }
 rsa = { version = "0.10", features = ["pkcs1v15"] }
 signature = "3"
@@ -152,8 +153,10 @@ rusqlite = { version = "0.43", features = ["bundled"] }
 
 # JSON Schema validation. `default-features = false` drops the optional
 # resolvers (HTTP/file remote $ref) — schemas embedded in scripts don't
-# need them, and turning them off shrinks the dependency tree.
-jsonschema = { version = "0.61", default-features = false }
+# need them, and turning them off shrinks the dependency tree. `idna` is the
+# one default feature kept: since 0.61 it backs the `idn-hostname` and
+# `idn-email` formats, which silently pass anything without it.
+jsonschema = { version = "0.61", default-features = false, features = ["idna"] }
 
 # Exposed to Lua as `lib.testcontainers` so scripts (and our integration
 # tests) can spin up disposable backing services without external setup.

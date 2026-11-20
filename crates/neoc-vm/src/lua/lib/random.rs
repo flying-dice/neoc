@@ -31,21 +31,21 @@
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use mlua::{Lua, Table, Value};
-use rand::Rng;
-use rand::rand_core::UnwrapErr;
+use rand::TryRng;
 use rand::rngs::SysRng;
-use rand::seq::IndexedRandom;
 use tracing::instrument;
 use uuid::Uuid;
 
 use crate::lua::facade::Module;
 use crate::lua::sandbox::{err, from_err, ok};
 
-/// The OS CSPRNG as an infallible `Rng`. `SysRng` is fallible in rand 0.10;
-/// `UnwrapErr` restores the rand 0.8 `OsRng` behaviour (panic if the OS
-/// entropy source fails, which is not recoverable).
-pub(crate) fn os_rng() -> UnwrapErr<SysRng> {
-    UnwrapErr(SysRng)
+/// Fill `buf` from the OS CSPRNG. `SysRng` is fallible in rand 0.10; an
+/// entropy-source failure comes back as an error for the caller to surface (a
+/// Lua error value) instead of a panic.
+pub(crate) fn fill_random(buf: &mut [u8]) -> Result<(), String> {
+    SysRng
+        .try_fill_bytes(buf)
+        .map_err(|e| format!("OS entropy source failed: {e}"))
 }
 
 /// Default alphabet for `random_string` when no alphabet is supplied.
@@ -145,7 +145,9 @@ fn random_bytes(lua: &Lua, n_bytes: i64) -> mlua::Result<(Value, Value)> {
         return err(lua, "random.random_bytes: byte count must be non-negative");
     }
     let mut buf = vec![0u8; n_bytes as usize];
-    os_rng().fill_bytes(&mut buf);
+    if let Err(e) = fill_random(&mut buf) {
+        return err(lua, format!("random.random_bytes: {e}"));
+    }
     ok(lua, lua.create_string(&buf)?)
 }
 
@@ -160,26 +162,26 @@ fn random_int(min: i64, max: i64) -> Result<i64, String> {
     // i64 would overflow. The i128 sum is always within i64 range, so the
     // narrowing cast is lossless.
     let span = ((max as i128) - (min as i128) + 1) as u128;
-    let value = uniform_u128(span);
+    let value = uniform_u128(span)?;
     Ok(((min as i128) + (value as i128)) as i64)
 }
 
 /// Unbiased uniform draw in `[0, span)` via rejection sampling on `u128`.
 /// `span` must be > 0; caller enforces (random_int's min<=max guard makes
 /// span >= 1).
-fn uniform_u128(span: u128) -> u128 {
+fn uniform_u128(span: u128) -> Result<u128, String> {
     if span == 1 {
-        return 0;
+        return Ok(0);
     }
     // Reject any draw landing in the partial bucket above `limit` so the
     // remaining range is an exact multiple of `span` — eliminates modulo bias.
     let limit = u128::MAX - (u128::MAX % span);
     loop {
         let mut buf = [0u8; 16];
-        os_rng().fill_bytes(&mut buf);
+        fill_random(&mut buf)?;
         let draw = u128::from_le_bytes(buf);
         if draw < limit {
-            return draw % span;
+            return Ok(draw % span);
         }
     }
 }
@@ -207,10 +209,10 @@ fn random_string(n: i64, alphabet: Option<mlua::LuaString>) -> Result<String, St
     }
     let mut out = String::with_capacity(n as usize);
     for _ in 0..n {
-        let pick = alpha
-            .choose(&mut os_rng())
-            .expect("alphabet non-empty (checked above)");
-        out.push(*pick);
+        // Exactly uniform over the alphabet (rejection sampling, no modulo
+        // bias), by the same draw `random_int` uses.
+        let idx = uniform_u128(alpha.len() as u128)? as usize;
+        out.push(alpha[idx]);
     }
     Ok(out)
 }
@@ -220,7 +222,7 @@ fn token_urlsafe(n_bytes: i64) -> Result<String, String> {
         return Err("byte count must be non-negative".to_string());
     }
     let mut buf = vec![0u8; n_bytes as usize];
-    os_rng().fill_bytes(&mut buf);
+    fill_random(&mut buf)?;
     Ok(URL_SAFE_NO_PAD.encode(&buf))
 }
 
@@ -274,7 +276,7 @@ pub fn benches(c: &mut criterion::Criterion) {
     g.bench_function("library/random_bytes_32", |b| {
         b.iter(|| {
             let mut buf = [0u8; 32];
-            os_rng().fill_bytes(black_box(&mut buf));
+            fill_random(black_box(&mut buf)).expect("os entropy");
         });
     });
 

@@ -176,10 +176,12 @@ pub struct KeyPair {
 impl KeyPair {
     fn generate(algo: Algo) -> Result<Self, String> {
         let secret = match algo {
-            Algo::Ed25519 => Secret::Ed25519(ed25519_dalek::SigningKey::generate(
-                &mut super::random::os_rng(),
-            )),
-            Algo::EcdsaP256 => Secret::EcdsaP256(p256::ecdsa::SigningKey::generate()),
+            Algo::Ed25519 => Secret::Ed25519(
+                ed25519_dalek::SigningKey::try_generate_from_rng(&mut SysRng).map_err(stringify)?,
+            ),
+            Algo::EcdsaP256 => Secret::EcdsaP256(
+                p256::ecdsa::SigningKey::try_generate_from_rng(&mut SysRng).map_err(stringify)?,
+            ),
             Algo::RsaPss => {
                 Secret::RsaPss(rsa::PrivateKey::new(&mut SysRng, RSA_BITS).map_err(stringify)?)
             }
