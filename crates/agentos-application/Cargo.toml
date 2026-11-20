@@ -1,0 +1,26 @@
+[package]
+name = "agentos-application"
+description = "Ports (traits) + use cases. Depends on the domain and nothing else but async-trait/serde_json/thiserror."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[features]
+testing = []   # in-memory fakes of every port, for application tests and the host e2e test
+
+[dependencies]
+agentos-domain = { workspace = true }
+async-trait = { workspace = true }
+futures-channel = { workspace = true }
+futures-util = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+parking_lot = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }   # test runtime only
+
+[lints]
+workspace = true

@@ -1,3 +1,6 @@
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
 disallowed-methods = [
     { path = "mlua::Lua::create_async_function", reason = "use neoc_vm::lua::lifecycle::async_function: every async host function is a leaf with a Role (see lifecycle.rs)" },
     { path = "mlua::UserDataMethods::add_async_method", reason = "use neoc_vm::lua::lifecycle::async_method (see lifecycle.rs)" },

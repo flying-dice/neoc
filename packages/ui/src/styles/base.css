@@ -1,0 +1,97 @@
+/* Base element styles and typography utilities. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font: var(--type-body);
+  letter-spacing: var(--tracking-body);
+  color: var(--label);
+  background: var(--bg-grouped);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--tint) 30%, transparent);
+}
+
+/* Thin overlay scrollbars, like iOS. */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--fill);
+  border-radius: 7px;
+}
+
+/* ── Typography utilities ─────────────────────────────────────── */
+.ios-large-title { font: var(--type-large-title); font-weight: 700; letter-spacing: var(--tracking-large-title); }
+.ios-title1 { font: var(--type-title1); letter-spacing: var(--tracking-title1); }
+.ios-title2 { font: var(--type-title2); letter-spacing: var(--tracking-title2); }
+.ios-title3 { font: var(--type-title3); letter-spacing: var(--tracking-title3); }
+.ios-headline { font: var(--type-headline); letter-spacing: var(--tracking-body); }
+.ios-body { font: var(--type-body); letter-spacing: var(--tracking-body); }
+.ios-callout { font: var(--type-callout); letter-spacing: var(--tracking-callout); }
+.ios-subheadline { font: var(--type-subheadline); letter-spacing: var(--tracking-subheadline); }
+.ios-footnote { font: var(--type-footnote); letter-spacing: var(--tracking-footnote); }
+.ios-caption1 { font: var(--type-caption1); }
+.ios-caption2 { font: var(--type-caption2); letter-spacing: 0.07px; }
+
+.ios-secondary { color: var(--label-secondary); }
+.ios-tertiary { color: var(--label-tertiary); }
+
+/* ── Material utilities ───────────────────────────────────────── */
+.ios-material-ultrathin,
+.ios-material-thin,
+.ios-material-regular,
+.ios-material-thick,
+.ios-material-chrome {
+  -webkit-backdrop-filter: var(--material-blur);
+  backdrop-filter: var(--material-blur);
+}
+.ios-material-ultrathin { background: var(--material-ultrathin); }
+.ios-material-thin { background: var(--material-thin); }
+.ios-material-regular { background: var(--material-regular); }
+.ios-material-thick { background: var(--material-thick); }
+.ios-material-chrome { background: var(--material-chrome); }
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

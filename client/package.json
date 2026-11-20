@@ -1,0 +1,50 @@
+{
+  "name": "@agentos/client",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "description": "The AgentOS client: an installable PWA shell (Vite + Svelte) that talks to the Rust host over WebSocket JSON-RPC",
+  "author": "AgentOS",
+  "scripts": {
+    "format": "prettier --plugin prettier-plugin-svelte --write .",
+    "lint": "eslint --cache .",
+    "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
+    "svelte-check": "svelte-check --tsconfig ./tsconfig.web.json",
+    "typecheck": "bun run typecheck:node && bun run svelte-check",
+    "test": "bun test ./src",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "storybook": "storybook dev -p 6008 --no-open",
+    "build-storybook": "storybook build -o storybook-static --quiet"
+  },
+  "dependencies": {
+    "@ag-ui/core": "1.0.5",
+    "@agentos/ui": "workspace:*",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@types/node": "^24.19.2",
+    "eslint": "^10.12.0",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-prettier": "5.5.7",
+    "eslint-plugin-svelte": "^3.23.1",
+    "globals": "17.14.0",
+    "prettier": "^3.9.10",
+    "prettier-plugin-svelte": "^4.1.1",
+    "svelte": "^5.57.2",
+    "svelte-check": "^4.7.6",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "8.72.1",
+    "vite": "^8.3.4",
+    "@agentos/storybook": "workspace:*",
+    "@storybook/addon-a11y": "10.6.7",
+    "@storybook/addon-docs": "10.6.7",
+    "@storybook/addon-svelte-csf": "5.1.6",
+    "@storybook/addon-themes": "10.6.7",
+    "@storybook/svelte-vite": "10.6.7",
+    "storybook": "10.6.7"
+  }
+}

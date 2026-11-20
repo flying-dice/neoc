@@ -1,0 +1,7 @@
+dist
+tsconfig.json
+tsconfig.*.json
+storybook-static
+test-results
+playwright-report
+**/__screenshots__

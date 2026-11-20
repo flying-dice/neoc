@@ -1,19 +1,26 @@
 {
   "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
   "runtime.version": "LuaJIT",
-  "workspace.library": [
-    "types/luals"
-  ],
+  "runtime.plugin": "types/luals-plugin.lua",
+  "workspace.library": ["types/luals", "types/generated/luals"],
   "workspace.checkThirdParty": false,
   "workspace.ignoreDir": [
+    ".claude",
+    "node_modules",
     "target",
-    "types/fixtures/negative"
+    "dist",
+    "client",
+    "packages",
+    "e2e",
+    "crates/neoc",
+    "crates/neoc-vm",
+    "tooling",
+    "crates/agentos-codegen/tests/fixtures/stub",
+    "scripts/*.lua",
+    "types/generated/*.lua"
   ],
-  "diagnostics.disable": [
-    "lowercase-global"
-  ],
-  "diagnostics.unusedLocalExclude": [
-    "_*"
-  ],
-  "runtime.plugin": "types/luals-plugin.lua"
+  "diagnostics.disable": ["lowercase-global"],
+  "diagnostics.unusedLocalExclude": ["_*"],
+  "type.checkTableShape": true,
+  "hint.enable": false
 }

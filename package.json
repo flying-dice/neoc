@@ -1,0 +1,43 @@
+{
+  "name": "agentos",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "client",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "bun scripts/dev.ts",
+    "build": "bun run --filter @agentos/client build",
+    "start": "cargo run --release -p agentos-host --",
+    "build:apps": "bun scripts/build-apps.ts",
+    "typecheck": "cargo check --workspace --all-targets && tsc --noEmit -p types/tsconfig.json && bun run --filter '*' typecheck",
+    "lint": "bun run lint:conflicts && bun run lint:atomic && bun run lint:testids && bun run lint:boundaries && bun run lint:rust && bun run lint:lua && bun run lint:stylua && bun run codegen:check && bun run --filter '*' lint",
+    "format": "bun run --filter '*' format && cargo fmt --all && bun scripts/stylua.ts format",
+    "lint:rust": "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && bun run lint:deps && cargo deny check",
+    "lint:deps": "bun scripts/check-deps.ts",
+    "lint:lua": "bun scripts/lint-lua.ts",
+    "lint:stylua": "bun scripts/stylua.ts check",
+    "host": "cargo run -p agentos-host --",
+    "codegen": "cargo run -q -p agentos-codegen && cargo run -q -p agentos-luavm --example luals && bun scripts/codegen-lua.ts",
+    "codegen:check": "cargo run -q -p agentos-codegen -- --check && cargo run -q -p agentos-luavm --example luals -- --check && bun scripts/codegen-lua.ts --check",
+    "lint:conflicts": "bun scripts/check-conflicts.ts",
+    "lint:atomic": "bun scripts/check-atomic.ts",
+    "lint:testids": "bun scripts/check-testids.ts",
+    "lint:boundaries": "bun scripts/check-boundaries.ts",
+    "test": "cargo nextest run --workspace && bun test types scripts && bun run --filter '*' test",
+    "test:e2e": "bun scripts/storybooks.ts build && playwright test",
+    "test:e2e:update": "bun scripts/storybooks.ts build && playwright test --update-snapshots",
+    "storybooks": "bun scripts/storybooks.ts"
+  },
+  "trustedDependencies": [
+    "esbuild"
+  ],
+  "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
+    "@playwright/test": "^1.65.1",
+    "@types/bun": "1.4.4",
+    "typescript": "^5.9.3",
+    "zod": "4.6.7"
+  }
+}

@@ -1,0 +1,3 @@
+[test]
+# Playwright specs (e2e/, client/e2e/, apps/*/e2e/) run with `bun run test:e2e`, not bun test.
+pathIgnorePatterns = ["e2e/**", "**/e2e/**", "node_modules/**"]

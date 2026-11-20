@@ -1,5 +1,6 @@
 # Rust build output
 /target
+target
 
 # CI — cargo cache and build artifacts land here during pipeline runs
 /.cargo
@@ -14,3 +15,18 @@
 
 # Test scratch
 .tmp/
+
+# JavaScript, apps and Storybook (AgentOS: client, packages, e2e)
+node_modules
+dist
+.eslintcache
+*.log*
+.playwright-mcp
+storybook-static
+*storybook.log
+test-results
+playwright-report
+
+# Per-developer Claude Code settings (project skills/workflows are committed)
+.claude/settings.local.json
+.claude/worktrees/

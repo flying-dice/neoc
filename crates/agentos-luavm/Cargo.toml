@@ -1,0 +1,139 @@
+[package]
+name = "agentos-luavm"
+description = "Sandboxed standard Lua 5.1 VM (mlua, vendored): the std:/lib:/vnd: module registry, and task scheduler. No dependency on any other agentos crate."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "agentos_luavm"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = "0.9"
+toml = { workspace = true, features = ["display"] }
+quick-xml = { version = "0.42", features = ["serialize"] }
+tracing = { workspace = true }
+tracing-core = "0.1"
+tokio = { workspace = true, features = ["net", "io-util"] }
+mlua = { workspace = true }
+parking_lot = { workspace = true }
+regex = "1"
+base64 = "0.22"
+# Zero-dep hex, backs `lib:hex` alongside the base64 crate.
+hex = "0.4"
+sha2 = "0.11"
+sha3 = "0.12"
+blake3 = "1"
+md-5 = "0.11"
+sha1 = "0.11"
+xxhash-rust = { version = "0.8", features = ["xxh3", "xxh64"] }
+# HMAC over the sha2 digests (`lib:hmac`); `subtle` gives the constant-time tag comparison.
+hmac = "0.13"
+subtle = "2"
+# AEAD primitives backing `lib:crypto` (verify the tag in constant time inside the crate).
+aes-gcm = "0.11"
+chacha20poly1305 = "0.11"
+# Asymmetric signing/verification backing `lib:pkey`: one RustCrypto crate per algorithm family, sharing the
+# `signature` 2.x traits and the `pkcs8` 0.10 / `spki` 0.7 encoding layer.
+ed25519-dalek = { version = "3", features = ["pkcs8", "pem", "rand_core"] }
+p256 = { version = "0.14", features = ["pem"] }
+# 0.10 is the series that fixed RUSTSEC-2023-0071 (Marvin timing side-channel in RSA sign); 0.9.x must not return.
+rsa = { version = "0.10", features = ["pkcs1v15"] }
+signature = "3"
+pkcs8 = { version = "0.11", features = ["pem", "std"] }
+spki = { version = "0.8", features = ["pem", "std"] }
+flate2 = "1"
+zstd = "0.13"
+brotli = "7"
+# `lib:archive`: tar and zip (DEFLATE only, via the in-tree flate2).
+tar = "0.4"
+zip = { version = "9", default-features = false, features = ["deflate"] }
+# OS CSPRNG (also the RNG for key generation and RSA-PSS salts) and UUIDs backing `lib:random` / `lib:pkey`.
+getrandom = { workspace = true, features = ["sys_rng"] }
+uuid = { version = "1", features = ["v4", "v7"] }
+rust-ini = "0.21"
+mime_guess = "2"
+csv = "1"
+semver = "1"
+similar = "3"
+url = "2"
+percent-encoding = "2"
+# Civil dates, times, IANA timezones, RFC 3339 / strftime for `lib:chrono`.
+jiff = "0.2"
+strsim = "0.11"
+heck = "0.5"
+unicode-width = "0.2"
+deunicode = "1"
+thiserror = { workspace = true }
+futures = { version = "0.3", default-features = false, features = ["std"] }
+# `default-features = false` drops tera's `builtins` (chrono-backed filters): no chrono, no tz data.
+tera = { version = "1.20", default-features = false }
+walkdir = "2"
+# `lib:args` parses script argv with clap's builder API; no derive.
+clap = { version = "4", default-features = false, features = ["std", "help", "usage", "error-context", "string"] }
+globset = "0.4"
+hyper = { version = "1", features = ["client", "server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+# TLS for the `vnd:hyper` client: rustls, as the host's own reqwest client, with the platform certificate verifier.
+tokio-rustls = "0.26"
+rustls-platform-verifier = "0.7"
+bytes = "1"
+# sqlx is async-only and used for `vnd:sqlx_mysql` / `vnd:sqlx_postgres`, where the work is network IO.
+# The `sqlite` feature is off: sqlx-sqlite's libsqlite3-sys would clash (`links = "sqlite3"`) with the
+# workspace rusqlite. `vnd:rusqlite` covers SQLite.
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "mysql", "mysql-rsa", "postgres"] }
+rusqlite = { workspace = true }
+# JSON Schema validation; the optional remote `$ref` resolvers (HTTP/file) stay off.
+jsonschema = { version = "0.30", default-features = false }
+# RAII temp files and directories backing `lib:tempfile`.
+tempfile = "3"
+# Bounded LRU map backing `lib:cache`.
+lru = "0.19"
+# Unicode correctness primitives backing `lib:unicode`.
+unicode-normalization = "0.1"
+unicode-segmentation = "1"
+unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
+caseless = "0.2"
+
+# Disposable MySQL/Postgres containers for scripts and integration tests (needs Docker). Off by default.
+[dependencies.testcontainers-modules]
+version = "0.11"
+features = ["mysql", "postgres"]
+optional = true
+
+# Optional regular dep, gated behind the `bench` feature: the `benches` functions live inline in
+# `src/lua/lib/<module>.rs`, so library code names `criterion::Criterion`.
+[dependencies.criterion]
+version = "0.5"
+features = ["html_reports"]
+optional = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+# a self-signed certificate for the `vnd:hyper` TLS tests
+rcgen = "0.14"
+
+[features]
+# `vnd:testcontainers_modules` and the Docker-backed tests.
+testcontainers = ["dep:testcontainers-modules"]
+# Compiles the per-module `benches` functions and pulls in criterion.
+bench = ["dep:criterion"]
+
+[[bench]]
+name = "lib"
+path = "benches/lib/lib.rs"
+harness = false
+required-features = ["bench"]
+
+[[bench]]
+name = "vnd"
+path = "benches/vnd/vnd.rs"
+harness = false
+required-features = ["bench"]
+
+[lints]
+workspace = true
