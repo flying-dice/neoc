@@ -6,9 +6,9 @@
 //! with a callback, such as `string.gsub` and `table.sort`, and the handler of `xpcall`, refuse); and a function that
 //! tail-calls a host function leaves no frame of its own, so an error from that call carries no app line.
 //!
-//! What running on standard Lua 5.1 changes: the sandbox of an app's environment (nothing is budgeted: apps
-//! get Lua's own `string` and `table` functions), and async host calls where 5.1 cannot yield (across `pcall`,
-//! metamethods, C functions).
+//! What running on this VM changes: the sandbox of an app's environment (nothing is budgeted: apps get Lua's own
+//! `string` and `table` functions), and async host calls where the engine cannot yield (the C functions that call back
+//! into Lua, `string.format` of a `__tostring`, the `xpcall` handler).
 
 mod common;
 
@@ -284,7 +284,7 @@ async fn no_number_a_script_passes_to_a_library_function_panics_the_host() {
 
 // ---- the memory limit ---------------------------------------------------------------------------------------
 
-// ---- async host calls where Lua 5.1 cannot yield ------------------------------------------------------------
+// ---- async host calls, and where the engine cannot yield ------------------------------------------------------------
 
 #[tokio::test]
 async fn host_calls_that_await_work_inside_pcall_coroutines_and_event_handlers() {
@@ -345,9 +345,10 @@ async fn host_calls_that_await_work_inside_pcall_coroutines_and_event_handlers()
 }
 
 #[tokio::test]
-async fn the_proxies_apps_index_never_yield_so_they_work_on_5_1() {
+async fn the_proxies_apps_index_never_yield_so_they_work_anywhere() {
     // app.state, a window's state / client / env, and a source handle are tables with __index / __newindex
-    // functions: Lua 5.1 cannot yield across a metamethod, so they must stay synchronous Rust functions
+    // functions: they are plain synchronous Rust functions (PUC Lua 5.1 could not yield across a metamethod, which is
+    // why; LuaJIT can, but a proxy that waited would still be a footgun), so reading one never lends the turn
     let src = r#"
         local ui = require("@agentos/ui")
         local s = app.state { n = 0, items = {} }

@@ -1,4 +1,4 @@
-//! One sandboxed Lua 5.1 VM per app.
+//! One sandboxed Lua VM (LuaJIT, running the app's Lua 5.1 source) per app.
 //!
 //! The VM is a bare `neoc-vm` engine with the app's own environment table (see
 //! `neoc_vm::lua::script_env`): the prelude's polyfills, the `app` capability table and a `require` that
@@ -290,7 +290,6 @@ impl Shared {
     }
 }
 
-/// Where a call came from, which decides what restricts it.
 /// What the VM carries from a call to the work it starts (`Inherited`): the read-only restriction, which is
 /// the adapter's policy, not the library's.
 #[derive(Clone, Copy)]
@@ -300,7 +299,7 @@ fn inherits_read_only(from: &Inherited) -> bool {
     from.get::<ReadOnly>().is_some_and(|r| r.0)
 }
 
-#[derive(Clone)]
+/// Where a call came from, which decides what restricts it.
 enum Via {
     /// Through the host (a tool, an event, a write-back): `read_only` is what the caller requires.
     Host { read_only: bool },
@@ -579,10 +578,7 @@ impl AppVm {
             Arc::new(|life| {
                 let lua = make_bare_engine()?;
                 install_runtime_state(&lua, life);
-                let offered: Vec<&str> = neoc_vm::lua::modules::names()
-                    .filter(|name| !crate::require::NOT_FOR_APPS.contains(name))
-                    .collect();
-                neoc_vm::lua::modules::install_allowed(&lua, &offered)?;
+                neoc_vm::lua::modules::install_allowed(&lua, &crate::require::offered_modules())?;
                 Ok(lua)
             }),
         );

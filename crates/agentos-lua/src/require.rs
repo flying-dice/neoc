@@ -13,8 +13,7 @@
 //!
 //! Anything else is an error that names what is allowed.
 //!
-//! `require` is a plain (synchronous) function: a module only builds tables, and a function the VM
-//! cannot yield from is the one thing a metamethod or a C boundary on Lua 5.1 must be.
+//! `require` is a plain (synchronous) function: a module only builds tables, so it never has to suspend.
 
 use crate::vm::Shared;
 use neoc_vm::{
@@ -26,7 +25,13 @@ use std::sync::Arc;
 /// The modules of the VM library that an app is not offered: `lib:test` (a test harness that prints to stdout),
 /// `lib:compile` (builds standalone executables) and `std:workers` (a process-wide shutdown signal). Which
 /// modules a script may have is the embedder's policy; the library offers all of them (`modules::names`).
-pub(crate) const NOT_FOR_APPS: &[&str] = &["lib:test", "lib:compile", "std:workers"];
+pub const NOT_FOR_APPS: &[&str] = &["lib:test", "lib:compile", "std:workers"];
+
+/// The library modules an app (and a `std:thread` worker it starts) is offered: every one the library has,
+/// less [`NOT_FOR_APPS`]. The one place that rule is written.
+pub(crate) fn offered_modules() -> Vec<&'static str> {
+    modules::names().filter(|name| !NOT_FOR_APPS.contains(name)).collect()
+}
 
 /// What a `require` may name, for the error message of one that names something else.
 const ALLOWED: &str = "\"@agentos/app\", \"@agentos/ui\" and the std:, lib: and vnd: modules";
@@ -68,11 +73,11 @@ fn library(lua: &Lua, sh: &Arc<Shared>, spec: &str) -> mlua::Result<LuaValue> {
     if let Some(done) = sh.modules.lock().get(spec) {
         return Ok(done.clone());
     }
-    let known = || modules::names().filter(|name| !NOT_FOR_APPS.contains(name)).collect::<Vec<&str>>();
-    if NOT_FOR_APPS.contains(&spec) {
-        return Err(modules::unknown_module(spec, &known()));
+    let offered = offered_modules();
+    if !offered.contains(&spec) {
+        return Err(modules::unknown_module(spec, &offered));
     }
-    let built = modules::build(lua, spec).ok_or_else(|| modules::unknown_module(spec, &known()))??;
+    let built = modules::build(lua, spec).ok_or_else(|| modules::unknown_module(spec, &offered))??;
     let value = LuaValue::Table(built);
     sh.modules.lock().insert(spec.to_owned(), value.clone());
     Ok(value)

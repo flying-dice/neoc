@@ -16,8 +16,8 @@
 //! tool of one of four kinds: `readOnly`, writable, writable with concurrent second tools, or `readOnly` calling the
 //! app's own server. Beside it run side calls that get in whenever the VM is free: a counter bump, a second writer, a
 //! `readOnly` peek that tries every write, and a *meddler* that resumes the threads the program left behind (its own
-//! top-level thread, the threads its tasks run in, the threads inside its `pcall`s, `xpcall`s and nested protected
-//! calls, its coroutines), with and without arguments, from another call.
+//! top-level thread, the threads its tasks run in, the thread a protected call runs in when the script is inside one,
+//! its coroutines), with and without arguments, from another call.
 //! Per case, within a timeout:
 //!
 //! - (a) nothing `app.*` could write (db, kv, state, notify, windows) was written in a read-only context;
@@ -27,8 +27,8 @@
 //!   acknowledged (and one that failed left none of it behind);
 //! - (e) the app still answers a ping tool and the database still answers a query (nothing is wedged);
 //! - (f) the host did not panic (a panic in a call is a failed join);
-//! - (g) a thread the script did not make (a call's top-level thread, a task's thread, the coroutine a `pcall` or
-//!   `xpcall` runs its body in, found with `coroutine.running()`) is never resumed by a script: a `coroutine.resume`
+//! - (g) a thread the script did not make (a call's top-level thread, a task's thread, found with
+//!   `coroutine.running()`) is never resumed by a script: a `coroutine.resume`
 //!   of one from anywhere returns false, *and* no script code runs because of it (every leaf ends by bumping a
 //!   counter, and the attempt, which waits for nothing, must not move it: an answer of `false` alone would also be
 //!   what a thread that ran and then failed says). Only the coroutines the script made (`create`, `wrap`) can be
