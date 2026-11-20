@@ -3,6 +3,11 @@
 # Every advisory ignore carries a reason, an upstream link and whether a fixed
 # version exists; delete the entry as soon as the upstream fix is adopted.
 
+# Check only what neoc ships (release.yml, Dockerfile): the Linux and Windows binaries. Crates that exist
+# only for other targets (Android, wasm, macOS) are not in the graph.
+[graph]
+targets = ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-gnu"]
+
 [advisories]
 yanked = "warn"
 unmaintained = "all"
@@ -24,9 +29,6 @@ allow = [
     "BSD-3-Clause",
     "BSL-1.0",
     "CC0-1.0",
-    # webpki-root-certs (the Mozilla root list), pulled by rustls-platform-verifier for `vnd:hyper` HTTPS.
-    # A permissive data license; the crate carries no code of its own.
-    "CDLA-Permissive-2.0",
     "ISC",
     "MIT",
     "MIT-0",

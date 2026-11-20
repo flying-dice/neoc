@@ -235,7 +235,7 @@ required-features = ["bench"]
 # The root `[workspace.lints]` table (clippy pedantic, `unsafe_code = "deny"`) was
 # imported with the old compiler crates and never inherited here: opting in
 # today means ~700 pedantic findings. (`neoc-vm` has no `unsafe` outside tests and
-# forbids it in `lib.rs`; the `neoc` crate has the rest.) Adopting
-# it is its own change, so silence cargo's "missing lints inheritance" nag until then.
+# forbids it in `lib.rs`; the `neoc` crate has the rest.) Adopting it is its own
+# change, so silence cargo's "missing lints inheritance" nag until then.
 [lints.cargo]
 missing_lints_inheritance = "allow"
