@@ -5,10 +5,10 @@
 #
 # One policy for the whole workspace: neoc (the `neoc` CLI over `neoc-vm`) and AgentOS (the host, apps, client).
 
-# Check only what is shipped (release.yml, Dockerfile, the AgentOS host): the Linux and Windows binaries, and the
-# macOS host. Crates that exist only for other targets (Android, wasm) are not in the graph.
+# No `targets`: every platform's dependencies are checked. The AgentOS host is meant for home-lab boxes and NAS units
+# (Linux on x86_64 and aarch64, macOS on a developer machine), so the bans (no OpenSSL, mlua and the framework crates
+# pinned to their crate) and the licenses must hold for all of them, not for the two triples neoc ships.
 [graph]
-targets = ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-gnu", "aarch64-apple-darwin"]
 
 [bans]
 # Duplicate versions come from the fast-moving protocol crates (rmcp, reqwest, rustls); not ours to fix.
@@ -47,7 +47,6 @@ ignore = [
 # The neoc crates carry the workspace license (MIT OR Apache-2.0); the AgentOS crates are `publish = false` and carry
 # none. Every third-party license in the tree is permissive. Anything not listed fails.
 private = { ignore = true }
-unused-allowed-license = "allow"
 allow = [
     "0BSD",
     "Apache-2.0",
