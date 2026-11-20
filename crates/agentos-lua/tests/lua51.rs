@@ -407,14 +407,19 @@ async fn a_host_call_where_lua_cannot_yield_fails_with_a_clear_error_not_a_hang(
     // the known limits on LuaJIT: C functions that call back into Lua (gsub, a sort comparator), the handler of
     // `xpcall` and `string.format("%s")` of a `__tostring`. (On PUC Lua 5.1 a metamethod and a `for ... in` iterator
     // function were limits too; LuaJIT yields across both, see `host_calls_in_metamethods_and_iterators_yield`.)
+    // the host call inside each boundary is a sleep, which is always pending on its first poll, so it always has
+    // to suspend. `app.kv:get` is not: its future can be ready at once, and then there is no yield to refuse and
+    // the call "worked" (NEOC-121)
     let src = r#"
+        local time = require("std:time")
+        local function wait() time.sleep(time.Duration.from_millis(1)) end
         app.tools.register { name = "limits", run = function()
           local function message(fn) local ok, e = pcall(fn) return ok and "worked" or tostring(e) end
           return {
-            gsub = message(function() return (string.gsub("a", "a", function() app.kv:get("k") return "b" end)) end),
-            sort = message(function() table.sort({ 2, 1 }, function(a, b) app.kv:get("k") return a < b end) end),
-            format = message(function() return string.format("%s", setmetatable({}, { __tostring = function() app.kv:get("k") return "s" end })) end),
-            xpcall_handler = select(2, xpcall(function() error("e") end, function(m) app.kv:get("k") return m end)),
+            gsub = message(function() return (string.gsub("a", "a", function() wait() return "b" end)) end),
+            sort = message(function() table.sort({ 2, 1 }, function(a, b) wait() return a < b end) end),
+            format = message(function() return string.format("%s", setmetatable({}, { __tostring = function() wait() return "s" end })) end),
+            xpcall_handler = select(2, xpcall(function() error("e") end, function(m) wait() return m end)),
           }
         end }
     "#;
