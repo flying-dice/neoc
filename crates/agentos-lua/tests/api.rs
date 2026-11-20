@@ -96,7 +96,7 @@ require('./nope')"
     let e = load_with("require('lib:jsn')").await;
     assert!(e.contains("unknown module") && e.contains("did you mean \"lib:json\""), "{e}");
     // the ones left out on purpose are not there
-    for spec in agentos_lua::NOT_FOR_APPS {
+    for spec in ["lib:test", "lib:compile", "std:workers"] {
         let src: &'static str = Box::leak(format!("require({spec:?})").into_boxed_str());
         assert!(load_with(src).await.contains("unknown module"), "{spec}");
     }

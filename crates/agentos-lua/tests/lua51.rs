@@ -2,7 +2,8 @@
 //! LuaJIT notes (the VM is `neoc-vm`, LuaJIT 2.1 in its 5.1 mode, here): where an expectation below was a PUC Lua 5.1
 //! fact and LuaJIT differs, the test says so. The differences that matter: a LuaJIT bytecode header is `\x1bLJ`;
 //! LuaJIT's pattern matcher bounds its own recursion (`pattern too complex`, `too many captures`), so `lua::patterns`
-//! is not needed; LuaJIT yields across `pcall`, `xpcall`, metamethods and `for ... in` iterators (only C functions
+//! is not needed (its limit is about 200 recursion items, where the former guard allowed 512: a pattern of 201 to 512
+//! items that worked before is now refused); LuaJIT yields across `pcall`, `xpcall`, metamethods and `for ... in` iterators (only C functions
 //! with a callback, such as `string.gsub` and `table.sort`, and the handler of `xpcall`, refuse); and a function that
 //! tail-calls a host function leaves no frame of its own, so an error from that call carries no app line.
 //!
@@ -174,7 +175,7 @@ async fn the_preludes_polyfills_are_there_and_sealed() {
 
 // ---- patterns and strings, which C code would run unchecked ------------------------------------------------
 
-/// LuaJIT: the matcher bounds its own recursion (`MAXCCALLS` 200: `pattern too complex`) and its captures (32:
+/// LuaJIT: the matcher bounds its own recursion (`LJ_MAX_XLEVEL` 200: `pattern too complex`) and its captures (32:
 /// `too many captures`), so no guard of ours is in the way and the refusal is LuaJIT's own.
 ///
 /// PUC Lua 5.1's C pattern matcher recurses with no depth limit: `("a?"):rep(20000)` overflowed a 2 MiB stack (a
@@ -453,4 +454,41 @@ async fn host_calls_in_metamethods_and_iterators_yield() {
     let vm = load(src).await;
     let out = vm.call_tool("yields", json!({}), &agent_ctx(0), false).await.unwrap();
     assert_eq!(out, json!({ "index": "index", "add": "add", "tostring": "add", "iterations": 2 }));
+}
+
+/// The test above shows that a call in a metamethod or an iterator works, not that it suspended (`app.kv:get` can be
+/// ready on its first poll). A sleep always suspends, so here the call that makes it must lend the turn: a second
+/// tool gets in while the first sleeps 4 x 150 ms, which it could not if the first held the turn throughout.
+#[tokio::test]
+async fn a_host_call_in_a_metamethod_or_iterator_lends_the_turn_while_it_waits() {
+    let src = r#"
+        local time = require("std:time")
+        local function nap() time.sleep(time.Duration.from_millis(150)) return "x" end
+        app.tools.register { name = "slow", run = function()
+          local mt = setmetatable({}, {
+            __index = function() return nap() end,
+            __add = function() return nap() end,
+            __tostring = function() return nap() end,
+          })
+          for _ in function() return nil, nap() end do end
+          return { index = mt.x, add = mt + 1, tostring = tostring(mt) }
+        end }
+        app.tools.register { name = "ping", run = function() return "pong" end }
+    "#;
+    let vm = load(src).await;
+    let ctx = agent_ctx(0);
+    let first = vm.call_tool("slow", json!({}), &ctx, false);
+    let second = async {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let started = Instant::now();
+        let out = vm.call_tool("ping", json!({}), &ctx, false).await.unwrap();
+        (out, started.elapsed())
+    };
+    let (slow_out, (pong, waited)) = tokio::join!(first, second);
+    assert_eq!(slow_out.unwrap(), json!({ "index": "x", "add": "x", "tostring": "x" }));
+    assert_eq!(pong, json!("pong"));
+    assert!(
+        waited < Duration::from_millis(100),
+        "the second call waited {waited:?}: the first held the turn"
+    );
 }

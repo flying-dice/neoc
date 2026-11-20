@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
-//! The invariants of a call into the VM, each with the script that broke it. Lua 5.1 cannot
-//! yield across a `string.gsub` callback, a sort comparator, a metamethod or an iterator, so a host call made
+//! The invariants of a call into the VM, each with the script that broke it. The engine
+//! cannot yield across a `string.gsub` callback, a sort comparator or an `xpcall` handler, so a host call made
 //! there fails and the script, which may catch the error, goes on; and a script may resume coroutines, yield,
 //! and start tasks. None of that may leave a call half-done:
 //!

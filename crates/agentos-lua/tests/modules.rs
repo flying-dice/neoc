@@ -29,6 +29,10 @@ fn fixture(name: &str) -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name).join("app.lua")
 }
 
+/// The library modules an app is not offered, spelled out here on purpose: the adapter's own `NOT_FOR_APPS` must
+/// say exactly this (a test that read the list from the constant would still pass with the constant emptied).
+const REFUSED: [&str; 3] = ["lib:test", "lib:compile", "std:workers"];
+
 const MANIFEST: &str = r#"app.manifest { id = "probe", name = "Probe", icon = "gear" }"#;
 
 /// Wait (up to `secs`) for `check` to hold.
@@ -114,8 +118,9 @@ impl Rig {
 
 #[tokio::test]
 async fn every_library_module_can_be_required_and_is_one_table_per_app() {
-    // the library offers every module; an app is not offered the ones in `NOT_FOR_APPS`
-    let names: Vec<&str> = modules::names().filter(|n| !agentos_lua::NOT_FOR_APPS.contains(n)).collect();
+    // the library offers every module; an app is not offered the ones in `REFUSED`
+    assert_eq!(agentos_lua::NOT_FOR_APPS, REFUSED);
+    let names: Vec<&str> = modules::names().filter(|n| !REFUSED.contains(n)).collect();
     assert!(names.len() >= 46, "{names:?}");
     let list = names.iter().map(|n| format!("{n:?}")).collect::<Vec<_>>().join(", ");
     let src = format!(
@@ -212,12 +217,17 @@ async fn a_worker_gets_the_same_modules_and_lib_log_goes_to_tracing_not_stdout()
     vm.shutdown();
 }
 
-/// A worker is offered what its app was offered: `std:workers` fires the process-wide shutdown signal that every
+/// A worker is offered what its app was offered: `std:workers` exposes the process-wide shutdown signal that every
 /// app's `server:wait()` selects on, so an app that is refused it must not get it through `std:thread`.
 #[tokio::test]
 async fn a_worker_is_refused_what_its_app_is_refused() {
-    // what is asked for, once: the refused modules and one that is offered
-    let asked: Vec<&str> = agentos_lua::NOT_FOR_APPS.iter().copied().chain(["lib:json"]).collect();
+    // what is asked for, once: every module the library has. The refused ones must fail and every other one must
+    // load, for the app and for its worker alike
+    let asked: Vec<&str> = modules::names().collect();
+    assert!(
+        REFUSED.iter().all(|r| asked.contains(r)),
+        "the library no longer has a refused module: {asked:?}"
+    );
     let list = asked.iter().map(|n| format!("{n:?}")).collect::<Vec<_>>().join(", ");
     let probe = format!(
         "local out = {{}} for _, n in ipairs {{ {list} }} do out[n] = (pcall(require, n)) end return out"
@@ -236,7 +246,7 @@ async fn a_worker_is_refused_what_its_app_is_refused() {
     let out = vm.call_tool("probe", json!({}), &agent_ctx(0), false).await.unwrap();
     let expected: Value = asked
         .iter()
-        .map(|n| ((*n).to_owned(), json!(*n == "lib:json")))
+        .map(|n| ((*n).to_owned(), json!(!REFUSED.contains(n))))
         .collect::<serde_json::Map<_, _>>()
         .into();
     assert_eq!(out["app"], expected, "{out}");
