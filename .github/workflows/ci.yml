@@ -44,7 +44,7 @@ jobs:
     env:
       CLEAN_ARGS: ""
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check toolchain pin sites agree
         run: scripts/check-toolchain-pin.sh
       - name: Install pinned toolchain
@@ -68,10 +68,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      CARGO_DENY_VERSION: "0.20.2"
-      CARGO_DENY_SHA256: "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f"
+      CARGO_DENY_VERSION: "0.22.0"
+      CARGO_DENY_SHA256: "98c56e6a408bfa5c3c60744b6015aaa6aa08f743fdeb88386d06fca035bb1786"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install cargo-deny (pinned, sha256-verified)
         run: |
           base="cargo-deny-${CARGO_DENY_VERSION}-x86_64-unknown-linux-musl"
@@ -96,7 +96,7 @@ jobs:
     env:
       CLEAN_ARGS: ""
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install pinned toolchain
         run: rustup show
       - uses: Swatinem/rust-cache@v2
@@ -141,7 +141,7 @@ jobs:
     env:
       CLEAN_ARGS: --release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install pinned toolchain
         run: rustup show
       - uses: Swatinem/rust-cache@v2
@@ -158,7 +158,7 @@ jobs:
         shell: bash
       - run: cargo bench -p neoc-vm --bench vnd --features bench -- --noplot | tee bench-vnd.txt
         shell: bash
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: bench-${{ github.sha }}
@@ -182,7 +182,7 @@ jobs:
     env:
       CLEAN_ARGS: --release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install pinned toolchain
         run: rustup show
       - uses: Swatinem/rust-cache@v2
@@ -208,7 +208,7 @@ jobs:
     env:
       CLEAN_ARGS: --release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install pinned toolchain
         run: rustup show
       - uses: Swatinem/rust-cache@v2
@@ -227,7 +227,7 @@ jobs:
           mkdir -p artifacts
           strip target/release/neoc
           cp target/release/neoc artifacts/neoc-x86_64-unknown-linux-gnu
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: neoc-x86_64-unknown-linux-gnu-${{ github.sha }}
           path: artifacts/
@@ -245,7 +245,7 @@ jobs:
       CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: x86_64-w64-mingw32-gcc
       CLEAN_ARGS: --release --target x86_64-pc-windows-gnu
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install MinGW
         run: sudo apt-get update -qq && sudo apt-get install -y -qq mingw-w64
       - name: Install pinned toolchain
@@ -265,7 +265,7 @@ jobs:
         run: |
           mkdir -p artifacts
           cp "target/${TARGET}/release/neoc.exe" "artifacts/neoc-${TARGET}.exe"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: neoc-x86_64-pc-windows-gnu-${{ github.sha }}
           path: artifacts/
@@ -282,7 +282,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Detect image-input changes
