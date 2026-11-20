@@ -137,6 +137,11 @@ globset = "0.4"
 hyper = { version = "1", features = ["client", "server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
+# TLS for the `vnd:hyper` client: rustls over the `ring` provider (already in the tree through
+# testcontainers, so no second crypto backend), with the platform certificate verifier (the operating
+# system's trust store).
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+rustls-platform-verifier = "0.7"
 bytes = "1"
 
 # sqlx is async-only and used here for `lib.mysql` / `lib.postgres`, where the
@@ -196,6 +201,8 @@ caseless = "0.2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+# a self-signed certificate for the `vnd:hyper` TLS tests
+rcgen = "0.14"
 
 # Optional regular dep, gated behind the `bench` feature so it doesn't
 # bloat normal lib builds. Lives in `[dependencies]` rather than
