@@ -149,7 +149,7 @@ if (import.meta.main) {
     maxBuffer: 64 * 1024 * 1024
   })
   if (run.status !== 0) {
-    console.error(`check-deps: \`cargo metadata\` failed\n${run.stderr}`)
+    console.error(`check-deps: \`cargo metadata\` failed\n${run.stderr || run.error}`)
     process.exit(1)
   }
   const { problems, seen } = findProblems((JSON.parse(run.stdout) as { packages: WorkspaceCrate[] }).packages)

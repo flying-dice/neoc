@@ -65,8 +65,10 @@ fn parse_cli(args: impl IntoIterator<Item = String>) -> anyhow::Result<Option<Cl
 }
 
 /// The stack of each runtime worker thread (the default is 2 MiB). Apps' Lua runs on these threads, and a stack
-/// overflow aborts the whole host. The guards in `neoc-vm` (template nesting, value depth) and the engine's own
-/// pattern limits are sound at 2 MiB without this; the slack is for the paths nobody has swept.
+/// overflow aborts the whole host. The guards in `neoc-vm` (template nesting, value depth: `hostile_inputs.rs` runs them on a
+/// 2 MiB thread) and the engine's own pattern limits are meant to hold at 2 MiB without this; the slack is for the
+/// paths nobody has swept. It is not a defence against the abort NEOC-124 closes: an error value that recurses in the
+/// engine's message handler overflows whatever stack it has (see AGENTS.md).
 const WORKER_STACK_BYTES: usize = 16 << 20;
 
 fn main() -> anyhow::Result<()> {

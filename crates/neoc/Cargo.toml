@@ -41,8 +41,10 @@ name = "cucumber"
 harness = false
 
 # The root `[workspace.lints]` table (clippy pedantic, `unsafe_code = "forbid"`) is
-# inherited by the AgentOS crates only; it was imported with the old compiler crates and the neoc crates never inherited it: opting in
-# today means ~700 pedantic findings and six `unsafe` blocks. Adopting it is its
-# own change, so silence cargo's "missing lints inheritance" nag until then.
+# inherited by the AgentOS crates only. The neoc crates never inherited it: when it
+# was imported with the old compiler crates, opting in meant ~700 pedantic findings
+# and six `unsafe` blocks (counted against the table as it was then, which did not
+# deny `unwrap`/`expect`/`panic`). Adopting it is its own change, so silence cargo's
+# "missing lints inheritance" nag until then.
 [lints.cargo]
 missing_lints_inheritance = "allow"

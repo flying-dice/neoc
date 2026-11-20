@@ -75,7 +75,7 @@ crates/
   - `cargo nextest`.
 - **Crates** (versions in `host-stack.md`):
   - runtime: tokio, axum;
-  - Lua: mlua (`luajit`, `vendored`, `async`, `serialize`, `send`), in `neoc-vm` and the `neoc` CLI, never in an agentos crate (apps are Lua 5.1 source);
+  - Lua: mlua (`luajit`, `vendored`, `async`, `serialize`, `send`, `macros`), in `neoc-vm` and the `neoc` CLI, never in an agentos crate (apps are Lua 5.1 source);
   - SQLite: rusqlite (bundled);
   - protocols: rmcp, agent-client-protocol;
   - fetch: reqwest (rustls);
