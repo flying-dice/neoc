@@ -2,8 +2,8 @@
 /**
  * Dependency-direction gate for the Rust host's hexagonal layout (docs/architecture/ARCHITECTURE.md §2).
  *
- * Reads `cargo metadata` and checks every workspace crate's NORMAL (non-dev, non-build) dependencies
- * against an explicit allow-list:
+ * Reads `cargo metadata` and checks every workspace crate's normal dependencies against an explicit allow-list
+ * (and, for the framework crates in FRAMEWORK_HOMES, its build dependencies too; a dev-dependency is exempt):
  *
  *   domain      -> nothing internal; external: serde, serde_json, sha2, thiserror (+ ts-rs, schemars)
  *   application -> domain; external: async-trait, futures-channel, futures-util (its runtime-free `lock::Mutex`), parking_lot, serde_json, sha2, thiserror, tracing
@@ -62,8 +62,10 @@ const CORE_EXTERNAL: Record<string, Set<string>> = {
 }
 
 /**
- * Where each framework crate may be a normal or build dependency (deny.toml `bans` lists the same crates, but its `wrappers`
- * also match dev-dependencies, so that file alone would let one of these move from a test dependency to a runtime one).
+ * Where each framework crate may be a normal or build dependency. deny.toml `bans` pins the same kind of crates, but its
+ * `wrappers` also match dev-dependencies, so that file alone would let one of these move from a test dependency to a
+ * runtime one. The two lists differ on purpose: deny.toml also bans `neoc-vm`, `openssl` and `native-tls`, and this table
+ * names `tonic`, which deny.toml lets use axum but no workspace crate may depend on.
  */
 const FRAMEWORK_HOMES: Record<string, string[]> = {
   mlua: ['neoc-vm', 'neoc'],

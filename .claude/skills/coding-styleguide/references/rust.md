@@ -23,8 +23,8 @@ Rules of thumb:
 - A framework crate appears only in its adapter (`deny.toml` pins it with `wrappers`): mlua in `neoc-vm` and the `neoc` CLI (the `lua` adapter reaches it through neoc-vm's re-export), rusqlite in
   `sqlite`, rmcp in `mcp`, agent-client-protocol in `acp`, axum in the driving adapters and the host. A new crate must
   be added to `scripts/check-deps.ts` on purpose.
-- Dependencies are declared once in `[workspace.dependencies]` with pins for the fast movers (`rmcp`, `agent-client-protocol`,
-  `mlua`); crates say `{ workspace = true }`. rustls only: no OpenSSL.
+- Dependencies are declared once in `[workspace.dependencies]` with pins for the fast movers (`rmcp`, `agent-client-protocol`);
+  `mlua` is declared by `neoc-vm` and `neoc` only; crates say `{ workspace = true }`. rustls only: no OpenSSL.
 - The host loads and unloads apps while running: whatever an adapter opens for an app (VM, connection, watcher, process)
   is dropped on unload. No lock or transaction is held across an `.await`.
 

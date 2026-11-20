@@ -305,7 +305,7 @@ it in the app's own VM and keeps it going for as long as the app is loaded.
 
 ## Security
 
-- **Apps keep their Lua state apart; that is not a security boundary.** One Lua 5.1 VM per app, and one
+- **Apps keep their Lua state apart; that is not a security boundary.** One Lua VM per app (LuaJIT, running the app's Lua 5.1 source), and one
   **environment table** per app (its globals are its own; two apps share no Lua state, not even the module tables
   below). Through `std:fs` and `vnd:rusqlite` an app can still read and write other apps' data and the host's own
   database under `~/.agentos`, and a runaway app (a loop that never yields, a `std:thread` worker) can hang the host
@@ -355,7 +355,7 @@ it in the app's own VM and keeps it going for as long as the app is loaded.
     works on a coroutine your own code made with `coroutine.create` or `coroutine.wrap`, and on nothing else.
     Every other thread belongs to the host and is refused: the top-level thread of a call (a tool, an event, a
     window callback, a request handler, a `db:tx` or `Mutex:with_lock` body, the app's entry), a task's thread,
-    and the thread a `pcall` or `xpcall` runs its body in, however you got hold of it (a `coroutine.running()` you
+    however you got hold of it (a `pcall` runs in its caller's thread, so it has none of its own) (a `coroutine.running()` you
     stashed in a variable and resume from another tool). The refusal is `false, "cannot resume non-suspended
     coroutine"`, and a `coroutine.wrap` function raises it; nothing changes in the thread you tried to resume. A
     coroutine you did create is refused the same way while a host call it is waiting at is in flight (another thread

@@ -98,7 +98,7 @@ crates/
     `getfenv`/`setfenv`, read-only standard libraries, text-only chunks, a locked string metatable. Apps cannot reach
     each other's state;
   - `require` knows `@agentos/app`, `@agentos/ui` (an app's own modules are bundled at build time) and **every
-    `std:`, `lib:` and `vnd:` module of `neoc-vm`** (files, network, servers, tasks, threads, SQLite, TLS);
+    `std:`, `lib:` and `vnd:` module of `neoc-vm` except `lib:test`, `lib:compile` and `std:workers`** (files, network, servers, tasks, threads, SQLite, TLS);
   - no permissions and no CPU, memory or time budgets: apps are the person's own code on their own host;
   - what an app starts (tasks, servers, workers) is aborted and its listeners are closed when it is unloaded or
     replaced; callbacks that come from inside the VM take their turn in the app's one-call-at-a-time queue;

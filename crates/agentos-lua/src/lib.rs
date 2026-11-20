@@ -1,7 +1,7 @@
 //! Driven adapter: Lua 5.1 apps (mlua, on `neoc-vm`) behind the `AppRuntime` port.
 //!
 //! One VM per app, with the host-provided `app` table (see [`api`]), a `require` for `@agentos/app`, `@agentos/ui`
-//! and every `std:`/`lib:`/`vnd:` module of the VM library, tracked `app.state`, one call at a time per VM
+//! and every `std:`/`lib:`/`vnd:` module of the VM library except [`NOT_FOR_APPS`], tracked `app.state`, one call at a time per VM
 //! (including the callbacks the app's own servers and tasks make), and errors reported with the app's file and
 //! line. Nothing is budgeted and there are no permissions; what an app starts is stopped when it is unloaded.
 
