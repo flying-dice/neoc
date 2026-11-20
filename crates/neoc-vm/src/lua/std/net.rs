@@ -79,41 +79,57 @@ fn bind(addr: &str) -> Result<TcpListener, String> {
 }
 
 /// The socket behind a [`Listener`], the only strong owner of it that the library keeps: a `vnd:hyper` server's
-/// accept loop polls it through [`ListenerSlot::poll_accept`] rather than holding a clone of the socket, so
+/// accept loop waits on it through [`ListenerSlot::accept`] rather than holding a clone of the socket, so
 /// taking it out ([`ListenerSlot::close`], which a script's shutdown does) drops the socket on the spot and
 /// frees the port before the shutdown returns, not when the runtime next gets to the aborted task.
 ///
 /// Any number of servers may accept on one slot (the `std:thread` pattern of several workers serving one shared
 /// listener). Tokio's `poll_accept` remembers only the waker of whoever polled last, where `accept()` queues every
-/// waiter, so the slot keeps the waiting tasks itself and hands tokio one waker that wakes them all: whoever polls
+/// waiter, so the slot keeps the waits itself and hands tokio one waker that wakes them all: whoever polls
 /// first takes the connection, the rest wait again, and a server that closes leaves the others woken as before.
 pub struct ListenerSlot {
     socket: parking_lot::Mutex<Option<TcpListener>>,
     waiting: Arc<Waiting>,
+    next_wait: std::sync::atomic::AtomicU64,
 }
 
-/// The tasks waiting to accept, woken together.
+/// The waits for a connection, woken together. Each wait has an entry of its own, so a task with two waits (a
+/// `select!` over two, or one kept while another is replaced) loses neither when the other ends.
 #[derive(Default)]
-struct Waiting(parking_lot::Mutex<Vec<std::task::Waker>>);
+struct Waiting(parking_lot::Mutex<Vec<(u64, std::task::Waker)>>);
 
 impl Waiting {
-    /// Add `waker` unless that task is already waiting.
-    fn add(&self, waker: &std::task::Waker) {
+    /// Record that wait `id` is waiting, to be woken through `waker`.
+    fn add(&self, id: u64, waker: &std::task::Waker) {
         let mut waiting = self.0.lock();
-        if !waiting.iter().any(|known| known.will_wake(waker)) {
-            waiting.push(waker.clone());
+        match waiting.iter_mut().find(|(known, _)| *known == id) {
+            Some((_, known)) => {
+                if !known.will_wake(waker) {
+                    // the old waker is dropped after the lock is let go: dropping a waker can drop a task
+                    let old = std::mem::replace(known, waker.clone());
+                    drop(waiting);
+                    drop(old);
+                }
+            }
+            None => waiting.push((id, waker.clone())),
         }
     }
 
-    /// Drop `waker` (its task stopped waiting).
-    fn remove(&self, waker: &std::task::Waker) {
-        self.0.lock().retain(|known| !known.will_wake(waker));
+    /// Drop wait `id` (it ended).
+    fn remove(&self, id: u64) {
+        let removed = {
+            let mut waiting = self.0.lock();
+            let at = waiting.iter().position(|(known, _)| *known == id);
+            at.map(|at| waiting.swap_remove(at))
+        };
+        // dropped outside the lock, as in `wake_all`
+        drop(removed);
     }
 
     fn wake_all(&self) {
         // taken out first: a woken task polls again, and adds itself again, from another thread
         let waiting = std::mem::take(&mut *self.0.lock());
-        for waker in waiting {
+        for (_, waker) in waiting {
             waker.wake();
         }
     }
@@ -130,10 +146,11 @@ impl ListenerSlot {
         Self {
             socket: parking_lot::Mutex::new(Some(socket)),
             waiting: Arc::new(Waiting::default()),
+            next_wait: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
-    /// Release the socket, and wake every task waiting to accept on it: they get a `NotConnected` error.
+    /// Release the socket, and wake every wait on it: they get a `NotConnected` error.
     pub fn close(&self) {
         // dropped outside the lock
         let socket = self.socket.lock().take();
@@ -141,26 +158,28 @@ impl ListenerSlot {
         self.waiting.wake_all();
     }
 
-    /// The next connection, or a `NotConnected` error once the slot is closed. Any number of tasks may wait on
-    /// the same slot; a future dropped while it waits takes its task out of the list.
-    pub fn accept(&self) -> Accept<'_> {
+    /// The next connection, or a `NotConnected` error once the slot is closed. Any number of waits, from any
+    /// number of tasks, may be pending on the same slot; a wait that is dropped takes only its own entry away.
+    pub(crate) fn accept(&self) -> Accept<'_> {
         Accept {
             slot: self,
-            waker: None,
+            id: self
+                .next_wait
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
     }
 
-    /// Poll for the next connection, or a `NotConnected` error once the slot is closed. Safe to call from any
-    /// number of tasks at once; [`ListenerSlot::accept`] is the future that also cleans up after itself.
-    pub fn poll_accept(
+    /// Poll wait `id` for the next connection, or a `NotConnected` error once the slot is closed.
+    fn poll_accept(
         &self,
+        id: u64,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<(tokio::net::TcpStream, SocketAddr)>> {
         let socket = self.socket.lock();
         let Some(listener) = socket.as_ref() else {
             return std::task::Poll::Ready(Err(closed()));
         };
-        self.waiting.add(cx.waker());
+        self.waiting.add(id, cx.waker());
         let wake_all = futures::task::waker(self.waiting.clone());
         listener.poll_accept(&mut std::task::Context::from_waker(&wake_all))
     }
@@ -175,31 +194,26 @@ impl ListenerSlot {
 }
 
 /// A wait for the next connection on a [`ListenerSlot`] (see [`ListenerSlot::accept`]).
-pub struct Accept<'a> {
+pub(crate) struct Accept<'a> {
     slot: &'a ListenerSlot,
-    waker: Option<std::task::Waker>,
+    id: u64,
 }
 
 impl std::future::Future for Accept<'_> {
     type Output = std::io::Result<(tokio::net::TcpStream, SocketAddr)>;
 
     fn poll(
-        mut self: std::pin::Pin<&mut Self>,
+        self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
-        if !self.waker.as_ref().is_some_and(|w| w.will_wake(cx.waker())) {
-            self.waker = Some(cx.waker().clone());
-        }
-        self.slot.poll_accept(cx)
+        self.slot.poll_accept(self.id, cx)
     }
 }
 
 impl Drop for Accept<'_> {
     fn drop(&mut self) {
         // a server that stops waiting (it closed, or its loop was aborted) leaves nothing in the list
-        if let Some(waker) = self.waker.take() {
-            self.slot.waiting.remove(&waker);
-        }
+        self.slot.waiting.remove(self.id);
     }
 }
 
@@ -275,6 +289,49 @@ mod slot_tests {
             assert!(waiting.is_err(), "nothing is connecting");
         }
         assert_eq!(slot.waiting.0.lock().len(), 0);
+    }
+
+    /// Two waits of one task are two entries: dropping one does not take the other's wake-up with it. The task
+    /// polls both once (both pending), drops the first and then does nothing of its own: only the slot can wake
+    /// it, for the second.
+    #[tokio::test]
+    async fn dropping_one_of_a_tasks_two_waits_keeps_the_other_woken() {
+        use std::future::Future;
+        use std::pin::Pin;
+        use std::task::Poll;
+
+        let slot = slot().await;
+        let addr = slot.local_addr().unwrap();
+        let accepted = tokio::spawn({
+            let slot = slot.clone();
+            async move {
+                let mut first = Some(slot.accept());
+                let mut second = Some(slot.accept());
+                let mut polled = false;
+                std::future::poll_fn(move |cx| {
+                    if !polled {
+                        polled = true;
+                        let a = Pin::new(first.as_mut().unwrap()).poll(cx);
+                        let b = Pin::new(second.as_mut().unwrap()).poll(cx);
+                        assert!(a.is_pending() && b.is_pending(), "nothing is connecting");
+                        // the first wait ends (a `select!` arm that lost); the task waits for the second
+                        first = None;
+                        return Poll::Pending;
+                    }
+                    Pin::new(second.as_mut().unwrap())
+                        .poll(cx)
+                        .map(|r| r.map(|_| ()))
+                })
+                .await
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let _client = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let accepted = tokio::time::timeout(Duration::from_secs(2), accepted)
+            .await
+            .expect("the second wait was woken by the connection")
+            .unwrap();
+        assert!(accepted.is_ok());
     }
 
     /// Closing the slot wakes every task waiting on it, with an error, and frees the socket at once.
