@@ -240,7 +240,7 @@ async fn run_server(
         tokio::select! {
             _ = &mut shutdown_rx => break,
             _ = signal.wait() => break,
-            accept = std::future::poll_fn(|cx| listener.poll_accept(cx)) => {
+            accept = listener.accept() => {
                 let stream = match accept {
                     Ok((s, _)) => s,
                     // the socket was released (the script was shut down): there is nothing to accept on

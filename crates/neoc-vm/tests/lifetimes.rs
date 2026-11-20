@@ -396,6 +396,52 @@ async fn a_worker_is_offered_only_what_its_parent_was_offered() {
         "the embedder's worker engine is what the worker gets"
     );
 
+    // a bare engine whose embedder offers modules through its own `require` and never said how to build a
+    // worker: a worker is refused (it fails closed), and works once the embedder says how
+    let lua = make_bare_engine().unwrap();
+    install_runtime_state(&lua, Life::new());
+    lua.globals()
+        .set(
+            "THREAD",
+            modules::build(&lua, "std:thread").unwrap().unwrap(),
+        )
+        .unwrap();
+    let refused: (Option<String>, Option<String>) = lua
+        .load(
+            r#"local w, e = THREAD.spawn { source = "return (pcall(require, 'std:workers'))" }
+               return tostring(w), e"#,
+        )
+        .eval_async()
+        .await
+        .unwrap();
+    assert_eq!(refused.0.as_deref(), Some("nil"), "no worker was started");
+    let message = refused.1.unwrap();
+    assert!(
+        message.starts_with("thread.spawn:") && message.contains("set_worker_engine"),
+        "{message}"
+    );
+    set_worker_engine(
+        &lua,
+        Arc::new(|life: Life| {
+            let lua = make_bare_engine()?;
+            install_runtime_state(&lua, life);
+            modules::install_allowed(&lua, &["lib:json", "std:thread"])?;
+            Ok(lua)
+        }),
+    );
+    let started: String = lua
+        .load(
+            r#"local w = THREAD.spawn { source = "return tostring((pcall(require, 'std:workers')))" }
+               return w:await()"#,
+        )
+        .eval_async()
+        .await
+        .unwrap();
+    assert_eq!(
+        started, "false",
+        "the embedder's worker engine is what the worker gets"
+    );
+
     // with no policy a worker gets everything, as on `main`
     let lua = make_engine().unwrap();
     let out: String = lua.load(WORKER_PROBE).eval_async().await.unwrap();

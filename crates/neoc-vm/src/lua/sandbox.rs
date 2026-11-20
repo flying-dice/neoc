@@ -61,6 +61,8 @@ pub fn make_engine_in(life: Life) -> mlua::Result<Lua> {
     let lua = base_engine()?;
     install_runtime_state(&lua, life);
     modules::install(&lua)?;
+    // a worker of this script is a full engine like it, joining the registry it is given
+    set_worker_engine(&lua, std::sync::Arc::new(make_engine_in));
     Ok(lua)
 }
 
@@ -77,25 +79,29 @@ pub(crate) fn make_engine_with(life: Life, allowed: &[&str]) -> mlua::Result<Lua
 }
 
 /// How an embedder builds the engine of a `std:thread` worker its script starts: given the script's [`Life`] (the
-/// worker's tasks, servers and workers join it), the engine, offered what the embedder offers its scripts. Without
-/// one, a worker is built like [`make_engine`] (or like its parent, when the parent used
-/// [`modules::install_allowed`], which installs one).
+/// worker's tasks, servers and workers join it), the engine, offered what the embedder offers its scripts.
 pub type WorkerEngineFn = std::sync::Arc<dyn Fn(Life) -> mlua::Result<Lua> + Send + Sync>;
 
 struct WorkerEngine(WorkerEngineFn);
 
-/// Install the [`WorkerEngineFn`] of this engine's scripts. An embedder that offers its scripts a subset of the
-/// modules through its own `require` must call this, or its workers get every module.
+/// Install the [`WorkerEngineFn`] of this engine's scripts. [`make_engine_in`] installs one that builds a full
+/// engine (so `neoc run` workers get what they always did) and [`modules::install_allowed`] one that builds the
+/// same subset. A bare engine ([`make_bare_engine`]) has none, and `std:thread` refuses to start a worker on it
+/// until this is called: a worker is never offered more than its parent without the embedder saying so. An
+/// embedder that replaces the `require` of a [`make_engine_in`] engine with a narrower one must call this too.
 pub fn set_worker_engine(lua: &Lua, factory: WorkerEngineFn) {
     lua.set_app_data(WorkerEngine(factory));
 }
 
-/// How `std:thread` builds a worker's engine for the script that runs in `lua`: the engine's [`WorkerEngineFn`]
-/// (installed by [`set_worker_engine`], or by [`modules::install_allowed`]), else a full one.
-pub(crate) fn worker_engine_builder(lua: &Lua) -> WorkerEngineFn {
+/// How `std:thread` builds a worker's engine for the script that runs in `lua`: the engine's [`WorkerEngineFn`],
+/// or an error when it has none (a bare engine whose embedder did not say how).
+pub(crate) fn worker_engine_builder(lua: &Lua) -> Result<WorkerEngineFn, String> {
     match lua.app_data_ref::<WorkerEngine>() {
-        Some(factory) => factory.0.clone(),
-        None => std::sync::Arc::new(make_engine_in),
+        Some(factory) => Ok(factory.0.clone()),
+        None => Err("this engine offers its script modules through its own `require` and has no worker \
+             engine: the embedder must call `set_worker_engine` (or `install_allowed`) before a script \
+             can start a worker"
+            .to_owned()),
     }
 }
 
@@ -115,7 +121,9 @@ pub fn install_runtime_state(lua: &Lua, life: Life) {
 /// to reach, and mutate, the shared `string` table.
 ///
 /// To offer a script some of the modules, build them with [`modules::build`] or install a subset with
-/// [`modules::install_allowed`]: this function deliberately exposes none.
+/// [`modules::install_allowed`]: this function deliberately exposes none. For the same reason a script on it
+/// cannot start a `std:thread` worker until the embedder says how to build one ([`set_worker_engine`], which
+/// `install_allowed` calls): a worker is never offered more than its parent.
 ///
 /// # Errors
 /// Fails when the engine or a library cannot be set up.

@@ -348,6 +348,12 @@ fn spawn(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
         Err(e) => return from_err(lua, "thread.spawn", e),
     };
 
+    // a worker is built like its parent's engine, or not at all (see `sandbox::worker_engine_builder`)
+    let build_engine = match worker_engine_builder(lua) {
+        Ok(build) => build,
+        Err(e) => return from_err(lua, "thread.spawn", e),
+    };
+
     // Two unbounded mpscs: parent→worker and worker→parent. The worker's
     // Channel sees the inverse pair.
     let (p2w_tx, p2w_rx) = mpsc::unbounded_channel::<serde_json::Value>();
@@ -370,7 +376,7 @@ fn spawn(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
         WorkerHost {
             life: life.clone(),
             log_sink,
-            build_engine: worker_engine_builder(lua),
+            build_engine,
         },
     ));
     let abort = join.abort_handle();
