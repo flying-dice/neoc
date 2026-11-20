@@ -238,8 +238,9 @@ function ud_ZonedDateTime:diff(other) end
 ---@return string? err
 function ud_ZonedDateTime:format(fmt) end
 
---- RFC 3339 timestamp string.
+--- RFC 3339 timestamp string (returned as `(string, nil)`).
 ---@return string
+---@return nil
 function ud_ZonedDateTime:to_rfc3339() end
 
 ---@class lib_chrono.ZonedDateTimeStatics
@@ -273,8 +274,9 @@ function ud_Duration:total_seconds() end
 ---@return lib_chrono.Duration
 function ud_Duration:negate() end
 
---- Return the absolute span.
+--- Return the absolute span (returned as `(span, nil)`).
 ---@return lib_chrono.Duration
+---@return nil
 function ud_Duration:abs() end
 
 ---@class lib_chrono.DurationStatics

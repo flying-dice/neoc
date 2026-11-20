@@ -5,8 +5,8 @@
 //!    `cargo run -p neoc-vm --example luals` fails here, and so does a definition file no module writes
 //!    any more (the example's `--check` reports the same two things).
 //! 2. lua-language-server accepts correct use and flags misuse. `types/fixtures/usage.lua` must check clean and
-//!    every line of `types/fixtures/negative/*.lua` marked `-- expect-error` must be flagged, and no other
-//!    line. The negative half also fails when the definitions or the plugin do not load: `require("lib:json")` is
+//!    every line of `types/fixtures/negative/*.lua` marked `-- expect-error: <code>` must be flagged with that
+//!    diagnostic code, and no other line. The negative half also fails when the definitions or the plugin do not load: `require("lib:json")` is
 //!    then `any` and nothing is flagged.
 //!
 //! Half 2 needs `lua-language-server` (`brew install lua-language-server`, pinned below: its diagnostics
@@ -36,13 +36,15 @@ fn definitions() -> Vec<(String, String)> {
     modules::luals_metas(&make_engine().unwrap()).unwrap()
 }
 
-/// Every file under `dir` as a path relative to it, with `/`.
+/// Every `.lua` file under `dir` as a path relative to it, with `/` (a `.DS_Store` is not ours to judge).
 fn files_under(dir: &Path, prefix: &str, found: &mut Vec<String>) {
     for entry in fs::read_dir(dir).unwrap().flatten() {
         let name = format!("{prefix}{}", entry.file_name().to_string_lossy());
         if entry.path().is_dir() {
             files_under(&entry.path(), &format!("{name}/"), found);
-        } else {
+        } else if entry.path().extension().is_some_and(|e| e == "lua")
+            && !entry.file_name().to_string_lossy().starts_with('.')
+        {
             found.push(name);
         }
     }
@@ -118,9 +120,10 @@ impl Drop for Scratch {
     }
 }
 
-/// One diagnostic of `--check`: the 1-based line and a one-line description.
+/// One diagnostic of `--check`: the 1-based line, its code (`missing-parameter`) and a one-line description.
 struct Finding {
     line: usize,
+    code: String,
     text: String,
 }
 
@@ -171,6 +174,7 @@ fn check(luals: &Path) -> Vec<(String, Vec<Finding>)> {
                 .map(|d| Finding {
                     line: usize::try_from(d["range"]["start"]["line"].as_u64().unwrap()).unwrap()
                         + 1,
+                    code: d["code"].as_str().unwrap_or("-").to_owned(),
                     text: format!(
                         "[{}] {}",
                         d["code"].as_str().unwrap_or("-"),
@@ -227,25 +231,41 @@ fn fixtures_check_against_the_generated_definitions() {
     for entry in negatives.flatten() {
         let name = format!("negative/{}", entry.file_name().to_string_lossy());
         let source = fs::read_to_string(entry.path()).unwrap();
-        let expected: Vec<usize> = source
+        // a marked line: `-- expect-error: <code>`
+        let expected: Vec<(usize, &str)> = source
             .lines()
             .enumerate()
-            .filter(|(_, line)| line.contains("-- expect-error"))
-            .map(|(i, _)| i + 1)
+            .filter_map(|(i, line)| {
+                let marker = line.split("-- expect-error").nth(1)?;
+                let code = marker.strip_prefix(':').map(str::trim);
+                Some((
+                    i + 1,
+                    code.filter(|c| !c.is_empty()).unwrap_or_else(|| {
+                        panic!("{name}:{}: `-- expect-error` needs a `: <code>`", i + 1)
+                    }),
+                ))
+            })
             .collect();
         assert!(!expected.is_empty(), "{name} expects no errors");
         let findings = found
             .iter()
             .find(|(file, _)| *file == name)
             .map_or(&[][..], |(_, findings)| findings.as_slice());
-        for line in &expected {
-            if !findings.iter().any(|f| f.line == *line) {
+        for (line, code) in &expected {
+            let on_line: Vec<&Finding> = findings.iter().filter(|f| f.line == *line).collect();
+            if on_line.is_empty() {
                 problems.push(format!(
-                    "{name}:{line}: expected a diagnostic, lua-language-server accepted it"
+                    "{name}:{line}: expected `{code}`, lua-language-server accepted it"
                 ));
+            } else if !on_line.iter().any(|f| f.code == *code) {
+                let got: Vec<&str> = on_line.iter().map(|f| f.code.as_str()).collect();
+                problems.push(format!("{name}:{line}: expected `{code}`, got {got:?}"));
             }
         }
-        for f in findings.iter().filter(|f| !expected.contains(&f.line)) {
+        for f in findings
+            .iter()
+            .filter(|f| !expected.iter().any(|(line, _)| *line == f.line))
+        {
             problems.push(format!(
                 "{name}:{}: {} (a line not marked expect-error)",
                 f.line, f.text

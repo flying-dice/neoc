@@ -112,7 +112,7 @@ Example: a `lib:foo` module. Pick the namespace first (see [CLAUDE.md](CLAUDE.md
    ```
 
    Run: `cargo run -p neoc -- run crates/neoc/tests/lib/foo.test.lua`. Per exported function: a happy path, one test per distinct error, and an empty or zero value where it applies.
-6. **Types.** Run `cargo run -p neoc-vm --example luals` to write `types/luals/lib/foo.lua`, commit it, and add a `require("lib:foo")` line (and a few correct calls) to `types/fixtures/usage.lua`; a wrong call goes in `types/fixtures/negative/wrong_use.lua` with `-- expect-error` on the line.
+6. **Types.** Run `cargo run -p neoc-vm --example luals` to write `types/luals/lib/foo.lua`, commit it, and add a `require("lib:foo")` line (and a few correct calls) to `types/fixtures/usage.lua`; a wrong call goes in `types/fixtures/negative/wrong_use.lua` with `-- expect-error: <code>` on the line, where `<code>` is the lua-language-server diagnostic (`missing-parameter`, `undefined-field`, ...); the test compares the code.
 7. **README.** Add the module to the list in the README modules table, alphabetical within its namespace.
 
 Extending an existing module follows the same steps: add the function and register it on the table, add the Rust and Lua cases, extend the bench group, and re-run the `luals` example (the `luals` test fails on stale definitions) with a call in `types/fixtures/usage.lua`.

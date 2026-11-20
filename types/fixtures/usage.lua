@@ -121,6 +121,24 @@ print(job:is_finished(), job:await())
 task.defer(print, "deferred", 1)
 task.delay(1, print, "later", 1, 2)
 
+-- a task and a lock hand back every value their function returned
+local first, second, third = task.spawn(function(x, y)
+  return x, y, "three"
+end, 1, 2):await()
+print(first, math.floor(second), third:upper())
+local locked_a, locked_b = collections.Mutex.new():with_lock(function()
+  return 1, "two"
+end)
+print(locked_a, locked_b:upper())
+
+-- a server takes a listener and a handler that receives the request
+local listener = assert(net.TcpListener.bind("127.0.0.1:0"))
+local server = assert(hyper.serve(listener, function(req)
+  local content_type = req:header("content-type")
+  return { status = 200, body = req.path .. (content_type and content_type:upper() or "") }
+end))
+print(server:addr(), server:wait(), thread.parent and thread.parent:send(1))
+
 -- an HTTP handler reads the fields of its request
 ---@param req vnd_hyper.Request
 local function handler(req)

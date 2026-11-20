@@ -39,7 +39,7 @@ function ud_Channel:send(value) end
 function ud_Channel:receive() end
 
 ---@class std_thread
----@field parent any The `Channel` to the parent VM inside a spawned worker; nil at the top level.
+---@field parent? std_thread.Channel The `Channel` to the parent VM inside a spawned worker; nil at the top level.
 ---@field shared any The reconstructed table of Sendable values passed via `shared` at spawn time; nil otherwise.
 local M = {}
 

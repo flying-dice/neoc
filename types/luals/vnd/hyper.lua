@@ -30,7 +30,7 @@ local ud_Request = {}
 
 --- Look up a request header by name (case-insensitive); returns the value string or nil when absent.
 ---@param name string
----@return any
+---@return string?
 function ud_Request:header(name) end
 
 ---@class vnd_hyper
@@ -55,9 +55,9 @@ function M.post(opts) end
 ---@return string? err
 function M.request(opts) end
 
---- Attach `handler` to `listener` and start accepting HTTP connections.
----@param listener any
----@param handler any
+--- Attach `handler` to `listener` and start accepting HTTP connections. The handler returns a body string, or `{ status?, body?, headers? }`.
+---@param listener std_net.TcpListener
+---@param handler fun(req: vnd_hyper.Request): string|table
 ---@return vnd_hyper.ServerHandle?
 ---@return string? err
 function M.serve(listener, handler) end

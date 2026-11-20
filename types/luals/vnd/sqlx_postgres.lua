@@ -16,14 +16,14 @@ local ud_Database = {}
 ---@return string? err
 function ud_Database:execute(sql, ...) end
 
---- Execute a SELECT and return all rows as a 1-indexed table of column-keyed row tables.
+--- Execute a SELECT and return all rows as a 1-indexed table of column-keyed row tables. A column of an unsupported type raises; cast it to text in SQL.
 ---@param sql string
 ---@param ... any
 ---@return any
 ---@return string? err
 function ud_Database:query(sql, ...) end
 
---- Execute a SELECT and return the first matching row, or nil when none matched.
+--- Execute a SELECT and return the first matching row, or nil when none matched. A column of an unsupported type raises; cast it to text in SQL.
 ---@param sql string
 ---@param ... any
 ---@return any

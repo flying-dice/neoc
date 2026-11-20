@@ -17,9 +17,9 @@ function ud_Task:cancel() end
 ---@return boolean
 function ud_Task:is_finished() end
 
---- Wait for the task to finish. Returns its values on success, `(nil, error)` on error, or `(nil, "cancelled")` if cancelled.
----@return any
----@return string? err
+--- Wait for the task to finish. Returns every value the task returned on success, `(nil, error)` on error, or `(nil, "cancelled")` if cancelled.
+---@return any?
+---@return any ...
 function ud_Task:await() end
 
 ---@class std_task

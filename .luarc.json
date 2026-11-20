@@ -6,7 +6,8 @@
   ],
   "workspace.checkThirdParty": false,
   "workspace.ignoreDir": [
-    "target"
+    "target",
+    "types/fixtures/negative"
   ],
   "diagnostics.disable": [
     "lowercase-global"

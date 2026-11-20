@@ -82,9 +82,9 @@ function statics_Counter.new(initial) end
 ---@class std_collections.Mutex
 local ud_Mutex = {}
 
---- Acquire the lock, call `f`, release, and return `f`'s result.
+--- Acquire the lock, call `f`, release, and return every value `f` returns.
 ---@param f any
----@return any
+---@return any ...
 function ud_Mutex:with_lock(f) end
 
 ---@class std_collections.MutexStatics
