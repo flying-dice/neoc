@@ -14,13 +14,13 @@ use hyper::{Request as HyperRequest, Response};
 use hyper_util::rt::TokioIo;
 use mlua::{Function, Lua, RegistryKey, UserData, UserDataMethods, Value};
 use parking_lot::Mutex;
-use tokio::net::TcpListener;
 use tokio::runtime::Handle;
 use tokio::sync::oneshot;
 use tracing::instrument;
 
+use crate::lua::lifecycle::{Life, Role, async_method, idle};
 use crate::lua::sandbox::{from_err, ok};
-use crate::lua::std::net::Listener;
+use crate::lua::std::net::{Listener, ListenerSlot};
 use crate::lua::std::workers::ShutdownSignal;
 
 use super::invoke_lua_handler;
@@ -40,7 +40,7 @@ struct ServerInner {
 enum ServerState {
     /// Listener attached, accept loop not yet running.
     Idle {
-        listener: Arc<TcpListener>,
+        listener: Arc<ListenerSlot>,
         addr: SocketAddr,
     },
     /// `serve()` has run; accept loop is live.
@@ -54,7 +54,7 @@ enum ServerState {
 }
 
 impl ServerHandle {
-    fn from_listener(listener: Arc<TcpListener>, handler: Arc<RegistryKey>) -> mlua::Result<Self> {
+    fn from_listener(listener: Arc<ListenerSlot>, handler: Arc<RegistryKey>) -> mlua::Result<Self> {
         let addr = listener.local_addr().map_err(mlua::Error::external)?;
         Ok(Self {
             inner: Arc::new(ServerInner {
@@ -89,20 +89,31 @@ impl ServerHandle {
             unreachable!("state was checked to be Idle");
         };
 
-        let handle = Handle::try_current()
+        Handle::try_current()
             .map_err(|_| mlua::Error::external("hyper.serve: no tokio runtime in scope"))?;
 
         let (tx, rx) = oneshot::channel::<()>();
         let (done_tx, done_rx) = tokio::sync::watch::channel(false);
         let inner = self.inner.clone();
         let lua_handle: Lua = lua.clone();
-        handle.spawn(run_server(lua_handle, listener, inner, rx, done_tx));
+        // registered with the engine's `Life`: shutting the script down aborts the accept loop
+        let life = Life::of(lua);
+        life.spawn(run_server(lua_handle, listener, inner, rx, done_tx));
 
         *state = ServerState::Listening {
             addr,
             shutdown: Some(tx),
             done: done_rx,
         };
+        // The state lock is let go before the registration: on a registry that is already shut down the release
+        // runs at once, and it takes the lock itself.
+        drop(state);
+        // the server reports itself closed from the moment the script is shut down (`addr()` raises, `wait()`
+        // returns), not only when the aborted accept loop is next dropped; the socket itself is released by the
+        // listener's own registration
+        life.on_shutdown_with(&self.inner, |inner| {
+            *inner.state.lock() = ServerState::Closed;
+        });
         Ok(())
     }
 }
@@ -128,13 +139,16 @@ impl UserData for ServerHandle {
             Ok(())
         });
 
-        // Block until the server stops accepting connections — either because
-        // close() was called, or because the process-wide shutdown signal
-        // fires (CLI installs a Ctrl-C handler that calls
-        // `workers.shutdown_signal():fire()`). On signal, wait() triggers a
+        // Block until the server stops accepting connections — because
+        // close() was called, because the script is being shut down (the
+        // engine's `Life` closes), or because the process-wide shutdown signal
+        // fires (the CLI fires it on Ctrl-C and on SIGTERM, and it stays fired). On signal, wait() triggers a
         // local graceful shutdown so the run_server loop drains cleanly.
-        methods.add_async_method("wait", |_, this, _: ()| {
+        // The wait does not hold the VM (an embedder's turn): the server's own
+        // handlers keep running while a script sits in `server:wait()`.
+        async_method(methods, "wait", Role::Mixed, |lua, this, (): ()| {
             let inner = this.inner.clone();
+            let life = Life::of(&lua);
             async move {
                 let mut done = {
                     let state = inner.state.lock();
@@ -152,21 +166,29 @@ impl UserData for ServerHandle {
                     return Ok(());
                 }
                 let signal = ShutdownSignal::current();
-                tokio::select! {
-                    _ = done.changed() => {},
-                    _ = signal.wait() => {
-                        // Drop the lock before awaiting — clippy
-                        // (correctly) flags lock guards held across awaits.
-                        {
-                            let mut state = inner.state.lock();
-                            if let ServerState::Listening { shutdown, .. } = &mut *state
-                                && let Some(tx) = shutdown.take()
-                            {
-                                let _ = tx.send(());
-                            }
-                        }
-                        let _ = done.changed().await;
+                let signalled = idle(async {
+                    tokio::select! {
+                        _ = done.changed() => false,
+                        () = life.closed() => false,
+                        () = signal.wait() => true,
                     }
+                })
+                .await?;
+                if signalled {
+                    // Drop the lock before awaiting — clippy
+                    // (correctly) flags lock guards held across awaits.
+                    {
+                        let mut state = inner.state.lock();
+                        if let ServerState::Listening { shutdown, .. } = &mut *state
+                            && let Some(tx) = shutdown.take()
+                        {
+                            let _ = tx.send(());
+                        }
+                    }
+                    idle(async {
+                        let _ = done.changed().await;
+                    })
+                    .await?;
                 }
                 Ok(())
             }
@@ -184,7 +206,7 @@ pub(super) fn serve(
     (listener, handler): (mlua::AnyUserData, Function),
 ) -> mlua::Result<(Value, Value)> {
     let arc = match listener.borrow::<Listener>() {
-        Ok(h) => h.arc(),
+        Ok(h) => h.slot(),
         Err(e) => return from_err(lua, "hyper.serve", format!("expected TcpListener: {e}")),
     };
     let key = match lua.create_registry_value(handler) {
@@ -207,12 +229,13 @@ pub(super) fn serve(
 
 async fn run_server(
     lua: Lua,
-    listener: Arc<TcpListener>,
+    listener: Arc<ListenerSlot>,
     inner: Arc<ServerInner>,
     mut shutdown_rx: oneshot::Receiver<()>,
     done_tx: tokio::sync::watch::Sender<bool>,
 ) {
     let signal = ShutdownSignal::current();
+    let life = Life::of(&lua);
     loop {
         tokio::select! {
             _ = &mut shutdown_rx => break,
@@ -220,11 +243,17 @@ async fn run_server(
             accept = listener.accept() => {
                 let stream = match accept {
                     Ok((s, _)) => s,
-                    Err(_) => continue,
+                    // the socket was released (the script was shut down): there is nothing to accept on
+                    Err(e) if e.kind() == std::io::ErrorKind::NotConnected => break,
+                    // a persistent error (out of descriptors) must not spin
+                    Err(_) => {
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        continue;
+                    }
                 };
                 let inner = inner.clone();
                 let lua = lua.clone();
-                tokio::spawn(async move {
+                life.spawn(async move {
                     let io = TokioIo::new(stream);
                     let svc = service_fn(move |req: HyperRequest<Incoming>| {
                         let inner = inner.clone();

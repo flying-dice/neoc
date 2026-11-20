@@ -27,7 +27,8 @@
 //!
 //! ## Output
 //!
-//! - **stderr only.** stdout is the program's data channel; mixing log
+//! - **stderr only** (or the embedder's sink, see [`set_log_sink`]: a program that embeds the VM may take
+//!   every line instead). stdout is the program's data channel; mixing log
 //!   lines into it breaks pipes and structured-output consumers.
 //! - **JSON by default.** Flat keys: `level`, `ts`, `msg`, then user
 //!   fields. Designed to be parsed by `jq`, log shippers, and LLM tools
@@ -187,8 +188,14 @@ impl LuaLogger {
         if let Some(t) = fields {
             merge_table_into(&mut merged, lua, t, DEPTH_LIMIT)?;
         }
-        write_line(self.format, lvl, msg, &merged);
-        emit_tracing(lvl, msg, &merged);
+        // An embedder's sink takes the line instead of stderr (and the tracing event stands down: the
+        // sink is where the embedder routes it).
+        if let Some(sink) = lua.app_data_ref::<LogSink>() {
+            (sink.0)(lvl.as_str(), &format_line(self.format, lvl, msg, &merged));
+        } else {
+            write_line(self.format, lvl, msg, &merged);
+            emit_tracing(lvl, msg, &merged);
+        }
         Ok(())
     }
 
@@ -360,9 +367,34 @@ fn is_reserved_key(k: &str) -> bool {
     matches!(k, "level" | "ts" | "msg")
 }
 
+/// Where an embedder wants `lib:log` lines instead of stderr: called with the level name and the formatted
+/// line.
+struct LogSink(LogFn);
+
+/// A function that takes a `lib:log` line: the level name and the formatted line.
+pub type LogFn = std::sync::Arc<dyn Fn(&str, &str) + Send + Sync>;
+
+/// Install `sink` as this engine's `lib:log` output. A `std:thread` worker the script starts logs to the
+/// same sink.
+pub fn set_log_sink(lua: &Lua, sink: LogFn) {
+    lua.set_app_data(LogSink(sink));
+}
+
+/// The sink [`set_log_sink`] installed in this engine, for a worker the script starts to log to as well.
+pub(crate) fn log_sink(lua: &Lua) -> Option<LogFn> {
+    lua.app_data_ref::<LogSink>().map(|sink| sink.0.clone())
+}
+
 fn write_line(format: Format, lvl: LogLevel, msg: &str, fields: &Map<String, Json>) {
+    let line = format_line(format, lvl, msg, fields);
+    // A failed stderr write is not recoverable from inside a log call —
+    // ignore it rather than crashing the caller.
+    let _ = writeln!(io::stderr(), "{line}");
+}
+
+fn format_line(format: Format, lvl: LogLevel, msg: &str, fields: &Map<String, Json>) -> String {
     let ts = now_rfc3339_millis();
-    let line = match format {
+    match format {
         Format::Json => {
             let mut obj = Map::with_capacity(3 + fields.len());
             obj.insert("level".into(), Json::String(lvl.as_str().into()));
@@ -389,10 +421,7 @@ fn write_line(format: Format, lvl: LogLevel, msg: &str, fields: &Map<String, Jso
             }
             s
         }
-    };
-    // A failed stderr write is not recoverable from inside a log call —
-    // ignore it rather than crashing the caller.
-    let _ = writeln!(io::stderr(), "{line}");
+    }
 }
 
 fn format_text_value(v: &Json) -> String {

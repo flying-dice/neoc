@@ -48,6 +48,7 @@ use hyper::{Request as HyperRequest, Response};
 use mlua::{Function, Lua, RegistryKey, Table, UserData, UserDataMethods, Value};
 
 use crate::lua::facade::Module;
+use crate::lua::lifecycle::{Role, async_function};
 
 // Bench-only: the criterion matrix in `benches` (and its `bench_helpers`,
 // which pulls these in via `use super::*`) is the sole remaining user in this
@@ -83,7 +84,9 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     m.set(
         "get",
-        lua.create_async_function(|lua, args: (String, Option<Table>)| get(lua, args))?,
+        async_function(lua, Role::Wait, |lua, args: (String, Option<Table>)| {
+            get(lua, args)
+        })?,
     )?;
     m.record_fn(
         "get",
@@ -94,7 +97,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     m.set(
         "post",
-        lua.create_async_function(|lua, opts: Table| post(lua, opts))?,
+        async_function(lua, Role::Wait, |lua, opts: Table| post(lua, opts))?,
     )?;
     m.record_fn(
         "post",
@@ -105,7 +108,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     m.set(
         "request",
-        lua.create_async_function(|lua, opts: Table| request(lua, opts))?,
+        async_function(lua, Role::Wait, |lua, opts: Table| request(lua, opts))?,
     )?;
     m.record_fn(
         "request",
@@ -142,7 +145,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             "wait",
             &[],
             "()",
-            "Block until the server stops accepting connections (`:close()` or process shutdown signal).",
+            "Block until the server stops accepting connections (`:close()`, the process shutdown signal, or an embedder shutting the script down).",
         );
     });
 
@@ -317,7 +320,8 @@ async fn invoke_lua_handler(
     let result: mlua::Result<HandlerResponse> = async {
         let req_ud = self::Request::from_parts(method, path, req_headers, body);
         let handler: Function = lua.registry_value(handler_key)?;
-        let raw: Value = handler.call_async(req_ud).await?;
+        // the handler is a call into the VM like any other: it waits for its turn (see `lifecycle`)
+        let raw: Value = crate::lua::lifecycle::request(lua, handler.call_async(req_ud)).await?;
         decode_handler_response(raw)
     }
     .await;

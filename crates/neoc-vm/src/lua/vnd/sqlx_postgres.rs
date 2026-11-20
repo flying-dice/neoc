@@ -41,6 +41,7 @@ use tracing::instrument;
 
 use super::split_sql_args;
 use crate::lua::facade::Module;
+use crate::lua::lifecycle::{Role, async_function, async_method};
 use crate::lua::sandbox::{from_err, i64_to_lua, ok};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
@@ -64,7 +65,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     m.set(
         "open",
-        lua.create_async_function(|lua, url: String| open(lua, url))?,
+        async_function(lua, Role::Wait, |lua, url: String| open(lua, url))?,
     )?;
     m.record_fn(
         "open",
@@ -131,71 +132,86 @@ async fn open(lua: Lua, url: String) -> mlua::Result<(Value, Value)> {
 
 impl UserData for Database {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_async_method("execute", |lua, this, args: MultiValue| {
-            let pool = this.pool.clone();
-            async move {
-                let op = "sqlx_postgres.execute";
-                let (sql, params) = match prepare(args, &pool) {
-                    Ok(v) => v,
-                    Err(e) => return from_err(&lua, op, e),
-                };
-                let q = match build_query(&sql, params) {
-                    Ok(q) => q,
-                    Err(e) => return from_err(&lua, op, e),
-                };
-                match q.execute(&*pool).await {
-                    Ok(r) => ok(&lua, r.rows_affected() as i64),
-                    Err(e) => from_err(&lua, op, e),
-                }
-            }
-        });
-
-        methods.add_async_method("query", |lua, this, args: MultiValue| {
-            let pool = this.pool.clone();
-            async move {
-                let op = "sqlx_postgres.query";
-                let (sql, params) = match prepare(args, &pool) {
-                    Ok(v) => v,
-                    Err(e) => return from_err(&lua, op, e),
-                };
-                let q = match build_query(&sql, params) {
-                    Ok(q) => q,
-                    Err(e) => return from_err(&lua, op, e),
-                };
-                match q.fetch_all(&*pool).await {
-                    Ok(rows) => {
-                        let out = lua.create_table()?;
-                        for (i, row) in rows.iter().enumerate() {
-                            out.set(i + 1, row_to_table(&lua, row)?)?;
-                        }
-                        ok(&lua, out)
+        async_method(
+            methods,
+            "execute",
+            Role::Wait,
+            |lua, this, args: MultiValue| {
+                let pool = this.pool.clone();
+                async move {
+                    let op = "sqlx_postgres.execute";
+                    let (sql, params) = match prepare(args, &pool) {
+                        Ok(v) => v,
+                        Err(e) => return from_err(&lua, op, e),
+                    };
+                    let q = match build_query(&sql, params) {
+                        Ok(q) => q,
+                        Err(e) => return from_err(&lua, op, e),
+                    };
+                    match q.execute(&*pool).await {
+                        Ok(r) => ok(&lua, r.rows_affected() as i64),
+                        Err(e) => from_err(&lua, op, e),
                     }
-                    Err(e) => from_err(&lua, op, e),
                 }
-            }
-        });
+            },
+        );
 
-        methods.add_async_method("query_one", |lua, this, args: MultiValue| {
-            let pool = this.pool.clone();
-            async move {
-                let op = "sqlx_postgres.query_one";
-                let (sql, params) = match prepare(args, &pool) {
-                    Ok(v) => v,
-                    Err(e) => return from_err(&lua, op, e),
-                };
-                let q = match build_query(&sql, params) {
-                    Ok(q) => q,
-                    Err(e) => return from_err(&lua, op, e),
-                };
-                match q.fetch_optional(&*pool).await {
-                    Ok(Some(row)) => ok(&lua, row_to_table(&lua, &row)?),
-                    Ok(None) => ok(&lua, Value::Nil),
-                    Err(e) => from_err(&lua, op, e),
+        async_method(
+            methods,
+            "query",
+            Role::Wait,
+            |lua, this, args: MultiValue| {
+                let pool = this.pool.clone();
+                async move {
+                    let op = "sqlx_postgres.query";
+                    let (sql, params) = match prepare(args, &pool) {
+                        Ok(v) => v,
+                        Err(e) => return from_err(&lua, op, e),
+                    };
+                    let q = match build_query(&sql, params) {
+                        Ok(q) => q,
+                        Err(e) => return from_err(&lua, op, e),
+                    };
+                    match q.fetch_all(&*pool).await {
+                        Ok(rows) => {
+                            let out = lua.create_table()?;
+                            for (i, row) in rows.iter().enumerate() {
+                                out.set(i + 1, row_to_table(&lua, row)?)?;
+                            }
+                            ok(&lua, out)
+                        }
+                        Err(e) => from_err(&lua, op, e),
+                    }
                 }
-            }
-        });
+            },
+        );
 
-        methods.add_async_method("close", |_, this, _: ()| {
+        async_method(
+            methods,
+            "query_one",
+            Role::Wait,
+            |lua, this, args: MultiValue| {
+                let pool = this.pool.clone();
+                async move {
+                    let op = "sqlx_postgres.query_one";
+                    let (sql, params) = match prepare(args, &pool) {
+                        Ok(v) => v,
+                        Err(e) => return from_err(&lua, op, e),
+                    };
+                    let q = match build_query(&sql, params) {
+                        Ok(q) => q,
+                        Err(e) => return from_err(&lua, op, e),
+                    };
+                    match q.fetch_optional(&*pool).await {
+                        Ok(Some(row)) => ok(&lua, row_to_table(&lua, &row)?),
+                        Ok(None) => ok(&lua, Value::Nil),
+                        Err(e) => from_err(&lua, op, e),
+                    }
+                }
+            },
+        );
+
+        async_method(methods, "close", Role::Wait, |_, this, _: ()| {
             let pool = this.pool.clone();
             async move {
                 pool.close().await;

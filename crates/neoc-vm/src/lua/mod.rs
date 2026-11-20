@@ -8,8 +8,10 @@
 //! `require` registry that ties them together.
 pub mod facade;
 pub mod lib;
+pub mod lifecycle;
 pub(crate) mod limits;
 pub mod modules;
 pub mod sandbox;
+pub mod script_env;
 pub mod std;
 pub mod vnd;

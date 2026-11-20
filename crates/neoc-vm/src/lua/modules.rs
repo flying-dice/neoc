@@ -32,6 +32,7 @@
 
 use std::cmp::max;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use mlua::{Lua, Table};
 use strsim::levenshtein;
@@ -82,74 +83,168 @@ fn truncate_list(members: &[&str], cap: usize) -> String {
     }
 }
 
-/// Builds every module table, keyed by its `require` name.
-fn registry(lua: &Lua) -> mlua::Result<HashMap<String, Table>> {
-    let mut modules: HashMap<String, Table> = HashMap::new();
+/// How a module's table is built.
+type Build = fn(&Lua) -> mlua::Result<Table>;
 
+/// Every module a script can `require`, by registry key. The one list: the engine's own `require`, an
+/// embedder's `require` ([`names`], [`build`]) and the `LuaCATS` definitions all follow it.
+const REGISTRY: &[(&str, Build)] = &[
     // std:* — mirrors Rust standard library.
-    modules.insert("std:collections".into(), stdmod::collections::module(lua)?);
-    modules.insert("std:env".into(), stdmod::env::module(lua)?);
-    modules.insert("std:fs".into(), stdmod::fs::module(lua)?);
-    modules.insert("std:io".into(), stdmod::io::module(lua)?);
-    modules.insert("std:net".into(), stdmod::net::module(lua)?);
-    modules.insert("std:task".into(), stdmod::task::module(lua)?);
-    modules.insert("std:thread".into(), stdmod::thread::module(lua)?);
-    modules.insert("std:time".into(), stdmod::time::module(lua)?);
-    modules.insert("std:workers".into(), stdmod::workers::module(lua)?);
-
+    ("std:collections", stdmod::collections::module),
+    ("std:env", stdmod::env::module),
+    ("std:fs", stdmod::fs::module),
+    ("std:io", stdmod::io::module),
+    ("std:net", stdmod::net::module),
+    ("std:task", stdmod::task::module),
+    ("std:thread", stdmod::thread::module),
+    ("std:time", stdmod::time::module),
+    ("std:workers", stdmod::workers::module),
     // lib:* — blessed gap-fillers and our own custom modules.
-    modules.insert("lib:archive".into(), lib::archive::module(lua)?);
-    modules.insert("lib:args".into(), lib::args::module(lua)?);
-    modules.insert("lib:base64".into(), lib::base64::module(lua)?);
-    modules.insert("lib:cache".into(), lib::cache::module(lua)?);
-    modules.insert("lib:chrono".into(), lib::chrono::module(lua)?);
-    modules.insert("lib:compile".into(), lib::compile::module(lua)?);
-    modules.insert("lib:compress".into(), lib::compress::module(lua)?);
-    modules.insert("lib:crypto".into(), lib::crypto::module(lua)?);
-    modules.insert("lib:csv".into(), lib::csv::module(lua)?);
-    modules.insert("lib:diff".into(), lib::diff::module(lua)?);
-    modules.insert("lib:glob".into(), lib::glob::module(lua)?);
-    modules.insert("lib:hash".into(), lib::hash::module(lua)?);
-    modules.insert("lib:hex".into(), lib::hex::module(lua)?);
-    modules.insert("lib:hmac".into(), lib::hmac::module(lua)?);
-    modules.insert("lib:html".into(), lib::html::module(lua)?);
-    modules.insert("lib:http".into(), lib::http::module(lua)?);
-    modules.insert("lib:ini".into(), lib::ini::module(lua)?);
-    modules.insert("lib:json".into(), lib::json::module(lua)?);
-    modules.insert("lib:log".into(), lib::log::module(lua)?);
-    modules.insert("lib:mime".into(), lib::mime::module(lua)?);
-    modules.insert("lib:pkey".into(), lib::pkey::module(lua)?);
-    modules.insert("lib:random".into(), lib::random::module(lua)?);
-    modules.insert("lib:regex".into(), lib::regex::module(lua)?);
-    modules.insert("lib:semver".into(), lib::semver::module(lua)?);
-    modules.insert("lib:template".into(), lib::template::module(lua)?);
-    modules.insert("lib:tempfile".into(), lib::tempfile::module(lua)?);
-    modules.insert("lib:test".into(), lib::test::module(lua)?);
-    modules.insert("lib:text".into(), lib::text::module(lua)?);
-    modules.insert("lib:unicode".into(), lib::unicode::module(lua)?);
-    modules.insert("lib:url".into(), lib::url::module(lua)?);
-    modules.insert("lib:vcr".into(), lib::vcr::module(lua)?);
-
+    ("lib:archive", lib::archive::module),
+    ("lib:args", lib::args::module),
+    ("lib:base64", lib::base64::module),
+    ("lib:cache", lib::cache::module),
+    ("lib:chrono", lib::chrono::module),
+    ("lib:compile", lib::compile::module),
+    ("lib:compress", lib::compress::module),
+    ("lib:crypto", lib::crypto::module),
+    ("lib:csv", lib::csv::module),
+    ("lib:diff", lib::diff::module),
+    ("lib:glob", lib::glob::module),
+    ("lib:hash", lib::hash::module),
+    ("lib:hex", lib::hex::module),
+    ("lib:hmac", lib::hmac::module),
+    ("lib:html", lib::html::module),
+    ("lib:http", lib::http::module),
+    ("lib:ini", lib::ini::module),
+    ("lib:json", lib::json::module),
+    ("lib:log", lib::log::module),
+    ("lib:mime", lib::mime::module),
+    ("lib:pkey", lib::pkey::module),
+    ("lib:random", lib::random::module),
+    ("lib:regex", lib::regex::module),
+    ("lib:semver", lib::semver::module),
+    ("lib:template", lib::template::module),
+    ("lib:tempfile", lib::tempfile::module),
+    ("lib:test", lib::test::module),
+    ("lib:text", lib::text::module),
+    ("lib:unicode", lib::unicode::module),
+    ("lib:url", lib::url::module),
+    ("lib:vcr", lib::vcr::module),
     // vnd:* — vendored crates, named after the upstream crate.
-    modules.insert("vnd:hyper".into(), vnd::hyper::module(lua)?);
-    modules.insert("vnd:jsonschema".into(), vnd::jsonschema::module(lua)?);
-    modules.insert("vnd:quick_xml".into(), vnd::quick_xml::module(lua)?);
-    modules.insert("vnd:rusqlite".into(), vnd::rusqlite::module(lua)?);
-    modules.insert("vnd:serde_json".into(), vnd::serde_json::module(lua)?);
-    modules.insert("vnd:serde_yaml".into(), vnd::serde_yaml::module(lua)?);
-    modules.insert("vnd:sqlx_mysql".into(), vnd::sqlx_mysql::module(lua)?);
-    modules.insert("vnd:sqlx_postgres".into(), vnd::sqlx_postgres::module(lua)?);
-    modules.insert(
-        "vnd:testcontainers_modules".into(),
-        vnd::testcontainers_modules::module(lua)?,
-    );
-    modules.insert("vnd:toml".into(), vnd::toml::module(lua)?);
+    ("vnd:hyper", vnd::hyper::module),
+    ("vnd:jsonschema", vnd::jsonschema::module),
+    ("vnd:quick_xml", vnd::quick_xml::module),
+    ("vnd:rusqlite", vnd::rusqlite::module),
+    ("vnd:serde_json", vnd::serde_json::module),
+    ("vnd:serde_yaml", vnd::serde_yaml::module),
+    ("vnd:sqlx_mysql", vnd::sqlx_mysql::module),
+    ("vnd:sqlx_postgres", vnd::sqlx_postgres::module),
+    (
+        "vnd:testcontainers_modules",
+        vnd::testcontainers_modules::module,
+    ),
+    ("vnd:toml", vnd::toml::module),
+];
 
-    Ok(modules)
+/// The registry keys (`"lib:json"`, ...), in registry order.
+pub fn names() -> impl Iterator<Item = &'static str> {
+    REGISTRY.iter().map(|(name, _)| *name)
 }
 
+/// Build the module `name` in `lua`, or `None` when there is no such module. Each call builds a new table:
+/// the caller caches it, so that every `require` of one module sees the same handle. This is the seam for an
+/// embedder that wants its own `require`, over the subset of [`names`] it offers.
+///
+/// # Errors
+/// Fails when the module cannot be built.
+#[must_use]
+pub fn build(lua: &Lua, name: &str) -> Option<mlua::Result<Table>> {
+    REGISTRY
+        .iter()
+        .find(|(key, _)| *key == name)
+        .map(|(_, build)| build(lua))
+}
+
+/// The error `require(name)` raises for a name that is not a module: what was meant, and what exists.
+#[must_use]
+pub fn unknown_module(name: &str, known: &[&str]) -> mlua::Error {
+    let ns = name.find(':').map(|pos| &name[..pos]);
+
+    // Bare names get suffix matching first — `require("json")` should
+    // land on `lib:json` even though their Levenshtein distance (4) is
+    // far past any sensible threshold.
+    let suggestion = if ns.is_some() {
+        let threshold = max(1, name.len() / 3);
+        find_closest(name, known, threshold).map(String::from)
+    } else {
+        find_by_suffix(name, known).map(String::from)
+    };
+
+    let mut msg = format!("require: unknown module {name:?}");
+    if let Some(ref s) = suggestion {
+        msg.push_str(&format!(" — did you mean {s:?}?"));
+    }
+
+    // Namespace catalogue: when the user named a namespace, list its
+    // members. When they didn't and we have no suggestion to offer,
+    // fall back to the three namespace prefixes — dumping all 50
+    // modules helps nobody.
+    let available = match ns {
+        Some(ns) => {
+            let prefix = format!("{ns}:");
+            let mut members: Vec<&str> = known
+                .iter()
+                .filter(|k| k.starts_with(&prefix))
+                .copied()
+                .collect();
+            members.sort_unstable();
+            (!members.is_empty()).then(|| truncate_list(&members, MAX_AVAILABLE_LIST))
+        }
+        None if suggestion.is_none() => Some("std:<name>, lib:<name>, vnd:<name>".to_string()),
+        None => None,
+    };
+    if let Some(list) = available {
+        msg.push_str(&format!(" available: {list}"));
+    }
+    mlua::Error::external(msg)
+}
+
+/// Install the `require` global over every module.
+///
+/// # Errors
+/// Fails when a module cannot be built.
 pub fn install(lua: &Lua) -> mlua::Result<()> {
-    let modules = registry(lua)?;
+    install_filtered(lua, None)
+}
+
+/// Install the `require` global over only the modules named in `allowed` (`"lib:json"`, ...); any other
+/// spec fails as unknown. A seam for exposing a subset of the modules to a script. A `std:thread` worker the
+/// script starts is built with the same subset (this installs the engine's
+/// [worker engine](crate::lua::sandbox::set_worker_engine); call that afterwards to replace it).
+///
+/// # Errors
+/// Fails when a module cannot be built.
+pub fn install_allowed(lua: &Lua, allowed: &[&str]) -> mlua::Result<()> {
+    install_filtered(lua, Some(allowed))?;
+    let allowed: Vec<String> = allowed.iter().map(|name| (*name).to_owned()).collect();
+    crate::lua::sandbox::set_worker_engine(
+        lua,
+        Arc::new(move |life| {
+            let names: Vec<&str> = allowed.iter().map(String::as_str).collect();
+            crate::lua::sandbox::make_engine_with(life, &names)
+        }),
+    );
+    Ok(())
+}
+
+fn install_filtered(lua: &Lua, allowed: Option<&[&str]>) -> mlua::Result<()> {
+    let mut modules: HashMap<String, Table> = HashMap::new();
+    for (name, build) in REGISTRY {
+        if allowed.is_none_or(|allowed| allowed.contains(name)) {
+            modules.insert((*name).to_string(), build(lua)?);
+        }
+    }
 
     // Custom require — strict `namespace:name` form, no path search, no
     // file I/O. Unknown specs error with the namespace catalogue so typos
@@ -157,48 +252,8 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
     let module_names: Vec<String> = modules.keys().cloned().collect();
     let require_fn = lua.create_function(move |_, name: String| -> mlua::Result<Table> {
         modules.get(&name).cloned().ok_or_else(|| {
-            let keys: Vec<&str> = module_names.iter().map(|k| k.as_str()).collect();
-            let ns = name.find(':').map(|pos| &name[..pos]);
-
-            // Bare names get suffix matching first — `require("json")` should
-            // land on `lib:json` even though their Levenshtein distance (4) is
-            // far past any sensible threshold.
-            let suggestion = if ns.is_some() {
-                let threshold = max(1, name.len() / 3);
-                find_closest(&name, &keys, threshold).map(String::from)
-            } else {
-                find_by_suffix(&name, &keys).map(String::from)
-            };
-
-            let mut msg = format!("require: unknown module {name:?}");
-            if let Some(ref s) = suggestion {
-                msg.push_str(&format!(" — did you mean {s:?}?"));
-            }
-
-            // Namespace catalogue: when the user named a namespace, list its
-            // members. When they didn't and we have no suggestion to offer,
-            // fall back to the three namespace prefixes — dumping all 50
-            // modules helps nobody.
-            let available = match ns {
-                Some(ns) => {
-                    let prefix = format!("{ns}:");
-                    let mut members: Vec<&str> = keys
-                        .iter()
-                        .filter(|k| k.starts_with(&prefix))
-                        .copied()
-                        .collect();
-                    members.sort_unstable();
-                    (!members.is_empty()).then(|| truncate_list(&members, MAX_AVAILABLE_LIST))
-                }
-                None if suggestion.is_none() => {
-                    Some("std:<name>, lib:<name>, vnd:<name>".to_string())
-                }
-                None => None,
-            };
-            if let Some(list) = available {
-                msg.push_str(&format!(" available: {list}"));
-            }
-            mlua::Error::external(msg)
+            let known: Vec<&str> = module_names.iter().map(String::as_str).collect();
+            unknown_module(&name, &known)
         })
     })?;
     lua.globals().set("require", require_fn)?;
@@ -208,7 +263,7 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
 /// Declares every module through the facade, in registry order, so each one's
 /// recorded surface can be read.
 ///
-/// Mirrors [`registry`] (a test holds the two together): a module appears here
+/// Mirrors [`REGISTRY`] (a test holds the two together): a module appears here
 /// by its `declare`, which both builds its table and records its signatures,
 /// docs and types.
 fn declared(lua: &Lua) -> mlua::Result<Vec<Module<'_>>> {
@@ -315,8 +370,13 @@ mod tests {
             "duplicate declared module: {declared_names:?}"
         );
 
-        let registered = registry(&lua).expect("registry");
-        let registered_set: BTreeSet<&str> = registered.keys().map(String::as_str).collect();
+        let registered_names: Vec<&str> = names().collect();
+        let registered_set: BTreeSet<&str> = registered_names.iter().copied().collect();
+        assert_eq!(
+            registered_set.len(),
+            registered_names.len(),
+            "duplicate registered module: {registered_names:?}"
+        );
 
         let undeclared: Vec<_> = registered_set.difference(&declared_set).collect();
         let unregistered: Vec<_> = declared_set.difference(&registered_set).collect();

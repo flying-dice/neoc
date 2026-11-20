@@ -12,6 +12,7 @@ use tokio::net::TcpListener;
 use walkdir::WalkDir;
 
 use crate::lua::facade::Module;
+use crate::lua::lifecycle::Life;
 
 const MAX_HEADER_LINE: u64 = 8192;
 const MAX_HEADERS: usize = 100;
@@ -40,7 +41,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.async_func(
         "serve_static",
         &[("glob_pattern", "string"), ("opts", "LuaValue?")],
-        "Serve the files matching `glob_pattern` over HTTP/1.1; `opts.host` / `opts.port` set the bind address (default `0.0.0.0:8080`). Blocks until Ctrl-C.",
+        "Serve the files matching `glob_pattern` over HTTP/1.1; `opts.host` / `opts.port` set the bind address (default `0.0.0.0:8080`). Blocks until Ctrl-C, or until an embedder stops the script's background work or shuts it down.",
         |lua, args: (String, Option<Table>)| serve_static(lua, args),
     )?;
     Ok(m)
@@ -53,10 +54,7 @@ fn opt_field<T: FromLua>(opts: &Option<Table>, key: &str) -> Option<T> {
         .and_then(|o| o.get::<Option<T>>(key).ok().flatten())
 }
 
-async fn serve_static(
-    _lua: Lua,
-    (glob_pattern, opts): (String, Option<Table>),
-) -> mlua::Result<()> {
+async fn serve_static(lua: Lua, (glob_pattern, opts): (String, Option<Table>)) -> mlua::Result<()> {
     let port: u16 = opt_field(&opts, "port").unwrap_or(8080);
     let host: String = opt_field(&opts, "host").unwrap_or_else(|| "0.0.0.0".to_string());
 
@@ -75,8 +73,16 @@ async fn serve_static(
         files.len()
     );
 
+    // Runs until Ctrl-C (a fresh SIGINT, as ever: this call listens for it itself), until the script's registry
+    // stops its background work or shuts down (an embedder unloading or replacing the script) or until the
+    // call is dropped. In each case the listener and every open connection go with it (the connections
+    // belong to the serve loop, see `serve_loop`).
+    let life = Life::of(&lua);
+    let stopped = life.stopped();
     tokio::select! {
         _ = serve_loop(listener, files, index) => {},
+        () = stopped => {},
+        () = life.closed() => {},
         result = tokio::signal::ctrl_c() => {
             if let Err(e) = result {
                 tracing::error!("signal error: {e}");

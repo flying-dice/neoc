@@ -7,9 +7,12 @@
 //! with `:cancel()`, `:is_finished()`, and `:await()` methods.
 //!
 //! Per-VM scheduling: each Lua engine gets its own `Scheduler` via `set_app_data`.
-//! Spawned coroutines run as separate tokio tasks on the same executor; the Lua
-//! VM's internal mutex provides cooperative serialisation without blocking OS
-//! threads.
+//! Spawned coroutines run as separate tokio tasks on the same executor, registered
+//! with the engine's [`Life`] (so shutting the script down aborts them). When the
+//! embedder serialises calls into the VM (see `lifecycle`), a task's slices are
+//! calls like any other: it takes its turn before it runs and hands the turn back
+//! while it waits in `task.wait`; otherwise the Lua VM's internal mutex serialises
+//! the slices.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,6 +24,10 @@ use parking_lot::Mutex;
 use tokio::sync::Notify;
 
 use crate::lua::facade::Module;
+use crate::lua::lifecycle::{
+    Life, Pruned, Role, async_function, async_method, entrance, first_slice, inherited,
+};
+use crate::lua::script_env::mark_driven;
 
 // ---------------------------------------------------------------------------
 // Task outcome — stored once the task reaches a terminal state
@@ -99,7 +106,7 @@ impl UserData for TaskHandle {
 
         methods.add_method("is_finished", |_, this, ()| Ok(this.inner.is_finished()));
 
-        methods.add_async_method("await", |lua, this, ()| {
+        async_method(methods, "await", Role::Wait, |lua, this, ()| {
             let inner = this.inner.clone();
             inner.awaited.store(true, Ordering::Relaxed);
             async move {
@@ -151,18 +158,43 @@ fn outcome_to_multi(lua: &Lua, outcome: &TaskOutcome) -> mlua::Result<MultiValue
 // ---------------------------------------------------------------------------
 
 pub struct Scheduler {
-    set: Mutex<tokio::task::JoinSet<()>>,
+    life: Life,
+    /// This engine's own tasks: what [`Scheduler::wait_all`] aborts, and what is aborted when the engine
+    /// (and so the scheduler) is dropped, as a worker's tasks end with the worker. The same tasks are registered
+    /// with the [`Life`], which aborts them when an embedder shuts the script down.
+    handles: Mutex<Pruned<tokio::task::AbortHandle>>,
     prev_defer: Mutex<Option<Arc<TaskInner>>>,
-    tasks: Mutex<Vec<Arc<TaskInner>>>,
+    /// Tasks that are still running, or that failed and nobody has awaited yet (what [`Scheduler::wait_all`] reports);
+    /// the others are forgotten as the list grows, so a script that spawns for ever does not keep every outcome.
+    tasks: Mutex<Pruned<Arc<TaskInner>>>,
     had_errors: AtomicBool,
 }
 
+impl Default for Scheduler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for Scheduler {
+    fn drop(&mut self) {
+        self.abort_own();
+    }
+}
+
 impl Scheduler {
+    /// A scheduler with a registry of its own.
     pub fn new() -> Self {
+        Self::with_life(Life::new())
+    }
+
+    /// A scheduler whose tasks also register with `life`.
+    pub fn with_life(life: Life) -> Self {
         Self {
-            set: Mutex::new(tokio::task::JoinSet::new()),
+            life,
+            handles: Mutex::new(Pruned::new()),
             prev_defer: Mutex::new(None),
-            tasks: Mutex::new(Vec::new()),
+            tasks: Mutex::new(Pruned::new()),
             had_errors: AtomicBool::new(false),
         }
     }
@@ -171,11 +203,36 @@ impl Scheduler {
         &self,
         future: impl std::future::Future<Output = ()> + Send + 'static,
     ) -> tokio::task::AbortHandle {
-        self.set.lock().spawn(future)
+        let abort = self.life.spawn(future).abort_handle();
+        self.handles
+            .lock()
+            .push(abort.clone(), |handle| !handle.is_finished());
+        abort
+    }
+
+    /// Take a task the script is starting into the scheduler, or, when the script was shut down, cancel it
+    /// without running its first slice (`false`).
+    fn admit(&self, inner: &Arc<TaskInner>) -> bool {
+        if self.life.is_closed() {
+            inner.complete(TaskOutcome::Cancelled);
+            return false;
+        }
+        self.track(inner);
+        true
+    }
+
+    fn abort_own(&self) {
+        for handle in std::mem::take(&mut self.handles.lock().items) {
+            handle.abort();
+        }
     }
 
     fn track(&self, inner: &Arc<TaskInner>) {
-        self.tasks.lock().push(inner.clone());
+        self.tasks.lock().push(inner.clone(), |task| {
+            !task.is_finished()
+                || (!task.awaited.load(Ordering::Relaxed)
+                    && matches!(&*task.outcome.lock(), Some(TaskOutcome::Err(_))))
+        });
     }
 
     /// Clean up in-flight tasks after the main script exits.
@@ -183,19 +240,15 @@ impl Scheduler {
     /// Lua async operations (`task.wait`, etc.) cannot be driven after the
     /// main `exec_async` context returns — their `AsyncThread` streams
     /// block inside the Lua VM lock and never yield. Neither
-    /// `tokio::time::timeout` nor `JoinSet::abort_all` can interrupt a
-    /// task that is synchronously blocked. Dropping the `JoinSet` flags
-    /// them for abort and detaches; the tokio runtime cleans them up on
-    /// shutdown.
+    /// `tokio::time::timeout` nor an abort can interrupt a task that is
+    /// synchronously blocked. This aborts this scheduler's tasks and only those: servers, workers and listeners the script
+    /// started stay up for whatever runs next, and the engine's [`Life`] stays open.
     ///
-    /// After dropping, reports un-awaited task errors to stderr.
+    /// After that, reports un-awaited task errors to stderr.
     pub async fn wait_all(&self) {
-        let _set = {
-            let mut guard = self.set.lock();
-            std::mem::take(&mut *guard)
-        };
+        self.abort_own();
 
-        let tasks = std::mem::take(&mut *self.tasks.lock());
+        let tasks = std::mem::take(&mut self.tasks.lock().items);
         for inner in &tasks {
             if inner.awaited.load(Ordering::Relaxed) {
                 continue;
@@ -210,12 +263,6 @@ impl Scheduler {
 
     pub fn had_task_errors(&self) -> bool {
         self.had_errors.load(Ordering::Relaxed)
-    }
-}
-
-impl Default for Scheduler {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -237,9 +284,13 @@ fn validate_thread(thread: &Thread, kind: &'static str) -> mlua::Result<()> {
 
 fn into_thread(lua: &Lua, val: Value, kind: &'static str) -> mlua::Result<Thread> {
     match val {
+        // a thread of the host's: the script holds no handle to it that `coroutine.resume` accepts
         Value::Function(f) => lua.create_thread(f),
         Value::Thread(t) => {
             validate_thread(&t, kind)?;
+            // a coroutine the script made: the scheduler drives it from here on, so the script may not
+            // resume it too
+            mark_driven(lua, &t)?;
             Ok(t)
         }
         other => Err(mlua::Error::external(format!(
@@ -306,14 +357,43 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
                 .app_data_ref::<Scheduler>()
                 .ok_or_else(|| mlua::Error::external("task.spawn: no Scheduler in app data"))?;
 
-            scheduler.track(&inner);
+            if !scheduler.admit(&inner) {
+                return Ok(TaskHandle { inner });
+            }
 
-            match thread.resume::<MultiValue>(args) {
+            // the first slice runs inside this call, but a wait it stops at is not this call's: see
+            // `lifecycle::resumed`. What the call may do is what its task may do: see `Inherited`.
+            let from = inherited();
+            // A slice that stopped at a wait (an async function, which yields the poll sentinel) has a
+            // continuation that takes its turn when the wait ends, and the leaf it stopped at stays alive
+            // for it (`Carried`). One that stopped at a plain `coroutine.yield()` has nothing to wait for.
+            let stopped_at_wait = |vals: &MultiValue| {
+                let mut yielded = vals.iter();
+                matches!(
+                    (yielded.next(), yielded.next()),
+                    (Some(Value::LightUserData(p)), None) if *p == Lua::poll_pending()
+                )
+            };
+            let (first, carried) = first_slice(
+                lua,
+                from.clone(),
+                || thread.resume::<MultiValue>(args),
+                |slice| {
+                    matches!(slice, Ok(vals) if stopped_at_wait(vals)
+                        && thread.status() == ThreadStatus::Resumable)
+                },
+            );
+            match first {
                 Ok(vals) => {
                     if matches!(thread.status(), ThreadStatus::Resumable) {
                         let inner_clone = inner.clone();
+                        let entrance = entrance(lua);
                         let abort = scheduler.spawn_task(async move {
-                            let outcome = drive_thread(thread, MultiValue::new()).await;
+                            // a slice that stopped at a plain yield carries no leaf: the continuation takes
+                            // its turn before it resumes Lua (lifecycle rule 5)
+                            let outcome = entrance
+                                .resumed(from, carried, drive_thread(thread, MultiValue::new()))
+                                .await;
                             inner_clone.complete(outcome);
                         });
                         *inner.abort.lock() = Some(abort);
@@ -348,10 +428,14 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
                 .app_data_ref::<Scheduler>()
                 .ok_or_else(|| mlua::Error::external("task.defer: no Scheduler in app data"))?;
 
-            scheduler.track(&inner);
+            if !scheduler.admit(&inner) {
+                return Ok(TaskHandle { inner });
+            }
 
             let prev = scheduler.prev_defer.lock().clone();
+            let from = inherited();
             let inner_clone = inner.clone();
+            let entrance = entrance(lua);
             let abort = scheduler.spawn_task(async move {
                 if let Some(prev_inner) = prev {
                     let notify = prev_inner.notify.clone();
@@ -363,21 +447,30 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
                     }
                 }
 
-                // Probe the Lua VM lock before checking cancellation.
+                // Without a call entry: probe the Lua VM lock before checking cancellation.
                 // thread.status() acquires the ReentrantMutex — it blocks
                 // until the current synchronous Lua batch yields. Since
                 // cancel() runs synchronously before the yield, is_finished()
                 // is guaranteed to reflect it once status() returns.
-                tokio::task::block_in_place(|| {
-                    let _ = thread.status();
-                });
-
-                if inner_clone.is_finished() {
-                    return;
+                if !entrance.is_set() {
+                    tokio::task::block_in_place(|| {
+                        let _ = thread.status();
+                    });
                 }
 
-                let outcome = drive_thread(thread, args).await;
-                inner_clone.complete(outcome);
+                // With one, the turn is taken first (the spawner's call has ended by then) and
+                // cancellation is checked inside it.
+                let outcome = entrance
+                    .inbound(from, async {
+                        if inner_clone.is_finished() {
+                            return None;
+                        }
+                        Some(drive_thread(thread, args).await)
+                    })
+                    .await;
+                if let Some(outcome) = outcome {
+                    inner_clone.complete(outcome);
+                }
             });
 
             *inner.abort.lock() = Some(abort);
@@ -404,12 +497,16 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
                 .app_data_ref::<Scheduler>()
                 .ok_or_else(|| mlua::Error::external("task.delay: no Scheduler in app data"))?;
 
-            scheduler.track(&inner);
+            if !scheduler.admit(&inner) {
+                return Ok(TaskHandle { inner });
+            }
 
+            let from = inherited();
             let inner_clone = inner.clone();
+            let entrance = entrance(lua);
             let abort = scheduler.spawn_task(async move {
                 tokio::time::sleep(delay).await;
-                let outcome = drive_thread(thread, args).await;
+                let outcome = entrance.inbound(from, drive_thread(thread, args)).await;
                 inner_clone.complete(outcome);
             });
 
@@ -434,7 +531,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     // Returns elapsed time as a float.
     m.set(
         "wait",
-        lua.create_async_function(|_, secs: f64| async move {
+        async_function(lua, Role::Timer, |_, secs: f64| async move {
             let delay = crate::lua::limits::sleep_duration(secs);
             let start = tokio::time::Instant::now();
             tokio::time::sleep(delay).await;
