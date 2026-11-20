@@ -325,8 +325,12 @@ mod tests {
         r
     }
 
+    /// Unique within the process: the clock alone can give two parallel tests the same value, and one of them
+    /// then removes the directory the other is reading its config from.
     fn rand_suffix() -> u128 {
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        (nanos << 16) ^ u128::from(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
     }
 
     #[test]
