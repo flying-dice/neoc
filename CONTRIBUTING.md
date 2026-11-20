@@ -43,6 +43,7 @@ cargo run -p neoc -- run \
   "crates/neoc/tests/vnd/toml.test.lua"
 cargo bench -p neoc-vm --features bench --bench lib --bench vnd -- --test
 scripts/check-toolchain-pin.sh
+cargo deny check
 ```
 
 The Lua list leaves out the suites that need a Docker daemon (`sqlx_mysql`, `sqlx_postgres`, `testcontainers_modules`). With Docker running, run every suite instead: `cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.lua' 'crates/neoc/tests/**/*.spec.lua'`.
