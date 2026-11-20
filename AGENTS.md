@@ -91,7 +91,10 @@ A change is done when all of these hold:
   modules an app can read and write other apps' data and the host's own database under `~/.agentos`. There are **no
   permissions** and **no budgets** (no CPU, memory or time limits): a runaway app (a loop that never yields, a
   `std:thread` worker) can hang the host, not just itself, and can outlive its uninstall, because unloading aborts
-  work only at the points where the app yields to the host. That is accepted. It reaches the host through the `app` table (typed by the generated LuaCATS definitions in `types/generated/luals/`) and
+  work only at the points where the app yields to the host. That is accepted. **Open until NEOC-120 lands:** the adapter
+  calls app code (tools, handlers, views, requests) with `call_async`, which on LuaJIT still aborts the host when an app
+  raises an error value whose `__tostring` makes a protected call and then fails (`CLAUDE.md`, "Embedding the VM"); the
+  guarded entry point from NEOC-120 closes it. It reaches the host through the `app` table (typed by the generated LuaCATS definitions in `types/generated/luals/`) and
   through **every `std:`, `lib:` and `vnd:` module of `neoc-vm`** (`require("std:fs")`, `require("lib:json")`,
   `require("vnd:hyper")`, ...: files, network, servers, tasks, threads, SQLite, TLS), next to `@agentos/app` and
   `@agentos/ui`. What an app starts (tasks, servers, workers) belongs to it: unloading or replacing the app aborts

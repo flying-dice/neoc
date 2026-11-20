@@ -56,7 +56,7 @@ cargo clippy --workspace --all-targets               # lint
 cargo fmt --check                                    # formatting
 ```
 
-The full pre-PR gate, including the Lua suite set that needs no Docker, is in [CONTRIBUTING.md](CONTRIBUTING.md#pre-pr-checks).
+`--workspace` also builds and tests the AgentOS crates, whose tests need `bun` and `darklua` on `PATH`; `-p neoc -p neoc-vm` limits a command to neoc's own crates. The full pre-PR gate, including the Lua suite set that needs no Docker, is in [CONTRIBUTING.md](CONTRIBUTING.md#pre-pr-checks).
 
 ## Modules
 

@@ -16,6 +16,8 @@ cargo test --workspace
 
 `cargo test --workspace` runs the `neoc-vm` unit tests, the `neoc` binary tests, the CLI integration tests and the Gherkin spec in `tooling/cli/`.
 
+The workspace also holds the AgentOS crates (`crates/agentos-*`, governed by [AGENTS.md](AGENTS.md)), so `cargo test --workspace`, `cargo clippy --all-targets` (AgentOS's pedantic lint table) and `cargo build` cover them too. Their tests build the bundled apps, which needs `bun` and `darklua` 0.18.0 (`cargo install darklua --version 0.18.0 --locked`) on `PATH`; without them those tests fail. To check only neoc's own crates, name them: `cargo test -p neoc -p neoc-vm`, `cargo clippy -p neoc -p neoc-vm --all-targets`.
+
 Lua suites run with the binary itself:
 
 ```sh
@@ -50,7 +52,7 @@ NEOC_REQUIRE_LUALS=1 cargo test -p neoc-vm --test luals
 
 The Lua list leaves out the suites that need a Docker daemon (`sqlx_mysql`, `sqlx_postgres`, `testcontainers_modules`). With Docker running, run every suite instead: `cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.lua' 'crates/neoc/tests/**/*.spec.lua'`.
 
-The last two lines are the editor types. `luals -- --check` fails when `types/luals/` (the generated LuaCATS definitions, one file per module, found by `types/luals-plugin.lua`) no longer matches what the modules record; fix it with `cargo run -p neoc-vm --example luals` and commit the result. The `luals` test runs the positive and negative fixtures in `types/fixtures/` through lua-language-server, which must be installed at the pinned version (`LUALS_VERSION` in `crates/neoc-vm/tests/luals.rs`; `brew install lua-language-server` gives the current release, which may differ, or take the release binary of that version from the lua-language-server GitHub releases); without `NEOC_REQUIRE_LUALS=1` it skips with a notice when the tool is missing or not that version, so a plain `cargo test --workspace` still passes without it.
+The last two lines are the editor types. `luals -- --check` fails when `types/luals/` (the generated LuaCATS definitions, one file per module, found by `types/luals-plugin.lua`) no longer matches what the modules record; fix it with `cargo run -p neoc-vm --example luals` and commit the result. The `luals` test runs the positive and negative fixtures in `types/fixtures/` through lua-language-server, which must be installed at the pinned version (`LUALS_VERSION` in `crates/neoc-vm/tests/luals.rs`; `brew install lua-language-server` gives the current release, which may differ, or take the release binary of that version from the lua-language-server GitHub releases); without `NEOC_REQUIRE_LUALS=1` it skips with a notice when the tool is missing or not that version, so `cargo test -p neoc-vm` still passes without it.
 
 The bench line compiles every bench and runs each body once, with no timing. It catches stale bench code the other checks never build. To time a module, drop `-- --test` and name it: `cargo bench -p neoc-vm --features bench --bench lib <name>`.
 

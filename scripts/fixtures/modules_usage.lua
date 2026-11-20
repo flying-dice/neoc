@@ -1,5 +1,5 @@
 -- Correct use of the `std:`, `lib:` and `vnd:` modules. `bun run lint:lua` requires this file to check clean against
--- the generated module definitions (types/generated/luals/<key>.lua); the matching wrong uses are in
+-- the generated module definitions (types/luals/<namespace>/<name>.lua, through types/luals-plugin.lua); the matching wrong uses are in
 -- negative/wrong_module_use.lua. If the module definitions stop loading or stop matching a module's real surface,
 -- this file (or that one) fails the gate.
 local json = require("lib:json")
