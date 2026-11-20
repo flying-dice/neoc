@@ -119,10 +119,10 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "serve",
         &[
             ("listener", "std_net.TcpListener"),
-            ("handler", "fun(req: vnd_hyper.Request): string|table"),
+            ("handler", "fun(req: vnd_hyper.Request): string|table|nil"),
         ],
         "Result<ServerHandle, string>",
-        "Attach `handler` to `listener` and start accepting HTTP connections. The handler returns a body string, or `{ status?, body?, headers? }`.",
+        "Attach `handler` to `listener` and start accepting HTTP connections. The handler returns a body string, `{ status?, body?, headers? }`, or nothing (an empty 200).",
     );
 
     m.userdata("ServerHandle", |s| {
@@ -151,16 +151,15 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         r.field("path", "string", "The request path, without the query string.");
         r.field("body", "string", "The raw request body.");
         r.field("is_json", "bool", "Whether the `Content-Type` header is `application/json`.");
+        r.field("headers", "LuaValue", "The request headers as a `{ [name]: value }` table.");
         r.field(
-                "headers",
-                "LuaValue",
-                "The request headers as a `{ [name]: value }` table.",
-            );
-        r.field(
-                "json",
-                "LuaValue",
-                "The body parsed as JSON (a JSON handle or scalar), or nil when it is empty or invalid.",
-            );
+            "json",
+            "LuaValue",
+            concat!(
+                "The body parsed as JSON (a JSON handle or scalar), ",
+                "or nil when it is empty or invalid."
+            ),
+        );
         r.method(
             "header",
             &[("name", "string")],
@@ -346,8 +345,8 @@ struct HandlerResponse {
     headers: Vec<(String, String)>,
 }
 
-/// Handlers may return either a plain string (treated as a 200 body) or a
-/// table `{status, body, headers}`. Anything else is an error.
+/// Handlers may return a plain string (treated as a 200 body), a table
+/// `{status, body, headers}`, or nothing (an empty 200). Anything else is an error.
 fn decode_handler_response(v: Value) -> mlua::Result<HandlerResponse> {
     match v {
         Value::String(s) => Ok(HandlerResponse {

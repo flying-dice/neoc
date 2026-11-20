@@ -167,10 +167,15 @@ fn luals_ident(name: &str) -> String {
 /// The recorded vocabulary is the facade's own (see [`DeclType`]): `string`,
 /// `number`, `bool`, `LuaValue` (the opaque dynamic value), a trailing `?` for
 /// an optional, and any other name for a type this module declares, which
-/// resolves under `scope`. A name with a dot (the class of another module) or a
-/// `fun(...)` type is written as it is.
+/// resolves under `scope`. A name with a dot (the class of another module), a
+/// `fun(...)` type or a parenthesised type is written as it is. A `fun(...)` type
+/// is never optional by a trailing `?`: that `?` belongs to its return type
+/// (`fun(a): string?`); write `(fun(a): b)?` for an optional function.
 fn luals_param_type(ty: &str, scope: &str) -> (String, bool) {
     let ty = luals_type(ty, scope);
+    if ty.starts_with("fun(") {
+        return (ty, false);
+    }
     match ty.strip_suffix('?') {
         Some(base) => (base.to_string(), true),
         None => (ty, false),
@@ -186,7 +191,9 @@ fn luals_type(ty: &str, scope: &str) -> String {
         "()" => "nil".to_string(),
         VARIADIC => "any ...".to_string(),
         // a class of another module (`std_net.TcpListener`) or a function type is written as it is
-        other if other.contains('.') || other.starts_with("fun(") => other.to_string(),
+        other if other.contains('.') || other.starts_with("fun(") || other.starts_with('(') => {
+            other.to_string()
+        }
         other => match other.strip_suffix('?') {
             Some(base) => format!("{}?", luals_type(base, scope)),
             None => format!("{scope}.{other}"),
@@ -208,7 +215,10 @@ fn luals_returns(ret: &str, scope: &str) -> Vec<String> {
         return Vec::new();
     }
     if let Some(values) = ret.strip_prefix('(').and_then(|r| r.strip_suffix(')')) {
-        return values.split(',').map(|v| luals_type(v, scope)).collect();
+        return split_top_level(values)
+            .into_iter()
+            .map(|v| luals_type(v, scope))
+            .collect();
     }
     if let Some(value) = ret
         .strip_prefix("Result<")
@@ -223,6 +233,27 @@ fn luals_returns(ret: &str, scope: &str) -> Vec<String> {
         return vec![value, "string? err".to_string()];
     }
     vec![luals_type(ret, scope)]
+}
+
+/// Splits `s` on the commas that are not inside brackets, so a `fun(a, b)` or
+/// `table<string, any>` type stays in one piece.
+fn split_top_level(s: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0_usize;
+    let mut start = 0;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' | '[' | '{' | '<' => depth += 1,
+            ')' | ']' | '}' | '>' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&s[start..]);
+    parts
 }
 
 /// The class name a registry key's module is declared under: `lib:json`
@@ -1141,7 +1172,7 @@ mod tests {
     use tracing_core::span::{Attributes, Id};
     use tracing_core::{Event, Subscriber};
 
-    use super::Module;
+    use super::{Module, luals_param_type, luals_returns, split_top_level};
 
     /// Minimal subscriber that records `(target, name)` of every span it is
     /// asked to create. Used to prove the facade opens an `#[instrument]`-
@@ -1766,5 +1797,83 @@ mod tests {
             error.contains("Limit.make is recorded but the module table has no such member"),
             "{error}"
         );
+    }
+
+    /// A trailing `?` on a `fun(...)` type belongs to its return type, so the parameter is not optional;
+    /// `(fun(...): T)?` is the optional function; a class of another module passes through and may be optional.
+    #[test]
+    fn pass_through_types_and_optionals() {
+        assert_eq!(
+            luals_param_type("fun(a, b): string?", "lib_x"),
+            ("fun(a, b): string?".to_string(), false)
+        );
+        assert_eq!(
+            luals_param_type("(fun(a): string)?", "lib_x"),
+            ("(fun(a): string)".to_string(), true)
+        );
+        assert_eq!(
+            luals_param_type("std_net.TcpListener?", "lib_x"),
+            ("std_net.TcpListener".to_string(), true)
+        );
+        assert_eq!(
+            luals_param_type("std_net.TcpListener", "lib_x"),
+            ("std_net.TcpListener".to_string(), false)
+        );
+        assert_eq!(
+            luals_param_type("Thing?", "lib_x"),
+            ("lib_x.Thing".to_string(), true)
+        );
+
+        let lua = Lua::new();
+        let mut m = Module::new(&lua, "lib:demo").expect("module");
+        m.record_fn(
+            "serve",
+            &[
+                ("listener", "std_net.TcpListener"),
+                ("handler", "fun(req: vnd_hyper.Request): string|nil"),
+                ("on_error", "(fun(message: string): nil)?"),
+            ],
+            "()",
+            "Serves.",
+        );
+        m.const_("hook", "fun(a, b): string?", "A hook.");
+        let meta = m.luals_meta().expect("meta");
+        assert!(
+            contains_in_order(
+                &meta,
+                &[
+                    "---@param listener std_net.TcpListener\n",
+                    "---@param handler fun(req: vnd_hyper.Request): string|nil\n",
+                    "---@param on_error? (fun(message: string): nil)\n",
+                    "function M.serve(listener, handler, on_error) end",
+                ]
+            ),
+            "{meta}"
+        );
+        assert!(
+            meta.contains("---@field hook fun(a, b): string? A hook.\n"),
+            "{meta}"
+        );
+    }
+
+    /// A tuple is split on its top-level commas only, so a `fun(a, b)` inside it stays whole, and a `...`
+    /// anywhere in it, or alone, is `any ...`.
+    #[test]
+    fn tuple_returns_split_on_top_level_commas() {
+        assert_eq!(
+            split_top_level("string, fun(a, b): c, table<string, any>"),
+            ["string", " fun(a, b): c", " table<string, any>"]
+        );
+        assert_eq!(
+            luals_returns("(fun(a, b): string, ())", "lib_x"),
+            ["fun(a, b): string", "nil"]
+        );
+        assert_eq!(
+            luals_returns("(LuaValue?, ...)", "lib_x"),
+            ["any?", "any ..."]
+        );
+        assert_eq!(luals_returns("...", "lib_x"), ["any ..."]);
+        assert_eq!(luals_returns("(string, ())", "lib_x"), ["string", "nil"]);
+        assert_eq!(luals_returns("()", "lib_x"), Vec::<String>::new());
     }
 }

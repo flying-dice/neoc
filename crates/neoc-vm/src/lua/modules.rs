@@ -364,6 +364,46 @@ mod tests {
         }
     }
 
+    /// The type names in the text of a type annotation: identifiers (dots included, so `std_net.TcpListener` is
+    /// one), without the `err` label after a return type, the `fun` of a function type and the parameter names
+    /// inside it (`fun(req: vnd_hyper.Request)` names `vnd_hyper.Request` only).
+    fn type_names(text: &str) -> Vec<&str> {
+        let mut names = Vec::new();
+        let mut start = None;
+        for (i, c) in text
+            .char_indices()
+            .chain(std::iter::once((text.len(), ' ')))
+        {
+            let part_of_name = c.is_alphanumeric() || c == '_' || c == '.';
+            match (start, part_of_name) {
+                (None, true) => start = Some(i),
+                (Some(from), false) => {
+                    start = None;
+                    let name = text[from..i].trim_matches('.');
+                    let rest = &text[i..];
+                    let is_param_name = rest.starts_with(':');
+                    let is_fun_keyword = name == "fun" && rest.starts_with('(');
+                    if !name.is_empty() && name != "err" && !is_param_name && !is_fun_keyword {
+                        names.push(name);
+                    }
+                }
+                _ => {}
+            }
+        }
+        names
+    }
+
+    #[test]
+    fn type_names_skip_labels_and_parameter_names() {
+        assert_eq!(
+            type_names("fun(req: vnd_hyper.Request, n: number): string|nil"),
+            ["vnd_hyper.Request", "number", "string", "nil"]
+        );
+        assert_eq!(type_names("string? err"), ["string"]);
+        assert_eq!(type_names("any ..."), ["any"]);
+        assert_eq!(type_names("std_net.TcpListener"), ["std_net.TcpListener"]);
+    }
+
     /// Every type a definition file names (in a `---@param`, `---@return` or `---@field`) is a primitive or a
     /// class some definition file declares (its own, or another module's such as `std_net.TcpListener`): a
     /// recorded type name with no class would be an unknown type in lua-language-server, and `luals_type`
@@ -389,13 +429,7 @@ mod tests {
                 } else {
                     continue;
                 };
-                // names of types in `text`: split on everything a type expression is made of
-                for ty in text.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.')) {
-                    // an `err` label after a return type, or a parameter name inside `fun(req: ...)`
-                    let ty = ty.trim_matches('.');
-                    if ty.is_empty() || matches!(ty, "err" | "req" | "fun") {
-                        continue;
-                    }
+                for ty in type_names(text) {
                     let known = matches!(
                         ty,
                         "string" | "number" | "boolean" | "any" | "nil" | "table"
@@ -563,8 +597,9 @@ mod tests {
             "std:io",
             "WriterHandle",
             r#"(function()
-                _KEEP = require("lib:tempfile").TempDir.new()
-                return require("std:fs").open({ path = _KEEP:path() .. "/w.txt", mode = "w" })
+                local dir = require("lib:tempfile").TempDir.new()
+                local writer = assert(require("std:fs").open({ path = dir:path() .. "/w.txt", mode = "w" }))
+                return writer, function() dir:close() end
             end)()"#,
         ),
         (
