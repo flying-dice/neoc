@@ -8,7 +8,6 @@
 //!
 //! Backed by the `url` crate (parsing, building, `form_urlencoded`) and
 //! `percent_encoding` (one-off encode/decode against WHATWG-aligned sets).
-//! See docs/src/lib/reference/url.md for the public surface contract.
 
 use mlua::{AnyUserData, Lua, MetaMethod, Table, UserData, UserDataFields, UserDataMethods, Value};
 use percent_encoding::{AsciiSet, CONTROLS, NON_ALPHANUMERIC, percent_decode_str, percent_encode};

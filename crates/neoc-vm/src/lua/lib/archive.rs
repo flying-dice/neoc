@@ -1,7 +1,5 @@
 //! Tar and zip archive handling — `lib:archive`.
 //!
-//! See docs/src/lib/reference/archive.md for the public surface contract.
-//!
 //! Buffer variants (`*_bytes`) are the primary API: the dominant agent/pipeline
 //! pattern is bytes in memory (a tarball off an HTTP body), not files on disk.
 //! The file-oriented wrappers read/write the filesystem and otherwise share the

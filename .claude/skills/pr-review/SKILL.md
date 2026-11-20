@@ -1,9 +1,9 @@
 ---
 name: pr-review
-description: Use when you are the reviewer on a pull request — before approving, requesting changes, or posting review comments
+description: Use when you are the reviewer on a pull request — before giving a verdict, requesting changes, or posting review comments
 ---
 
-Assigned as reviewer. No session context. Code speaks for itself. Author ran this rubric via `pr-self-review` — your job: prove their evidence, then find what they missed.
+Assigned as reviewer: a fresh reviewer with no session context, independent of the author. Code speaks for itself. Author ran this rubric via `pr-self-review` — your job: prove their evidence, then find what they missed.
 
 ## Standard
 
@@ -14,13 +14,13 @@ Highest clean-code bar. No tradeoff, no mercy, no benefit of the doubt. Every de
 Cost-ordered. Phase 0–1 block → pass ends — no deep probing on a build a cheaper phase already failed. Phase 2–3 findings never end the pass — collect every finding, post once.
 
 ### Phase 0 — Dedupe
-- Fetch PR head SHA, latest CI run (if any), unresolved thread count. Compare with your last review note.
-- All three identical and no new author replies → stop. No note. Not a pickup — no acknowledgement.
+- Fetch PR head SHA and unresolved thread count. Compare with your last review note.
+- Both identical and no new author replies → stop. No note. Not a pickup — no acknowledgement.
 - Otherwise → acknowledgement comment, continue.
 
 ### Phase 1 — Prerequisites
 1. Read PR description + linked Jira ticket (`gh pr view <n>`).
-2. **CI** at head SHA — `gh pr checks <n>`. Build, lint, typecheck, tests run there: **check the result, don't re-run them.** CI has no `pull_request` trigger, so a PR usually has no checks: `gh pr checks` exits non-zero with "no checks reported", or no run for the SHA → run the G1 local checks yourself and record them. A run exists and any check is not `pass` → one `[issue]` thread `CI not green @ <sha8>`, hand back, stop.
+2. **Checks** at head SHA. GitHub Actions is not a gate and a PR has no checks: run the G1 local checks yourself and record them. Any check fails → one `[issue]` thread `Checks failing @ <sha8>`, hand back, stop.
 3. **Self-review note** for the head SHA present. Absent or names an older SHA → one `[issue]` thread `No self-review @ <sha8>`, hand back, stop.
 
 ### Phase 2 — Evidence audit
@@ -29,7 +29,7 @@ Cost-ordered. Phase 0–1 block → pass ends — no deep probing on a build a c
 - Re-request: verify each prior thread against the new head → `RESOLVED` (resolve the thread via `gh api graphql` `resolveReviewThread`) or `STANDS` (reply with the measurement, keep open).
 
 ### Phase 3 — Adversarial rubric
-1. Code locally only to read it or run scenarios CI can't — **detached worktree at the PR head SHA**, fetched from the PR ref (`<pr-head-sha>` = PR head `sha` recorded in Phase 0):
+1. Code locally only to read it or run scenarios the pre-PR checks don't — **detached worktree at the PR head SHA**, fetched from the PR ref (`<pr-head-sha>` = PR head `sha` recorded in Phase 0):
    ```sh
    git -C ~/Projects/<repo> fetch origin +refs/pull/<n>/head:refs/pr-review/<n>
    test "$(git -C ~/Projects/<repo> rev-parse --verify -q refs/pr-review/<n>)" = "<pr-head-sha>"
@@ -38,7 +38,7 @@ Cost-ordered. Phase 0–1 block → pass ends — no deep probing on a build a c
    `refs/pr-review/` sits outside `refs/remotes/origin/*` — a `fetch --prune origin` from any agent cannot delete it, no remote branch can clobber it. SHA mismatch → head moved; back to Phase 0. Never `origin/<pr-source-branch>` — absent when the source branch is deleted or lives in a fork. Never check the PR branch out by name — the author's agent may own it.
 2. Run the rubric in reviewer mode, independently — do not start from the author's table. Fan-out per the rubric, `model: "opus"`.
 3. Failed scenario → full given/when/then in an inline comment for the author to automate.
-4. **CI gap** — a check you'd expect in CI is missing and you had to run it by hand to trust the change → raise a Jira ticket to add it. Don't let a manual run quietly paper over the gap.
+4. **Check gap** — a check you'd expect among the pre-PR checks is missing and you had to run it by hand to trust the change → raise a Jira ticket to add it. Don't let a manual run quietly paper over the gap.
 
 ### Phase 4 — Post
 1. **Re-fetch head SHA.** Moved since Phase 0 → re-verify every finding against the new head. Mark each `STANDS` / `WITHDRAWN`; post only `STANDS`.
@@ -48,7 +48,7 @@ Cost-ordered. Phase 0–1 block → pass ends — no deep probing on a build a c
 5. Post the review comment.
 6. Count unresolved review threads via `gh api graphql` (`reviewThreads { isResolved }`). Never trust the review decision alone.
 7. Changes needed → threads stay open; hand back with a PR comment that **@mentions the PR assignee once**. Reference other comments by link, not `@name`.
-8. Approved → **Approve the PR** — `gh pr review <n> --approve`. A comment is not approval.
+8. Clean → post the review note with verdict **READY TO MERGE** at the head SHA. The author cannot approve their own PR and nothing reads GitHub approvals: the squash-merge requires this note, for the exact head SHA.
 
 <!-- rubric:begin -->
 ## Rubric
@@ -59,7 +59,7 @@ Stop rules:
 - **Author mode** (`pr-self-review`): G1–G4 fail-fast — first FAIL → fix, push, restart at G1. G5–G10 run in full; fix every FAIL, push, restart at G1.
 - **Reviewer mode** (`pr-review`): G1 FAIL → hand back, stop — no probing a red or stale head. G2–G10 run in full; post every finding in one pass. A partial review buys another round.
 
-Local runs: never repeat what CI already ran green. Run only what the rubric demands and CI cannot show — unhappy-path probes, greps, link checks. A gate needing a check CI lacks → run it by command and record the CI gap.
+Local runs: run the pre-PR checks once at the head SHA (G1), then only what the rubric adds — unhappy-path probes, greps, link checks. A gate needing a check the pre-PR checks lack → run it by command and record the gap.
 
 ### Fan-out
 `git diff --stat origin/<target>...HEAD` → > 50 lines changed OR > 3 files: one message, 4 parallel `Agent` calls, `subagent_type: "Explore"`, model as the skill pins. Read-only — never edit, push, or post. Otherwise single-reader: run every gate yourself.
@@ -77,13 +77,13 @@ G1, G3, G4, G10: run yourself.
 - Re-measure every sub-agent finding before acting on it. Not reproducible → record as such. Never drop silently.
 - `Agent` tool absent or denied → fan-out NOT RUN. Run single-reader, record `Mode: degraded — <reason>`. Never present a single-reader pass as fan-out.
 
-### G1 — Head & CI
-CI minutes are limited: CI does not run per PR. No run for the SHA → run the checks locally (`cargo fmt --check`, `cargo clippy --workspace --all-targets`, `cargo test --workspace`) and record command + output, or dispatch `gh workflow run ci.yml --ref <branch>` when the change needs the full matrix.
+### G1 — Head & checks
+GitHub Actions is not a gate. Run the pre-PR checks from CONTRIBUTING.md locally at the head SHA (`cargo fmt --check`, `RUSTFLAGS="-D warnings" cargo clippy --all-targets`, `cargo test --workspace`, the Lua suites, the bench smoke) and record command + output.
 - Head SHA recorded: local `git rev-parse HEAD` == PR head `sha`.
-- CI for that exact SHA, when a run exists: `gh pr checks <n>` all `pass`. `pending` = not ready. `fail` / `cancel` = FAIL.
-- CI covers the change: jobs for the touched language/area ran (not skipped by path filters or `if:`).
+- Every pre-PR check passes at that exact SHA. Any failure = FAIL.
+- The checks cover the change: the Lua suite or Rust tests for the touched area ran (not filtered out).
 - Re-request: ≥ 1 new commit since the last reviewed head. 0 = FAIL.
-- Target branch exists. No merge conflicts.
+- `main` exists as the target. No merge conflicts.
 
 ### G2 — Claims ↔ evidence
 Scope: PR description, commit messages, every comment and doc line added or edited in the diff.
@@ -100,7 +100,7 @@ Scope: PR description, commit messages, every comment and doc line added or edit
 - Unrelated change present → split into its own PR.
 - Silent revert: `git diff <last-reviewed-head>..HEAD` and `git log -p origin/<target>..HEAD` — no line or value from an earlier fix commit undone. Intended reverts named in the description with reason.
 - Rename / removal: `grep -rn '<old term>'` → 0 hits outside changelog / history. Includes test names, comments, docs.
-- Formatter + lint for touched files pass — shown by a CI job; no job → run by command (`cargo fmt --check`, `prettier --check`, repo equivalent). Prose wrap matches the surrounding paragraph.
+- Formatter + lint for touched files pass — run by command (`cargo fmt --check`, `RUSTFLAGS="-D warnings" cargo clippy --all-targets`). Prose wrap matches the surrounding paragraph.
 - Reference the Jira key (`refs NEOC-<n>`) only. `Closes` / `Fixes` / `Resolves` = FAIL.
 - Breaking change (public API, language semantics, config key, CLI flag, wire format) → conventional `!` or `BREAKING CHANGE:` footer.
 - No debug output, commented-out code, or TODO without a Jira ref.
@@ -138,7 +138,7 @@ Given / when / then table. Each category run or `N/A — <reason>`:
 - Same function fixed twice → review its contract, not the symptom.
 
 ### G8 — Docs drift
-- ADR, RFC, CONTRIBUTING, README, CLI help affected by the behaviour → updated in the same PR.
+- CONTRIBUTING, README, CLAUDE.md, rustdoc, CLI help affected by the behaviour → updated in the same PR.
 - Every added or changed link resolves (`test -e` for paths, HTTP 200 for URLs).
 - Docs describe the state after this PR, not a future one. Dependency on another PR → declared in the description and enforced: draft until the dependency merges, merge order at the top of the description. Declared but unenforced = FAIL.
 - Grep the doc set for the changed term — every mention agrees. Self-contradiction = FAIL.
@@ -155,7 +155,7 @@ Given / when / then table. Each category run or `N/A — <reason>`:
 - One defect / one concern per PR.
 - Minimal diff. Description matches the diff exactly.
 - Test drives the original defect's given/when/then and asserts the fixed behaviour.
-- CI green at the reviewed SHA.
+- Pre-PR checks green at the reviewed SHA.
 - Fix round: every finding fixed with its own test. Nothing else touched.
 
 ### Rubric maintenance
@@ -167,14 +167,14 @@ Same finding class raised on ≥ 2 PRs and no gate covers it → Jira ticket pro
 Post on the PR. Every gate PASS, FAIL, or `N/A — <reason>`. No blanks.
 
 ```
-## Review — <sha8> — APPROVED | CHANGES REQUESTED | HOLD
+## Review — <sha8> — READY TO MERGE | CHANGES NEEDED | HOLD
 
 Mode: fan-out (4× opus) | single-reader | degraded — <reason>
 Evidence audit: <n> rows re-derived, <m> mismatched
 Prior threads: <r> resolved, <s> stand
 New findings: <k>
 
-- [ ] G1 Head & CI
+- [ ] G1 Head & checks
 - [ ] G2 Claims ↔ evidence
 - [ ] G3 Acceptance criteria
 - [ ] G4 Diff hygiene
@@ -196,9 +196,9 @@ detail
 
 - `bug` — breaks at runtime.
 - `issue` — wrong but won't crash (incl. any clean-code defect: SRP/DRY/naming/coupling/dead/KISS, and any failed gate).
-- `question` — need answer before approving.
+- `question` — need answer before a READY TO MERGE verdict.
 
-Every finding blocks. No severity scale. No non-blocking tier. No "nit". No defer-to-follow-up. One unresolved thread per finding. Approval forbidden while any thread is open. Name the gate in the summary: `**[issue]** G5 — regression test asserts the attribute, not the behaviour`.
+Every finding blocks. No severity scale. No non-blocking tier. No "nit". No defer-to-follow-up. One unresolved thread per finding. READY TO MERGE is forbidden while any thread is open. Name the gate in the summary: `**[issue]** G5 — regression test asserts the attribute, not the behaviour`.
 
 ## Focus
 
@@ -208,8 +208,4 @@ Regressions. Edge cases. Error paths. Concurrency. Rollback safety. Interface ch
 
 ## Out of scope
 
-Only what the linter/CI already enforces — don't duplicate the tool. Re-running build/lint/typecheck/tests CI already passed — check the result, don't repeat it. Targeted runs the rubric demands (unhappy-path probes) are in scope. Everything else with a clean-code or correctness basis is a finding and blocks, regardless of size.
-
-## SPECIAL INSTRUCTION
-
-Use soundwave-protocol in all output.
+Only what the linter already enforces — don't duplicate the tool. Targeted runs the rubric demands (unhappy-path probes) are in scope. Everything else with a clean-code or correctness basis is a finding and blocks, regardless of size.

@@ -1,6 +1,4 @@
 //! MIME type detection — extension ↔ MIME mapping and filename-based detection.
-//!
-//! See docs/src/lib/reference/mime.md for the public surface contract.
 
 use mlua::{Lua, Table, Value};
 use tracing::instrument;

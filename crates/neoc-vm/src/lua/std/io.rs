@@ -1,7 +1,7 @@
 //! Core I/O primitives — `lib.io` (mirrors `std::io`).
 //!
 //! `ReaderHandle` and `WriterHandle` are the canonical trait-object wrappers
-//! (ADR 0003). Methods mirror Rust's Read/Write/BufRead traits.
+//! (the `std:io` surface). Methods mirror Rust's Read/Write/BufRead traits.
 //!
 //! ```lua
 //! local reader = lib.io.from_string("hello")

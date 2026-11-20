@@ -2,13 +2,11 @@ name: CI
 
 on:
   # CI minutes are limited: no pull_request or feature-branch triggers.
-  # Runs on push to main/develop, manually, and on the weekly schedule.
+  # Runs on push to main, manually, and on the weekly schedule.
   push:
-    branches: [main, develop]
-    paths-ignore: 
-      - "docs/**"
+    branches: [main]
+    paths-ignore:
       - "**/*.md"
-      - "media/**"
       - "CODEOWNERS"
       - ".claude/**"
   workflow_dispatch:
@@ -18,7 +16,7 @@ on:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
-  cancel-in-progress: ${{ github.ref_type != 'tag' && github.ref != 'refs/heads/main' && github.ref != 'refs/heads/develop' }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' && github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -122,6 +120,8 @@ jobs:
           cargo run -p neoc -- run \
             "crates/neoc/tests/lib/*.test.lua" \
             "crates/neoc/tests/std/*.test.lua" \
+            "crates/neoc/tests/std/task.spec.lua" \
+            "crates/neoc/tests/app.test.lua" \
             "crates/neoc/tests/vnd/jsonschema.test.lua" \
             "crates/neoc/tests/vnd/quick_xml.test.lua" \
             "crates/neoc/tests/vnd/rusqlite.test.lua" \
@@ -170,7 +170,7 @@ jobs:
   # Smoke check for bench code (NEOC-32): compiles every bench under
   # `--features bench` and runs each bench body once (criterion `--test`), no
   # timing. Catches stale bench inputs that lint/test never build. Blocking;
-  # follows the workflow triggers (push to main/develop, manual dispatch), not
+  # follows the workflow triggers (push to main, manual dispatch), not
   # the schedule, and has no PR trigger because CI minutes are limited. Names
   # the two bench targets so the lib unit tests are not built or run.
   bench-smoke:
@@ -198,7 +198,8 @@ jobs:
       - run: cargo bench -p neoc-vm --features bench --bench lib --bench vnd -- --test
 
   # Build jobs are independent of lint/test so binaries are produced for every
-  # commit, even on WIP branches. Check lint/test for the quality gates.
+  # push to main even when lint or test fails. Check lint/test for the quality
+  # signal.
   build-linux-x86_64:
     name: build:linux-x86_64
     if: github.event_name != 'schedule'

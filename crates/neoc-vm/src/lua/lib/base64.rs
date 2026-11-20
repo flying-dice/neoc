@@ -1,6 +1,4 @@
 //! base64 encode / decode (standard and URL-safe alphabets).
-//!
-//! See docs/modules/base64.md for the public surface contract.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};

@@ -4,7 +4,7 @@ use thiserror::Error;
 #[derive(Error, Diagnostic, Debug)]
 pub enum NeocError {
     #[error("{message}")]
-    #[diagnostic(code(neoc::E0001), url("https://neoc.dev/errors/E0001"))]
+    #[diagnostic(code(neoc::E0001))]
     ModuleNotFound {
         message: String,
         #[help]
@@ -16,14 +16,14 @@ pub enum NeocError {
     },
 
     #[error("embedded payload corrupt")]
-    #[diagnostic(code(neoc::E0002), url("https://neoc.dev/errors/E0002"))]
+    #[diagnostic(code(neoc::E0002))]
     CorruptPayload {
         #[help]
         detail: String,
     },
 
     #[error("engine initialisation failed: {0}")]
-    #[diagnostic(code(neoc::E0003), url("https://neoc.dev/errors/E0003"))]
+    #[diagnostic(code(neoc::E0003))]
     EngineInit(String),
 
     #[error("{0}")]
