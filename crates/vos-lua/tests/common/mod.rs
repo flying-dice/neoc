@@ -69,13 +69,13 @@ pub async fn timed_tool(vm: &Arc<AppVm>, name: &str, secs: u64) -> Result<Value,
     }
 }
 
-/// The bundled Lua 5.1 text of an app entry file, built with the product's own pipeline (`scripts/lua51.ts`: darklua
+/// The bundled Luau text of an app entry file, built with the product's own pipeline (`scripts/luau.ts`: darklua
 /// with `.darklua.json`), so these tests run what `bun run build:apps` ships. Needs bun and darklua.
-pub fn build_lua(entry: &Path) -> Vec<u8> {
+pub fn build_luau(entry: &Path) -> Vec<u8> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let out = std::env::temp_dir().join(format!("vos-lua-test-{}-{}.lua", std::process::id(), nonce()));
+    let out = std::env::temp_dir().join(format!("vos-lua-test-{}-{}.luau", std::process::id(), nonce()));
     let run = Command::new("bun")
-        .arg("scripts/lua51-build.ts")
+        .arg("scripts/luau-build.ts")
         .arg(entry)
         .arg(&out)
         .current_dir(&root)
@@ -83,7 +83,7 @@ pub fn build_lua(entry: &Path) -> Vec<u8> {
         .expect("bun is needed to build the apps these tests run (https://bun.sh)");
     assert!(
         run.status.success(),
-        "building {} failed (is darklua 0.18.0 installed? see scripts/lua51.ts):\n{}{}",
+        "building {} failed (is darklua 0.18.0 installed? see scripts/luau.ts):\n{}{}",
         entry.display(),
         String::from_utf8_lossy(&run.stdout),
         String::from_utf8_lossy(&run.stderr)
@@ -99,11 +99,10 @@ fn nonce() -> u64 {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
-/// An app package of the one built file: `entry` is a Lua file (`apps/calculator/app.lua`, a codegen
-/// fixture), bundled.
+/// An app package of the one built file: `entry` is a Luau file (`apps/calculator/app.luau`, a fixture), bundled.
 pub fn built_package(entry: &Path) -> AppPackage {
-    let files = BTreeMap::from([("app.lua".to_owned(), build_lua(entry))]);
-    AppPackage { entry: "app.lua".into(), files }
+    let files = BTreeMap::from([("app.luau".to_owned(), build_luau(entry))]);
+    AppPackage { entry: "app.luau".into(), files }
 }
 
 /// The shipped app `apps/<id>` (or, when the repo has none, the codegen example of that name), built.
@@ -115,7 +114,7 @@ pub fn built_app(app: &str) -> AppPackage {
     } else {
         manifest.join("../vos-codegen/tests/fixtures").join(app)
     };
-    built_package(&dir.join("app.lua"))
+    built_package(&dir.join("app.luau"))
 }
 
 /// The real database, except that a statement whose SQL contains `stall` never finishes (so a test can hold a

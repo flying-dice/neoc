@@ -28,7 +28,7 @@ import { spawnSync } from 'node:child_process'
 const INTERNAL: Record<string, string[]> = {
   'vos-domain': [],
   'vos-application': ['vos-domain'],
-  // The Lua adapter runs apps (plain Lua 5.1 source) on top of the Lua VM library below.
+  // The Lua adapter runs apps (Luau source) on top of the Lua VM library below.
   'vos-lua': ['vos-domain', 'vos-application', 'neoc-vm'],
   // The Lua VM (Luau): a support library, not an adapter. It depends on no other crate here, and among the
   // vos crates only the Lua adapter may depend on it (the one place a script engine is wired to a port), so

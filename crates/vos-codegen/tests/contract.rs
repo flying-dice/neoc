@@ -1,9 +1,11 @@
 //! Contract tests: drift between the Rust schema and any generated consumer is a build failure.
 //!
 //! * the committed generated files are exactly what the generator writes now;
-//! * every component, expression function and client action is covered by the Lua and TypeScript output;
-//! * the Calculator and Notes examples from `ui-system.md` §4.3 and §4.4 (checked by `bun run lint:lua`) are
-//!   **run** against the real generated `ui.lua` with a `lua` interpreter (5.1 or newer), and the trees they
+//! * every component, expression function and client action is covered by the Luau declarations, the runtime
+//!   `ui.lua` and the TypeScript output; the app definitions offer exactly the modules the host does (no more, no
+//!   refused one) and carry one `declare require`;
+//! * the Calculator and Notes examples (typed Luau, checked by `bun run lint:luau`), built as the host runs them,
+//!   are **run** against the real generated `ui.lua` with a `lua` interpreter (5.1 or newer), and the trees they
 //!   render validate against the schema. Without `lua` installed the committed trees are validated instead.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
 
@@ -12,6 +14,8 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
 };
+
+use vos_domain::{GLOBALS_NOT_FOR_APPS, NOT_FOR_APPS};
 
 use serde_json::Value;
 use vos_domain::ui::{
@@ -32,6 +36,12 @@ fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
 }
 
+/// The app definitions the generator writes now, from neoc's committed declarations.
+fn definitions() -> String {
+    let neoc = fs::read_to_string(root().join(vos_codegen::NEOC_DECLARATIONS)).unwrap();
+    vos_codegen::luau_definitions(&neoc).unwrap()
+}
+
 // ---- the generated files ----------------------------------------------------------------------------------
 
 #[test]
@@ -42,7 +52,16 @@ fn the_committed_generated_files_are_up_to_date() {
 
 #[test]
 fn generation_is_deterministic() {
-    assert_eq!(vos_codegen::generate(), vos_codegen::generate());
+    assert_eq!(vos_codegen::generate(root()), vos_codegen::generate(root()));
+}
+
+/// A colon is not allowed in a Windows file name: no generated file may have one (the module `vos:app` is
+/// declared inside one file, not as a file of its own).
+#[test]
+fn no_generated_file_has_a_colon_in_its_name() {
+    for file in vos_codegen::generate(root()).unwrap() {
+        assert!(!file.path.contains(':'), "{}", file.path);
+    }
 }
 
 // ---- Lua output -------------------------------------------------------------------------------------------
@@ -50,15 +69,19 @@ fn generation_is_deterministic() {
 #[test]
 fn ui_lua_has_a_constructor_for_every_component_and_sugar() {
     let lua = vos_codegen::ui_module();
-    let defs = vos_codegen::ui_module_definitions();
+    let defs = definitions();
     for c in CATALOGUE {
         assert!(lua.contains(&format!("function ui.{}(props)", c.name)), "{}", c.name);
-        assert!(defs.contains(&format!("---@class {}Props\n", c.name)), "{}", c.name);
-        assert!(defs.contains(&format!("function ui.{}(props) end", c.name)), "{}", c.name);
+        assert!(defs.contains(&format!("export type vos_{}Props = {{\n", c.name)), "{}", c.name);
+        assert!(
+            defs.contains(&format!("\t{}: (props: vos_{}Props) -> vos_Node,", c.name, c.name)),
+            "{}",
+            c.name
+        );
     }
     for (sugar, _) in STACK_SUGAR {
         assert!(lua.contains(&format!("function ui.{sugar}(props)")), "{sugar}");
-        assert!(defs.contains(&format!("function ui.{sugar}(props) end")), "{sugar}");
+        assert!(defs.contains(&format!("\t{sugar}: (props: vos_StackProps) -> vos_Node,")), "{sugar}");
     }
 }
 
@@ -81,18 +104,23 @@ fn ui_act_covers_exactly_the_domain_actions() {
     let wire: Vec<&str> = vos_codegen::ACTION_BUILDERS.iter().map(|(_, wire)| *wire).collect();
     assert_eq!(wire, Action::NAMES);
     let lua = vos_codegen::ui_module();
-    let defs = vos_codegen::ui_module_definitions();
+    let defs = definitions();
     for (builder, wire) in vos_codegen::ACTION_BUILDERS {
         assert!(lua.contains(&format!("function act.{builder}(")), "act.{builder}");
-        assert!(defs.contains(&format!("function act.{builder}(")), "act.{builder} definition");
+        assert!(defs.contains(&format!("\t{builder}: (")), "act.{builder} definition");
         assert!(lua.contains(&format!("[\"do\"] = \"{wire}\"")), "{wire}");
     }
 }
 
+/// The runtime module is plain Lua source (the host runs it as Luau; the contract tests below also run it with a native
+/// `lua`): the types of its constructors live in the declarations.
 #[test]
-fn ui_lua_is_plain_lua_5_1() {
+fn ui_lua_is_plain_lua() {
     let lua = vos_codegen::ui_module();
-    assert!(!lua.contains("---@"), "the runtime module carries no annotations: they live in the definitions");
+    assert!(
+        !lua.contains("---@"),
+        "the runtime module carries no annotations: they live in the declarations"
+    );
     let code: String =
         lua.lines().filter(|line| !line.trim_start().starts_with("--")).collect::<Vec<_>>().join("\n");
     for luau_only in ["export type", ":: ", " += ", " ..= ", "continue", "`"] {
@@ -102,28 +130,69 @@ fn ui_lua_is_plain_lua_5_1() {
 
 #[test]
 fn the_definitions_declare_the_app_global_and_the_client_decl() {
-    let defs = vos_codegen::vos_definitions();
-    assert!(defs.starts_with("---@meta\n"));
-    assert!(defs.contains("---@class AppApi"));
-    assert!(defs.contains("\napp = nil\n"), "the global `app`");
+    let defs = definitions();
+    assert!(defs.starts_with("-- GENERATED by vos-codegen"));
+    assert!(defs.contains("export type vos_AppApi = {"));
+    assert!(defs.contains("\ndeclare app: vos_AppApi\n"), "the global `app`");
     assert!(
-        defs.contains("---@alias ClientDecl {"),
+        defs.contains("export type vos_ClientDecl = {"),
         "ClientDecl comes from the JSON Schema of the Rust type"
     );
-    assert!(defs.contains("---@alias Persist \"none\"|\"session\"|\"app\""));
-    assert_eq!(vos_codegen::app_module_definitions().lines().last(), Some("return app"));
+    assert!(defs.contains("export type vos_Persist = \"none\" | \"session\" | \"app\""));
+    for ty in ["vos_Ref<T>", "vos_Expr<T>", "vos_Handler<P>", "vos_Child", "vos_Action", "vos_Node"] {
+        assert!(defs.contains(&format!("export type {ty} = ")), "{ty} is defined");
+    }
+}
+
+/// Two `declare require` do not merge: the file has one, and it is the last thing in it.
+#[test]
+fn the_definitions_have_one_declare_require_with_every_module() {
+    let defs = definitions();
+    assert_eq!(defs.lines().filter(|l| l.starts_with("declare require")).count(), 1);
+    let overloads = vos_codegen::require_overloads(&defs);
+    let names: Vec<&str> = overloads.iter().map(|(name, _)| name.as_str()).collect();
+    assert!(names.contains(&"vos:app") && names.contains(&"vos:ui"), "{names:?}");
+    assert!(defs.trim_end().ends_with("& ((path: string) -> any)"), "a bundled module of the app is any");
+    // typed: the app API and the constructors are the types the file declares
+    assert!(overloads.contains(&("vos:app".to_owned(), "vos_AppApi".to_owned())));
+    assert!(overloads.contains(&("vos:ui".to_owned(), "vos_ui".to_owned())));
 }
 
 #[test]
-fn the_module_definitions_use_the_shared_core_types() {
-    let core = vos_codegen::vos_definitions();
-    let module = vos_codegen::ui_module_definitions();
-    assert!(module.starts_with("---@meta\n"));
-    for ty in ["Ref<T>", "Expr<T>", "Handler<P>", "Child", "Action", "Node"] {
-        assert!(core.contains(&format!("{ty} ")) || core.contains(&format!("{ty}\n")), "{ty} is defined");
+fn the_modules_an_app_is_not_offered_are_unusable_and_the_others_are_neocs() {
+    let defs = definitions();
+    let overloads = vos_codegen::require_overloads(&defs);
+    for refused in NOT_FOR_APPS {
+        let (_, ty) =
+            overloads.iter().find(|(name, _)| name == refused).unwrap_or_else(|| panic!("{refused}"));
+        assert!(ty.starts_with("vos_NotForApps_"), "{refused} is typed unusable, not as neoc's module: {ty}");
+        let section = format!("-- ===== {refused} =====");
+        assert!(!defs.contains(&section), "neoc's section of {refused} is left out");
+        assert!(defs.contains(&format!("export type {ty} = {{ __not_for_apps: never }}")), "{ty}");
     }
-    for used in ["Expr<", "Handler<", "Child"] {
-        assert!(module.contains(used), "{used} is used by the props");
+    // every other overload is neoc's own type for the module (`lib:json` -> `lib_json`)
+    let neoc = fs::read_to_string(root().join(vos_codegen::NEOC_DECLARATIONS)).unwrap();
+    let theirs = vos_codegen::require_overloads(&neoc);
+    assert!(theirs.len() > NOT_FOR_APPS.len() + 20);
+    for (name, ty) in &theirs {
+        if NOT_FOR_APPS.contains(&name.as_str()) {
+            continue;
+        }
+        assert!(overloads.contains(&(name.clone(), ty.clone())), "{name} keeps neoc's type {ty}");
+        assert!(defs.contains(&format!("-- ===== {name} =====\n")), "{name} keeps its section");
+    }
+    assert_eq!(overloads.len(), theirs.len() + 2, "neoc's modules, `vos:app` and `vos:ui`");
+}
+
+#[test]
+fn the_globals_an_app_does_not_have_are_declared_unusable() {
+    let defs = definitions();
+    for global in GLOBALS_NOT_FOR_APPS {
+        assert!(defs.contains(&format!("\ndeclare {global}: vos_NotForApps_{global}\n")), "{global}");
+    }
+    // and none of them is a global the app is meant to use
+    for needed in ["app", "typeof", "utf8", "table", "string", "math", "bit32", "coroutine"] {
+        assert!(!GLOBALS_NOT_FOR_APPS.contains(&needed), "{needed}");
     }
 }
 
@@ -210,7 +279,7 @@ fn lua_binary() -> Option<&'static str> {
         .find(|name| Command::new(name).arg("-v").output().is_ok_and(|out| out.status.success()))
 }
 
-/// Where an example app's Lua lives: the real app under `apps/<app>` when the repo has one (the Calculator), so the
+/// Where an example app's Luau lives: the real app under `apps/<app>` when the repo has one (the Calculator), so the
 /// contract is checked against what ships, else a fixture (Notes, which exists only as an example).
 fn source_of(app: &str) -> std::path::PathBuf {
     let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps").join(app);
@@ -228,20 +297,41 @@ fn write_ui(work: &Path) -> PathBuf {
     ui
 }
 
-/// Run an example app's `main` window with a `lua` interpreter against the generated `ui.lua`. `None` when no
-/// interpreter is installed.
+/// The app as the host runs it: the one file the product's own pipeline builds (`scripts/luau-build.ts`: darklua,
+/// with the types stripped). Needs bun and darklua, as the other crates' tests do.
+fn build(app: &str, work: &Path) -> PathBuf {
+    let built = work.join("app.luau");
+    let run = Command::new("bun")
+        .arg("scripts/luau-build.ts")
+        .arg(source_of(app).join("app.luau"))
+        .arg(&built)
+        .current_dir(root())
+        .output()
+        .expect("bun is needed to build the apps these tests run (https://bun.sh)");
+    assert!(
+        run.status.success(),
+        "building {app} failed (is darklua 0.18.0 installed? see scripts/luau.ts):\n{}{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    built
+}
+
+/// Run an example app's `main` window, built as the host runs it, with a `lua` interpreter against the generated
+/// `ui.lua`. `None` when no interpreter is installed.
 fn run_lua(app: &str) -> Option<Value> {
     let lua = lua_binary()?;
     let work = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("lua-{app}"));
     let _ = fs::remove_dir_all(&work);
     fs::create_dir_all(&work).unwrap();
     let ui = write_ui(&work);
+    let built = build(app, &work);
     let output = Command::new(lua)
         .current_dir(&work)
         .arg(fixtures().join("stub/harness.lua"))
         .arg(&ui)
         .arg(fixtures().join("stub/app.lua"))
-        .arg(source_of(app))
+        .arg(&built)
         .output()
         .ok()?;
     assert!(

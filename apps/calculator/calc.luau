@@ -1,3 +1,4 @@
+--!strict
 -- A safe arithmetic evaluator (a small shunting-yard parser: nothing is ever compiled from the text, and the
 -- sandbox has no `loadstring`), `format` for results and `formatEntry` for the number being typed.
 local calc = {}
@@ -5,34 +6,37 @@ local calc = {}
 -- A failure calc raises on purpose is a plain sentence for a person ("Can't divide by zero") and for an agent, with
 -- no "calc.lua:56:" in front: an error object whose `tostring` is that sentence. Anything else that goes wrong
 -- (a bug) is an ordinary error with a source position, which `calc.reason` keeps from reaching the screen.
+type Failure = { message: string }
+
 local Failure = {}
-Failure.__tostring = function(failure)
+Failure.__tostring = function(failure: Failure): string
   return failure.message
 end
 
-local function fail(message)
+local function fail(message: string): never
   error(setmetatable({ message = message }, Failure))
 end
 
 -- The sentence to show for something `pcall` caught: a failure raised by `fail`, else a generic one.
-function calc.reason(err)
-  if getmetatable(err) == Failure then
-    return err.message
+function calc.reason(err: unknown): string
+  if getmetatable(err :: any) == Failure then
+    return (err :: Failure).message
   end
   return "Something went wrong"
 end
 
 -- A token is { kind = "num" | "op" | "paren", value = text, number = its value (numbers only) }.
+type Token = { kind: "num" | "op" | "paren", value: string, number: number }
 
-local PRECEDENCE = { ["+"] = 1, ["-"] = 1, ["*"] = 2, ["/"] = 2, ["%"] = 2, ["^"] = 3, neg = 4 }
-local RIGHT_ASSOCIATIVE = { ["^"] = true, neg = true }
+local PRECEDENCE: { [string]: number } = { ["+"] = 1, ["-"] = 1, ["*"] = 2, ["/"] = 2, ["%"] = 2, ["^"] = 3, neg = 4 }
+local RIGHT_ASSOCIATIVE: { [string]: boolean } = { ["^"] = true, neg = true }
 
-local function tokenize(input)
+local function tokenize(input: string): { Token }
   local source = string.gsub(input, "×", "*")
   source = string.gsub(source, "÷", "/")
   source = string.gsub(source, "−", "-")
   source = string.gsub(source, "%s+", "")
-  local tokens = {}
+  local tokens: { Token } = {}
   local i = 1
   while i <= #source do
     local ch = string.sub(source, i, i)
@@ -44,7 +48,7 @@ local function tokenize(input)
       local text = string.sub(source, i, j - 1)
       local value = tonumber(text)
       if value == nil then
-        fail('Invalid number "' .. text .. '"')
+        return fail('Invalid number "' .. text .. '"')
       end
       table.insert(tokens, { kind = "num", value = text, number = value })
       i = j
@@ -54,17 +58,18 @@ local function tokenize(input)
       table.insert(tokens, { kind = "op", value = unary and "neg" or ch, number = 0 })
       i = i + 1
     elseif ch == "(" or ch == ")" then
-      table.insert(tokens, { kind = "paren", value = ch, number = 0 })
+      local paren: string = ch
+      table.insert(tokens, { kind = "paren", value = paren, number = 0 })
       i = i + 1
     else
-      fail('Unexpected character "' .. ch .. '"')
+      return fail('Unexpected character "' .. ch .. '"')
     end
   end
   return tokens
 end
 
 -- One binary operation on numbers. Raises on division by zero.
-local function operate(op, a, b)
+local function operate(op: string, a: number, b: number): number
   if op == "+" then
     return a + b
   elseif op == "-" then
@@ -73,44 +78,42 @@ local function operate(op, a, b)
     return a * b
   elseif op == "/" then
     if b == 0 then
-      fail("Can't divide by zero")
+      return fail("Can't divide by zero")
     end
     return a / b
   elseif op == "%" then
     if b == 0 then
-      fail("Can't divide by zero") -- Lua's `a % 0` is nan
+      return fail("Can't divide by zero") -- Lua's `a % 0` is nan
     end
     return a % b
   elseif op == "^" then
     return a ^ b
   end
-  fail('Unknown operator "' .. op .. '"')
+  return fail('Unknown operator "' .. op .. '"')
 end
 
 -- Round away binary noise (0.1 + 0.2): 12 significant digits, as a number.
-local function tidy(value)
-  return tonumber(string.format("%.12g", value))
+local function tidy(value: number): number
+  return tonumber(string.format("%.12g", value)) :: number
 end
 
-local function apply(op, stack)
+-- Takes the top of the stack; an empty one is a malformed expression (`1 +`, `*`).
+local function pop(stack: { number }): number
+  return table.remove(stack) or fail("Malformed expression")
+end
+
+local function apply(op: string, stack: { number })
   if op == "neg" then
-    local a = table.remove(stack)
-    if a == nil then
-      fail("Malformed expression")
-    end
-    table.insert(stack, -a)
+    table.insert(stack, -pop(stack))
     return
   end
-  local b = table.remove(stack)
-  local a = table.remove(stack)
-  if a == nil or b == nil then
-    fail("Malformed expression")
-  end
+  local b = pop(stack)
+  local a = pop(stack)
   table.insert(stack, operate(op, a, b))
 end
 
 -- A result the display cannot show: infinity (too big) or nan (not a real number, such as (-8) ^ 0.5).
-local function checked(result)
+local function checked(result: number): number
   if result ~= result then
     fail("Not a real number")
   elseif math.abs(result) == math.huge then
@@ -121,18 +124,18 @@ end
 
 -- `a op b` on numbers, the way the keypad chains: no text round trip, so a result shown as 2e-7 or 1e21 is an
 -- ordinary operand. Raises on division by zero and on a result too large to show.
-function calc.combine(a, op, b)
+function calc.combine(a: number, op: string, b: number): number
   return checked(operate(op, a, b))
 end
 
 -- Evaluate an arithmetic expression; raises a descriptive error when invalid.
-function calc.evaluate(expression)
+function calc.evaluate(expression: string): number
   local tokens = tokenize(expression)
   if #tokens == 0 then
     fail("Empty expression")
   end
-  local values = {}
-  local ops = {}
+  local values: { number } = {}
+  local ops: { string } = {}
   for _, token in ipairs(tokens) do
     if token.kind == "num" then
       table.insert(values, token.number)
@@ -140,7 +143,7 @@ function calc.evaluate(expression)
       table.insert(ops, "(")
     elseif token.kind == "paren" then
       while #ops > 0 and ops[#ops] ~= "(" do
-        apply(table.remove(ops), values)
+        apply(table.remove(ops) :: string, values)
       end
       if table.remove(ops) ~= "(" then
         fail("Mismatched parentheses")
@@ -154,7 +157,7 @@ function calc.evaluate(expression)
         end
         local other = PRECEDENCE[top]
         if other > precedence or (other == precedence and not RIGHT_ASSOCIATIVE[token.value]) then
-          apply(table.remove(ops), values)
+          apply(table.remove(ops) :: string, values)
         else
           break
         end
@@ -163,7 +166,7 @@ function calc.evaluate(expression)
     end
   end
   while #ops > 0 do
-    local op = table.remove(ops)
+    local op = table.remove(ops) :: string
     if op == "(" then
       fail("Mismatched parentheses")
     end
@@ -175,7 +178,7 @@ function calc.evaluate(expression)
   return checked(values[1])
 end
 
-local function group(digits)
+local function group(digits: string): string
   local spaced = string.gsub(string.reverse(digits), "(%d%d%d)", "%1,")
   return (string.gsub(string.reverse(spaced), "^,", ""))
 end
@@ -183,7 +186,7 @@ end
 -- Fixed notation with at most 9 significant digits and no trailing zeros. Not `%.9g`: that switches to
 -- exponent form ("5e-05", "1e+09") between 1e-6 and 1e-4 and when rounding reaches 1e9, which has no integer
 -- part to group.
-local function fixed(value)
+local function fixed(value: number): string
   local decimals = math.max(0, 8 - math.floor(math.log10(math.abs(value))))
   local text = string.format("%." .. decimals .. "f", value)
   if string.find(text, ".", 1, true) then
@@ -194,7 +197,7 @@ local function fixed(value)
 end
 
 -- Format a result for the display: grouping, at most 9 significant digits.
-function calc.format(value)
+function calc.format(value: number): string
   if value ~= value or math.abs(value) == math.huge then
     return "Error"
   end
@@ -202,18 +205,20 @@ function calc.format(value)
     return "0"
   end
   -- 999999999.6 is under 1e9 but shows as 1e9 once rounded to 9 digits
-  local rounded = tonumber(string.format("%.9g", value))
-  ---@cast rounded number
+  local rounded = tonumber(string.format("%.9g", value)) :: number
   if math.abs(rounded) >= 1e9 or math.abs(value) < 1e-6 then
     local mantissa, exponent = string.match(string.format("%.8e", value), "^(.-)e([+-]%d+)$")
+    assert(mantissa ~= nil and exponent ~= nil)
     local trimmed = string.gsub(mantissa, "%.?0+$", "")
     -- "%e" pads the exponent to two digits ("e-07") and signs it ("e+12"): show "e-7" and "e12"
     local sign, digits = string.match(exponent, "^([+-])(%d+)$")
-    local power = (sign == "-" and "-" or "") .. tonumber(digits)
+    assert(sign ~= nil and digits ~= nil)
+    local power = (sign == "-" and "-" or "") .. (tonumber(digits) :: number)
     return trimmed .. "e" .. power
   end
   local text = fixed(value)
   local sign, integer, fraction = string.match(text, "^(-?)(%d+)%.?(%d*)$")
+  assert(sign ~= nil and integer ~= nil and fraction ~= nil)
   local grouped = group(integer)
   if fraction ~= "" then
     return sign .. grouped .. "." .. fraction
@@ -222,8 +227,9 @@ function calc.format(value)
 end
 
 -- Format the number being typed: group the integer part, keep a trailing dot and trailing zeros.
-function calc.formatEntry(entry)
+function calc.formatEntry(entry: string): string
   local sign, integer, rest = string.match(entry, "^(-?)(%d*)(.*)$")
+  assert(sign ~= nil and integer ~= nil and rest ~= nil)
   local grouped = group(integer == "" and "0" or integer)
   return sign .. grouped .. rest
 end

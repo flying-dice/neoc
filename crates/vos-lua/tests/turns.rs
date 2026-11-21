@@ -85,7 +85,7 @@ fn waits(url: &str) -> Vec<(&'static str, String)> {
 
 /// Every row of `SPELLINGS` with every kind of wait: where the engine cannot yield the wait fails and the turn is not
 /// lent (nothing runs inside the call); where it can, the wait suspends (`ok` only says it was not refused; that it
-/// suspends is shown by `lua51.rs`); in both the call is still read-only afterwards, because the restriction belongs to
+/// suspends is shown by `luau.rs`); in both the call is still read-only afterwards, because the restriction belongs to
 /// the call and not to the turn.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_read_only_tool_stays_read_only_across_every_wait_inside_luas_own_machinery() {

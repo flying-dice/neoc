@@ -1,6 +1,6 @@
 [package]
 name = "vos-lua"
-description = "Adapter: apps (plain Lua 5.1 source, run on neoc-vm) implementing the AppRuntime port, one VM per app."
+description = "Adapter: apps (Luau, run on neoc-vm) implementing the AppRuntime port, one VM per app."
 version.workspace = true
 edition = "2021"
 rust-version.workspace = true

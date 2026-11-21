@@ -2,7 +2,7 @@
 /**
  * The prelude the host embeds, copied next to the other generated files:
  *
- *   types/generated/prelude.lua  <- lua/prelude.lua   (a few standard-library polyfills for Lua 5.1)
+ *   types/generated/prelude.lua  <- lua/prelude.lua   (`typeof` and `utf8`, which the app environment does not copy from Luau)
  *
  * (`types/generated/ui.lua`, the other embedded module, is written by the Rust generator, `vos-codegen`.)
  *

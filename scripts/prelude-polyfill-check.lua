@@ -1,10 +1,10 @@
 -- Compares the prelude's polyfills with the native implementations of a Lua 5.3+ interpreter:
---   lua scripts/lua51-polyfill-check.lua <prelude.lua>
--- The prelude runs in a fresh globals table that lacks utf8, table.move/pack/unpack/clone and typeof (what a
--- Lua 5.1 host has), then each call is made on both and the results must agree (an error must be an error on
+--   lua scripts/prelude-polyfill-check.lua <prelude.lua>
+-- The prelude runs in a fresh globals table that lacks utf8 and typeof (the app environment copies neither from the
+-- engine), then each call is made on both and the results must agree (an error must be an error on
 -- both; messages differ). Exits 0 and prints "ok <n> comparisons", or raises with the first difference.
 
-local native = { utf8 = utf8, move = table.move }
+local native = { utf8 = utf8 }
 
 local env = {}
 for name, value in pairs(_G) do
@@ -12,15 +12,10 @@ for name, value in pairs(_G) do
 end
 env.utf8, env.typeof = nil, nil
 env.unpack = table.unpack
-env.table = {}
-for name, value in pairs(table) do
-  env.table[name] = value
-end
-env.table.move, env.table.pack, env.table.unpack, env.table.clone = nil, nil, nil, nil
 
 local source = assert(io.open(arg[1], "rb")):read("a")
 assert(load(source, "prelude", "t", env))(env) -- the prelude installs into its `...` argument
-local poly = { utf8 = env.utf8, move = env.table.move }
+local poly = { utf8 = env.utf8 }
 
 local comparisons = 0
 local function same(a, b)
@@ -149,30 +144,6 @@ for _, text in ipairs { "h\xc3\xa9llo", "\xe6\x97\xa5\xe6\x9c\xac", "a\xf0\x9f\x
   assert(same(a, b), "charpattern splits " .. text .. " differently")
 end
 
-local function range(count)
-  local list = {}
-  for i = 1, count do
-    list[i] = i
-  end
-  return list
-end
-for from = -1, 6 do
-  for upTo = -1, 6 do
-    for to = -1, 8 do
-      agree("move", native.move, poly.move, nil, range(5), from, upTo, to)
-      agree("move", native.move, poly.move, nil, range(5), from, upTo, to, {})
-    end
-  end
-end
-
-local meta = setmetatable({ 1, 2, k = "v" }, { __index = { inherited = true } })
-local copy = env.table.clone(meta)
-assert(
-  copy ~= meta and copy[1] == 1 and copy.k == "v" and copy.inherited == true,
-  "table.clone keeps fields and metatable"
-)
 assert(env.typeof(1) == "number" and env.typeof {} == "table" and env.typeof(nil) == "nil")
-assert(select("#", env.table.unpack { 1, 2, 3 }) == 3)
-assert(env.table.pack(1, nil, 3).n == 3)
 
 print("ok " .. comparisons .. " comparisons")

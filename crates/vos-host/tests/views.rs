@@ -21,8 +21,8 @@ async fn host_with(tmp: &Path, apps: &[&str]) -> Running {
     })
     .await;
     for app in apps {
-        let refs = [("app.lua", built_app(app))];
-        let url = publish_package(&tmp.join(format!("pkg-{app}")), app, "app.lua", &refs);
+        let refs = [("app.luau", built_app(app))];
+        let url = publish_package(&tmp.join(format!("pkg-{app}")), app, "app.luau", &refs);
         r.host.service.install_from_url(&url).await.unwrap();
     }
     r

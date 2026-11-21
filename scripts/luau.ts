@@ -1,17 +1,18 @@
 /**
- * Bundling a Lua 5.1 app with darklua (config: .darklua.json), shared by `build-apps.ts` and `lua51-build.ts`.
+ * Bundling a Luau app with darklua (config: .darklua.json), shared by `build-apps.ts` and `luau-build.ts`.
  *
- * Apps are plain Lua 5.1 and are shipped as plain Lua 5.1: darklua only bundles an app's relative `require`s into
- * one chunk (and strips comments). `vos:*` requires and the host's neoc modules (`std:*`, `lib:*`, `vnd:*`) stay as
- * runtime `require` calls (the host provides those modules; `.darklua.json` excludes them, as `[:]` because a bare `:`
- * is not a valid darklua glob). Nothing is lowered, so an app is exactly the Lua it is written in.
+ * Apps are authored in Luau (`--!strict`, annotations, the whole language) and run as Luau: darklua bundles an
+ * app's relative `require`s into one chunk (darklua resolves `./calc` to `calc.luau`), strips the comments and the
+ * type annotations (the host does not use them, and darklua's own bundle prelude carries one). `vos:*` requires and
+ * the host's neoc modules (`std:*`, `lib:*`, `vnd:*`) stay as runtime `require` calls (the host provides those
+ * modules; `.darklua.json` excludes them, as `[:]` because a bare `:` is not a valid darklua glob). Nothing is
+ * lowered: no rule rewrites Luau syntax, so what runs is the Luau the app is written in, less its types.
  *
  * The generator is `retain_lines` (with `remove_comments`), so line numbers in an error from the VM point at the
  * source: a file keeps every statement on its line (an app with no relative require is line for line its
- * `app.lua`). Bundling a module hoists it to the top of the file: the module's lines move down by a small
- * constant (+2 for `calc.lua`) and the entry's by the size of the modules before it. The `readable` generator
- * reformats every line and gives no such mapping. (`remove_types` is on only because darklua's own bundle
- * prelude carries a type annotation.)
+ * `app.luau`). Bundling a module hoists it to the top of the file: the module's lines move down by a small
+ * constant (+4 for `calc.luau`) and the entry's by the size of the modules before it. The `readable` generator
+ * reformats every line and gives no such mapping.
  *
  * Unlike the lint tools, building cannot skip when darklua is missing: the output is what the host runs.
  */
@@ -40,7 +41,7 @@ export function requireDarklua(): string {
   const darklua = findDarklua()
   if (!darklua) {
     console.error(
-      `darklua not found. It bundles the Lua apps; install the pinned version:\n` +
+      `darklua not found. It bundles the Luau apps; install the pinned version:\n` +
         `  cargo install darklua --version ${DARKLUA_VERSION} --locked\n` +
         `(or put darklua ${DARKLUA_VERSION} on PATH, e.g. brew install darklua)`
     )
@@ -58,10 +59,10 @@ export function requireDarklua(): string {
 }
 
 /**
- * The Lua 5.1 text of the Lua file `entry`, with its relative requires bundled in.
+ * The Luau text of the Luau file `entry`, with its relative requires bundled in.
  * Throws with darklua's message when the file does not process.
  */
-export function toLua51(darklua: string, entry: string): string {
+export function toLuau(darklua: string, entry: string): string {
   const scratch = mkdtempSync(join(tmpdir(), 'vos-darklua-'))
   try {
     const output = join(scratch, 'out.lua')

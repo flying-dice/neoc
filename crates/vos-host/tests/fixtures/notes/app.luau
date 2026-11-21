@@ -1,3 +1,4 @@
+--!strict
 -- Sample app for the host end-to-end tests: a small Notes data model with live sources, a two-way bound
 -- row and agent tools (no window: the view journeys use the Notes and Calculator of the spec).
 local app = require("vos:app")

@@ -1,6 +1,6 @@
 //! `require`: the host's modules, and nothing from the package.
 //!
-//! An app is built into one self-contained Lua 5.1 file (its own modules are bundled in at build time), so at
+//! An app is built into one self-contained Luau file (its own modules are bundled in at build time), so at
 //! run time there is nothing to resolve in the package and no filesystem. Three kinds of name resolve:
 //!
 //! - `require("vos:app")` is the `app` table, and `require("vos:<name>")` a host module the host
@@ -22,10 +22,10 @@ use neoc_vm::{
 };
 use std::sync::Arc;
 
-/// The modules of the VM library that an app is not offered: `lib:test` (a test harness that prints to stdout),
-/// `lib:compile` (builds standalone executables) and `std:workers` (a process-wide shutdown signal). Which
-/// modules a script may have is the embedder's policy; the library offers all of them (`modules::names`).
-pub const NOT_FOR_APPS: &[&str] = &["lib:test", "lib:compile", "std:workers"];
+/// The modules of the VM library that an app is not offered (the list is `vos_domain::NOT_FOR_APPS`, which the Luau
+/// declarations are generated from as well). Which modules a script may have is the embedder's policy; the library
+/// offers all of them (`modules::names`).
+pub use vos_domain::NOT_FOR_APPS;
 
 /// The library modules an app (and a `std:thread` worker it starts) is offered: every one the library has,
 /// less [`NOT_FOR_APPS`]. The one place that rule is written.

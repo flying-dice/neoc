@@ -6,10 +6,8 @@
 //! | Output | For | How |
 //! |---|---|---|
 //! | `types/generated/vos.ts` | the client renderer | protocol types via `ts-rs` (reads the serde attributes), component types and the runtime `COMPONENTS` table from the catalogue |
-//! | `types/generated/ui.lua` | the Lua 5.1 runtime (`require("vos:ui")`) | the `ui.*` constructors, `ui.act`, `ui.fmt`, expression helpers (plain Lua 5.1) |
-//! | `types/generated/luals/vos.lua` | app authors (lua-language-server) | `LuaCATS`: the `app` API and its global, the core and component types, `ClientDecl` via JSON Schema (`schemars`) |
-//! | `types/generated/luals/vos/ui.lua` | lua-language-server | `LuaCATS` for `require("vos:ui")`: every component's props and the `ui` functions |
-//! | `types/generated/luals/vos/app.lua` | lua-language-server | `require("vos:app")` is the global `app` |
+//! | `types/generated/ui.lua` | the Luau runtime (`require("vos:ui")`) | the `ui.*` constructors, `ui.act`, `ui.fmt`, expression helpers (plain Lua source, no annotations) |
+//! | `types/generated/vos.d.luau` | app authors (luau-lsp) | Luau declarations: the `std:`/`lib:`/`vnd:` modules an app is offered (from `types/neoc.d.luau`), the `app` API and its global, the core and component types, `ClientDecl` via JSON Schema (`schemars`), `ui`, and the one `declare require` |
 //! | `docs/reference/components.md` | everyone | the component reference |
 //!
 //! `bun run codegen` writes them; `bun run codegen:check` (part of `bun run lint`) fails when the committed files
@@ -17,17 +15,18 @@
 
 mod docs;
 mod lua;
-mod schema_lua;
+mod luau;
 mod ts;
 mod walk;
 
-pub use lua::{
-    app_module_definitions, module as ui_module, ui_module_definitions, vos_definitions, ACTION_BUILDERS,
-};
-pub use schema_lua::schema_to_lua;
+pub use lua::{module as ui_module, ACTION_BUILDERS};
+pub use luau::defs::{definitions as luau_definitions, require_overloads};
 pub use ts::generate as typescript;
 
 use std::{fs, io, path::Path};
+
+/// Where neoc's own generated declarations of its modules are (what `types/generated/vos.d.luau` is built from).
+pub const NEOC_DECLARATIONS: &str = "types/neoc.d.luau";
 
 /// One generated file: its path relative to the repository root and its contents.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,25 +35,27 @@ pub struct GeneratedFile {
     pub contents: String,
 }
 
-/// Every generated file.
-#[must_use]
-pub fn generate() -> Vec<GeneratedFile> {
-    vec![
+/// Every generated file. `root` is the repository root, where [`NEOC_DECLARATIONS`] is read.
+///
+/// # Errors
+/// neoc's declarations are missing, or are not in the shape the generator reads.
+pub fn generate(root: &Path) -> Result<Vec<GeneratedFile>, String> {
+    let neoc = fs::read_to_string(root.join(NEOC_DECLARATIONS))
+        .map_err(|e| format!("cannot read {NEOC_DECLARATIONS}: {e}"))?;
+    Ok(vec![
         GeneratedFile { path: "types/generated/vos.ts", contents: ts::generate() },
         GeneratedFile { path: "types/generated/ui.lua", contents: lua::module() },
-        GeneratedFile { path: "types/generated/luals/vos.lua", contents: lua::vos_definitions() },
-        GeneratedFile { path: "types/generated/luals/vos/ui.lua", contents: lua::ui_module_definitions() },
-        GeneratedFile { path: "types/generated/luals/vos/app.lua", contents: lua::app_module_definitions() },
+        GeneratedFile { path: "types/generated/vos.d.luau", contents: luau::defs::definitions(&neoc)? },
         GeneratedFile { path: "docs/reference/components.md", contents: docs::generate() },
-    ]
+    ])
 }
 
 /// Write every generated file under `root`.
 ///
 /// # Errors
-/// Any I/O error creating a directory or writing a file.
+/// Any I/O error creating a directory or writing a file, or [`generate`] failing.
 pub fn write_all(root: &Path) -> io::Result<()> {
-    for file in generate() {
+    for file in generate(root).map_err(io::Error::other)? {
         let target = root.join(file.path);
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
@@ -76,7 +77,10 @@ const WRITTEN_ELSEWHERE: &[&str] = &["types/generated/prelude.lua"];
 /// files under `types/generated` that no generator writes any more.
 #[must_use]
 pub fn stale(root: &Path) -> Vec<String> {
-    let files = generate();
+    let files = match generate(root) {
+        Ok(files) => files,
+        Err(error) => return vec![format!("every generated file ({error})")],
+    };
     let mut stale: Vec<String> = files
         .iter()
         .filter(|file| {
@@ -123,15 +127,19 @@ pub fn repo_root() -> &'static Path {
 mod tests {
     use super::*;
 
+    /// A copy of the repository's generated files and neoc's declarations, which the tests may edit.
     fn scratch(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("vos-codegen-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("types")).unwrap();
+        fs::copy(repo_root().join(NEOC_DECLARATIONS), dir.join(NEOC_DECLARATIONS)).unwrap();
         write_all(&dir).unwrap();
         dir
     }
 
-    /// A generated file that nothing writes any more (`ui.luau` after the move to Lua 5.1) kept being read by
-    /// whatever globbed the directory, and `codegen:check` was green with it there.
+    /// A generated file that nothing writes any more (`ui.luau` after the move to Lua 5.1, the `luals/` definition
+    /// files after the move to Luau declarations) kept being read by whatever globbed the directory, and `codegen:check`
+    /// was green with it there.
     #[test]
     fn a_file_no_generator_writes_any_more_is_stale() {
         let dir = scratch("orphans");
@@ -141,12 +149,11 @@ mod tests {
         fs::write(dir.join("types/generated/luals/old/extra.lua"), "-- old output").unwrap();
         // the prelude is another generator's (scripts/codegen-lua.ts)
         fs::write(dir.join("types/generated/prelude.lua"), "-- copy").unwrap();
-        // the std:/lib:/vnd: module definitions are not vos's to write (neoc dropped its LuaCATS output): a copy left
-        // here is an orphan
-        fs::write(dir.join("types/generated/luals/lib:json.lua"), "---@meta").unwrap();
+        // the `luals/` definitions this generator used to write
+        fs::write(dir.join("types/generated/luals/vos.lua"), "---@meta").unwrap();
         let flagged = stale(&dir);
         assert_eq!(flagged.len(), 3, "{flagged:?}");
-        assert!(flagged.iter().any(|p| p.starts_with("types/generated/luals/lib:json.lua")), "{flagged:?}");
+        assert!(flagged.iter().any(|p| p.starts_with("types/generated/luals/vos.lua")), "{flagged:?}");
         assert!(flagged.iter().any(|p| p.starts_with("types/generated/ui.luau")), "{flagged:?}");
         assert!(flagged.iter().any(|p| p.starts_with("types/generated/luals/old/extra.lua")), "{flagged:?}");
         fs::remove_dir_all(dir).unwrap();
@@ -158,6 +165,20 @@ mod tests {
         fs::write(dir.join("types/generated/ui.lua"), "-- edited").unwrap();
         fs::remove_file(dir.join("docs/reference/components.md")).unwrap();
         assert_eq!(stale(&dir), ["types/generated/ui.lua", "docs/reference/components.md"]);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The app definitions are built from neoc's file: when that changes, the committed definitions are stale
+    /// (`bun run codegen:check` then asks for a regeneration), and a file of another shape is an error.
+    #[test]
+    fn the_definitions_follow_neoc_declarations() {
+        let dir = scratch("neoc");
+        let neoc = dir.join(NEOC_DECLARATIONS);
+        let text = fs::read_to_string(&neoc).unwrap();
+        fs::write(&neoc, text.replace("Read a key.", "Read a key (changed).")).unwrap();
+        assert_eq!(stale(&dir), ["types/generated/vos.d.luau"]);
+        fs::write(&neoc, "-- nothing\n").unwrap();
+        assert!(stale(&dir)[0].contains("no `-- ===== require =====` section"), "{:?}", stale(&dir));
         fs::remove_dir_all(dir).unwrap();
     }
 }

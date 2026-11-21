@@ -1,3 +1,4 @@
+--!strict
 -- Sample app for the background-work tests: a counter that a task of the app raises on its own, every 0.2 s, for
 -- as long as the app is loaded. It shows what AGOS-52 and AGOS-54 promise: the work starts at load without
 -- holding it up (`task.spawn` at the top level), it goes on when the window is closed, it re-renders every open

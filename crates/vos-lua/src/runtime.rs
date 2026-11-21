@@ -22,7 +22,7 @@ use vos_application::{
 };
 use vos_domain::AppId;
 
-/// The generated constructors (`types/generated/ui.lua`) every app gets as `require("vos:ui")`. Lua 5.1 source of
+/// The generated constructors (`types/generated/ui.lua`) every app gets as `require("vos:ui")`. Luau source of
 /// `vos:ui` (hosts and tests that build a [`VmConfig`] by hand register it as `ui`).
 pub const UI_MODULE: &str = include_str!("../../../types/generated/ui.lua");
 

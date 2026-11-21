@@ -27,20 +27,20 @@ use vos_host::startup::{prepare_data_dir, start_apps};
 
 /// Publish the fixture app under `root` as an app ref with the id `id`; returns the `file://` URL of the ref.
 fn publish_app(root: &Path, id: &str) -> String {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/notes/app.lua");
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/notes/app.luau");
     let lua = std::fs::read_to_string(src).unwrap().replace("\"notes\"", &format!("\"{id}\""));
     std::fs::create_dir_all(root).unwrap();
-    // build the fixture with the app pipeline: the one Lua 5.1 file an app ref ships
-    std::fs::write(root.join("source.lua"), &lua).unwrap();
-    let lua = String::from_utf8(common::build_lua(&root.join("source.lua"))).unwrap();
-    std::fs::remove_file(root.join("source.lua")).unwrap();
-    std::fs::write(root.join("app.lua"), &lua).unwrap();
+    // build the fixture with the app pipeline: the one Luau file an app ref ships
+    std::fs::write(root.join("source.luau"), &lua).unwrap();
+    let lua = String::from_utf8(common::build_luau(&root.join("source.luau"))).unwrap();
+    std::fs::remove_file(root.join("source.luau")).unwrap();
+    std::fs::write(root.join("app.luau"), &lua).unwrap();
     let r = AppRef {
         manifest: Manifest {
             id: AppId::parse(id).unwrap(),
             name: id.into(),
             version: "1.0.0".into(),
-            main: "app.lua".into(),
+            main: "app.luau".into(),
             migrations: vec![],
             icon: None,
             tint: None,
@@ -48,8 +48,8 @@ fn publish_app(root: &Path, id: &str) -> String {
             requires: None,
         },
         files: vec![FileRef {
-            path: "app.lua".into(),
-            url: format!("file://{}/app.lua", root.display()),
+            path: "app.luau".into(),
+            url: format!("file://{}/app.luau", root.display()),
             sha256: format!("{:x}", Sha256::digest(lua.as_bytes())),
         }],
     };
@@ -300,7 +300,7 @@ async fn an_app_whose_bundle_broke_is_marked_failed_and_the_others_start() {
     first.stop().await;
 
     // the bundle is edited on disk without rebuilding the app ref: its checksum no longer matches
-    std::fs::write(tmp.join("pkg-todo/app.lua"), "error('edited by hand')").unwrap();
+    std::fs::write(tmp.join("pkg-todo/app.luau"), "error('edited by hand')").unwrap();
 
     let second = start(configure).await;
     start_apps(&second.host.service, &[]).await;
@@ -335,10 +335,10 @@ async fn dev_reload_rebuilds_the_vm_when_the_bundle_changes_and_keeps_the_data()
 
     // "rebuild" the bundle: a new tool, a new checksum
     let before = counter.0.load(Ordering::SeqCst);
-    let lua = std::fs::read_to_string(pkg.join("app.lua")).unwrap();
+    let lua = std::fs::read_to_string(pkg.join("app.luau")).unwrap();
     let v2 =
         format!("{lua}\napp.tools.register({{ name = \"extra\", run = function() return \"v2\" end }})\n");
-    std::fs::write(pkg.join("app.lua"), &v2).unwrap();
+    std::fs::write(pkg.join("app.luau"), &v2).unwrap();
     let mut app_ref: AppRef =
         serde_json::from_slice(&std::fs::read(pkg.join("app-ref.json")).unwrap()).unwrap();
     app_ref.files[0].sha256 = format!("{:x}", Sha256::digest(v2.as_bytes()));
@@ -377,9 +377,9 @@ async fn the_fetcher_caps_one_package_file_at_the_domain_limit() {
     let url = publish_package(
         &tmp.join("pkg"),
         "big",
-        "app.lua",
+        "app.luau",
         // an app is one bundled file, so the entry is the file the fetcher is handed
-        &[("app.lua", vec![b'-'; max + 1])],
+        &[("app.luau", vec![b'-'; max + 1])],
     );
     let r = start(|_| {}).await;
     let mut ws = browser(&r).await;

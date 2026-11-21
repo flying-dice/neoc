@@ -785,7 +785,7 @@ impl AppService {
         m.validate()?;
         let mut budget = PackageBudget::default();
         let mut package = AppPackage { entry: m.main.clone(), ..AppPackage::default() };
-        // an app is built into ONE Lua 5.1 file: the entry is the only source the runtime is handed
+        // an app is built into ONE Luau file: the entry is the only source the runtime is handed
         package.files.insert(m.main.clone(), self.fetch_verified(app_ref, &m.main, &mut budget).await?);
         let mut migrations = Vec::new();
         for spec in &m.migrations {

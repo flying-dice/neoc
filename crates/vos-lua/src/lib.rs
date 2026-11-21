@@ -1,4 +1,4 @@
-//! Driven adapter: Lua 5.1 apps (mlua, on `neoc-vm`) behind the `AppRuntime` port.
+//! Driven adapter: Luau apps (mlua, on `neoc-vm`) behind the `AppRuntime` port.
 //!
 //! One VM per app, with the host-provided `app` table (see [`api`]), a `require` for `vos:app`, `vos:ui`
 //! and every `std:`/`lib:`/`vnd:` module of the VM library except [`NOT_FOR_APPS`], tracked `app.state`, one call at a time per VM

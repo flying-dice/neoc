@@ -101,7 +101,7 @@ fn file_url_dir(url: &str) -> Option<PathBuf> {
 /// rebuild the app's VM (database kept) when a file in it changes. Returns what it is watching.
 ///
 /// The host never builds an app (bundling an app is `bun run build:apps`, which `bun run dev` re-runs when a
-/// source changes): what it watches is the built ref folder, `app.lua` and the app ref.
+/// source changes): what it watches is the built ref folder, `app.luau` and the app ref.
 pub fn watch_for_reload(service: &Arc<AppService>, stop: &CancellationToken) -> Vec<PathBuf> {
     let mut watching = Vec::new();
     for app in service.apps() {

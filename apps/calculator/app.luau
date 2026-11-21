@@ -1,9 +1,13 @@
+--!strict
 -- The Calculator: a keypad window and three agent tools. `bun run build:apps` packages it (with app.json) into
 -- an app ref.
 local app = require("vos:app")
 local ui = require("vos:ui")
 local calc = require("./calc")
 local t = app.t
+
+type Window = vos_WindowContext
+type Node = vos_Node
 
 app.manifest {
   id = "calculator",
@@ -27,29 +31,29 @@ local s = app.state {
   err = false,
 }
 
-local SYMBOL = { ["+"] = "+", ["-"] = "−", ["*"] = "×", ["/"] = "÷" }
+local SYMBOL: { [string]: string } = { ["+"] = "+", ["-"] = "−", ["*"] = "×", ["/"] = "÷" }
 
 -- ── Logic (pure Lua; no UI in here) ──────────────────────────────────────
 
-local function apply(a, op, b)
+local function apply(a: number, op: string, b: number): number
   s.caption = calc.format(a) .. " " .. SYMBOL[op] .. " " .. calc.format(b)
   return calc.combine(a, op, b) -- raises on division by zero
 end
 
 -- The number on the display: the result once one is in, else what has been typed.
-local function current()
+local function current(): number
   if s.fresh then
     return s.value
   end
-  return tonumber(s.entry)
+  return tonumber(s.entry) :: number
 end
 
 -- Show a number (a result, or a value an agent put there); the next digit starts a new entry.
-local function show(value)
+local function show(value: number)
   s.value, s.fresh = value, true
 end
 
-local function digit(d)
+local function digit(d: string)
   if s.fresh then
     s.entry, s.fresh = (d == "." and "0." or d), false
   elseif d == "." then
@@ -65,7 +69,7 @@ local function digit(d)
   end
 end
 
-local function operator(op)
+local function operator(op: string)
   local value = current()
   if s.hasAcc and s.pending ~= "" and not s.fresh then
     s.acc = apply(s.acc, s.pending, value)
@@ -95,7 +99,7 @@ local function clear() -- "C" clears what is being typed; "AC" (nothing typed) c
   s.err, s.value, s.fresh = false, 0, true
 end
 
-local actions = {
+local actions: { [string]: (arg: string) -> () } = {
   digit = digit,
   operator = operator,
   equals = equals,
@@ -133,16 +137,17 @@ local actions = {
 -- announcer is always on the page, so a screen reader hears it (a live region that appears together with its text is
 -- often missed). "AC" gets out of it, and so does a digit, which starts a new sum as it does on an iPad; the other
 -- keys have nothing to work on and are ignored.
-local function press(w, kind, arg)
+local function press(w: Window, kind: string, arg: string?)
   local wasErr = s.err
   if s.err then
     if kind == "digit" then
-      actions.clear()
+      actions.clear("")
     elseif kind ~= "clear" then
       return
     end
   end
-  local ok, err = pcall(actions[kind], arg)
+  -- `pcall` is typed for a function that returns a value: say so, to get the error as its second result
+  local ok, err = pcall(actions[kind] :: (string) -> any, arg or "")
   if not ok then
     local reason = calc.reason(err) -- an unexpected error is a generic sentence, never a source position
     s.err, s.hasAcc, s.pending, s.fresh = true, false, "", true
@@ -155,15 +160,27 @@ end
 
 -- ── View ─────────────────────────────────────────────────────────────────
 
-local function digitKey(d)
+-- A key of the pad: what it is called, shows and does. Not every key has an argument, a shortcut or a span.
+type KeyDef = {
+  id: string,
+  name: string,
+  label: string,
+  kind: string,
+  arg: string?,
+  face: string,
+  shortcut: string?,
+  span: number?,
+  wide: boolean?,
+}
+
+local function digitKey(d: string): KeyDef
   return { id = d, name = d, label = d, kind = "digit", arg = d, face = "digit", shortcut = d }
 end
-local function opKey(id, symbol, arg, name)
+local function opKey(id: string, symbol: string, arg: string, name: string): KeyDef
   return { id = id, name = name, label = symbol, kind = "operator", arg = arg, face = "operator", shortcut = arg }
 end
 
--- the keys are heterogeneous tables (not every key has a shortcut or a span)
-local KEYS = {
+local KEYS: { KeyDef } = {
   { id = "clear", name = "Clear", label = "AC", kind = "clear", face = "function", shortcut = "escape" },
   { id = "negate", name = "Change sign", label = "±", kind = "negate", face = "function" },
   { id = "percent", name = "Percent", label = "%", kind = "percent", face = "function", shortcut = "%" },
@@ -194,10 +211,10 @@ local KEYS = {
   { id = "dot", name = "Decimal point", label = ".", kind = "digit", arg = ".", face = "digit", shortcut = "." },
   { id = "eq", name = "Equals", label = "=", kind = "equals", face = "operator", shortcut = "enter" },
 }
-local FILL = { digit = "gray4", ["function"] = "gray2", operator = "orange" } -- semantic palette, auto-contrast text
+local FILL: { [string]: vos_PaletteToken } = { digit = "gray4", ["function"] = "gray2", operator = "orange" } -- semantic palette, auto-contrast text
 
 -- iPadOS sets the wide "0" with its label over the first circle, not centred in the capsule
-local function wideLabel(k)
+local function wideLabel(k: KeyDef): Node
   return ui.HStack {
     key = "label",
     frame = "fill",
@@ -208,7 +225,7 @@ local function wideLabel(k)
   }
 end
 
-local function keyView(k, w)
+local function keyView(k: KeyDef, w: Window): Node
   local title, name = k.label, k.name
   if k.id == "clear" and s.entry ~= "0" and not s.fresh then
     title, name = "C", "C, clear entry" -- the accessible name keeps the visible text (WCAG 2.5.3)
@@ -308,7 +325,7 @@ app.window("main", {
 
 -- ── Agent tools ──────────────────────────────────────────────────────────
 
-local function record(expression, result)
+local function record(expression: string, result: number)
   local h = app.kv:get("history") or {}
   table.insert(h, 1, { expression = expression, result = result })
   while #h > 50 do
@@ -323,7 +340,7 @@ app.tool {
   -- not readOnly: it writes the history to app.kv
   description = "Evaluate an arithmetic expression with the usual precedence (2 + 3 * 4 is 14), rounded to 12 significant digits. Supports + - * / % ^, parentheses, unary minus and decimals.",
   input = { expression = t.string { description = 'Arithmetic expression, e.g. "(12.5 + 7) * 3"' } },
-  run = function(input)
+  run = function(input: { expression: string })
     local result = calc.evaluate(input.expression)
     record(input.expression, result)
     return { expression = input.expression, result = result, display = calc.format(result) }
@@ -335,7 +352,7 @@ app.tool {
   title = "Show on Calculator",
   description = "Open the Calculator and show the result of an expression, so the user can keep calculating.",
   input = { expression = t.string {} },
-  run = function(input)
+  run = function(input: { expression: string })
     local result = calc.evaluate(input.expression)
     record(input.expression, result)
     show(result)
@@ -354,7 +371,7 @@ app.tool {
   readOnly = true,
   description = "List recent calculations, newest first.",
   input = { limit = t.integer { default = 10, min = 1, max = 50 } },
-  run = function(input)
+  run = function(input: { limit: number })
     local h = app.kv:get("history") or {}
     local entries = {}
     for i = 1, math.min(#h, input.limit) do

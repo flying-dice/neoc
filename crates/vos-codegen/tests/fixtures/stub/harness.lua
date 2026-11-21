@@ -1,12 +1,12 @@
 -- Runs one example app's `main` window and prints what the host would send in `view.open`, as JSON:
---   lua harness.lua <ui.lua> <stub app.lua> <app dir>
--- The generated `ui.lua` is `vos:ui` and the stub is `vos:app` (the app's own `./modules` resolve inside
--- its folder). The Lua closures in `on` become what the wire carries (`true`, or the client actions with an `emit`
--- for each function), and the source and client declarations come from the stub host. Any Lua 5.1+ runs it.
-local uiPath, stubPath, dir = ...
+--   lua harness.lua <ui.lua> <stub app.lua> <built app>
+-- The generated `ui.lua` is `vos:ui` and the stub is `vos:app`; the app is the one file `bun run build:apps` makes
+-- (its own modules bundled in, its types stripped: an app that avoids Luau-only syntax such as `continue` or `+=`
+-- is plain Lua then). The Lua closures in `on` become what the wire carries (`true`, or the client actions with an
+-- `emit` for each function), and the source and client declarations come from the stub host. Any Lua 5.1+ runs it.
+local uiPath, stubPath, built = ...
 unpack = unpack or table.unpack
 
-package.path = dir .. "/?.lua;" .. package.path
 package.preload["vos:ui"] = assert(loadfile(uiPath))
 package.preload["vos:app"] = assert(loadfile(stubPath))
 local app = require("vos:app")
@@ -109,7 +109,7 @@ local function wireNode(node)
   return copy
 end
 
-dofile(dir .. "/app.lua")
+dofile(built)
 local tree, clientDecls, sources = app.__render("main")
 
 local decls = {}
