@@ -704,7 +704,12 @@ async fn watch_refuses_what_it_cannot_watch() {
         fails("invalid_input", fs.watch(dir, { recursive = "yes" }))
 
         local w = ok(fs.watch(dir))
-        local _, late = w:receive(0)
+        -- once what is already queued is taken (FSEvents may report a change from just before the watch started)
+        local ev, late = w:receive(0)
+        for _ = 1, 100 do
+          if ev == nil then break end
+          ev, late = w:receive(0)
+        end
         check(fs.error_kind(late) == "timed_out" and late:find("^fs%.receive: timed_out: "), late)
         fails("invalid_input", w:receive(-1))
         fails("invalid_input", w:receive(0 / 0))

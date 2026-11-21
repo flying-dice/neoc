@@ -754,10 +754,14 @@ mod tests {
     async fn receive_hands_out_overflows_errors_and_timeouts() {
         let dir = tempfile::tempdir().unwrap();
         let lua = crate::lua::sandbox::make_engine().unwrap();
-        let handle = start(dir.path().to_path_buf(), false)
-            .unwrap()
-            .register(&lua);
-        let queue = Arc::clone(&handle.0.queue);
+        // no system watcher: a real one could report a change of its own first (FSEvents may report the temp
+        // directory's creation), and this test is about what `receive` makes of each kind of queued item
+        let queue = Arc::new(Queue::new(CAPACITY));
+        let handle = WatchHandle(Arc::new(WatchInner {
+            watcher: Mutex::new(None),
+            queue: Arc::clone(&queue),
+            root: dir.path().to_path_buf(),
+        }));
         queue.push(Item::Failed(FsError::at(
             Kind::PermissionDenied,
             dir.path(),

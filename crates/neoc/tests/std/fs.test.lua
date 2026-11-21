@@ -743,7 +743,13 @@ describe("fs", function()
         test("an empty watcher times out", function()
             local _, dir = scratch()
             local watcher = ok(fs.watch(dir))
-            expect(kind_of(watcher:receive(0))).toBe("timed_out")
+            -- once what is already queued is taken (FSEvents may report a change from just before the watch started)
+            local event, err = watcher:receive(0)
+            for _ = 1, 100 do
+                if event == nil then break end
+                event, err = watcher:receive(0)
+            end
+            expect(kind_of(event, err)).toBe("timed_out")
             watcher:close()
         end)
 
