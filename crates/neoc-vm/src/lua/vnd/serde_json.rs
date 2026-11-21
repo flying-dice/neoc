@@ -97,7 +97,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 }
 
 /// Declares the `vnd:serde_json` surface through the facade. Every function is
-/// fallible; the `(value, error)` shape, the `serde_json.<fn>` error prefixes,
+/// fallible (and the encoders raise for a buffer, see `serde_guard`); the `(value, error)` shape, the `serde_json.<fn>` error prefixes,
 /// the exact error suffixes (handle, parse, bridge, serialize, and I/O
 /// failures), and the `lua::lib::serde_json` spans are byte-identical to the
 /// hand-written registration this replaces.

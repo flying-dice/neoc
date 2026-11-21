@@ -22,7 +22,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 }
 
 /// Declares the `vnd:quick_xml` surface through the facade. Every function is
-/// fallible; the `(value, error)` shape, the `quick_xml.<fn>` error prefixes,
+/// fallible (and the encoders raise for a buffer, see `serde_guard`); the `(value, error)` shape, the `quick_xml.<fn>` error prefixes,
 /// the exact error suffixes (handle, UTF-8, parse, bridge, serialize, and I/O
 /// failures), and the `lua::lib::quick_xml` spans are byte-identical to the
 /// hand-written registration this replaces.

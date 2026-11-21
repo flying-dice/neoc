@@ -5,11 +5,14 @@
 //! back, or a file of numbers, without a word. A buffer is refused instead (Decision NEOC-256), and the script
 //! converts it itself (`buffer.tostring`) to say what it means.
 //!
-//! [`contains_buffer`] makes the walk mlua's serializer makes: the value, then every key and value of each table it
-//! reaches, raw (no metamethods), each table once (a cycle is the serializer's to report). The walk keeps its own
-//! stack, so a deeply nested table cannot overflow the host's.
+//! [`contains_buffer`] walks every table a serializer here can reach: the value, then every key and value of each
+//! table it reaches, raw (no metamethods, as they read). That is a little further than they go (an array-shaped table
+//! serializes only `1..#t`, so a buffer under another key of it, which they would drop unseen, is refused too), and
+//! no deeper: mlua's serializer and deserializer stop at [`SERIALIZER_DEPTH`] nested tables (`lib:json`'s walker at
+//! 127), so a buffer below that is never converted, the conversion fails on the depth. Holding one table per level,
+//! the walk stays within the host's stack and within Luau's limit on values held at once, however wide the value.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::ffi::c_void;
 
 use mlua::{Table, Value};
@@ -18,44 +21,49 @@ use mlua::{Table, Value};
 pub(crate) const BUFFER_REFUSED: &str =
     "a buffer cannot be serialized; convert it explicitly first (for example with buffer.tostring)";
 
-/// Whether `value` is a buffer, or holds one as a key or a value of any table it reaches.
+/// The most nested tables mlua's serializer and deserializer enter (their default recursion limit), the root
+/// included. Every serde conversion of a script value in this crate uses that default.
+const SERIALIZER_DEPTH: usize = 128;
+
+/// Whether `value` is a buffer, or holds one as a key or a value of a table it reaches within
+/// [`SERIALIZER_DEPTH`] nested tables.
 pub(crate) fn contains_buffer(value: &Value) -> mlua::Result<bool> {
-    let mut seen = HashSet::new();
-    let mut pending = Vec::new();
-    if is_buffer_or_queue(value, &mut seen, &mut pending) {
-        return Ok(true);
+    match value {
+        Value::Buffer(_) => Ok(true),
+        Value::Table(t) => table_holds_buffer(t, 1, &mut HashMap::new()),
+        _ => Ok(false),
     }
-    while let Some(table) = pending.pop() {
-        let mut found = false;
-        table.for_each::<Value, Value>(|k, v| {
-            found = found
-                || is_buffer_or_queue(&k, &mut seen, &mut pending)
-                || is_buffer_or_queue(&v, &mut seen, &mut pending);
-            Ok(())
-        })?;
-        if found {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
-/// Whether `v` is a buffer; a table not seen before is queued for the walk.
-fn is_buffer_or_queue(
-    v: &Value,
-    seen: &mut HashSet<*const c_void>,
-    pending: &mut Vec<Table>,
-) -> bool {
-    match v {
-        Value::Buffer(_) => true,
-        Value::Table(t) => {
-            if seen.insert(t.to_pointer()) {
-                pending.push(t.clone());
-            }
-            false
+/// Whether `table`, at `depth` (the root is 1), holds a buffer. `walked` keeps the shallowest depth each table was
+/// walked at: one reached again no shallower has nothing new to show, one reached shallower is walked again, since
+/// more of what lies under it is now within the limit.
+fn table_holds_buffer(
+    table: &Table,
+    depth: usize,
+    walked: &mut HashMap<*const c_void, usize>,
+) -> mlua::Result<bool> {
+    match walked.get(&table.to_pointer()) {
+        Some(&shallowest) if shallowest <= depth => return Ok(false),
+        _ => {
+            walked.insert(table.to_pointer(), depth);
         }
-        _ => false,
     }
+    let mut found = false;
+    table.for_each::<Value, Value>(|k, v| {
+        for item in [k, v] {
+            found = found
+                || match item {
+                    Value::Buffer(_) => true,
+                    Value::Table(t) if depth < SERIALIZER_DEPTH => {
+                        table_holds_buffer(&t, depth + 1, walked)?
+                    }
+                    _ => false,
+                };
+        }
+        Ok(())
+    })?;
+    Ok(found)
 }
 
 /// Raise `<prefix>: <BUFFER_REFUSED>` when `value` holds a buffer (see [`contains_buffer`]). `prefix` is the
@@ -105,6 +113,8 @@ mod tests {
             &lua,
             "setmetatable({}, { __index = { buf } })"
         ));
+        // further than the serializer, which writes `{ 1, x = buf }` as `[1]` and drops the buffer unseen
+        assert!(holds_buffer(&lua, "{ 1, x = buf }"));
     }
 
     #[test]
@@ -136,12 +146,45 @@ mod tests {
     }
 
     #[test]
-    fn deep_nesting_does_not_overflow_the_stack() {
+    fn walks_as_deep_as_a_serializer_and_no_deeper() {
         let lua = engine_with_buffer();
-        let deep =
-            "(function(leaf) local t = { leaf } for _ = 1, 100000 do t = { t } end return t end)";
-        assert!(!holds_buffer(&lua, &format!("{deep}(1)")));
-        assert!(holds_buffer(&lua, &format!("{deep}(buf)")));
+        // `nest(leaf, n)`: `leaf` in the innermost of `n` nested tables
+        lua.load(
+            "function nest(leaf, n) local t = { leaf } for _ = 2, n do t = { t } end return t end",
+        )
+        .exec()
+        .expect("nest");
+        assert!(
+            holds_buffer(&lua, "nest(buf, 128)"),
+            "the deepest a serializer goes"
+        );
+        assert!(!holds_buffer(&lua, "nest(buf, 129)"));
+        // ... where the conversion fails on the depth instead
+        let (out, err): (Option<String>, String) = lua
+            .load("local out, err = require('vnd:toml').encode(nest(buf, 129)) return out, tostring(err)")
+            .eval()
+            .expect("encode");
+        assert_eq!(out, None, "{err}");
+        assert!(err.contains("recursion limit"), "{err}");
+        // a table reached first deep and then shallower is walked again from the shallower place
+        assert!(holds_buffer(
+            &lua,
+            "(function() local shared = nest(buf, 100) return { nest(shared, 100), shared } end)()"
+        ));
+        assert!(
+            !holds_buffer(&lua, "nest(1, 100000)"),
+            "deeper than that costs no stack"
+        );
+    }
+
+    #[test]
+    #[ignore = "slow: builds over a million tables (about 20 s in a debug build)"]
+    fn a_wide_value_is_walked_whole() {
+        // more tables than Luau lets the host hold at once (about a million), were it to hold each one it reached
+        let lua = engine_with_buffer();
+        let wide = "(function(last) local t = {} for i = 1, 1100000 do t[i] = { i } end t[#t][2] = last return t end)";
+        assert!(!holds_buffer(&lua, &format!("{wide}(1)")));
+        assert!(holds_buffer(&lua, &format!("{wide}(buf)")));
     }
 
     /// Run `call` (a Lua expression) in a protected call and return its error text; panics when it did not raise.

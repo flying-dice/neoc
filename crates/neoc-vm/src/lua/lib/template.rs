@@ -1096,7 +1096,8 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `template.compile` span and channel prefix) and recorded with
 /// [`crate::lua::facade::Module::record_fn`]. The `(value, error)` shape, the
 /// exact error strings, the raise on `into_lua`, and the `lua::lib::template`
-/// spans are byte-identical to the hand-written registration this replaces. The
+/// spans are byte-identical to the hand-written registration this replaces
+/// (which never saw a buffer: one raises from `render` and `Template:render`). The
 /// shared `Engine` is cloned into each closure exactly as before. The compiled
 /// `Template` userdata keeps its own `impl UserData` and is recorded here via
 /// [`crate::lua::facade::Module::userdata`].

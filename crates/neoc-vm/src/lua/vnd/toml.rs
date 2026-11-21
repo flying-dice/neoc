@@ -26,7 +26,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 }
 
 /// Declares the `vnd:toml` surface through the facade. Every function is
-/// fallible; the `(value, error)` shape, the `toml.<fn>` error prefixes, the
+/// fallible (and the encoders raise for a buffer, see `serde_guard`); the `(value, error)` shape, the `toml.<fn>` error prefixes, the
 /// exact error suffixes (reader/writer-handle, UTF-8, parse, serialize, and
 /// I/O failures), and the `lua::lib::toml` spans are byte-identical to the
 /// hand-written registration this replaces.
