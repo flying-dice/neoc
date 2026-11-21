@@ -307,8 +307,8 @@ it in the app's own VM and keeps it going for as long as the app is loaded.
   database under `~/.agentos`, and a runaway app (a loop that never yields, a `std:thread` worker) can hang the host
   and outlive its uninstall: unloading stops an app's work only where it yields to the host. The base functions are
   an allow-list: no `load`, `loadstring`, `dofile`, `loadfile`, `getfenv`, `setfenv`, `newproxy`, `module`,
-  `collectgarbage`, `print`, no `string.dump`, no `io`, `os`, `debug` or `package`. Chunks load as text only (Lua 5.1
-  bytecode is unverified). `string`, `table`, `math`, `coroutine`, `bit` and `utf8` are **read-only**: assigning to
+  `collectgarbage`, `print`, no `string.dump`, no `io`, `os`, `debug` or `package`. Chunks load as text only (Luau
+  checks a bytecode chunk's version and does not verify it). `string`, `table`, `math`, `coroutine`, `bit32` and `utf8` are **read-only**: assigning to
   one, `rawset` on one, `setmetatable` on one and `getmetatable("")` (the shared string metatable is locked) all fail,
   so an app cannot change what other code in its VM sees. `math.random` has a generator of its own per VM, seeded by
   the host. The functions themselves are Lua's own (C `string` and `table`, including `table.sort` and the pattern
@@ -341,7 +341,7 @@ it in the app's own VM and keeps it going for as long as the app is loaded.
   to yield across metamethod/C-call boundary"). Luau's base library is not LuaJIT's: `bit` is `bit32`,
   `string.format("%s", v)` takes only strings and numbers (`tostring(v)` first), there is no `goto`. `math.random` of a
   bound that is not a finite number (`1e300`, `NaN`, an infinity) is an error. `pairs` and `next` of
-  a library table (`pairs(string)`) see nothing. An error raised by a host function (`app.db`, `app.kv`, and
+  a library table (`pairs(string)`) see its functions. An error raised by a host function (`app.db`, `app.kv`, and
   `math.random`, which the host implements) reaches a `pcall` as an error object, not a plain string: write
   `tostring(err)` before concatenating or matching it.
 - **Coroutines, abandoned calls and transactions.** Three things a script can run into when it is clever with

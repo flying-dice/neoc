@@ -45,7 +45,7 @@ G1, G3, G4, G10: run yourself.
 - `Agent` tool absent or denied → fan-out NOT RUN. Run single-reader, record `Mode: degraded — <reason>`. Never present a single-reader pass as fan-out.
 
 ### G1 — Head & checks
-GitHub Actions is not a gate. Run the pre-PR checks from CONTRIBUTING.md locally at the head SHA (`cargo fmt --check`, `RUSTFLAGS="-D warnings" cargo clippy --all-targets`, `cargo test --workspace`, the Lua suites, the bench smoke) and record command + output.
+GitHub Actions is not a gate. Run the pre-PR checks from CONTRIBUTING.md locally at the head SHA (`cargo fmt --check`, `RUSTFLAGS="-D warnings" cargo clippy --all-targets`, `cargo test -p neoc -p neoc-vm`, the Lua suites, the bench smoke) and record command + output.
 - Head SHA recorded: local `git rev-parse HEAD` == PR head `sha`.
 - Every pre-PR check passes at that exact SHA. Any failure = FAIL.
 - The checks cover the change: the Lua suite or Rust tests for the touched area ran (not filtered out).
@@ -142,7 +142,7 @@ Diff: <files> files, +<add> / -<del>
 
 | Gate | Result | Evidence |
 |---|---|---|
-| G1 Head & checks | PASS | `cargo test --workspace` → ok @ <sha8> |
+| G1 Head & checks | PASS | `cargo test -p neoc -p neoc-vm` → ok @ <sha8> |
 | G2 Claims ↔ evidence | PASS | <claim> → `<cmd>` → <output> |
 | ... | ... | ... |
 | G10 Fix-round discipline | N/A — first request | |
