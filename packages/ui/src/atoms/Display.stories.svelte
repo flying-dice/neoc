@@ -8,6 +8,7 @@
   import ProgressBar from './ProgressBar.svelte'
   import ProgressRing from './ProgressRing.svelte'
   import Text from './Text.svelte'
+  import { fitScale } from '../text'
 
   const { Story } = defineMeta({
     title: 'Atoms/Display',
@@ -50,6 +51,25 @@
     await waitFor(() => expect(fit.scrollWidth).toBeLessThanOrEqual(fit.clientWidth))
     await expect(parseFloat(getComputedStyle(fit).fontSize)).toBeLessThan(56)
     await expect(parseFloat(getComputedStyle(fit).fontSize)).toBeGreaterThanOrEqual(56 * 0.3)
+
+    // However often it measures, it settles at the scale its width at the natural size asks for. Narrow the box (a new
+    // scale) and widen it back: measured again at the scale it then has, it must come back to the same one.
+    const box = fit.parentElement!
+    const host = within(canvasElement).getByTestId('readout-fit')
+    const scale = (): number => Number(getComputedStyle(fit).getPropertyValue('--fit-scale'))
+    const atNaturalSize = (): number => {
+      const applied = fit.style.getPropertyValue('--fit-scale')
+      fit.style.setProperty('--fit-scale', '1')
+      const width = fit.scrollWidth
+      fit.style.setProperty('--fit-scale', applied)
+      return width
+    }
+    const settled = fitScale(atNaturalSize(), box.clientWidth)
+    await waitFor(() => expect(scale()).toBeCloseTo(settled, 6))
+    host.style.width = `${Math.round(host.clientWidth * 0.8)}px`
+    await waitFor(() => expect(scale()).not.toBeCloseTo(settled, 6))
+    host.style.width = ''
+    await waitFor(() => expect(scale()).toBeCloseTo(settled, 6))
   }}
 >
   <div style="display:grid;grid-template-columns:minmax(0,1fr);gap:12px;width:260px;background:#000;color:#fff;padding:12px;border-radius:var(--radius-md)">

@@ -194,8 +194,8 @@
     white-space: nowrap;
     text-overflow: ellipsis;
     font-size: calc(56px * var(--fit-scale, 1));
-    /* No transition on the size: the measurement must see the font the scale asks for, not a frame of tween
-       (reduced motion turns every transition into a one-frame one, which made the fit chase its own tail). */
+    /* No transition on the size: the measurement must see the font the scale asks for, not a frame of a tween
+       (with motion on, a transition here would hand it an in-between size). */
     transition-property: none;
   }
   .truncate {
