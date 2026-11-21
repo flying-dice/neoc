@@ -1,5 +1,5 @@
 /**
- * Client-managed state (spec 3.1, 3.5): the entries a view declares (`client = {name = {init, persist, sync}}`),
+ * Client-managed state: the entries a view declares (`client = {name = {init, persist, sync}}`),
  * authoritative on the client. Reads and writes cost no round trip. This module owns:
  *
  *  - initial values: `init`, then the `session` copy kept in `sessionStorage` by window, then whatever the host
@@ -121,7 +121,7 @@ export class ClientState {
       if (!(name in client) && !(name in decls)) client[name] = value
   }
 
-  /** Values to hand the host on resume: what a restarted host adopts (spec 3.5 reconnect). */
+  /** Values to hand the host on resume: what a restarted host adopts. */
   snapshot(): Record<string, Json> {
     const out: Record<string, Json> = {}
     for (const [name, decl] of Object.entries(this.decls)) {

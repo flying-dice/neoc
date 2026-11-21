@@ -1,6 +1,6 @@
 /**
  * The managed renderer's public surface (what the shell and wave B2 import). Everything under `view/` is the
- * client half of docs/architecture/ui-system.md; the shell stays as it is until it opens windows through here.
+ * client half of the server-driven UI; the shell stays as it is until it opens windows through here.
  *
  *   const session = new Session({ transport: createWebSocketTransport({ url: defaultRpcUrl(location) }), createStore: reactiveStore })
  *   session.start()

@@ -5,7 +5,7 @@ the conversation itself streams over AG-UI (`ChatTranscript`) from the host, whi
 
 Each journey is a goal, not a script: research participants work out *how* themselves. The automated twin of each is the
 test with the same id in `e2e/journeys.spec.ts`, against the real host, in a paired browser, with the scripted ACP agent
-(no model; the prompt text picks what it does: `docs/TESTING.md`, "The scripted agent"). Chats live on the shared host,
+(no model; the prompt text picks what it does: `crates/vos-acp/src/bin/fake_agent.rs`). Chats live on the shared host,
 so each test starts its own chat and finds it by what it said.
 
 Beyond these journeys: the transcript and session bar rendering is covered by the "Renderer/Chat transcript" stories and
@@ -23,6 +23,6 @@ on the shared e2e host).
 | AG6 | Close the window and come back to the same conversation. | A chat with a reply in it. | After closing and reopening Agents the same chat was open with its whole transcript. |
 | AG7 | Use Agents in a small window: shrink it as far as it goes, then chat. | Agents open. | The window stopped at its minimum (480x420) with nothing cut off; starting a chat opened it, the composer was in view, the reply arrived, and Back returned to the list with the chat in it. |
 
-Node keys (test ids derive from the key path, `docs/TESTING.md`): `new-chat` (or `new-chat-<agentId>` in the menu),
+Node keys (test ids derive from the key path): `new-chat` (or `new-chat-<agentId>` in the menu),
 `roster` with `agent-<agentId>`, `sidebar` (the chats), `chat`, `no-chat`. Inside the chat: `<chat id>-thread`,
 `-session-mode`, `-session-config-<id>`, `-session-commands`, `-session-usage`, `-composer-input|send|stop`, `-retry`.

@@ -62,22 +62,22 @@ Journeys and stories are a starting backlog shaped by hypotheses, not validated 
 
 ## In vos
 
-Run this before the first line of a **new app** (a Lua app in `apps/<app>/`, or a new built-in shell page), and before
+Run this before the first line of a **new app** (a Luau app in `apps/<app>/`, or a new built-in shell page), and before
 a redesign that changes what an app is for. It is step 0 of the `app-design` loop.
 
-- **The brief** is the app's GitHub issue plus what the platform gives every app (`apps/README.md`: windows and view
+- **The brief** is the app's Jira issue (project NEOC) plus what the platform gives every app (`apps/README.md`: windows and view
   trees, `app.db`, tools agents can call, notifications, chats with agents). Users here are people *and the agents
   working beside them*: when an agent uses the app through its tools, treat that as a persona with its own goal and
   failure modes (it reads tool descriptions, not screens). Rule 2 still applies to the platform: a capability
   `apps/README.md` does not list is a gap, not a given.
-- **Write it to** `docs/ux/<app>/discovery.md`, with the banner first.
+- **Write it to** `ux/<app>/discovery.md`, with the banner first.
 - **Hand off to the build** (stage 7):
   - Key journeys become `apps/<app>/JOURNEYS.md` (`client/journeys/<id>.md` for a shell page) in the `app-design`
     format: id (letter + number), who and what they want, start state, observable **Done when**. Keep the numbered steps in
     `discovery.md` as design intent, but drop them from `JOURNEYS.md`: research participants must find the way
     themselves. The trigger becomes the start state; the success end state, including what is shown when it goes
     wrong, becomes **Done when**.
-  - Each journey gets its automated twin in `apps/<app>/e2e/journeys.spec.ts` as the app is built (`docs/TESTING.md`).
+  - Each journey gets its automated twin in `apps/<app>/e2e/journeys.spec.ts` as the app is built.
   - Must stories are the first PR's scope; Should and Could go on the issue as a checklist. A story marked *assumption*
     names the hypothesis that must be confirmed before it is built.
 - **Riskiest assumptions** that a research round can test (comprehension, findability, effort) go into the first

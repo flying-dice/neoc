@@ -202,7 +202,7 @@ describe('host lifecycle notifications', () => {
   })
 })
 
-describe('two-way text binding: drafts, shielding, merge (spec 3.4)', () => {
+describe('two-way text binding: drafts, shielding, merge', () => {
   test('typing shows at once; the write-back is debounced into one state.set with baseRev', async () => {
     const { view, timers, received, h } = await setup()
     for (const v of ['h', 'he', 'hel', 'hell', 'hello']) view.write('state.body', v)
@@ -532,7 +532,7 @@ describe('sources: params are refs, windows, row deltas', () => {
   })
 })
 
-describe('client-managed state (spec 3.5)', () => {
+describe('client-managed state', () => {
   test('persist=session survives a reload (a new view for the same window id reads it back)', async () => {
     const first = await setup()
     first.view.write('client.search', 'gro')
@@ -576,7 +576,7 @@ describe('client-managed state (spec 3.5)', () => {
   })
 })
 
-describe('events and actions (spec 2.4, 3.5)', () => {
+describe('events and actions', () => {
   test('an event is addressed by key path and row key, and flushes dirty drafts first', async () => {
     const { view, received, h } = await setup()
     view.write('state.body', 'Buy milk')

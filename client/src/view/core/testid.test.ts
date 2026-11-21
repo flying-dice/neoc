@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { rowTestid, testid } from './testid'
 
-describe('test ids derive from explicit keys (spec 5.4)', () => {
+describe('test ids derive from explicit keys', () => {
   test('the spec table', () => {
     expect(testid('calculator', 'main/_0/_1/_2/key-7')).toBe('calculator-key-7')
     expect(testid('notes', 'main/actions/save')).toBe('notes-actions-save')

@@ -82,7 +82,7 @@
     )
   })
 
-  // env.sizeClass follows the container, so resizing a window never round-trips (spec 5.2).
+  // env.sizeClass follows the container, so resizing a window never round-trips.
   $effect(() => {
     if (!root || typeof ResizeObserver === 'undefined') return undefined
     const ro = new ResizeObserver(([entry]) =>
@@ -95,7 +95,7 @@
     return () => ro.disconnect()
   })
 
-  // env.now ticks at minute resolution, so relative times update with zero messages (spec 3.6).
+  // env.now ticks at minute resolution, so relative times update with zero messages.
   $effect(() => {
     const tick = (): void => void (store.env.now = Math.floor(Date.now() / 60_000) * 60_000)
     const id = setInterval(tick, 15_000)

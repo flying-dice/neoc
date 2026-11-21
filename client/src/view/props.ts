@@ -1,6 +1,6 @@
 /**
  * Prop helpers shared by the adapters: coercion of evaluated values, the common props every node accepts
- * (spec 1.1) and the closed layout vocabulary (4 pt spacing units, frame clamps). Adapters call these inside
+ * and the closed layout vocabulary (4 pt spacing units, frame clamps). Adapters call these inside
  * `$derived`, so every store read they make is tracked per prop.
  */
 import type { Scope } from './core/view'
@@ -14,7 +14,7 @@ export const bool = (v: unknown): boolean => v === true
 export const oneOf = <T extends string>(v: unknown, allowed: readonly T[], fallback: T): T =>
   (allowed as readonly unknown[]).includes(v) ? (v as T) : fallback
 
-/** Spacing is an integer 0..8 in units of 4 pt (spec 5.1); anything else is clamped, never passed through. */
+/** Spacing is an integer 0..8 in units of 4 pt; anything else is clamped, never passed through. */
 export const unit = (v: unknown): number => Math.min(8, Math.max(0, Math.round(Number(v) || 0))) * 4
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
@@ -81,7 +81,7 @@ export interface Common {
   shortcut: string | undefined
 }
 
-/** The common props of a node (spec 1.1) that adapters pass through to the kit component. */
+/** The common props of a node that adapters pass through to the kit component. */
 export function commonOf(ctx: ViewContext, node: Node, path: string, scope: Scope): Common {
   const p = (name: string): unknown => ctx.view.evaluate(node.props?.[name], scope)
   const optional = (v: unknown): string | undefined =>

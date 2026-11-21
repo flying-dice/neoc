@@ -4,7 +4,7 @@
 //! AG-UI has no vocabulary for session settings (mode, model, effort), slash commands, context usage or
 //! permission requests beyond its generic interrupts, so those are typed here and carried in AG-UI's shared
 //! state (`STATE_SNAPSHOT` / `STATE_DELTA`) and interrupts. The wire form is `camelCase` JSON and is
-//! documented in `docs/architecture/host-stack.md`.
+//! the serde shapes below.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};

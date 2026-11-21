@@ -14,7 +14,6 @@ client
 packages
 apps
 e2e
-docs
 lua
 test-results
 playwright-report

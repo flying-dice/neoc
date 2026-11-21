@@ -48,7 +48,7 @@ pub enum PropType {
     Union(&'static [PropType]),
 }
 
-/// How the host merges a two-way write (spec §3.4 rule 5).
+/// How the host merges a two-way write.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BindingKind {
     /// Three-way merge; overlapping edits go to the human.
@@ -212,7 +212,7 @@ pub enum Children {
     Max(u8),
 }
 
-/// How an accessible name is established (spec §5.3).
+/// How an accessible name is established.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NameRule {
     /// No name required (decorative or structural).
@@ -231,7 +231,7 @@ pub struct A11y {
     pub name: NameRule,
 }
 
-/// The rollout tier (spec §1.10).
+/// The rollout tier.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Tier {
     /// The first apps; complete before the first app ships.

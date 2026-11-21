@@ -6,7 +6,7 @@
 use crate::{error::DomainError, AppId};
 use serde::{Deserialize, Serialize};
 
-/// `DESIGN_LANGUAGE`: no window is smaller than this.
+/// No window is smaller than this (the shell's minimum, 320x240).
 pub const MIN_WINDOW_W: u32 = 320;
 pub const MIN_WINDOW_H: u32 = 240;
 

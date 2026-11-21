@@ -1,4 +1,4 @@
-//! Tier 2 and Tier 3 components: names, tiers and placeholder props only (spec §1.4 to §1.8). Their schema is
+//! Tier 2 and Tier 3 components: names, tiers and placeholder props only. Their schema is
 //! written when the first app that needs them is designed; until then the validator accepts any prop on them.
 //! Heavy components own a third-party engine (`CodeMirror`, canvas hit-testing) and are built and gated per app.
 

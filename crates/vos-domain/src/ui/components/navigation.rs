@@ -1,4 +1,4 @@
-//! Navigation (spec §1.3).
+//! Navigation.
 
 use crate::ui::spec::BindingKind::{Collection, Scalar, Text};
 use crate::ui::spec::{

@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 /**
- * Enforces the test-id convention (docs/TESTING.md → "Test ids").
+ * Enforces the test-id convention (the naming rules are in `.claude/skills/coding-styleguide/references/typescript-svelte.md`,
+ * "Test ids").
  *
  * Rules
  *  1. In every .svelte component, a raw interactive element must carry a
@@ -108,7 +109,7 @@ for (const pattern of SOURCE_GLOBS) {
 if (errors.length) {
   console.error(`✗ Test id check failed (${errors.length} problem${errors.length > 1 ? 's' : ''}):\n`)
   for (const e of errors) console.error('  ' + e)
-  console.error('\nSee docs/TESTING.md → "Test ids".')
+  console.error('\nSee .claude/skills/coding-styleguide/references/typescript-svelte.md, "Test ids".')
   process.exit(1)
 }
 console.log(`✓ Test id check passed (${checked} components)`)

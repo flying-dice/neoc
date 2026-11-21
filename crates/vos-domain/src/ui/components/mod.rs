@@ -1,4 +1,4 @@
-//! The component catalogue (spec §1): every component with typed props, events, slots and metadata.
+//! The component catalogue: every component with typed props, events, slots and metadata.
 //!
 //! Tier 1 (the first apps) is complete and final. Tier 2 and 3 carry names, tiers and placeholder props
 //! (`open_props`): the validator accepts any prop on them until their schema is written.
@@ -59,7 +59,7 @@ pub use advanced::{
 };
 
 // ---------------------------------------------------------------------------------------------------------
-// Closed token sets (spec §5.1): apps can say what a thing is and how much space it needs, never what colour
+// Closed token sets: apps can say what a thing is and how much space it needs, never what colour
 // or font it is.
 // ---------------------------------------------------------------------------------------------------------
 
@@ -169,7 +169,7 @@ pub const DROP: ObjectDef = ObjectDef {
 pub const SYNC_DOC: &str = "When the value is written back: `change`, `blur`, `submit` or `debounce:<ms>`.";
 
 // ---------------------------------------------------------------------------------------------------------
-// Common props, events and slots (spec §1.1): every node accepts these. A component's own prop of the same
+// Common props, events and slots: every node accepts these. A component's own prop of the same
 // name overrides the common one (`Text.align`, `ZStack.align`, `Icon.tint`).
 // ---------------------------------------------------------------------------------------------------------
 

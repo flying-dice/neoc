@@ -1,4 +1,4 @@
-//! Two-way writes (ui-system.md §3.4): a bound field edited by the human goes back through the row
+//! Two-way writes: a bound field edited by the human goes back through the row
 //! source's `write` callback, after a `baseRev` check.
 //!
 //! The host decides by the binding's kind:

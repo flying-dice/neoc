@@ -1,4 +1,4 @@
-//! `validate(node)`: checks a tree against the component schema (spec §2.1, §3.2, §5.3, §5.4).
+//! `validate(node)`: checks a tree against the component schema.
 //!
 //! The host runs it on **every tree an app renders**, so a bad app fails in its own tests, not in the client.
 //! It is a pure function over the catalogue tables in [`super::components`]: unknown components, props,

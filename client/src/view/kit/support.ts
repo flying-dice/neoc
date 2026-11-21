@@ -1,6 +1,6 @@
 /**
  * Shared by the controls, presentation and display adapters: the closed token vocabulary of the common props
- * (`tint`, `background`, `foreground`, `corner`, spec 5.1) as CSS, number coercion for ranges, and the
+ * (`tint`, `background`, `foreground`, `corner`) as CSS, number coercion for ranges, and the
  * kit-icon lookup. Apps never pass CSS: every value here is looked up in a closed table, an unknown token is
  * ignored, never passed through.
  */

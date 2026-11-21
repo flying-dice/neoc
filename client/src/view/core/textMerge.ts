@@ -1,5 +1,5 @@
 /**
- * Text helpers for two-way text bindings (spec 3.4). The HOST decides conflicts and merges on the base it last
+ * Text helpers for two-way text bindings. The HOST decides conflicts and merges on the base it last
  * sent; the client reproduces the same rule where the spec leaves a merge to it:
  *
  *  - `rebase`: if the user kept typing while a write was in flight, the next write must carry both the ack's

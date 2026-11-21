@@ -1,5 +1,5 @@
 /**
- * Reordering by keys, never by index (spec 3.7: `onMove {key, beforeKey}`): the keyboard path (`Alt+Arrow`), the
+ * Reordering by keys, never by index: the keyboard path (`Alt+Arrow`), the
  * drag path (insertion index from row rectangles) and the optimistic order a list shows while the host settles.
  */
 

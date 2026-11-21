@@ -1,7 +1,7 @@
 /**
  * Desktop shell journeys (client/journeys/desktop.md): the Dock, windows, the recent-apps strip, Split View and
  * full screen, on the real host. Nothing here presses a Calculator key or installs anything, so these can run
- * beside the specs that do (docs/TESTING.md, "The end-to-end host").
+ * beside the specs that do (see the `verify-change` skill, "The end-to-end host").
  */
 import type { Page } from '@playwright/test'
 import { chooseLayout, expect, openDesktop, resizeWindow, settle, test, windowOf } from './fixtures'

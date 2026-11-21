@@ -1,5 +1,5 @@
 /**
- * Keyed tree operations (spec 2.2). Nodes are addressed by path: the keys from the root, "/"-joined, with an
+ * Keyed tree operations. Nodes are addressed by path: the keys from the root, "/"-joined, with an
  * `@slot` segment when the node sits in a named slot (`main/list/@row/item/delete`). Paths are stable across
  * renders because keys are. Works on plain objects and on Svelte `$state` proxies alike, so applying an op to
  * the reactive tree gives fine-grained updates: a node keeps its component instance because its path is its
@@ -63,7 +63,7 @@ export function findByKey(root: Node, key: string): { node: Node; path: string }
   return visit(root, root.key)
 }
 
-/** Count nodes and measure depth: the limits the host enforces on every tree it emits (spec 2.1). */
+/** Count nodes and measure depth: the limits the host enforces on every tree it emits. */
 export function measure(root: Node): { nodes: number; depth: number } {
   let nodes = 0
   let depth = 0

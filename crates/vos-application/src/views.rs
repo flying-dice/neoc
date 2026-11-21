@@ -1,4 +1,4 @@
-//! Per-window view instances (ui-system.md §2.5): what the host keeps for each open window, and the protocol's
+//! Per-window view instances: what the host keeps for each open window, and the protocol's
 //! behaviour on top of the runtime and the live sources.
 //!
 //! * **open**: render, subscribe the sources the render used, answer with one complete snapshot.

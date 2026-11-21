@@ -1,4 +1,4 @@
-//! Which source fields a tree binds two-way (spec §3.2, §3.4): the `Binding` props that point at
+//! Which source fields a tree binds two-way: the `Binding` props that point at
 //! `src.<id>.<field>`. The host derives from them the fields a single-row source's `writable` lists, and how a
 //! write to each is reconciled (text: merge, scalar: the human wins).
 

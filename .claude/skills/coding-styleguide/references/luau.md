@@ -73,7 +73,7 @@ ui.Grid { columns = 4, spacing = 2, ui.each(KEYS, keyView) }
 ```
 
 - Props are semantic tokens (`style = "display"`, `fill = "gray4"`, `foreground = "secondary"`, `spacing = 2`): apps never use
-  raw colours, sizes or CSS. Check the component's props in `docs/reference/components.md`.
+  raw colours, sizes or CSS. Check the component's props in `types/generated/vos.d.luau`.
 - Icon-only controls need a `label`; an `Image` needs `alt` or `decorative = true`; the accessible name keeps the visible
   text (WCAG 2.5.3).
 - `and`, `or`, `not` are Lua keywords: in a tree use `ui.all`, `ui.any`, `ui.negate`, and `ui.when(cond, a, b)` for a value.

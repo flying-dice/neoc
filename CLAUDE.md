@@ -1,30 +1,39 @@
 # CLAUDE.md
 
-Guidance for Claude (and any LLM agent) working in **neoc**: one Cargo workspace holding a Lua runtime and, next to it, vos (see "vos" below).
+Instructions for Claude (and any LLM agent) working in this repository. It is one Cargo workspace and one Bun workspace holding
+two products, and one set of rules for both:
 
-- **Runtime** (`crates/neoc-vm`): an embedded Luau engine (through `mlua`) backed by Rust. Scripts are written in Luau (Lua 5.1 syntax plus type annotations, `continue`, compound assignment and string interpolation, all of which run); their editor types are the generated Luau declarations of every module (see Modules, Types); the base library is Luau's (`bit32`, `table.clone`, no `goto`, `string.format('%s')` takes strings and numbers only (`%*` for anything else): the list is in [README.md](README.md#language)). Scripts run in a VM with a curated module surface (`std:*`, `lib:*`, `vnd:*`). The unsafe halves of the Lua standard library are stripped; everything else comes through explicit modules. Not a security boundary.
-- **Binary** (`crates/neoc`): the thin `neoc` CLI over the runtime. `run` only.
+- **neoc**: a fast, lightweight [Luau](https://luau.org/) runtime. `crates/neoc-vm` is the embedded engine (through `mlua`):
+  Luau scripts in a VM with a curated module surface (`std:*`, `lib:*`, `vnd:*`); the unsafe halves of the Lua standard
+  library are stripped and everything else comes through explicit modules. Not a security boundary. `crates/neoc` is the
+  thin `neoc` CLI over it (`run` only). Scripts are Luau (Lua 5.1 syntax plus type annotations, `continue`, compound
+  assignment and string interpolation); their editor types are the generated Luau declarations of every module
+  (`types/neoc.d.luau`, checked by luau-lsp); the base library is Luau's (`bit32`, `table.clone`, no `goto`,
+  `string.format('%s')` takes strings and numbers only: the list is in [README.md](README.md#language)). neoc used to be a
+  language that compiled to Lua; that is gone, its last state is the `neoc-lang-final` tag (`git checkout neoc-lang-final --
+  <path>` restores a path).
+- **vos** (Virtual OS): an iPadOS-style virtual desktop for agents, a self-hosted home lab: apps can provide LAN services such
+  as DNS and container-backed services, so vos can stand in for the services people run on a home NAS. Three parts:
+  - **The host** (`crates/vos-*`, the `vos` binary): a Rust hexagon. It runs the apps, owns their data, serves the client, and
+    speaks JSON-RPC 2.0 over WebSocket at `/rpc`, AG-UI over HTTP + SSE at `/agui` (agent chats), MCP at `/mcp` (the tools
+    agents call) and ACP to the agent processes it launches. It binds the LAN and every client must pair as a device first.
+  - **The apps** (`apps/<id>/`): server-side code authored in typed Luau (`app.json` + `*.luau`, `--!strict`, checked by
+    luau-lsp against `types/generated/vos.d.luau`). `bun run build:apps` bundles an app into one `app.luau` with darklua (types
+    and comments stripped); the host runs it in one `neoc-vm` VM per app (the `vos-lua` adapter), loaded from an app ref over
+    `file://`, `http://` or `https://`. An app holds its state, data, tools, notifications and UI description. Examples:
+    `apps/calculator`, `apps/agents`; `apps/README.md` is the reference for writing one.
+  - **The client** (`client/`, a Vite + Svelte 5 PWA): renders the view trees the host sends with the kit in `packages/ui`
+    (atomic layers) through adapters in `client/src/view/`, holds client-managed state, and runs **no app code**.
 
-neoc used to be a language that compiled to Lua. That is gone; the last state is under the `neoc-lang-final` tag. Restore a path with `git checkout neoc-lang-final -- <path>`.
-
-Read [README.md](README.md) for what neoc is and [CONTRIBUTING.md](CONTRIBUTING.md) for the build, the pre-PR checks, how to add a module and how to release.
-
-## vos
-
-This repository also holds **vos** (Virtual OS), an iPadOS-style virtual desktop for agents: the host (`crates/vos-*`, the `vos` binary), the apps (`apps/`, typed Luau run on `neoc-vm`), the client (`client/`) and the UI kit (`packages/ui`). It has its own gate, boundaries, test layout and skills, all governed by [AGENTS.md](AGENTS.md), which stays as it is: read it before touching any of that. Its skills are in `.claude/skills/`: the `vos-*` ones (`vos-pre-commit`, `vos-clean-code-review`, `vos-refactor`, `vos-code-review`) and the vos-only `app-design`, `coding-styleguide`, `prebuild-synthetic-ux`, `postbuild-synthetic-usability`, `verify-change`; the unprefixed `pre-commit`, `clean-code-review` and `refactor` (and `change-review`, `pr-review`, `pr-self-review`, ...) are neoc's. `AGENTS.md` is imported below, so its rules load with this file; where it and this file differ (Jira project, merge policy, review skills), NEOC-115 settles it, and for the neoc crates this file wins.
-
-@AGENTS.md
-
-The vos adapter (`crates/vos-lua`) is an embedder of `neoc-vm`: vos policy (apps, `readOnly`, views, `app.*`, the `vos:*` modules) stays in that adapter and never moves into `neoc-vm`. The vos crates keep edition 2021 and inherit the workspace lint table; the neoc crates do not yet (see "Rust style").
+[README.md](README.md) says what the products are and how to build, run and test them; [CONTRIBUTING.md](CONTRIBUTING.md) has
+the pre-PR checks, how to add a module and how to release. This file is the rest: the rules.
 
 ## Layout
 
 ```
-crates/neoc/                 # the `neoc` binary (the vos crates add the `vos` host binary, crate `vos-host`, and the `vos-codegen` tool)
-  src/main.rs                # CLI entry: `run`, embedded-payload executables
+crates/neoc/                 # the `neoc` binary (CLI entry src/main.rs: `run`, embedded-payload executables)
   tests/                     # Lua suites (*.test.lua, *.spec.lua), cli.rs, cucumber.rs
 crates/neoc-vm/              # the runtime library
-  tests/script_parse.rs      # compiles (never runs) every Lua script, Docker or not
   src/errors.rs              # runtime error types (NeocError)
   src/lua/sandbox.rs         # engine construction, stripped globals
   src/lua/lifecycle.rs       # the embedding hooks: Life, CallEntry/Baton, async_function/async_method, Role
@@ -33,34 +42,100 @@ crates/neoc-vm/              # the runtime library
   src/lua/facade/luau_decls.rs  # the Luau declarations emitter: a module's recorded surface -> `type` aliases, the `require` overloads
   src/lua/modules.rs         # module registration + `require`
   src/lua/{std,lib,vnd}/     # one file per module
-  examples/luau_decls.rs     # writes (or `-- --check`s) the Luau declarations in types/neoc.d.luau
-  tests/embedding.rs         # the embedding hooks on Luau: yield boundaries, environments, ownership
-  tests/abort_regressions.rs # poisoned error values and recursion through host functions, each in a child process, on `VM_THREAD_STACK` (8 MiB) in a debug build and 2 MiB in a release build
-  tests/lifetimes.rs         # what a script leaves running (`neoc run` and under a Life), worker module sets
-  tests/signals.rs           # Ctrl-C and the process shutdown signal against serve_static and server:wait
-  tests/luau_decls.rs        # drift check of types/neoc.d.luau, no colon in a file name, the luau-lsp fixtures (NEOC_REQUIRE_LUAU_LSP)
+  examples/luau_decls.rs     # writes (or `-- --check`s) types/neoc.d.luau
+  tests/                     # e.g. embedding, abort_regressions, lifetimes, signals, luau_decls, hostile_inputs, forged_len, script_parse
   benches/                   # Criterion suites (lib/, vnd/), behind the `bench` feature
-types/neoc.d.luau            # GENERATED Luau declarations of every module (one definitions file for luau-lsp, `require` overloads at its end)
-types/fixtures/              # luau-lsp fixtures: usage.luau, syntax.luau (clean, strict) and negative/ (expect-error)
-(types/fixtures/.luaurc)     # Luau config of the fixtures: strict mode (each fixture also says `--!strict`)
-types/generated/vos.d.luau   # GENERATED by vos-codegen: the app-facing Luau declarations (vos's `app`/`ui` API, plus types/neoc.d.luau's modules minus `NOT_FOR_APPS`, one `declare require`); the vos apps are checked against it by `bun run lint:luau`
+crates/vos-domain/           # vos: the pure model (ids, app refs, tools, the view tree and component schema, protocol messages)
+crates/vos-application/      # vos: ports (traits) and use cases, in-memory fakes in `testing`
+crates/vos-{lua,sqlite,fetch,acp,agui,http,mcp}/   # vos: adapters, one port or protocol each (`lua` embeds neoc-vm)
+crates/vos-codegen/          # vos: dev-time generator, Rust schema -> types/generated/*
+crates/vos-host/             # vos: composition root and the `vos` binary
+apps/<id>/                   # vos apps (app.json, *.luau, JOURNEYS.md, e2e/); apps/README.md
+client/                      # the shell and the managed renderer (client/src/view); client/journeys/*.md for built-in pages
+packages/ui/, packages/storybook/   # the UI kit (atoms, molecules, organisms, templates, tokens, stories); the shared Storybook config
+e2e/                         # Playwright: stories, desktop, journeys against the real host; e2e/tools (session.mjs, contact-sheet.mjs)
+scripts/                     # lint and build scripts (check-*.ts, build-apps.ts, lint-luau.ts, ...), pre-pr.ts (the gate), check-neoc.sh
+types/neoc.d.luau            # GENERATED by neoc-vm: Luau declarations of every module (one definitions file, `require` overloads last)
+types/fixtures/              # luau-lsp fixtures of those declarations: usage.luau, syntax.luau (clean, strict) and negative/ (expect-error)
+types/generated/             # GENERATED by vos-codegen and scripts/codegen-lua.ts: vos.d.luau (the app-facing declarations: vos's
+                             #   `app`/`ui` API plus neoc.d.luau's modules minus NOT_FOR_APPS), vos.ts, ui.lua, prelude.lua
+lua/prelude.lua              # the prelude embedded in every app VM (polyfills: `typeof`, `utf8`)
 tooling/cli/                 # Gherkin spec for the CLI, run against the built binary
+ux/<app>/                    # UX research output written by the UX skills (discovery.md, review-<n>.md, round-<n>.md)
+.claude/                     # skills, agents, the ux-research workflow, output style; they are the process docs of this repo
 ```
 
-The crate boundary is enforced by `Cargo.toml`. `neoc-vm` owns the `mlua`/`tokio` stack, the sandbox and every module, and depends on no other workspace crate. `neoc` owns the CLI, glob expansion, the tokio runtime and process exit policy. If a need crosses the boundary, lift it into `neoc-vm`'s API; don't shortcut.
+Never edit `types/neoc.d.luau` or `types/generated/*` by hand: `cargo run -p neoc-vm --example luau_decls` and `bun run codegen`
+write them (`bun run codegen:check` fails when they are stale). There are no other long-form docs in the repo: the code, its
+tests, the generated types, the READMEs, this file and the skills are the documentation. (The old `docs/` tree, a pre-NEOC-115
+copy, is in git history at `51f47f4`: `git show 51f47f4:docs/architecture/ui-system.md`.)
 
-## Build and test
+## Boundaries
 
-```sh
-cargo build                                          # debug build
-cargo test -p neoc -p neoc-vm                         # Rust, CLI integration and the Gherkin spec
-cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.lua' 'crates/neoc/tests/**/*.spec.lua'   # all Lua suites (Docker ones need a daemon)
-cargo bench -p neoc-vm --features bench --bench lib --bench vnd -- --test   # bench smoke
-cargo clippy --workspace --all-targets               # lint
-cargo fmt --check                                    # formatting
-```
+- **Crate dependency direction** (inward only). vos is a hexagon: `vos-domain` is pure and depends on no other crate;
+  `vos-application` (ports and use cases) depends on domain; each adapter (`lua`, `sqlite`, `mcp`, `acp`, `agui`, `fetch`,
+  `http`, `codegen`) depends on application and domain and **never on another adapter**; `vos-host` is the composition root and
+  the only crate that sees them all. `neoc-vm` is a support library, not a vos adapter: the Lua VM (mlua on Luau, built from
+  source), depending on no other crate here; the `neoc` CLI is its other client. **The no-vos-leak rule: `neoc` and `neoc-vm`
+  never depend on a `vos-*` crate and take no vos concept** (apps, `readOnly`, views, `app.*`, the `vos:*` modules, a type or
+  name only vos needs). vos policy lives in `vos-lua`, the embedder; `neoc-vm` gets only a generic mechanism an embedder needs (a
+  hook, a registry, `Life`). Among the `vos-*` crates only `vos-lua` may depend on `neoc-vm` (it reaches mlua through
+  neoc-vm's re-export, so mlua stays out of every vos crate). Enforced by `bun run lint:deps` (`scripts/check-deps.ts`, an
+  allow-list over `cargo metadata`), `cargo deny check` (`deny.toml`: each framework crate is pinned to its adapter) and, for
+  the no-vos-leak edge, `scripts/check-neoc.sh`. A new crate is placed in the allow-list on purpose.
+- **Rust hygiene.** The workspace lint table (`[workspace.lints]`: clippy pedantic with `-D warnings`, `unsafe_code` forbidden,
+  `unwrap`, `expect` and `panic!` denied outside tests) is inherited by the vos crates; the neoc crates do not inherit it yet
+  (see "Rust style") but follow the same practice. `thiserror` in library crates, `anyhow` only in a host binary.
+- **Apps are the person's own code on their own host. The VM keeps their Luau state apart; it is not a security boundary.** An
+  app runs as Luau in its own VM and its own environment table: its globals, its standard libraries (read-only) and its module
+  tables are its own, so apps do not share state by accident, and it has no `load*`/`getfenv`/`setfenv`. That is all the
+  separation there is. Through `std:fs`, `vnd:rusqlite` and the other modules an app can read and write other apps' data and the
+  host's own database under `~/.vos`. There are **no permissions** and **no budgets** (no CPU, memory or time limits): a runaway
+  app (a loop that never yields, a `std:thread` worker) can hang the host, not just itself, and can outlive its uninstall,
+  because unloading aborts work only at the points where the app yields to the host. That is accepted. It reaches the host
+  through the `app` table (typed by `types/generated/vos.d.luau`) and through **every `std:`, `lib:` and `vnd:` module of
+  `neoc-vm` except `lib:test`, `lib:compile` and `std:workers`** (files, network, servers, tasks, threads, SQLite, TLS), next to
+  `vos:app` and `vos:ui`. All of them are typed in the declarations; the refused three are `vos_domain::NOT_FOR_APPS`, the one
+  list: the adapter refuses them and the declarations type each as unusable. What an app starts (tasks, servers, workers)
+  belongs to it: unloading or replacing the app aborts it and closes its listeners, and what a task or a request handler runs
+  queues behind the app's other calls (one call at a time per VM). Still enforced: a tool declared `readOnly` cannot write
+  through the `app.*` API (db, kv, state, notify, shell, windows, and registering tools, windows and handlers), and neither can
+  the tasks it starts or the requests it triggers through the app's own server (a request is read-only while any read-only call
+  is acting: running, queued, or waiting at something in flight such as a request; one asleep at a timer does not count, so a
+  poller that also makes requests still taints webhooks intermittently: put long-lived work that must write in a writable
+  call, not a `readOnly` tool; `crates/vos-lua/tests/hardening.rs` and `chaos.rs` pin it, and the failed-reload edge is
+  accepted in the `AppRuntime::load` port doc). That guarantee does **not** cover the neoc modules (`std:fs`, `vnd:rusqlite`,
+  `std:net`, ...), which are open to every tool. Agent auto-approval of `readOnly` app tools relies on this `app.*`-only
+  guarantee (owner decision: auto-approval stays on). SQL `ATTACH` is denied through `app.db`/`app.kv` (not through
+  `vnd:rusqlite`), a cyclic or absurdly shared table handed back to the host is an error (never a stack overflow), a Lua number
+  can not panic a module or size an unbounded allocation (an error instead: a host panic aborts every app), and chunks load as
+  text only.
+- **Luau, the stack and what an error value can do.** An error value whose `__tostring` makes a protected call and then fails
+  (which aborted the host on LuaJIT) is answered `error in error handling` once, so it reaches the adapter as an ordinary error
+  on every path (`crates/vos-lua/tests/poison.rs` holds one test per path). Recursion through a Rust host function that calls
+  back into Lua stops at Luau's C-call limit (200) with `C stack overflow`, provided the thread's stack holds those levels:
+  **every thread that polls a VM has `neoc_vm::VM_THREAD_STACK` (8 MiB)**, which `vos_host::runtime` gives the workers and the
+  blocking pool (the host re-exports it through `vos_lua`, since the host may not depend on neoc-vm), and the top-level future
+  runs on a worker, not on the `block_on` thread (`crates/vos-host/tests/stack.rs`). A new thread of the host's own that calls
+  into Lua is built with that stack too. (A Tera panic in `lib:template` aborts under `release-host`'s `panic = "abort"`:
+  NEOC-125.)
+- **The client runs no app code.** The renderer draws view trees and sends events; nothing executable crosses the wire. Kit
+  knowledge of apps, and app knowledge in the client, are both bugs.
+- **Agent and tool output is untrusted:** render it as text. No `{@html}` or `innerHTML` for it (the only `{@html}` is
+  `packages/ui/src/atoms/Icon.svelte`, over the constant icon map). RPC params, MCP tool inputs, and anything an app or agent
+  sends are validated at the edge.
+- **Missing a capability?** Extend the host API: the domain type and schema, the application port and use case, the adapter, the
+  codegen output and the tests, in that order. Never a side channel (no extra route, raw socket or global); client and host talk
+  only through the protocol (JSON-RPC on `/rpc`, AG-UI on `/agui`).
+- **Release what you open.** The host registers and unregisters apps at runtime, so an adapter's resources (VMs, DB handles,
+  watchers, agent processes) are dropped on unload; a neoc module registers whatever it starts with the engine's `Life`.
 
-`--workspace` would also build and test the vos crates, whose tests need `bun` and `darklua` on `PATH`; the neoc gate names `-p neoc -p neoc-vm`, and the vos crates have the gate in `AGENTS.md`. The full pre-PR gate, including the Lua suite set that needs no Docker, is in [CONTRIBUTING.md](CONTRIBUTING.md#pre-pr-checks).
+`bun run lint:boundaries` (`scripts/check-boundaries.ts`) enforces on the client and the kit: no relative import leaves its
+package (the client never reaches into `crates/`), the client and kit import only `@vos/ui` (stories also `@vos/storybook`), no
+Node or Bun builtins in browser code, `new WebSocket` only in `client/src/view/rpc/websocket.ts`, and no `{@html}`, `innerHTML`,
+`outerHTML`, `insertAdjacentHTML` or `document.write`. Also atomic layers (`lint:atomic`, in `packages/ui` and `client/src`:
+atoms, molecules, organisms, templates, pages, each importing only strictly lower layers through the layer entry points) and
+test ids from the first commit (`lint:testids`).
 
 ## Modules
 
@@ -119,12 +194,19 @@ Adding a module: see [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-new-module).
 
 `neoc_vm::mlua` is re-exported: name that one binding.
 
+
 ## Tests
 
-- **Rust:** `#[cfg(test)] mod tests` next to the code. Integration tests in `tests/` only where they cross crate boundaries, plus `crates/neoc-vm/tests/embedding.rs`, `lifetimes.rs` and `signals.rs` (the embedding hooks, and what `neoc run` keeps doing), `crates/neoc-vm/tests/abort_regressions.rs` (error values and recursion that aborted the host on LuaJIT), `crates/neoc-vm/tests/luau_decls.rs` (the generated declarations and the luau-lsp fixtures), `crates/neoc-vm/tests/hostile_inputs.rs` (every module called with hostile values, fails on any panic) and `forged_len.rs`.
-- **Lua:** a new module gets `crates/neoc/tests/<ns>/<name>.test.lua`, run with `neoc run`. (Not every existing module has one yet: `std:net`, `std:workers` and `lib:test` have none, and `std:task` uses a `.spec.lua`.) Per exported function: one happy path, one test per distinct error condition, and an empty or zero value where it applies. The outer `describe` is the bare module name.
+- **neoc Rust:** `#[cfg(test)] mod tests` next to the code. Integration tests in `tests/` only where they cross crate boundaries, plus `crates/neoc-vm/tests/embedding.rs`, `lifetimes.rs` and `signals.rs` (the embedding hooks, and what `neoc run` keeps doing), `abort_regressions.rs` (error values and recursion that aborted the host on LuaJIT), `luau_decls.rs` (the generated declarations and the luau-lsp fixtures), `hostile_inputs.rs` (every module called with hostile values, fails on any panic) and `forged_len.rs`.
+- **neoc Lua:** a new module gets `crates/neoc/tests/<ns>/<name>.test.lua`, run with `neoc run`. (Not every existing module has one yet: `std:net`, `std:workers` and `lib:test` have none, and `std:task` uses a `.spec.lua`.) Per exported function: one happy path, one test per distinct error condition, and an empty or zero value where it applies. The outer `describe` is the bare module name.
 - **CLI spec:** `tooling/cli/*.feature`, driven by `crates/neoc/tests/cucumber.rs`.
 - **Benches:** three tiers per module (`library`, `into_out_lua`, `through_lua`), behind the `bench` feature.
+- **vos Rust** (`cargo nextest run --workspace --exclude neoc --exclude neoc-vm`): domain unit tests with no I/O; use cases in `vos-application` against the in-memory port fakes in `vos_application::testing` (no mocking library: write a fake); adapters through the real library in `crates/<adapter>/tests/` (the shipped apps too: `crates/vos-lua/tests/calculator_app.rs` builds `apps/calculator` with darklua and runs the bundle, which needs `bun` and `darklua`); the real wiring on an ephemeral loopback port in `crates/vos-host/tests` (`/rpc`, `/agui`, `/mcp`, pairing, the Agents app). Name a test after the behaviour, put the failure path next to the success path, keep each test independent (its own data directory, no fixed ports); a protocol or adapter change adds the test in the layer it touches and, across layers, one in the host. Tests may use `unwrap`, `expect` and `panic!` (`clippy.toml`).
+- **vos client and kit:** `bun test` next to the code (`*.test.ts`: the renderer core against a TypeScript fake host on an in-memory wire, the shell's rune modules through the preload in `client/bunfig.toml`, the kit's logic, `types/tests`).
+- **vos stories and e2e:** every screen and state of the shell, the renderer and the kit is a story (`*.stories.svelte`; renderer and shell states are JSON-tree stories on a fake host); `bun run test:e2e` runs every story (render, axe WCAG 2.1 AA, snapshots light and dark, no overflow), the `desktop` project (every `apps/*/app.json` and built-in page opened in the real shell on the real host: sizes, layouts, light and dark, axe, snapshots) and the `journeys` projects (`JOURNEYS.md` and `client/journeys/*.md`, one spec per journey id, driven by test ids). The `verify-change` skill (sections 3 and 7) says how the e2e host works and how to drive the real shell by hand.
+- **Luau apps:** `bun run lint:luau` runs `luau-lsp analyze` in strict mode over every app and fixture against `types/generated/vos.d.luau` (a positive fixture, `negative/` fixtures whose `-- expect-error` markers are counted in `scripts/lint-luau.ts`, a second pass for an app's own modules); `bun run lint:stylua` checks the format.
+
+Locators in tests are `getByTestId` only; the test-id conventions are in `.claude/skills/coding-styleguide/references/typescript-svelte.md`.
 
 ## Rust style
 
@@ -135,16 +217,30 @@ Adding a module: see [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-new-module).
 - Plain voice. No marketing language.
 - `mlua` is built with `luau` (the engine's source is vendored by `luau0-src`; native code generation, `luau-jit`, is not enabled) and `rusqlite` with `bundled`. The binary supports Linux, macOS and Windows; gate platform code with `#[cfg(unix)]` / `#[cfg(not(unix))]`.
 
+
 ## Workflow
 
-`main` is the only long-lived branch. Work is tracked in [Jira](https://flying-dice.atlassian.net/jira/software/projects/NEOC) (project `NEOC`); code and pull requests are on GitHub at `flying-dice/neoc`.
+`main` is the only long-lived branch, and everything lands on it through a squash-merged PR; nothing is pushed to `main`
+directly. Code and pull requests are on GitHub at `flying-dice/neoc`.
 
-1. Branch from `main`: `issues/{key}-{slug}` (e.g. `issues/NEOC-6-std-task`).
-2. Run the [pre-PR checks](CONTRIBUTING.md#pre-pr-checks) locally. GitHub Actions is not a gate and is not relied on: the local run is the verification.
-3. Open a PR into `main` (a draft is fine). Title and commits are Conventional Commits (the squash commit message comes from the PR title for a multi-commit PR, from the commit for a single-commit one). Reference the Jira key in the body or footer (`Refs NEOC-6`).
+**Tracking.** This repository's work is in the Jira project **NEOC**
+(<https://flying-dice.atlassian.net/jira/software/projects/NEOC>): create new work there, not as GitHub issues. The **AGOS**
+Jira project (board <https://flying-dice.atlassian.net/jira/software/projects/AGOS/boards/101>) and the **AGOS Confluence
+space** (<https://flying-dice.atlassian.net/wiki/spaces/AGOS/overview>) still hold the vos product epics and the long-form
+planning pages. The current AGOS epic is **AGOS-55**, foundations. (Older comments cite AGOS-n keys; they stay valid.)
+
+1. Branch from `main`: `issues/NEOC-<n>-<slug>` (e.g. `issues/NEOC-6-std-task`).
+2. Work, then run the pre-PR checks locally (see "The gate"). GitHub Actions is blocked and is not a gate: the local run is the
+   verification.
+3. Open a PR into `main` (a draft is fine). One module or one well-scoped change per PR; say why, not only what. Title and
+   commits are Conventional Commits; reference the Jira key in the body or footer (`Refs NEOC-<n>`).
 4. Self-review with the `pr-self-review` skill and post its `Self-review` note on the PR for the head SHA.
-5. Hand off to an independent `pr-review` pass: a fresh reviewer with no session context, who posts a verdict note for the head SHA (`READY TO MERGE` or `CHANGES NEEDED`). Fix and repeat from step 2 until `READY TO MERGE`.
-6. Squash-merge only on `READY TO MERGE` for the current head, then delete the branch. The one exception is the merge of vos into neoc (NEOC-113, PR #34), which lands with a merge commit so that vos's history stays in `main`: never squash it. Mark the Jira ticket Done.
+5. Hand off to an independent `pr-review` pass: a fresh reviewer with no session context, who posts a verdict note for the head
+   SHA (`READY TO MERGE`, `CHANGES NEEDED` or `HOLD`). Fix and repeat from step 2 until `READY TO MERGE`.
+6. Squash-merge only on `READY TO MERGE` for the current head, then delete the branch and mark the Jira ticket Done. The one
+   exception was the merge of vos into neoc (NEOC-113, PR #34), which landed with a merge commit to keep vos's history.
+7. An app that isn't ready for the full gate and the UX research panel stays in its PR: keep pushing to the branch; don't merge
+   a partial app behind a flag or with "tests later".
 
 Releases are cut by pushing a `vX.Y.Z` tag on `main` (see CONTRIBUTING.md). Don't push release tags unless asked.
 
@@ -153,9 +249,10 @@ Releases are cut by pushing a `vX.Y.Z` tag on `main` (see CONTRIBUTING.md). Don'
 [Conventional Commits](https://www.conventionalcommits.org): `type(scope): description`. Imperative, lowercase, no trailing period; one logical change per commit.
 
 - **Type:** `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`.
-- **Scope** (optional): `cli`, a module (`std:fs`), or a subsystem (`vm`, `install`, `workspace`, `ci`).
+- **Scope** (optional): `cli`, a module (`std:fs`), or a subsystem (`vm`, `vos`, `client`, `install`, `workspace`, `ci`).
 - **Footer:** `Refs NEOC-42`. Never `Closes` / `Fixes` / `Resolves`.
-- **Breaking change:** `!` after the type/scope **and** a `BREAKING CHANGE:` footer. The Lua surface of a module and the CLI are the user-visible contracts, so changes there almost always need `!`.
+- **Breaking change:** `!` after the type/scope **and** a `BREAKING CHANGE:` footer. The Lua surface of a module, the CLI, and vos's
+  app API, protocol and `app.json` are the user-visible contracts, so changes there almost always need `!`.
 
 ```
 fix(std:fs): read_to_string reports the path in its error
@@ -165,3 +262,90 @@ the caller passed.
 
 Refs NEOC-42
 ```
+
+## The gate
+
+One command set, defined once in [CONTRIBUTING.md](CONTRIBUTING.md#pre-pr-checks) and run by the `pre-commit` skill:
+
+```sh
+bun run gate           # the neoc checks (scripts/check-neoc.sh), then the vos checks: lint, typecheck, test, test:e2e
+bun run gate:neoc      # = scripts/check-neoc.sh: the scoped gate for a change confined to the neoc crates (no bun, no darklua; not for a change to the embedding API or sandbox, to an async host function's `Role` or to what a module registers with `Life`: `vos-lua`'s `turns.rs` and `chaos.rs` pin those, so they get the full gate)
+```
+
+`bun run gate` sets `VOS_GATE=1` and `NEOC_REQUIRE_LUAU_LSP=1`, so a missing `luau-lsp`, `stylua` or `darklua` fails instead of
+skipping. Both variables keep their meaning: `VOS_GATE=1` (or `CI`) makes the vos lints (`lint:luau`, `lint:stylua`) and the
+`vos-codegen` editor test fail on a missing tool; `NEOC_REQUIRE_LUAU_LSP=1` does the same for `neoc-vm`'s `luau_decls` test.
+Without them a developer machine skips with a notice, and a skip is not a pass. Needed tools: the pinned Rust toolchain,
+`cargo-nextest`, `cargo-deny`, `luau-lsp` 1.70.1 (the release binary on `PATH` or in `~/.local/bin`; there is no Homebrew
+formula), and for vos Bun, `darklua` 0.18.0 (`cargo install darklua --version 0.18.0 --locked`; building the apps fails without
+it), `stylua` and Playwright's Chromium. e2e needs a Mac for the screenshot baselines; `VOS_PORT_BASE=9100` runs it in a second
+worktree (Storybook = base, e2e host = base + 10).
+
+## Commands
+
+```sh
+bun run dev             # build:apps, then the vos host on :7400 (dev_reload) + Vite on :5173; pair with the code the host prints
+bun run build:apps      # bundle every apps/*/app.json into one Luau file (darklua) + app refs + registry.json under dist/apps
+bun run build           # build the client (client/dist)
+bun run host            # cargo run -p vos-host: serves client/dist, /rpc, /agui, /mcp on :7400
+bun run host pair       # print a fresh device pairing code (every client must pair first, even on loopback)
+bun start               # the same host, built with the release-host profile (opt-level z, panic abort)
+cargo run -p neoc -- run script.lua   # the neoc CLI
+bun run lint            # conflict markers + atomic layers + test ids + boundaries + rust (fmt, clippy -D warnings, lint:deps, cargo deny) + luau (luau-lsp) + stylua + codegen:check + package eslint
+bun run typecheck       # cargo check --workspace --all-targets --locked + tsc on types/ + svelte-check in each package
+bun run test            # cargo nextest over the vos crates (neoc's crates are in check-neoc.sh) + bun test (types, scripts, client, kit)
+bun run test:e2e        # all Storybooks + desktop + journeys, headless, against the real host
+bun run test:e2e:update # rebaseline snapshots (then look at them)
+bun run storybooks list # every Storybook (client, packages/ui); each package: bun run storybook
+bun run format          # prettier + cargo fmt + StyLua
+bun run codegen         # regenerate types/generated/* (vos.d.luau, vos.ts, ui.lua, prelude.lua) from the Rust schema and types/neoc.d.luau
+bun run codegen:check   # fails when they are stale (part of bun run lint)
+cargo run -p neoc-vm --example luau_decls   # regenerate types/neoc.d.luau (-- --check fails on drift)
+bun scripts/design-audit.ts <page>  # static styleguide audit of a built-in shell page's styles
+```
+
+## Definition of done
+
+A change is done when all of these hold:
+
+1. The gate passes on the head commit (`bun run gate`, or `scripts/check-neoc.sh` for a change confined to the neoc crates).
+2. New behaviour has new checks, in the layer it lives in (see "Tests"): for neoc, Rust tests and a `*.test.lua` suite; for vos,
+   `cargo nextest` tests (domain, use cases against the port fakes, adapters, the host end to end), `bun test` for client and
+   kit logic, a story per new screen or state, a journey spec per new or changed journey. Changed snapshots were looked at.
+3. Every interactive vos element has a `data-testid` (kit components take a required `testid` prop; a Luau app's interactive
+   nodes have a `key`); it works by keyboard, in light and dark, and at the app's minimum window.
+4. UI changes carry a `verify-change` "Manual verification" record in the PR.
+5. For a new app or a change people will notice in one: the `pr-review` section "vos checks" (V5, the readiness table) holds,
+   including a `ux/<app>/round-<n>.md` that meets the `app-design` exit criteria.
+
+## Adding things
+
+- **A neoc module:** [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-new-module).
+- **A vos app:** `apps/README.md`, "Adding an app". From its first commit the app has an `app.json`, an `app.manifest` with a
+  `window` min size (and a comment when the layout needs more than 320x240), a `JOURNEYS.md` plus `e2e/journeys.spec.ts`, and a
+  Rust test of its logic and tools next to the others in `crates/vos-lua/tests`. The generic `desktop` project opens every
+  `apps/*/app.json` in the real shell with no extra code; each screen and state beyond the landing view is reached by a
+  journey or shown by a JSON-tree story in the client Storybook. The app is `lint:luau` (strict) and StyLua clean from the
+  first commit. Then design it with `app-design` until the exit criteria hold; until then it stays in its PR.
+- **A kit component or renderer adapter:** a component in the right atomic layer of `packages/ui` with a required `testid` prop
+  and a story; an adapter under `client/src/view/<layer>/` that takes `AdapterProps`, reads props through `useView().view`
+  inside `$derived`, renders children with `<Children>`, and is registered in `client/src/view/kit.ts`; the component's schema
+  (props, events, slots, accessibility rules) is a Rust change in `vos-domain` first, then `bun run codegen`
+  (`coding-styleguide`, `references/typescript-svelte.md`).
+
+## Skills: when to use which
+
+Each skill covers both products; where the checks differ it has a section per product. The skills are in `.claude/skills/`.
+
+| When | Skill |
+|---|---|
+| Designing a new neoc module, or reviewing a runtime design | `runtime-design`; `requesting-module` for a request to add one (the `std-module`, `lib-module` and `vnd-module` agents implement them) |
+| Writing or changing code (Rust, Luau, Svelte/TypeScript) | `coding-styleguide` |
+| After implementing, before pushing | `change-review`, `clean-code-review`, then `pre-commit` (loops until clean; `refactor` clears markers) |
+| Hardening tests, finding unhappy paths a suite misses | `chaos-monkey` |
+| Before marking a PR ready, and again after fixes | `pr-self-review` |
+| Reviewing a PR (independent; verdict READY TO MERGE, CHANGES NEEDED or HOLD; applies the vos checks when the diff touches vos) | `pr-review` |
+| Any change to what a person sees or does | `verify-change` |
+| Before building a new app (or re-scoping one) | `prebuild-synthetic-ux` (personas, riskiest assumptions, key journeys and stories, to `ux/<app>/discovery.md`) |
+| Designing or redesigning an app | `app-design` (discovery, journeys, usability review, the `ux-research` workflow, conformance to `app-design/STYLEGUIDE.md`, iterate; reports in `ux/<app>/`) |
+| Reviewing the usability of something built | `postbuild-synthetic-usability` (task walkthroughs on the real host, heuristics and WCAG, to `ux/<app>/review-<n>.md`) |

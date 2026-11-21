@@ -1,5 +1,5 @@
 /**
- * Picker options and selection (`Picker.options`, `Picker.selection`, spec 1.5). Options are a literal list of
+ * Picker options and selection (`Picker.options`, `Picker.selection`). Options are a literal list of
  * `{value, label, icon?, disabled?}` or the rows of a source (fields `value` and `label`); the selection is one
  * value, or a list when `multiple`. Pure: adapters call it inside `$derived`.
  */

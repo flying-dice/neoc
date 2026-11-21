@@ -1,6 +1,6 @@
 ---
 name: pr-self-review
-description: Use before marking a pull request ready, handing it to an independent review, or re-handing it after fixes — author-side quality gate
+description: Use before marking a pull request ready, handing it to an independent review, or re-handing it after fixes — author-side quality gate (the same 11-gate rubric as pr-review; G11 covers the vos checks when the diff touches vos paths)
 ---
 
 Author gate. Run before every handoff to review and every re-handoff. Reviewer runs the same rubric — anything skipped here, they find, and each find costs a full round.
@@ -12,7 +12,7 @@ You are your own first reviewer. Default verdict FAIL until each gate carries ev
 ## Process
 
 1. **Freeze head.** Push. Record `git rev-parse HEAD`. Run the pre-PR checks at that SHA (see G1).
-2. **Run the rubric** in author mode. Fan-out per the rubric, `model: "sonnet"`.
+2. **Run the rubric** in author mode. Fan-out per the rubric, `model: "sonnet"`. When the diff touches vos paths, G11 means reading the section "vos checks" of `.claude/skills/pr-review/SKILL.md` and running it.
 3. **Fix loop.** Any FAIL → fix, push, back to step 1. A note is valid only for the SHA it names.
 4. **Post** the Self-review note (template below) on the PR.
 5. **Hand off to an independent `pr-review` pass** only when every gate is PASS or `N/A — <reason>`.
@@ -20,16 +20,16 @@ You are your own first reviewer. Default verdict FAIL until each gate carries ev
 <!-- rubric:begin -->
 ## Rubric
 
-10 gates. Cost-ordered. Each gate: PASS / FAIL / `N/A — <reason>`. No blanks. Evidence = command + measured output at head SHA. Assertion without evidence = FAIL.
+11 gates. Cost-ordered. Each gate: PASS / FAIL / `N/A — <reason>`. No blanks. Evidence = command + measured output at head SHA. Assertion without evidence = FAIL.
 
 Stop rules:
-- **Author mode** (`pr-self-review`): G1–G4 fail-fast — first FAIL → fix, push, restart at G1. G5–G10 run in full; fix every FAIL, push, restart at G1.
-- **Reviewer mode** (`pr-review`): G1 FAIL → hand back, stop — no probing a red or stale head. G2–G10 run in full; post every finding in one pass. A partial review buys another round.
+- **Author mode** (`pr-self-review`): G1–G4 fail-fast — first FAIL → fix, push, restart at G1. G5–G11 run in full; fix every FAIL, push, restart at G1.
+- **Reviewer mode** (`pr-review`): G1 FAIL → hand back, stop — no probing a red or stale head. G2–G11 run in full; post every finding in one pass. A partial review buys another round.
 
 Local runs: run the pre-PR checks once at the head SHA (G1), then only what the rubric adds — unhappy-path probes, greps, link checks. A gate needing a check the pre-PR checks lack → run it by command and record the gap.
 
 ### Fan-out
-`git diff --stat origin/<target>...HEAD` → > 50 lines changed OR > 3 files: one message, 4 parallel `Agent` calls, `subagent_type: "Explore"`, model as the skill pins. Read-only — never edit, push, or post. Otherwise single-reader: run every gate yourself.
+`git diff --stat origin/<target>...HEAD` → > 50 lines changed OR > 3 files: one message, 4 parallel `Agent` calls (5 when the diff touches vos paths, see G11), `subagent_type: "Explore"`, model as the skill pins. Read-only — never edit, push, or post. Otherwise single-reader: run every gate yourself.
 
 | Agent | Gates |
 |---|---|
@@ -37,6 +37,7 @@ Local runs: run the pre-PR checks once at the head SHA (G1), then only what the 
 | test-validity | G5 |
 | unhappy-paths | G6, G7 |
 | docs-drift | G8 |
+| vos-checks (vos paths only) | G11 |
 
 G1, G3, G4, G10: run yourself.
 
@@ -45,9 +46,9 @@ G1, G3, G4, G10: run yourself.
 - `Agent` tool absent or denied → fan-out NOT RUN. Run single-reader, record `Mode: degraded — <reason>`. Never present a single-reader pass as fan-out.
 
 ### G1 — Head & checks
-GitHub Actions is not a gate. Run the pre-PR checks from CONTRIBUTING.md locally at the head SHA (`cargo fmt --check`, `RUSTFLAGS="-D warnings" cargo clippy --all-targets`, `cargo test -p neoc -p neoc-vm`, the Lua suites, the bench smoke) and record command + output.
+GitHub Actions is not a gate. Run the pre-PR checks from CONTRIBUTING.md locally at the head SHA and record command + output: `bun run gate` (the neoc checks, then the vos checks: lint, typecheck, test, test:e2e), or `scripts/check-neoc.sh` for a change confined to the neoc crates (the scoped variant, see `pre-commit`). A lint that printed `SKIPPED`, or an e2e you could not run (it needs a Mac), is unverified, not passed.
 - Head SHA recorded: local `git rev-parse HEAD` == PR head `sha`.
-- Every pre-PR check passes at that exact SHA. Any failure = FAIL.
+- Every pre-PR check passes at that exact SHA. Any failure = FAIL. The scoped variant on a diff that touches vos paths = FAIL.
 - The checks cover the change: the Lua suite or Rust tests for the touched area ran (not filtered out).
 - Re-request: ≥ 1 new commit since the last reviewed head. 0 = FAIL.
 - `main` exists as the target. No merge conflicts.
@@ -67,7 +68,8 @@ Scope: PR description, commit messages, every comment and doc line added or edit
 - Unrelated change present → split into its own PR.
 - Silent revert: `git diff <last-reviewed-head>..HEAD` and `git log -p origin/<target>..HEAD` — no line or value from an earlier fix commit undone. Intended reverts named in the description with reason.
 - Rename / removal: `grep -rn '<old term>'` → 0 hits outside changelog / history. Includes test names, comments, docs.
-- Formatter + lint for touched files pass — run by command (`cargo fmt --check`, `RUSTFLAGS="-D warnings" cargo clippy --all-targets`). Prose wrap matches the surrounding paragraph.
+- Formatter + lint for touched files pass — run by command (`cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`; `bun run lint` for vos paths). Prose wrap matches the surrounding paragraph.
+- `neoc-vm` and `neoc` take no vos concept (apps, `readOnly` tools, views, `app.*`, a `vos:` module): `cargo tree -p neoc -p neoc-vm -e all --prefix none | grep '^vos-'` prints nothing, and a new name or type in those crates that only vos needs = FAIL (it belongs in `crates/vos-lua`).
 - Reference the Jira key (`refs NEOC-<n>`) only. `Closes` / `Fixes` / `Resolves` = FAIL.
 - Breaking change (public API, language semantics, config key, CLI flag, wire format) → conventional `!` or `BREAKING CHANGE:` footer.
 - No debug output, commented-out code, or TODO without a Jira ref.
@@ -105,7 +107,7 @@ Given / when / then table. Each category run or `N/A — <reason>`:
 - Same function fixed twice → review its contract, not the symptom.
 
 ### G8 — Docs drift
-- CONTRIBUTING, README, CLAUDE.md, rustdoc, CLI help affected by the behaviour → updated in the same PR.
+- CONTRIBUTING, README, `apps/README.md`, CLAUDE.md, rustdoc, CLI help, and the skills or workflows that name the behaviour → updated in the same PR.
 - Every added or changed link resolves (`test -e` for paths, HTTP 200 for URLs).
 - Docs describe the state after this PR, not a future one. Dependency on another PR → declared in the description and enforced: draft until the dependency merges, merge order at the top of the description. Declared but unenforced = FAIL.
 - Grep the doc set for the changed term — every mention agrees. Self-contradiction = FAIL.
@@ -117,6 +119,11 @@ Given / when / then table. Each category run or `N/A — <reason>`:
 - Per prior thread: fix commit SHA + test name + the finding's given/when/then reproduced at the new head → fixed behaviour observed.
 - Diff since the last reviewed head touches only finding sites + their tests. Prose rewrites and new behaviour → separate PR.
 - G1–G9 re-run against the fix diff. Comment / doc lines the fix introduced get G2.
+
+### G11 — vos checks
+`N/A — no vos paths` unless the diff touches `crates/vos-*`, `apps/`, `client/`, `packages/`, `e2e/`, `types/generated` or the vos scripts. Otherwise run the section "vos checks" of `.claude/skills/pr-review/SKILL.md` (V1 tests and coverage, V2 accessibility, V3 boundaries and security, V4 UI structure and design, V5 the app readiness table when an app or what a person sees or does in one changed) and record each row PASS, FAIL or `N/A — <reason>` with command + output or `file:line`.
+- The gate for vos paths is the full `bun run gate`; e2e not run = unverified = FAIL.
+- A UI change carries a `verify-change` "Manual verification" section in the PR.
 
 ### Target shape — one-round PRs
 - One defect / one concern per PR.
@@ -136,16 +143,17 @@ Post on the PR. One note per head SHA.
 ```
 ## Self-review — <sha8>
 
-Mode: fan-out (4× sonnet) | single-reader | degraded — <reason>
+Mode: fan-out (4× sonnet, 5× when vos paths) | single-reader | degraded — <reason>
 Checks: pre-PR checks pass @ <sha8>
 Diff: <files> files, +<add> / -<del>
 
 | Gate | Result | Evidence |
 |---|---|---|
-| G1 Head & checks | PASS | `cargo test -p neoc -p neoc-vm` → ok @ <sha8> |
+| G1 Head & checks | PASS | `bun run gate` (or `scripts/check-neoc.sh`) → ok @ <sha8> |
 | G2 Claims ↔ evidence | PASS | <claim> → `<cmd>` → <output> |
 | ... | ... | ... |
 | G10 Fix-round discipline | N/A — first request | |
+| G11 vos checks | N/A — no vos paths | |
 
 ### Acceptance criteria
 | AC | Proof | Result |

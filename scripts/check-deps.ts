@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Dependency-direction gate for the Rust host's hexagonal layout (docs/architecture/ARCHITECTURE.md §2).
+ * Dependency-direction gate for the Rust host's hexagonal layout (CLAUDE.md, "Crate dependency direction").
  *
  * Reads `cargo metadata` and checks every workspace crate's normal dependencies against an explicit allow-list
  * (and, for the framework crates in FRAMEWORK_HOMES, its build dependencies too; a dev-dependency is exempt):

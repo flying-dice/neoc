@@ -212,7 +212,7 @@
     padding: 0;
     background: none;
     font-size: 0.88em;
-    /* Code wraps rather than scrolling sideways (a window is never wider than its content: DESIGN_LANGUAGE 8). */
+    /* Code wraps rather than scrolling sideways (a window is never wider than its content: styleguide section 8). */
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }

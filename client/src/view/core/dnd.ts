@@ -1,5 +1,5 @@
 /**
- * Drag and drop (the common `drag` / `drop` props and the `drop` event, spec 1.8). Pointer-event based (HTML5 DnD is
+ * Drag and drop (the common `drag` / `drop` props and the `drop` event). Pointer-event based (HTML5 DnD is
  * not touch-friendly), and every draggable has a non-pointer path:
  *
  *  - keyboard: Alt+Arrow on a focused draggable drops it on the next (Down/Right) or previous (Up/Left) target that

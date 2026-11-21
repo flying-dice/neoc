@@ -1,4 +1,4 @@
-//! Controls (spec §1.5): buttons, toggles, pickers and text input.
+//! Controls: buttons, toggles, pickers and text input.
 
 use crate::ui::spec::BindingKind::{Scalar, Text};
 use crate::ui::spec::{

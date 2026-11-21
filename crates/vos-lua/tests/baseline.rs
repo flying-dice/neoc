@@ -12,8 +12,7 @@
 //! It loads the built Calculator (the shipped bundle: darklua, then `AppVm::load`: the engine, the host API, the
 //! manifest and the window and tool declarations) into `N` VMs (default 50) and prints, per VM, how long the load
 //! took and what the Lua heap holds (`AppVm::used_memory`), plus the process's resident set before and after, which
-//! also counts what Rust allocated for each VM (the database handle, the tables of the host API). The numbers go
-//! into the table in `docs/architecture/host-stack.md` (§1, "Measured baseline"): rerun this to see whether a change
+//! also counts what Rust allocated for each VM (the database handle, the tables of the host API). Rerun this to see whether a change
 //! made the VM slower or larger. It asserts nothing about the numbers (they depend on the machine), only that
 //! every VM loaded.
 

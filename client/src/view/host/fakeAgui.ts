@@ -1,6 +1,6 @@
 /**
  * A TypeScript stand-in for the host's `/agui` endpoint, as a `fetch` replacement: for unit tests and stories (the real
- * path runs against the Rust host). It speaks the contract of docs/architecture/host-stack.md: thread ensure and
+ * path runs against the Rust host). It speaks the host's `/agui` contract: thread ensure and
  * snapshot, runs streamed as SSE frames, interrupts and resume runs, cancel and settings.
  *
  * What a run says is scripted: `fake.onRun = async (run) => { run.start(); run.text('Hi'); run.finish() }`. The script

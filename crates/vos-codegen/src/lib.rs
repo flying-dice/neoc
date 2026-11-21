@@ -8,12 +8,10 @@
 //! | `types/generated/vos.ts` | the client renderer | protocol types via `ts-rs` (reads the serde attributes), component types and the runtime `COMPONENTS` table from the catalogue |
 //! | `types/generated/ui.lua` | the Luau runtime (`require("vos:ui")`) | the `ui.*` constructors, `ui.act`, `ui.fmt`, expression helpers (plain Lua source, no annotations) |
 //! | `types/generated/vos.d.luau` | app authors (luau-lsp) | Luau declarations: the `std:`/`lib:`/`vnd:` modules an app is offered (from `types/neoc.d.luau`), the `app` API and its global, the core and component types, `ClientDecl` via JSON Schema (`schemars`), `ui`, and the one `declare require` |
-//! | `docs/reference/components.md` | everyone | the component reference |
 //!
 //! `bun run codegen` writes them; `bun run codegen:check` (part of `bun run lint`) fails when the committed files
 //! are stale, so drift between the Rust schema and any consumer is a build failure.
 
-mod docs;
 mod lua;
 mod luau;
 mod ts;
@@ -46,7 +44,6 @@ pub fn generate(root: &Path) -> Result<Vec<GeneratedFile>, String> {
         GeneratedFile { path: "types/generated/vos.ts", contents: ts::generate() },
         GeneratedFile { path: "types/generated/ui.lua", contents: lua::module() },
         GeneratedFile { path: "types/generated/vos.d.luau", contents: luau::defs::definitions(&neoc)? },
-        GeneratedFile { path: "docs/reference/components.md", contents: docs::generate() },
     ])
 }
 
@@ -163,8 +160,8 @@ mod tests {
     fn a_missing_or_edited_file_is_stale() {
         let dir = scratch("drift");
         fs::write(dir.join("types/generated/ui.lua"), "-- edited").unwrap();
-        fs::remove_file(dir.join("docs/reference/components.md")).unwrap();
-        assert_eq!(stale(&dir), ["types/generated/ui.lua", "docs/reference/components.md"]);
+        fs::remove_file(dir.join("types/generated/vos.ts")).unwrap();
+        assert_eq!(stale(&dir), ["types/generated/vos.ts", "types/generated/ui.lua"]);
         fs::remove_dir_all(dir).unwrap();
     }
 

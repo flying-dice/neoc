@@ -46,10 +46,10 @@ Lead with blockers and their fixes. For each finding: what, where, why it matter
 The artifact is the **running app on the real host**, not a description of it, so rule 1 can be applied to more than
 a screenshot: drive it.
 
-- **Setup** (`docs/TESTING.md`, "Driving the real shell"): `bun run build && bun run build:apps`, start a host with the
+- **Setup** (`verify-change` section 3, "Exercise it like a person"): `bun run build && bun run build:apps`, start a host with the
   app installed, pair, then use `node e2e/tools/session.mjs` (`start`, `pair`, `look`, `click`, `type`, `press`,
   `resize`). `look` gives a screenshot and the accessibility tree, so keyboard order, focus, roles and names *can* be
-  checked here: check them rather than writing "could not verify". Read the app's tree in `apps/<app>/app.lua` for
+  checked here: check them rather than writing "could not verify". Read the app's tree in `apps/<app>/app.luau` for
   labels, keys and states the screens do not reach.
 - **Tasks** are the app's journeys (`apps/<app>/JOURNEYS.md` or `client/journeys/<id>.md`); each **Done when** is the
   pass condition for the walkthrough. Walk every one, plus the matrix `verify-change` lists (light and dark, the
@@ -57,10 +57,10 @@ a screenshot: drive it.
 - **Agents are users too.** For each tool the app registers, read its description and schema as an agent would: is it
   clear which tool does what, what the arguments mean, and what a failure says? Call one through the Agents app with
   the scripted agent where the journey involves it.
-- **Lenses:** Nielsen and WCAG 2.2 AA as written above, plus `docs/design/DESIGN_LANGUAGE.md` (§11 checklist) and
+- **Lenses:** Nielsen and WCAG 2.2 AA as written above, plus `.claude/skills/app-design/STYLEGUIDE.md` (§11 checklist) and
   [CONFORMANCE.md](../app-design/CONFORMANCE.md) when a score is wanted. Cite evidence by screenshot path or by
-  `file:line` in `app.lua` / the kit.
-- **Write it to** `docs/ux/<app>/review-<n>.md`. Blocker and major *defects* are fixed before the next `ux-research`
+  `file:line` in `app.luau` / the kit.
+- **Write it to** `ux/<app>/review-<n>.md`. Blocker and major *defects* are fixed before the next `ux-research`
   round (that panel is expensive; this review is one agent). A *defect* found here gets a regression check where one is
   possible: a journey assertion, a story with a play function, or a stricter generic check in `e2e/fixtures.ts`.
 - It does not replace the `ux-research` round the readiness gate asks for: it is the cheap pass that makes that round

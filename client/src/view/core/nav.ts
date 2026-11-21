@@ -1,5 +1,5 @@
 /**
- * Navigation as client-managed state (spec 1.3, 3.5): a `NavigationStack`'s path is a list of routes
+ * Navigation as client-managed state: a `NavigationStack`'s path is a list of routes
  * (`{name, ...params}`), authoritative on the client, so push and pop never wait for the host. This module is the
  * framework-free half: the pure stack operations and the registry that routes the `nav.push` / `nav.pop` /
  * `nav.popToRoot` client actions to the stack they mean. The Svelte adapter registers each mounted stack here.

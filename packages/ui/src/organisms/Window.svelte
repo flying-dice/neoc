@@ -28,7 +28,9 @@
   there). When it is, focus moves on to the element in the content marked `data-window-focus`, if there is one, so a
   window whose keys are handled inside (an app's window-scoped shortcuts) keeps listening after a move or resize.
   `data-window-focus` is the convention for "this element takes the window's keys": one per window, `tabindex="-1"`.
-  See client/README.md, "Focus hooks".
+  The shell (`client/src/organisms/ViewWindow.svelte`) and the renderer (`ViewHost`) find each other by these
+  attributes, never by a test id: an app id must not leak into the shell. `data-launcher` marks a launcher (the Dock
+  tray): focus resting there yields to a window that has just opened, while focus anywhere else stays.
 
   `unavailable` lists layouts the screen has no room for; the menu shows them disabled (see MultitaskingMenu).
 

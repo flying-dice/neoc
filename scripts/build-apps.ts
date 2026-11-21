@@ -17,7 +17,7 @@
  * `--root <dir>` also builds the packages under <dir>/* (the e2e harness builds a test-only app that way).
  * and one <out>/registry.json listing every app's app ref: { "apps": ["calculator/0.1.0/app-ref.json", ...] }.
  *
- * The host's default registry is dist/apps/registry.json over file:// (see docs/architecture/host-stack.md);
+ * The host's default registry is dist/apps/registry.json over file://;
  * with `dev_reload` it rebuilds an app's VM when its files change, so `bun run build:apps` is the dev loop.
  *
  * `app.json` is the package manifest (id, name, version, main, icon, tint, description,

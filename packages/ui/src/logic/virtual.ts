@@ -1,5 +1,5 @@
 /**
- * DOM virtualization maths for lists of thousands of rows (spec 3.7). Pure: no DOM, no Svelte.
+ * DOM virtualization maths for lists of thousands of rows. Pure: no DOM, no Svelte.
  *
  * A list of `total` rows renders only the rows near the viewport. Every row has a height: `estimate` until the
  * component measures it, then the measured value. With no measurements (fixed-height rows) the maths is O(1);
