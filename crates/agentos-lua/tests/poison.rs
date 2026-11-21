@@ -1,26 +1,21 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
 //! An app must not be able to take the host down with the value it raises or hands over.
 //!
-//! The probe is the one neoc-vm's own `embedding.rs` uses: an error value whose `__tostring` makes a protected call
-//! and then fails (`mt.__tostring = function() pcall(error, "x") error(setmetatable({}, mt)) end`). On LuaJIT the
-//! engine's message handler recurses on it until the stack overflows, which aborts the process (the PUC Lua 5.1 VM
-//! this host used to run on turned the same recursion into a catchable "C stack overflow" error). The fix is NEOC-124, a patch to
-//! mlua (decision NEOC-123): mlua's own protected calls (the entry chunk, `call_async`, a field read of an app table
-//! that has a metatable) are where the recursion happens.
+//! The probe is the one neoc-vm's own `abort_regressions.rs` uses: an error value whose `__tostring` makes a protected
+//! call and then fails (`mt.__tostring = function() pcall(error, "x") error(setmetatable({}, mt)) end`). On LuaJIT the
+//! engine's message handler recursed on it until the stack overflowed, which aborted the process (the PUC Lua 5.1 VM
+//! this host first ran on turned the same recursion into a catchable "C stack overflow" error). On Luau the engine
+//! answers `error in error handling` once, so the value reaches the caller as an ordinary error, whichever path it
+//! takes: the entry chunk, a tool, an event or request handler, a task, a render, a write-back, a transaction body, or a
+//! field read of a table the app handed over (given to `app.tool`, `app.notify`, `app.window`, or returned from a
+//! render).
 //!
-//! Each case runs in a child process (this test binary again, `poison_case_child`) so that an abort kills the child
-//! and not the harness; the case passes when the child exits normally after handling the value as an ordinary error
-//! and the app (or the next app) still answers. The child runs like the host does: a runtime of workers with 16 MiB
-//! stacks, driven from a thread with an 8 MiB stack.
-//!
-//! Only `request_handler` passes today (the server answers 500). The other nine cases abort and are
-//! `#[ignore = "aborts until NEOC-124 lands"]`: NEOC-124 is the patch to mlua (decision NEOC-123 = A) that makes mlua's
-//! own protected calls survive an error whose `__tostring` fails, so the plain `exec_async`, `call_async` and
-//! `Table::get` the adapter uses stop aborting. They are meant to be turned on when that patch is merged and main is
-//! merged into this branch: remove the `ignore`s and run `cargo test -p agentos-lua --test poison`
-//! (`-- --ignored` runs them before that). A case that read nothing would pass at any head, so every case here either
-//! aborts today or asserts the error the raise produces. Not covered yet: the write-back and transaction-body
-//! `call_async` sites.
+//! Each case runs in a child process (this test binary again, `poison_case_child`) so that an abort would kill the
+//! child and not the harness; the case passes when the child exits normally after handling the value as an ordinary
+//! error and the app (or the next app) still answers. The child runs like the host does: a runtime built by
+//! the host's recipe (workers with `VM_THREAD_STACK`, the case run on a worker), driven from a plain thread. A case that read
+//! nothing would pass at any engine, so every case here asserts the error the raise produces (or the 500 the server
+//! answers).
 
 mod common;
 
@@ -125,15 +120,22 @@ async fn run_case(name: &str) -> String {
         }
         // a background task raises the value
         "task_body" => {
-            let vm = load(&app(
-                r#"local task = require("std:task")
-                   app.tool { name = 'spawn', run = function() task.spawn(function() error(poison) end) return 'ok' end }"#,
-            ))
+            let vm = load(&app(r#"local task = require("std:task")
+                   app.tool { name = 'spawn', run = function()
+                     task.spawn(function() app.kv:set('ran', 'yes') error(poison) end) return 'ok'
+                   end }
+                   app.tool { name = 'ran', run = function() return app.kv:get('ran') end }"#))
             .await;
             vm.call_tool("spawn", json!({}), &agent_ctx(0), false).await.unwrap();
-            tokio::time::sleep(Duration::from_millis(200)).await;
-            ping(&vm).await;
-            "the task failed".into()
+            // wait for the task to have run (it sets a key, then raises)
+            for _ in 0..100 {
+                if vm.call_tool("ran", json!({}), &agent_ctx(0), false).await.unwrap() == json!("yes") {
+                    ping(&vm).await;
+                    return "the task ran and failed".into();
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            panic!("the task never ran")
         }
         // a window's render raises the value
         "render_error" => {
@@ -146,23 +148,45 @@ async fn run_case(name: &str) -> String {
         "render_return_value" => {
             let runtime =
                 runtime_with(&app("app.window('main', { render = function() return booby end })")).await;
-            let out = runtime.open_view(&id("probe"), "v1", "main", Map::new(), Map::new()).await;
-            format!("{:?}", out.map(|_| ()))
+            // the host reads the returned table raw (no `__index` runs), finds no node in it and refuses the render
+            let e = runtime.open_view(&id("probe"), "v1", "main", Map::new(), Map::new()).await.unwrap_err();
+            e.to_string()
         }
         // a table handed to `app.notify` raises the value when the host reads a field of it
         "notify_spec" => {
             let vm =
                 load(&app("app.tool { name = 'n', run = function() app.notify(booby) return 'ok' end }"))
                     .await;
-            let out = vm.call_tool("n", json!({}), &agent_ctx(0), false).await;
+            let e = vm.call_tool("n", json!({}), &agent_ctx(0), false).await.unwrap_err();
             ping(&vm).await;
-            format!("{out:?}")
+            e.to_string()
         }
         // a table handed to `app.window` raises the value when the host reads a field of it, at install
         "window_spec" => match try_load("probe", &app("app.window('main', booby)")).await {
-            Ok(_) => "loaded".into(),
+            Ok(_) => panic!("the app loaded"),
             Err(e) => e.to_string(),
         },
+        // a row source's write-back callback raises the value
+        "write_back" => {
+            let vm = load(&app(
+                "app.db:row('select 1 as id', { key = 'id', write = function() error(poison) end })",
+            ))
+            .await;
+            let source = agentos_application::live::SourceId("s1".into());
+            let e = vm.write_row(&source, &json!(1), "body", &json!("x"), &agent_ctx(0)).await.unwrap_err();
+            ping(&vm).await;
+            e.to_string()
+        }
+        // the body of a transaction raises the value
+        "tx_body" => {
+            let vm = load(&app(
+                "app.tool { name = 'tx', run = function() app.db:tx(function() error(poison) end) end }",
+            ))
+            .await;
+            let e = vm.call_tool("tx", json!({}), &agent_ctx(0), false).await.unwrap_err();
+            ping(&vm).await;
+            e.to_string()
+        }
         other => panic!("no case {other}"),
     }
 }
@@ -171,20 +195,22 @@ async fn run_case(name: &str) -> String {
 #[test]
 fn poison_case_child() {
     let Ok(name) = std::env::var(CASE) else { return };
-    let worker = std::thread::Builder::new()
-        .stack_size(8 << 20)
-        .spawn(move || {
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .thread_stack_size(16 << 20)
-                .enable_all()
-                .build()
-                .unwrap();
-            let saw: Value = json!(rt.block_on(run_case(&name)));
-            println!("SURVIVED {name}: {saw}");
-        })
-        .unwrap();
-    worker.join().unwrap();
+    // the host's recipe (`agentos_host::runtime`, which this crate cannot depend on): workers with `VM_THREAD_STACK`, and
+    // the case run on a worker, not on the thread that drives the runtime (a plain thread here, with the default stack)
+    let driver = std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_stack_size(agentos_lua::VM_THREAD_STACK)
+            .enable_all()
+            .build()
+            .unwrap();
+        let case = name.clone();
+        let saw: Value = json!(
+            rt.block_on(async move { tokio::spawn(async move { run_case(&case).await }).await.unwrap() })
+        );
+        println!("SURVIVED {name}: {saw}");
+    });
+    driver.join().unwrap();
 }
 
 /// Runs the case in a child process and asserts that it ended normally, having seen an ordinary outcome.
@@ -206,25 +232,21 @@ fn survives(case: &str) {
 }
 
 #[test]
-#[ignore = "aborts until NEOC-124 lands"]
 fn entry_chunk_raising_the_poison_fails_the_load() {
     survives("entry_chunk");
 }
 
 #[test]
-#[ignore = "aborts until NEOC-124 lands"]
 fn a_table_given_to_app_tool_that_raises_the_poison_on_a_field_read_fails_the_load() {
     survives("tool_spec_index");
 }
 
 #[test]
-#[ignore = "aborts until NEOC-124 lands"]
 fn a_tool_raising_the_poison_fails_the_call() {
     survives("tool_body");
 }
 
 #[test]
-#[ignore = "aborts until NEOC-124 lands"]
 fn an_event_handler_raising_the_poison_fails_the_event() {
     survives("event_handler");
 }
@@ -235,31 +257,36 @@ fn a_request_handler_raising_the_poison_answers_an_error() {
 }
 
 #[test]
-#[ignore = "aborts until NEOC-124 lands"]
 fn a_task_raising_the_poison_fails_the_task() {
     survives("task_body");
 }
 
 #[test]
-#[ignore = "aborts until NEOC-124 lands"]
 fn a_render_raising_the_poison_fails_the_render() {
     survives("render_error");
 }
 
 #[test]
-#[ignore = "aborts until NEOC-124 lands"]
 fn a_render_returning_a_table_that_raises_the_poison_on_a_read() {
     survives("render_return_value");
 }
 
 #[test]
-#[ignore = "aborts until NEOC-124 lands"]
 fn a_table_given_to_app_notify_that_raises_the_poison_on_a_field_read_fails_the_call() {
     survives("notify_spec");
 }
 
 #[test]
-#[ignore = "aborts until NEOC-124 lands"]
 fn a_table_given_to_app_window_that_raises_the_poison_on_a_field_read_fails_the_load() {
     survives("window_spec");
+}
+
+#[test]
+fn a_write_back_raising_the_poison_fails_the_write() {
+    survives("write_back");
+}
+
+#[test]
+fn a_transaction_body_raising_the_poison_fails_the_call() {
+    survives("tx_body");
 }
