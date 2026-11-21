@@ -68,13 +68,12 @@ under `bun test` too, through the preload in `client/bunfig.toml` (`client/test/
 
 - **Check:** `bun run lint:lua` runs `lua-language-server --check` (pinned: 3.19.2, in `scripts/lint-lua.ts`) over
   every `.lua` file `.luarc.json` does not ignore (apps, `lua/prelude.lua`, the codegen example app), against the
-  generated LuaCATS definitions: `types/generated/luals/` (`agentos.lua` for the global `app`, `@agentos/ui.lua` and
-  `@agentos/app.lua` for the two `require`s) and `types/luals/` (one file per `std:`/`lib:`/`vnd:` module, e.g.
-  `lib/json.lua` for `lib:json`, written by `cargo run -p neoc-vm --example luals` from the module's recorded
-  surface; `types/luals-plugin.lua` maps the module key to the file, and both folders are libraries in
-  `.luarc.json`). Files in `negative/` folders (`scripts/fixtures/negative/`) mark lines with
+  generated LuaCATS definitions in `types/generated/luals/` (`agentos.lua` for the global `app`, `@agentos/ui.lua` and
+  `@agentos/app.lua` for the two `require`s; `.luarc.json` is AgentOS's own). The `std:`/`lib:`/`vnd:` modules are not
+  typed here (neoc moved its module types to Luau declarations for luau-lsp, `types/neoc.d.luau`, in NEOC-139; typed
+  apps come with NEOC-140). Files in `negative/` folders (`scripts/fixtures/negative/`) mark lines with
   `-- expect-error`; the check demands exactly those lines are flagged, so a broken definitions file cannot pass
-  silently (`wrong_module_use.lua` is the one for the modules, `modules_usage.lua` its correct counterpart).
+  silently (`wrong_api_use.lua` for the `app` API, `wrong_ui_usage.lua` for `@agentos/ui`).
 - **Format:** `bun run lint:stylua` (`stylua.toml`, syntax `Lua51`; `.styluaignore`); `bun run format` rewrites.
   Both lints print a `SKIPPED` message when `lua-language-server` (PATH or `~/.local/bin`) or `stylua` (PATH or
   `~/.cargo/bin`) is not installed, and **fail** instead when `AGENTOS_GATE=1` or `CI` is set (`scripts/gate.ts`; the

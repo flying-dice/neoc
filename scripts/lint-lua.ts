@@ -1,9 +1,10 @@
 #!/usr/bin/env bun
 /**
  * Checks every Lua app and fixture with lua-language-server (LuaLS) `--check` against the generated definitions
- * (config: .luarc.json; definitions: types/generated/luals for `@agentos/*`, written by agentos-codegen, and
- * types/luals for the std:/lib:/vnd: modules, written by `cargo run -p neoc-vm --example luals` and found through
- * types/luals-plugin.lua; `bun run codegen` writes both).
+ * (config: .luarc.json; definitions: types/generated/luals, the `app` API and `@agentos/*`, written by agentos-codegen).
+ * The std:/lib:/vnd: modules are NOT typed here: neoc's LuaCATS definitions (and lua-language-server) are gone from neoc
+ * (NEOC-139: Luau declarations checked by luau-lsp), so an app's `require("std:fs")` is untyped (`any`) until the apps
+ * move to typed Luau (NEOC-140).
  *
  *  1. Positive: every `.lua` file the config does not ignore (apps, lua/prelude.lua, the example app fixture) must
  *     check clean.

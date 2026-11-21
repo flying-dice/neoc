@@ -162,7 +162,7 @@ bun start               # the same host, built with the release-host profile (op
 bun run lint            # conflict markers + atomic layers + test ids + boundaries + rust + lua (LuaLS) + stylua + codegen:check + package eslint
 bun run lint:conflicts  # leftover merge-conflict markers in tracked files (runs first)
 bun run lint:rust       # cargo fmt --check, clippy -D warnings, lint:deps (crate direction), cargo deny
-bun run lint:lua        # lua-language-server --check of every app against types/luals + types/generated/luals (plus negative fixtures)
+bun run lint:lua        # lua-language-server --check of every app against types/generated/luals (plus negative fixtures; the std:/lib:/vnd: modules are untyped until NEOC-140)
 bun run lint:stylua     # StyLua check (skipped with a message when stylua is not installed)
 bun run typecheck       # cargo check --workspace --all-targets + tsc on types/ + svelte-check in each package
 bun run test            # cargo nextest over the agentos crates (neoc's crates have their own gate) + bun test (types, scripts, client, kit)
@@ -171,7 +171,7 @@ bun run test:e2e        # all Storybooks + desktop + journeys, headless, against
                         # AGENTOS_PORT_BASE=9100 for a second worktree (Storybook = base, e2e host = base + 10)
 bun run test:e2e:update # rebaseline snapshots (then look at them)
 bun run storybooks list # every Storybook (client, packages/ui); each package: bun run storybook
-bun run codegen         # regenerate types/generated/* (incl. ui.lua, prelude.lua), types/luals/ (the std:/lib:/vnd: module definitions) and docs/reference/components.md from the Rust schema
+bun run codegen         # regenerate types/generated/* (incl. ui.lua, prelude.lua) and docs/reference/components.md from the Rust schema
 bun run codegen:check   # fails when they are stale (part of bun run lint)
 bun scripts/design-audit.ts <page>  # static styleguide audit of a built-in shell page's styles
 ```

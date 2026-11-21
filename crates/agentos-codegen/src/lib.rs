@@ -147,7 +147,8 @@ mod tests {
         fs::write(dir.join("types/generated/luals/old/extra.lua"), "-- old output").unwrap();
         // the prelude is another generator's (scripts/codegen-lua.ts)
         fs::write(dir.join("types/generated/prelude.lua"), "-- copy").unwrap();
-        // the module definitions are neoc-vm's `luals` example's, in types/luals: a copy left here is an orphan
+        // the std:/lib:/vnd: module definitions are not AgentOS's to write (neoc dropped its LuaCATS output): a copy left
+        // here is an orphan
         fs::write(dir.join("types/generated/luals/lib:json.lua"), "---@meta").unwrap();
         let flagged = stale(&dir);
         assert_eq!(flagged.len(), 3, "{flagged:?}");

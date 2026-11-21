@@ -7,6 +7,4 @@ types/generated/
 # formatted by AgentOS's StyLua config
 crates/neoc/
 crates/neoc-vm/
-types/luals/
-types/luals-plugin.lua
 types/fixtures/

@@ -244,7 +244,7 @@ API only and logs a warning.
 `tsc -p types`), `bun run test` (adds `cargo nextest run --workspace --exclude neoc --exclude neoc-vm` and `bun test types scripts`), `bun run format` (adds
 `cargo fmt` and StyLua). `codegen:check` fails when the committed `types/generated/*` and `docs/reference/components.md`
 are stale against the Rust schema (`bun run codegen` regenerates them). `lint:lua` runs `lua-language-server --check` (pinned 3.19.2) over every Lua app and fixture against the generated
-LuaCATS definitions in `types/generated/luals/` (`@agentos/*`, `agentos.lua`) and `types/luals/` (the `std:`/`lib:`/`vnd:` modules, from neoc-vm's `luals` example), which LuaLS finds through `.luarc.json`'s library setting (the modules through `types/luals-plugin.lua`); negative fixtures (`scripts/fixtures/negative/*.lua`, lines marked
+LuaCATS definitions in `types/generated/luals/` (`@agentos/*`, `agentos.lua`), which LuaLS finds through `.luarc.json`'s library setting (the `std:`/`lib:`/`vnd:` modules are untyped until NEOC-140: neoc's own types are Luau declarations for luau-lsp); negative fixtures (`scripts/fixtures/negative/*.lua`, lines marked
 `-- expect-error`) must be flagged, so a broken definitions file cannot pass silently. `lint:lua` and `lint:stylua`
 skip with a message when `lua-language-server` or `stylua` is not installed.
 
