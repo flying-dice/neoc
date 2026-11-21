@@ -122,8 +122,8 @@ type Opts = (
 
 fn extract_opts(opts: &Table) -> Result<Opts, String> {
     let url: String = opts.get("url").map_err(|e| e.to_string())?;
-    let body = body_from_opts(opts);
-    let headers = headers_from_opts(opts).map_err(|e| e.to_string())?;
+    let body = body_from_opts(opts)?;
+    let headers = headers_from_opts(opts)?;
     let ca_pem = ca_from_opts(opts)?;
     Ok((url, body, headers, ca_pem))
 }
@@ -134,16 +134,37 @@ fn ca_from_opts(opts: &Table) -> Result<Option<String>, String> {
         .map_err(|e| format!("ca_pem must be a string: {e}"))
 }
 
-fn body_from_opts(opts: &Table) -> Option<Vec<u8>> {
-    let s: Option<mlua::LuaString> = opts.get("body").ok();
-    s.map(|v| v.as_bytes().to_vec())
+/// The optional `body`: a string's bytes or a buffer's (a number is sent as its text, as Lua converts it). Anything
+/// else is an error, never an empty body.
+fn body_from_opts(opts: &Table) -> Result<Option<Vec<u8>>, String> {
+    match opts.get::<Value>("body").map_err(|e| e.to_string())? {
+        Value::Nil => Ok(None),
+        Value::String(s) => Ok(Some(s.as_bytes().to_vec())),
+        Value::Buffer(b) => Ok(Some(b.to_vec())),
+        // Lua's own number-to-string conversion, as the body was read before
+        Value::Integer(_) | Value::Number(_) => opts
+            .get::<mlua::LuaString>("body")
+            .map(|s| Some(s.as_bytes().to_vec()))
+            .map_err(|e| e.to_string()),
+        other => Err(format!(
+            "body must be a string or a buffer, got {}",
+            other.type_name()
+        )),
+    }
 }
 
-fn headers_from_opts(opts: &Table) -> mlua::Result<Vec<(String, String)>> {
-    let h: Option<Table> = opts.get("headers").ok();
-    match h {
-        None => Ok(Vec::new()),
-        Some(t) => t.pairs::<String, String>().collect(),
+/// The optional `headers` table of name to value strings. Anything else is an error, never no headers.
+fn headers_from_opts(opts: &Table) -> Result<Vec<(String, String)>, String> {
+    match opts.get::<Value>("headers").map_err(|e| e.to_string())? {
+        Value::Nil => Ok(Vec::new()),
+        Value::Table(t) => t
+            .pairs::<String, String>()
+            .collect::<mlua::Result<_>>()
+            .map_err(|e| format!("headers must map strings to strings: {e}")),
+        other => Err(format!(
+            "headers must be a table, got {}",
+            other.type_name()
+        )),
     }
 }
 
