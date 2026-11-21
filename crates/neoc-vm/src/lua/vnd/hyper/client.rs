@@ -84,21 +84,27 @@ pub(super) fn request(
 }
 
 /// The future of a prepared request, or the `(nil, err)` of options that could not be read. Holds no script table.
-async fn send(
+/// It runs inside a span named after the entry point (`hyper.get`, `hyper.post`, `hyper.request`: a span name is a
+/// literal, so each is written out), at target `lua::lib::hyper`, as the `#[instrument]` it replaces opened.
+fn send(
     lua: Lua,
     prefix: &'static str,
     prepared: Result<Request, String>,
-) -> mlua::Result<(Value, Value)> {
-    match prepared {
-        Ok((prefix, method, url, body, headers, ca_pem)) => {
-            perform(&lua, prefix, method, url, body, headers, ca_pem)
-                .instrument(
-                    tracing::info_span!(target: "lua::lib::hyper", "hyper.client", call = prefix),
-                )
-                .await
+) -> impl Future<Output = mlua::Result<(Value, Value)>> + Send + 'static {
+    let span = match prefix {
+        "hyper.get" => tracing::info_span!(target: "lua::lib::hyper", "hyper.get"),
+        "hyper.post" => tracing::info_span!(target: "lua::lib::hyper", "hyper.post"),
+        _ => tracing::info_span!(target: "lua::lib::hyper", "hyper.request"),
+    };
+    async move {
+        match prepared {
+            Ok((prefix, method, url, body, headers, ca_pem)) => {
+                perform(&lua, prefix, method, url, body, headers, ca_pem).await
+            }
+            Err(e) => from_err(&lua, prefix, e),
         }
-        Err(e) => from_err(&lua, prefix, e),
     }
+    .instrument(span)
 }
 
 // ---------------------------------------------------------------------------

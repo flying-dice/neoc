@@ -309,7 +309,8 @@ const CASES: &[Case] = &[
     }),
 ];
 
-/// The child half: run the case named by `NEOC_ABORT_CASE` on a 2 MiB thread and print what it caught. Does nothing
+/// The child half: run the case named by `NEOC_ABORT_CASE` on a thread of `NEOC_ABORT_STACK_KIB` (the parent sets it:
+/// see `stack_kib`) and print what it caught. Does nothing
 /// when the variable is not set (the normal run of this test binary).
 #[test]
 fn child() {

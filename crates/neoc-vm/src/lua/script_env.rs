@@ -263,7 +263,15 @@ pub fn mark_driven(lua: &Lua, thread: &mlua::Thread) -> mlua::Result<()> {
 /// the flag alone would leave the script `getmetatable(host).__index = ...` (a write the host's own table and every
 /// other environment holding it would see) and a `__newindex` function that takes writes to absent keys past the flag.
 /// The proxy is empty, reads through to the table, refuses every write, and locks its metatable (`getmetatable`
-/// answers a string), as every library was behind a proxy on LuaJIT. (A plain table is flagged *itself*, not wrapped:
+/// answers a string), as every library was behind a proxy on LuaJIT.
+///
+/// **The proxy forwards reads only** (`__index`). What does not pass through it: `__call` (calling the object says
+/// "attempt to call a table value"), `__len`, `__tostring`, `__eq`, `__concat`, `__iter` and the arithmetic and
+/// comparison metamethods; `pairs` and `next` (the proxy is empty, so they see nothing); and any write a method makes
+/// to `self`, because `host:m()` passes the proxy as `self` and the proxy refuses writes (a method that keeps its state
+/// in an upvalue, or in a table it holds, still works). A host object that needs one of these goes into the
+/// environment as a plain table without a metatable, or behind functions that carry the state themselves.
+/// (A plain table is flagged *itself*, not wrapped:
 /// an embedder that shares one between environments, or changes it later, gets a read-only table everywhere, and its
 /// own `set` fails on it.)
 ///
