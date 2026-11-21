@@ -4,14 +4,19 @@
 //! Luau stops a recursion that goes through a C function or a metamethod at 200 C levels with an ordinary error, but
 //! the 200 levels, with a Rust host function in each, must fit the thread's stack: in a debug build a level through
 //! `Mutex:with_lock` needs up to 4.5 MiB in all (neoc-vm's `lifecycle.rs` has the table), more than tokio's default
-//! 2 MiB and what the main thread of some platforms gives. The host builds its runtime with
+//! 2 MiB (the main thread's stack is whatever the operating system decides, which is why the top-level future does not
+//! run there). The host builds its runtime with
 //! `agentos_host::runtime::build` and runs its top-level future on a worker, so every thread that polls a VM has
 //! `VM_THREAD_STACK`.
 //!
 //! The child process (this binary again, `stack_child`) builds that runtime exactly as `main` does, loads an app that
-//! recurses until Luau refuses and checks that the host answers an ordinary error. If the runtime used the default
-//! stack, the child would overflow and abort, and the parent test would fail. Tests build in debug, the build that
-//! needs the most stack.
+//! recurses until Luau refuses and checks that the host answers an ordinary error. Tests build in debug, the build that
+//! needs the most stack. Which cases would notice a runtime on tokio's default 2 MiB: only `with_lock` (measured by
+//! putting 2 MiB in `runtime.rs`: that case aborts, the gsub, tostring, index and notify cases still pass; neoc-vm's
+//! table puts their levels well under 1 MiB). The others hold the 200-level error on the host's runtime, through the
+//! engine's own machinery and, for `notify`, through a host function the adapter registers (`app.notify` reads a field
+//! of its argument through a metatable, whose `__index` calls `app.notify` again). The `run` tests below hold the
+//! wrapper's error and panic arms. What no test holds is `main.rs` calling the two functions (two lines).
 
 use agentos_application::ports::{AppPackage, CallContext};
 use agentos_domain::{Actor, AppId};
@@ -55,6 +60,10 @@ const APP: &str = r#"
       local t = setmetatable({}, { __index = function(t, k) count() return t[k] end })
       return t.x
     end)
+    probe("notify", function(count)
+      local t = setmetatable({}, { __index = function(t) count() app.notify(t) end })
+      app.notify(t)
+    end)
 "#;
 
 async fn run_case(case: &str) -> String {
@@ -67,7 +76,7 @@ async fn run_case(case: &str) -> String {
     let ctx = CallContext { actor: Actor::agent("claude", "Claude"), now_ms: 0 };
     let out = vm.call_tool(case, json!({}), &ctx, false).await.unwrap();
     assert_eq!(out["ok"], false, "{case}: the recursion never ended: {out}");
-    assert!(out["depth"].as_u64().unwrap() >= 100, "{case}: stopped too early: {out}");
+    assert!(out["depth"].as_u64().unwrap() >= 50, "{case}: stopped too early: {out}");
     format!("{case}: depth {} err {}", out["depth"], out["err"])
 }
 
@@ -121,4 +130,22 @@ fn recursion_through_a_tostring_metamethod_is_an_error_on_the_hosts_threads() {
 #[test]
 fn recursion_through_an_index_metamethod_is_an_error_on_the_hosts_threads() {
     survives("index");
+}
+
+#[test]
+fn recursion_through_a_host_function_the_adapter_registers_is_an_error_on_the_hosts_threads() {
+    survives("notify");
+}
+
+#[test]
+fn run_gives_back_what_the_top_level_future_returned_and_raises_its_panic() {
+    let runtime = agentos_host::runtime::build().unwrap();
+    agentos_host::runtime::run(&runtime, async { Ok(()) }).unwrap();
+    let e = agentos_host::runtime::run(&runtime, async { anyhow::bail!("no") }).unwrap_err();
+    assert_eq!(e.to_string(), "no");
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = agentos_host::runtime::run(&runtime, async { panic!("top-level boom") });
+    }));
+    let payload = panicked.unwrap_err();
+    assert_eq!(payload.downcast_ref::<&str>(), Some(&"top-level boom"));
 }

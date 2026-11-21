@@ -14,8 +14,9 @@
 //! child and not the harness; the case passes when the child exits normally after handling the value as an ordinary
 //! error and the app (or the next app) still answers. The child runs like the host does: a runtime built by
 //! the host's recipe (workers with `VM_THREAD_STACK`, the case run on a worker), driven from a plain thread. A case that read
-//! nothing would pass at any engine, so every case here asserts the error the raise produces (or the 500 the server
-//! answers).
+//! nothing would pass at any engine, so every case here asserts the outcome the raise produces: the engine's `error in
+//! error handling` in the error, the 500 the server answers, the task that ran (it sets a key first), or, for the render
+//! that returns a poisoned table, the host's own "a node has no type".
 
 mod common;
 
@@ -38,6 +39,23 @@ local booby = setmetatable({}, { __index = function() error(poison) end })
 
 fn app(body: &str) -> String {
     format!("{POISON}\napp.tool {{ name = 'ping', run = function() return 'pong' end }}\n{body}")
+}
+
+/// The text of an error the engine produced for the poison: `error in error handling`, once. A case that failed for
+/// some other reason (a typo in the probe, a missing global) would not carry it.
+fn poisoned(e: &dyn std::fmt::Display) -> String {
+    let text = e.to_string();
+    assert!(text.contains("error in error handling"), "not the engine's answer to the poison: {text}");
+    text
+}
+
+/// Load an app with `src` and call its tool `tool`, which must fail with the engine's answer to the poison; the app
+/// must still answer afterwards.
+async fn failing_tool(src: &str, tool: &str) -> String {
+    let vm = load(&app(src)).await;
+    let e = vm.call_tool(tool, json!({}), &agent_ctx(0), false).await.unwrap_err();
+    ping(&vm).await;
+    poisoned(&e)
 }
 
 async fn ping(vm: &agentos_lua::AppVm) {
@@ -81,26 +99,23 @@ async fn run_case(name: &str) -> String {
         // the entry chunk raises the value
         "entry_chunk" => match try_load("probe", &app("error(poison)")).await {
             Ok(_) => panic!("the app loaded"),
-            Err(e) => e.to_string(),
+            Err(e) => poisoned(&e),
         },
         // a table handed to `app.tool` raises the value when the host reads a field of it, at install
         "tool_spec_index" => match try_load("probe", &app("app.tool(booby)")).await {
             Ok(_) => panic!("the app loaded"),
-            Err(e) => e.to_string(),
+            Err(e) => poisoned(&e),
         },
         // a tool body raises the value
         "tool_body" => {
-            let vm = load(&app("app.tool { name = 'boom', run = function() error(poison) end }")).await;
-            let e = vm.call_tool("boom", json!({}), &agent_ctx(0), false).await.unwrap_err();
-            ping(&vm).await;
-            e.to_string()
+            failing_tool("app.tool { name = 'boom', run = function() error(poison) end }", "boom").await
         }
         // an event handler raises the value
         "event_handler" => {
             let vm = load(&app("app.on('e', function() error(poison) end)")).await;
             let e = vm.emit("e", json!({})).await.unwrap_err();
             ping(&vm).await;
-            e.to_string()
+            poisoned(&e)
         }
         // a handler of the app's own HTTP server raises the value
         "request_handler" => {
@@ -142,29 +157,29 @@ async fn run_case(name: &str) -> String {
             let runtime =
                 runtime_with(&app("app.window('main', { render = function() error(poison) end })")).await;
             let e = runtime.open_view(&id("probe"), "v1", "main", Map::new(), Map::new()).await.unwrap_err();
-            e.to_string()
+            poisoned(&e)
         }
         // a window's render returns a table whose reads raise the value
         "render_return_value" => {
             let runtime =
                 runtime_with(&app("app.window('main', { render = function() return booby end })")).await;
-            // the host reads the returned table raw (no `__index` runs), finds no node in it and refuses the render
+            // the host reads `type` of the returned table with `Table::get`, which runs `__index`, which raises the poison;
+            // the host turns any failure of that read into "a node has no type" and refuses the render: an ordinary
+            // error, and the poison itself is not in it
             let e = runtime.open_view(&id("probe"), "v1", "main", Map::new(), Map::new()).await.unwrap_err();
-            e.to_string()
+            let text = e.to_string();
+            assert!(text.contains("a node has no type"), "{text}");
+            text
         }
         // a table handed to `app.notify` raises the value when the host reads a field of it
         "notify_spec" => {
-            let vm =
-                load(&app("app.tool { name = 'n', run = function() app.notify(booby) return 'ok' end }"))
-                    .await;
-            let e = vm.call_tool("n", json!({}), &agent_ctx(0), false).await.unwrap_err();
-            ping(&vm).await;
-            e.to_string()
+            failing_tool("app.tool { name = 'n', run = function() app.notify(booby) return 'ok' end }", "n")
+                .await
         }
         // a table handed to `app.window` raises the value when the host reads a field of it, at install
         "window_spec" => match try_load("probe", &app("app.window('main', booby)")).await {
             Ok(_) => panic!("the app loaded"),
-            Err(e) => e.to_string(),
+            Err(e) => poisoned(&e),
         },
         // a row source's write-back callback raises the value
         "write_back" => {
@@ -175,17 +190,15 @@ async fn run_case(name: &str) -> String {
             let source = agentos_application::live::SourceId("s1".into());
             let e = vm.write_row(&source, &json!(1), "body", &json!("x"), &agent_ctx(0)).await.unwrap_err();
             ping(&vm).await;
-            e.to_string()
+            poisoned(&e)
         }
         // the body of a transaction raises the value
         "tx_body" => {
-            let vm = load(&app(
+            failing_tool(
                 "app.tool { name = 'tx', run = function() app.db:tx(function() error(poison) end) end }",
-            ))
-            .await;
-            let e = vm.call_tool("tx", json!({}), &agent_ctx(0), false).await.unwrap_err();
-            ping(&vm).await;
-            e.to_string()
+                "tx",
+            )
+            .await
         }
         other => panic!("no case {other}"),
     }
