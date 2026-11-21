@@ -1,12 +1,14 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, waitFor, within } from 'storybook/test'
+  import ActivityIndicator from './ActivityIndicator.svelte'
   import Avatar from './Avatar.svelte'
   import Badge from './Badge.svelte'
   import Picture from './Picture.svelte'
   import ProgressBar from './ProgressBar.svelte'
   import ProgressRing from './ProgressRing.svelte'
   import Text from './Text.svelte'
+  import { fitScale } from '../text'
 
   const { Story } = defineMeta({
     title: 'Atoms/Display',
@@ -49,6 +51,25 @@
     await waitFor(() => expect(fit.scrollWidth).toBeLessThanOrEqual(fit.clientWidth))
     await expect(parseFloat(getComputedStyle(fit).fontSize)).toBeLessThan(56)
     await expect(parseFloat(getComputedStyle(fit).fontSize)).toBeGreaterThanOrEqual(56 * 0.3)
+
+    // However often it measures, it settles at the scale its width at the natural size asks for. Narrow the box (a new
+    // scale) and widen it back: measured again at the scale it then has, it must come back to the same one.
+    const box = fit.parentElement!
+    const host = within(canvasElement).getByTestId('readout-fit')
+    const scale = (): number => Number(getComputedStyle(fit).getPropertyValue('--fit-scale'))
+    const atNaturalSize = (): number => {
+      const applied = fit.style.getPropertyValue('--fit-scale')
+      fit.style.setProperty('--fit-scale', '1')
+      const width = fit.scrollWidth
+      fit.style.setProperty('--fit-scale', applied)
+      return width
+    }
+    const settled = fitScale(atNaturalSize(), box.clientWidth)
+    await waitFor(() => expect(scale()).toBeCloseTo(settled, 6))
+    host.style.width = `${Math.round(host.clientWidth * 0.8)}px`
+    await waitFor(() => expect(scale()).not.toBeCloseTo(settled, 6))
+    host.style.width = ''
+    await waitFor(() => expect(scale()).toBeCloseTo(settled, 6))
   }}
 >
   <div style="display:grid;grid-template-columns:minmax(0,1fr);gap:12px;width:260px;background:#000;color:#fff;padding:12px;border-radius:var(--radius-md)">
@@ -130,7 +151,21 @@
   </div>
 </Story>
 
-<Story name="Progress" asChild>
+<Story
+  name="Progress"
+  asChild
+  play={async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    // What says the app is busy keeps moving, under Reduce Motion too (the e2e run has it on; base.css stops the rest).
+    for (const busy of [
+      canvas.getByRole('progressbar', { name: 'Preparing' }),
+      canvas.getByRole('progressbar', { name: 'Loading' }),
+      canvas.getByRole('status', { name: 'Working' })
+    ]) {
+      await expect(busy.getAnimations({ subtree: true }).some((a) => a.playState === 'running')).toBe(true)
+    }
+  }}
+>
   <div style="display:grid;gap:16px;width:280px">
     <ProgressBar value={0.35} label="Upload" />
     <ProgressBar label="Preparing" />
@@ -139,6 +174,7 @@
       <ProgressRing value={0.75} size={44} label="75 percent" />
       <ProgressRing size={36} label="Loading" />
       <ProgressRing value={1} size={28} tint="var(--ios-green)" label="Done" />
+      <ActivityIndicator label="Working" />
     </div>
   </div>
 </Story>

@@ -64,10 +64,14 @@
     if (!fit || !box || !readout) return undefined
     const measure = (): void => {
       if (!box || !readout) return
-      // Text width is proportional to the font size, so the natural width is what is measured now over the scale
-      // that is actually applied to the element (not the state, which can be ahead of the DOM).
-      const applied = Number(getComputedStyle(readout).getPropertyValue('--fit-scale')) || 1
-      const natural = readout.scrollWidth / applied
+      // The natural width is measured at the natural size (scale 1) and the scale put back in the same task, so
+      // nothing is drawn in between. Measuring at the applied scale and dividing by it is not the same: glyph widths do
+      // not scale in exact proportion and scrollWidth is rounded, so the result depended on the scale the readout
+      // happened to have (one story settled at 0.670 or 0.664 depending on how many times it was measured).
+      const applied = readout.style.getPropertyValue('--fit-scale')
+      readout.style.setProperty('--fit-scale', '1')
+      const natural = readout.scrollWidth
+      readout.style.setProperty('--fit-scale', applied)
       const available = box.clientWidth
       if (natural <= 0 || available <= 0) return
       const next = fitScale(natural, available)
@@ -190,8 +194,8 @@
     white-space: nowrap;
     text-overflow: ellipsis;
     font-size: calc(56px * var(--fit-scale, 1));
-    /* No transition on the size: the measurement must see the font the scale asks for, not a frame of tween
-       (reduced motion turns every transition into a one-frame one, which made the fit chase its own tail). */
+    /* No transition on the size: the measurement must see the font the scale asks for, not a frame of a tween
+       (with motion on, a transition here would hand it an in-between size). */
     transition-property: none;
   }
   .truncate {
