@@ -28,12 +28,15 @@
 //!
 //!   **Who lends, and when.** A wait that cannot suspend the call must not lend the baton: the script goes on
 //!   running, and so must whatever the embedder attaches to the turn (a limit on what the call may do, say). The wait fails with an error the
-//!   script may catch. On LuaJIT (the engine of this VM) the places that *refuse* a yield are the C functions that
-//!   call back into Lua (a `string.gsub` replacement function or table, a `table.sort` comparator), `string.format`
-//!   of a `__tostring` and the message handler of `xpcall` (it runs on the C stack of the error), and any
-//!   host function that calls Lua synchronously (`mlua::Function::call`). LuaJIT *does* yield across `pcall`,
-//!   `xpcall` (its protected function), every metamethod, `tostring()` and `for ... in` iterator functions, so
-//!   those are ordinary suspensions that lend (PUC Lua 5.1 refused all of them). The VM cannot see whether Lua
+//!   script may catch. On Luau (the engine of this VM) the places that *refuse* a yield are every metamethod
+//!   (`__index`, `__newindex`, the arithmetic, comparison, `__concat`, `__len` and `__iter` ones; `__call` is
+//!   the exception, it is an ordinary call), `tostring()` of a `__tostring`, the C functions that call back into Lua
+//!   (a `string.gsub` replacement function or table, a `table.sort` comparator), the message handler of `xpcall` (it
+//!   runs on the C stack of the error), and any host function that calls Lua synchronously
+//!   (`mlua::Function::call`): Luau says "attempt to yield across metamethod/C-call boundary". Luau *does* yield
+//!   across `pcall`, `xpcall` (its protected function), a `__call` and `for ... in` iterator functions, so those
+//!   are ordinary suspensions that lend. (LuaJIT also yielded across every metamethod and `tostring()`; PUC Lua 5.1
+//!   refused all of them. `tests/embedding.rs` holds the table to a real engine.) The VM cannot see whether Lua
 //!   managed to yield, so the rules are structural, and an embedder is expected to check them with generated
 //!   programs over every boundary (`tests/embedding.rs` lists the boundaries, and a generated-program test
 //!   generates programs out of them):
@@ -62,15 +65,17 @@
 //!      (`run_call`, behind [`scoped`] and [`resumed`]): a poll that is not resuming into a suspended leaf (the leaf takes the turn itself when it ends)
 //!      first takes the turn, and does not run script code until it has it. A call resumed anywhere else (at a plain
 //!      yield, or into a leaf that is gone) therefore queues for the turn instead of running in someone else's.
-//!   6. **A script resumes only the coroutines it made, and only while nobody else drives them.** This rule is
-//!      kept by the [script environment](crate::lua::script_env) (its `coroutine` library); a script that runs on
+//!   6. **A script resumes (and closes) only the coroutines it made, and only while nobody else drives them.** This
+//!      rule is kept by the [script environment](crate::lua::script_env) (its `coroutine` library); a script that runs on
 //!      the engine's own `coroutine` (`make_engine_in` and no environment) is not held to it, and [`mark_driven`](crate::lua::script_env::mark_driven)
 //!      accepts every coroutine there.
 //!      `coroutine.create` and `coroutine.wrap` record their coroutine in a weak-keyed *owned* set
 //!      (`async_coroutines.lua`); `coroutine.resume` of any other thread is refused with "cannot resume non-suspended
-//!      coroutine", as for a coroutine that is running. A script can hold other threads (`coroutine.running()` returns
+//!      coroutine", as for a coroutine that is running, and `coroutine.close` of one is refused with "cannot close a coroutine
+//!      that is not yours" (Luau's `close` kills a suspended thread: a task's thread would end with its `await` returning
+//!      nothing; the engine of `neoc run`, which has no environment, has no `close` at all). A script can hold other threads (`coroutine.running()` returns
 //!      the top-level thread of a call, a task's thread), but the refusal is the default, so there is no list of host
-//!      threads to keep complete. (On LuaJIT a `pcall` or `xpcall` runs in the thread that called it, so inside a
+//!      threads to keep complete. (On Luau a `pcall` or `xpcall` runs in the thread that called it, so inside a
 //!      coroutine the script made `coroutine.running()` is that coroutine, which it may resume.) A coroutine of its own is
 //!      refused too while someone else drives it: a thread is waiting at its host call, or [`mark_driven`](crate::lua::script_env::mark_driven) gave it to
 //!      the task scheduler (`task.spawn`, `defer` and `delay` take only coroutines the script made).
@@ -101,6 +106,35 @@
 //!
 //! Without a [`CallEntry`] (an engine that is not an embedder's script, like a `std:thread` worker's, `neoc run`'s or a test's) the
 //! callbacks run directly and [`idle`] is a plain `.await`.
+
+/// The stack size of every thread that polls a VM: the runtime's workers and its blocking pool (build the runtime
+/// with `.thread_stack_size(VM_THREAD_STACK)`), the thread that `block_on`s the top-level future (run that future on a
+/// worker instead, with `tokio::spawn`), and any thread of the embedder's own that calls into Lua. `std:thread`
+/// workers need nothing of their own: they are tasks on the embedder's runtime.
+///
+/// Luau stops a recursion that goes through a C function or a metamethod at 200 C levels with an ordinary error
+/// (`C stack overflow`), so a script cannot recurse past that. What the stack must hold is those 200 levels with the
+/// host functions in them, and a level through a Rust host function costs more than one through Lua's own. Measured
+/// at `tests/abort_regressions.rs` (the smallest thread, in KiB, the child survives on; mlua-sys at `opt-level = 2` in
+/// both builds, Apple silicon):
+///
+/// | recursion through | debug | release |
+/// |---|---|---|
+/// | `Mutex:with_lock` nested | 4608 | 640 |
+/// | `lib:test` `describe` nested | 4096 | 640 |
+/// | `lib:cache` `on_evict` re-entering the cache | 3072 | 768 |
+/// | a `vnd:hyper` request whose options table recurses | 1536 | 512 |
+/// | a `std:thread` spawn, or a `lib:http` `serve_static`, whose options table recurses | 1024 | 640 |
+/// | a `__tostring` that resumes a failing coroutine through mlua | 768 | under 256 |
+/// | a `string.gsub` callback | 384 | 384 |
+///
+/// tokio's default, 2 MiB, holds every release figure (the suite holds a release build to it) and none of the three
+/// largest debug ones. 8 MiB holds the worst debug figure with a margin of 1.7. (An async host function that reads
+/// a script table inside its future, as `vnd:hyper` did until its options were read first, is a path of this kind:
+/// each level stacks a polled future, about 20 KiB in release and 150 KiB in debug.) The stack is reserved address
+/// space and committed only as it is touched, so a bigger constant costs a thread nothing it does not use. `neoc run`
+/// builds its runtime with it.
+pub const VM_THREAD_STACK: usize = 8 * 1024 * 1024;
 
 use std::{
     any::Any,

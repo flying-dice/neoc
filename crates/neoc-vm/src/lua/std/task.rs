@@ -244,8 +244,9 @@ impl Scheduler {
     /// synchronously blocked. This aborts this scheduler's tasks and only those: servers, workers and listeners the script
     /// started stay up for whatever runs next, and the engine's [`Life`] stays open.
     ///
-    /// After that, reports un-awaited task errors to stderr.
-    pub async fn wait_all(&self) {
+    /// After that, reports un-awaited task errors to stderr. (Synchronous: it never waited for anything, and a future
+    /// that held an engine's app data across an `.await` was not `Send`, which the top-level future of `neoc run` must be.)
+    pub fn wait_all(&self) {
         self.abort_own();
 
         let tasks = std::mem::take(&mut self.tasks.lock().items);
@@ -761,7 +762,7 @@ mod tests {
                 .expect("exec");
 
                 let scheduler = e.app_data_ref::<super::Scheduler>().unwrap();
-                scheduler.wait_all().await;
+                scheduler.wait_all();
             });
             tx.send(()).ok();
         });
@@ -784,7 +785,7 @@ mod tests {
             .expect("exec");
 
             let scheduler = e.app_data_ref::<super::Scheduler>().unwrap();
-            scheduler.wait_all().await;
+            scheduler.wait_all();
             assert!(scheduler.had_task_errors(), "should flag un-awaited errors");
         });
     }
@@ -805,7 +806,7 @@ mod tests {
             .expect("exec");
 
             let scheduler = e.app_data_ref::<super::Scheduler>().unwrap();
-            scheduler.wait_all().await;
+            scheduler.wait_all();
             assert!(
                 !scheduler.had_task_errors(),
                 "awaited errors should not flag"

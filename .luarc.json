@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
-  "runtime.version": "LuaJIT",
+  "runtime.version": "Lua 5.1",
   "workspace.library": [
     "types/luals"
   ],
@@ -11,6 +11,9 @@
   ],
   "diagnostics.disable": [
     "lowercase-global"
+  ],
+  "diagnostics.globals": [
+    "bit32"
   ],
   "diagnostics.unusedLocalExclude": [
     "_*"

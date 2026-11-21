@@ -961,7 +961,7 @@ mod tests {
         rt.block_on(async {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("worker.lua");
-            let bytecode = lua::sandbox::ascii_bytecode();
+            let bytecode = lua::sandbox::luau_bytecode();
             std::fs::write(&path, &bytecode).unwrap();
 
             let e = lua::sandbox::make_engine().expect("engine");
@@ -985,13 +985,13 @@ mod tests {
         });
     }
 
-    /// Spawn rejects LuaJIT bytecode passed inline as `source`.
+    /// Spawn rejects Luau bytecode passed inline as `source`.
     #[test]
     fn spawn_source_rejects_bytecode() {
         assert_spawn_rejects_bytecode("{ source = bytecode }");
     }
 
-    /// Spawn rejects a `file` whose contents are LuaJIT bytecode.
+    /// Spawn rejects a `file` whose contents are Luau bytecode.
     #[test]
     fn spawn_file_rejects_bytecode() {
         assert_spawn_rejects_bytecode("{ file = path }");

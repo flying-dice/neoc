@@ -18,11 +18,11 @@
 -- wrapper; it is only sent when the parked frame is mlua's own wrapper, never to the yield below, so nothing
 -- here handles it.)
 --
--- LuaJIT yields across `pcall`, `xpcall`, metamethods and `for ... in` iterator functions, so a host call in any of
--- those suspends the call like any other. It still cannot yield out of a C function that calls back into Lua (a
--- `string.gsub` callback, a `table.sort` comparator), `string.format("%s")` of a `__tostring`, the message handler
--- of an `xpcall` or a host function that calls Lua synchronously: a host call there fails with Lua's own "attempt to
--- yield across C-call boundary".
+-- Luau yields across `pcall`, `xpcall` (its protected function), a `__call` metamethod and `for ... in` iterator
+-- functions, so a host call in any of those suspends the call like any other. It cannot yield out of any other
+-- metamethod, `tostring()` of a `__tostring`, a C function that calls back into Lua (a `string.gsub` callback, a
+-- `table.sort` comparator), the message handler of an `xpcall` or a host function that calls Lua synchronously: a host
+-- call there fails with Luau's own "attempt to yield across metamethod/C-call boundary".
 --
 -- WHO MAY RESUME WHAT. A script reaches threads it did not make: `coroutine.running()` returns the thread it runs in,
 -- which may be the top-level thread of a call the host is driving or a task's thread (a `pcall` runs in the thread that
@@ -33,7 +33,7 @@
 -- or a module makes internally has to be found and marked: the host machinery uses the raw primitives captured below.
 -- A coroutine of its own is refused only while somebody else drives it (`driven`, see `is_driven`).
 
-local pending, raw, driven, owned = ...
+local pending, raw, driven, owned, close = ...
 local select, unpack, error, type = select, unpack, error, type
 local create, resume, yield, status, running = raw.create, raw.resume, raw.yield, raw.status, raw.running
 
@@ -50,7 +50,7 @@ local create, resume, yield, status, running = raw.create, raw.resume, raw.yield
 -- coroutines that resumed it), so once that call is dropped nothing refers to the thread, the garbage collector
 -- clears the entry, and the coroutine can be resumed again (it finds its host call abandoned). Clearing an entry for
 -- a thread nothing can resume allows no second driver, and a strong value would keep the dead thread, its stack
--- and the coroutine (Lua 5.1 and LuaJIT have no ephemerons: the value refers back to the key) for ever.
+-- and the coroutine (the value refers back to the key, so a collector without ephemerons would keep both alive) for ever.
 local function is_driven(co)
   local driver = driven[co]
   if driver == nil then
@@ -105,6 +105,20 @@ function M.resume(co, ...)
   end
   local r = drive(co, pack(resume(co, ...)))
   return unpack(r, 1, r.n)
+end
+
+-- `coroutine.close` is Luau's (LuaJIT had none): it kills a suspended coroutine, so it is held to the same rule as
+-- `resume`: a script closes only what it made and nobody else drives (a scheduler task's thread, or the thread of
+-- another call, would otherwise be killed from outside, and a task's `await` would return neither a value nor an
+-- error). `close` is the function `sandbox::base_engine` stashed before it stripped `coroutine.close` from the engine.
+function M.close(co)
+  if type(co) ~= "thread" then
+    return close(co) -- Luau's own "invalid argument #1 to 'close'"
+  end
+  if not resumable(co) then
+    error("cannot close a coroutine that is not yours", 2)
+  end
+  return close(co)
 end
 
 function M.wrap(f)

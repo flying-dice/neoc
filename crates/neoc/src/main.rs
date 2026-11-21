@@ -142,7 +142,7 @@ fn engine_with_args(user_args: &[String]) -> mlua::Lua {
 /// with code 1 if any of them errored.
 async fn drain_scheduler(engine: &mlua::Lua) {
     if let Some(scheduler) = engine.app_data_ref::<lua::std::task::Scheduler>() {
-        scheduler.wait_all().await;
+        scheduler.wait_all();
         if scheduler.had_task_errors() {
             process::exit(1);
         }
@@ -309,12 +309,23 @@ async fn run_embedded(payload: &[u8]) {
 
 /// Builds the multi-thread tokio runtime the Lua engine paths drive on, then
 /// blocks on `fut`.
-fn block_on_runtime<F: std::future::Future<Output = ()>>(fut: F) {
-    tokio::runtime::Builder::new_multi_thread()
+///
+/// The workers have `VM_THREAD_STACK` of stack, and `fut` runs on a worker (not on the main thread, whose stack the
+/// operating system decides), so every thread that polls the VM is known to have it.
+fn block_on_runtime<F: std::future::Future<Output = ()> + Send + 'static>(fut: F) {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
+        .thread_stack_size(neoc_vm::VM_THREAD_STACK)
         .build()
-        .unwrap_or_else(|e| report_error(NeocError::EngineInit(e.to_string())))
-        .block_on(fut);
+        .unwrap_or_else(|e| report_error(NeocError::EngineInit(e.to_string())));
+    runtime.block_on(async move {
+        if let Err(e) = tokio::spawn(fut).await {
+            match e.try_into_panic() {
+                Ok(panic) => std::panic::resume_unwind(panic),
+                Err(e) => report_error(NeocError::Runtime(e.to_string())),
+            }
+        }
+    });
 }
 
 fn main() {

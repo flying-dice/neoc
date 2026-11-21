@@ -1,8 +1,8 @@
 # neoc
 
-A fast, lightweight [LuaJIT](https://luajit.org/) runtime. One binary: Lua scripts plus a curated set of Rust-backed modules, with nothing to install at run time.
+A fast, lightweight [Luau](https://luau.org/) runtime (Roblox's Lua 5.1 derivative, embedded through mlua). One binary: Lua scripts plus a curated set of Rust-backed modules, with nothing to install at run time.
 
-`neoc` runs Lua in a VM with the unsafe globals stripped (`load*`, `io`, `os`, `debug`, `ffi`, ...). Scripts reach the outside world only through registered modules. This is a curated surface, not a security boundary.
+`neoc` runs Lua in a VM with the unsafe globals stripped (`loadstring`, `os`, `debug`, `getfenv`, `setfenv`, ...). Scripts reach the outside world only through registered modules. This is a curated surface, not a security boundary.
 
 neoc used to be a language that compiled to Lua. That is gone; the runtime is the product. The last state of the language is preserved under the `neoc-lang-final` tag.
 
@@ -61,6 +61,25 @@ The source in [`crates/neoc-vm/src/lua/`](crates/neoc-vm/src/lua) is the catalog
 - `lib:test` is the test runner: a script named `*.test.lua` or `*.spec.lua` runs under it when passed to `neoc run`.
 - `lib:compile` bundles a script and the runtime into a standalone executable.
 
+## Language
+
+Scripts are Lua 5.1 syntax running on Luau: the language and the base library are Luau's, not LuaJIT's, which neoc ran before NEOC-137. What a script written for LuaJIT can hit:
+
+**Syntax LuaJIT accepted and Luau rejects.** The bitwise and logical operators `&`, `|`, `<<`, `>>`, `!=`, `&&`, `??` and `?.`, and `a ~= b` as a statement (xor-assign); `goto` and labels; hex floats (`0x.8`, `0xA.8p1`) and the `LL`/`ULL` suffixes; non-ASCII identifiers (`local café`: Luau identifiers are ASCII). A leading `#!` line and a UTF-8 byte-order mark are not Luau syntax either, but neoc's loader drops both before it loads a script (line numbers stay), so a script with a shebang runs as before. Luau accepts more than LuaJIT did (`//`, `+=`, `continue`, type annotations, `for k, v in t` over a table), so a script is still valid Lua 5.1 only if it avoids those.
+
+**Library differences.**
+- `bit` is `bit32` (unsigned results; a shift of 32 or more gives 0).
+- `string.format("%s", v)` takes strings and numbers only: `nil`, booleans, tables and `__tostring` objects raise `invalid argument #2 to 'format' (string expected, got table)`. Luau's `%*` formats any value through `tostring` and its `__tostring`, and is the replacement for `%s` with a value that is not a string. `%a` is not a format (`invalid option '%a'`), and `%q` writes `\000` for a NUL.
+- `tostring` of an object whose `__tostring` returns something that is not a string raises (`'__tostring' must return a string`; LuaJIT gave `nil`). `assert(false, <table>)` needs a string message.
+- `string.rep` ignores a separator. `string.find("abc", "", 10)` is `nil` (LuaJIT: `4`). A `gsub` replacement string with a lone `%`, or a `%` followed by anything other than a digit or `%` (`"a%"`, `"100%"`, `"%-"`), raises `invalid use of '%' in replacement string` (`"%%"` is a literal `%` and works).
+- `#` of a table with holes is the border Luau finds: `#{1, nil, 3}` and `select('#', unpack({1, nil, 3}))` are `3` (LuaJIT: `1`), so `table.sort({3, nil, 1})` raises `attempt to compare nil < number`. `#t` honours `__len`. `unpack({}, 1, 100000)` returns 100000 values (LuaJIT: `too many results to unpack`).
+- A numeric `for` with a step of 0 runs zero times (LuaJIT looped for ever). There are no proper tail calls: `f(1000000)` that tail-calls itself overflows the stack. Recursion through a metamethod, a `string.gsub` callback or a `table.sort` comparator stops at about 200 levels with `C stack overflow`.
+- `tostring(1e15)` is `1000000000000000` (shortest round-trip, not `%.14g`); `tonumber("0b11")` is `nil`; `_VERSION` is `Luau 0.740`; `tostring(print)` is an address. `math.random(0)` and `math.random(5, 1)` raise `invalid argument ... (interval is empty)` (LuaJIT answered a number); `math.random(1e300)` answers an integer.
+- Error messages use Luau's wording (`attempt to call a nil value`, `attempt to perform arithmetic (add) on number and nil`, `invalid argument #1 to 'select'`) and name no variable. A failing `xpcall` handler is not run again: `xpcall` answers `error in error handling`.
+- There is no `coroutine.close` in `neoc run` (Luau has one, and it would kill a task's thread); a script environment has one that closes only coroutines the script made. `typeof`, `rawlen` and Luau's extra `table`, `string` and `math` functions are there.
+
+A wait (`task.wait`, I/O) suspends inside `pcall`, `xpcall`, `__call` and `for ... in` iterator functions, and is refused with "attempt to yield across metamethod/C-call boundary" in every other metamethod, in `tostring`, and in `string.gsub` and `table.sort` callbacks.
+
 ## Editor types
 
 This repository contains [LuaCATS](https://luals.github.io/wiki/annotations/) definitions for every module in [`types/luals/`](types/luals), one file per module (`lib/json.lua` for `lib:json`, `vnd/rusqlite.lua` for `vnd:rusqlite`), generated from the modules' own signatures. [lua-language-server](https://luals.github.io/) gives completion, hover docs and type checks of `require("lib:json")` and the rest once it can find them. Its `require` search cannot map a name with a colon to a file, so [`types/luals-plugin.lua`](types/luals-plugin.lua) does that. Point both at your copy of the repository:
@@ -68,7 +87,8 @@ This repository contains [LuaCATS](https://luals.github.io/wiki/annotations/) de
 ```jsonc
 // .luarc.json
 {
-  "runtime.version": "LuaJIT",
+  "runtime.version": "Lua 5.1",
+  "diagnostics.globals": ["bit32"],
   "workspace.library": ["path/to/neoc/types/luals"],
   "runtime.plugin": "path/to/neoc/types/luals-plugin.lua"
 }
