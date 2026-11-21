@@ -88,16 +88,26 @@ textarea {
 .ios-material-chrome { background: var(--material-chrome); }
 
 /*
- * Reduce Motion: a style change applies at once. A transition of 0s is never started; one of 0.01ms is, and it shows its
- * old value until the browser gives it a start time at a later frame (beside a transform or opacity transition, such as
- * the Dock's next to a window's frame, only once the compositor has started that one), so a window read right after a
- * layout change could still have its old size (NEOC-146). Nothing listens for transitionend.
+ * Reduce Motion: nothing moves, a style change applies at once (NEOC-146).
+ *
+ * A transition of 0s is never started. One of 0.01ms is: it shows its old value until the browser gives it a start time
+ * at a later frame (beside a transform or opacity transition, such as the Dock's next to a window's frame, only once the
+ * compositor has started that one), so a window read right after a layout change could still have its old size.
+ *
+ * An animation of 0s has no active time: a one-shot shows the element as it ends, never a first keyframe, and a loop stands
+ * still. At 0.01ms a loop ran 100 000 times a second (Discover's floating icons, every spinner) and a one-shot showed its
+ * first keyframe until it started. The one exception is an indicator that says the app is busy (ActivityIndicator, an
+ * indeterminate ProgressBar or ProgressRing, a pull-to-refresh spinner): it keeps turning, as iOS's do under Reduce
+ * Motion, by setting its own duration with !important in its own reduced-motion rule.
+ *
+ * Nothing listens for transitionend; NavigationStack, the one component that waits for animationend, turns its
+ * animations off under Reduce Motion itself.
  */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
-    animation-duration: 0.01ms !important;
+    animation-duration: 0s !important;
     transition-duration: 0s !important;
   }
 }

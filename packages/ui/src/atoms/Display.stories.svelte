@@ -1,6 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, waitFor, within } from 'storybook/test'
+  import ActivityIndicator from './ActivityIndicator.svelte'
   import Avatar from './Avatar.svelte'
   import Badge from './Badge.svelte'
   import Picture from './Picture.svelte'
@@ -130,7 +131,21 @@
   </div>
 </Story>
 
-<Story name="Progress" asChild>
+<Story
+  name="Progress"
+  asChild
+  play={async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    // What says the app is busy keeps moving, under Reduce Motion too (the e2e run has it on; base.css stops the rest).
+    for (const busy of [
+      canvas.getByRole('progressbar', { name: 'Preparing' }),
+      canvas.getByRole('progressbar', { name: 'Loading' }),
+      canvas.getByRole('status', { name: 'Working' })
+    ]) {
+      await expect(busy.getAnimations({ subtree: true }).some((a) => a.playState === 'running')).toBe(true)
+    }
+  }}
+>
   <div style="display:grid;gap:16px;width:280px">
     <ProgressBar value={0.35} label="Upload" />
     <ProgressBar label="Preparing" />
@@ -139,6 +154,7 @@
       <ProgressRing value={0.75} size={44} label="75 percent" />
       <ProgressRing size={36} label="Loading" />
       <ProgressRing value={1} size={28} tint="var(--ios-green)" label="Done" />
+      <ActivityIndicator label="Working" />
     </div>
   </div>
 </Story>

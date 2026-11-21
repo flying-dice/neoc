@@ -79,6 +79,19 @@ for (const layout of ['slideover', 'fullscreen'] as const) {
   })
 }
 
+// With Reduce Motion nothing decorative keeps moving: Discover's floating icons stand still (only an indicator that says
+// the app is busy keeps turning, and the landing page shows none once it has loaded).
+test('Reduce Motion: nothing in Discover keeps moving', async ({ page }) => {
+  await openDesktop(page, { open: ['discover'] })
+  const moving = await page.getByTestId('window-discover-content').evaluate((el) =>
+    el
+      .getAnimations({ subtree: true })
+      .filter((a) => a.playState === 'running')
+      .map((a) => (a.effect instanceof KeyframeEffect && a.effect.target?.getAttribute('class')) || 'an animation')
+  )
+  expect(moving, 'what still moves').toEqual([])
+})
+
 for (const id of APPS) {
   test.describe(`app: ${id}`, () => {
     test('opens from the Dock', async ({ page }) => {
