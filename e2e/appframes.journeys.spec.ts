@@ -98,7 +98,7 @@ for (const id of FIXTURE_APPS) {
       await expect(frame(page).locator('li', { hasText: title })).toBeVisible()
     })
 
-    test(`AF5 (${id}): the client reaches nothing but its own backend`, async ({ page }) => {
+    test(`AF5 (${id}): the client reaches nothing but its own backend`, async ({ page, errors }) => {
       await openDesktop(page, { open: [id] })
       await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()
       const probes = await frame(page)
@@ -131,6 +131,11 @@ for (const id of FIXTURE_APPS) {
           }
         })
       for (const [probe, outcome] of Object.entries(probes)) expect(outcome, probe).not.toBe('allowed')
+      // the browser reports each refused request as a console error: those are the expected ones (the policy did it),
+      // and anything else the page logged still fails the test
+      const refused = errors.filter((e) => /Content Security Policy/.test(e))
+      expect(refused.length, 'the policy refused the fetches and the socket').toBeGreaterThanOrEqual(3)
+      errors.splice(0, errors.length, ...errors.filter((e) => !refused.includes(e)))
     })
 
     test(`AF6 (${id}): the frame follows light and dark live, and its styles stay inside`, async ({ page }) => {

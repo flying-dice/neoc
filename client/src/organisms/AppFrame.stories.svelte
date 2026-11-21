@@ -103,6 +103,29 @@ ${CLOSE}</body></html>`
   }}
 />
 
+<!-- A press or a drag in the shell covers the frame, which would otherwise swallow the pointer; a drag outlives its pointer. -->
+<Story
+  name="Covered while something is dragged"
+  args={{ srcdoc: client('greet') }}
+  beforeEach={withHost(() => 'there')}
+  play={async ({ canvas }) => {
+    await waitFor(() => expect(canvas.getByTestId('calculator-frame')).toBeVisible())
+    await expect(canvas.queryByTestId('calculator-shield')).toBeNull()
+    // a press (a window being moved, the Split View divider): covered until the pointer is up
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    await expect(await canvas.findByTestId('calculator-shield')).toBeInTheDocument()
+    window.dispatchEvent(new PointerEvent('pointerup'))
+    await waitFor(() => expect(canvas.queryByTestId('calculator-shield')).toBeNull())
+    // a native drag: the browser ends the press with pointercancel at once, the cover stays until the drag ends
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    document.body.dispatchEvent(new DragEvent('dragstart', { bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointercancel'))
+    await expect(await canvas.findByTestId('calculator-shield')).toBeInTheDocument()
+    window.dispatchEvent(new DragEvent('dragend'))
+    await waitFor(() => expect(canvas.queryByTestId('calculator-shield')).toBeNull())
+  }}
+/>
+
 <!-- The backend failed: its message reaches the client, which shows it (the window stays up). -->
 <Story
   name="The backend fails"

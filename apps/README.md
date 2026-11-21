@@ -6,6 +6,12 @@ shell. The backend is **typed Luau** (`--!strict`) that runs in the app's own VM
 agents, its background work. The client calls the backend by name, and the backend can tell the client when something
 changed. The client reaches nothing else.
 
+**This page describes the transport an app runs on: how a client script and a Luau backend meet in the host.** An app
+is meant to be built as a Vite project whose RPC is defined once and from which a vos Vite plugin generates the typed
+client, the Luau router and the handler interface (NEOC-300, next change); until it lands, the client script and the
+handler table are written by hand, as below, and that is the layer the generated code will sit on. Don't treat the
+hand-built layout as the final workflow.
+
 Two apps show the model: `e2e/apps/tasks-svelte` and `e2e/apps/tasks-react` (the same task list written once in each
 framework, on the same backend; they are test fixtures, not in Discover). The older view-tree apps, `apps/calculator`
 and `apps/agents`, describe their screens in Luau instead and have no client (see "View-tree apps" below; NEOC-298

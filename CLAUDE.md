@@ -25,7 +25,9 @@ two products, and one set of rules for both:
     the backend in one `neoc-vm` VM per app (the `vos-lua` adapter), loaded from an app ref over `file://`, `http://` or
     `https://`, and serves the client into a frame of the app's window. The Calculator and Agents are still **view-tree
     apps** (no client: their Luau describes the screens), until NEOC-298 ports them. Examples: `e2e/apps/tasks-svelte`,
-    `e2e/apps/tasks-react`; `apps/README.md` is the reference for writing one.
+    `e2e/apps/tasks-react`; `apps/README.md` is the reference for writing one. (The transport described here is what the
+    contract-first Vite toolchain of NEOC-300 generates onto: one RPC definition, a Vite plugin, a typed client, a Luau
+    router; until it lands the fixtures are built by hand.)
   - **The client** (`client/`, a Vite + Svelte 5 PWA): the shell. It owns pairing, the desktop, windows, Discover and
     Settings, and runs each app's client in a sandboxed frame of its own (`organisms/AppFrame.svelte`, `shell/frameBridge.ts`);
     a view-tree app is still drawn by the managed renderer with the kit in `packages/ui` (atomic layers) through adapters in

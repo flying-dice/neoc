@@ -5,8 +5,8 @@
   `app.call`, the backend's events and the shell's light or dark appearance come back as messages, and a message is
   the frame's only when it comes from this iframe's own window (`shell/frameBridge.ts`). Atoms: ActivityIndicator,
   Button, Text.
-  Test ids: `${appId}-opening` while the client mounts, `${appId}-failed` (+ `-retry`) when it cannot, and
-  `${appId}-frame` on the iframe itself.
+  Test ids: `${appId}-opening` while the client mounts, `${appId}-failed` (+ `-retry`) when it cannot,
+  `${appId}-frame` on the iframe itself and `${appId}-shield` on the cover while a press or a drag is going on.
 -->
 <script lang="ts">
   import { onDestroy, tick, untrack } from 'svelte'
@@ -34,9 +34,11 @@
   let phase = $state<'opening' | 'ready' | 'failed'>('opening')
   let failure = $state<string | null>(null)
   let attempt = $state(0)
-  // a press anywhere in the shell: while it lasts the frame must not swallow the pointer (a window being dragged or
-  // resized, the Split View divider), so it is covered
+  // a press anywhere in the shell, or a drag of something in it (a recent app dragged onto the stage: the browser takes
+  // the pointer over then and ends the press with `pointercancel`): while it lasts the frame must not swallow the
+  // pointer, so it is covered
   let pressing = $state(false)
+  let dragging = $state(false)
 
   // The appearance the frame opens in. It is read once per attempt: the live appearance reaches the open frame as an
   // event, and reloading the app because the theme changed would lose what the person was doing.
@@ -132,6 +134,9 @@
   onpointerdowncapture={() => (pressing = true)}
   onpointerup={() => (pressing = false)}
   onpointercancel={() => (pressing = false)}
+  ondragstartcapture={() => (dragging = true)}
+  ondragend={() => (dragging = false)}
+  ondrop={() => (dragging = false)}
   {onblur}
 />
 
@@ -148,8 +153,8 @@
       class:hidden={phase !== 'ready'}
     ></iframe>
   {/key}
-  {#if pressing && phase === 'ready'}
-    <div class="shield" aria-hidden="true"></div>
+  {#if (pressing || dragging) && phase === 'ready'}
+    <div class="shield" aria-hidden="true" data-testid="{appId}-shield"></div>
   {/if}
   {#if phase === 'failed'}
     <div class="state" role="alert" data-testid="{appId}-failed">
