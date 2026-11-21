@@ -112,6 +112,13 @@ describe("path", function()
         end)
     end)
 
+    describe("with_extension and a separator", function()
+        test("an extension with a separator is an error, not a crash", function()
+            expect(function() path.with_extension("a/b.txt", "x/y") end).toThrow()
+            expect(function() path.with_extension("a/b.txt", path.separator) end).toThrow()
+        end)
+    end)
+
     describe("is_absolute", function()
         test("tells absolute from relative", function()
             if not unix then return end

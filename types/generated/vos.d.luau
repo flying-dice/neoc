@@ -243,7 +243,7 @@ export type std_path = {
 	file_stem: (path: string) -> string?,
 	--- The extension without the dot (`"txt"` for `"a/b.txt"`), or `nil` when there is none.
 	extension: (path: string) -> string?,
-	--- The path with its extension replaced by `extension` (given without the dot); an empty `extension` removes it. A path with no file name is returned unchanged.
+	--- The path with its extension replaced by `extension` (given without the dot); an empty `extension` removes it. A path with no file name is returned unchanged. An `extension` that contains a path separator is a Lua error.
 	with_extension: (path: string, extension: string) -> string,
 	--- The path with its last component replaced by `name` (appended when the path has none).
 	with_file_name: (path: string, name: string) -> string,

@@ -78,9 +78,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.func(
         "with_extension",
         &[("path", "string"), ("extension", "string")],
-        "The path with its extension replaced by `extension` (given without the dot); an empty `extension` removes it. A path with no file name is returned unchanged.",
+        "The path with its extension replaced by `extension` (given without the dot); an empty `extension` removes it. A path with no file name is returned unchanged. An `extension` that contains a path separator is a Lua error.",
         |lua, (p, extension): (LuaString, LuaString)| {
             let extension = path(&extension)?;
+            // `Path::with_extension` panics on a separator, and a panic out of a host function ends the call
+            if extension.to_string_lossy().chars().any(std::path::is_separator) {
+                return Err(mlua::Error::runtime("an extension cannot contain a path separator"));
+            }
             osstr::to_lua(lua, path(&p)?.with_extension(extension).as_os_str())
         },
     )?;
@@ -260,6 +264,23 @@ mod tests {
         assert_eq!(maybe("path.extension('a/b.txt')").as_deref(), Some("txt"));
         assert_eq!(maybe("path.extension('a/b')"), None);
         assert_eq!(maybe("path.extension('.bashrc')"), None);
+    }
+
+    #[test]
+    fn with_extension_refuses_a_separator_instead_of_panicking() {
+        let lua = make_engine().unwrap();
+        for extension in [
+            "'a/b'",
+            "'/'",
+            "'<a>' .. string.rep('</a>', 3)",
+            "'x' .. std_sep",
+        ] {
+            let source = format!(
+                "local path = require('std:path'); local std_sep = path.separator; local ok, err = pcall(path.with_extension, 'a/b.txt', {extension}); return ok, tostring(err)"
+            );
+            let (ok, err): (bool, String) = lua.load(source).eval().unwrap();
+            assert!(!ok && err.contains("path separator"), "{extension}: {err}");
+        }
     }
 
     #[cfg(unix)]
