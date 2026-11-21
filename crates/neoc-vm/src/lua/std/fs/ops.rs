@@ -610,34 +610,61 @@ fn move_by_copy_with(
         copy_dir(from, to, cancel)?;
         remove_tree(from, cancel)
     } else {
-        let staged = staging_path(to);
-        let made = if meta.file_type().is_symlink() {
-            copy_symlink(from, &staged)
-        } else {
-            copy_step(from, &staged).map(|_| ())
-        };
-        let placed =
-            made.and_then(|()| fs::rename(&staged, to).map_err(|e| FsError::io2(&e, &staged, to)));
-        if placed.is_err() {
-            // best effort: what is being reported is why the copy failed
-            let _ = remove_leaf(&staged, meta.file_type());
-        }
-        placed?;
+        place_beside(from, to, &meta, copy_step)?;
         remove_leaf(from, meta.file_type()).map_err(|e| FsError::io(&e, from))
     }
 }
 
-/// A name that does not exist yet next to `to`, for a copy that is renamed over `to` when it is whole.
-fn staging_path(to: &Path) -> PathBuf {
-    use std::sync::atomic::AtomicU64;
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let name = format!(
-        ".neoc-move-{}-{}",
-        std::process::id(),
-        COUNTER.fetch_add(1, Ordering::Relaxed)
-    );
-    to.parent()
-        .map_or_else(|| PathBuf::from(&name), |dir| dir.join(&name))
+/// Puts a copy of the file or symlink `from` at `to` in one step: the copy is made under a name that did not exist
+/// next to `to` (created exclusively, with a random name, so a link planted there beforehand is never followed or
+/// removed and nothing already there is overwritten), and renamed over `to` only when it is whole. Whatever fails,
+/// only what this call created is removed.
+fn place_beside(
+    from: &Path,
+    to: &Path,
+    meta: &fs::Metadata,
+    copy_step: impl Fn(&Path, &Path) -> FsResult<u64>,
+) -> FsResult<()> {
+    let dir = match to.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir,
+        _ => Path::new("."),
+    };
+    if meta.file_type().is_symlink() {
+        let staged = stage_symlink(from, dir)?;
+        fs::rename(&staged, to).map_err(|e| {
+            // this call made `staged`, so it may remove it
+            let _ = remove_leaf(&staged, meta.file_type());
+            FsError::io2(&e, &staged, to)
+        })
+    } else {
+        let staged = tempfile::Builder::new()
+            .prefix(".neoc-move-")
+            .tempfile_in(dir)
+            .map_err(|e| FsError::io(&e, dir))?;
+        // dropping `staged` on any early return deletes the file this call created, and only that one
+        copy_step(from, staged.path())?;
+        staged
+            .persist(to)
+            .map(|_| ())
+            .map_err(|e| FsError::io2(&e.error, from, to))
+    }
+}
+
+/// Recreates the symlink `from` next to the destination under a fresh random name and returns that name. `symlink(2)`
+/// refuses an existing name, so a taken name is retried with another and nothing existing is ever replaced.
+fn stage_symlink(from: &Path, dir: &Path) -> FsResult<PathBuf> {
+    let target = fs::read_link(from).map_err(|e| FsError::io(&e, from))?;
+    let mut last = None;
+    for _ in 0..16 {
+        let staged = dir.join(format!(".neoc-move-{}", uuid::Uuid::new_v4().simple()));
+        match make_symlink(&target, &staged) {
+            Ok(()) => return Ok(staged),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => last = Some(e),
+            Err(e) => return Err(FsError::io2(&e, from, &staged)),
+        }
+    }
+    let error = last.unwrap_or_else(|| io::Error::from(io::ErrorKind::AlreadyExists));
+    Err(FsError::io2(&error, from, dir))
 }
 
 /// The path a symlink at `path` points to, as stored.
@@ -1648,6 +1675,75 @@ mod tests {
         let never = |_: &Path, _: &Path| -> FsResult<u64> { panic!("copied") };
         move_path_with(&a, &b, &live(), rename, never).unwrap();
         assert_eq!(read(&b), "a");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_planted_at_a_staging_style_name_is_neither_followed_nor_removed() {
+        let d = dir();
+        let victim = d.path().join("victim");
+        write(&victim, "precious");
+        // what an attacker would plant: the names a counter-based staging file would have used
+        let planted: Vec<PathBuf> = (0..64)
+            .map(|n| {
+                d.path()
+                    .join(format!(".neoc-move-{}-{n}", std::process::id()))
+            })
+            .chain([d.path().join(".neoc-move-0"), d.path().join(".neoc-move-")])
+            .collect();
+        for link in &planted {
+            symlink(&victim, link).unwrap();
+        }
+        let (a, to) = (d.path().join("a"), d.path().join("to"));
+        write(&a, "new data");
+        move_by_copy(&a, &to, &live()).unwrap();
+        assert_eq!(read(&to), "new data");
+        assert!(!a.exists());
+        assert_eq!(
+            read(&victim),
+            "precious",
+            "nothing was written through a planted link"
+        );
+        // a symlink move too
+        let (link, moved) = (d.path().join("l"), d.path().join("moved"));
+        symlink(&victim, &link).unwrap();
+        move_by_copy(&link, &moved, &live()).unwrap();
+        assert_eq!(read_link(&moved).unwrap(), victim);
+        assert_eq!(read(&victim), "precious");
+        for link in &planted {
+            assert_eq!(
+                read_link(link).unwrap(),
+                victim,
+                "{link:?} was removed or replaced"
+            );
+        }
+        assert!(
+            !to.symlink_metadata().unwrap().file_type().is_symlink(),
+            "`to` is the copy, not a link"
+        );
+        // nothing but what was there, the two results and the planted links
+        let mut expected: Vec<String> = planted
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        expected.extend(["victim", "to", "moved"].map(String::from));
+        let expected: Vec<&str> = expected.iter().map(String::as_str).collect();
+        assert_eq!(strays(d.path(), &expected), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_failed_cross_device_move_leaves_no_staged_file_and_the_destination_intact() {
+        let d = dir();
+        let (a, b) = (d.path().join("a"), d.path().join("b"));
+        write(&a, "new");
+        write(&b, "old");
+        let failing = |_: &Path, into: &Path| -> FsResult<u64> {
+            fs::write(into, "partial").unwrap();
+            Err(FsError::at(Kind::Other, into, "boom"))
+        };
+        assert!(move_by_copy_with(&a, &b, &live(), failing).is_err());
+        assert_eq!((read(&a), read(&b)), ("new".to_owned(), "old".to_owned()));
+        assert_eq!(strays(d.path(), &["a", "b"]), Vec::<String>::new());
     }
 
     #[test]
