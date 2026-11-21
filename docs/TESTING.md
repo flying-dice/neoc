@@ -77,7 +77,7 @@ under `bun test` too, through the preload in `client/bunfig.toml` (`client/test/
   silently (`wrong_api_use.lua` for the `app` API, `wrong_ui_usage.lua` for `vos:ui`).
 - **Format:** `bun run lint:stylua` (`stylua.toml`, syntax `Lua51`; `.styluaignore`); `bun run format` rewrites.
   Both lints print a `SKIPPED` message when `lua-language-server` (PATH or `~/.local/bin`) or `stylua` (PATH or
-  `~/.cargo/bin`) is not installed, and **fail** instead when `AGENTOS_GATE=1` or `CI` is set (`scripts/gate.ts`; the
+  `~/.cargo/bin`) is not installed, and **fail** instead when `VOS_GATE=1` or `CI` is set (`scripts/gate.ts`; the
   `agentos-pre-commit` skill's gate sets it): install them, a skipped lint is not a pass.
 - **Lua 5.1 build:** apps run as plain Lua 5.1 (`scripts/lua51.ts`, `.darklua.json`; see `apps/README.md`).
   `darklua` 0.18.0 is required and **never skipped** (`cargo install darklua --version 0.18.0 --locked`):
@@ -94,7 +94,7 @@ under `bun test` too, through the preload in `client/bunfig.toml` (`client/test/
 
 Required: Rust (the pinned toolchain), `cargo-nextest`, `cargo-deny`, Bun, `darklua` 0.18.0 (never skipped), Chromium
 for Playwright (`bun run test:e2e`, on a Mac for the snapshots). Needed for the Lua lints, which print `SKIPPED` without
-them (a skipped lint is not a pass; with `AGENTOS_GATE=1` or `CI` they fail): `lua-language-server` and `stylua`.
+them (a skipped lint is not a pass; with `VOS_GATE=1` or `CI` they fail): `lua-language-server` and `stylua`.
 **Optional interpreter**, used by `scripts/lua51.test.ts` only: a native **Lua 5.3+** compares the polyfills with the
 native `utf8`/`table.move`. Without it that test is skipped, not failed: the skip is written to stderr
 (`!! polyfill comparison SKIPPED`) and in the test name (`[SKIPPED: ...]`). The bundles themselves run on mlua's
@@ -126,9 +126,9 @@ a fake host) and `packages/ui` (each kit component and its states). Stories are 
    without disturbing the Calculator), and the Ticker (`crates/vos-host/tests/fixtures/ticker`, an app whose
    background task counts up) built into `test-results/host/hidden`, which no registry lists: the background journeys
    (`e2e/background.journeys.spec.ts`) install it by its app ref and remove it again;
-2. writes `agentos.toml` for it: port **7410** (never the default 7400, so a host you have running is untouched). All e2e ports come from
-   one env var, `AGENTOS_PORT_BASE` (`scripts/ports.ts`; default 6100): the Storybook server is the base and the e2e
-   host is base + 10. Set it (e.g. `AGENTOS_PORT_BASE=9100`) to run e2e in a second worktree at the same time; loopback
+2. writes `vos.toml` for it: port **7410** (never the default 7400, so a host you have running is untouched). All e2e ports come from
+   one env var, `VOS_PORT_BASE` (`scripts/ports.ts`; default 6100): the Storybook server is the base and the e2e
+   host is base + 10. Set it (e.g. `VOS_PORT_BASE=9100`) to run e2e in a second worktree at the same time; loopback
    only, a fresh data directory under `test-results/host/`, the test registry as `registries`, the Calculator and
    Agents as `install` (Notes is only offered), and one agent on the roster;
 3. runs `vos-host` in the foreground; Playwright stops it with SIGTERM.
@@ -218,8 +218,8 @@ and the UX research panel (`app-design`, `ux-research`) use. It needs a running 
 bun run build && bun run build:apps                       # the client and the app refs (dist/apps)
 # the newest built version of an app (dist/apps/<app>/<version>/app-ref.json), whatever its version is
 ref() { echo "file://$(ls -d "$PWD/dist/apps/$1"/*/ | sort -V | tail -1)app-ref.json"; }
-AGENTOS_DATA=$(mktemp -d) AGENTOS_PORT=7420 \
-  AGENTOS_INSTALL="$(ref calculator),$(ref agents)" \
+VOS_DATA=$(mktemp -d) VOS_PORT=7420 \
+  VOS_INSTALL="$(ref calculator),$(ref agents)" \
   bun run host                                            # prints the URL and "Pairing code: K7QM-3XHR"
 node e2e/tools/session.mjs start me --url http://127.0.0.1:7420/ [--theme dark] [--width 1280 --height 800]
 node e2e/tools/session.mjs pair me K7QM-3XHR      # the first screen (fills "Pairing code", clicks "Pair")
@@ -232,7 +232,7 @@ node e2e/tools/session.mjs stop me
 Commands match labels by accessible name first, so a missing label is a finding. `look` also prints console errors.
 Sessions live in `test-results/sessions/<name>/`. `window.__agentos` exposes the shell's host state, window manager
 (`wm.open('calculator')`) and app registry. Another pairing code any time: `bun run host pair` with the same
-`AGENTOS_DATA`. To drive the e2e host instead, keep `bun run test:e2e` running and point `--url` at its port; pair with
+`VOS_DATA`. To drive the e2e host instead, keep `bun run test:e2e` running and point `--url` at its port; pair with
 `issuePairingCode()` from `e2e/host/pair.ts`.
 
 ## Known gotchas

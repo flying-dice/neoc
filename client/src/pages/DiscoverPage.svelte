@@ -445,7 +445,7 @@
                   <Text style="subheadline" color="secondary">
                     {query
                       ? `No agents match “${query}”.`
-                      : 'No agents on this host yet. Add one to agentos.toml.'}
+                      : 'No agents on this host yet. Add one to vos.toml.'}
                   </Text>
                 {/each}
               </div>

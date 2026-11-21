@@ -12,7 +12,7 @@ export const PORT = HOST_PORT
 export const ORIGIN = `http://127.0.0.1:${PORT}`
 export const DIR = join(ROOT, 'test-results/host')
 export const DATA = join(DIR, 'data')
-export const CONFIG = join(DIR, 'agentos.toml')
+export const CONFIG = join(DIR, 'vos.toml')
 export const REGISTRY = join(DIR, 'registry/registry.json')
 /**
  * The Ticker (background work, `e2e/background.journeys.spec.ts`): built like any app, but kept out of the registry so

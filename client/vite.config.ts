@@ -5,7 +5,7 @@
  *                /session and /pair
  *
  *   bun run dev        Vite on :5173, proxying the host's routes to the host on :7400 (start it with
- *                      AGENTOS_DEV_CLIENT_PORT=5173 so its Origin guard accepts the dev client)
+ *                      VOS_DEV_CLIENT_PORT=5173 so its Origin guard accepts the dev client)
  *   bun run build      → dist/ (the host serves it)
  */
 import { resolve } from 'node:path'
@@ -13,7 +13,7 @@ import { defineConfig } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 
 const here = import.meta.dirname
-const host = process.env.AGENTOS_HOST ?? 'http://127.0.0.1:7400'
+const host = process.env.VOS_HOST ?? 'http://127.0.0.1:7400'
 
 export default defineConfig({
   root: here,

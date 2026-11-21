@@ -1,25 +1,25 @@
-//! Host settings: built-in defaults, overridden by an `agentos.toml`, overridden by environment variables.
+//! Host settings: built-in defaults, overridden by an `vos.toml`, overridden by environment variables.
 //!
-//! | `agentos.toml`                | environment                          | default                             |
+//! | `vos.toml`                | environment                          | default                             |
 //! |-------------------------------|--------------------------------------|-------------------------------------|
-//! | `data_dir`                    | `AGENTOS_DATA`                       | `~/.agentos`                        |
-//! | `bind`                        | `AGENTOS_BIND`                       | `0.0.0.0`                           |
-//! | `port`                        | `AGENTOS_PORT`                       | `7400`                              |
-//! | `client_dir`                  | `AGENTOS_CLIENT_DIR`                 | `client/dist`                       |
-//! | `registries`                  | `AGENTOS_REGISTRIES` (comma list)    | `dist/apps/registry.json` when built |
-//! | `install`                     | `AGENTOS_INSTALL` (comma list)       | none: app-ref URLs installed at start |
-//! | `allowed_hosts`               | `AGENTOS_ALLOWED_HOSTS` (comma list) | none                                |
-//! | `dev_client_port`             | `AGENTOS_DEV_CLIENT_PORT`            | none                                |
-//! | `dev_reload`                  | `AGENTOS_DEV_RELOAD`                 | off: rebuild an app's VM when its `file://` bundle changes |
-//! | `secure_cookies`              | `AGENTOS_SECURE_COOKIES`             | true when TLS is configured         |
-//! | `[tls] cert`, `[tls] key`     | `AGENTOS_TLS_CERT`, `AGENTOS_TLS_KEY`| TLS off                             |
+//! | `data_dir`                    | `VOS_DATA`                       | `~/.vos`                        |
+//! | `bind`                        | `VOS_BIND`                       | `0.0.0.0`                           |
+//! | `port`                        | `VOS_PORT`                       | `7400`                              |
+//! | `client_dir`                  | `VOS_CLIENT_DIR`                 | `client/dist`                       |
+//! | `registries`                  | `VOS_REGISTRIES` (comma list)    | `dist/apps/registry.json` when built |
+//! | `install`                     | `VOS_INSTALL` (comma list)       | none: app-ref URLs installed at start |
+//! | `allowed_hosts`               | `VOS_ALLOWED_HOSTS` (comma list) | none                                |
+//! | `dev_client_port`             | `VOS_DEV_CLIENT_PORT`            | none                                |
+//! | `dev_reload`                  | `VOS_DEV_RELOAD`                 | off: rebuild an app's VM when its `file://` bundle changes |
+//! | `secure_cookies`              | `VOS_SECURE_COOKIES`             | true when TLS is configured         |
+//! | `[tls] cert`, `[tls] key`     | `VOS_TLS_CERT`, `VOS_TLS_KEY`| TLS off                             |
 //! | `[[agents]]`                  | (file only)                          | Claude, if its ACP adapter is installed |
 //!
 //! `[[agents]]` seed the agent roster: an entry is added at start when no agent has its `id`, and left alone
 //! after that (edit agents through `agents.*` on `/rpc`). Each is an `Agent`: `id`, `name`, `role`, `avatar`,
 //! `[agents.runtime] command/args/env`, `[agents.grants] all/apps` (deny by default) and `approval`.
 //!
-//! The file is `--config <path>`, else `AGENTOS_CONFIG`, else `./agentos.toml`, else `<data_dir>/agentos.toml`.
+//! The file is `--config <path>`, else `VOS_CONFIG`, else `./vos.toml`, else `<data_dir>/vos.toml`.
 //! Relative paths in the file are relative to the file; relative paths in the environment, to the working
 //! directory.
 
@@ -109,26 +109,26 @@ impl Settings {
         home: Option<&Path>,
     ) -> anyhow::Result<Self> {
         let env_path = |key: &str| env(key).filter(|v| !v.is_empty()).map(|v| expand(&v, cwd, home));
-        let env_data_dir = env_path("AGENTOS_DATA");
-        let default_data_dir = home.map_or_else(|| PathBuf::from(".agentos"), |h| h.join(".agentos"));
+        let env_data_dir = env_path("VOS_DATA");
+        let default_data_dir = home.map_or_else(|| PathBuf::from(".vos"), |h| h.join(".vos"));
 
         let (file, file_dir) = Self::read_file(
-            config_arg.map(Path::to_path_buf).or_else(|| env_path("AGENTOS_CONFIG")),
+            config_arg.map(Path::to_path_buf).or_else(|| env_path("VOS_CONFIG")),
             env_data_dir.as_ref().unwrap_or(&default_data_dir),
             cwd,
         )?;
         let in_file = |p: PathBuf| expand_in(&p, &file_dir, home);
 
         let data_dir = env_data_dir.or(file.data_dir.map(in_file)).unwrap_or(default_data_dir);
-        let bind = match env("AGENTOS_BIND").filter(|v| !v.is_empty()) {
-            Some(v) => v.parse().with_context(|| format!("AGENTOS_BIND `{v}` is not an IP address"))?,
+        let bind = match env("VOS_BIND").filter(|v| !v.is_empty()) {
+            Some(v) => v.parse().with_context(|| format!("VOS_BIND `{v}` is not an IP address"))?,
             None => file.bind.unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED)),
         };
-        let port = match env("AGENTOS_PORT").filter(|v| !v.is_empty()) {
-            Some(v) => v.parse().with_context(|| format!("AGENTOS_PORT `{v}` is not a port"))?,
+        let port = match env("VOS_PORT").filter(|v| !v.is_empty()) {
+            Some(v) => v.parse().with_context(|| format!("VOS_PORT `{v}` is not a port"))?,
             None => file.port.unwrap_or(DEFAULT_PORT),
         };
-        let client = match env_path("AGENTOS_CLIENT_DIR") {
+        let client = match env_path("VOS_CLIENT_DIR") {
             Some(dir) => ClientSource::Explicit(dir),
             None => match file.client_dir {
                 Some(dir) => ClientSource::Explicit(expand_in(&dir, &file_dir, home)),
@@ -136,27 +136,27 @@ impl Settings {
             },
         };
         let list = |key: &str| env(key).filter(|v| !v.is_empty()).map(|v| split_list(&v));
-        let dev_client_port = match env("AGENTOS_DEV_CLIENT_PORT").filter(|v| !v.is_empty()) {
+        let dev_client_port = match env("VOS_DEV_CLIENT_PORT").filter(|v| !v.is_empty()) {
             Some(v) => {
-                Some(v.parse().with_context(|| format!("AGENTOS_DEV_CLIENT_PORT `{v}` is not a port"))?)
+                Some(v.parse().with_context(|| format!("VOS_DEV_CLIENT_PORT `{v}` is not a port"))?)
             }
             None => file.dev_client_port,
         };
 
-        let tls = match (env_path("AGENTOS_TLS_CERT"), env_path("AGENTOS_TLS_KEY")) {
+        let tls = match (env_path("VOS_TLS_CERT"), env_path("VOS_TLS_KEY")) {
             (Some(cert), Some(key)) => Some(TlsFiles { cert, key }),
             (None, None) => file.tls.map(|t| TlsFiles {
                 cert: expand_in(&t.cert, &file_dir, home),
                 key: expand_in(&t.key, &file_dir, home),
             }),
-            _ => bail!("AGENTOS_TLS_CERT and AGENTOS_TLS_KEY must be set together"),
+            _ => bail!("VOS_TLS_CERT and VOS_TLS_KEY must be set together"),
         };
         let flag = |v: String| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on");
-        let dev_reload = match env("AGENTOS_DEV_RELOAD").filter(|v| !v.is_empty()) {
+        let dev_reload = match env("VOS_DEV_RELOAD").filter(|v| !v.is_empty()) {
             Some(v) => flag(v),
             None => file.dev_reload.unwrap_or(false),
         };
-        let secure_cookies = match env("AGENTOS_SECURE_COOKIES").filter(|v| !v.is_empty()) {
+        let secure_cookies = match env("VOS_SECURE_COOKIES").filter(|v| !v.is_empty()) {
             Some(v) => matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"),
             None => file.secure_cookies.unwrap_or(tls.is_some()),
         };
@@ -166,9 +166,9 @@ impl Settings {
             bind,
             port,
             client,
-            registries: list("AGENTOS_REGISTRIES").or(file.registries).unwrap_or_default(),
-            install: list("AGENTOS_INSTALL").or(file.install).unwrap_or_default(),
-            allowed_hosts: list("AGENTOS_ALLOWED_HOSTS").or(file.allowed_hosts).unwrap_or_default(),
+            registries: list("VOS_REGISTRIES").or(file.registries).unwrap_or_default(),
+            install: list("VOS_INSTALL").or(file.install).unwrap_or_default(),
+            allowed_hosts: list("VOS_ALLOWED_HOSTS").or(file.allowed_hosts).unwrap_or_default(),
             dev_client_port,
             dev_reload,
             secure_cookies,
@@ -185,7 +185,7 @@ impl Settings {
     ) -> anyhow::Result<(FileSettings, PathBuf)> {
         let candidates: Vec<(PathBuf, bool)> = match explicit {
             Some(p) => vec![(cwd.join(p), true)],
-            None => vec![(cwd.join("agentos.toml"), false), (data_dir.join("agentos.toml"), false)],
+            None => vec![(cwd.join("vos.toml"), false), (data_dir.join("vos.toml"), false)],
         };
         for (path, required) in candidates {
             match std::fs::read_to_string(&path) {
@@ -311,8 +311,8 @@ mod tests {
             std::env::temp_dir().join(format!("agentos-config-{}-{}", std::process::id(), rand_suffix()));
         std::fs::create_dir_all(&dir).unwrap();
         let config_arg = file.map(|text| {
-            std::fs::write(dir.join("agentos.toml"), text).unwrap();
-            dir.join("agentos.toml")
+            std::fs::write(dir.join("vos.toml"), text).unwrap();
+            dir.join("vos.toml")
         });
         let env: HashMap<String, String> = env.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect();
         let r = Settings::load(
@@ -338,7 +338,7 @@ mod tests {
         let s = load(None, &[]).unwrap();
         assert_eq!(s.port, 7400);
         assert_eq!(s.bind, "0.0.0.0".parse::<IpAddr>().unwrap());
-        assert_eq!(s.data_dir, PathBuf::from("/home/me/.agentos"));
+        assert_eq!(s.data_dir, PathBuf::from("/home/me/.vos"));
         assert_eq!(s.client, ClientSource::Default);
         assert!(s.registries.is_empty() && s.install.is_empty() && s.tls.is_none() && !s.secure_cookies);
         assert_eq!(s.scheme(), "http");
@@ -369,10 +369,10 @@ mod tests {
         let s = load(
             Some(toml),
             &[
-                ("AGENTOS_PORT", "9000"),
-                ("AGENTOS_REGISTRIES", "a, b ,,c"),
-                ("AGENTOS_INSTALL", "d"),
-                ("AGENTOS_BIND", "::1"),
+                ("VOS_PORT", "9000"),
+                ("VOS_REGISTRIES", "a, b ,,c"),
+                ("VOS_INSTALL", "d"),
+                ("VOS_BIND", "::1"),
             ],
         )
         .unwrap();
@@ -398,9 +398,9 @@ mod tests {
     #[test]
     fn mistakes_are_reported_not_ignored() {
         assert!(load(Some("prot = 1"), &[]).is_err(), "unknown key");
-        assert!(load(None, &[("AGENTOS_PORT", "seventy")]).is_err());
-        assert!(load(None, &[("AGENTOS_BIND", "everywhere")]).is_err());
-        assert!(load(None, &[("AGENTOS_TLS_CERT", "/c.pem")]).is_err(), "cert without key");
+        assert!(load(None, &[("VOS_PORT", "seventy")]).is_err());
+        assert!(load(None, &[("VOS_BIND", "everywhere")]).is_err());
+        assert!(load(None, &[("VOS_TLS_CERT", "/c.pem")]).is_err(), "cert without key");
         assert!(load(Some("[tls]\ncert = \"c\""), &[]).is_err(), "tls table needs both");
     }
 

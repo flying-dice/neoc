@@ -33,7 +33,7 @@
   <AgentAvatar icon="sparkles" color="var(--ios-gray)" size={30} />
   <span class="meta">
     <Text style="subheadline" weight="semibold">No agents yet</Text>
-    <Text style="caption1" color="secondary">Add one to agentos.toml</Text>
+    <Text style="caption1" color="secondary">Add one to vos.toml</Text>
   </span>
 {/snippet}
 

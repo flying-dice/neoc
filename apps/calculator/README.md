@@ -111,7 +111,7 @@ bun run test:e2e                                           # the whole gate's UI
 
 The Rust tests tap the real nodes `render` returned (`Keypad::press("1 2 add 7 eq")`), then read the display and caption
 back from the next render, so they cover the handlers and the view as well as `calc.lua`. The journeys press the same
-keys in a browser, once per journey id. Set `AGENTOS_PORT_BASE=9100` to run the e2e suite in a second worktree.
+keys in a browser, once per journey id. Set `VOS_PORT_BASE=9100` to run the e2e suite in a second worktree.
 
 ## Extending it
 

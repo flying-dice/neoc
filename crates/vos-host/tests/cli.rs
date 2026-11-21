@@ -21,12 +21,12 @@ struct HostProcess {
 fn host_command(data: &Path) -> Command {
     let mut cmd = Command::new(BIN);
     cmd.current_dir(data)
-        .env("AGENTOS_DATA", data)
-        .env("AGENTOS_BIND", "127.0.0.1")
-        .env("AGENTOS_PORT", "0")
+        .env("VOS_DATA", data)
+        .env("VOS_BIND", "127.0.0.1")
+        .env("VOS_PORT", "0")
         .env("RUST_LOG", "warn")
-        .env_remove("AGENTOS_CONFIG")
-        .env_remove("AGENTOS_CLIENT_DIR");
+        .env_remove("VOS_CONFIG")
+        .env_remove("VOS_CLIENT_DIR");
     cmd
 }
 

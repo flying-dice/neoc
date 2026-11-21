@@ -15,7 +15,7 @@ if (!app) throw new Error('ux-research needs args.app, e.g. { app: "calculator",
 const round = (args && args.round) || 1
 const previous = args && args.previous // path to the previous round's report, if any
 const base = (args && args.baseUrl) || 'http://127.0.0.1:7400/'
-const dataDir = (args && args.dataDir) || '' // the host's AGENTOS_DATA, if it is not the default ~/.agentos
+const dataDir = (args && args.dataDir) || '' // the host's VOS_DATA, if it is not the default ~/.vos
 
 const journeysPath = `apps/${app}/JOURNEYS.md (Lua apps) or client/journeys/${app}.md (built-in pages and the desktop shell)`
 const reportPath = `docs/ux/${app}/round-${round}.md`
@@ -97,7 +97,7 @@ help). Your session name is "${p.id}-r${round}". For each journey:
   1. node e2e/tools/session.mjs start ${p.id}-r${round} --url "${base}"
      (add --theme dark / --width / --height if your persona would; Alex uses dark mode and a 1024x768 screen).
      The first screen asks to pair this device. That is setup, not part of the study: get a code with
-     \`${dataDir ? `AGENTOS_DATA=${dataDir} ` : ''}bun run host pair\` (it prints "Pairing code: XXXX-XXXX"), then
+     \`${dataDir ? `VOS_DATA=${dataDir} ` : ''}bun run host pair\` (it prints "Pairing code: XXXX-XXXX"), then
      \`fill\` the "Pairing code" field with it and \`click\` "Pair". Start each journey from the state its "Starts at"
      column describes, using the Dock and the shell like anyone would; there are no deep links.
   2. Loop: \`look\` (then open the screenshot with the Read tool — LOOK at it, as a person would), decide, act

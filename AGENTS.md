@@ -88,7 +88,7 @@ A change is done when all of these hold:
   boundary.** An app runs as plain Lua 5.1 in its own VM and its own environment table: its globals, its standard
   libraries (read-only) and its module tables are its own, so apps do not share state by accident, and it has no
   `load*`/`getfenv`/`setfenv`. That is all the separation there is. Through `std:fs`, `vnd:rusqlite` and the other
-  modules an app can read and write other apps' data and the host's own database under `~/.agentos`. There are **no
+  modules an app can read and write other apps' data and the host's own database under `~/.vos`. There are **no
   permissions** and **no budgets** (no CPU, memory or time limits): a runaway app (a loop that never yields, a
   `std:thread` worker) can hang the host, not just itself, and can outlive its uninstall, because unloading aborts
   work only at the points where the app yields to the host. That is accepted. It reaches the host through the `app` table (typed by the generated LuaCATS definitions in `types/generated/luals/`) and
@@ -168,7 +168,7 @@ bun run typecheck       # cargo check --workspace --all-targets + tsc on types/ 
 bun run test            # cargo nextest over the agentos crates (neoc's crates have their own gate) + bun test (types, scripts, client, kit)
 bun run format          # prettier + cargo fmt + StyLua
 bun run test:e2e        # all Storybooks + desktop + journeys, headless, against the real host
-                        # AGENTOS_PORT_BASE=9100 for a second worktree (Storybook = base, e2e host = base + 10)
+                        # VOS_PORT_BASE=9100 for a second worktree (Storybook = base, e2e host = base + 10)
 bun run test:e2e:update # rebaseline snapshots (then look at them)
 bun run storybooks list # every Storybook (client, packages/ui); each package: bun run storybook
 bun run codegen         # regenerate types/generated/* (incl. ui.lua, prelude.lua) and docs/reference/components.md from the Rust schema
@@ -180,7 +180,7 @@ Visual baselines (`e2e/__screenshots__`) are macOS-only, so run `test:e2e` on a 
 `agentos-pre-commit` skill runs the gate and `agentos-code-review` checks it. Needed tools: Rust (the pinned toolchain),
 `cargo-nextest`, `cargo-deny`, Bun, `darklua` 0.18.0 (`cargo install darklua --version 0.18.0 --locked`; building the
 apps fail without it, they never skip) and, for the Lua checks, `lua-language-server` 3.19.2 (`brew install lua-language-server`) and `stylua`.
-Without them `lint:lua` and `lint:stylua` skip on a developer machine and **fail** when `AGENTOS_GATE=1` or `CI` is
+Without them `lint:lua` and `lint:stylua` skip on a developer machine and **fail** when `VOS_GATE=1` or `CI` is
 set (the `agentos-pre-commit` skill runs the gate that way). No system Lua 5.1 is needed: the Rust tests load and run the
 bundled apps on neoc-vm's Luau. A native Lua 5.3+ is optional: with it `bun test scripts` also compares the
 prelude's polyfills with the native ones.

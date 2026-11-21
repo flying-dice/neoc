@@ -6,7 +6,7 @@
 //!
 //! ```sh
 //! cargo test --release -p vos-lua --test baseline -- --ignored --nocapture
-//! AGENTOS_BASELINE_VMS=200 cargo test --release -p vos-lua --test baseline -- --ignored --nocapture
+//! VOS_BASELINE_VMS=200 cargo test --release -p vos-lua --test baseline -- --ignored --nocapture
 //! ```
 //!
 //! It loads the built Calculator (the shipped bundle: darklua, then `AppVm::load`: the engine, the host API, the
@@ -26,7 +26,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// How many VMs to create when `AGENTOS_BASELINE_VMS` is not set.
+/// How many VMs to create when `VOS_BASELINE_VMS` is not set.
 const DEFAULT_VMS: usize = 50;
 
 /// The config the host gives every app: the generated `vos:ui` module, and no agent roster.
@@ -63,8 +63,8 @@ fn ms(d: Duration) -> f64 {
 #[ignore = "a measurement, run on demand (AGOS-53): cargo test --release -p vos-lua --test baseline -- --ignored --nocapture"]
 async fn calculator_vm_create_time_and_memory() {
     let count: usize =
-        std::env::var("AGENTOS_BASELINE_VMS").ok().and_then(|n| n.parse().ok()).unwrap_or(DEFAULT_VMS);
-    assert!(count >= 2, "AGENTOS_BASELINE_VMS must be at least 2");
+        std::env::var("VOS_BASELINE_VMS").ok().and_then(|n| n.parse().ok()).unwrap_or(DEFAULT_VMS);
+    assert!(count >= 2, "VOS_BASELINE_VMS must be at least 2");
     let package = built_app("calculator");
     let bundle_bytes: usize = package.files.values().map(Vec::len).sum();
 

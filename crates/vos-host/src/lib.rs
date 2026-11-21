@@ -68,7 +68,7 @@ pub struct HostConfig {
     /// The catalog Discover browses (`app.available`): registry files or app refs, by URL.
     pub registries: Vec<String>,
     /// Agents to add to the roster at start if they are not there yet, each with a fixed persistent MCP
-    /// bearer token (tests; the binary seeds from `agentos.toml` and mints tokens at runtime).
+    /// bearer token (tests; the binary seeds from `vos.toml` and mints tokens at runtime).
     pub agents: Vec<(String, Agent)>,
     /// The `/mcp` URL as agents reach it (handed to every agent session); `None` starts sessions without tools.
     pub mcp_url: Option<String>,

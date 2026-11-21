@@ -62,11 +62,11 @@ Run the real host with the app installed and the built client, then run the save
 bun run build && bun run build:apps
 # the newest built version of an app (dist/apps/<app>/<version>/app-ref.json), whatever its version is
 ref() { echo "file://$(ls -d "$PWD/dist/apps/$1"/*/ | sort -V | tail -1)app-ref.json"; }
-AGENTOS_DATA=$(mktemp -d) AGENTOS_PORT=7420 AGENTOS_INSTALL="$(ref <app>)" bun run host
+VOS_DATA=$(mktemp -d) VOS_PORT=7420 VOS_INSTALL="$(ref <app>)" bun run host
 ```
 
 ```
-Workflow({ name: "ux-research", args: { app: "calculator", round: 1, baseUrl: "http://127.0.0.1:7420/", dataDir: "<the AGENTOS_DATA above>" } })
+Workflow({ name: "ux-research", args: { app: "calculator", round: 1, baseUrl: "http://127.0.0.1:7420/", dataDir: "<the VOS_DATA above>" } })
 Workflow({ name: "ux-research", args: { app: "calculator", round: 2, previous: "docs/ux/calculator/round-1.md", baseUrl: "...", dataDir: "..." } })
 ```
 

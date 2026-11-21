@@ -79,11 +79,11 @@ backtick strings, `if` expressions or `for k, v in t do`), and use only the libr
 modules is shifted by the size of the modules bundled before it (the Calculator: `calc.lua` +2, `app.lua` +183).
 
 - **A registry** is a list of app-ref URLs. The host's default registry is `dist/apps/registry.json` over `file://`
-  when it exists; `registries` in `agentos.toml` (or `AGENTOS_REGISTRIES`) adds more. Discover lists what they offer.
+  when it exists; `registries` in `vos.toml` (or `VOS_REGISTRIES`) adds more. Discover lists what they offer.
 - **An app is installed from an app ref URL** (`file://`, `http://`, `https://`): the host fetches it, verifies every
   file's sha256, runs the migrations, loads the app in its VM and publishes its tools. Discover previews an app ref
   first (manifest, source host) without running anything, then asks for confirmation. `install` in
-  `agentos.toml` makes sure listed app refs are installed at every start.
+  `vos.toml` makes sure listed app refs are installed at every start.
 - **Lifecycle:** install, enable, disable (VM unloaded, tools withdrawn, data kept), delete data, uninstall. At start
   the host re-fetches and re-verifies every installed app. An app that fails to load is marked failed and the rest
   start. All of it is in `docs/architecture/host-stack.md` ("Apps: lifecycle").
@@ -304,7 +304,7 @@ it in the app's own VM and keeps it going for as long as the app is loaded.
 - **Apps keep their Lua state apart; that is not a security boundary.** One Lua VM per app (Luau, running the app's Lua 5.1 source), and one
   **environment table** per app (its globals are its own; two apps share no Lua state, not even the module tables
   below). Through `std:fs` and `vnd:rusqlite` an app can still read and write other apps' data and the host's own
-  database under `~/.agentos`, and a runaway app (a loop that never yields, a `std:thread` worker) can hang the host
+  database under `~/.vos`, and a runaway app (a loop that never yields, a `std:thread` worker) can hang the host
   and outlive its uninstall: unloading stops an app's work only where it yields to the host. The base functions are
   an allow-list: no `load`, `loadstring`, `dofile`, `loadfile`, `getfenv`, `setfenv`, `newproxy`, `module`,
   `collectgarbage`, `print`, no `string.dump`, no `io`, `os`, `debug` or `package`. Chunks load as text only (Luau

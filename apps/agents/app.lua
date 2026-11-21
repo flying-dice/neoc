@@ -142,7 +142,7 @@ app.window("main", {
             empty = ui.EmptyState {
               icon = "sparkles",
               title = "No agents",
-              message = "Add an agent to agentos.toml, or with agents.create, to start a chat.",
+              message = "Add an agent to vos.toml, or with agents.create, to start a chat.",
             },
             ui.Section { key = "agents", header = "Agents", unpack(agentRows) },
           },

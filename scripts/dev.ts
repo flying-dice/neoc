@@ -50,7 +50,7 @@ const sources = watch(join(root, 'apps'), { recursive: true }, (_event, file) =>
 const host = spawn('cargo', ['run', '-q', '-p', 'vos-host'], {
   cwd: root,
   stdio: 'inherit',
-  env: { ...process.env, AGENTOS_DEV_CLIENT_PORT: '5173', AGENTOS_DEV_RELOAD: '1' }
+  env: { ...process.env, VOS_DEV_CLIENT_PORT: '5173', VOS_DEV_RELOAD: '1' }
 })
 const client = spawn('bun', ['run', '--filter', '@vos/client', 'dev'], { cwd: root, stdio: 'inherit' })
 

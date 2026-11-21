@@ -1,7 +1,7 @@
 //! `vos`: serve the desktop, `/rpc`, `/agui` and `/mcp`, or print a fresh pairing code.
 //!
 //! ```text
-//! vos                       serve (config: agentos.toml, environment, see --help)
+//! vos                       serve (config: vos.toml, environment, see --help)
 //! vos pair                  print a fresh pairing code (also: --new-pairing-code)
 //! vos --config <file>       use this config file
 //! ```
@@ -36,7 +36,7 @@ USAGE:
     vos pair [--config <file>]  print a fresh pairing code (alias: --new-pairing-code)
 
 Every client must be paired: open the desktop, enter the pairing code the host prints at start.
-Settings come from agentos.toml and AGENTOS_* environment variables; see docs/architecture/host-stack.md.
+Settings come from vos.toml and VOS_* environment variables; see docs/architecture/host-stack.md.
 Logging: RUST_LOG (default info).
 ";
 

@@ -3,8 +3,8 @@
  * A persistent, headless browser session that an agent drives one command at
  * a time, the way a person uses the app: look at the screen, click what they
  * can see by its label, type, press keys, drag. Used by the UX research panel
- * (.claude/skills/app-design) against a running host. Default URL: the e2e host (AGENTOS_PORT_BASE + 10, see
- * scripts/ports.ts) when AGENTOS_PORT_BASE is set, else a host you run yourself (`bun run host`: 127.0.0.1:7400).
+ * (.claude/skills/app-design) against a running host. Default URL: the e2e host (VOS_PORT_BASE + 10, see
+ * scripts/ports.ts) when VOS_PORT_BASE is set, else a host you run yourself (`bun run host`: 127.0.0.1:7400).
  * A new session is not paired: run `pair` first.
  *
  *   node e2e/tools/session.mjs start  <name> [--url URL] [--width 1280] [--height 800] [--theme light|dark]
@@ -36,10 +36,10 @@ import { join, resolve } from 'node:path'
 const ROOT = resolve(import.meta.dirname, '../..')
 const dirOf = (name) => join(ROOT, 'test-results', 'sessions', name)
 
-/** The e2e host's port is AGENTOS_PORT_BASE + 10 (scripts/ports.ts); a host you run yourself is on 7400. */
-const E2E_CONFIG = join(ROOT, 'test-results/host/agentos.toml')
+/** The e2e host's port is VOS_PORT_BASE + 10 (scripts/ports.ts); a host you run yourself is on 7400. */
+const E2E_CONFIG = join(ROOT, 'test-results/host/vos.toml')
 const E2E_HOST_BIN = join(ROOT, 'target/debug/vos')
-const PORT_BASE = process.env.AGENTOS_PORT_BASE
+const PORT_BASE = process.env.VOS_PORT_BASE
 const DEFAULT_URL = `http://127.0.0.1:${PORT_BASE ? Number(PORT_BASE) + 10 : 7400}/`
 
 /** A fresh pairing code from the host this session talks to: the e2e host's own config when it is the e2e one. */

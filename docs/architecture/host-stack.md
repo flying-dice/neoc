@@ -38,7 +38,7 @@ Apps are written in plain Lua 5.1 (checked by lua-language-server against the ge
   | Clean release build | 1 min 58 s (378 s of CPU) | `CARGO_TARGET_DIR=<empty dir> cargo build --profile release-host -p vos-host` |
   | Incremental release build (touched `crates/vos-lua/src/api/misc.rs`) | 1 min 06 s: the adapter and the host are recompiled and relinked with LTO | `touch crates/vos-lua/src/api/misc.rs`, then the same build |
   | Incremental dev build (same file) | 1.7 s | `cargo build -p vos-host` after a first build, then `touch` the file and build again |
-  | VM create (the built Calculator, 14 662 bytes: engine, host API, manifest, window and tools; 50 VMs after one warm-up) | first 1.64 ms; then median 1.26 ms, mean 1.30 ms, p95 1.42 ms, max 1.51 ms | `cargo test --release -p vos-lua --test baseline -- --ignored --nocapture` (`AGENTOS_BASELINE_VMS=<n>` for another count) |
+  | VM create (the built Calculator, 14 662 bytes: engine, host API, manifest, window and tools; 50 VMs after one warm-up) | first 1.64 ms; then median 1.26 ms, mean 1.30 ms, p95 1.42 ms, max 1.51 ms | `cargo test --release -p vos-lua --test baseline -- --ignored --nocapture` (`VOS_BASELINE_VMS=<n>` for another count) |
   | Lua heap per VM (`AppVm::used_memory`) | 512.9 KiB, the same for every VM | the same test |
   | Process memory per VM (resident set after 50 VMs minus before, `ps`) | 822 KiB (12 208 KiB before, 53 296 KiB after): the Lua heap plus what Rust allocates for the VM (database handle, tables of the host API) | the same test |
 
@@ -217,22 +217,22 @@ name in `allowed_hosts`.
 
 ### Configuration
 
-Defaults, then `agentos.toml`, then environment variables. The file is `--config <path>`, else
-`AGENTOS_CONFIG`, else `./agentos.toml`, else `<data_dir>/agentos.toml`. Unknown keys are an error.
+Defaults, then `vos.toml`, then environment variables. The file is `--config <path>`, else
+`VOS_CONFIG`, else `./vos.toml`, else `<data_dir>/vos.toml`. Unknown keys are an error.
 
-| `agentos.toml` | environment | default |
+| `vos.toml` | environment | default |
 |---|---|---|
-| `data_dir` | `AGENTOS_DATA` | `~/.agentos` (mode 0700): `system.db`, `apps/<id>.db`, `mcp.json` |
-| `bind` | `AGENTOS_BIND` | `0.0.0.0` |
-| `port` | `AGENTOS_PORT` | `7400` (`0` picks a free port) |
-| `client_dir` | `AGENTOS_CLIENT_DIR` | `client/dist`; not built = API only |
-| `registries` | `AGENTOS_REGISTRIES` (comma list) | the catalog Discover browses: registry files (`{"apps": ["<id>/<version>/app-ref.json"]}`, relative URLs resolve against the registry) or app refs, by URL; default `dist/apps/registry.json` (what `bun run build:apps` writes) over `file://` when it exists |
-| `install` | `AGENTOS_INSTALL` (comma list) | none: app-ref URLs the host makes sure are installed at every start |
-| `allowed_hosts` | `AGENTOS_ALLOWED_HOSTS` (comma list) | none |
-| `dev_client_port` | `AGENTOS_DEV_CLIENT_PORT` | none: also accept the Vite dev server on this port |
-| `dev_reload` | `AGENTOS_DEV_RELOAD` | off: watch the `file://` app bundles and rebuild an app's VM (database kept) when one changes |
-| `secure_cookies` | `AGENTOS_SECURE_COOKIES` | on when TLS is configured |
-| `[tls] cert`, `key` | `AGENTOS_TLS_CERT`, `AGENTOS_TLS_KEY` | TLS off |
+| `data_dir` | `VOS_DATA` | `~/.vos` (mode 0700): `system.db`, `apps/<id>.db`, `mcp.json` |
+| `bind` | `VOS_BIND` | `0.0.0.0` |
+| `port` | `VOS_PORT` | `7400` (`0` picks a free port) |
+| `client_dir` | `VOS_CLIENT_DIR` | `client/dist`; not built = API only |
+| `registries` | `VOS_REGISTRIES` (comma list) | the catalog Discover browses: registry files (`{"apps": ["<id>/<version>/app-ref.json"]}`, relative URLs resolve against the registry) or app refs, by URL; default `dist/apps/registry.json` (what `bun run build:apps` writes) over `file://` when it exists |
+| `install` | `VOS_INSTALL` (comma list) | none: app-ref URLs the host makes sure are installed at every start |
+| `allowed_hosts` | `VOS_ALLOWED_HOSTS` (comma list) | none |
+| `dev_client_port` | `VOS_DEV_CLIENT_PORT` | none: also accept the Vite dev server on this port |
+| `dev_reload` | `VOS_DEV_RELOAD` | off: watch the `file://` app bundles and rebuild an app's VM (database kept) when one changes |
+| `secure_cookies` | `VOS_SECURE_COOKIES` | on when TLS is configured |
+| `[tls] cert`, `key` | `VOS_TLS_CERT`, `VOS_TLS_KEY` | TLS off |
 
 An explicit `client_dir` that is not built is an error; when the default `client/dist` is not built the host serves the
 API only and logs a warning.
@@ -427,7 +427,7 @@ broadcasts `agents.changed {id}` to the paired clients. Deleting an agent, or ch
 its ACP process; each agent's process starts under its own lock and `initialize` times out after 30 s, so one hung
 agent holds up only itself.
 
-**Configuration.** `agentos.toml` may list `[[agents]]` (an `Agent`: `id`, `name`, `role`, `avatar`, `[agents.runtime]`
+**Configuration.** `vos.toml` may list `[[agents]]` (an `Agent`: `id`, `name`, `role`, `avatar`, `[agents.runtime]`
 `command`/`args`/`env`, `[agents.grants]` `all`/`apps`, `approval`). They seed the roster: an entry is added when no
 agent has its id and left alone afterwards (edit through `agents.*`). With none configured, Claude is added if its ACP
 adapter is installed (`node_modules/@agentclientprotocol/claude-agent-acp`), with no grants. The host also keeps a

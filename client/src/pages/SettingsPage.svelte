@@ -164,7 +164,7 @@
           {:else if pane === 'agents'}
             <ListSection
               header="Agents on this host"
-              footer="An agent can use only the apps it is granted. Add or change agents in agentos.toml, or with agents.create; chat with them in the Agents app."
+              footer="An agent can use only the apps it is granted. Add or change agents in vos.toml, or with agents.create; chat with them in the Agents app."
             >
               {#each host.agents as agent (agent.id)}
                 <ListRow

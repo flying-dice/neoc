@@ -15,7 +15,7 @@
  *
  * `lua-language-server` is found on PATH or at ~/.local/bin/lua-language-server and must be the pinned version
  * (its diagnostics change between releases). When it is missing the check SKIPS with a message and exits 0 on a
- * developer machine, and FAILS in the quality gate (AGENTOS_GATE=1 or CI set, see scripts/gate.ts).
+ * developer machine, and FAILS in the quality gate (VOS_GATE=1 or CI set, see scripts/gate.ts).
  *
  * Usage: bun scripts/lint-lua.ts
  */

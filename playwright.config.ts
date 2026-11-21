@@ -7,7 +7,7 @@
  *   background  the background-work journeys (e2e/background.journeys.spec.ts): they install an app that every open page hears about, so they run alone, after the journeys
  *
  * The desktop and the journeys run against the real Rust host (`e2e/host/start.ts`: a cargo build, a fresh data
- * directory, a test registry, port 7410, or AGENTOS_PORT_BASE + 10: see scripts/ports.ts). One browser is paired once (`e2e/host/global-setup.ts`) and every spec
+ * directory, a test registry, port 7410, or VOS_PORT_BASE + 10: see scripts/ports.ts). One browser is paired once (`e2e/host/global-setup.ts`) and every spec
  * shares it, except the pairing journeys, which start unpaired.
  */
 import { defineConfig } from '@playwright/test'
