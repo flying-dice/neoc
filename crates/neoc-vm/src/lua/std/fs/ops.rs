@@ -1173,6 +1173,66 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn copy_dir_refuses_a_fifo_inside_the_source_without_opening_it_and_leaves_nothing() {
+        let d = dir();
+        let src = tree(d.path());
+        // after `sub/b.txt` in name order, so part of the tree is already copied when the FIFO is met
+        let made = std::process::Command::new("mkfifo")
+            .arg(src.join("sub/pipe"))
+            .status();
+        if made.is_ok_and(|s| s.success()) {
+            let dst = d.path().join("dst");
+            // opening the FIFO would block for ever: the copy must refuse it by its type instead
+            assert_eq!(kind(copy_dir(&src, &dst, &live())), Kind::InvalidInput);
+            assert!(!dst.exists(), "the partial copy is removed again");
+            assert!(
+                src.join("sub/pipe").exists(),
+                "the source is left as it was"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_file_writes_through_a_symlink_at_the_destination_and_a_dangling_one_creates_its_target()
+    {
+        let d = dir();
+        let (a, target, link) = (
+            d.path().join("a"),
+            d.path().join("target"),
+            d.path().join("link"),
+        );
+        write(&a, "new");
+        write(&target, "old");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert_eq!(copy_file(&a, &link).unwrap(), 3);
+        assert_eq!(
+            read(&target),
+            "new",
+            "the file the link points at is written"
+        );
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "the link stays a link"
+        );
+
+        let (missing, dangling) = (d.path().join("missing"), d.path().join("dangling"));
+        std::os::unix::fs::symlink(&missing, &dangling).unwrap();
+        assert_eq!(copy_file(&a, &dangling).unwrap(), 3);
+        assert_eq!(read(&missing), "new", "a dangling link's target is created");
+        assert!(
+            fs::symlink_metadata(&dangling)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+
     #[test]
     fn remove_file_removes_a_file_and_reports_missing_and_directories() {
         let d = dir();
@@ -1520,6 +1580,22 @@ mod tests {
             "a cancelled move leaves the source whole"
         );
         assert!(!b.exists());
+    }
+
+    #[test]
+    fn a_move_cancelled_after_its_copy_keeps_the_source_and_the_complete_destination() {
+        // the copy checks the flag at each entry it meets, and an empty tree has none: the first check this cancelled
+        // move reaches is the one before the source is removed
+        let d = dir();
+        let (a, b) = (d.path().join("a"), d.path().join("b"));
+        fs::create_dir(&a).unwrap();
+        let cancelled = AtomicBool::new(true);
+        assert_eq!(kind(move_by_copy(&a, &b, &cancelled)), Kind::Other);
+        assert!(
+            a.is_dir(),
+            "the source is not removed once the call is gone"
+        );
+        assert!(b.is_dir(), "the finished copy stays");
     }
 
     #[cfg(unix)]

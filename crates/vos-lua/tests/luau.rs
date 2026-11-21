@@ -43,7 +43,7 @@ async fn none_of_the_escape_hatches_exist_in_the_apps_environment() {
         check("string.dump", string.dump)
         check("string.gfind", string.gfind)
         check("coroutine.debug", coroutine.debug)
-        app.on("report", function() return missing end)
+        hook("report", function() return missing end)
     "#;
     let vm = load(src).await;
     assert_eq!(emit(&vm, "report").await.unwrap(), json!([]), "these exist in the app's environment");
@@ -98,8 +98,8 @@ async fn the_standard_libraries_are_read_only_in_every_spelling() {
     }
     src.push_str(
         r#"
-        app.on("results", function() return results end)
-        app.on("intact", function()
+        hook("results", function() return results end)
+        hook("intact", function()
           return {
             string.rep("ab", 2) == "abab", ("x"):rep(3) == "xxx", string.find("abc", "b") == 2,
             string.evil == nil, table.insert ~= nil, math.floor(1.5) == 1, bit32.band(6, 3) == 2, utf8.len("é") == 1,
@@ -134,7 +134,7 @@ async fn the_real_library_tables_are_not_reachable_from_the_app() {
         probe("getmetatable(_G)", function() return getmetatable(_G) end)
         probe("getmetatable(app)", function() return getmetatable(app) end)
         probe("_G == getfenv", function() return getfenv and getfenv(1) end)
-        app.on("report", function() return reachable end)
+        hook("report", function() return reachable end)
     "#;
     let vm = load(src).await;
     assert_eq!(emit(&vm, "report").await.unwrap(), json!([]));
@@ -144,7 +144,7 @@ async fn the_real_library_tables_are_not_reachable_from_the_app() {
 async fn an_apps_global_writes_stay_in_its_own_environment() {
     let src = r#"
         shared = (shared or 0) + 1
-        app.on("n", function() shared = shared + 1 return shared end)
+        hook("n", function() shared = shared + 1 return shared end)
     "#;
     let a = try_load("alpha", src).await.unwrap();
     let b = try_load("beta", src).await.unwrap();
@@ -156,7 +156,7 @@ async fn an_apps_global_writes_stay_in_its_own_environment() {
 #[tokio::test]
 async fn the_preludes_polyfills_are_there_and_sealed() {
     let src = r#"
-        app.on("t", function()
+        hook("t", function()
           local clone = table.clone({ 1, 2 })
           return {
             typeof = typeof("x"), typeof_table = typeof({}), typeof_nil = typeof(nil),
@@ -184,7 +184,7 @@ async fn the_preludes_polyfills_are_there_and_sealed() {
 #[tokio::test]
 async fn a_huge_pattern_in_an_app_is_a_catchable_error_not_a_stack_overflow() {
     let src = r#"
-        app.on("t", function()
+        hook("t", function()
           local subject = ("a"):rep(20000)
           local results = {}
           local function refused(e)
@@ -271,7 +271,7 @@ async fn no_number_a_script_passes_to_a_library_function_panics_the_host() {
             let call = call.replace('N', n);
             writeln!(
                 src,
-                "app.on('c{i}_{j}', function() local ok, e = pcall(function() return {call} end) return tostring(ok) end)"
+                "hook('c{i}_{j}', function() local ok, e = pcall(function() return {call} end) return tostring(ok) end)"
             )
             .unwrap();
         }
@@ -323,7 +323,7 @@ async fn host_calls_that_await_work_inside_pcall_coroutines_and_event_handlers()
           local gen = coroutine.wrap(function() for i = 1, 3 do app.kv:set("i", i) coroutine.yield(app.kv:get("i")) end end)
           return { gen(), gen(), gen() }
         end }
-        app.on("event", function(payload)
+        hook("event", function(payload)
           local ok, v = pcall(function() app.kv:set("e", payload.n) return app.kv:get("e") end)
           return { ok = ok, v = v }
         end)
@@ -398,7 +398,7 @@ async fn dropping_a_call_that_waits_inside_coroutines_ends_it_without_running_ap
             gen()
           end
         end }
-        app.on("ok", function() return 42 end)
+        hook("ok", function() return 42 end)
     "#;
     let vm = std::sync::Arc::new(load(src).await);
     // cut the call off wherever it happens to be waiting; each cancellation must complete at once

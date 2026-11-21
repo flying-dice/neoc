@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 use vos_application::{
-    ports::{EventSink, MenuCommand, Notifier, PortResult, ServerEvent, Shell},
+    ports::{EventSink, Notifier, PortResult, ServerEvent, Shell},
     AgentError, AgentPatch, AgentService, AppError, AppInfo, AppService, AppStatus, DeviceService, NewAgent,
     PortError, ViewError, ViewService, ViewSink,
 };
@@ -453,8 +453,8 @@ impl EventSink for RpcHub {
     }
 }
 
-/// What apps ask of the shell: opening a window goes to every connected client; the Dock badge, menu
-/// commands and deep links are accepted and dropped until the shell shows them.
+/// What apps ask of the shell: opening a window goes to every connected client; deep links are accepted and
+/// dropped until the shell shows them.
 #[async_trait]
 impl Shell for RpcHub {
     async fn open_window(&self, app: &AppId, window: &str, params: Map<String, Value>) {
@@ -465,12 +465,6 @@ impl Shell for RpcHub {
         });
         let (method, params) = note.to_rpc();
         self.broadcast(method, &params);
-    }
-    async fn set_badge(&self, app: &AppId, badge: Option<String>) {
-        tracing::debug!(%app, ?badge, "shell: badge (not shown yet)");
-    }
-    async fn set_menu_commands(&self, app: &AppId, commands: Vec<MenuCommand>) {
-        tracing::debug!(%app, commands = commands.len(), "shell: menu commands (not shown yet)");
     }
     async fn set_deep_links(&self, app: &AppId, patterns: Vec<String>) {
         tracing::debug!(%app, ?patterns, "shell: deep links (not shown yet)");

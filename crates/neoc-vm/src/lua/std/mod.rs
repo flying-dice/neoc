@@ -11,7 +11,7 @@ pub mod env;
 pub mod fs;
 pub mod io;
 pub mod net;
-pub mod osstr;
+pub(crate) mod osstr;
 pub mod path;
 pub mod task;
 pub mod thread;

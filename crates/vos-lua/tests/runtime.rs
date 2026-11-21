@@ -45,7 +45,7 @@ app.tool { name = "append", input = { id = t.integer {}, text = t.string {} }, r
     { text = input.text, id = input.id, who = ctx.actor.name })
   if r.changes == 0 then return ctx:fail("No note with id " .. input.id) end
   app.notify { title = "Note changed", body = ctx.actor.name }
-  app.shell.badge(r.changes)
+  app.shell.deepLink("note/" .. r.changes, function() end)
   return { id = input.id }
 end }
 app.tool { name = "add_two", run = function(_, ctx)
@@ -175,10 +175,10 @@ async fn an_agent_tool_writes_data_and_every_live_source_gets_a_delta() {
         .expect("the note list sends only the changed row");
     assert_eq!(list_delta.changed[0].0, json!(1));
 
-    // the tool's app.notify and app.shell.badge reached their ports
+    // the tool's app.notify and app.shell.deepLink reached their ports
     let notes = rig.notifier.0.lock().clone();
     assert_eq!((notes[0].title.as_str(), notes[0].body.as_deref()), ("Note changed", Some("Claude")));
-    assert_eq!(rig.shell.badges.lock().unwrap().last().unwrap().1.as_deref(), Some("1"));
+    assert_eq!(rig.shell.links.lock().unwrap().last().unwrap().1, ["note/1"]);
     pump.abort();
 }
 
