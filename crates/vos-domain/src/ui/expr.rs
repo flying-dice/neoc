@@ -1,4 +1,4 @@
-//! Prop value forms (spec §3.2): a prop is a **literal**, a **ref** or a **`$fn` call** from the closed,
+//! Prop value forms: a prop is a **literal**, a **ref** or a **`$fn` call** from the closed,
 //! pure, presentation-only function set.
 //!
 //! ```json

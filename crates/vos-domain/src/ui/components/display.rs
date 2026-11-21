@@ -1,4 +1,4 @@
-//! Display (spec §1.7): text, icons, images and read-only indicators.
+//! Display: text, icons, images and read-only indicators.
 
 use crate::ui::spec::{
     Children, ComponentSpec, EventSpec, Group, NameRule, ObjectDef, PropSpec, PropType, SlotSpec, Tier,

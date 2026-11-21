@@ -1,4 +1,4 @@
-//! Layout (spec §1.2): stacks, grid, scroll, containers and client-evaluated structure.
+//! Layout: stacks, grid, scroll, containers and client-evaluated structure.
 
 use crate::ui::spec::BindingKind::Scalar;
 use crate::ui::spec::{

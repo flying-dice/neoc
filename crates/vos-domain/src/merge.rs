@@ -1,4 +1,4 @@
-//! Pure three-way text merge for two-way bound text (ui-system.md §3.4).
+//! Pure three-way text merge for two-way bound text.
 //!
 //! The host holds `base` (the value it last sent the view), `theirs` (the value now in the database,
 //! usually an agent's write) and `mine` (what the human typed). The merge works on *tokens* (a word, a run
@@ -314,7 +314,7 @@ mod tests {
 
     #[test]
     fn the_spec_example_composes() {
-        // ui-system.md 2.8-B: the user capitalised "milk" while an agent appended a line
+        // the user capitalised "milk" while an agent appended a line
         let r = merge3("milk", "milk\n- buy oat milk", "Milk");
         assert_eq!(r.text, "Milk\n- buy oat milk");
         assert!(!r.conflict && r.lost.is_none());

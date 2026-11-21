@@ -1,6 +1,6 @@
 <!--
   @molecule ForEach — instantiates its row template (slot "row") once per key of a bound source window. The tree
-  carries the template once; thousands of rows cost data, not nodes (spec 3.7). Each instance sees `row.*` for its
+  carries the template once; thousands of rows cost data, not nodes. Each instance sees `row.*` for its
   row and is addressed `path/@row/<template key>` plus the row key. Atoms: Children.
 -->
 <script lang="ts">

@@ -1,7 +1,7 @@
 /**
  * The component registry: the renderer's one extension point. A node's `type` maps to an adapter component that
  * knows both the wire props and the kit component it wraps; an unknown type renders `Unsupported` (or the node's
- * own `fallback` slot, spec 2.7), so a client older than the app degrades instead of showing holes.
+ * own `fallback` slot), so a client older than the app degrades instead of showing holes.
  *
  * Wave B1 adds the full tier-1 kit by calling `register` once per component (see `kit.ts`); nothing else changes.
  *

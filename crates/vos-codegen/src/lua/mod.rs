@@ -1,8 +1,6 @@
 //! The runtime `ui` module that apps load with `require("vos:ui")` and the host embeds: `types/generated/ui.lua`.
 //! Plain Lua (no annotations, no Luau syntax), so the contract tests can also run it with a native `lua`
 //! (see [`module`]); the Luau declarations of the same constructors are [`crate::luau`].
-//!
-//! `docs/reference/components.md` is the prose reference for the constructors and their props.
 
 mod ui;
 

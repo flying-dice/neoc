@@ -1,5 +1,5 @@
 /**
- * A transport-agnostic JSON-RPC 2.0 peer with **by-name params objects** (spec 2, "Transport"). Both ends of
+ * A transport-agnostic JSON-RPC 2.0 peer with **by-name params objects**. Both ends of
  * the socket run one: each side sends requests (awaited) and notifications (fire-and-forget) and handles the
  * other side's. `params` is always an object.
  */

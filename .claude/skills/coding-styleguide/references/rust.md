@@ -1,7 +1,8 @@
-# Rust in vos (`crates/`)
+# Rust in the vos crates (`crates/vos-*`)
 
-The host is a Cargo workspace (`Cargo.toml`, `rust-toolchain.toml`, edition 2021, `rustfmt.toml`: 110 columns,
-`clippy.toml`). `bun run lint:rust` is the gate: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets
+The whole repo is one Cargo workspace (`Cargo.toml`, `rust-toolchain.toml`). The vos crates are edition 2021, take the
+root `rustfmt.toml` (110 columns) and inherit the workspace lint table; the neoc crates are edition 2024 and have their own
+formatting and lints (see `CLAUDE.md`, "Rust style"). `bun run lint:rust` is the gate: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets
 -- -D warnings`, `scripts/check-deps.ts`, `cargo deny check`. `bun run format` runs `cargo fmt`.
 
 ## Layering
@@ -71,4 +72,4 @@ Rules of thumb:
 `cargo nextest run --workspace --exclude neoc --exclude neoc-vm`. Domain: unit tests. Application: use cases against the fakes in `testing`, no mocking
 library. Adapters: integration tests in `tests/` through the real library. Host: `crates/vos-host/tests` start the real
 wiring on an ephemeral loopback port. Test the failure path beside the success path; a bug fix gets a regression test in the
-layer where it lived. See `docs/TESTING.md`.
+layer where it lived.

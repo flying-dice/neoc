@@ -1,4 +1,4 @@
-//! Keyed reconciliation (spec §2.2): `diff(old, new)` is what the host runs after every render, and
+//! Keyed reconciliation: `diff(old, new)` is what the host runs after every render, and
 //! [`apply`] is what a client (or a test) runs on the result.
 //!
 //! The host reconciles the new tree against the instance's previous tree React-style:

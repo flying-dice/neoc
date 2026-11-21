@@ -1,4 +1,4 @@
-//! Presentation (spec §1.6). Presentation nodes are portal nodes: they render nothing in flow and mount in the
+//! Presentation. Presentation nodes are portal nodes: they render nothing in flow and mount in the
 //! window's overlay layer. `Toast` is imperative (`view.command`), `ContextMenu` is the common `contextMenu`
 //! slot and `Tooltip` is the common `help` prop, so none of the three is a node type.
 

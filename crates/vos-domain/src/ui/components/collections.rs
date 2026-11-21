@@ -1,4 +1,4 @@
-//! Collections (spec §1.4): lists, sections, rows, forms.
+//! Collections: lists, sections, rows, forms.
 
 use crate::ui::spec::BindingKind::{Collection, Scalar};
 use crate::ui::spec::{

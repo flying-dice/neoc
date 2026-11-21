@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
 //! The view protocol end to end, over the real adapters: a paired browser on `/rpc` opens the Notes and
-//! Calculator windows of ui-system.md §4.3 and §4.4 (the spec's own apps, unchanged), types into them, and
+//! Calculator windows, types into them, and
 //! an agent changes the same data through MCP tools while the windows are open.
 
 mod common;

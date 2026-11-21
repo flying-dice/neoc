@@ -1,5 +1,5 @@
 <!--
-  @molecule EmptyState — what a screen shows when there is nothing to show (DESIGN_LANGUAGE s8): a muted glyph, a
+  @molecule EmptyState — what a screen shows when there is nothing to show (`app-design` styleguide, section 8): a muted glyph, a
   title, an optional message and one call to action in `action`. Atoms: Icon. Optional test id: `testid`.
 -->
 <script lang="ts">

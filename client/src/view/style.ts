@@ -1,5 +1,5 @@
 /**
- * The surface props every node accepts (spec 1.1, 5.1): `background`, `foreground`, `tint`, `corner`: closed token
+ * The surface props every node accepts: `background`, `foreground`, `tint`, `corner`: closed token
  * sets mapped to the kit's CSS variables. No raw values pass through: an unknown token is ignored.
  */
 import type { Scope } from './core/view'

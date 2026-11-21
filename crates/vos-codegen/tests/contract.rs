@@ -240,15 +240,6 @@ fn typescript_declares_every_component_protocol_type_and_method() {
     }
 }
 
-#[test]
-fn the_reference_documents_every_component() {
-    let docs = fs::read_to_string(root().join("docs/reference/components.md")).unwrap();
-    for c in CATALOGUE {
-        assert!(docs.contains(&format!("### {}\n", c.name)), "{}", c.name);
-    }
-    assert!(docs.contains("Accessible name required"));
-}
-
 // ---- the example apps -------------------------------------------------------------------------------------
 
 /// What the stub host sends for `view.open`, minus the snapshot envelope.

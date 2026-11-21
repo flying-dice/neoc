@@ -1,4 +1,4 @@
-//! Sources and client state (spec §3.3, §3.5, §3.7).
+//! Sources and client state.
 //!
 //! A **source** is a host-owned, parameterised, live read of data. The tree references it by opaque id; the
 //! SQL and the database never leave the host. A source's *params* are refs (usually to client state): when
@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-/// Budgets of a view's sources (spec §3.7). The window size lives with the sources that serve it
+/// Budgets of a view's sources. The window size lives with the sources that serve it
 /// (`vos-application` `live::MAX_WINDOW`) and the row and byte caps of a query with the database adapter
 /// (`vos-sqlite` `MAX_QUERY_ROWS` / `MAX_QUERY_BYTES`).
 pub mod budgets {
@@ -130,7 +130,7 @@ impl SourceDecl {
     }
 }
 
-/// Where a client-managed value survives (spec §3.5).
+/// Where a client-managed value survives.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]

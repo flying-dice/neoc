@@ -1,4 +1,4 @@
-//! The node shape (spec §2.1), event handlers and client actions (spec §3.5), and node addressing.
+//! The node shape, event handlers and client actions, and node addressing.
 //!
 //! A node's **path** is the keys from the window root, `/`-joined, with an `@slot` segment when the
 //! node sits in a named slot: `main/list/@row/item/delete`. Paths are stable across renders because keys are.
@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
 
-/// Limits the host enforces on every view (spec §2.1).
+/// Limits the host enforces on every view.
 pub mod limits {
     pub const MAX_DEPTH: usize = 64;
     pub const MAX_NODES: usize = 10_000;
@@ -120,7 +120,7 @@ impl<'de> Deserialize<'de> for Handler {
     }
 }
 
-/// The declarative micro-language that runs on the client with no round trip (spec §3.5).
+/// The declarative micro-language that runs on the client with no round trip.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 #[serde(tag = "do")]
@@ -220,7 +220,7 @@ pub fn split_path(path: &str) -> Option<(&str, &str)> {
     path.rsplit_once('/')
 }
 
-/// Derive the test id of the node at `path` (spec §5.4): `app + "-" + the explicit keys on the path`, joined
+/// Derive the test id of the node at `path`: `app + "-" + the explicit keys on the path`, joined
 /// with `-`. The window root, **auto keys** and **slot names** are skipped (wrapping a node in a stack, or
 /// moving it into a toolbar slot, never renames it); the `row` slot contributes `row-<rowKey>`.
 ///

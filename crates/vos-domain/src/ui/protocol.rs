@@ -1,4 +1,4 @@
-//! The view protocol (spec §2.2 to §2.7): JSON-RPC 2.0 over the `/rpc` WebSocket, by-name params objects.
+//! The view protocol: JSON-RPC 2.0 over the `/rpc` WebSocket, by-name params objects.
 //!
 //! Three message classes keep the common path cheap: `view.tree` (a full tree, on open and resync), `view.ops`
 //! (keyed structural ops, versioned by `base`/`rev`) and `data.patch` (per-binding value updates). Values change
@@ -30,7 +30,7 @@ macro_rules! wire {
 }
 
 // ---------------------------------------------------------------------------------------------------------
-// Ops (spec §2.2)
+// Ops
 // ---------------------------------------------------------------------------------------------------------
 
 wire! {
@@ -67,7 +67,7 @@ wire! {
 }
 
 // ---------------------------------------------------------------------------------------------------------
-// Data patches and sources on the wire (spec §2.3, §3.3)
+// Data patches and sources on the wire
 // ---------------------------------------------------------------------------------------------------------
 
 wire! {
@@ -610,7 +610,7 @@ const fn from_host(name: &'static str, params: &'static str, doc: &'static str) 
     }
 }
 
-/// Every method of the view protocol (spec §2.6).
+/// Every method of the view protocol.
 pub const METHODS: &[MethodSpec] = &[
     request(
         "session.hello",

@@ -1,7 +1,7 @@
 # Desktop shell: key user journeys
 
 The iPadOS-style desktop itself, served by the Rust host: Dock, windows, the Stage Manager strip, Split View, Slide Over
-and full screen. Every journey starts in a paired browser at the host's address (`docs/TESTING.md`: pairing is
+and full screen. Every journey starts in a paired browser at the host's address (pairing is
 a precondition, see `pairing.md` for the unpaired side). The first window the desktop opens is Discover.
 
 Each journey is a goal, not a script: research participants find the way themselves. The automated twin of each is

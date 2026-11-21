@@ -1,4 +1,4 @@
-//! Schema versioning (spec §2.7): two independent numbers, both announced in `session.hello`.
+//! Schema versioning: two independent numbers, both announced in `session.hello`.
 //!
 //! * `proto` (integer): the envelope, the method set and the semantics of ops and patches. Breaking
 //!   changes bump it; host and client negotiate `min(proto)`.

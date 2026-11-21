@@ -1,16 +1,21 @@
 ---
 name: coding-styleguide
-description: Use while writing or changing any vos code - Rust in crates/ (the hexagonal host), Luau apps in apps/ (the app API, table-call constructors, StyLua, luau-lsp), or the client and kit in TypeScript and Svelte 5 (client/, packages/ui, scripts). The house rules for where code belongs (domain, ports and use cases, adapters, the composition root; per-app VM isolation (not a security boundary); the managed renderer), types and expected errors, validating at trust boundaries, and Svelte 5 runes. Read references/rust.md, references/luau.md or references/typescript-svelte.md for the language details.
+description: Use while writing or changing any code in this repo - the neoc runtime (crates/neoc, crates/neoc-vm: modules, the Luau engine), the vos host in crates/vos-* (hexagon), typed Luau apps in apps/ (the app API, table-call constructors, StyLua, luau-lsp), or the client and kit in TypeScript and Svelte 5 (client/, packages/ui, scripts). The house rules for where code belongs (neoc-vm takes no vos concepts; domain, ports and use cases, adapters, the composition root; per-app VM isolation (not a security boundary); the managed renderer), types and expected errors, validating at trust boundaries, and Svelte 5 runes. Read references/rust.md, references/luau.md or references/typescript-svelte.md for the language details.
 ---
 
-# vos coding styleguide
+# Coding styleguide
 
 Read the neighbouring code and its tests first and match them. Apply these rules to the code you are changing;
 don't migrate unrelated APIs, add dependencies or change configuration on the way.
 
 ## Where code belongs
 
-vos is hexagonal. A Rust host runs Luau apps, each in its own VM, and serves a managed client; nothing crosses a process or
+**neoc** (`crates/neoc-vm`, `crates/neoc`) is a Luau runtime: modules (`std:`, `lib:`, `vnd:`), the sandbox, the embedding hooks. Its
+rules (module conventions, errors as `(value, err)`, the facade that records each module's types, Rust style) are in
+`CLAUDE.md` ("Modules", "Embedding the VM", "Rust style"); `runtime-design` and `requesting-module` cover design and new modules. `neoc-vm` depends on no
+other workspace crate and takes no vos concept (apps, `readOnly`, views, `app.*`): vos policy stays in `vos-lua`.
+
+**vos** is hexagonal. A Rust host runs Luau apps, each in its own VM, and serves a managed client; nothing crosses a process or
 crate seam except through a port or the protocol.
 
 | Role | vos |
@@ -19,7 +24,7 @@ crate seam except through a port or the protocol.
 | Ports and use cases | `crates/vos-application`: the port traits (`AppRuntime`, `DataStore` / `AppData`, `ToolRegistry`, `Notifier`, `AgentConnector`, `Fetcher`, `Clock`, ...) and the services that orchestrate domain objects through them. In-memory fakes in `testing`. |
 | Driven adapters | `vos-lua` (per-app VMs), `vos-sqlite`, `vos-fetch`, `vos-acp` (agent processes) |
 | Driving adapters | `vos-http` (`/rpc`, pairing, guard, static client), `vos-mcp` (`/mcp`), `vos-agui` (`/agui`) |
-| Dev-time adapter | `vos-codegen`: the Rust schema to `types/generated/*` and `docs/reference/components.md` |
+| Dev-time adapter | `vos-codegen`: the Rust schema to `types/generated/*` (`vos.ts`, `ui.lua`, `vos.d.luau`) |
 | Composition root | `vos-host`: wiring only (build adapters, hand each to its port, mount routers) |
 | Apps | `apps/<id>`: Luau packages; their only contract is the `app` table (`types/generated/vos.d.luau`) |
 | Client | `client/`: the shell and the renderer (`client/src/view`); it renders view trees and runs no app code |
@@ -44,7 +49,7 @@ The boundary rules:
 case in application, the adapter, the codegen output (`bun run codegen`), and tests at each layer. That is a platform
 change: call it out in the MR.
 
-UI layering is atomic (`docs/design/DESIGN_LANGUAGE.md`, `bun run lint:atomic`): atoms < molecules < organisms <
+UI layering is atomic (`bun run lint:atomic`; the styleguide is `.claude/skills/app-design/STYLEGUIDE.md`): atoms < molecules < organisms <
 templates < pages, each importing only strictly lower layers. Reach for `@vos/ui` first; a generic need goes into the
 kit (with a story and a required `testid` prop), never into one renderer adapter or app.
 
@@ -70,6 +75,6 @@ kit (with a story and a required `testid` prop), never into one renderer adapter
 
 ## Before you finish
 
-Match `docs/TESTING.md`: Rust logic gets a test in its layer, client and kit logic bun tests next to the code, every
+Match the test layers in `CLAUDE.md` ("Tests"): Rust logic gets a test in its layer, client and kit logic bun tests next to the code, every
 screen and state a story or a journey, every journey a spec, every interactive element a `data-testid`. UI changes go
 through the `verify-change` skill.

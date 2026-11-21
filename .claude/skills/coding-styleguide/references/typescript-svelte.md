@@ -1,4 +1,4 @@
-# TypeScript and Svelte 5 in vos (client, kit, scripts)
+# TypeScript and Svelte 5 (client, kit, scripts)
 
 Applies to `client/` (the shell and the managed renderer), `packages/ui` (the kit), `packages/storybook`, `types/` tests and
 `scripts/`. App code is Luau (`luau.md`), the host is Rust (`rust.md`). The client **renders view trees and runs no app
@@ -73,9 +73,26 @@ component. To add one:
 - Header comment `<!-- @<layer> Name — purpose -->` matching the folder (`lint:atomic`); layers import only strictly lower
   layers, and `@vos/ui` comes through its layer entry point (`@vos/ui/atoms`), never a deep path.
 - Interactive kit components take a required `testid: string` and derive inner ids as `${testid}-<part>`; raw interactive
-  elements carry `data-testid` (`lint:testids`, naming in `docs/TESTING.md`).
+  elements carry `data-testid` (`lint:testids`; naming below).
 - Native elements first (`<button>`, `<input>`, `<a>`). A custom control needs a `role`, `tabindex`, key handling and an
   accessible name. Icon-only buttons get `aria-label`.
 - Colours, type, spacing, radii and shadows come from tokens (`packages/ui/src/styles/tokens.css`); `bun scripts/design-audit.ts
   <page>` finds raw values in a shell page. State is never shown by colour alone.
 - Transitions go through `motion()` (`packages/ui/src/motion.ts`) so reduced motion holds.
+
+## Test ids
+
+Locators in tests are `getByTestId` only. Every interactive element and overlay has a stable `data-testid` from the first
+commit; `bun run lint:testids` fails raw Svelte elements (`<button>`, `<a>`, `<input>`, `<select>`, `<textarea>`, an element
+with a pointer or key handler or an interactive `role`) and kit components without one.
+
+- Names are kebab-case `<scope>-<thing>[-<qualifier>]`. The scope is the app id inside an app and the shell part on the
+  desktop (`dock`, `status-bar`, `stage-strip`, `window-<appId>`, `pairing`).
+- A Luau app's ids come from node keys: `<appId>-<explicit keys on the path>` (`calculator-key-7`;
+  `client/src/view/core/testid.ts`). Auto keys, slot names and the window root are skipped; a row template adds
+  `row-<rowKey>`. The host rejects an interactive node without a `key`.
+- Collections use the item's stable id, never its index or display text (`dock-calculator`, `settings-device-<id>`). Parts
+  append to the component's id (`window-calculator-resize`).
+- Every interactive or overlay-opening `@vos/ui` component takes a **required** `testid: string` and puts it on its root
+  interactive element, so svelte-check fails a caller that forgets it; inner parts are `${testid}-<part>`, documented in the
+  component's header comment.

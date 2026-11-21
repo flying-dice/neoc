@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Enforces the TypeScript boundaries that are left now that apps are Lua and the host is Rust
- * (AGENTS.md -> "Boundaries"). The TypeScript here is the client (client/), the UI kit (packages/ui), the
+ * (CLAUDE.md -> "Boundaries"). The TypeScript here is the client (client/), the UI kit (packages/ui), the
  * shared Storybook setup (packages/storybook) and the specs.
  *
  * Rules
@@ -211,7 +211,7 @@ for (const pattern of SOURCE_GLOBS) {
 if (errors.length) {
   console.error(`✗ Boundary check failed (${errors.length} problem${errors.length > 1 ? 's' : ''}):\n`)
   for (const e of [...new Set(errors)].sort((a, b) => a.localeCompare(b, 'en', { numeric: true }))) console.error('  ' + e)
-  console.error('\nSee AGENTS.md -> "Boundaries".')
+  console.error('\nSee CLAUDE.md -> "Boundaries".')
   process.exit(1)
 }
 console.log(`✓ Boundary check passed (${checked} files)`)

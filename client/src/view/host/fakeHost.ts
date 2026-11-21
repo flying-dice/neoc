@@ -263,7 +263,7 @@ export class FakeHost {
     if (!view) {
       view = new FakeView(`v${this.nextView++}`, this)
       view.windowId = String(params.windowId)
-      // A fresh instance adopts the client's persisted values for declared entries (spec 3.5).
+      // A fresh instance adopts the client's persisted values for declared entries.
       for (const [name, decl] of Object.entries(this.app.clientDecls)) {
         view.client[name] = resume?.client[name] ?? decl.init
         if (resume && name in resume.client) view.adopted.add(name)
@@ -329,11 +329,11 @@ export class FakeHost {
     const spec = this.app.sources[id]
     const st = view.sources.get(id)!
     if (spec.decl.kind === 'row') {
-      const row = (spec as RowSourceSpec).get(st.params)
+      const row =.get(st.params)
       if (row) this.noteSent(id, row[spec.decl.key ?? 'id'] as RowKey, row)
       return { kind: 'row', row, rev: typeof row?.rev === 'number' ? row.rev : 0 }
     }
-    const result = (spec as RowsSourceSpec).query(st.params)
+    const result =.query(st.params)
     const keyField = spec.decl.key ?? 'id'
     const window = result.slice(st.range.from, st.range.to)
     const rows: Record<string, Row> = {}
@@ -360,7 +360,7 @@ export class FakeHost {
     }
   }
 
-  /** Remember what a row looked like at its revision: the merge base of a later write (the ring of spec 3.4). */
+  /** Remember what a row looked like at its revision: the merge base of a later write (the revision ring). */
   private noteSent(source: string, key: RowKey, row: Row): void {
     if (typeof row.rev !== 'number') return
     for (const [field, value] of Object.entries(row)) {
@@ -394,7 +394,7 @@ export class FakeHost {
     }
   }
 
-  // ── Writes and conflicts (spec 3.4) ────────────────────────────────────
+  // ── Writes and conflicts ────────────────────────────────────
 
   /** An agent (or any non-UI writer) sets a state path: every open view gets the new value and revision. */
   setState(path: string, value: Json, exceptView?: FakeView): number {
@@ -474,8 +474,8 @@ export class FakeHost {
     const st = view.sources.get(p.source)!
     const row =
       spec.decl.kind === 'row'
-        ? (spec as RowSourceSpec).get(st.params)
-        : ((spec as RowsSourceSpec).find?.(p.key) ?? null)
+        ?.get(st.params)
+        : (.find?.(p.key) ?? null)
     if (!row) throw new RpcError(-32602, `no row ${String(p.key)}`)
     const ringKey = `${p.source}:${String(p.key)}:${p.field}`
     const ring = this.rowRings.get(ringKey) ?? { values: new Map<number, Json>() }
@@ -506,7 +506,7 @@ export class FakeHost {
     }
   }
 
-  /** The value a human-wins write replaced, kept so `row.restore` can bring it back (spec 3.4 rule 8). */
+  /** The value a human-wins write replaced, kept so `row.restore` can bring it back. */
   private keepRevision(
     p: { source: string; key: RowKey; field: string },
     lost: Json

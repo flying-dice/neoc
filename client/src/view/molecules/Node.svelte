@@ -1,6 +1,6 @@
 <!--
   @molecule Node — one wire node: looks its `type` up in the window's component registry and renders the adapter.
-  A type this client does not know renders the node's own `fallback` slot if it has one (spec 2.7), else
+  A type this client does not know renders the node's own `fallback` slot if it has one, else
   `Unsupported`. `hidden` removes the node from layout and the accessibility tree. A node with a `contextMenu` slot or `drag` / `drop`
   props is wrapped by the registry's decorator. Atoms: Children, Unsupported.
 -->

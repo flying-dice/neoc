@@ -1,6 +1,6 @@
 ---
 name: app-design
-description: Use when designing, redesigning or polishing any vos app (a new Lua app, a built-in shell page, or the desktop shell), or when asked how good an app's UX or design is. Runs the iterative UX process for that app: key user journeys, a user-research panel of Haiku, Sonnet and Opus participants who use the real app headless on the real host, a styleguide conformance score, then design changes, repeated until the exit criteria hold.
+description: Use when designing, redesigning or polishing any vos app (a new Luau app, a built-in shell page, or the desktop shell), or when asked how good an app's UX or design is. Runs the iterative UX process for that app: key user journeys, a user-research panel of Haiku, Sonnet and Opus participants who use the real app headless on the real host, a styleguide conformance score, then design changes, repeated until the exit criteria hold.
 ---
 
 # Designing a vos app
@@ -13,13 +13,17 @@ Every app goes through the same loop, from its first screen to every later redes
                    └──────────────────────────────── until the exit criteria hold ◀──────────────────────────────┘
 ```
 
-The styleguide is `docs/design/DESIGN_LANGUAGE.md` (iPadOS virtual desktop, flat design). The testing setup is
-`docs/TESTING.md`. Read both before the first round.
+The styleguide is [STYLEGUIDE.md](STYLEGUIDE.md) (iPadOS virtual desktop, flat design). How to run the real shell and the
+e2e host is in the `verify-change` skill (sections 3 and 7). Read both before the first round.
+
+**Where the research output goes:** `ux/<app>/` at the repository root (`discovery.md`, `review-<n>.md`, `round-<n>.md`).
+The repo keeps no other long-form docs; these files are the app's design history and the evidence the readiness check in
+`pr-review` ("vos checks") asks for, and they are committed with the PR that makes the design change.
 
 ## 0. Discovery (new apps and re-scopes)
 
 Before building a new app, or changing what an existing one is for, run the **`prebuild-synthetic-ux`** skill on its
-issue. It writes `docs/ux/<app>/discovery.md`: constrained personas (including an agent that uses the app's tools),
+issue. It writes `ux/<app>/discovery.md`: constrained personas (including an agent that uses the app's tools),
 the riskiest assumptions with the cheapest tests, and key journeys and user stories. Its key journeys seed
 `JOURNEYS.md` (section 1, without the steps); its Must stories are the first PR's scope. Skip it for a polish pass on
 an app whose purpose is not changing.
@@ -29,12 +33,12 @@ an app whose purpose is not changing.
 Each app has 4 to 8 key journeys. They are what people come to the app to do, plus the hard cases: errors, small
 windows, keyboard-only use, agents driving the app.
 
-- Lua apps: `apps/<app>/JOURNEYS.md`. Built-in shell pages and the shell: `client/journeys/<id>.md`.
+- Luau apps: `apps/<app>/JOURNEYS.md`. Built-in shell pages and the shell: `client/journeys/<id>.md`.
 - Each row is an id (letter + number), who and what they want, a start state (what is open and installed; the only URL
   parameter is `theme=light|dark`), and an observable **Done when**. Never write steps: participants must find the way
   themselves.
 - Every journey has an automated twin with the same id in `apps/<app>/e2e/*.spec.ts` (or `client/e2e`,
-  `e2e/*.journeys.spec.ts`), driven by test ids against the real host (`docs/TESTING.md`).
+  `e2e/*.journeys.spec.ts`), driven by test ids against the real host.
 - A new feature means a new or updated journey in the same PR.
 
 ## 2. Automated checks first
@@ -52,11 +56,11 @@ look at them** (`node e2e/tools/contact-sheet.mjs out.png a.png b.png …` puts 
 ## 3. Usability review, then a research round
 
 First run the **`postbuild-synthetic-usability`** skill against the running app (one agent; it writes
-`docs/ux/<app>/review-<n>.md`). Fix its blocker and major defects, back to step 2, then spend the panel's time.
+`ux/<app>/review-<n>.md`). Fix its blocker and major defects, back to step 2, then spend the panel's time.
 
 
 Run the real host with the app installed and the built client, then run the saved workflow
-(`docs/TESTING.md`, "Driving the real shell"):
+(`verify-change` section 3, "Exercise it like a person"):
 
 ```sh
 bun run build && bun run build:apps
@@ -67,7 +71,7 @@ VOS_DATA=$(mktemp -d) VOS_PORT=7420 VOS_INSTALL="$(ref <app>)" bun run host
 
 ```
 Workflow({ name: "ux-research", args: { app: "calculator", round: 1, baseUrl: "http://127.0.0.1:7420/", dataDir: "<the VOS_DATA above>" } })
-Workflow({ name: "ux-research", args: { app: "calculator", round: 2, previous: "docs/ux/calculator/round-1.md", baseUrl: "...", dataDir: "..." } })
+Workflow({ name: "ux-research", args: { app: "calculator", round: 2, previous: "ux/calculator/round-1.md", baseUrl: "...", dataDir: "..." } })
 ```
 
 What happens (`.claude/workflows/ux-research.js`):
@@ -76,7 +80,7 @@ What happens (`.claude/workflows/ux-research.js`):
 |---|---|---|
 | Panel | **Haiku** as Sam (non-technical, impatient), **Sonnet** as Priya (iPad power user), **Opus** as Alex (low vision, keyboard, dark mode, small windows) | Each pairs a headless browser with the host (setup, not part of the study) and tries every journey through `e2e/tools/session.mjs`, by visible labels only (no test ids, no source). They look at screenshots, think aloud, and give up when their persona would. They report outcome and ease (1 to 7) per journey, plus findings with screenshot evidence. |
 | Audit | Opus as design-systems reviewer | Scores conformance to the styleguide with [CONFORMANCE.md](CONFORMANCE.md), from the axe/overflow/snapshot tests, the baselines, a live look and, for shell pages, `scripts/design-audit.ts`. |
-| Synthesis | research lead | Dedupes the findings, builds the scorecard, and writes `docs/ux/<app>/round-<n>.md` with a prioritised change list. |
+| Synthesis | research lead | Dedupes the findings, builds the scorecard, and writes `ux/<app>/round-<n>.md` with a prioritised change list. |
 
 The panel and the audit run in parallel. A round is 5 agents.
 
@@ -86,8 +90,8 @@ Work through the change list in priority order:
 
 - Fix root causes in the kit (`packages/ui`), the renderer adapters (`client/src/view`), the component schema
   (Rust, then `bun run codegen`) or the tokens, not one screen at a time. A kit change reaches every app, so run the whole
-  e2e suite afterwards. A Lua app changes its tree, keys, labels, copy and window size only: it never styles.
-- If a finding shows the **styleguide** is wrong, change `DESIGN_LANGUAGE.md` deliberately in the same change and
+  e2e suite afterwards. A Luau app changes its tree, keys, labels, copy and window size only: it never styles.
+- If a finding shows the **styleguide** is wrong, change `STYLEGUIDE.md` deliberately in the same change and
   say so in the round report. Never quietly diverge from it.
 - Every fixed finding gets a regression check where one is possible: a journey assertion, a story with a play
   function, or a stricter generic check in `e2e/fixtures.ts`.
@@ -108,6 +112,6 @@ needs a product decision, not another iteration.
 
 ## 6. Record it
 
-- Round reports stay in `docs/ux/<app>/`. They are the app's design history.
+- Round reports stay in `ux/<app>/`. They are the app's design history.
 - The PR for a design change links the round report and quotes the scorecard. Also run the `verify-change` skill
   for the change itself.

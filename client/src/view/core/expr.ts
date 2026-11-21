@@ -1,5 +1,5 @@
 /**
- * The closed expression language (spec 3.2): literals, `{$ref}` and `{$fn}` calls over a fixed, pure,
+ * The closed expression language: literals, `{$ref}` and `{$fn}` calls over a fixed, pure,
  * presentation-only function set. No loops, no recursion, no user functions, no I/O, and a total cost bound
  * (`MAX_EXPR_NODES`), so an expression can neither hang nor exfiltrate and means the same on every client.
  * An unknown function, a bad argument or an over-budget expression evaluates to `undefined`; it never throws.
@@ -28,7 +28,7 @@ export function dig(value: unknown, path: readonly string[]): unknown {
   return cur
 }
 
-/** The viewer's formatting environment (spec 3.6): locale, zone and the shared minute clock. */
+/** The viewer's formatting environment: locale, zone and the shared minute clock. */
 export interface FormatEnv {
   locale: string
   timeZone: string
@@ -44,7 +44,7 @@ const str = (v: unknown): string => (v === null || v === undefined ? '' : String
 const isEmptyValue = (v: unknown): boolean =>
   v === null || v === undefined || v === '' || (Array.isArray(v) && v.length === 0)
 
-/** `YYYY-MM-DD` and `HH:mm` are floating (no zone): never shift them into the viewer's zone (spec 3.6). */
+/** `YYYY-MM-DD` and `HH:mm` are floating (no zone): never shift them into the viewer's zone. */
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
 const TIME_ONLY = /^\d{2}:\d{2}(:\d{2})?$/
 
@@ -94,7 +94,7 @@ function formatBytes(value: unknown, env: FormatEnv): string {
   }).format(n)
 }
 
-/** Money travels as `{amount: integer minor units, currency}` (spec 3.6); a bare number is major units. */
+/** Money travels as `{amount: integer minor units, currency}`; a bare number is major units. */
 function formatCurrency(value: unknown, currency: unknown, env: FormatEnv): string {
   let amount = value
   let code = currency

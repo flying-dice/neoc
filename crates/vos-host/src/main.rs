@@ -37,7 +37,7 @@ USAGE:
     vos pair [--config <file>]  print a fresh pairing code (alias: --new-pairing-code)
 
 Every client must be paired: open the desktop, enter the pairing code the host prints at start.
-Settings come from vos.toml and VOS_* environment variables; see docs/architecture/host-stack.md.
+Settings come from vos.toml and VOS_* environment variables; the table is in crates/vos-host/src/config.rs.
 Logging: RUST_LOG (default info).
 ";
 

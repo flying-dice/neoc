@@ -1,5 +1,5 @@
 /**
- * Two-way bindings: drafts, write-back, shielding and conflict handling (spec 3.4).
+ * Two-way bindings: drafts, write-back, shielding and conflict handling.
  *
  * Every editable control binds a ref and follows the same small state machine per bound path, implemented
  * once here and used by every adapter:
@@ -8,7 +8,7 @@
  *                    ^  |                                            |
  *                    +--+--edit while inflight: stays dirty, next write is rebased on the ack
  *
- * Rules implemented (numbers are spec 3.4 "Rules"):
+ * Rules implemented:
  *  1. the user's value shows at once: `store.drafts[key]` overlays the server value; the control is never a
  *     server-controlled input;
  *  2. a dirty or inflight field shields itself: a remote change is applied to the server value but the draft
@@ -17,9 +17,9 @@
  *     composition never flushes mid-composition; nothing is sent while offline (the draft is queued and
  *     replayed on reconnect);
  *  4. the write carries `baseRev`;
- *  6. the ack carries the authoritative value: adopted (and the caret mapped through the diff); if the user kept
+ *  5. the ack carries the authoritative value: adopted (and the caret mapped through the diff); if the user kept
  *     typing, the draft is rebased onto it;
- *  8. nothing is silently lost: an overlap that replaced a change made elsewhere raises a conflict notice; a
+ *  6. nothing is silently lost: an overlap that replaced a change made elsewhere raises a conflict notice; a
  *     refused write adopts the server value, announces "changed elsewhere" and puts the field in its error state.
  * Scalar controls are human-wins: the host returns the user's value, and a value that changed elsewhere in the
  * meantime is overwritten (the host keeps it in the revision ring).
@@ -56,7 +56,7 @@ export function parseSync(spec: unknown, fallback: SyncPolicy): SyncPolicy {
 
 // ── Acks ───────────────────────────────────────────────────────────────────
 
-/** The ack of `state.set` / `row.set` (spec 3.4 rule 6): the host says how it resolved the write. */
+/** The ack of `state.set` / `row.set`: the host says how it resolved the write. */
 export type WriteAck = WriteResult
 
 /**
@@ -269,7 +269,7 @@ export class Bindings {
     return this.settle()
   }
 
-  /** What is still unacknowledged, for `view.open {resume}` (spec 2.5). */
+  /** What is still unacknowledged, for `view.open {resume}`. */
   pending(): ResumeDraft[] {
     return [...this.entries.values()]
       .filter((e) => e.dirty)

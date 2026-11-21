@@ -1,4 +1,4 @@
-//! Live sources (ui-system.md §3.3, §3.7): parameterised, windowed, live reads of an app's data.
+//! Live sources: parameterised, windowed, live reads of an app's data.
 //!
 //! A [`SourceDef`] is what Lua's `db:query` / `db:row` / `db:scalar` declared. A view *subscribes* to one
 //! with params and a window and gets a snapshot; afterwards every commit that touches a table the query
@@ -20,7 +20,7 @@ use std::{
     sync::Arc,
 };
 
-/// Hard cap on rows in one window (ui-system.md §3.7 budgets).
+/// Hard cap on rows in one window.
 pub const MAX_WINDOW: u64 = 500;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]

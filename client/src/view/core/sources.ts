@@ -1,5 +1,5 @@
 /**
- * Sources: data bound to live host queries (spec 3.3, 3.7).
+ * Sources: data bound to live host queries.
  *
  * The tree references a source by an opaque id; the SQL never leaves the host and the client sends only param
  * values. This module owns, per view:

@@ -1,5 +1,5 @@
 /**
- * The `/agui` wire (docs/architecture/host-stack.md, "Agents over AG-UI"): what the host sends that AG-UI does not
+ * The `/agui` wire: what the host sends that AG-UI does not
  * define (session state, thread snapshot, permission options, our `vos.tool` custom event), validated with zod at
  * the edge. The standard events, interrupts and resume entries come from `@ag-ui/core` (types, plus its zod
  * `EventSchemas` for every frame); nothing here re-declares them.

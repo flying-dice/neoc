@@ -1,39 +1,45 @@
+# neoc and vos
+
+One repository, two products on one Rust workspace:
+
+- **neoc**: a fast, lightweight [Luau](https://luau.org/) runtime (Roblox's Lua 5.1 derivative, embedded through mlua). One
+  binary: Luau scripts plus a curated set of Rust-backed modules, with nothing to install at run time. Scripts reach the outside
+  world only through `require("std:...")`, `require("lib:...")` and `require("vnd:...")`; the unsafe globals (`loadstring`,
+  `os`, `debug`, ...) are stripped. A curated surface, not a security boundary. Code: `crates/neoc` (the CLI),
+  `crates/neoc-vm` (the runtime library).
+- **vos** (Virtual OS): an iPadOS-style virtual desktop for agents, a self-hosted home lab. A Rust host (`crates/vos-*`) runs
+  apps written in typed Luau (`apps/`) on `neoc-vm`, serves a Svelte PWA (`client/`, with the UI kit in `packages/ui`) and speaks
+  JSON-RPC (`/rpc`), AG-UI (`/agui`) and MCP (`/mcp`). Every client pairs as a device first.
+
+[CLAUDE.md](CLAUDE.md) holds the rules and the layout, [CONTRIBUTING.md](CONTRIBUTING.md) the workflow and the pre-PR checks,
+[apps/README.md](apps/README.md) how to write a vos app.
+
+## Build, run and test
+
+Prerequisites: `rustup` (the toolchain is pinned in `rust-toolchain.toml`; building Luau needs a C++ compiler). For vos also
+[Bun](https://bun.sh), `darklua` 0.18.0 (`cargo install darklua --version 0.18.0 --locked`), `luau-lsp` 1.70.1, `stylua`,
+`cargo-nextest` and `cargo-deny`.
+
+```sh
 # neoc
+cargo build                                  # both products
+cargo run -p neoc -- run script.lua          # run a script (several, a glob, or -e 'print(1 + 2)'; args after -- reach it as _NEOC_ARGS)
+cargo install --locked --path crates/neoc    # install the binary
+cargo test -p neoc -p neoc-vm                # the neoc tests
 
-A fast, lightweight [Luau](https://luau.org/) runtime (Roblox's Lua 5.1 derivative, embedded through mlua). One binary: Luau scripts plus a curated set of Rust-backed modules, with nothing to install at run time.
+# vos
+bun install
+bun run dev                                  # build the apps, the host on :7400 and the client on :5173; pair with the printed code
+bun run build && bun run build:apps && bun run host   # the same without hot reload; `bun run host pair` prints a new code
 
-`neoc` runs Lua in a VM with the unsafe globals stripped (`loadstring`, `os`, `debug`, `getfenv`, `setfenv`, ...). Scripts reach the outside world only through registered modules. This is a curated surface, not a security boundary.
-
-neoc used to be a language that compiled to Lua. That is gone; the runtime is the product. The last state of the language is preserved under the `neoc-lang-final` tag.
-
-## Install
-
-```sh
-# From source (any platform with the pinned Rust toolchain)
-cargo install --locked --path crates/neoc
+# everything, before a PR
+bun run gate                                 # neoc checks, then lint, typecheck, test and e2e (see CONTRIBUTING.md)
 ```
 
-Releases ship Linux x86_64 and Windows x86_64 binaries. The install scripts download them from GitHub Releases:
+Releases ship Linux x86_64 and Windows x86_64 `neoc` binaries (`scripts/install.sh`, `scripts/install.ps1`; `NEOC_INSTALL_DIR`
+and `NEOC_VERSION` choose where and which). While the repository is private the downloads need authentication.
 
-```sh
-# Linux x86_64
-curl -fsSL https://raw.githubusercontent.com/flying-dice/neoc/main/scripts/install.sh | bash
-
-# Windows x86_64 (PowerShell)
-irm https://raw.githubusercontent.com/flying-dice/neoc/main/scripts/install.ps1 | iex
-```
-
-While the repository is private, the raw script URL, the GitHub API and the release downloads need authentication, so the scripts only work once the repository is public (or with a download you authenticate yourself). `NEOC_INSTALL_DIR` (default `~/.neoc/bin`) sets where the binary goes. `NEOC_VERSION=vX.Y.Z` installs a specific release.
-
-## Run
-
-```sh
-neoc run script.lua                   # one script
-neoc run one.lua two.lua              # several, in sequence
-neoc run 'tests/**/*.lua'             # globs expand
-neoc run -e 'print(1 + 2)'            # inline snippet
-neoc run script.lua -- a b            # arguments reach the script as _NEOC_ARGS
-```
+## neoc
 
 ```lua
 -- notes.lua
@@ -46,9 +52,7 @@ fs.write("notes.json", json.to_string_pretty(doc))
 print("saved " .. doc:get("name"))
 ```
 
-## Modules
-
-`require("namespace:name")` is the only way in. There are no ambient globals and no path search; an unknown name errors with the catalogue.
+`require("namespace:name")` is the only way in: no ambient globals, no path search; an unknown name errors with the catalogue.
 
 | Namespace | What | Modules |
 |---|---|---|
@@ -56,53 +60,43 @@ print("saved " .. doc:get("name"))
 | `lib:` | curated helpers and gap-fillers | `archive`, `args`, `base64`, `cache`, `chrono`, `compile`, `compress`, `crypto`, `csv`, `diff`, `glob`, `hash`, `hex`, `hmac`, `html`, `http`, `ini`, `json`, `log`, `mime`, `pkey`, `random`, `regex`, `semver`, `tempfile`, `template`, `test`, `text`, `unicode`, `url`, `vcr` |
 | `vnd:` | one vendored crate each, named after it | `hyper`, `jsonschema`, `quick_xml`, `rusqlite`, `serde_json`, `serde_yaml`, `sqlx_mysql`, `sqlx_postgres`, `testcontainers_modules`, `toml` |
 
-The source in [`crates/neoc-vm/src/lua/`](crates/neoc-vm/src/lua) is the catalogue.
+The source in [`crates/neoc-vm/src/lua/`](crates/neoc-vm/src/lua) is the catalogue. `lib:test` is the test runner (a script
+named `*.test.lua` or `*.spec.lua` runs under it); `lib:compile` bundles a script and the runtime into a standalone executable.
 
-- `lib:test` is the test runner: a script named `*.test.lua` or `*.spec.lua` runs under it when passed to `neoc run`.
-- `lib:compile` bundles a script and the runtime into a standalone executable.
+### Language
 
-## Language
+Luau: Lua 5.1 syntax plus type annotations, `continue`, compound assignment, string interpolation and `if` expressions, with
+Luau's base library (not LuaJIT's, which neoc ran before NEOC-137). What a script written for LuaJIT can hit:
 
-Scripts are Luau: Lua 5.1 syntax plus Luau's own (type annotations, `continue`, compound assignment, string interpolation, `if` expressions), and the base library is Luau's, not LuaJIT's, which neoc ran before NEOC-137. What a script written for LuaJIT can hit:
+- Rejected syntax: the operators `&`, `|`, `<<`, `>>`, `!=`, `&&`, `??`, `?.`; `goto` and labels; hex floats and the `LL`/`ULL`
+  suffixes; non-ASCII identifiers. A leading `#!` line and a byte-order mark are dropped by neoc's loader.
+- `bit` is `bit32`. `string.format("%s", v)` takes strings and numbers only (`%*` formats any value through `tostring`); `%a`
+  is not a format. `#t` of a table with holes is the border Luau finds. There are no proper tail calls, and recursion through
+  a metamethod, a `string.gsub` callback or a `table.sort` comparator stops at about 200 levels (`C stack overflow`).
+- Error messages use Luau's wording and name no variable. `coroutine.close` is absent in `neoc run`.
+- A wait (`task.wait`, I/O) suspends inside `pcall`, `xpcall`, `__call` and `for ... in` iterator functions, and is refused with
+  "attempt to yield across metamethod/C-call boundary" in other metamethods, in `tostring`, and in `string.gsub` and
+  `table.sort` callbacks.
 
-**Syntax LuaJIT accepted and Luau rejects.** The bitwise and logical operators `&`, `|`, `<<`, `>>`, `!=`, `&&`, `??` and `?.`, and `a ~= b` as a statement (xor-assign); `goto` and labels; hex floats (`0x.8`, `0xA.8p1`) and the `LL`/`ULL` suffixes; non-ASCII identifiers (`local café`: Luau identifiers are ASCII). A leading `#!` line and a UTF-8 byte-order mark are not Luau syntax either, but neoc's loader drops both before it loads a script (line numbers stay), so a script with a shebang runs as before. Luau accepts more than LuaJIT did (`//`, `+=`, `continue`, type annotations, `for k, v in t` over a table), so a script is still valid Lua 5.1 only if it avoids those.
+### Editor types
 
-**Library differences.**
-- `bit` is `bit32` (unsigned results; a shift of 32 or more gives 0).
-- `string.format("%s", v)` takes strings and numbers only: `nil`, booleans, tables and `__tostring` objects raise `invalid argument #2 to 'format' (string expected, got table)`. Luau's `%*` formats any value through `tostring` and its `__tostring`, and is the replacement for `%s` with a value that is not a string. `%a` is not a format (`invalid option '%a'`), and `%q` writes `\000` for a NUL.
-- `tostring` of an object whose `__tostring` returns something that is not a string raises (`'__tostring' must return a string`; LuaJIT gave `nil`). `assert(false, <table>)` needs a string message.
-- `string.rep` ignores a separator. `string.find("abc", "", 10)` is `nil` (LuaJIT: `4`). A `gsub` replacement string with a lone `%`, or a `%` followed by anything other than a digit or `%` (`"a%"`, `"100%"`, `"%-"`), raises `invalid use of '%' in replacement string` (`"%%"` is a literal `%` and works).
-- `#` of a table with holes is the border Luau finds: `#{1, nil, 3}` and `select('#', unpack({1, nil, 3}))` are `3` (LuaJIT: `1`), so `table.sort({3, nil, 1})` raises `attempt to compare nil < number`. `#t` honours `__len`. `unpack({}, 1, 100000)` returns 100000 values (LuaJIT: `too many results to unpack`).
-- A numeric `for` with a step of 0 runs zero times (LuaJIT looped for ever). There are no proper tail calls: `f(1000000)` that tail-calls itself overflows the stack. Recursion through a metamethod, a `string.gsub` callback or a `table.sort` comparator stops at about 200 levels with `C stack overflow`.
-- `tostring(1e15)` is `1000000000000000` (shortest round-trip, not `%.14g`); `tonumber("0b11")` is `nil`; `_VERSION` is `Luau 0.740`; `tostring(print)` is an address. `math.random(0)` and `math.random(5, 1)` raise `invalid argument ... (interval is empty)` (LuaJIT answered a number); `math.random(1e300)` answers an integer.
-- Error messages use Luau's wording (`attempt to call a nil value`, `attempt to perform arithmetic (add) on number and nil`, `invalid argument #1 to 'select'`) and name no variable. A failing `xpcall` handler is not run again: `xpcall` answers `error in error handling`.
-- There is no `coroutine.close` in `neoc run` (Luau has one, and it would kill a task's thread); a script environment has one that closes only coroutines the script made. `typeof`, `rawlen` and Luau's extra `table`, `string` and `math` functions are there.
-
-A wait (`task.wait`, I/O) suspends inside `pcall`, `xpcall`, `__call` and `for ... in` iterator functions, and is refused with "attempt to yield across metamethod/C-call boundary" in every other metamethod, in `tostring`, and in `string.gsub` and `table.sort` callbacks.
-
-## Editor types
-
-This repository contains [Luau](https://luau.org) declarations for every module in [`types/neoc.d.luau`](types/neoc.d.luau), one definitions file generated from the modules' own signatures: a table type per module (`lib_json` for `lib:json`), a type per resource type (`lib_json_Object`), and an overloaded `require` that gives `require("lib:json")` the type of that module. [luau-lsp](https://github.com/JohnnyMorganz/luau-lsp) gives completion, hover docs and type checks once it loads that file; a `require` of a name that is not a module is a type error, as it is at run time. The declarations are a definitions file, not a module: nothing loads them at run time.
+[`types/neoc.d.luau`](types/neoc.d.luau) holds Luau declarations of every module, generated from the modules' own signatures
+(`cargo run -p neoc-vm --example luau_decls`; never edit it by hand). With [luau-lsp](https://github.com/JohnnyMorganz/luau-lsp)
+they give completion, hover docs and type checks, and a `require` of a name that is not a module is a type error:
 
 ```sh
-luau-lsp analyze --definitions:@neoc=path/to/neoc/types/neoc.d.luau script.luau   # type-check from the command line
+luau-lsp analyze --definitions:@neoc=types/neoc.d.luau script.luau
 ```
 
-In VS Code with the [Luau Language Server](https://marketplace.visualstudio.com/items?itemName=JohnnyMorganz.luau-lsp) extension, these workspace settings (`.vscode/settings.json`) load the file. `definitionFiles` is a map from a name to a path:
+In VS Code (Luau Language Server extension): `"luau-lsp.platform.type": "standard"` and
+`"luau-lsp.types.definitionFiles": { "@neoc": "path/to/neoc/types/neoc.d.luau" }`. Another editor starts the server as
+`luau-lsp lsp --stdio --definitions:@neoc=path/to/neoc.d.luau`. `require` is typed for a string literal; put `--!strict` at the
+top of a script to have optional results checked. The declarations cover the modules, not the base globals (those are luau-lsp's
+own Luau ones).
 
-```jsonc
-{
-  "luau-lsp.platform.type": "standard",
-  "luau-lsp.types.definitionFiles": { "@neoc": "path/to/neoc/types/neoc.d.luau" }
-}
-```
+## vos
 
-`standard` keeps the extension from loading Roblox's API. The extension hands the file to the server as a command-line argument, so another editor starts the server as `luau-lsp lsp --stdio --definitions:@neoc=path/to/neoc/types/neoc.d.luau`; sending `definitionFiles` to the server as a setting does not load it. The editor path is exercised by `the_language_server_types_require_as_the_editor_starts_it` in `crates/neoc-vm/tests/luau_decls.rs` (the language server started that way: typed `require`, a wrong member, hover docs). Put `--!strict` at the top of a script, or `{ "languageMode": "strict" }` in a `.luaurc` beside it, to have strict mode flag an optional result used without a check; this repository's strict `.luaurc` is [`types/fixtures/.luaurc`](types/fixtures/.luaurc), and the only other strictness is a `--!strict` first line in `crates/neoc/tests/std/task.spec.lua`. The existing `.lua` test scripts predate typed Luau, and an editor with luau-lsp shows some type errors in them. The resource types are exported: `local o: lib_json_Object = json.object()`. The declarations live in the source tree, not in the release binaries or the Docker image. `cargo run -p neoc-vm --example luau_decls` regenerates them.
-
-`require` is typed for a string literal. `require(name)` with a variable annotated as a string (`local name: string = "lib:json"`), and `pcall(require, "lib:json")`, are type errors in strict and non-strict mode alike (neoc's own `require` takes any string and fails at run time for an unknown one). An unannotated `local name = "lib:json"; require(name)` and a bare function parameter (`local function load(n) return require(n) end`) are not flagged.
-
-The declarations describe Luau, which is the language the engine runs: type annotations, string interpolation, `continue` and compound assignment all run under `neoc run` (`types/fixtures/syntax.luau` is checked in strict mode against the declarations and run by `neoc run`, in `crates/neoc/tests/cli.rs`). The declarations cover only the modules (`require`, and the types of what a module returns), not the base globals: those are luau-lsp's own Luau ones, which can differ from neoc's engine in places. Measured with `neoc run`: `coroutine.close` is `nil` there though luau-lsp declares it, `typeof` runs there (an embedder's script environment, `script_env`, does not offer it), and `bit` is not defined (luau-lsp flags it, as Luau has `bit32`).
-
-## Contributing
-
-[CONTRIBUTING.md](CONTRIBUTING.md) covers building, testing, adding a module and releasing. [CLAUDE.md](CLAUDE.md) holds the module design rules.
+`bun run dev` starts the host on :7400 and the client on :5173. The host prints a pairing code; open
+<http://127.0.0.1:5173>, enter it, and open Discover to install apps. `apps/calculator` and `apps/agents` are the reference
+apps. Data lives under `~/.vos` (`VOS_DATA` overrides it); settings come from `vos.toml` and `VOS_*` variables (the table is in
+`crates/vos-host/src/config.rs`).

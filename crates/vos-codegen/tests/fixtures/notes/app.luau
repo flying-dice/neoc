@@ -1,5 +1,5 @@
 --!strict
--- Notes from docs/architecture/ui-system.md §4.4. The codegen contract test runs it (against the real
+-- A Notes window. The codegen contract test runs it (against the real
 -- `ui.lua`) and validates the tree it renders.
 local app = require("vos:app")
 local ui = require("vos:ui")

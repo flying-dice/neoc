@@ -1,11 +1,11 @@
 export const meta = {
   name: 'ux-research',
   description: 'One UX research round for a vos app: Haiku, Sonnet and Opus participants use it for real, a styleguide conformance audit scores it, and a synthesis writes the round report and change list',
-  whenToUse: 'Every design round of a vos app (see .claude/skills/app-design). Args: { app, round, previous?, baseUrl?, dataDir? }. The real host must be serving the built client (default http://127.0.0.1:7400/, see docs/TESTING.md, Driving the real shell) with the app installed.',
+  whenToUse: 'Every design round of a vos app (see .claude/skills/app-design). Args: { app, round, previous?, baseUrl?, dataDir? }. The real host must be serving the built client (default http://127.0.0.1:7400/, see .claude/skills/verify-change, section 3) with the app installed.',
   phases: [
     { title: 'Panel', detail: 'three participants (Haiku, Sonnet, Opus) walk every key journey in the real app' },
-    { title: 'Audit', detail: 'styleguide conformance score against docs/design/DESIGN_LANGUAGE.md' },
-    { title: 'Synthesis', detail: 'merge findings, score the round, write docs/ux/<app>/round-<n>.md' }
+    { title: 'Audit', detail: 'styleguide conformance score against .claude/skills/app-design/STYLEGUIDE.md' },
+    { title: 'Synthesis', detail: 'merge findings, score the round, write ux/<app>/round-<n>.md' }
   ]
 }
 
@@ -18,7 +18,7 @@ const base = (args && args.baseUrl) || 'http://127.0.0.1:7400/'
 const dataDir = (args && args.dataDir) || '' // the host's VOS_DATA, if it is not the default ~/.vos
 
 const journeysPath = `apps/${app}/JOURNEYS.md (Luau apps) or client/journeys/${app}.md (built-in pages and the desktop shell)`
-const reportPath = `docs/ux/${app}/round-${round}.md`
+const reportPath = `ux/${app}/round-${round}.md`
 
 // ── Participants ────────────────────────────────────────────────────────
 // Different models AND different people: the spread is the point.
@@ -135,7 +135,7 @@ const AUDIT_SCHEMA = {
         type: 'object',
         properties: {
           category: { type: 'string' },
-          rule: { type: 'string', description: 'the DESIGN_LANGUAGE.md section / checklist item' },
+          rule: { type: 'string', description: 'the STYLEGUIDE.md section / checklist item' },
           where: { type: 'string', description: 'file:line or screenshot + region' },
           fix: { type: 'string' }
         },
@@ -147,7 +147,7 @@ const AUDIT_SCHEMA = {
 }
 
 const auditPrompt = `You are the design-systems reviewer for vos. Score how well the app "${app}" conforms to the
-styleguide in docs/design/DESIGN_LANGUAGE.md, using the rubric in .claude/skills/app-design/CONFORMANCE.md
+styleguide in .claude/skills/app-design/STYLEGUIDE.md, using the rubric in .claude/skills/app-design/CONFORMANCE.md
 (categories, weights, and what earns each score are defined there — follow it exactly, do not invent categories).
 
 Evidence to gather (all of it, before scoring):
@@ -157,7 +157,7 @@ Evidence to gather (all of it, before scoring):
   • The visual baselines: e2e/__screenshots__/stories.spec.ts/** and e2e/__screenshots__/desktop.spec.ts/** files
     for this app (light, dark, min, large, fullscreen, split, slideover, screen sizes). Open them with Read and look.
   • A live look on the real host: node e2e/tools/session.mjs start audit-r${round} --url "${base}" (pair it as in
-    docs/TESTING.md, open the app from the Dock, then look, resize the screen to 1024 768, try dark with --theme dark in a
+    the verify-change skill (section 3), open the app from the Dock, then look, resize the screen to 1024 768, try dark with --theme dark in a
     new session, Tab through controls).
   • The automated results: \`npx playwright test --project=stories --project=desktop --grep "${app}" --reporter=line\`
     (axe, overflow and snapshot checks). Do NOT pass --update-snapshots.
@@ -228,7 +228,7 @@ The report must contain, in this order:
      the evidence paths and the participants' own words where useful. Most severe and most frequent first.
   3. Change list: the design changes to make before the next round, prioritised. Each says exactly what to change
      (component / token / behaviour, with file paths) and which findings it resolves. Prefer fixing root causes in
-     the kit or tokens over one-off patches, and never propose something that breaks DESIGN_LANGUAGE.md — if the
+     the kit or tokens over one-off patches, and never propose something that breaks STYLEGUIDE.md — if the
      styleguide itself is wrong, say so as a separate "styleguide change" item.
   4. Participant quotes.
 

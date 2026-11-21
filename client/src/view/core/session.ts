@@ -1,5 +1,5 @@
 /**
- * The session: one connection to the host, shared by every window's view instance (spec 2.5, 2.6, 3.5).
+ * The session: one connection to the host, shared by every window's view instance.
  *
  *  - owns the transport and one JSON-RPC peer per connection;
  *  - handshakes with `session.hello` (version negotiation, formatting env);

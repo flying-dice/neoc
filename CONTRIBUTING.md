@@ -1,6 +1,7 @@
 # Contributing
 
-Build, test, add a module, release. The module design rules are in [CLAUDE.md](CLAUDE.md#modules); what neoc is, is in [README.md](README.md).
+The workflow, the pre-PR checks, how to add a module and how to release. The rules (boundaries, module design, vos) are in
+[CLAUDE.md](CLAUDE.md); what the products are and how to run them is in [README.md](README.md).
 
 ## Before you start
 
@@ -14,63 +15,98 @@ cargo build
 cargo test -p neoc -p neoc-vm
 ```
 
-`cargo test -p neoc -p neoc-vm` runs the `neoc-vm` unit tests, the `neoc` binary tests, the CLI integration tests and the Gherkin spec in `tooling/cli/`.
-
-The workspace also holds the vos crates (`crates/vos-*`, governed by [AGENTS.md](AGENTS.md)). neoc's own checks do not need what those crates need: the test line names `-p neoc -p neoc-vm`, so neoc contributors need neither `bun` nor `darklua`. The vos crates have their own gate (`bun run lint`, `typecheck`, `test`, `test:e2e`, in AGENTS.md); their tests build the bundled apps, which needs `bun` and `darklua` 0.18.0 on `PATH`, and `cargo test --workspace` would run them. `cargo build` and `cargo clippy --all-targets` cover the vos crates too, and need nothing extra. NEOC-115 unifies the two gates.
-
-Lua suites run with the binary itself:
+`cargo test -p neoc -p neoc-vm` runs the `neoc-vm` unit tests, the `neoc` binary tests, the CLI integration tests and the
+Gherkin spec in `tooling/cli/`. Lua suites run with the binary itself:
 
 ```sh
 cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.lua'
 ```
 
+The workspace also holds vos (`crates/vos-*`, `apps/`, `client/`, `packages/`, `e2e/`). Its tests build the bundled apps, which
+needs `bun` and `darklua` 0.18.0 on `PATH`, so they are not part of `cargo test -p neoc -p neoc-vm` (and `cargo test
+--workspace` would run them). `cargo build` and `cargo clippy --workspace --all-targets` cover the vos crates and need nothing
+extra.
+
 ## Pre-PR checks
 
-Run all of these locally before opening a PR. They must pass exactly as written.
+One command set covers both products. Run it locally on the head commit before opening a PR and after every fix; it must pass
+exactly as written. GitHub Actions is not a gate.
 
 ```sh
-cargo fmt --check
-RUSTFLAGS="-D warnings" cargo clippy --all-targets
-cargo test -p neoc -p neoc-vm
-cargo run -p neoc -- run \
-  "crates/neoc/tests/lib/*.test.lua" \
-  "crates/neoc/tests/std/*.test.lua" \
-  "crates/neoc/tests/std/task.spec.lua" \
-  "crates/neoc/tests/app.test.lua" \
-  "crates/neoc/tests/vnd/jsonschema.test.lua" \
-  "crates/neoc/tests/vnd/quick_xml.test.lua" \
-  "crates/neoc/tests/vnd/rusqlite.test.lua" \
-  "crates/neoc/tests/vnd/serde_json.test.lua" \
-  "crates/neoc/tests/vnd/serde_yaml.test.lua" \
-  "crates/neoc/tests/vnd/toml.test.lua"
-cargo test --release -p neoc-vm --test abort_regressions
-cargo bench -p neoc-vm --features bench --bench lib --bench vnd -- --test
-scripts/check-toolchain-pin.sh
-cargo deny check
-cargo run -p neoc-vm --example luau_decls -- --check
-NEOC_REQUIRE_LUAU_LSP=1 cargo test -p neoc-vm --test luau_decls
+bun run gate           # the neoc checks, then the vos checks
+bun run gate:neoc      # the scoped gate (= scripts/check-neoc.sh): a change confined to the neoc crates
 ```
 
-`abort_regressions` holds every case to `neoc_vm::VM_THREAD_STACK` (8 MiB) of stack in a debug build, which is what `neoc run` and an embedder that follows `lifecycle.rs` give a thread that polls the VM, and to tokio's default 2 MiB in a release build; the release run is a separate line above because it is the one that proves a default-size thread survives. Building Luau needs a C++ compiler (`mlua-sys` compiles it).
+**`bun run gate`** (`scripts/pre-pr.ts`) runs, stopping at the first failure:
 
-The Lua list leaves out the suites that need a Docker daemon (`sqlx_mysql`, `sqlx_postgres`, `testcontainers_modules`). With Docker running, run every suite instead: `cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.lua' 'crates/neoc/tests/**/*.spec.lua'`.
+1. `scripts/check-neoc.sh`, the neoc checks:
+   - `cargo fmt --check`
+   - `cargo clippy --workspace --all-targets -- -D warnings`
+   - `cargo test -p neoc -p neoc-vm`
+   - the Lua suites with `neoc run` (`crates/neoc/tests/lib`, `std`, `std/task.spec.lua`, `app.test.lua` and the `vnd` suites that
+     need no Docker; `sqlx_mysql`, `sqlx_postgres` and `testcontainers_modules` need a daemon: with Docker running, run every
+     suite with `neoc run 'crates/neoc/tests/**/*.test.lua' 'crates/neoc/tests/**/*.spec.lua'`)
+   - `cargo test --release -p neoc-vm --test abort_regressions`
+   - `cargo bench -p neoc-vm --features bench --bench lib --bench vnd -- --test` (the bench smoke: compiles every bench and
+     runs each body once, no timing)
+   - `scripts/check-toolchain-pin.sh`
+   - `cargo deny check`
+   - `cargo run -p neoc-vm --example luau_decls -- --check`
+   - `cargo run -p vos-codegen -- --check`
+   - no `vos-*` crate in the dependency tree of `neoc` or `neoc-vm` (`cargo tree`)
+   - `cargo check --workspace --all-targets --locked`
+2. the vos checks: `bun run lint`, `bun run typecheck`, `bun run test`, `bun run test:e2e`.
 
-The last two lines are the editor types. `luau_decls -- --check` fails when `types/neoc.d.luau` (the generated Luau declarations of every module, one definitions file) no longer matches what the modules record; fix it with `cargo run -p neoc-vm --example luau_decls` and commit the result. The `luau_decls` test runs the fixtures in `types/fixtures/` through `luau-lsp analyze` in strict mode: the files in `types/fixtures/` outside `negative/` must check clean, and a line of `types/fixtures/negative/` marked with `-- expect-error: <text>` must carry exactly one finding per marker (a line with two findings carries two markers), each marker matching a different finding's message up to its `caused by:` lines, and no unmarked line may carry a finding. `NEGATIVE_MARKERS` in the test pins the number of markers per file, so deleting a wrong line with its marker is an edit of that table. luau-lsp must be on `PATH` (`luau-lsp.exe` on Windows) at the pinned version (`LUAU_LSP_VERSION` in `crates/neoc-vm/tests/luau_decls.rs`; take the release binary of that version from the luau-lsp GitHub releases, there is no Homebrew formula; a binary that is not on `PATH` counts as missing); without `NEOC_REQUIRE_LUAU_LSP=1` it skips with a notice when the tool is missing or not that version, so `cargo test -p neoc -p neoc-vm` still passes without it. The same file also runs the language server the way the editor starts it (typed `require`, a wrong member, hover), under the same variable. The other tests in that file (the committed file is current, the example's `--check` and argument exit codes, the fixture matcher, no file name has a colon, the positive fixture requires every module) always run.
+`bun run gate --neoc` and `--vos` run one half (for a loop; the gate before a PR is both).
 
-The bench line compiles every bench and runs each body once, with no timing. It catches stale bench code the other checks never build. To time a module, drop `-- --test` and name it: `cargo bench -p neoc-vm --features bench --bench lib <name>`.
+**Which one.** `bun run gate:neoc` needs Rust, `cargo-deny` and `luau-lsp`, and neither `bun` nor `darklua`. Use it only when the
+diff touches none of `crates/vos-*`, `apps/`, `client/`, `packages/`, `e2e/` and `scripts/` (apart from `check-neoc.sh`, the
+install scripts and the toolchain pin) and leaves alone `neoc-vm`'s embedding API and sandbox (`lifecycle`, `script_env`,
+`modules`, `sandbox`), which the vos Lua adapter embeds. Anything else, and every change before a merge that touches vos, runs the
+full `bun run gate`. e2e needs a Mac (the screenshot baselines are macOS-only); `VOS_PORT_BASE=9100` runs it in a second
+worktree beside another run.
 
-GitHub Actions (`.github/workflows/ci.yml`) runs similar checks on pushes to `main`, plus `cargo deny check advisories`, the release-binary cross builds and the Docker image build. It is not a gate and is not relied on: the local run is the verification.
+**Missing tools fail, they do not skip.** `bun run gate` sets `VOS_GATE=1` and `NEOC_REQUIRE_LUAU_LSP=1` for every step, and
+`scripts/check-neoc.sh` sets `NEOC_REQUIRE_LUAU_LSP=1` itself. Both switches stay, with their old meaning:
+`VOS_GATE=1` (or `CI`, as `scripts/gate.ts` reads it) makes `lint:luau`, `lint:stylua` and the `vos-codegen` editor test fail
+when `luau-lsp` or `stylua` is missing; `NEOC_REQUIRE_LUAU_LSP=1` does the same for `crates/neoc-vm/tests/luau_decls.rs`. Without
+them those checks print a notice and skip, so a plain `cargo test -p neoc -p neoc-vm` passes on a machine without luau-lsp. A
+skip is not a pass. `luau-lsp` must be on `PATH` (`~/.local/bin` also counts for the vos lints) at the pinned version
+(`LUAU_LSP_VERSION` in `crates/neoc-vm/tests/luau_decls.rs`, 1.70.1: take the release binary from the luau-lsp GitHub releases,
+there is no Homebrew formula).
+
+`abort_regressions` holds every case to `neoc_vm::VM_THREAD_STACK` (8 MiB) of stack in a debug build, which is what `neoc run`
+and an embedder that follows `lifecycle.rs` give a thread that polls the VM, and to tokio's default 2 MiB in a release build;
+the release run is a separate step because it is the one that proves a default-size thread survives. Building Luau needs a C++
+compiler (`mlua-sys` compiles it).
+
+The Luau declarations: `luau_decls -- --check` fails when `types/neoc.d.luau` (the generated declarations of every module, one
+definitions file) no longer matches what the modules record; fix it with `cargo run -p neoc-vm --example luau_decls` and commit
+the result. `types/generated/vos.d.luau` is built from it, so a change to it also needs `cargo run -p vos-codegen` (or `bun run
+codegen`) and the regenerated files committed. The `luau_decls` test runs the fixtures in `types/fixtures/` through `luau-lsp
+analyze` in strict mode: the files outside `negative/` must check clean, and a line of `types/fixtures/negative/` marked with
+`-- expect-error: <text>` must carry exactly one finding per marker (a line with two findings carries two markers), each marker
+matching a different finding's message up to its `caused by:` lines, and no unmarked line may carry a finding.
+`NEGATIVE_MARKERS` in the test pins the number of markers per file, so deleting a wrong line with its marker is an edit of that
+table. The same file also runs the language server the way the editor starts it (typed `require`, a wrong member, hover). The
+other tests in that file (the committed file is current, the example's `--check` and argument exit codes, the fixture matcher,
+no file name has a colon, the positive fixture requires every module) always run.
+
+To time a module, drop `-- --test` from the bench line and name it: `cargo bench -p neoc-vm --features bench --bench lib <name>`.
+
+GitHub Actions (`.github/workflows/ci.yml`) runs similar checks on pushes to `main`, plus `cargo deny check advisories`, the
+release-binary cross builds and the Docker image build. It is not a gate and is not relied on: the local run is the verification.
 
 ## Branching and PRs
 
 `main` is the only long-lived branch.
 
-1. Branch from `main`: `issues/{key}-{slug}` (e.g. `issues/NEOC-6-std-task`).
-2. Run the [pre-PR checks](#pre-pr-checks) locally.
+1. Branch from `main`: `issues/NEOC-<n>-<slug>` (e.g. `issues/NEOC-6-std-task`). Nothing is pushed to `main` directly.
+2. Run the [pre-PR checks](#pre-pr-checks) locally (`bun run gate`, or `bun run gate:neoc` for a change confined to the neoc crates).
 3. Open the PR into `main` (a draft is fine). One module or one well-scoped change per PR. Say why in the description, not only what. Reference the Jira key (`Refs NEOC-<n>`).
 4. Self-review with the `pr-self-review` skill and post the `Self-review` note on the PR for the head SHA.
-5. Hand off to an independent `pr-review` pass: a fresh reviewer with no session context, who posts a verdict note for the head SHA (`READY TO MERGE` or `CHANGES NEEDED`). Fix and re-run from step 2 until `READY TO MERGE`.
-6. Squash-merge only on `READY TO MERGE` for the current head, then delete the branch. The one exception is the merge of vos into neoc (NEOC-113, PR #34), which lands with a merge commit so that vos's history stays in `main`: never squash it.
+5. Hand off to an independent `pr-review` pass: a fresh reviewer with no session context, who posts a verdict note for the head SHA (`READY TO MERGE`, `CHANGES NEEDED` or `HOLD`). Fix and re-run from step 2 until `READY TO MERGE`.
+6. Squash-merge only on `READY TO MERGE` for the current head, then delete the branch and mark the Jira ticket Done. (The merge of vos into neoc, NEOC-113, PR #34, was the one merge commit, to keep vos's history in `main`.) A change to a vos app or UI also needs the vos checks of `pr-review` (tests, accessibility, boundaries, `verify-change`, and for an app the readiness table); an app that is not ready stays in its PR.
 
 ### Commits and PR titles
 
@@ -119,7 +155,7 @@ Example: a `lib:foo` module. Pick the namespace first (see [CLAUDE.md](CLAUDE.md
    ```
 
    Run: `cargo run -p neoc -- run crates/neoc/tests/lib/foo.test.lua`. Per exported function: a happy path, one test per distinct error, and an empty or zero value where it applies.
-6. **Types.** Run `cargo run -p neoc-vm --example luau_decls` to add the module's section to `types/neoc.d.luau` (its `export type lib_foo`, one `lib_foo_<Type>` per resource type, a `lib_foo_<Type>Statics` for each type with constructors or constants, and the `require` overload), commit it, and add a `local foo = require("lib:foo")` line (the check wants `= require("lib:foo")` on a line that is not a comment) and a few correct calls to `types/fixtures/usage.luau`; a wrong call goes in `types/fixtures/negative/wrong_use.luau` with `-- expect-error: <text>` at the end of the line, where `<text>` is part of the luau-lsp message before its `caused by:` lines (`Key 'nope' not found in table 'lib_foo'`, `expects 1 argument, but none are specified`, ...); a line that gives two findings takes two markers (a wrong `require("lib:fooo")` also gives `Other overloads are also not viable`), and the new markers go in `NEGATIVE_MARKERS`.
+6. **Types.** Run `cargo run -p neoc-vm --example luau_decls` to add the module's section to `types/neoc.d.luau` (its `export type lib_foo`, one `lib_foo_<Type>` per resource type, a `lib_foo_<Type>Statics` for each type with constructors or constants, and the `require` overload), commit it, run `cargo run -p vos-codegen` (apps are offered the module through `types/generated/vos.d.luau`, which is built from `types/neoc.d.luau`) and commit that too, and add a `local foo = require("lib:foo")` line (the check wants `= require("lib:foo")` on a line that is not a comment) and a few correct calls to `types/fixtures/usage.luau`; a wrong call goes in `types/fixtures/negative/wrong_use.luau` with `-- expect-error: <text>` at the end of the line, where `<text>` is part of the luau-lsp message before its `caused by:` lines (`Key 'nope' not found in table 'lib_foo'`, `expects 1 argument, but none are specified`, ...); a line that gives two findings takes two markers (a wrong `require("lib:fooo")` also gives `Other overloads are also not viable`), and the new markers go in `NEGATIVE_MARKERS`.
 7. **README.** Add the module to the list in the README modules table, alphabetical within its namespace.
 
 Extending an existing module follows the same steps: add the function and register it on the table, add the Rust and Lua cases, extend the bench group, and re-run the `luau_decls` example (the `luau_decls` test fails on a stale `types/neoc.d.luau`) with a call in `types/fixtures/usage.luau`.

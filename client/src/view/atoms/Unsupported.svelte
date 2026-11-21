@@ -1,5 +1,5 @@
 <!--
-  @atom Unsupported — the placeholder for a component this client's kit version does not know (spec 2.7):
+  @atom Unsupported — the placeholder for a component this client's kit version does not know:
   visible, labelled, harmless (`role="note"`). A node's own `fallback` slot is preferred; this is the last resort.
 -->
 <script lang="ts">

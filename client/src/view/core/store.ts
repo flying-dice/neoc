@@ -3,7 +3,7 @@
  * deep `$state` proxy of this shape (`store.svelte.ts`) so every mutation is fine-grained; tests hand it plain
  * objects. Nothing in `core/` imports Svelte.
  *
- * The four state tiers of spec 3.1 map onto it:
+ * The four state tiers map onto it:
  *  - ephemeral UI (scroll, caret, focus): in the adapters, never here;
  *  - client-managed: `client` (declared by the view, client-authoritative);
  *  - app state: `state` (server values by path) with `drafts` as the instant overlay of the user's edits;
@@ -45,7 +45,7 @@ export interface Notice {
   undo?: { source: string; key: RowKey; field: string; revisionId: number }
 }
 
-/** `env.*` refs: the viewer's environment (spec 3.2). */
+/** `env.*` refs: the viewer's environment. */
 export interface ViewEnv {
   sizeClass: SizeClass
   heightClass: SizeClass
@@ -64,7 +64,7 @@ export interface ViewStore {
   rev: number
   /** Server values of state paths (the latest the host sent, or the last ack). */
   state: Record<string, Json>
-  /** The user's unacknowledged edits by binding key: resolved before the server value (spec 3.2). */
+  /** The user's unacknowledged edits by binding key: resolved before the server value. */
   drafts: Record<string, Json>
   /** Binding keys with an unsent or unacknowledged local edit ("Saving..."). */
   dirty: Record<string, boolean>
@@ -120,7 +120,7 @@ export type StoreFactory = () => ViewStore
 
 // ── Binding keys ───────────────────────────────────────────────────────────
 
-/** What a two-way binding writes: a server state path, or a field of a bound row (spec 3.2 write table). */
+/** What a two-way binding writes: a server state path, or a field of a bound row. */
 export type BindingTarget =
   { kind: 'state'; path: string } | { kind: 'row'; source: string; key: RowKey; field: string }
 

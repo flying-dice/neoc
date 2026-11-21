@@ -78,13 +78,15 @@ SRP, DRY, low coupling, KISS. Terse. Conventional Commits with the module as sco
 
 1. Create `crates/neoc-vm/src/lua/lib/<name>.rs` with a `module` fn.
 2. Register in `crates/neoc-vm/src/lua/lib/mod.rs` (alphabetical).
-3. Add the `modules.insert("lib:<name>".into(), lib::<name>::module(lua)?)` line in `registry()` in
-   `crates/neoc-vm/src/lua/modules.rs`; add the module to the `declared` and `runtime_tables`
-   lists in that file's tests and update the registered-module count they assert.
+3. Register in `crates/neoc-vm/src/lua/modules.rs`: a `("lib:<name>", lib::<name>::module)` row in `REGISTRY` and
+   `lib::<name>::declare(lua)?` in `declared()`, each alphabetical; add the module to the `runtime_tables` list in that
+   file's tests and update the module counts they assert (see CONTRIBUTING.md).
 4. `#[cfg(test)] mod tests` in the file.
 5. Criterion benches behind the `bench` feature (`cargo bench -p neoc-vm --features bench --bench lib`).
 6. `crates/neoc/tests/lib/<name>.test.lua`.
-7. Add the module to the README modules table (alphabetical within the namespace).
+7. Types: `cargo run -p neoc-vm --example luau_decls`, then `cargo run -p vos-codegen` (apps are offered the module through
+   `types/generated/vos.d.luau`), plus fixture lines in `types/fixtures/` (CONTRIBUTING.md, step 6).
+8. Add the module to the README modules table (alphabetical within the namespace).
 
 See CONTRIBUTING.md → "Adding a new module".
 

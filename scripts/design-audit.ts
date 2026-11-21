@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Static design-language audit for one shell page: flags styles that bypass the
- * tokens in docs/design/DESIGN_LANGUAGE.md. Feeds the styleguide conformance
+ * tokens in .claude/skills/app-design/STYLEGUIDE.md. Feeds the styleguide conformance
  * score in the app-design skill (it is evidence, not the whole score).
  *
  *   bun scripts/design-audit.ts <page> [--json]

@@ -11,7 +11,7 @@ const m3 = (base: string, theirs: string, mine: string): [string, boolean] => {
 
 describe('merge3 (port of merge.rs)', () => {
   test('the spec example composes', () => {
-    // ui-system.md 2.8-B: the user capitalised "milk" while an agent appended a line
+    // the user capitalised "milk" while an agent appended a line
     const r = merge3('milk', 'milk\n- buy oat milk', 'Milk')
     expect(r.text).toBe('Milk\n- buy oat milk')
     expect(r.conflict).toBe(false)

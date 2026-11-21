@@ -58,7 +58,7 @@ const HEADER: &str =
 // Regenerate with `bun run codegen`; `bun run codegen:check` fails when this file is stale.\n\
 /* eslint-disable */\n\n";
 
-/// Value forms (spec §3.2).
+/// Value forms.
 fn prelude() -> String {
     let cfg = ts_rs::Config::default();
     let mut out = String::new();

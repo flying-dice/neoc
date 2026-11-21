@@ -7,7 +7,7 @@
 --   ui.VStack { spacing = 2, ui.Text { "Hello", style = "title1" }, ui.Button { key = "go", title = "Go", onTap = fn } }
 --
 -- Constructors return plain node tables. There are no style modifiers: apps pick semantic tokens only.
--- The props, slots and events of every component are in docs/reference/components.md.
+-- The props, slots and events of every component are typed in types/generated/vos.d.luau.
 
 -- ── Runtime ─────────────────────────────────────────────────────────────────────────────────────────────────
 -- Constructors are thin: they validate their arguments, assign auto keys and return the plain node table of the

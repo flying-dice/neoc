@@ -1,5 +1,5 @@
 /**
- * Window-scoped keyboard shortcuts (the common `shortcut` prop, spec 1.1): `"cmd+n"`, `"escape"`, `"7"`,
+ * Window-scoped keyboard shortcuts (the common `shortcut` prop): `"cmd+n"`, `"escape"`, `"7"`,
  * `"shift+/"`. Active while focus is inside the window. `cmd` is the platform command key (Meta on Apple
  * platforms, Ctrl elsewhere). A shortcut without a command/ctrl/alt modifier never fires while the user is typing
  * into an editable control.

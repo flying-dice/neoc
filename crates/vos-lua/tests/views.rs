@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
-//! Windows over the real runtime: the Calculator and Notes of ui-system.md §4.3 and §4.4 (the fixtures the
+//! Windows over the real runtime: the Calculator and Notes (the fixtures the
 //! codegen contract test type-checks) run as real apps, render through the generated `ui` module, and every
 //! tree passes the schema validator.
 

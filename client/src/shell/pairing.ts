@@ -1,5 +1,5 @@
 /**
- * Device pairing over plain HTTP (docs/architecture/host-stack.md, "Pairing"): `GET /session` says whether this
+ * Device pairing over plain HTTP: `GET /session` says whether this
  * browser is paired, `POST /pair` trades the code the host printed for a session cookie. Both are unauthenticated
  * by design; the cookie is HttpOnly, so the page never sees the token.
  */

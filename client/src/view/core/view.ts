@@ -132,7 +132,7 @@ export class ViewCore {
   readonly shortcuts = new ShortcutRegistry()
   readonly bindings: Bindings
   readonly sources: Sources
-  /** Mounted navigation stacks: where `nav.*` actions are routed (spec 3.5). */
+  /** Mounted navigation stacks: where `nav.*` actions are routed. */
   readonly nav = new NavRegistry()
   private readonly clientState: ClientState
   private readonly link: ViewLink
@@ -274,7 +274,7 @@ export class ViewCore {
     return this.resyncing
   }
 
-  /** The socket is back: resume this instance (spec 3.5 reconnect protocol), then replay queued work. */
+  /** The socket is back: resume this instance, then replay queued work. */
   async resume(): Promise<void> {
     const open = this.openParams
     if (!open) return
@@ -557,7 +557,7 @@ export class ViewCore {
     if (i >= 0) this.store.notices.splice(i, 1)
   }
 
-  // ── Reading: refs and expressions (spec 3.2) ───────────────────────────
+  // ── Reading: refs and expressions ───────────────────────────
 
   /** The longest `state.<path>` the store knows (state paths are granular, dotted names). */
   private statePath(rest: string[]): { path: string; tail: string[] } {
@@ -630,7 +630,7 @@ export class ViewCore {
     return evaluate(expr, (r) => this.resolve(r, scope), this.fmt)
   }
 
-  // ── Writing: bindings (spec 3.2 write table) ───────────────────────────
+  // ── Writing: bindings ───────────────────────────
 
   /** Which server target a ref writes, or null when the namespace is read-only. */
   target(ref: string, scope: Scope = {}): BindingTarget | null {
@@ -749,7 +749,7 @@ export class ViewCore {
     }
   }
 
-  // ── Events and actions (spec 2.4, 3.5) ─────────────────────────────────
+  // ── Events and actions ─────────────────────────────────
 
   /**
    * A node reported an event: run its handler (client actions first, `emit` entries towards the app). The promise
@@ -809,7 +809,7 @@ export class ViewCore {
   }
 
   /**
-   * Push a route on the stack an action or a `NavigationLink` addresses (spec 3.5): the innermost stack that
+   * Push a route on the stack an action or a `NavigationLink` addresses: the innermost stack that
    * contains the node at `from`, or the one named `stack`. Param values are expressions, read in `scope` now.
    */
   navigate(from: string, route: Record<string, Expr>, scope: Scope = {}, stack?: string): void {

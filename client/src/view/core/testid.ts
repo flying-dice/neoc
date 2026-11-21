@@ -1,6 +1,5 @@
 /**
- * Test ids derive from the explicit keys on a node's path, never from index or text (spec 5.4,
- * docs/TESTING.md): `testid = app + "-" + the explicit keys on the path`, "-"-joined.
+ * Test ids derive from the explicit keys on a node's path, never from index or text: `testid = app + "-" + the explicit keys on the path`, "-"-joined (convention: `scripts/check-testids.ts`).
  *
  * The window root, auto keys (`_0`, given to un-keyed layout wrappers) and slot names are skipped, so wrapping
  * a node in a Stack or moving it into a toolbar slot never renames it. A row template contributes
