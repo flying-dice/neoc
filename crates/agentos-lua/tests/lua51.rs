@@ -1,15 +1,14 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
-//! LuaJIT notes (the VM is `neoc-vm`, LuaJIT 2.1 in its 5.1 mode, here): where an expectation below was a PUC Lua 5.1
-//! fact and LuaJIT differs, the test says so. The differences that matter: a LuaJIT bytecode header is `\x1bLJ`;
-//! LuaJIT's pattern matcher bounds its own recursion (`pattern too complex`, `too many captures`), so `lua::patterns`
-//! is not needed (its limit is about 200 recursion items, where the former guard allowed 512: a pattern of 201 to 512
-//! items that worked before is now refused); LuaJIT yields across `pcall`, `xpcall`, metamethods and `for ... in` iterators (only C functions
-//! with a callback, such as `string.gsub` and `table.sort`, and the handler of `xpcall`, refuse); and a function that
-//! tail-calls a host function leaves no frame of its own, so an error from that call carries no app line.
+//! Luau notes (the VM is `neoc-vm`, Luau, here; the apps are Lua 5.1 syntax): the tests that were PUC Lua 5.1 facts
+//! hold on Luau, whose yield boundaries are those of PUC 5.1, with these differences, each said where it matters:
+//! a Luau bytecode chunk starts with a version byte (`string.dump` does not exist), `bit` is `bit32`, the pattern
+//! matcher bounds its own recursion (`pattern too complex`: no guard of ours, no abort), a wait suspends inside
+//! `pcall`, `xpcall`, `__call` and the iterator function of a `for ... in` (PUC 5.1 refused it in an iterator) and is
+//! refused in every other metamethod, in `tostring`, in a `string.gsub` or `table.sort` callback and in the handler of
+//! an `xpcall`; Luau has no proper tail calls and messages name no variable.
 //!
-//! What running on this VM changes: the sandbox of an app's environment (nothing is budgeted: apps get Lua's own
-//! `string` and `table` functions), and async host calls where the engine cannot yield (the C functions that call back
-//! into Lua, `string.format` of a `__tostring`, the `xpcall` handler).
+//! What running on this VM changes: the sandbox of an app's environment (nothing is budgeted: apps get Luau's own
+//! `string` and `table` functions), and async host calls where the engine cannot yield.
 
 mod common;
 
@@ -51,14 +50,10 @@ async fn none_of_the_escape_hatches_exist_in_the_apps_environment() {
 
 #[tokio::test]
 async fn text_only_loading_binary_chunks_never_run() {
-    let bytecode = neoc_vm::mlua::Lua::new()
-        .load("return string.dump(function() return 7 end)")
-        .eval::<neoc_vm::mlua::LuaString>()
-        .unwrap()
-        .as_bytes()
-        .to_vec();
-    // LuaJIT bytecode starts `\x1bLJ` (PUC Lua 5.1: `\x1bLua`)
-    assert!(bytecode.starts_with(b"\x1bLJ"));
+    // Luau has no `string.dump`: the fixture is what its compiler writes for `return 7`, which starts with a version
+    // byte (never `0`, the compiler's error marker) and not with source text (PUC Lua 5.1: `\x1bLua`)
+    let bytecode = neoc_vm::mlua::chunk::Compiler::new().set_debug_level(0).compile("return 7").unwrap();
+    assert!(bytecode[0] != 0 && bytecode[0] < b' ', "the fixture must be Luau bytecode: {bytecode:?}");
     let package = agentos_application::ports::AppPackage {
         entry: "app.lua".into(),
         files: [("app.lua".to_owned(), bytecode)].into(),
@@ -82,7 +77,7 @@ async fn the_standard_libraries_are_read_only_in_every_spelling() {
         "table.insert = nil",
         "math.floor = function() return 0 end",
         "coroutine.wrap = nil",
-        "bit.band = nil",
+        "bit32.band = nil",
         "utf8.len = nil",
         "rawset(string, 'evil', 1)",
         "rawset(table, 'insert', nil)",
@@ -106,8 +101,8 @@ async fn the_standard_libraries_are_read_only_in_every_spelling() {
         app.on("intact", function()
           return {
             string.rep("ab", 2) == "abab", ("x"):rep(3) == "xxx", string.find("abc", "b") == 2,
-            string.evil == nil, table.insert ~= nil, math.floor(1.5) == 1, bit.band(6, 3) == 2, utf8.len("é") == 1,
-            type(getmetatable("")) == "string", type(getmetatable(string)) == "string",
+            string.evil == nil, table.insert ~= nil, math.floor(1.5) == 1, bit32.band(6, 3) == 2, utf8.len("é") == 1,
+            type(getmetatable("")) == "string", getmetatable(string) == nil,
           }
         end)
     "#,
@@ -117,6 +112,9 @@ async fn the_standard_libraries_are_read_only_in_every_spelling() {
     for (i, attempt) in attempts.iter().enumerate() {
         assert_eq!(results[i], json!(false), "`{attempt}` must raise");
     }
+    // the string metatable is locked (`getmetatable('')` answers a string, not the table); a library table has no
+    // metatable on Luau: it is sealed by Luau's `readonly` flag, which the attempts above show nothing gets round
+    // (LuaJIT sealed it with a locked metatable, so `getmetatable(string)` answered a string there)
     assert_eq!(emit(&vm, "intact").await.unwrap(), json!(vec![true; 10]));
 }
 
@@ -175,32 +173,38 @@ async fn the_preludes_polyfills_are_there_and_sealed() {
 
 // ---- patterns and strings, which C code would run unchecked ------------------------------------------------
 
-/// LuaJIT: the matcher bounds its own recursion (`LJ_MAX_XLEVEL` 200: `pattern too complex`) and its captures (32:
-/// `too many captures`), so no guard of ours is in the way and the refusal is LuaJIT's own.
-///
-/// PUC Lua 5.1's C pattern matcher recurses with no depth limit: `("a?"):rep(20000)` overflowed a 2 MiB stack (a
-/// `#[tokio::test]` runs on one) and aborted the process. In an app it is a Lua error the app can catch.
+/// Luau's matcher bounds its own recursion and its captures, so no guard of ours is in the way (the deleted
+/// `lua::patterns` refused a pattern of more than 512 items before the matcher saw it). A pattern of 20000 items either
+/// answers (the matcher got through it: `a*` repeated does) or is refused with the matcher's own message
+/// (`pattern too complex` for `a?` repeated, `too many captures` for `(a)` repeated); what it must never do is run the host out of stack. PUC Lua 5.1's C pattern matcher recurses
+/// with no depth limit: `("a?"):rep(20000)` overflowed a 2 MiB stack (a `#[tokio::test]` runs on one) and aborted the
+/// process. In an app it is a Lua value or a Lua error the app can catch. Each of the six calls must be one or the
+/// other, and the error one must be the matcher's refusal, not some other failure.
 #[tokio::test]
 async fn a_huge_pattern_in_an_app_is_a_catchable_error_not_a_stack_overflow() {
     let src = r#"
         app.on("t", function()
           local subject = ("a"):rep(20000)
           local results = {}
+          local function refused(e)
+            local text = tostring(e)
+            return text:find("pattern too complex", 1, true) ~= nil or text:find("too many captures", 1, true) ~= nil
+          end
           for _, item in ipairs { "a?", "a*", "(a)" } do
             local pattern = item:rep(20000)
             local ok, err = pcall(string.find, subject, pattern)
-            local function refused(e) return tostring(e):find("pattern too complex", 1, true) ~= nil or tostring(e):find("too many captures", 1, true) ~= nil end
-            results[#results + 1] = { ok = ok, refused = refused(err) }
+            results[#results + 1] = { ok = ok, refused = refused(err), err = ok and "" or tostring(err) }
             ok, err = pcall(function() return subject:gsub(pattern, "") end)
-            results[#results + 1] = { ok = ok, refused = refused(err) }
+            results[#results + 1] = { ok = ok, refused = refused(err), err = ok and "" or tostring(err) }
           end
           return results
         end)
     "#;
     let vm = load(src).await;
     let out = emit(&vm, "t").await.unwrap();
-    assert_eq!(out.as_array().unwrap().len(), 6);
-    assert!(out.as_array().unwrap().iter().all(|r| r == &json!({"ok": false, "refused": true})), "{out}");
+    let out = out.as_array().unwrap();
+    assert_eq!(out.len(), 6);
+    assert!(out.iter().all(|r| r["ok"] == json!(true) || r["refused"] == json!(true)), "{out:?}");
 }
 
 // ---- numbers the host must never panic on -----------------------------------------------------------------
@@ -235,17 +239,18 @@ async fn no_number_a_script_passes_to_a_library_function_panics_the_host() {
         "string.format('%c', N)",
         "string.format('%x', N)",
         "string.format('%' .. N .. 'd', 1)",
-        "bit.lshift(1, N)",
-        "bit.rshift(N, N)",
-        "bit.arshift(N, N)",
-        "bit.rol(N, N)",
-        "bit.ror(N, N)",
-        "bit.tobit(N)",
-        "bit.bnot(N)",
-        "bit.band(N, N)",
-        "bit.tohex(N)",
-        "bit.tohex(1, N)",
-        "bit.bswap(N)",
+        // Luau's `bit32` (LuaJIT's `bit` is gone): the same shapes, over the functions it has
+        "bit32.lshift(1, N)",
+        "bit32.rshift(N, N)",
+        "bit32.arshift(N, N)",
+        "bit32.lrotate(N, N)",
+        "bit32.rrotate(N, N)",
+        "bit32.bnot(N)",
+        "bit32.band(N, N)",
+        "bit32.extract(N, N)",
+        "bit32.extract(1, N, N)",
+        "bit32.countlz(N)",
+        "bit32.byteswap(N)",
         "table.concat({ 'a', 'b' }, ',', N)",
         "table.concat({ 'a', 'b' }, ',', 1, N)",
         "table.concat({ 'a', 'b' }, ',', N, N)",
@@ -410,12 +415,14 @@ async fn dropping_a_call_that_waits_inside_coroutines_ends_it_without_running_ap
 
 #[tokio::test]
 async fn a_host_call_where_lua_cannot_yield_fails_with_a_clear_error_not_a_hang() {
-    // the known limits on LuaJIT: C functions that call back into Lua (gsub, a sort comparator), the handler of
-    // `xpcall` and `string.format("%s")` of a `__tostring`. (On PUC Lua 5.1 a metamethod and a `for ... in` iterator
-    // function were limits too; LuaJIT yields across both, see `host_calls_in_metamethods_and_iterators_yield`.)
-    // the host call inside each boundary is a sleep, which is always pending on its first poll, so it always has
+    // The places Luau refuses a yield: the C functions that call back into Lua (a gsub callback, a sort comparator),
+    // a metamethod other than `__call` (`__index`, `__add`, ...), `tostring` of an object whose `__tostring` waits,
+    // and the handler of an `xpcall`. (PUC Lua 5.1 refused an iterator function too; Luau suspends in one, see
+    // `host_calls_in_iterators_and_call_metamethods_yield`. `string.format("%s", obj)` is not a row: Luau's `%s`
+    // takes only strings and numbers, so it fails before it could call `__tostring`.)
+    // The host call inside each boundary is a sleep, which is always pending on its first poll, so it always has
     // to suspend. `app.kv:get` is not: its future can be ready at once, and then there is no yield to refuse and
-    // the call "worked" (NEOC-121)
+    // the call "worked" (NEOC-121).
     let src = r#"
         local time = require("std:time")
         local function wait() time.sleep(time.Duration.from_millis(1)) end
@@ -424,14 +431,16 @@ async fn a_host_call_where_lua_cannot_yield_fails_with_a_clear_error_not_a_hang(
           return {
             gsub = message(function() return (string.gsub("a", "a", function() wait() return "b" end)) end),
             sort = message(function() table.sort({ 2, 1 }, function(a, b) wait() return a < b end) end),
-            format = message(function() return string.format("%s", setmetatable({}, { __tostring = function() wait() return "s" end })) end),
+            index = message(function() return setmetatable({}, { __index = function() wait() return 1 end }).x end),
+            add = message(function() return setmetatable({}, { __add = function() wait() return 1 end }) + 1 end),
+            tostring = message(function() return tostring(setmetatable({}, { __tostring = function() wait() return "s" end })) end),
             xpcall_handler = select(2, xpcall(function() error("e") end, function(m) wait() return m end)),
           }
         end }
     "#;
     let vm = load(src).await;
     let out = vm.call_tool("limits", json!({}), &agent_ctx(0), false).await.unwrap();
-    for field in ["gsub", "sort", "format"] {
+    for field in ["gsub", "sort", "index", "add", "tostring"] {
         let message = out[field].as_str().unwrap();
         assert!(message.contains("yield across"), "{field}: {message}");
     }
@@ -439,55 +448,46 @@ async fn a_host_call_where_lua_cannot_yield_fails_with_a_clear_error_not_a_hang(
     assert_eq!(out["xpcall_handler"], json!("error in error handling"), "{out}");
 }
 
-/// LuaJIT, unlike PUC Lua 5.1, suspends across metamethods and `for ... in` iterator functions: an async host call
-/// there is an ordinary wait, not an error.
+/// Luau suspends in the iterator function of a `for ... in` and in `__call`, which PUC Lua 5.1 refused in an iterator:
+/// an async host call there is an ordinary wait, not an error. (Every other metamethod refuses it, see the test
+/// above.) The calls here are `app.kv` ones, which may be ready at once; the test below shows that these contexts
+/// suspend.
 #[tokio::test]
-async fn host_calls_in_metamethods_and_iterators_yield() {
+async fn host_calls_in_iterators_and_call_metamethods_yield() {
     let src = r#"
         app.tools.register { name = "yields", run = function()
-          local mt = setmetatable({}, {
-            __index = function() return app.kv:get("k") or "index" end,
-            __add = function() app.kv:set("k", "add") return app.kv:get("k") end,
-            __tostring = function() return app.kv:get("k") or "ts" end,
-          })
+          local callable = setmetatable({}, { __call = function() app.kv:set("k", "call") return app.kv:get("k") end })
           local seen = {}
           for v in function() if #seen < 2 then seen[#seen + 1] = app.kv:get("k") or "iter" return #seen end end do end
-          return { index = mt.x, add = mt + 1, tostring = tostring(mt), iterations = #seen }
+          return { call = callable(), iterations = #seen }
         end }
     "#;
     let vm = load(src).await;
     let out = vm.call_tool("yields", json!({}), &agent_ctx(0), false).await.unwrap();
-    assert_eq!(out, json!({ "index": "index", "add": "add", "tostring": "add", "iterations": 2 }));
+    assert_eq!(out, json!({ "call": "call", "iterations": 2 }));
 }
 
-/// The test above shows that a call in a metamethod or an iterator works, not that it suspended (`app.kv:get` can be
-/// ready on its first poll). A sleep always suspends, so here the call that makes it must lend the turn. Each context
-/// has a tool of its own that sleeps 300 ms inside it, and a second tool is called 50 ms in: it gets in at once, which
-/// it could not if the first held the turn. (One tool with all four would let the second call land in the first nap
-/// only.)
+/// The test above shows that a call in an iterator or `__call` works, not that it suspended (`app.kv:get` can be ready
+/// on its first poll). A sleep always suspends, so here the call that makes it must lend the turn. Each context has a
+/// tool of its own that sleeps 300 ms inside it, and a second tool is called 50 ms in: it gets in at once, which it
+/// could not if the first held the turn. (One tool with both would let the second call land in the first nap only.)
 #[tokio::test]
-async fn a_host_call_in_a_metamethod_or_iterator_lends_the_turn_while_it_waits() {
+async fn a_host_call_in_an_iterator_or_a_call_metamethod_lends_the_turn_while_it_waits() {
     let src = r#"
         local time = require("std:time")
         local function nap() time.sleep(time.Duration.from_millis(300)) return "x" end
-        app.tools.register { name = "index", run = function()
-          return setmetatable({}, { __index = function() return nap() end }).x
-        end }
-        app.tools.register { name = "add", run = function()
-          return setmetatable({}, { __add = function() return nap() end }) + 1
-        end }
-        app.tools.register { name = "tostring", run = function()
-          return tostring(setmetatable({}, { __tostring = function() return nap() end }))
-        end }
         app.tools.register { name = "iterator", run = function()
           for _ in function() nap() return nil end do end
           return "x"
+        end }
+        app.tools.register { name = "call", run = function()
+          return setmetatable({}, { __call = function() return nap() end })()
         end }
         app.tools.register { name = "ping", run = function() return "pong" end }
     "#;
     let vm = load(src).await;
     let ctx = agent_ctx(0);
-    for context in ["index", "add", "tostring", "iterator"] {
+    for context in ["iterator", "call"] {
         let first = vm.call_tool(context, json!({}), &ctx, false);
         let second = async {
             tokio::time::sleep(Duration::from_millis(50)).await;

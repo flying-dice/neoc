@@ -309,9 +309,7 @@ async fn source_handles_check_their_params() {
         local note = db:row('select id, body from notes where id = :id', {{ key = 'id' }})
         app.on('ok', function() return note {{ id = 1 }}['$source'] end)
         app.on('missing', function() return note {{}} end)
-        -- not a tail call: LuaJIT drops the frame of a function that tail-calls a host function, so the
-        -- error would have no app line to report (see the LuaJIT notes in lua51.rs)
-        app.on('extra', function() local h = note {{ id = 1, other = 2 }} return h end)"
+        app.on('extra', function() return note {{ id = 1, other = 2 }} end)"
     ));
     let vm = load(&src).await;
     assert_eq!(vm.emit("ok", json!(null)).await.unwrap(), json!("s1"));

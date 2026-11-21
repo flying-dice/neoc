@@ -49,16 +49,17 @@ async fn canned_server() -> String {
 /// Where a host call runs inside Lua's own machinery, with each kind of wait inside it. `WAIT` is replaced with the
 /// wait's source. The flag says whether the engine can suspend there.
 ///
-/// On LuaJIT (this VM) the C functions that call back into Lua (`string.gsub`, `table.sort`), `string.format("%s")`
-/// of a `__tostring` and the message handler of `xpcall` refuse a yield: the wait fails and must not lend the turn.
-/// A metamethod and a `for ... in` iterator function do not refuse it (PUC Lua 5.1 did): the wait suspends and lends
-/// the turn like any other, and the call is read-only on resuming, as before. LuaJIT's `tostring()` yields too.
+/// On Luau (this VM) a wait is refused with "attempt to yield across metamethod/C-call boundary" in the C functions
+/// that call back into Lua (`string.gsub`, `table.sort`), in every metamethod but `__call` (`__index`, `__add`, a
+/// `__tostring` that `tostring` calls) and in the handler of an `xpcall`: the wait fails and must not lend the turn.
+/// The iterator function of a `for ... in` and `__call` suspend (PUC Lua 5.1 refused an iterator; it had no
+/// `__call` row): the wait lends the turn like any other, and the call is read-only on resuming, as before.
 const SPELLINGS: &[(&str, &str, bool)] = &[
     ("gsub callback", r#"string.gsub("a", "a", function() WAIT end)"#, false),
     ("sort comparator", r"table.sort({ 3, 2, 1 }, function(a, b) WAIT return a < b end)", false),
     (
-        "string.format __tostring",
-        r#"local _ = string.format("%s", setmetatable({}, { __tostring = function() WAIT return "s" end }))"#,
+        "tostring",
+        r#"local _ = tostring(setmetatable({}, { __tostring = function() WAIT return "s" end }))"#,
         false,
     ),
     (
@@ -68,9 +69,10 @@ const SPELLINGS: &[(&str, &str, bool)] = &[
         r#"local why xpcall(function() error("e") end, function(m) local ok, e = pcall(function() WAIT end) why = e return m end) if why then error(why, 0) end"#,
         false,
     ),
-    ("__index metamethod", r"local _ = setmetatable({}, { __index = function() WAIT end }).x", true),
-    ("__add metamethod", r"local _ = setmetatable({}, { __add = function() WAIT return 1 end }) + 1", true),
+    ("__index metamethod", r"local _ = setmetatable({}, { __index = function() WAIT end }).x", false),
+    ("__add metamethod", r"local _ = setmetatable({}, { __add = function() WAIT return 1 end }) + 1", false),
     ("for iterator", r"for _ in function() WAIT end do end", true),
+    ("__call metamethod", r"local _ = setmetatable({}, { __call = function() WAIT return 1 end })()", true),
 ];
 
 fn waits(url: &str) -> Vec<(&'static str, String)> {
@@ -151,7 +153,7 @@ async fn a_read_only_tool_stays_read_only_across_every_wait_inside_luas_own_mach
         if yields {
             // the wait suspended for real (the turn was lent, so a writable tool may have run meanwhile), and the
             // call is still read-only afterwards: the restriction belongs to the call, not to the turn
-            assert_eq!(r["ok"], true, "{name}: LuaJIT suspends here: {r}");
+            assert_eq!(r["ok"], true, "{name}: Luau suspends here: {r}");
         } else {
             // the wait failed where Lua cannot yield, the call went on, and it is still read-only
             assert_eq!(r["ok"], false, "{name}: {r}");

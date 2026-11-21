@@ -2,10 +2,10 @@
 //! A generator of hostile scripts, and the invariants every one of them must leave intact.
 //!
 //! Lua cannot yield across some of its own machinery, so a host call made there fails with a Lua error, and the script
-//! (which may catch it) goes on. On LuaJIT (the VM under test here) those places are the C functions that call back
-//! into Lua (`string.gsub`, `table.sort`), `string.format("%s")` of a `__tostring` and the message handler of
-//! `xpcall`; PUC Lua 5.1 also refused metamethods and `for ... in` iterator functions, which LuaJIT suspends across
-//! (the generator still puts leaves there, as ordinary suspensions: see `CONTEXTS`). Each way that can leave a
+//! (which may catch it) goes on. On Luau (the VM under test here) those places are the C functions that call back
+//! into Lua (`string.gsub`, `table.sort`), every metamethod but `__call` (`__index`, `__add`, the `__tostring` that
+//! `tostring` calls) and the handler of an `xpcall`; the iterator function of a `for ... in` and `__call` suspend (see
+//! `CONTEXTS`: the generator puts leaves there too, as ordinary suspensions). Each way that can leave a
 //! call half-done (a future, a lend mark, a lock, a transaction) was found one case at a time; this test builds
 //! programs out of the ingredients and checks the invariants over all of them instead.
 //!
@@ -185,31 +185,29 @@ const CONTROLS: &[Control] = &[
     Control::SpawnInTx,
 ];
 
-/// Places a leaf runs inside Lua's own machinery. Each gets the body in place of `<S>`. The flag says whether LuaJIT
-/// can suspend there: where it cannot, the host call fails and the step must not lend the turn (and nothing may
-/// run inside it); where it can (a metamethod, an iterator, `tostring`), the leaf is an ordinary suspension.
+/// Places a leaf runs inside Lua's own machinery. Each gets the body in place of `<S>`. The flag says whether Luau can
+/// suspend there: where it cannot (the C functions that call back into Lua, every metamethod but `__call`, a
+/// `tostring` of an object whose `__tostring` waits, the handler of an `xpcall`), the host call fails and the step must
+/// not lend the turn (and nothing may run inside it); where it can (the iterator function of a `for ... in`, `__call`),
+/// the leaf is an ordinary suspension.
 const CONTEXTS: &[(&str, &str, bool)] = &[
     ("gsub callback", "string.gsub('a', 'a', function() <S> end)", false),
     ("sort comparator", "table.sort({ 3, 2, 1 }, function(a, b) <S> return a < b end)", false),
-    (
-        "string.format __tostring",
-        "local _ = string.format('%s', setmetatable({}, { __tostring = function() <S> return 's' end }))",
-        false,
-    ),
     ("xpcall handler", "xpcall(function() error('x') end, function(m) <S> return m end)", false),
-    ("__index", "local _ = setmetatable({}, { __index = function() <S> end }).x", true),
-    ("__add", "local _ = setmetatable({}, { __add = function() <S> return 1 end }) + 1", true),
-    ("for iterator", "for _ in function() <S> end do end", true),
+    ("__index", "local _ = setmetatable({}, { __index = function() <S> end }).x", false),
+    ("__add", "local _ = setmetatable({}, { __add = function() <S> return 1 end }) + 1", false),
     (
         "tostring",
         "local _ = tostring(setmetatable({}, { __tostring = function() <S> return 's' end }))",
-        true,
+        false,
     ),
+    ("for iterator", "for _ in function() <S> end do end", true),
+    ("__call", "local _ = setmetatable({}, { __call = function() <S> return 1 end })()", true),
 ];
 
 fn wrap(control: Control, body: &str) -> String {
     match control {
-        // each protected call stashes the thread its body runs in, for the meddlers to find. On LuaJIT a protected call runs
+        // each protected call stashes the thread its body runs in, for the meddlers to find. On Luau a protected call runs
         // in the thread that called it (PUC Lua 5.1 with the coroutine-based `pcall` ran it in a thread of its own), so
         // `sh()` skips a thread the script made itself: those may be resumed (rule 6), the call's and the tasks' may not
         Control::Pcall => format!("pcall(function() sh() {body} end)"),
@@ -279,7 +277,7 @@ fn step(rng: &mut Rng, n: usize, kind: Kind) -> Step {
         let _ = write!(describe, " in a {name}");
         let inside = template.replace("<S>", &body);
         if yields {
-            // LuaJIT suspends here: an idle wait lends the turn as anywhere else, so nothing is added
+            // Luau suspends here: an idle wait lends the turn as anywhere else, so nothing is added
             body = format!("pcall(function() {inside} end)");
         } else {
             // the context fails the host call with a Lua error, so it runs under `pcall`, with a counter check
@@ -317,7 +315,7 @@ local A, X, V, keep, pending, txp = {}, {}, {}, {}, 0, nil
 -- what the program leaves behind for another call to find: the threads it did not make (its top-level thread, the
 -- threads its tasks and its protected calls run in: no script may resume them) and the functions of its `coroutine.wrap`s
 local SH, WR = {}, {}
--- the coroutines the script made itself (`create`, `wrap`): on LuaJIT a `pcall` runs in the thread that called it, so
+-- the coroutines the script made itself (`create`, `wrap`): on Luau a `pcall` runs in the thread that called it, so
 -- `coroutine.running()` inside one is the script's own coroutine when the `pcall` is inside one
 local MINE = setmetatable({}, { __mode = "k" })
 local function sh() local t = coroutine.running() if not MINE[t] then SH[#SH + 1] = t end end
@@ -907,9 +905,9 @@ fn the_generator_uses_every_ingredient() {
         "table.sort({ 3, 2, 1 }",
         "__index = function",
         "__add = function",
-        "string.format('%s', setmetatable({}, { __tostring = function()",
         "xpcall(function() error('x') end, function(m)",
         "local _ = tostring(setmetatable({}, { __tostring = function()",
+        "__call = function",
         "for _ in function()",
         "pcall(function()",
         "xpcall(function()",
