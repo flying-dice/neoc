@@ -18,6 +18,9 @@ mod vm;
 
 pub use convert::{json_to_lua, lua_to_json};
 pub use error::{ScriptError, ToolFailure};
+/// The stack every thread that polls an app's VM needs (neoc-vm's constant, re-exported so that the host, which may not
+/// depend on neoc-vm, can build its runtime with it).
+pub use neoc_vm::VM_THREAD_STACK;
 pub use require::NOT_FOR_APPS;
 pub use runtime::{LuaRuntime, UI_MODULE};
 pub use state::DepKey;

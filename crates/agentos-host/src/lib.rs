@@ -20,6 +20,7 @@
 pub mod config;
 pub mod net;
 pub mod platform;
+pub mod runtime;
 pub mod serve;
 pub mod startup;
 
