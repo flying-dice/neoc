@@ -200,7 +200,7 @@ end
 -- They become the tokens `tokenize` makes, so the keypad runs the evaluator above and not a copy of it.
 local function tokensOf(terms: { number | string }): { Token }
   local tokens: { Token } = {}
-  for _, term in terms do
+  for _, term in ipairs(terms) do
     if type(term) == "number" then
       table.insert(tokens, { kind = "num", value = tostring(term), number = term })
     else
@@ -237,8 +237,14 @@ function calc.describe(terms: { number | string }): string
   local width = 0
   for i = #terms, 1, -1 do
     local term = terms[i]
-    local word = if type(term) == "number" then calc.format(term) else SYMBOL[term]
-    width += (if type(term) == "number" then #word else 1) + 1 -- an operator symbol is one character, however many bytes
+    local word: string
+    if type(term) == "number" then
+      word = calc.format(term)
+      width = width + #word + 1
+    else
+      word = SYMBOL[term]
+      width = width + 2 -- an operator symbol is one character, however many bytes
+    end
     if width > CAPTION_WIDTH and #words > 0 then
       if type(first) ~= "number" then
         table.remove(words, 1)
