@@ -42,8 +42,8 @@ Run before every push. Loop until everything below is clean. Scale the work to t
    (`lint:luau`, `lint:stylua`) and the `vos-codegen` editor test when their tool is missing; `NEOC_REQUIRE_LUAU_LSP=1` does
    the same for `crates/neoc-vm/tests/luau_decls.rs`.
 
-   `gate:neoc` covers `cargo fmt`, clippy with `-D warnings`, the `neoc` and `neoc-vm` tests, the Lua suites, the bench
-   smoke, the toolchain pin, `cargo deny`, the Luau declarations (`luau_decls --check` and the luau-lsp fixtures),
+   `gate:neoc` covers `cargo fmt`, clippy with `-D warnings`, the `neoc` and `neoc-vm` tests, the Lua suites, `vos-lua`'s
+   module tests (`--test modules`, less the one darklua test), the bench smoke, the toolchain pin, `cargo deny`, the Luau declarations (`luau_decls --check` and the luau-lsp fixtures),
    `vos-codegen --check` (a new neoc module regenerates `types/generated/vos.d.luau`: run `cargo run -p vos-codegen`), a check
    that no neoc crate depends on a `vos-*` crate, and `cargo check --workspace --all-targets --locked`. If you changed the
    Rust schema or the app API, `bun run codegen` first and commit the regenerated files.
