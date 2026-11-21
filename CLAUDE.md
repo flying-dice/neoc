@@ -59,8 +59,9 @@ crates/vos-{lua,sqlite,fetch,acp,agui,http,mcp}/   # vos: adapters, one port or 
 crates/vos-codegen/          # vos: dev-time generator, Rust schema -> types/generated/*
 crates/vos-host/             # vos: composition root and the `vos` binary
 apps/<id>/                   # vos apps (app.json, *.luau, a client package, JOURNEYS.md, e2e/); apps/README.md
-e2e/apps/<id>/               # the framework fixtures: a task list with a Svelte client and one with a React client, on a Luau backend
+e2e/apps/<id>/               # the framework fixtures: Vite projects, a task list with a Svelte client and one with a React client, on one RPC definition and a Luau backend
 client/                      # the shell, its app frames and the managed renderer of view-tree apps (client/src/view); client/journeys/*.md for built-in pages and app frames
+packages/vite-plugin/        # @vos/vite-plugin: the RPC definition (OpenRPC) -> the typed client, the Luau router and Handlers; builds the app ref; the `vos` CLI (generate, lint, typecheck, format)
 packages/ui/, packages/storybook/   # the UI kit (atoms, molecules, organisms, templates, tokens, stories); the shared Storybook config
 e2e/                         # Playwright: stories, desktop, journeys against the real host; e2e/tools (session.mjs, contact-sheet.mjs)
 scripts/                     # lint and build scripts (check-*.ts, build-apps.ts, lint-luau.ts, ...), pre-pr.ts (the gate), check-neoc.sh
@@ -157,9 +158,9 @@ Node or Bun builtins in browser code, `new WebSocket` only in `client/src/view/r
 app's client has no socket: its frame has no network), and no `{@html}`, `innerHTML`,
 `outerHTML`, `insertAdjacentHTML` or `document.write`. Also atomic layers (`lint:atomic`, in `packages/ui` and `client/src`:
 atoms, molecules, organisms, templates, pages, each importing only strictly lower layers through the layer entry points) and
-test ids from the first commit (`lint:testids`). An app's client is its own package (`apps/*`, `e2e/apps/*`) outside
-those rules: it sets its own `data-testid`s, its package builds with the app (`build:apps`), and the journeys drive it
-through its frame (`frameOf` in `e2e/fixtures.ts`).
+test ids from the first commit (`lint:testids`). An app is its own Bun workspace package (`apps/*`, `e2e/apps/*`)
+outside those rules: its client sets its own `data-testid`s, its scripts (`lint`, `typecheck`: the Luau through `vos`) run with
+the repository's, `build:apps` builds it, and the journeys drive it through its frame (`frameOf` in `e2e/fixtures.ts`).
 
 ## Modules
 
@@ -225,10 +226,10 @@ Adding a module: see [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-new-module).
 - **neoc Lua:** a new module gets `crates/neoc/tests/<ns>/<name>.test.lua`, run with `neoc run`. (Not every existing module has one yet: `std:net`, `std:workers` and `lib:test` have none, and `std:task` uses a `.spec.lua`.) Per exported function: one happy path, one test per distinct error condition, and an empty or zero value where it applies. The outer `describe` is the bare module name.
 - **CLI spec:** `tooling/cli/*.feature`, driven by `crates/neoc/tests/cucumber.rs`.
 - **Benches:** three tiers per module (`library`, `into_out_lua`, `through_lua`), behind the `bench` feature.
-- **vos Rust** (`cargo nextest run --workspace --exclude neoc --exclude neoc-vm`): domain unit tests with no I/O; use cases in `vos-application` against the in-memory port fakes in `vos_application::testing` (no mocking library: write a fake); adapters through the real library in `crates/<adapter>/tests/` (the shipped apps too: `crates/vos-lua/tests/calculator_app.rs` builds `apps/calculator` with darklua and runs the bundle, which needs `bun` and `darklua`; `crates/vos-lua/tests/handlers.rs` is the backend of an app with a client); the real wiring on an ephemeral loopback port in `crates/vos-host/tests` (`/rpc`, `/agui`, `/mcp`, `/frame` and an app's client, pairing, the Agents app). Name a test after the behaviour, put the failure path next to the success path, keep each test independent (its own data directory, no fixed ports); a protocol or adapter change adds the test in the layer it touches and, across layers, one in the host. Tests may use `unwrap`, `expect` and `panic!` (`clippy.toml`).
+- **vos Rust** (`cargo nextest run --workspace --exclude neoc --exclude neoc-vm`): domain unit tests with no I/O; use cases in `vos-application` against the in-memory port fakes in `vos_application::testing` (no mocking library: write a fake); adapters through the real library in `crates/<adapter>/tests/` (the shipped apps too: `crates/vos-lua/tests/calculator_app.rs` builds `apps/calculator` with darklua and runs the bundle, which needs `bun` and `darklua`; `crates/vos-lua/tests/handlers.rs` is the backend of an app with a client, `router.rs` the router the plugin generates, built from `e2e/apps/tasks-svelte`); the real wiring on an ephemeral loopback port in `crates/vos-host/tests` (`/rpc`, `/agui`, `/mcp`, `/frame` and an app's client, pairing, the Agents app). Name a test after the behaviour, put the failure path next to the success path, keep each test independent (its own data directory, no fixed ports); a protocol or adapter change adds the test in the layer it touches and, across layers, one in the host. Tests may use `unwrap`, `expect` and `panic!` (`clippy.toml`).
 - **vos client and kit:** `bun test` next to the code (`*.test.ts`: the renderer core against a TypeScript fake host on an in-memory wire, the shell's rune modules through the preload in `client/bunfig.toml`, the kit's logic, `types/tests`).
 - **vos stories and e2e:** every screen and state of the shell, the renderer and the kit is a story (`*.stories.svelte`; renderer and shell states are JSON-tree stories on a fake host, and an app frame's states are stories with a stand-in document for the frame); `bun run test:e2e` runs every story (render, axe WCAG 2.1 AA, snapshots light and dark, no overflow), the `desktop` project (every `apps/*/app.json` and built-in page opened in the real shell on the real host: sizes, layouts, light and dark, axe, snapshots) and the `journeys` projects (`JOURNEYS.md` and `client/journeys/*.md`, one spec per journey id, driven by test ids). The `verify-change` skill (sections 3 and 7) says how the e2e host works and how to drive the real shell by hand.
-- **Luau apps:** `bun run lint:luau` runs `luau-lsp analyze` in strict mode over every app and fixture (backends; an app's client is checked by its own package's build and the Playwright journeys) against `types/generated/vos.d.luau` (a positive fixture, `negative/` fixtures whose `-- expect-error` markers are counted in `scripts/lint-luau.ts`, a second pass for an app's own modules); `bun run lint:stylua` checks the format.
+- **Luau apps:** `bun run lint:luau` runs `luau-lsp analyze` in strict mode over every view-tree app and fixture (an app that is a Vite project checks its Luau with `vos lint` and `vos typecheck`, which its scripts run, and its client with its own type check) against `types/generated/vos.d.luau` (a positive fixture, `negative/` fixtures whose `-- expect-error` markers are counted in `scripts/lint-luau.ts`, a second pass for an app's own modules); `bun run lint:stylua` checks the format.
 
 Locators in tests are `getByTestId` only; the test-id conventions are in `.claude/skills/coding-styleguide/references/typescript-svelte.md`.
 
@@ -374,7 +375,7 @@ worktree (Storybook = base, e2e host = base + 10).
 
 ```sh
 bun run dev             # build:apps, then the vos host on :7400 (dev_reload) + Vite on :5173; pair with the code the host prints
-bun run build:apps      # bundle every apps/*/app.json's backend into one Luau file (darklua), build its client (`bun run build` in the app's package), app refs + registry.json under dist/apps
+bun run build:apps      # build every app under apps/: a Vite project by its own `bun run build` (client, bundled backend, app ref), the others by bundling their Luau into one file (darklua); registry.json under dist/apps
 bun run build           # build the client (client/dist)
 bun run host            # cargo run -p vos-host: serves client/dist, /rpc, /agui, /mcp on :7400
 bun run host pair       # print a fresh device pairing code (every client must pair first, even on loopback)
@@ -411,14 +412,15 @@ A change is done when all of these hold:
 ## Adding things
 
 - **A neoc module:** [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-new-module).
-- **A vos app:** `apps/README.md`, "Adding an app". From its first commit the app has an `app.json` (with `client` and a
-  `window` min size, and a comment when the layout needs more than 320x240), a backend that returns its handlers, a client
-  package whose `bun run build` writes `dist/client.js`, a `JOURNEYS.md` plus `e2e/journeys.spec.ts` (driven through the
-  app's frame), and a Rust test of its handlers and tools next to the others in `crates/vos-lua/tests`. The generic
-  `desktop` project opens every installed app in the real shell with no extra code; each state beyond the landing view is
-  reached by a journey. The backend is `lint:luau` (strict) and StyLua clean from the first commit. Then design it with
-  `app-design` until the exit criteria hold; until then it stays in its PR. (A view-tree app keeps an `app.manifest` with a
-  `window` min size and shows a state no journey reaches as a JSON-tree story in the client Storybook, until NEOC-298.)
+- **A vos app:** `apps/README.md`, "Adding an app". An app is a Vite project (copy `e2e/apps/tasks-svelte`): from its first
+  commit it has an `app.json` (with a `window` min size, and a comment when the layout needs more than 320x240), the RPC
+  definition `rpc.openrpc.json` and the files `vos generate` makes from it, a backend that implements `Handlers` and returns
+  the router, a client with the plugin in its `vite.config.ts`, `lint` and `typecheck` scripts that cover the Luau, a
+  `JOURNEYS.md` plus `e2e/journeys.spec.ts` (driven through the app's frame), and a Rust test of its handlers and tools next
+  to the others in `crates/vos-lua/tests`. The generic `desktop` project opens every installed app in the real shell with no
+  extra code; each state beyond the landing view is reached by a journey. Then design it with `app-design` until the exit
+  criteria hold; until then it stays in its PR. (A view-tree app keeps an `app.manifest` with a `window` min size and shows a
+  state no journey reaches as a JSON-tree story in the client Storybook, until NEOC-298.)
 - **A web component of the shared kit** (NEOC-252): the kit's own story says how. **A renderer adapter** (view-tree apps, until NEOC-298): a component in the right atomic layer of `packages/ui` with a required `testid` prop
   and a story; an adapter under `client/src/view/<layer>/` that takes `AdapterProps`, reads props through `useView().view`
   inside `$derived`, renders children with `<Children>`, and is registered in `client/src/view/kit.ts`; the component's schema

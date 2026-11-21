@@ -1,41 +1,39 @@
 import { useCallback, useEffect, useState } from 'react'
+import type { Host, Rpc, Task } from '../generated/rpc'
 
-const messageOf = (e) => (e instanceof Error ? e.message : String(e))
+const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
-export default function App({ rpc, host }) {
-  const [tasks, setTasks] = useState([])
+export default function App({ rpc, host }: { rpc: Rpc; host: Host }) {
+  const [tasks, setTasks] = useState<Task[]>([])
   const [title, setTitle] = useState('')
-  const [error, setError] = useState(null)
+  const [error, setError] = useState<string | null>(null)
   const [theme, setTheme] = useState(host.theme)
 
-  // run a handler that answers with the whole list; a failure is the handler's own message
-  const call = useCallback(
-    async (method, args) => {
-      setError(null)
-      try {
-        setTasks(await rpc(method, args))
-        return true
-      } catch (e) {
-        setError(messageOf(e))
-        return false
-      }
-    },
-    [rpc]
-  )
+  // run a method that answers with the whole list; a failure is the backend's own message
+  const show = useCallback(async (call: Promise<Task[]>): Promise<boolean> => {
+    setError(null)
+    try {
+      setTasks(await call)
+      return true
+    } catch (e) {
+      setError(messageOf(e))
+      return false
+    }
+  }, [])
 
   // load once, then again whenever the backend says the list changed outside this window (an agent added a task)
   useEffect(() => {
-    void call('list')
+    void show(rpc.list())
     const stops = [
-      host.on('tasks.changed', () => void call('list')),
+      host.on('tasks.changed', () => void show(rpc.list())),
       host.on('host:theme', (t) => setTheme(t === 'dark' ? 'dark' : 'light'))
     ]
     return () => stops.forEach((stop) => stop())
-  }, [call, host])
+  }, [show, rpc, host])
 
   // not a <form>: the frame is sandboxed without allow-forms, so a form cannot submit; Enter is handled here
-  async function add() {
-    if (await call('add', { title })) setTitle('')
+  async function add(): Promise<void> {
+    if (await show(rpc.add({ title }))) setTitle('')
   }
 
   return (
@@ -50,12 +48,12 @@ export default function App({ rpc, host }) {
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && add()}
+          onKeyDown={(e) => e.key === 'Enter' && void add()}
           aria-label="New task"
           placeholder="What has to be done?"
           data-testid="tasks-react-title"
         />
-        <button type="button" onClick={add} data-testid="tasks-react-add">
+        <button type="button" onClick={() => void add()} data-testid="tasks-react-add">
           Add
         </button>
       </div>
@@ -71,7 +69,7 @@ export default function App({ rpc, host }) {
               <input
                 type="checkbox"
                 checked={task.done}
-                onChange={() => call('toggle', { id: task.id })}
+                onChange={() => show(rpc.toggle({ id: task.id }))}
                 data-testid={`tasks-react-toggle-${task.id}`}
               />
               <span>{task.title}</span>

@@ -18,6 +18,7 @@
  */
 import { z } from 'zod'
 import { messageOf } from '../view/errors'
+import { HostError } from './channel'
 import type { HostAppEvent } from '../view/protocol'
 
 /** The longest method name a client may call (the backend's own limit, `MAX_HANDLER_NAME`). */
@@ -37,7 +38,7 @@ const fromFrame = z.discriminatedUnion('t', [
 /** What the shell sends into a frame. */
 export type ToFrame =
   | { t: 'res'; id: number; result: unknown }
-  | { t: 'res'; id: number; error: string }
+  | { t: 'res'; id: number; error: { code: number; message: string; data?: unknown } }
   | { t: 'event'; name: string; data: unknown }
 
 export interface FrameBridgeOptions {
@@ -64,6 +65,17 @@ export interface FrameBridge {
   dispose(): void
 }
 
+/** JSON-RPC's internal error: what a failure that is not the host's own answer is reported as. */
+const INTERNAL_ERROR = -32603
+
+/** The JSON-RPC error a failed call answers with: the host's code, message and data, else an internal error. */
+function rpcErrorOf(error: unknown): { code: number; message: string; data?: unknown } {
+  if (error instanceof HostError) {
+    return { code: error.code, message: error.message, ...(error.data === undefined ? {} : { data: error.data }) }
+  }
+  return { code: INTERNAL_ERROR, message: messageOf(error) }
+}
+
 export function createFrameBridge(options: FrameBridgeOptions): FrameBridge {
   const { appId } = options
   let disposed = false
@@ -84,7 +96,7 @@ export function createFrameBridge(options: FrameBridgeOptions): FrameBridge {
             .call('app.call', { app: appId, method: message.method, args: message.args ?? null })
             .then(
               (result) => post({ t: 'res', id: message.id, result: result ?? null }),
-              (error: unknown) => post({ t: 'res', id: message.id, error: messageOf(error) })
+              (error: unknown) => post({ t: 'res', id: message.id, error: rpcErrorOf(error) })
             )
           return
         case 'ready':

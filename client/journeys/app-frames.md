@@ -2,9 +2,9 @@
 
 An app can draw its own screens in the web framework its developer knows (Svelte, React, plain JavaScript), on a
 backend written in Luau. Its window is a frame of the shell that loads the app's client; the client calls its
-backend by name (`rpc`), hears what the backend sends (`host.on`), and reaches nothing else. The journeys use the two
-framework fixtures, `tasks-svelte` and `tasks-react`: the same task list written once in each framework
-(`e2e/apps`; they are built for the tests and are not in Discover). Every journey runs against both.
+backend (`rpc`, typed from the app's one RPC definition), hears what the backend sends (`host.on`), and reaches nothing else. The journeys use the two
+framework fixtures, `tasks-svelte` and `tasks-react`: the same task list written once in each framework, Vite
+projects on one RPC definition (`e2e/apps`; they are built for the tests and are not in Discover). Every journey runs against both.
 
 Automated twins have the same ids: `e2e/appframes.journeys.spec.ts` (the two apps share their data, so they run one
 after another).
@@ -18,6 +18,7 @@ after another).
 | AF5 | Try to make the client reach out (network, the shell, storage). | The app open.                      | Every attempt fails: no fetch, no socket, no access to the shell's page, its cookie or its storage.                                        |
 | AF6 | Switch the shell between light and dark.                       | The app open.                      | The app follows at once, without reloading; the app's styles did not change the shell.                                                     |
 | AF7 | Use two apps with clients side by side.                        | Both apps open.                    | A task added in one is not in the other: each client reaches only its own backend.                                                         |
+| AF8 | Send the backend a call its definition does not allow.         | The app open.                      | The router refuses it with a JSON-RPC error that says what is wrong (invalid params, method not found); the window is unharmed.           |
 
 ## Manual verification
 

@@ -196,10 +196,13 @@ export type vos_SchemaBuilders = {
 	enum: (values: { string }, options: vos_SchemaOptions?) -> vos_Schema,
 }
 
+export type vos_FailOptions = { code: number?, data: any? }
+
 export type vos_ToolContext = {
 	actor: vos_Actor,
 	now: string,
-	fail: (self: vos_ToolContext, message: string) -> any,
+	--- `ctx:fail(message, { code, data })`: with a `code` the failure is a JSON-RPC error of that code (the generated router fails invalid params with -32602).
+	fail: (self: vos_ToolContext, message: string, options: vos_FailOptions?) -> any,
 }
 
 --- What a handler of an app's backend gets: who is calling and when (the person's client, so `actor.kind` is `"user"`).
@@ -207,7 +210,7 @@ export type vos_ToolContext = {
 export type vos_HandlerContext = {
 	actor: vos_Actor,
 	now: string,
-	fail: (self: vos_HandlerContext, message: string) -> any,
+	fail: (self: vos_HandlerContext, message: string, options: vos_FailOptions?) -> any,
 }
 
 --- What an app's entry returns: the handlers a client reaches with `rpc(name, args)`, as `handler(ctx, args)`.

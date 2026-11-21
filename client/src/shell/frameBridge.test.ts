@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { HostError } from './channel'
 import { createFrameBridge, eventFor, type FrameBridge, type ToFrame } from './frameBridge'
 
 const FRAME = { name: 'the frame window' }
@@ -62,11 +63,26 @@ describe('the frame bridge', () => {
     expect(events).toEqual({ ready: 0, failed: [] })
   })
 
-  test('a handler error comes back as its message', async () => {
-    const { bridge, posted, flush } = rig(() => Promise.reject(new Error('title is required')))
+  test('a JSON-RPC error of the host comes back with its code, message and data', async () => {
+    const { bridge, posted, flush } = rig(() =>
+      Promise.reject(new HostError(-32602, 'Invalid params: params.title is required', { field: 'title' }))
+    )
     bridge.receive({ source: FRAME, data: { t: 'rpc', id: 3, method: 'add', args: {} } })
     await flush()
-    expect(posted).toEqual([{ t: 'res', id: 3, error: 'title is required' }])
+    expect(posted).toEqual([
+      {
+        t: 'res',
+        id: 3,
+        error: { code: -32602, message: 'Invalid params: params.title is required', data: { field: 'title' } }
+      }
+    ])
+  })
+
+  test('any other failure is an internal error with its message', async () => {
+    const { bridge, posted, flush } = rig(() => Promise.reject(new Error('socket closed')))
+    bridge.receive({ source: FRAME, data: { t: 'rpc', id: 4, method: 'add', args: {} } })
+    await flush()
+    expect(posted).toEqual([{ t: 'res', id: 4, error: { code: -32603, message: 'socket closed' } }])
   })
 
   test('malformed messages are dropped', async () => {

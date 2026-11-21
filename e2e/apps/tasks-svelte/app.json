@@ -3,9 +3,12 @@
   "name": "Tasks (Svelte)",
   "version": "0.1.0",
   "description": "A fixture: a task list whose client is written in Svelte, on a Luau backend.",
-  "main": "app.luau",
-  "client": "client.js",
   "icon": "checkmark",
   "tint": "green",
-  "window": { "w": 420, "h": 480, "minW": 320, "minH": 320 }
+  "window": {
+    "w": 420,
+    "h": 480,
+    "minW": 320,
+    "minH": 320
+  }
 }

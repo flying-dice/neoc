@@ -1,82 +1,132 @@
 # Writing a vos app
 
-An app is a **web client and a Luau backend**. The client is the app's screens, written in any web framework (Svelte,
-React, plain JavaScript) and shipped as one prebuilt script; the host loads it into a frame of the app's window in the
-shell. The backend is **typed Luau** (`--!strict`) that runs in the app's own VM on the host: its data, its tools for
-agents, its background work. The client calls the backend by name, and the backend can tell the client when something
-changed. The client reaches nothing else.
+An app is **one Vite project**: a web client (the app's screens, in any framework: Svelte, React, plain JavaScript) and a
+**Luau backend** (typed, `--!strict`) that runs in the app's own VM on the host: its data, its tools for agents, its
+background work. The two meet in one place, the app's **RPC definition**: a JSON-RPC 2.0 contract written once, in a file,
+that says which methods the client may call, with which params and what they return. The vos Vite plugin generates from it
+the typed `rpc` client for the client, the Luau router, and the Luau interface the backend implements. The developer writes
+the client, and the implementation of the handlers; nothing else on either side of the RPC.
 
-**This page describes the transport an app runs on: how a client script and a Luau backend meet in the host.** An app
-is meant to be built as a Vite project whose RPC is defined once and from which a vos Vite plugin generates the typed
-client, the Luau router and the handler interface (NEOC-300, next change); until it lands, the client script and the
-handler table are written by hand, as below, and that is the layer the generated code will sit on. Don't treat the
-hand-built layout as the final workflow.
-
-Two apps show the model: `e2e/apps/tasks-svelte` and `e2e/apps/tasks-react` (the same task list written once in each
-framework, on the same backend; they are test fixtures, not in Discover). The older view-tree apps, `apps/calculator`
-and `apps/agents`, describe their screens in Luau instead and have no client (see "View-tree apps" below; NEOC-298
-ports them and retires that model). The backend API is typed in `types/generated/vos.d.luau` (generated from the Rust
-schema by `bun run codegen`; never edit it): every `app.*` call and every `std:`/`lib:`/`vnd:` module an app may
+Two apps show it: `e2e/apps/tasks-svelte` and `e2e/apps/tasks-react`, the same task list written once in each framework, on
+the same definition and the same backend (they are test fixtures, not in Discover). The older view-tree apps,
+`apps/calculator` and `apps/agents`, have no client: their Luau describes the screens instead (see "View-tree apps" below;
+NEOC-298 ports them and retires that model). The backend API is typed in `types/generated/vos.d.luau` (generated from the
+Rust schema by `bun run codegen`; never edit it): every `app.*` call and every `std:`/`lib:`/`vnd:` module an app may
 `require`. It is the reference; hover docs show in an editor running luau-lsp with
 `luau-lsp.types.definitionFiles = { "@vos": "types/generated/vos.d.luau" }` and `luau-lsp.platform.type = "standard"`.
 
-## The package
+## The project
 
 ```
 apps/<id>/                    (or e2e/apps/<id> for a test fixture)
-  app.json             the package manifest
-  app.luau             the backend: the entry (`main`), returns the handlers
-  *.luau               modules the entry loads with require("./calc")
-  package.json         the client's package: `bun run build` writes dist/client.js
-  src/                 the client's source, in whatever framework
-  JOURNEYS.md          4 to 8 key user journeys (goal, start state, observable "Done when"; never steps)
-  e2e/journeys.spec.ts their automated twins, one test per journey id
-  tests/, negative/, e2e/   never shipped
+  app.json                the manifest: id, name, version, window, icon, tint, description, requires.host, migrations
+  rpc.openrpc.json        the RPC definition: the contract (OpenRPC)
+  vite.config.ts          plugins: [<your framework>(), vos()]
+  package.json            scripts: generate, build, typecheck, lint, format (a Bun workspace package)
+  src/main.ts             the client: exports mount(el, props)
+  app.luau                the backend: implements the handlers, returns the router; tools, data, background work
+  *.luau                  modules the backend loads with require("./thing")
+  generated/rpc.ts        GENERATED: the typed client
+  generated/rpc.luau      GENERATED: the types, the Handlers interface, the router
+  .styluaignore           generated/
+  JOURNEYS.md, e2e/       journeys and their specs, one test per journey id
 ```
 
-`app.json`: `id` (3 to 40 characters: lowercase letters, digits, dashes; namespaces the app's data and tools), `name`,
-`version` (`major.minor.patch`; bump it to ship a change), `main` (the backend), `client` (the client script's name in the
-app ref, ending in `.js`), `window` (`{ w, h, minW, minH }`: the default size and the **minimum**), `icon`, `tint`,
-`description`, `requires.host` and optional `migrations`. The shell needs the window and the client's name before any code
-runs, so they are in `app.json` and the backend declares nothing about itself (no `app.manifest`).
+`app.json` is the package manifest: `id` (3 to 40 characters: lowercase letters, digits, dashes; namespaces the app's data
+and tools), `name`, `version` (`major.minor.patch`; bump it to ship a change), `window` (`{ w, h, minW, minH }`: the default
+size and the **minimum**, the smallest size where every control is fully visible and at least 44 pt), `icon`, `tint`,
+`description`, `requires.host` and optional `migrations`. The shell needs the window before any code runs, so it is here and
+not in the Luau. The plugin adds `main` and `client` to the app ref it builds.
 
-**An app with a client is a Bun workspace package** (`apps/*` and `e2e/apps/*` are in the root `workspaces`): its
-framework is an ordinary dependency, installed by the root `bun install`.
+**An app is a Bun workspace package** (`apps/*` and `e2e/apps/*` are in the root `workspaces`): its framework and the plugin
+are ordinary dependencies, installed by the root `bun install`.
 
-`bun run build:apps` builds each app. For the backend it bundles the entry with darklua into one `app.luau` (relative
-`require`s inlined, types and comments stripped, statements kept on their source lines). For the client it runs `bun run
-build` in the app's folder and takes `dist/client.js`. Both go into an **app ref** (`app-ref.json` with a sha256 per
-file) under `dist/apps/<id>/<version>/`, plus `dist/apps/registry.json`. The host installs an app from an app ref URL
-(`file://`, `http://`, `https://`), verifies every sha256 (the client's too) and runs the migrations. `bun run dev`
-rebuilds on save and the host reloads the app's VM, keeping its database; reopen the window to load a new client.
-`darklua` 0.18.0 must be installed; the build fails without it.
+```ts
+// vite.config.ts
+import { svelte } from '@sveltejs/vite-plugin-svelte'
+import { vos } from '@vos/vite-plugin'
+import { defineConfig } from 'vite'
+export default defineConfig({ plugins: [svelte({ configFile: false, compilerOptions: { css: 'injected' } }), vos()] })
+```
+
+`vos()` takes optional `{ definition, generated, client, backend }` (defaults `rpc.openrpc.json`, `generated`, `src/main.ts`,
+`app.luau`).
+
+## The RPC definition
+
+`rpc.openrpc.json` is an [OpenRPC](https://spec.open-rpc.org/) document (the standard description of a JSON-RPC 2.0
+service). Requests, results and errors are JSON-RPC 2.0: a call is `{ method, params }`, params are **by name**, a result is
+any JSON value, an error has a `code`, a `message` and optional `data`.
+
+```json
+{
+  "openrpc": "1.3.2",
+  "info": { "title": "Tasks", "version": "0.1.0" },
+  "methods": [
+    {
+      "name": "add",
+      "summary": "Add a task, and answer with the whole list.",
+      "params": [{ "name": "title", "required": true, "schema": { "type": "string", "maxLength": 200 } }],
+      "result": { "name": "tasks", "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Task" } } },
+      "errors": [{ "code": -32010, "message": "A task needs a title." }]
+    }
+  ],
+  "components": {
+    "schemas": {
+      "Task": {
+        "type": "object",
+        "properties": { "id": { "type": "integer" }, "title": { "type": "string" }, "done": { "type": "boolean" } },
+        "required": ["id", "title", "done"]
+      }
+    }
+  }
+}
+```
+
+A deliberate subset, and an error that names where when the document goes beyond it: method and param names are identifiers
+(they become `rpc.add({ title })` and `add = function(ctx, params)`); schemas are `type` (`string`, `number`, `integer`,
+`boolean`, `null`, `array`, `object`, or a list of one of these and `"null"`), `enum` of strings, `minLength`, `maxLength`,
+`minimum`, `maximum`, `items`, `properties` with `required`, `description` and `$ref` to `#/components/schemas/<Name>`. An
+object takes no property it does not declare. A JSON `null` and an absent key are the same thing in Luau.
+
+## What the plugin generates
+
+`vos generate` (the plugin does it too when `vite build` or the dev server starts and whenever the definition changes) writes
+two files that are committed with the app, so the editor and the linters see them without a build, and `vos generate --check`
+(part of `lint`) fails when they are stale:
+
+- `generated/rpc.ts`: a type for every schema, `Rpc` (one typed function per method), `createRpc(raw)`, the `MountProps`
+  and `Host` types of the mount contract, and `RpcError`.
+- `generated/rpc.luau`: the same types in Luau, **`Handlers`** (the interface the backend implements), the schemas, and
+  **`router(handlers)`**. The router receives a call, holds its params to the definition (a refused call is the JSON-RPC
+  error `-32602 Invalid params: params.title is required`, and the handler never runs), dispatches it, and holds what the
+  handler returns to the definition too (a mismatch is `-32603`, a bug in the backend); a method the definition does not
+  have is `-32601 Method not found`. An entry whose handlers miss a method of the definition, or implement one it does not
+  declare, does not load.
 
 ## The client
 
-The client is **one classic script** that defines the global `vosApp` with `mount(el, { rpc, host })`, which draws into
-`el` and returns a function that unmounts it. With Vite, in each framework:
+`src/main.ts` exports `mount(el, { rpc, host })`, draws into `el` and returns a function that unmounts it. The plugin builds it
+into **one classic script** (`dist/client.js`, an IIFE that defines the global `vosApp`; a module script would need CORS in
+the app's frame):
 
-```js
-// the entry (Svelte shown; React is createRoot(el).render(...) and root.unmount())
+```ts
 import { mount as mountApp, unmount } from 'svelte'
+import { createRpc, type MountProps } from '../generated/rpc'
 import App from './App.svelte'
-export function mount(el, props) {
-  const app = mountApp(App, { target: el, props })
-  return () => unmount(app)
-}
 
-// vite.config: a library build to one IIFE named vosApp
-build: { lib: { entry: 'src/main.ts', name: 'vosApp', formats: ['iife'], fileName: () => 'client.js' } }
+export function mount(el: HTMLElement, props: MountProps): () => void {
+  const app = mountApp(App, { target: el, props: { rpc: createRpc(props.rpc), host: props.host } })
+  return () => void unmount(app)
+}
 ```
 
-Keep the **styles inside the script** (Svelte: `compilerOptions: { css: 'injected' }`; React: a `<style>` you add when
-`mount` runs) and set `data-testid` on every interactive element yourself (`<appId>-<thing>`).
-
-What `mount` gets:
+Keep the **styles inside the script** (Svelte: `compilerOptions: { css: 'injected' }`; React: a `<style>` you add when `mount`
+runs) and set `data-testid` on every interactive element yourself (`<appId>-<thing>`).
 
 | | |
 |---|---|
-| `rpc(method, args)` | calls the backend handler `method` with `args` (any JSON); resolves with its result, rejects with an `Error` whose message is the handler's (`ctx:fail(...)`, or the error it raised) |
+| `rpc.add({ title })` | the typed call: resolves with the result, or rejects with an `RpcError` (`code`, `message`, `data`) |
 | `host.on(name, fn)` | hears an event, returns a function that stops listening: one the backend sent with `app.emit(name, data)`, or the host's own, whose names start with `host:` |
 | `host.theme` | `"light"` or `"dark"`: the shell's appearance now. `host:theme` is the event when it changes, and `<html data-theme>` and `color-scheme` follow it, so style dark as `html[data-theme="dark"]` |
 
@@ -84,72 +134,92 @@ What `mount` gets:
 frame has no network (its content security policy allows none: `fetch`, WebSocket and the rest fail), no access to the
 shell's page, cookie or storage (`localStorage`, `document.cookie` and `parent.document` throw), and one way out: `rpc`
 reaches **this app's** backend, and the host knows which app is calling from the frame the message came from, never from
-anything the client says. The client's styles and scripts stay in its frame. The frame is sandboxed without
-`allow-forms`, so **a `<form>` cannot submit** (not even to `preventDefault` it): handle clicks and the Enter key yourself. This is sensible isolation, so apps do not
-trip over each other or over the shell; it is not a security boundary. Lasting data belongs in the backend (the frame has
-no storage).
+anything the client says. The client's styles and scripts stay in its frame. The frame is sandboxed without `allow-forms`,
+so **a `<form>` cannot submit** (not even to `preventDefault` it): handle clicks and the Enter key yourself. This is
+sensible isolation, so apps do not trip over each other or over the shell; it is not a security boundary. Lasting data
+belongs in the backend (the frame has no storage).
 
 The shell draws sheets, alerts and toasts above the frame (the shared UI kit and its tokens are NEOC-252; the kit will be
 served at `/kit/tokens.css` and `/kit/kit.js`).
 
 ## The backend
 
-The entry runs once when the app loads and **returns a table of handlers**, the functions a client reaches with
-`rpc(name, args)`. A handler is called as `handler(ctx, args)` and returns any JSON value (`nil` is `null`):
+`app.luau` implements the generated `Handlers` interface and **returns the router**:
 
 ```lua
 --!strict
 local app = require("vos:app")
+local rpc = require("./generated/rpc")
 local db = app.db
 
-db:migrate { [1] = "create table tasks(id integer primary key, title text not null)" }
+db:migrate { [1] = "create table tasks(id integer primary key, title text not null, done integer not null default 0)" }
 
-local handlers: vos_Handlers = {
-  list = function(_ctx, _args)
-    return db:all("select id, title from tasks order by id")
+local function list(): { rpc.Task } -- reads the rows (see e2e/apps/tasks-svelte)
+  ...
+end
+
+local handlers: rpc.Handlers = {
+  list = function(_ctx)
+    return list()
   end,
-  add = function(ctx, args)
-    if type(args) ~= "table" or type(args.title) ~= "string" then
+  add = function(ctx, params) -- params.title is a string: the router checked it
+    if params.title == "" then
       return ctx:fail("A task needs a title.") -- the client's rpc rejects with exactly this
     end
-    db:exec("insert into tasks(title) values (:title)", { title = args.title })
-    return db:all("select id, title from tasks order by id")
+    db:exec("insert into tasks(title) values (:title)", { title = params.title })
+    return list()
   end,
 }
-return handlers
+
+return rpc.router(handlers)
 ```
 
 - **`ctx`** is `{ actor, now, fail }`: `actor.kind` is `"user"` (it is the person's own client calling), `now` an ISO time,
-  `ctx:fail(message)` ends the call with a message that has no file or line. Any other error the handler raises reaches
-  the client as `app.luau:12: message`.
+  `ctx:fail(message)` ends the call with an application error (`-32010`) whose message has no file or line, and
+  `ctx:fail(message, { code = ..., data = ... })` fails with that JSON-RPC error code. Any other error the handler raises
+  reaches the client as `-32010` with `app.luau:12: message`.
 - **Services.** A handler, a tool and background work all reach the host the same way, through the `app` global:
-  `app.db`, `app.kv`, `app.files`, `app.notify`, `app.log`, `app.agents:list()`, `app.emit`. There is nothing special about
-  `ctx`. A handler may write: the person's client is calling. The entry may also return nothing (an app with only tools).
+  `app.db`, `app.kv`, `app.files`, `app.notify`, `app.log`, `app.agents:list()`, `app.emit`. A handler may write: the
+  person's client is calling.
 - **Events.** `app.emit(name, data)` tells the app's open clients something changed (they hear it with `host.on`): after
   an agent's tool changed data, or from a background task. `name` is 1 to 64 letters, digits and `. _ : -` (not `host:...`),
   `data` JSON of at most 64 KiB, at most 256 events waiting; a `readOnly` tool may not emit.
-- **Calls** from a client, a tool and a task all queue behind one another: one runs at a time in an app's VM. A call to a
-  handler that does not exist, or to an app that is not running, rejects with a message.
-- **Tools** are separate from handlers (agents call tools over MCP, the client calls handlers), and unchanged:
+- **Calls** from a client, a tool and a task all queue behind one another: one runs at a time in an app's VM.
+- **Tools** are separate from handlers (agents call tools over MCP, the client calls handlers):
   `app.tool { name, title, description, readOnly, input, run }` (MCP name `<id>__<name>`, local name `[a-z][a-z0-9_]*`);
   describe every input field with `app.t` builders (agents read them); the host validates input before `run`.
   `readOnly = true` is enforced for the `app.*` API (no db, kv, files, notify, emit or shell writes, no registering
   anything; tasks and requests the call starts inherit it) and lets an agent with the default `auto_read_only` policy
   call the tool without a prompt. It does not cover the `std:`/`vnd:` modules. A tool that writes is not `readOnly`.
   Handlers have no `readOnly`.
-- **Background work:** start loops with `task.spawn` from `std:task` and let the entry return (the app is not loaded until
-  it does). Closing a window leaves the work running, `app.emit` from a task reaches the open windows, and unloading aborts
-  tasks and closes servers (`crates/vos-host/tests/fixtures/ticker` is an example).
+- **Background work:** start loops with `task.spawn` from `std:task` before the entry returns the router (the app is not
+  loaded until it does). Closing a window leaves the work running, `app.emit` from a task reaches the open windows, and
+  unloading aborts tasks and closes servers (`crates/vos-host/tests/fixtures/ticker` is an example).
 - **Luau limits:** a host call (`app.db:*`, `app.kv:*`) cannot wait inside a `string.gsub` callback, a `table.sort`
   comparator, a metamethod other than `__call`, or an `xpcall` handler. No `print`, `os`, `debug`, `load*`; `bit` is
   `bit32`; `string.format("%s", v)` takes strings and numbers only. The root README lists the language differences.
 - **Modules:** `lib:test`, `lib:compile` and `std:workers` are not offered (`vos_domain::NOT_FOR_APPS`); naming one is a
   type error. Everything else in `neoc-vm` is, with no permission to ask for. An app is the person's own code on their
   own host: `CLAUDE.md` ("Boundaries") says what the VM does and does not keep apart.
-- **Your own modules are `any` in the editor.** luau-lsp resolves a relative `require` only while `require` is its
-  built-in; `bun run lint:luau` checks them in a second pass. A wrong call into one is an error there, not in the editor.
 - **Data:** `db:migrate` steps are numbered and run once each (a changed old step is an error). SQL `ATTACH` is denied
   through `app.db`.
+
+## The scripts
+
+| Script | What it does |
+|---|---|
+| `bun run generate` | `vos generate`: write `generated/` from the definition |
+| `bun run build` | `vite build`: the client script, the backend bundled by darklua, and the app ref the host installs, all in `dist/` (`app-ref.json`, `app.luau`, `client.js`, each with a sha256) |
+| `bun run typecheck` | `vos typecheck` (generated files current, luau-lsp strict over the Luau against `types/generated/vos.d.luau`) and the client's own type check (`svelte-check` or `tsc`) |
+| `bun run lint` | `vos lint`: the same Luau check, and StyLua |
+| `bun run format` | `vos format`: StyLua over the Luau (not `generated/`) |
+
+The repository's `bun run lint`, `typecheck` and `test` run every project's scripts. luau-lsp 1.70.1, StyLua and darklua
+0.18.0 must be installed; a missing one skips on a developer machine and fails in the gate (`VOS_GATE=1`).
+`bun run build:apps` builds every app under `apps/`, a Vite project by running its `build` and copying `dist/`, and writes the
+registry. The host installs an app from an app ref URL (`file://`, `http://`, `https://`), verifies every sha256 (the client's
+too) and runs the migrations. `bun run dev` rebuilds on save and the host reloads the app's VM, keeping its database; reopen
+the window to load a new client.
 
 ## View-tree apps (retired by NEOC-298)
 
@@ -264,21 +334,22 @@ if app.files.errorKind(err) == "not_found" then end  -- the kinds of std:fs
 
 ## Adding an app
 
-An app with a client:
+An app that is a Vite project:
 
-1. **Package.** Copy `e2e/apps/tasks-svelte` (or `tasks-react`) to `apps/<id>`; edit `app.json` (version `0.1.0`: the
-   `window` minimum is the smallest size where every control is fully visible and at least 44 pt) and `app.luau`.
-2. **Backend** as handlers (logic in its own module, testable without the client), tools with a described schema and a
-   truthful `readOnly`; `app.emit` wherever data changes outside the client.
-3. **Client** with `data-testid` on every interactive element, working by keyboard, in light and dark and at the minimum
-   window; `bun run build:apps` builds it.
-4. **Clean.** `bun run lint:luau` and `bun run lint:stylua` pass, not skipped; `bun run format` fixes formatting.
-5. **Tests:** a Rust test of the handlers and tools next to `crates/vos-lua/tests/handlers.rs`; a host test in
+1. **Project.** Copy `e2e/apps/tasks-svelte` (or `tasks-react`) to `apps/<id>`; edit `app.json` (version `0.1.0`) and the
+   definition.
+2. **Define the RPC first** in `rpc.openrpc.json`, then `bun run generate`.
+3. **Implement the handlers** in `app.luau` (logic in its own module, testable without the client); tools with a described
+   schema and a truthful `readOnly`; `app.emit` wherever data changes outside the client.
+4. **Client** with `data-testid` on every interactive element, working by keyboard, in light and dark and at the minimum
+   window.
+5. **Clean.** `bun run lint` and `bun run typecheck` in the project pass, not skipped; `bun run format` fixes formatting.
+6. **Tests:** a Rust test of the router and handlers next to `crates/vos-lua/tests/router.rs`; a host test in
    `crates/vos-host/tests` for what needs the data layer or agents; `JOURNEYS.md` and `e2e/journeys.spec.ts` with a test of
    the same id per journey, reached through `page.frameLocator('[data-testid="<id>-frame"]')` (an error case, a minimum
    window, keyboard only, and an agent driving the app where it applies). The generic `desktop` project opens every
    installed app in the real shell (sizes, layouts, light and dark, axe, snapshots).
-6. **Try it for real** (`verify-change`), then **design it** with `app-design` until its exit criteria hold, and ship it
+7. **Try it for real** (`verify-change`), then **design it** with `app-design` until its exit criteria hold, and ship it
    through a PR whose review applies the `pr-review` section "vos checks". Until then the app stays in its PR.
 
 A view-tree app:

@@ -284,6 +284,9 @@ fn handler_err(e: &AppError) -> RpcError {
         AppError::Port(PortError::Rejected(message)) => {
             RpcError { code: codes::APP_ERROR, message: message.clone(), data: None }
         }
+        AppError::Port(PortError::Rpc { code, message, data }) => {
+            RpcError { code: *code, message: message.clone(), data: data.clone() }
+        }
         other => rpc_err(other),
     }
 }

@@ -10,7 +10,7 @@
 use crate::{
     api,
     convert::{json_to_lua, lua_to_json},
-    error::{ScriptError, ToolFailure},
+    error::{RpcFailure, ScriptError, ToolFailure},
     state::{DepKey, SharedTracker, TrackGuard, Tracker, TrackerScope},
     tx::OpenTx,
     view::{RenderScope, ViewInstance},
@@ -72,8 +72,11 @@ pub enum VmError {
     ToolFailed(String),
     #[error("no such tool `{0}`")]
     NoSuchTool(String),
+    /// The handler (or the generated router) failed with a JSON-RPC error code: `ctx:fail(message, { code })`.
+    #[error("{message}")]
+    Rpc { code: i32, message: String, data: Option<Value> },
     /// A client called a handler the backend does not have.
-    #[error("the app has no handler `{0}`")]
+    #[error("method not found: {0}")]
     NoSuchHandler(String),
     /// The entry returned something that is not a table of handler functions.
     #[error("the entry must return nothing or a table of functions by name: {0}")]
@@ -603,6 +606,9 @@ impl Drop for AppVm {
 
 /// A script's error as the VM reports it: `ctx:fail` is a failed tool call, anything else a script error.
 pub(crate) fn script(e: &mlua::Error) -> VmError {
+    if let Some(f) = e.downcast_ref::<RpcFailure>() {
+        return VmError::Rpc { code: f.code, message: f.message.clone(), data: f.data.clone() };
+    }
     match e.downcast_ref::<ToolFailure>() {
         Some(f) => VmError::ToolFailed(f.0.clone()),
         None => VmError::Script(ScriptError::from_lua(e)),

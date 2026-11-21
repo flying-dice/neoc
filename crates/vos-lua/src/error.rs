@@ -31,6 +31,22 @@ impl fmt::Display for ToolFailure {
 }
 impl std::error::Error for ToolFailure {}
 
+/// `ctx:fail(message, { code = ..., data = ... })`: a failure with a JSON-RPC error code, which reaches the caller as
+/// that error (the generated router fails invalid params this way). Like [`ToolFailure`] it is not a bug in the app.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RpcFailure {
+    pub code: i32,
+    pub message: String,
+    pub data: Option<serde_json::Value>,
+}
+
+impl fmt::Display for RpcFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+impl std::error::Error for RpcFailure {}
+
 /// Does a message already begin with `chunk.luau:LINE:` (or `chunk.lua:LINE:`)?
 fn has_location(message: &str) -> bool {
     let Some((head, rest)) = message.split_once(':') else { return false };

@@ -64,6 +64,9 @@ return {
   nothing = function() end,
   fail = function(ctx) return ctx:fail("A task needs a title.") end,
   explode = function() error("boom") end,
+  coded = function(ctx) return ctx:fail("not today", { code = -32001, data = { why = "closed" } }) end,
+  badcode = function(ctx) return ctx:fail("x", { code = "no" }) end,
+  plain = function(ctx) return ctx:fail("just a message", {}) end,
   loop = function() local t = {} t.t = t return t end,
 }
 "#;
@@ -116,13 +119,32 @@ async fn a_handler_that_fails_answers_with_its_message() {
 }
 
 #[tokio::test]
+async fn a_failure_with_a_code_reaches_the_caller_as_that_json_rpc_error() {
+    let rig = rig();
+    load(&rig, "tasks", TASKS).await.unwrap();
+    assert_eq!(
+        call(&rig, "tasks", "coded", Value::Null).await.unwrap_err(),
+        PortError::Rpc { code: -32001, message: "not today".into(), data: Some(json!({ "why": "closed" })) }
+    );
+    // options without a code are a plain failure; a code that is not a whole number is a mistake in the app
+    assert_eq!(
+        call(&rig, "tasks", "plain", Value::Null).await.unwrap_err(),
+        PortError::Rejected("just a message".into())
+    );
+    let PortError::Rejected(mistake) = call(&rig, "tasks", "badcode", Value::Null).await.unwrap_err() else {
+        panic!("rejected");
+    };
+    assert!(mistake.contains("`code` must be a whole number"), "{mistake}");
+}
+
+#[tokio::test]
 async fn a_call_for_a_handler_that_does_not_exist_says_so() {
     let rig = rig();
     load(&rig, "tasks", TASKS).await.unwrap();
-    let PortError::Rejected(message) = call(&rig, "tasks", "nope", Value::Null).await.unwrap_err() else {
-        panic!("rejected");
-    };
-    assert_eq!(message, "the app has no handler `nope`");
+    assert_eq!(
+        call(&rig, "tasks", "nope", Value::Null).await.unwrap_err(),
+        PortError::Rpc { code: -32601, message: "Method not found: nope".into(), data: None }
+    );
     // a name no handler can have is the same answer, whatever its length
     assert!(call(&rig, "tasks", &"x".repeat(10_000), Value::Null).await.is_err());
     // a tool is not a handler

@@ -60,7 +60,7 @@ export const NEGATIVE_MARKERS: Record<string, number> = {
 }
 
 /** Where apps and their fixtures live. */
-const SOURCES = ['apps/**/*.luau', 'e2e/apps/**/*.luau', 'crates/*/tests/fixtures/**/*.luau', 'scripts/fixtures/**/*.luau']
+const SOURCES = ['apps/**/*.luau', 'crates/*/tests/fixtures/**/*.luau', 'scripts/fixtures/**/*.luau']
 const SKIP = /node_modules|\.claude|\/target\//
 
 /** One finding of `luau-lsp analyze`: the 1-based line, the message up to its `caused by:` lines, the whole message. */

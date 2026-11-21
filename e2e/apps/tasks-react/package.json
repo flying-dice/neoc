@@ -3,16 +3,24 @@
   "private": true,
   "type": "module",
   "version": "0.1.0",
-  "description": "A fixture app: a task list whose client is written in React. `bun run build` writes dist/client.js.",
+  "description": "A fixture app: a task list whose client is written in React. `bun run build` writes the app ref (dist/app-ref.json, app.luau, client.js).",
   "scripts": {
-    "build": "vite build"
+    "generate": "vos generate",
+    "build": "vite build",
+    "typecheck": "vos typecheck && tsc --noEmit -p tsconfig.json",
+    "lint": "vos lint",
+    "format": "vos format"
   },
   "dependencies": {
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },
   "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^6.3.0",
+    "@vos/vite-plugin": "workspace:*",
+    "typescript": "^5.9.3",
     "vite": "^8.3.4"
   }
 }

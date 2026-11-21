@@ -128,6 +128,11 @@ fn port_error(app: &AppId, e: VmError) -> PortError {
             tracing::warn!(%app, error = %script, traceback = script.traceback.as_deref().unwrap_or(""), "app code failed");
             PortError::Rejected(e.to_string())
         }
+        VmError::Rpc { code, message, data } => PortError::Rpc { code, message, data },
+        // JSON-RPC's "method not found": the client called something the backend does not implement
+        VmError::NoSuchHandler(name) => {
+            PortError::Rpc { code: -32601, message: format!("Method not found: {name}"), data: None }
+        }
         other => PortError::Rejected(other.to_string()), // ctx:fail, invalid input, bad data
     }
 }

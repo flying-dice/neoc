@@ -1,11 +1,5 @@
 <script lang="ts">
-  import type { Host, Rpc } from './vos'
-
-  interface Task {
-    id: number
-    title: string
-    done: boolean
-  }
+  import type { Host, Rpc, Task } from '../generated/rpc'
 
   let { rpc, host }: { rpc: Rpc; host: Host } = $props()
 
@@ -16,10 +10,11 @@
 
   const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
-  async function call(method: string, args?: unknown): Promise<void> {
+  // run a method that answers with the whole list; a failure is the backend's own message
+  async function show(call: Promise<Task[]>): Promise<void> {
     error = null
     try {
-      tasks = (await rpc(method, args)) as Task[]
+      tasks = await call
     } catch (e) {
       error = messageOf(e)
     }
@@ -27,15 +22,15 @@
 
   // not a `<form>`: the frame is sandboxed without `allow-forms`, so a form cannot submit; Enter is handled here
   async function add(): Promise<void> {
-    await call('add', { title })
+    await show(rpc.add({ title }))
     if (!error) title = ''
   }
 
   // load once, then again whenever the backend says the list changed outside this window (an agent added a task)
   $effect(() => {
-    void call('list')
+    void show(rpc.list())
     const stops = [
-      host.on('tasks.changed', () => void call('list')),
+      host.on('tasks.changed', () => void show(rpc.list())),
       host.on('host:theme', (t) => (theme = t === 'dark' ? 'dark' : 'light'))
     ]
     return () => stops.forEach((stop) => stop())
@@ -69,7 +64,7 @@
           <input
             type="checkbox"
             checked={task.done}
-            onchange={() => call('toggle', { id: task.id })}
+            onchange={() => show(rpc.toggle({ id: task.id }))}
             data-testid="tasks-svelte-toggle-{task.id}"
           />
           <span>{task.title}</span>
