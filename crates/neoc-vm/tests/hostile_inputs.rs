@@ -676,3 +676,98 @@ fn a_ring_of_sixty_thousand_macros_is_planned_in_linear_time() {
         started.elapsed()
     );
 }
+
+/// `std:fs` against trees built to hang or overflow a naive implementation, on a 2 MiB thread: a directory nest
+/// as deep as the operating system's path limit allows, symlink loops (to a parent, to itself, in a cycle of two),
+/// and counts no tree can satisfy. Each call must finish with a value or an `(nil, err)` pair, and nothing may be
+/// followed out of the tree (a victim directory next to it must survive the recursive remove).
+#[test]
+fn std_fs_tree_operations_survive_deep_nests_and_symlink_loops() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_str().unwrap().to_owned();
+    let lines = on_small_stack(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let lua = make_engine().unwrap();
+        lua.globals().set("root", root).unwrap();
+        let out: Table = rt
+            .block_on(
+                lua.load(
+                    r#"
+                    local fs = require("std:fs")
+                    local out = {}
+                    local function note(label, value, err)
+                      out[#out + 1] = label .. ":" .. (value ~= nil and "ok" or ("err " .. tostring(fs.error_kind(err))))
+                    end
+                    assert(fs.create_dir(root .. "/victim") and fs.write(root .. "/victim/precious", "p"))
+
+                    -- a nest as deep as the path limit allows (the create fails at the limit: stop there)
+                    local deep = root .. "/deep"
+                    assert(fs.create_dir(deep))
+                    local levels = 0
+                    for _ = 1, 4000 do
+                      local nested = deep .. "/d"
+                      if not fs.create_dir(nested) then break end
+                      deep, levels = nested, levels + 1
+                    end
+                    assert(levels > 20, "the nest is too shallow to mean anything: " .. levels)
+                    -- loops, in the nest and beside it
+                    fs.symlink(root, deep .. "/up")
+                    fs.symlink(".", root .. "/deep/self")
+                    fs.symlink("two", root .. "/one")
+                    fs.symlink("one", root .. "/two")
+
+                    note("walk", fs.walk(root .. "/deep"))
+                    note("walk depth", fs.walk(root .. "/deep", { max_depth = 2 }))
+                    note("walk huge depth", fs.walk(root .. "/deep", { max_depth = 2^63 }))
+                    note("walk hostile depth", fs.walk(root .. "/deep", { max_depth = 0/0 }))
+                    note("copy_dir", fs.copy_dir(root .. "/deep", root .. "/c"))
+                    note("copy_dir again", fs.copy_dir(root .. "/deep", root .. "/c"))
+                    note("copy_dir into itself", fs.copy_dir(root .. "/deep", root .. "/deep/d/inside"))
+                    note("copy over loop", fs.copy(root .. "/one", root .. "/x"))
+                    note("walk loop link", fs.walk(root .. "/one"))
+                    note("metadata loop link", fs.metadata(root .. "/one"))
+                    note("remove copy", fs.remove_dir_all(root .. "/c"))
+                    note("remove deep", fs.remove_dir_all(root .. "/deep"))
+                    note("remove loop link", fs.remove_dir_all(root .. "/one"))
+                    note("remove loop link as file", fs.remove_file(root .. "/one"))
+                    note("victim kept", fs.read(root .. "/victim/precious"))
+                    note("deep gone", fs.exists(root .. "/deep") == false and true or nil, "x")
+                    for _, count in ipairs { 2^53, 2^63, 1e300, -1, 0/0, 1/0 } do
+                      note("hostile mode", fs.set_permissions(root .. "/victim", { mode = count }))
+                    end
+                    return out
+                    "#,
+                )
+                .eval_async::<Table>(),
+            )
+            .unwrap();
+        out.sequence_values::<String>()
+            .map(Result::unwrap)
+            .collect::<Vec<_>>()
+    });
+    let seen = lines.join("\n");
+    for expected in [
+        "walk:ok",
+        "walk depth:ok",
+        "walk huge depth:ok",
+        "walk hostile depth:err invalid_input",
+        "copy_dir:ok",
+        "copy_dir again:err already_exists",
+        "copy_dir into itself:err invalid_input",
+        "remove copy:ok",
+        "remove deep:ok",
+        "remove loop link:err not_a_directory",
+        "remove loop link as file:ok",
+        "victim kept:ok",
+    ] {
+        assert!(seen.contains(expected), "missing `{expected}` in:\n{seen}");
+    }
+    assert_eq!(
+        seen.matches("hostile mode:err invalid_input").count(),
+        6,
+        "{seen}"
+    );
+}
