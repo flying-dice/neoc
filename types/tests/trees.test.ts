@@ -6,8 +6,8 @@
 import { describe, expect, test } from 'bun:test'
 import calculator from '../../crates/vos-codegen/tests/fixtures/trees/calculator.json'
 import notes from '../../crates/vos-codegen/tests/fixtures/trees/notes.json'
-import { CLIENT_METHODS, COMPONENTS, FUNCTIONS, HOST_METHODS, KIT_VERSION, PROTO_VERSION } from '../generated/agentos'
-import type { ComponentName, Node } from '../generated/agentos'
+import { CLIENT_METHODS, COMPONENTS, FUNCTIONS, HOST_METHODS, KIT_VERSION, PROTO_VERSION } from '../generated/vos'
+import type { ComponentName, Node } from '../generated/vos'
 
 type Meta = (typeof COMPONENTS)[ComponentName]
 

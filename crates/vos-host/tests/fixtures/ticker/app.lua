@@ -2,8 +2,8 @@
 -- as long as the app is loaded. It shows what AGOS-52 and AGOS-54 promise: the work starts at load without
 -- holding it up (`task.spawn` at the top level), it goes on when the window is closed, it re-renders every open
 -- window by itself, and it stops when the app is unloaded.
-local app = require("@agentos/app")
-local ui = require("@agentos/ui")
+local app = require("vos:app")
+local ui = require("vos:ui")
 local task = require("std:task")
 
 app.manifest {

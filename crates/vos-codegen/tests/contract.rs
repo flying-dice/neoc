@@ -102,7 +102,7 @@ fn ui_lua_is_plain_lua_5_1() {
 
 #[test]
 fn the_definitions_declare_the_app_global_and_the_client_decl() {
-    let defs = vos_codegen::agentos_definitions();
+    let defs = vos_codegen::vos_definitions();
     assert!(defs.starts_with("---@meta\n"));
     assert!(defs.contains("---@class AppApi"));
     assert!(defs.contains("\napp = nil\n"), "the global `app`");
@@ -116,7 +116,7 @@ fn the_definitions_declare_the_app_global_and_the_client_decl() {
 
 #[test]
 fn the_module_definitions_use_the_shared_core_types() {
-    let core = vos_codegen::agentos_definitions();
+    let core = vos_codegen::vos_definitions();
     let module = vos_codegen::ui_module_definitions();
     assert!(module.starts_with("---@meta\n"));
     for ty in ["Ref<T>", "Expr<T>", "Handler<P>", "Child", "Action", "Node"] {

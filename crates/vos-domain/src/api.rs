@@ -1,7 +1,7 @@
 //! The host-management methods on `/rpc`: `app.list`, `app.available`, `app.preview`, `host.devices.list`.
 //!
 //! Next to the view protocol (`ui::protocol`) these are what the shell, not an app window, talks to the host
-//! about. They are plain serde types, so the generated TypeScript (`types/generated/agentos.ts`) cannot drift
+//! about. They are plain serde types, so the generated TypeScript (`types/generated/vos.ts`) cannot drift
 //! from what the host sends.
 
 use serde::{Deserialize, Serialize};

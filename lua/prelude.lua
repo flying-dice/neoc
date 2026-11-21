@@ -9,7 +9,7 @@
 -- polyfill below is what an app sees). `bit32` is Luau's and is in the environment, but an app stays Lua 5.1: it does
 -- not use it (`scripts/lua51.test.ts` fails when one appears).
 --
--- The host runs this file once per app, before any app chunk or `@agentos/ui`, and passes the table those chunks
+-- The host runs this file once per app, before any app chunk or `vos:ui`, and passes the table those chunks
 -- will run in as the chunk's `...` argument (`types/generated/prelude.lua`, copied by `bun run codegen`). It
 -- installs into that table rather than reaching for `getfenv()`, which an app's sandbox does not have. Nothing
 -- is overwritten: a member the interpreter already has is left alone.

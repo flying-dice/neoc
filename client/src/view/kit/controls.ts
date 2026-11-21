@@ -1,7 +1,7 @@
 /**
  * Tier-1 controls, presentation and display adapters (wave B1b), plus the decorator that gives every node the
  * common `contextMenu` slot and `drag` / `drop` behaviour. One `register` call per catalogue type; `bindings` names
- * the props that are two-way `Binding`s (the schema's `bindings` table, `types/generated/agentos.ts`).
+ * the props that are two-way `Binding`s (the schema's `bindings` table, `types/generated/vos.ts`).
  *
  *   Controls      Shortcut, Button, Toggle, Slider, Stepper, Picker, DatePicker, ColorPicker, TextField,
  *                 SecureField, TextEditor, SearchField

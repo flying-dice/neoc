@@ -15,7 +15,7 @@ This repository also holds **AgentOS**, an iPadOS-style virtual desktop for agen
 
 @AGENTS.md
 
-The AgentOS adapter (`crates/vos-lua`) is an embedder of `neoc-vm`: AgentOS policy (apps, `readOnly`, views, `app.*`, the `@agentos/*` modules) stays in that adapter and never moves into `neoc-vm`. The AgentOS crates keep edition 2021 and inherit the workspace lint table; the neoc crates do not yet (see "Rust style").
+The AgentOS adapter (`crates/vos-lua`) is an embedder of `neoc-vm`: AgentOS policy (apps, `readOnly`, views, `app.*`, the `vos:*` modules) stays in that adapter and never moves into `neoc-vm`. The AgentOS crates keep edition 2021 and inherit the workspace lint table; the neoc crates do not yet (see "Rust style").
 
 ## Layout
 

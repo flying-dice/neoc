@@ -289,8 +289,8 @@ async fn a_synced_client_value_is_readable_by_handlers_and_the_alert_deletes_the
 // ---- failures stay in the view ---------------------------------------------------------------------------
 
 const BROKEN: &str = r#"
-local app = require("@agentos/app")
-local ui = require("@agentos/ui")
+local app = require("vos:app")
+local ui = require("vos:ui")
 app.manifest { id = "broken", name = "Broken", icon = "gear" }
 local s = app.state { n = 0, bad = false }
 app.window("main", {
@@ -359,8 +359,8 @@ async fn a_render_that_fails_or_is_invalid_is_an_error_and_the_view_survives() {
 #[tokio::test]
 async fn render_is_pure_a_handler_style_write_raises_inside_it() {
     let src = r#"
-local app = require("@agentos/app")
-local ui = require("@agentos/ui")
+local app = require("vos:app")
+local ui = require("vos:ui")
 app.manifest { id = "impure", name = "Impure", icon = "gear" }
 local s = app.state { n = 0 }
 app.window("main", { render = function(w) s.n = s.n + 1 return ui.Text { "x", key = "t" } end })
@@ -387,8 +387,8 @@ fn the_fixture_trees_the_codegen_test_committed_are_what_a_stub_host_rendered() 
 }
 
 const TOASTER: &str = r#"
-local app = require("@agentos/app")
-local ui = require("@agentos/ui")
+local app = require("vos:app")
+local ui = require("vos:ui")
 app.manifest { id = "toaster", name = "Toaster", icon = "plus", window = { w = 400, h = 300, minW = 320, minH = 240 } }
 local s = app.state { n = 0, undone = 0 }
 app.window("main", {

@@ -93,8 +93,8 @@ A change is done when all of these hold:
   `std:thread` worker) can hang the host, not just itself, and can outlive its uninstall, because unloading aborts
   work only at the points where the app yields to the host. That is accepted. It reaches the host through the `app` table (typed by the generated LuaCATS definitions in `types/generated/luals/`) and
   through **every `std:`, `lib:` and `vnd:` module of `neoc-vm` except `lib:test`, `lib:compile` and `std:workers`** (`require("std:fs")`, `require("lib:json")`,
-  `require("vnd:hyper")`, ...: files, network, servers, tasks, threads, SQLite, TLS), next to `@agentos/app` and
-  `@agentos/ui`. What an app starts (tasks, servers, workers) belongs to it: unloading or replacing the app aborts
+  `require("vnd:hyper")`, ...: files, network, servers, tasks, threads, SQLite, TLS), next to `vos:app` and
+  `vos:ui`. What an app starts (tasks, servers, workers) belongs to it: unloading or replacing the app aborts
   it and closes its listeners, and what a task or a request handler runs queues behind the app's other calls (one
   call at a time per VM). Still enforced: a tool declared `readOnly` cannot write through the `app.*` API (db, kv, state,
   notify, shell, windows, and registering tools, windows and handlers), and neither can the tasks it starts or the

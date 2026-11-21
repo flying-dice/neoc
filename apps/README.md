@@ -68,7 +68,7 @@ permissions: a `permissions` key in `app.json` or in `app.manifest` (from before
 plus the app as **one bundled Lua 5.1 file** (`app.lua`) and its migrations, and one `dist/apps/registry.json`
 (`{ "apps": ["calculator/0.1.0/app-ref.json", ...] }`). Apps are plain Lua 5.1 and run as written:
 [darklua](https://github.com/seaofvoices/darklua) (`.darklua.json`) only bundles: it inlines the package's relative
-`require`s into the one file and strips comments; `require("@agentos/app")` and `require("@agentos/ui")` stay runtime
+`require`s into the one file and strips comments; `require("vos:app")` and `require("vos:ui")` stay runtime
 calls. The ref's `manifest.main` is the bundled file; the separate source modules are not shipped. Two things to know
 when writing an app: write Lua 5.1 (`unpack`, `string.gsub`, `x = x + 1`, `a and b or c`: no `+=`, `continue`,
 backtick strings, `if` expressions or `for k, v in t do`), and use only the library members Lua 5.1 and
@@ -97,17 +97,17 @@ modules is shifted by the size of the modules bundled before it (the Calculator:
 An app file starts like this (the Calculator):
 
 ```lua
-local app = require("@agentos/app")   -- the host module; also a global named `app`
-local ui = require("@agentos/ui")     -- component constructors and helpers, generated from the component schema
+local app = require("vos:app")   -- the host module; also a global named `app`
+local ui = require("vos:ui")     -- component constructors and helpers, generated from the component schema
 local calc = require("./calc")        -- a module of this package: inlined into the bundle at build time
 ```
 
-In the source, `require` accepts `./x`, `../x` (bundled into the one built file when the app is built), `@agentos/app`
-and `@agentos/ui`. At run time the built file can `require` `@agentos/app`, `@agentos/ui` and the host's `std:`, `lib:` and `vnd:` modules
+In the source, `require` accepts `./x`, `../x` (bundled into the one built file when the app is built), `vos:app`
+and `vos:ui`. At run time the built file can `require` `vos:app`, `vos:ui` and the host's `std:`, `lib:` and `vnd:` modules
 (the build leaves those as `require` calls, see "Every library module is yours" below), and never the filesystem
 (`require("./x")` in a running app is an error that says so). The
 LuaCATS definitions in `types/generated/luals/` (generated, `---@meta`) are the contract: lua-language-server reads
-them through `.luarc.json` (so an editor with the Lua extension knows `app`, `ui.*` and `require("@agentos/ui")`), and
+them through `.luarc.json` (so an editor with the Lua extension knows `app`, `ui.*` and `require("vos:ui")`), and
 `bun run lint:lua` checks every app against them. Annotations in app code (`---@param`, `---@type`) are optional;
 write one where it helps a reader or silences a false alarm. The `std:`, `lib:` and `vnd:` modules are **not typed
 here**: neoc describes them for luau-lsp (`types/neoc.d.luau`), not for lua-language-server, so `require("std:fs")` is
@@ -313,8 +313,8 @@ it in the app's own VM and keeps it going for as long as the app is loaded.
   so an app cannot change what other code in its VM sees. `math.random` has a generator of its own per VM, seeded by
   the host. The functions themselves are Lua's own (C `string` and `table`, including `table.sort` and the pattern
   matcher).
-- **Every library module is yours, with no permission to ask for.** Next to `require("@agentos/app")` and
-  `require("@agentos/ui")`, an app can `require("std:fs")`, `require("lib:json")`, `require("vnd:hyper")` and the rest
+- **Every library module is yours, with no permission to ask for.** Next to `require("vos:app")` and
+  `require("vos:ui")`, an app can `require("std:fs")`, `require("lib:json")`, `require("vnd:hyper")` and the rest
   of `neoc-vm`'s modules, spelled as neoc spells them: `std:` (collections, env, fs, io, net, task, thread, time),
   `lib:` (archive, args, base64, cache, chrono, compress, crypto, csv, diff, glob, hash, hex, hmac, html, http, ini,
   json, log, mime, pkey, random, regex, semver, template, tempfile, text, unicode, url, vcr) and `vnd:` (hyper,
@@ -390,7 +390,7 @@ it in the app's own VM and keeps it going for as long as the app is loaded.
    Every interactive node gets a `key`; every tool gets a described schema and a `readOnly` that is true when the tool
    does not write.
 4. **Make it clean.** `bun run lint:lua` (`lua-language-server --check` against the generated definitions, which
-   cover `@agentos/app`, `@agentos/ui` and every `std:`, `lib:` and `vnd:` module you `require`) and
+   cover `vos:app`, `vos:ui` and every `std:`, `lib:` and `vnd:` module you `require`) and
    `bun run lint:stylua` pass; `bun run format` fixes formatting. Fix what the checker reports, do not silence it.
 5. **Test the logic and tools in Rust.** Add a test beside `crates/vos-lua/tests/calculator_app.rs` that loads the
    shipped package under the real runtime, calls its tools (`call_tool`) and asserts results and

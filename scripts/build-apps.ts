@@ -7,7 +7,7 @@
  * For each app this writes, under <out>/<id>/<version>/ (default out: dist/apps):
  *   app-ref.json   { manifest, files: [{ path, url, sha256 }] }, file URLs relative to the app ref
  *   app.lua        the app as ONE Lua 5.1 file: the entry (app.json `main`, app.lua) and the modules it
- *                  requires, bundled by darklua (.darklua.json); `@agentos/app` and `@agentos/ui` stay runtime
+ *                  requires, bundled by darklua (.darklua.json); `vos:app` and `vos:ui` stay runtime
  *                  `require` calls, the host provides them (with types/generated/prelude.lua, a few standard-library
  *                  polyfills from lua/prelude.lua)
  *   <migrations>   the SQL migrations app.json lists, copied as they are

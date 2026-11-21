@@ -3,7 +3,7 @@
 //! An app is built into one self-contained Lua 5.1 file (its own modules are bundled in at build time), so at
 //! run time there is nothing to resolve in the package and no filesystem. Three kinds of name resolve:
 //!
-//! - `require("@agentos/app")` is the `app` table, and `require("@agentos/<name>")` a host module the host
+//! - `require("vos:app")` is the `app` table, and `require("vos:<name>")` a host module the host
 //!   registered (the generated `ui` constructors). A host module runs once, in the app's own environment (so
 //!   it sees the same polyfills), and is cached; a cycle is an error.
 //! - `require("std:<name>")`, `require("lib:<name>")` and `require("vnd:<name>")` are the library modules of
@@ -34,7 +34,7 @@ pub(crate) fn offered_modules() -> Vec<&'static str> {
 }
 
 /// What a `require` may name, for the error message of one that names something else.
-const ALLOWED: &str = "\"@agentos/app\", \"@agentos/ui\" and the std:, lib: and vnd: modules";
+const ALLOWED: &str = "\"vos:app\", \"vos:ui\" and the std:, lib: and vnd: modules";
 
 pub(crate) fn install(lua: &Lua, sh: &Arc<Shared>, env: &mlua::Table) -> mlua::Result<()> {
     let sh = sh.clone();
@@ -46,7 +46,7 @@ fn load(lua: &Lua, sh: &Arc<Shared>, spec: &str) -> mlua::Result<LuaValue> {
     if spec.starts_with("std:") || spec.starts_with("lib:") || spec.starts_with("vnd:") {
         return library(lua, sh, spec);
     }
-    let Some(name) = spec.strip_prefix("@agentos/") else {
+    let Some(name) = spec.strip_prefix("vos:") else {
         return Err(mlua::Error::runtime(format!(
             "require(\"{spec}\"): only {ALLOWED} can be required at run time (an app's own modules are bundled \
              into its file when it is built)"
@@ -62,10 +62,10 @@ fn load(lua: &Lua, sh: &Arc<Shared>, spec: &str) -> mlua::Result<LuaValue> {
     }
     let source = sh.host_modules.get(name).ok_or_else(|| {
         mlua::Error::runtime(format!(
-            "unknown host module \"@agentos/{name}\": only {ALLOWED} can be required"
+            "unknown host module \"vos:{name}\": only {ALLOWED} can be required"
         ))
     })?;
-    run_module(lua, sh, &format!("@agentos/{name}"), source)
+    run_module(lua, sh, &format!("vos:{name}"), source)
 }
 
 /// A library module (`std:task`, `lib:json`, ...), built in this VM the first time it is required.

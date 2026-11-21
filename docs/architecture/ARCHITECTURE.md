@@ -97,7 +97,7 @@ crates/
   - one Lua VM per app (the apps' source is Lua 5.1) and one environment table per app: an allow-list of base functions, no `load*`,
     `getfenv`/`setfenv`, read-only standard libraries, text-only chunks, a locked string metatable. Apps cannot reach
     each other's state;
-  - `require` knows `@agentos/app`, `@agentos/ui` (an app's own modules are bundled at build time) and **every
+  - `require` knows `vos:app`, `vos:ui` (an app's own modules are bundled at build time) and **every
     `std:`, `lib:` and `vnd:` module of `neoc-vm` except `lib:test`, `lib:compile` and `std:workers`** (files, network, servers, tasks, threads, SQLite, TLS);
   - no permissions and no CPU, memory or time budgets: apps are the person's own code on their own host;
   - what an app starts (tasks, servers, workers) is aborted and its listeners are closed when it is unloaded or

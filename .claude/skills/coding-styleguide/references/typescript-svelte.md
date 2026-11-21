@@ -12,7 +12,7 @@ code**: nothing in it knows what the Calculator is.
 - Untrusted values are `unknown` until parsed or narrowed. No `any`, no `as` on data you didn't construct, no non-null `!`
   (narrow, or state the invariant in a comment where it is established).
 - Model alternatives as discriminated unions and close switches with a `never` check.
-- Wire types come from the Rust schema: `types/generated/agentos.ts` (`bun run codegen`). Don't hand-write a second copy of
+- Wire types come from the Rust schema: `types/generated/vos.ts` (`bun run codegen`). Don't hand-write a second copy of
   a wire shape; `client/src/view/protocol.ts` and `shell/hostApi.ts` are tested for drift against the generated
   file. A shape the client reads from outside that the schema doesn't cover (an `/agui` event, a JSON-RPC result) is parsed
   with zod before use.

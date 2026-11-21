@@ -1,15 +1,15 @@
 /**
  * Wire types of the AgentOS view protocol (proto 1, kit 1.0).
  *
- * The Rust schema is the source of truth: `types/generated/agentos.ts` is generated from it (`bun run codegen`).
+ * The Rust schema is the source of truth: `types/generated/vos.ts` is generated from it (`bun run codegen`).
  * This module is the renderer's only door to it: it re-exports the generated shapes under the names the renderer
  * uses, and derives the request and notification tables from the generated method table, so a wire change is a
  * compile error here and nowhere else. Nothing else in the renderer declares a message, node, op, patch or action
  * type or imports the generated module directly.
  */
-import type * as G from '../../../types/generated/agentos'
+import type * as G from '../../../types/generated/vos'
 
-export { PROTO_VERSION as PROTO, KIT_VERSION as KIT } from '../../../types/generated/agentos'
+export { PROTO_VERSION as PROTO, KIT_VERSION as KIT } from '../../../types/generated/vos'
 
 export type Json = G.JsonValue
 

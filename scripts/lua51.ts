@@ -2,7 +2,7 @@
  * Bundling a Lua 5.1 app with darklua (config: .darklua.json), shared by `build-apps.ts` and `lua51-build.ts`.
  *
  * Apps are plain Lua 5.1 and are shipped as plain Lua 5.1: darklua only bundles an app's relative `require`s into
- * one chunk (and strips comments). `@agentos/*` requires and the host's neoc modules (`std:*`, `lib:*`, `vnd:*`) stay as
+ * one chunk (and strips comments). `vos:*` requires and the host's neoc modules (`std:*`, `lib:*`, `vnd:*`) stay as
  * runtime `require` calls (the host provides those modules; `.darklua.json` excludes them, as `[:]` because a bare `:`
  * is not a valid darklua glob). Nothing is lowered, so an app is exactly the Lua it is written in.
  *

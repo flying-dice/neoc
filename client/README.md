@@ -28,7 +28,7 @@ shell/results.ts        zod schemas for what the host answers the shell (app.lis
 shell/links.ts          opening a link the person confirmed (web in a new tab, mailto to the mail client); the
                         confirmation itself is ViewHost's (view/core/link.ts describes the link: host and full URL)
 shell/pairing.ts        GET /session, POST /pair and their messages (wrong code, rate limit, unreachable)
-shell/hostApi.ts        the wire types of app.* / agents.* / host.devices.*: re-exported from types/generated/agentos.ts
+shell/hostApi.ts        the wire types of app.* / agents.* / host.devices.*: re-exported from types/generated/vos.ts
 shell/fakeHost.ts       a fake of those methods for stories
 organisms/ViewWindow    an installed app's window: view.open on mount, view.close on destroy, <ViewHost> in between
 pages/                  PairingPage, DiscoverPage (apps: install, enable, disable, remove, add by URL), SettingsPage
@@ -50,7 +50,7 @@ code**. The shell's `ViewWindow` organism hosts it for every installed app.
 
 ```
 protocol.ts      every wire type (view.tree/ops, data.patch, requests, actions): re-exported from the types generated
-                 from the Rust schema (`types/generated/agentos.ts`, `bun run codegen`). The only module that
+                 from the Rust schema (`types/generated/vos.ts`, `bun run codegen`). The only module that
                  reaches the generated file.
 rpc/             peer.ts  JSON-RPC 2.0 peer, by-name params          websocket.ts  /rpc transport, backoff + jitter
 core/            framework-free, plain objects under bun test; Svelte hands it a $state store

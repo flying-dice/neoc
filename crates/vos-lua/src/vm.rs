@@ -103,8 +103,8 @@ impl From<VmError> for BootError {
 /// How a VM is built.
 #[derive(Clone)]
 pub struct VmConfig {
-    /// Lua 5.1 source of host modules `require("@agentos/<name>")` can load besides `@agentos/app`
-    /// (the generated `@agentos/ui` constructors), by module name.
+    /// Lua 5.1 source of host modules `require("vos:<name>")` can load besides `vos:app`
+    /// (the generated `vos:ui` constructors), by module name.
     pub host_modules: Arc<HashMap<String, Vec<u8>>>,
     /// The agent contacts `app.agents:list()` shows (empty unless the host gives a roster).
     pub roster: Arc<dyn AgentRoster>,

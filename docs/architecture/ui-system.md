@@ -841,8 +841,8 @@ validator. There are no modifiers: universal props (padding, frame, background, 
 ### 4.2 API reference
 
 ```lua
-local app = require("@agentos/app")      -- host module, one VM per app
-local ui  = require("@agentos/ui")       -- constructors + helpers, generated from the component schema
+local app = require("vos:app")      -- host module, one VM per app
+local ui  = require("vos:ui")       -- constructors + helpers, generated from the component schema
 ```
 
 **`app`**
@@ -886,7 +886,7 @@ per frame; a CPU time slice per call (counted by the VM's count hook); interacti
 icon-only controls need a `label`; every `Image` needs `alt` or `decorative = true`; only whitelisted props exist.
 Errors carry the Lua `file:line` of the constructor call (dev builds).
 
-**Typing.** The component schema (section 6) generates LuaCATS definitions (`types/generated/luals/@agentos/ui.lua`); a wrong
+**Typing.** The component schema (section 6) generates LuaCATS definitions (`types/generated/luals/vos/ui.lua`); a wrong
 enum value, a `Binding` prop given a plain value, a missing required prop or a wrong slot type is a lua-language-server
 diagnostic (`bun run lint:lua`, wired into `bun run lint`), not a runtime surprise. An unknown prop name is still caught only
 at run time (LuaLS does not check a table literal for extra fields).
@@ -898,8 +898,8 @@ bad input, `format(n)`, `formatEntry(text)`); the app is below. State is **share
 however many windows are open, and the agent tool can drive it.
 
 ```lua
-local app  = require("@agentos/app")
-local ui   = require("@agentos/ui")
+local app  = require("vos:app")
+local ui   = require("vos:ui")
 local calc = require("./calc")
 local t    = app.t
 
@@ -1085,8 +1085,8 @@ Folders sidebar, a notes list bound to a query with search, an editor with a two
 preview, a delete confirmation `Alert`, and an agent tool `notes.append` that updates the open view live.
 
 ```lua
-local app = require("@agentos/app")
-local ui  = require("@agentos/ui")
+local app = require("vos:app")
+local ui  = require("vos:ui")
 local t   = app.t
 local db  = app.db
 
@@ -1318,12 +1318,12 @@ notes or 5 000. Test ids that fall out: `notes-folders-row-3`, `notes-new-note`,
 ### 4.6 Testing and sandbox
 
 - **Host-side tests need no browser.** *(Planned, not built: today app logic is tested from Rust integration tests
-  that load the real package, see `docs/TESTING.md`.)* `@agentos/test` mounts a window in the host and exposes the same ids as the
+  that load the real package, see `docs/TESTING.md`.)* `vos:test` mounts a window in the host and exposes the same ids as the
   e2e specs: `local v = test.mount(app, "main"); v:tap("calculator-key-7"); v:expectText("calculator-display", "7")`;
   `v:type("notes-body", "hi")`; `v:tree()` for snapshots (the tree is JSON). Tool tests call `app.tool` directly against a
   temp SQLite and assert the resulting `data.patch` for an open view.
 - **Isolation (not a security boundary).** One Lua VM per app (Luau; apps are plain Lua 5.1 source, which darklua only bundles into one file), its own environment table with no `load*`/`getfenv`/`setfenv` and no bare `os`/`io`/`debug`, and its
-  own per-app SQLite file. An app's `require` takes `@agentos/app`, `@agentos/ui` and every `std:`/`lib:`/`vnd:` module except `lib:test`, `lib:compile` and `std:workers`
+  own per-app SQLite file. An app's `require` takes `vos:app`, `vos:ui` and every `std:`/`lib:`/`vnd:` module except `lib:test`, `lib:compile` and `std:workers`
   (files, network, servers, threads), so it can reach other apps' data and the host's. There are no app permissions and
   no CPU, memory or time limits: an app is the person's own code on their own host (see host-stack.md, "No permissions,
   no budgets"). What still holds: values leaving the VM are size- and depth-checked, a host panic or stack overflow
@@ -1428,7 +1428,7 @@ unless the app sets `testid`).
 ## 6. The type pipeline
 
 **As built: Rust first, not the YAML below.** The component schema is Rust (`crates/vos-domain`, the `ui` module:
-types plus the component catalogue tables); `vos-codegen` turns it into `types/generated/agentos.ts` (protocol types
+types plus the component catalogue tables); `vos-codegen` turns it into `types/generated/vos.ts` (protocol types
 and the runtime `COMPONENTS` table), `ui.lua`, the LuaCATS definitions under `types/generated/luals/` and `docs/reference/components.md`.
 `bun run codegen` writes them and `bun run codegen:check` (part of `bun run lint`) fails when they are stale; there is no
 `gen:ui` or `schema:diff` command. The diagram below is the real flow; from "Authoring format" on, the text is the
@@ -1440,9 +1440,9 @@ One component schema, generated outputs that are committed, and a no-diff check 
 ```
 crates/vos-domain, ui module   (Rust types + the component catalogue: tokens, Action, Expr, Source decls, event payloads)
         │   bun run codegen     (cargo run -p vos-codegen; `bun run codegen:check` is the no-diff check)
-        ├─▶ types/generated/agentos.ts        protocol types + the runtime COMPONENTS table  ──▶  client/src/view/protocol.ts
-        ├─▶ types/generated/ui.lua            constructors (the Lua runtime's `@agentos/ui`)
-        ├─▶ types/generated/luals/            LuaCATS: `agentos.lua` (the `app` API and shared types), `@agentos/ui.lua`, `@agentos/app.lua`
+        ├─▶ types/generated/vos.ts        protocol types + the runtime COMPONENTS table  ──▶  client/src/view/protocol.ts
+        ├─▶ types/generated/ui.lua            constructors (the Lua runtime's `vos:ui`)
+        ├─▶ types/generated/luals/            LuaCATS: `vos.lua` (the `app` API and shared types), `vos/ui.lua`, `vos/app.lua`
         └─▶ docs/reference/components.md      the component reference
 ```
 
@@ -1474,7 +1474,7 @@ examples:
 maps: { adapter: TextField, kit: "@vos/ui/molecules#TextFieldRow" }
 ```
 
-**Generated LuaCATS** (`luals/@agentos/ui.lua`): every prop, enum, `Binding` (typed `Ref<T>`, so a plain value in a `Binding` prop is a diagnostic),
+**Generated LuaCATS** (`luals/vos/ui.lua`): every prop, enum, `Binding` (typed `Ref<T>`, so a plain value in a `Binding` prop is a diagnostic),
 slot and event payload:
 
 ```lua

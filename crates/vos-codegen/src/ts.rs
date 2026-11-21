@@ -1,4 +1,4 @@
-//! `types/generated/agentos.ts`: the protocol types (derived by `ts-rs` from the Rust types, so they cannot drift
+//! `types/generated/vos.ts`: the protocol types (derived by `ts-rs` from the Rust types, so they cannot drift
 //! from the serde shapes) and the component schema (emitted from the catalogue tables).
 
 use std::fmt::Write as _;

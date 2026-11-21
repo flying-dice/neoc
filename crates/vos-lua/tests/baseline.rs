@@ -29,7 +29,7 @@ use std::{
 /// How many VMs to create when `AGENTOS_BASELINE_VMS` is not set.
 const DEFAULT_VMS: usize = 50;
 
-/// The config the host gives every app: the generated `@agentos/ui` module, and no agent roster.
+/// The config the host gives every app: the generated `vos:ui` module, and no agent roster.
 fn config() -> VmConfig {
     VmConfig {
         host_modules: std::collections::HashMap::from([("ui".to_owned(), UI_MODULE.as_bytes().to_vec())])

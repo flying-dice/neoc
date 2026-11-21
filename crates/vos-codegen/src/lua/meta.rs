@@ -1,9 +1,11 @@
 //! The `LuaLS` (lua-language-server) definition files under `types/generated/luals/`: `---@meta` `LuaCATS` for editors
 //! and `bun run lint:lua`. They are never loaded by the host.
 //!
-//! `LuaLS` resolves `require("@agentos/ui")` through the workspace library, by file path: the library root is
-//! `types/generated/luals/`, so the module definitions live at `@agentos/ui.lua` and `@agentos/app.lua` and
-//! `agentos.lua` holds the shared types and the global `app`. Classes and aliases are global to the workspace, so
+//! A module name has a colon, which no file name may carry, so the files are laid out by the part of the name after
+//! the prefix: `.luarc.json` sets `completion.requireSeparator` to `:`, which makes `LuaLS` read `require("vos:ui")`
+//! as the path `vos/ui` and find it through the workspace library (the library root is `types/generated/luals/`).
+//! The files live at `vos/ui.lua` and `vos/app.lua`, and `vos.lua` holds the shared types and the global `app`.
+//! Classes and aliases are global to the workspace, so
 //! the module files use the shared types without importing them.
 
 use std::collections::BTreeMap;
@@ -77,9 +79,9 @@ const CORE: &str = r#"--- A reference to client or app state or to a source fiel
 
 "#;
 
-/// `types/generated/luals/agentos.lua`: the shared types, the component enums and objects, `ClientDecl` and the `app`
+/// `types/generated/luals/vos.lua`: the shared types, the component enums and objects, `ClientDecl` and the `app`
 /// API with its global.
-pub fn agentos_definitions() -> String {
+pub fn vos_definitions() -> String {
     let mut out = String::from("---@meta\n\n");
     out.push_str(HEADER);
     out.push('\n');
@@ -102,12 +104,12 @@ fn client_decl() -> String {
     schema_to_lua("ClientDecl", &schema, &mut seen)
 }
 
-/// `types/generated/luals/@agentos/app.lua`: `require("@agentos/app")` is the global `app`.
+/// `types/generated/luals/vos/app.lua`: `require("vos:app")` is the global `app`.
 pub fn app_module_definitions() -> String {
     format!("---@meta\n\n{HEADER}\nreturn app\n")
 }
 
-/// `types/generated/luals/@agentos/ui.lua`: the `ui` module and every component's props.
+/// `types/generated/luals/vos/ui.lua`: the `ui` module and every component's props.
 pub fn ui_module_definitions() -> String {
     let mut out = String::from("---@meta\n\n");
     out.push_str(HEADER);
@@ -348,7 +350,7 @@ mod tests {
 
     #[test]
     fn the_module_files_are_meta_files() {
-        for file in [agentos_definitions(), app_module_definitions(), ui_module_definitions()] {
+        for file in [vos_definitions(), app_module_definitions(), ui_module_definitions()] {
             assert!(file.starts_with("---@meta\n"), "{}", &file[..40]);
         }
     }

@@ -1,7 +1,7 @@
 /**
  * What the shell asks the host besides the view protocol: the app lifecycle (`app.*`), the catalog Discover
  * browses, the agent roster (`agents.*`) and the paired devices (`host.devices.*`). The shapes are generated from
- * `crates/vos-domain/src/api.rs` into `types/generated/agentos.ts`.
+ * `crates/vos-domain/src/api.rs` into `types/generated/vos.ts`.
  */
 import { icons, type IconName } from '@vos/ui'
 import type {

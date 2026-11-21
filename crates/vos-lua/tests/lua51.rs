@@ -357,7 +357,7 @@ async fn the_proxies_apps_index_never_yield_so_they_work_anywhere() {
     // why; Luau still cannot). What shows that they never wait is a place where Luau refuses a yield: a `string.gsub`
     // callback. A proxy that suspended would fail there with "attempt to yield across C-call boundary".
     let src = r#"
-        local ui = require("@agentos/ui")
+        local ui = require("vos:ui")
         local s = app.state { n = 0, items = {} }
         app.window("main", {
           client = { search = { init = "", persist = "app" } },

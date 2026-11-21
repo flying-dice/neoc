@@ -748,7 +748,7 @@ async fn effects_queued_after_the_app_was_unloaded_are_dropped_not_flushed() {
     assert!(r.shell.badges.lock().unwrap().is_empty(), "no badge from an app that is gone");
 }
 
-/// `bun run build:apps` bundles an app's relative requires and leaves `@agentos/*` and the neoc modules
+/// `bun run build:apps` bundles an app's relative requires and leaves `vos:*` and the neoc modules
 /// (`std:`, `lib:`, `vnd:`) as runtime requires. darklua used to fail on `std:fs` ("unable to require
 /// resource"), so no built app could use a module. The fixture is built through the real pipeline and then
 /// loaded and exercised in the VM.
@@ -756,7 +756,7 @@ async fn effects_queued_after_the_app_was_unloaded_are_dropped_not_flushed() {
 async fn an_app_built_by_the_real_pipeline_requires_the_neoc_modules() {
     let package = built_package(&fixture("neoc_modules"));
     let bundle = String::from_utf8(package.files["app.lua"].clone()).unwrap();
-    for required in ["@agentos/app", "std:fs", "lib:json", "vnd:serde_yaml"] {
+    for required in ["vos:app", "std:fs", "lib:json", "vnd:serde_yaml"] {
         assert!(bundle.contains(&format!("require(\"{required}\")")), "{required} stays a runtime require");
     }
     assert!(!bundle.contains("./helpers"), "the relative module is bundled in");

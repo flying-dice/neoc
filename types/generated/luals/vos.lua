@@ -89,7 +89,7 @@
 ---@alias ClientDecl { init?: any, persist?: Persist, sync?: SyncMode, type?: any }
 
 -- ── The `app` module ────────────────────────────────────────────────────────────────────────────────────────
--- `local app = require("@agentos/app")` in app code. The host provides it natively (one VM per app); it is also a
+-- `local app = require("vos:app")` in app code. The host provides it natively (one VM per app); it is also a
 -- global named `app`.
 
 ---@class ManifestWindow

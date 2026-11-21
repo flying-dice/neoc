@@ -1,4 +1,4 @@
--- A stand-in for the host's native `@agentos/app` module, just enough to load an app and render a window:
+-- A stand-in for the host's native `vos:app` module, just enough to load an app and render a window:
 -- the codegen contract test runs the Calculator and Notes examples against the real generated `ui.lua` with it,
 -- then validates the tree in Rust. It mimics what the host does (refs for client state, source handles, the
 -- row proxy is in ui.lua itself); the real implementation lives in vos-lua.

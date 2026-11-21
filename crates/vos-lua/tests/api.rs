@@ -60,9 +60,9 @@ async fn the_manifest_is_parsed_validated_and_checked_against_the_package() {
 #[tokio::test]
 async fn require_loads_the_two_host_modules_and_caches_them() {
     let src = r#"
-        local app2 = require("@agentos/app")
-        local ui = require("@agentos/ui")
-        local again = require("@agentos/ui")
+        local app2 = require("vos:app")
+        local ui = require("vos:ui")
+        local again = require("vos:ui")
         app.on("t", function() return { app = app2 == app, same = ui == again, kit = type(ui.VStack), t = type(ui.each) } end)
     "#;
     let host_modules =
@@ -85,7 +85,7 @@ async fn require_refuses_everything_but_the_host_and_library_modules_with_the_re
         let e = load_with(src).await;
         assert!(e.contains("can be required at run time"), "{spec}: {e}");
     }
-    assert!(load_with("require('@agentos/nope')").await.contains("unknown host module"));
+    assert!(load_with("require('vos:nope')").await.contains("unknown host module"));
     assert!(load_with(
         "local lines = 1
 require('./nope')"
@@ -105,9 +105,9 @@ require('./nope')"
 #[tokio::test]
 async fn a_host_module_that_requires_itself_is_a_cycle_not_a_stack_overflow() {
     let mut modules = std::collections::HashMap::new();
-    modules.insert("loop".to_owned(), b"return require('@agentos/loop')".to_vec());
+    modules.insert("loop".to_owned(), b"return require('vos:loop')".to_vec());
     let config = VmConfig { host_modules: Arc::new(modules), ..VmConfig::default() };
-    let e = AppVm::load(&id("probe"), package("require('@agentos/loop')", &[]), db(), config)
+    let e = AppVm::load(&id("probe"), package("require('vos:loop')", &[]), db(), config)
         .await
         .err()
         .unwrap()
@@ -120,7 +120,7 @@ async fn host_modules_are_registered_by_the_host_and_load_once() {
     let mut modules = std::collections::HashMap::new();
     modules.insert("ui".to_owned(), b"local n = (n or 0) return { version = 1 }".to_vec());
     let cfg = VmConfig { host_modules: Arc::new(modules), ..VmConfig::default() };
-    let src = "local ui = require('@agentos/ui')\napp.on('t', function() return ui.version end)";
+    let src = "local ui = require('vos:ui')\napp.on('t', function() return ui.version end)";
     let vm = AppVm::load(&id("probe"), package(src, &[]), db(), cfg).await.unwrap();
     assert_eq!(vm.emit("t", json!(null)).await.unwrap(), json!(1));
 }

@@ -4,8 +4,8 @@
 -- The app keeps only what it needs to list chats: an id, the agent, a title and when it was last used. The
 -- conversation itself (messages, tool calls, permission prompts, the agent's settings) lives with the host and
 -- streams to the window over AG-UI: the app never sees it, and cannot read an agent's grants or tokens.
-local app = require("@agentos/app")
-local ui = require("@agentos/ui")
+local app = require("vos:app")
+local ui = require("vos:ui")
 local db = app.db
 
 app.manifest {

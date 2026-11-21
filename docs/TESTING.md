@@ -68,12 +68,13 @@ under `bun test` too, through the preload in `client/bunfig.toml` (`client/test/
 
 - **Check:** `bun run lint:lua` runs `lua-language-server --check` (pinned: 3.19.2, in `scripts/lint-lua.ts`) over
   every `.lua` file `.luarc.json` does not ignore (apps, `lua/prelude.lua`, the codegen example app), against the
-  generated LuaCATS definitions in `types/generated/luals/` (`agentos.lua` for the global `app`, `@agentos/ui.lua` and
-  `@agentos/app.lua` for the two `require`s; `.luarc.json` is AgentOS's own). The `std:`/`lib:`/`vnd:` modules are not
+  generated LuaCATS definitions in `types/generated/luals/` (`vos.lua` for the global `app`, `vos/ui.lua` and
+  `vos/app.lua` for the two `require`s: a module name cannot be a file name with a colon, so `.luarc.json` sets
+  `completion.requireSeparator` to `":"` and LuaLS reads `require("vos:ui")` as the path `vos/ui`; `.luarc.json` is AgentOS's own). The `std:`/`lib:`/`vnd:` modules are not
   typed here (neoc moved its module types to Luau declarations for luau-lsp, `types/neoc.d.luau`, in NEOC-139; typed
   apps come with NEOC-140). Files in `negative/` folders (`scripts/fixtures/negative/`) mark lines with
   `-- expect-error`; the check demands exactly those lines are flagged, so a broken definitions file cannot pass
-  silently (`wrong_api_use.lua` for the `app` API, `wrong_ui_usage.lua` for `@agentos/ui`).
+  silently (`wrong_api_use.lua` for the `app` API, `wrong_ui_usage.lua` for `vos:ui`).
 - **Format:** `bun run lint:stylua` (`stylua.toml`, syntax `Lua51`; `.styluaignore`); `bun run format` rewrites.
   Both lints print a `SKIPPED` message when `lua-language-server` (PATH or `~/.local/bin`) or `stylua` (PATH or
   `~/.cargo/bin`) is not installed, and **fail** instead when `AGENTOS_GATE=1` or `CI` is set (`scripts/gate.ts`; the
@@ -82,7 +83,7 @@ under `bun test` too, through the preload in `client/bunfig.toml` (`client/test/
   `darklua` 0.18.0 is required and **never skipped** (`cargo install darklua --version 0.18.0 --locked`):
   `bun run build:apps` fails with that message without it. `bun test scripts`
   (`scripts/lua51.test.ts`) checks the sources stay plain Lua 5.1 (no Luau syntax, no library members Lua 5.1 and `lua/prelude.lua` lack), that each
-  app bundles into one file whose only requires are runtime ones (`@agentos/*` and the `std:`/`lib:`/`vnd:` modules, with a fixture that requires them), and (with a native Lua 5.3+ on PATH) that the prelude's
+  app bundles into one file whose only requires are runtime ones (`vos:*` and the `std:`/`lib:`/`vnd:` modules, with a fixture that requires them), and (with a native Lua 5.3+ on PATH) that the prelude's
   `utf8`/`table.move` polyfills agree with the native ones. The prelude, `ui.lua` and the bundles are loaded and run
   under Lua 5.1 by the Rust tests (neoc-vm's Luau), so no system Lua 5.1 is needed. `bun run codegen:check`
   also fails when `types/generated/ui.lua`, `luals/*` or `prelude.lua` is stale.

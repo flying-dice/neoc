@@ -54,7 +54,7 @@ The keypad is a small state machine, in the iPadOS Calculator's way:
 
 ## View: `app.window` and the kit
 
-`render` is a pure function of `s`: it builds a tree of `@agentos/ui` constructors (`ui.VStack`, `ui.Text`,
+`render` is a pure function of `s`: it builds a tree of `vos:ui` constructors (`ui.VStack`, `ui.Text`,
 `ui.Grid`, `ui.Button`...) and the client draws it with the kit in `packages/ui`. The app picks semantic tokens only
 (`style = "display"`, `fill = "gray4"`, `foreground = "secondary"`); it never styles, and it ships no client code. The
 components are listed in [`docs/reference/components.md`](../../docs/reference/components.md).

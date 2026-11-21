@@ -1,6 +1,6 @@
 //! Lua 5.1 output for app authors:
 //!
-//! * `types/generated/ui.lua`: the `ui.*` constructor module that apps load with `require("@agentos/ui")` and the
+//! * `types/generated/ui.lua`: the `ui.*` constructor module that apps load with `require("vos:ui")` and the
 //!   host embeds. Plain Lua 5.1, no annotations (see [`module`]);
 //! * `types/generated/luals/*`: lua-language-server (`LuaLS`) definition files, `---@meta` `LuaCATS`, for the editor
 //!   and `bun run lint:lua` (see [`meta`]). Never loaded by the host.
@@ -10,7 +10,7 @@
 mod meta;
 mod ui;
 
-pub use meta::{agentos_definitions, app_module_definitions, ui_module_definitions};
+pub use meta::{vos_definitions, app_module_definitions, ui_module_definitions};
 pub use ui::{module, ACTION_BUILDERS};
 
 use std::collections::BTreeMap;

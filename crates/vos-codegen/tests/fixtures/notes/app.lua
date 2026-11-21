@@ -1,7 +1,7 @@
 -- Notes from docs/architecture/ui-system.md §4.4. The codegen contract test runs it (against the real
 -- `ui.lua`) and validates the tree it renders.
-local app = require("@agentos/app")
-local ui = require("@agentos/ui")
+local app = require("vos:app")
+local ui = require("vos:ui")
 local t = app.t
 local db = app.db
 
