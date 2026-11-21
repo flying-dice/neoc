@@ -6,12 +6,14 @@
 //! `walk` (a recursive listing), `copy_dir` (a recursive copy), `move` (a rename that survives a filesystem
 //! boundary), `watch` (the changes inside a directory, as the operating system reports them) and `error_kind`.
 //! Paths are Lua strings; on Unix they are bytes (a name `read_dir` returns can always be passed back), elsewhere
-//! they must be UTF-8. `std:path` has the text-only path helpers.
+//! they must be UTF-8 (and a name that is not valid Unicode comes back lossily; Windows was never built or run). `std:path` has the text-only path helpers.
 //!
 //! Conventions, the same for every function:
 //!
 //! - **`(value, err)`.** A failure returns `nil, err`; `err` is one string, `fs.<function>: <kind>: <path>:
-//!   <message>`, with a stable `kind` (see [`error::Kind`], read it with `error_kind`). A wrong argument type is
+//!   <message>`, with a stable `kind` (see [`error::Kind`], read it with `error_kind`). An error of a call on two
+//!   paths may name both, `<from> -> <to>`, in place of `<path>`; one about no path (a bad option) leaves the path
+//!   part out, `fs.<function>: <kind>: <message>`. A wrong argument type is
 //!   a Lua error, as everywhere in the VM (`open` is the exception for its options table: a missing or
 //!   mistyped `path` or `mode` is `invalid_input`).
 //! - **Options are tables of booleans or counts** (`missing_ok`, `max_depth`, `recursive`); an unknown name, or a value of the
@@ -20,14 +22,14 @@
 //!   (and `write` replaces its content). `copy_dir` refuses an existing destination instead of merging.
 //!   Symlinks found inside a tree are not followed while walking, copying or removing it (the path a script names
 //!   is: `walk` and `copy_dir` resolve a symlink given as their root, `remove_dir_all` refuses one); see [`ops`].
-//! - **Calls that can run for long wait; the rest run in place.** `copy`, `copy_dir`, `move`, `remove_dir_all`,
-//!   `walk` and `watch` do their work on the blocking pool (a `Role::Wait`, like a network call): the call waits,
-//!   and an embedder can run other calls meanwhile. Luau refuses a yield inside a metamethod, a `table.sort`
-//!   comparator or a `string.gsub` callback, so these six fail with the yield error when called from one of them,
-//!   and do nothing: the job starts only once the call has really suspended
+//! - **Calls that can run for long wait; the rest run in place.** `copy`, `copy_dir`, `move`, `read_dir`,
+//!   `remove_dir_all`, `walk` and `watch` do their work on the blocking pool (a `Role::Wait`, like a network call):
+//!   the call waits, and an embedder can run other calls meanwhile. Luau refuses a yield inside a metamethod, a
+//!   `table.sort` comparator or a `string.gsub` callback, so these seven fail with the yield error when called from
+//!   one of them, and do nothing: the job starts only once the call has really suspended
 //!   (`tests::the_long_calls_fail_where_luau_refuses_a_yield`). `Watcher:receive` waits for the operating system
-//!   the same way (and fails there too when it would have to wait). Every other function is one system call (or
-//!   one directory listing) and runs in place, as `read` and `write` always did.
+//!   the same way (and fails there too when it would have to wait). Every other function is one system call and
+//!   runs in place, as `read` and `write` always did.
 //! - **Not a sandbox.** Any path the host process can reach is reachable.
 //!
 //! Platform differences, the ones a script can meet (each function's doc says which it is subject to):
@@ -81,6 +83,15 @@ const MISSING_OK: &[&str] = &["missing_ok"];
 const WALK_OPTIONS: &[&str] = &["max_depth"];
 const PERMISSION_OPTIONS: &[&str] = &["mode", "readonly"];
 const WATCH_OPTIONS: &[&str] = &["recursive"];
+
+/// What every call that waits on the blocking pool says about it, in place of a pointer to these module notes, which
+/// an editor's hover does not show.
+const WAITS: &str = "It waits like `task.wait`: other tasks, and an embedder's other calls, run while it does. Where Luau cannot yield (a metamethod, a `table.sort` comparator, a `string.gsub` callback) it fails with the yield error and does nothing.";
+
+/// A function's doc followed by [`WAITS`].
+fn waits(doc: &str) -> String {
+    format!("{doc} {WAITS}")
+}
 
 /// Declares the `std:fs` surface through the facade: every function is a fallible one (except `error_kind`), so each
 /// is registered (with its `fs.<name>` tracing span and the `(nil, err)` shape) and recorded for the definitions in
@@ -184,16 +195,26 @@ fn declare_directories(m: &mut Module<'_>) -> mlua::Result<()> {
             std::fs::create_dir_all(&path).map(|()| true).map_err(|e| FsError::io(&e, &path))
         },
     )?;
-    m.try_func(
+    m.try_async_func(
         "read_dir",
         &[("path", "string")],
-        "List the directory `path`: an array of `DirEntry`, sorted by name (Rust leaves the order unspecified), without `.` and `..`. A symlink is listed as `\"symlink\"`, not as what it points at, and is not entered. It is `not_found` for a missing path and `not_a_directory` for a file. The whole listing is read at once, and at most 1048576 entries (`too_large` past that). `walk` lists a whole tree; `lib:glob` matches patterns.",
-        |_, path: Path1| ops::read_dir(&path_of(&path)?).map(DirEntries),
+        &waits(
+            "List the directory `path`: an array of `DirEntry`, sorted by name (Rust leaves the order unspecified), without `.` and `..`. A symlink is listed as `\"symlink\"`, not as what it points at, and is not entered. It is `not_found` for a missing path and `not_a_directory` for a file. The whole listing is read at once, and at most 1048576 entries (`too_large` past that). On Unix a name is the file's own bytes and can be passed back to any `std:fs` function unchanged; on Windows (never built or run) a name that is not valid Unicode comes back with replacement characters and may not name the same file. `walk` lists a whole tree; `lib:glob` matches patterns.",
+        ),
+        |_, path: Path1| {
+            let path = path_of(&path);
+            async move {
+                let path = path?;
+                blocking(move |_| ops::read_dir(&path)).await.map(DirEntries)
+            }
+        },
     )?;
     m.try_async_func(
         "walk",
         &[("path", "string"), ("opts", "{ max_depth: number? }?")],
-        "List everything under the directory `path`, recursively: an array of `DirEntry` (the directory itself is not in it), depth first, the children of each directory sorted by name, so the order is the same on every platform. A symlink inside is listed and never entered, so a link loop cannot make a walk run for ever; `path` itself may be a symlink to a directory and is followed. Option `{ max_depth }` (a non-negative whole number) limits how far down it goes: `1` is `read_dir`. It is `not_found` for a missing path and `not_a_directory` for a file; an unreadable subdirectory fails the whole walk with `permission_denied` and its path. At most 1048576 entries (`too_large` past that: walk the subdirectories separately). It waits like `task.wait` (see the module notes).",
+        &waits(
+            "List everything under the directory `path`, recursively: an array of `DirEntry` (the directory itself is not in it), depth first, the children of each directory sorted by name, so the order is the same on every platform. A symlink inside is listed and never entered, so a link loop cannot make a walk run for ever; `path` itself may be a symlink to a directory and is followed. Option `{ max_depth }` (a non-negative whole number) limits how far down it goes: `1` is `read_dir`. It is `not_found` for a missing path and `not_a_directory` for a file; an unreadable subdirectory fails the whole walk with `permission_denied` and its path. At most 1048576 entries (`too_large` past that: walk the subdirectories separately).",
+        ),
         |_, (path, opts): (Path1, Option<Table>)| {
             let parsed = path_of(&path).and_then(|path| {
                 let options = read_options(opts.as_ref(), WALK_OPTIONS)?;
@@ -213,7 +234,9 @@ fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
     m.try_async_func(
         "copy",
         &[("from", "string"), ("to", "string")],
-        "Copy the file `from` to the path `to` and return the number of bytes written. Mirrors `std::fs::copy`: `to` is created or replaced and takes the permission bits of `from`; a symlink given as `from` is resolved. `to` is the new path of the copy, not a directory to copy into (`is_directory`), `from` must be a file (`is_directory` for a directory: use `copy_dir`; `invalid_input` for a device or FIFO), as must an existing `to` (`invalid_input` for a FIFO or device: opening one for writing could block for ever), and copying a file onto itself is `invalid_input` rather than emptying it. Its parent must exist (`not_found`). It waits like `task.wait` (see the module notes).",
+        &waits(
+            "Copy the file `from` to the path `to` and return the number of bytes written. Mirrors `std::fs::copy`: `to` is created or replaced and takes the permission bits of `from`; a symlink given as `from` is resolved, and so is one at `to`: the file it points at is written (the link stays a link), and a dangling one creates its target. `to` is the new path of the copy, not a directory to copy into (`is_directory`), `from` must be a file (`is_directory` for a directory: use `copy_dir`; `invalid_input` for a device or FIFO), as must an existing `to` (`invalid_input` for a FIFO or device: opening one for writing could block for ever), and copying a file onto itself is `invalid_input` rather than emptying it. Its parent must exist (`not_found`).",
+        ),
         |_, (from, to): (Path1, Path1)| {
             let paths = path_of(&from).and_then(|from| Ok((from, path_of(&to)?)));
             async move {
@@ -225,7 +248,9 @@ fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
     m.try_async_func(
         "copy_dir",
         &[("from", "string"), ("to", "string")],
-        "Copy the directory `from` and everything under it to the new path `to`, and return the bytes of file data copied. `to` must not exist (`already_exists`; nothing is merged) and its parent must; a destination inside the source is `invalid_input`. Files keep their permission bits, directories get the default ones, and symlinks are recreated as symlinks with the target as stored (a relative target stays relative), never followed, so a link loop cannot make it run for ever. A source that holds something that is not a file, directory or symlink (a device, FIFO, socket) is `invalid_input`. A failure part way removes the partial `to` again (best effort: if that removal fails too, the partial copy stays). A symlink given as `from` is resolved. It waits like `task.wait` (see the module notes).",
+        &waits(
+            "Copy the directory `from` and everything under it to the new path `to`, and return the bytes of file data copied. `to` must not exist (`already_exists`; nothing is merged) and its parent must; a destination inside the source is `invalid_input`. Files keep their permission bits, directories get the default ones, and symlinks are recreated as symlinks with the target as stored (a relative target stays relative), never followed, so a link loop cannot make it run for ever. A source that holds something that is not a file, directory or symlink (a device, FIFO, socket) is `invalid_input`. A failure part way removes the partial `to` again (best effort: if that removal fails too, the partial copy stays). A symlink given as `from` is resolved.",
+        ),
         |_, (from, to): (Path1, Path1)| {
             let paths = path_of(&from).and_then(|from| Ok((from, path_of(&to)?)));
             async move {
@@ -243,7 +268,9 @@ fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
     m.try_async_func(
         "move",
         &[("from", "string"), ("to", "string")],
-        "Move `from` to `to`, with the rules of `rename`. When the two are on different filesystems it copies instead (a file, a symlink as a symlink, or a whole directory tree, never following a link) and removes `from` only after the copy completed. That case is not atomic: a failed copy leaves the source whole, a failure while removing a source tree leaves it partly removed and the destination complete, an existing empty directory at `to` is removed before the copy starts, and a file or symlink at `to` is replaced by renaming the finished copy over it (so a copy that fails leaves the old `to` as it was). A trailing separator on either path is dropped, so `link/` moves the link, not its target. It waits like `task.wait` (see the module notes).",
+        &waits(
+            "Move `from` to `to`, with the rules of `rename`. When the two are on different filesystems it copies instead (a file, a symlink as a symlink, or a whole directory tree, never following a link) and removes `from` only after the copy completed. That case is not atomic: a failed copy leaves the source whole, a failure while removing a source tree leaves it partly removed and the destination complete, an existing empty directory at `to` is removed before the copy starts, and a file or symlink at `to` is replaced by renaming the finished copy over it (so a copy that fails leaves the old `to` as it was). A trailing separator on either path is dropped, so `link/` moves the link, not its target.",
+        ),
         |_, (from, to): (Path1, Path1)| {
             let paths = path_of(&from).and_then(|from| Ok((from, path_of(&to)?)));
             async move {
@@ -275,7 +302,9 @@ fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
     m.try_async_func(
         "remove_dir_all",
         &[("path", "string"), ("opts", "{ missing_ok: bool? }?")],
-        "Remove a directory and everything under it, children before parents. Symlinks inside are deleted without being followed, so nothing outside the tree is touched. It refuses `/`, `.`, `..` and the empty path (`invalid_input`, a guard against a typo, not a security boundary) and a symlink to a directory (`not_a_directory`, also when written `link/`: use `remove_file`). Option `{ missing_ok }` as for `remove_file`. A failure part way (a permission, an open file on Windows) leaves what was not yet removed. Delegates to `std::fs::remove_dir_all` (which is safe against a directory swapped for a symlink while it runs, and not limited by path length) after refusing a symlink root and the paths above; once started it cannot be interrupted. It waits like `task.wait` (see the module notes).",
+        &waits(
+            "Remove a directory and everything under it, children before parents. Symlinks inside are deleted without being followed, so nothing outside the tree is touched. It refuses `/`, `.`, `..` and the empty path (`invalid_input`, a guard against a typo, not a security boundary) and a symlink to a directory (`not_a_directory`, also when written `link/`: use `remove_file`). Option `{ missing_ok }` as for `remove_file`. A failure part way (a permission, an open file on Windows) leaves what was not yet removed. Delegates to `std::fs::remove_dir_all` (which is safe against a directory swapped for a symlink while it runs, and not limited by path length) after refusing a symlink root and the paths above; once started it cannot be interrupted.",
+        ),
         |_, (path, opts): (Path1, Option<Table>)| {
             let parsed = path_of(&path).and_then(|path| {
                 let missing_ok = read_options(opts.as_ref(), MISSING_OK)?.flag("missing_ok")?.unwrap_or(false);
@@ -318,7 +347,7 @@ fn declare_links_and_errors(m: &mut Module<'_>) -> mlua::Result<()> {
     m.func(
         "error_kind",
         &[("err", "string")],
-        "The stable kind inside an error string returned by a `std:fs` function, or `nil` when the string is not one of theirs. Kinds: `not_found`, `permission_denied`, `already_exists`, `not_empty`, `is_directory`, `not_a_directory`, `cross_device`, `invalid_input`, `read_only_filesystem`, `storage_full`, `unsupported`, `too_large`, `timed_out`, `other`. They mean the same on every platform; the rest of the message is the operating system's wording and differs.",
+        "The stable kind inside an error string returned by a `std:fs` function, or `nil` when the string is not one of theirs. Such a string is `fs.<function>: <kind>: <path>: <message>`; for a call on two paths (`copy`, `rename`, ...) the path part may be `<from> -> <to>`, and an error about no one path (a bad option, say) has none: `fs.<function>: <kind>: <message>`. Kinds: `not_found`, `permission_denied`, `already_exists`, `not_empty`, `is_directory`, `not_a_directory`, `cross_device`, `invalid_input`, `read_only_filesystem`, `storage_full`, `unsupported`, `too_large`, `timed_out`, `other`. They mean the same on every platform; the rest of the message is the operating system's wording and differs.",
         |_, err: mlua::LuaString| Ok(error::kind_of(&err.to_string_lossy()).map(str::to_owned)),
     )?;
     Ok(())
@@ -328,7 +357,9 @@ fn declare_watch(m: &mut Module<'_>) -> mlua::Result<()> {
     m.try_async_func(
         "watch",
         &[("path", "string"), ("opts", "{ recursive: bool? }?")],
-        "Watch the directory `path` for changes and return a `Watcher`; read them with `watcher:receive()`. Option `{ recursive }` watches the whole tree under it (default: only its direct children). It is `not_found` for a missing path and `not_a_directory` for a file. The watch is the operating system's (inotify, FSEvents, ReadDirectoryChangesW), so the directory is not rescanned. Each event is `{ kind, path }`, `path` under the `path` given here. Kinds: `create`, `modify`, `remove`, `rename` (one event per path, the old name and the new name each; they are not paired, and macOS cannot tell which is which: check with `exists`), and `overflow`: changes were lost (more than 4096 waiting, or the system's own buffer overflowed), so rescan; its `path` is the watched directory. Events are not deduplicated or debounced, and one change can be reported as several (FSEvents coalesces: a new file may also show as `modify`). On macOS a change made just before the watch started may also be reported. The watch stops at `watcher:close()`, when the handle is collected, and when the engine shuts down. It waits like `task.wait` (see the module notes): a recursive watch on Linux adds one watch per directory of the tree.",
+        &waits(
+            "Watch the directory `path` for changes and return a `Watcher`; read them with `watcher:receive()`. Option `{ recursive }` watches the whole tree under it (default: only its direct children). It is `not_found` for a missing path and `not_a_directory` for a file. The watch is the operating system's (inotify, FSEvents, ReadDirectoryChangesW), so the directory is not rescanned. Each event is `{ kind, path }`, `path` under the `path` given here. Kinds: `create`, `modify`, `remove`, `rename` (one event per path, the old name and the new name each; they are not paired, and macOS cannot tell which is which: check with `exists`), and `overflow`: changes were lost (more than 4096 waiting, or the system's own buffer overflowed), so rescan; its `path` is the watched directory. Events are not deduplicated or debounced, and one change can be reported as several (FSEvents coalesces: a new file may also show as `modify`). On macOS a change made just before the watch started may also be reported. The watch stops at `watcher:close()`, when the handle is collected, and when the engine shuts down. Starting a recursive watch on Linux adds one watch per directory of the tree.",
+        ),
         |lua, (path, opts): (Path1, Option<Table>)| {
             let parsed = path_of(&path).and_then(|path| {
                 let recursive = read_options(opts.as_ref(), WATCH_OPTIONS)?.flag("recursive")?.unwrap_or(false);
@@ -363,7 +394,7 @@ fn declare_types(m: &mut Module<'_>) {
             "receive",
             &[("timeout", "number?")],
             "Result<{ kind: \"create\" | \"modify\" | \"remove\" | \"rename\" | \"overflow\", path: string }, string>",
-            "Wait for the next change and return it as `{ kind, path }` (see `fs.watch`). Once the watcher is closed it returns `(nil, nil)`, also to a call already waiting. `timeout` (seconds; `nil` or `math.huge` waits for ever, `0` only takes what is already there) ends the wait with `timed_out`; a negative or NaN one is `invalid_input`. An error the watch reports (`fs.receive: <kind>: <path>: <message>`) is returned as `(nil, err)` and the watch goes on. Other tasks run while it waits, as for the long calls (see the module notes).",
+            "Wait for the next change and return it as `{ kind, path }` (see `fs.watch`). Once the watcher is closed it returns `(nil, nil)`, also to a call already waiting. `timeout` (seconds; `nil` or `math.huge` waits for ever, `0` only takes what is already there) ends the wait with `timed_out`; a negative or NaN one is `invalid_input`. An error the watch reports (`fs.receive: <kind>: <path>: <message>`) is returned as `(nil, err)` and the watch goes on. Other tasks, and an embedder's other calls, run while it waits; where Luau cannot yield (a metamethod, a `table.sort` comparator, a `string.gsub` callback) a call that would have to wait fails with the yield error.",
         )
         .method(
             "close",

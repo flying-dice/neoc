@@ -383,6 +383,74 @@ async fn an_embedders_mixed_host_function_lends_at_its_idle_wait_and_holds_after
     );
 }
 
+/// `std:fs.read_dir` reads (and sorts) a listing of up to a million entries on the blocking pool, as `walk` does:
+/// the call lends its turn while it waits, so another call into the same VM runs in the middle of it instead of
+/// queueing behind the whole listing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn read_dir_lends_the_turn_so_another_call_runs_while_a_large_listing_is_read() {
+    let dir = tempfile::tempdir().unwrap();
+    for i in 0..2000 {
+        std::fs::write(dir.path().join(format!("f{i:04}")), "").unwrap();
+    }
+    let rig = Rig::new();
+    let globals = rig.lua.globals();
+    globals.set("dir", dir.path().to_str().unwrap()).unwrap();
+    globals.set("OTHER_RAN", false).unwrap();
+    // holds the turn without suspending, long enough for the other call to be queued at the gate
+    globals
+        .set(
+            "HOLD_FOR",
+            rig.lua
+                .create_function(|_, ms: u64| {
+                    std::thread::sleep(Duration::from_millis(ms));
+                    Ok(())
+                })
+                .unwrap(),
+        )
+        .unwrap();
+
+    let baton = rig.entry.enter(Inherited::default()).await;
+    // another call into the same VM: it queues for the turn the script holds (the gate is a fair mutex, so it is
+    // first in line when the turn is lent)
+    let other = {
+        let (entry, lua) = (rig.entry.clone(), rig.lua.clone());
+        tokio::spawn(async move {
+            let baton = entry.enter(Inherited::default()).await;
+            scoped(baton, lua.load("OTHER_RAN = true").exec_async()).await
+        })
+    };
+    let out = scoped(
+        baton,
+        rig.lua
+            .load(
+                r#"local fs = require("std:fs")
+                   HOLD_FOR(50)
+                   local before, parks = OTHER_RAN, PARKS()
+                   local entries = assert(fs.read_dir(dir))
+                   return { before = before, after = OTHER_RAN, lent = PARKS() - parks, n = #entries }"#,
+            )
+            .eval_async::<Table>(),
+    )
+    .await
+    .expect("script");
+    other.await.unwrap().expect("the other call");
+
+    assert_eq!(out.get::<usize>("n").unwrap(), 2000);
+    assert!(
+        !out.get::<bool>("before").unwrap(),
+        "the other call waited while the script held its turn"
+    );
+    assert_eq!(
+        out.get::<usize>("lent").unwrap(),
+        1,
+        "read_dir lent the turn once, at its wait"
+    );
+    assert!(
+        out.get::<bool>("after").unwrap(),
+        "the other call ran while read_dir was reading"
+    );
+}
+
 /// The reason `yieldable_pcall.lua` is gone: Luau's own `pcall` and `xpcall` let an async host call suspend the
 /// coroutine they run in, with no engine support and in the engine a plain `neoc run` uses.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

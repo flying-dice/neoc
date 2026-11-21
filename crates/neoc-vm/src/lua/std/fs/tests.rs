@@ -546,6 +546,8 @@ async fn the_long_calls_yield_like_any_wait() {
         check(t:await() == 1)
         local w = task.spawn(function() return #ok(fs.walk(p("u"))) end)
         check(w:await() == 2)
+        local l = task.spawn(function() return #ok(fs.read_dir(p("u"))) end)
+        check(l:await() == 1)
         local r = task.spawn(function() return ok(fs.remove_dir_all(p("u"))) end)
         check(r:await() == true)
         check(fs.exists(p("u")) == false)
@@ -575,6 +577,7 @@ async fn the_long_calls_fail_where_luau_refuses_a_yield_and_do_nothing() {
         -- a table.sort comparator
         check(pcall(table.sort, { 1, 2, 3 }, function(a, b) fs.move(p("m"), p("moved")) return a < b end) == false)
         check(pcall(table.sort, { 1, 2, 3 }, function(a, b) fs.walk(dir) return a < b end) == false)
+        check(pcall(table.sort, { 1, 2, 3 }, function(a, b) fs.read_dir(dir) return a < b end) == false)
         check(pcall(string.gsub, "abc", "b", function() fs.watch(dir) return "x" end) == false)
         -- a metamethod
         local meta = setmetatable({}, { __index = function() fs.remove_dir_all(p("tree")) return 1 end })

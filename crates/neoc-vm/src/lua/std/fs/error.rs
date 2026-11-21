@@ -1,10 +1,11 @@
 //! The error contract of `std:fs`: a stable `kind` plus the platform's own message and the failing path.
 //!
 //! Every fallible `std:fs` function returns `(nil, err)` where `err` is one string,
-//! `fs.<function>: <kind>: <path>: <message>` (the path part is left out when no path is involved). The `kind` is
-//! one of [`Kind`]'s names and means the same on every platform, so a script can branch on it
-//! (`fs.error_kind(err) == "not_found"`); the message is the operating system's wording and differs between
-//! platforms, so a script must not parse it.
+//! `fs.<function>: <kind>: <path>: <message>`. An operation on two paths may name both, `<from> -> <to>`
+//! ([`FsError::io2`]), and the path part is left out when no path is involved (`fs.<function>: <kind>: <message>`,
+//! [`FsError::new`]). The `kind` is one of [`Kind`]'s names and means the same on every platform, so a script can
+//! branch on it (`fs.error_kind(err) == "not_found"`); the message is the operating system's wording and differs
+//! between platforms, so a script must not parse it.
 
 use std::fmt;
 use std::io;
@@ -203,6 +204,9 @@ mod tests {
             (io::ErrorKind::StorageFull, "storage_full"),
             (io::ErrorKind::Unsupported, "unsupported"),
             (io::ErrorKind::TimedOut, "timed_out"),
+            (io::ErrorKind::InvalidFilename, "invalid_input"),
+            (io::ErrorKind::QuotaExceeded, "storage_full"),
+            (io::ErrorKind::FileTooLarge, "too_large"),
         ];
         for (io_kind, name) in cases {
             assert_eq!(Kind::from(io_kind).as_str(), name, "{io_kind:?}");
