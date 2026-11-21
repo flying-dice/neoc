@@ -51,4 +51,20 @@
       transform: translateX(290%);
     }
   }
+  /*
+   * It says the app is busy, so it keeps going under Reduce Motion (base.css stops every other animation), but it fades
+   * in place in the middle of the track instead of sliding along it (in the middle, so it never reads as a share done).
+   */
+  @media (prefers-reduced-motion: reduce) {
+    .indeterminate .bar {
+      margin-inline: auto;
+      animation-name: pulse;
+      animation-duration: 1.3s !important;
+    }
+  }
+  @keyframes pulse {
+    50% {
+      opacity: 0.35;
+    }
+  }
 </style>
