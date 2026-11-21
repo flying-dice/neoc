@@ -129,6 +129,11 @@ fn port_error(app: &AppId, e: VmError) -> PortError {
             tracing::warn!(%app, error = %script, traceback = script.traceback.as_deref().unwrap_or(""), "app code failed");
             PortError::Rejected(e.to_string())
         }
+        // a bug in Rust code, not the app's: the caller is told, the app stays loaded, and the host's log says so
+        VmError::Panicked(ref message) => {
+            tracing::error!(%app, %message, "a host function panicked in a call into the app");
+            PortError::Internal(e.to_string())
+        }
         other => PortError::Rejected(other.to_string()), // ctx:fail, invalid input, bad data
     }
 }

@@ -758,7 +758,10 @@ impl AppVm {
         // raw: a `__index` on the spec is app code, and this runs outside the VM's gate
         let on_close = instance.spec.raw_get::<Option<Function>>("onClose").ok().flatten();
         if let Some(f) = on_close {
-            self.in_call(false, f.call_async::<()>(instance.w.clone())).await.map_err(|e| script(&e))?;
+            self.in_call(false, async {
+                f.call_async::<()>(instance.w.clone()).await.map_err(|e| script(&e))
+            })
+            .await?;
         }
         Ok(())
     }
