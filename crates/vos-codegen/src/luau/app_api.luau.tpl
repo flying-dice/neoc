@@ -63,6 +63,50 @@ export type vos_KvApi = {
 	delete: (self: vos_KvApi, key: string) -> (),
 }
 
+--- An entry of `app.files`: `kind` does not follow a symbolic link; `modified` is seconds since the Unix epoch
+--- (`nil` where the filesystem does not record it).
+export type vos_FileInfo = {
+	name: string,
+	kind: "file" | "dir" | "symlink" | "other",
+	size: number,
+	modified: number?,
+}
+
+--- One managed location of the app (`app.files.documents`, `.cache`, `.temp`). A path is relative to it,
+--- written with `/` (`"notes/a.txt"`; `""` is the location itself); an absolute path, `..`, `:`, a backslash,
+--- NUL or a name over 255 bytes is `invalid_input`, and a symbolic link inside it is never followed. A failure
+--- returns `nil, "files.<method>: <kind>: <path>: <message>"` with the kinds of `std:fs` (`app.files.errorKind`
+--- reads it). A write inside a `readOnly` tool or a render raises. Scoped to the app by convention: not a sandbox.
+export type vos_Files = {
+	--- The whole file (binary-safe); at most 64 MiB (`too_large`). A directory is `is_directory`.
+	read: (self: vos_Files, path: string) -> (string?, string?),
+	--- Create or replace the file in one step (a reader never sees half of it). The parent must exist (`not_found`).
+	write: (self: vos_Files, path: string, data: string) -> (boolean?, string?),
+	--- The entries of a directory (default: the location), sorted by name.
+	list: (self: vos_Files, path: string?) -> ({ vos_FileInfo }?, string?),
+	--- What `path` is: type, size, modification time.
+	info: (self: vos_Files, path: string) -> (vos_FileInfo?, string?),
+	--- Create a directory and the missing ones above it; one already there is not an error.
+	createDir: (self: vos_Files, path: string) -> (boolean?, string?),
+	--- Remove a file, or a directory: empty (`not_empty` otherwise) unless `{ recursive = true }`.
+	remove: (self: vos_Files, path: string, options: { recursive: boolean? }?) -> (boolean?, string?),
+	--- Rename or move inside the location; an existing file at `to` is replaced.
+	move: (self: vos_Files, from: string, to: string) -> (boolean?, string?),
+	--- Copy a file (an existing file at `to` is replaced) or a directory tree (`to` must not exist).
+	copy: (self: vos_Files, from: string, to: string) -> (boolean?, string?),
+}
+
+--- The app's managed files: one shared set per app (not per person or device), found from the app's identity.
+--- `documents` for what the person would miss, `cache` for what the app can rebuild, `temp` for scratch files.
+--- All three are deleted when the app's data is deleted (uninstall with purge, "delete data"), and kept otherwise.
+export type vos_FilesApi = {
+	documents: vos_Files,
+	cache: vos_Files,
+	temp: vos_Files,
+	--- The kind of an error a file call returned (`"not_found"`, `"already_exists"`, ...), or nil for anything else.
+	errorKind: (err: string?) -> string?,
+}
+
 export type vos_ExecResult = { changes: number, last_insert_id: number }
 
 export type vos_SqlParams = { [string]: any }
@@ -163,7 +207,7 @@ export type vos_ToolDef = {
 	title: string?,
 	description: string?,
 	input: { [string]: vos_Schema }?,
-	--- enforced: the tool runs with app writes blocked (db writes, app.kv set/delete, db:migrate raise) and an agent may run it without a permission prompt
+	--- enforced: the tool runs with app writes blocked (db writes, app.kv set/delete, db:migrate, app.files writes raise) and an agent may run it without a permission prompt
 	readOnly: boolean?,
 	run: (input: any, ctx: vos_ToolContext) -> any,
 }
@@ -192,6 +236,7 @@ export type vos_AppApi = {
 	id: string,
 	kv: vos_KvApi,
 	db: vos_Db,
+	files: vos_FilesApi,
 	--- the agent contacts
 	agents: vos_AgentsApi,
 	t: vos_SchemaBuilders,

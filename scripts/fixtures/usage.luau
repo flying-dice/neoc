@@ -162,6 +162,23 @@ local _tx: number = app.db:tx(function()
 end)
 app.kv:set("k", { 1, 2 })
 local _stored: any = app.kv:get("k")
+local docs: vos_Files = app.files.documents
+local _made: boolean?, _madeErr: string? = docs:createDir("notes")
+local _wrote: boolean? = docs:write("notes/a.txt", "hello")
+local _text: string?, readErr: string? = docs:read("notes/a.txt")
+local _missing: string? = app.files.errorKind(readErr)
+local entries: { vos_FileInfo } = docs:list("notes") or {}
+for _, entry in entries do
+  local _entryName: string, _size: number, _modified: number? = entry.name, entry.size, entry.modified
+end
+local _rootEntries = app.files.cache:list()
+local info: vos_FileInfo? = docs:info("notes/a.txt")
+if info and info.kind == "file" then
+  docs:move("notes/a.txt", "notes/b.txt")
+end
+docs:copy("notes", "backup")
+docs:remove("backup", { recursive = true })
+app.files.temp:remove("scratch.txt")
 app.notify { title = "hello", body = "world" }
 app:notify { title = "hello" }
 app.log("usage")

@@ -18,7 +18,7 @@ use vos_application::{
         AgentRoster, AppActivity, AppData, AppPackage, AppRuntime, CallContext, LoadedApp, Notifier,
         PortResult, RenderOutput, Shell, ViewEffect, ViewEventCall,
     },
-    PortError,
+    FileStore, NoFiles, PortError,
 };
 use vos_domain::AppId;
 
@@ -32,6 +32,8 @@ pub struct LuaRuntime {
     shell: Arc<dyn Shell>,
     host_modules: HashMap<String, Vec<u8>>,
     roster: Option<Arc<dyn AgentRoster>>,
+    /// Where each app's `app.files` live (none unless the host gives a store).
+    files: Arc<dyn FileStore>,
     /// Who hears that a background call settled; bound once the application exists (see [`Self::bind_activity`]).
     activity: Arc<OnceLock<Weak<dyn AppActivity>>>,
 }
@@ -39,13 +41,28 @@ pub struct LuaRuntime {
 impl LuaRuntime {
     pub fn new(notifier: Arc<dyn Notifier>, shell: Arc<dyn Shell>) -> Self {
         let host_modules = HashMap::from([("ui".to_owned(), UI_MODULE.as_bytes().to_vec())]);
-        Self { vms: RwLock::default(), notifier, shell, host_modules, roster: None, activity: Arc::default() }
+        Self {
+            vms: RwLock::default(),
+            notifier,
+            shell,
+            host_modules,
+            roster: None,
+            files: Arc::new(NoFiles),
+            activity: Arc::default(),
+        }
     }
 
     /// The agent contacts `app.agents:list()` shows to every app.
     #[must_use]
     pub fn with_roster(mut self, roster: Arc<dyn AgentRoster>) -> Self {
         self.roster = Some(roster);
+        self
+    }
+
+    /// Where every app's managed files (`app.files`) live: the same store the application purges them from.
+    #[must_use]
+    pub fn with_files(mut self, files: Arc<dyn FileStore>) -> Self {
+        self.files = files;
         self
     }
 
@@ -122,6 +139,8 @@ impl AppRuntime for LuaRuntime {
         let config = VmConfig {
             host_modules: Arc::new(self.host_modules.clone()),
             roster: self.roster.clone().unwrap_or_else(|| VmConfig::default().roster),
+            files: self.files.files(app),
+            refused_modules: Vec::new(),
         };
         // An app that serves a port cannot be replaced by a version that serves the same one while the old
         // still holds it: stop what the old version started (listeners, tasks, workers) before the new one

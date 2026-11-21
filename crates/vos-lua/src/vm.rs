@@ -40,6 +40,7 @@ use tokio::sync::Notify;
 use vos_application::{
     live::{SourceDef, SourceId},
     ports::{AgentCard, AgentRoster, AppData, AppPackage, CallContext, MenuCommand, ViewEffect},
+    AppFiles, Files, NoFiles,
 };
 use vos_domain::{time, tool_schema, AppDecl, AppId, Notification, ToolSpec};
 
@@ -108,6 +109,12 @@ pub struct VmConfig {
     pub host_modules: Arc<HashMap<String, Vec<u8>>>,
     /// The agent contacts `app.agents:list()` shows (empty unless the host gives a roster).
     pub roster: Arc<dyn AgentRoster>,
+    /// The app's managed files (`app.files`); every call is `unsupported` unless the host gives a store.
+    pub files: Arc<dyn AppFiles>,
+    /// Library modules this VM does not offer, on top of [`crate::NOT_FOR_APPS`] (its `std:thread` workers neither).
+    /// The host leaves it empty and there is no setting for it: a test uses it to show that a capability works
+    /// for an app that cannot `require` a module (`app.files` without `std:fs`).
+    pub refused_modules: Vec<String>,
 }
 
 impl std::fmt::Debug for VmConfig {
@@ -126,7 +133,12 @@ impl AgentRoster for NoRoster {
 
 impl Default for VmConfig {
     fn default() -> Self {
-        Self { host_modules: Arc::default(), roster: Arc::new(NoRoster) }
+        Self {
+            host_modules: Arc::default(),
+            roster: Arc::new(NoRoster),
+            files: Arc::new(NoFiles),
+            refused_modules: Vec::new(),
+        }
     }
 }
 
@@ -159,6 +171,10 @@ pub(crate) struct Shared {
     pub app: AppId,
     pub package: AppPackage,
     pub db: Arc<dyn AppData>,
+    /// `app.files`, through the use case that checks every path.
+    pub files: Files,
+    /// The library modules this app is offered (see [`crate::require::offered_modules`]).
+    pub offered: Arc<Vec<&'static str>>,
     pub host_modules: Arc<HashMap<String, Vec<u8>>>,
     pub roster: Arc<dyn AgentRoster>,
     pub tracker: SharedTracker,
@@ -223,6 +239,15 @@ impl Shared {
             self.db.read_only()
         } else {
             self.db.clone()
+        }
+    }
+
+    /// The app's files as the running call may use them: a handle that refuses writes inside a `readOnly` tool.
+    pub fn files(&self) -> Files {
+        if self.read_only.load(Ordering::SeqCst) {
+            self.files.read_only()
+        } else {
+            self.files.clone()
         }
     }
 
@@ -563,7 +588,8 @@ impl AppVm {
         db: Arc<dyn AppData>,
         config: VmConfig,
     ) -> Result<Self> {
-        let VmConfig { host_modules, roster } = config;
+        let VmConfig { host_modules, roster, files, refused_modules } = config;
+        let offered = Arc::new(crate::require::offered_modules(&refused_modules));
         let load_err =
             |e: &mlua::Error| VmError::Load { app: app.to_string(), error: ScriptError::from_lua(e) };
         let lua = make_bare_engine().map_err(|e| load_err(&e))?;
@@ -573,12 +599,13 @@ impl AppVm {
         install_runtime_state(&lua, life.clone());
         // a `std:thread` worker an app starts is offered what the app is offered: the library's module list
         // without the ones an app is not given (`require::NOT_FOR_APPS`)
+        let worker_offered = offered.clone();
         set_worker_engine(
             &lua,
-            Arc::new(|life| {
+            Arc::new(move |life| {
                 let lua = make_bare_engine()?;
                 install_runtime_state(&lua, life);
-                neoc_vm::lua::modules::install_allowed(&lua, &crate::require::offered_modules())?;
+                neoc_vm::lua::modules::install_allowed(&lua, &worker_offered)?;
                 Ok(lua)
             }),
         );
@@ -598,6 +625,8 @@ impl AppVm {
             app: app.clone(),
             package,
             db,
+            files: Files::new(files),
+            offered,
             host_modules,
             roster,
             tracker: Arc::new(Mutex::new(Tracker::new(read_only.clone()))),
