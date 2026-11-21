@@ -8,6 +8,7 @@ const dirs: string[] = []
 
 /** The ignored tests of the workspace today, as `cargo nextest list --run-ignored only --message-format oneline` prints them. */
 const TODAY = [
+  'neoc-vm lua::serde_guard::tests::a_wide_value_is_walked_whole',
   'neoc-vm::hostile_inputs a_ring_of_sixty_thousand_macros_is_planned_in_linear_time',
   'neoc-vm::hostile_inputs no_module_function_panics_on_hostile_input',
   'vos-domain ui::diff::tests::apply_of_diff_reproduces_the_new_tree_for_edited_trees_full',
@@ -34,10 +35,10 @@ afterAll(() => {
 })
 
 describe('the slow-suite selection', () => {
-  test('selects the four slow: tests and leaves out the baseline measurement', () => {
+  test('selects the five slow: tests and leaves out the baseline measurement', () => {
     const r = list(TODAY)
     expect(r.status).toBe(0)
-    expect(r.stdout).toContain('slow tests (4)')
+    expect(r.stdout).toContain('slow tests (5)')
     expect(r.stdout).toContain('no_module_function_panics_on_hostile_input')
     expect(r.stdout).not.toContain('calculator_vm_create_time_and_memory')
   })
