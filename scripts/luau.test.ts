@@ -1,7 +1,8 @@
 /**
  * Apps as Luau (scripts/luau.ts, .darklua.json, lua/prelude.lua):
- *  - the sources the host embeds and the contract tests also run with a native Lua (`lua/prelude.lua`,
- *    `types/generated/ui.lua`) stay plain Lua source: no annotations, no Luau-only syntax;
+ *  - the prelude (`lua/prelude.lua`) stays plain Lua source, no annotations and no Luau-only syntax, because the
+ *    polyfill comparison below runs it on a native Lua 5.3+ as the reference for `utf8` (it is the host's own source,
+ *    not app code; apps are Luau and run only on the Luau engine);
  *  - every app bundles into one file whose only requires are runtime ones (`vos:*` and the host's `std:`, `lib:` and
  *    `vnd:` modules), with its types and comments stripped, its Luau syntax untouched and its non-ASCII text intact;
  *  - the prelude's `utf8` agrees with a native Lua 5.3+ when one is installed;
@@ -43,8 +44,8 @@ function code(file: string): string {
     .join("\n");
 }
 
-describe("the embedded Lua sources stay plain Lua", () => {
-  for (const file of ["lua/prelude.lua", "types/generated/ui.lua"]) {
+describe("the embedded prelude stays plain Lua", () => {
+  for (const file of ["lua/prelude.lua"]) {
     test(`${file} has no annotations and no Luau-only syntax`, () => {
       const source = code(file);
       expect(

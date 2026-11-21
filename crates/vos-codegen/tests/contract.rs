@@ -4,15 +4,15 @@
 //! * every component, expression function and client action is covered by the Luau declarations, the runtime
 //!   `ui.lua` and the TypeScript output; the app definitions offer exactly the modules the host does (no more, no
 //!   refused one) and carry one `declare require`;
-//! * the Calculator and Notes examples (typed Luau, checked by `bun run lint:luau`), built as the host runs them,
-//!   are **run** against the real generated `ui.lua` with a `lua` interpreter (5.1 or newer), and the trees they
-//!   render validate against the schema. Without `lua` installed the committed trees are validated instead.
+//! * the trees the Calculator and Notes examples render (committed under `tests/fixtures/trees`) validate against the
+//!   schema and have the documented shape. The apps run on the real runtime, not here: `crates/vos-lua/tests/views.rs`
+//!   holds the committed trees to what the apps render (and runs the `ui.lua` constructor checks), so nothing in this
+//!   crate executes Lua.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
 
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 use vos_domain::{GLOBALS_NOT_FOR_APPS, NOT_FOR_APPS};
@@ -112,20 +112,14 @@ fn ui_act_covers_exactly_the_domain_actions() {
     }
 }
 
-/// The runtime module is plain Lua source (the host runs it as Luau; the contract tests below also run it with a native
-/// `lua`): the types of its constructors live in the declarations.
+/// The runtime module carries no annotations: the types of its constructors live in the declarations.
 #[test]
-fn ui_lua_is_plain_lua() {
+fn ui_lua_carries_no_annotations() {
     let lua = vos_codegen::ui_module();
     assert!(
         !lua.contains("---@"),
         "the runtime module carries no annotations: they live in the declarations"
     );
-    let code: String =
-        lua.lines().filter(|line| !line.trim_start().starts_with("--")).collect::<Vec<_>>().join("\n");
-    for luau_only in ["export type", ":: ", " += ", " ..= ", "continue", "`"] {
-        assert!(!code.contains(luau_only), "Luau-only syntax `{luau_only}` in ui.lua");
-    }
 }
 
 #[test]
@@ -242,7 +236,7 @@ fn typescript_declares_every_component_protocol_type_and_method() {
 
 // ---- the example apps -------------------------------------------------------------------------------------
 
-/// What the stub host sends for `view.open`, minus the snapshot envelope.
+/// What a view sends on `view.open`, minus the snapshot envelope (the committed trees).
 struct Rendered {
     tree: Node,
     decls: ViewDecls,
@@ -270,80 +264,6 @@ fn committed(app: &str) -> Value {
         .unwrap()
 }
 
-/// A Lua interpreter (5.1 or newer) on PATH, or `None`.
-fn lua_binary() -> Option<&'static str> {
-    ["lua5.1", "lua", "lua5.4", "lua5.3", "luajit"]
-        .into_iter()
-        .find(|name| Command::new(name).arg("-v").output().is_ok_and(|out| out.status.success()))
-}
-
-/// Where an example app's Luau lives: the real app under `apps/<app>` when the repo has one (the Calculator), so the
-/// contract is checked against what ships, else a fixture (Notes, which exists only as an example).
-fn source_of(app: &str) -> std::path::PathBuf {
-    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps").join(app);
-    if shipped.join("app.json").exists() {
-        shipped
-    } else {
-        fixtures().join(app)
-    }
-}
-
-/// The generated `ui.lua`, written where the interpreter can read it.
-fn write_ui(work: &Path) -> PathBuf {
-    let ui = work.join("ui.lua");
-    fs::write(&ui, vos_codegen::ui_module()).unwrap();
-    ui
-}
-
-/// The app as the host runs it: the one file the product's own pipeline builds (`scripts/luau-build.ts`: darklua,
-/// with the types stripped). Needs bun and darklua, as the other crates' tests do.
-fn build(app: &str, work: &Path) -> PathBuf {
-    let built = work.join("app.luau");
-    let run = Command::new("bun")
-        .arg("scripts/luau-build.ts")
-        .arg(source_of(app).join("app.luau"))
-        .arg(&built)
-        .current_dir(root())
-        .output()
-        .expect("bun is needed to build the apps these tests run (https://bun.sh)");
-    assert!(
-        run.status.success(),
-        "building {app} failed (is darklua 0.18.0 installed? see scripts/luau.ts):\n{}{}",
-        String::from_utf8_lossy(&run.stdout),
-        String::from_utf8_lossy(&run.stderr)
-    );
-    built
-}
-
-/// Run an example app's `main` window, built as the host runs it, with a `lua` interpreter against the generated
-/// `ui.lua`. `None` when no interpreter is installed.
-fn run_lua(app: &str) -> Option<Value> {
-    let lua = lua_binary()?;
-    let work = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("lua-{app}"));
-    let _ = fs::remove_dir_all(&work);
-    fs::create_dir_all(&work).unwrap();
-    let ui = write_ui(&work);
-    let built = build(app, &work);
-    let output = Command::new(lua)
-        .current_dir(&work)
-        .arg(fixtures().join("stub/harness.lua"))
-        .arg(&ui)
-        .arg(fixtures().join("stub/app.lua"))
-        .arg(&built)
-        .output()
-        .ok()?;
-    assert!(
-        output.status.success(),
-        "{lua} failed for {app}:\n{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Some(
-        serde_json::from_slice(&output.stdout)
-            .unwrap_or_else(|e| panic!("{app}: {e}\n{}", String::from_utf8_lossy(&output.stdout))),
-    )
-}
-
 fn check_tree(app: &str, rendered: &Rendered) {
     let context = Context::from_decls(&rendered.decls);
     let findings = validate_with(&rendered.tree, &context);
@@ -364,59 +284,6 @@ fn ids(app: &str, node: &Node, path: &str, out: &mut Vec<String>) {
             ids(app, child, &child_path, out);
         }
     }
-}
-
-#[test]
-fn the_examples_run_against_the_generated_constructors_and_render_valid_trees() {
-    let bless = std::env::var_os("UPDATE_FIXTURES").is_some();
-    let mut ran = 0;
-    for app in ["calculator", "notes"] {
-        if let Some(fresh) = run_lua(app) {
-            ran += 1;
-            check_tree(app, &parse(&fresh));
-            let path = fixtures().join("trees").join(format!("{app}.json"));
-            if bless {
-                fs::create_dir_all(path.parent().unwrap()).unwrap();
-                fs::write(&path, serde_json::to_string_pretty(&fresh).unwrap() + "\n").unwrap();
-            } else {
-                assert_eq!(
-                    fresh,
-                    committed(app),
-                    "{app}: the tree the Lua example renders changed; review it, then run \
-                     `UPDATE_FIXTURES=1 cargo test -p vos-codegen` to re-bless tests/fixtures/trees/{app}.json"
-                );
-            }
-        }
-    }
-    if ran == 0 {
-        eprintln!(
-            "skipped running the examples: no `lua` interpreter is installed (the committed trees are validated below)"
-        );
-    }
-}
-
-#[test]
-fn the_constructors_behave_as_documented() {
-    let Some(lua) = lua_binary() else {
-        eprintln!("skipped: no `lua` interpreter is installed");
-        return;
-    };
-    let work = Path::new(env!("CARGO_TARGET_TMPDIR")).join("lua-constructors");
-    let _ = fs::remove_dir_all(&work);
-    fs::create_dir_all(&work).unwrap();
-    let ui = write_ui(&work);
-    let output = Command::new(lua)
-        .current_dir(&work)
-        .arg(fixtures().join("stub/constructors.lua"))
-        .arg(&ui)
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        output.status.success() && stdout.trim() == "ok",
-        "{stdout}{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
 }
 
 #[test]
@@ -460,19 +327,27 @@ fn the_calculator_tree_has_the_documented_shape_and_ids() {
 #[test]
 fn the_notes_tree_has_the_documented_sources_bindings_and_ids() {
     let rendered = parse(&committed("notes"));
-    // three sources, declared once; the SQL never reaches the tree
+    // three sources, declared once (the ids are the runtime's to hand out); the SQL never reaches the tree
     assert_eq!(rendered.decls.sources.len(), 3);
+    let (row_id, _) = rendered
+        .decls
+        .sources
+        .iter()
+        .find(|(_, decl)| matches!(decl, SourceDecl::Row { .. }))
+        .expect("`note`, the one row source");
     assert!(
-        matches!(rendered.decls.sources["s1"], SourceDecl::Row { .. }),
-        "`note` is declared first in render"
+        rendered.decls.sources.values().any(|decl| matches!(decl, SourceDecl::Rows { page: Some(60), .. })),
+        "the paged list of notes"
     );
-    assert!(matches!(rendered.decls.sources["s3"], SourceDecl::Rows { page: Some(60), .. }));
     assert!(serde_json::to_string(&rendered.tree).unwrap().find("select ").is_none(), "no SQL in the tree");
     // persisted client state
     assert_eq!(rendered.decls.client["folder"].persist, vos_domain::ui::source::Persist::App);
     // the two-way text binding, and the ids the spec lists (§4.5)
     let text = serde_json::to_string(&rendered.tree).unwrap();
-    assert!(text.contains(r#""text":{"$ref":"src.s1.body"}"#), "TextEditor is bound to the row source field");
+    assert!(
+        text.contains(&format!(r#""text":{{"$ref":"src.{row_id}.body"}}"#)),
+        "TextEditor is bound to the row source field"
+    );
     let mut found = Vec::new();
     ids("notes", &rendered.tree, &rendered.tree.key, &mut found);
     for expected in

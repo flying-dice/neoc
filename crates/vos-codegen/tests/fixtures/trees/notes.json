@@ -24,34 +24,14 @@
       "persist": "session"
     }
   },
-  "manifest": {
-    "icon": "note.text",
-    "id": "notes",
-    "name": "Notes",
-    "tint": "yellow",
-    "window": {
-      "h": 640,
-      "minH": 360,
-      "minW": 480,
-      "w": 960
-    }
-  },
   "sources": {
     "s1": {
       "key": "id",
-      "kind": "row",
-      "params": {
-        "id": {
-          "$ref": "client.noteId"
-        }
-      }
+      "kind": "rows",
+      "params": {},
+      "total": "exact"
     },
     "s2": {
-      "key": "id",
-      "kind": "rows",
-      "params": {}
-    },
-    "s3": {
       "key": "id",
       "kind": "rows",
       "page": 60,
@@ -62,10 +42,24 @@
         "q": {
           "$ref": "client.search"
         }
-      }
+      },
+      "total": "exact"
+    },
+    "s3": {
+      "conflict": "merge",
+      "key": "id",
+      "kind": "row",
+      "params": {
+        "id": {
+          "$ref": "client.noteId"
+        }
+      },
+      "rev": "rev",
+      "writable": [
+        "body"
+      ]
     }
   },
-  "tools": 2,
   "tree": {
     "children": [
       {
@@ -82,7 +76,7 @@
                     {
                       "key": "_0",
                       "props": {
-                        "source": "s3"
+                        "source": "s2"
                       },
                       "slots": {
                         "row": [
@@ -262,7 +256,7 @@
                                   "placeholder": "Start writing…",
                                   "sync": "debounce:400",
                                   "text": {
-                                    "$ref": "src.s1.body"
+                                    "$ref": "src.s3.body"
                                   }
                                 },
                                 "type": "TextEditor"
@@ -289,7 +283,7 @@
                                       "props": {
                                         "padding": 4,
                                         "text": {
-                                          "$ref": "src.s1.body"
+                                          "$ref": "src.s3.body"
                                         }
                                       },
                                       "type": "Markdown"
@@ -319,7 +313,7 @@
                                     "$fn": "fmt.relative",
                                     "args": [
                                       {
-                                        "$ref": "src.s1.updated_at"
+                                        "$ref": "src.s3.updated_at"
                                       }
                                     ]
                                   },
@@ -330,7 +324,7 @@
                                         "$fn": "isEmpty",
                                         "args": [
                                           {
-                                            "$ref": "src.s1.author"
+                                            "$ref": "src.s3.author"
                                           }
                                         ]
                                       },
@@ -340,7 +334,7 @@
                                         "args": [
                                           " by ",
                                           {
-                                            "$ref": "src.s1.author"
+                                            "$ref": "src.s3.author"
                                           }
                                         ]
                                       }
@@ -454,7 +448,7 @@
                     {
                       "key": "_1",
                       "props": {
-                        "source": "s2"
+                        "source": "s1"
                       },
                       "slots": {
                         "row": [

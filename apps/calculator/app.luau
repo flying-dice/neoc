@@ -66,11 +66,7 @@ end
 
 -- The sum in progress as a new list (state is only ever assigned, never edited in place), ready to be added to.
 local function copyOfTerms(): { number | string }
-  local terms: { number | string } = {}
-  for i, term in ipairs(s.terms) do
-    terms[i] = term
-  end
-  return terms
+  return table.clone(s.terms)
 end
 
 -- An operator key adds the number on the display and the operator to the sum, and works out only what that operator

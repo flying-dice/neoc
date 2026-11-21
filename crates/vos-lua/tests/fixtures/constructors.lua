@@ -1,6 +1,9 @@
--- Runs the generated `ui.lua` constructors and asserts what the docs promise. Executed by the codegen contract
--- test with a `lua` runner: `lua constructors.lua <ui.lua>`; prints `ok`.
-local ui = assert(loadfile((...)))()
+-- An app whose entry asserts what the docs promise of the generated `ui.lua` constructors. It runs on the real
+-- runtime (`vos:ui` is that file, as every app gets it); a failed check raises and the app does not load. The last
+-- thing it does is register a tool, so a test can tell that every check ran.
+local app = require("vos:app")
+local ui = require("vos:ui")
+app.manifest { id = "constructors", name = "Constructors", icon = "gear" }
 
 local function check(condition, message)
   assert(condition, message)
@@ -129,4 +132,13 @@ local mapped = ui.each({ 1, 2, 3 }, function(n)
 end)
 check(#mapped == 2 and mapped[2].key == "n3", "ui.each skips nil")
 
-print("ok")
+app.tool {
+  name = "constructors_checked",
+  title = "Constructors checked",
+  description = "Answers once every check above has passed.",
+  readOnly = true,
+  input = {},
+  run = function()
+    return { ok = true }
+  end,
+}
