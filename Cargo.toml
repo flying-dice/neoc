@@ -28,7 +28,7 @@ vos-http        = { path = "crates/vos-http" }
 # external
 anyhow      = "1.0"
 async-trait = "0.1"
-notify      = "8.2"
+notify      = "9.0"
 parking_lot = "0.12"
 rusqlite    = { version = "0.43.0", features = ["bundled", "hooks", "limits"] }
 serde       = { version = "1", features = ["derive"] }

@@ -23,7 +23,9 @@
 //! - *Recursion.* Native on macOS and Windows. On Linux each directory is one inotify watch, added for the tree at
 //!   start and for new subdirectories as they appear (bounded by `fs.inotify.max_user_watches`), and each watcher is
 //!   one inotify instance (`fs.inotify.max_user_instances`, 128 by default: inotify(7)).
-//! - *Paths.* FSEvents reports resolved paths; they are reported under the path the script gave ([`Roots`]).
+//! - *Paths.* FSEvents reports resolved paths; they are reported under the path the script gave ([`Roots`]). A name
+//!   that is not UTF-8 (a FAT32 volume on macOS reports one) is reported as its bytes: notify 9 takes such paths,
+//!   where notify 8's FSEvents callback panicked on them.
 //! - *Start.* FSEvents may also report a change made just before the watch started.
 
 use std::collections::VecDeque;
@@ -276,9 +278,8 @@ fn watch_error(e: &notify::Error, root: &Path) -> FsError {
             path,
             "the operating system's limit on watches is reached (fs.inotify.max_user_watches on Linux)",
         ),
-        notify::ErrorKind::Generic(_) | notify::ErrorKind::WatchNotFound => {
-            FsError::at(Kind::Other, path, e.to_string())
-        }
+        // `Generic`, `WatchNotFound`, `WatchStartFailed` and whatever a later notify adds (the enum is non-exhaustive)
+        _ => FsError::at(Kind::Other, path, e.to_string()),
     }
 }
 
@@ -292,10 +293,22 @@ struct WatchInner {
 impl WatchInner {
     /// Stop watching and end every wait. Idempotent, and safe while the watching thread is delivering: the watcher is
     /// dropped (which waits for that thread on macOS) with no lock held, and the queue refuses what still arrives.
+    ///
+    /// The queue is closed first, so every wait ends whatever the drop does. A watcher whose thread has died cannot
+    /// hang the drop (notify 9 stops FSEvents without waiting for its run loop, and the other backends only send a
+    /// message), but notify unwraps that thread's result there (`join().expect`, `send().unwrap()`): the panic is
+    /// caught here, so a close, a collection or the engine's shutdown cannot unwind out of it. (Under
+    /// `panic = "abort"` the thread's own panic has already ended the process.)
     fn close(&self) {
         let watcher = self.watcher.lock().take();
         self.queue.close();
-        drop(watcher);
+        if let Some(watcher) = watcher {
+            let dropped =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || drop(watcher)));
+            if dropped.is_err() {
+                tracing::warn!(target: "lua::lib::fs", root = %self.root.display(), "the watcher's thread had died");
+            }
+        }
     }
 }
 
@@ -773,6 +786,57 @@ mod tests {
         .exec_async()
         .await
         .unwrap();
+    }
+
+    /// notify 8's FSEvents callback panicked on a path that is not UTF-8 (a FAT32 volume reports one) and its
+    /// `stop()` then spun for ever; 9.0 fixed both. Held here so a downgrade says why it is wrong.
+    #[test]
+    fn notify_is_a_version_that_takes_paths_that_are_not_utf8() {
+        let lock =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.lock"))
+                .unwrap();
+        let versions: Vec<u64> = lock
+            .split("[[package]]")
+            .filter(|package| package.contains("\nname = \"notify\"\n"))
+            .filter_map(|package| package.split("version = \"").nth(1))
+            .filter_map(|version| version.split('.').next()?.parse().ok())
+            .collect();
+        assert!(!versions.is_empty(), "notify is not in Cargo.lock");
+        assert!(
+            versions.iter().all(|major| *major >= 9),
+            "notify {versions:?}: 9.0 at least"
+        );
+    }
+
+    /// A name that is not UTF-8, made while the directory is watched, is reported as its bytes and the watch closes
+    /// cleanly. Skipped where the filesystem refuses such a name (APFS does; Linux filesystems do not).
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_name_that_is_not_utf8_is_reported_as_its_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = tempfile::tempdir().unwrap();
+        let handle = start(dir.path().to_path_buf(), false).unwrap();
+        let name = dir.path().join(std::ffi::OsStr::from_bytes(b"new\xffname"));
+        if let Err(e) = std::fs::write(&name, "x") {
+            eprintln!("skipped: this filesystem refuses a name that is not UTF-8 ({e})");
+            return;
+        }
+        let queue = Arc::clone(&handle.0.queue);
+        let seen = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match queue.next().await {
+                    Next::Item(Item::Change(_, path)) if path == name => return true,
+                    Next::Closed => return false,
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("an event for the name within 10 seconds");
+        assert!(seen, "the watch ended before reporting the name");
+        handle.0.close();
+        assert!(handle.0.watcher.lock().is_none());
+        assert!(matches!(queue.try_next(), Some(Next::Closed)));
     }
 
     #[test]
