@@ -1322,7 +1322,7 @@ notes or 5 000. Test ids that fall out: `notes-folders-row-3`, `notes-new-note`,
   e2e specs: `local v = test.mount(app, "main"); v:tap("calculator-key-7"); v:expectText("calculator-display", "7")`;
   `v:type("notes-body", "hi")`; `v:tree()` for snapshots (the tree is JSON). Tool tests call `app.tool` directly against a
   temp SQLite and assert the resulting `data.patch` for an open view.
-- **Isolation (not a security boundary).** One Lua VM per app (LuaJIT; apps are plain Lua 5.1 source, which darklua only bundles into one file), its own environment table with no `load*`/`getfenv`/`setfenv` and no bare `os`/`io`/`debug`, and its
+- **Isolation (not a security boundary).** One Lua VM per app (Luau; apps are plain Lua 5.1 source, which darklua only bundles into one file), its own environment table with no `load*`/`getfenv`/`setfenv` and no bare `os`/`io`/`debug`, and its
   own per-app SQLite file. An app's `require` takes `@agentos/app`, `@agentos/ui` and every `std:`/`lib:`/`vnd:` module except `lib:test`, `lib:compile` and `std:workers`
   (files, network, servers, threads), so it can reach other apps' data and the host's. There are no app permissions and
   no CPU, memory or time limits: an app is the person's own code on their own host (see host-stack.md, "No permissions,

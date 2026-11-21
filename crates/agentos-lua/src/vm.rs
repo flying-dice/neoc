@@ -1,4 +1,4 @@
-//! One sandboxed Lua VM (LuaJIT, running the app's Lua 5.1 source) per app.
+//! One sandboxed Lua VM (Luau, running the app's Lua 5.1 source) per app.
 //!
 //! The VM is a bare `neoc-vm` engine with the app's own environment table (see
 //! `neoc_vm::lua::script_env`): the prelude's polyfills, the `app` capability table and a `require` that

@@ -30,7 +30,7 @@ const INTERNAL: Record<string, string[]> = {
   'agentos-application': ['agentos-domain'],
   // The Lua adapter runs apps (plain Lua 5.1 source) on top of the Lua VM library below.
   'agentos-lua': ['agentos-domain', 'agentos-application', 'neoc-vm'],
-  // The Lua VM (LuaJIT): a support library, not an adapter. It depends on no other crate here, and among the
+  // The Lua VM (Luau): a support library, not an adapter. It depends on no other crate here, and among the
   // agentos crates only the Lua adapter may depend on it (the one place a script engine is wired to a port), so
   // the VM stays swappable. The `neoc` CLI is its other client.
   'neoc-vm': [],

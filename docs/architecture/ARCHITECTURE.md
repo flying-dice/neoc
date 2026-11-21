@@ -45,8 +45,8 @@ crates/
   agentos-domain        pure model, no I/O: app ids, app refs, manifests, tool grants, agent identity, tools,
                         notifications, view tree and component schema, protocol messages
   agentos-application   ports (traits) and use cases; in-memory fakes for tests; no frameworks
-  agentos-lua          adapter: runs apps (Lua 5.1 source, on LuaJIT), one VM per app: the app API modules, views, the call queue
-  neoc-vm               support library (not an adapter): the Lua VM (LuaJIT) on mlua, the per-app environment, the
+  agentos-lua          adapter: runs apps (Lua 5.1 source, on Luau), one VM per app: the app API modules, views, the call queue
+  neoc-vm               support library (not an adapter): the Lua VM (Luau) on mlua, the per-app environment, the
                         `std:`/`lib:`/`vnd:` modules, the lifecycle of what apps spawn; depends on no other
                         crate; among the agentos crates only `lua` may depend on it (and the
                         `neoc` CLI, which is not part of the hexagon)
@@ -75,7 +75,7 @@ crates/
   - `cargo nextest`.
 - **Crates** (versions in `host-stack.md`):
   - runtime: tokio, axum;
-  - Lua: mlua (`luajit`, `vendored`, `async`, `serialize`, `send`, `macros`), in `neoc-vm` and the `neoc` CLI, never in an agentos crate (apps are Lua 5.1 source);
+  - Lua: mlua (`luau`, `async`, `serialize`, `send`, `macros`), in `neoc-vm` and the `neoc` CLI, never in an agentos crate (apps are Lua 5.1 source);
   - SQLite: rusqlite (bundled);
   - protocols: rmcp, agent-client-protocol;
   - fetch: reqwest (rustls);

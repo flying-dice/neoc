@@ -305,7 +305,7 @@ it in the app's own VM and keeps it going for as long as the app is loaded.
 
 ## Security
 
-- **Apps keep their Lua state apart; that is not a security boundary.** One Lua VM per app (LuaJIT, running the app's Lua 5.1 source), and one
+- **Apps keep their Lua state apart; that is not a security boundary.** One Lua VM per app (Luau, running the app's Lua 5.1 source), and one
   **environment table** per app (its globals are its own; two apps share no Lua state, not even the module tables
   below). Through `std:fs` and `vnd:rusqlite` an app can still read and write other apps' data and the host's own
   database under `~/.agentos`, and a runaway app (a loop that never yields, a `std:thread` worker) can hang the host
@@ -338,10 +338,12 @@ it in the app's own VM and keeps it going for as long as the app is loaded.
   BLOBs come out as base64 text. SQL `ATTACH` is denied through `app.db`. `readOnly` tools cannot write through
   `app.*` (see above; the neoc modules are not covered). A Lua number cannot panic a module: sizes, sleeps and
   indices are bounded and answer with an error.
-- **Lua limits to write around.** A host call (`app.db:*`, `app.kv:*`) may be made inside `pcall`, inside a
-  coroutine, in a metamethod, in the iterator function of a `for ... in` and in any handler, but not where the
-  engine (LuaJIT) cannot yield: a `string.gsub` callback, a `table.sort` comparator, `string.format("%s")` of a
-  `__tostring`, or the handler of an `xpcall` (it fails with "attempt to yield across C-call boundary"). `return app.db:all(...)` (a tail call) loses the line number in an error message. `math.random` of a
+- **Lua limits to write around.** A host call (`app.db:*`, `app.kv:*`) may be made inside `pcall`, inside the body of an `xpcall`,
+  inside a coroutine, in `__call`, in the iterator function of a `for ... in` and in any handler, but not where
+  the engine (Luau) cannot yield: a `string.gsub` callback, a `table.sort` comparator, a metamethod other than
+  `__call`, `tostring` of an object whose `__tostring` waits, or the handler of an `xpcall` (it fails with "attempt
+  to yield across metamethod/C-call boundary"). Luau's base library is not LuaJIT's: `bit` is `bit32`,
+  `string.format("%s", v)` takes only strings and numbers (`tostring(v)` first), there is no `goto`. `math.random` of a
   bound that is not a finite number (`1e300`, `NaN`, an infinity) is an error. `pairs` and `next` of
   a library table (`pairs(string)`) see nothing. An error raised by a host function (`app.db`, `app.kv`, and
   `math.random`, which the host implements) reaches a `pcall` as an error object, not a plain string: write

@@ -8,7 +8,7 @@ AgentOS is an iPadOS-style virtual desktop for agents. It has three parts:
   client must pair as a device first.
 - **The apps** (`apps/<id>/`): server-side code **authored in plain Lua 5.1** (`app.json` + `*.lua`, checked by
   lua-language-server against generated LuaCATS definitions): `bun run build:apps` bundles an app into one `app.lua`
-  with darklua, and the host runs that in one VM per app (the `agentos-lua` adapter on the `neoc-vm` library, a LuaJIT engine that runs the Lua 5.1 source as written),
+  with darklua, and the host runs that in one VM per app (the `agentos-lua` adapter on the `neoc-vm` library, Luau, running the Lua 5.1 source; see "Language" in the neoc README for how Luau's base library differs),
   loaded from an app ref over `file://`, `http://` or `https://`. An app holds its state, data, tools, notifications
   and UI description. Examples: `apps/calculator`, `apps/agents`.
 - **The client** (`client/`): a managed Vite + Svelte 5 PWA. It renders the view trees the host sends with the kit in
@@ -76,7 +76,7 @@ A change is done when all of these hold:
   `agentos-application` (ports and use cases) depends on domain; each adapter (`lua`, `sqlite`, `mcp`, `acp`, `agui`,
   `fetch`, `http`, `codegen`) depends on application and domain and **never on another adapter**; `agentos-host` is the
   composition root and the only crate that sees them all. `neoc-vm` is a support library, not an adapter: the
-  per-app Lua VM (mlua on LuaJIT, vendored), depending on no other crate here (the `neoc` CLI is its other client, and
+  per-app Lua VM (mlua on Luau, built from source), depending on no other crate here (the `neoc` CLI is its other client, and
   `neoc`/`neoc-vm` never depend on an `agentos-*` crate). Among the `agentos-*` crates only the `lua` adapter may depend
   on it (it reaches mlua through neoc-vm's re-export, so mlua stays out of every agentos crate). Enforced by `bun run lint:deps` (`scripts/check-deps.ts`,
   an allow-list over `cargo metadata`) and `cargo deny check` (`deny.toml`: each framework crate is pinned to its
@@ -107,19 +107,17 @@ A change is done when all of these hold:
   cyclic or absurdly shared table handed back to the host is an error (never a stack overflow), a Lua number can
   not panic a module or size an unbounded allocation (an error instead: a host panic aborts every app), and chunks
   load as text only.
-- **Open (NEOC-124): an app can abort the host.** On LuaJIT an app that raises an error value whose `__tostring` makes
-  a protected call and then fails (`mt.__tostring = function() pcall(error, "x") error(setmetatable({}, mt)) end`)
-  overflows the stack in the engine's message handler and aborts the process; the PUC Lua 5.1 this host ran on before
-  reported a catchable "C stack overflow". Reproduced paths: the entry chunk (`exec_async`, `vm.rs`), the adapter's
-  `call_async` sites (tool, event, render and view calls reproduced; write-backs and transaction bodies are the same
-  kind of site, without a probe yet), a failing `std:task` task, and a field read of an app table that has a
-  metatable by mlua's own protected `Table::get` (the table given to `app.tool`, `app.notify` or `app.window`, a
-  render's return value). What closes it: NEOC-124 (PR #36, decision NEOC-123 = A), a patch to mlua that makes its own
-  protected calls survive such an error, so the plain `exec_async`, `call_async` and `Table::get` the adapter uses
-  stop aborting and the adapter needs no other change. Until it is merged and main is merged into this branch, any app
-  can take the host down. `crates/agentos-lua/tests/poison.rs` has a test per reproduced path that reads the value;
-  the aborting ones are `#[ignore = "aborts until NEOC-124 lands"]` and come off with the fix. (A Tera panic in
-  `lib:template` also aborts under `release-host`: NEOC-125.)
+- **Luau, the stack and what an error value can do.** The engine is Luau. An error value whose `__tostring` makes a
+  protected call and then fails (which aborted the host on LuaJIT) is answered `error in error handling` once, so it
+  reaches the adapter as an ordinary error on every path; `crates/agentos-lua/tests/poison.rs` holds one test per path
+  (entry chunk, a table given to `app.tool`, `app.notify` or `app.window`, tool, event, request, write-back,
+  transaction body, task, render). Recursion through a Rust host function that calls back into Lua stops at Luau's
+  C-call limit (200) with `C stack overflow`, provided the thread's stack holds those levels: **every thread that polls
+  a VM has `neoc_vm::VM_THREAD_STACK` (8 MiB)**, which `agentos_host::runtime` gives the workers and the blocking
+  pool (the host re-exports it through `agentos_lua`, since the host may not depend on neoc-vm), and the top-level
+  future runs on a worker, not on the `block_on` thread; `crates/agentos-host/tests/stack.rs` holds it in a debug
+  build. A new thread of the host's own that calls into Lua must be built with that stack too. (A Tera panic in
+  `lib:template` aborts under `release-host`'s `panic = "abort"`: NEOC-125.)
 - **The client runs no app code.** The renderer draws view trees and sends events; nothing executable crosses the
   wire. Kit knowledge of apps, and app knowledge in the client, are both bugs.
 - **Agent and tool output is untrusted:** render it as text. No `{@html}` or `innerHTML` for it (the only `{@html}` is
@@ -184,7 +182,7 @@ Visual baselines (`e2e/__screenshots__`) are macOS-only, so run `test:e2e` on a 
 apps fail without it, they never skip) and, for the Lua checks, `lua-language-server` 3.19.2 (`brew install lua-language-server`) and `stylua`.
 Without them `lint:lua` and `lint:stylua` skip on a developer machine and **fail** when `AGENTOS_GATE=1` or `CI` is
 set (the `agentos-pre-commit` skill runs the gate that way). No system Lua 5.1 is needed: the Rust tests load and run the
-bundled apps on neoc-vm's vendored LuaJIT. A native Lua 5.3+ is optional: with it `bun test scripts` also compares the
+bundled apps on neoc-vm's Luau. A native Lua 5.3+ is optional: with it `bun test scripts` also compares the
 prelude's polyfills with the native ones.
 
 ## Adding an app

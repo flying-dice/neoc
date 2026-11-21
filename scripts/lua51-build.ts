@@ -4,7 +4,7 @@
  *
  *   bun scripts/lua51-build.ts <entry.lua> <out.lua>
  *
- * For the Rust tests, which run real apps and fixtures through the host's Lua runtime (LuaJIT, running Lua 5.1 source): they build with
+ * For the Rust tests, which run real apps and fixtures through the host's Lua runtime (Luau, running Lua 5.1 source): they build with
  * the product's own pipeline (scripts/lua51.ts, .darklua.json) instead of carrying generated copies.
  */
 import { writeFileSync } from 'node:fs'

@@ -85,7 +85,7 @@ under `bun test` too, through the preload in `client/bunfig.toml` (`client/test/
   (`scripts/lua51.test.ts`) checks the sources stay plain Lua 5.1 (no Luau syntax, no library members Lua 5.1 and `lua/prelude.lua` lack), that each
   app bundles into one file whose only requires are runtime ones (`@agentos/*` and the `std:`/`lib:`/`vnd:` modules, with a fixture that requires them), and (with a native Lua 5.3+ on PATH) that the prelude's
   `utf8`/`table.move` polyfills agree with the native ones. The prelude, `ui.lua` and the bundles are loaded and run
-  under Lua 5.1 by the Rust tests (neoc-vm's vendored LuaJIT), so no system Lua 5.1 is needed. `bun run codegen:check`
+  under Lua 5.1 by the Rust tests (neoc-vm's Luau), so no system Lua 5.1 is needed. `bun run codegen:check`
   also fails when `types/generated/ui.lua`, `luals/*` or `prelude.lua` is stale.
 - **Logic and tools:** tested from Rust against the shipped package (see "Rust"); views and journeys against the real
   host (below).
@@ -98,7 +98,7 @@ them (a skipped lint is not a pass; with `AGENTOS_GATE=1` or `CI` they fail): `l
 **Optional interpreter**, used by `scripts/lua51.test.ts` only: a native **Lua 5.3+** compares the polyfills with the
 native `utf8`/`table.move`. Without it that test is skipped, not failed: the skip is written to stderr
 (`!! polyfill comparison SKIPPED`) and in the test name (`[SKIPPED: ...]`). The bundles themselves run on mlua's
-vendored LuaJIT in the Rust tests, so no system Lua 5.1 is involved.
+Luau in the Rust tests, so no system Lua 5.1 is involved.
 
 ## Storybook and the fake hosts
 
