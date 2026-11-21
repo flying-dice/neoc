@@ -11,6 +11,7 @@ pub mod lib;
 pub mod lifecycle;
 pub(crate) mod limits;
 pub mod modules;
+pub mod panics;
 pub mod sandbox;
 pub mod script_env;
 pub mod std;

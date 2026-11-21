@@ -48,6 +48,7 @@ use tracing::instrument;
 use crate::lua::facade::Module;
 use crate::lua::lib::log::{LogFn, log_sink, set_log_sink};
 use crate::lua::lifecycle::{Life, Role, async_method};
+use crate::lua::panics;
 use crate::lua::sandbox::{WorkerEngineFn, from_err, load_source, ok, worker_engine_builder};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
@@ -475,10 +476,15 @@ async fn run_worker(
     }
 
     let arg_value = lua.to_value(&args)?;
-    let result: Value = load_source(&lua, &source)
-        .set_name(&name)
-        .call_async(arg_value)
-        .await?;
+    // a host function that panics in the worker fails it like an error, which `await` returns (see
+    // `crate::lua::panics`)
+    let result: Value = panics::caught(
+        load_source(&lua, &source)
+            .set_name(&name)
+            .call_async(arg_value),
+    )
+    .await
+    .unwrap_or_else(|message| Err(panics::error(&message)))?;
     serde_json::to_value(&result).map_err(mlua::Error::external)
 }
 
@@ -624,6 +630,43 @@ mod tests {
                 .await
                 .expect("available_parallelism");
             assert!(result >= 1, "should return at least 1, got: {result}");
+        });
+    }
+
+    /// A host function that panics in a worker fails the worker: `await` returns the error, and the parent runs on.
+    #[test]
+    fn a_host_function_that_panics_in_a_worker_fails_its_await() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let e = lua::sandbox::make_engine().expect("engine");
+            // the worker's engine is a full one with a global `explode()` that panics
+            lua::sandbox::set_worker_engine(
+                &e,
+                std::sync::Arc::new(|life| {
+                    let worker = lua::sandbox::make_engine_in(life)?;
+                    let explode = worker.create_function(|_, ()| -> mlua::Result<()> {
+                        panic!("the module broke")
+                    })?;
+                    worker.globals().set("explode", explode)?;
+                    Ok(worker)
+                }),
+            );
+            let (value, err): (Option<String>, String) = e
+                .load(
+                    r#"
+                    local thread = require("std:thread")
+                    local w = thread.spawn({ source = "explode()" })
+                    return w:await()
+                "#,
+                )
+                .eval_async()
+                .await
+                .expect("the parent ran");
+            assert_eq!(value, None);
+            assert!(
+                err.contains("a host function panicked: the module broke"),
+                "{err}"
+            );
         });
     }
 

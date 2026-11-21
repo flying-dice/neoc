@@ -13,6 +13,10 @@
 //! calls like any other: it takes its turn before it runs and hands the turn back
 //! while it waits in `task.wait`; otherwise the Lua VM's internal mutex serialises
 //! the slices.
+//!
+//! A host function that panics inside a task fails that task like an error does
+//! (`await` returns `nil, "... a host function panicked: ..."`): nobody else is
+//! above a task to hand the panic to (see `crate::lua::panics`).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -27,6 +31,7 @@ use crate::lua::facade::Module;
 use crate::lua::lifecycle::{
     Life, Pruned, Role, async_function, async_method, entrance, first_slice, inherited,
 };
+use crate::lua::panics;
 use crate::lua::script_env::mark_driven;
 
 // ---------------------------------------------------------------------------
@@ -317,10 +322,12 @@ async fn drive_thread(thread: Thread, args: MultiValue) -> TaskOutcome {
     };
     let mut last: Option<Vec<Value>> = None;
     loop {
-        match stream.next().await {
-            Some(Ok(vals)) => last = Some(vals.into_vec()),
-            Some(Err(e)) => return TaskOutcome::Err(e.to_string()),
-            None => break,
+        // a host function that panics fails the task: the outcome is recorded, so `await` does not wait for ever
+        match panics::caught(stream.next()).await {
+            Ok(Some(Ok(vals))) => last = Some(vals.into_vec()),
+            Ok(Some(Err(e))) => return TaskOutcome::Err(e.to_string()),
+            Ok(None) => break,
+            Err(message) => return TaskOutcome::Err(panics::error(&message).to_string()),
         }
     }
     TaskOutcome::Ok(last.unwrap_or_default())
@@ -378,7 +385,11 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             let (first, carried) = first_slice(
                 lua,
                 from.clone(),
-                || thread.resume::<MultiValue>(args),
+                // a panic in the first slice fails the task, as one in a later slice does (`drive_thread`)
+                || {
+                    panics::caught_sync(|| thread.resume::<MultiValue>(args))
+                        .unwrap_or_else(|message| Err(panics::error(&message)))
+                },
                 |slice| {
                     matches!(slice, Ok(vals) if stopped_at_wait(vals)
                         && thread.status() == ThreadStatus::Resumable)
@@ -836,6 +847,52 @@ mod tests {
                 .await
                 .expect("defer_cancel");
             assert!(!ran, "deferred task should have been cancelled");
+        });
+    }
+
+    /// An engine with a global `explode()`: a host function that panics.
+    fn engine_with_a_panicking_function() -> mlua::Lua {
+        let e = engine();
+        let explode = e
+            .create_function(|_, ()| -> mlua::Result<()> { panic!("the module broke") })
+            .unwrap();
+        e.globals().set("explode", explode).unwrap();
+        e
+    }
+
+    #[test]
+    fn a_host_function_that_panics_fails_its_task_in_any_slice() {
+        rt().block_on(async {
+            let e = engine_with_a_panicking_function();
+            let run = e
+                .load(
+                    r#"
+                    local task = require("std:task")
+                    local first = task.spawn(function() explode() end)
+                    local later = task.spawn(function() task.wait(0) explode() end)
+                    local delayed = task.delay(0, function() explode() end)
+                    local r1, e1 = first:await()
+                    local r2, e2 = later:await()
+                    local r3, e3 = delayed:await()
+                    local after = task.spawn(function() task.wait(0) return "still runs" end)
+                    return r1 == nil and r2 == nil and r3 == nil, e1, e2, e3, after:await()
+                "#,
+                )
+                .eval_async::<(bool, String, String, String, String)>();
+            // before the fix a panic after the first slice never completed its handle: `await` waited for ever
+            let (nil, e1, e2, e3, after) =
+                tokio::time::timeout(std::time::Duration::from_secs(10), run)
+                    .await
+                    .expect("an await of a task that panicked returned")
+                    .expect("the script ran");
+            assert!(nil, "a task that panicked returns no value");
+            for err in [e1, e2, e3] {
+                assert!(
+                    err.contains("a host function panicked: the module broke"),
+                    "{err}"
+                );
+            }
+            assert_eq!(after, "still runs");
         });
     }
 
