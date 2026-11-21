@@ -87,11 +87,17 @@ textarea {
 .ios-material-thick { background: var(--material-thick); }
 .ios-material-chrome { background: var(--material-chrome); }
 
+/*
+ * Reduce Motion: a style change applies at once. A transition of 0s is never started; one of 0.01ms is, and it shows its
+ * old value until the browser gives it a start time at a later frame (beside a transform or opacity transition, such as
+ * the Dock's next to a window's frame, only once the compositor has started that one), so a window read right after a
+ * layout change could still have its old size (NEOC-146). Nothing listens for transitionend.
+ */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
+    transition-duration: 0s !important;
   }
 }
