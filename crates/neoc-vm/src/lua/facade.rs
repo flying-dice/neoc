@@ -231,10 +231,34 @@ impl<'l> Module<'l> {
         T: DeclType + IntoLua,
         E: std::fmt::Display,
     {
+        self.try_func_raising(name, params, doc, move |lua, a| Ok(f(lua, a)))
+    }
+
+    /// Registers a fallible function of any arity that may also raise.
+    ///
+    /// [`Module::try_func`] for a function that refuses some arguments outright
+    /// (a programming error, such as a value of a type it cannot take) besides
+    /// the failures it reports: `f` returns `mlua::Result<Result<T, E>>`. An
+    /// outer `Err` raises, unchanged, as it would from [`Module::func`]; an
+    /// inner `Err(e)` becomes `(nil, "<stem>.<name>: <e>")` and an `Ok(v)`
+    /// `(v, nil)`, exactly as [`Module::try_func`] marshals them. The span and
+    /// the recorded signature are `try_func`'s.
+    pub fn try_func_raising<A, T, E>(
+        &mut self,
+        name: &str,
+        params: &[(&str, &str)],
+        doc: &str,
+        f: impl Fn(&Lua, A) -> mlua::Result<Result<T, E>> + Send + 'static,
+    ) -> mlua::Result<&mut Self>
+    where
+        A: FromLuaMulti,
+        T: DeclType + IntoLua,
+        E: std::fmt::Display,
+    {
         let prefix = format!("{}.{}", module_stem(&self.name), name);
         let span = dyn_span(&self.target(), &prefix);
         let func = self.lua.create_function(move |lua, a: A| {
-            span.in_scope(|| match f(lua, a) {
+            span.in_scope(|| match f(lua, a)? {
                 Ok(v) => ok(lua, v),
                 Err(e) => from_err(lua, &prefix, e),
             })

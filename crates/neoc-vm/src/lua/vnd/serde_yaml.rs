@@ -14,6 +14,7 @@
 use mlua::{AnyUserData, Error, Lua, LuaSerdeExt, Table, Value};
 
 use crate::lua::facade::Module;
+use crate::lua::serde_guard::refuse_buffer;
 use crate::lua::std::io::{ReaderHandle, WriterHandle};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
@@ -21,7 +22,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 }
 
 /// Declares the `vnd:serde_yaml` surface through the facade. Every function is
-/// fallible; the `(value, error)` shape, the `serde_yaml.<fn>` error prefixes,
+/// fallible (and the encoders raise for a buffer, see `serde_guard`); the `(value, error)` shape, the `serde_yaml.<fn>` error prefixes,
 /// the exact error suffixes (handle, parse, serialize, and I/O failures), and
 /// the `lua::lib::serde_yaml` spans are byte-identical to the hand-written
 /// registration this replaces.
@@ -39,13 +40,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "Parse a YAML string into a Lua value.",
         decode_string,
     )?
-    .try_func(
+    .try_func_raising(
         "encode",
         &[("value", "LuaValue")],
         "Serialise a Lua value to a YAML string.",
         encode,
     )?
-    .try_func(
+    .try_func_raising(
         "encode_to",
         &[("value", "LuaValue"), ("writer", "LuaValue")],
         "Serialise a Lua value to YAML and write it to a writer handle.",
@@ -87,14 +88,21 @@ fn json_result_to_value<E: std::fmt::Display>(
     lua.to_value(&json).map_err(|e| e.to_string())
 }
 
-fn encode(_: &Lua, v: Value) -> Result<String, String> {
-    let json = lua_to_json_value(&v).map_err(|e| e.to_string())?;
-    serde_yaml::to_string(&json).map_err(|e| e.to_string())
+fn encode(_: &Lua, v: Value) -> mlua::Result<Result<String, String>> {
+    refuse_buffer(&v, "serde_yaml.encode")?;
+    Ok(lua_to_json_value(&v)
+        .map_err(|e| e.to_string())
+        .and_then(|json| serde_yaml::to_string(&json).map_err(|e| e.to_string())))
 }
 
-fn encode_to(_: &Lua, (v, ud): (Value, AnyUserData)) -> Result<bool, String> {
-    let wh = borrow_handle::<WriterHandle>(&ud, "writer")?;
-    let json = lua_to_json_value(&v).map_err(|e| e.to_string())?;
+fn encode_to(_: &Lua, (v, ud): (Value, AnyUserData)) -> mlua::Result<Result<bool, String>> {
+    refuse_buffer(&v, "serde_yaml.encode_to")?;
+    Ok(write_yaml(&v, &ud))
+}
+
+fn write_yaml(v: &Value, ud: &AnyUserData) -> Result<bool, String> {
+    let wh = borrow_handle::<WriterHandle>(ud, "writer")?;
+    let json = lua_to_json_value(v).map_err(|e| e.to_string())?;
     let mut locked = wh.0.lock();
     let result = serde_yaml::to_writer(&mut **locked, &json);
     drop(locked);
