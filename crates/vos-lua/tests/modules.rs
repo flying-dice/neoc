@@ -326,20 +326,25 @@ async fn a_worker_is_refused_what_its_app_is_refused() {
     vm.shutdown();
 }
 
-/// `neoc run` scripts have Luau's `buffer` (NEOC-206); an app does not yet, in its environment or in a worker it
-/// starts (a worker runs on the engine's own globals, where the engine opened it). NEOC-44 offers it to both.
+/// `neoc run` scripts have Luau's `buffer` (NEOC-206); an app does not yet, in its environment, in a worker it
+/// starts or in that worker's own worker (a worker runs on the engine's own globals, where the engine opened it).
+/// NEOC-44 offers it to all of them.
 #[tokio::test]
 async fn an_app_and_its_workers_are_not_offered_buffer_yet() {
     let src = r#"
         local thread = require("std:thread")
         app.tool { name = "probe", run = function()
-          local worker = thread.spawn { source = "return type(buffer)" }
-          return { app = type(buffer), worker = worker:await() }
+          local worker = thread.spawn { source = [[
+            local inner = require("std:thread").spawn { source = "return type(buffer)" }
+            return { type(buffer), inner:await() }
+          ]] }
+          local out = worker:await()
+          return { app = type(buffer), worker = out[1], nested = out[2] }
         end }
     "#;
     let vm = load(src).await;
     let out = vm.call_tool("probe", json!({}), &agent_ctx(0), false).await.unwrap();
-    assert_eq!(out, json!({ "app": "nil", "worker": "nil" }));
+    assert_eq!(out, json!({ "app": "nil", "worker": "nil", "nested": "nil" }));
     vm.shutdown();
 }
 

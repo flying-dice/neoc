@@ -124,6 +124,11 @@ pub fn install_runtime_state(lua: &Lua, life: Life) {
 /// The one shared string metatable is locked (`__metatable`), so `getmetatable("").__index` cannot be used
 /// to reach, and mutate, the shared `string` table.
 ///
+/// Its globals hold every library [`make_engine`] opens, `buffer` included. A
+/// [script environment](crate::lua::script_env) copies only some of them, but a `std:thread` worker (built by
+/// [`modules::install_allowed`]'s worker engine, or the embedder's own) runs on its engine's globals: an embedder
+/// that keeps a library from its scripts removes it there too, in every worker engine it builds.
+///
 /// To offer a script some of the modules, build them with [`modules::build`] or install a subset with
 /// [`modules::install_allowed`]: this function deliberately exposes none. For the same reason a script on it
 /// cannot start a `std:thread` worker until the embedder says how to build one ([`set_worker_engine`], which
@@ -450,6 +455,11 @@ mod tests {
             bare, "|nil",
             "a bare engine has no require, not even mlua's file-system one"
         );
+        // and both open `buffer` (an embedder that keeps it from its scripts relies on knowing where it is)
+        for lua in [make_engine().unwrap(), make_bare_engine().unwrap()] {
+            let ty: String = lua.load("return type(buffer)").eval().unwrap();
+            assert_eq!(ty, "table");
+        }
     }
 
     #[test]
