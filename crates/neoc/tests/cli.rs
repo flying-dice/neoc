@@ -29,6 +29,46 @@ fn run_lua_script_executes() {
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ran lua");
 }
 
+/// The authoring language, end to end: `types/fixtures/syntax.luau` is type-checked in strict mode against the
+/// generated declarations (`crates/neoc-vm/tests/luau_decls.rs`) and is run here by `neoc run`, with type annotations, a
+/// type alias, a generic function, `continue`, compound assignment, string interpolation and an `if` expression, and
+/// typed values of the modules it requires (`std:time`, `lib:url`, `lib:semver`, `lib:json`).
+#[test]
+fn run_a_typed_luau_script_with_annotations_interpolation_and_continue() {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../types/fixtures/syntax.luau");
+    let out = Command::new(BIN).arg("run").arg(&script).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // `continue` skips "a"; `total += #word * index` is 2 * 2 + 3 * 3; the string is interpolated; the version,
+    // the host and the 30 second budget come from typed module values
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "total 13 is big\nexample.com\tv1.2.3\t30\n"
+    );
+}
+
+/// A script that is wrong the way the declarations flag it still runs: types are not checked at run time, and
+/// nothing about the annotations changes what the engine does.
+#[test]
+fn annotations_are_not_checked_at_run_time() {
+    let dir = tempdir().unwrap();
+    let src = write(
+        dir.path(),
+        "lie.luau",
+        "local n: number = \"not a number\"\nprint(`{n}`)\n",
+    );
+    let out = Command::new(BIN).arg("run").arg(&src).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "not a number");
+}
+
 /// LuaJIT's loader skipped a first `#` line and a UTF-8 byte-order mark; Luau's lexer rejects both, so neoc's chunk
 /// loader (`sandbox::load_source`) does it: an executable script and a file saved with a BOM keep running, and an
 /// error on line 3 of a file with a shebang still says line 3.

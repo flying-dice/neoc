@@ -1,8 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
   "runtime.version": "Lua 5.1",
-  "runtime.plugin": "types/luals-plugin.lua",
-  "workspace.library": ["types/luals", "types/generated/luals"],
+  "workspace.library": ["types/generated/luals"],
   "workspace.checkThirdParty": false,
   "workspace.ignoreDir": [
     ".claude",
