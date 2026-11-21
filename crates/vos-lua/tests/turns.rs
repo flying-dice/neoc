@@ -758,8 +758,8 @@ async fn get_path(addr: &str, path: &str) -> String {
 async fn a_cancelled_tracked_emit_leaves_the_vm_usable_and_the_next_one_tracks_afresh() {
     let src = r#"
         local state = app.state { a = 1, b = 2 }
-        app.on("stuck", function() local _ = state.a app.db:all("select 'stall'") end)
-        app.on("reads_b", function() return state.b end)
+        hook("stuck", function() local _ = state.a app.db:all("select 'stall'") end)
+        hook("reads_b", function() return state.b end)
     "#;
     let vm = try_load_with("emit", src, Stalling::new()).await.unwrap();
     let cancelled =

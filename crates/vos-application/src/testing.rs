@@ -6,9 +6,9 @@ use crate::{
     ports::{
         AgentDirectory, AgentStore, AppData, AppPackage, AppRuntime, Background, CallContext, ChangeBatch,
         ChangeFeed, Clock, DataStore, DataTx, DeviceRegistry, EventSink, ExecOutcome, Fetcher, InstalledApp,
-        InstalledAppStore, LoadedApp, MenuCommand, Params, PortResult, QueryInfo, RandomSource, RenderOutput,
-        ServerEvent, Shell, SourceBinding, SqlMigration, StoredThread, TaskHandle, ThreadStore, ToolRegistry,
-        ViewEffect, ViewEventCall,
+        InstalledAppStore, LoadedApp, Params, PortResult, QueryInfo, RandomSource, RenderOutput, ServerEvent,
+        Shell, SourceBinding, SqlMigration, StoredThread, TaskHandle, ThreadStore, ToolRegistry, ViewEffect,
+        ViewEventCall,
     },
     services::{AppService, Ports},
     PortError,
@@ -761,8 +761,6 @@ pub type OpenedWindow = (String, String, Map<String, Value>);
 /// Records what apps asked of the shell.
 #[derive(Default)]
 pub struct RecordingShell {
-    pub badges: Mutex<Vec<(String, Option<String>)>>,
-    pub commands: Mutex<Vec<(String, Vec<MenuCommand>)>>,
     pub links: Mutex<Vec<(String, Vec<String>)>>,
     /// `(app, window, params)` of every `app:openWindow`.
     pub windows: Mutex<Vec<OpenedWindow>>,
@@ -771,12 +769,6 @@ pub struct RecordingShell {
 impl Shell for RecordingShell {
     async fn open_window(&self, app: &AppId, window: &str, params: Map<String, Value>) {
         self.windows.lock().unwrap().push((app.to_string(), window.to_owned(), params));
-    }
-    async fn set_badge(&self, app: &AppId, badge: Option<String>) {
-        self.badges.lock().unwrap().push((app.to_string(), badge));
-    }
-    async fn set_menu_commands(&self, app: &AppId, commands: Vec<MenuCommand>) {
-        self.commands.lock().unwrap().push((app.to_string(), commands));
     }
     async fn set_deep_links(&self, app: &AppId, patterns: Vec<String>) {
         self.links.lock().unwrap().push((app.to_string(), patterns));

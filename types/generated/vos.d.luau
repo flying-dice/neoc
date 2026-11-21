@@ -1809,18 +1809,8 @@ export type vos_ToolDef = {
 
 export type vos_Notification = { title: string, body: string?, at: string?, actions: { any }? }
 
-export type vos_Timers = {
-	at: (time: string | number, body: () -> ()) -> (),
-	every: (seconds: number, body: () -> ()) -> (),
-}
-
-export type vos_MenuCommand = { id: string, title: string, shortcut: string?, run: () -> () }
-
---- The desktop shell's side of the app: declarations only until the shell implements them.
+--- The desktop shell's side of the app: a deep link is accepted and dropped until the shell shows it.
 export type vos_Shell = {
-	--- a string, a number (0 clears) or nil
-	badge: (value: (string | number)?) -> (),
-	command: (def: vos_MenuCommand) -> (),
 	--- e.g. "note/:id"
 	deepLink: (pattern: string, handler: (params: { [string]: string }) -> ()) -> (),
 }
@@ -1836,7 +1826,6 @@ export type vos_AppApi = {
 	agents: vos_AgentsApi,
 	t: vos_SchemaBuilders,
 	shell: vos_Shell,
-	timer: vos_Timers,
 	--- the same as `app.tool`
 	tools: vos_ToolRegistry,
 	manifest: (manifest: vos_Manifest) -> (),

@@ -270,9 +270,6 @@ const READ_ONLY_APP: &str = r#"
     local function try(f) local ok, err = pcall(f); return { ok = ok, err = (not ok) and tostring(err) or nil } end
     app.tool { name = "open", readOnly = true, run = function() return try(function() app:openWindow("main") end) end }
     app.tool { name = "notify", readOnly = true, run = function() return try(function() app.notify { title = "hi" } end) end }
-    app.tool { name = "badge", readOnly = true, run = function() return try(function() app.shell.badge(1) end) end }
-    app.tool { name = "command", readOnly = true, run = function()
-      return try(function() app.shell.command { id = "c", title = "C", run = function() end } end) end }
     app.tool { name = "link", readOnly = true, run = function()
       return try(function() app.shell.deepLink("a/:id", function() end) end) end }
     app.tool { name = "state", readOnly = true, run = function() return try(function() state.n = 1 end) end }
@@ -281,7 +278,7 @@ const READ_ONLY_APP: &str = r#"
       state.n = state.n + 1
       app:openWindow("main")
       app.notify { title = "hi" }
-      app.shell.badge(1)
+      app.shell.deepLink("b/:id", function() end)
       return state.n
     end }
     app.tool { name = "count", readOnly = true, run = function() return app.db:one("select count(*) as n from log").n end }
@@ -291,13 +288,12 @@ const READ_ONLY_APP: &str = r#"
 async fn a_read_only_tool_cannot_open_a_window_notify_change_the_shell_or_assign_state() {
     let rig = rig();
     rig.load("probe", &format!("{MANIFEST}\n{READ_ONLY_APP}")).await.unwrap();
-    for tool in ["open", "notify", "badge", "command", "link", "state"] {
+    for tool in ["open", "notify", "link", "state"] {
         let out = rig.tool("probe", tool).await.unwrap();
         assert_eq!(out["ok"], false, "{tool} must be refused: {out}");
         assert!(out["err"].as_str().unwrap().contains("readOnly"), "{tool}: {out}");
     }
     assert!(rig.shell.windows.lock().unwrap().is_empty(), "no window was opened, so no onOpen could write");
-    assert!(rig.shell.badges.lock().unwrap().is_empty() && rig.shell.commands.lock().unwrap().is_empty());
     assert!(rig.shell.links.lock().unwrap().is_empty());
     assert_eq!(rig.tool("probe", "count").await.unwrap(), json!(0), "the table is unchanged");
 
@@ -351,7 +347,7 @@ async fn a_caller_can_require_a_read_only_run_of_a_tool_that_is_not_declared_rea
 #[tokio::test]
 async fn loadstring_getfenv_and_setfenv_are_not_in_the_sandbox() {
     let src = r#"
-        app.on("probe", function()
+        hook("probe", function()
           return { loadstring = loadstring == nil, getfenv = getfenv == nil, setfenv = setfenv == nil }
         end)
     "#;
@@ -372,7 +368,7 @@ async fn vacuum_into_and_attach_are_refused_through_db_all_and_exec() {
     let src = format!(
         r#"
         local function try(f) local ok, err = pcall(f); return {{ ok = ok, err = (not ok) and tostring(err) or nil }} end
-        app.on("probe", function()
+        hook("probe", function()
           return {{
             vacuum_all = try(function() return app.db:all("VACUUM INTO '{vacuumed}'") end),
             vacuum_exec = try(function() return app.db:exec("vacuum into '{vacuumed}'") end),
@@ -405,7 +401,7 @@ async fn vacuum_into_and_attach_are_refused_through_db_all_and_exec() {
 #[tokio::test]
 async fn a_host_call_inside_a_coroutine_finishes_before_resume_returns_and_leaves_nothing_parked() {
     let src = r#"
-      app.on("probe", function()
+      hook("probe", function()
         local co = coroutine.create(function() return app.kv:get("k") end)
         local ok, value = coroutine.resume(co)
         local wrapped = coroutine.wrap(function() return app.db:all("select 1 as x") end)
@@ -429,7 +425,7 @@ async fn a_host_call_inside_a_coroutine_finishes_before_resume_returns_and_leave
 #[tokio::test]
 async fn a_coroutine_cannot_leave_the_write_gate_held_after_the_call_returns() {
     let src = r#"
-      app.on("leak", function()
+      hook("leak", function()
         local co = coroutine.create(function()
           app.db:tx(function()
             app.db:exec("create table if not exists t(a)")
@@ -459,7 +455,7 @@ async fn a_coroutine_cannot_leave_the_write_gate_held_after_the_call_returns() {
 async fn a_cancelled_call_gives_up_its_transaction_at_once() {
     // a call held at a host call (a statement that never finishes) with the transaction open in the VM
     let src = r#"
-      app.on("tx", function()
+      hook("tx", function()
         app.db:tx(function()
           app.db:exec("create table if not exists t(a)")
           app.db:all("select 'stall'")
