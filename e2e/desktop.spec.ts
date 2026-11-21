@@ -63,6 +63,44 @@ test('the desktop renders with every app in the Dock', async ({ page }, testInfo
   await expect(page).toHaveScreenshot('desktop-landing.png')
 })
 
+// With Reduce Motion (on in every spec) a window is drawn at its new frame as soon as the shell sets it: no transition
+// holds the old size until a later frame, which made the Slide Over and full screen journeys (V5, D6) flaky (NEOC-146).
+for (const layout of ['slideover', 'fullscreen'] as const) {
+  test(`Reduce Motion: a window is drawn at its ${layout} frame at once`, async ({ page }) => {
+    await openDesktop(page, { open: ['discover'] })
+    const win = await windowOf(page, 'discover').elementHandle()
+    await page.getByTestId('window-discover-multitasking').click()
+    const frame = await page.getByTestId(`window-discover-menu-${layout}`).evaluate(
+      (item, el) =>
+        new Promise<{ before: number; set: number; drawn: number }>((resolve) => {
+          const before = el.getBoundingClientRect().width
+          // read right after the shell writes the frame, in the same task, before any frame is drawn
+          new MutationObserver((_, observer) => {
+            observer.disconnect()
+            resolve({ before, set: parseFloat(el.style.width), drawn: el.getBoundingClientRect().width })
+          }).observe(el, { attributes: true, attributeFilter: ['style'] })
+          item.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        }),
+      win
+    )
+    expect(frame.set, 'the layout gave the window another width').not.toBe(frame.before)
+    expect(frame.drawn, 'the window is drawn at the width its layout gave it').toBe(frame.set)
+  })
+}
+
+// With Reduce Motion nothing decorative keeps moving: Discover's floating icons stand still (only an indicator that says
+// the app is busy keeps turning, and the landing page shows none once it has loaded).
+test('Reduce Motion: nothing in Discover keeps moving', async ({ page }) => {
+  await openDesktop(page, { open: ['discover'] })
+  const moving = await page.getByTestId('window-discover-content').evaluate((el) =>
+    el
+      .getAnimations({ subtree: true })
+      .filter((a) => a.playState === 'running')
+      .map((a) => (a.effect instanceof KeyframeEffect && a.effect.target?.getAttribute('class')) || 'an animation')
+  )
+  expect(moving, 'what still moves').toEqual([])
+})
+
 for (const id of APPS) {
   test.describe(`app: ${id}`, () => {
     test('opens from the Dock', async ({ page }) => {

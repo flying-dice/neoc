@@ -118,5 +118,8 @@
     .pull {
       transition: none;
     }
+    .spin {
+      animation-duration: 2s !important; /* it says the app is busy: slower, but turning (base.css stops the rest) */
+    }
   }
 </style>
