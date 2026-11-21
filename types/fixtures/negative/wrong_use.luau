@@ -72,3 +72,8 @@ local _name: string = "lib:json"
 local _dynamic = require(_name) -- expect-error: Expected this to be '"std:collections"', but got 'string' -- expect-error: Other overloads are also not viable
 
 local _fine = base64.encode("this line is correct")
+
+-- the filesystem functions: a missing argument, an option of the wrong type, a metadata method that does not exist
+fs.copy_dir("a") -- expect-error: Function 'fs.copy_dir' expects 2 arguments, but only 1 is specified
+fs.remove_file("a", { missing_ok = "yes" }) -- expect-error: Expected this to be '{ missing_ok: boolean? }?' but got '{| missing_ok: string |}'
+assert(fs.metadata("a")):size() -- expect-error: Key 'size' not found in table 'std_fs_Metadata'

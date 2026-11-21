@@ -95,6 +95,7 @@ const REGISTRY: &[(&str, Build)] = &[
     ("std:fs", stdmod::fs::module),
     ("std:io", stdmod::io::module),
     ("std:net", stdmod::net::module),
+    ("std:path", stdmod::path::module),
     ("std:task", stdmod::task::module),
     ("std:thread", stdmod::thread::module),
     ("std:time", stdmod::time::module),
@@ -273,6 +274,7 @@ fn declared(lua: &Lua) -> mlua::Result<Vec<Module<'_>>> {
         stdmod::fs::declare(lua)?,
         stdmod::io::declare(lua)?,
         stdmod::net::declare(lua)?,
+        stdmod::path::declare(lua)?,
         stdmod::task::declare(lua)?,
         stdmod::thread::declare(lua)?,
         stdmod::time::declare(lua)?,
@@ -399,7 +401,7 @@ mod tests {
             unregistered.is_empty(),
             "declared but not registered: {unregistered:?}"
         );
-        assert_eq!(registered_set.len(), 50);
+        assert_eq!(registered_set.len(), 51);
 
         for key in &registered_set {
             let kind: String = lua
@@ -456,7 +458,7 @@ mod tests {
         let lua = make_engine().expect("engine");
         let sections = luau_decl_sections(&lua).expect("sections");
         let file = luau_decls(&lua).expect("file");
-        assert_eq!(sections.len(), 50);
+        assert_eq!(sections.len(), 51);
         for (key, section) in &sections {
             let scope = luau_decls::scope(key);
             assert!(
@@ -477,7 +479,7 @@ mod tests {
         assert!(file.contains("declare require: \n\t((path: \"std:collections\")"));
         assert_eq!(
             file.matches("((path: \"").count(),
-            50,
+            51,
             "one `require` overload per module"
         );
     }
@@ -696,6 +698,16 @@ mod tests {
             "std:collections",
             "Mutex",
             r#"require("std:collections").Mutex.new()"#,
+        ),
+        (
+            "std:fs",
+            "Metadata",
+            r#"assert(require("std:fs").metadata("."))"#,
+        ),
+        (
+            "std:fs",
+            "DirEntry",
+            r#"assert(require("std:fs").read_dir("."))[1]"#,
         ),
         (
             "std:io",
@@ -956,6 +968,7 @@ mod tests {
             "std:fs" => stdmod::fs::module(lua),
             "std:io" => stdmod::io::module(lua),
             "std:net" => stdmod::net::module(lua),
+            "std:path" => stdmod::path::module(lua),
             "std:task" => stdmod::task::module(lua),
             "std:thread" => stdmod::thread::module(lua),
             "std:time" => stdmod::time::module(lua),

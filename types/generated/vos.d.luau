@@ -98,17 +98,91 @@ export type std_env = {
 
 -- ===== std:fs =====
 
+export type std_fs_Metadata = {
+	--- `"file"`, `"dir"`, `"symlink"` (only from `symlink_metadata`) or `"other"`.
+	kind: (self: std_fs_Metadata) -> string,
+	--- `kind() == "file"`.
+	is_file: (self: std_fs_Metadata) -> boolean,
+	--- `kind() == "dir"`.
+	is_dir: (self: std_fs_Metadata) -> boolean,
+	--- `kind() == "symlink"`.
+	is_symlink: (self: std_fs_Metadata) -> boolean,
+	--- Size in bytes (for a directory, whatever the platform reports).
+	len: (self: std_fs_Metadata) -> number,
+	--- Whether the permissions forbid writing: on Unix, no write bit at all; on Windows, the read-only attribute.
+	readonly: (self: std_fs_Metadata) -> boolean,
+	--- Last modification, seconds since the Unix epoch; `nil` if unavailable.
+	modified: (self: std_fs_Metadata) -> number?,
+	--- Creation (birth) time, seconds since the Unix epoch; `nil` where the platform or filesystem does not record it.
+	created: (self: std_fs_Metadata) -> number?,
+	--- Last access, seconds since the Unix epoch; `nil` if unavailable (and unreliable: many filesystems do not update it).
+	accessed: (self: std_fs_Metadata) -> number?,
+	--- The Unix permission bits (`0o644` is `420`); `nil` on Windows.
+	mode: (self: std_fs_Metadata) -> number?,
+}
+
+export type std_fs_DirEntry = {
+	--- The entry's own name, as the filesystem has it (bytes on Unix, so it may not be UTF-8).
+	file_name: (self: std_fs_DirEntry) -> string,
+	--- The directory given to `read_dir` or `walk` joined with the entry's path under it.
+	path: (self: std_fs_DirEntry) -> string,
+	--- `"file"`, `"dir"`, `"symlink"` or `"other"`; a symlink is not resolved.
+	kind: (self: std_fs_DirEntry) -> string,
+	--- `kind() == "file"`.
+	is_file: (self: std_fs_DirEntry) -> boolean,
+	--- `kind() == "dir"`.
+	is_dir: (self: std_fs_DirEntry) -> boolean,
+	--- `kind() == "symlink"`.
+	is_symlink: (self: std_fs_DirEntry) -> boolean,
+	--- How far below the listed directory the entry is: `1` for a direct child (always, for `read_dir`).
+	depth: (self: std_fs_DirEntry) -> number,
+}
+
 export type std_fs = {
-	--- Create a single directory. Mirrors `std::fs::create_dir` — errors if the path already exists or the parent is missing.
-	create_dir: (path: string) -> (boolean?, string?),
-	--- Create a directory and every missing ancestor. Mirrors `std::fs::create_dir_all`; succeeds if the directory already exists.
-	create_dir_all: (path: string) -> (boolean?, string?),
-	--- Open a file given `{ path, mode }`. Mode `"r"` returns a reader handle; `"w"` / `"a"` return a writer handle.
+	--- Open a file given `{ path, mode }`. Mode `"r"` returns a reader handle; `"w"` (create or truncate) and `"a"` (create or append) return a writer handle; any other mode is `invalid_input`.
 	open: (opts: any) -> (any, string?),
 	--- Read the entire contents of `path` into a binary-safe string. Mirrors `std::fs::read`.
 	read: (path: string) -> (string?, string?),
 	--- Write `data` to `path`, replacing any existing content. Mirrors `std::fs::write`; binary-safe.
 	write: (path: string, data: string) -> (boolean?, string?),
+	--- Whether `path` exists, following symlinks: `false` for a missing path and for a dangling symlink. A path that cannot be checked (permission denied on a parent directory) is `permission_denied`, not `false`. Use `symlink_metadata` to see a dangling link itself. Mirrors `std::fs::exists`.
+	exists: (path: string) -> (boolean?, string?),
+	--- Metadata of `path`, following symlinks (a dangling symlink is `not_found`). See `Metadata` for what it says; timestamps are seconds since the Unix epoch, and `nil` where the platform or filesystem does not record them (`created` on some Linux filesystems). Mirrors `std::fs::metadata`.
+	metadata: (path: string) -> (std_fs_Metadata?, string?),
+	--- Like `metadata`, but about the symlink itself when `path` is one (`kind()` is then `"symlink"`). Mirrors `std::fs::symlink_metadata`.
+	symlink_metadata: (path: string) -> (std_fs_Metadata?, string?),
+	--- Change the permissions of `path` (through a symlink). Give exactly one of `mode`, the Unix permission bits (`0o755` is `493`, at most `4095`; `unsupported` on Windows), or `readonly`. `readonly = true` clears every write bit on Unix and sets the read-only attribute on Windows; `readonly = false` gives the owner (not group or others) write access on Unix. Mirrors `std::fs::set_permissions`.
+	set_permissions: (path: string, opts: { mode: number?, readonly: boolean? }) -> (boolean?, string?),
+	--- Create a single directory. Mirrors `std::fs::create_dir`: `already_exists` when the path exists, `not_found` when the parent is missing.
+	create_dir: (path: string) -> (boolean?, string?),
+	--- Create a directory and every missing ancestor. Mirrors `std::fs::create_dir_all`; succeeds if the directory already exists, and is `not_a_directory` when a part of the path is a file.
+	create_dir_all: (path: string) -> (boolean?, string?),
+	--- List the directory `path`: an array of `DirEntry`, sorted by name (Rust leaves the order unspecified), without `.` and `..`. A symlink is listed as `"symlink"`, not as what it points at, and is not entered. It is `not_found` for a missing path and `not_a_directory` for a file. The whole listing is read at once, and at most 1048576 entries (`too_large` past that). `walk` lists a whole tree; `lib:glob` matches patterns.
+	read_dir: (path: string) -> ({ std_fs_DirEntry }?, string?),
+	--- List everything under the directory `path`, recursively: an array of `DirEntry` (the directory itself is not in it), depth first, the children of each directory sorted by name, so the order is the same on every platform. A symlink is listed and never entered, so a link loop cannot make a walk run for ever; `path` itself may be a symlink to a directory. Option `{ max_depth }` (a non-negative whole number) limits how far down it goes: `1` is `read_dir`. It is `not_found` for a missing path and `not_a_directory` for a file; an unreadable subdirectory fails the whole walk with `permission_denied` and its path. At most 1048576 entries (`too_large` past that: walk the subdirectories separately). It waits like `task.wait` (see the module notes).
+	walk: (path: string, opts: { max_depth: number? }?) -> ({ std_fs_DirEntry }?, string?),
+	--- Copy the file `from` to the path `to` and return the number of bytes written. Mirrors `std::fs::copy`: `to` is created or replaced and takes the permission bits of `from`; a symlink given as `from` is resolved. `to` is the new path of the copy, not a directory to copy into (`is_directory`), `from` must be a file (`is_directory` for a directory: use `copy_dir`; `invalid_input` for a device or FIFO), and copying a file onto itself is `invalid_input` rather than emptying it. Its parent must exist (`not_found`). It waits like `task.wait` (see the module notes).
+	copy: (from: string, to: string) -> (number?, string?),
+	--- Copy the directory `from` and everything under it to the new path `to`, and return the bytes of file data copied. `to` must not exist (`already_exists`; nothing is merged) and its parent must; a destination inside the source is `invalid_input`. Files keep their permission bits, directories get the default ones, and symlinks are recreated as symlinks with the target as stored (a relative target stays relative), never followed, so a link loop cannot make it run for ever. A source that holds something that is not a file, directory or symlink (a device, FIFO, socket) is `invalid_input`. A failure part way removes the partial `to`: the copy is whole or absent. A symlink given as `from` is resolved. It waits like `task.wait` (see the module notes).
+	copy_dir: (from: string, to: string) -> (number?, string?),
+	--- Rename or move `from` to `to` on the same filesystem, in one atomic step: the operating system's rename, as `std::fs::rename` calls it. An existing file or symlink at `to` is replaced; a directory replaces an empty directory only (`not_empty` otherwise); a file over a directory is `is_directory`, a directory over a file `not_a_directory`; a move across filesystems is `cross_device` (use `move`). Platform differences: Windows refuses a directory over an existing directory (`permission_denied`) and cannot rename a file that is open.
+	rename: (from: string, to: string) -> (boolean?, string?),
+	--- Move `from` to `to`, with the rules of `rename`. When the two are on different filesystems it copies instead (a file, a symlink as a symlink, or a whole directory tree, never following a link) and removes `from` only after the copy completed; that case is not atomic, and a failure part way leaves the source whole and, for a file, possibly a partial `to`. It waits like `task.wait` (see the module notes).
+	move: (from: string, to: string) -> (boolean?, string?),
+	--- Remove a file or a symlink (the link, never its target; on Windows also a link to a directory). A directory is `is_directory`. Option `{ missing_ok }`: a missing path is then not an error and the result is `false` (otherwise `not_found`); a removal returns `true`. Mirrors `std::fs::remove_file`; on Windows a read-only file or one that is open may be `permission_denied`.
+	remove_file: (path: string, opts: { missing_ok: boolean? }?) -> (boolean?, string?),
+	--- Remove an empty directory (`not_empty` otherwise; `remove_dir_all` removes a tree). A symlink to a directory is `not_a_directory` (use `remove_file`), also when written `link/`; so is a file. Option `{ missing_ok }` as for `remove_file`. Mirrors `std::fs::remove_dir`.
+	remove_dir: (path: string, opts: { missing_ok: boolean? }?) -> (boolean?, string?),
+	--- Remove a directory and everything under it, children before parents. Symlinks inside are deleted without being followed, so nothing outside the tree is touched. It refuses `/`, `.`, `..` and the empty path (`invalid_input`, a guard against a typo, not a security boundary) and a symlink to a directory (`not_a_directory`, also when written `link/`: use `remove_file`). Option `{ missing_ok }` as for `remove_file`. A failure part way (a permission, an open file on Windows) leaves what was not yet removed. Mirrors `std::fs::remove_dir_all`. It waits like `task.wait` (see the module notes).
+	remove_dir_all: (path: string, opts: { missing_ok: boolean? }?) -> (boolean?, string?),
+	--- The absolute path of `path` with every symlink and `.`/`..` resolved; the path must exist (`not_found`). On Windows the result has the extended-length `\\?\` prefix. Mirrors `std::fs::canonicalize`; `path.absolute` makes a path absolute without touching the disk.
+	canonicalize: (path: string) -> (string?, string?),
+	--- The path the symlink `path` points to, as stored (possibly relative, possibly dangling). A path that is not a symlink is `invalid_input`. Mirrors `std::fs::read_link`.
+	read_link: (path: string) -> (string?, string?),
+	--- Create the symlink `link` pointing at `target` (stored as given; it need not exist). `already_exists` when `link` exists. On Windows creating a symlink needs the privilege to do so (`permission_denied` otherwise), and the kind of link (file or directory) follows what `target` is when it is created.
+	symlink: (target: string, link: string) -> (boolean?, string?),
+	--- The stable kind inside an error string returned by a `std:fs` function, or `nil` when the string is not one of theirs. Kinds: `not_found`, `permission_denied`, `already_exists`, `not_empty`, `is_directory`, `not_a_directory`, `cross_device`, `invalid_input`, `read_only_filesystem`, `storage_full`, `unsupported`, `too_large`, `other`. They mean the same on every platform; the rest of the message is the operating system's wording and differs.
+	error_kind: (err: string) -> string?,
 }
 
 -- ===== std:io =====
@@ -150,6 +224,37 @@ export type std_net_TcpListenerStatics = {
 
 export type std_net = {
 	TcpListener: std_net_TcpListenerStatics,
+}
+
+-- ===== std:path =====
+
+export type std_path = {
+	--- The platform's preferred path separator: `"/"` on Unix, `"\\"` on Windows.
+	separator: string,
+	--- Join path parts with the platform separator. A later part that is absolute replaces everything before it (`join("a", "/b")` is `"/b"`), as `Path::join` does. Does not normalise: `join("a", "..")` is `"a/.."`.
+	join: (first: string, ...string) -> string,
+	--- Clean a path by text alone: drop `.` and repeated separators, and fold `x/..` away. A leading `..` of a relative path stays; a `..` at the root is dropped; an empty result is `"."`. It does not look at the disk, so with symlinks `a/link/..` is not necessarily `a` (use `fs.canonicalize` for that).
+	normalize: (path: string) -> string,
+	--- The path without its last component, or `nil` for a root (`"/"`) and for an empty path. The parent of `"a"` is `""`.
+	parent: (path: string) -> string?,
+	--- The last component, or `nil` when the path ends in `..` or is a root. `file_name("a/b.txt")` is `"b.txt"`.
+	file_name: (path: string) -> string?,
+	--- The file name without its extension (`"b"` for `"a/b.txt"`; `".bashrc"` has no extension, so its stem is `".bashrc"`), or `nil` when there is no file name.
+	file_stem: (path: string) -> string?,
+	--- The extension without the dot (`"txt"` for `"a/b.txt"`), or `nil` when there is none.
+	extension: (path: string) -> string?,
+	--- The path with its extension replaced by `extension` (given without the dot); an empty `extension` removes it. A path with no file name is returned unchanged.
+	with_extension: (path: string, extension: string) -> string,
+	--- The path with its last component replaced by `name` (appended when the path has none).
+	with_file_name: (path: string, name: string) -> string,
+	--- Whether the path is absolute for this platform (on Windows `"/a"` is not: it needs a drive).
+	is_absolute: (path: string) -> boolean,
+	--- The path made absolute by text alone: a relative path is joined to the current directory and `.` and repeated separators are dropped, but `..` is kept and nothing is looked up on disk (a symlink stays a symlink, the path need not exist; `fs.canonicalize` resolves them). An empty path is an error, and so is a current directory that is gone. Mirrors `std::path::absolute`.
+	absolute: (path: string) -> (string?, string?),
+	--- The components of a path as an array of strings, as `Path::components` yields them: a root or drive prefix first (`"/"`, `"C:"`), then each name, with `".."` kept and a `"."` only at the start (`components("/a/./b")` is `{ "/", "a", "b" }`).
+	components: (path: string) -> { string },
+	--- The path relative to `base`, or `nil` when `base` is not a prefix of it, compared component by component (`strip_prefix("/a/b/c", "/a/b")` is `"c"`, but `"/a/bc"` is not under `"/a/b"`).
+	strip_prefix: (path: string, base: string) -> string?,
 }
 
 -- ===== std:task =====
@@ -5839,6 +5944,7 @@ declare require:
 	& ((path: "std:fs") -> std_fs)
 	& ((path: "std:io") -> std_io)
 	& ((path: "std:net") -> std_net)
+	& ((path: "std:path") -> std_path)
 	& ((path: "std:task") -> std_task)
 	& ((path: "std:thread") -> std_thread)
 	& ((path: "std:time") -> std_time)

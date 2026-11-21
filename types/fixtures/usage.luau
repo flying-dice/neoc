@@ -42,6 +42,7 @@ local env = require("std:env")
 local fs = require("std:fs")
 local io = require("std:io")
 local net = require("std:net")
+local path = require("std:path")
 local task = require("std:task")
 local thread = require("std:thread")
 local time = require("std:time")
@@ -81,6 +82,28 @@ local written, write_err = fs.write("/tmp/x", "data")
 if not written then
 	print("write failed:", write_err)
 end
+
+-- directory listings, metadata and tree operations: results are optional, the entries are typed
+local entries = assert(fs.walk("/tmp/tree", { max_depth = 2 }))
+for _, entry in entries do
+	print(entry:file_name(), entry:kind(), entry:depth(), entry:is_dir(), path.extension(entry:path()))
+end
+local listing = assert(fs.read_dir("/tmp/tree"))
+print(#listing)
+local meta = assert(fs.metadata("/tmp/x"))
+print(meta:len(), meta:is_file(), meta:modified(), meta:mode(), meta:readonly())
+local copied, copy_err = fs.copy("/tmp/x", "/tmp/y")
+if copy_err ~= nil then
+	print(copied, fs.error_kind(copy_err) == "not_found", copy_err)
+end
+local bytes: number? = fs.copy_dir("/tmp/tree", "/tmp/tree2")
+local removed = fs.remove_dir_all("/tmp/tree2", { missing_ok = true })
+fs.move("/tmp/y", "/tmp/z")
+fs.rename("/tmp/z", "/tmp/w")
+fs.set_permissions("/tmp/w", { mode = 420 })
+fs.set_permissions("/tmp/w", { readonly = true })
+print(bytes, removed, path.join("a", "b", "c"), path.parent("/a/b"), path.normalize("a/../b"), path.is_absolute("/a"))
+print(#path.components("/a/b"), path.absolute("x"), path.file_name("a/b.txt"), path.separator)
 
 -- a resource type has methods, called with a colon
 local object = json.object()
