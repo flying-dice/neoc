@@ -7,7 +7,7 @@
  * uncaught exceptions. Locate things with `getByTestId` only.
  */
 import AxeBuilder from '@axe-core/playwright'
-import { test as base, expect, type Locator, type Page, type TestInfo } from '@playwright/test'
+import { test as base, expect, type FrameLocator, type Locator, type Page, type TestInfo } from '@playwright/test'
 
 export { expect }
 
@@ -97,6 +97,9 @@ export async function settle(page: Page): Promise<void> {
     () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))
   )
 }
+
+/** The frame of an app that has a client of its own (`<appId>-frame`): locate what the client draws inside it. */
+export const frameOf = (page: Page, appId: string): FrameLocator => page.frameLocator(`[data-testid="${appId}-frame"]`)
 
 /** The window for an app (`window-<appId>`). */
 export const windowOf = (page: Page, appId: string): Locator => page.getByTestId(`window-${appId}`)

@@ -17,6 +17,7 @@ import {
   expect,
   expectAccessible,
   expectNoOverflow,
+  frameOf,
   openDesktop,
   resizeWindow,
   settle,
@@ -42,10 +43,18 @@ function installedAppIds(): string[] {
     .map((file) => (JSON.parse(readFileSync(file, 'utf8')) as { id: string }).id)
 }
 
+/** The framework fixtures (e2e/apps) are installed at start too: apps whose client runs in a frame of its own. */
+function clientAppIds(): string[] {
+  return readdirSync(join(ROOT, 'e2e/apps'))
+    .map((dir) => join(ROOT, 'e2e/apps', dir, 'app.json'))
+    .filter((file) => existsSync(file))
+    .map((file) => (JSON.parse(readFileSync(file, 'utf8')) as { id: string }).id)
+}
+
 /** Layout is checked inside the window's content: the resize corner deliberately overhangs the frame. */
 const contentOf = (page: Page, id: string) => page.getByTestId(`window-${id}-content`)
 
-const APPS = [...builtinAppIds(), ...installedAppIds()]
+const APPS = [...builtinAppIds(), ...installedAppIds(), ...clientAppIds()]
 
 test('the desktop renders with every app in the Dock', async ({ page }, testInfo) => {
   await openDesktop(page)
@@ -61,9 +70,12 @@ for (const id of APPS) {
       await page.getByTestId(`dock-${id}`).click()
       await settle(page)
       await expect(windowOf(page, id)).toBeVisible()
-      await expect(page.getByTestId(`window-${id}-content`)).not.toBeEmpty()
+      // (a frame has no text of its own: for an app with a client the check is that its client drew, below)
+      if (!clientAppIds().includes(id)) await expect(page.getByTestId(`window-${id}-content`)).not.toBeEmpty()
       // an installed app's window is a view the host rendered: wait for it
       if (installedAppIds().includes(id)) await expect(page.getByTestId(`${id}-view`)).toBeVisible()
+      // an app with a client of its own is a frame: wait for the client to draw
+      if (clientAppIds().includes(id)) await expect(frameOf(page, id).getByTestId(`${id}-app`)).toBeVisible()
     })
 
     for (const theme of ['light', 'dark'] as const) {
