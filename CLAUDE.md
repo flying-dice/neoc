@@ -290,17 +290,30 @@ bun run gate:neoc       # = scripts/check-neoc.sh: the scoped gate for a change 
 bun run slow            # = scripts/check-slow.sh: the slow suites, opt-in (below)
 ```
 
-**The e2e rule (stated once, here).** `test:e2e` is required only when a change touches vos UI, apps, the client, the protocol or
-the host's HTTP surface (`apps/`, `client/`, `packages/`, `e2e/`, `crates/vos-http`, the routes of `crates/vos-host`, the wire
-types in `crates/vos-domain`, `types/generated/`). Any other change runs `bun run gate --no-e2e` (or `gate:neoc` when it stays
-inside the neoc crates). The skills point here; none restates it. A fix round re-runs only what the fix touches, and the gate
+**The e2e rule (stated once, here).** `bun run gate` with `test:e2e` is required for:
+
+- any code change under `apps/`, `client/`, `packages/`, `e2e/`, `types/generated/` or `crates/vos-*`. That covers the UI and
+  the apps, and also their server side: the app runtime and view rendering (`vos-lua`), the view and chat services
+  (`vos-application`), the protocol adapters (`vos-agui`, `vos-mcp`, `vos-acp`), the host's HTTP surface (`vos-http`,
+  `vos-host`) and the wire types (`vos-domain`);
+- a change to what e2e is built from outside those paths: `playwright.config.ts` and the scripts that build the apps, the
+  generated types or the Storybooks it runs (`scripts/build-apps.ts`, `luau.ts`, `codegen-lua.ts`, `storybooks.ts`,
+  `ports.ts`);
+- a `neoc-vm` change that already takes the full gate: to the embedding API or the sandbox (`lifecycle`, `script_env`,
+  `modules`, `sandbox`), to the `Role` of an async host function, or to what a module registers with `Life`.
+
+`bun run gate --no-e2e` is allowed only for the rest: a change to the neoc crates outside the last item (`gate:neoc` when it
+qualifies, see "Which one" in CONTRIBUTING.md), a change to the other scripts, the skills or the docs, and a test-only change
+inside the vos crates (their `tests/` files and `#[cfg(test)]` modules, nothing they compile into the host). A diff that mixes
+kinds takes the strictest. The skills point here; none restates it. A fix round re-runs only what the fix touches, and the gate
 once on the final head.
 
 **The slow suites are not in the gate.** `bun run slow` runs them: the full `hostile_inputs` sweep (about two million hostile
 calls over every module; the gate runs a quick sweep of the same harness) and the 60 000-macro ring test, the full case counts
 of the vos-domain generated-tree properties, the release-build `abort_regressions` run (the debug run is in the gate) and the
 bench bodies (the gate compiles them). One mechanism: a test too slow for the gate is `#[ignore = "slow: ..."]` and
-`check-slow.sh` runs every ignored test of the workspace; a new slow test needs nothing else. Run it before a PR that changes
+`check-slow.sh` runs those tests (found by that reason; an ignored test with another reason, such as `vos-lua`'s `baseline.rs`
+measurement, does not run); a new slow test needs nothing else. Run it before a PR that changes
 what these suites guard (a module's argument handling, stack use or recursion, `vos-domain`'s tree diff, the VM's call
 scheduling), and when you want the whole sweep. A review, a fix round and the gate do not run it. A new test is fast, or it is
 opt-in under `bun run slow`.

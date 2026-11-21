@@ -43,7 +43,7 @@ Cost-ordered. Phase 0–1 block → pass ends — no deep probing on a build a c
 ### Phase 4 — Post
 1. **Re-fetch head SHA.** Moved since Phase 0 → re-verify every finding against the new head. Mark each `STANDS` / `WITHDRAWN`; post only `STANDS`.
 2. Every `file:line` from `grep -n` / `sed -n` at head, run in this pass.
-3. Inline review comments. One thread per **blocking** finding, anchored at the head SHA (`commit_id` = head). Read the stored comment back after posting. Each follow-up becomes a Jira NEOC ticket (`Refs` the PR) and one line in the note under "Follow-ups (not blocking)"; no thread.
+3. Inline review comments. One thread per **blocking** finding, anchored at the head SHA (`commit_id` = head). Read the stored comment back after posting. Each follow-up gets one line in the note under "Follow-ups (not blocking)", and no thread. File each as a Jira NEOC ticket (`Refs` the PR) and put its key on the line. When you cannot create tickets, or your brief says not to, list the follow-ups in the note without keys and say so there ("tickets not filed"): the coordinator or the author then files them, and the PR does not wait for it.
 4. Multi-line bodies as JSON payloads (`gh api`). GET the review thread back; confirm it landed.
 5. Post the review comment.
 6. Count unresolved review threads via `gh api graphql` (`reviewThreads { isResolved }`). Never trust the review decision alone.
@@ -81,9 +81,9 @@ G1, G3, G4, G10: run yourself.
 - `Agent` tool absent or denied → fan-out NOT RUN. Run single-reader, record `Mode: degraded — <reason>`. Never present a single-reader pass as fan-out.
 
 ### G1 — Head & checks
-GitHub Actions is not a gate. Run the pre-PR checks from CONTRIBUTING.md locally at the head SHA and record command + output: `bun run gate` (the neoc checks, then the vos checks: lint, typecheck, test, and e2e), `bun run gate --no-e2e` when e2e is not required, or `bun run gate:neoc` for a change confined to the neoc crates (see "The gate" in CLAUDE.md for which one and when e2e is required). The slow suites are not part of the gate (`bun run slow`). A lint that printed `SKIPPED`, or a required e2e you could not run (it needs a Mac), is unverified, not passed.
+GitHub Actions is not a gate. Run the pre-PR checks from CONTRIBUTING.md locally at the head SHA and record command + output: `bun run gate` (the neoc checks, then the vos checks: lint, typecheck, test, and e2e), `bun run gate --no-e2e` only where the e2e rule allows it, or `bun run gate:neoc` for a neoc-only change it does not send to the full gate ("The gate" in CLAUDE.md states which one and when e2e is required; check every path in `git diff --name-only main...HEAD` against it). The slow suites are not part of the gate (`bun run slow`). A lint that printed `SKIPPED`, or a required e2e you could not run (it needs a Mac), is unverified, not passed.
 - Head SHA recorded: local `git rev-parse HEAD` == PR head `sha`.
-- Every pre-PR check passes at that exact SHA. Any failure = FAIL. `gate:neoc` on a diff outside its scope (CLAUDE.md, "The gate"), or `--no-e2e` on a diff that requires e2e = FAIL.
+- Every pre-PR check passes at that exact SHA. Any failure = FAIL. `gate:neoc` on a diff outside its scope (CLAUDE.md, "The gate"), or `--no-e2e` on a diff that requires e2e (any code change in a vos crate, the apps, the client or the kit, among others) = FAIL.
 - The checks cover the change: the Lua suite or Rust tests for the touched area ran (not filtered out).
 - Re-request: ≥ 1 new commit since the last reviewed head. 0 = FAIL.
 - `main` exists as the target. No merge conflicts.
@@ -159,7 +159,7 @@ Rounds continue until the independent reviewer returns READY TO MERGE at the exa
 
 ### G11 — vos checks
 `N/A — no vos paths` unless the diff touches `crates/vos-*`, `apps/`, `client/`, `packages/`, `e2e/`, `types/generated` or the vos scripts. Otherwise run the section "vos checks" of `.claude/skills/pr-review/SKILL.md` (V1 tests and coverage, V2 accessibility, V3 boundaries and security, V4 UI structure and design, V5 the app readiness table when an app or what a person sees or does in one changed) and record each row PASS, FAIL or `N/A — <reason>` with command + output or `file:line`.
-- The gate for vos paths is `bun run gate`, with e2e where the e2e rule requires it (CLAUDE.md, "The gate"); a required e2e not run = unverified = FAIL.
+- The gate for vos paths is `bun run gate` with e2e. `--no-e2e` passes here only where the e2e rule in CLAUDE.md ("The gate") allows it, such as a test-only change inside the vos crates; a change to `vos-lua`, `vos-application` or a protocol adapter takes e2e although it draws no screen. A required e2e not run = unverified = FAIL.
 - A UI change carries a `verify-change` "Manual verification" section in the PR.
 
 ### Target shape — one-round PRs
@@ -267,11 +267,11 @@ row needs evidence; one missing row is a finding, and the app stays in its PR.
 | States | every screen and state is reached by a journey or a JSON-tree story (V1), green in the stories, desktop and journeys projects |
 | Journeys | `JOURNEYS.md` with 4 to 8 journeys (goal, start state, observable "Done when"), each with a passing spec of the same id |
 | Verified | the PR's "Manual verification" section (`verify-change`) covers light and dark, the minimum and large windows, Split View and Slide Over, and keyboard |
-| Researched | `ux/<app>/round-<n>.md` from the `app-design` skill whose scorecard meets the exit criteria (all journeys succeed for all three participants, mean ease at least 6.0, no blocker or major open, conformance at least 90 with no category below 70), and no layout or flow change landed after that round. Proportionality: a change to behaviour or text only, with no layout, control or flow change and identical snapshots, needs a `postbuild-synthetic-usability` review (`ux/<app>/review-<n>.md`), not a research panel; the panel is for a new app and for changes to screens or flows |
+| Researched | `ux/<app>/round-<n>.md` from the `app-design` skill whose scorecard meets the exit criteria (all journeys succeed for all three participants, mean ease at least 6.0, no blocker or major open, conformance at least 90 with no category below 70), and no layout or flow change landed after that round. Proportionality: a change to behaviour or text only, with no layout, control or flow change, identical snapshots and no new or changed journey, needs a `postbuild-synthetic-usability` review (`ux/<app>/review-<n>.md`), not a research panel; the panel is for a new app and for changes to screens or flows |
 
 A change to an app that doesn't alter what people see or do (a pure-logic fix, a new read-only tool) needs the gate, the
 tests and green journeys, but not a new research round. A change to behaviour or text only (no layout, control or flow
-change, identical snapshots) needs a usability review (`postbuild-synthetic-usability`), not the panel.
+change, identical snapshots, no new or changed journey) needs a usability review (`postbuild-synthetic-usability`), not the panel.
 
 For an app whose earlier research rounds predate NEOC-115 (the Calculator's reports were dropped with `docs/`; they are in git at `51f47f4`), the next change to what a person sees or does starts a fresh round under `ux/<app>/`.
 

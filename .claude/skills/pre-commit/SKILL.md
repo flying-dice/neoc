@@ -20,19 +20,20 @@ Run before every push. Loop until everything below is clean. Scale the work to t
    0.5 blocks the push: fix it, or run `refactor` until none remain.
 4. **The gate**, on the final head and after a fix that touches more than a test or a doc line. There is one command set, the
    one `CONTRIBUTING.md` lists, and the rule for which one and when e2e is required is stated once, in `CLAUDE.md` ("The
-   gate"):
+   gate"). Check every path the diff touches (`git diff --name-only main...HEAD`) against it: a code change in a vos crate
+   takes e2e even when no screen changes, and so does a `neoc-vm` change that already takes the full gate.
 
    ```sh
    bun run gate            # the neoc checks (scripts/check-neoc.sh), then the vos checks: lint, typecheck, test, e2e
-   bun run gate --no-e2e   # the same without e2e, when the e2e rule in CLAUDE.md says it is not required
-   bun run gate:neoc       # scripts/check-neoc.sh alone: a change confined to the neoc crates (no bun, no darklua)
+   bun run gate --no-e2e   # the same without e2e, only where the e2e rule in CLAUDE.md allows it
+   bun run gate:neoc       # scripts/check-neoc.sh alone: a neoc-only change CLAUDE.md does not send to the full gate (no bun, no darklua)
    ```
 
    Between fixes run only what the fix touches (one test, one crate, one lint); the gate runs once more on the final head. It
    is fast on purpose (a few minutes warm). The slow suites (the `hostile_inputs` sweep, the release `abort_regressions` run,
-   the full chaos case counts) are not in it: `bun run slow` runs them, and a change to what they guard (a module's argument
+   the full generated-tree case counts) are not in it: `bun run slow` runs them, and a change to what they guard (a module's argument
    handling, stack use or recursion, the VM's call scheduling) runs it once before the PR. A new test is fast, or it is
-   `#[ignore = "slow: ..."]` and added to `scripts/check-slow.sh`.
+   `#[ignore = "slow: ..."]`, which `scripts/check-slow.sh` finds by that reason (nothing to add there).
 
    `bun run gate` sets `VOS_GATE=1` and `NEOC_REQUIRE_LUAU_LSP=1` for every step, so a missing `luau-lsp`, `stylua` or
    `darklua` fails instead of skipping; `scripts/check-neoc.sh` sets `NEOC_REQUIRE_LUAU_LSP=1` itself. A skip is not green

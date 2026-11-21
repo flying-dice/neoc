@@ -34,7 +34,7 @@ exactly as written. GitHub Actions is not a gate.
 
 ```sh
 bun run gate           # the neoc checks, then the vos checks
-bun run gate --no-e2e  # the same without e2e (when the e2e rule below says it is not required)
+bun run gate --no-e2e  # the same without e2e (only where the e2e rule in CLAUDE.md allows it)
 bun run gate:neoc      # the scoped gate (= scripts/check-neoc.sh): a change confined to the neoc crates
 bun run slow           # the slow suites (= scripts/check-slow.sh): opt-in, not part of the gate
 ```
@@ -62,15 +62,14 @@ about two minutes, the vos half without e2e about two, and e2e about five. Whate
 
 `bun run gate --neoc` and `--vos` run one half (for a loop; the gate before a PR is both), and `--no-e2e` leaves out `test:e2e`.
 
-**The e2e rule.** `test:e2e` is required only when a change touches vos UI, apps, the client, the protocol or the host's HTTP
-surface; any other change runs `bun run gate --no-e2e` (see [CLAUDE.md](CLAUDE.md#the-gate), the one place the rule is stated).
-After a fix round, re-run only what the fix touches, and the gate once on the final head.
+**When e2e is required** (and when `--no-e2e` is enough): see "The e2e rule" in [CLAUDE.md](CLAUDE.md#the-gate), the one place
+it is stated.
 
 **The slow suites** (`bun run slow`, `scripts/check-slow.sh`) are opt-in: the full `hostile_inputs` sweep and the 60 000-macro
 ring test (`neoc-vm`), the full case counts of the generated-tree properties (`vos-domain`), `cargo test --release -p neoc-vm
 --test abort_regressions` (the release build proves a default 2 MiB thread survives; the debug run is in the gate) and the bench
 bodies (`cargo bench -p neoc-vm --features bench --bench lib --bench vnd -- --test`). A test too slow for the gate is
-`#[ignore = "slow: ..."]`, and the script runs every ignored test of the workspace. Run it before a PR that changes what they
+`#[ignore = "slow: ..."]`, and the script runs exactly those (found by that reason, not every ignored test). Run it before a PR that changes what they
 guard, not for every change and never in a review or a fix round. No mutation testing: nobody edits code to watch a test fail,
 reverts a fix, or loops a test to prove it is not flaky.
 

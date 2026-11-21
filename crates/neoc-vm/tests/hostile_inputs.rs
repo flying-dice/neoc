@@ -13,8 +13,10 @@
 //! is a failure too, the test binary dies on the call it printed last (`HOSTILE_TRACE=1`).
 //!
 //! The sweep comes in two sizes. `no_module_function_panics_on_a_quick_hostile_sweep` is in the gate: every function with
-//! every hostile value alone and in pairs from the reduced pool, no three-argument combinations and no deeply nested
-//! text (those are covered by the targeted tests below). `no_module_function_panics_on_hostile_input` is the full sweep
+//! every hostile value alone and in pairs from the reduced pool, no three-argument combinations and none of the texts
+//! nested a hundred thousand deep ([`DEEP`]). The targeted tests below feed those depths to the parsers that recurse on
+//! them (the YAML, TOML and XML decoders, glob patterns, Lua patterns and template macros); `lib:json` and `vnd:serde_json`
+//! have their own depth tests. `no_module_function_panics_on_hostile_input` is the full sweep
 //! (about two million calls, minutes), `#[ignore]`d as slow: `bun run slow` runs it.
 //!
 //! The sweep and the other tests here run on a 2 MiB thread (the stack of a default runtime worker): a
@@ -706,5 +708,87 @@ fn a_ring_of_sixty_thousand_macros_is_planned_in_linear_time() {
         started.elapsed() < Duration::from_secs(10),
         "took {:?}",
         started.elapsed()
+    );
+}
+
+/// Parse each text (a Lua chunk returning a list of strings) with `require(module).decode_string` on a 2 MiB thread
+/// and return, per text, the error it gave or `ACCEPTED`. A stack overflow aborts the test binary, so reaching the
+/// assertions is the proof that the parser stays on the stack.
+fn decode_deep_texts(module: &'static str, texts: &'static str) -> Vec<String> {
+    on_small_stack(move || {
+        let lua = make_engine().unwrap();
+        let out: Table = lua
+            .load(
+                r#"
+                local module, texts = ...
+                local decode_string = require(module).decode_string
+                local out = {}
+                for _, text in ipairs(texts) do
+                  local ok, value, err = pcall(decode_string, text)
+                  out[#out + 1] = (not ok and tostring(value)) or (value == nil and tostring(err)) or "ACCEPTED"
+                end
+                return out
+                "#,
+            )
+            .call((module, lua.load(texts).eval::<Table>().unwrap()))
+            .unwrap();
+        out.sequence_values::<String>()
+            .map(Result::unwrap)
+            .collect()
+    })
+}
+
+/// The quick sweep leaves out [`DEEP`], the texts nested a hundred thousand deep; these are the ones a data parser
+/// would recurse on, fed straight to each parser. serde_yaml scans the whole text without recursing and cuts the
+/// descent at its recursion limit (128), so ten thousand levels prove it as well as a hundred thousand would, in a
+/// fraction of the time. Its scan of nested flow mappings (`{a: {a: ...`) is quadratic in the depth (half a second at
+/// ten thousand levels in a debug build, a minute and a half at a hundred thousand), so that text is fed shallower.
+#[test]
+fn deeply_nested_yaml_is_an_error_not_a_stack_overflow() {
+    let lines = decode_deep_texts(
+        "vnd:serde_yaml",
+        r#"local N = 10000 return {
+            ("["):rep(N) .. ("]"):rep(N), ("["):rep(N), ("- "):rep(N) .. "1", ("{a: "):rep(2000) .. ("}"):rep(2000),
+        }"#,
+    );
+    assert_eq!(lines.len(), 4);
+    assert!(
+        lines.iter().all(|l| l.contains("recursion limit exceeded")),
+        "{lines:#?}"
+    );
+}
+
+/// toml's parser stops nesting arrays and inline tables at its recursion limit (80).
+#[test]
+fn deeply_nested_toml_is_an_error_not_a_stack_overflow() {
+    let lines = decode_deep_texts(
+        "vnd:toml",
+        r#"local N = 100000 return {
+            "a = " .. ("["):rep(N) .. ("]"):rep(N), "a = " .. ("{b = "):rep(N) .. "1" .. ("}"):rep(N),
+            "a = " .. ("[1,"):rep(N),
+        }"#,
+    );
+    assert_eq!(lines.len(), 3);
+    assert!(
+        lines.iter().all(|l| l.contains("max recursion depth met")),
+        "{lines:#?}"
+    );
+}
+
+/// quick-xml's deserializer stops at its recursion limit (128) before the value reaches `serde_json` or Lua.
+#[test]
+fn deeply_nested_xml_is_an_error_not_a_stack_overflow() {
+    let lines = decode_deep_texts(
+        "vnd:quick_xml",
+        r#"local N = 100000 return {
+            ("<a>"):rep(N) .. ("</a>"):rep(N), ("<a>"):rep(N), ("<a><b>"):rep(N) .. ("</b></a>"):rep(N),
+        }"#,
+    );
+    assert_eq!(lines.len(), 3);
+    assert!(
+        lines
+            .iter()
+            .all(|l| l.contains("recursion limit of 128 exceeded")),
+        "{lines:#?}"
     );
 }

@@ -48,9 +48,9 @@ G1, G3, G4, G10: run yourself.
 - `Agent` tool absent or denied → fan-out NOT RUN. Run single-reader, record `Mode: degraded — <reason>`. Never present a single-reader pass as fan-out.
 
 ### G1 — Head & checks
-GitHub Actions is not a gate. Run the pre-PR checks from CONTRIBUTING.md locally at the head SHA and record command + output: `bun run gate` (the neoc checks, then the vos checks: lint, typecheck, test, and e2e), `bun run gate --no-e2e` when e2e is not required, or `bun run gate:neoc` for a change confined to the neoc crates (see "The gate" in CLAUDE.md for which one and when e2e is required). The slow suites are not part of the gate (`bun run slow`). A lint that printed `SKIPPED`, or a required e2e you could not run (it needs a Mac), is unverified, not passed.
+GitHub Actions is not a gate. Run the pre-PR checks from CONTRIBUTING.md locally at the head SHA and record command + output: `bun run gate` (the neoc checks, then the vos checks: lint, typecheck, test, and e2e), `bun run gate --no-e2e` only where the e2e rule allows it, or `bun run gate:neoc` for a neoc-only change it does not send to the full gate ("The gate" in CLAUDE.md states which one and when e2e is required; check every path in `git diff --name-only main...HEAD` against it). The slow suites are not part of the gate (`bun run slow`). A lint that printed `SKIPPED`, or a required e2e you could not run (it needs a Mac), is unverified, not passed.
 - Head SHA recorded: local `git rev-parse HEAD` == PR head `sha`.
-- Every pre-PR check passes at that exact SHA. Any failure = FAIL. `gate:neoc` on a diff outside its scope (CLAUDE.md, "The gate"), or `--no-e2e` on a diff that requires e2e = FAIL.
+- Every pre-PR check passes at that exact SHA. Any failure = FAIL. `gate:neoc` on a diff outside its scope (CLAUDE.md, "The gate"), or `--no-e2e` on a diff that requires e2e (any code change in a vos crate, the apps, the client or the kit, among others) = FAIL.
 - The checks cover the change: the Lua suite or Rust tests for the touched area ran (not filtered out).
 - Re-request: ≥ 1 new commit since the last reviewed head. 0 = FAIL.
 - `main` exists as the target. No merge conflicts.
@@ -126,7 +126,7 @@ Rounds continue until the independent reviewer returns READY TO MERGE at the exa
 
 ### G11 — vos checks
 `N/A — no vos paths` unless the diff touches `crates/vos-*`, `apps/`, `client/`, `packages/`, `e2e/`, `types/generated` or the vos scripts. Otherwise run the section "vos checks" of `.claude/skills/pr-review/SKILL.md` (V1 tests and coverage, V2 accessibility, V3 boundaries and security, V4 UI structure and design, V5 the app readiness table when an app or what a person sees or does in one changed) and record each row PASS, FAIL or `N/A — <reason>` with command + output or `file:line`.
-- The gate for vos paths is `bun run gate`, with e2e where the e2e rule requires it (CLAUDE.md, "The gate"); a required e2e not run = unverified = FAIL.
+- The gate for vos paths is `bun run gate` with e2e. `--no-e2e` passes here only where the e2e rule in CLAUDE.md ("The gate") allows it, such as a test-only change inside the vos crates; a change to `vos-lua`, `vos-application` or a protocol adapter takes e2e although it draws no screen. A required e2e not run = unverified = FAIL.
 - A UI change carries a `verify-change` "Manual verification" section in the PR.
 
 ### Target shape — one-round PRs
