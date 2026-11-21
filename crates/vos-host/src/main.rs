@@ -19,7 +19,7 @@ use vos_domain::{Agent, AgentId, AgentRuntime, ApprovalPolicy, Grants};
 use vos_host::{
     build,
     config::Settings,
-    migrate::{migrate_if_default, Migration},
+    migrate::{migrate_if_default, reject_legacy_env, Migration},
     net::{local_url, reachable_urls},
     open_devices,
     platform::{OsRandom, SystemClock},
@@ -81,6 +81,9 @@ async fn run_cli() -> anyhow::Result<()> {
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
         .with_writer(std::io::stderr)
         .init();
+
+    // the old environment variable names are no longer read: stop rather than start with different settings
+    reject_legacy_env(std::env::vars_os().filter_map(|(name, _)| name.into_string().ok()))?;
 
     let cwd = std::env::current_dir().context("working directory")?;
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from);

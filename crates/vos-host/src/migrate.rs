@@ -1,3 +1,6 @@
+//! The migration from the names this program had before it was renamed: the one-time move of its data directory,
+//! and the refusal to start while an old-named environment variable is set.
+//!
 //! The one-time move from the data directory this program used before it was renamed (`~/.agentos`, with an
 //! `agentos.toml` in it) to `~/.vos`, so that paired devices, app data, the agent roster and the chat history
 //! survive the rename.
@@ -35,6 +38,35 @@ pub(crate) const DIR: &str = ".vos";
 const LEGACY_CONFIG: &str = "agentos.toml";
 /// The config file name now.
 const CONFIG: &str = "vos.toml";
+
+/// The prefix of the environment variables the program read before its rename (`AGENTOS_BIND`, ...).
+const LEGACY_ENV_PREFIX: &str = "AGENTOS_";
+/// The prefix of the variables it reads now.
+const ENV_PREFIX: &str = "VOS_";
+
+/// Refuse to start while any old-named environment variable is set.
+///
+/// The old names are no longer read, so ignoring one would change what the host does without a word (an
+/// `AGENTOS_BIND` that kept it on loopback would become the default `0.0.0.0`). The error names each variable and
+/// the one that replaces it. `names` is the environment's variable names (`std::env::vars_os` keys).
+pub fn reject_legacy_env(names: impl IntoIterator<Item = String>) -> anyhow::Result<()> {
+    let mut found: Vec<String> = names
+        .into_iter()
+        .filter_map(|name| {
+            let rest = name.strip_prefix(LEGACY_ENV_PREFIX)?;
+            Some(format!("{name} (now {ENV_PREFIX}{rest})"))
+        })
+        .collect();
+    if found.is_empty() {
+        return Ok(());
+    }
+    found.sort();
+    bail!(
+        "the environment holds variables from before the rename to vos, which are no longer read: {}. Rename each to \
+         the name given (or unset it) and start again.",
+        found.join(", ")
+    )
+}
 
 /// What [`migrate_legacy_data_dir`] did.
 #[derive(Debug, PartialEq, Eq)]
@@ -148,6 +180,24 @@ mod tests {
         fs::write(dir.join("apps/calculator.db"), b"app data").unwrap();
         fs::write(dir.join(LEGACY_CONFIG), b"port = 7500\n").unwrap();
         dir
+    }
+
+    #[test]
+    fn an_old_environment_variable_stops_the_start_and_names_its_replacement() {
+        let err = reject_legacy_env(
+            ["PATH", "AGENTOS_PORT", "VOS_BIND", "AGENTOS_BIND", "XAGENTOS_X"].map(String::from),
+        )
+        .unwrap_err();
+        let text = format!("{err:#}");
+        assert!(text.contains("AGENTOS_BIND (now VOS_BIND)"), "{text}");
+        assert!(text.contains("AGENTOS_PORT (now VOS_PORT)"), "{text}");
+        assert!(!text.contains("XAGENTOS_X") && !text.contains("PATH"), "only the old prefix counts: {text}");
+    }
+
+    #[test]
+    fn a_clean_environment_starts() {
+        assert!(reject_legacy_env(["PATH", "HOME", "VOS_PORT", "RUST_LOG"].map(String::from)).is_ok());
+        assert!(reject_legacy_env(Vec::new()).is_ok());
     }
 
     #[test]

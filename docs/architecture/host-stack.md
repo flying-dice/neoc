@@ -246,6 +246,7 @@ if `~/.vos` exists nothing happens and the two are never merged; if neither exis
 `VOS_DATA` or `data_dir` is never a reason to move the old default. A rename that fails stops the start with an error
 naming both paths and loses no data (nothing is copied or deleted; at worst the config file keeps its new name inside the old directory). A browser's session cookie and
 the client's local settings are keyed by the old name, so each paired device pairs again once (`vos pair`).
+The old environment variables (the same names with the old prefix) are no longer read, and the host refuses to start while any is set (`serve` and `pair` both): the error names each variable and its `VOS_*` replacement, so a loopback `bind` kept in the environment cannot silently become the default `0.0.0.0`.
 
 ### The gate
 

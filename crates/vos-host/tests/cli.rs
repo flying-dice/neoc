@@ -18,8 +18,19 @@ struct HostProcess {
     lines: mpsc::Receiver<String>,
 }
 
-fn host_command(data: &Path) -> Command {
+/// A `vos` command with no `AGENTOS_*` variable inherited from the developer's shell (the host refuses to start with one).
+fn vos_command() -> Command {
     let mut cmd = Command::new(BIN);
+    for (name, _) in std::env::vars_os() {
+        if name.to_string_lossy().starts_with("AGENTOS_") {
+            cmd.env_remove(name);
+        }
+    }
+    cmd
+}
+
+fn host_command(data: &Path) -> Command {
+    let mut cmd = vos_command();
     cmd.current_dir(data)
         .env("VOS_DATA", data)
         .env("VOS_BIND", "127.0.0.1")
@@ -202,7 +213,7 @@ fn an_unknown_argument_is_an_error_and_help_is_not() {
 
 /// The host the way a person runs it: no `VOS_DATA`, so the data directory is `$HOME/.vos`.
 fn host_in_home(home: &Path) -> Command {
-    let mut cmd = Command::new(BIN);
+    let mut cmd = vos_command();
     cmd.current_dir(home)
         .env("HOME", home)
         .env_remove("USERPROFILE")
@@ -311,4 +322,29 @@ fn a_move_that_fails_is_reported_and_stops_the_start_with_the_data_where_it_was(
     assert!(home.join(".agentos/agentos.toml").is_file(), "the config name is back");
     assert!(!home.join(".vos").exists());
     let _ = std::fs::remove_dir_all(home);
+}
+
+// -- the old AGENTOS_* variables are refused, not ignored ------------------------------------------------------
+
+#[test]
+fn an_old_environment_variable_stops_serve_and_pair_naming_its_replacement() {
+    let data = temp_dir("old-env");
+    for args in [&["pair"][..], &[][..]] {
+        let out = host_command(&data).env("AGENTOS_BIND", "127.0.0.1").args(args).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "`vos {args:?}` must not start with AGENTOS_BIND set");
+        assert!(stderr.contains("AGENTOS_BIND (now VOS_BIND)"), "{stderr}");
+        assert!(out.stdout.is_empty(), "no banner or pairing code was printed");
+    }
+    assert!(!data.join("system.db").exists(), "it stopped before touching the data directory");
+    let _ = std::fs::remove_dir_all(data);
+}
+
+#[test]
+fn a_clean_environment_starts_normally() {
+    let data = temp_dir("clean-env");
+    let out = host_command(&data).arg("pair").output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("Pairing code:"));
+    let _ = std::fs::remove_dir_all(data);
 }
