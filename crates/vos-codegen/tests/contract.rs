@@ -153,6 +153,9 @@ fn the_definitions_have_one_declare_require_with_every_module() {
     let names: Vec<&str> = overloads.iter().map(|(name, _)| name.as_str()).collect();
     assert!(names.contains(&"vos:app") && names.contains(&"vos:ui"), "{names:?}");
     assert!(defs.trim_end().ends_with("& ((path: string) -> any)"), "a bundled module of the app is any");
+    // `bun run lint:luau` cuts the last section out for its second pass: it must be the last marker of the file
+    let last = defs.lines().rfind(|l| l.starts_with("-- ===== ")).unwrap();
+    assert_eq!(last, "-- ===== require =====");
     // typed: the app API and the constructors are the types the file declares
     assert!(overloads.contains(&("vos:app".to_owned(), "vos_AppApi".to_owned())));
     assert!(overloads.contains(&("vos:ui".to_owned(), "vos_ui".to_owned())));
@@ -190,6 +193,10 @@ fn the_globals_an_app_does_not_have_are_declared_unusable() {
     for global in GLOBALS_NOT_FOR_APPS {
         assert!(defs.contains(&format!("\ndeclare {global}: vos_NotForApps_{global}\n")), "{global}");
     }
+    // a function global is unusable by any call (`print("x")`, `pcall(print, "x")`), a library by any member access
+    assert!(defs.contains("export type vos_NotForApps_print = (__not_for_apps: never) -> never\n"));
+    assert!(defs.contains("export type vos_NotForApps_loadstring = (__not_for_apps: never) -> never\n"));
+    assert!(defs.contains("export type vos_NotForApps_os = { __not_for_apps: never }\n"));
     // and none of them is a global the app is meant to use
     for needed in ["app", "typeof", "utf8", "table", "string", "math", "bit32", "coroutine"] {
         assert!(!GLOBALS_NOT_FOR_APPS.contains(&needed), "{needed}");

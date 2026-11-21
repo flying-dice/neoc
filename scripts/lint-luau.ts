@@ -14,11 +14,17 @@
  *     lines, and none on an unmarked line. `NEGATIVE_MARKERS` pins how many markers each file holds, so deleting a
  *     wrong line with its marker is an edit of that table. This is what stops the gate passing silently when the
  *     declarations stop loading (`app` and `ui` would be `any`, and nothing would be flagged).
- *  3. Requires: the types cannot catch a misspelt module name that falls to the declarations' last overload
- *     (`require("./calc")`, an app's own bundled module, is `any`: luau-lsp resolves a relative `require` to the
- *     module's type only while `require` is its built-in, and the declarations replace it), so every literal
- *     `require` of an app source is checked here as well: a relative path, `vos:app`, `vos:ui` or a module the
- *     declarations offer; anything else (a refused `lib:test`, a typo such as `lib:jsno`) fails.
+ *  3. An app's own modules: the first pass sees `require("./calc")` as `any` (luau-lsp resolves a relative `require`
+ *     to the module's type only while `require` is its built-in, and the declarations replace it with the one
+ *     `declare require` that types `vos:*` and the std:/lib:/vnd: modules). So a second pass runs over the same
+ *     files against the declarations with that `declare require` cut out: `require("./calc")` then has the module's
+ *     real type and a wrong call into it is an error. In that pass `vos:*` and the offered std:/lib:/vnd: names are
+ *     "Unknown require" (nothing resolves them) and those findings are dropped; every other finding is real, and so
+ *     is an "Unknown require" of anything else: a refused `lib:test`, a typo such as `lib:jsno`, a missing module.
+ *     A negative fixture's findings are those of both passes. (The editor still shows `any` for an app's own modules;
+ *     this gate is what catches the errors.)
+ *  4. Requires: every literal `require` of an app source is a relative path, `vos:app`, `vos:ui` or a module the
+ *     declarations offer (the second pass's check, stated as a plain rule with a clearer message).
  *
  * luau-lsp is found on PATH or at ~/.local/bin/luau-lsp and must be the pinned version (its messages change between
  * releases). When it is missing the check SKIPS with a message and exits 0 on a developer machine, and FAILS in the
@@ -28,8 +34,8 @@
  */
 import { Glob } from 'bun'
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { skipTool } from './gate'
 
@@ -48,7 +54,8 @@ export const DEFINITIONS = 'types/generated/vos.d.luau'
  */
 export const NEGATIVE_MARKERS: Record<string, number> = {
   'scripts/fixtures/negative/wrong_api_use.luau': 11,
-  'scripts/fixtures/negative/wrong_requires.luau': 11,
+  'scripts/fixtures/negative/wrong_module_use.luau': 5,
+  'scripts/fixtures/negative/wrong_requires.luau': 16,
   'scripts/fixtures/negative/wrong_ui_usage.luau': 14
 }
 
@@ -176,6 +183,40 @@ export function offeredModules(definitions: string): Set<string> {
   return new Set(overloads(definitions).filter((o) => !o.type.startsWith('vos_NotForApps_')).map((o) => o.name))
 }
 
+/** The declarations without their `declare require`: the last section of the file (`-- ===== require =====`). */
+export function withoutRequire(definitions: string): string {
+  const at = definitions.indexOf('\n-- ===== require =====')
+  if (at === -1) throw new Error(`${DEFINITIONS} has no \`-- ===== require =====\` section to cut out`)
+  return `${definitions.slice(0, at)}\n`
+}
+
+/**
+ * The findings of the second pass (no `declare require`), less the "Unknown require" of a name the first pass
+ * types: `vos:*` and the offered modules resolve to no file there, which says nothing about the app.
+ */
+export function dropKnownUnknownRequires(findings: Finding[], offered: Set<string>): Finding[] {
+  return findings.filter((f) => {
+    const m = /^TypeError: Unknown require: (.*)$/.exec(f.primary)
+    if (!m) return true
+    const name = (m[1] ?? '').split('/').pop()?.replace(/\.luau?$/, '') ?? ''
+    return !offered.has(name)
+  })
+}
+
+/** Findings of two passes over the same file, once each (the same line and message is one finding). */
+export function mergeFindings(...passes: Finding[][]): Finding[] {
+  const seen = new Set<string>()
+  const merged: Finding[] = []
+  for (const f of passes.flat()) {
+    const key = `${f.line}|${f.primary}`
+    if (!seen.has(key)) {
+      seen.add(key)
+      merged.push(f)
+    }
+  }
+  return merged.sort((a, b) => a.line - b.line)
+}
+
 /** Is `name` a `require` an app may write: a relative path, `vos:app`/`vos:ui`, or an offered module? */
 export function allowedRequire(name: string, offered: Set<string>): boolean {
   return name.startsWith('./') || name.startsWith('../') || offered.has(name)
@@ -234,19 +275,33 @@ function main(): void {
   const usageRequires = new Set(requiredNames(usageSource).map((r) => r.name))
   for (const name of offered) if (!usageRequires.has(name)) problems.push(`${usage} never requires ${name}`)
 
-  // luau-lsp, once over everything
+  // luau-lsp over everything, twice: against the declarations, then against the declarations without their `declare
+  // require` (see the header: an app's own modules get their real types in the second pass)
   const files = [...positive, ...negative]
-  const run = spawnSync(
-    luauLsp,
-    ['analyze', '--formatter=plain', '--platform=standard', `--definitions:@vos=${DEFINITIONS}`, ...files],
-    { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }
-  )
-  let found: Map<string, Finding[]>
+  const scratch = mkdtempSync(join(tmpdir(), 'vos-lint-luau-'))
+  const analyze = (definitions: string): Map<string, Finding[]> => {
+    const run = spawnSync(
+      luauLsp,
+      ['analyze', '--formatter=plain', '--platform=standard', `--definitions:@vos=${definitions}`, ...files],
+      { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }
+    )
+    return parseAnalysis(`${run.stderr}\n${run.stdout}`, files)
+  }
+  const found = new Map<string, Finding[]>()
   try {
-    found = parseAnalysis(`${run.stderr}\n${run.stdout}`, files)
+    const first = analyze(DEFINITIONS)
+    // the file keeps its name: parseAnalysis treats any output that names it as a definitions failure
+    const bare = join(scratch, 'vos.d.luau')
+    writeFileSync(bare, withoutRequire(definitions))
+    const second = analyze(bare)
+    for (const file of files) {
+      found.set(file, mergeFindings(first.get(file) ?? [], dropKnownUnknownRequires(second.get(file) ?? [], offered)))
+    }
   } catch (error) {
     console.error(`lint:luau FAILED: ${(error as Error).message}`)
     process.exit(1)
+  } finally {
+    rmSync(scratch, { recursive: true, force: true })
   }
 
   for (const file of positive) {
@@ -273,7 +328,7 @@ function main(): void {
   }
   const markers = Object.values(NEGATIVE_MARKERS).reduce((a, b) => a + b, 0)
   console.log(
-    `lint:luau OK (${positive.length} sources clean in strict mode, ${negative.length} negative fixtures flag exactly their ${markers} markers; ` +
+    `lint:luau OK (${positive.length} sources clean in strict mode in two passes (with and without the typed require), ${negative.length} negative fixtures flag exactly their ${markers} markers; ` +
       `${offered.size} offered modules; luau-lsp ${version})`
   )
 }

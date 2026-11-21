@@ -75,14 +75,20 @@ under `bun test` too, through the preload in `client/bunfig.toml` (`client/test/
   a file name, so a module is an overload, not a file). Every checked file starts with `--!strict` and must come out with
   no type error and no lint warning. `scripts/fixtures/usage.luau` is the positive fixture: it `require`s every module
   an app is offered (the check fails when it misses one) and uses the API and the constructors correctly. Files in
-  `negative/` folders (`scripts/fixtures/negative/`: `wrong_api_use.luau`, `wrong_ui_usage.luau`, `wrong_requires.luau`)
+  `negative/` folders (`scripts/fixtures/negative/`: `wrong_api_use.luau`, `wrong_ui_usage.luau`, `wrong_requires.luau`, `wrong_module_use.luau`)
   end a line with `-- expect-error: <text>`: luau-lsp must give exactly one finding per marker on that line, each
   matching a different finding's message (up to its `caused by:` lines), and none on an unmarked line, so a broken
   declarations file cannot pass silently (`require("vos:app")` would be `any` and nothing would be flagged).
   `NEGATIVE_MARKERS` in the script pins how many markers each file holds: deleting a wrong line with its marker is an
-  edit of that table. The check also reads every literal `require` of an app source (a relative path, `vos:app`,
-  `vos:ui` or an offered module, nothing else), because a misspelt name falls to the declarations' last overload, which
-  is `any` for an app's own bundled modules. `bun test scripts` runs the matcher (`scripts/lint-luau.test.ts`).
+  edit of that table. luau-lsp runs **twice** over the same files: against the declarations, and against the declarations
+  without their `declare require`. The first pass types `vos:*` and the library modules; in it an app's own module
+  (`require("./calc")`) is `any`, because luau-lsp resolves a relative `require` only while `require` is its built-in. The
+  second pass has the built-in, so `./calc` has its real type and a wrong call into it is an error (the editor still shows
+  `any`: the gate is what catches these); there the "Unknown require" of `vos:*` and of an offered module is dropped and
+  every other finding counts, so a misspelt or refused module name is an error too (`wrong_requires.luau` marks the
+  require lines, `lib/shout.luau` with `module_use.luau` and `negative/wrong_module_use.luau` pin the module case). A
+  negative fixture's findings are those of both passes. The check also reads every literal `require` of an app source (a
+  relative path, `vos:app`, `vos:ui` or an offered module, nothing else) for a plain message. `bun test scripts` runs the matcher (`scripts/lint-luau.test.ts`).
   The editor path is tested too: `crates/vos-codegen/tests/luau_lsp.rs` starts `luau-lsp lsp --stdio` as the extension
   does and checks that `require("vos:app")` is typed, a wrong member and a refused module are flagged and the docs show
   on hover. `crates/vos-lua/tests/modules.rs` holds the declared `require` to the modules the host offers (every module

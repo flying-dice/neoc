@@ -125,13 +125,19 @@ the module's real type), and the one `declare require`. Name a type with an alia
 - **Modules the host refuses are a type error.** `lib:test`, `lib:compile` and `std:workers` are not offered
   (`vos_domain::NOT_FOR_APPS`, one list for the adapter and the declarations): they are left out of the typed overloads
   of `require` and typed as unusable, so `local test = require("lib:test"); test.describe(...)` fails with
-  `Key 'describe' not found in table 'vos_NotForApps_lib_test'`. The same goes for the globals above.
-- **Your own modules type as `any`.** luau-lsp resolves `require("./calc")` to the module's type only while `require`
-  is its built-in; the declarations replace `require` (that is how `vos:*` and `std:*` get their types), and a second
-  `declare require` would replace the first. So a relative module is `any` to the file that requires it (annotate the
-  functions you call, or cast), and each module is itself checked in strict mode. Because the types cannot catch a
-  misspelt name there, `bun run lint:luau` also checks every literal `require` of an app: a relative path, `vos:app`,
-  `vos:ui` or an offered module, nothing else (`require("lib:jsno")` fails the lint).
+  `Key 'describe' not found in table 'vos_NotForApps_lib_test'`. Exactly what is a type error: a member access on a refused
+  module or library global (`os.time`), and any call of a refused function global (`print("x")`, `pcall(print, "x")`, an
+  alias of it). A bare `require("lib:test")` that is never used is not one: the second pass of `lint:luau` fails it as an
+  "Unknown require" and so does the require scan.
+- **Your own modules: `any` in the editor, typed by the gate.** luau-lsp resolves `require("./calc")` to the module's type
+  only while `require` is its built-in; the declarations replace `require` (that is how `vos:*` and `std:*` get their
+  types), and a second `declare require` would replace the first. So **the editor shows `any`** for a relative module (no
+  completion, no error on a wrong call). **`bun run lint:luau` catches those errors**: it analyzes every file a second time
+  against the declarations without their `declare require`, where `require("./calc")` has the module's real type
+  (`calc.format` taking a string is flagged at each caller), `vos:*` and the offered `std:`/`lib:`/`vnd:` names are the
+  only "Unknown require" it ignores, and anything else, a misspelt `lib:jsno`, a refused `lib:test` or a missing module, is
+  an error. Each module is also checked in strict mode on its own. `scripts/fixtures/module_use.luau` and
+  `negative/wrong_module_use.luau` (with `lib/shout.luau`) pin both.
 - **Limits of the types.** An unknown prop in a constructor call (`ui.Button { key = "a", titel = "x" }`) is not a type
   error (Luau accepts extra fields in a table literal; the host rejects it when it validates the tree). A handler list
   that mixes actions and functions needs a typed local

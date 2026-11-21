@@ -58,10 +58,14 @@ export type vos_Child = vos_Node | { vos_Node }
 
 "#;
 
-/// The type an unusable name has: a table with nothing in it, so the first use is a type error that names it.
+/// The type an unusable name has.
 fn not_for_apps_type(name: &str) -> String {
     named(&format!("NotForApps_{}", name.replace(':', "_")))
 }
+
+/// The refused globals that are tables (a library): they get the table type below. Every other refused global is
+/// a function (`print`, `loadstring`, ...) and gets the function type.
+const REFUSED_LIBRARIES: &[&str] = &["buffer", "debug", "os", "vector"];
 
 /// `ClientDecl` and its enums, from the JSON Schema of the Rust types.
 fn client_decl() -> String {
@@ -86,23 +90,37 @@ fn vos_declarations() -> String {
 }
 
 /// The modules and globals an app is not given, as types no value can be used through.
+///
+/// What is and is not a type error (measured with luau-lsp 1.70.1, see `scripts/fixtures/negative/wrong_requires.luau`):
+/// - a refused module is `{ __not_for_apps: never }`: the first member access on what `require` returned is an error
+///   that names it (`Key 'describe' not found in table 'vos_NotForApps_lib_test'`). The `require` call itself is NOT a
+///   type error (a bare `require("lib:test")` that is never used checks clean); `bun run lint:luau` catches it by
+///   scanning every literal `require`;
+/// - a refused library global (`os`, `debug`, `buffer`, `vector`) has the same table type: a member access is an error;
+/// - a refused function global (`print`, `loadstring`, ...) is `(__not_for_apps: never) -> never`: calling it with an
+///   argument (`print("x")`, `pcall(print, "x")`, an alias of it) is an error ("Expected this to be unreachable"), and so
+///   is calling it with none (the argument count). Naming it without calling it is not an error.
 fn unusable(offered: &Offered) -> String {
     let mut out = String::from(
         "-- ===== not for apps =====\n\
 -- A module in NOT_FOR_APPS (the Lua adapter refuses it when it runs) and a global the app's environment does not\n\
--- have are declared as a table with one `never` field: the first use of one is a type error naming it.\n\n",
+-- have. A module or a library is a table with one `never` field: the first member access is a type error naming it\n\
+-- (requiring the module is not one: `bun run lint:luau` scans the `require`s). A function global takes a `never`\n\
+-- argument and returns `never`: any call of it, direct or through `pcall`, is a type error.\n\n",
     );
+    let table = "{ __not_for_apps: never }";
     for module in &offered.refused {
         let _ = writeln!(
             out,
-            "--- `{module}` is not offered to apps.\nexport type {} = {{ __not_for_apps: never }}\n",
+            "--- `{module}` is not offered to apps.\nexport type {} = {table}\n",
             not_for_apps_type(module)
         );
     }
     for global in GLOBALS_NOT_FOR_APPS {
+        let ty = if REFUSED_LIBRARIES.contains(global) { table } else { "(__not_for_apps: never) -> never" };
         let _ = writeln!(
             out,
-            "--- `{global}` does not exist in an app's environment.\nexport type {} = {{ __not_for_apps: never }}\n",
+            "--- `{global}` does not exist in an app's environment.\nexport type {} = {ty}\n",
             not_for_apps_type(global)
         );
     }
@@ -128,9 +146,9 @@ fn globals() -> String {
 ///
 /// Why that last overload: luau-lsp resolves a relative `require` to the file's type only while `require` is the
 /// built-in one, and a `declare require` replaces it (an intersection with `typeof(require)` brings the resolution
-/// back for every call, and then fails every `vos:` and `std:` name as an unknown file). So a bundled module's
-/// type is `any` here, and `bun run lint:luau` checks the module names a `require` uses (see scripts/lint-luau.ts)
-/// where the types cannot.
+/// back for every call, and then fails every `vos:` and `std:` name as an unknown file). So in the editor, and in the
+/// first pass of `bun run lint:luau`, a bundled module's type is `any`. The second pass of the lint cuts this whole
+/// section out (the last one of the file), so the built-in `require` types the app's own modules there.
 fn require(offered: &Offered) -> String {
     let mut lines: Vec<String> =
         offered.overloads.iter().map(|(module, ty)| format!("((path: \"{module}\") -> {ty})")).collect();

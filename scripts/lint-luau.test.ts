@@ -4,15 +4,18 @@ import { join } from 'node:path'
 import {
   allowedRequire,
   checkNegative,
+  dropKnownUnknownRequires,
   DEFINITIONS,
   expectedErrors,
   finding,
   markerCount,
+  mergeFindings,
   NEGATIVE_MARKERS,
   offeredModules,
   overloads,
   parseAnalysis,
-  requiredNames
+  requiredNames,
+  withoutRequire
 } from './lint-luau'
 
 const root = join(import.meta.dir, '..')
@@ -107,6 +110,52 @@ describe('the module names an app may require', () => {
     expect(names).toEqual([
       { name: 'lib:json', line: 1 },
       { name: 'std:fs', line: 2 }
+    ])
+  })
+})
+
+describe('the second pass (the declarations without their `declare require`)', () => {
+  const definitions = readFileSync(join(root, DEFINITIONS), 'utf8')
+  const offered = offeredModules(definitions)
+
+  test('the declarations lose only the require section', () => {
+    const bare = withoutRequire(definitions)
+    expect(bare.split('\n').some((l) => l.startsWith('declare require'))).toBe(false)
+    expect(bare).toContain('declare app: vos_AppApi')
+    expect(bare).toContain('export type vos_ui = {')
+    expect(definitions.startsWith(bare.trimEnd())).toBe(true)
+    expect(() => withoutRequire('-- nothing\n')).toThrow('no `-- ===== require =====` section')
+  })
+
+  test('an "Unknown require" of vos:* or an offered module is dropped; of anything else it is kept', () => {
+    const unknown = (name: string) => finding(3, `TypeError: Unknown require: /x/y/${name}.lua`)
+    const kept = dropKnownUnknownRequires(
+      [
+        unknown('vos:app'),
+        unknown('vos:ui'),
+        unknown('lib:json'),
+        unknown('lib:test'),
+        unknown('lib:jsno'),
+        finding(4, "TypeError: Expected this to be 'string', but got 'number'")
+      ],
+      offered
+    )
+    expect(kept.map((f) => f.primary)).toEqual([
+      'TypeError: Unknown require: /x/y/lib:test.lua',
+      'TypeError: Unknown require: /x/y/lib:jsno.lua',
+      "TypeError: Expected this to be 'string', but got 'number'"
+    ])
+  })
+
+  test('the findings of two passes are merged once each', () => {
+    const merged = mergeFindings(
+      [finding(5, 'TypeError: a'), finding(2, 'TypeError: b')],
+      [finding(5, 'TypeError: a'), finding(5, 'TypeError: c')]
+    )
+    expect(merged.map((f) => [f.line, f.primary])).toEqual([
+      [2, 'TypeError: b'],
+      [5, 'TypeError: a'],
+      [5, 'TypeError: c']
     ])
   })
 })

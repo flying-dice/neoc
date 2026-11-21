@@ -5756,7 +5756,9 @@ export type vos_ui = {
 
 -- ===== not for apps =====
 -- A module in NOT_FOR_APPS (the Lua adapter refuses it when it runs) and a global the app's environment does not
--- have are declared as a table with one `never` field: the first use of one is a type error naming it.
+-- have. A module or a library is a table with one `never` field: the first member access is a type error naming it
+-- (requiring the module is not one: `bun run lint:luau` scans the `require`s). A function global takes a `never`
+-- argument and returns `never`: any call of it, direct or through `pcall`, is a type error.
 
 --- `lib:test` is not offered to apps.
 export type vos_NotForApps_lib_test = { __not_for_apps: never }
@@ -5771,40 +5773,40 @@ export type vos_NotForApps_std_workers = { __not_for_apps: never }
 export type vos_NotForApps_buffer = { __not_for_apps: never }
 
 --- `collectgarbage` does not exist in an app's environment.
-export type vos_NotForApps_collectgarbage = { __not_for_apps: never }
+export type vos_NotForApps_collectgarbage = (__not_for_apps: never) -> never
 
 --- `debug` does not exist in an app's environment.
 export type vos_NotForApps_debug = { __not_for_apps: never }
 
 --- `dofile` does not exist in an app's environment.
-export type vos_NotForApps_dofile = { __not_for_apps: never }
+export type vos_NotForApps_dofile = (__not_for_apps: never) -> never
 
 --- `gcinfo` does not exist in an app's environment.
-export type vos_NotForApps_gcinfo = { __not_for_apps: never }
+export type vos_NotForApps_gcinfo = (__not_for_apps: never) -> never
 
 --- `getfenv` does not exist in an app's environment.
-export type vos_NotForApps_getfenv = { __not_for_apps: never }
+export type vos_NotForApps_getfenv = (__not_for_apps: never) -> never
 
 --- `load` does not exist in an app's environment.
-export type vos_NotForApps_load = { __not_for_apps: never }
+export type vos_NotForApps_load = (__not_for_apps: never) -> never
 
 --- `loadfile` does not exist in an app's environment.
-export type vos_NotForApps_loadfile = { __not_for_apps: never }
+export type vos_NotForApps_loadfile = (__not_for_apps: never) -> never
 
 --- `loadstring` does not exist in an app's environment.
-export type vos_NotForApps_loadstring = { __not_for_apps: never }
+export type vos_NotForApps_loadstring = (__not_for_apps: never) -> never
 
 --- `newproxy` does not exist in an app's environment.
-export type vos_NotForApps_newproxy = { __not_for_apps: never }
+export type vos_NotForApps_newproxy = (__not_for_apps: never) -> never
 
 --- `os` does not exist in an app's environment.
 export type vos_NotForApps_os = { __not_for_apps: never }
 
 --- `print` does not exist in an app's environment.
-export type vos_NotForApps_print = { __not_for_apps: never }
+export type vos_NotForApps_print = (__not_for_apps: never) -> never
 
 --- `setfenv` does not exist in an app's environment.
-export type vos_NotForApps_setfenv = { __not_for_apps: never }
+export type vos_NotForApps_setfenv = (__not_for_apps: never) -> never
 
 --- `vector` does not exist in an app's environment.
 export type vos_NotForApps_vector = { __not_for_apps: never }

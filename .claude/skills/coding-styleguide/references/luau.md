@@ -15,7 +15,7 @@ Gates: `bun run lint:luau` (`luau-lsp analyze`, strict, against the generated de
 -- One line on what the app is and where its state lives.
 local app = require("vos:app")
 local ui = require("vos:ui")
-local calc = require("./calc")      -- a module of this package (bundle-only require; `any` to the checker)
+local calc = require("./calc")      -- a module of this package (bundle-only require; `any` in the editor, typed by `lint:luau`'s second pass)
 local t = app.t
 
 type Node = vos_Node               -- the declarations name their types vos_<Name>
@@ -39,7 +39,7 @@ app.manifest { id = "calculator", name = "Calculator", icon = "plus", tint = "or
 - `app.json` and `app.manifest` agree on `id`, `icon` and `tint` (the build checks).
 - `require` takes `vos:app`, `vos:ui`, the package's own modules (bundled at build time) and the host's `std:`,
   `lib:` and `vnd:` modules (all typed, except the refused `lib:test`, `lib:compile` and `std:workers`, which are type errors, and
-  never a misspelt name: `lint:luau` checks every literal `require`); there is no bare `io`, `os` or `debug` and no filesystem `require`: files and the network
+  never a misspelt name: `lint:luau` fails it); there is no bare `io`, `os` or `debug` and no filesystem `require`: files and the network
   come through `std:fs`, `std:net`, `lib:http` and the rest. Don't reach for globals; the per-app VM leaves out the
   ones that load code or reach the engine.
 
