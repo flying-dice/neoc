@@ -710,6 +710,14 @@ mod tests {
             r#"assert(require("std:fs").read_dir("."))[1]"#,
         ),
         (
+            "std:fs",
+            "Watcher",
+            r#"(function()
+                local watcher = assert(require("std:fs").watch("."))
+                return watcher, function() watcher:close() end
+            end)()"#,
+        ),
+        (
             "std:io",
             "ReaderHandle",
             r#"require("std:io").from_string("x")"#,

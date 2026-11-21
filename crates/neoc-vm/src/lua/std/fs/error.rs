@@ -25,12 +25,13 @@ pub enum Kind {
     StorageFull,
     Unsupported,
     TooLarge,
+    TimedOut,
     Other,
 }
 
 impl Kind {
     /// Every kind, for the docs and the tests that hold them to each other.
-    pub const ALL: [Kind; 13] = [
+    pub const ALL: [Kind; 14] = [
         Kind::NotFound,
         Kind::PermissionDenied,
         Kind::AlreadyExists,
@@ -43,6 +44,7 @@ impl Kind {
         Kind::StorageFull,
         Kind::Unsupported,
         Kind::TooLarge,
+        Kind::TimedOut,
         Kind::Other,
     ];
 
@@ -61,6 +63,7 @@ impl Kind {
             Kind::StorageFull => "storage_full",
             Kind::Unsupported => "unsupported",
             Kind::TooLarge => "too_large",
+            Kind::TimedOut => "timed_out",
             Kind::Other => "other",
         }
     }
@@ -85,6 +88,7 @@ impl From<io::ErrorKind> for Kind {
             io::ErrorKind::StorageFull | io::ErrorKind::QuotaExceeded => Kind::StorageFull,
             io::ErrorKind::Unsupported => Kind::Unsupported,
             io::ErrorKind::FileTooLarge => Kind::TooLarge,
+            io::ErrorKind::TimedOut => Kind::TimedOut,
             // `io::ErrorKind` is non-exhaustive: anything else is reported, never hidden, as `other`.
             _ => Kind::Other,
         }
@@ -198,7 +202,7 @@ mod tests {
             (io::ErrorKind::ReadOnlyFilesystem, "read_only_filesystem"),
             (io::ErrorKind::StorageFull, "storage_full"),
             (io::ErrorKind::Unsupported, "unsupported"),
-            (io::ErrorKind::TimedOut, "other"),
+            (io::ErrorKind::TimedOut, "timed_out"),
         ];
         for (io_kind, name) in cases {
             assert_eq!(Kind::from(io_kind).as_str(), name, "{io_kind:?}");

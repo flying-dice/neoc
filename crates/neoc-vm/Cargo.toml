@@ -131,6 +131,10 @@ futures = { version = "0.3", default-features = false, features = ["std"] }
 # a dependency bump.
 tera = { version = "1.20", default-features = false }
 walkdir = "2"
+# Native directory watching (inotify on Linux, FSEvents on macOS, ReadDirectoryChangesW on Windows) backing
+# `fs.watch` in `std:fs`. The blessed.rs crate for it, already in the workspace for the vos host's dev reload
+# (`vos-lua`); same major version, default features (the macOS FSEvents backend).
+notify = "8.2"
 
 # `lib:args` parses script argv with clap's builder API (`Arg`, `Command`,
 # `value_parser`) — the runtime arg-parser, not a CLI tree. `derive` is the

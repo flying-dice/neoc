@@ -705,6 +705,57 @@ describe("fs", function()
         end)
     end)
 
+    -- watch ------------------------------------------------------------------------
+
+    describe("watch", function()
+        -- the next event of `kind` at `at`, skipping the others (a platform may report one change as several)
+        local function next_change(watcher, kind, at)
+            for _ = 1, 100 do
+                local event = ok(watcher:receive(10))
+                expect(event).toBeTruthy()
+                if event.kind == kind and event.path == at then return event end
+            end
+            error("no " .. kind .. " event for " .. at)
+        end
+
+        test("reports a new, changed and removed file under the path given", function()
+            local _, dir = scratch()
+            local watcher = ok(fs.watch(dir))
+            fs.write(dir .. "/f", "1")
+            next_change(watcher, "create", dir .. "/f")
+            fs.write(dir .. "/f", "22")
+            next_change(watcher, "modify", dir .. "/f")
+            fs.remove_file(dir .. "/f")
+            next_change(watcher, "remove", dir .. "/f")
+            watcher:close()
+        end)
+
+        test("a closed watcher has no more events", function()
+            local _, dir = scratch()
+            local watcher = ok(fs.watch(dir))
+            watcher:close()
+            fs.write(dir .. "/f", "1")
+            local event, err = watcher:receive(0)
+            expect(event).toBeNil()
+            expect(err).toBeNil()
+        end)
+
+        test("an empty watcher times out", function()
+            local _, dir = scratch()
+            local watcher = ok(fs.watch(dir))
+            expect(kind_of(watcher:receive(0))).toBe("timed_out")
+            watcher:close()
+        end)
+
+        test("a missing path is not_found and a file not_a_directory", function()
+            local _, dir = scratch()
+            fs.write(dir .. "/f", "x")
+            expect(kind_of(fs.watch(dir .. "/missing"))).toBe("not_found")
+            expect(kind_of(fs.watch(dir .. "/f"))).toBe("not_a_directory")
+            expect(kind_of(fs.watch(dir, { recursiv = true }))).toBe("invalid_input")
+        end)
+    end)
+
     -- a task keeps running while a long call waits --------------------------------
 
     describe("long calls wait", function()

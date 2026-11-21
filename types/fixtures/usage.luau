@@ -102,6 +102,15 @@ fs.move("/tmp/y", "/tmp/z")
 fs.rename("/tmp/z", "/tmp/w")
 fs.set_permissions("/tmp/w", { mode = 420 })
 fs.set_permissions("/tmp/w", { readonly = true })
+local watcher = assert(fs.watch("/tmp/tree", { recursive = true }))
+local change, change_err = watcher:receive(0.5)
+if change then
+	local kind: "create" | "modify" | "remove" | "rename" | "overflow" = change.kind
+	print(kind, change.path)
+elseif change_err then
+	print(fs.error_kind(change_err) == "timed_out")
+end
+watcher:close()
 print(bytes, removed, path.join("a", "b", "c"), path.parent("/a/b"), path.normalize("a/../b"), path.is_absolute("/a"))
 print(#path.components("/a/b"), path.absolute("x"), path.file_name("a/b.txt"), path.separator)
 

@@ -1,0 +1,612 @@
+//! `fs.watch`: the changes inside a directory, as the operating system reports them, without rescanning it.
+//!
+//! The watching is the `notify` crate's (inotify on Linux, FSEvents on macOS, `ReadDirectoryChangesW` on Windows):
+//! it calls back on a thread of its own, and the callback puts each change in a bounded [`Queue`] that
+//! `Watcher:receive` takes from. Nothing here holds the engine: the callback holds the queue only, the engine's
+//! [`Life`] holds the watch weakly, and closing it (`close`, the engine's shutdown or `stop_background`, or the
+//! handle being collected) stops the operating system's watch and ends every wait on it.
+//!
+//! **Overflow.** At most [`CAPACITY`] changes wait in the queue. When it is full the next change is dropped and an
+//! `overflow` event is put after the ones already waiting; until the script has received it, further changes are
+//! dropped too (the script rescans once it sees `overflow`, which covers them). The operating system's own overflow
+//! (inotify's queue, an FSEvents "must scan subdirectories") is reported the same way, so a busy directory costs at
+//! most [`CAPACITY`] queued paths.
+//!
+//! **Platforms.**
+//!
+//! - *Coalescing.* Nothing here deduplicates or debounces. FSEvents (macOS) reports per path with flags that can
+//!   accumulate, so one change may arrive as several kinds (a new file as `create` and `modify`); inotify and
+//!   Windows report each operation.
+//! - *Renames.* One `rename` per path, never paired: inotify's paired report (`RenameMode::Both`, sent after the two
+//!   halves) is dropped so Linux matches Windows, which reports the halves only; FSEvents cannot say which path is
+//!   the old one and which the new.
+//! - *Recursion.* Native on macOS and Windows. On Linux each directory is one inotify watch, added for the tree at
+//!   start and for new subdirectories as they appear (bounded by `fs.inotify.max_user_watches`), and each watcher is
+//!   one inotify instance (`fs.inotify.max_user_instances`, 128 by default).
+//! - *Paths.* FSEvents reports resolved paths; they are reported under the path the script gave ([`Roots`]).
+
+use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
+
+use mlua::{Lua, UserData, UserDataMethods, Value};
+use notify::event::{EventKind, ModifyKind, RenameMode};
+use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
+use parking_lot::Mutex;
+use tokio::sync::Notify;
+
+use super::error::{FsError, FsResult, Kind};
+use crate::lua::facade::DeclType;
+use crate::lua::lifecycle::{Life, Role, async_method};
+use crate::lua::sandbox::{from_err, ok};
+use crate::lua::std::osstr;
+
+/// How many changes wait for `receive` before the rest are reported as one `overflow` (the `fs.watch` doc says 4096).
+pub(super) const CAPACITY: usize = 4096;
+
+/// The error prefix of `Watcher:receive` (as `thread.receive` is the prefix of a worker handle's method).
+const RECEIVE: &str = "fs.receive";
+
+/// What happened, as a script sees it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Change {
+    Create,
+    Modify,
+    Remove,
+    Rename,
+    /// Changes were lost (the queue or the operating system's buffer was full): rescan.
+    Overflow,
+}
+
+impl Change {
+    fn as_str(self) -> &'static str {
+        match self {
+            Change::Create => "create",
+            Change::Modify => "modify",
+            Change::Remove => "remove",
+            Change::Rename => "rename",
+            Change::Overflow => "overflow",
+        }
+    }
+}
+
+/// One entry of the queue: a change at a path, or an error the watch reported.
+#[derive(Debug)]
+pub(super) enum Item {
+    Change(Change, PathBuf),
+    Failed(FsError),
+}
+
+/// What [`Queue::next`] hands out.
+#[derive(Debug)]
+pub(super) enum Next {
+    Item(Item),
+    /// Changes were dropped since the last item: the `overflow` event.
+    Overflow,
+    /// The watch is closed: no more events.
+    Closed,
+}
+
+struct State {
+    items: VecDeque<Item>,
+    /// Changes were dropped after `items`; new ones are dropped until a receiver takes the overflow.
+    overflowed: bool,
+    closed: bool,
+}
+
+/// The bounded queue between the watching thread and `receive`.
+pub(super) struct Queue {
+    state: Mutex<State>,
+    capacity: usize,
+    ready: Notify,
+}
+
+impl Queue {
+    pub(super) fn new(capacity: usize) -> Self {
+        Self {
+            state: Mutex::new(State {
+                items: VecDeque::new(),
+                overflowed: false,
+                closed: false,
+            }),
+            capacity,
+            ready: Notify::new(),
+        }
+    }
+
+    /// Queue `item` (from the watching thread). Dropped once the queue is closed, and while an overflow is pending.
+    pub(super) fn push(&self, item: Item) {
+        {
+            let mut state = self.state.lock();
+            if state.closed || state.overflowed {
+                return;
+            }
+            if state.items.len() >= self.capacity {
+                state.overflowed = true;
+            } else {
+                state.items.push_back(item);
+            }
+        }
+        self.ready.notify_waiters();
+    }
+
+    /// Queue an overflow: the operating system lost changes.
+    fn push_overflow(&self) {
+        {
+            let mut state = self.state.lock();
+            if state.closed {
+                return;
+            }
+            state.overflowed = true;
+        }
+        self.ready.notify_waiters();
+    }
+
+    fn try_next(&self) -> Option<Next> {
+        let mut state = self.state.lock();
+        if let Some(item) = state.items.pop_front() {
+            return Some(Next::Item(item));
+        }
+        if state.overflowed {
+            state.overflowed = false;
+            return Some(Next::Overflow);
+        }
+        state.closed.then_some(Next::Closed)
+    }
+
+    /// The next item, waiting for one. Any number of waits may be pending; each item goes to exactly one, and a wait
+    /// that is dropped takes nothing (the item is removed only in the poll that returns it).
+    pub(super) async fn next(&self) -> Next {
+        loop {
+            // registered before looking, so a push between the look and the wait still wakes it
+            let notified = self.ready.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if let Some(next) = self.try_next() {
+                return next;
+            }
+            notified.await;
+        }
+    }
+
+    /// Close the queue: drop what waits, refuse what comes, and end every wait.
+    pub(super) fn close(&self) {
+        let dropped = {
+            let mut state = self.state.lock();
+            state.closed = true;
+            state.overflowed = false;
+            std::mem::take(&mut state.items)
+        };
+        drop(dropped);
+        self.ready.notify_waiters();
+    }
+
+    #[cfg(test)]
+    pub(super) fn len(&self) -> usize {
+        self.state.lock().items.len()
+    }
+}
+
+/// The path the script gave and the same directory resolved, to report every change under the path the script gave
+/// (FSEvents reports resolved paths: `/private/var/...` for `/var/...` on macOS).
+struct Roots {
+    given: PathBuf,
+    resolved: Option<PathBuf>,
+}
+
+impl Roots {
+    fn relocate(&self, path: PathBuf) -> PathBuf {
+        let Some(resolved) = &self.resolved else {
+            return path;
+        };
+        match path.strip_prefix(resolved) {
+            Ok(rest) if rest.as_os_str().is_empty() => self.given.clone(),
+            Ok(rest) => self.given.join(rest),
+            Err(_) => path,
+        }
+    }
+}
+
+/// What a `notify` event is to a script, or `None` for one that changes nothing.
+fn classify(event: &notify::Event) -> Option<Change> {
+    if event.need_rescan() {
+        return Some(Change::Overflow);
+    }
+    match event.kind {
+        EventKind::Create(_) => Some(Change::Create),
+        EventKind::Remove(_) => Some(Change::Remove),
+        // inotify pairs a rename after reporting both halves (`From`, then `To`): a third report of the same rename
+        EventKind::Modify(ModifyKind::Name(RenameMode::Both)) => None,
+        EventKind::Modify(ModifyKind::Name(_)) => Some(Change::Rename),
+        EventKind::Modify(_) | EventKind::Any => Some(Change::Modify),
+        // an open, a read or a close changes nothing
+        EventKind::Access(_) => None,
+        // an event about the watch itself (a root that moved, a volume mounted): what is there may have changed
+        EventKind::Other => Some(Change::Overflow),
+    }
+}
+
+/// The watching thread's callback: classify, relocate and queue.
+fn deliver(queue: &Queue, roots: &Roots, received: notify::Result<notify::Event>) {
+    match received {
+        Ok(event) => match classify(&event) {
+            None => {}
+            Some(Change::Overflow) => queue.push_overflow(),
+            Some(change) => {
+                for path in event.paths {
+                    queue.push(Item::Change(change, roots.relocate(path)));
+                }
+            }
+        },
+        Err(e) => queue.push(Item::Failed(watch_error(&e, &roots.given))),
+    }
+}
+
+/// A `notify` error as an `std:fs` error about `root` (or the path the error names).
+fn watch_error(e: &notify::Error, root: &Path) -> FsError {
+    let path = e.paths.first().map_or(root, PathBuf::as_path);
+    match &e.kind {
+        notify::ErrorKind::Io(io) => FsError::io(io, path),
+        notify::ErrorKind::PathNotFound => {
+            FsError::at(Kind::NotFound, path, "no such file or directory")
+        }
+        notify::ErrorKind::InvalidConfig(_) => FsError::at(Kind::InvalidInput, path, e.to_string()),
+        notify::ErrorKind::MaxFilesWatch => FsError::at(
+            Kind::Other,
+            path,
+            "the operating system's limit on watches is reached (fs.inotify.max_user_watches on Linux)",
+        ),
+        notify::ErrorKind::Generic(_) | notify::ErrorKind::WatchNotFound => {
+            FsError::at(Kind::Other, path, e.to_string())
+        }
+    }
+}
+
+/// A started watch: the operating system's watcher and the queue it fills.
+struct WatchInner {
+    watcher: Mutex<Option<RecommendedWatcher>>,
+    queue: Arc<Queue>,
+    root: PathBuf,
+}
+
+impl WatchInner {
+    /// Stop watching and end every wait. Idempotent, and safe while the watching thread is delivering: the watcher is
+    /// dropped (which waits for that thread on macOS) with no lock held, and the queue refuses what still arrives.
+    fn close(&self) {
+        let watcher = self.watcher.lock().take();
+        self.queue.close();
+        drop(watcher);
+    }
+}
+
+impl Drop for WatchInner {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
+/// Start watching the directory `root`, the whole tree under it when `recursive`.
+pub(super) fn watch(lua: &Lua, root: PathBuf, recursive: bool) -> FsResult<WatchHandle> {
+    let meta = std::fs::metadata(&root).map_err(|e| FsError::io(&e, &root))?;
+    if !meta.is_dir() {
+        return Err(FsError::at(Kind::NotADirectory, &root, "not a directory"));
+    }
+    let queue = Arc::new(Queue::new(CAPACITY));
+    let roots = Roots {
+        resolved: std::fs::canonicalize(&root).ok(),
+        given: root.clone(),
+    };
+    let sink = Arc::clone(&queue);
+    let mut watcher = notify::recommended_watcher(move |received| deliver(&sink, &roots, received))
+        .map_err(|e| watch_error(&e, &root))?;
+    let mode = if recursive {
+        RecursiveMode::Recursive
+    } else {
+        RecursiveMode::NonRecursive
+    };
+    watcher
+        .watch(&root, mode)
+        .map_err(|e| watch_error(&e, &root))?;
+    let inner = Arc::new(WatchInner {
+        watcher: Mutex::new(Some(watcher)),
+        queue,
+        root,
+    });
+    // weakly: a script that starts and drops watchers in a loop leaves nothing registered
+    Life::of(lua).on_shutdown_with(&inner, |inner| inner.close());
+    Ok(WatchHandle(inner))
+}
+
+/// `receive`'s timeout: `nil` or `math.huge` waits for ever, a negative or NaN one is `invalid_input`.
+fn timeout_of(secs: Option<f64>) -> FsResult<Option<Duration>> {
+    match secs {
+        None => Ok(None),
+        Some(s) if s.is_nan() || s < 0.0 => Err(FsError::new(
+            Kind::InvalidInput,
+            "the timeout must be a non-negative number of seconds",
+        )),
+        // past what a Duration holds (hundreds of billions of years) is no limit
+        Some(s) => Ok(Duration::try_from_secs_f64(s).ok()),
+    }
+}
+
+/// The `{ kind, path }` table of one event.
+fn event(lua: &Lua, change: Change, path: &Path) -> mlua::Result<(Value, Value)> {
+    let table = lua.create_table_with_capacity(0, 2)?;
+    table.raw_set("kind", change.as_str())?;
+    table.raw_set("path", osstr::to_lua(lua, path.as_os_str())?)?;
+    ok(lua, table)
+}
+
+/// The handle `fs.watch` returns.
+pub(super) struct WatchHandle(Arc<WatchInner>);
+
+impl UserData for WatchHandle {
+    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        // a wait for the operating system, not the VM: `Role::Wait` (and not `Timer`: a timeout is not all it waits for)
+        async_method(
+            methods,
+            "receive",
+            Role::Wait,
+            |lua, this, secs: Option<f64>| {
+                let queue = Arc::clone(&this.0.queue);
+                let root = this.0.root.clone();
+                let limit = timeout_of(secs);
+                async move {
+                    let limit = match limit {
+                        Ok(limit) => limit,
+                        Err(e) => return from_err(&lua, RECEIVE, e),
+                    };
+                    let next = match limit {
+                        None => queue.next().await,
+                        Some(limit) => match tokio::time::timeout(limit, queue.next()).await {
+                            Ok(next) => next,
+                            Err(_) => {
+                                let secs = limit.as_secs_f64();
+                                let e = FsError::at(
+                                    Kind::TimedOut,
+                                    &root,
+                                    format!("no change within {secs} seconds"),
+                                );
+                                return from_err(&lua, RECEIVE, e);
+                            }
+                        },
+                    };
+                    match next {
+                        Next::Item(Item::Change(change, path)) => event(&lua, change, &path),
+                        Next::Item(Item::Failed(e)) => from_err(&lua, RECEIVE, e),
+                        Next::Overflow => event(&lua, Change::Overflow, &root),
+                        Next::Closed => Ok((Value::Nil, Value::Nil)),
+                    }
+                }
+            },
+        );
+        methods.add_method("close", |_, this, ()| {
+            this.0.close();
+            Ok(())
+        });
+    }
+}
+
+impl DeclType for WatchHandle {
+    fn decl_type() -> String {
+        "Watcher".to_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn change(path: &str) -> Item {
+        Item::Change(Change::Create, PathBuf::from(path))
+    }
+
+    fn path_of(next: Next) -> String {
+        match next {
+            Next::Item(Item::Change(_, path)) => path.display().to_string(),
+            other => panic!("expected a change, got {other:?}"),
+        }
+    }
+
+    /// A full queue drops what comes, keeps what waits, and reports one overflow after it; changes after the overflow
+    /// was received are queued again.
+    #[tokio::test]
+    async fn a_full_queue_reports_one_overflow_after_what_waits() {
+        let queue = Queue::new(2);
+        for name in ["a", "b", "c", "d", "e"] {
+            queue.push(change(name));
+        }
+        assert_eq!(queue.len(), 2, "bounded");
+        assert_eq!(path_of(queue.next().await), "a");
+        // room again, but the overflow is still pending: this one is covered by the rescan
+        queue.push(change("f"));
+        assert_eq!(path_of(queue.next().await), "b");
+        assert!(matches!(queue.next().await, Next::Overflow));
+        queue.push(change("g"));
+        assert_eq!(path_of(queue.next().await), "g");
+        assert!(queue.try_next().is_none(), "nothing else");
+    }
+
+    /// The operating system's own overflow comes after what already waits, once.
+    #[tokio::test]
+    async fn an_overflow_from_the_system_comes_after_what_waits() {
+        let queue = Queue::new(8);
+        queue.push(change("a"));
+        queue.push_overflow();
+        queue.push_overflow();
+        queue.push(change("dropped"));
+        assert_eq!(path_of(queue.next().await), "a");
+        assert!(matches!(queue.next().await, Next::Overflow));
+        assert!(queue.try_next().is_none());
+    }
+
+    /// Closing drops what waits and refuses what comes.
+    #[tokio::test]
+    async fn closing_drops_what_waits_and_refuses_what_comes() {
+        let queue = Queue::new(8);
+        queue.push(change("a"));
+        queue.close();
+        queue.push(change("b"));
+        assert_eq!(queue.len(), 0);
+        assert!(matches!(queue.next().await, Next::Closed));
+        assert!(
+            matches!(queue.next().await, Next::Closed),
+            "and stays closed"
+        );
+    }
+
+    /// A wait that is pending when the queue closes ends, with `Closed`.
+    #[tokio::test]
+    async fn closing_ends_a_pending_wait() {
+        use std::future::Future;
+        let queue = Queue::new(8);
+        let mut wait = Box::pin(queue.next());
+        let pending =
+            std::future::poll_fn(|cx| std::task::Poll::Ready(wait.as_mut().poll(cx).is_pending()))
+                .await;
+        assert!(pending, "nothing to take yet");
+        queue.close();
+        let ended = tokio::time::timeout(Duration::from_secs(5), wait)
+            .await
+            .expect("the close woke the wait");
+        assert!(matches!(ended, Next::Closed));
+    }
+
+    /// A rename is reported once per path: inotify's paired report is dropped, access events too, and the system's
+    /// "rescan" is an overflow.
+    #[test]
+    fn notify_events_map_to_the_five_kinds() {
+        use notify::event::{AccessKind, CreateKind, DataChange, Flag, RemoveKind};
+        let kind = |k| classify(&notify::Event::new(k));
+        assert_eq!(
+            kind(EventKind::Create(CreateKind::File)),
+            Some(Change::Create)
+        );
+        assert_eq!(
+            kind(EventKind::Remove(RemoveKind::Any)),
+            Some(Change::Remove)
+        );
+        assert_eq!(
+            kind(EventKind::Modify(ModifyKind::Data(DataChange::Any))),
+            Some(Change::Modify)
+        );
+        assert_eq!(kind(EventKind::Any), Some(Change::Modify));
+        assert_eq!(
+            kind(EventKind::Modify(ModifyKind::Name(RenameMode::From))),
+            Some(Change::Rename)
+        );
+        assert_eq!(
+            kind(EventKind::Modify(ModifyKind::Name(RenameMode::To))),
+            Some(Change::Rename)
+        );
+        assert_eq!(
+            kind(EventKind::Modify(ModifyKind::Name(RenameMode::Any))),
+            Some(Change::Rename)
+        );
+        assert_eq!(
+            kind(EventKind::Modify(ModifyKind::Name(RenameMode::Both))),
+            None
+        );
+        assert_eq!(kind(EventKind::Access(AccessKind::Any)), None);
+        assert_eq!(kind(EventKind::Other), Some(Change::Overflow));
+        let rescan = notify::Event::new(EventKind::Create(CreateKind::Any)).set_flag(Flag::Rescan);
+        assert_eq!(classify(&rescan), Some(Change::Overflow));
+    }
+
+    /// A resolved path is reported under the path the script gave; any other path is left alone.
+    #[test]
+    fn paths_are_reported_under_the_path_the_script_gave() {
+        let roots = Roots {
+            given: PathBuf::from("/var/x"),
+            resolved: Some(PathBuf::from("/private/var/x")),
+        };
+        assert_eq!(
+            roots.relocate(PathBuf::from("/private/var/x/a/b")),
+            PathBuf::from("/var/x/a/b")
+        );
+        assert_eq!(
+            roots.relocate(PathBuf::from("/private/var/x")),
+            PathBuf::from("/var/x")
+        );
+        assert_eq!(
+            roots.relocate(PathBuf::from("/var/x/a")),
+            PathBuf::from("/var/x/a")
+        );
+    }
+
+    /// The engine's registry holds a watch weakly: dropping the handle frees it and closes the watch, and the watch
+    /// does not keep the engine alive.
+    #[tokio::test]
+    async fn a_watch_holds_neither_itself_nor_its_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        let lua = crate::lua::sandbox::make_engine().unwrap();
+        let handle = watch(&lua, dir.path().to_path_buf(), false).unwrap();
+        let weak_lua = lua.weak();
+        drop(lua);
+        assert!(
+            weak_lua.try_upgrade().is_none(),
+            "the engine is gone although its watch is alive"
+        );
+
+        let queue = Arc::clone(&handle.0.queue);
+        let inner = Arc::downgrade(&handle.0);
+        drop(handle);
+        assert!(inner.upgrade().is_none(), "nothing else holds the watch");
+        assert!(
+            matches!(queue.try_next(), Some(Next::Closed)),
+            "dropping it closed it"
+        );
+    }
+
+    /// Shutting the engine down closes its watches (and drops the system watcher), and a watch started afterwards is
+    /// closed at once; `stop_background` closes them too.
+    #[tokio::test]
+    async fn the_engines_shutdown_and_stop_background_close_its_watches() {
+        let dir = tempfile::tempdir().unwrap();
+        let life = Life::new();
+        let lua = crate::lua::sandbox::make_engine_in(life.clone()).unwrap();
+        let stopped = watch(&lua, dir.path().to_path_buf(), false).unwrap();
+        life.stop_background();
+        assert!(
+            stopped.0.watcher.lock().is_none(),
+            "the system watcher is released"
+        );
+        assert!(matches!(stopped.0.queue.try_next(), Some(Next::Closed)));
+
+        let open = watch(&lua, dir.path().to_path_buf(), true).unwrap();
+        assert!(
+            open.0.watcher.lock().is_some(),
+            "a watch after stop_background works"
+        );
+        life.shutdown();
+        assert!(open.0.watcher.lock().is_none());
+        assert!(matches!(open.0.queue.try_next(), Some(Next::Closed)));
+
+        let late = watch(&lua, dir.path().to_path_buf(), false).unwrap();
+        assert!(
+            late.0.watcher.lock().is_none(),
+            "closed at once after shutdown"
+        );
+    }
+
+    #[test]
+    fn a_timeout_is_a_non_negative_number_of_seconds() {
+        assert_eq!(timeout_of(None).unwrap(), None);
+        assert_eq!(
+            timeout_of(Some(0.5)).unwrap(),
+            Some(Duration::from_millis(500))
+        );
+        assert_eq!(timeout_of(Some(f64::INFINITY)).unwrap(), None);
+        assert_eq!(timeout_of(Some(1e300)).unwrap(), None);
+        assert_eq!(
+            timeout_of(Some(-1.0)).unwrap_err().kind(),
+            Kind::InvalidInput
+        );
+        assert_eq!(
+            timeout_of(Some(f64::NAN)).unwrap_err().kind(),
+            Kind::InvalidInput
+        );
+    }
+}
