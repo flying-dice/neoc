@@ -3,10 +3,11 @@
 //! A module is declared once, and that single declaration both registers
 //! functions with mlua exactly as a hand-written `module()` would and records
 //! the signature + doc for each function (and, for resource handles, each
-//! method, field and constructor). The recording is dumped as a `LuaCATS`
-//! definition file by [`Module::luals_meta`]: `cargo run -p neoc-vm --example luals`
-//! writes one per module to `types/luals/`, and a lua-language-server plugin
-//! makes `require("lib:json")` resolve to it, with completion and diagnostics. There is no reverse
+//! method, field and constructor). The recording is dumped as Luau
+//! declarations by [`Module::luau_decls`] (the `luau_decls` child module):
+//! `cargo run -p neoc-vm --example luau_decls` writes every module's to
+//! `types/neoc.d.luau`, and luau-lsp makes `require("lib:json")` resolve to
+//! its type, with completion and diagnostics. There is no reverse
 //! mapping: the Rust source is the source of truth.
 //!
 //! Three things the facade preserves byte-for-byte versus the hand-written
@@ -16,8 +17,8 @@
 //!    [`crate::lua::sandbox::ok`] / [`crate::lua::sandbox::from_err`], so a
 //!    fallible function returns `(v, nil)` on success and
 //!    `(nil, "<stem>.<fn>: <e>")` on failure — the identical idiom and the
-//!    identical error prefix the original used. The definition file says the
-//!    same: `---@return T?` then `---@return string? err`.
+//!    identical error prefix the original used. The declarations say the
+//!    same: the return type `(T?, string?)`.
 //! 2. **Per-call tracing spans.** Every registered function opens a
 //!    `tracing` span named `"<stem>.<name>"` at target
 //!    `"lua::lib::<module>"` around the call body, matching the old
@@ -36,6 +37,8 @@ use tracing::{Instrument, Level};
 use tracing_core::callsite::{Callsite, DefaultCallsite, Identifier};
 use tracing_core::field::FieldSet;
 use tracing_core::metadata::{Kind, Metadata};
+
+pub mod luau_decls;
 
 use crate::lua::lifecycle::{Role, async_function};
 use crate::lua::sandbox::{from_err, ok};
@@ -80,8 +83,8 @@ impl<T: DeclType, E: DeclType> DeclType for Result<T, E> {
 }
 
 /// One recorded function: its name, parameter list (name + recorded type per
-/// param), return type, and doc string. Enough to emit one annotated `LuaCATS`
-/// function definition.
+/// param), return type, and doc string. Enough to emit one Luau function
+/// type.
 struct Entry {
     name: String,
     params: Vec<(String, String)>,
@@ -89,180 +92,11 @@ struct Entry {
     doc: String,
 }
 
-impl Entry {
-    /// Emits the annotated, bodyless `LuaCATS` definition of this entry.
-    ///
-    /// `owner` is the local table the function hangs on and `method` picks
-    /// `owner:name(...)` (an instance method, with the implicit `self`) over
-    /// `owner.name(...)` (a free or associated function). `scope` is the class
-    /// prefix that the module's own type names resolve under.
-    fn write_luals(&self, out: &mut String, scope: &str, owner: &str, method: bool) {
-        write_doc(out, &self.doc);
-        for (name, ty) in &self.params {
-            if name == VARIADIC {
-                out.push_str("---@param ... any\n");
-                continue;
-            }
-            let (ty, optional) = luals_param_type(ty, scope);
-            out.push_str(&format!(
-                "---@param {}{} {ty}\n",
-                luals_ident(name),
-                if optional { "?" } else { "" }
-            ));
-        }
-        for ret in luals_returns(&self.ret, scope) {
-            out.push_str(&format!("---@return {ret}\n"));
-        }
-        let params = self
-            .params
-            .iter()
-            .map(|(n, _)| {
-                if n == VARIADIC {
-                    VARIADIC.to_string()
-                } else {
-                    luals_ident(n)
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        let sep = if method { ':' } else { '.' };
-        out.push_str(&format!(
-            "function {owner}{sep}{}({params}) end\n\n",
-            luals_ident(&self.name)
-        ));
-    }
-}
-
 /// The recorded name of a trailing variadic parameter. A function that takes
 /// any number of further arguments ends its `params` with
-/// `("...", "LuaValue")`, which the definitions write as `---@param ... any`
-/// and `function f(a, ...)`.
+/// `("...", "LuaValue")`, which the declarations write as `...any`
+/// (`(a: string, ...any) -> ()`).
 const VARIADIC: &str = "...";
-
-/// Writes `doc` as `---` comment lines (nothing when it is empty).
-fn write_doc(out: &mut String, doc: &str) {
-    for line in doc.lines() {
-        out.push_str(&format!("--- {line}\n"));
-    }
-}
-
-/// Reserved words of Lua 5.1 and of Lua 5.2+ (`goto`, which the editor tooling may be configured for; Luau treats it
-/// as an identifier): not usable as a
-/// parameter or function name in a definition file.
-const LUA_KEYWORDS: &[&str] = &[
-    "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "goto", "if", "in",
-    "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while",
-];
-
-/// A name made safe to write as a Lua identifier: a reserved word gets a
-/// trailing underscore.
-fn luals_ident(name: &str) -> String {
-    if LUA_KEYWORDS.contains(&name) {
-        format!("{name}_")
-    } else {
-        name.to_string()
-    }
-}
-
-/// The `LuaCATS` type of one recorded type string, and whether it is optional.
-///
-/// The recorded vocabulary is the facade's own (see [`DeclType`]): `string`,
-/// `number`, `bool`, `LuaValue` (the opaque dynamic value), a trailing `?` for
-/// an optional, and any other name for a type this module declares, which
-/// resolves under `scope`. A name with a dot (the class of another module), a
-/// `fun(...)` type or a parenthesised type is written as it is. A `fun(...)` type
-/// is never optional by a trailing `?`: that `?` belongs to its return type
-/// (`fun(a): string?`); write `(fun(a): b)?` for an optional function.
-fn luals_param_type(ty: &str, scope: &str) -> (String, bool) {
-    let ty = luals_type(ty, scope);
-    if ty.starts_with("fun(") {
-        return (ty, false);
-    }
-    match ty.strip_suffix('?') {
-        Some(base) => (base.to_string(), true),
-        None => (ty, false),
-    }
-}
-
-fn luals_type(ty: &str, scope: &str) -> String {
-    match ty.trim() {
-        "string" => "string".to_string(),
-        "number" => "number".to_string(),
-        "bool" => "boolean".to_string(),
-        "LuaValue" => "any".to_string(),
-        "()" => "nil".to_string(),
-        VARIADIC => "any ...".to_string(),
-        // a class of another module (`std_net.TcpListener`) or a function type is written as it is
-        other if other.contains('.') || other.starts_with("fun(") || other.starts_with('(') => {
-            other.to_string()
-        }
-        other => match other.strip_suffix('?') {
-            Some(base) => format!("{}?", luals_type(base, scope)),
-            None => format!("{scope}.{other}"),
-        },
-    }
-}
-
-/// The `---@return` lines for a recorded return type.
-///
-/// `()` returns nothing. `Result<T, string>` is the runtime's `(value, error)`
-/// idiom: `T?` then `string? err` (a `()` value is `nil`). `(A, B)` is a
-/// function that returns several values of its own, one `---@return` each, and
-/// a `...` in it (or alone) is any number of further values (`---@return any ...`),
-/// for a function that hands back whatever a Lua function returned. Anything else
-/// is one value.
-fn luals_returns(ret: &str, scope: &str) -> Vec<String> {
-    let ret = ret.trim();
-    if ret == "()" {
-        return Vec::new();
-    }
-    if let Some(values) = ret.strip_prefix('(').and_then(|r| r.strip_suffix(')')) {
-        return split_top_level(values)
-            .into_iter()
-            .map(|v| luals_type(v, scope))
-            .collect();
-    }
-    if let Some(value) = ret
-        .strip_prefix("Result<")
-        .and_then(|r| r.strip_suffix(", string>"))
-    {
-        let value = luals_type(value, scope);
-        let value = if value == "nil" || value == "any" || value.ends_with('?') {
-            value
-        } else {
-            format!("{value}?")
-        };
-        return vec![value, "string? err".to_string()];
-    }
-    vec![luals_type(ret, scope)]
-}
-
-/// Splits `s` on the commas that are not inside brackets, so a `fun(a, b)` or
-/// `table<string, any>` type stays in one piece.
-fn split_top_level(s: &str) -> Vec<&str> {
-    let mut parts = Vec::new();
-    let mut depth = 0_usize;
-    let mut start = 0;
-    for (i, c) in s.char_indices() {
-        match c {
-            '(' | '[' | '{' | '<' => depth += 1,
-            ')' | ']' | '}' | '>' => depth = depth.saturating_sub(1),
-            ',' if depth == 0 => {
-                parts.push(&s[start..i]);
-                start = i + 1;
-            }
-            _ => {}
-        }
-    }
-    parts.push(&s[start..]);
-    parts
-}
-
-/// The class name a registry key's module is declared under: `lib:json`
-/// becomes `lib_json`.
-fn luals_class(name: &str) -> String {
-    name.replace(':', "_")
-}
 
 /// One recorded resource-handle userdata type. The receiver (`self`) is
 /// implicit on every method, so only the trailing arguments are recorded.
@@ -291,7 +125,7 @@ struct TypeEntry {
 /// One recorded value that is not a function: a module-level constant (for
 /// example `std:thread`'s dynamically-injected `parent` / `shared`), a userdata
 /// type's read-only field (`date.year`) or a constant on a type's sub-table
-/// (`Duration.ZERO`). It is emitted as a `---@field`.
+/// (`Duration.ZERO`). It is emitted as a property of a table type.
 struct FieldEntry {
     name: String,
     ty: String,
@@ -306,7 +140,7 @@ struct FieldEntry {
 /// `FromLuaMulti` plus an explicit parameter-name/type slice. Record a
 /// resource-handle userdata type with [`Module::userdata`]. When the surface
 /// is complete, hand the table to the engine with [`Module::into_table`] and
-/// emit the matching `LuaCATS` definitions with [`Module::luals_meta`].
+/// emit the matching Luau declarations with [`Module::luau_decls`].
 pub struct Module<'l> {
     lua: &'l Lua,
     table: Table,
@@ -321,7 +155,8 @@ impl<'l> Module<'l> {
     /// Creates a new module builder with an empty backing table.
     ///
     /// The `name` is the registry key the module is installed under
-    /// (for example, `"lib:base64"`) and names the module's definition file.
+    /// (for example, `"lib:base64"`) and names the module's section of the
+    /// declarations and the prefix of its type names (`lib_base64`).
     pub fn new(lua: &'l Lua, name: impl Into<String>) -> mlua::Result<Self> {
         Ok(Self {
             lua,
@@ -584,8 +419,8 @@ impl<'l> Module<'l> {
     /// registration stays in the type's own `impl UserData`). The sub-table is
     /// created here, populated with the constructors, and set on the module
     /// table under `type_name`, exactly as a hand-written `t.set("Map", map_t)`
-    /// would. The recorded definitions are a `<Type>` class of methods and a
-    /// `<Type>Statics` class of constructors.
+    /// would. The recorded declarations are a `<Type>` alias of methods and a
+    /// `<Type>Statics` alias of constructors.
     pub fn type_(
         &mut self,
         type_name: &str,
@@ -617,7 +452,7 @@ impl<'l> Module<'l> {
     /// does not model as a function — most notably a dynamically-injected
     /// global such as `std:thread`'s `parent` / `shared`, which only exists in
     /// a spawned worker and cannot be typed beyond the opaque `LuaValue`. This
-    /// only records the surface (a `---@field` on the module class); the
+    /// only records the surface (a property of the module's table type); the
     /// runtime value is set elsewhere (or injected at spawn time), so the
     /// registration is unchanged.
     pub fn const_(&mut self, name: &str, ty: &str, doc: &str) -> &mut Self {
@@ -652,85 +487,10 @@ impl<'l> Module<'l> {
         format!("lua::lib::{}", module_stem(&self.name))
     }
 
-    /// Emits the `LuaCATS` definition file for this module: `---@meta`, then
-    /// one class per resource type and one for the module table, then the
-    /// module table's functions.
-    ///
-    /// The caller writes it to the path [`crate::lua::modules::luals_file`] gives
-    /// for the registry key (`lib/json.lua`). Classes are `<ns>_<stem>` for the module (`lib_json`) and
-    /// `<ns>_<stem>.<Type>` for each type it declares; a type with a sub-table
-    /// of functions or constants on the module (`Duration.from_secs`,
-    /// `Duration.ZERO`) also gets a `<Type>Statics` class, the type of that
-    /// field of the module.
-    ///
-    /// # Errors
-    /// Fails when the live module table cannot be read, or when a type's
-    /// sub-table on it disagrees with the recording: a member that was not
-    /// recorded would be a false alarm for every script that uses it, and a
-    /// recorded one that does not exist a call the editor accepts and the VM
-    /// refuses.
-    pub fn luals_meta(&self) -> mlua::Result<String> {
-        let class = luals_class(&self.name);
-        let mut out = String::new();
-        out.push_str("---@meta\n\n");
-        out.push_str(
-            "-- GENERATED by neoc-vm (`cargo run -p neoc-vm --example luals`) from the module's\n",
-        );
-        out.push_str(
-            "-- recorded surface. Do not edit. Regenerate with the same command; `-- --check` fails\n",
-        );
-        out.push_str("-- when this file is stale.\n--\n");
-        out.push_str(&format!(
-            "-- Definitions for lua-language-server: `require(\"{}\")`. Never loaded by neoc.\n\n",
-            self.name
-        ));
-
-        let mut module_fields = Vec::new();
-        for ud in &self.userdata {
-            write_class(
-                &mut out,
-                &class,
-                &ud.type_name,
-                &ud.fields,
-                &[&ud.methods, &ud.functions],
-            );
-            self.check_statics_recorded(ud)?;
-            if !ud.statics.is_empty() || !ud.static_consts.is_empty() {
-                write_statics(
-                    &mut out,
-                    &class,
-                    &ud.type_name,
-                    &ud.static_consts,
-                    &ud.statics,
-                );
-                module_fields.push(&ud.type_name);
-            }
-        }
-        for ty in &self.types {
-            write_class(&mut out, &class, &ty.type_name, &[], &[&ty.methods, &[]]);
-            write_statics(&mut out, &class, &ty.type_name, &[], &ty.constructors);
-            module_fields.push(&ty.type_name);
-        }
-
-        out.push_str(&format!("---@class {class}\n"));
-        for name in module_fields {
-            out.push_str(&format!("---@field {name} {class}.{name}Statics\n"));
-        }
-        for c in &self.consts {
-            write_field(&mut out, &class, c);
-        }
-        out.push_str("local M = {}\n\n");
-        for e in &self.entries {
-            e.write_luals(&mut out, &class, "M", false);
-        }
-        out.push_str(&format!("---@type {class}\nreturn M\n"));
-        Ok(out)
-    }
-
     /// What is recorded for each resource type of the module:
     /// `(type, methods, fields)`, so a test can hold the records to a live
     /// instance (a recorded method the type does not have would be a call
-    /// `LuaLS` accepts and the VM refuses).
+    /// the editor accepts and the VM refuses).
     #[cfg(test)]
     pub(crate) fn recorded_members(&self) -> Vec<(String, Vec<String>, Vec<String>)> {
         let names = |entries: &[Entry]| entries.iter().map(|e| e.name.clone()).collect::<Vec<_>>();
@@ -795,58 +555,6 @@ impl<'l> Module<'l> {
 /// Whether `ud` records any static function or constant.
 fn recorded_any(ud: &UserDataEntry) -> bool {
     !ud.statics.is_empty() || !ud.static_consts.is_empty()
-}
-
-/// One `---@class <class>.<Type>` of values (`fields`), methods (`:`, with the
-/// implicit `self`) and plain functions (`.`), hung on a local `ud_<Type>`.
-fn write_class(
-    out: &mut String,
-    class: &str,
-    type_name: &str,
-    fields: &[FieldEntry],
-    members: &[&[Entry]; 2],
-) {
-    out.push_str(&format!("---@class {class}.{type_name}\n"));
-    for field in fields {
-        write_field(out, class, field);
-    }
-    out.push_str(&format!("local ud_{type_name} = {{}}\n\n"));
-    for m in members[0] {
-        m.write_luals(out, class, &format!("ud_{type_name}"), true);
-    }
-    for f in members[1] {
-        f.write_luals(out, class, &format!("ud_{type_name}"), false);
-    }
-}
-
-/// One `---@class <class>.<Type>Statics`: the sub-table of a type on its module
-/// (`Duration.from_secs`).
-fn write_statics(
-    out: &mut String,
-    class: &str,
-    type_name: &str,
-    consts: &[FieldEntry],
-    functions: &[Entry],
-) {
-    out.push_str(&format!("---@class {class}.{type_name}Statics\n"));
-    for c in consts {
-        write_field(out, class, c);
-    }
-    out.push_str(&format!("local statics_{type_name} = {{}}\n\n"));
-    for f in functions {
-        f.write_luals(out, class, &format!("statics_{type_name}"), false);
-    }
-}
-
-/// One `---@field <name> <type> <doc>` line.
-fn write_field(out: &mut String, class: &str, field: &FieldEntry) {
-    let (ty, optional) = luals_param_type(&field.ty, class);
-    let mark = if optional { "?" } else { "" };
-    let doc = field.doc.replace('\n', " ");
-    out.push_str(&format!(
-        "---@field {}{mark} {ty} {doc}\n",
-        luals_ident(&field.name)
-    ));
 }
 
 /// Records the surface of one resource-handle userdata type (or of a plain
@@ -1167,12 +875,12 @@ fn dyn_span(target: &str, name: &str) -> tracing::Span {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use mlua::{Lua, Table};
+    use mlua::Lua;
     use tracing::subscriber;
     use tracing_core::span::{Attributes, Id};
     use tracing_core::{Event, Subscriber};
 
-    use super::{Module, luals_param_type, luals_returns, split_top_level};
+    use super::Module;
 
     /// Minimal subscriber that records `(target, name)` of every span it is
     /// asked to create. Used to prove the facade opens an `#[instrument]`-
@@ -1251,629 +959,5 @@ mod tests {
                 "collections.echo".to_string(),
             )]
         );
-    }
-
-    /// `func` / `try_func` accept any arity through `FromLuaMulti`: a
-    /// two-argument function takes a tuple and records both params.
-    #[test]
-    fn multi_arg_function() {
-        let lua = Lua::new();
-        let mut m = Module::new(&lua, "vnd:demo").expect("module");
-        m.try_func(
-            "join",
-            &[("a", "string"), ("b", "string")],
-            "Concatenate two strings.",
-            |_, (a, b): (String, String)| Ok::<_, String>(format!("{a}{b}")),
-        )
-        .expect("try_func");
-
-        let meta = m.luals_meta().expect("meta");
-        assert!(
-            contains_in_order(
-                &meta,
-                &[
-                    "--- Concatenate two strings.",
-                    "---@param a string",
-                    "---@param b string",
-                    "---@return string?",
-                    "---@return string? err",
-                    "function M.join(a, b) end",
-                ]
-            ),
-            "meta missing the multi-arg definition:\n{meta}"
-        );
-
-        let f: mlua::Function = m.into_table().get("join").expect("get fn");
-        let (v, err): (String, Option<String>) = f.call(("foo", "bar")).expect("call");
-        assert_eq!(v, "foobar");
-        assert!(err.is_none());
-    }
-
-    /// The lines of `needle`, each found after the one before it.
-    fn contains_in_order(haystack: &str, needles: &[&str]) -> bool {
-        let mut rest = haystack;
-        needles.iter().all(|n| match rest.find(n) {
-            Some(at) => {
-                rest = &rest[at + n.len()..];
-                true
-            }
-            None => false,
-        })
-    }
-
-    /// `userdata` records a class per type with its methods (`ud:method`, the implicit `self`), and the
-    /// dynamic `LuaValue` bridge type surfaces as `any`.
-    #[test]
-    fn userdata_emits_class_and_methods() {
-        let lua = Lua::new();
-        let mut m = Module::new(&lua, "lib:json").expect("module");
-        m.userdata("Object", |o| {
-            o.method("get", &[("path", "LuaValue")], "LuaValue", "Read a path.")
-                .method("len", &[], "number", "Number of keys.");
-        });
-
-        let meta = m.luals_meta().expect("meta");
-        assert!(meta.starts_with("---@meta\n"), "{meta}");
-        assert!(meta.contains("---@class lib_json.Object\n"), "{meta}");
-        assert!(meta.contains("---@class lib_json\n"), "{meta}");
-        assert!(
-            contains_in_order(
-                &meta,
-                &[
-                    "---@param path any",
-                    "---@return any",
-                    "function ud_Object:get(path) end"
-                ]
-            ),
-            "{meta}"
-        );
-        assert!(
-            contains_in_order(
-                &meta,
-                &["---@return number", "function ud_Object:len() end"]
-            ),
-            "{meta}"
-        );
-        assert!(meta.ends_with("---@type lib_json\nreturn M\n"), "{meta}");
-    }
-
-    /// `type_` registers a constructor on the type's sub-table (so
-    /// `Type.new(...)` calls it) and records a `Type` class of methods and a
-    /// `TypeStatics` class of constructors, reached from the module as a field.
-    #[test]
-    fn type_registers_and_records_constructor() {
-        let lua = Lua::new();
-        let table = {
-            let mut m = Module::new(&lua, "std:collections").expect("module");
-            m.type_("Map", |t| {
-                t.constructor("new", &[], "Build an empty map.", |_, (): ()| Ok("MAP"))?
-                    .method(
-                        "set",
-                        &[("k", "string"), ("v", "LuaValue")],
-                        "()",
-                        "Insert.",
-                    );
-                Ok(())
-            })
-            .expect("type_");
-
-            let meta = m.luals_meta().expect("meta");
-            assert!(meta.contains("---@class std_collections.Map\n"), "{meta}");
-            assert!(
-                meta.contains("---@field Map std_collections.MapStatics\n"),
-                "{meta}"
-            );
-            assert!(meta.contains("function statics_Map.new() end"), "{meta}");
-            assert!(
-                contains_in_order(
-                    &meta,
-                    &[
-                        "---@param k string",
-                        "---@param v any",
-                        "function ud_Map:set(k, v) end"
-                    ]
-                ),
-                "{meta}"
-            );
-            m.into_table()
-        };
-
-        // The constructor is reachable as `Map.new()` and runs the body.
-        let sub: Table = table.get("Map").expect("Map sub-table");
-        let ctor: mlua::Function = sub.get("new").expect("new");
-        let out: String = ctor.call(()).expect("call new");
-        assert_eq!(out, "MAP");
-    }
-
-    /// `try_constructor` marshals the `(value, error)` idiom with a
-    /// `"<Type>.<name>"` prefix and records a `Result<<Type>, string>` return.
-    #[test]
-    fn try_constructor_marshals_and_records() {
-        let lua = Lua::new();
-        let mut m = Module::new(&lua, "std:net").expect("module");
-        m.type_("TcpListener", |t| {
-            t.try_constructor(
-                "bind",
-                &[("addr", "string")],
-                "Bind a listener.",
-                |_, addr: String| {
-                    if addr.is_empty() {
-                        Err("empty addr".to_string())
-                    } else {
-                        Ok(addr)
-                    }
-                },
-            )?;
-            Ok(())
-        })
-        .expect("type_");
-
-        let meta = m.luals_meta().expect("meta");
-        assert!(
-            contains_in_order(
-                &meta,
-                &[
-                    "---@param addr string",
-                    "---@return std_net.TcpListener?",
-                    "---@return string? err",
-                    "function statics_TcpListener.bind(addr) end",
-                ]
-            ),
-            "{meta}"
-        );
-
-        let sub: Table = m.into_table().get("TcpListener").expect("sub");
-        let bind: mlua::Function = sub.get("bind").expect("bind");
-        let (_, err): (Option<String>, Option<String>) = bind.call("").expect("call");
-        assert_eq!(err.as_deref(), Some("TcpListener.bind: empty addr"));
-    }
-
-    /// `const_` records a former module constant as a `---@field` on the module class, with an optional
-    /// type spelled `name?`.
-    #[test]
-    fn const_records_field() {
-        let lua = Lua::new();
-        let mut m = Module::new(&lua, "std:thread").expect("module");
-        m.const_("parent", "LuaValue", "Dynamic parent channel.");
-        m.const_("shared", "LuaValue?", "Shared table.");
-
-        let meta = m.luals_meta().expect("meta");
-        assert!(
-            meta.contains("---@field parent any Dynamic parent channel.\n"),
-            "{meta}"
-        );
-        assert!(
-            meta.contains("---@field shared? any Shared table.\n"),
-            "{meta}"
-        );
-    }
-
-    /// `try_async_func` records the same `(value, error)` returns as the synchronous `try_func`.
-    #[test]
-    fn try_async_func_records_result_signature() {
-        let lua = Lua::new();
-        let mut m = Module::new(&lua, "vnd:demo").expect("module");
-        m.try_async_func(
-            "open",
-            &[("url", "string")],
-            "Open a connection.",
-            |_, url: String| async move { Ok::<_, String>(url) },
-        )
-        .expect("try_async_func");
-
-        let meta = m.luals_meta().expect("meta");
-        assert!(
-            contains_in_order(
-                &meta,
-                &[
-                    "---@param url string",
-                    "---@return string?",
-                    "---@return string? err",
-                    "function M.open(url) end"
-                ]
-            ),
-            "{meta}"
-        );
-    }
-
-    /// `set` + `record_fn` registers a verbatim implementation and records its
-    /// signature without the facade touching the body — the path for
-    /// functions that raise or bake their own prefix.
-    #[test]
-    fn record_fn_records_signature_for_verbatim_set() {
-        let lua = Lua::new();
-        let mut m = Module::new(&lua, "lib:demo").expect("module");
-        let raw = lua
-            .create_function(|_, n: i64| Ok(n + 1))
-            .expect("create_function");
-        m.set("bump", raw).expect("set");
-        m.record_fn("bump", &[("n", "number")], "number", "Increments by one.");
-
-        let meta = m.luals_meta().expect("meta");
-        assert!(
-            contains_in_order(
-                &meta,
-                &[
-                    "--- Increments by one.",
-                    "---@param n number",
-                    "---@return number",
-                    "function M.bump(n) end"
-                ]
-            ),
-            "{meta}"
-        );
-
-        // The verbatim implementation is what actually runs.
-        let bump: mlua::Function = m.into_table().get("bump").expect("bump fn");
-        let out: i64 = bump.call(41).expect("call");
-        assert_eq!(out, 42);
-    }
-
-    /// A `()` return writes no `---@return`, a `Result<(), string>` returns `nil` then the error, an
-    /// optional parameter is `name?`, and a Lua reserved word is made a safe name.
-    #[test]
-    fn return_and_name_shapes() {
-        let lua = Lua::new();
-        let mut m = Module::new(&lua, "lib:demo").expect("module");
-        m.record_fn("noop", &[("end", "number?")], "()", "Does nothing.");
-        m.record_fn("save", &[], "Result<(), string>", "Saves.");
-        let meta = m.luals_meta().expect("meta");
-        assert!(
-            contains_in_order(
-                &meta,
-                &["---@param end_? number", "function M.noop(end_) end"]
-            ),
-            "{meta}"
-        );
-        let noop = &meta[meta.find("--- Does nothing.").expect("noop doc")..];
-        let noop = &noop[..noop.find("function M.noop").expect("noop function")];
-        assert!(
-            !noop.contains("---@return"),
-            "a `()` return wrote a return:\n{meta}"
-        );
-        assert!(
-            contains_in_order(
-                &meta,
-                &[
-                    "---@return nil",
-                    "---@return string? err",
-                    "function M.save() end"
-                ]
-            ),
-            "{meta}"
-        );
-    }
-
-    /// A tuple return writes one `---@return` per value, and a trailing `...` parameter is
-    /// `---@param ... any` and a `...` in the signature.
-    #[test]
-    fn tuple_returns_and_variadic_params() {
-        let lua = Lua::new();
-        let mut m = Module::new(&lua, "lib:demo").expect("module");
-        m.record_fn(
-            "scan",
-            &[("pattern", "string"), ("opts", "LuaValue?")],
-            "(LuaValue, LuaValue?)",
-            "Scans.",
-        );
-        m.record_fn(
-            "call",
-            &[("sql", "string"), ("...", "LuaValue")],
-            "Result<number, string>",
-            "Runs.",
-        );
-        let meta = m.luals_meta().expect("meta");
-        assert!(
-            contains_in_order(
-                &meta,
-                &[
-                    "---@param pattern string",
-                    "---@param opts? any",
-                    "---@return any",
-                    "---@return any?",
-                    "function M.scan(pattern, opts) end",
-                    "---@param sql string",
-                    "---@param ... any",
-                    "---@return number?",
-                    "---@return string? err",
-                    "function M.call(sql, ...) end",
-                ]
-            ),
-            "{meta}"
-        );
-    }
-
-    /// A userdata records fields (`---@field` on its class), dot-called functions (`.`, no receiver) and the
-    /// statics of its sub-table on the module, and the sub-table is held to the record in both directions.
-    #[test]
-    fn userdata_fields_functions_and_statics() {
-        let lua = Lua::new();
-        let sub = lua.create_table().expect("table");
-        sub.set("new", lua.create_function(|_, (): ()| Ok(1)).expect("fn"))
-            .expect("set");
-        sub.set("ZERO", 0).expect("set");
-        let mut m = Module::new(&lua, "lib:demo").expect("module");
-        m.set("Thing", sub.clone()).expect("set");
-        m.userdata("Thing", |t| {
-            t.field("size", "number", "How big.")
-                .field("label", "string?", "A label.")
-                .method("grow", &[("by", "number")], "()", "Grows.")
-                .function("check", &[("expected", "LuaValue")], "()", "Checks.")
-                .static_fn("new", &[], "Result<Thing, string>", "Builds one.")
-                .static_const("ZERO", "Thing", "The empty one.");
-        });
-
-        let meta = m.luals_meta().expect("meta");
-        assert!(meta.contains("---@field size number How big.\n"), "{meta}");
-        assert!(
-            meta.contains("---@field label? string A label.\n"),
-            "{meta}"
-        );
-        assert!(meta.contains("function ud_Thing:grow(by) end"), "{meta}");
-        assert!(
-            meta.contains("function ud_Thing.check(expected) end"),
-            "{meta}"
-        );
-        assert!(
-            meta.contains("---@field ZERO lib_demo.Thing The empty one.\n"),
-            "{meta}"
-        );
-        assert!(meta.contains("function statics_Thing.new() end"), "{meta}");
-        assert!(
-            meta.contains("---@field Thing lib_demo.ThingStatics\n"),
-            "{meta}"
-        );
-
-        // a member of the sub-table that was not recorded is an error
-        sub.set("extra", 1).expect("set");
-        let error = m.luals_meta().expect_err("unrecorded member").to_string();
-        assert!(
-            error.contains("Thing.extra is on the module table but not recorded"),
-            "{error}"
-        );
-
-        // and so is a recorded static that the sub-table does not have
-        sub.set("extra", mlua::Value::Nil).expect("set");
-        sub.set("ZERO", mlua::Value::Nil).expect("set");
-        let error = m.luals_meta().expect_err("phantom static").to_string();
-        assert!(
-            error.contains("Thing.ZERO is recorded but the module table has no such member"),
-            "{error}"
-        );
-    }
-
-    /// A type that records statics but has no sub-table on the module is an error, not a silent omission.
-    #[test]
-    fn statics_without_a_sub_table_fail() {
-        let lua = Lua::new();
-        let mut m = Module::new(&lua, "lib:demo").expect("module");
-        m.userdata("Thing", |t| {
-            t.static_fn("new", &[], "Thing", "Builds one.");
-        });
-        let error = m.luals_meta().expect_err("no sub-table").to_string();
-        assert!(
-            error.contains("records statics but the module has no such sub-table"),
-            "{error}"
-        );
-    }
-
-    /// Reserved words are escaped in function, parameter and field names (including `goto`, reserved in Lua 5.2+), and a
-    /// near miss is left alone.
-    #[test]
-    fn reserved_words_are_escaped_everywhere() {
-        let lua = Lua::new();
-        let mut m = Module::new(&lua, "lib:demo").expect("module");
-        m.record_fn(
-            "goto",
-            &[("local", "string"), ("ending", "string")],
-            "()",
-            "Jumps.",
-        );
-        m.const_("end", "number", "A constant.");
-        m.userdata("Thing", |t| {
-            t.field("repeat", "number", "A field.").method(
-                "then",
-                &[("until", "number")],
-                "()",
-                "A method.",
-            );
-        });
-        let meta = m.luals_meta().expect("meta");
-        assert!(
-            meta.contains("function M.goto_(local_, ending) end"),
-            "{meta}"
-        );
-        assert!(
-            meta.contains("---@field end_ number A constant.\n"),
-            "{meta}"
-        );
-        assert!(
-            meta.contains("---@field repeat_ number A field.\n"),
-            "{meta}"
-        );
-        assert!(
-            meta.contains("function ud_Thing:then_(until_) end"),
-            "{meta}"
-        );
-        // the output is still valid Lua (it loads on the engine, Luau)
-        lua.load(meta.as_str()).into_function().expect("valid Lua");
-    }
-
-    /// `Result<T, string>` makes `T` optional unless it already is (or is `any`), a `()` value is `nil`,
-    /// and `boolean` is the Lua name of `bool`.
-    #[test]
-    fn result_value_shapes() {
-        let lua = Lua::new();
-        let mut m = Module::new(&lua, "lib:demo").expect("module");
-        m.record_fn("a", &[], "Result<LuaValue, string>", "A.");
-        m.record_fn("b", &[], "Result<string?, string>", "B.");
-        m.record_fn("c", &[("flag", "bool")], "Result<bool, string>", "C.");
-        let meta = m.luals_meta().expect("meta");
-        assert!(
-            contains_in_order(
-                &meta,
-                &[
-                    "---@return any\n",
-                    "---@return string? err",
-                    "function M.a() end"
-                ]
-            ),
-            "{meta}"
-        );
-        assert!(
-            contains_in_order(
-                &meta,
-                &[
-                    "---@return string?\n",
-                    "---@return string? err",
-                    "function M.b() end"
-                ]
-            ),
-            "{meta}"
-        );
-        assert!(
-            contains_in_order(
-                &meta,
-                &[
-                    "---@param flag boolean",
-                    "---@return boolean?\n",
-                    "---@return string? err",
-                    "function M.c(flag) end"
-                ]
-            ),
-            "{meta}"
-        );
-    }
-
-    /// An empty doc writes no comment line and a multi-line doc is flattened into a single `---@field` line.
-    #[test]
-    fn docs_empty_and_multiline() {
-        let lua = Lua::new();
-        let mut m = Module::new(&lua, "lib:demo").expect("module");
-        m.record_fn("quiet", &[], "()", "");
-        m.const_("noisy", "number", "first line\nsecond line");
-        let meta = m.luals_meta().expect("meta");
-        assert!(
-            meta.contains("local M = {}\n\nfunction M.quiet() end"),
-            "{meta}"
-        );
-        assert!(
-            meta.contains("---@field noisy number first line second line\n"),
-            "{meta}"
-        );
-    }
-
-    /// A type that records only constants still gets a statics class and a module field, and a recorded
-    /// static function the sub-table lacks is a phantom, like a constant.
-    #[test]
-    fn const_only_statics_and_phantom_static_fn() {
-        let lua = Lua::new();
-        let sub = lua.create_table().expect("table");
-        sub.set("MAX", 1).expect("set");
-        let mut m = Module::new(&lua, "lib:demo").expect("module");
-        m.set("Limit", sub.clone()).expect("set");
-        m.userdata("Limit", |t| {
-            t.static_const("MAX", "number", "The cap.");
-        });
-        let meta = m.luals_meta().expect("meta");
-        assert!(
-            meta.contains("---@field Limit lib_demo.LimitStatics\n"),
-            "{meta}"
-        );
-        assert!(meta.contains("---@field MAX number The cap.\n"), "{meta}");
-
-        let mut m = Module::new(&lua, "lib:demo").expect("module");
-        m.set("Limit", sub).expect("set");
-        m.userdata("Limit", |t| {
-            t.static_const("MAX", "number", "The cap.").static_fn(
-                "make",
-                &[],
-                "Limit",
-                "Makes one.",
-            );
-        });
-        let error = m.luals_meta().expect_err("phantom static fn").to_string();
-        assert!(
-            error.contains("Limit.make is recorded but the module table has no such member"),
-            "{error}"
-        );
-    }
-
-    /// A trailing `?` on a `fun(...)` type belongs to its return type, so the parameter is not optional;
-    /// `(fun(...): T)?` is the optional function; a class of another module passes through and may be optional.
-    #[test]
-    fn pass_through_types_and_optionals() {
-        assert_eq!(
-            luals_param_type("fun(a, b): string?", "lib_x"),
-            ("fun(a, b): string?".to_string(), false)
-        );
-        assert_eq!(
-            luals_param_type("(fun(a): string)?", "lib_x"),
-            ("(fun(a): string)".to_string(), true)
-        );
-        assert_eq!(
-            luals_param_type("std_net.TcpListener?", "lib_x"),
-            ("std_net.TcpListener".to_string(), true)
-        );
-        assert_eq!(
-            luals_param_type("std_net.TcpListener", "lib_x"),
-            ("std_net.TcpListener".to_string(), false)
-        );
-        assert_eq!(
-            luals_param_type("Thing?", "lib_x"),
-            ("lib_x.Thing".to_string(), true)
-        );
-
-        let lua = Lua::new();
-        let mut m = Module::new(&lua, "lib:demo").expect("module");
-        m.record_fn(
-            "serve",
-            &[
-                ("listener", "std_net.TcpListener"),
-                ("handler", "fun(req: vnd_hyper.Request): string|nil"),
-                ("on_error", "(fun(message: string): nil)?"),
-            ],
-            "()",
-            "Serves.",
-        );
-        m.const_("hook", "fun(a, b): string?", "A hook.");
-        let meta = m.luals_meta().expect("meta");
-        assert!(
-            contains_in_order(
-                &meta,
-                &[
-                    "---@param listener std_net.TcpListener\n",
-                    "---@param handler fun(req: vnd_hyper.Request): string|nil\n",
-                    "---@param on_error? (fun(message: string): nil)\n",
-                    "function M.serve(listener, handler, on_error) end",
-                ]
-            ),
-            "{meta}"
-        );
-        assert!(
-            meta.contains("---@field hook fun(a, b): string? A hook.\n"),
-            "{meta}"
-        );
-    }
-
-    /// A tuple is split on its top-level commas only, so a `fun(a, b)` inside it stays whole, and a `...`
-    /// anywhere in it, or alone, is `any ...`.
-    #[test]
-    fn tuple_returns_split_on_top_level_commas() {
-        assert_eq!(
-            split_top_level("string, fun(a, b): c, table<string, any>"),
-            ["string", " fun(a, b): c", " table<string, any>"]
-        );
-        assert_eq!(
-            luals_returns("(fun(a, b): string, ())", "lib_x"),
-            ["fun(a, b): string", "nil"]
-        );
-        assert_eq!(
-            luals_returns("(LuaValue?, ...)", "lib_x"),
-            ["any?", "any ..."]
-        );
-        assert_eq!(luals_returns("...", "lib_x"), ["any ..."]);
-        assert_eq!(luals_returns("(string, ())", "lib_x"), ["string", "nil"]);
-        assert_eq!(luals_returns("()", "lib_x"), Vec::<String>::new());
     }
 }

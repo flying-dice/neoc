@@ -37,7 +37,7 @@ use std::sync::Arc;
 use mlua::{Lua, Table};
 use strsim::levenshtein;
 
-use crate::lua::facade::Module;
+use crate::lua::facade::{Module, luau_decls};
 use crate::lua::{lib, std as stdmod, vnd};
 
 /// Soft cap on how many namespace members a `require` error inlines before it
@@ -87,7 +87,7 @@ fn truncate_list(members: &[&str], cap: usize) -> String {
 type Build = fn(&Lua) -> mlua::Result<Table>;
 
 /// Every module a script can `require`, by registry key. The one list: the engine's own `require`, an
-/// embedder's `require` ([`names`], [`build`]) and the `LuaCATS` definitions all follow it.
+/// embedder's `require` ([`names`], [`build`]) and the Luau declarations all follow it.
 const REGISTRY: &[(&str, Build)] = &[
     // std:* — mirrors Rust standard library.
     ("std:collections", stdmod::collections::module),
@@ -321,30 +321,41 @@ fn declared(lua: &Lua) -> mlua::Result<Vec<Module<'_>>> {
     ])
 }
 
-/// Where a module's definition file goes, relative to the definitions folder: `lib:json` becomes
-/// `lib/json.lua`. A colon is not allowed in a Windows file name, so the file is not named after the key;
-/// `types/luals-plugin.lua` maps `require("lib:json")` to it for lua-language-server.
-#[must_use]
-pub fn luals_file(key: &str) -> String {
-    format!("{}.lua", key.replace(':', "/"))
-}
+/// Where the Luau declarations go, relative to the repository root: one definitions file for every module.
+/// A colon is not allowed in a Windows file name, so nothing is named after a registry key; the overloaded
+/// `require` in the file maps `require("lib:json")` to its type.
+pub const LUAU_DECLS_PATH: &str = "types/neoc.d.luau";
 
-/// The `LuaCATS` definition file of every module, as `(registry_key, text)` in
-/// registry order.
+/// The Luau declarations of every module, as `(registry_key, section)` in registry order.
 ///
-/// The text is a `---@meta` file for lua-language-server
-/// (`cargo run -p neoc-vm --example luals` writes it to `types/luals/<ns>/<name>.lua`,
-/// see [`luals_file`], and a plugin makes `require("lib:json")` resolve to it): each
-/// function's parameters, returns and docs, and the resource types it hands out.
+/// A section is the `export type` aliases of one module (its resource types and its table): each function's
+/// parameters, returns and docs. [`luau_decls`] joins them into the file.
 ///
 /// # Errors
 /// Fails when a module cannot be built, or its recording disagrees with the
 /// live table of one of its types.
-pub fn luals_metas(lua: &Lua) -> mlua::Result<Vec<(String, String)>> {
+pub fn luau_decl_sections(lua: &Lua) -> mlua::Result<Vec<(String, String)>> {
     declared(lua)?
         .iter()
-        .map(|m| Ok((m.name().to_string(), m.luals_meta()?)))
+        .map(|m| Ok((m.name().to_string(), m.luau_decls()?)))
         .collect()
+}
+
+/// The whole Luau definitions file (`cargo run -p neoc-vm --example luau_decls` writes it to
+/// [`LUAU_DECLS_PATH`]): a header, the section of every module in registry order, then the `require`
+/// overloads that make `require("lib:json")` have the type of that module in luau-lsp.
+///
+/// # Errors
+/// As [`luau_decl_sections`].
+pub fn luau_decls(lua: &Lua) -> mlua::Result<String> {
+    let sections = luau_decl_sections(lua)?;
+    let mut out = luau_decls::file_header();
+    for (_, section) in &sections {
+        out.push_str(section);
+    }
+    let keys: Vec<&str> = sections.iter().map(|(key, _)| key.as_str()).collect();
+    out.push_str(&luau_decls::require_declaration(&keys));
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -399,111 +410,164 @@ mod tests {
         }
     }
 
-    /// Every module yields a definition file: `---@meta`, a module class named after its key, the
-    /// `require` return, and valid Lua 5.1 syntax (lua-language-server drops a file it cannot parse).
-    #[test]
-    fn every_module_yields_valid_definitions() {
-        let lua = make_engine().expect("engine");
-        let metas = luals_metas(&lua).expect("metas");
-        assert_eq!(metas.len(), 50);
-        for (key, meta) in &metas {
-            let class = key.replace(':', "_");
-            assert!(meta.starts_with("---@meta\n"), "{key}: not a meta file");
-            assert!(
-                meta.contains(&format!("---@class {class}\n")),
-                "{key}: no module class {class}"
-            );
-            assert!(
-                meta.ends_with(&format!("---@type {class}\nreturn M\n")),
-                "{key}: does not return the module"
-            );
-            lua.load(meta.as_str())
-                .set_name(key)
-                .into_function()
-                .unwrap_or_else(|e| panic!("{key}: {e}\n{meta}"));
-        }
+    /// The properties of the alias `name` in a section of the declarations, as `(property, type text)`:
+    /// the lines with exactly one tab of indent between `export type <name> = {` and the closing brace. A
+    /// doc comment line (`\t---`) and a line indented deeper are not properties, and a reserved word is the
+    /// quoted key `["end"]`, read back as the bare name.
+    fn alias_props(section: &str, name: &str) -> Vec<(String, String)> {
+        let open = format!("export type {name} = {{");
+        let mut lines = section.lines().skip_while(|l| *l != open);
+        assert!(lines.next().is_some(), "no `{open}` in:\n{section}");
+        lines
+            .take_while(|l| *l != "}")
+            .filter(|l| l.starts_with('\t') && !l.starts_with("\t\t") && !l.starts_with("\t---"))
+            .map(|l| {
+                let l = &l[1..];
+                let (name, ty) = l.split_once(": ").expect("`name: type,`");
+                let name = name
+                    .strip_prefix("[\"")
+                    .and_then(|n| n.strip_suffix("\"]"))
+                    .unwrap_or(name);
+                (name.to_string(), ty.trim_end_matches(',').to_string())
+            })
+            .collect()
     }
 
-    /// The type names in the text of a type annotation: identifiers (dots included, so `std_net.TcpListener` is
-    /// one), without the `err` label after a return type, the `fun` of a function type and the parameter names
-    /// inside it (`fun(req: vnd_hyper.Request)` names `vnd_hyper.Request` only).
-    fn type_names(text: &str) -> Vec<&str> {
-        let mut names = Vec::new();
-        let mut start = None;
-        for (i, c) in text
-            .char_indices()
-            .chain(std::iter::once((text.len(), ' ')))
-        {
-            let part_of_name = c.is_alphanumeric() || c == '_' || c == '.';
-            match (start, part_of_name) {
-                (None, true) => start = Some(i),
-                (Some(from), false) => {
-                    start = None;
-                    let name = text[from..i].trim_matches('.');
-                    let rest = &text[i..];
-                    let is_param_name = rest.starts_with(':');
-                    let is_fun_keyword = name == "fun" && rest.starts_with('(');
-                    if !name.is_empty() && name != "err" && !is_param_name && !is_fun_keyword {
-                        names.push(name);
-                    }
-                }
-                _ => {}
+    /// A quoted key (a reserved word) is read back as the bare name; a doc line and a line indented deeper
+    /// (a nested one) are not properties.
+    #[test]
+    fn alias_props_reads_quoted_keys() {
+        let section = "-- ===== lib:x =====\n\nexport type lib_x = {\n\t--- doc: not a property\n\t[\"end\"]: number,\n\t\tnested line without a separator,\n\tf: (a: number) -> (),\n}\n\n";
+        assert_eq!(
+            alias_props(section, "lib_x"),
+            [
+                ("end".to_string(), "number".to_string()),
+                ("f".to_string(), "(a: number) -> ()".to_string())
+            ]
+        );
+    }
+
+    /// Every module yields a section of the declarations: a header naming its key, an exported alias for its
+    /// table named after the key, and an overload of `require` that returns that alias; and the whole file
+    /// parses with the grammar of what the emitter writes (`facade::luau_decls::grammar`, which needs no
+    /// luau-lsp: it refuses a control character, a tuple in a result, an unbalanced type, a stray line).
+    #[test]
+    fn every_module_yields_valid_declarations() {
+        let lua = make_engine().expect("engine");
+        let sections = luau_decl_sections(&lua).expect("sections");
+        let file = luau_decls(&lua).expect("file");
+        assert_eq!(sections.len(), 50);
+        for (key, section) in &sections {
+            let scope = luau_decls::scope(key);
+            assert!(
+                section.starts_with(&format!("-- ===== {key} =====\n")),
+                "{key}: no header"
+            );
+            assert!(
+                section.contains(&format!("\nexport type {scope} = {{")),
+                "{key}: no module alias {scope}"
+            );
+            assert!(
+                file.contains(&format!("((path: \"{key}\") -> {scope})")),
+                "{key}: no `require` overload"
+            );
+        }
+        assert_eq!(luau_decls::grammar::validate(&file), Ok(()));
+        assert!(file.starts_with("-- GENERATED by neoc-vm"));
+        assert!(file.contains("declare require: \n\t((path: \"std:collections\")"));
+        assert_eq!(
+            file.matches("((path: \"").count(),
+            50,
+            "one `require` overload per module"
+        );
+    }
+
+    /// The identifiers of the text of the declarations in type position, as `(word, is_declaration)`:
+    /// comments and strings are dropped, a word followed by a colon is a label (a property or parameter
+    /// name) and not a type, and the word after `type` is a declaration.
+    fn type_words(text: &str) -> Vec<(String, bool)> {
+        let code: String = text
+            .lines()
+            .map(|l| l.split("--").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut stripped = String::new();
+        let mut in_string = false;
+        for c in code.chars() {
+            if c == '"' {
+                in_string = !in_string;
+            } else if !in_string {
+                stripped.push(c);
             }
         }
-        names
+        let chars: Vec<char> = stripped.chars().collect();
+        let mut words = Vec::new();
+        let mut previous = String::new();
+        let mut i = 0;
+        while i < chars.len() {
+            if !(chars[i].is_ascii_alphabetic() || chars[i] == '_') {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
+                i += 1;
+            }
+            let word: String = chars[start..i].iter().collect();
+            let label = chars[i..].iter().find(|c| !c.is_whitespace()) == Some(&':');
+            if !label && !matches!(word.as_str(), "export" | "type" | "declare" | "require") {
+                words.push((word.clone(), previous == "type"));
+            }
+            previous = word;
+        }
+        words
     }
 
     #[test]
-    fn type_names_skip_labels_and_parameter_names() {
+    fn type_words_skip_labels_comments_and_strings() {
+        let words: Vec<String> = type_words(
+            "export type a_B = {\n\t--- a doc, with Words\n\t[\"end\"]: number,\n\tf: (self: a_B, x: c_D?) -> (string, ...any),\n}\ndeclare require: ((path: \"lib:json\") -> a_B)",
+        )
+        .into_iter()
+        .map(|(w, declared)| if declared { format!("={w}") } else { w })
+        .collect();
         assert_eq!(
-            type_names("fun(req: vnd_hyper.Request, n: number): string|nil"),
-            ["vnd_hyper.Request", "number", "string", "nil"]
+            words,
+            ["=a_B", "number", "a_B", "c_D", "string", "any", "a_B"]
         );
-        assert_eq!(type_names("string? err"), ["string"]);
-        assert_eq!(type_names("any ..."), ["any"]);
-        assert_eq!(type_names("std_net.TcpListener"), ["std_net.TcpListener"]);
     }
 
-    /// Every type a definition file names (in a `---@param`, `---@return` or `---@field`) is a primitive or a
-    /// class some definition file declares (its own, or another module's such as `std_net.TcpListener`): a
-    /// recorded type name with no class would be an unknown type in lua-language-server, and `luals_type`
-    /// turns any unknown name into `<module>.<Name>` without complaint.
+    /// Every type the declarations name is a primitive or an alias some section declares (its own, or another
+    /// module's such as `std_net_TcpListener`): a recorded type name with no alias would be an unknown type
+    /// in luau-lsp, and the emitter turns any unknown name into `<module>_<Name>` without complaint.
     #[test]
     fn every_named_type_is_declared() {
         let lua = make_engine().expect("engine");
-        let metas = luals_metas(&lua).expect("metas");
-        let classes: Vec<&str> = metas
+        let file = luau_decls(&lua).expect("file");
+        let words = type_words(&file);
+        let declared: Vec<&str> = words
             .iter()
-            .flat_map(|(_, meta)| meta.lines().filter_map(|l| l.strip_prefix("---@class ")))
+            .filter(|(_, declaration)| *declaration)
+            .map(|(w, _)| w.as_str())
             .collect();
         let mut checked = 0;
-        for (key, meta) in &metas {
-            for line in meta.lines() {
-                // the type text: the rest of a `@return` or `@param name` line, one word after `@field name`
-                let text = if let Some(rest) = line.strip_prefix("---@return ") {
-                    rest
-                } else if let Some(rest) = line.strip_prefix("---@param ") {
-                    rest.split_once(' ').map_or("", |(_, ty)| ty)
-                } else if let Some(rest) = line.strip_prefix("---@field ") {
-                    rest.split_whitespace().nth(1).unwrap_or("")
-                } else {
-                    continue;
-                };
-                for ty in type_names(text) {
-                    let known = matches!(
-                        ty,
-                        "string" | "number" | "boolean" | "any" | "nil" | "table"
-                    ) || classes.contains(&ty);
-                    assert!(
-                        known,
-                        "{key}: `{line}` names `{ty}`, which no class declares"
-                    );
-                    checked += 1;
-                }
+        for (word, declaration) in &words {
+            if *declaration {
+                continue;
             }
+            let known = matches!(
+                word.as_str(),
+                "string" | "number" | "boolean" | "any" | "nil"
+            ) || declared.contains(&word.as_str());
+            assert!(
+                known,
+                "the declarations name `{word}`, which no alias declares"
+            );
+            checked += 1;
         }
-        // a changed annotation prefix would make the loop skip every line and pass
-        assert!(checked > 500, "only {checked} type names checked");
+        // a changed layout would make the scan skip every word and pass
+        assert!(declared.len() > 100, "only {} aliases", declared.len());
+        assert!(checked > 1000, "only {checked} type names checked");
     }
 
     /// One Lua expression per recorded resource type, building a value that has every field set, so the test below
@@ -758,8 +822,8 @@ mod tests {
 
     /// Every method and field a module records for a resource type exists on a live value of that type, and
     /// (for a value that is a plain table or a userdata whose methods sit in a table) every live method is
-    /// recorded. A record with no implementation behind it (`Time:add`, once) is a call lua-language-server
-    /// accepts and the VM refuses; a live method nobody recorded is a false `undefined-field` for every script
+    /// recorded. A record with no implementation behind it (`Time:add`, once) is a call luau-lsp
+    /// accepts and the VM refuses; a live method nobody recorded is a false "key not found" for every script
     /// that uses it. A userdata with fields keeps its members in a function, so only the first direction holds
     /// for it.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -877,7 +941,7 @@ mod tests {
     }
 
     /// Builds every facade-migrated module's runtime `require(...)` table,
-    /// paired with its registry key, in the same order as [`luals_metas`].
+    /// paired with its registry key, in the same order as [`luau_decl_sections`].
     /// The two lists line up by index so a test can cross-check a module's
     /// live surface against its recorded surface.
     fn runtime_tables(lua: &Lua) -> Vec<(String, Table)> {
@@ -940,31 +1004,16 @@ mod tests {
         }
     }
 
-    /// The names of the `---@field`s of a module's own class (`lib_json`), not of one of its resource
-    /// classes (`lib_json.Object`).
-    fn module_fields(key: &str, meta: &str) -> Vec<String> {
-        let class = format!("---@class {}", key.replace(':', "_"));
-        let mut lines = meta.lines().skip_while(|l| *l != class);
-        assert!(
-            lines.next().is_some(),
-            "{key}: no `{class}` in its definitions"
-        );
-        lines
-            .take_while(|l| l.starts_with("---@field "))
-            .map(|l| {
-                let name = l.split_whitespace().nth(1).unwrap_or("");
-                name.trim_end_matches('?').to_string()
-            })
-            .collect()
-    }
-
-    /// The names of the module's own functions (`function M.<name>(`).
-    fn module_functions(meta: &str) -> Vec<String> {
-        meta.lines()
-            .filter_map(|l| l.strip_prefix("function M."))
-            .filter_map(|l| l.split('(').next())
-            .map(String::from)
-            .collect()
+    /// The names of the module's own functions and of its other members (a type's statics, a constant),
+    /// from the properties of its table type: a function is the property whose type is a function type (an
+    /// arrow outside every bracket: `luau_decls::is_function`).
+    fn module_members(key: &str, section: &str) -> (Vec<String>, Vec<String>) {
+        let props = alias_props(section, &luau_decls::scope(key));
+        let (functions, fields): (Vec<_>, Vec<_>) = props
+            .into_iter()
+            .partition(|(_, ty)| luau_decls::is_function(ty));
+        let names = |props: Vec<(String, String)>| props.into_iter().map(|(n, _)| n).collect();
+        (names(functions), names(fields))
     }
 
     /// Module keys the definitions record that the base `require(...)` table does not have:
@@ -974,16 +1023,16 @@ mod tests {
     /// A module's live `require(...)` table and its definitions describe the same keys, in both
     /// directions.
     ///
-    /// - Every live key is recorded: a function as `function M.<key>(`, anything else (a constructor
-    ///   sub-table such as `chrono.Date`, a constant such as `json.null`) as a `---@field <key>` of the
-    ///   module class. A free function registered with `set` and never `record_fn`ed fails here.
-    /// - Every recorded function is a live function and every recorded field of the module class is a live
-    ///   key (the worker-only ones above excepted). A `record_fn` with no `set` behind it, a call the
-    ///   editor accepts and the VM refuses, fails here.
+    /// - Every live key is recorded: a function as a property of the module's table type with a function
+    ///   type, anything else (a constructor sub-table such as `chrono.Date`, a constant such as `json.null`)
+    ///   as another property of it. A free function registered with `set` and never `record_fn`ed fails here.
+    /// - Every recorded function is a live function and every other recorded property is a live key (the
+    ///   worker-only ones above excepted). A `record_fn` with no `set` behind it, a call the editor accepts
+    ///   and the VM refuses, fails here.
     #[test]
     fn definitions_cover_runtime_table_keys() {
         let lua = make_engine().expect("engine");
-        let metas = luals_metas(&lua).expect("metas");
+        let metas = luau_decl_sections(&lua).expect("metas");
         let tables = runtime_tables(&lua);
 
         assert_eq!(
@@ -995,8 +1044,7 @@ mod tests {
         let mut checked = 0;
         for ((mkey, meta), (tkey, table)) in metas.iter().zip(tables.iter()) {
             assert_eq!(mkey, tkey, "definition / table ordering drifted");
-            let fields = module_fields(mkey, meta);
-            let functions = module_functions(meta);
+            let (functions, fields) = module_members(mkey, meta);
 
             let mut live = Vec::new();
             for pair in table.clone().pairs::<String, mlua::Value>() {

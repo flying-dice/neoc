@@ -1,6 +1,6 @@
 # neoc
 
-A fast, lightweight [Luau](https://luau.org/) runtime (Roblox's Lua 5.1 derivative, embedded through mlua). One binary: Lua scripts plus a curated set of Rust-backed modules, with nothing to install at run time.
+A fast, lightweight [Luau](https://luau.org/) runtime (Roblox's Lua 5.1 derivative, embedded through mlua). One binary: Luau scripts plus a curated set of Rust-backed modules, with nothing to install at run time.
 
 `neoc` runs Lua in a VM with the unsafe globals stripped (`loadstring`, `os`, `debug`, `getfenv`, `setfenv`, ...). Scripts reach the outside world only through registered modules. This is a curated surface, not a security boundary.
 
@@ -63,7 +63,7 @@ The source in [`crates/neoc-vm/src/lua/`](crates/neoc-vm/src/lua) is the catalog
 
 ## Language
 
-Scripts are Lua 5.1 syntax running on Luau: the language and the base library are Luau's, not LuaJIT's, which neoc ran before NEOC-137. What a script written for LuaJIT can hit:
+Scripts are Luau: Lua 5.1 syntax plus Luau's own (type annotations, `continue`, compound assignment, string interpolation, `if` expressions), and the base library is Luau's, not LuaJIT's, which neoc ran before NEOC-137. What a script written for LuaJIT can hit:
 
 **Syntax LuaJIT accepted and Luau rejects.** The bitwise and logical operators `&`, `|`, `<<`, `>>`, `!=`, `&&`, `??` and `?.`, and `a ~= b` as a statement (xor-assign); `goto` and labels; hex floats (`0x.8`, `0xA.8p1`) and the `LL`/`ULL` suffixes; non-ASCII identifiers (`local café`: Luau identifiers are ASCII). A leading `#!` line and a UTF-8 byte-order mark are not Luau syntax either, but neoc's loader drops both before it loads a script (line numbers stay), so a script with a shebang runs as before. Luau accepts more than LuaJIT did (`//`, `+=`, `continue`, type annotations, `for k, v in t` over a table), so a script is still valid Lua 5.1 only if it avoids those.
 
@@ -82,19 +82,26 @@ A wait (`task.wait`, I/O) suspends inside `pcall`, `xpcall`, `__call` and `for .
 
 ## Editor types
 
-This repository contains [LuaCATS](https://luals.github.io/wiki/annotations/) definitions for every module in [`types/luals/`](types/luals), one file per module (`lib/json.lua` for `lib:json`, `vnd/rusqlite.lua` for `vnd:rusqlite`), generated from the modules' own signatures. [lua-language-server](https://luals.github.io/) gives completion, hover docs and type checks of `require("lib:json")` and the rest once it can find them. Its `require` search cannot map a name with a colon to a file, so [`types/luals-plugin.lua`](types/luals-plugin.lua) does that. Point both at your copy of the repository:
+This repository contains [Luau](https://luau.org) declarations for every module in [`types/neoc.d.luau`](types/neoc.d.luau), one definitions file generated from the modules' own signatures: a table type per module (`lib_json` for `lib:json`), a type per resource type (`lib_json_Object`), and an overloaded `require` that gives `require("lib:json")` the type of that module. [luau-lsp](https://github.com/JohnnyMorganz/luau-lsp) gives completion, hover docs and type checks once it loads that file; a `require` of a name that is not a module is a type error, as it is at run time. The declarations are a definitions file, not a module: nothing loads them at run time.
+
+```sh
+luau-lsp analyze --definitions:@neoc=path/to/neoc/types/neoc.d.luau script.luau   # type-check from the command line
+```
+
+In VS Code with the [Luau Language Server](https://marketplace.visualstudio.com/items?itemName=JohnnyMorganz.luau-lsp) extension, these workspace settings (`.vscode/settings.json`) load the file. `definitionFiles` is a map from a name to a path:
 
 ```jsonc
-// .luarc.json
 {
-  "runtime.version": "Lua 5.1",
-  "diagnostics.globals": ["bit32"],
-  "workspace.library": ["path/to/neoc/types/luals"],
-  "runtime.plugin": "path/to/neoc/types/luals-plugin.lua"
+  "luau-lsp.platform.type": "standard",
+  "luau-lsp.types.definitionFiles": { "@neoc": "path/to/neoc/types/neoc.d.luau" }
 }
 ```
 
-Inside this repository nothing is needed: its own [`.luarc.json`](.luarc.json) already does it. VS Code with the sumneko Lua extension reads `.luarc.json` from the workspace root and should pick both settings up. Whether it asks you to trust the plugin (it only turns `lib:json` into a file path) may depend on the extension version and VS Code's Workspace Trust; allow it if asked. lua-language-server runs a plugin's `ResolveRequire` only when every configured plugin defines it, so this plugin cannot sit next to a plugin that lacks one (it would silently stop resolving `lib:json`). Other editors need the same two settings in their lua-language-server configuration. The definitions live in the source tree, not in the release binaries or the Docker image. `cargo run -p neoc-vm --example luals` regenerates them.
+`standard` keeps the extension from loading Roblox's API. The extension hands the file to the server as a command-line argument, so another editor starts the server as `luau-lsp lsp --stdio --definitions:@neoc=path/to/neoc/types/neoc.d.luau`; sending `definitionFiles` to the server as a setting does not load it. The editor path is exercised by `the_language_server_types_require_as_the_editor_starts_it` in `crates/neoc-vm/tests/luau_decls.rs` (the language server started that way: typed `require`, a wrong member, hover docs). Put `--!strict` at the top of a script, or `{ "languageMode": "strict" }` in a `.luaurc` beside it, to have strict mode flag an optional result used without a check; this repository's strict `.luaurc` is [`types/fixtures/.luaurc`](types/fixtures/.luaurc), and the only other strictness is a `--!strict` first line in `crates/neoc/tests/std/task.spec.lua`. The existing `.lua` test scripts predate typed Luau, and an editor with luau-lsp shows some type errors in them. The resource types are exported: `local o: lib_json_Object = json.object()`. The declarations live in the source tree, not in the release binaries or the Docker image. `cargo run -p neoc-vm --example luau_decls` regenerates them.
+
+`require` is typed for a string literal. `require(name)` with a variable annotated as a string (`local name: string = "lib:json"`), and `pcall(require, "lib:json")`, are type errors in strict and non-strict mode alike (neoc's own `require` takes any string and fails at run time for an unknown one). An unannotated `local name = "lib:json"; require(name)` and a bare function parameter (`local function load(n) return require(n) end`) are not flagged.
+
+The declarations describe Luau, which is the language the engine runs: type annotations, string interpolation, `continue` and compound assignment all run under `neoc run` (`types/fixtures/syntax.luau` is checked in strict mode against the declarations and run by `neoc run`, in `crates/neoc/tests/cli.rs`). The declarations cover only the modules (`require`, and the types of what a module returns), not the base globals: those are luau-lsp's own Luau ones, which can differ from neoc's engine in places. Measured with `neoc run`: `coroutine.close` is `nil` there though luau-lsp declares it, `typeof` runs there (an embedder's script environment, `script_env`, does not offer it), and `bit` is not defined (luau-lsp flags it, as Luau has `bit32`).
 
 ## Contributing
 
