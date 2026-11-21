@@ -1,6 +1,6 @@
 # neoc
 
-A fast, lightweight [Luau](https://luau.org/) runtime (Roblox's Lua 5.1 derivative, embedded through mlua). One binary: Lua scripts plus a curated set of Rust-backed modules, with nothing to install at run time.
+A fast, lightweight [Luau](https://luau.org/) runtime (Roblox's Lua 5.1 derivative, embedded through mlua). One binary: Luau scripts plus a curated set of Rust-backed modules, with nothing to install at run time.
 
 `neoc` runs Lua in a VM with the unsafe globals stripped (`loadstring`, `os`, `debug`, `getfenv`, `setfenv`, ...). Scripts reach the outside world only through registered modules. This is a curated surface, not a security boundary.
 
@@ -63,7 +63,7 @@ The source in [`crates/neoc-vm/src/lua/`](crates/neoc-vm/src/lua) is the catalog
 
 ## Language
 
-Scripts are Lua 5.1 syntax running on Luau: the language and the base library are Luau's, not LuaJIT's, which neoc ran before NEOC-137. What a script written for LuaJIT can hit:
+Scripts are Luau: Lua 5.1 syntax plus Luau's own (type annotations, `continue`, compound assignment, string interpolation, `if` expressions), and the base library is Luau's, not LuaJIT's, which neoc ran before NEOC-137. What a script written for LuaJIT can hit:
 
 **Syntax LuaJIT accepted and Luau rejects.** The bitwise and logical operators `&`, `|`, `<<`, `>>`, `!=`, `&&`, `??` and `?.`, and `a ~= b` as a statement (xor-assign); `goto` and labels; hex floats (`0x.8`, `0xA.8p1`) and the `LL`/`ULL` suffixes; non-ASCII identifiers (`local café`: Luau identifiers are ASCII). A leading `#!` line and a UTF-8 byte-order mark are not Luau syntax either, but neoc's loader drops both before it loads a script (line numbers stay), so a script with a shebang runs as before. Luau accepts more than LuaJIT did (`//`, `+=`, `continue`, type annotations, `for k, v in t` over a table), so a script is still valid Lua 5.1 only if it avoids those.
 
@@ -101,7 +101,7 @@ In VS Code with the [Luau Language Server](https://marketplace.visualstudio.com/
 
 `require` is typed for a string literal. `require(name)` with a variable annotated as a string (`local name: string = "lib:json"`), and `pcall(require, "lib:json")`, are type errors in strict and non-strict mode alike (neoc's own `require` takes any string and fails at run time for an unknown one). An unannotated `local name = "lib:json"; require(name)` and a bare function parameter (`local function load(n) return require(n) end`) are not flagged.
 
-The declarations describe Luau. The engine neoc runs scripts on today is LuaJIT: it runs `continue` and compound assignment (`n += i`), but refuses type annotations and string interpolation, which are for Luau scripts once the engine switch (a separate piece of work, Jira NEOC-137) lands. The calls and results are typed either way.
+The declarations describe Luau, which is the language the engine runs: type annotations, string interpolation, `continue` and compound assignment all run under `neoc run` (`types/fixtures/syntax.luau` is checked in strict mode against the declarations and run by `neoc run`, in `crates/neoc/tests/cli.rs`). The declarations cover only the modules (`require`, and the types of what a module returns), not the base globals: those are luau-lsp's own Luau ones, which can differ from neoc's engine in places. Measured with `neoc run`: `coroutine.close` is `nil` there though luau-lsp declares it, `typeof` runs there (an embedder's script environment, `script_env`, does not offer it), and `bit` is not defined (luau-lsp flags it, as Luau has `bit32`).
 
 ## Contributing
 

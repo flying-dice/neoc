@@ -35,8 +35,8 @@ pub(crate) mod grammar;
 /// What the emitter cannot write is a message, not a panic and not invalid text.
 type Emit<T> = Result<T, String>;
 
-/// Reserved words of Luau: not usable as a parameter name or a bare property name. (`goto` is not one:
-/// neither Luau nor neoc's LuaJIT reserves it.)
+/// Reserved words of Luau: not usable as a parameter name or a bare property name. (`goto` is not one: Luau
+/// does not reserve it.)
 const LUAU_KEYWORDS: &[&str] = &[
     "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "if", "in", "local",
     "nil", "not", "or", "repeat", "return", "then", "true", "until", "while",
@@ -1109,7 +1109,7 @@ mod tests {
             let line = format!("\t[\"{word}\"]: ({word}_: number) -> (),\n");
             assert!(decls.contains(&line), "missing {line:?} in:\n{decls}");
         }
-        // `goto` is a name in Luau and in neoc's LuaJIT (`t.goto = 1` runs), so it stays bare
+        // `goto` is a name in Luau, so it stays bare
         for word in ["ending", "continue", "type", "export", "goto"] {
             let line = format!("\t{word}: ({word}: number) -> (),\n");
             assert!(decls.contains(&line), "missing {line:?} in:\n{decls}");

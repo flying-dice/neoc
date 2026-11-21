@@ -2,7 +2,7 @@
 
 Guidance for Claude (and any LLM agent) working in **neoc**: one Cargo workspace holding a Lua runtime.
 
-- **Runtime** (`crates/neoc-vm`): an embedded Luau engine (through `mlua`) backed by Rust. Scripts are written in Lua 5.1 syntax, which Luau accepts; the base library is Luau's (`bit32`, `table.clone`, no `goto`, `string.format('%s')` takes strings and numbers only (`%*` for anything else): the list is in [README.md](README.md#language)). Scripts run in a VM with a curated module surface (`std:*`, `lib:*`, `vnd:*`). The unsafe halves of the Lua standard library are stripped; everything else comes through explicit modules. Not a security boundary.
+- **Runtime** (`crates/neoc-vm`): an embedded Luau engine (through `mlua`) backed by Rust. Scripts are written in Luau (Lua 5.1 syntax plus type annotations, `continue`, compound assignment and string interpolation, all of which run); their editor types are the generated Luau declarations of every module (see Modules, Types); the base library is Luau's (`bit32`, `table.clone`, no `goto`, `string.format('%s')` takes strings and numbers only (`%*` for anything else): the list is in [README.md](README.md#language)). Scripts run in a VM with a curated module surface (`std:*`, `lib:*`, `vnd:*`). The unsafe halves of the Lua standard library are stripped; everything else comes through explicit modules. Not a security boundary.
 - **Binary** (`crates/neoc`): the thin `neoc` CLI over the runtime. `run` only.
 
 neoc used to be a language that compiled to Lua. That is gone; the last state is under the `neoc-lang-final` tag. Restore a path with `git checkout neoc-lang-final -- <path>`.

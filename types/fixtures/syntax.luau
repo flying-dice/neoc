@@ -1,7 +1,9 @@
 --!strict
 -- Luau syntax and types with the module declarations: type annotations, `local x: T`, type aliases that
 -- name a module's resource type (the declarations export them), `continue`, compound assignment, string interpolation, if-expressions and
--- generic functions. Checked clean like usage.luau.
+-- generic functions. Checked clean like usage.luau, and RUN by `neoc run` in crates/neoc/tests/cli.rs
+-- (`run_a_typed_luau_script_with_annotations_interpolation_and_continue`), which asserts its output: edit the
+-- two together.
 local json = require("lib:json")
 local semver = require("lib:semver")
 local time = require("std:time")
