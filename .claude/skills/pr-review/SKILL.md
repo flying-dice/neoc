@@ -262,6 +262,8 @@ row needs evidence; one missing row is a finding, and the app stays in its PR.
 A change to an app that doesn't alter what people see or do (a pure-logic fix, a new read-only tool) needs the gate, the
 tests and green journeys, but not a new research round.
 
+For an app whose earlier research rounds predate NEOC-115 (the Calculator's reports were dropped with `docs/`; they are in git at `51f47f4`), the next change to what a person sees or does starts a fresh round under `ux/<app>/`.
+
 Severity: a bug, data loss, a host panic or stack overflow reachable from app input, a boundary violation, a missing gate or
 readiness row, or an accessibility failure that stops a journey is a `bug`; new behaviour without a check, or an
 accessibility or design defect people will hit, is an `issue`. Every finding blocks.
