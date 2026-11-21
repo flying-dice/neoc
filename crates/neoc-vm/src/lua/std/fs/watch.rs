@@ -22,8 +22,9 @@
 //!   the old one and which the new.
 //! - *Recursion.* Native on macOS and Windows. On Linux each directory is one inotify watch, added for the tree at
 //!   start and for new subdirectories as they appear (bounded by `fs.inotify.max_user_watches`), and each watcher is
-//!   one inotify instance (`fs.inotify.max_user_instances`, 128 by default).
+//!   one inotify instance (`fs.inotify.max_user_instances`, 128 by default: inotify(7)).
 //! - *Paths.* FSEvents reports resolved paths; they are reported under the path the script gave ([`Roots`]).
+//! - *Start.* FSEvents may also report a change made just before the watch started.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -38,7 +39,7 @@ use tokio::sync::Notify;
 
 use super::error::{FsError, FsResult, Kind};
 use crate::lua::facade::DeclType;
-use crate::lua::lifecycle::{Life, Role, async_method};
+use crate::lua::lifecycle::{Life, Role, async_method, hold, idle};
 use crate::lua::sandbox::{from_err, ok};
 use crate::lua::std::osstr;
 
@@ -155,18 +156,35 @@ impl Queue {
         state.closed.then_some(Next::Closed)
     }
 
-    /// The next item, waiting for one. Any number of waits may be pending; each item goes to exactly one, and a wait
-    /// that is dropped takes nothing (the item is removed only in the poll that returns it).
-    pub(super) async fn next(&self) -> Next {
+    fn has_next(&self) -> bool {
+        let state = self.state.lock();
+        !state.items.is_empty() || state.overflowed || state.closed
+    }
+
+    /// Resolves once [`Queue::try_next`] has something to hand out, without taking it: the caller takes it with
+    /// [`Queue::try_next`] in the poll that returns it, so a wait that is dropped (abandoned, timed out, cancelled)
+    /// takes nothing. Another taker may get there first; the caller then waits again.
+    async fn wait_ready(&self) {
         loop {
             // registered before looking, so a push between the look and the wait still wakes it
             let notified = self.ready.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
+            if self.has_next() {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    /// The next item, waiting for one. Any number of waits may be pending; each item goes to exactly one.
+    #[cfg(test)]
+    pub(super) async fn next(&self) -> Next {
+        loop {
+            self.wait_ready().await;
             if let Some(next) = self.try_next() {
                 return next;
             }
-            notified.await;
         }
     }
 
@@ -222,7 +240,8 @@ fn classify(event: &notify::Event) -> Option<Change> {
         EventKind::Modify(_) | EventKind::Any => Some(Change::Modify),
         // an open, a read or a close changes nothing
         EventKind::Access(_) => None,
-        // an event about the watch itself (a root that moved, a volume mounted): what is there may have changed
+        // a catch-all notify 8.2 sends only with the rescan flag (handled above); one without it says nothing usable
+        // about a path, so the script is told to rescan rather than told nothing
         EventKind::Other => Some(Change::Overflow),
     }
 }
@@ -286,8 +305,10 @@ impl Drop for WatchInner {
     }
 }
 
-/// Start watching the directory `root`, the whole tree under it when `recursive`.
-pub(super) fn watch(lua: &Lua, root: PathBuf, recursive: bool) -> FsResult<WatchHandle> {
+/// Start watching the directory `root`, the whole tree under it when `recursive`. Blocking (a recursive inotify
+/// watch adds one watch per directory of the tree): it runs on the blocking pool, and [`WatchHandle::register`]
+/// ties the result to the engine.
+pub(super) fn start(root: PathBuf, recursive: bool) -> FsResult<WatchHandle> {
     let meta = std::fs::metadata(&root).map_err(|e| FsError::io(&e, &root))?;
     if !meta.is_dir() {
         return Err(FsError::at(Kind::NotADirectory, &root, "not a directory"));
@@ -308,14 +329,11 @@ pub(super) fn watch(lua: &Lua, root: PathBuf, recursive: bool) -> FsResult<Watch
     watcher
         .watch(&root, mode)
         .map_err(|e| watch_error(&e, &root))?;
-    let inner = Arc::new(WatchInner {
+    Ok(WatchHandle(Arc::new(WatchInner {
         watcher: Mutex::new(Some(watcher)),
         queue,
         root,
-    });
-    // weakly: a script that starts and drops watchers in a loop leaves nothing registered
-    Life::of(lua).on_shutdown_with(&inner, |inner| inner.close());
-    Ok(WatchHandle(inner))
+    })))
 }
 
 /// `receive`'s timeout: `nil` or `math.huge` waits for ever, a negative or NaN one is `invalid_input`.
@@ -342,13 +360,52 @@ fn event(lua: &Lua, change: Change, path: &Path) -> mlua::Result<(Value, Value)>
 /// The handle `fs.watch` returns.
 pub(super) struct WatchHandle(Arc<WatchInner>);
 
+impl WatchHandle {
+    /// Register the watch with the engine's [`Life`], weakly (a script that starts and drops watchers in a loop
+    /// leaves nothing registered), so its shutdown or `stop_background` closes it; closed at once when the engine is
+    /// already shut down.
+    pub(super) fn register(self, lua: &Lua) -> Self {
+        Life::of(lua).on_shutdown_with(&self.0, |inner| inner.close());
+        self
+    }
+}
+
+/// Wait for the next event of `queue` and take it, `None` once `deadline` passes. The wait lends the call's turn
+/// (an [`idle`] wait); the event is taken only after the turn is back, in the poll that returns it, so a call dropped
+/// while it queues for its turn loses no event.
+async fn receive(
+    queue: &Queue,
+    deadline: Option<tokio::time::Instant>,
+) -> mlua::Result<Option<Next>> {
+    loop {
+        let ready = match deadline {
+            None => {
+                idle(queue.wait_ready()).await?;
+                true
+            }
+            Some(deadline) => idle(tokio::time::timeout_at(deadline, queue.wait_ready()))
+                .await?
+                .is_ok(),
+        };
+        if let Some(next) = queue.try_next() {
+            return Ok(Some(next));
+        }
+        if !ready {
+            return Ok(None);
+        }
+    }
+}
+
 impl UserData for WatchHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        // a wait for the operating system, not the VM: `Role::Wait` (and not `Timer`: a timeout is not all it waits for)
+        // `Role::Mixed`, not `Role::Wait`: a `Wait` body takes the event when its wait ends and only then queues for
+        // the turn, and a call dropped there would lose it. `receive` waits for the operating system through `idle`
+        // (an idle wait, as `Wait` is: never `Timer`, a timeout is not all it waits for) and takes the event with the
+        // turn held.
         async_method(
             methods,
             "receive",
-            Role::Wait,
+            Role::Mixed,
             |lua, this, secs: Option<f64>| {
                 let queue = Arc::clone(&this.0.queue);
                 let root = this.0.root.clone();
@@ -356,22 +413,22 @@ impl UserData for WatchHandle {
                 async move {
                     let limit = match limit {
                         Ok(limit) => limit,
-                        Err(e) => return from_err(&lua, RECEIVE, e),
+                        Err(e) => {
+                            hold().await;
+                            return from_err(&lua, RECEIVE, e);
+                        }
                     };
-                    let next = match limit {
-                        None => queue.next().await,
-                        Some(limit) => match tokio::time::timeout(limit, queue.next()).await {
-                            Ok(next) => next,
-                            Err(_) => {
-                                let secs = limit.as_secs_f64();
-                                let e = FsError::at(
-                                    Kind::TimedOut,
-                                    &root,
-                                    format!("no change within {secs} seconds"),
-                                );
-                                return from_err(&lua, RECEIVE, e);
-                            }
-                        },
+                    // a deadline past what an Instant holds is no deadline
+                    let deadline =
+                        limit.and_then(|limit| tokio::time::Instant::now().checked_add(limit));
+                    let Some(next) = receive(&queue, deadline).await? else {
+                        let secs = limit.map_or(0.0, |limit| limit.as_secs_f64());
+                        let e = FsError::at(
+                            Kind::TimedOut,
+                            &root,
+                            format!("no change within {secs} seconds"),
+                        );
+                        return from_err(&lua, RECEIVE, e);
                     };
                     match next {
                         Next::Item(Item::Change(change, path)) => event(&lua, change, &path),
@@ -534,6 +591,14 @@ mod tests {
             roots.relocate(PathBuf::from("/var/x/a")),
             PathBuf::from("/var/x/a")
         );
+        let unresolved = Roots {
+            given: PathBuf::from("x"),
+            resolved: None,
+        };
+        assert_eq!(
+            unresolved.relocate(PathBuf::from("x/a")),
+            PathBuf::from("x/a")
+        );
     }
 
     /// The engine's registry holds a watch weakly: dropping the handle frees it and closes the watch, and the watch
@@ -542,7 +607,9 @@ mod tests {
     async fn a_watch_holds_neither_itself_nor_its_engine() {
         let dir = tempfile::tempdir().unwrap();
         let lua = crate::lua::sandbox::make_engine().unwrap();
-        let handle = watch(&lua, dir.path().to_path_buf(), false).unwrap();
+        let handle = start(dir.path().to_path_buf(), false)
+            .unwrap()
+            .register(&lua);
         let weak_lua = lua.weak();
         drop(lua);
         assert!(
@@ -567,7 +634,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let life = Life::new();
         let lua = crate::lua::sandbox::make_engine_in(life.clone()).unwrap();
-        let stopped = watch(&lua, dir.path().to_path_buf(), false).unwrap();
+        let stopped = start(dir.path().to_path_buf(), false)
+            .unwrap()
+            .register(&lua);
         life.stop_background();
         assert!(
             stopped.0.watcher.lock().is_none(),
@@ -575,7 +644,9 @@ mod tests {
         );
         assert!(matches!(stopped.0.queue.try_next(), Some(Next::Closed)));
 
-        let open = watch(&lua, dir.path().to_path_buf(), true).unwrap();
+        let open = start(dir.path().to_path_buf(), true)
+            .unwrap()
+            .register(&lua);
         assert!(
             open.0.watcher.lock().is_some(),
             "a watch after stop_background works"
@@ -584,11 +655,124 @@ mod tests {
         assert!(open.0.watcher.lock().is_none());
         assert!(matches!(open.0.queue.try_next(), Some(Next::Closed)));
 
-        let late = watch(&lua, dir.path().to_path_buf(), false).unwrap();
+        let late = start(dir.path().to_path_buf(), false)
+            .unwrap()
+            .register(&lua);
         assert!(
             late.0.watcher.lock().is_none(),
             "closed at once after shutdown"
         );
+    }
+
+    /// An overflow after the close is refused like any change.
+    #[test]
+    fn a_closed_queue_refuses_an_overflow() {
+        let queue = Queue::new(8);
+        queue.close();
+        queue.push_overflow();
+        assert!(matches!(queue.try_next(), Some(Next::Closed)));
+    }
+
+    /// The watching thread's callback: a change per path, relocated; an access is dropped; a rescan is one overflow;
+    /// an error is queued as an error.
+    #[test]
+    fn the_callback_queues_changes_overflows_and_errors() {
+        use notify::event::{AccessKind, CreateKind, Flag};
+        let queue = Queue::new(8);
+        let roots = Roots {
+            given: PathBuf::from("/given"),
+            resolved: Some(PathBuf::from("/resolved")),
+        };
+        let created = notify::Event::new(EventKind::Create(CreateKind::File))
+            .add_path(PathBuf::from("/resolved/a"))
+            .add_path(PathBuf::from("/resolved/b"));
+        deliver(&queue, &roots, Ok(created));
+        let access =
+            notify::Event::new(EventKind::Access(AccessKind::Any)).add_path("/resolved/c".into());
+        deliver(&queue, &roots, Ok(access));
+        deliver(&queue, &roots, Err(notify::Error::generic("boom")));
+        assert_eq!(path_of(queue.try_next().unwrap()), "/given/a");
+        assert_eq!(path_of(queue.try_next().unwrap()), "/given/b");
+        match queue.try_next() {
+            Some(Next::Item(Item::Failed(e))) => {
+                assert_eq!(e.kind(), Kind::Other);
+                assert!(e.to_string().contains("/given"), "{e}");
+            }
+            other => panic!("expected the error, got {other:?}"),
+        }
+        assert!(queue.try_next().is_none(), "the access was dropped");
+        let rescan = notify::Event::new(EventKind::Other).set_flag(Flag::Rescan);
+        deliver(&queue, &roots, Ok(rescan));
+        assert!(matches!(queue.try_next(), Some(Next::Overflow)));
+    }
+
+    /// Each `notify` error maps to a stable kind about the path it names, or the watched directory.
+    #[test]
+    fn notify_errors_map_to_stable_kinds() {
+        let root = Path::new("/root");
+        let kind = |e: notify::Error| watch_error(&e, root);
+        let io = kind(notify::Error::io(std::io::Error::from(
+            std::io::ErrorKind::PermissionDenied,
+        )));
+        assert_eq!(io.kind(), Kind::PermissionDenied);
+        assert!(
+            io.to_string().starts_with("permission_denied: /root: "),
+            "{io}"
+        );
+        let missing = kind(notify::Error::path_not_found().add_path(PathBuf::from("/root/sub")));
+        assert_eq!(missing.kind(), Kind::NotFound);
+        assert!(
+            missing.to_string().starts_with("not_found: /root/sub: "),
+            "{missing}"
+        );
+        assert_eq!(
+            kind(notify::Error::new(notify::ErrorKind::MaxFilesWatch)).kind(),
+            Kind::Other
+        );
+        assert_eq!(kind(notify::Error::watch_not_found()).kind(), Kind::Other);
+        assert_eq!(kind(notify::Error::generic("x")).kind(), Kind::Other);
+        let config = notify::Error::invalid_config(&notify::Config::default());
+        assert_eq!(kind(config).kind(), Kind::InvalidInput);
+    }
+
+    /// Through Lua: an overflow is `{ kind = "overflow", path = <the watched directory> }`, an error the watch reports
+    /// is `(nil, "fs.receive: ...")` and the watch goes on, and a timeout that passes is `timed_out` with the path.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn receive_hands_out_overflows_errors_and_timeouts() {
+        let dir = tempfile::tempdir().unwrap();
+        let lua = crate::lua::sandbox::make_engine().unwrap();
+        let handle = start(dir.path().to_path_buf(), false)
+            .unwrap()
+            .register(&lua);
+        let queue = Arc::clone(&handle.0.queue);
+        queue.push(Item::Failed(FsError::at(
+            Kind::PermissionDenied,
+            dir.path(),
+            "denied",
+        )));
+        queue.push_overflow();
+        lua.globals().set("w", handle).unwrap();
+        lua.globals()
+            .set("dir", dir.path().to_str().unwrap())
+            .unwrap();
+        lua.load(
+            r#"
+            local fs = require("std:fs")
+            local ev, err = w:receive(5)
+            assert(ev == nil and err:find("^fs%.receive: permission_denied: "), tostring(err))
+            assert(fs.error_kind(err) == "permission_denied")
+            ev, err = w:receive(5)
+            assert(err == nil, err)
+            assert(ev.kind == "overflow" and ev.path == dir, ev.kind .. " " .. ev.path)
+            ev, err = w:receive(0.05)
+            assert(ev == nil and fs.error_kind(err) == "timed_out", tostring(err))
+            assert(err:find(dir, 1, true) and err:find("no change within 0.05 seconds", 1, true), err)
+            w:close()
+            "#,
+        )
+        .exec_async()
+        .await
+        .unwrap();
     }
 
     #[test]

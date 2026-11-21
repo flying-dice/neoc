@@ -5,7 +5,7 @@
 //! each) supplies the two things this module defines, and the VM keeps the rules.
 //!
 //! A script can start work that outlives the call that started it: `std:task` coroutines, a `vnd:hyper`
-//! server's accept loop and connections, `std:thread` workers. Two things follow, and this module is both
+//! server's accept loop and connections, `std:thread` workers, a `std:fs` watcher's operating-system watch. Two things follow, and this module is both
 //! of them:
 //!
 //! - **[`Life`]**, a per-VM registry of everything the script spawned. The embedder calls
@@ -302,8 +302,8 @@ impl Life {
 
     /// Abort everything registered and run the releases, but stay open: the script keeps running and may start
     /// new work. A replacement version that wants the old one's port is loaded after this. That covers what the
-    /// script started (tasks, workers, `vnd:hyper` servers, `std:net` listeners) and a `lib:http` static server
-    /// it is blocked in (see [`Life::stopped`]).
+    /// script started (tasks, workers, `vnd:hyper` servers, `std:net` listeners, `std:fs` watchers) and a
+    /// `lib:http` static server it is blocked in (see [`Life::stopped`]).
     pub fn stop_background(&self) {
         let (tasks, releases) = {
             let mut tasks = self.inner.tasks.lock();

@@ -575,6 +575,7 @@ async fn the_long_calls_fail_where_luau_refuses_a_yield_and_do_nothing() {
         -- a table.sort comparator
         check(pcall(table.sort, { 1, 2, 3 }, function(a, b) fs.move(p("m"), p("moved")) return a < b end) == false)
         check(pcall(table.sort, { 1, 2, 3 }, function(a, b) fs.walk(dir) return a < b end) == false)
+        check(pcall(string.gsub, "abc", "b", function() fs.watch(dir) return "x" end) == false)
         -- a metamethod
         local meta = setmetatable({}, { __index = function() fs.remove_dir_all(p("tree")) return 1 end })
         check(pcall(function() return meta.anything end) == false)
