@@ -88,3 +88,12 @@ json.array():get(1, {}) -- expect-error: Expected this to be 'number | string', 
 -- a parsed document may be a scalar or the null sentinel, so it is not a handle until it is narrowed
 assert(serde_json.from_str("{}")):get("a") -- expect-error: Key 'get' is missing from
 local _document: lib_json_Object = assert(serde_json.from_str("{}")) -- expect-error: Expected this to be 'lib_json_Object'
+local _name: string = json.object():get("name") -- expect-error: Expected this to be 'string'
+local _key: number = json.object():keys()[1] -- expect-error: Expected this to be 'number', but got 'string'
+
+-- a parser reads a reader handle, a serialiser writes a writer handle
+serde_json.from_reader("[1]") -- expect-error: Expected this to be 'std_io_ReaderHandle', but got 'string'
+serde_json.to_writer({}, "out.json") -- expect-error: Expected this to be 'std_io_WriterHandle', but got 'string'
+
+-- a request body parsed as JSON may be absent
+hyper.serve(_listener, function(req) return req.json:get("id") end) -- expect-error: Value of type -- expect-error: Key 'get' is missing from

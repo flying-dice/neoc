@@ -131,8 +131,15 @@ print(object:len(), object:has("name"))
 local list = json.array()
 list:push(1)
 list:set(1, "one")
--- a path is object keys and 1-based array indexes
+-- a path is object keys and 1-based array indexes; a node is a handle, the null sentinel, a scalar or nil
 print(object:get("name"), list:get(1), object:get("name", 1, "x"))
+local name = object:get("name")
+if type(name) == "string" then
+	print(name:upper())
+end
+for _, key in ipairs(object:keys()) do
+	print(key:upper())
+end
 
 -- a parsed document is a handle, the null sentinel or a scalar: narrow it before calling a method
 local document = assert(serde_json.from_str('{"users": [{"name": "Ada"}]}')) :: lib_json_Object
@@ -144,6 +151,8 @@ if type(scalar) == "number" then
 	print(scalar + 1)
 end
 print(serde_json.from_str("null") == json.null)
+-- a reader in, a writer out
+print(serde_json.from_reader(io.from_string("[1]")))
 local _null: lib_json_JsonNull = json.null
 
 -- constructors live on a sub-table of the module, fields read as plain values
@@ -234,6 +243,11 @@ print(network_databases)
 -- a handler reads its request, and may name the type of one
 local function describe(req: vnd_hyper_Request)
 	print(req.method, req.path, req.body, req.is_json, req.headers, req.json, req:header("accept"))
+	-- the parsed body is nil when it is empty or not JSON
+	local body = req.json
+	if body ~= nil then
+		print((body :: lib_json_Object):get("id"))
+	end
 end
 print(describe)
 

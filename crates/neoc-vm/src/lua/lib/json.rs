@@ -905,6 +905,12 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(declare(lua)?.into_table())
 }
 
+/// The recorded type of a JSON value as this module hands it out: an `Object` or `Array` handle for a container,
+/// the `null` sentinel for JSON `null`, and a Lua string, number or boolean for any other scalar. `:get` returns
+/// it, and so do the parsers that build a document (`vnd:serde_json`, `vnd:hyper`'s `Request.json`).
+pub(crate) const JSON_VALUE: &str =
+    "lib_json.Object | lib_json.Array | lib_json.JsonNull | string | number | bool";
+
 /// Declares the `lib:json` surface through the facade.
 ///
 /// `object` / `array` are registered with [`crate::lua::facade::Module::set`]
@@ -916,6 +922,8 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// sentinel, set verbatim and recorded as a `const`.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:json")?;
+    // `:get` gives `nil` for a path that leads nowhere.
+    let node = format!("{JSON_VALUE} | nil");
 
     m.set(
         "object",
@@ -963,7 +971,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         o.method(
             "get",
             &[("path", "string | number"), ("...", "string | number")],
-            "LuaValue",
+            &node,
             "Walk a path of segments (a string is an object key, a number a 1-based array index) and return the leaf node.",
         )
         .method(
@@ -978,7 +986,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             "bool",
             "Whether the object contains an entry for `key`.",
         )
-        .method("keys", &[], "LuaValue", "The object's keys as a table.")
+        .method("keys", &[], "{ string }", "The object's keys as a table.")
         .method("len", &[], "number", "Number of top-level keys.")
         .method(
             "to_table",
@@ -992,7 +1000,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         a.method(
             "get",
             &[("path", "string | number"), ("...", "string | number")],
-            "LuaValue",
+            &node,
             "Walk a path of segments (a number is a 1-based array index, a string an object key) and return the leaf node.",
         )
         .method(

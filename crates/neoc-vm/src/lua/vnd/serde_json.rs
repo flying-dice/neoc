@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use mlua::{AnyUserData, IntoLua, Lua, Table, Value};
 
 use crate::lua::facade::{DeclType, Module};
-use crate::lua::lib::json::{JsonValue, lua_value_to_json_value, wrap_root};
+use crate::lua::lib::json::{JSON_VALUE, JsonValue, lua_value_to_json_value, wrap_root};
 use crate::lua::serde_guard::refuse_buffer;
 use crate::lua::std::io::{ReaderHandle, WriterHandle};
 
@@ -105,7 +105,7 @@ impl IntoLua for Parsed {
 
 impl DeclType for Parsed {
     fn decl_type() -> String {
-        "lib_json.Object | lib_json.Array | lib_json.JsonNull | string | number | bool".to_owned()
+        JSON_VALUE.to_owned()
     }
 }
 
@@ -128,7 +128,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     )?
     .try_func(
         "from_reader",
-        &[("reader", "LuaValue")],
+        &[("reader", "std_io.ReaderHandle")],
         "Parse JSON from a reader handle, with the same results as `from_str`.",
         from_reader,
     )?
@@ -146,7 +146,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     )?
     .try_func_raising(
         "to_writer",
-        &[("value", "LuaValue"), ("writer", "LuaValue")],
+        &[("value", "LuaValue"), ("writer", "std_io.WriterHandle")],
         "Serialise a Lua value to JSON and write it to a writer handle.",
         to_writer,
     )?;
