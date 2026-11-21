@@ -118,6 +118,13 @@ export type std_fs_Metadata = {
 	mode: (self: std_fs_Metadata) -> number?,
 }
 
+export type std_fs_Watcher = {
+	--- Wait for the next change and return it as `{ kind, path }` (see `fs.watch`). Once the watcher is closed it returns `(nil, nil)`, also to a call already waiting. `timeout` (seconds; `nil` or `math.huge` waits for ever, `0` only takes what is already there) ends the wait with `timed_out`; a negative or NaN one is `invalid_input`. An error the watch reports (`fs.receive: <kind>: <path>: <message>`) is returned as `(nil, err)` and the watch goes on. Other tasks run while it waits, as for the long calls (see the module notes).
+	receive: (self: std_fs_Watcher, timeout: number?) -> ({ kind: "create" | "modify" | "remove" | "rename" | "overflow", path: string }?, string?),
+	--- Stop watching: the operating system's watch is released, events not yet received are dropped, and every `receive`, waiting or later, returns `(nil, nil)`. Closing again does nothing.
+	close: (self: std_fs_Watcher) -> (),
+}
+
 export type std_fs_DirEntry = {
 	--- The entry's own name, as the filesystem has it (bytes on Unix, so it may not be UTF-8).
 	file_name: (self: std_fs_DirEntry) -> string,
@@ -178,8 +185,10 @@ export type std_fs = {
 	read_link: (path: string) -> (string?, string?),
 	--- Create the symlink `link` pointing at `target` (stored as given; it need not exist). `already_exists` when `link` exists. On Windows creating a symlink needs the privilege to do so (`permission_denied` otherwise), and the kind of link (file or directory) follows what `target` is when it is created.
 	symlink: (target: string, link: string) -> (boolean?, string?),
-	--- The stable kind inside an error string returned by a `std:fs` function, or `nil` when the string is not one of theirs. Kinds: `not_found`, `permission_denied`, `already_exists`, `not_empty`, `is_directory`, `not_a_directory`, `cross_device`, `invalid_input`, `read_only_filesystem`, `storage_full`, `unsupported`, `too_large`, `other`. They mean the same on every platform; the rest of the message is the operating system's wording and differs.
+	--- The stable kind inside an error string returned by a `std:fs` function, or `nil` when the string is not one of theirs. Kinds: `not_found`, `permission_denied`, `already_exists`, `not_empty`, `is_directory`, `not_a_directory`, `cross_device`, `invalid_input`, `read_only_filesystem`, `storage_full`, `unsupported`, `too_large`, `timed_out`, `other`. They mean the same on every platform; the rest of the message is the operating system's wording and differs.
 	error_kind: (err: string) -> string?,
+	--- Watch the directory `path` for changes and return a `Watcher`; read them with `watcher:receive()`. Option `{ recursive }` watches the whole tree under it (default: only its direct children). It is `not_found` for a missing path and `not_a_directory` for a file. The watch is the operating system's (inotify, FSEvents, ReadDirectoryChangesW), so the directory is not rescanned. Each event is `{ kind, path }`, `path` under the `path` given here. Kinds: `create`, `modify`, `remove`, `rename` (one event per path, the old name and the new name each; they are not paired, and macOS cannot tell which is which: check with `exists`), and `overflow`: changes were lost (more than 4096 waiting, or the system's own buffer overflowed), so rescan; its `path` is the watched directory. Events are not deduplicated or debounced, and one change can be reported as several (FSEvents coalesces: a new file may also show as `modify`). On macOS a change made just before the watch started may also be reported. The watch stops at `watcher:close()`, when the handle is collected, and when the engine shuts down. It waits like `task.wait` (see the module notes): a recursive watch on Linux adds one watch per directory of the tree.
+	watch: (path: string, opts: { recursive: boolean? }?) -> (std_fs_Watcher?, string?),
 }
 
 -- ===== std:io =====

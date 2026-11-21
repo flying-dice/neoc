@@ -336,6 +336,7 @@ async fn hostile_paths_fail_cleanly() {
           assert(fs.read_link(bad) == nil)
           assert(fs.canonicalize(bad) == nil)
           assert(fs.set_permissions(bad, { readonly = true }) == nil)
+          assert(fs.watch(bad) == nil)
         end
         local _, err = fs.write("a\0b", "x")
         assert(fs.error_kind(err) == "invalid_input" and err:find("NUL", 1, true), err)
@@ -574,6 +575,7 @@ async fn the_long_calls_fail_where_luau_refuses_a_yield_and_do_nothing() {
         -- a table.sort comparator
         check(pcall(table.sort, { 1, 2, 3 }, function(a, b) fs.move(p("m"), p("moved")) return a < b end) == false)
         check(pcall(table.sort, { 1, 2, 3 }, function(a, b) fs.walk(dir) return a < b end) == false)
+        check(pcall(string.gsub, "abc", "b", function() fs.watch(dir) return "x" end) == false)
         -- a metamethod
         local meta = setmetatable({}, { __index = function() fs.remove_dir_all(p("tree")) return 1 end })
         check(pcall(function() return meta.anything end) == false)
@@ -603,6 +605,116 @@ async fn error_kind_and_trailing_separators_on_hostile_strings() {
           check(fs.exists(p("real/f")) == true, "the target stays")
           check(ok(fs.symlink_metadata(p("moved"))):is_symlink())
         end
+    "#)
+    .await;
+}
+
+/// Helpers for the watch tests: `next_change(w, kind, path)` reads events until one of `kind` at `path` arrives
+/// (skipping others: a platform may report one change as several), failing after 10 seconds; it never sleeps.
+const WATCH_HELPERS: &str = r#"
+    local Instant = require("std:time").Instant
+    local function next_change(w, kind, at)
+      local started = Instant.now()
+      while started:elapsed():as_secs_f64() < 10 do
+        local ev, err = w:receive(10)
+        check(err == nil, tostring(err))
+        check(ev ~= nil, "the watch ended")
+        if ev.kind == kind and ev.path == at then return ev end
+      end
+      error("no " .. kind .. " event for " .. at)
+    end
+"#;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn watch_reports_create_modify_remove_and_rename_under_the_given_path() {
+    run(&format!(
+        r#"{WATCH_HELPERS}
+        local w = ok(fs.watch(dir))
+        ok(fs.write(p("a"), "1"))
+        next_change(w, "create", p("a"))
+        ok(fs.write(p("a"), "22"))
+        next_change(w, "modify", p("a"))
+        ok(fs.remove_file(p("a")))
+        next_change(w, "remove", p("a"))
+        ok(fs.write(p("b"), "x"))
+        next_change(w, "create", p("b"))
+        ok(fs.rename(p("b"), p("c")))
+        next_change(w, "rename", p("c"))
+        w:close()
+    "#
+    ))
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn watch_sees_subdirectories_only_when_recursive() {
+    run(&format!(
+        r#"{WATCH_HELPERS}
+        ok(fs.create_dir(p("sub")))
+        local flat = ok(fs.watch(dir))
+        local deep = ok(fs.watch(dir, {{ recursive = true }}))
+        ok(fs.write(p("sub/x"), "1"))
+        next_change(deep, "create", p("sub/x"))
+        -- the flat watch reports the marker, and nothing inside sub before it
+        ok(fs.write(p("marker"), "1"))
+        while true do
+          local ev = ok(flat:receive(10))
+          check(ev.path ~= p("sub/x"), "a flat watch reported a change inside a subdirectory")
+          if ev.path == p("marker") then break end
+        end
+        flat:close()
+        deep:close()
+    "#
+    ))
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn closing_a_watch_ends_its_events_and_a_pending_receive() {
+    run(r##"
+        local task = require("std:task")
+        local w = ok(fs.watch(dir))
+        w:close()
+        ok(fs.write(p("after"), "1"))
+        local ev, err = w:receive()
+        check(ev == nil and err == nil, "a closed watch has no events")
+        check(select("#", w:receive(0)) == 2)
+        w:close() -- again: nothing
+
+        local waiting = ok(fs.watch(dir))
+        local t = task.spawn(function() return waiting:receive() end)
+        waiting:close()
+        local got, why = t:await()
+        check(got == nil and why == nil, "the close ended the wait: " .. tostring(why))
+    "##)
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn watch_refuses_what_it_cannot_watch() {
+    run(r#"
+        fails("not_found", fs.watch(p("nope")))
+        local _, err = fs.watch(p("nope"))
+        check(err:find("^fs%.watch: not_found: "), err)
+        ok(fs.write(p("f"), "x"))
+        fails("not_a_directory", fs.watch(p("f")))
+        fails("invalid_input", fs.watch("a\0b"))
+        fails("invalid_input", fs.watch(("x"):rep(5000)))
+        fails("invalid_input", fs.watch(dir, { recursiv = true }))
+        fails("invalid_input", fs.watch(dir, { recursive = "yes" }))
+
+        local w = ok(fs.watch(dir))
+        -- once what is already queued is taken (FSEvents may report a change from just before the watch started)
+        local ev, late = w:receive(0)
+        for _ = 1, 100 do
+          if ev == nil then break end
+          ev, late = w:receive(0)
+        end
+        check(fs.error_kind(late) == "timed_out" and late:find("^fs%.receive: timed_out: "), late)
+        fails("invalid_input", w:receive(-1))
+        fails("invalid_input", w:receive(0 / 0))
+        check(not pcall(w.receive, w, "soon"), "a wrong type raises")
+        w:close()
     "#)
     .await;
 }

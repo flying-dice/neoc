@@ -131,6 +131,11 @@ futures = { version = "0.3", default-features = false, features = ["std"] }
 # a dependency bump.
 tera = { version = "1.20", default-features = false }
 walkdir = "2"
+# Native directory watching (inotify on Linux, FSEvents on macOS, ReadDirectoryChangesW on Windows) backing
+# `fs.watch` in `std:fs`. The blessed.rs crate for it, also the vos host's dev reload (`vos-lua`, same version
+# through the workspace). 9.0 at least: 8.2's FSEvents callback panics on a path that is not UTF-8 (a FAT32
+# volume reports one), and its `stop()` spins for ever once that thread is dead (notify-rs #790, 9.0's changelog).
+notify = "9.0"
 
 # `lib:args` parses script argv with clap's builder API (`Arg`, `Command`,
 # `value_parser`) — the runtime arg-parser, not a CLI tree. `derive` is the

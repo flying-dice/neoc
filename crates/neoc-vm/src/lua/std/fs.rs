@@ -3,9 +3,10 @@
 //! The surface follows `std::fs`: `read`, `write`, `open`, `create_dir`, `create_dir_all`, `metadata`,
 //! `symlink_metadata`, `read_dir`, `copy`, `rename`, `remove_file`, `remove_dir`, `remove_dir_all`,
 //! `canonicalize`, `read_link`, `symlink`, `set_permissions`, and `exists`; plus what Rust leaves to crates:
-//! `walk` (a recursive listing), `copy_dir` (a recursive copy) and `move` (a rename that survives a filesystem
-//! boundary), and `error_kind`. Paths are Lua strings; on Unix they are bytes (a name `read_dir` returns can
-//! always be passed back), elsewhere they must be UTF-8. `std:path` has the text-only path helpers.
+//! `walk` (a recursive listing), `copy_dir` (a recursive copy), `move` (a rename that survives a filesystem
+//! boundary), `watch` (the changes inside a directory, as the operating system reports them) and `error_kind`.
+//! Paths are Lua strings; on Unix they are bytes (a name `read_dir` returns can always be passed back), elsewhere
+//! they must be UTF-8. `std:path` has the text-only path helpers.
 //!
 //! Conventions, the same for every function:
 //!
@@ -13,18 +14,20 @@
 //!   <message>`, with a stable `kind` (see [`error::Kind`], read it with `error_kind`). A wrong argument type is
 //!   a Lua error, as everywhere in the VM (`open` is the exception for its options table: a missing or
 //!   mistyped `path` or `mode` is `invalid_input`).
-//! - **Options are tables of booleans or counts** (`missing_ok`, `max_depth`); an unknown name, or a value of the
+//! - **Options are tables of booleans or counts** (`missing_ok`, `max_depth`, `recursive`); an unknown name, or a value of the
 //!   wrong type, is `invalid_input` rather than being ignored, so a typo cannot silently change what a call does.
 //! - **Rust's behaviour where Rust has the function.** `copy` and `rename` replace an existing destination file
 //!   (and `write` replaces its content). `copy_dir` refuses an existing destination instead of merging.
 //!   Symlinks found inside a tree are not followed while walking, copying or removing it (the path a script names
 //!   is: `walk` and `copy_dir` resolve a symlink given as their root, `remove_dir_all` refuses one); see [`ops`].
-//! - **Calls that can run for long wait; the rest run in place.** `copy`, `copy_dir`, `move`, `remove_dir_all`
-//!   and `walk` do their work on the blocking pool (a `Role::Wait`, like a network call): the call waits, and
-//!   an embedder can run other calls meanwhile. Luau refuses a yield inside a metamethod, a `table.sort`
-//!   comparator or a `string.gsub` callback, so these five fail with the yield error when called from one of them, and do nothing: the job starts only once the
-//!   call has really suspended (`tests::the_long_calls_fail_where_luau_refuses_a_yield`). Every other function
-//!   is one system call (or one directory listing) and runs in place, as `read` and `write` always did.
+//! - **Calls that can run for long wait; the rest run in place.** `copy`, `copy_dir`, `move`, `remove_dir_all`,
+//!   `walk` and `watch` do their work on the blocking pool (a `Role::Wait`, like a network call): the call waits,
+//!   and an embedder can run other calls meanwhile. Luau refuses a yield inside a metamethod, a `table.sort`
+//!   comparator or a `string.gsub` callback, so these six fail with the yield error when called from one of them,
+//!   and do nothing: the job starts only once the call has really suspended
+//!   (`tests::the_long_calls_fail_where_luau_refuses_a_yield`). `Watcher:receive` waits for the operating system
+//!   the same way (and fails there too when it would have to wait). Every other function is one system call (or
+//!   one directory listing) and runs in place, as `read` and `write` always did.
 //! - **Not a sandbox.** Any path the host process can reach is reachable.
 //!
 //! Platform differences, the ones a script can meet (each function's doc says which it is subject to):
@@ -52,6 +55,7 @@
 
 pub mod error;
 pub mod ops;
+mod watch;
 
 use std::ffi::OsStr;
 use std::io::{BufReader, BufWriter};
@@ -76,6 +80,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 const MISSING_OK: &[&str] = &["missing_ok"];
 const WALK_OPTIONS: &[&str] = &["max_depth"];
 const PERMISSION_OPTIONS: &[&str] = &["mode", "readonly"];
+const WATCH_OPTIONS: &[&str] = &["recursive"];
 
 /// Declares the `std:fs` surface through the facade: every function is a fallible one (except `error_kind`), so each
 /// is registered (with its `fs.<name>` tracing span and the `(nil, err)` shape) and recorded for the definitions in
@@ -87,6 +92,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     declare_directories(&mut m)?;
     declare_tree_operations(&mut m)?;
     declare_links_and_errors(&mut m)?;
+    declare_watch(&mut m)?;
     declare_types(&mut m);
 
     Ok(m)
@@ -312,13 +318,33 @@ fn declare_links_and_errors(m: &mut Module<'_>) -> mlua::Result<()> {
     m.func(
         "error_kind",
         &[("err", "string")],
-        "The stable kind inside an error string returned by a `std:fs` function, or `nil` when the string is not one of theirs. Kinds: `not_found`, `permission_denied`, `already_exists`, `not_empty`, `is_directory`, `not_a_directory`, `cross_device`, `invalid_input`, `read_only_filesystem`, `storage_full`, `unsupported`, `too_large`, `other`. They mean the same on every platform; the rest of the message is the operating system's wording and differs.",
+        "The stable kind inside an error string returned by a `std:fs` function, or `nil` when the string is not one of theirs. Kinds: `not_found`, `permission_denied`, `already_exists`, `not_empty`, `is_directory`, `not_a_directory`, `cross_device`, `invalid_input`, `read_only_filesystem`, `storage_full`, `unsupported`, `too_large`, `timed_out`, `other`. They mean the same on every platform; the rest of the message is the operating system's wording and differs.",
         |_, err: mlua::LuaString| Ok(error::kind_of(&err.to_string_lossy()).map(str::to_owned)),
     )?;
     Ok(())
 }
 
-/// Records the two result types (the runtime registration is their `impl UserData`).
+fn declare_watch(m: &mut Module<'_>) -> mlua::Result<()> {
+    m.try_async_func(
+        "watch",
+        &[("path", "string"), ("opts", "{ recursive: bool? }?")],
+        "Watch the directory `path` for changes and return a `Watcher`; read them with `watcher:receive()`. Option `{ recursive }` watches the whole tree under it (default: only its direct children). It is `not_found` for a missing path and `not_a_directory` for a file. The watch is the operating system's (inotify, FSEvents, ReadDirectoryChangesW), so the directory is not rescanned. Each event is `{ kind, path }`, `path` under the `path` given here. Kinds: `create`, `modify`, `remove`, `rename` (one event per path, the old name and the new name each; they are not paired, and macOS cannot tell which is which: check with `exists`), and `overflow`: changes were lost (more than 4096 waiting, or the system's own buffer overflowed), so rescan; its `path` is the watched directory. Events are not deduplicated or debounced, and one change can be reported as several (FSEvents coalesces: a new file may also show as `modify`). On macOS a change made just before the watch started may also be reported. The watch stops at `watcher:close()`, when the handle is collected, and when the engine shuts down. It waits like `task.wait` (see the module notes): a recursive watch on Linux adds one watch per directory of the tree.",
+        |lua, (path, opts): (Path1, Option<Table>)| {
+            let parsed = path_of(&path).and_then(|path| {
+                let recursive = read_options(opts.as_ref(), WATCH_OPTIONS)?.flag("recursive")?.unwrap_or(false);
+                Ok((path, recursive))
+            });
+            async move {
+                let (path, recursive) = parsed?;
+                let started = blocking(move |_| watch::start(path, recursive)).await?;
+                Ok::<_, FsError>(started.register(&lua))
+            }
+        },
+    )?;
+    Ok(())
+}
+
+/// Records the result types (the runtime registration is their `impl UserData`).
 fn declare_types(m: &mut Module<'_>) {
     m.userdata("Metadata", |t| {
         t.method("kind", &[], "string", "`\"file\"`, `\"dir\"`, `\"symlink\"` (only from `symlink_metadata`) or `\"other\"`.")
@@ -331,6 +357,20 @@ fn declare_types(m: &mut Module<'_>) {
             .method("created", &[], "number?", "Creation (birth) time, seconds since the Unix epoch; `nil` where the platform or filesystem does not record it.")
             .method("accessed", &[], "number?", "Last access, seconds since the Unix epoch; `nil` if unavailable (and unreliable: many filesystems do not update it).")
             .method("mode", &[], "number?", "The Unix permission bits (`0o644` is `420`); `nil` on Windows.");
+    });
+    m.userdata("Watcher", |t| {
+        t.method(
+            "receive",
+            &[("timeout", "number?")],
+            "Result<{ kind: \"create\" | \"modify\" | \"remove\" | \"rename\" | \"overflow\", path: string }, string>",
+            "Wait for the next change and return it as `{ kind, path }` (see `fs.watch`). Once the watcher is closed it returns `(nil, nil)`, also to a call already waiting. `timeout` (seconds; `nil` or `math.huge` waits for ever, `0` only takes what is already there) ends the wait with `timed_out`; a negative or NaN one is `invalid_input`. An error the watch reports (`fs.receive: <kind>: <path>: <message>`) is returned as `(nil, err)` and the watch goes on. Other tasks run while it waits, as for the long calls (see the module notes).",
+        )
+        .method(
+            "close",
+            &[],
+            "()",
+            "Stop watching: the operating system's watch is released, events not yet received are dropped, and every `receive`, waiting or later, returns `(nil, nil)`. Closing again does nothing.",
+        );
     });
     m.userdata("DirEntry", |t| {
         t.method("file_name", &[], "string", "The entry's own name, as the filesystem has it (bytes on Unix, so it may not be UTF-8).")
