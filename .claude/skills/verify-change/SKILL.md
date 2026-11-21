@@ -66,7 +66,7 @@ node e2e/tools/session.mjs stop me                # then stop the host
 ```
 
 With the Vite dev server instead (`bun run dev`: host on :7400, client on :5173 with hot reload) point the session at
-`http://127.0.0.1:5173/` and pair with the code the host prints; rebuild an app with `bun run build:apps` and the host reloads its
+`http://localhost:5173/` and pair with the code the host prints; rebuild an app with `bun run build:apps` and the host reloads its
 VM. A fresh `VOS_DATA` keeps your own `~/.vos` untouched; another code any time: `bun run host pair` with the same
 `VOS_DATA`. URL param: `theme=light|dark`.
 

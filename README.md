@@ -97,6 +97,6 @@ own Luau ones).
 ## vos
 
 `bun run dev` starts the host on :7400 and the client on :5173. The host prints a pairing code; open
-<http://127.0.0.1:5173>, enter it, and open Discover to install apps. `apps/calculator` and `apps/agents` are the reference
+<http://localhost:5173>, enter it, and open Discover to install apps. `apps/calculator` and `apps/agents` are the reference
 apps. Data lives under `~/.vos` (`VOS_DATA` overrides it); settings come from `vos.toml` and `VOS_*` variables (the table is in
 `crates/vos-host/src/config.rs`).

@@ -64,7 +64,7 @@ diff touches none of `crates/vos-*`, `apps/`, `client/`, `packages/`, `e2e/` and
 install scripts and the toolchain pin) and leaves alone `neoc-vm`'s embedding API and sandbox (`lifecycle`, `script_env`,
 `modules`, `sandbox`), which the vos Lua adapter embeds. Anything else, and every change before a merge that touches vos, runs the
 full `bun run gate`. e2e needs a Mac (the screenshot baselines are macOS-only); `VOS_PORT_BASE=9100` runs it in a second
-worktree beside another run.
+worktree beside another run. Leave `VOS_DATA` unset for it: the e2e host uses its own data directory under `test-results/host/`, and an override breaks the specs that read `mcp.json` there.
 
 **Missing tools fail, they do not skip.** `bun run gate` sets `VOS_GATE=1` and `NEOC_REQUIRE_LUAU_LSP=1` for every step, and
 `scripts/check-neoc.sh` sets `NEOC_REQUIRE_LUAU_LSP=1` itself. Both switches stay, with their old meaning:
