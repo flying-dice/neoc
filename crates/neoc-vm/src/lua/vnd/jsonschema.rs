@@ -34,7 +34,8 @@
 //!
 //! A value with no JSON encoding (a function, userdata) makes `is_valid`
 //! raise, while `validate` returns a result with `ok() == false` and an
-//! `invalid input: …` error.
+//! `invalid input: …` error. A buffer makes both raise: it is never turned
+//! into an array of numbers (see `serde_guard`).
 //!
 //! `value` may be any Lua value — table, string, number, bool, nil — and
 //! is converted to `serde_json::Value` via `serde_json::to_value` before validating.
@@ -46,6 +47,7 @@ use serde_json::Value as JV;
 
 use crate::lua::facade::Module;
 use crate::lua::sandbox::{from_err, ok};
+use crate::lua::serde_guard::refuse_buffer;
 
 /// Compiled schema, shareable across coroutines via `Arc`.
 pub struct JSchema {
@@ -64,11 +66,13 @@ impl UserData for JSchema {
         methods.add_method("is_valid", |_, this, value: Value| {
             // Surface a conversion failure rather than masquerading it as
             // "invalid" — a non-encodable input is a caller bug, not a schema miss.
+            refuse_buffer(&value, "jsonschema.Schema.is_valid")?;
             let jv = lua_value_to_jv(&value)?;
             Ok(this.inner.is_valid(&jv))
         });
 
         methods.add_method("validate", |_, this, value: Value| {
+            refuse_buffer(&value, "jsonschema.Schema.validate")?;
             let jv = match lua_value_to_jv(&value) {
                 Ok(v) => v,
                 Err(e) => {

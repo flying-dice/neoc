@@ -31,7 +31,10 @@
 //!
 //! Closures can't move between VMs (Lua functions are tied to their
 //! originating VM's bytecode + upvalues), so workers always start from a
-//! source string. Messages and args travel as `serde_json::Value`.
+//! source string. Messages, args and a worker's return value travel as
+//! `serde_json::Value`; a buffer among them is refused (`spawn` and `send`
+//! raise, a worker's return value makes `await` return `(nil, error)`), never
+//! turned into an array of numbers.
 //!
 //! Forgotten workers are aborted on `WorkerHandle` drop so they don't leak
 //! the tokio task indefinitely.
@@ -49,6 +52,7 @@ use crate::lua::facade::Module;
 use crate::lua::lib::log::{LogFn, log_sink, set_log_sink};
 use crate::lua::lifecycle::{Life, Role, async_method};
 use crate::lua::sandbox::{WorkerEngineFn, from_err, load_source, ok, worker_engine_builder};
+use crate::lua::serde_guard::{BUFFER_REFUSED, contains_buffer, refuse_buffer};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(declare(lua)?.into_table())
@@ -316,16 +320,17 @@ struct SpawnConfig {
     shared: Vec<SharedEntry>,
 }
 
-/// Parse and validate every `spawn` option, failing fast with a stringified
-/// error the caller maps under `thread.spawn`.
-fn prepare_spawn(opts: &Table) -> Result<SpawnConfig, String> {
+/// Parse and validate every `spawn` option except `args` (read by `spawn`
+/// first, so a buffer in it raises), failing fast with a stringified error the
+/// caller maps under `thread.spawn`.
+fn prepare_spawn(opts: &Table, args: &Value) -> Result<SpawnConfig, String> {
     let (source, default_name) = read_source(opts)?;
     let name = opts
         .get::<Option<String>>("name")
         .ok()
         .flatten()
         .unwrap_or(default_name);
-    let args = read_args(opts)?;
+    let args = serde_json::to_value(args).map_err(|e| e.to_string())?;
     let shared = read_shared(opts)?;
     tokio::runtime::Handle::try_current().map_err(|_| "no tokio runtime in scope".to_string())?;
     Ok(SpawnConfig {
@@ -338,12 +343,20 @@ fn prepare_spawn(opts: &Table) -> Result<SpawnConfig, String> {
 
 #[instrument(name = "thread.spawn", target = "lua::lib::thread", skip_all)]
 fn spawn(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
+    // `args` is one value (any JSON-encodable Lua value, a table for "named"
+    // args) that arrives in the worker as the first vararg, as Node's
+    // `workerData` does
+    let args = match opt::<Value>(&opts, "args") {
+        Ok(args) => args.unwrap_or(Value::Nil),
+        Err(e) => return from_err(lua, "thread.spawn", e),
+    };
+    refuse_buffer(&args, "thread.spawn")?;
     let SpawnConfig {
         source,
         name,
         args,
         shared,
-    } = match prepare_spawn(&opts) {
+    } = match prepare_spawn(&opts, &args) {
         Ok(c) => c,
         Err(e) => return from_err(lua, "thread.spawn", e),
     };
@@ -414,18 +427,6 @@ fn read_source(opts: &Table) -> Result<(String, String), String> {
     Err("opts must specify either `source` or `file`".into())
 }
 
-/// `args` is passed as a *single* value (any JSON-encodable Lua value) and
-/// arrives in the worker as the first vararg, matching Node's `workerData`
-/// convention. Pass a table for "named" args.
-fn read_args(opts: &Table) -> Result<serde_json::Value, String> {
-    match opt::<Value>(opts, "args")? {
-        Some(v) => serde_json::to_value(&v)
-            .map_err(mlua::Error::external)
-            .map_err(|e| e.to_string()),
-        None => Ok(serde_json::Value::Null),
-    }
-}
-
 /// Read the optional `shared = {…}` table from spawn options.
 /// Validates that every value is a Sendable userdata at spawn time.
 fn read_shared(opts: &Table) -> Result<Vec<SharedEntry>, String> {
@@ -479,6 +480,10 @@ async fn run_worker(
         .set_name(&name)
         .call_async(arg_value)
         .await?;
+    // reaches the parent as `(nil, "thread.await: <BUFFER_REFUSED>")`
+    if contains_buffer(&result)? {
+        return Err(mlua::Error::external(BUFFER_REFUSED));
+    }
     serde_json::to_value(&result).map_err(mlua::Error::external)
 }
 
@@ -509,7 +514,7 @@ impl Drop for WorkerInner {
 impl UserData for WorkerHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("send", |_, this, v: Value| {
-            send_json(&this.inner.tx, v, "thread.send: worker has exited")
+            send_json(&this.inner.tx, v, "thread.send", "worker has exited")
         });
 
         async_method(methods, "receive", Role::Wait, |lua, this, (): ()| {
@@ -559,7 +564,7 @@ pub struct Channel {
 impl UserData for Channel {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("send", |_, this, v: Value| {
-            send_json(&this.tx, v, "channel.send: peer has exited")
+            send_json(&this.tx, v, "channel.send", "peer has exited")
         });
 
         async_method(methods, "receive", Role::Wait, |lua, this, (): ()| {
@@ -572,15 +577,18 @@ impl UserData for Channel {
     }
 }
 
-/// Encode `v` and push onto `tx`. `err_msg` is wrapped in the same
-/// `mlua::Error::external` envelope used by every direct caller.
+/// Encode `v` and push onto `tx`, raising `"<prefix>: <BUFFER_REFUSED>"` for a
+/// buffer and `"<prefix>: <closed>"` once the peer is gone.
 fn send_json(
     tx: &mpsc::UnboundedSender<serde_json::Value>,
     v: Value,
-    err_msg: &'static str,
+    prefix: &str,
+    closed: &str,
 ) -> mlua::Result<()> {
+    refuse_buffer(&v, prefix)?;
     let json = serde_json::to_value(&v).map_err(mlua::Error::external)?;
-    tx.send(json).map_err(|_| mlua::Error::external(err_msg))?;
+    tx.send(json)
+        .map_err(|_| mlua::Error::external(format!("{prefix}: {closed}")))?;
     Ok(())
 }
 

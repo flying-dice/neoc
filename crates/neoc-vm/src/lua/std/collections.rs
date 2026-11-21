@@ -30,6 +30,7 @@ use parking_lot::RwLock;
 use crate::lua::facade::Module;
 use crate::lua::lifecycle::{Role, async_method, idle};
 use crate::lua::sandbox::i64_to_lua;
+use crate::lua::serde_guard::refuse_buffer;
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(declare(lua)?.into_table())
@@ -166,6 +167,7 @@ impl crate::lua::std::thread::Sendable for Map {
 impl UserData for Map {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("set", |_, this, (k, v): (String, Value)| {
+            refuse_buffer(&v, "collections.Map.set")?;
             let json = serde_json::to_value(&v).map_err(mlua::Error::external)?;
             this.0.inner.write().insert(k, json);
             Ok(())
