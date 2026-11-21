@@ -93,4 +93,24 @@ describe("quick_xml", function()
         end)
     end)
 
+    -- a buffer (refused, never turned into an array of numbers) ----------------
+
+    describe("a buffer", function()
+        local refused = "a buffer cannot be serialized; convert it explicitly first"
+
+        test("encode refuses one", function()
+            local ok, err = pcall(quick_xml.encode, { root = { data = buffer.create(2) } })
+            expect(ok).toBe(false)
+            expect(tostring(err)).toContain("quick_xml.encode: " .. refused)
+        end)
+
+        test("encode_to refuses one and writes nothing", function()
+            local writer, _ = fs.open({ path = ".tmp/xml_buffer.xml", mode = "w" })
+            local ok, err = pcall(quick_xml.encode_to, { root = { data = buffer.create(2) } }, writer)
+            expect(ok).toBe(false)
+            expect(tostring(err)).toContain("quick_xml.encode_to: " .. refused)
+            writer:flush()
+            expect(fs.read(".tmp/xml_buffer.xml")).toBe("")
+        end)
+    end)
 end)

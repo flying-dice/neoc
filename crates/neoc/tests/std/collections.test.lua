@@ -82,6 +82,14 @@ describe("collections", function()
             m1:set("k", "from_a")
             expect(m2:get("k")).toBeNil()
         end)
+
+        test("set refuses a buffer, never storing it as an array of numbers", function()
+            local m = Map.new()
+            local ok, err = pcall(m.set, m, "k", { data = buffer.create(2) })
+            expect(ok).toBe(false)
+            expect(tostring(err)).toContain("collections.Map.set: a buffer cannot be serialized; convert it explicitly first")
+            expect(m:get("k")).toBeNil()
+        end)
     end)
 
     -- counter ------------------------------------------------------------------

@@ -607,6 +607,10 @@ impl AppVm {
             &lua,
             Arc::new(move |life| {
                 let lua = make_bare_engine()?;
+                // the engine opens Luau's `buffer`, which the app's environment does not copy in
+                // (`GLOBALS_NOT_FOR_APPS`): a worker runs on the engine's own globals, so it is removed here too,
+                // until apps are offered `buffer` (NEOC-44), workers alike (Decision NEOC-292)
+                lua.globals().raw_remove("buffer")?;
                 install_runtime_state(&lua, life);
                 neoc_vm::lua::modules::install_allowed(&lua, &worker_offered)?;
                 Ok(lua)

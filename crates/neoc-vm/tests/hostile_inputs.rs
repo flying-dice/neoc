@@ -95,6 +95,8 @@ const POOL: &str = r#"
         -- (`lib:template` refuses the second and catches the first)
         "{{ (0 - 9223372036854775807 - 1) % -1 }}",
         "{% macro m() %}1{% endmacro m %}{{ 1 + self::m() }}{% if self::m() > 0 %}a{% endif %}",
+        -- Luau buffers: alone, empty, and inside a table (a serializer must refuse one, never panic on it)
+        buffer.create(8), buffer.create(0), { b = buffer.fromstring("ab") },
     }
 "#;
 
@@ -119,7 +121,9 @@ const DEEP: &str = r#"
 
 /// A reduced pool (indices into [`POOL`]) for three-argument combinations and for the methods of handles:
 /// `1`, `-1`, `2^63`, `-2^63`, `1e300`, NaN; `""`, `"a\0b"`, `"&ÜÜÜÜÜÜÜÜ;"`, invalid UTF-8 cut mid-character;
-/// `{}`, `{ 1, 2, 3 }`, `{ a = 1 }`; and the options tables with `1e300`, `2^63` and NaN under every name.
+/// `{}`, `{ 1, 2, 3 }`, `{ a = 1 }`; and the options tables with `1e300`, `2^63` and NaN under every name. (The
+/// buffers at the end of [`POOL`] are not in it: every function and method gets each of them alone, and adding one
+/// here would grow the pairs, and the handles they fill, by an eighth.)
 const SMALL_POOL: &[usize] = &[4, 5, 15, 16, 18, 22, 26, 27, 32, 38, 39, 40, 41, 52, 53, 56];
 
 static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);

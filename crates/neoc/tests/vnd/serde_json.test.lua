@@ -233,4 +233,33 @@ describe("serde_json", function()
         end)
     end)
 
+    -- a buffer (refused, never turned into an array of numbers) ----------------
+
+    describe("a buffer", function()
+        local refused = "a buffer cannot be serialized; convert it explicitly first"
+
+        test("to_string and to_string_pretty refuse one anywhere in the value", function()
+            local ok, err = pcall(serde_json.to_string, { data = { buffer.fromstring("ab") } })
+            expect(ok).toBe(false)
+            expect(tostring(err)).toContain("serde_json.to_string: " .. refused)
+            ok, err = pcall(serde_json.to_string_pretty, buffer.create(2))
+            expect(ok).toBe(false)
+            expect(tostring(err)).toContain("serde_json.to_string_pretty: " .. refused)
+        end)
+
+        test("to_writer refuses one and writes nothing", function()
+            local writer, _ = fs.open({ path = ".tmp/json_buffer.json", mode = "w" })
+            local ok, err = pcall(serde_json.to_writer, { data = buffer.create(2) }, writer)
+            expect(ok).toBe(false)
+            expect(tostring(err)).toContain("serde_json.to_writer: " .. refused)
+            writer:flush()
+            expect(fs.read(".tmp/json_buffer.json")).toBe("")
+        end)
+
+        test("the text of a buffer encodes as a string", function()
+            local out, err = serde_json.to_string({ data = buffer.tostring(buffer.fromstring("ab")) })
+            expect(err).toBeNil()
+            expect(out).toBe('{"data":"ab"}')
+        end)
+    end)
 end)

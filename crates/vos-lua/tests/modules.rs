@@ -326,6 +326,23 @@ async fn a_worker_is_refused_what_its_app_is_refused() {
     vm.shutdown();
 }
 
+/// `neoc run` scripts have Luau's `buffer` (NEOC-206); an app does not yet, in its environment or in a worker it
+/// starts (a worker runs on the engine's own globals, where the engine opened it). NEOC-44 offers it to both.
+#[tokio::test]
+async fn an_app_and_its_workers_are_not_offered_buffer_yet() {
+    let src = r#"
+        local thread = require("std:thread")
+        app.tool { name = "probe", run = function()
+          local worker = thread.spawn { source = "return type(buffer)" }
+          return { app = type(buffer), worker = worker:await() }
+        end }
+    "#;
+    let vm = load(src).await;
+    let out = vm.call_tool("probe", json!({}), &agent_ctx(0), false).await.unwrap();
+    assert_eq!(out, json!({ "app": "nil", "worker": "nil" }));
+    vm.shutdown();
+}
+
 // ---- tasks and servers take their turn ---------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

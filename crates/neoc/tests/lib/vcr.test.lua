@@ -123,4 +123,32 @@ describe("vcr", function()
         end)
     end)
 
+    -- a buffer (refused, never recorded as an array of numbers) ----------------
+
+    describe("a buffer", function()
+        local refused = "a buffer cannot be serialized; convert it explicitly first"
+
+        test("record refuses one in the arguments before the function runs", function()
+            local tape = vcr.cassette({ path = ".tmp/vcr_buffer_args.json", mode = "record" })
+            local called = false
+            local echo = tape:wrap("echo", function(x)
+                called = true
+                return x
+            end)
+            local ok, err = pcall(echo, buffer.create(2))
+            expect(ok).toBe(false)
+            expect(tostring(err)).toContain("vcr.record: " .. refused)
+            expect(called).toBe(false)
+        end)
+
+        test("record refuses one in the result", function()
+            local tape = vcr.cassette({ path = ".tmp/vcr_buffer_result.json", mode = "record" })
+            local give = tape:wrap("give", function()
+                return { data = buffer.create(2) }
+            end)
+            local ok, err = pcall(give)
+            expect(ok).toBe(false)
+            expect(tostring(err)).toContain("vcr.record: " .. refused)
+        end)
+    end)
 end)

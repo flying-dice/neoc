@@ -138,4 +138,19 @@ describe("jsonschema", function()
         end)
     end)
 
+    -- a buffer (refused, never validated as an array of numbers) ---------------
+
+    describe("a buffer", function()
+        local refused = "a buffer cannot be serialized; convert it explicitly first"
+
+        test("is_valid and validate refuse one", function()
+            local s = assert(jsonschema.compile('{"type":"object"}'))
+            local ok, err = pcall(s.is_valid, s, { data = buffer.create(2) })
+            expect(ok).toBe(false)
+            expect(tostring(err)).toContain("jsonschema.Schema.is_valid: " .. refused)
+            ok, err = pcall(s.validate, s, { data = buffer.create(2) })
+            expect(ok).toBe(false)
+            expect(tostring(err)).toContain("jsonschema.Schema.validate: " .. refused)
+        end)
+    end)
 end)

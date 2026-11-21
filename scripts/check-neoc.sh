@@ -34,6 +34,7 @@ cargo run -p neoc -- run \
   "crates/neoc/tests/std/*.test.lua" \
   "crates/neoc/tests/std/task.spec.lua" \
   "crates/neoc/tests/app.test.lua" \
+  "crates/neoc/tests/buffer.test.lua" \
   "crates/neoc/tests/vnd/hyper.test.lua" \
   "crates/neoc/tests/vnd/jsonschema.test.lua" \
   "crates/neoc/tests/vnd/quick_xml.test.lua" \
