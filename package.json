@@ -30,7 +30,8 @@
     "test:e2e:update": "bun scripts/storybooks.ts build && playwright test --update-snapshots",
     "storybooks": "bun scripts/storybooks.ts",
     "gate": "bun scripts/pre-pr.ts",
-    "gate:neoc": "bash scripts/check-neoc.sh"
+    "gate:neoc": "bash scripts/check-neoc.sh",
+    "slow": "bash scripts/check-slow.sh"
   },
   "trustedDependencies": [
     "esbuild"

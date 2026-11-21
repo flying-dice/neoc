@@ -34,21 +34,24 @@ exactly as written. GitHub Actions is not a gate.
 
 ```sh
 bun run gate           # the neoc checks, then the vos checks
+bun run gate --no-e2e  # the same without e2e (only where the e2e rule in CLAUDE.md allows it)
 bun run gate:neoc      # the scoped gate (= scripts/check-neoc.sh): a change confined to the neoc crates
+bun run slow           # the slow suites (= scripts/check-slow.sh): opt-in, not part of the gate
 ```
+
+The gate is fast on purpose: iteration speed is a requirement ([CLAUDE.md](CLAUDE.md#workflow)). Warm, `bun run gate:neoc` takes
+about two minutes, the vos half without e2e about two, and e2e about five. Whatever takes minutes is in `bun run slow`.
 
 **`bun run gate`** (`scripts/pre-pr.ts`) runs, stopping at the first failure:
 
 1. `scripts/check-neoc.sh`, the neoc checks:
    - `cargo fmt --check`
    - `cargo clippy --workspace --all-targets -- -D warnings`
-   - `cargo test -p neoc -p neoc-vm`
+   - `cargo test -p neoc -p neoc-vm` (the `hostile_inputs` sweep runs in its quick size; ignored tests do not run)
    - the Lua suites with `neoc run` (`crates/neoc/tests/lib`, `std`, `std/task.spec.lua`, `app.test.lua` and the `vnd` suites that
      need no Docker; `sqlx_mysql`, `sqlx_postgres` and `testcontainers_modules` need a daemon: with Docker running, run every
      suite with `neoc run 'crates/neoc/tests/**/*.test.lua' 'crates/neoc/tests/**/*.spec.lua'`)
-   - `cargo test --release -p neoc-vm --test abort_regressions`
-   - `cargo bench -p neoc-vm --features bench --bench lib --bench vnd -- --test` (the bench smoke: compiles every bench and
-     runs each body once, no timing)
+   - `cargo check -p neoc-vm --features bench --benches --locked` (the benches keep compiling; their bodies run under `bun run slow`)
    - `scripts/check-toolchain-pin.sh`
    - `cargo deny check`
    - `cargo run -p neoc-vm --example luau_decls -- --check`
@@ -57,7 +60,20 @@ bun run gate:neoc      # the scoped gate (= scripts/check-neoc.sh): a change con
    - `cargo check --workspace --all-targets --locked`
 2. the vos checks: `bun run lint`, `bun run typecheck`, `bun run test`, `bun run test:e2e`.
 
-`bun run gate --neoc` and `--vos` run one half (for a loop; the gate before a PR is both).
+`bun run gate --neoc` and `--vos` run one half (for a loop; the gate before a PR is both), and `--no-e2e` leaves out `test:e2e`.
+
+**When e2e is required** (and when `--no-e2e` is enough): see "The e2e rule" in [CLAUDE.md](CLAUDE.md#the-gate), the one place
+it is stated.
+
+**The slow suites** (`bun run slow`, `scripts/check-slow.sh`) are opt-in: the full `hostile_inputs` sweep and the 60 000-macro
+ring test (`neoc-vm`), the full case counts of the generated-tree properties (`vos-domain`), `cargo test --release -p neoc-vm
+--test abort_regressions` (the release build proves a default 2 MiB thread survives; the debug run is in the gate) and the bench
+bodies (`cargo bench -p neoc-vm --features bench --bench lib --bench vnd -- --test`). A test too slow for the gate is
+`#[ignore = "slow: ..."]`, and the script runs exactly those (found by that reason, not every ignored test; it stops on an
+ignored test that is neither `slow:` nor on its `NOT_SLOW` list, and `bash scripts/check-slow.sh --list` shows the selection
+without running it). Run it before a PR that changes what they
+guard, not for every change and never in a review or a fix round. No mutation testing: nobody edits code to watch a test fail,
+reverts a fix, or loops a test to prove it is not flaky.
 
 **Which one.** `bun run gate:neoc` needs Rust, `cargo-deny` and `luau-lsp`, and neither `bun` nor `darklua`. Use it only when the
 diff touches none of `crates/vos-*`, `apps/`, `client/`, `packages/`, `e2e/` and `scripts/` (apart from `check-neoc.sh`, `check-no-vos-leak.sh`, the
@@ -79,7 +95,8 @@ there is no Homebrew formula).
 
 `abort_regressions` holds every case to `neoc_vm::VM_THREAD_STACK` (8 MiB) of stack in a debug build, which is what `neoc run`
 and an embedder that follows `lifecycle.rs` give a thread that polls the VM, and to tokio's default 2 MiB in a release build;
-the release run is a separate step because it is the one that proves a default-size thread survives. Building Luau needs a C++
+the release run is in `bun run slow` because it is the one that proves a default-size thread survives, and a release build of the
+crate costs minutes. Building Luau needs a C++
 compiler (`mlua-sys` compiles it).
 
 The Luau declarations: `luau_decls -- --check` fails when `types/neoc.d.luau` (the generated declarations of every module, one
@@ -104,10 +121,10 @@ release-binary cross builds and the Docker image build. It is not a gate and is 
 `main` is the only long-lived branch.
 
 1. Branch from `main`: `issues/NEOC-<n>-<slug>` (e.g. `issues/NEOC-6-std-task`). Nothing is pushed to `main` directly.
-2. Run the [pre-PR checks](#pre-pr-checks) locally (`bun run gate`, or `bun run gate:neoc` for a change confined to the neoc crates).
+2. Run the [pre-PR checks](#pre-pr-checks) locally (`bun run gate`, `bun run gate --no-e2e` when e2e is not required, or `bun run gate:neoc` for a change confined to the neoc crates). Small PRs are preferred over long-lived branches.
 3. Open the PR into `main` (a draft is fine). One module or one well-scoped change per PR. Say why in the description, not only what. Reference the Jira key (`Refs NEOC-<n>`).
 4. Self-review with the `pr-self-review` skill and post the `Self-review` note on the PR for the head SHA.
-5. Hand off to an independent `pr-review` pass: a fresh reviewer with no session context, who posts a verdict note for the head SHA (`READY TO MERGE`, `CHANGES NEEDED` or `HOLD`). Fix and re-run from step 2 until `READY TO MERGE`.
+5. Hand off to an independent `pr-review` pass: a fresh reviewer with no session context, who posts a verdict note for the head SHA (`READY TO MERGE`, with or without follow-ups, `CHANGES NEEDED` for blocking findings only, or `HOLD`). Fix and re-run from step 2 until `READY TO MERGE` at the exact head; each re-review reads the fix delta as new code. Only a real bug, data loss or a security hole, a broken acceptance criterion, a failing check, or a boundary or no-vos-leak violation blocks; doc wording, comment accuracy, extra coverage, naming and cosmetics become follow-up tickets.
 6. Squash-merge only on `READY TO MERGE` for the current head, then delete the branch and mark the Jira ticket Done. (The merge of vos into neoc, NEOC-113, PR #34, was the one merge commit, to keep vos's history in `main`.) A change to a vos app or UI also needs the vos checks of `pr-review` (tests, accessibility, boundaries, `verify-change`, and for an app the readiness table); an app that is not ready stays in its PR.
 
 ### Commits and PR titles

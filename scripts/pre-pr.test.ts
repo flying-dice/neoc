@@ -11,6 +11,17 @@ describe('the gate plan', () => {
     expect(plan(['--vos']).map((s) => s.name)).toEqual(['lint', 'typecheck', 'test', 'test:e2e'])
   })
 
+  test('--no-e2e leaves out test:e2e and nothing else, alone or with --vos', () => {
+    const lint = ['neoc checks', 'lint', 'typecheck', 'test']
+    expect(plan(['--no-e2e']).map((s) => s.name)).toEqual(lint)
+    expect(plan(['--vos', '--no-e2e']).map((s) => s.name)).toEqual(lint.slice(1))
+    expect(plan(['--neoc', '--no-e2e']).map((s) => s.name)).toEqual(['neoc checks'])
+  })
+
+  test('an unknown flag is refused rather than ignored', () => {
+    expect(() => plan(['--no-e2e-please'])).toThrow('unknown argument')
+  })
+
   test('both flags together are refused rather than guessed at', () => {
     expect(() => plan(['--neoc', '--vos'])).toThrow('whole gate')
   })

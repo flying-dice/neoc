@@ -7,13 +7,13 @@ Author gate. Run before every handoff to review and every re-handoff. Reviewer r
 
 ## Standard
 
-You are your own first reviewer. Default verdict FAIL until each gate carries evidence. Evidence = command + measured output at the head SHA. "Tested locally", "should work", "covered" = no evidence = FAIL.
+You are your own first reviewer. Default verdict FAIL until each gate carries evidence. Evidence = command + measured output at the head SHA. "Tested locally", "should work", "covered" = no evidence = FAIL. Judge by the blocking rule in the rubric: a real bug, data loss or a security hole, a broken acceptance criterion, a failing gate or a no-vos-leak or boundary violation is a FAIL; anything else you find is a follow-up ticket in Jira NEOC, listed in the note, and does not hold the hand-off (speed is a requirement, CLAUDE.md, "Non-functional requirements").
 
 ## Process
 
-1. **Freeze head.** Push. Record `git rev-parse HEAD`. Run the pre-PR checks at that SHA (see G1).
+1. **Freeze head.** Push. Record `git rev-parse HEAD`. Run the pre-PR checks at that SHA (see G1; the gate is fast, and e2e only when CLAUDE.md, "The gate", requires it).
 2. **Run the rubric** in author mode. Fan-out per the rubric, `model: "sonnet"`. When the diff touches vos paths, G11 means reading the section "vos checks" of `.claude/skills/pr-review/SKILL.md` and running it.
-3. **Fix loop.** Any FAIL → fix, push, back to step 1. A note is valid only for the SHA it names.
+3. **Fix loop.** Any FAIL → fix, push, then re-run only what the fix touches (a targeted test, the check of the touched path) and the gate once on the final head. No mutation, reverts or looped runs to prove a fix works: read the test and the code. A note is valid only for the SHA it names.
 4. **Post** the Self-review note (template below) on the PR.
 5. **Hand off to an independent `pr-review` pass** only when every gate is PASS or `N/A — <reason>`.
 
@@ -22,14 +22,16 @@ You are your own first reviewer. Default verdict FAIL until each gate carries ev
 
 11 gates. Cost-ordered. Each gate: PASS / FAIL / `N/A — <reason>`. No blanks. Evidence = command + measured output at head SHA. Assertion without evidence = FAIL.
 
+Blocking: a gate is FAIL, and a merge is held, only for a real bug; data loss or a security hole; a broken acceptance criterion; a failing gate (a pre-PR check that does not pass); a no-vos-leak or boundary violation. Every other defect a gate turns up (doc wording, comment accuracy, extra test coverage, cosmetic issues, naming, clean-code nits) is recorded as a follow-up ticket in Jira NEOC and does not hold the merge: that gate is PASS, with the ticket key beside it. Iteration speed is a requirement (CLAUDE.md, "Non-functional requirements"), and it comes from fast checks and small PRs, never from fewer review rounds or a shortcut that lets a bug through.
+
 Stop rules:
 - **Author mode** (`pr-self-review`): G1–G4 fail-fast — first FAIL → fix, push, restart at G1. G5–G11 run in full; fix every FAIL, push, restart at G1.
-- **Reviewer mode** (`pr-review`): G1 FAIL → hand back, stop — no probing a red or stale head. G2–G11 run in full; post every finding in one pass. A partial review buys another round.
+- **Reviewer mode** (`pr-review`): G1 FAIL → hand back, stop — no probing a red or stale head. G2–G11 run in full; post every blocking finding in one pass and list the follow-ups beside them. A partial review buys another round.
 
-Local runs: run the pre-PR checks once at the head SHA (G1), then only what the rubric adds — unhappy-path probes, greps, link checks. A gate needing a check the pre-PR checks lack → run it by command and record the gap.
+Local runs: run the pre-PR checks once at the head SHA (G1), then only what the rubric adds — unhappy-path probes, greps, link checks. A gate needing a check the pre-PR checks lack → run it by command and record the gap. Never mutate code, revert a fix, or loop a test N times to see it fail or to rule out a flake: judge a test by reading it and the code it covers, and run it once, targeted. A new test is fast (it fits the gate) or is `#[ignore = "slow: ..."]` under `bun run slow`.
 
 ### Fan-out
-`git diff --stat origin/<target>...HEAD` → > 50 lines changed OR > 3 files: one message, 4 parallel `Agent` calls (5 when the diff touches vos paths, see G11), `subagent_type: "Explore"`, model as the skill pins. Read-only — never edit, push, or post. Otherwise single-reader: run every gate yourself.
+`git diff --stat origin/<target>...HEAD` → a large or risky diff only (> 400 lines changed, > 10 files, or a change to the VM's embedding API or sandbox, the protocol, the host's HTTP surface or a crate boundary): one message, 4 parallel `Agent` calls (5 when the diff touches vos paths, see G11), `subagent_type: "Explore"`, model as the skill pins. Read-only — never edit, push, or post. Otherwise single-reader: run every gate yourself.
 
 | Agent | Gates |
 |---|---|
@@ -46,9 +48,9 @@ G1, G3, G4, G10: run yourself.
 - `Agent` tool absent or denied → fan-out NOT RUN. Run single-reader, record `Mode: degraded — <reason>`. Never present a single-reader pass as fan-out.
 
 ### G1 — Head & checks
-GitHub Actions is not a gate. Run the pre-PR checks from CONTRIBUTING.md locally at the head SHA and record command + output: `bun run gate` (the neoc checks, then the vos checks: lint, typecheck, test, test:e2e), or `scripts/check-neoc.sh` for a change confined to the neoc crates (the scoped variant, see `pre-commit`). A lint that printed `SKIPPED`, or an e2e you could not run (it needs a Mac), is unverified, not passed.
+GitHub Actions is not a gate. Run the pre-PR checks from CONTRIBUTING.md locally at the head SHA and record command + output: `bun run gate` (the neoc checks, then the vos checks: lint, typecheck, test, and e2e), `bun run gate --no-e2e` only where the e2e rule allows it, or `bun run gate:neoc` for a neoc-only change it does not send to the full gate ("The gate" in CLAUDE.md states which one and when e2e is required; check every path in `git diff --name-only main...HEAD` against it). The slow suites are not part of the gate (`bun run slow`). A lint that printed `SKIPPED`, or a required e2e you could not run (it needs a Mac), is unverified, not passed.
 - Head SHA recorded: local `git rev-parse HEAD` == PR head `sha`.
-- Every pre-PR check passes at that exact SHA. Any failure = FAIL. The scoped variant on a diff that touches vos paths = FAIL.
+- Every pre-PR check passes at that exact SHA. Any failure = FAIL. `gate:neoc` on a diff outside its scope (CLAUDE.md, "The gate"), or `--no-e2e` on a diff that requires e2e (any code change in a vos crate, the apps, the client or the kit, among others) = FAIL.
 - The checks cover the change: the Lua suite or Rust tests for the touched area ran (not filtered out).
 - Re-request: ≥ 1 new commit since the last reviewed head. 0 = FAIL.
 - `main` exists as the target. No merge conflicts.
@@ -76,7 +78,7 @@ Scope: PR description, commit messages, every comment and doc line added or edit
 
 ### G5 — Test validity
 - Every new public fn / branch / error arm → ≥ 1 test exercising it. Report count: new items vs tested items.
-- Each regression test asserts the reported behaviour, read from the test body. An assertion that would still hold with the defect present (attribute-only, tautological, mocked-out subject) = FAIL. Judge tests by reading them — never by re-running them against altered code.
+- Each regression test asserts the reported behaviour, read from the test body. An assertion that would still hold with the defect present (attribute-only, tautological, mocked-out subject) = FAIL. Judge tests by reading the test and the code — never by mutating the code, reverting the fix, re-running against altered code, or looping the test to prove it bites or is not flaky. A targeted run of the test at head is fine.
 - Test reaches the call site the defect lived at — not a helper beside it, not a fixture that skips the branch.
 - Deny / allow lists: assert an unlisted entry is rejected, not only that listed ones are.
 - BDD: runner fails on undefined / skipped steps (`fail_on_skipped` or equivalent); summary shows skipped = 0. Count scenarios with `grep -cE '^\s*(Scenario|Scenario Outline):'`, compare names not totals.
@@ -86,6 +88,7 @@ Scope: PR description, commit messages, every comment and doc line added or edit
   - Playwright `click()` auto-scrolls → native `el.click()` for scroll assertions.
   - Signal races → in-process same-tick `process.kill`; external `kill(2)` never enters the window.
 - Removed or weakened test → justified in the description. Removed to satisfy a done-check = FAIL.
+- New test is fast: it runs in the gate's budget (CLAUDE.md, "The gate"), or it is `#[ignore = "slow: ..."]` and listed under `bun run slow`. A slow test in the gate is a follow-up to move it, unless it adds more than ~10 s to the gate: then FAIL.
 
 ### G6 — Unhappy paths
 Given / when / then table. Each category run or `N/A — <reason>`:
@@ -102,7 +105,7 @@ Given / when / then table. Each category run or `N/A — <reason>`:
 | CI config | triggers fire on the intended events; steps fail closed |
 
 ### G7 — Narrowing & deletion audit
-- New or narrowed predicate / match arm / filter → list the shapes it now excludes; run each against the pre-fix and post-fix build; diff outputs. Valid case silenced = FAIL.
+- New or narrowed predicate / match arm / filter → list the shapes it now excludes, from the code, and find the test that holds each one (or run one targeted probe at head). No pre-fix build, no reverted code. Valid case silenced = FAIL.
 - Deleted read / query / guard → list every clause it carried (WHERE, LIMIT, permission check); probe the state each one excluded.
 - Same function fixed twice → review its contract, not the symptom.
 
@@ -116,16 +119,18 @@ Given / when / then table. Each category run or `N/A — <reason>`:
 - Every `file:line` posted comes from `grep -n` / `sed -n` at the head SHA in the same pass. No `cat -n` window offsets. No recall.
 
 ### G10 — Fix-round discipline (re-request only)
-- Per prior thread: fix commit SHA + test name + the finding's given/when/then reproduced at the new head → fixed behaviour observed.
+Rounds continue until the independent reviewer returns READY TO MERGE at the exact head; every fix round is re-reviewed, and nobody merges over an open blocking finding. A re-review reads the delta (the lines since the last reviewed head and their tests) and treats it as new code under the full blocking rules: it checks the fix, and checks for regressions the fix itself introduced. Re-run only the checks the delta touches (G1), but read all of the delta.
+- Per prior thread: fix commit SHA + test name + the finding's given/when/then run at the new head (a targeted run of that test) → fixed behaviour observed.
 - Diff since the last reviewed head touches only finding sites + their tests. Prose rewrites and new behaviour → separate PR.
-- G1–G9 re-run against the fix diff. Comment / doc lines the fix introduced get G2.
+- G1–G9 re-run against the fix diff only: re-run just the checks and tests the delta touches (`git diff <last-reviewed-head>..HEAD`), not the whole gate again unless the delta reaches outside what the last green run covered. Comment / doc lines the fix introduced get G2.
 
 ### G11 — vos checks
 `N/A — no vos paths` unless the diff touches `crates/vos-*`, `apps/`, `client/`, `packages/`, `e2e/`, `types/generated` or the vos scripts. Otherwise run the section "vos checks" of `.claude/skills/pr-review/SKILL.md` (V1 tests and coverage, V2 accessibility, V3 boundaries and security, V4 UI structure and design, V5 the app readiness table when an app or what a person sees or does in one changed) and record each row PASS, FAIL or `N/A — <reason>` with command + output or `file:line`.
-- The gate for vos paths is the full `bun run gate`; e2e not run = unverified = FAIL.
+- The gate for vos paths is `bun run gate` with e2e. `--no-e2e` passes here only where the e2e rule in CLAUDE.md ("The gate") allows it, such as a test-only change inside the vos crates that e2e does not read (`git grep crates/vos- -- e2e` lists the fixtures it copies); a change to `vos-lua`, `vos-application` or a protocol adapter takes e2e although it draws no screen. A required e2e not run = unverified = FAIL.
 - A UI change carries a `verify-change` "Manual verification" section in the PR.
 
 ### Target shape — one-round PRs
+- Small PRs, merged soon, over a long-lived branch.
 - One defect / one concern per PR.
 - Minimal diff. Description matches the diff exactly.
 - Test drives the original defect's given/when/then and asserts the fixed behaviour.
@@ -158,6 +163,9 @@ Diff: <files> files, +<add> / -<del>
 ### Acceptance criteria
 | AC | Proof | Result |
 |---|---|---|
+
+### Follow-ups (not blocking)
+<NEOC-n — one line each> | none
 
 ### Unhappy paths
 | Given | When | Then | Run | Result |

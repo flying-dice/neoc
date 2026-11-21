@@ -18,8 +18,8 @@ description: Clear one clean-code TODO marker per pass (left by clean-code-revie
    - **vos:** a port trait in `vos-application`, a domain or schema type that feeds codegen (`types/generated`), a JSON-RPC
      method, view message or AG-UI event, anything in the `app` API (`types/generated/vos.d.luau`), a tool's name or input,
      an app's `app.json`, a kit component's props or test ids.
-5. Run the gate for what you touched: `scripts/check-neoc.sh` for a change confined to the neoc crates (the scoped variant in
-   `pre-commit`), otherwise `bun run gate`. Include the e2e half when anything rendered changed.
+5. Run the gate for what you touched (CLAUDE.md, "The gate"): `bun run gate:neoc` for a change confined to the neoc crates,
+   otherwise `bun run gate`, with `--no-e2e` only where the e2e rule in `CLAUDE.md` ("The gate") allows it: a refactor of a vos crate's code takes e2e.
 6. Report the file, what changed and the score cleared. Stop.
 
 No markers, or none above 0.5: report "clean" and stop.

@@ -197,7 +197,7 @@ Adding a module: see [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-new-module).
 
 ## Tests
 
-- **neoc Rust:** `#[cfg(test)] mod tests` next to the code. Integration tests in `tests/` only where they cross crate boundaries, plus `crates/neoc-vm/tests/embedding.rs`, `lifetimes.rs` and `signals.rs` (the embedding hooks, and what `neoc run` keeps doing), `abort_regressions.rs` (error values and recursion that aborted the host on LuaJIT), `luau_decls.rs` (the generated declarations and the luau-lsp fixtures), `hostile_inputs.rs` (every module called with hostile values, fails on any panic) and `forged_len.rs`.
+- **neoc Rust:** `#[cfg(test)] mod tests` next to the code. Integration tests in `tests/` only where they cross crate boundaries, plus `crates/neoc-vm/tests/embedding.rs`, `lifetimes.rs` and `signals.rs` (the embedding hooks, and what `neoc run` keeps doing), `abort_regressions.rs` (error values and recursion that aborted the host on LuaJIT), `luau_decls.rs` (the generated declarations and the luau-lsp fixtures), `hostile_inputs.rs` (every module called with hostile values, fails on any panic; a quick sweep in the gate, the full one under `bun run slow`) and `forged_len.rs`.
 - **neoc Lua:** a new module gets `crates/neoc/tests/<ns>/<name>.test.lua`, run with `neoc run`. (Not every existing module has one yet: `std:net`, `std:workers` and `lib:test` have none, and `std:task` uses a `.spec.lua`.) Per exported function: one happy path, one test per distinct error condition, and an empty or zero value where it applies. The outer `describe` is the bare module name.
 - **CLI spec:** `tooling/cli/*.feature`, driven by `crates/neoc/tests/cucumber.rs`.
 - **Benches:** three tiers per module (`library`, `into_out_lua`, `through_lua`), behind the `bench` feature.
@@ -223,6 +223,16 @@ Locators in tests are `getByTestId` only; the test-id conventions are in `.claud
 `main` is the only long-lived branch, and everything lands on it through a squash-merged PR; nothing is pushed to `main`
 directly. Code and pull requests are on GitHub at `flying-dice/neoc`.
 
+**Non-functional requirement: velocity and iteration speed.** How fast a change gets from an idea to `main` is a requirement of
+this repository, not a nicety. Every process step (a check, a review pass, a research round, a fan-out of sub-agents) is
+weighed by the time it adds, and a step earns its place only if what it catches is worth that time. That is why the gate is
+fast and the slow suites are opt-in (see "The gate"), why audits scale with the size of the change, why a review holds a
+merge only for what must not ship (the `pr-review` skill), and why small PRs are preferred over long-lived branches. Velocity
+comes from fast checks and small PRs. It does not come from fewer review rounds: rounds continue until the independent
+reviewer returns READY TO MERGE at the exact head, every fix round is re-reviewed, and nobody shortcuts a check or merges over
+an open blocking finding. A skill, a script or a doc that adds a slow step needs a reason that outweighs the time, written
+down beside it.
+
 **Tracking.** This repository's work is in the Jira project **NEOC**
 (<https://flying-dice.atlassian.net/jira/software/projects/NEOC>): create new work there, not as GitHub issues. The **AGOS**
 Jira project (board <https://flying-dice.atlassian.net/jira/software/projects/AGOS/boards/101>) and the **AGOS Confluence
@@ -232,11 +242,16 @@ planning pages. The current AGOS epic is **AGOS-55**, foundations. (Older commen
 1. Branch from `main`: `issues/NEOC-<n>-<slug>` (e.g. `issues/NEOC-6-std-task`).
 2. Work, then run the pre-PR checks locally (see "The gate"). GitHub Actions is blocked and is not a gate: the local run is the
    verification.
-3. Open a PR into `main` (a draft is fine). One module or one well-scoped change per PR; say why, not only what. Title and
+3. Open a PR into `main` (a draft is fine). One module or one well-scoped change per PR, and small PRs are preferred over
+   long-lived branches; say why, not only what. Title and
    commits are Conventional Commits; reference the Jira key in the body or footer (`Refs NEOC-<n>`).
 4. Self-review with the `pr-self-review` skill and post its `Self-review` note on the PR for the head SHA.
 5. Hand off to an independent `pr-review` pass: a fresh reviewer with no session context, who posts a verdict note for the head
-   SHA (`READY TO MERGE`, `CHANGES NEEDED` or `HOLD`). Fix and repeat from step 2 until `READY TO MERGE`.
+   SHA (`READY TO MERGE`, with or without follow-ups, `CHANGES NEEDED` for blocking findings only, or `HOLD`). Rounds continue
+   until `READY TO MERGE` at the exact head; each re-review reads the fix delta as new code, so it also catches regressions
+   the fix introduced. Only a real bug, data loss or a security hole, a broken
+   acceptance criterion, a failing gate, or a no-vos-leak or boundary violation holds a merge; everything else becomes a
+   follow-up ticket in Jira NEOC and the PR merges.
 6. Squash-merge only on `READY TO MERGE` for the current head, then delete the branch and mark the Jira ticket Done. The one
    exception was the merge of vos into neoc (NEOC-113, PR #34), which landed with a merge commit to keep vos's history.
 7. An app that isn't ready for the full gate and the UX research panel stays in its PR: keep pushing to the branch; don't merge
@@ -265,12 +280,56 @@ Refs NEOC-42
 
 ## The gate
 
-One command set, defined once in [CONTRIBUTING.md](CONTRIBUTING.md#pre-pr-checks) and run by the `pre-commit` skill:
+One command set, defined once in [CONTRIBUTING.md](CONTRIBUTING.md#pre-pr-checks) and run by the `pre-commit` skill. It is fast
+on purpose (iteration speed is a requirement, see "Workflow"): minutes warm, not a quarter of an hour.
 
 ```sh
-bun run gate           # the neoc checks (scripts/check-neoc.sh), then the vos checks: lint, typecheck, test, test:e2e
-bun run gate:neoc      # = scripts/check-neoc.sh: the scoped gate for a change confined to the neoc crates (no bun, no darklua; not for a change to the embedding API or sandbox, to an async host function's `Role` or to what a module registers with `Life`: `vos-lua`'s `turns.rs` and `chaos.rs` pin those, so they get the full gate)
+bun run gate            # the neoc checks (scripts/check-neoc.sh), then the vos checks: lint, typecheck, test, test:e2e
+bun run gate --no-e2e   # the same without e2e
+bun run gate:neoc       # = scripts/check-neoc.sh: the scoped gate for a change confined to the neoc crates (no bun, no darklua; not for a change to the embedding API or sandbox, to an async host function's `Role` or to what a module registers with `Life`: `vos-lua`'s `turns.rs` and `chaos.rs` pin those, so they get the vos half)
+bun run slow            # = scripts/check-slow.sh: the slow suites, opt-in (below)
 ```
+
+**The e2e rule (stated once, here).** `bun run gate` with `test:e2e` is required for:
+
+- any code change under `apps/`, `client/`, `packages/`, `e2e/`, `types/generated/` or `crates/vos-*`. That covers the UI and
+  the apps, and also their server side: the app runtime and view rendering (`vos-lua`), the view and chat services
+  (`vos-application`), the protocol adapters (`vos-agui`, `vos-mcp`, `vos-acp`), the host's HTTP surface (`vos-http`,
+  `vos-host`) and the wire types (`vos-domain`);
+- a change to anything else e2e reads or is built from, wherever it lives. Today, outside those paths, that is:
+  - the root build inputs: `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `package.json`, `bun.lock`, `.darklua.json`
+    (a lockfile-only dependency bump changes the host or the client);
+  - `lua/prelude.lua` (built into every app VM through `types/generated/prelude.lua`);
+  - `playwright.config.ts` and the scripts that build the apps, the generated types or the Storybooks it runs
+    (`scripts/build-apps.ts`, `luau.ts`, `codegen-lua.ts`, `storybooks.ts`, `ports.ts`);
+  - the vos test fixtures e2e copies into its registry: `crates/vos-codegen/tests/fixtures/notes/app.luau` (Notes) and
+    `crates/vos-host/tests/fixtures/ticker/app.luau` (the Ticker the Background journeys drive).
+
+  The list goes stale; the reads do not. `git grep crates/vos- -- e2e` finds the fixtures e2e copies, and
+  `git grep -n -e ROOT -e "scripts/" -- e2e playwright.config.ts` what else it reads;
+- a `neoc-vm` change that already takes the full gate: to the embedding API or the sandbox (`lifecycle`, `script_env`,
+  `modules`, `sandbox`), to the `Role` of an async host function, or to what a module registers with `Life`.
+
+`bun run gate --no-e2e` is allowed only for the rest: a change to the neoc crates outside the last item (`gate:neoc` when it
+qualifies, see "Which one" in CONTRIBUTING.md), a change to the other scripts, the skills or the docs, and a test-only change
+inside the vos crates that e2e does not read (their `tests/` files and `#[cfg(test)]` modules, nothing they compile into the
+host, and none of the fixtures above). A path neither list names takes e2e, and a diff that mixes kinds takes the strictest. The skills point here; none restates it. A fix round re-runs only what the fix touches, and the gate
+once on the final head.
+
+**The slow suites are not in the gate.** `bun run slow` runs them: the full `hostile_inputs` sweep (about two million hostile
+calls over every module; the gate runs a quick sweep of the same harness) and the 60 000-macro ring test, the full case counts
+of the vos-domain generated-tree properties, the release-build `abort_regressions` run (the debug run is in the gate) and the
+bench bodies (the gate compiles them). One mechanism: a test too slow for the gate is `#[ignore = "slow: ..."]` and
+`check-slow.sh` runs those tests (found by that reason; an ignored test with another reason, such as `vos-lua`'s `baseline.rs`
+measurement, is on the script's short `NOT_SLOW` list and does not run, and an ignored test on neither stops the script); a new
+slow test needs nothing else. Run it before a PR that changes
+what these suites guard (a module's argument handling, stack use or recursion, `vos-domain`'s tree diff, the VM's call
+scheduling), and when you want the whole sweep. A review, a fix round and the gate do not run it. A new test is fast, or it is
+opt-in under `bun run slow`.
+
+**No mutation testing.** Nobody (author or reviewer) edits code to watch a test fail, reverts a fix to see a test go red, or loops
+a test N times to prove it bites or is not flaky. A test is judged by reading it and the code it covers; a targeted run of it is
+fine.
 
 `bun run gate` sets `VOS_GATE=1` and `NEOC_REQUIRE_LUAU_LSP=1`, so a missing `luau-lsp`, `stylua` or `darklua` fails instead of
 skipping. Both variables keep their meaning: `VOS_GATE=1` (or `CI`) makes the vos lints (`lint:luau`, `lint:stylua`) and the
@@ -294,6 +353,7 @@ cargo run -p neoc -- run script.lua   # the neoc CLI
 bun run lint            # conflict markers + atomic layers + test ids + boundaries + rust (fmt, clippy -D warnings, lint:deps, cargo deny) + luau (luau-lsp) + stylua + codegen:check + package eslint
 bun run typecheck       # cargo check --workspace --all-targets --locked + tsc on types/ + svelte-check in each package
 bun run test            # cargo nextest over the vos crates (neoc's crates are in check-neoc.sh) + bun test (types, scripts, client, kit)
+bun run slow            # the slow suites, opt-in: full hostile-input sweep, release abort regressions, bench bodies, full generated-case counts
 bun run test:e2e        # all Storybooks + desktop + journeys, headless, against the real host
 bun run test:e2e:update # rebaseline snapshots (then look at them)
 bun run storybooks list # every Storybook (client, packages/ui); each package: bun run storybook
@@ -308,7 +368,7 @@ bun scripts/design-audit.ts <page>  # static styleguide audit of a built-in shel
 
 A change is done when all of these hold:
 
-1. The gate passes on the head commit (`bun run gate`, or `scripts/check-neoc.sh` for a change confined to the neoc crates).
+1. The gate passes on the head commit (`bun run gate`, `bun run gate --no-e2e` when e2e is not required, or `bun run gate:neoc` for a change confined to the neoc crates; see "The gate").
 2. New behaviour has new checks, in the layer it lives in (see "Tests"): for neoc, Rust tests and a `*.test.lua` suite; for vos,
    `cargo nextest` tests (domain, use cases against the port fakes, adapters, the host end to end), `bun test` for client and
    kit logic, a story per new screen or state, a journey spec per new or changed journey. Changed snapshots were looked at.
