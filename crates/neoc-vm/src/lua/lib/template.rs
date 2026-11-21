@@ -89,6 +89,7 @@ use tracing::instrument;
 
 use crate::lua::facade::Module;
 use crate::lua::sandbox::{from_err, ok};
+use crate::lua::serde_guard::{BUFFER_REFUSED, contains_buffer, refuse_buffer};
 
 /// Tera autoescapes by filename suffix. We pick a sentinel that is unlikely
 /// to collide with a real user-supplied template name; one-off render calls
@@ -1023,6 +1024,10 @@ impl TeraFilter for LuaFilter {
             let out: Value = func
                 .call((lua_value, args_tbl))
                 .map_err(|e| e.to_string())?;
+            // a filter is called inside Tera, which can only fail the render: `(nil, "...: <BUFFER_REFUSED>")`
+            if contains_buffer(&out).map_err(|e| format!("return value: {e}"))? {
+                return Err(format!("return value: {BUFFER_REFUSED}"));
+            }
             let json: TeraValue =
                 serde_json::to_value(&out).map_err(|e| format!("return value: {e}"))?;
             Ok(json)
@@ -1078,8 +1083,10 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// Declares the `lib:template` surface through the facade.
 ///
 /// `render` and `add_filter` are fallible and routed through
+/// [`crate::lua::facade::Module::try_func_raising`] and
 /// [`crate::lua::facade::Module::try_func`]: each inner function returns the
-/// bare failure reason and the facade prepends the `"template.<fn>: "` prefix.
+/// bare failure reason and the facade prepends the `"template.<fn>: "` prefix;
+/// `render` raises for a context holding a buffer.
 ///
 /// `compile` is a *mixed* raise-plus-channel shape: a parse failure goes to the
 /// `(value, error)` channel via [`crate::lua::sandbox::from_err`], but the
@@ -1110,7 +1117,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     );
 
     let eng = engine.clone();
-    m.try_func(
+    m.try_func_raising(
         "render",
         &[
             ("source", "string"),
@@ -1119,7 +1126,8 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         ],
         "One-shot parse and render of `source` against `context`; `options.autoescape` toggles HTML escaping.",
         move |lua, (src, ctx, opts): (String, Value, Option<Table>)| {
-            render_impl(lua, &eng, src, ctx, opts)
+            refuse_buffer(&ctx, "template.render")?;
+            Ok(render_impl(lua, &eng, src, ctx, opts))
         },
     )?;
 
@@ -1238,6 +1246,7 @@ fn render_caught(lua: &Lua, tera: &Tera, name: &str, ctx: &Context) -> Result<St
 }
 
 fn template_render(lua: &Lua, this: &TemplateHandle, ctx: Value) -> mlua::Result<(Value, Value)> {
+    refuse_buffer(&ctx, "Template.render")?;
     let Some(_render_guard) = RenderGuard::enter() else {
         return from_err(lua, "Template.render", RECURSIVE_RENDER_MSG);
     };

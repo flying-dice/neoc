@@ -14,6 +14,7 @@
 use mlua::{AnyUserData, Lua, LuaSerdeExt, Table, Value};
 
 use crate::lua::facade::Module;
+use crate::lua::serde_guard::refuse_buffer;
 use crate::lua::std::io::{ReaderHandle, WriterHandle};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
@@ -39,13 +40,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "Parse an XML string into a Lua value.",
         decode_string,
     )?
-    .try_func(
+    .try_func_raising(
         "encode",
         &[("value", "LuaValue")],
         "Serialise a Lua value to an XML string rooted at `<root>`.",
         encode,
     )?
-    .try_func(
+    .try_func_raising(
         "encode_to",
         &[("value", "LuaValue"), ("writer", "LuaValue")],
         "Serialise a Lua value to XML and write it to a writer handle.",
@@ -76,16 +77,22 @@ fn decode_string(lua: &Lua, s: mlua::LuaString) -> Result<Value, String> {
     parse_str(lua, &s)
 }
 
-fn encode(_: &Lua, v: Value) -> Result<String, String> {
-    to_xml_string(&v)
+fn encode(_: &Lua, v: Value) -> mlua::Result<Result<String, String>> {
+    refuse_buffer(&v, "quick_xml.encode")?;
+    Ok(to_xml_string(&v))
 }
 
-fn encode_to(_: &Lua, (v, ud): (Value, AnyUserData)) -> Result<bool, String> {
+fn encode_to(_: &Lua, (v, ud): (Value, AnyUserData)) -> mlua::Result<Result<bool, String>> {
+    refuse_buffer(&v, "quick_xml.encode_to")?;
+    Ok(write_xml(&v, &ud))
+}
+
+fn write_xml(v: &Value, ud: &AnyUserData) -> Result<bool, String> {
     let wh = match ud.borrow::<WriterHandle>() {
         Ok(h) => h,
         Err(_) => return Err("expected a writer handle".to_string()),
     };
-    let s = to_xml_string(&v)?;
+    let s = to_xml_string(v)?;
     let mut locked = wh.0.lock();
     let result = std::io::Write::write_all(&mut **locked, s.as_bytes());
     drop(locked);

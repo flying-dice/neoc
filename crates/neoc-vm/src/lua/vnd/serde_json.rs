@@ -14,6 +14,7 @@ use mlua::{AnyUserData, Lua, Table, Value};
 
 use crate::lua::facade::Module;
 use crate::lua::lib::json::{JsonValue, lua_value_to_json_value, wrap_root};
+use crate::lua::serde_guard::refuse_buffer;
 use crate::lua::std::io::{ReaderHandle, WriterHandle};
 
 // ---------------------------------------------------------------------------
@@ -114,19 +115,19 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "Parse JSON from a reader handle.",
         from_reader,
     )?
-    .try_func(
+    .try_func_raising(
         "to_string",
         &[("value", "LuaValue")],
         "Serialise a Lua value to a compact JSON string.",
         to_string,
     )?
-    .try_func(
+    .try_func_raising(
         "to_string_pretty",
         &[("value", "LuaValue")],
         "Serialise a Lua value to an indented, human-readable JSON string.",
         to_string_pretty,
     )?
-    .try_func(
+    .try_func_raising(
         "to_writer",
         &[("value", "LuaValue"), ("writer", "LuaValue")],
         "Serialise a Lua value to JSON and write it to a writer handle.",
@@ -158,20 +159,27 @@ fn serialize_with(
     formatter(&json_value_to_jv(&j)).map_err(|e| e.to_string())
 }
 
-fn to_string(_: &Lua, v: Value) -> Result<String, String> {
-    serialize_with(v, serde_json::to_string)
+fn to_string(_: &Lua, v: Value) -> mlua::Result<Result<String, String>> {
+    refuse_buffer(&v, "serde_json.to_string")?;
+    Ok(serialize_with(v, serde_json::to_string))
 }
 
-fn to_string_pretty(_: &Lua, v: Value) -> Result<String, String> {
-    serialize_with(v, serde_json::to_string_pretty)
+fn to_string_pretty(_: &Lua, v: Value) -> mlua::Result<Result<String, String>> {
+    refuse_buffer(&v, "serde_json.to_string_pretty")?;
+    Ok(serialize_with(v, serde_json::to_string_pretty))
 }
 
-fn to_writer(_: &Lua, (v, ud): (Value, AnyUserData)) -> Result<bool, String> {
+fn to_writer(_: &Lua, (v, ud): (Value, AnyUserData)) -> mlua::Result<Result<bool, String>> {
+    refuse_buffer(&v, "serde_json.to_writer")?;
+    Ok(write_json(&v, &ud))
+}
+
+fn write_json(v: &Value, ud: &AnyUserData) -> Result<bool, String> {
     let wh = match ud.borrow::<WriterHandle>() {
         Ok(h) => h,
         Err(_) => return Err("expected a writer handle".to_string()),
     };
-    let j = lua_value_to_json_value(&v).map_err(|e| e.to_string())?;
+    let j = lua_value_to_json_value(v).map_err(|e| e.to_string())?;
     let jv = json_value_to_jv(&j);
     let mut locked = wh.0.lock();
     let result = serde_json::to_writer(&mut **locked, &jv);

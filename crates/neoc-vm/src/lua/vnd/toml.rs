@@ -18,6 +18,7 @@
 use mlua::{AnyUserData, Lua, LuaSerdeExt, Table, Value};
 
 use crate::lua::facade::Module;
+use crate::lua::serde_guard::refuse_buffer;
 use crate::lua::std::io::{ReaderHandle, WriterHandle};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
@@ -43,19 +44,19 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "Parse a TOML string into a Lua value.",
         decode_string,
     )?
-    .try_func(
+    .try_func_raising(
         "encode",
         &[("value", "LuaValue")],
         "Serialise a Lua value to a compact TOML string.",
         encode,
     )?
-    .try_func(
+    .try_func_raising(
         "encode_pretty",
         &[("value", "LuaValue")],
         "Serialise a Lua value to a pretty-printed TOML string.",
         encode_pretty,
     )?
-    .try_func(
+    .try_func_raising(
         "encode_to",
         &[("value", "LuaValue"), ("writer", "LuaValue")],
         "Serialise a Lua value to TOML and write it to a writer handle.",
@@ -86,20 +87,27 @@ fn decode_string(lua: &Lua, s: mlua::LuaString) -> Result<Value, String> {
     parse_str(lua, &s)
 }
 
-fn encode(_: &Lua, v: Value) -> Result<String, String> {
-    to_toml_string(&v, false)
+fn encode(_: &Lua, v: Value) -> mlua::Result<Result<String, String>> {
+    refuse_buffer(&v, "toml.encode")?;
+    Ok(to_toml_string(&v, false))
 }
 
-fn encode_pretty(_: &Lua, v: Value) -> Result<String, String> {
-    to_toml_string(&v, true)
+fn encode_pretty(_: &Lua, v: Value) -> mlua::Result<Result<String, String>> {
+    refuse_buffer(&v, "toml.encode_pretty")?;
+    Ok(to_toml_string(&v, true))
 }
 
-fn encode_to(_: &Lua, (v, ud): (Value, AnyUserData)) -> Result<bool, String> {
+fn encode_to(_: &Lua, (v, ud): (Value, AnyUserData)) -> mlua::Result<Result<bool, String>> {
+    refuse_buffer(&v, "toml.encode_to")?;
+    Ok(write_toml(&v, &ud))
+}
+
+fn write_toml(v: &Value, ud: &AnyUserData) -> Result<bool, String> {
     let wh = match ud.borrow::<WriterHandle>() {
         Ok(h) => h,
         Err(_) => return Err("expected a writer handle".to_string()),
     };
-    let s = to_toml_string(&v, false)?;
+    let s = to_toml_string(v, false)?;
     match wh.write_all(s.as_bytes()) {
         Ok(()) => Ok(true),
         Err(e) => Err(e.to_string()),
