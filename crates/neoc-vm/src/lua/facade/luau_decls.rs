@@ -430,8 +430,8 @@ fn luau_type(ty: &str, scope: &str) -> Emit<String> {
     }
 }
 
-/// The index of the quote that closes the string literal opened at `start`; every escape in it is one Luau
-/// reads (`escape_len`).
+/// The index of the quote that closes the string literal opened at `start`; every escape in it is one the
+/// emitter takes (`escape_len`).
 fn string_end(chars: &[char], start: usize) -> Result<usize, String> {
     let mut i = start + 1;
     while i < chars.len() {
@@ -439,7 +439,7 @@ fn string_end(chars: &[char], start: usize) -> Result<usize, String> {
             '\\' => {
                 i += escape_len(chars, i).ok_or_else(|| {
                     format!(
-                        "malformed escape in a string at `{}`",
+                        "an escape the emitter does not take, in a string at `{}`",
                         chars[i..].iter().take(6).collect::<String>()
                     )
                 })?;
@@ -451,7 +451,8 @@ fn string_end(chars: &[char], start: usize) -> Result<usize, String> {
     Err("unterminated string".to_string())
 }
 
-/// The length of the escape that starts with the backslash at `at`, or `None` when Luau would refuse it: one
+/// The length of the escape that starts with the backslash at `at`, or `None` for an escape the emitter does
+/// not take. It takes only these, which Luau reads: one
 /// of `\a \b \f \n \r \t \v \\ \" \' \z`, `\xHH`, `\u{H...}` (a code point) or `\ddd` (one to three digits,
 /// at most 255).
 fn escape_len(chars: &[char], at: usize) -> Option<usize> {
@@ -473,7 +474,7 @@ fn escape_len(chars: &[char], at: usize) -> Option<usize> {
             )
             .ok()?;
             (digits > 0 && chars.get(at + 3 + digits) == Some(&'}') && value <= 0x0010_FFFF)
-                .then_some(4 + digits + 1)
+                .then_some(3 + digits + 1)
         }
         '0'..='9' => {
             let digits = chars[at + 1..]
@@ -1401,24 +1402,75 @@ mod tests {
             "\"\\x4\"",
             "\"\\u{110000}\"",
             "\"\\u{}\"",
+            // a good escape does not excuse the one after it
+            "\"\\u{41}\\x4\"",
+            "\"\\u{41}\\999\"",
+            "\"\\x41\\q\"",
+            "\"\\u{41\"",
         ] {
             let mut m = Module::new(&lua, "lib:demo").expect("module");
             m.record_fn("f", &[("a", ty)], "()", "");
-            refused(&m, "malformed escape");
+            refused(&m, "an escape the emitter does not take");
         }
-        // the escapes Luau reads are copied
-        let mut m = Module::new(&lua, "lib:demo").expect("module");
-        m.record_fn(
-            "f",
-            &[("a", "\"a\\n\\x41\\065\\u{1F600}\\z\\\\\\\"\"")],
-            "()",
-            "",
-        );
-        let decls = m.luau_decls().expect("decls");
-        assert_eq!(validate(&decls), Ok(()), "{decls}");
+        // the escapes the emitter takes are copied, each alone and one after another
+        for ty in [
+            "\"\\u{41}\"",
+            "\"\\u{1F600}\"",
+            "\"\\x41\"",
+            "\"\\065\"",
+            "\"\\0\"",
+            "\"\\z\"",
+            "\"\\\\\"",
+            "\"\\\"\"",
+            "\"a\\n\\x41\\065\\u{41}\\u{1F600}\\z\\\\\\\"\"",
+            "\"\\u{41}\\x41\" | \"\\u{41}\"",
+        ] {
+            let mut m = Module::new(&lua, "lib:demo").expect("module");
+            m.record_fn("f", &[("a", ty)], "()", "");
+            let decls = m.luau_decls().unwrap_or_else(|e| panic!("{ty}: {e}"));
+            assert!(decls.contains(ty), "{ty} copied as it is: {decls}");
+            assert_eq!(validate(&decls), Ok(()), "{ty}: {decls}");
+        }
     }
 
-    /// A `()` as the type of a value (a parameter, a field) is `nil`, as a value type (a parameter, a field).
+    /// The length of each escape is exact: the closing quote after it is found, and what follows is scanned.
+    #[test]
+    fn escape_lengths_are_exact() {
+        let at = |text: &str| super::escape_len(&text.chars().collect::<Vec<_>>(), 0);
+        for (text, len) in [
+            ("\\n", 2),
+            ("\\z", 2),
+            ("\\\\", 2),
+            ("\\x41", 4),
+            ("\\0", 2),
+            ("\\65", 3),
+            ("\\065", 4),
+            ("\\255", 4),
+            ("\\u{41}", 6),
+            ("\\u{1F600}", 9),
+            ("\\u{10FFFF}", 10),
+        ] {
+            // the escape is the whole text, and is the same length with more text after it
+            assert_eq!(at(text), Some(len), "{text}");
+            assert_eq!(at(&format!("{text}\"")), Some(len), "{text}\"");
+        }
+        for text in [
+            "\\",
+            "\\q",
+            "\\x4",
+            "\\xg1",
+            "\\256",
+            "\\u41",
+            "\\u{}",
+            "\\u{41",
+            "\\u{110000}",
+            "\\u{zz}",
+        ] {
+            assert_eq!(at(text), None, "{text}");
+        }
+    }
+
+    /// A `()` as the type of a value (a parameter, a field) is `nil`.
     #[test]
     fn unit_as_a_value_type_is_nil() {
         let lua = Lua::new();

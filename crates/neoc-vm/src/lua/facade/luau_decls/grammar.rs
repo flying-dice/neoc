@@ -166,7 +166,7 @@ fn lex(s: &str) -> Result<Vec<Tok>, String> {
                         None => return Err("unterminated string".to_string()),
                         Some('\\') => {
                             i += super::escape_len(&chars, i)
-                                .ok_or("a string has an escape Luau does not read")?;
+                                .ok_or("a string has an escape the emitter does not write")?;
                         }
                         Some('"') => break,
                         Some(_) => i += 1,
@@ -429,6 +429,8 @@ mod tests {
             "((f))?",
             "() -> (nil, string?)",
             "\"a\\n\\x41\\065\\u{1F600}\\z\\\\\"",
+            "\"\\u{41}\"",
+            "\"\\u{41}\\x41\" | \"\\u{1F600}\\065\"",
             "{ a: number, }",
         ] {
             assert_eq!(parse_type(ty), Ok(()), "{ty}");
@@ -457,6 +459,8 @@ mod tests {
             "\"\\q\"",
             "\"\\x4\"",
             "\"\\u{110000}\"",
+            "\"\\u{41}\\x4\"", // a good escape does not excuse the one after it
+            "\"\\u{41}\\999\"",
             "() -> (number, string)?", // luau-lsp reads it as an optional function
             "() -> (number, string) | nil",
             "() -> ()?",
