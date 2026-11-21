@@ -14,9 +14,23 @@ export const accents = [
 /** System-wide appearance settings, applied to the document root. */
 class Settings {
   theme = $state<Theme>('auto')
+  /** What the system prefers, followed while `theme` is `auto`. */
+  #systemDark = $state(false)
   accent = $state<string>(accents[0].value)
   reduceTransparency = $state(false)
   textScale = $state(100)
+
+  constructor() {
+    if (typeof matchMedia !== 'function') return
+    const query = matchMedia('(prefers-color-scheme: dark)')
+    this.#systemDark = query.matches
+    query.addEventListener('change', (e) => (this.#systemDark = e.matches))
+  }
+
+  /** The appearance the shell shows now, `auto` resolved: what an app's frame is told. */
+  get appearance(): 'light' | 'dark' {
+    return this.theme === 'auto' ? (this.#systemDark ? 'dark' : 'light') : this.theme
+  }
 
   apply(root: HTMLElement): void {
     if (this.theme === 'auto') delete root.dataset.theme

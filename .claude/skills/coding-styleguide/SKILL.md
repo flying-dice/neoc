@@ -27,7 +27,7 @@ crate seam except through a port or the protocol.
 | Dev-time adapter | `vos-codegen`: the Rust schema to `types/generated/*` (`vos.ts`, `ui.lua`, `vos.d.luau`) |
 | Composition root | `vos-host`: wiring only (build adapters, hand each to its port, mount routers) |
 | Apps | `apps/<id>`: Luau packages; their only contract is the `app` table (`types/generated/vos.d.luau`) |
-| Client | `client/`: the shell and the renderer (`client/src/view`); it renders view trees and runs no app code |
+| Client | `client/`: the shell, its app frames (`organisms/AppFrame.svelte`, `shell/frameBridge.ts`) and the renderer of view-tree apps (`client/src/view`); it knows nothing of any app |
 | Kit | `packages/ui`: Svelte components in atomic layers, tokens, stories; knows nothing about apps |
 
 The boundary rules:
@@ -40,7 +40,8 @@ The boundary rules:
   reach other apps' data and the host database). What they start (tasks, servers, workers) is released when they are
   unloaded. Through `app.*`, apps reach other apps only through tools. A Lua number that reaches Rust is bounded or an
   error, never a panic.
-- **The client runs no app code.** Client and host talk only through the protocol (JSON-RPC on `/rpc`, AG-UI on `/agui`);
+- **An app's client runs only in its own frame and reaches only its own backend.** The shell and the kit know nothing of any app.
+  Client and host talk only through the protocol (JSON-RPC on `/rpc`, AG-UI on `/agui`, the frame route and its messages);
   no raw sockets or side routes. A new wire shape is declared once, in the Rust schema, and generated.
 - **Release what you open.** The host loads and unloads apps at runtime: an adapter's VMs, database handles, watchers and
   child processes are dropped on unload and shutdown.
