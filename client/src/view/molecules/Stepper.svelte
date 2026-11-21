@@ -5,7 +5,7 @@
   buttons are for pointer and touch. `on.change` reports the new value. Atoms: Stepper, Text.
 -->
 <script lang="ts">
-  import { Stepper, Text } from '@agentos/ui/atoms'
+  import { Stepper, Text } from '@vos/ui/atoms'
   import { useView } from '../context'
   import { commonOf, str } from '../props'
   import type { AdapterProps } from '../registry'

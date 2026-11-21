@@ -6,7 +6,7 @@
  */
 import type { Interrupt, ResumeEntry, RunAgentInput } from '@ag-ui/core'
 import { EventSchemas } from '@ag-ui/core/schemas'
-import { uniqueBy } from '@agentos/ui'
+import { uniqueBy } from '@vos/ui'
 import { z } from 'zod'
 
 export { EventType } from '@ag-ui/core'

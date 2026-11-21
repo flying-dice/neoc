@@ -9,9 +9,9 @@
   The `drop` event carries `{type, payload, target: {key, beforeKey, edge}}`. Molecules: Menu, Popover.
 -->
 <script lang="ts">
-  import { Menu, Popover } from '@agentos/ui/molecules'
-  import type { MenuItem } from '@agentos/ui'
-  import { isContextMenuKey } from '@agentos/ui'
+  import { Menu, Popover } from '@vos/ui/molecules'
+  import type { MenuItem } from '@vos/ui'
+  import { isContextMenuKey } from '@vos/ui'
   import { useView } from '../context'
   import {
     keyboardEdge,

@@ -185,7 +185,7 @@ first commit. `bun run lint:testids` fails the build for raw Svelte elements and
 
 ### Kit components
 
-Every `@agentos/ui` component that is interactive, or opens an overlay, takes a **required** `testid: string` prop
+Every `@vos/ui` component that is interactive, or opens an overlay, takes a **required** `testid: string` prop
 and renders it as `data-testid` on its root interactive element, so svelte-check fails if a caller forgets it. Inner
 parts derive from it (`${testid}-<part>`, `${testid}-<item id>`), documented in the component's header comment. The
 renderer adapters pass the id derived from the node's key path.

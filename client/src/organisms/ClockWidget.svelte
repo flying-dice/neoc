@@ -1,6 +1,6 @@
 <!-- @organism ClockWidget — home-screen date & time widget. Atoms: Card, Text. Test id: `testid`. -->
 <script lang="ts">
-  import { Card, Text } from '@agentos/ui/atoms'
+  import { Card, Text } from '@vos/ui/atoms'
 
   interface Props {
     testid: string

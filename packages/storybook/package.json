@@ -1,5 +1,5 @@
 {
-  "name": "@agentos/storybook",
+  "name": "@vos/storybook",
   "version": "0.1.0",
   "private": true,
   "description": "Shared Storybook setup for every AgentOS app: config factory, preview (tokens, themes, a11y), and the AppWindow frame",
@@ -17,7 +17,7 @@
     "typecheck": "svelte-check --tsconfig ./tsconfig.json"
   },
   "dependencies": {
-    "@agentos/ui": "workspace:*"
+    "@vos/ui": "workspace:*"
   },
   "peerDependencies": {
     "storybook": "10.6.7",

@@ -1,4 +1,4 @@
-# @agentos/client
+# @vos/client
 
 The AgentOS client: an installable PWA (Vite + Svelte 5) that is the iPadOS-style shell. It talks to the Rust host
 (`crates/vos-host`) over one WebSocket with JSON-RPC 2.0 (`/rpc`), pairs through `/session` and `/pair`, and renders
@@ -45,7 +45,7 @@ streaming over AG-UI (`/agui`).
 ## The managed renderer (`src/view`)
 
 The client half of the server-driven UI (`docs/architecture/ui-system.md`, sections 2 and 3). The host owns truth and
-structure; this renders view trees with the `@agentos/ui` kit, holds client-managed state and drafts, and runs **no app
+structure; this renders view trees with the `@vos/ui` kit, holds client-managed state and drafts, and runs **no app
 code**. The shell's `ViewWindow` organism hosts it for every installed app.
 
 ```

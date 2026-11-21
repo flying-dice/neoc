@@ -4,7 +4,7 @@
   DisclosureGroup. Atoms: Children.
 -->
 <script lang="ts">
-  import { DisclosureGroup } from '@agentos/ui/molecules'
+  import { DisclosureGroup } from '@vos/ui/molecules'
   import Children from '../atoms/Children.svelte'
   import { useView } from '../context'
   import { commonOf, str } from '../props'

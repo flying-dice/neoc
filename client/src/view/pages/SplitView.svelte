@@ -8,7 +8,7 @@
   column `main`. Templates: SplitViewTemplate. Atoms: NavLevel, Children.
 -->
 <script lang="ts">
-  import { SplitViewTemplate } from '@agentos/ui/templates'
+  import { SplitViewTemplate } from '@vos/ui/templates'
   import { untrack } from 'svelte'
   import Children from '../atoms/Children.svelte'
   import NavLevel from '../atoms/NavLevel.svelte'

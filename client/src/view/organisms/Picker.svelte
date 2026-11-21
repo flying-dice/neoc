@@ -7,9 +7,9 @@
   Icon, Text.
 -->
 <script lang="ts">
-  import { Button, Icon, SegmentedControl, Text } from '@agentos/ui/atoms'
-  import type { MenuItem } from '@agentos/ui'
-  import { Menu, OptionList, Popover } from '@agentos/ui/molecules'
+  import { Button, Icon, SegmentedControl, Text } from '@vos/ui/atoms'
+  import type { MenuItem } from '@vos/ui'
+  import { Menu, OptionList, Popover } from '@vos/ui/molecules'
   import { iconOf, pickerOptions } from '../core/menuItems'
   import { choose, selectedKeys, selectionLabel } from '../core/options'
   import { useView } from '../context'

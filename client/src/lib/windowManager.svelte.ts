@@ -1,4 +1,4 @@
-import type { Frame, StageSummary, WindowLayout } from '@agentos/ui'
+import type { Frame, StageSummary, WindowLayout } from '@vos/ui'
 import { appOf, MIN_WIDTH, type AppDefinition, type AppId } from './apps.svelte'
 
 /**

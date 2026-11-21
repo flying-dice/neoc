@@ -52,7 +52,7 @@ const host = spawn('cargo', ['run', '-q', '-p', 'vos-host'], {
   stdio: 'inherit',
   env: { ...process.env, AGENTOS_DEV_CLIENT_PORT: '5173', AGENTOS_DEV_RELOAD: '1' }
 })
-const client = spawn('bun', ['run', '--filter', '@agentos/client', 'dev'], { cwd: root, stdio: 'inherit' })
+const client = spawn('bun', ['run', '--filter', '@vos/client', 'dev'], { cwd: root, stdio: 'inherit' })
 
 const stop = (): void => {
   sources.close()

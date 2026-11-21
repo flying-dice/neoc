@@ -8,7 +8,7 @@
   ActivityIndicator, Children.
 -->
 <script lang="ts">
-  import { ActivityIndicator, Button, Icon } from '@agentos/ui/atoms'
+  import { ActivityIndicator, Button, Icon } from '@vos/ui/atoms'
   import Children from '../atoms/Children.svelte'
   import { iconOf } from '../core/menuItems'
   import { ariaShortcut } from '../core/shortcuts'

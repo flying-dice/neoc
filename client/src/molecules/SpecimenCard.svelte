@@ -1,7 +1,7 @@
 <!-- @molecule SpecimenCard — titled card that frames a UI-kit specimen. Atoms: Card, Text. -->
 <script lang="ts">
   import type { Snippet } from 'svelte'
-  import { Card, Text } from '@agentos/ui/atoms'
+  import { Card, Text } from '@vos/ui/atoms'
 
   interface Props {
     title: string

@@ -6,7 +6,7 @@
   Test ids: `pairing` (the page), `pairing-code`, `pairing-device-name`, `pairing-submit`, `pairing-error`.
 -->
 <script lang="ts">
-  import { Button, Icon, IconTile, Text, TextInput } from '@agentos/ui/atoms'
+  import { Button, Icon, IconTile, Text, TextInput } from '@vos/ui/atoms'
   import { normaliseCode, type PairResult } from '../shell/pairing'
 
   interface Props {

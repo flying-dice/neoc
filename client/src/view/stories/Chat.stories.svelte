@@ -1,7 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, waitFor, within } from 'storybook/test'
-  import AppWindow from '@agentos/storybook/AppWindow.svelte'
+  import AppWindow from '@vos/storybook/AppWindow.svelte'
   import ViewHost from '../organisms/ViewHost.svelte'
   import type { FakeRun } from '../host/fakeAgui'
   import {

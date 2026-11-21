@@ -1,8 +1,8 @@
 <!-- @page FilesPage — workspace file browser (placeholder data). -->
 <script lang="ts">
-  import { ListRow, SearchField, IconButton } from '@agentos/ui/molecules'
-  import { ListSection, NavigationBar } from '@agentos/ui/organisms'
-  import { ScreenTemplate } from '@agentos/ui/templates'
+  import { ListRow, SearchField, IconButton } from '@vos/ui/molecules'
+  import { ListSection, NavigationBar } from '@vos/ui/organisms'
+  import { ScreenTemplate } from '@vos/ui/templates'
 
   let query = $state('')
 

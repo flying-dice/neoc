@@ -45,7 +45,7 @@ case in application, the adapter, the codegen output (`bun run codegen`), and te
 change: call it out in the MR.
 
 UI layering is atomic (`docs/design/DESIGN_LANGUAGE.md`, `bun run lint:atomic`): atoms < molecules < organisms <
-templates < pages, each importing only strictly lower layers. Reach for `@agentos/ui` first; a generic need goes into the
+templates < pages, each importing only strictly lower layers. Reach for `@vos/ui` first; a generic need goes into the
 kit (with a story and a required `testid` prop), never into one renderer adapter or app.
 
 ## Types and errors, in short

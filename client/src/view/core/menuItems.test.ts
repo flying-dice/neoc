@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { MenuEntry, MenuItem } from '@agentos/ui'
+import type { MenuEntry, MenuItem } from '@vos/ui'
 import { createHarness } from '../host/harness'
 import type { Node } from '../protocol'
 import { formatShortcut, iconOf, menuItems } from './menuItems'

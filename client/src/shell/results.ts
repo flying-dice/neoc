@@ -7,7 +7,7 @@
  * (and so from the generated types) a type error. Unknown fields are dropped, so a field the shell never reads
  * (an agent's runtime `env`) does not travel further than this module.
  */
-import { uniqueBy } from '@agentos/ui'
+import { uniqueBy } from '@vos/ui'
 import { z } from 'zod'
 import type { AgentSummary, AppPreview, AppSummary, Catalog, DeviceRow, HostApi } from './hostApi'
 

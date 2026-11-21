@@ -7,7 +7,7 @@
  *     `data-testid`: <button>, <a>, <input>, <select>, <textarea>, any element
  *     with a click / pointer / key handler, and any element with an
  *     interactive ARIA role.
- *  2. Every @agentos/ui component that renders such an element declares a
+ *  2. Every @vos/ui component that renders such an element declares a
  *     `testid` prop, so callers are forced (by svelte-check) to name it.
  *
  * Stories are skipped: they document components and are not shipped.

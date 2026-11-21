@@ -1,4 +1,4 @@
-# @agentos/ui
+# @vos/ui
 
 AgentOS UI kit — the iOS / iPadOS 16–17 design language (before Liquid Glass) for Svelte 5.
 
@@ -20,12 +20,12 @@ Rules, enforced by `bun run lint:atomic` (`scripts/check-atomic.ts`):
 4. Consumers import through layer entry points, never deep paths:
 
 ```ts
-import { Button, Icon } from '@agentos/ui/atoms'
-import { ListRow } from '@agentos/ui/molecules'
-import { Window } from '@agentos/ui/organisms'
-import { DesktopTemplate } from '@agentos/ui/templates'
-import type { IconName } from '@agentos/ui'
-import '@agentos/ui/styles.css' // tokens + base, once at app entry
+import { Button, Icon } from '@vos/ui/atoms'
+import { ListRow } from '@vos/ui/molecules'
+import { Window } from '@vos/ui/organisms'
+import { DesktopTemplate } from '@vos/ui/templates'
+import type { IconName } from '@vos/ui'
+import '@vos/ui/styles.css' // tokens + base, once at app entry
 ```
 
 Content flows *into* a component through snippets, which doesn't count as an import. That's how an organism like `ListSection` holds `ListRow`s without importing them.

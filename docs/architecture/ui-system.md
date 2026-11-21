@@ -57,7 +57,7 @@ Rules that fall out of the decided architecture:
 
 Repo placement (as built): `packages/ui` is the kit (atomic layers, `testid` required). The renderer lives in the client,
 `client/src/view`: `core/` is this protocol's client half and `atoms/ molecules/ organisms/ templates/ pages/`
-are the adapters (wire props -> kit components). Adapters import only `@agentos/ui` and `svelte`.
+are the adapters (wire props -> kit components). Adapters import only `@vos/ui` and `svelte`.
 
 ---
 
@@ -1471,7 +1471,7 @@ slots:
   suffix: { max: 1 }
 examples:
   - { title: Search, node: { type: TextField, key: q, props: { text: { $ref: client.search }, placeholder: Search } } }
-maps: { adapter: TextField, kit: "@agentos/ui/molecules#TextFieldRow" }
+maps: { adapter: TextField, kit: "@vos/ui/molecules#TextFieldRow" }
 ```
 
 **Generated LuaCATS** (`luals/@agentos/ui.lua`): every prop, enum, `Binding` (typed `Ref<T>`, so a plain value in a `Binding` prop is a diagnostic),
@@ -1523,7 +1523,7 @@ layer and keep the same four outputs.
 Historical: `proto/` was the spike that proved the renderer core. It was removed once `client/src/view`
 (`ViewCore` in `core/`, tested under `bun test`) replaced it, so the commands and file names below no longer exist.
 
-Vite + Svelte 5, importing the real `@agentos/ui` atoms from the repo path (read-only), the host as a TypeScript stub on an
+Vite + Svelte 5, importing the real `@vos/ui` atoms from the repo path (read-only), the host as a TypeScript stub on an
 in-memory JSON-RPC wire (messages really serialised). `proto/README.md` has the run commands; summary:
 
 ```sh

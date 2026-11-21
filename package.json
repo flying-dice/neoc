@@ -1,5 +1,5 @@
 {
-  "name": "agentos",
+  "name": "vos",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -8,7 +8,7 @@
   ],
   "scripts": {
     "dev": "bun scripts/dev.ts",
-    "build": "bun run --filter @agentos/client build",
+    "build": "bun run --filter @vos/client build",
     "start": "cargo run --profile release-host -p vos-host --",
     "build:apps": "bun scripts/build-apps.ts",
     "typecheck": "cargo check --workspace --all-targets && tsc --noEmit -p types/tsconfig.json && bun run --filter '*' typecheck",

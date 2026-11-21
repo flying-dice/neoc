@@ -4,7 +4,7 @@
  * focus, Enter from a prompt field). A tap runs the button node's own handler through the view core; for an alert
  * with prompt `fields` the entered values travel in the tap payload as `{ fields }`.
  */
-import type { AlertAction, AlertField } from '@agentos/ui'
+import type { AlertAction, AlertField } from '@vos/ui'
 import { childPath } from '../core/tree'
 import type { Scope, ViewCore } from '../core/view'
 import type { Json, Node } from '../protocol'

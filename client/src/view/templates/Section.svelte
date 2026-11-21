@@ -4,7 +4,7 @@
   Organisms: ListSection. Molecules: FormCell. Atoms: Children.
 -->
 <script lang="ts">
-  import { ListSection } from '@agentos/ui/organisms'
+  import { ListSection } from '@vos/ui/organisms'
   import Children from '../atoms/Children.svelte'
   import FormCell from '../molecules/FormCell.svelte'
   import { useList, useView } from '../context'

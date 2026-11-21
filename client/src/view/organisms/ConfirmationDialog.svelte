@@ -6,8 +6,8 @@
   Popover, Alert. Atoms: Button, Text.
 -->
 <script lang="ts">
-  import { Button, Text } from '@agentos/ui/atoms'
-  import { Alert, Popover } from '@agentos/ui/molecules'
+  import { Button, Text } from '@vos/ui/atoms'
+  import { Alert, Popover } from '@vos/ui/molecules'
   import { useView } from '../context'
   import { commonOf, str } from '../props'
   import type { AdapterProps } from '../registry'

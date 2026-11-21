@@ -130,8 +130,8 @@ A change is done when all of these hold:
   handles, watchers, agent processes) are dropped on unload.
 
 Enforced by `bun run lint:boundaries` (`scripts/check-boundaries.ts`) on the client and the kit: no relative import
-leaves its package (the client never reaches into `crates/`), the client and kit import only `@agentos/ui` (stories
-also `@agentos/storybook`), no Node or Bun builtins in browser code, `new WebSocket` only in
+leaves its package (the client never reaches into `crates/`), the client and kit import only `@vos/ui` (stories
+also `@vos/storybook`), no Node or Bun builtins in browser code, `new WebSocket` only in
 `client/src/view/rpc/websocket.ts`, and no `{@html}`, `innerHTML`, `outerHTML`, `insertAdjacentHTML` or
 `document.write`.
 

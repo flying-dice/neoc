@@ -5,8 +5,8 @@
   `sidebar` TabView becomes `bottom` in a compact window. Organisms: TabView. Atoms: Children.
 -->
 <script lang="ts">
-  import { icons, type IconName } from '@agentos/ui'
-  import { TabView as KitTabView } from '@agentos/ui/organisms'
+  import { icons, type IconName } from '@vos/ui'
+  import { TabView as KitTabView } from '@vos/ui/organisms'
   import Children from '../atoms/Children.svelte'
   import { useView } from '../context'
   import { commonOf, oneOf, str } from '../props'

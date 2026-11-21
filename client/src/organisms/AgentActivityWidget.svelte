@@ -6,7 +6,7 @@
   there are none.
 -->
 <script lang="ts">
-  import { Card, Text } from '@agentos/ui/atoms'
+  import { Card, Text } from '@vos/ui/atoms'
   import AgentAvatar from '../molecules/AgentAvatar.svelte'
   import { iconOf, type AgentSummary } from '../shell/hostApi'
 

@@ -1,10 +1,10 @@
 <!-- @page SettingsPage — iPadOS Settings-style system preferences. -->
 <script lang="ts">
-  import type { IconName } from '@agentos/ui'
-  import { Icon, IconTile, Toggle, SegmentedControl } from '@agentos/ui/atoms'
-  import { ListRow, SearchField, IconSlider, Alert } from '@agentos/ui/molecules'
-  import { ListSection, NavigationBar } from '@agentos/ui/organisms'
-  import { SplitViewTemplate, ScreenTemplate } from '@agentos/ui/templates'
+  import type { IconName } from '@vos/ui'
+  import { Icon, IconTile, Toggle, SegmentedControl } from '@vos/ui/atoms'
+  import { ListRow, SearchField, IconSlider, Alert } from '@vos/ui/molecules'
+  import { ListSection, NavigationBar } from '@vos/ui/organisms'
+  import { SplitViewTemplate, ScreenTemplate } from '@vos/ui/templates'
   import ColorSwatch from '../atoms/ColorSwatch.svelte'
   import DevicesPane from '../templates/DevicesPane.svelte'
   import { settings, accents, type Theme } from '../lib/settings.svelte'

@@ -5,7 +5,7 @@
   Slider, Text.
 -->
 <script lang="ts">
-  import { Slider, Text } from '@agentos/ui/atoms'
+  import { Slider, Text } from '@vos/ui/atoms'
   import { useView } from '../context'
   import { commonOf, str } from '../props'
   import type { AdapterProps } from '../registry'

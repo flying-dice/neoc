@@ -7,8 +7,8 @@
   Atoms: Button, Icon.
 -->
 <script lang="ts">
-  import { Button, Icon } from '@agentos/ui/atoms'
-  import { Menu, Popover } from '@agentos/ui/molecules'
+  import { Button, Icon } from '@vos/ui/atoms'
+  import { Menu, Popover } from '@vos/ui/molecules'
   import { iconOf, menuItems } from '../core/menuItems'
   import { useView } from '../context'
   import { commonOf, str } from '../props'

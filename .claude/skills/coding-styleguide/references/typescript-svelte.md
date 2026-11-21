@@ -71,7 +71,7 @@ component. To add one:
 ## Components
 
 - Header comment `<!-- @<layer> Name — purpose -->` matching the folder (`lint:atomic`); layers import only strictly lower
-  layers, and `@agentos/ui` comes through its layer entry point (`@agentos/ui/atoms`), never a deep path.
+  layers, and `@vos/ui` comes through its layer entry point (`@vos/ui/atoms`), never a deep path.
 - Interactive kit components take a required `testid: string` and derive inner ids as `${testid}-<part>`; raw interactive
   elements carry `data-testid` (`lint:testids`, naming in `docs/TESTING.md`).
 - Native elements first (`<button>`, `<input>`, `<a>`). A custom control needs a `role`, `tabindex`, key handling and an

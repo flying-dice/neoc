@@ -7,8 +7,8 @@
   Atoms: Children.
 -->
 <script lang="ts">
-  import { Sheet } from '@agentos/ui/molecules'
-  import { normaliseDetents } from '@agentos/ui'
+  import { Sheet } from '@vos/ui/molecules'
+  import { normaliseDetents } from '@vos/ui'
   import Children from '../atoms/Children.svelte'
   import { useView } from '../context'
   import { commonOf, oneOf } from '../props'

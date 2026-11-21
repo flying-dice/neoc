@@ -1,3 +1,3 @@
 import './host'
 
-export { default } from '@agentos/storybook/preview'
+export { default } from '@vos/storybook/preview'

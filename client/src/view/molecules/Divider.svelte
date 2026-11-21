@@ -1,6 +1,6 @@
 <!-- @molecule Divider — a hairline separator (role separator); vertical inside a horizontal stack. Atoms: Divider. -->
 <script lang="ts">
-  import { Divider } from '@agentos/ui/atoms'
+  import { Divider } from '@vos/ui/atoms'
   import { useView } from '../context'
   import { commonOf } from '../props'
   import type { AdapterProps } from '../registry'

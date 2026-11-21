@@ -6,8 +6,8 @@
   `${testid}-remove`, `${testid}-state`.
 -->
 <script lang="ts">
-  import type { IconName } from '@agentos/ui'
-  import { ActivityIndicator, Button, Icon, IconTile, Text } from '@agentos/ui/atoms'
+  import type { IconName } from '@vos/ui'
+  import { ActivityIndicator, Button, Icon, IconTile, Text } from '@vos/ui/atoms'
   import type { AppState } from '../shell/hostApi'
 
   interface Props {

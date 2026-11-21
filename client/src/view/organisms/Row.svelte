@@ -7,8 +7,8 @@
   SwipeAction. Atoms: Children.
 -->
 <script lang="ts">
-  import { icons, type IconName } from '@agentos/ui'
-  import { ListRow, SwipeAction } from '@agentos/ui/molecules'
+  import { icons, type IconName } from '@vos/ui'
+  import { ListRow, SwipeAction } from '@vos/ui/molecules'
   import Children from '../atoms/Children.svelte'
   import { useColumn, useList, useView } from '../context'
   import { childPath } from '../core/tree'

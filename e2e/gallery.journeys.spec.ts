@@ -1,5 +1,5 @@
 /**
- * UI Kit journeys (client/journeys/gallery.md): the catalogue of `@agentos/ui` that app builders read. Nothing
+ * UI Kit journeys (client/journeys/gallery.md): the catalogue of `@vos/ui` that app builders read. Nothing
  * here touches the host's state.
  */
 import type { Page } from '@playwright/test'

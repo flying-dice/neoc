@@ -5,7 +5,7 @@
   writes at once, human wins on conflict. Molecules: DatePicker.
 -->
 <script lang="ts">
-  import { DatePicker } from '@agentos/ui/molecules'
+  import { DatePicker } from '@vos/ui/molecules'
   import { useView } from '../context'
   import { commonOf, oneOf, str } from '../props'
   import type { AdapterProps } from '../registry'

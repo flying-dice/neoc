@@ -10,10 +10,10 @@
 -->
 <script lang="ts">
   import type { Snippet } from 'svelte'
-  import type { DockApp } from '@agentos/ui'
-  import { SplitHandle, Toast } from '@agentos/ui/atoms'
-  import { DesktopTemplate } from '@agentos/ui/templates'
-  import { StatusBar, Dock, Window, StageStrip } from '@agentos/ui/organisms'
+  import type { DockApp } from '@vos/ui'
+  import { SplitHandle, Toast } from '@vos/ui/atoms'
+  import { DesktopTemplate } from '@vos/ui/templates'
+  import { StatusBar, Dock, Window, StageStrip } from '@vos/ui/organisms'
   import ClockWidget from '../organisms/ClockWidget.svelte'
   import AgentActivityWidget from '../organisms/AgentActivityWidget.svelte'
   import { AGENTS_APP_ID, appOf, dockOrder, dockRecents, type AppId } from '../lib/apps.svelte'

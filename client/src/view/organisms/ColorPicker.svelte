@@ -4,7 +4,7 @@
   accessible name is the required `label`; each swatch is named by its token. Molecules: ColorPicker.
 -->
 <script lang="ts">
-  import { ColorPicker } from '@agentos/ui/molecules'
+  import { ColorPicker } from '@vos/ui/molecules'
   import { useView } from '../context'
   import { commonOf, str } from '../props'
   import type { AdapterProps } from '../registry'

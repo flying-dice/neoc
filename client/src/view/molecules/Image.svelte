@@ -4,7 +4,7 @@
   `fit` is `fit` (contain) or `fill` (cover), `size` makes a square, `corner` a radius token. Atoms: Picture.
 -->
 <script lang="ts">
-  import { Picture } from '@agentos/ui/atoms'
+  import { Picture } from '@vos/ui/atoms'
   import { useView } from '../context'
   import { commonOf, oneOf, str } from '../props'
   import type { AdapterProps } from '../registry'

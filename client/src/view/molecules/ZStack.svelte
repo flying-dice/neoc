@@ -2,7 +2,7 @@
   @molecule ZStack — overlays its children back to front, aligned to one of nine anchors. Atoms: ZStack, Children.
 -->
 <script lang="ts">
-  import { ZStack } from '@agentos/ui/atoms'
+  import { ZStack } from '@vos/ui/atoms'
   import Children from '../atoms/Children.svelte'
   import { useView } from '../context'
   import { commonOf, oneOf } from '../props'

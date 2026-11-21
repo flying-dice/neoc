@@ -3,15 +3,15 @@
   iPadOS split view, introducing AgentOS, the apps you can install and the agents on this host.
 -->
 <script lang="ts">
-  import type { IconName } from '@agentos/ui'
-  import { Button, Icon, IconTile, Text } from '@agentos/ui/atoms'
-  import { IconButton, ListRow, SearchField } from '@agentos/ui/molecules'
-  import { ListSection, NavigationBar } from '@agentos/ui/organisms'
-  import { ScreenTemplate, SplitViewTemplate } from '@agentos/ui/templates'
+  import type { IconName } from '@vos/ui'
+  import { Button, Icon, IconTile, Text } from '@vos/ui/atoms'
+  import { IconButton, ListRow, SearchField } from '@vos/ui/molecules'
+  import { ListSection, NavigationBar } from '@vos/ui/organisms'
+  import { ScreenTemplate, SplitViewTemplate } from '@vos/ui/templates'
   import AgentListing from '../molecules/AgentListing.svelte'
   import AppListing from '../molecules/AppListing.svelte'
-  import { Alert } from '@agentos/ui/molecules'
-  import { TextInput } from '@agentos/ui/atoms'
+  import { Alert } from '@vos/ui/molecules'
+  import { TextInput } from '@vos/ui/atoms'
   import { windowManager as wm } from '../lib/windowManager.svelte'
   import { AGENTS_APP_ID, appOf } from '../lib/apps.svelte'
   import { host } from '../lib/host.svelte'

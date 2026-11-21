@@ -4,7 +4,7 @@
   A polite `status` live region. Atoms: ActivityIndicator, Button, Text.
 -->
 <script lang="ts">
-  import { ActivityIndicator, Button, Text } from '@agentos/ui/atoms'
+  import { ActivityIndicator, Button, Text } from '@vos/ui/atoms'
 
   interface Props {
     testid: string

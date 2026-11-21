@@ -3,7 +3,7 @@
   the accessible name). Molecules: Label.
 -->
 <script lang="ts">
-  import { Label } from '@agentos/ui/molecules'
+  import { Label } from '@vos/ui/molecules'
   import { iconOf } from '../core/menuItems'
   import { useView } from '../context'
   import { commonOf, oneOf, str } from '../props'

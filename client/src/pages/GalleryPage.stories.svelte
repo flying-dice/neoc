@@ -1,13 +1,13 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect } from 'storybook/test'
-  import AppWindow from '@agentos/storybook/AppWindow.svelte'
+  import AppWindow from '@vos/storybook/AppWindow.svelte'
   import GalleryPage from './GalleryPage.svelte'
   import { apps } from '../lib/apps.svelte'
 
   const app = apps.gallery
 
-  /** UI Kit: the living catalogue of @agentos/ui. */
+  /** UI Kit: the living catalogue of @vos/ui. */
   const { Story } = defineMeta({
     title: 'Apps/UI Kit',
     component: GalleryPage,

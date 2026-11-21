@@ -6,7 +6,7 @@
   `{from, to}` reported as the selection changes. A "Saving…" status is announced politely. Atoms: TextArea.
 -->
 <script lang="ts">
-  import { TextArea } from '@agentos/ui/atoms'
+  import { TextArea } from '@vos/ui/atoms'
   import { useView } from '../context'
   import { commonOf, str } from '../props'
   import type { AdapterProps } from '../registry'

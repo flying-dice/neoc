@@ -2,8 +2,8 @@
   Atoms: IconTile, Icon, Text, Button, ActivityIndicator.
   Test ids: `testid` on the listing, `${testid}-get` on the main button, `${testid}-remove` on Remove. -->
 <script lang="ts">
-  import type { IconName } from '@agentos/ui'
-  import { ActivityIndicator, IconTile, Icon, Text, Button } from '@agentos/ui/atoms'
+  import type { IconName } from '@vos/ui'
+  import { ActivityIndicator, IconTile, Icon, Text, Button } from '@vos/ui/atoms'
 
   interface Props {
     testid: string

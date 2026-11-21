@@ -27,7 +27,7 @@ const versionOf = (id: string): string =>
 rmSync(DIR, { recursive: true, force: true })
 mkdirSync(DIR, { recursive: true })
 
-run('bun', ['run', '--filter', '@agentos/client', 'build'])
+run('bun', ['run', '--filter', '@vos/client', 'build'])
 run('cargo', ['build', '-q', '-p', 'vos-host'])
 run('cargo', ['build', '-q', '-p', 'vos-acp', '--bin', 'fake_agent']) // the scripted agent the Agents journeys talk to
 

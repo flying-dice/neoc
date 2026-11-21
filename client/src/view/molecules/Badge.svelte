@@ -4,8 +4,8 @@
   needs a `label` for assistive technology. Atoms: Badge.
 -->
 <script lang="ts">
-  import { Badge } from '@agentos/ui/atoms'
-  import { isPaletteToken } from '@agentos/ui'
+  import { Badge } from '@vos/ui/atoms'
+  import { isPaletteToken } from '@vos/ui'
   import { useView } from '../context'
   import { commonOf } from '../props'
   import type { AdapterProps } from '../registry'

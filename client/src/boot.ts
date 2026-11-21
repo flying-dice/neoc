@@ -8,7 +8,7 @@
  * definitions, the host state); nothing in the product reads it.
  */
 import { mount } from 'svelte'
-import '@agentos/ui/styles.css'
+import '@vos/ui/styles.css'
 import './app.css'
 import App from './App.svelte'
 import { apps } from './lib/apps.svelte'

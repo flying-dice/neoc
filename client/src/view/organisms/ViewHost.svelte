@@ -11,8 +11,8 @@
   confirmation `${app}-link-confirm` (`-host`, `-url`, `-action-open`, `-action-cancel`).
 -->
 <script lang="ts">
-  import { Text } from '@agentos/ui/atoms'
-  import { Alert } from '@agentos/ui/molecules'
+  import { Text } from '@vos/ui/atoms'
+  import { Alert } from '@vos/ui/molecules'
   import { untrack } from 'svelte'
   import { provideView } from '../context'
   import { describeLink, type ExternalLink } from '../core/link'

@@ -1,4 +1,4 @@
-<!-- @page GalleryPage — living catalogue of the @agentos/ui kit, layer by layer. -->
+<!-- @page GalleryPage — living catalogue of the @vos/ui kit, layer by layer. -->
 <script lang="ts">
   import {
     ActivityIndicator,
@@ -9,7 +9,7 @@
     Slider,
     Text,
     Toggle
-  } from '@agentos/ui/atoms'
+  } from '@vos/ui/atoms'
   import {
     AppIcon,
     Alert,
@@ -19,9 +19,9 @@
     SearchField,
     Sheet,
     TextFieldRow
-  } from '@agentos/ui/molecules'
-  import { ListSection, NavigationBar, TabBar } from '@agentos/ui/organisms'
-  import { ScreenTemplate } from '@agentos/ui/templates'
+  } from '@vos/ui/molecules'
+  import { ListSection, NavigationBar, TabBar } from '@vos/ui/organisms'
+  import { ScreenTemplate } from '@vos/ui/templates'
   import ColorSwatch from '../atoms/ColorSwatch.svelte'
   import SpecimenCard from '../molecules/SpecimenCard.svelte'
   import { apps } from '../lib/apps.svelte'

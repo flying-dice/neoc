@@ -3,7 +3,7 @@
   px), on the client, so resizing a window never round-trips. Atoms: Adaptive, Children.
 -->
 <script lang="ts">
-  import { Adaptive } from '@agentos/ui/atoms'
+  import { Adaptive } from '@vos/ui/atoms'
   import Children from '../atoms/Children.svelte'
   import { useView } from '../context'
   import { commonOf } from '../props'

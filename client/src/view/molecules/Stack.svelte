@@ -3,7 +3,7 @@
   CSS. Atoms: Stack, Children.
 -->
 <script lang="ts">
-  import { Stack } from '@agentos/ui/atoms'
+  import { Stack } from '@vos/ui/atoms'
   import Children from '../atoms/Children.svelte'
   import { useView } from '../context'
   import { commonOf, oneOf, unit } from '../props'

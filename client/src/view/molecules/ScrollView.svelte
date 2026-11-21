@@ -5,7 +5,7 @@
   Atoms: ScrollView, Children.
 -->
 <script lang="ts">
-  import { ScrollView } from '@agentos/ui/atoms'
+  import { ScrollView } from '@vos/ui/atoms'
   import Children from '../atoms/Children.svelte'
   import { useView } from '../context'
   import { findByKey } from '../core/tree'

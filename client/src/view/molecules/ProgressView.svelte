@@ -4,7 +4,7 @@
   percentage). Atoms: ProgressBar, ProgressRing, ActivityIndicator.
 -->
 <script lang="ts">
-  import { ActivityIndicator, ProgressBar, ProgressRing } from '@agentos/ui/atoms'
+  import { ActivityIndicator, ProgressBar, ProgressRing } from '@vos/ui/atoms'
   import { useView } from '../context'
   import { commonOf, oneOf } from '../props'
   import type { AdapterProps } from '../registry'

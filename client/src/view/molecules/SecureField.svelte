@@ -5,7 +5,7 @@
   Icon.
 -->
 <script lang="ts">
-  import { Button, Icon, TextInput } from '@agentos/ui/atoms'
+  import { Button, Icon, TextInput } from '@vos/ui/atoms'
   import { useView } from '../context'
   import { commonOf, str } from '../props'
   import type { AdapterProps } from '../registry'

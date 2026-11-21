@@ -4,7 +4,7 @@
   decoration and hidden from assistive technology. Atoms: Icon.
 -->
 <script lang="ts">
-  import { Icon } from '@agentos/ui/atoms'
+  import { Icon } from '@vos/ui/atoms'
   import { iconOf } from '../core/menuItems'
   import { useView } from '../context'
   import { commonOf, oneOf } from '../props'

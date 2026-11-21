@@ -6,7 +6,7 @@
   the action's tap payload as `fields`. Molecules: Alert.
 -->
 <script lang="ts">
-  import { Alert } from '@agentos/ui/molecules'
+  import { Alert } from '@vos/ui/molecules'
   import { useView } from '../context'
   import { commonOf, str } from '../props'
   import type { AdapterProps } from '../registry'

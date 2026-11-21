@@ -5,7 +5,7 @@
   name is `label`, else the placeholder. Molecules: SearchField.
 -->
 <script lang="ts">
-  import { SearchField } from '@agentos/ui/molecules'
+  import { SearchField } from '@vos/ui/molecules'
   import { TEXT_SYNC } from '../core/bindings'
   import { useView } from '../context'
   import { commonOf, str } from '../props'

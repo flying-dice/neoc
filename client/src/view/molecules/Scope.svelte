@@ -4,7 +4,7 @@
   Atoms: Scope, Children.
 -->
 <script lang="ts">
-  import { Scope } from '@agentos/ui/atoms'
+  import { Scope } from '@vos/ui/atoms'
   import Children from '../atoms/Children.svelte'
   import { useView } from '../context'
   import { commonOf, oneOf } from '../props'

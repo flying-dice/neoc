@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "agentos",
+      "name": "vos",
       "devDependencies": {
         "@axe-core/playwright": "^4.14.0",
         "@playwright/test": "^1.65.1",
@@ -13,15 +13,14 @@
       },
     },
     "client": {
-      "name": "@agentos/client",
+      "name": "@vos/client",
       "version": "1.0.0",
       "dependencies": {
         "@ag-ui/core": "1.0.5",
-        "@agentos/ui": "workspace:*",
+        "@vos/ui": "workspace:*",
         "zod": "4.6.7",
       },
       "devDependencies": {
-        "@agentos/storybook": "workspace:*",
         "@eslint/js": "10.0.1",
         "@storybook/addon-a11y": "10.6.7",
         "@storybook/addon-docs": "10.6.7",
@@ -30,6 +29,7 @@
         "@storybook/svelte-vite": "10.6.7",
         "@sveltejs/vite-plugin-svelte": "^7.3.1",
         "@types/node": "^24.19.2",
+        "@vos/storybook": "workspace:*",
         "eslint": "^10.12.0",
         "eslint-config-prettier": "10.1.8",
         "eslint-plugin-prettier": "5.5.7",
@@ -46,10 +46,10 @@
       },
     },
     "packages/storybook": {
-      "name": "@agentos/storybook",
+      "name": "@vos/storybook",
       "version": "0.1.0",
       "dependencies": {
-        "@agentos/ui": "workspace:*",
+        "@vos/ui": "workspace:*",
       },
       "devDependencies": {
         "@storybook/addon-a11y": "10.6.7",
@@ -68,7 +68,7 @@
       },
     },
     "packages/ui": {
-      "name": "@agentos/ui",
+      "name": "@vos/ui",
       "version": "0.1.0",
       "dependencies": {
         "marked": "18.1.2",
@@ -98,12 +98,6 @@
     "@adobe/css-tools": ["@adobe/css-tools@4.5.0", "", {}, "sha512-6OzddxPio9UiWTCemp4N8cYLV2ZN1ncRnV1cVGtve7dhPOtRkleRyx32GQCYSwDYgaHU3USMm84tNsvKzRCa1Q=="],
 
     "@ag-ui/core": ["@ag-ui/core@1.0.5", "", { "peerDependencies": { "zod": "^3.25.18 || ^4.0.0" }, "optionalPeers": ["zod"] }, "sha512-W7xg7E/bVco3svYxZCp3CMqJ6/fB15U7yAaMS3mhLCwwlJXFzZJ/bGwMqnNrx6Afmj1WmnjFKzliYds+KFXMMQ=="],
-
-    "@agentos/client": ["@agentos/client@workspace:client"],
-
-    "@agentos/storybook": ["@agentos/storybook@workspace:packages/storybook"],
-
-    "@agentos/ui": ["@agentos/ui@workspace:packages/ui"],
 
     "@axe-core/playwright": ["@axe-core/playwright@4.14.0", "", { "dependencies": { "axe-core": "~4.14.0" }, "peerDependencies": { "playwright-core": ">= 1.0.0" } }, "sha512-SGUhG5PIHd2eMdpgBF2PyQLOhX+qyDR2PT4cmoS4Qk2ak+jX/rrSvst9l0PGv5WTHolKpUMvVmoHpr4cZgf1RQ=="],
 
@@ -424,6 +418,12 @@
     "@vitest/spy": ["@vitest/spy@3.2.4", "", { "dependencies": { "tinyspy": "^4.0.3" } }, "sha512-vAfasCOe6AIK70iP5UD11Ac4siNUNJ9i/9PZ3NKx07sG6sUxeag1LWdNrMWeKKYBLlzuK+Gn65Yd5nyL6ds+nw=="],
 
     "@vitest/utils": ["@vitest/utils@3.2.4", "", { "dependencies": { "@vitest/pretty-format": "3.2.4", "loupe": "^3.1.4", "tinyrainbow": "^2.0.0" } }, "sha512-fB2V0JFrQSMsCo9HiSq3Ezpdv4iYaXRG1Sx8edX3MwxfyNn83mKiGzOcH+Fkxt4MHxr3y42fQi1oeAInqgX2QA=="],
+
+    "@vos/client": ["@vos/client@workspace:client"],
+
+    "@vos/storybook": ["@vos/storybook@workspace:packages/storybook"],
+
+    "@vos/ui": ["@vos/ui@workspace:packages/ui"],
 
     "@webcontainer/env": ["@webcontainer/env@1.1.1", "", {}, "sha512-6aN99yL695Hi9SuIk1oC88l9o0gmxL1nGWWQ/kNy81HigJ0FoaoTXpytCj6ItzgyCEwA9kF1wixsTuv5cjsgng=="],
 

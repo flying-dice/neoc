@@ -2,7 +2,7 @@
  * Storybook config factory shared by every AgentOS Storybook.
  *
  *   // apps/<app>/.storybook/main.ts
- *   import { defineStorybook } from '@agentos/storybook/main'
+ *   import { defineStorybook } from '@vos/storybook/main'
  *   export default defineStorybook()
  *
  * Stories live next to the code as `*.stories.svelte` (Svelte CSF).

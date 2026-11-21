@@ -8,7 +8,7 @@
 -->
 <script lang="ts">
   import { onDestroy, tick } from 'svelte'
-  import { ActivityIndicator, Button, Text } from '@agentos/ui/atoms'
+  import { ActivityIndicator, Button, Text } from '@vos/ui/atoms'
   import { ViewHost, type protocol, type ViewCore } from '../view'
   import { host } from '../lib/host.svelte'
   import { installedApp } from '../lib/apps.svelte'

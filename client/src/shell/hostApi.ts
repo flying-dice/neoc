@@ -3,7 +3,7 @@
  * browses, the agent roster (`agents.*`) and the paired devices (`host.devices.*`). The shapes are generated from
  * `crates/vos-domain/src/api.rs` into `types/generated/agentos.ts`.
  */
-import { icons, type IconName } from '@agentos/ui'
+import { icons, type IconName } from '@vos/ui'
 import type {
   HostAgentList,
   HostAgentRow,
