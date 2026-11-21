@@ -329,11 +329,11 @@ export class FakeHost {
     const spec = this.app.sources[id]
     const st = view.sources.get(id)!
     if (spec.decl.kind === 'row') {
-      const row =.get(st.params)
+      const row = (spec as RowSourceSpec).get(st.params)
       if (row) this.noteSent(id, row[spec.decl.key ?? 'id'] as RowKey, row)
       return { kind: 'row', row, rev: typeof row?.rev === 'number' ? row.rev : 0 }
     }
-    const result =.query(st.params)
+    const result = (spec as RowsSourceSpec).query(st.params)
     const keyField = spec.decl.key ?? 'id'
     const window = result.slice(st.range.from, st.range.to)
     const rows: Record<string, Row> = {}
@@ -474,8 +474,8 @@ export class FakeHost {
     const st = view.sources.get(p.source)!
     const row =
       spec.decl.kind === 'row'
-        ?.get(st.params)
-        : (.find?.(p.key) ?? null)
+        ? (spec as RowSourceSpec).get(st.params)
+        : ((spec as RowsSourceSpec).find?.(p.key) ?? null)
     if (!row) throw new RpcError(-32602, `no row ${String(p.key)}`)
     const ringKey = `${p.source}:${String(p.key)}:${p.field}`
     const ring = this.rowRings.get(ringKey) ?? { values: new Map<number, Json>() }
