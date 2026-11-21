@@ -8,15 +8,15 @@
 //! - **Symlinks are never followed while walking.** A recursive copy recreates the links it meets, `walk` lists
 //!   them as links and does not enter them, a recursive remove deletes them and never what they point at. Only
 //!   the top-level source of a copy or a walk is resolved.
-//! - **Walks are iterative and bounded by the tree, not by a script.** No operation here recurses (`walkdir` walks,
-//!   and the recursive remove deletes entry by entry, children first), none sizes an allocation from a number a
-//!   script passed, and a listing is capped at [`MAX_ENTRIES`] entries.
+//! - **Walks are bounded by the tree, not by a script.** `walk` and `copy_dir` are iterative (`walkdir`), none
+//!   sizes an allocation from a number a script passed, and a listing is capped at [`MAX_ENTRIES`] entries.
 //! - **Failures are classified** ([`Kind`]), so a script can tell `not_found` from `permission_denied` on any
 //!   platform.
-//! - **A job that loops over a tree takes a cancel flag** (`walk`, `copy_dir`, the recursive remove and the
-//!   copy and remove halves of a cross-device `move`) and stops at the next entry once it is set (the call that
-//!   started it was abandoned or its script shut down). A single file copy is one `std::fs::copy` and cannot be
-//!   interrupted.
+//! - **A job that loops over a tree takes a cancel flag** (`walk` and `copy_dir`, and so the copy half of a
+//!   cross-device `move`) and stops at the next entry once it is set (the call that started it was abandoned or
+//!   its script shut down). The recursive remove delegates to `std::fs::remove_dir_all` (see [`remove_dir_all`]),
+//!   which cannot be interrupted: the flag is checked once before it starts. A single file copy is one
+//!   `std::fs::copy` and cannot be interrupted either.
 
 use std::ffi::OsString;
 use std::fs;
@@ -156,7 +156,11 @@ fn read_dir_up_to(path: &Path, cap: usize) -> FsResult<Vec<Entry>> {
     for item in listing {
         let item = item.map_err(|e| FsError::io(&e, path))?;
         if entries.len() >= cap {
-            return Err(too_many(path, cap));
+            return Err(too_many(
+                path,
+                cap,
+                "this directory is too big to list at once",
+            ));
         }
         let entry_path = item.path();
         let file_type = item.file_type().map_err(|e| FsError::io(&e, &entry_path))?;
@@ -171,13 +175,11 @@ fn read_dir_up_to(path: &Path, cap: usize) -> FsResult<Vec<Entry>> {
     Ok(entries)
 }
 
-fn too_many(path: &Path, cap: usize) -> FsError {
+fn too_many(path: &Path, cap: usize, hint: &str) -> FsError {
     FsError::at(
         Kind::TooLarge,
         path,
-        format!(
-            "more than {cap} entries; list the subdirectories one at a time or lower max_depth"
-        ),
+        format!("more than {cap} entries; {hint}"),
     )
 }
 
@@ -213,7 +215,11 @@ fn walk_up_to(
         check_cancel(cancel)?;
         let item = item.map_err(|e| walk_error(&e, root))?;
         if entries.len() >= cap {
-            return Err(too_many(root, cap));
+            return Err(too_many(
+                root,
+                cap,
+                "walk the subdirectories one at a time, or lower max_depth",
+            ));
         }
         entries.push(Entry {
             name: item.file_name().to_owned(),
@@ -312,7 +318,7 @@ fn same_file(a: &Path, b: &Path) -> io::Result<bool> {
 
 /// Copies the directory tree `from` to the new path `to` (which must not exist; its parent must), iteratively and
 /// without following a symlink inside it, and returns the bytes of file data copied. A failure part way removes
-/// the partial `to` again (this call created it), so a copy is whole or absent.
+/// the partial `to` again (this call created it; the removal is best effort, so if it fails too the partial copy stays).
 pub fn copy_dir(from: &Path, to: &Path, cancel: &AtomicBool) -> FsResult<u64> {
     let meta = fs::metadata(from).map_err(|e| FsError::io(&e, from))?;
     if !meta.is_dir() {
@@ -453,8 +459,8 @@ pub fn remove_dir(path: &Path, missing_ok: bool) -> FsResult<bool> {
     }
 }
 
-/// Removes the directory `path` and everything under it, children first, one entry at a time (symlinks inside are
-/// removed, never followed). It refuses a path that names no directory of its own (`""`, `/`, `.`, `..`) and a symlink to a
+/// Removes the directory `path` and everything under it (`std::fs::remove_dir_all`: symlinks inside are removed,
+/// never followed; not interruptible once started). It refuses a path that names no directory of its own (`""`, `/`, `.`, `..`) and a symlink to a
 /// directory, also when spelled `link/` or `link/.`: the operating system follows a link spelled like that.
 pub fn remove_dir_all(path: &Path, missing_ok: bool, cancel: &AtomicBool) -> FsResult<bool> {
     if path.as_os_str().is_empty() {
@@ -477,24 +483,13 @@ pub fn remove_dir_all(path: &Path, missing_ok: bool, cancel: &AtomicBool) -> FsR
     }
 }
 
-/// Deletes the tree under `root` (a real directory, not a link), children before parents, one entry at a time.
+/// Deletes the tree under `root` (a real directory, not a link) with `std::fs::remove_dir_all`, which walks with
+/// `openat` and `unlinkat` and so is not fooled by a directory swapped for a symlink while it runs (CVE-2022-21658),
+/// and is not limited by the length of a path. The price: once it has started it cannot be interrupted, so the cancel
+/// flag is checked only before it.
 fn remove_tree(root: &Path, cancel: &AtomicBool) -> FsResult<()> {
-    let walk = WalkDir::new(root)
-        .follow_links(false)
-        .follow_root_links(false)
-        .contents_first(true);
-    for item in walk {
-        check_cancel(cancel)?;
-        let item = item.map_err(|e| walk_error(&e, root))?;
-        let file_type = item.file_type();
-        let removed = if file_type.is_dir() {
-            fs::remove_dir(item.path())
-        } else {
-            remove_leaf(item.path(), file_type)
-        };
-        removed.map_err(|e| FsError::io(&e, item.path()))?;
-    }
-    Ok(())
+    check_cancel(cancel)?;
+    fs::remove_dir_all(root).map_err(|e| FsError::io(&e, root))
 }
 
 fn not_a_directory(path: &Path) -> FsError {
@@ -537,20 +532,42 @@ pub fn rename(from: &Path, to: &Path) -> FsResult<()> {
 }
 
 /// Moves `from` to `to`: a rename, and when that crosses a filesystem boundary, a copy followed by removing the
-/// source (see [`move_by_copy`]).
+/// source (see [`move_by_copy`]). A trailing separator or `.` on either path is dropped once, here, so that both
+/// halves treat a symlink as the link it is.
 pub fn move_path(from: &Path, to: &Path, cancel: &AtomicBool) -> FsResult<()> {
-    match rename(from, to) {
-        Err(e) if e.kind() == Kind::CrossDevice => move_by_copy(from, to, cancel),
+    move_path_with(from, to, cancel, rename, copy_file)
+}
+
+/// [`move_path`] with its two system-facing steps passed in, so a test can make the rename cross a device and the
+/// copy fail part way.
+fn move_path_with(
+    from: &Path,
+    to: &Path,
+    cancel: &AtomicBool,
+    rename_step: impl Fn(&Path, &Path) -> FsResult<()>,
+    copy_step: impl Fn(&Path, &Path) -> FsResult<u64>,
+) -> FsResult<()> {
+    let (from, to) = (without_trailing_dots(from), without_trailing_dots(to));
+    match rename_step(&from, &to) {
+        Err(e) if e.kind() == Kind::CrossDevice => move_by_copy_with(&from, &to, cancel, copy_step),
         other => other,
     }
 }
 
 /// The cross-device half of a move: copy `from` (a file, a symlink as a symlink, a directory tree) to `to`, and only
 /// when that completed remove `from`. The destination rules are the ones of `rename`: a file or symlink replaces a
-/// file or symlink, a directory replaces an empty directory only. A failure part way leaves the source whole,
-/// except that the last step, removing the source, can fail part way through a tree, and that an existing symlink
-/// or empty directory at `to` is removed before the copy (an existing file is overwritten by it instead).
-pub fn move_by_copy(from: &Path, to: &Path, cancel: &AtomicBool) -> FsResult<()> {
+/// file or symlink (the copy is made under a temporary name next to `to` and renamed over it, so a copy that fails
+/// leaves the old `to` untouched and a hard link to it is not rewritten), a directory replaces an empty directory
+/// only (that empty directory is removed before the copy starts). A failure part way leaves the source whole,
+/// except that removing a source tree is the last step and can fail part way through it.
+fn move_by_copy_with(
+    from: &Path,
+    to: &Path,
+    cancel: &AtomicBool,
+    copy_step: impl Fn(&Path, &Path) -> FsResult<u64>,
+) -> FsResult<()> {
+    let (from, to) = (without_trailing_dots(from), without_trailing_dots(to));
+    let (from, to) = (from.as_path(), to.as_path());
     let meta = fs::symlink_metadata(from).map_err(|e| FsError::io(&e, from))?;
     let existing = match fs::symlink_metadata(to) {
         Ok(m) => Some(m),
@@ -586,22 +603,41 @@ pub fn move_by_copy(from: &Path, to: &Path, cancel: &AtomicBool) -> FsResult<()>
                 "the destination is a directory",
             ));
         }
-        (false, Some(m)) if m.file_type().is_symlink() => {
-            remove_leaf(to, m.file_type()).map_err(|e| FsError::io(&e, to))?;
-        }
-        // a file at `to` is replaced by the copy itself, so a failed copy leaves it alone
+        // a file or symlink at `to` is replaced by the rename of the finished copy below
         (false, Some(_)) | (_, None) => {}
     }
     if meta.is_dir() {
         copy_dir(from, to, cancel)?;
         remove_tree(from, cancel)
-    } else if meta.file_type().is_symlink() {
-        copy_symlink(from, to)?;
-        remove_leaf(from, meta.file_type()).map_err(|e| FsError::io(&e, from))
     } else {
-        copy_file(from, to)?;
+        let staged = staging_path(to);
+        let made = if meta.file_type().is_symlink() {
+            copy_symlink(from, &staged)
+        } else {
+            copy_step(from, &staged).map(|_| ())
+        };
+        let placed =
+            made.and_then(|()| fs::rename(&staged, to).map_err(|e| FsError::io2(&e, &staged, to)));
+        if placed.is_err() {
+            // best effort: what is being reported is why the copy failed
+            let _ = remove_leaf(&staged, meta.file_type());
+        }
+        placed?;
         remove_leaf(from, meta.file_type()).map_err(|e| FsError::io(&e, from))
     }
+}
+
+/// A name that does not exist yet next to `to`, for a copy that is renamed over `to` when it is whole.
+fn staging_path(to: &Path) -> PathBuf {
+    use std::sync::atomic::AtomicU64;
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let name = format!(
+        ".neoc-move-{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    );
+    to.parent()
+        .map_or_else(|| PathBuf::from(&name), |dir| dir.join(&name))
 }
 
 /// The path a symlink at `path` points to, as stored.
@@ -714,6 +750,10 @@ mod tests {
 
     fn kind<T: std::fmt::Debug>(r: FsResult<T>) -> Kind {
         r.unwrap_err().kind()
+    }
+
+    fn move_by_copy(from: &Path, to: &Path, cancel: &AtomicBool) -> FsResult<()> {
+        move_by_copy_with(from, to, cancel, copy_file)
     }
 
     fn live() -> AtomicBool {
@@ -1491,23 +1531,123 @@ mod tests {
         assert!(!link.exists() && link.symlink_metadata().is_err());
     }
 
+    /// Everything in `dir` that is not one of `expected`: a staging file left behind shows up here.
+    fn strays(dir: &Path, expected: &[&str]) -> Vec<String> {
+        let mut found: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| !expected.contains(&n.as_str()))
+            .collect();
+        found.sort();
+        found
+    }
+
     #[test]
-    fn move_by_copy_overwrites_a_file_destination_in_place_and_keeps_it_when_the_copy_fails() {
+    fn a_cross_device_move_over_a_file_survives_a_copy_that_fails_after_the_destination_was_opened()
+    {
         let d = dir();
         let (a, b) = (d.path().join("a"), d.path().join("b"));
+        write(&a, "new data");
+        write(&b, "old precious");
+        // a copy that has written part of the data into whatever path it was given, then fails (a full disk)
+        let failing = |_: &Path, into: &Path| -> FsResult<u64> {
+            fs::write(into, "par").unwrap();
+            Err(FsError::at(
+                Kind::StorageFull,
+                into,
+                "no space left on device",
+            ))
+        };
+        assert_eq!(
+            kind(move_by_copy_with(&a, &b, &live(), failing)),
+            Kind::StorageFull
+        );
+        assert_eq!(read(&b), "old precious", "the old destination is untouched");
+        assert_eq!(read(&a), "new data", "the source is whole");
+        assert_eq!(
+            strays(d.path(), &["a", "b"]),
+            Vec::<String>::new(),
+            "no staging file is left"
+        );
+        // and when the copy works, the destination is replaced by a rename: a hard link to it keeps the old data
+        #[cfg(unix)]
+        {
+            let hard = d.path().join("hard");
+            fs::hard_link(&b, &hard).unwrap();
+            move_by_copy(&a, &b, &live()).unwrap();
+            assert_eq!(read(&b), "new data");
+            assert_eq!(
+                read(&hard),
+                "old precious",
+                "the old inode was replaced, not rewritten"
+            );
+            assert!(!a.exists());
+        }
+    }
+
+    #[test]
+    fn a_missing_source_leaves_the_destination_alone() {
+        let d = dir();
+        let b = d.path().join("b");
         write(&b, "old");
         assert_eq!(
             kind(move_by_copy(&d.path().join("nope"), &b, &live())),
             Kind::NotFound
         );
+        assert_eq!(read(&b), "old");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_cross_device_move_of_a_symlink_replaces_a_file_and_a_symlink_like_rename() {
+        let d = dir();
+        let (target, link) = (d.path().join("t"), d.path().join("l"));
+        write(&target, "t");
+        symlink(&target, &link).unwrap();
+        let existing_file = d.path().join("file");
+        write(&existing_file, "old");
+        move_by_copy(&link, &existing_file, &live()).unwrap();
+        assert_eq!(read_link(&existing_file).unwrap(), target);
+        assert!(link.symlink_metadata().is_err(), "the source link is gone");
+        assert_eq!(strays(d.path(), &["t", "file"]), Vec::<String>::new());
+        let (link2, existing_link) = (d.path().join("l2"), d.path().join("el"));
+        symlink(&target, &link2).unwrap();
+        symlink(&d.path().join("elsewhere"), &existing_link).unwrap();
+        move_by_copy(&link2, &existing_link, &live()).unwrap();
+        assert_eq!(read_link(&existing_link).unwrap(), target);
+        assert_eq!(read(&target), "t");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_cross_device_move_of_link_slash_moves_the_link_and_leaves_its_target_alone() {
+        let d = dir();
+        let real = tree(d.path());
+        let link = d.path().join("link");
+        symlink(&real, &link).unwrap();
+        let moved = d.path().join("moved");
+        let crossing =
+            |_: &Path, _: &Path| -> FsResult<()> { Err(FsError::new(Kind::CrossDevice, "x")) };
+        let from = PathBuf::from(format!("{}/", link.display()));
+        move_path_with(&from, &moved, &live(), crossing, copy_file).unwrap();
         assert_eq!(
-            read(&b),
-            "old",
-            "a failed move keeps the destination it would have replaced"
+            read_link(&moved).unwrap(),
+            real,
+            "the link was moved as a link"
         );
-        write(&a, "new");
-        move_by_copy(&a, &b, &live()).unwrap();
-        assert_eq!(read(&b), "new");
+        assert!(link.symlink_metadata().is_err());
+        assert_eq!(read(&real.join("sub/b.txt")), "bb", "its target is whole");
+        assert!(real.join("sub/deeper/c.txt").exists());
+    }
+
+    #[test]
+    fn a_move_that_does_not_cross_a_device_never_reaches_the_copy() {
+        let d = dir();
+        let (a, b) = (d.path().join("a"), d.path().join("b"));
+        write(&a, "a");
+        let never = |_: &Path, _: &Path| -> FsResult<u64> { panic!("copied") };
+        move_path_with(&a, &b, &live(), rename, never).unwrap();
+        assert_eq!(read(&b), "a");
     }
 
     #[test]

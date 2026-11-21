@@ -22,7 +22,8 @@
 //! - **Calls that can run for long wait; the rest run in place.** `copy`, `copy_dir`, `move`, `remove_dir_all`
 //!   and `walk` do their work on the blocking pool (a `Role::Wait`, like a network call): the call waits, and
 //!   an embedder can run other calls meanwhile. Luau refuses a yield inside a metamethod, a `table.sort`
-//!   comparator or a `string.gsub` callback, so these five fail when called from one of them. Every other function
+//!   comparator or a `string.gsub` callback, so these five fail with the yield error when called from one of them, and do nothing: the job starts only once the
+//!   call has really suspended (`tests::the_long_calls_fail_where_luau_refuses_a_yield`). Every other function
 //!   is one system call (or one directory listing) and runs in place, as `read` and `write` always did.
 //! - **Not a sandbox.** Any path the host process can reach is reachable.
 //!
@@ -233,7 +234,7 @@ fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
     m.try_async_func(
         "move",
         &[("from", "string"), ("to", "string")],
-        "Move `from` to `to`, with the rules of `rename`. When the two are on different filesystems it copies instead (a file, a symlink as a symlink, or a whole directory tree, never following a link) and removes `from` only after the copy completed. That case is not atomic: a failed copy leaves the source whole, a failure while removing a source tree leaves it partly removed and the destination complete, an existing symlink or empty directory at `to` is removed before the copy starts, and an existing file at `to` is overwritten by it. A trailing separator on either path is dropped, so `link/` moves the link, not its target. It waits like `task.wait` (see the module notes).",
+        "Move `from` to `to`, with the rules of `rename`. When the two are on different filesystems it copies instead (a file, a symlink as a symlink, or a whole directory tree, never following a link) and removes `from` only after the copy completed. That case is not atomic: a failed copy leaves the source whole, a failure while removing a source tree leaves it partly removed and the destination complete, an existing empty directory at `to` is removed before the copy starts, and a file or symlink at `to` is replaced by renaming the finished copy over it (so a copy that fails leaves the old `to` as it was). A trailing separator on either path is dropped, so `link/` moves the link, not its target. It waits like `task.wait` (see the module notes).",
         |_, (from, to): (Path1, Path1)| {
             let paths = path_of(&from).and_then(|from| Ok((from, path_of(&to)?)));
             async move {
@@ -265,7 +266,7 @@ fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
     m.try_async_func(
         "remove_dir_all",
         &[("path", "string"), ("opts", "{ missing_ok: bool? }?")],
-        "Remove a directory and everything under it, children before parents. Symlinks inside are deleted without being followed, so nothing outside the tree is touched. It refuses `/`, `.`, `..` and the empty path (`invalid_input`, a guard against a typo, not a security boundary) and a symlink to a directory (`not_a_directory`, also when written `link/`: use `remove_file`). Option `{ missing_ok }` as for `remove_file`. A failure part way (a permission, an open file on Windows) leaves what was not yet removed. Like `std::fs::remove_dir_all`, but it deletes entry by entry and refuses a symlink root. It waits like `task.wait` (see the module notes).",
+        "Remove a directory and everything under it, children before parents. Symlinks inside are deleted without being followed, so nothing outside the tree is touched. It refuses `/`, `.`, `..` and the empty path (`invalid_input`, a guard against a typo, not a security boundary) and a symlink to a directory (`not_a_directory`, also when written `link/`: use `remove_file`). Option `{ missing_ok }` as for `remove_file`. A failure part way (a permission, an open file on Windows) leaves what was not yet removed. Delegates to `std::fs::remove_dir_all` (which is safe against a directory swapped for a symlink while it runs, and not limited by path length) after refusing a symlink root and the paths above; once started it cannot be interrupted. It waits like `task.wait` (see the module notes).",
         |_, (path, opts): (Path1, Option<Table>)| {
             let parsed = path_of(&path).and_then(|path| {
                 let missing_ok = read_options(opts.as_ref(), MISSING_OK)?.flag("missing_ok")?.unwrap_or(false);
@@ -462,6 +463,11 @@ where
             }
         }
     }
+    // Do nothing on the first poll. mlua polls a host call once before it tries to yield, and where Luau refuses
+    // the yield (a `gsub` callback, a `table.sort` comparator, a metamethod) it drops the call after that poll: a
+    // job started now would run to the end although the script was told the call failed. Returning `Pending` first
+    // means a call that cannot suspend never starts its job.
+    tokio::task::yield_now().await;
     let cancel = Arc::new(AtomicBool::new(false));
     let mut guard = CancelOnDrop(Some(Arc::clone(&cancel)));
     let joined = tokio::task::spawn_blocking(move || job(&cancel)).await;

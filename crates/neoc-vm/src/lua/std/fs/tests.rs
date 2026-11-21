@@ -557,20 +557,37 @@ async fn the_long_calls_yield_like_any_wait() {
     .await;
 }
 
-/// Luau refuses a yield inside these; a call that waits fails there instead of hanging or panicking.
+/// Luau refuses a yield inside these. A waiting call made there must fail and must not have done anything: the
+/// job starts only after the call has suspended, so what is untouched here is untouched deterministically.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_long_calls_fail_where_luau_refuses_a_yield() {
+async fn the_long_calls_fail_where_luau_refuses_a_yield_and_do_nothing() {
     run(r#"
-        ok(fs.create_dir_all(p("t")))
-        local comparator = pcall(table.sort, { 1, 2, 3 }, function(a, b) fs.walk(dir) return a < b end)
-        check(comparator == false, "table.sort comparator")
-        local replacement = pcall(string.gsub, "abc", "b", function() fs.copy_dir(p("t"), p("u")) return "x" end)
-        check(replacement == false, "string.gsub callback")
-        local meta = setmetatable({}, { __index = function() fs.walk(dir) return 1 end })
-        check(pcall(function() return meta.anything end) == false, "__index")
-        check(fs.exists(p("u")) == false, "a refused call does nothing")
+        ok(fs.write(p("src"), "NEW"))
+        ok(fs.write(p("dst"), "OLD precious"))
+        ok(fs.create_dir_all(p("tree/sub")))
+        ok(fs.write(p("tree/sub/f"), "f"))
+        ok(fs.write(p("m"), "m"))
+
+        -- a callback of string.gsub
+        check(pcall(string.gsub, "abc", "b", function() fs.copy(p("src"), p("dst")) return "x" end) == false)
+        check(pcall(string.gsub, "abc", "b", function() fs.copy_dir(p("tree"), p("treecopy")) return "x" end) == false)
+        -- a table.sort comparator
+        check(pcall(table.sort, { 1, 2, 3 }, function(a, b) fs.move(p("m"), p("moved")) return a < b end) == false)
+        check(pcall(table.sort, { 1, 2, 3 }, function(a, b) fs.walk(dir) return a < b end) == false)
+        -- a metamethod
+        local meta = setmetatable({}, { __index = function() fs.remove_dir_all(p("tree")) return 1 end })
+        check(pcall(function() return meta.anything end) == false)
+
+        check(ok(fs.read(p("dst"))) == "OLD precious", "copy changed the destination")
+        check(fs.exists(p("treecopy")) == false, "copy_dir made its destination")
+        check(fs.exists(p("moved")) == false and fs.exists(p("m")) == true, "move moved the file")
+        check(fs.exists(p("tree/sub/f")) == true, "remove_dir_all removed the tree")
+
         -- the functions that run in place are fine in all of them
         check(pcall(table.sort, { 1, 2, 3 }, function(a, b) fs.metadata(dir) return a < b end) == true)
+        -- and the same calls work where the call can wait
+        check(ok(fs.copy(p("src"), p("dst"))) == 3)
+        check(ok(fs.read(p("dst"))) == "NEW")
     "#)
     .await;
 }
