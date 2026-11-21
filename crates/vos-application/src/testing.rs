@@ -1,6 +1,7 @@
 //! In-memory fakes of every port (no frameworks, no mocks library).
 
 use crate::{
+    files::{AppFiles, FileStore},
     live::{SourceDef, SourceId, SourceUpdate, SubscriptionId},
     ports::{
         AgentDirectory, AgentStore, AppData, AppPackage, AppRuntime, Background, CallContext, ChangeBatch,
@@ -27,8 +28,8 @@ use std::{
 };
 use vos_domain::{
     ui::{ClientDecl, Node},
-    Agent, AgentId, AppId, AppRef, Device, DeviceId, FileRef, Manifest, MigrationSpec, Revision,
-    StoredRevision, ToolSpec,
+    Agent, AgentId, AppId, AppRef, Device, DeviceId, FileInfo, FileKind, FilePath, FileRef, FileResult,
+    Location, Manifest, MigrationSpec, Revision, StoredRevision, ToolSpec,
 };
 
 #[derive(Default)]
@@ -892,10 +893,83 @@ impl DeviceRegistry for MemDevices {
     }
 }
 
+/// Files that record what reached them (`"write documents notes/a.txt"`) and answer with empty success; the
+/// use-case tests check what the port is, and is not, asked to do. Also the [`FileStore`] of [`Fakes`]: it
+/// records purges.
+#[derive(Default)]
+pub struct RecordingFiles {
+    calls: Mutex<Vec<String>>,
+    purged: Mutex<Vec<String>>,
+}
+impl RecordingFiles {
+    /// Every call so far, in order, and forget them.
+    pub fn take(&self) -> Vec<String> {
+        std::mem::take(&mut *self.calls.lock().unwrap())
+    }
+    pub fn purged(&self, app: &str) -> bool {
+        self.purged.lock().unwrap().iter().any(|a| a == app)
+    }
+    fn record(&self, what: &str, at: Location, paths: &[&FilePath]) {
+        let paths: Vec<String> = paths.iter().map(ToString::to_string).collect();
+        self.calls.lock().unwrap().push(format!("{what} {} {}", at.as_str(), paths.join(" ")));
+    }
+}
+#[async_trait]
+impl AppFiles for RecordingFiles {
+    async fn read(&self, at: Location, path: &FilePath) -> FileResult<Vec<u8>> {
+        self.record("read", at, &[path]);
+        Ok(Vec::new())
+    }
+    async fn write(&self, at: Location, path: &FilePath, _: Vec<u8>) -> FileResult<()> {
+        self.record("write", at, &[path]);
+        Ok(())
+    }
+    async fn list(&self, at: Location, path: &FilePath) -> FileResult<Vec<FileInfo>> {
+        self.record("list", at, &[path]);
+        Ok(Vec::new())
+    }
+    async fn info(&self, at: Location, path: &FilePath) -> FileResult<FileInfo> {
+        self.record("info", at, &[path]);
+        Ok(FileInfo {
+            name: path.name().unwrap_or(at.as_str()).to_owned(),
+            kind: FileKind::File,
+            size: 0,
+            modified: None,
+        })
+    }
+    async fn create_dir(&self, at: Location, path: &FilePath) -> FileResult<()> {
+        self.record("create_dir", at, &[path]);
+        Ok(())
+    }
+    async fn remove(&self, at: Location, path: &FilePath, recursive: bool) -> FileResult<()> {
+        self.record(if recursive { "remove_all" } else { "remove" }, at, &[path]);
+        Ok(())
+    }
+    async fn move_to(&self, at: Location, from: &FilePath, to: &FilePath) -> FileResult<()> {
+        self.record("move", at, &[from, to]);
+        Ok(())
+    }
+    async fn copy(&self, at: Location, from: &FilePath, to: &FilePath) -> FileResult<()> {
+        self.record("copy", at, &[from, to]);
+        Ok(())
+    }
+}
+#[async_trait]
+impl FileStore for RecordingFiles {
+    fn files(&self, _: &AppId) -> Arc<dyn AppFiles> {
+        Arc::new(RecordingFiles::default())
+    }
+    async fn purge(&self, app: &AppId) -> FileResult<()> {
+        self.purged.lock().unwrap().push(app.to_string());
+        Ok(())
+    }
+}
+
 /// Bundle of all fakes + helpers to build the service under test.
 pub struct Fakes {
     pub fetcher: Arc<MemFetcher>,
     pub store: Arc<MemStore>,
+    pub files: Arc<RecordingFiles>,
     pub runtime: Arc<FakeRuntime>,
     pub registry: Arc<MemRegistry>,
     pub events: Arc<RecordingSink>,
@@ -913,6 +987,7 @@ impl Fakes {
         Self {
             fetcher: Arc::default(),
             store: Arc::default(),
+            files: Arc::default(),
             runtime: Arc::default(),
             registry: Arc::default(),
             events: Arc::default(),
@@ -937,6 +1012,7 @@ impl Fakes {
         AppService::new(Ports {
             fetcher: self.fetcher.clone(),
             data: self.store.clone(),
+            files: self.files.clone(),
             runtime: self.runtime.clone(),
             tools,
             events: self.events.clone(),

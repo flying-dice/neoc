@@ -77,9 +77,17 @@ async fn uninstall_retracts_tools_unloads_vm_forgets_the_record_and_optionally_p
     assert!(f.registry.names().is_empty());
     assert_eq!(f.runtime.loaded(), Vec::<String>::new());
     assert!(f.store.purged("notes"));
+    assert!(f.files.purged("notes"), "its managed files go with its database");
     assert!(f.installed.records().is_empty(), "an uninstalled app is not restored at the next start");
     assert_eq!(f.background.alive(), 0, "the pump stops");
     assert!(matches!(svc.uninstall(&id, false).await, Err(AppError::NotInstalled(_))));
+
+    let kept = svc.install_from_url(&f.add_app("todo", &[("add_task", "x")])).await.unwrap();
+    svc.uninstall(&kept, false).await.unwrap();
+    assert!(
+        !f.store.purged("todo") && !f.files.purged("todo"),
+        "without purge a reinstall finds its data and files"
+    );
 }
 
 #[tokio::test]
@@ -94,6 +102,7 @@ async fn shutdown_unloads_every_app_keeps_data_and_records() {
     assert!(f.registry.names().is_empty());
     assert!(f.runtime.loaded().is_empty());
     assert!(!f.store.purged("notes"), "shutdown keeps app data");
+    assert!(!f.files.purged("notes"), "and its files");
     assert_eq!(f.installed.records().len(), 2, "and remembers the installs");
     assert!(f.events.take().is_empty(), "clients are not told the apps were uninstalled");
     assert!(svc.installed_apps().is_empty());
@@ -237,6 +246,7 @@ async fn delete_data_purges_and_reloads_a_running_app_on_an_empty_database() {
     let id = svc.install_from_url(&f.add_app("notes", &[("add_note", "x")])).await.unwrap();
     svc.delete_data(&id).await.unwrap();
     assert!(f.store.purged("notes"));
+    assert!(f.files.purged("notes"), "deleting the data deletes the files too");
     assert_eq!(f.runtime.loads("notes"), 2, "reloaded so its migrations run on the fresh database");
     assert_eq!(f.store.opened_with_migrations("notes"), Some(1));
     assert_eq!(svc.status(&id), Some(AppStatus::Running));

@@ -18,6 +18,9 @@ mod chat_tests;
 pub mod data;
 pub mod devices;
 pub mod error;
+pub mod files;
+#[cfg(test)]
+mod files_tests;
 pub mod live;
 pub mod ports;
 pub mod services;
@@ -41,6 +44,7 @@ pub use agents::{mint_agent_token, AgentError, AgentPatch, AgentService, NewAgen
 pub use chat::{ChatError, ChatPorts, ChatService, RunEvents, PERMISSION_TTL_MS};
 pub use devices::{DeviceService, PairError, PairedDevice, PairingCode, PairingPolicy};
 pub use error::{AppError, PortError};
+pub use files::{AppFiles, FileStore, Files, NoFiles};
 pub use live::{LiveSources, SourceDef, SourceId, SourceKind, SourceUpdate, SubscriptionId, Window};
 pub use ports::{AgentProcesses, NoAgentProcesses};
 pub use services::{AppInfo, AppService, AppStatus, Display, Ports};
