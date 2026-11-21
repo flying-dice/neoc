@@ -532,7 +532,6 @@ async fn notify_and_shell_calls_become_effects_for_the_host() {
 
 #[tokio::test]
 async fn notify_and_deep_links_are_validated() {
-    let long_body = format!("app.notify {{ title = 't', body = string.rep('b', 2001) }}");
     for (call, needle) in [
         ("app.notify { body = 'no title' }", "app.notify needs `title`"),
         ("app.notify { title = '' }", "app.notify: `title` must be 1 to 200 characters, not blank"),
@@ -540,7 +539,10 @@ async fn notify_and_deep_links_are_validated() {
         ("app.notify { title = string.rep('t', 201) }", "1 to 200"),
         ("app.notify { title = 5 }", "app.notify: `title` must be a string, got number"),
         ("app.notify { title = 't', body = false }", "`body` must be a string, got boolean"),
-        (long_body.as_str(), "app.notify: `body` must be at most 2000 characters"),
+        (
+            "app.notify { title = 't', body = string.rep('b', 2001) }",
+            "app.notify: `body` must be at most 2000 characters",
+        ),
         ("app.shell.deepLink('', function() end)", "1 to 128"),
     ] {
         let src = format!("app.manifest {{ id = 'probe', name = 'P', icon = 'gear' }}\n{call}");
