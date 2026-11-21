@@ -5,7 +5,7 @@
 Everything below was built and run in this workspace (`rust-spike/`, rustc 1.98.1, macOS arm64). `cargo nextest run --workspace`:
 **42 tests, 42 passed, 0.5 s.** Clippy: 0 errors, 21 pedantic warnings (spike code). `scripts/check-deps.py` and `cargo deny --exclude-dev check bans`: OK.
 The spikes were restructured into the proposed hexagonal layout (section "Workspace layout"), so the layout is proven by compiling code, not only drawn.
-~3.5k lines of code in 11 crates; the host binary is 14.6 MiB (`release-host`, stripped, measured on NEOC-113).
+~3.5k lines of code in 11 crates; the host binary is 15.1 MiB (`release-host`, stripped, measured on NEOC-113).
 
 **Verdict: the stack works end to end. Recommend it as decided.** One test (`crates/agentos-host/tests/e2e.rs`) installs a Lua 5.1 app from a `file://` app ref over `/rpc`, calls its tool from an `rmcp` client with a per-agent bearer token, shows `app.notify` reaching the UI socket, round-trips a UI event to a new view tree, uninstalls, and sees `tools/list_changed`.
 
@@ -34,7 +34,7 @@ Apps are written in plain Lua 5.1 (checked by lua-language-server against the ge
 
   | What | Measured | How |
   |---|---|---|
-  | Release binary (`agentos-host`) | 13 418 960 bytes (12.8 MiB; PUC VM, 14.6 MiB on neoc-vm) | `cargo build --profile release-host -p agentos-host`, then `ls -l target/release-host/agentos-host` |
+  | Release binary (`agentos-host`) | 13 418 960 bytes (12.8 MiB; PUC VM, 15.1 MiB on neoc-vm with Luau) | `cargo build --profile release-host -p agentos-host`, then `ls -l target/release-host/agentos-host` |
   | Clean release build | 1 min 58 s (378 s of CPU) | `CARGO_TARGET_DIR=<empty dir> cargo build --profile release-host -p agentos-host` |
   | Incremental release build (touched `crates/agentos-lua/src/api/misc.rs`) | 1 min 06 s: the adapter and the host are recompiled and relinked with LTO | `touch crates/agentos-lua/src/api/misc.rs`, then the same build |
   | Incremental dev build (same file) | 1.7 s | `cargo build -p agentos-host` after a first build, then `touch` the file and build again |
