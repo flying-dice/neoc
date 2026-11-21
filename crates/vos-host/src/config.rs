@@ -23,6 +23,7 @@
 //! Relative paths in the file are relative to the file; relative paths in the environment, to the working
 //! directory.
 
+use crate::migrate;
 use anyhow::{bail, Context};
 use serde::Deserialize;
 use std::{
@@ -110,7 +111,7 @@ impl Settings {
     ) -> anyhow::Result<Self> {
         let env_path = |key: &str| env(key).filter(|v| !v.is_empty()).map(|v| expand(&v, cwd, home));
         let env_data_dir = env_path("VOS_DATA");
-        let default_data_dir = home.map_or_else(|| PathBuf::from(".vos"), |h| h.join(".vos"));
+        let default_data_dir = home.map_or_else(|| PathBuf::from(migrate::DIR), migrate::default_data_dir);
 
         let (file, file_dir) = Self::read_file(
             config_arg.map(Path::to_path_buf).or_else(|| env_path("VOS_CONFIG")),

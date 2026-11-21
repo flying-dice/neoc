@@ -19,6 +19,7 @@ use vos_domain::{Agent, AgentId, AgentRuntime, ApprovalPolicy, Grants};
 use vos_host::{
     build,
     config::Settings,
+    migrate::{migrate_if_default, Migration},
     net::{local_url, reachable_urls},
     open_devices,
     platform::{OsRandom, SystemClock},
@@ -83,7 +84,18 @@ async fn run_cli() -> anyhow::Result<()> {
 
     let cwd = std::env::current_dir().context("working directory")?;
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from);
-    let settings = Settings::load(cli.config.as_deref(), &|k| std::env::var(k).ok(), &cwd, home.as_deref())?;
+    let load = || Settings::load(cli.config.as_deref(), &|k| std::env::var(k).ok(), &cwd, home.as_deref());
+    let mut settings = load()?;
+    if let Some(home) = home.as_deref() {
+        // once, on the first start after the rename: `~/.agentos` becomes `~/.vos` (see `vos_host::migrate`)
+        let moved = migrate_if_default(&settings.data_dir, home)
+            .context("moving the data directory to its new name (it was not changed)")?;
+        if let Migration::Moved { from, to, config_renamed } = moved {
+            tracing::info!(from = %from.display(), to = %to.display(), config_renamed, "moved the data directory to its new name");
+            // the config file may have come with it
+            settings = load()?;
+        }
+    }
     match cli.command {
         Command::Pair => pair(&settings).await,
         Command::Serve => run(settings, &cwd).await,

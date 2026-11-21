@@ -237,6 +237,16 @@ Defaults, then `vos.toml`, then environment variables. The file is `--config <pa
 An explicit `client_dir` that is not built is an error; when the default `client/dist` is not built the host serves the
 API only and logs a warning.
 
+**The rename's one-time move.** The program used to be called AgentOS and kept its data in `~/.agentos` (with an
+`agentos.toml`). On start, when the data directory in use is the default `~/.vos`, `~/.vos` does not exist and
+`~/.agentos` is a directory, the host renames `~/.agentos` to `~/.vos` (and `agentos.toml` in it to `vos.toml`, when
+there is no `vos.toml` yet), so paired devices, app data, the agent roster and the chat history carry over
+(`crates/vos-host/src/migrate.rs`, the only code that still spells the old name). If `~/.vos` exists nothing happens
+and the two are never merged; if neither exists nothing happens; an explicit `VOS_DATA` or `data_dir` is never a
+reason to move the old default. A rename that fails stops the start with an error naming both paths and leaves every
+file where it was (nothing is copied or deleted). A browser's session cookie and the client's local settings are
+keyed by the old name, so each paired device pairs again once (`vos pair`).
+
 ### The gate
 
 `bun run lint` (adds `cargo fmt --check`, clippy with `-D warnings`, `scripts/check-deps.ts`, `cargo deny check`,

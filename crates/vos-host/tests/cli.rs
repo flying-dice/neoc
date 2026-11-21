@@ -197,3 +197,112 @@ fn an_unknown_argument_is_an_error_and_help_is_not() {
     assert!(help.status.success());
     assert!(String::from_utf8_lossy(&help.stdout).contains("pair"));
 }
+
+// -- the rename's one-time data directory move (`vos_host::migrate`) --------------------------------------------
+
+/// The host the way a person runs it: no `VOS_DATA`, so the data directory is `$HOME/.vos`.
+fn host_in_home(home: &Path) -> Command {
+    let mut cmd = Command::new(BIN);
+    cmd.current_dir(home)
+        .env("HOME", home)
+        .env_remove("USERPROFILE")
+        .env_remove("VOS_DATA")
+        .env_remove("VOS_CONFIG")
+        .env_remove("VOS_CLIENT_DIR")
+        .env("VOS_BIND", "127.0.0.1")
+        .env("VOS_PORT", "0")
+        .env("RUST_LOG", "warn");
+    cmd
+}
+
+/// A pre-rename `~/.agentos`: made by running the binary against it (so it is a real system database that holds a
+/// pairing code), plus the old config file name. Returns the code.
+fn legacy_home(tag: &str) -> (std::path::PathBuf, String) {
+    let home = temp_dir(tag);
+    let old = home.join(".agentos");
+    std::fs::create_dir_all(&old).unwrap();
+    let out = host_command(&old).arg("pair").output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let code = code_in(stdout.lines().find(|l| l.contains("Pairing code:")).unwrap());
+    std::fs::write(old.join("agentos.toml"), "bind = \"127.0.0.1\"\n").unwrap();
+    (home, code)
+}
+
+#[tokio::test]
+async fn the_first_start_after_the_rename_moves_the_old_data_directory_and_its_pairing_survives() {
+    let (home, code) = legacy_home("migrate-start");
+
+    let mut child = host_in_home(&home).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let (tx, lines) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            let _ = tx.send(line);
+        }
+    });
+    let host = HostProcess { child, lines };
+    let new = home.join(".vos");
+    assert!(host.line_with("listening").contains(new.to_str().unwrap()), "it serves from ~/.vos");
+    let base = base_url(&host);
+    assert!(!home.join(".agentos").exists(), "moved, not copied");
+    assert!(new.join("system.db").is_file(), "the system database came along");
+    assert!(
+        new.join("vos.toml").is_file() && !new.join("agentos.toml").exists(),
+        "the config has its new name"
+    );
+
+    // the code issued before the move is still in the moved database: it pairs
+    let res = reqwest::Client::new()
+        .post(format!("{base}/pair"))
+        .json(&json!({"code": code, "deviceName": "migrated"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200, "the pairing state moved with the directory");
+
+    host.signal("TERM");
+    let mut host = host;
+    assert!(host.wait_for_exit().success());
+    let _ = std::fs::remove_dir_all(home);
+}
+
+#[test]
+fn an_explicit_data_directory_leaves_the_old_default_where_it_is() {
+    let (home, _) = legacy_home("migrate-explicit");
+    let elsewhere = home.join("elsewhere");
+
+    let out = host_in_home(&home).env("VOS_DATA", &elsewhere).arg("pair").output().unwrap();
+
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(home.join(".agentos/system.db").is_file(), "not moved");
+    assert!(!home.join(".vos").exists());
+    assert!(elsewhere.join("system.db").is_file(), "it used the directory it was told to");
+    let _ = std::fs::remove_dir_all(home);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_move_that_fails_is_reported_and_stops_the_start_with_the_data_where_it_was() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let (home, _) = legacy_home("migrate-fails");
+    // a home directory nobody can write to: renaming `.agentos` to `.vos` inside it is refused
+    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let can_write_anyway = std::fs::write(home.join("probe"), "x").is_ok(); // root ignores the mode
+    if can_write_anyway {
+        std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let _ = std::fs::remove_dir_all(home);
+        return;
+    }
+
+    let out = host_in_home(&home).arg("pair").output().unwrap();
+
+    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(!out.status.success(), "the start stops rather than beginning on an empty directory");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("moving the data directory") && stderr.contains("still in"), "{stderr}");
+    assert!(home.join(".agentos/system.db").is_file(), "nothing was lost");
+    assert!(home.join(".agentos/agentos.toml").is_file(), "the config name is back");
+    assert!(!home.join(".vos").exists());
+    let _ = std::fs::remove_dir_all(home);
+}

@@ -18,6 +18,7 @@
 //! the Origin/Host guard.
 
 pub mod config;
+pub mod migrate;
 pub mod net;
 pub mod platform;
 pub mod runtime;
