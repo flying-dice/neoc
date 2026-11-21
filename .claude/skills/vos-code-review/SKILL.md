@@ -1,9 +1,9 @@
 ---
-name: agentos-code-review
-description: Use on every AgentOS merge request / pull request, and before calling any branch ready to merge. Reviews the change for what actually bites here (missing tests, stories and journey specs; accessibility; crate-direction, per-app VM isolation (not a security boundary), host panics from app input, permission and protocol violations; untrusted agent output; atomic layers, test ids and design-language conformance; clean code via agentos-clean-code-review), checks the app readiness gate (min window size, tests, journeys, verify-change, UX research round), and ends with a verdict of READY TO MERGE or STAYS IN MR.
+name: vos-code-review
+description: Use on every vos merge request / pull request, and before calling any branch ready to merge. Reviews the change for what actually bites here (missing tests, stories and journey specs; accessibility; crate-direction, per-app VM isolation (not a security boundary), host panics from app input, permission and protocol violations; untrusted agent output; atomic layers, test ids and design-language conformance; clean code via vos-clean-code-review), checks the app readiness gate (min window size, tests, journeys, verify-change, UX research round), and ends with a verdict of READY TO MERGE or STAYS IN MR.
 ---
 
-# AgentOS code review
+# vos code review
 
 Nothing reaches `main` half-done. This review decides whether a change merges now or stays in its MR. Be concrete:
 every finding names `file:line`, the failure it causes and the fix. Skip nitpicks and anything lint enforces.
@@ -106,7 +106,7 @@ The generic specs run axe (WCAG 2.1 AA) in light and dark on every story and app
   from the Rust schema. Test ids follow `docs/TESTING.md` naming (stable ids from node keys, never indices or display text).
 - Design language: check the screenshots in the PR (or baselines) against DESIGN_LANGUAGE §11.
 - A UI change has a "Manual verification" section from `verify-change` with screenshots of the states it claims.
-- Run the `agentos-clean-code-review` skill on the diff; carry over its findings above 0.5 at their severity.
+- Run the `vos-clean-code-review` skill on the diff; carry over its findings above 0.5 at their severity.
 
 ## 6. Readiness gate (apps)
 
@@ -130,7 +130,7 @@ the tests and green journeys, but not a new research round.
 ## 7. Report
 
 ```md
-## AgentOS review: <PR title or branch>
+## vos review: <PR title or branch>
 
 **Verdict: READY TO MERGE** | **Verdict: STAYS IN MR** (one line on why)
 

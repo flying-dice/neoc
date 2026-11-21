@@ -41,7 +41,7 @@ Six stages. Scale them to the request: a single component may need only 1, 3 and
 
 Lead with blockers and their fixes. For each finding: what, where, why it matters, its label, and a suggested fix. Format to suit the request. Do not pad with praise; mention what works only when it is a deliberate choice worth protecting from later changes.
 
-## In AgentOS
+## In vos
 
 The artifact is the **running app on the real host**, not a description of it, so rule 1 can be applied to more than
 a screenshot: drive it.

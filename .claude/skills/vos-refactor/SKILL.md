@@ -1,6 +1,6 @@
 ---
-name: agentos-refactor
-description: Clear one AgentOS clean-code TODO marker per pass (left by agentos-clean-code-review). Picks the highest-scored marker, fixes it without changing behaviour or a public contract (a port, the protocol, the app API), runs the gates, reports, and stops. Run it repeatedly to work the list down, or when agentos-pre-commit is blocked by a marker above 0.5.
+name: vos-refactor
+description: Clear one vos clean-code TODO marker per pass (left by vos-clean-code-review). Picks the highest-scored marker, fixes it without changing behaviour or a public contract (a port, the protocol, the app API), runs the gates, reports, and stops. Run it repeatedly to work the list down, or when vos-pre-commit is blocked by a marker above 0.5.
 ---
 
 # Refactor: one marker per pass

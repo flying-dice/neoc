@@ -1,6 +1,6 @@
-# Working on AgentOS
+# Working on vos
 
-AgentOS is an iPadOS-style virtual desktop for agents. It has three parts:
+vos (Virtual OS) is an iPadOS-style virtual desktop for agents. It has three parts:
 
 - **The host** (`crates/`): a Rust program, one Cargo workspace laid out as a hexagon. It runs the apps, owns their
   data, serves the client, and speaks JSON-RPC 2.0 over WebSocket at `/rpc`, AG-UI over HTTP + SSE at `/agui` (agent
@@ -19,7 +19,7 @@ Bun workspaces cover `client` and `packages/*` (an app is Lua, `app.json` + `*.l
 `crates/*`.
 
 The direction is a self-hosted home lab: apps can provide LAN services such as DNS, DHCP and container-backed services,
-so AgentOS can stand in for the services people run on a home NAS.
+so vos can stand in for the services people run on a home NAS.
 
 ## Sources of truth
 
@@ -44,14 +44,14 @@ edit them by hand.
 - Long-form wiki and planning pages live in the **Confluence space AGOS**:
   <https://flying-dice.atlassian.net/wiki/spaces/AGOS/overview>. The in-repo `docs/` stay the source of truth for
   architecture, testing and design (the table above).
-- Current epic: **AGOS-1**, home-lab network services (DNS, DHCP, containers). AgentOS aims to replace the services
+- Current epic: **AGOS-1**, home-lab network services (DNS, DHCP, containers). vos aims to replace the services
   people run on a home NAS such as Synology.
 
 ## Merge policy
 
 - All work happens on a branch and lands through a PR. Never push to `main`.
 - Nothing merges without the full gate green locally on the head commit (lint, typecheck, test, e2e; there is no
-  hosted CI) and an `agentos-code-review` verdict of **READY TO MERGE**.
+  hosted CI) and a `vos-code-review` verdict of **READY TO MERGE**.
 - An app that isn't ready for the full gate and the UX research panel stays in its MR. Keep pushing to the
   branch; don't merge a partial app behind a flag or with "tests later".
 
@@ -67,7 +67,7 @@ A change is done when all of these hold:
 3. Every interactive element has a `data-testid` (kit components take a required `testid` prop; a Lua app's
    interactive nodes have a `key`); it works by keyboard, in light and dark, and at the app's minimum window.
 4. UI changes carry a `verify-change` "Manual verification" record in the PR.
-5. For a new app or a change people will notice in one: the readiness gate in `agentos-code-review` §6 holds,
+5. For a new app or a change people will notice in one: the readiness gate in `vos-code-review` §6 holds,
    including a `docs/ux/<app>/round-<n>.md` that meets the `app-design` exit criteria.
 
 ## Boundaries
@@ -77,8 +77,8 @@ A change is done when all of these hold:
   `fetch`, `http`, `codegen`) depends on application and domain and **never on another adapter**; `vos-host` is the
   composition root and the only crate that sees them all. `neoc-vm` is a support library, not an adapter: the
   per-app Lua VM (mlua on Luau, built from source), depending on no other crate here (the `neoc` CLI is its other client, and
-  `neoc`/`neoc-vm` never depend on an `vos-*` crate). Among the `vos-*` crates only the `lua` adapter may depend
-  on it (it reaches mlua through neoc-vm's re-export, so mlua stays out of every agentos crate). Enforced by `bun run lint:deps` (`scripts/check-deps.ts`,
+  `neoc`/`neoc-vm` never depend on a `vos-*` crate). Among the `vos-*` crates only the `lua` adapter may depend
+  on it (it reaches mlua through neoc-vm's re-export, so mlua stays out of every vos crate). Enforced by `bun run lint:deps` (`scripts/check-deps.ts`,
   an allow-list over `cargo metadata`) and `cargo deny check` (`deny.toml`: each framework crate is pinned to its
   adapter). A new crate must be placed in the allow-list on purpose.
 - **Rust hygiene** (`[workspace.lints]`): clippy pedantic with `-D warnings`; `unsafe_code` is forbidden;
@@ -143,8 +143,8 @@ Also: atomic layers (`lint:atomic`, in `packages/ui` and `client/src`) and test 
 | When | Skill |
 |---|---|
 | Writing or changing code (Rust, Lua, Svelte/TypeScript) | `coding-styleguide` |
-| Before pushing | `agentos-clean-code-review`, then `agentos-pre-commit` (loops until clean; `agentos-refactor` clears markers) |
-| Every MR, and before calling a branch ready | `agentos-code-review` (verdict: READY TO MERGE or STAYS IN MR) |
+| Before pushing | `vos-clean-code-review`, then `vos-pre-commit` (loops until clean; `vos-refactor` clears markers) |
+| Every MR, and before calling a branch ready | `vos-code-review` (verdict: READY TO MERGE or STAYS IN MR) |
 | Any change to what a person sees or does | `verify-change` |
 | Before building a new app (or re-scoping one) | `prebuild-synthetic-ux` (personas, riskiest assumptions, key journeys and stories → `docs/ux/<app>/discovery.md`) |
 | Designing or redesigning an app | `app-design` (discovery, journeys, usability review, the `ux-research` panel, conformance, iterate) |
@@ -165,7 +165,7 @@ bun run lint:rust       # cargo fmt --check, clippy -D warnings, lint:deps (crat
 bun run lint:lua        # lua-language-server --check of every app against types/generated/luals (plus negative fixtures; the std:/lib:/vnd: modules are untyped until NEOC-140)
 bun run lint:stylua     # StyLua check (skipped with a message when stylua is not installed)
 bun run typecheck       # cargo check --workspace --all-targets + tsc on types/ + svelte-check in each package
-bun run test            # cargo nextest over the agentos crates (neoc's crates have their own gate) + bun test (types, scripts, client, kit)
+bun run test            # cargo nextest over the vos crates (neoc's crates have their own gate) + bun test (types, scripts, client, kit)
 bun run format          # prettier + cargo fmt + StyLua
 bun run test:e2e        # all Storybooks + desktop + journeys, headless, against the real host
                         # VOS_PORT_BASE=9100 for a second worktree (Storybook = base, e2e host = base + 10)
@@ -177,11 +177,11 @@ bun scripts/design-audit.ts <page>  # static styleguide audit of a built-in shel
 ```
 
 Visual baselines (`e2e/__screenshots__`) are macOS-only, so run `test:e2e` on a Mac. There is no hosted CI: the
-`agentos-pre-commit` skill runs the gate and `agentos-code-review` checks it. Needed tools: Rust (the pinned toolchain),
+`vos-pre-commit` skill runs the gate and `vos-code-review` checks it. Needed tools: Rust (the pinned toolchain),
 `cargo-nextest`, `cargo-deny`, Bun, `darklua` 0.18.0 (`cargo install darklua --version 0.18.0 --locked`; building the
 apps fail without it, they never skip) and, for the Lua checks, `lua-language-server` 3.19.2 (`brew install lua-language-server`) and `stylua`.
 Without them `lint:lua` and `lint:stylua` skip on a developer machine and **fail** when `VOS_GATE=1` or `CI` is
-set (the `agentos-pre-commit` skill runs the gate that way). No system Lua 5.1 is needed: the Rust tests load and run the
+set (the `vos-pre-commit` skill runs the gate that way). No system Lua 5.1 is needed: the Rust tests load and run the
 bundled apps on neoc-vm's Luau. A native Lua 5.3+ is optional: with it `bun test scripts` also compares the
 prelude's polyfills with the native ones.
 

@@ -1,6 +1,6 @@
 ---
-name: agentos-clean-code-review
-description: Clean-code audit of an AgentOS change (the current diff or a branch) against SRP, DRY, naming, coupling, dead code, KISS, BOUNDARY (the crate ports, per-app VM isolation (not a security boundary), the protocol and the atomic layers) and PANIC (unwrap and panics in Rust, unvalidated JSON-RPC params, unchecked casts, non-null assertions, agent or tool input). Fixes what this session introduced and tags the rest as scored TODO markers. Use after implementing a change and before the agentos-pre-commit skill; agentos-code-review delegates its clean-code pass here.
+name: vos-clean-code-review
+description: Clean-code audit of a vos change (the current diff or a branch) against SRP, DRY, naming, coupling, dead code, KISS, BOUNDARY (the crate ports, per-app VM isolation (not a security boundary), the protocol and the atomic layers) and PANIC (unwrap and panics in Rust, unvalidated JSON-RPC params, unchecked casts, non-null assertions, agent or tool input). Fixes what this session introduced and tags the rest as scored TODO markers. Use after implementing a change and before the vos-pre-commit skill; vos-code-review delegates its clean-code pass here.
 ---
 
 # Clean-code review
@@ -32,7 +32,7 @@ given the diff and the file list, not your conclusions. Otherwise one inline pas
    commented-out code.
 6. **KISS**: abstraction without a second user, premature options or traits, `$effect` where `$derived` does, a generic
    where a concrete type will do. Ask why up to five times; if no answer survives, it is a violation.
-7. **BOUNDARY**: coupling across a real AgentOS seam that lint can't see. Seams:
+7. **BOUNDARY**: coupling across a real vos seam that lint can't see. Seams:
    - **crate ports**: a port that leaks adapter types (`rusqlite`, `mlua`, `axum`, `rmcp` types in a signature of
      `vos-application` or `vos-domain`); a driving adapter reaching into a driven one instead of a use case; a use
      case that bypasses a port; policy (permissions, grants, `readOnly`) enforced in an adapter instead of the layer that owns it;
@@ -83,5 +83,5 @@ Report each finding with file, line range, principle, a one-line description and
 ```
 
 In TypeScript use `// TODO: clean-code - <score> - <PRINCIPLE>: ...`, and in Svelte markup
-`<!-- TODO: clean-code - <score> - <PRINCIPLE>: ... -->`. The `agentos-refactor` skill clears markers one at a time;
-`agentos-pre-commit` blocks on any above 0.5.
+`<!-- TODO: clean-code - <score> - <PRINCIPLE>: ... -->`. The `vos-refactor` skill clears markers one at a time;
+`vos-pre-commit` blocks on any above 0.5.

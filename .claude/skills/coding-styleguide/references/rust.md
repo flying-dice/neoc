@@ -1,4 +1,4 @@
-# Rust in AgentOS (`crates/`)
+# Rust in vos (`crates/`)
 
 The host is a Cargo workspace (`Cargo.toml`, `rust-toolchain.toml`, edition 2021, `rustfmt.toml`: 110 columns,
 `clippy.toml`). `bun run lint:rust` is the gate: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets

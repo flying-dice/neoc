@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Guidance for Claude (and any LLM agent) working in **neoc**: one Cargo workspace holding a Lua runtime and, next to it, AgentOS (see "AgentOS" below).
+Guidance for Claude (and any LLM agent) working in **neoc**: one Cargo workspace holding a Lua runtime and, next to it, vos (see "vos" below).
 
 - **Runtime** (`crates/neoc-vm`): an embedded Luau engine (through `mlua`) backed by Rust. Scripts are written in Luau (Lua 5.1 syntax plus type annotations, `continue`, compound assignment and string interpolation, all of which run); their editor types are the generated Luau declarations of every module (see Modules, Types); the base library is Luau's (`bit32`, `table.clone`, no `goto`, `string.format('%s')` takes strings and numbers only (`%*` for anything else): the list is in [README.md](README.md#language)). Scripts run in a VM with a curated module surface (`std:*`, `lib:*`, `vnd:*`). The unsafe halves of the Lua standard library are stripped; everything else comes through explicit modules. Not a security boundary.
 - **Binary** (`crates/neoc`): the thin `neoc` CLI over the runtime. `run` only.
@@ -9,18 +9,18 @@ neoc used to be a language that compiled to Lua. That is gone; the last state is
 
 Read [README.md](README.md) for what neoc is and [CONTRIBUTING.md](CONTRIBUTING.md) for the build, the pre-PR checks, how to add a module and how to release.
 
-## AgentOS
+## vos
 
-This repository also holds **AgentOS**, an iPadOS-style virtual desktop for agents (to be renamed vos): the host (`crates/vos-*`, the `vos` binary), the apps (`apps/`, plain Lua 5.1 run on `neoc-vm`), the client (`client/`) and the UI kit (`packages/ui`). It has its own gate, boundaries, test layout and skills, all governed by [AGENTS.md](AGENTS.md), which stays as it is: read it before touching any of that. Its skills are in `.claude/skills/`: the `vos-*` ones (`agentos-pre-commit`, `agentos-clean-code-review`, `agentos-refactor`, `agentos-code-review`) and the AgentOS-only `app-design`, `coding-styleguide`, `prebuild-synthetic-ux`, `postbuild-synthetic-usability`, `verify-change`; the unprefixed `pre-commit`, `clean-code-review` and `refactor` (and `change-review`, `pr-review`, `pr-self-review`, ...) are neoc's. `AGENTS.md` is imported below, so its rules load with this file; where it and this file differ (Jira project, merge policy, review skills), NEOC-115 settles it, and for the neoc crates this file wins.
+This repository also holds **vos** (Virtual OS), an iPadOS-style virtual desktop for agents: the host (`crates/vos-*`, the `vos` binary), the apps (`apps/`, plain Lua 5.1 run on `neoc-vm`), the client (`client/`) and the UI kit (`packages/ui`). It has its own gate, boundaries, test layout and skills, all governed by [AGENTS.md](AGENTS.md), which stays as it is: read it before touching any of that. Its skills are in `.claude/skills/`: the `vos-*` ones (`vos-pre-commit`, `vos-clean-code-review`, `vos-refactor`, `vos-code-review`) and the vos-only `app-design`, `coding-styleguide`, `prebuild-synthetic-ux`, `postbuild-synthetic-usability`, `verify-change`; the unprefixed `pre-commit`, `clean-code-review` and `refactor` (and `change-review`, `pr-review`, `pr-self-review`, ...) are neoc's. `AGENTS.md` is imported below, so its rules load with this file; where it and this file differ (Jira project, merge policy, review skills), NEOC-115 settles it, and for the neoc crates this file wins.
 
 @AGENTS.md
 
-The AgentOS adapter (`crates/vos-lua`) is an embedder of `neoc-vm`: AgentOS policy (apps, `readOnly`, views, `app.*`, the `vos:*` modules) stays in that adapter and never moves into `neoc-vm`. The AgentOS crates keep edition 2021 and inherit the workspace lint table; the neoc crates do not yet (see "Rust style").
+The vos adapter (`crates/vos-lua`) is an embedder of `neoc-vm`: vos policy (apps, `readOnly`, views, `app.*`, the `vos:*` modules) stays in that adapter and never moves into `neoc-vm`. The vos crates keep edition 2021 and inherit the workspace lint table; the neoc crates do not yet (see "Rust style").
 
 ## Layout
 
 ```
-crates/neoc/                 # the `neoc` binary (the AgentOS crates add the `vos` host binary, crate `vos-host`, and the `vos-codegen` tool)
+crates/neoc/                 # the `neoc` binary (the vos crates add the `vos` host binary, crate `vos-host`, and the `vos-codegen` tool)
   src/main.rs                # CLI entry: `run`, embedded-payload executables
   tests/                     # Lua suites (*.test.lua, *.spec.lua), cli.rs, cucumber.rs
 crates/neoc-vm/              # the runtime library
@@ -43,7 +43,7 @@ crates/neoc-vm/              # the runtime library
 types/neoc.d.luau            # GENERATED Luau declarations of every module (one definitions file for luau-lsp, `require` overloads at its end)
 types/fixtures/              # luau-lsp fixtures: usage.luau, syntax.luau (clean, strict) and negative/ (expect-error)
 (types/fixtures/.luaurc)     # Luau config of the fixtures: strict mode (each fixture also says `--!strict`)
-.luarc.json                  # AgentOS's lua-language-server config for the apps (Lua 5.1, library types/generated/luals): neoc itself has none
+.luarc.json                  # vos's lua-language-server config for the apps (Lua 5.1, library types/generated/luals): neoc itself has none
 tooling/cli/                 # Gherkin spec for the CLI, run against the built binary
 ```
 
@@ -60,7 +60,7 @@ cargo clippy --workspace --all-targets               # lint
 cargo fmt --check                                    # formatting
 ```
 
-`--workspace` would also build and test the AgentOS crates, whose tests need `bun` and `darklua` on `PATH`; the neoc gate names `-p neoc -p neoc-vm`, and the AgentOS crates have the gate in `AGENTS.md`. The full pre-PR gate, including the Lua suite set that needs no Docker, is in [CONTRIBUTING.md](CONTRIBUTING.md#pre-pr-checks).
+`--workspace` would also build and test the vos crates, whose tests need `bun` and `darklua` on `PATH`; the neoc gate names `-p neoc -p neoc-vm`, and the vos crates have the gate in `AGENTS.md`. The full pre-PR gate, including the Lua suite set that needs no Docker, is in [CONTRIBUTING.md](CONTRIBUTING.md#pre-pr-checks).
 
 ## Modules
 
@@ -128,7 +128,7 @@ Adding a module: see [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-new-module).
 
 ## Rust style
 
-- Edition 2024 for the neoc crates (the AgentOS crates set edition 2021 themselves). The workspace lint table (`unsafe_code = forbid`, clippy pedantic, `unwrap`/`expect`/`panic` denied) is inherited by the AgentOS crates only; the neoc crates do not inherit it yet (see their `[lints.cargo]` comment: the ~700 pedantic findings and six `unsafe` blocks it mentions were counted when the table was imported, against neoc's table of that time, which did not deny `unwrap`/`expect`/`panic`; this one is stricter, so the count would be higher). `neoc-vm` forbids `unsafe` outside tests (`lib.rs`); the `neoc` binary crate still has some, in its CLI test helper.
+- Edition 2024 for the neoc crates (the vos crates set edition 2021 themselves). The workspace lint table (`unsafe_code = forbid`, clippy pedantic, `unwrap`/`expect`/`panic` denied) is inherited by the vos crates only; the neoc crates do not inherit it yet (see their `[lints.cargo]` comment: the ~700 pedantic findings and six `unsafe` blocks it mentions were counted when the table was imported, against neoc's table of that time, which did not deny `unwrap`/`expect`/`panic`; this one is stricter, so the count would be higher). `neoc-vm` forbids `unsafe` outside tests (`lib.rs`); the `neoc` binary crate still has some, in its CLI test helper.
 - `clippy::all` + `clippy::pedantic`; warnings are errors (`RUSTFLAGS="-D warnings"`). Use `#[allow(...)]` with a comment when you must.
 - `thiserror` for library error enums; the CLI renders them with `miette`. No `unwrap()` / `expect()` in library code.
 - `///` on public items is full, normal English. Everywhere else, write tight: cut filler, keep every fact. Never abbreviate code, API names, types, commands, paths or error text.
@@ -144,7 +144,7 @@ Adding a module: see [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-new-module).
 3. Open a PR into `main` (a draft is fine). Title and commits are Conventional Commits (the squash commit message comes from the PR title for a multi-commit PR, from the commit for a single-commit one). Reference the Jira key in the body or footer (`Refs NEOC-6`).
 4. Self-review with the `pr-self-review` skill and post its `Self-review` note on the PR for the head SHA.
 5. Hand off to an independent `pr-review` pass: a fresh reviewer with no session context, who posts a verdict note for the head SHA (`READY TO MERGE` or `CHANGES NEEDED`). Fix and repeat from step 2 until `READY TO MERGE`.
-6. Squash-merge only on `READY TO MERGE` for the current head, then delete the branch. The one exception is the merge of AgentOS (NEOC-113, PR #34), which lands with a merge commit so that AgentOS's history stays in `main`: never squash it. Mark the Jira ticket Done.
+6. Squash-merge only on `READY TO MERGE` for the current head, then delete the branch. The one exception is the merge of vos into neoc (NEOC-113, PR #34), which lands with a merge commit so that vos's history stays in `main`: never squash it. Mark the Jira ticket Done.
 
 Releases are cut by pushing a `vX.Y.Z` tag on `main` (see CONTRIBUTING.md). Don't push release tags unless asked.
 

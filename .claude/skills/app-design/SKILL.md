@@ -1,9 +1,9 @@
 ---
 name: app-design
-description: Use when designing, redesigning or polishing any AgentOS app (a new Lua app, a built-in shell page, or the desktop shell), or when asked how good an app's UX or design is. Runs the iterative UX process for that app: key user journeys, a user-research panel of Haiku, Sonnet and Opus participants who use the real app headless on the real host, a styleguide conformance score, then design changes, repeated until the exit criteria hold.
+description: Use when designing, redesigning or polishing any vos app (a new Lua app, a built-in shell page, or the desktop shell), or when asked how good an app's UX or design is. Runs the iterative UX process for that app: key user journeys, a user-research panel of Haiku, Sonnet and Opus participants who use the real app headless on the real host, a styleguide conformance score, then design changes, repeated until the exit criteria hold.
 ---
 
-# Designing an AgentOS app
+# Designing a vos app
 
 Every app goes through the same loop, from its first screen to every later redesign:
 

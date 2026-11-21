@@ -1,4 +1,4 @@
-# AgentOS server-driven UI: component kit, view protocol, bindings, Lua API
+# vos server-driven UI: component kit, view protocol, bindings, Lua API
 
 Status: the design the platform is built on, and still its reference for the view protocol, bindings, state and the
 Lua authoring API. It is implemented: the host in `crates/` (`vos-domain` holds the schema and the protocol,
@@ -25,7 +25,7 @@ Keywords MUST/SHOULD/MAY are used in the RFC 2119 sense. "Host" = the Rust proce
 | Conflicts | Dirty field **shields itself** from remote changes; write-back carries `baseRev`; host **3-way merges text on the base it last sent**, scalars are human-wins; the losing side is kept as a revision. | An agent appending to a note while the user types must lose nothing and never move the caret. |
 | Lua API | **Table-call constructors** (`ui.VStack { spacing = 2, child, child }`) that return plain node tables; handlers are Lua functions (never serialised: referenced by key path); **both** layers exist: constructors are sugar over the plain-table wire form, raw tables are accepted and validated identically. No chained modifiers. | Native Lua idiom (Roact/Fusion), described by generated LuaCATS types, JSON-shaped, diffable. |
 | Styling | Apps can **not** style. Only semantic props from closed token sets (spacing units, text styles, tints, surfaces, radii, sizes in pt). No CSS, raw colours, fonts, shadows. Data colours (labels, canvas fills) are *content*, auto-contrasted. | Design language, WCAG AA, dark mode, Reduce Transparency and re-theming all stay host-controlled and guaranteed. |
-| Type pipeline | One **component schema** (YAML with JSON Schema fragments + `x-agentos` metadata) -> Rust validator tables, TS types + renderer contract tests, Lua `ui` module + LuaCATS definitions, docs + stories. | The catalogue has metadata (events, slots, a11y rules, `since`, tier) that plain Rust or TS types do not express; one file, four outputs, drift is a build failure. |
+| Type pipeline | One **component schema** (YAML with JSON Schema fragments + `x-vos` metadata) -> Rust validator tables, TS types + renderer contract tests, Lua `ui` module + LuaCATS definitions, docs + stories. | The catalogue has metadata (events, slots, a11y rules, `since`, tier) that plain Rust or TS types do not express; one file, four outputs, drift is a build failure. |
 
 ---
 
@@ -1446,7 +1446,7 @@ crates/vos-domain, ui module   (Rust types + the component catalogue: tokens, Ac
         └─▶ docs/reference/components.md      the component reference
 ```
 
-**Authoring format.** YAML whose property types are JSON Schema fragments, plus `x-agentos` metadata that no plain
+**Authoring format.** YAML whose property types are JSON Schema fragments, plus `x-vos` metadata that no plain
 type system carries (events with payloads, slots, a11y rules, `since`, tier, bindings, positional arg, kit mapping):
 
 ```yaml
@@ -1502,7 +1502,7 @@ for `Unsupported` decisions and the binding-writability check.
 (compiled once with the `jsonschema` crate; full validation for the first tree and in debug, structural fast-path in
 release). The host never needs per-component Rust structs: nodes are JSON values end to end, so adding a prop needs no Rust change.
 
-**Contract tests (the "drift is a build failure" part)**, run by the repo's gate (`agentos-pre-commit` / `test`):
+**Contract tests (the "drift is a build failure" part)**, run by the repo's gate (`vos-pre-commit` / `test`):
 
 1. every schema component has an adapter, a generated story per example and an axe pass; every adapter prop appears in the schema;
 2. Lua constructor snapshots: `ui.X {...}` of each example equals the schema's example node;
@@ -1559,7 +1559,7 @@ Historical: the original plan, written before the build. Milestone names and pac
 | **M0 Schema and conformance** | schema format, `codegen`, validator, protocol crate, golden fixtures | the two example apps' trees validate; generated TS/Lua compile |
 | **M1 Core + Calculator** | Rust `ViewInstance` (render, reconcile, ops), Lua `ui` + tracked state, the client renderer (`ViewCore` productionised), Tier 1 layout/text/button/grid | Calculator ported, journeys green, p95 key -> pixels <= 30 ms |
 | **M2 Data + Notes** | sources, live queries, drafts/merge, client state + persistence, `TextEditor`, `Markdown`, `List` windowing, `SplitView` x3, `Alert`, `Screen` search | Notes ported incl. `notes.append` live; reconnect and host-restart tests |
-| **M3 Rest of Tier 1** | navigation, presentations, DnD, pickers, `Form`, swipe/reorder/multi-select; Tasks, Reminders, Contacts, Settings | each app passes the `agentos-code-review` readiness gate |
+| **M3 Rest of Tier 1** | navigation, presentations, DnD, pickers, `Form`, swipe/reorder/multi-select; Tasks, Reminders, Contacts, Settings | each app passes the `vos-code-review` readiness gate |
 | **M4 Tier 2** | `Table`, `ChatTranscript`, `CalendarGrid`, `Outline`, `LazyGrid`; Agents, Calendar, Files, Books | |
 | **M5 Tier 3** | `CodeEditor`, `DiffView`, `Canvas`; Coder, Reviewer, Diagrams | |
 

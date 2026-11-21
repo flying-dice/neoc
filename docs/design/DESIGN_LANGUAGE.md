@@ -1,8 +1,8 @@
-# AgentOS design language
+# vos design language
 
 **iPadOS virtual desktop, flat design.**
 
-AgentOS looks and behaves like an iPad running Stage Manager: a wallpaper, a status bar, a floating Dock, a
+vos looks and behaves like an iPad running Stage Manager: a wallpaper, a status bar, a floating Dock, a
 recent-apps strip on the left and app windows that float, go full screen, split or slide over. Inside each window,
 an app is an iPadOS app: navigation bars, inset-grouped lists, sidebars, sheets and alerts.
 

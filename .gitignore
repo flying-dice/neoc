@@ -15,7 +15,7 @@
 # Test scratch
 .tmp/
 
-# JavaScript, apps and Storybook (AgentOS: client, packages, e2e)
+# JavaScript, apps and Storybook (vos: client, packages, e2e)
 node_modules
 dist
 .eslintcache

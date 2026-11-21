@@ -1,4 +1,4 @@
-# Lua apps in AgentOS (`apps/<id>/*.lua`)
+# Lua apps in vos (`apps/<id>/*.lua`)
 
 An app is server-side **plain Lua 5.1** in its own VM (no permissions, no budgets): no Luau syntax (no `+=`, `continue`, backtick strings, `if`
 expressions, `for k, v in t do`, type annotations in signatures). Its contract is the `app` table and the `ui` constructors,

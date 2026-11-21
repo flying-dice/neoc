@@ -1,6 +1,6 @@
 ---
-name: agentos-pre-commit
-description: Mandatory AgentOS quality gate before every push and before opening or updating a PR. Reviews the outgoing change adversarially, runs agentos-clean-code-review, clears markers above 0.5, and runs the real gates (lint with clippy, crate direction, cargo deny, lua-language-server, StyLua, atomic and test-id checks; typecheck; cargo nextest and bun test; and test:e2e for anything rendered). Loops until clean. No exceptions for small changes.
+name: vos-pre-commit
+description: Mandatory vos quality gate before every push and before opening or updating a PR. Reviews the outgoing change adversarially, runs vos-clean-code-review, clears markers above 0.5, and runs the real gates (lint with clippy, crate direction, cargo deny, lua-language-server, StyLua, atomic and test-id checks; typecheck; cargo nextest and bun test; and test:e2e for anything rendered). Loops until clean. No exceptions for small changes.
 ---
 
 # Pre-commit gate
@@ -13,9 +13,9 @@ Run before every push. Loop until everything below is clean.
    lives in, a bun test for client and kit logic, a story or a journey for each new screen or state, a journey spec for
    each new or changed journey in `JOURNEYS.md`. A bug or a missing check blocks the push: fix it now. "Tests later" is
    not allowed.
-2. **Run `agentos-clean-code-review`** on the same change.
+2. **Run `vos-clean-code-review`** on the same change.
 3. **Markers**: `grep -rnE "TODO: clean-code -" crates apps packages client scripts e2e`. Any above 0.5 blocks the push:
-   fix it, or run `agentos-refactor` until none remain.
+   fix it, or run `vos-refactor` until none remain.
 4. **Gates**, after every fix:
 
    ```sh
@@ -23,7 +23,7 @@ Run before every push. Loop until everything below is clean.
    bun run lint         # atomic layers, test ids, conflict markers, cargo fmt + clippy -D warnings, crate direction
                         # (check-deps), cargo deny, lua-language-server, StyLua, codegen:check, eslint
    bun run typecheck    # cargo check --workspace --all-targets, tsc on types/, svelte-check (required testid props)
-   bun run test         # cargo nextest over the agentos crates, then bun test (types, client, kit)
+   bun run test         # cargo nextest over the vos crates, then bun test (types, client, kit)
    bun run test:e2e     # required if the change touches anything rendered (packages/ui, the client, apps, stories,
                         # e2e/), and always before asking for a merge; needs a Mac for the baselines
    ```

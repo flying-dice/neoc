@@ -1,4 +1,4 @@
-# Testing AgentOS
+# Testing vos
 
 Everything UI-facing runs headless in Chromium against the **real Rust host**. There is no in-memory host and no web
 mode: the host starts in milliseconds, so the desktop and the journeys talk to the same binary a person runs. Logic is
@@ -70,7 +70,7 @@ under `bun test` too, through the preload in `client/bunfig.toml` (`client/test/
   every `.lua` file `.luarc.json` does not ignore (apps, `lua/prelude.lua`, the codegen example app), against the
   generated LuaCATS definitions in `types/generated/luals/` (`vos.lua` for the global `app`, `vos/ui.lua` and
   `vos/app.lua` for the two `require`s: a module name cannot be a file name with a colon, so `.luarc.json` sets
-  `completion.requireSeparator` to `":"` and LuaLS reads `require("vos:ui")` as the path `vos/ui`; `.luarc.json` is AgentOS's own). The `std:`/`lib:`/`vnd:` modules are not
+  `completion.requireSeparator` to `":"` and LuaLS reads `require("vos:ui")` as the path `vos/ui`; `.luarc.json` is vos's own). The `std:`/`lib:`/`vnd:` modules are not
   typed here (neoc moved its module types to Luau declarations for luau-lsp, `types/neoc.d.luau`, in NEOC-139; typed
   apps come with NEOC-140). Files in `negative/` folders (`scripts/fixtures/negative/`) mark lines with
   `-- expect-error`; the check demands exactly those lines are flagged, so a broken definitions file cannot pass
@@ -78,7 +78,7 @@ under `bun test` too, through the preload in `client/bunfig.toml` (`client/test/
 - **Format:** `bun run lint:stylua` (`stylua.toml`, syntax `Lua51`; `.styluaignore`); `bun run format` rewrites.
   Both lints print a `SKIPPED` message when `lua-language-server` (PATH or `~/.local/bin`) or `stylua` (PATH or
   `~/.cargo/bin`) is not installed, and **fail** instead when `VOS_GATE=1` or `CI` is set (`scripts/gate.ts`; the
-  `agentos-pre-commit` skill's gate sets it): install them, a skipped lint is not a pass.
+  `vos-pre-commit` skill's gate sets it): install them, a skipped lint is not a pass.
 - **Lua 5.1 build:** apps run as plain Lua 5.1 (`scripts/lua51.ts`, `.darklua.json`; see `apps/README.md`).
   `darklua` 0.18.0 is required and **never skipped** (`cargo install darklua --version 0.18.0 --locked`):
   `bun run build:apps` fails with that message without it. `bun test scripts`
@@ -230,7 +230,7 @@ node e2e/tools/session.mjs stop me
 ```
 
 Commands match labels by accessible name first, so a missing label is a finding. `look` also prints console errors.
-Sessions live in `test-results/sessions/<name>/`. `window.__agentos` exposes the shell's host state, window manager
+Sessions live in `test-results/sessions/<name>/`. `window.__vos` exposes the shell's host state, window manager
 (`wm.open('calculator')`) and app registry. Another pairing code any time: `bun run host pair` with the same
 `VOS_DATA`. To drive the e2e host instead, keep `bun run test:e2e` running and point `--url` at its port; pair with
 `issuePairingCode()` from `e2e/host/pair.ts`.

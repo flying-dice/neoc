@@ -1,6 +1,6 @@
 ---
 name: verify-change
-description: Use before finishing, opening or merging ANY AgentOS change that alters what a person sees or does (kit components in packages/ui, renderer adapters and the shell in client/, Lua app windows, window management, menus, dialogs, layout, theming, agent tools that move the UI, host changes that change a view or protocol message). Run the real shell and the real Rust host headless, exercise the change, look at the screenshots against the intended result and the design language, and write down what was checked and how. Passing unit tests is not enough.
+description: Use before finishing, opening or merging ANY vos change that alters what a person sees or does (kit components in packages/ui, renderer adapters and the shell in client/, Lua app windows, window management, menus, dialogs, layout, theming, agent tools that move the UI, host changes that change a view or protocol message). Run the real shell and the real Rust host headless, exercise the change, look at the screenshots against the intended result and the design language, and write down what was checked and how. Passing unit tests is not enough.
 ---
 
 # Verify a change in the real UI before it lands

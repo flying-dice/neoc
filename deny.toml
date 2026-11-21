@@ -3,9 +3,9 @@
 # Every advisory ignore carries a reason, an upstream link and whether a fixed
 # version exists; delete the entry as soon as the upstream fix is adopted.
 #
-# One policy for the whole workspace: neoc (the `neoc` CLI over `neoc-vm`) and AgentOS (the host, apps, client).
+# One policy for the whole workspace: neoc (the `neoc` CLI over `neoc-vm`) and vos (the host, apps, client).
 
-# No `targets`: every platform's dependencies are checked. The AgentOS host is meant for home-lab boxes and NAS units
+# No `targets`: every platform's dependencies are checked. The vos host is meant for home-lab boxes and NAS units
 # (Linux on x86_64 and aarch64, macOS on a developer machine), so the bans (no OpenSSL, mlua and the framework crates
 # pinned to their crate) and the licenses must hold for all of them, not for the two triples neoc ships.
 [graph]
@@ -37,14 +37,14 @@ deny = [
 yanked = "warn"
 unmaintained = "all"
 ignore = [
-    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml unmaintained, no vulnerability advisory, no fixed version (serde_yaml is archived at 0.9.34+deprecated). Ships in neoc and the AgentOS host via neoc-vm -> serde_yaml 0.9 (vnd:serde_yaml); no safe upgrade exists. Upstream: https://github.com/dtolnay/serde-yaml/releases/tag/0.9.34 and https://rustsec.org/advisories/RUSTSEC-2024-0449. Replacement tracked in NEOC-91. Review: 2027-01-10." },
+    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml unmaintained, no vulnerability advisory, no fixed version (serde_yaml is archived at 0.9.34+deprecated). Ships in neoc and the vos host via neoc-vm -> serde_yaml 0.9 (vnd:serde_yaml); no safe upgrade exists. Upstream: https://github.com/dtolnay/serde-yaml/releases/tag/0.9.34 and https://rustsec.org/advisories/RUSTSEC-2024-0449. Replacement tracked in NEOC-91. Review: 2027-01-10." },
     { id = "RUSTSEC-2026-0440", reason = "astral-tokio-tar unmaintained (Astral ended maintenance 2026-11-03), no vulnerability advisory, no fixed version: every release is deprecated. Pulled by testcontainers 0.27 and 0.28 (^0.6.1) via testcontainers-modules 0.15, which backs vnd:testcontainers_modules; no testcontainers release has dropped it yet. Upstream: https://github.com/astral-sh/tokio-tar/pull/130 and https://rustsec.org/advisories/RUSTSEC-2026-0440. Remove once testcontainers moves to a maintained tar crate. Review: 2027-01-10." },
     { id = "RUSTSEC-2026-0542", reason = "humantime unmaintained (it wraps chrono, which is unmaintained), no vulnerability advisory, no fixed version. Dev-dependency only: pulled by cucumber 0.23 for the Gherkin CLI spec (crates/neoc/tests/cucumber.rs), never linked into the neoc binary. Upstream: https://github.com/chronotope/chrono/issues/1768 and https://rustsec.org/advisories/RUSTSEC-2026-0542. Remove once cucumber drops humantime. Review: 2027-01-10." },
     { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained (an advisory of the unmaintained kind: no vulnerability, no fixed version). Pulled by rmcp and by schemars, which vos-domain and vos-codegen use too (cargo tree -i chrono); not used directly. Upstream: https://github.com/chronotope/chrono/issues/1768 and https://rustsec.org/advisories/RUSTSEC-2026-0543. Revisit when rmcp and schemars drop it. Review: 2027-01-10." },
 ]
 
 [licenses]
-# The neoc crates carry the workspace license (MIT OR Apache-2.0); the AgentOS crates are `publish = false` and carry
+# The neoc crates carry the workspace license (MIT OR Apache-2.0); the vos crates are `publish = false` and carry
 # none. Every third-party license in the tree is permissive. Anything not listed fails.
 private = { ignore = true }
 allow = [

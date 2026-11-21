@@ -1,4 +1,4 @@
-# AgentOS architecture: Rust host, Lua 5.1 apps, managed client
+# vos architecture: Rust host, Lua 5.1 apps, managed client
 
 Status: **approved** (2026-11-18). LAN binding with device pairing (see `host-stack.md`). Detail lives in two companion documents, both backed by working prototypes:
 
@@ -48,7 +48,7 @@ crates/
   vos-lua          adapter: runs apps (Lua 5.1 source, on Luau), one VM per app: the app API modules, views, the call queue
   neoc-vm               support library (not an adapter): the Lua VM (Luau) on mlua, the per-app environment, the
                         `std:`/`lib:`/`vnd:` modules, the lifecycle of what apps spawn; depends on no other
-                        crate; among the agentos crates only `lua` may depend on it (and the
+                        crate; among the vos crates only `lua` may depend on it (and the
                         `neoc` CLI, which is not part of the hexagon)
   vos-sqlite        adapter: per-app rusqlite DBs, migrations, live queries via commit hooks
   vos-mcp           adapter: rmcp server, dynamic tool list, per-agent bearer identity
@@ -75,7 +75,7 @@ crates/
   - `cargo nextest`.
 - **Crates** (versions in `host-stack.md`):
   - runtime: tokio, axum;
-  - Lua: mlua (`luau`, `async`, `serialize`, `send`, `macros`), in `neoc-vm` and the `neoc` CLI, never in an agentos crate (apps are Lua 5.1 source);
+  - Lua: mlua (`luau`, `async`, `serialize`, `send`, `macros`), in `neoc-vm` and the `neoc` CLI, never in a vos crate (apps are Lua 5.1 source);
   - SQLite: rusqlite (bundled);
   - protocols: rmcp, agent-client-protocol;
   - fetch: reqwest (rustls);

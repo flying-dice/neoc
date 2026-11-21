@@ -1,4 +1,4 @@
-# TypeScript and Svelte 5 in AgentOS (client, kit, scripts)
+# TypeScript and Svelte 5 in vos (client, kit, scripts)
 
 Applies to `client/` (the shell and the managed renderer), `packages/ui` (the kit), `packages/storybook`, `types/` tests and
 `scripts/`. App code is Lua (`lua.md`), the host is Rust (`rust.md`). The client **renders view trees and runs no app
