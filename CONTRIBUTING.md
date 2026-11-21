@@ -43,12 +43,15 @@ cargo run -p neoc -- run \
   "crates/neoc/tests/vnd/serde_json.test.lua" \
   "crates/neoc/tests/vnd/serde_yaml.test.lua" \
   "crates/neoc/tests/vnd/toml.test.lua"
+cargo test --release -p neoc-vm --test abort_regressions
 cargo bench -p neoc-vm --features bench --bench lib --bench vnd -- --test
 scripts/check-toolchain-pin.sh
 cargo deny check
 cargo run -p neoc-vm --example luals -- --check
 NEOC_REQUIRE_LUALS=1 cargo test -p neoc-vm --test luals
 ```
+
+`abort_regressions` holds every case to `neoc_vm::VM_THREAD_STACK` (8 MiB) of stack in a debug build, which is what `neoc run` and an embedder that follows `lifecycle.rs` give a thread that polls the VM, and to tokio's default 2 MiB in a release build; the release run is a separate line above because it is the one that proves a default-size thread survives. Building Luau needs a C++ compiler (`mlua-sys` compiles it).
 
 The Lua list leaves out the suites that need a Docker daemon (`sqlx_mysql`, `sqlx_postgres`, `testcontainers_modules`). With Docker running, run every suite instead: `cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.lua' 'crates/neoc/tests/**/*.spec.lua'`.
 

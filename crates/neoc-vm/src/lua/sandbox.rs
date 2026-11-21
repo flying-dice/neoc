@@ -8,11 +8,12 @@ use crate::lua::modules;
 
 /// Globals removed after the standard libraries load.
 ///
-/// Each is a sandbox hazard: runtime code loading (`load`, `loadstring`,
-/// `dofile`, `loadfile`, `string.dump`), environment/identity tampering
-/// (`getfenv`, `setfenv`, `newproxy`, `module`), and GC control and
-/// introspection (`collectgarbage`, `gcinfo`). Paths are dotted; the last
-/// segment is the key removed from its parent table.
+/// Each is a sandbox hazard: runtime code loading (`loadstring`, which mlua adds to Luau), environment/identity
+/// tampering (`getfenv`, `setfenv`, `newproxy`), GC control and introspection (`collectgarbage`, which mlua
+/// adds, `gcinfo`) and mlua's file-system `require` (the engine's own is installed by `modules::install`).
+/// Luau has no `load`, `dofile`, `loadfile`, `module` or `string.dump`; the `io`, `os`, `package`, `debug`,
+/// `utf8`, `buffer`, `vector` and `integer` names are not opened either and stay on the list so a library a future
+/// mlua opens by default is removed (`jit` and `ffi` went with LuaJIT). Paths are dotted; the last segment is the key removed from its parent table.
 const STRIPPED_GLOBALS: &[&str] = &[
     "load",
     "loadstring",
@@ -24,25 +25,29 @@ const STRIPPED_GLOBALS: &[&str] = &[
     "module",
     "collectgarbage",
     "gcinfo",
+    "require",
     "string.dump",
-    // Not loaded by StdLib selection, but `luaopen_base` and the LuaJIT
-    // runtime may register them regardless — remove any that leak.
+    // Luau's `coroutine.close` kills a suspended thread whoever made it: in `neoc run` that is a task's thread, whose
+    // `await` would then return nothing at all. LuaJIT had none. The function is kept for a script environment, whose
+    // `close` holds it to the ownership rule of `resume` (see `STASHED_CLOSE`).
+    "coroutine.close",
     "io",
     "os",
     "package",
-    "jit",
-    "ffi",
     "debug",
+    "utf8",
+    "buffer",
+    "vector",
+    "integer",
 ];
 
-/// Build a fresh LuaJIT engine with our curated stdlib in place.
+/// Build a fresh Luau engine with our curated stdlib in place.
 ///
-/// Only the language-semantics libraries load: TABLE/STRING/MATH/
-/// BIT, plus BASE which `mlua` always opens along with `coroutine` (`pairs`, `ipairs`, `tostring`,
-/// `pcall`, ...). IO/OS/PACKAGE/DEBUG/JIT/FFI never load — they are sandbox
-/// hazards and our `fs`/`os`/`process` modules cover their legitimate uses.
-/// The unsafe parts of BASE and STRING are then stripped
-/// (see `STRIPPED_GLOBALS`) and the custom `require` is installed.
+/// Only the language-semantics libraries load: COROUTINE/TABLE/STRING/MATH/BIT (Luau's `bit32`), plus BASE
+/// which `mlua` always opens (`pairs`, `ipairs`, `tostring`, `pcall`, ...). OS/DEBUG/UTF8/BUFFER/VECTOR never
+/// load: `os` and `debug` are sandbox hazards that our `std:` modules cover, and the others are Luau
+/// extensions neoc does not offer (`INTEGER` is not opened either). The unsafe parts of BASE are then stripped (see `STRIPPED_GLOBALS`)
+/// and the custom `require` is installed.
 ///
 /// # Errors
 /// Fails when the engine, a library or a module cannot be set up.
@@ -133,24 +138,15 @@ pub fn make_bare_engine() -> mlua::Result<Lua> {
     Ok(lua)
 }
 
-/// The libraries, the stripped globals and the guarded `xpcall` shared by both engines.
+/// The libraries and the stripped globals shared by both engines.
 fn base_engine() -> mlua::Result<Lua> {
     let lua = Lua::new_with(
-        StdLib::TABLE | StdLib::STRING | StdLib::MATH | StdLib::BIT,
+        StdLib::COROUTINE | StdLib::TABLE | StdLib::STRING | StdLib::MATH | StdLib::BIT,
         mlua::LuaOptions::new(),
     )?;
+    stash_coroutine_close(&lua)?;
     strip_unsafe_globals(&lua)?;
-    install_guarded_xpcall(&lua)?;
     Ok(lua)
-}
-
-/// Replace `xpcall` with a version whose message handler cannot fail the error handling (see
-/// `guarded_xpcall.lua`): on LuaJIT a handler that errors after a protected call of its own is called again by
-/// its own error, until a stack overflow that is past the stack of a 2 MiB thread.
-fn install_guarded_xpcall(lua: &Lua) -> mlua::Result<()> {
-    load_source(lua, include_str!("guarded_xpcall.lua"))
-        .set_name("=guarded_xpcall")
-        .exec()
 }
 
 /// Every string shares one metatable (`{ __index = string }`) that `getmetatable("")` returns. Locking it
@@ -166,12 +162,70 @@ fn lock_string_metatable(lua: &Lua) -> mlua::Result<()> {
 
 /// Load script source as a text-only chunk.
 ///
-/// LuaJIT bytecode is unverified — a crafted `\x1bLJ` chunk corrupts memory
-/// and escapes the sandbox — so every entry point that runs script-supplied
-/// source goes through here and refuses binary chunks.
+/// Luau's loader checks the bytecode version and does not verify the instructions (LuaJIT's did not either), so a
+/// crafted chunk is treated as able to corrupt memory: every entry point that runs script-supplied source goes
+/// through here and refuses binary chunks.
+///
+/// A leading UTF-8 byte-order mark is dropped and a first line that starts with `#` (a shebang) is blanked, with its
+/// newline kept so line numbers do not move: LuaJIT's loader skipped both, Luau's lexer rejects both, and `neoc run
+/// script.lua` of an executable script with `#!/usr/bin/env neoc` must go on working (see [`prepare_script`]).
 #[track_caller]
 pub fn load_source<'a>(lua: &Lua, source: impl AsChunk + 'a) -> Chunk<'a> {
-    lua.load(source).set_mode(ChunkMode::Text)
+    lua.load(Prepared(source)).set_mode(ChunkMode::Text)
+}
+
+/// `source` without a leading UTF-8 byte-order mark, and with a first line that starts with `#` emptied (its newline
+/// stays, so line numbers are those of the file).
+#[must_use]
+pub fn prepare_script(source: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    let without_bom = source.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(source);
+    if without_bom.first() == Some(&b'#') {
+        let rest = without_bom
+            .iter()
+            .position(|&b| b == b'\n')
+            .map_or(&[][..], |newline| &without_bom[newline..]);
+        return std::borrow::Cow::Owned(rest.to_vec());
+    }
+    std::borrow::Cow::Borrowed(without_bom)
+}
+
+/// A chunk source passed through [`prepare_script`].
+struct Prepared<S>(S);
+
+impl<S: AsChunk> AsChunk for Prepared<S> {
+    fn name(&self) -> Option<String> {
+        self.0.name()
+    }
+
+    fn environment(&self, lua: &Lua) -> mlua::Result<Option<mlua::Table>> {
+        self.0.environment(lua)
+    }
+
+    fn mode(&self) -> Option<ChunkMode> {
+        self.0.mode()
+    }
+
+    fn source<'a>(&self) -> std::io::Result<std::borrow::Cow<'a, [u8]>>
+    where
+        Self: 'a,
+    {
+        Ok(match self.0.source()? {
+            std::borrow::Cow::Borrowed(bytes) => prepare_script(bytes),
+            std::borrow::Cow::Owned(bytes) => {
+                std::borrow::Cow::Owned(prepare_script(&bytes).into_owned())
+            }
+        })
+    }
+}
+
+/// Where the registry keeps Luau's own `coroutine.close`, taken out of `coroutine` before the strip: the script
+/// environment's `close` (`async_coroutines.lua`) calls it after its ownership check.
+pub(crate) const STASHED_CLOSE: &str = "neoc.coroutine_close";
+
+fn stash_coroutine_close(lua: &Lua) -> mlua::Result<()> {
+    let coroutine: mlua::Table = lua.globals().raw_get("coroutine")?;
+    let close: Value = coroutine.raw_get("close")?;
+    lua.set_named_registry_value(STASHED_CLOSE, close)
 }
 
 fn strip_unsafe_globals(lua: &Lua) -> mlua::Result<()> {
@@ -189,47 +243,9 @@ fn strip_unsafe_globals(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// Call a script function from Rust, with `args`, so that an error it raises reaches the caller as a Lua error with
-/// text, whatever the error value is. Use this, not `Function::call`, wherever a host function calls a callback the
-/// script gave it: on LuaJIT an error value whose `__tostring` makes a protected call and then fails sends the
-/// message handler of a plain `Function::call` into a recursion that overflows a runtime worker's stack and
-/// aborts the process (`guarded_call.lua`). It is not for a call that may suspend (`call_async`).
-///
-/// # Errors
-/// The function raised: the error is its message (a value that is not text is converted without running a
-/// `__tostring` that fails).
-pub fn call_guarded<R: mlua::FromLuaMulti>(
-    lua: &Lua,
-    function: &mlua::Function,
-    args: impl mlua::IntoLuaMulti,
-) -> mlua::Result<R> {
-    const KEY: &str = "neoc.guarded_call";
-    let trampoline = match lua.named_registry_value::<Value>(KEY)? {
-        Value::Function(f) => f,
-        _ => {
-            let f: mlua::Function = load_source(lua, include_str!("guarded_call.lua"))
-                .set_name("=guarded_call")
-                .eval()?;
-            lua.set_named_registry_value(KEY, f.clone())?;
-            f
-        }
-    };
-    let mut returned: mlua::MultiValue = trampoline.call((function.clone(), args))?;
-    let ok = matches!(returned.pop_front(), Some(Value::Boolean(true)));
-    if ok {
-        R::from_lua_multi(returned, lua)
-    } else {
-        let message = match returned.pop_front() {
-            Some(Value::String(s)) => s.to_string_lossy(),
-            _ => "<error object>".to_owned(),
-        };
-        Err(mlua::Error::runtime(message))
-    }
-}
-
 /// Convert a Rust `i64` to a Lua number.
 ///
-/// LuaJIT numbers are IEEE doubles, so integers beyond 2^53 lose precision on
+/// Luau numbers are IEEE doubles, so integers beyond 2^53 lose precision on
 /// the way in; callers that need exact 64-bit values must pass strings.
 pub fn i64_to_lua(v: i64) -> Value {
     Value::Number(v as f64)
@@ -255,23 +271,21 @@ pub fn from_err<E: ::std::fmt::Display>(
     err(lua, format!("{prefix}: {e}"))
 }
 
-/// Stripped LuaJIT bytecode for `return 7` — no debug info or chunk name, so
-/// every byte is ASCII and it survives the `String` conversion script-facing
-/// loaders apply. The escape-vector fixture for the text-only loader tests.
-///
-/// `string.dump(f, true)` in an unsandboxed state: `Function::dump(true)` does
-/// not strip under `LuaJIT`.
+/// Luau bytecode for `return 7`, as the text the script-facing loaders take. Compiled with the debug level at 0 it
+/// has no debug info or chunk name, and every byte is below 0x80 (a version byte, small counts and the instruction
+/// words), so it survives the `String` conversion script-facing loaders apply. The escape-vector fixture for the
+/// text-only loader tests: Luau's bytecode is not verified when it is loaded.
 #[cfg(test)]
-pub(crate) fn ascii_bytecode() -> String {
-    let lua = Lua::new();
-    let dump: mlua::LuaString = lua
-        .load("return string.dump(function() return 7 end, true)")
-        .eval()
-        .expect("dump");
-    let dump = dump.as_bytes().to_vec();
-    // Header: `\x1bLJ`, version, flags; `BCDUMP_F_STRIP` = 0x02.
-    assert_eq!(dump[4] & 0x02, 0x02, "dump must be stripped");
-    String::from_utf8(dump).expect("stripped dump of `return 7` is ASCII")
+pub(crate) fn luau_bytecode() -> String {
+    let bytes = mlua::chunk::Compiler::new()
+        .set_debug_level(0)
+        .compile("return 7")
+        .expect("compile");
+    assert!(
+        bytes[0] != 0,
+        "a chunk starting with 0 is the compiler's error marker"
+    );
+    String::from_utf8(bytes).expect("the bytecode of `return 7` is ASCII")
 }
 
 #[cfg(test)]
@@ -302,7 +316,7 @@ mod tests {
             .collect()
     }
 
-    // Allowlists, not denylists: a global or string function a LuaJIT/mlua
+    // Allowlists, not denylists: a global or string function a Luau/mlua
     // bump adds fails here until someone decides whether it is safe.
     #[test]
     fn given_fresh_engine_when_enumerating_globals_then_exactly_the_allowlist_remains() {
@@ -312,7 +326,7 @@ mod tests {
             expected(&[
                 // Libraries.
                 ("_G", "table"),
-                ("bit", "table"),
+                ("bit32", "table"),
                 ("coroutine", "table"),
                 ("math", "table"),
                 ("string", "table"),
@@ -328,12 +342,14 @@ mod tests {
                 ("print", "function"),
                 ("rawequal", "function"),
                 ("rawget", "function"),
+                ("rawlen", "function"),
                 ("rawset", "function"),
                 ("select", "function"),
                 ("setmetatable", "function"),
                 ("tonumber", "function"),
                 ("tostring", "function"),
                 ("type", "function"),
+                ("typeof", "function"),
                 ("unpack", "function"),
                 ("xpcall", "function"),
                 ("_VERSION", "string"),
@@ -358,11 +374,38 @@ mod tests {
                 ("len", "function"),
                 ("lower", "function"),
                 ("match", "function"),
+                ("pack", "function"),
+                ("packsize", "function"),
                 ("rep", "function"),
                 ("reverse", "function"),
+                ("split", "function"),
                 ("sub", "function"),
+                ("unpack", "function"),
                 ("upper", "function"),
             ])
+        );
+    }
+
+    // `STRIPPED_GLOBALS` seen from a script: the engine of `neoc run` has its own `require` and nothing else on the
+    // list; a bare engine has none of them (mlua installs a file-system `require`, `loadstring` and
+    // `collectgarbage`, which are stripped; `utf8`, `buffer`, `vector` and `integer` are not opened)
+    #[test]
+    fn given_either_engine_when_probing_the_stripped_names_then_none_is_reachable() {
+        let names = "{ 'load', 'loadstring', 'dofile', 'loadfile', 'getfenv', 'setfenv', 'newproxy', 'module', \
+             'collectgarbage', 'gcinfo', 'io', 'os', 'package', 'debug', 'utf8', 'buffer', 'vector', 'integer' }";
+        let probe = format!(
+            "local found = {{}} for _, n in ipairs({names}) do if _G[n] ~= nil then found[#found + 1] = n end end \
+             if string.dump then found[#found + 1] = 'string.dump' end if coroutine.close then found[#found + 1] = 'coroutine.close' end return table.concat(found, ',') .. '|' .. type(require)"
+        );
+        let full: String = make_engine().unwrap().load(&probe).eval().unwrap();
+        assert_eq!(
+            full, "|function",
+            "the engine's own require, nothing stripped left"
+        );
+        let bare: String = make_bare_engine().unwrap().load(&probe).eval().unwrap();
+        assert_eq!(
+            bare, "|nil",
+            "a bare engine has no require, not even mlua's file-system one"
         );
     }
 
@@ -397,16 +440,57 @@ mod tests {
     #[test]
     fn given_bytecode_when_loaded_as_source_then_rejected() {
         let lua = engine();
-        let source = ascii_bytecode();
+        let source = luau_bytecode();
         assert!(
-            source.starts_with("\x1bLJ"),
-            "fixture must be LuaJIT bytecode"
+            source.starts_with(|c: char| c < ' '),
+            "fixture must be Luau bytecode (a version byte, not source text)"
         );
         let err = load_source(&lua, &source)
             .eval::<Value>()
             .expect_err("bytecode must not load")
             .to_string();
         assert!(err.contains("binary"), "got: {err}");
+    }
+
+    #[test]
+    fn given_a_shebang_or_a_byte_order_mark_when_loaded_as_source_then_it_runs_and_lines_stay() {
+        let lua = engine();
+        for (name, source) in [
+            (
+                "shebang",
+                "#!/usr/bin/env neoc\nreturn debug_line()".to_owned(),
+            ),
+            ("bom", "\u{feff}return debug_line()".to_owned()),
+            (
+                "bom and shebang",
+                "\u{feff}#!/usr/bin/env neoc\nreturn debug_line()".to_owned(),
+            ),
+        ] {
+            lua.globals()
+                .set("debug_line", lua.create_function(|_, ()| Ok(1)).unwrap())
+                .unwrap();
+            let n: i64 = load_source(&lua, &source)
+                .eval()
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!(n, 1, "{name}");
+        }
+        // the shebang line keeps its newline, so an error on line 2 says line 2
+        let err = load_source(&lua, "#!/usr/bin/env neoc\nerror('boom')")
+            .set_name("=script")
+            .exec()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("script:2: boom"), "{err}");
+        // a file that is only a shebang, with or without a newline
+        for source in ["#!x", "#!x\n", "\u{feff}#!x"] {
+            load_source(&lua, source)
+                .exec()
+                .unwrap_or_else(|e| panic!("{source:?}: {e}"));
+        }
+        // only the first line: a later `#` is still a syntax error
+        assert!(load_source(&lua, "return 1\n#!x").exec().is_err());
+        // bytecode still starts with its version byte and is still refused
+        assert!(load_source(&lua, luau_bytecode()).exec().is_err());
     }
 
     #[test]
@@ -440,7 +524,7 @@ mod tests {
     #[test]
     fn given_bit_library_when_xor_then_computes() {
         let lua = engine();
-        let n: i64 = lua.load("return bit.bxor(5, 3)").eval().unwrap();
+        let n: i64 = lua.load("return bit32.bxor(5, 3)").eval().unwrap();
         assert_eq!(n, 6);
     }
 }

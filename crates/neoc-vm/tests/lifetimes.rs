@@ -114,7 +114,7 @@ async fn what_a_script_leaves_running_outlives_its_tasks_being_drained() {
     // what the CLI does at the end of a script
     {
         let scheduler = lua.app_data_ref::<Scheduler>().unwrap();
-        scheduler.wait_all().await;
+        scheduler.wait_all();
     }
     // the task it drained is stopped
     let ticks = |lua: &Lua| lua.load("return _G.ticks:get()").eval::<f64>().unwrap();

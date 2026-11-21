@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test harness
-//! What a program that embeds the VM gets, proven on LuaJIT: the call model of `lifecycle` (a turn at a time
-//! in one VM, lent at the waits that suspend and kept where LuaJIT refuses a yield), the script environment of
+//! What a program that embeds the VM gets, proven on Luau: the call model of `lifecycle` (a turn at a time
+//! in one VM, lent at the waits that suspend and kept where Luau refuses a yield), the script environment of
 //! `script_env`, the lifetimes of what a script starts (`Life`), the log sink and the module registry seam.
 //!
 //! Nothing here is a product policy: the embedder in these tests is a mutex and a counter. The same rules are
@@ -192,7 +192,7 @@ impl Rig {
     }
 }
 
-/// Where a host call (a wait of 50 ms) runs, with whether LuaJIT can suspend there: the boundaries this VM claims to
+/// Where a host call (a wait of 50 ms) runs, with whether Luau can suspend there: the boundaries this VM claims to
 /// know. (Metamethods other than these were not measured and are not claimed.)
 const PLACES: &[(&str, &str, bool)] = &[
     ("pcall", "pcall(function() WAIT end)", true),
@@ -200,12 +200,12 @@ const PLACES: &[(&str, &str, bool)] = &[
     (
         "__index",
         "local _ = setmetatable({}, { __index = function() WAIT end }).x",
-        true,
+        false,
     ),
     (
         "__newindex",
         "setmetatable({}, { __newindex = function() WAIT end }).x = 1",
-        true,
+        false,
     ),
     (
         "__call",
@@ -215,32 +215,47 @@ const PLACES: &[(&str, &str, bool)] = &[
     (
         "__add",
         "local _ = setmetatable({}, { __add = function() WAIT return 1 end }) + 1",
-        true,
+        false,
     ),
     (
         "__concat",
         "local _ = setmetatable({}, { __concat = function() WAIT return 'x' end }) .. 'a'",
-        true,
+        false,
     ),
     (
         "__eq",
         "local f = function() WAIT return true end local _ = setmetatable({}, { __eq = f }) == setmetatable({}, { __eq = f })",
-        true,
+        false,
     ),
     (
         "__lt",
         "local f = function() WAIT return true end local _ = setmetatable({}, { __lt = f }) < setmetatable({}, { __lt = f })",
-        true,
+        false,
     ),
     (
         "__unm",
         "local _ = -setmetatable({}, { __unm = function() WAIT return 1 end })",
-        true,
+        false,
+    ),
+    (
+        "__len",
+        "local _ = #setmetatable({}, { __len = function() WAIT return 1 end })",
+        false,
+    ),
+    (
+        "__le",
+        "local f = function() WAIT return true end local _ = setmetatable({}, { __le = f }) <= setmetatable({}, { __le = f })",
+        false,
+    ),
+    (
+        "__iter",
+        "for _ in setmetatable({}, { __iter = function() WAIT return function() end end }) do end",
+        false,
     ),
     (
         "tostring()",
         "local _ = tostring(setmetatable({}, { __tostring = function() WAIT return 's' end }))",
-        true,
+        false,
     ),
     ("for iterator", "for _ in function() WAIT end do end", true),
     (
@@ -258,11 +273,6 @@ const PLACES: &[(&str, &str, bool)] = &[
         "table.sort({ 3, 2, 1 }, function(a, b) WAIT return a < b end)",
         false,
     ),
-    (
-        "string.format %s",
-        "local _ = string.format('%s', setmetatable({}, { __tostring = function() WAIT return 's' end }))",
-        false,
-    ),
     // the handler cannot raise the wait's error to the caller (`xpcall` would answer "error in error handling"),
     // so it keeps it and the script raises it afterwards, as an embedder's own tests do
     (
@@ -277,12 +287,14 @@ const PLACES: &[(&str, &str, bool)] = &[
     ),
 ];
 
-/// The yield boundaries of LuaJIT, against the rules of `lifecycle`, counted at the baton (`Baton::park`): where
-/// LuaJIT suspends, the wait lends the turn; where it refuses, the host call fails with Lua's own error and the
+/// The yield boundaries of Luau, against the rules of `lifecycle`, counted at the baton (`Baton::park`): where
+/// Luau suspends (`pcall`, `xpcall`'s body, `__call`, a `for ... in` iterator function), the wait lends the turn; where it
+/// refuses (every other metamethod, `tostring`, and the callbacks of `string.gsub` and `table.sort`: Luau's "attempt to
+/// yield across metamethod/C-call boundary"), the host call fails with that error and the
 /// call *keeps* the turn, so whatever the embedder attached to the turn stays with it, and the host calls that follow
 /// (not idle waits) do not lend either.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_wait_lends_the_turn_where_luajit_suspends_and_keeps_it_where_it_refuses() {
+async fn a_wait_lends_the_turn_where_luau_suspends_and_keeps_it_where_it_refuses() {
     let rig = Rig::new();
     let mut script = String::from(
         r#"local task = require("std:task")
@@ -318,13 +330,13 @@ async fn a_wait_lends_the_turn_where_luajit_suspends_and_keeps_it_where_it_refus
             "{name}: a host call that is not an idle wait never lends the turn"
         );
         if *suspends {
-            assert!(ok, "{name}: LuaJIT suspends here, got {err}");
+            assert!(ok, "{name}: Luau suspends here, got {err}");
             assert!(
                 wait_lent >= 1,
                 "{name}: a wait that suspends lends the turn"
             );
         } else {
-            assert!(!ok, "{name}: LuaJIT refuses a yield here");
+            assert!(!ok, "{name}: Luau refuses a yield here");
             assert!(err.contains("yield across"), "{name}: {err}");
             assert_eq!(
                 wait_lent, 0,
@@ -371,7 +383,7 @@ async fn an_embedders_mixed_host_function_lends_at_its_idle_wait_and_holds_after
     );
 }
 
-/// The reason `yieldable_pcall.lua` is gone: LuaJIT's own `pcall` and `xpcall` let an async host call suspend the
+/// The reason `yieldable_pcall.lua` is gone: Luau's own `pcall` and `xpcall` let an async host call suspend the
 /// coroutine they run in, with no engine support and in the engine a plain `neoc run` uses.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pcall_and_xpcall_suspend_natively_on_the_default_engine() {
@@ -396,13 +408,29 @@ async fn pcall_and_xpcall_suspend_natively_on_the_default_engine() {
     assert_eq!(out.get::<String>("f").unwrap(), "in a task");
 }
 
-/// LuaJIT runs an `xpcall` handler at the point of the error and keeps it installed: a handler that makes a
-/// protected call of its own and then fails is called again by its own error, and when that never ends it is a stack
-/// overflow, past a 2 MiB thread. The engine's `xpcall` bounds the runs (`guarded_xpcall.lua`): a handler that is
-/// handled on its second or fifth run answers what LuaJIT answers, one that never is answers `error in error
-/// handling`, and none of it needs more than 256 KiB of stack.
+/// Luau's `coroutine.close` kills a suspended thread whoever made it. In `neoc run` (no script environment, so no
+/// ownership rule) that would let a script close a task's thread and leave `await` with neither a value nor an error:
+/// the engine has no `close` (LuaJIT had none), and a script environment has the owned one.
 #[test]
-fn an_xpcall_handler_that_fails_is_run_again_as_on_luajit_up_to_a_bound() {
+fn the_default_engine_has_no_coroutine_close_and_a_script_environment_has_the_owned_one() {
+    let lua = make_engine().expect("engine");
+    let on_engine: String = lua
+        .load("return type(coroutine.close)")
+        .eval()
+        .expect("script");
+    assert_eq!(on_engine, "nil");
+    let (bare, env) = sealed();
+    let in_env = run_in(&bare, &env, "return type(coroutine.close)").unwrap();
+    assert_eq!(in_env.as_string().unwrap().to_str().unwrap(), "function");
+}
+
+/// Luau runs an `xpcall` handler at the point of the error, once: a handler that fails is not run again with its own
+/// error, the `xpcall` answers `error in error handling` (LuaJIT re-ran it, and a handler that made a protected call
+/// of its own and then failed re-ran itself until the C stack was gone, which needed a per-coroutine bound in the
+/// engine's `xpcall`: `guarded_xpcall.lua`, deleted). Nothing here needs more than 256 KiB of stack, and the engine's
+/// `xpcall` is the builtin.
+#[test]
+fn an_xpcall_handler_that_fails_is_answered_error_in_error_handling_on_a_small_stack() {
     std::thread::Builder::new()
         .stack_size(256 * 1024)
         .spawn(|| {
@@ -412,58 +440,26 @@ fn an_xpcall_handler_that_fails_is_run_again_as_on_luajit_up_to_a_bound() {
                         r#"local r = {}
                            local function show(...) r[#r + 1] = table.concat({ ... }, ",") end
                            local function fails(handler) return select(2, xpcall(function() error("x", 0) end, handler)) end
-                           -- never handled: bounded
-                           local never = function() pcall(error, "z") error("again") end
+                           -- the handler makes a protected call of its own and then fails: not run again
+                           local runs = 0
+                           local never = function() runs = runs + 1 pcall(error, "z") error("again") end
                            show("never", tostring(fails(never)))
                            show("never again", tostring(fails(never)))
-                           -- a failure that is handled by the re-run, as LuaJIT's own xpcall does: a handler with a bug
-                           -- (it concatenates a table) is run again with its own error and succeeds
+                           show("runs", tostring(runs))
+                           -- a handler with a bug (it concatenates a table) is not re-run to handle its own error either
                            local buggy = function(e) pcall(error, "p") return "H:" .. e end
-                           local _, e = xpcall(function() error({}) end, buggy)
-                           show("buggy", tostring(e):match("^H:.*attempt to concatenate") and "re-run handled it" or tostring(e))
-                           -- handled after n runs: n below the bound is LuaJIT's, n past it is the bound
-                           local function after(n)
-                             local runs = 0
-                             return function() pcall(error, "z") runs = runs + 1 if runs < n then error("again") end return "ok after " .. runs end
-                           end
-                           show("5 runs", tostring(fails(after(5))))
-                           show("1000 runs", tostring(fails(after(1000))))
-                           -- the count does not carry over to the next xpcall, or the next handler
-                           show("fresh", tostring(fails(after(5))))
+                           show("buggy", tostring(select(2, xpcall(function() error({}) end, buggy))))
                            show("plain error", tostring(fails(function() error("again") end)))
                            show("a host error", tostring(fails(function() local _ = nil + 1 end)))
                            show("ok", tostring(fails(function(m) return "handled:" .. m end)))
                            show("args", tostring(select(2, xpcall(function(a, b) return a + b end, print, 1, 2))))
-                           -- inside a coroutine the handler cannot yield, and a failing one is bounded there too
+                           -- inside a coroutine, and from a thousand failures in a row
                            local co = coroutine.wrap(function() return fails(never) end)
                            show("coroutine", tostring(co()))
-                           -- xpcalls suspended in other coroutines, finished from inside a handler or long after, do not change
-                           -- the count of this chain (LuaJIT yields across xpcall; the count is per coroutine)
-                           local pool = {}
-                           for i = 1, 100 do
-                             local co = coroutine.create(function() xpcall(function() coroutine.yield() end, function(e) return e end) end)
-                             coroutine.resume(co)
-                             pool[i] = co
-                           end
-                           local runs = 0
-                           local bounded = select(2, xpcall(function() error("x") end, function()
-                             runs = runs + 1
-                             if pool[runs] then coroutine.resume(pool[runs]) end
-                             pcall(error, "z") error("again")
-                           end))
-                           show("pool", tostring(bounded) .. " in " .. (runs <= 24 and "at most 24" or runs) .. " runs")
-                           -- an xpcall that starts inside a handler and finishes outside one leaves nothing behind
-                           local parked = {}
-                           for _ = 1, 40 do
-                             xpcall(function() error("x") end, function(e)
-                               local co = coroutine.create(function() xpcall(function() coroutine.yield() end, function(m) return m end) end)
-                               coroutine.resume(co)
-                               parked[#parked + 1] = co
-                               return "h"
-                             end)
-                           end
-                           for _, co in ipairs(parked) do coroutine.resume(co) end
-                           show("after parked", tostring(fails(function(m) return "handled:" .. m end)))
+                           local last
+                           for _ = 1, 1000 do last = fails(never) end
+                           show("1000 in a row", tostring(last))
+                           show("after", tostring(fails(function(m) return "handled:" .. m end)))
                            -- a handler that is not a function raises, as the builtin does
                            show("not a function", tostring(pcall(xpcall, function() end, nil)))
                            return r"#,
@@ -475,17 +471,15 @@ fn an_xpcall_handler_that_fails_is_run_again_as_on_luajit_up_to_a_bound() {
                     [
                         "never,error in error handling",
                         "never again,error in error handling",
-                        "buggy,re-run handled it",
-                        "5 runs,ok after 5",
-                        "1000 runs,error in error handling",
-                        "fresh,ok after 5",
+                        "runs,2",
+                        "buggy,error in error handling",
                         "plain error,error in error handling",
                         "a host error,error in error handling",
                         "ok,handled:x",
                         "args,3",
                         "coroutine,error in error handling",
-                        "pool,error in error handling in at most 24 runs",
-                        "after parked,handled:x",
+                        "1000 in a row,error in error handling",
+                        "after,handled:x",
                         "not a function,false",
                     ]
                 );
@@ -496,9 +490,10 @@ fn an_xpcall_handler_that_fails_is_run_again_as_on_luajit_up_to_a_bound() {
         .unwrap();
 }
 
-/// The same recursion through mlua's own message handler, which runs a value's `__tostring` to make the text of
-/// an error: it aborts a runtime worker unless the host call that runs script code goes through `call_guarded`
-/// (`lib:test`'s `toThrow` and `lib:cache`'s `on_evict` do, and so must an embedder's).
+/// mlua's own message handler runs a value's `__tostring` to make the text of an error. On LuaJIT a `__tostring`
+/// that made a protected call and then failed recursed there until a runtime worker's stack was gone, so a host call
+/// that ran script code had to go through `call_guarded` (deleted). On Luau the handler fails once and the error is
+/// catchable, so `lib:test`'s `toThrow` and `lib:cache`'s `on_evict` call the function directly.
 #[test]
 fn an_error_value_whose_tostring_fails_cannot_overflow_the_stack_through_a_host_call() {
     std::thread::Builder::new()
@@ -542,7 +537,7 @@ fn an_error_value_whose_tostring_fails_cannot_overflow_the_stack_through_a_host_
         .unwrap();
 }
 
-// ---- the script environment on LuaJIT ---------------------------------------------------------------------------
+// ---- the script environment on Luau ---------------------------------------------------------------------------
 
 fn sealed() -> (Lua, Table) {
     let lua = make_bare_engine().expect("engine");
@@ -558,18 +553,18 @@ fn run_in(lua: &Lua, env: &Table, source: &str) -> mlua::Result<Value> {
         .eval()
 }
 
-/// LuaJIT's runtime reaches beyond Lua 5.1's: `jit`, `ffi`, `bit`, `debug` and the bytecode loaders. None of them,
-/// nor any way to read or change a function's environment, is in a script's environment, and the sealed libraries
-/// and the shared string metatable hold. (The engines here do not open `jit`, so the JIT compiler is off and this
-/// runs in LuaJIT's interpreter; whether a compiled loop could get past a proxy is not claimed.)
+/// Luau's runtime reaches beyond Lua 5.1's: `os`, `debug`, `utf8`, `buffer`, `vector`, `loadstring` and the bytecode
+/// loaders. None of them, nor any way to read or change a function's environment, is in a script's environment,
+/// and the sealed (read-only) libraries and the shared string metatable hold. (The engine runs Luau's interpreter:
+/// native code generation is not enabled.)
 #[test]
-fn the_sealed_environment_holds_on_luajit() {
+fn the_sealed_environment_holds_on_luau() {
     let (lua, env) = sealed();
     let escapes: String = run_in(
         &lua,
         &env,
         r#"local found = {}
-           for _, name in ipairs { "jit", "ffi", "debug", "io", "os", "package", "require", "print", "load", "loadstring",
+           for _, name in ipairs { "typeof", "utf8", "buffer", "vector", "debug", "io", "os", "package", "require", "print", "load", "loadstring",
              "loadfile", "dofile", "getfenv", "setfenv", "newproxy", "module", "collectgarbage", "gcinfo" } do
              if _G[name] ~= nil then found[#found + 1] = name end
            end
@@ -587,37 +582,39 @@ fn the_sealed_environment_holds_on_luajit() {
         "string.evil = 1",
         "table.insert = nil",
         "math.pi = 3",
-        "bit.band = nil",
+        "bit32.band = nil",
         "coroutine.yield = nil",
         "rawset(string, 'evil', 1)",
         "getmetatable('').__index.evil = 1",
         "getmetatable('').__index = {}",
         "getmetatable(string).__index = {}",
         "setmetatable(string, {})",
-        // LuaJIT's table functions store with raw sets, past a proxy's `__newindex`
+        // the table functions check Luau's `readonly` flag themselves. (`table.remove(string)` is not here: a
+        // table with no array part is left as it is and nothing is raised, see `script_env`'s tests)
         "table.insert(string, 'x')",
         "table.insert(math, 1, 'x')",
         "table.insert(table, 'x')",
-        "table.remove(string)",
-        "table.remove(string, 1)",
         "table.sort(string)",
         "table.sort(math, function(a, b) return a < b end)",
         "table.move({ 'a' }, 1, 1, 1, string)",
         "table.move(string, 1, 1, 2)",
         "setmetatable(table, nil)",
         "setmetatable(coroutine, { __index = function() end })",
+        // Luau-only writers
+        "table.clear(string)",
+        "table.freeze(string)",
     ] {
         assert!(run_in(&lua, &env, write).is_err(), "{write} must fail");
     }
-    // nothing landed in a proxy either
+    // nothing landed in a library
     let landed: f64 = run_in(
         &lua,
         &env,
-        "return #string + #table + #math + #bit + #coroutine",
+        "return #string + #table + #math + #bit32 + #coroutine",
     )
     .and_then(|v| mlua::FromLua::from_lua(v, &lua))
     .unwrap();
-    assert!(landed == 0.0, "something was written into a library proxy");
+    assert!(landed == 0.0, "something was written into a library");
     // and the table functions still work on a table that is the script's own
     let ok: String = run_in(
         &lua,
@@ -628,7 +625,7 @@ fn the_sealed_environment_holds_on_luajit() {
     .and_then(|v| mlua::FromLua::from_lua(v, &lua))
     .unwrap();
     assert_eq!(ok, "1,2,3|4");
-    for table in ["string", "table", "math", "bit", "coroutine"] {
+    for table in ["string", "table", "math", "bit32", "coroutine"] {
         let leaked: Value = lua.load(format!("return {table}.evil")).eval().unwrap();
         assert!(matches!(leaked, Value::Nil), "{table} was written to");
     }
@@ -641,6 +638,15 @@ fn the_sealed_environment_holds_on_luajit() {
     .and_then(|v| mlua::FromLua::from_lua(v, &lua))
     .unwrap();
     assert!(sum > 0.0);
+    // a library is a real table: it can be walked and read raw (LuaJIT's proxies showed nothing to `pairs`)
+    let walked: String = run_in(
+        &lua,
+        &env,
+        "local n = 0 for _ in pairs(string) do n = n + 1 end return tostring(n > 10) .. type(rawget(string, 'len'))",
+    )
+    .and_then(|v| mlua::FromLua::from_lua(v, &lua))
+    .unwrap();
+    assert_eq!(walked, "truefunction");
     // a function made by the script keeps the script's environment (there is no `setfenv` to change it)
     let kept: String = run_in(
         &lua,
@@ -681,7 +687,7 @@ fn script_engine(extra: impl FnOnce(&Lua, &Table)) -> (Lua, Table) {
 }
 
 /// A script resumes only the coroutines it made. The thread it reaches through `coroutine.running()` inside a task
-/// is the host's: parked at `task.wait` (suspended, so LuaJIT itself would let it be resumed), `coroutine.resume`
+/// is the host's: parked at `task.wait` (suspended, so Luau itself would let it be resumed), `coroutine.resume`
 /// refuses it, and nothing the task does after the wait runs because of the attempt.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_script_resumes_only_the_coroutines_it_made() {
@@ -695,19 +701,32 @@ async fn a_script_resumes_only_the_coroutines_it_made() {
                local status = coroutine.status(host)
                local attempt = { pcall(coroutine.resume, host) }
                local with_args = { pcall(coroutine.resume, host, 1, 2) }
+               -- `coroutine.close` (Luau's) kills a suspended thread: held to the same rule
+               local close_attempt = { pcall(coroutine.close, host) }
                local after_attempts = ran
                -- the task is not harmed: it finishes its wait and runs on
                task.wait(0.4)
                local mine = coroutine.create(function() coroutine.yield("a") return "b" end)
                local made = { coroutine.resume(mine) }
                local wrapped = coroutine.wrap(function() coroutine.yield(1) return 2 end)
+               local closed_own = coroutine.close(mine)
+               -- one of its own that the scheduler drives is not its to close either (it would kill a task from outside)
+               local driven = coroutine.create(function() task.wait(0.3) return "done" end)
+               task.spawn(driven)
+               local close_driven = { pcall(coroutine.close, driven) }
+               -- and a value that is not a thread gets Luau's own argument error
+               local close_number = { pcall(coroutine.close, 7) }
                return {
                  status = status,
                  refused = (not attempt[2]) and (not with_args[2]),
+                 close_refused = (not close_attempt[1]) and tostring(close_attempt[2]):find("not yours", 1, true) ~= nil,
                  msg = tostring(attempt[3]),
                  ran_after_attempts = after_attempts,
                  ran_at_the_end = ran,
                  made = made[1] and made[2],
+                 closed_own = closed_own,
+                 close_driven_refused = (not close_driven[1]) and tostring(close_driven[2]):find("not yours", 1, true) ~= nil,
+                 close_number = tostring(close_number[2]),
                  wrapped = wrapped(),
                }"#,
         )
@@ -719,6 +738,14 @@ async fn a_script_resumes_only_the_coroutines_it_made() {
         .unwrap();
     assert_eq!(out.get::<String>("status").unwrap(), "suspended");
     assert!(out.get::<bool>("refused").unwrap());
+    assert!(out.get::<bool>("close_refused").unwrap());
+    assert!(out.get::<bool>("closed_own").unwrap());
+    assert!(out.get::<bool>("close_driven_refused").unwrap());
+    assert!(
+        out.get::<String>("close_number")
+            .unwrap()
+            .contains("invalid argument #1 to 'close'")
+    );
     assert_eq!(
         out.get::<String>("msg").unwrap(),
         "cannot resume non-suspended coroutine"

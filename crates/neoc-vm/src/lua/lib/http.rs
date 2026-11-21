@@ -54,10 +54,23 @@ fn opt_field<T: FromLua>(opts: &Option<Table>, key: &str) -> Option<T> {
         .and_then(|o| o.get::<Option<T>>(key).ok().flatten())
 }
 
-async fn serve_static(lua: Lua, (glob_pattern, opts): (String, Option<Table>)) -> mlua::Result<()> {
+/// The options are read here, before the future exists: a script table can run script code when it is read, which can
+/// call this function again, and read inside the future every level would stack another polled future on the C stack.
+fn serve_static(
+    lua: Lua,
+    (glob_pattern, opts): (String, Option<Table>),
+) -> impl std::future::Future<Output = mlua::Result<()>> + Send + 'static {
     let port: u16 = opt_field(&opts, "port").unwrap_or(8080);
     let host: String = opt_field(&opts, "host").unwrap_or_else(|| "0.0.0.0".to_string());
+    serve_static_at(lua, glob_pattern, host, port)
+}
 
+async fn serve_static_at(
+    lua: Lua,
+    glob_pattern: String,
+    host: String,
+    port: u16,
+) -> mlua::Result<()> {
     let files = resolve_glob(&glob_pattern)
         .map_err(|e| mlua::Error::external(format!("http.serve_static: {e}")))?;
     let files = Arc::new(files);

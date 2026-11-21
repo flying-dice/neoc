@@ -3,7 +3,7 @@
 //! CI runs only a glob subset of `crates/neoc/tests` (the rest need Docker),
 //! so a syntax regression in an excluded script would ship undetected. This
 //! test compiles — never runs — every `.lua`/`.luau` script under
-//! `crates/neoc/tests` and `crates/neoc-vm` with the embedded LuaJIT. No
+//! `crates/neoc/tests` and `crates/neoc-vm` with the embedded Luau. No
 //! Docker, no network.
 
 use std::fs;

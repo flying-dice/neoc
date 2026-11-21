@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
-  "runtime.version": "LuaJIT",
+  "runtime.version": "Lua 5.1",
   "runtime.plugin": "types/luals-plugin.lua",
   "workspace.library": ["types/luals", "types/generated/luals"],
   "workspace.checkThirdParty": false,
@@ -19,6 +19,7 @@
     "types/generated/*.lua"
   ],
   "diagnostics.disable": ["lowercase-global"],
+  "diagnostics.globals": ["bit32"],
   "diagnostics.unusedLocalExclude": ["_*"],
   "type.checkTableShape": true,
   "hint.enable": false
