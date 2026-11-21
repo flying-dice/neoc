@@ -1,8 +1,8 @@
-# AgentOS server-driven UI: component kit, view protocol, bindings, Lua API
+# vos server-driven UI: component kit, view protocol, bindings, Lua API
 
 Status: the design the platform is built on, and still its reference for the view protocol, bindings, state and the
-Lua authoring API. It is implemented: the host in `crates/` (`agentos-domain` holds the schema and the protocol,
-`agentos-lua` the app API), the renderer in `client/src/view` and the kit in `packages/ui`. Where the
+Lua authoring API. It is implemented: the host in `crates/` (`vos-domain` holds the schema and the protocol,
+`vos-lua` the app API), the renderer in `client/src/view` and the kit in `packages/ui`. Where the
 code and this text differ, the code wins: the generated `types/generated/luals/` (LuaCATS) and
 `docs/reference/components.md` are the exact catalogue. Sections 6 to 8 record the original type-pipeline proposal,
 the prototype and the build plan; each opens with what was actually built. Sources of truth beside it:
@@ -25,7 +25,7 @@ Keywords MUST/SHOULD/MAY are used in the RFC 2119 sense. "Host" = the Rust proce
 | Conflicts | Dirty field **shields itself** from remote changes; write-back carries `baseRev`; host **3-way merges text on the base it last sent**, scalars are human-wins; the losing side is kept as a revision. | An agent appending to a note while the user types must lose nothing and never move the caret. |
 | Lua API | **Table-call constructors** (`ui.VStack { spacing = 2, child, child }`) that return plain node tables; handlers are Lua functions (never serialised: referenced by key path); **both** layers exist: constructors are sugar over the plain-table wire form, raw tables are accepted and validated identically. No chained modifiers. | Native Lua idiom (Roact/Fusion), described by generated LuaCATS types, JSON-shaped, diffable. |
 | Styling | Apps can **not** style. Only semantic props from closed token sets (spacing units, text styles, tints, surfaces, radii, sizes in pt). No CSS, raw colours, fonts, shadows. Data colours (labels, canvas fills) are *content*, auto-contrasted. | Design language, WCAG AA, dark mode, Reduce Transparency and re-theming all stay host-controlled and guaranteed. |
-| Type pipeline | One **component schema** (YAML with JSON Schema fragments + `x-agentos` metadata) -> Rust validator tables, TS types + renderer contract tests, Lua `ui` module + LuaCATS definitions, docs + stories. | The catalogue has metadata (events, slots, a11y rules, `since`, tier) that plain Rust or TS types do not express; one file, four outputs, drift is a build failure. |
+| Type pipeline | One **component schema** (YAML with JSON Schema fragments + `x-vos` metadata) -> Rust validator tables, TS types + renderer contract tests, Lua `ui` module + LuaCATS definitions, docs + stories. | The catalogue has metadata (events, slots, a11y rules, `since`, tier) that plain Rust or TS types do not express; one file, four outputs, drift is a build failure. |
 
 ---
 
@@ -57,7 +57,7 @@ Rules that fall out of the decided architecture:
 
 Repo placement (as built): `packages/ui` is the kit (atomic layers, `testid` required). The renderer lives in the client,
 `client/src/view`: `core/` is this protocol's client half and `atoms/ molecules/ organisms/ templates/ pages/`
-are the adapters (wire props -> kit components). Adapters import only `@agentos/ui` and `svelte`.
+are the adapters (wire props -> kit components). Adapters import only `@vos/ui` and `svelte`.
 
 ---
 
@@ -841,8 +841,8 @@ validator. There are no modifiers: universal props (padding, frame, background, 
 ### 4.2 API reference
 
 ```lua
-local app = require("@agentos/app")      -- host module, one VM per app
-local ui  = require("@agentos/ui")       -- constructors + helpers, generated from the component schema
+local app = require("vos:app")      -- host module, one VM per app
+local ui  = require("vos:ui")       -- constructors + helpers, generated from the component schema
 ```
 
 **`app`**
@@ -886,7 +886,7 @@ per frame; a CPU time slice per call (counted by the VM's count hook); interacti
 icon-only controls need a `label`; every `Image` needs `alt` or `decorative = true`; only whitelisted props exist.
 Errors carry the Lua `file:line` of the constructor call (dev builds).
 
-**Typing.** The component schema (section 6) generates LuaCATS definitions (`types/generated/luals/@agentos/ui.lua`); a wrong
+**Typing.** The component schema (section 6) generates LuaCATS definitions (`types/generated/luals/vos/ui.lua`); a wrong
 enum value, a `Binding` prop given a plain value, a missing required prop or a wrong slot type is a lua-language-server
 diagnostic (`bun run lint:lua`, wired into `bun run lint`), not a runtime surprise. An unknown prop name is still caught only
 at run time (LuaLS does not check a table literal for extra fields).
@@ -898,8 +898,8 @@ bad input, `format(n)`, `formatEntry(text)`); the app is below. State is **share
 however many windows are open, and the agent tool can drive it.
 
 ```lua
-local app  = require("@agentos/app")
-local ui   = require("@agentos/ui")
+local app  = require("vos:app")
+local ui   = require("vos:ui")
 local calc = require("./calc")
 local t    = app.t
 
@@ -1085,8 +1085,8 @@ Folders sidebar, a notes list bound to a query with search, an editor with a two
 preview, a delete confirmation `Alert`, and an agent tool `notes.append` that updates the open view live.
 
 ```lua
-local app = require("@agentos/app")
-local ui  = require("@agentos/ui")
+local app = require("vos:app")
+local ui  = require("vos:ui")
 local t   = app.t
 local db  = app.db
 
@@ -1318,12 +1318,12 @@ notes or 5 000. Test ids that fall out: `notes-folders-row-3`, `notes-new-note`,
 ### 4.6 Testing and sandbox
 
 - **Host-side tests need no browser.** *(Planned, not built: today app logic is tested from Rust integration tests
-  that load the real package, see `docs/TESTING.md`.)* `@agentos/test` mounts a window in the host and exposes the same ids as the
+  that load the real package, see `docs/TESTING.md`.)* `vos:test` mounts a window in the host and exposes the same ids as the
   e2e specs: `local v = test.mount(app, "main"); v:tap("calculator-key-7"); v:expectText("calculator-display", "7")`;
   `v:type("notes-body", "hi")`; `v:tree()` for snapshots (the tree is JSON). Tool tests call `app.tool` directly against a
   temp SQLite and assert the resulting `data.patch` for an open view.
 - **Isolation (not a security boundary).** One Lua VM per app (Luau; apps are plain Lua 5.1 source, which darklua only bundles into one file), its own environment table with no `load*`/`getfenv`/`setfenv` and no bare `os`/`io`/`debug`, and its
-  own per-app SQLite file. An app's `require` takes `@agentos/app`, `@agentos/ui` and every `std:`/`lib:`/`vnd:` module except `lib:test`, `lib:compile` and `std:workers`
+  own per-app SQLite file. An app's `require` takes `vos:app`, `vos:ui` and every `std:`/`lib:`/`vnd:` module except `lib:test`, `lib:compile` and `std:workers`
   (files, network, servers, threads), so it can reach other apps' data and the host's. There are no app permissions and
   no CPU, memory or time limits: an app is the person's own code on their own host (see host-stack.md, "No permissions,
   no budgets"). What still holds: values leaving the VM are size- and depth-checked, a host panic or stack overflow
@@ -1427,8 +1427,8 @@ unless the app sets `testid`).
 
 ## 6. The type pipeline
 
-**As built: Rust first, not the YAML below.** The component schema is Rust (`crates/agentos-domain`, the `ui` module:
-types plus the component catalogue tables); `agentos-codegen` turns it into `types/generated/agentos.ts` (protocol types
+**As built: Rust first, not the YAML below.** The component schema is Rust (`crates/vos-domain`, the `ui` module:
+types plus the component catalogue tables); `vos-codegen` turns it into `types/generated/vos.ts` (protocol types
 and the runtime `COMPONENTS` table), `ui.lua`, the LuaCATS definitions under `types/generated/luals/` and `docs/reference/components.md`.
 `bun run codegen` writes them and `bun run codegen:check` (part of `bun run lint`) fails when they are stale; there is no
 `gen:ui` or `schema:diff` command. The diagram below is the real flow; from "Authoring format" on, the text is the
@@ -1438,15 +1438,15 @@ are not the real ones.
 One component schema, generated outputs that are committed, and a no-diff check (the proposal asked for exactly this):
 
 ```
-crates/agentos-domain, ui module   (Rust types + the component catalogue: tokens, Action, Expr, Source decls, event payloads)
-        │   bun run codegen     (cargo run -p agentos-codegen; `bun run codegen:check` is the no-diff check)
-        ├─▶ types/generated/agentos.ts        protocol types + the runtime COMPONENTS table  ──▶  client/src/view/protocol.ts
-        ├─▶ types/generated/ui.lua            constructors (the Lua runtime's `@agentos/ui`)
-        ├─▶ types/generated/luals/            LuaCATS: `agentos.lua` (the `app` API and shared types), `@agentos/ui.lua`, `@agentos/app.lua`
+crates/vos-domain, ui module   (Rust types + the component catalogue: tokens, Action, Expr, Source decls, event payloads)
+        │   bun run codegen     (cargo run -p vos-codegen; `bun run codegen:check` is the no-diff check)
+        ├─▶ types/generated/vos.ts        protocol types + the runtime COMPONENTS table  ──▶  client/src/view/protocol.ts
+        ├─▶ types/generated/ui.lua            constructors (the Lua runtime's `vos:ui`)
+        ├─▶ types/generated/luals/            LuaCATS: `vos.lua` (the `app` API and shared types), `vos/ui.lua`, `vos/app.lua`
         └─▶ docs/reference/components.md      the component reference
 ```
 
-**Authoring format.** YAML whose property types are JSON Schema fragments, plus `x-agentos` metadata that no plain
+**Authoring format.** YAML whose property types are JSON Schema fragments, plus `x-vos` metadata that no plain
 type system carries (events with payloads, slots, a11y rules, `since`, tier, bindings, positional arg, kit mapping):
 
 ```yaml
@@ -1471,10 +1471,10 @@ slots:
   suffix: { max: 1 }
 examples:
   - { title: Search, node: { type: TextField, key: q, props: { text: { $ref: client.search }, placeholder: Search } } }
-maps: { adapter: TextField, kit: "@agentos/ui/molecules#TextFieldRow" }
+maps: { adapter: TextField, kit: "@vos/ui/molecules#TextFieldRow" }
 ```
 
-**Generated LuaCATS** (`luals/@agentos/ui.lua`): every prop, enum, `Binding` (typed `Ref<T>`, so a plain value in a `Binding` prop is a diagnostic),
+**Generated LuaCATS** (`luals/vos/ui.lua`): every prop, enum, `Binding` (typed `Ref<T>`, so a plain value in a `Binding` prop is a diagnostic),
 slot and event payload:
 
 ```lua
@@ -1502,7 +1502,7 @@ for `Unsupported` decisions and the binding-writability check.
 (compiled once with the `jsonschema` crate; full validation for the first tree and in debug, structural fast-path in
 release). The host never needs per-component Rust structs: nodes are JSON values end to end, so adding a prop needs no Rust change.
 
-**Contract tests (the "drift is a build failure" part)**, run by the repo's gate (`agentos-pre-commit` / `test`):
+**Contract tests (the "drift is a build failure" part)**, run by the repo's gate (`vos-pre-commit` / `test`):
 
 1. every schema component has an adapter, a generated story per example and an axe pass; every adapter prop appears in the schema;
 2. Lua constructor snapshots: `ui.X {...}` of each example equals the schema's example node;
@@ -1523,7 +1523,7 @@ layer and keep the same four outputs.
 Historical: `proto/` was the spike that proved the renderer core. It was removed once `client/src/view`
 (`ViewCore` in `core/`, tested under `bun test`) replaced it, so the commands and file names below no longer exist.
 
-Vite + Svelte 5, importing the real `@agentos/ui` atoms from the repo path (read-only), the host as a TypeScript stub on an
+Vite + Svelte 5, importing the real `@vos/ui` atoms from the repo path (read-only), the host as a TypeScript stub on an
 in-memory JSON-RPC wire (messages really serialised). `proto/README.md` has the run commands; summary:
 
 ```sh
@@ -1559,7 +1559,7 @@ Historical: the original plan, written before the build. Milestone names and pac
 | **M0 Schema and conformance** | schema format, `codegen`, validator, protocol crate, golden fixtures | the two example apps' trees validate; generated TS/Lua compile |
 | **M1 Core + Calculator** | Rust `ViewInstance` (render, reconcile, ops), Lua `ui` + tracked state, the client renderer (`ViewCore` productionised), Tier 1 layout/text/button/grid | Calculator ported, journeys green, p95 key -> pixels <= 30 ms |
 | **M2 Data + Notes** | sources, live queries, drafts/merge, client state + persistence, `TextEditor`, `Markdown`, `List` windowing, `SplitView` x3, `Alert`, `Screen` search | Notes ported incl. `notes.append` live; reconnect and host-restart tests |
-| **M3 Rest of Tier 1** | navigation, presentations, DnD, pickers, `Form`, swipe/reorder/multi-select; Tasks, Reminders, Contacts, Settings | each app passes the `agentos-code-review` readiness gate |
+| **M3 Rest of Tier 1** | navigation, presentations, DnD, pickers, `Form`, swipe/reorder/multi-select; Tasks, Reminders, Contacts, Settings | each app passes the `vos-code-review` readiness gate |
 | **M4 Tier 2** | `Table`, `ChatTranscript`, `CalendarGrid`, `Outline`, `LazyGrid`; Agents, Calendar, Files, Books | |
 | **M5 Tier 3** | `CodeEditor`, `DiffView`, `Canvas`; Coder, Reviewer, Diagrams | |
 

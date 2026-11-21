@@ -3,7 +3,7 @@
   "bundle": {
     "require_mode": "path",
     "excludes": [
-      "@agentos/*",
+      "vos[:]*",
       "std[:]*",
       "lib[:]*",
       "vnd[:]*"

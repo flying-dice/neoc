@@ -1,4 +1,4 @@
-import { defineStorybook } from '@agentos/storybook/main'
+import { defineStorybook } from '@vos/storybook/main'
 
 /** The client's own Storybook: the shell and every built-in app. */
 export default defineStorybook({

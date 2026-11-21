@@ -3,7 +3,7 @@
  * list of tool calls) and the agent's reply merged into one bubble. Permission prompts and errors stay where they
  * happened.
  */
-import type { ChatBlock } from '@agentos/ui'
+import type { ChatBlock } from '@vos/ui'
 import type { ChatItem, ChatStatus } from './session'
 
 type Activity = Extract<ChatBlock, { kind: 'activity' }>

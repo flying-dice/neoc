@@ -5,7 +5,7 @@
  * `Show` are transparent. Anything else is not a menu item and is left out. Taps run through the view core, so a
  * menu item behaves exactly like the same node elsewhere (client actions first, `emit` towards the app).
  */
-import { icons, type IconName, type MenuItem } from '@agentos/ui'
+import { icons, type IconName, type MenuItem } from '@vos/ui'
 import type { Json, Node } from '../protocol'
 import { parseShortcut } from './shortcuts'
 import { childPath } from './tree'

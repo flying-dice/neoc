@@ -15,7 +15,7 @@ import type {
   TypedNode,
   ViewOps,
   ViewSnapshot
-} from '../generated/agentos'
+} from '../generated/vos'
 
 const button: ButtonNode = {
   type: 'Button',

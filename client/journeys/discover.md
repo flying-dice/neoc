@@ -1,6 +1,6 @@
 # Discover: key user journeys
 
-The landing window: what AgentOS is, the apps you can install (from the host's registries, or by URL) and the agents on
+The landing window: what vos is, the apps you can install (from the host's registries, or by URL) and the agents on
 this host. Start at the host's address in a paired browser; Discover opens by itself.
 
 Automated twins have the same ids: V1 to V5 in `e2e/discover.journeys.spec.ts`, V6 and V7 in
@@ -8,7 +8,7 @@ Automated twins have the same ids: V1 to V5 in `e2e/discover.journeys.spec.ts`, 
 
 | Id  | Who / goal                                                                         | Starts at                                       | Done when                                                                                                                                                             |
 | --- | ---------------------------------------------------------------------------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| V1  | A newcomer: understand what AgentOS does in under a minute.                        | Discover open (the default).                    | They can explain it in their own words; the welcome text, the Apps list (with the Calculator) and "Open Agents" were all in reach without scrolling far.               |
+| V1  | A newcomer: understand what vos does in under a minute.                        | Discover open (the default).                    | They can explain it in their own words; the welcome text, the Apps list (with the Calculator) and "Open Agents" were all in reach without scrolling far.               |
 | V2  | See which agents this host has.                                                    | Discover open.                                  | They found the agents of this host (name and role), with nothing offered to install.                                                                                  |
 | V3  | Search for something that doesn't exist ("spreadsheet") and understand the result. | Discover open.                                  | They saw plain "no apps match" and "no agents match" messages that name the search, and cleared it to get everything back.                                           |
 | V4  | Look at only the agents, then only the apps.                                       | Discover open.                                  | The sidebar narrowed the page to the agents, then to the apps, and back to everything.                                                                                |

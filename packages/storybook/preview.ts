@@ -1,13 +1,13 @@
 /**
- * Shared Storybook preview: AgentOS tokens and base styles, light/dark theme
+ * Shared Storybook preview: vos tokens and base styles, light/dark theme
  * switch (the `theme` global: Light | Dark), and a11y checks set to fail.
  *
  *   // apps/<app>/.storybook/preview.ts
- *   export { default } from '@agentos/storybook/preview'
+ *   export { default } from '@vos/storybook/preview'
  */
 import type { Preview } from '@storybook/svelte-vite'
 import { withThemeByDataAttribute } from '@storybook/addon-themes'
-import '@agentos/ui/styles.css'
+import '@vos/ui/styles.css'
 import './preview.css'
 
 const preview: Preview = {

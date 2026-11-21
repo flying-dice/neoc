@@ -1,7 +1,7 @@
 <!-- @molecule AgentAvatar — agent glyph on a coloured tile. Atoms: IconTile, Icon. -->
 <script lang="ts">
-  import { Icon, IconTile } from '@agentos/ui/atoms'
-  import type { IconName } from '@agentos/ui'
+  import { Icon, IconTile } from '@vos/ui/atoms'
+  import type { IconName } from '@vos/ui'
 
   interface Props {
     icon: IconName

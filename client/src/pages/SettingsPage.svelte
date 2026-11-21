@@ -1,10 +1,10 @@
 <!-- @page SettingsPage — iPadOS Settings-style system preferences. -->
 <script lang="ts">
-  import type { IconName } from '@agentos/ui'
-  import { Icon, IconTile, Toggle, SegmentedControl } from '@agentos/ui/atoms'
-  import { ListRow, SearchField, IconSlider, Alert } from '@agentos/ui/molecules'
-  import { ListSection, NavigationBar } from '@agentos/ui/organisms'
-  import { SplitViewTemplate, ScreenTemplate } from '@agentos/ui/templates'
+  import type { IconName } from '@vos/ui'
+  import { Icon, IconTile, Toggle, SegmentedControl } from '@vos/ui/atoms'
+  import { ListRow, SearchField, IconSlider, Alert } from '@vos/ui/molecules'
+  import { ListSection, NavigationBar } from '@vos/ui/organisms'
+  import { SplitViewTemplate, ScreenTemplate } from '@vos/ui/templates'
   import ColorSwatch from '../atoms/ColorSwatch.svelte'
   import DevicesPane from '../templates/DevicesPane.svelte'
   import { settings, accents, type Theme } from '../lib/settings.svelte'
@@ -47,7 +47,7 @@
     </NavigationBar>
 
     <ListSection sidebar>
-      <ListRow testid="settings-account" title="AgentOS User" subtitle="Account, Sync & Agents">
+      <ListRow testid="settings-account" title="vos User" subtitle="Account, Sync & Agents">
         {#snippet leading()}
           <IconTile size={44} background="linear-gradient(180deg, #c7c7cc, #8e8e93)">
             <Icon name="person" size={26} color="#fff" />
@@ -80,7 +80,7 @@
         <div class="pane">
           {#if pane === 'general'}
             <ListSection header="About">
-              <ListRow testid="settings-about-name" title="Name" value="AgentOS" />
+              <ListRow testid="settings-about-name" title="Name" value="vos" />
               <ListRow testid="settings-about-version" title="Version" value="0.1.0" />
               <ListRow testid="settings-about-host" title="Host" value={hostVersion} />
               <ListRow testid="settings-about-browser" title="Browser" value={browser} />
@@ -164,7 +164,7 @@
           {:else if pane === 'agents'}
             <ListSection
               header="Agents on this host"
-              footer="An agent can use only the apps it is granted. Add or change agents in agentos.toml, or with agents.create; chat with them in the Agents app."
+              footer="An agent can use only the apps it is granted. Add or change agents in vos.toml, or with agents.create; chat with them in the Agents app."
             >
               {#each host.agents as agent (agent.id)}
                 <ListRow
@@ -277,7 +277,7 @@
       }
     }
     title="Revoke {devices.asked.name}?"
-    message="It will be signed out of AgentOS and must pair again to come back."
+    message="It will be signed out of vos and must pair again to come back."
     actions={[
       { label: 'Cancel', style: 'cancel' },
       {

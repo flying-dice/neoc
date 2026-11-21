@@ -9,10 +9,10 @@
   IconButton. Atoms: SegmentedControl, Children.
 -->
 <script lang="ts">
-  import { SegmentedControl } from '@agentos/ui/atoms'
-  import { IconButton, SearchField } from '@agentos/ui/molecules'
-  import { NavigationBar } from '@agentos/ui/organisms'
-  import { ScreenTemplate } from '@agentos/ui/templates'
+  import { SegmentedControl } from '@vos/ui/atoms'
+  import { IconButton, SearchField } from '@vos/ui/molecules'
+  import { NavigationBar } from '@vos/ui/organisms'
+  import { ScreenTemplate } from '@vos/ui/templates'
   import Children from '../atoms/Children.svelte'
   import { useNavLevel, useView } from '../context'
   import { commonOf, oneOf, str } from '../props'

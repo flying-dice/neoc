@@ -13,9 +13,9 @@ async function peekStrip(page: Page): Promise<void> {
 }
 
 test.describe('Desktop journeys', () => {
-  test('D1: first launch: see what AgentOS is, then open an app from the Dock', async ({ page }) => {
+  test('D1: first launch: see what vos is, then open an app from the Dock', async ({ page }) => {
     await openDesktop(page)
-    // the landing window says what AgentOS is
+    // the landing window says what vos is
     await expect(windowOf(page, 'discover')).toBeVisible()
     await expect(page.getByTestId('window-discover-content')).toContainText('Your agents, on one desktop.')
     await expect(page.getByTestId('window-discover-content')).toContainText('Watch them work')

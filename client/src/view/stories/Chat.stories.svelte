@@ -1,7 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, waitFor, within } from 'storybook/test'
-  import AppWindow from '@agentos/storybook/AppWindow.svelte'
+  import AppWindow from '@vos/storybook/AppWindow.svelte'
   import ViewHost from '../organisms/ViewHost.svelte'
   import type { FakeRun } from '../host/fakeAgui'
   import {
@@ -42,9 +42,9 @@
   const toolTurn = async (run: FakeRun): Promise<void> => {
     run.start()
     await run.thought('The user wants a total: I will use the calculator.')
-    await run.tool('mcp__agentos__calculator__calculate', { kind: 'execute', delay: 30 })
+    await run.tool('mcp__vos__calculator__calculate', { kind: 'execute', delay: 30 })
     await run.tool('Read', { kind: 'read', delay: 30 })
-    await run.tool('mcp__agentos__notes__append', { kind: 'edit', status: 'failed' })
+    await run.tool('mcp__vos__notes__append', { kind: 'edit', status: 'failed' })
     run.patch([{ op: 'replace', path: '/session/usage', value: { used: 61000, size: 200000 } }])
     await run.text('18% of 2,450 is **441**. I could not save it to Notes.', {
       chunk: 12,
@@ -55,11 +55,11 @@
 
   const permissionTurn = (run: FakeRun): void => {
     run.start()
-    run.interrupt({ id: 'int-1', title: 'mcp__agentos__calculator__show_on_calculator' })
+    run.interrupt({ id: 'int-1', title: 'mcp__vos__calculator__show_on_calculator' })
   }
   const afterPermission = async (run: FakeRun): Promise<void> => {
     run.start()
-    await run.tool('mcp__agentos__calculator__show_on_calculator', { kind: 'execute' })
+    await run.tool('mcp__vos__calculator__show_on_calculator', { kind: 'execute' })
     await run.text('Done: it is on the calculator.')
     run.finish()
   }
@@ -73,11 +73,11 @@
         {
           id: 'tc1',
           type: 'function',
-          function: { name: 'mcp__agentos__calculator__show_on_calculator', arguments: '{}' }
+          function: { name: 'mcp__vos__calculator__show_on_calculator', arguments: '{}' }
         }
       ],
-      agentos: {
-        title: 'mcp__agentos__calculator__show_on_calculator',
+      vos: {
+        title: 'mcp__vos__calculator__show_on_calculator',
         kind: 'execute',
         status: 'completed'
       }
@@ -385,7 +385,7 @@
           reason: 'tool_call',
           message: 'Bash',
           metadata: {
-            'agentos:options': [
+            'vos:options': [
               { optionId: 'allow', name: 'Allow once', kind: 'allow_once' },
               { optionId: 'reject', name: 'Deny', kind: 'reject_once' }
             ]

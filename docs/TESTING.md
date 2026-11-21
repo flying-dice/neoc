@@ -1,4 +1,4 @@
-# Testing AgentOS
+# Testing vos
 
 Everything UI-facing runs headless in Chromium against the **real Rust host**. There is no in-memory host and no web
 mode: the host starts in milliseconds, so the desktop and the journeys talk to the same binary a person runs. Logic is
@@ -22,16 +22,16 @@ snapshots deliberately with `bun run test:e2e:update`, then open the changed PNG
 
 `cargo nextest run --workspace --exclude neoc --exclude neoc-vm` (neoc's crates have their own gate: `cargo test -p neoc -p neoc-vm`), one convention per layer (the hexagon in `docs/architecture/ARCHITECTURE.md` §2):
 
-- **Domain** (`agentos-domain`): plain unit tests, no framework, no I/O.
-- **Application** (`agentos-application`): use cases tested against the in-memory port fakes in `agentos_application::testing`
+- **Domain** (`vos-domain`): plain unit tests, no framework, no I/O.
+- **Application** (`vos-application`): use cases tested against the in-memory port fakes in `vos_application::testing`
   (`ManualClock`, `RecordingShell`, ...). Tests sit beside the code in `*_tests.rs`. No mocking library: write a fake.
 - **Adapters**: integration tests in `crates/<adapter>/tests/`, through the real library (per-app VM isolation and the
   module set, SQLite migrations and live queries, MCP with an `rmcp` client, ACP against the scripted agent, `/rpc` with a
-  WebSocket client, fetch against a local server). The shipped apps are tested here too: `crates/agentos-lua/tests/calculator_app.rs`
+  WebSocket client, fetch against a local server). The shipped apps are tested here too: `crates/vos-lua/tests/calculator_app.rs`
   builds `apps/calculator` with darklua and runs the bundle under the real runtime. The Lua apps and fixtures the Rust
-  tests run are built with the product's own pipeline (`scripts/lua51-build.ts`, which `crates/agentos-lua/tests/common`
-  and `crates/agentos-host/tests/common` call, so `bun` and `darklua` must be installed); inline snippets in those tests
-  are plain Lua 5.1. `crates/agentos-lua/tests/lua51.rs` holds what is specific to running on this VM (Luau, running Lua 5.1 source): the
+  tests run are built with the product's own pipeline (`scripts/lua51-build.ts`, which `crates/vos-lua/tests/common`
+  and `crates/vos-host/tests/common` call, so `bun` and `darklua` must be installed); inline snippets in those tests
+  are plain Lua 5.1. `crates/vos-lua/tests/lua51.rs` holds what is specific to running on this VM (Luau, running Lua 5.1 source): the
   isolation of the per-app VMs, the read-only libraries and host calls under `pcall` and in coroutines; `modules.rs` holds the modules and
   the lifecycle: every `std:`/`lib:`/`vnd:` module an app is offered can be required (not `lib:test`, `lib:compile`, `std:workers`), a request handler and a task take their turn in
   the VM's one-call-at-a-time queue, an unloaded or replaced app's listener port is free again and its tasks and
@@ -44,14 +44,14 @@ snapshots deliberately with `bun run test:e2e:update`, then open the changed PNG
   and the host did not panic; 600 cases take about a second. `CHAOS_CASES=20000` (and `CHAOS_SEED`) go further, and
   `CHAOS_ONLY=<case>` prints and runs one. A second generated test drops a call (timeout or abort) while its own coroutine waits, and checks that another call can neither run nor refuse for ever what it left behind (`CHAOS_DROPPED_CASES`). `neoc-vm` has its own unit tests (the module registry, the lifecycle,
   and the `vnd:hyper` client against a local TLS server).
-- **Host** (`agentos-host/tests`): the real wiring on an ephemeral loopback port (`tests/common`), driven like a
+- **Host** (`vos-host/tests`): the real wiring on an ephemeral loopback port (`tests/common`), driven like a
   browser or an agent would: `/rpc`, `/agui`, `/mcp`, pairing, the Agents app.
 - Tests may use `unwrap`, `expect` and `panic!` (`clippy.toml`); an integration-test file with helpers carries
   `#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]`. Name a test after the behaviour
   (`calculate_evaluates_exactly_and_rejects_what_is_not_arithmetic`), cover the failure path next to the success path,
   and keep each test independent (its own data directory, no fixed ports).
 - A protocol or adapter change adds the test in the layer it touches and, if it crosses layers, one in the host.
-- `cargo nextest run -p agentos-lua`, or a test name, runs a slice. `bun run lint:rust` is the other half of the Rust
+- `cargo nextest run -p vos-lua`, or a test name, runs a slice. `bun run lint:rust` is the other half of the Rust
   gate: `cargo fmt --check`, clippy with `-D warnings`, the crate-direction check (`bun run lint:deps`) and `cargo deny`.
 
 ## Client, kit and generated types
@@ -68,21 +68,22 @@ under `bun test` too, through the preload in `client/bunfig.toml` (`client/test/
 
 - **Check:** `bun run lint:lua` runs `lua-language-server --check` (pinned: 3.19.2, in `scripts/lint-lua.ts`) over
   every `.lua` file `.luarc.json` does not ignore (apps, `lua/prelude.lua`, the codegen example app), against the
-  generated LuaCATS definitions in `types/generated/luals/` (`agentos.lua` for the global `app`, `@agentos/ui.lua` and
-  `@agentos/app.lua` for the two `require`s; `.luarc.json` is AgentOS's own). The `std:`/`lib:`/`vnd:` modules are not
+  generated LuaCATS definitions in `types/generated/luals/` (`vos.lua` for the global `app`, `vos/ui.lua` and
+  `vos/app.lua` for the two `require`s: a colon is not portable in a file name (Windows), so `.luarc.json` sets
+  `completion.requireSeparator` to `":"` and LuaLS reads `require("vos:ui")` as the path `vos/ui`; without it the `require` finds nothing and returns `any` on LuaLS 3.19.2, and the negative fixtures stop being flagged; `.luarc.json` is vos's own). The `std:`/`lib:`/`vnd:` modules are not
   typed here (neoc moved its module types to Luau declarations for luau-lsp, `types/neoc.d.luau`, in NEOC-139; typed
   apps come with NEOC-140). Files in `negative/` folders (`scripts/fixtures/negative/`) mark lines with
   `-- expect-error`; the check demands exactly those lines are flagged, so a broken definitions file cannot pass
-  silently (`wrong_api_use.lua` for the `app` API, `wrong_ui_usage.lua` for `@agentos/ui`).
+  silently (`wrong_api_use.lua` for the `app` API, `wrong_ui_usage.lua` for `vos:ui`).
 - **Format:** `bun run lint:stylua` (`stylua.toml`, syntax `Lua51`; `.styluaignore`); `bun run format` rewrites.
   Both lints print a `SKIPPED` message when `lua-language-server` (PATH or `~/.local/bin`) or `stylua` (PATH or
-  `~/.cargo/bin`) is not installed, and **fail** instead when `AGENTOS_GATE=1` or `CI` is set (`scripts/gate.ts`; the
-  `agentos-pre-commit` skill's gate sets it): install them, a skipped lint is not a pass.
+  `~/.cargo/bin`) is not installed, and **fail** instead when `VOS_GATE=1` or `CI` is set (`scripts/gate.ts`; the
+  `vos-pre-commit` skill's gate sets it): install them, a skipped lint is not a pass.
 - **Lua 5.1 build:** apps run as plain Lua 5.1 (`scripts/lua51.ts`, `.darklua.json`; see `apps/README.md`).
   `darklua` 0.18.0 is required and **never skipped** (`cargo install darklua --version 0.18.0 --locked`):
   `bun run build:apps` fails with that message without it. `bun test scripts`
   (`scripts/lua51.test.ts`) checks the sources stay plain Lua 5.1 (no Luau syntax, no library members Lua 5.1 and `lua/prelude.lua` lack), that each
-  app bundles into one file whose only requires are runtime ones (`@agentos/*` and the `std:`/`lib:`/`vnd:` modules, with a fixture that requires them), and (with a native Lua 5.3+ on PATH) that the prelude's
+  app bundles into one file whose only requires are runtime ones (`vos:*` and the `std:`/`lib:`/`vnd:` modules, with a fixture that requires them), and (with a native Lua 5.3+ on PATH) that the prelude's
   `utf8`/`table.move` polyfills agree with the native ones. The prelude, `ui.lua` and the bundles are loaded and run
   under Lua 5.1 by the Rust tests (neoc-vm's Luau), so no system Lua 5.1 is needed. `bun run codegen:check`
   also fails when `types/generated/ui.lua`, `luals/*` or `prelude.lua` is stale.
@@ -93,7 +94,7 @@ under `bun test` too, through the preload in `client/bunfig.toml` (`client/test/
 
 Required: Rust (the pinned toolchain), `cargo-nextest`, `cargo-deny`, Bun, `darklua` 0.18.0 (never skipped), Chromium
 for Playwright (`bun run test:e2e`, on a Mac for the snapshots). Needed for the Lua lints, which print `SKIPPED` without
-them (a skipped lint is not a pass; with `AGENTOS_GATE=1` or `CI` they fail): `lua-language-server` and `stylua`.
+them (a skipped lint is not a pass; with `VOS_GATE=1` or `CI` they fail): `lua-language-server` and `stylua`.
 **Optional interpreter**, used by `scripts/lua51.test.ts` only: a native **Lua 5.3+** compares the polyfills with the
 native `utf8`/`table.move`. Without it that test is skipped, not failed: the skip is written to stderr
 (`!! polyfill comparison SKIPPED`) and in the test name (`[SKIPPED: ...]`). The bundles themselves run on mlua's
@@ -119,27 +120,27 @@ a fake host) and `packages/ui` (each kit component and its states). Stories are 
 
 `playwright.config.ts` starts the host itself (`e2e/host/start.ts`):
 
-1. builds the client (`client/dist`), the host (`cargo build -p agentos-host`), the scripted ACP agent
-   (`cargo build -p agentos-acp --bin fake_agent`) and the apps into a **test registry** (`bun scripts/build-apps.ts`:
+1. builds the client (`client/dist`), the host (`cargo build -p vos-host`), the scripted ACP agent
+   (`cargo build -p vos-acp --bin fake_agent`) and the apps into a **test registry** (`bun scripts/build-apps.ts`:
    every `apps/*/app.json`, plus Notes, the codegen fixture, as a second app the Discover journeys install and remove
-   without disturbing the Calculator), and the Ticker (`crates/agentos-host/tests/fixtures/ticker`, an app whose
+   without disturbing the Calculator), and the Ticker (`crates/vos-host/tests/fixtures/ticker`, an app whose
    background task counts up) built into `test-results/host/hidden`, which no registry lists: the background journeys
    (`e2e/background.journeys.spec.ts`) install it by its app ref and remove it again;
-2. writes `agentos.toml` for it: port **7410** (never the default 7400, so a host you have running is untouched). All e2e ports come from
-   one env var, `AGENTOS_PORT_BASE` (`scripts/ports.ts`; default 6100): the Storybook server is the base and the e2e
-   host is base + 10. Set it (e.g. `AGENTOS_PORT_BASE=9100`) to run e2e in a second worktree at the same time; loopback
+2. writes `vos.toml` for it: port **7410** (never the default 7400, so a host you have running is untouched). All e2e ports come from
+   one env var, `VOS_PORT_BASE` (`scripts/ports.ts`; default 6100): the Storybook server is the base and the e2e
+   host is base + 10. Set it (e.g. `VOS_PORT_BASE=9100`) to run e2e in a second worktree at the same time; loopback
    only, a fresh data directory under `test-results/host/`, the test registry as `registries`, the Calculator and
    Agents as `install` (Notes is only offered), and one agent on the roster;
-3. runs `agentos-host` in the foreground; Playwright stops it with SIGTERM.
+3. runs `vos-host` in the foreground; Playwright stops it with SIGTERM.
 
 **The scripted agent.** The roster's agent is `scripted`, a real ACP process with no model
-(`crates/agentos-acp/src/bin/fake_agent.rs`): the prompt text picks what it does (`hello` streams a short reply, `think`
+(`crates/vos-acp/src/bin/fake_agent.rs`): the prompt text picks what it does (`hello` streams a short reply, `think`
 adds a thought, `tool` and `fail` make tool calls, `ask` and `ask-write` request permission, `state` sends commands, usage
 and a plan, `slow` streams until cancelled, `exit` crashes; anything else is echoed). Its approval policy is `ask` and it
 is granted the Calculator. The Agents journeys (`apps/agents/e2e`) talk to it over the real `/agui`.
 
 **Pairing in tests.** Every client route needs a paired device, including from loopback. `e2e/host/global-setup.ts`
-**pairs one browser** the way a person does: `agentos-host pair --config ...` prints a code (it lands in the shared
+**pairs one browser** the way a person does: `vos pair --config ...` prints a code (it lands in the shared
 system database, so the running host accepts it), `POST /pair` trades it for the session cookie, and the cookie is saved
 as the storage state every desktop and journey spec shares. Always use `http://127.0.0.1:<port>` (the cookie is
 host-only, so `localhost` would be a different device). The pairing journeys (`e2e/pairing.journeys.spec.ts`) start unpaired
@@ -185,7 +186,7 @@ first commit. `bun run lint:testids` fails the build for raw Svelte elements and
 
 ### Kit components
 
-Every `@agentos/ui` component that is interactive, or opens an overlay, takes a **required** `testid: string` prop
+Every `@vos/ui` component that is interactive, or opens an overlay, takes a **required** `testid: string` prop
 and renders it as `data-testid` on its root interactive element, so svelte-check fails if a caller forgets it. Inner
 parts derive from it (`${testid}-<part>`, `${testid}-<item id>`), documented in the component's header comment. The
 renderer adapters pass the id derived from the node's key path.
@@ -217,8 +218,8 @@ and the UX research panel (`app-design`, `ux-research`) use. It needs a running 
 bun run build && bun run build:apps                       # the client and the app refs (dist/apps)
 # the newest built version of an app (dist/apps/<app>/<version>/app-ref.json), whatever its version is
 ref() { echo "file://$(ls -d "$PWD/dist/apps/$1"/*/ | sort -V | tail -1)app-ref.json"; }
-AGENTOS_DATA=$(mktemp -d) AGENTOS_PORT=7420 \
-  AGENTOS_INSTALL="$(ref calculator),$(ref agents)" \
+VOS_DATA=$(mktemp -d) VOS_PORT=7420 \
+  VOS_INSTALL="$(ref calculator),$(ref agents)" \
   bun run host                                            # prints the URL and "Pairing code: K7QM-3XHR"
 node e2e/tools/session.mjs start me --url http://127.0.0.1:7420/ [--theme dark] [--width 1280 --height 800]
 node e2e/tools/session.mjs pair me K7QM-3XHR      # the first screen (fills "Pairing code", clicks "Pair")
@@ -229,9 +230,9 @@ node e2e/tools/session.mjs stop me
 ```
 
 Commands match labels by accessible name first, so a missing label is a finding. `look` also prints console errors.
-Sessions live in `test-results/sessions/<name>/`. `window.__agentos` exposes the shell's host state, window manager
+Sessions live in `test-results/sessions/<name>/`. `window.__vos` exposes the shell's host state, window manager
 (`wm.open('calculator')`) and app registry. Another pairing code any time: `bun run host pair` with the same
-`AGENTOS_DATA`. To drive the e2e host instead, keep `bun run test:e2e` running and point `--url` at its port; pair with
+`VOS_DATA`. To drive the e2e host instead, keep `bun run test:e2e` running and point `--url` at its port; pair with
 `issuePairingCode()` from `e2e/host/pair.ts`.
 
 ## Known gotchas

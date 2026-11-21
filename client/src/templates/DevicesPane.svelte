@@ -7,9 +7,9 @@
   `settings-devices-error`.
 -->
 <script lang="ts">
-  import { Button, Text } from '@agentos/ui/atoms'
-  import { ListRow } from '@agentos/ui/molecules'
-  import { ListSection } from '@agentos/ui/organisms'
+  import { Button, Text } from '@vos/ui/atoms'
+  import { ListRow } from '@vos/ui/molecules'
+  import { ListSection } from '@vos/ui/organisms'
   import { devices } from '../lib/devices.svelte'
   import { ago, type DeviceRow } from '../shell/hostApi'
 
@@ -28,7 +28,7 @@
 <div data-testid="settings-devices">
   <ListSection
     header="Paired devices"
-    footer="A device that is paired can use this host and everything on it. Revoke one you no longer trust; it must pair again with a new code (run “agentos-host pair”)."
+    footer="A device that is paired can use this host and everything on it. Revoke one you no longer trust; it must pair again with a new code (run “vos pair”)."
   >
     {#each devices.list as d (d.id)}
       <ListRow

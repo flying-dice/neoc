@@ -1,12 +1,12 @@
 <!--
   @page PairingPage — shown to a browser the host does not know yet: enter the code the host printed (and
-  `agentos-host pair` prints again) to pair this device. iPadOS "Sign in" style: a card on the wallpaper. Wrong
+  `vos pair` prints again) to pair this device. iPadOS "Sign in" style: a card on the wallpaper. Wrong
   code, rate limiting and expiry are said plainly, once, under the field.
 
   Test ids: `pairing` (the page), `pairing-code`, `pairing-device-name`, `pairing-submit`, `pairing-error`.
 -->
 <script lang="ts">
-  import { Button, Icon, IconTile, Text, TextInput } from '@agentos/ui/atoms'
+  import { Button, Icon, IconTile, Text, TextInput } from '@vos/ui/atoms'
   import { normaliseCode, type PairResult } from '../shell/pairing'
 
   interface Props {
@@ -56,14 +56,14 @@
 
     {#if unreachable}
       <div class="notice" role="alert" data-testid="pairing-unreachable">
-        <Text style="subheadline" color="destructive">Can’t reach the AgentOS host.</Text>
+        <Text style="subheadline" color="destructive">Can’t reach the vos host.</Text>
         <Text style="footnote" color="secondary">{unreachable}</Text>
         <Button testid="pairing-retry" size="small" capsule onclick={onretry}>Try again</Button>
       </div>
     {:else}
       <Text style="subheadline" color="secondary" as="p">
-        Enter the pairing code shown where AgentOS is running. It is single use and lasts 10
-        minutes. Need a new one? Run <code>agentos-host pair</code>.
+        Enter the pairing code shown where vos is running. It is single use and lasts 10
+        minutes. Need a new one? Run <code>vos pair</code>.
       </Text>
 
       <label class="field">

@@ -8,7 +8,7 @@
  *  - `mapCaret`: after an ack replaces the draft with the host's merged value, the caret and selection are mapped
  *    through the diff so they do not jump.
  *
- * `merge3` is a port of `crates/agentos-domain/src/merge.rs`, token for token, so host and client agree on every
+ * `merge3` is a port of `crates/vos-domain/src/merge.rs`, token for token, so host and client agree on every
  * corner case: it works on tokens (a run of word characters, a run of blanks, or one other character), diffs them
  * with Myers' algorithm, composes edits to different tokens (insertions at one point compose, theirs first), and
  * resolves overlapping edits to MINE (the human wins) while reporting the value that lost. Keep the two in step:

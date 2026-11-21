@@ -1,5 +1,5 @@
 /**
- * Shared Playwright fixtures and checks for AgentOS UI tests.
+ * Shared Playwright fixtures and checks for vos UI tests.
  *
  *   import { test, expect, openDesktop, expectAccessible, expectNoOverflow } from '../../e2e/fixtures'
  *
@@ -50,7 +50,7 @@ export interface DesktopOptions {
   theme?: 'light' | 'dark'
 }
 
-/** The shell's debug handle (`window.__agentos`, see client boot.ts). */
+/** The shell's debug handle (`window.__vos`, see client boot.ts). */
 interface ShellHandle {
   host: { phase: string; apps: unknown[] }
   wm: { windows: { id: string }[]; close(id: string): void; open(appId: string): void }
@@ -58,7 +58,7 @@ interface ShellHandle {
 }
 declare global {
   interface Window {
-    __agentos: ShellHandle
+    __vos: ShellHandle
   }
 }
 
@@ -72,13 +72,13 @@ export async function openDesktop(page: Page, options: DesktopOptions = {}): Pro
   await page.goto(`/?${params}`)
   await page.locator('html[data-ready="true"]').waitFor()
   await page.waitForFunction(
-    () => window.__agentos.host.phase === 'ready' && window.__agentos.host.apps.length > 0
+    () => window.__vos.host.phase === 'ready' && window.__vos.host.apps.length > 0
   )
   await page.getByTestId('dock').waitFor()
   await settle(page)
   if (options.open) {
     await page.evaluate((ids) => {
-      const { wm, apps } = window.__agentos
+      const { wm, apps } = window.__vos
       for (const win of [...wm.windows]) wm.close(win.id)
       for (const id of ids) {
         if (!apps[id]) throw new Error(`Unknown app "${id}". Known: ${Object.keys(apps).join(', ')}`)

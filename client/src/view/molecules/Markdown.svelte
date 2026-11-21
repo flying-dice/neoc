@@ -5,8 +5,8 @@
   features (tables, tasklist, code); `selectable` allows copying. Atoms: Markdown.
 -->
 <script lang="ts">
-  import { Markdown } from '@agentos/ui/atoms'
-  import { optionsFromExtensions } from '@agentos/ui'
+  import { Markdown } from '@vos/ui/atoms'
+  import { optionsFromExtensions } from '@vos/ui'
   import { useView } from '../context'
   import { commonOf, str } from '../props'
   import type { AdapterProps } from '../registry'

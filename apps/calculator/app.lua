@@ -1,7 +1,7 @@
 -- The Calculator: a keypad window and three agent tools. `bun run build:apps` packages it (with app.json) into
 -- an app ref.
-local app = require("@agentos/app")
-local ui = require("@agentos/ui")
+local app = require("vos:app")
+local ui = require("vos:ui")
 local calc = require("./calc")
 local t = app.t
 

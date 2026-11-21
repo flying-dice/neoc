@@ -5,8 +5,8 @@
   Atoms: Button, Children.
 -->
 <script lang="ts">
-  import { Button } from '@agentos/ui/atoms'
-  import { ListRow } from '@agentos/ui/molecules'
+  import { Button } from '@vos/ui/atoms'
+  import { ListRow } from '@vos/ui/molecules'
   import Children from '../atoms/Children.svelte'
   import { useColumn, useList, useView } from '../context'
   import { commonOf, str } from '../props'

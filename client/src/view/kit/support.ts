@@ -4,7 +4,7 @@
  * kit-icon lookup. Apps never pass CSS: every value here is looked up in a closed table, an unknown token is
  * ignored, never passed through.
  */
-import { isPaletteToken } from '@agentos/ui'
+import { isPaletteToken } from '@vos/ui'
 import type { ViewContext } from '../context'
 import type { Scope } from '../core/view'
 import type { Node } from '../protocol'

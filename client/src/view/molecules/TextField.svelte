@@ -8,7 +8,7 @@
   TextInput, TextArea, Children.
 -->
 <script lang="ts">
-  import { TextArea, TextInput } from '@agentos/ui/atoms'
+  import { TextArea, TextInput } from '@vos/ui/atoms'
   import Children from '../atoms/Children.svelte'
   import { parseRules, validateText } from '../core/validate'
   import { useView } from '../context'

@@ -6,9 +6,9 @@
  *      the repo's apps plus Notes (the codegen fixture), a second app the Discover journeys install and remove
  *      so they never disturb the Calculator the other specs use, and the Ticker (the host's background-work
  *      fixture) outside the registry, which only the background journeys install;
- *   2. writes agentos.toml (port 7410 or AGENTOS_PORT_BASE + 10, loopback, a fresh data directory, the test registry; the Calculator and
+ *   2. writes vos.toml (port 7410 or VOS_PORT_BASE + 10, loopback, a fresh data directory, the test registry; the Calculator and
  *      Agents are installed at start, Notes is only offered; one scripted ACP agent is on the roster);
- *   3. runs agentos-host in the foreground, forwarding SIGTERM so the host shuts down gracefully.
+ *   3. runs vos-host in the foreground, forwarding SIGTERM so the host shuts down gracefully.
  */
 import { spawn, spawnSync } from 'node:child_process'
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -27,14 +27,14 @@ const versionOf = (id: string): string =>
 rmSync(DIR, { recursive: true, force: true })
 mkdirSync(DIR, { recursive: true })
 
-run('bun', ['run', '--filter', '@agentos/client', 'build'])
-run('cargo', ['build', '-q', '-p', 'agentos-host'])
-run('cargo', ['build', '-q', '-p', 'agentos-acp', '--bin', 'fake_agent']) // the scripted agent the Agents journeys talk to
+run('bun', ['run', '--filter', '@vos/client', 'build'])
+run('cargo', ['build', '-q', '-p', 'vos-host'])
+run('cargo', ['build', '-q', '-p', 'vos-acp', '--bin', 'fake_agent']) // the scripted agent the Agents journeys talk to
 
 // Notes: the codegen fixture, packaged for the registry like any app
 const extra = join(DIR, 'extra-apps/notes')
 mkdirSync(extra, { recursive: true })
-cpSync(join(ROOT, 'crates/agentos-codegen/tests/fixtures/notes/app.lua'), join(extra, 'app.lua'))
+cpSync(join(ROOT, 'crates/vos-codegen/tests/fixtures/notes/app.lua'), join(extra, 'app.lua'))
 writeFileSync(
   join(extra, 'app.json'),
   JSON.stringify({
@@ -51,7 +51,7 @@ run('bun', ['scripts/build-apps.ts', '--out', join(DIR, 'registry'), '--root', j
 // Ticker: built the same way, into a folder of its own that no registry lists (Discover must not offer it)
 const hidden = join(DIR, 'hidden-apps/ticker')
 mkdirSync(hidden, { recursive: true })
-cpSync(join(ROOT, 'crates/agentos-host/tests/fixtures/ticker/app.lua'), join(hidden, 'app.lua'))
+cpSync(join(ROOT, 'crates/vos-host/tests/fixtures/ticker/app.lua'), join(hidden, 'app.lua'))
 writeFileSync(
   join(hidden, 'app.json'),
   JSON.stringify({
@@ -75,7 +75,7 @@ writeFileSync(
     `client_dir = "${join(ROOT, 'client/dist')}"`,
     `registries = ["file://${REGISTRY}"]`,
     `install = [${['calculator', 'agents'].map((id) => `"file://${join(DIR, `registry/${id}/${versionOf(id)}/app-ref.json`)}"`).join(', ')}]`,
-    // one agent, no model: the scripted ACP agent (crates/agentos-acp/src/bin/fake_agent.rs) answers by prompt
+    // one agent, no model: the scripted ACP agent (crates/vos-acp/src/bin/fake_agent.rs) answers by prompt
     '[[agents]]',
     'id = "scripted"',
     'name = "Scripted agent"',

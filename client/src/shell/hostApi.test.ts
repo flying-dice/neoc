@@ -3,12 +3,12 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ago, iconOf, tintBackground } from './hostApi'
 
-const generated = readFileSync(join(import.meta.dir, '../../../types/generated/agentos.ts'), 'utf8')
+const generated = readFileSync(join(import.meta.dir, '../../../types/generated/vos.ts'), 'utf8')
 
 /** The field names of `export type <name> = { ... }` in the generated TypeScript (these types are flat). */
 function fieldsOf(name: string): string[] {
   const start = generated.indexOf(`export type ${name} = {`)
-  if (start < 0) throw new Error(`${name} is not in types/generated/agentos.ts`)
+  if (start < 0) throw new Error(`${name} is not in types/generated/vos.ts`)
   const end = generated.indexOf('\nexport ', start + 1)
   const body = generated
     .slice(start, end < 0 ? undefined : end)

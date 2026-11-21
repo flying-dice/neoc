@@ -14,7 +14,7 @@
   const sample = [
     '# Release notes',
     '',
-    'AgentOS **1.0** adds _tables_, `inline code` and ~~old~~ new [links](https://example.com/docs).',
+    'vos **1.0** adds _tables_, `inline code` and ~~old~~ new [links](https://example.com/docs).',
     '',
     '## Checklist',
     '',

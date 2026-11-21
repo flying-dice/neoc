@@ -65,13 +65,13 @@ export function createHostChannel(base: Transport, timeoutMs = 30_000): HostChan
       try {
         base.send(m)
       } catch {
-        throw new HostError(-32000, 'Not connected to AgentOS')
+        throw new HostError(-32000, 'Not connected to vos')
       }
     },
     onNotification: (method, params) => {
       for (const l of [...notifications]) l(method, params)
     },
-    onError: (e) => console.warn('[agentos] host channel:', e),
+    onError: (e) => console.warn('[vos] host channel:', e),
     timeoutMs,
     idPrefix: 's'
   })
@@ -81,7 +81,7 @@ export function createHostChannel(base: Transport, timeoutMs = 30_000): HostChan
     if (ownerOf(raw) !== 'session') peer.receive(raw)
   })
   base.onStatus((status) => {
-    if (status !== 'open') peer.failPending('The connection to AgentOS closed')
+    if (status !== 'open') peer.failPending('The connection to vos closed')
   })
 
   const transport: Transport = {

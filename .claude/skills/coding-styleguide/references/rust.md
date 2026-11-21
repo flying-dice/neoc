@@ -1,4 +1,4 @@
-# Rust in AgentOS (`crates/`)
+# Rust in vos (`crates/`)
 
 The host is a Cargo workspace (`Cargo.toml`, `rust-toolchain.toml`, edition 2021, `rustfmt.toml`: 110 columns,
 `clippy.toml`). `bun run lint:rust` is the gate: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets
@@ -8,17 +8,17 @@ The host is a Cargo workspace (`Cargo.toml`, `rust-toolchain.toml`, edition 2021
 
 | Crate | Owns | May use |
 |---|---|---|
-| `agentos-domain` | the pure model: ids, app refs and manifests, tool grants, agent identity, tools, notifications, the view tree and component schema, protocol messages, `merge3`. Unit tests. | `serde`, `serde_json`, `sha2`, `thiserror`; `ts-rs` and `schemars` only behind the derive-only `codegen` feature |
-| `agentos-application` | **ports** (traits) and **use cases** (`AppService`, `ChatService`, `DeviceService`, live sources, write-back), plus in-memory fakes in `testing`. Runtime-free: tokio is a dev-dependency. | `agentos-domain`, `async-trait`, `parking_lot`, `thiserror`, `tracing`, small runtime-free crates |
+| `vos-domain` | the pure model: ids, app refs and manifests, tool grants, agent identity, tools, notifications, the view tree and component schema, protocol messages, `merge3`. Unit tests. | `serde`, `serde_json`, `sha2`, `thiserror`; `ts-rs` and `schemars` only behind the derive-only `codegen` feature |
+| `vos-application` | **ports** (traits) and **use cases** (`AppService`, `ChatService`, `DeviceService`, live sources, write-back), plus in-memory fakes in `testing`. Runtime-free: tokio is a dev-dependency. | `vos-domain`, `async-trait`, `parking_lot`, `thiserror`, `tracing`, small runtime-free crates |
 | adapters (`lua`, `sqlite`, `fetch`, `acp`, `agui`, `http`, `mcp`) | one port or one protocol each | application and domain; **never another adapter** (dev-dependencies may) |
-| `agentos-codegen` | dev-time generation from the domain schema; not linked into the host | domain |
-| `agentos-host` | composition root: build, wire, mount, bind, shut down. No business logic. | everything; the only crate with `anyhow` |
+| `vos-codegen` | dev-time generation from the domain schema; not linked into the host | domain |
+| `vos-host` | composition root: build, wire, mount, bind, shut down. No business logic. | everything; the only crate with `anyhow` |
 
 Rules of thumb:
 
 - A new behaviour goes in the innermost layer that can express it. A rule about apps, permissions or tools is domain or a
   use case, not an adapter. An adapter translates (SQLite rows, mlua values, HTTP, ACP messages) and holds no policy.
-- A new need from the outside world is a **port** in `agentos-application::ports` first, with a fake in `testing`, then an
+- A new need from the outside world is a **port** in `vos-application::ports` first, with a fake in `testing`, then an
   adapter. A driving adapter (`http`, `mcp`, `agui`) calls use cases, never reaches an adapter.
 - A framework crate appears only in its adapter (`deny.toml` pins it with `wrappers`): mlua in `neoc-vm` and the `neoc` CLI (the `lua` adapter reaches it through neoc-vm's re-export), rusqlite in
   `sqlite`, rmcp in `mcp`, agent-client-protocol in `acp`, axum in the driving adapters and the host. A new crate must
@@ -69,6 +69,6 @@ Rules of thumb:
 ## Tests
 
 `cargo nextest run --workspace --exclude neoc --exclude neoc-vm`. Domain: unit tests. Application: use cases against the fakes in `testing`, no mocking
-library. Adapters: integration tests in `tests/` through the real library. Host: `crates/agentos-host/tests` start the real
+library. Adapters: integration tests in `tests/` through the real library. Host: `crates/vos-host/tests` start the real
 wiring on an ephemeral loopback port. Test the failure path beside the success path; a bug fix gets a regression test in the
 layer where it lived. See `docs/TESTING.md`.

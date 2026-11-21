@@ -1,11 +1,11 @@
 <!-- @page TerminalPage — agent shell output (placeholder). -->
 <script lang="ts">
-  import { Text } from '@agentos/ui/atoms'
-  import { NavigationBar } from '@agentos/ui/organisms'
-  import { ScreenTemplate } from '@agentos/ui/templates'
+  import { Text } from '@vos/ui/atoms'
+  import { NavigationBar } from '@vos/ui/organisms'
+  import { ScreenTemplate } from '@vos/ui/templates'
 
   const lines = [
-    '$ agentos status',
+    '$ vos status',
     'research   running   62%   reading 5/14 papers',
     'coder      waiting         PR ready for review',
     'inbox      idle',

@@ -70,7 +70,7 @@
 {#if host.phase === 'ready' || host.phase === 'connecting'}
   <DesktopPage {windowContent} />
 {:else if host.phase === 'checking'}
-  <main class="splash" data-testid="splash" aria-busy="true" aria-label="Starting AgentOS"></main>
+  <main class="splash" data-testid="splash" aria-busy="true" aria-label="Starting vos"></main>
 {:else}
   <PairingPage
     onpair={(code, name) => host.pair(code, name)}

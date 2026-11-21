@@ -1,7 +1,7 @@
 export const meta = {
   name: 'ux-research',
-  description: 'One UX research round for an AgentOS app: Haiku, Sonnet and Opus participants use it for real, a styleguide conformance audit scores it, and a synthesis writes the round report and change list',
-  whenToUse: 'Every design round of an AgentOS app (see .claude/skills/app-design). Args: { app, round, previous?, baseUrl?, dataDir? }. The real host must be serving the built client (default http://127.0.0.1:7400/, see docs/TESTING.md, Driving the real shell) with the app installed.',
+  description: 'One UX research round for a vos app: Haiku, Sonnet and Opus participants use it for real, a styleguide conformance audit scores it, and a synthesis writes the round report and change list',
+  whenToUse: 'Every design round of a vos app (see .claude/skills/app-design). Args: { app, round, previous?, baseUrl?, dataDir? }. The real host must be serving the built client (default http://127.0.0.1:7400/, see docs/TESTING.md, Driving the real shell) with the app installed.',
   phases: [
     { title: 'Panel', detail: 'three participants (Haiku, Sonnet, Opus) walk every key journey in the real app' },
     { title: 'Audit', detail: 'styleguide conformance score against docs/design/DESIGN_LANGUAGE.md' },
@@ -15,7 +15,7 @@ if (!app) throw new Error('ux-research needs args.app, e.g. { app: "calculator",
 const round = (args && args.round) || 1
 const previous = args && args.previous // path to the previous round's report, if any
 const base = (args && args.baseUrl) || 'http://127.0.0.1:7400/'
-const dataDir = (args && args.dataDir) || '' // the host's AGENTOS_DATA, if it is not the default ~/.agentos
+const dataDir = (args && args.dataDir) || '' // the host's VOS_DATA, if it is not the default ~/.vos
 
 const journeysPath = `apps/${app}/JOURNEYS.md (Lua apps) or client/journeys/${app}.md (built-in pages and the desktop shell)`
 const reportPath = `docs/ux/${app}/round-${round}.md`
@@ -84,7 +84,7 @@ const participantPrompt = (p) => `You are a usability-study participant. Stay in
 
 ${p.persona}
 
-You are using AgentOS, an iPad-style desktop, in a real browser. You have never seen this app before. Your job is
+You are using vos, an iPad-style desktop, in a real browser. You have never seen this app before. Your job is
 to try to achieve each goal below the way this person would, and say honestly how it went. You are not a tester:
 do not read the source code, do not use data-testid values, do not look at JOURNEYS.md beyond the goal and start
 URL of each journey (the "Done when" column is for the moderator; read it only after you finish a journey, to
@@ -97,7 +97,7 @@ help). Your session name is "${p.id}-r${round}". For each journey:
   1. node e2e/tools/session.mjs start ${p.id}-r${round} --url "${base}"
      (add --theme dark / --width / --height if your persona would; Alex uses dark mode and a 1024x768 screen).
      The first screen asks to pair this device. That is setup, not part of the study: get a code with
-     \`${dataDir ? `AGENTOS_DATA=${dataDir} ` : ''}bun run host pair\` (it prints "Pairing code: XXXX-XXXX"), then
+     \`${dataDir ? `VOS_DATA=${dataDir} ` : ''}bun run host pair\` (it prints "Pairing code: XXXX-XXXX"), then
      \`fill\` the "Pairing code" field with it and \`click\` "Pair". Start each journey from the state its "Starts at"
      column describes, using the Dock and the shell like anyone would; there are no deep links.
   2. Loop: \`look\` (then open the screenshot with the Read tool — LOOK at it, as a person would), decide, act
@@ -146,7 +146,7 @@ const AUDIT_SCHEMA = {
   required: ['score', 'categories', 'violations']
 }
 
-const auditPrompt = `You are the design-systems reviewer for AgentOS. Score how well the app "${app}" conforms to the
+const auditPrompt = `You are the design-systems reviewer for vos. Score how well the app "${app}" conforms to the
 styleguide in docs/design/DESIGN_LANGUAGE.md, using the rubric in .claude/skills/app-design/CONFORMANCE.md
 (categories, weights, and what earns each score are defined there — follow it exactly, do not invent categories).
 
@@ -210,7 +210,7 @@ const SYNTHESIS_SCHEMA = {
 }
 
 const synthesis = await agent(
-  `You are the UX research lead. Synthesise round ${round} of the design study for the AgentOS app "${app}" and write
+  `You are the UX research lead. Synthesise round ${round} of the design study for the vos app "${app}" and write
 the round report to ${reportPath} (create the folder if needed).
 
 Participant sessions (JSON):

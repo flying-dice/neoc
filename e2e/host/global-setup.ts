@@ -1,5 +1,5 @@
 /**
- * After the host is up: pair one browser, the way a person does (a code from `agentos-host pair`, POST /pair),
+ * After the host is up: pair one browser, the way a person does (a code from `vos pair`, POST /pair),
  * and save its cookie as the Playwright storage state the desktop and journey specs share.
  */
 import { writeFileSync } from 'node:fs'

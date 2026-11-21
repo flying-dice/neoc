@@ -1,5 +1,5 @@
 {
-  "name": "agentos",
+  "name": "vos",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -8,8 +8,8 @@
   ],
   "scripts": {
     "dev": "bun scripts/dev.ts",
-    "build": "bun run --filter @agentos/client build",
-    "start": "cargo run --profile release-host -p agentos-host --",
+    "build": "bun run --filter @vos/client build",
+    "start": "cargo run --profile release-host -p vos-host --",
     "build:apps": "bun scripts/build-apps.ts",
     "typecheck": "cargo check --workspace --all-targets && tsc --noEmit -p types/tsconfig.json && bun run --filter '*' typecheck",
     "lint": "bun run lint:conflicts && bun run lint:atomic && bun run lint:testids && bun run lint:boundaries && bun run lint:rust && bun run lint:lua && bun run lint:stylua && bun run codegen:check && bun run --filter '*' lint",
@@ -18,9 +18,9 @@
     "lint:deps": "bun scripts/check-deps.ts",
     "lint:lua": "bun scripts/lint-lua.ts",
     "lint:stylua": "bun scripts/stylua.ts check",
-    "host": "cargo run -p agentos-host --",
-    "codegen": "cargo run -q -p agentos-codegen && bun scripts/codegen-lua.ts",
-    "codegen:check": "cargo run -q -p agentos-codegen -- --check && bun scripts/codegen-lua.ts --check",
+    "host": "cargo run -p vos-host --",
+    "codegen": "cargo run -q -p vos-codegen && bun scripts/codegen-lua.ts",
+    "codegen:check": "cargo run -q -p vos-codegen -- --check && bun scripts/codegen-lua.ts --check",
     "lint:conflicts": "bun scripts/check-conflicts.ts",
     "lint:atomic": "bun scripts/check-atomic.ts",
     "lint:testids": "bun scripts/check-testids.ts",

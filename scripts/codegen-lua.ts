@@ -4,7 +4,7 @@
  *
  *   types/generated/prelude.lua  <- lua/prelude.lua   (a few standard-library polyfills for Lua 5.1)
  *
- * (`types/generated/ui.lua`, the other embedded module, is written by the Rust generator, `agentos-codegen`.)
+ * (`types/generated/ui.lua`, the other embedded module, is written by the Rust generator, `vos-codegen`.)
  *
  *   bun scripts/codegen-lua.ts          write it (part of `bun run codegen`)
  *   bun scripts/codegen-lua.ts --check  exit 1 when it is missing or stale (part of `bun run codegen:check`)

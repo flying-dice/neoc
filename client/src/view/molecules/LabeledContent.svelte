@@ -3,7 +3,7 @@
   LabeledContent, Children.
 -->
 <script lang="ts">
-  import { LabeledContent } from '@agentos/ui/atoms'
+  import { LabeledContent } from '@vos/ui/atoms'
   import Children from '../atoms/Children.svelte'
   import { useView } from '../context'
   import { commonOf, str } from '../props'

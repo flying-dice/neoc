@@ -6,8 +6,8 @@
   one with an action or Undo stays until it is answered or dismissed (WCAG 2.2.1). Atoms: Toast, Icon.
 -->
 <script lang="ts">
-  import { Icon, Toast } from '@agentos/ui/atoms'
-  import { icons, type IconName } from '@agentos/ui'
+  import { Icon, Toast } from '@vos/ui/atoms'
+  import { icons, type IconName } from '@vos/ui'
   import type { Notice } from '../core/store'
 
   interface Props {

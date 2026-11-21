@@ -4,8 +4,8 @@
   Children.
 -->
 <script lang="ts">
-  import { icons, type IconName } from '@agentos/ui'
-  import { EmptyState } from '@agentos/ui/molecules'
+  import { icons, type IconName } from '@vos/ui'
+  import { EmptyState } from '@vos/ui/molecules'
   import Children from '../atoms/Children.svelte'
   import { useView } from '../context'
   import { commonOf, str } from '../props'

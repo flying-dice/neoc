@@ -9,8 +9,8 @@ describe('a missing lint tool', () => {
     })
   })
 
-  test('fails in the gate (AGENTOS_GATE=1)', () => {
-    const { line, code } = missingTool('lint:lua', 'lua-language-server not found', { AGENTOS_GATE: '1' })
+  test('fails in the gate (VOS_GATE=1)', () => {
+    const { line, code } = missingTool('lint:lua', 'lua-language-server not found', { VOS_GATE: '1' })
     expect(code).toBe(1)
     expect(line).toContain('lint:lua FAILED: lua-language-server not found')
   })
@@ -22,11 +22,11 @@ describe('a missing lint tool', () => {
 
 describe('what counts as the gate', () => {
   test.each([
-    [{ AGENTOS_GATE: '1' }, true],
+    [{ VOS_GATE: '1' }, true],
     [{ CI: 'true' }, true],
     [{ CI: '1' }, true],
     [{}, false],
-    [{ AGENTOS_GATE: '0' }, false],
+    [{ VOS_GATE: '0' }, false],
     [{ CI: '' }, false],
     [{ CI: 'false' }, false],
     [{ CI: '0' }, false]

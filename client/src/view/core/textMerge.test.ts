@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { diff, diff1, mapCaret, merge3, rebase, tokenize } from './textMerge'
 
-// The first block mirrors the unit tests of crates/agentos-domain/src/merge.rs one for one: host and client
+// The first block mirrors the unit tests of crates/vos-domain/src/merge.rs one for one: host and client
 // must agree on every corner case.
 
 const m3 = (base: string, theirs: string, mine: string): [string, boolean] => {

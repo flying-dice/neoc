@@ -1,0 +1,16 @@
+[package]
+name = "vos-codegen"
+description = "Adapter (dev-time): generates the TypeScript types (ts-rs), the Lua 5.1 `ui` module, the LuaLS definitions (LuaCATS, ClientDecl from JSON Schema via schemars) and the component reference from the domain types."
+version.workspace = true
+edition = "2021"
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+vos-domain = { workspace = true, features = ["codegen"] }
+schemars = { workspace = true }
+serde_json = { workspace = true }
+ts-rs = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,5 +1,5 @@
 <!--
-  @page DesktopPage — the AgentOS desktop, iPadOS Stage Manager style: status
+  @page DesktopPage — the vos desktop, iPadOS Stage Manager style: status
   bar, recent-apps strip, the current stage (floating / full screen / split
   windows), Slide Over, widgets and the dock. Window contents are supplied by
   the composition root through the `windowContent` snippet.
@@ -10,10 +10,10 @@
 -->
 <script lang="ts">
   import type { Snippet } from 'svelte'
-  import type { DockApp } from '@agentos/ui'
-  import { SplitHandle, Toast } from '@agentos/ui/atoms'
-  import { DesktopTemplate } from '@agentos/ui/templates'
-  import { StatusBar, Dock, Window, StageStrip } from '@agentos/ui/organisms'
+  import type { DockApp } from '@vos/ui'
+  import { SplitHandle, Toast } from '@vos/ui/atoms'
+  import { DesktopTemplate } from '@vos/ui/templates'
+  import { StatusBar, Dock, Window, StageStrip } from '@vos/ui/organisms'
   import ClockWidget from '../organisms/ClockWidget.svelte'
   import AgentActivityWidget from '../organisms/AgentActivityWidget.svelte'
   import { AGENTS_APP_ID, appOf, dockOrder, dockRecents, type AppId } from '../lib/apps.svelte'
@@ -52,10 +52,10 @@
 
   // Dragging a strip group onto the stage merges it into the current group.
   function ondragover(e: DragEvent): void {
-    if (e.dataTransfer?.types.includes('application/x-agentos-stage')) e.preventDefault()
+    if (e.dataTransfer?.types.includes('application/x-vos-stage')) e.preventDefault()
   }
   function ondrop(e: DragEvent): void {
-    const id = e.dataTransfer?.getData('application/x-agentos-stage')
+    const id = e.dataTransfer?.getData('application/x-vos-stage')
     if (id) {
       e.preventDefault()
       wm.mergeStage(id)
@@ -97,10 +97,10 @@
           {#if connection !== 'online'}
             <span class="connection" role="status" data-testid="status-connection">
               {connection === 'connecting'
-                ? 'Connecting to AgentOS…'
+                ? 'Connecting to vos…'
                 : connection === 'incompatible'
-                  ? 'Reload to update AgentOS'
-                  : 'Reconnecting to AgentOS…'}
+                  ? 'Reload to update vos'
+                  : 'Reconnecting to vos…'}
             </span>
           {/if}
         {/snippet}

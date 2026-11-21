@@ -1,10 +1,10 @@
 /**
- * AgentOS service worker: makes the shell installable and opens it offline.
+ * vos service worker: makes the shell installable and opens it offline.
  *  • Navigations: network first, falling back to the cached shell.
  *  • Hashed build assets (immutable URLs): cache first.
  *  • Never touches /rpc (WebSocket), /mcp (always live).
  */
-const CACHE = 'agentos-shell-v1'
+const CACHE = 'vos-shell-v1'
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon-512.png']
 
 self.addEventListener('install', (event) => {

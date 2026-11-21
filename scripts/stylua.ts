@@ -7,7 +7,7 @@
  *   bun scripts/stylua.ts format   rewrite the files in place (part of `bun run format`)
  *
  * `stylua` is found on PATH or at ~/.cargo/bin/stylua. When it is missing the script SKIPS with a message and
- * exits 0 on a developer machine, and FAILS in the quality gate (AGENTOS_GATE=1 or CI set, see scripts/gate.ts).
+ * exits 0 on a developer machine, and FAILS in the quality gate (VOS_GATE=1 or CI set, see scripts/gate.ts).
  */
 import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'

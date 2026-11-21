@@ -1,6 +1,6 @@
 {
-  "name": "AgentOS",
-  "short_name": "AgentOS",
+  "name": "vos",
+  "short_name": "vos",
   "description": "An iPadOS-style desktop for agents and the apps they use.",
   "start_url": "/",
   "scope": "/",

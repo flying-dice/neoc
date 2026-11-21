@@ -89,9 +89,9 @@ export interface ChatSessionOptions {
   newId?: () => string
 }
 
-/** "mcp__agentos__calculator__show_on_calculator" is shown as "Calculator · show on calculator". */
+/** "mcp__vos__calculator__show_on_calculator" is shown as "Calculator · show on calculator". */
 export function friendlyTool(title: string): string {
-  const m = /^mcp__agentos__([a-z0-9-]+?)__(.+)$/.exec(title)
+  const m = /^mcp__vos__([a-z0-9-]+?)__(.+)$/.exec(title)
   if (!m) return title
   const app = m[1].replace(/[-_]/g, ' ').replace(/^\w/, (c) => c.toUpperCase())
   return `${app} · ${m[2].replace(/_/g, ' ')}`
@@ -112,7 +112,7 @@ export function itemsFromMessages(messages: ThreadSnapshot['messages']): ChatIte
   const items: ChatItem[] = []
   for (const m of messages) {
     const id = str(m.id) ?? `m${items.length}`
-    const ext = isRecord(m.agentos) ? m.agentos : {}
+    const ext = isRecord(m.vos) ? m.vos : {}
     switch (m.role) {
       case 'user':
         items.push({ kind: 'user', id, text: contentText(m.content) })

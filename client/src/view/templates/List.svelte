@@ -21,10 +21,10 @@
     moveBy,
     windowFor,
     type RowRange
-  } from '@agentos/ui'
-  import { ActivityIndicator } from '@agentos/ui/atoms'
-  import { ListRow } from '@agentos/ui/molecules'
-  import { List as KitList, ListSection, VirtualRows } from '@agentos/ui/organisms'
+  } from '@vos/ui'
+  import { ActivityIndicator } from '@vos/ui/atoms'
+  import { ListRow } from '@vos/ui/molecules'
+  import { List as KitList, ListSection, VirtualRows } from '@vos/ui/organisms'
   import Children from '../atoms/Children.svelte'
   import FormCell from '../molecules/FormCell.svelte'
   import { provideList, useView } from '../context'

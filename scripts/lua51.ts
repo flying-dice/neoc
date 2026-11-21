@@ -2,7 +2,7 @@
  * Bundling a Lua 5.1 app with darklua (config: .darklua.json), shared by `build-apps.ts` and `lua51-build.ts`.
  *
  * Apps are plain Lua 5.1 and are shipped as plain Lua 5.1: darklua only bundles an app's relative `require`s into
- * one chunk (and strips comments). `@agentos/*` requires and the host's neoc modules (`std:*`, `lib:*`, `vnd:*`) stay as
+ * one chunk (and strips comments). `vos:*` requires and the host's neoc modules (`std:*`, `lib:*`, `vnd:*`) stay as
  * runtime `require` calls (the host provides those modules; `.darklua.json` excludes them, as `[:]` because a bare `:`
  * is not a valid darklua glob). Nothing is lowered, so an app is exactly the Lua it is written in.
  *
@@ -62,7 +62,7 @@ export function requireDarklua(): string {
  * Throws with darklua's message when the file does not process.
  */
 export function toLua51(darklua: string, entry: string): string {
-  const scratch = mkdtempSync(join(tmpdir(), 'agentos-darklua-'))
+  const scratch = mkdtempSync(join(tmpdir(), 'vos-darklua-'))
   try {
     const output = join(scratch, 'out.lua')
     const run = spawnSync(darklua, ['process', '--config', CONFIG, entry, output], { cwd: root, encoding: 'utf8' })

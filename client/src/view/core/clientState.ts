@@ -71,7 +71,7 @@ export class ClientState {
   }
 
   private get storageKey(): string {
-    return `agentos.view.${this.d.windowId}.client`
+    return `vos.view.${this.d.windowId}.client`
   }
 
   private effectiveSync(name: string): 'none' | 'change' | 'commit' {

@@ -101,192 +101,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agentos-acp"
-version = "0.1.0"
-dependencies = [
- "agent-client-protocol",
- "agentos-application",
- "agentos-domain",
- "async-trait",
- "parking_lot 0.12.5",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
-]
-
-[[package]]
-name = "agentos-agui"
-version = "0.1.0"
-dependencies = [
- "agentos-application",
- "agentos-domain",
- "axum",
- "futures-util",
- "parking_lot 0.12.5",
- "serde",
- "serde_json",
- "tokio",
- "tokio-util",
-]
-
-[[package]]
-name = "agentos-application"
-version = "0.1.0"
-dependencies = [
- "agentos-domain",
- "async-trait",
- "futures-channel",
- "futures-util",
- "parking_lot 0.12.5",
- "serde_json",
- "sha2 0.10.9",
- "thiserror",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "agentos-codegen"
-version = "0.1.0"
-dependencies = [
- "agentos-domain",
- "schemars 1.2.3",
- "serde_json",
- "ts-rs",
-]
-
-[[package]]
-name = "agentos-domain"
-version = "0.1.0"
-dependencies = [
- "schemars 1.2.3",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "thiserror",
- "ts-rs",
-]
-
-[[package]]
-name = "agentos-fetch"
-version = "0.1.0"
-dependencies = [
- "agentos-application",
- "async-trait",
- "axum",
- "futures-util",
- "reqwest",
- "tokio",
- "tower-http",
-]
-
-[[package]]
-name = "agentos-host"
-version = "0.1.0"
-dependencies = [
- "agentos-acp",
- "agentos-agui",
- "agentos-application",
- "agentos-domain",
- "agentos-fetch",
- "agentos-http",
- "agentos-lua",
- "agentos-mcp",
- "agentos-sqlite",
- "anyhow",
- "async-trait",
- "axum",
- "axum-server",
- "futures-util",
- "getrandom 0.4.3",
- "rcgen",
- "reqwest",
- "rmcp",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tokio",
- "tokio-tungstenite 0.30.0",
- "tokio-util",
- "toml",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "agentos-http"
-version = "0.1.0"
-dependencies = [
- "agentos-application",
- "agentos-domain",
- "async-trait",
- "axum",
- "futures-util",
- "gethostname",
- "if-addrs",
- "parking_lot 0.12.5",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tokio-tungstenite 0.30.0",
- "tokio-util",
- "tower-http",
- "tracing",
-]
-
-[[package]]
-name = "agentos-lua"
-version = "0.1.0"
-dependencies = [
- "agentos-application",
- "agentos-domain",
- "agentos-sqlite",
- "async-trait",
- "neoc-vm",
- "notify",
- "parking_lot 0.12.5",
- "serde_json",
- "thiserror",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "agentos-mcp"
-version = "0.1.0"
-dependencies = [
- "agentos-application",
- "agentos-domain",
- "async-trait",
- "axum",
- "parking_lot 0.12.5",
- "reqwest",
- "rmcp",
- "serde_json",
- "thiserror",
- "tokio",
- "tokio-util",
-]
-
-[[package]]
-name = "agentos-sqlite"
-version = "0.1.0"
-dependencies = [
- "agentos-application",
- "agentos-domain",
- "async-trait",
- "parking_lot 0.12.5",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "thiserror",
- "tokio",
-]
-
-[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6466,6 +6280,192 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "vos-acp"
+version = "0.1.0"
+dependencies = [
+ "agent-client-protocol",
+ "async-trait",
+ "parking_lot 0.12.5",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "vos-application",
+ "vos-domain",
+]
+
+[[package]]
+name = "vos-agui"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "futures-util",
+ "parking_lot 0.12.5",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "vos-application",
+ "vos-domain",
+]
+
+[[package]]
+name = "vos-application"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures-channel",
+ "futures-util",
+ "parking_lot 0.12.5",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "vos-domain",
+]
+
+[[package]]
+name = "vos-codegen"
+version = "0.1.0"
+dependencies = [
+ "schemars 1.2.3",
+ "serde_json",
+ "ts-rs",
+ "vos-domain",
+]
+
+[[package]]
+name = "vos-domain"
+version = "0.1.0"
+dependencies = [
+ "schemars 1.2.3",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror",
+ "ts-rs",
+]
+
+[[package]]
+name = "vos-fetch"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "futures-util",
+ "reqwest",
+ "tokio",
+ "tower-http",
+ "vos-application",
+]
+
+[[package]]
+name = "vos-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "axum-server",
+ "futures-util",
+ "getrandom 0.4.3",
+ "rcgen",
+ "reqwest",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+ "tokio-util",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "vos-acp",
+ "vos-agui",
+ "vos-application",
+ "vos-domain",
+ "vos-fetch",
+ "vos-http",
+ "vos-lua",
+ "vos-mcp",
+ "vos-sqlite",
+]
+
+[[package]]
+name = "vos-http"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "futures-util",
+ "gethostname",
+ "if-addrs",
+ "parking_lot 0.12.5",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+ "tokio-util",
+ "tower-http",
+ "tracing",
+ "vos-application",
+ "vos-domain",
+]
+
+[[package]]
+name = "vos-lua"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "neoc-vm",
+ "notify",
+ "parking_lot 0.12.5",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "vos-application",
+ "vos-domain",
+ "vos-sqlite",
+]
+
+[[package]]
+name = "vos-mcp"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "parking_lot 0.12.5",
+ "reqwest",
+ "rmcp",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "vos-application",
+ "vos-domain",
+]
+
+[[package]]
+name = "vos-sqlite"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "parking_lot 0.12.5",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror",
+ "tokio",
+ "vos-application",
+ "vos-domain",
+]
 
 [[package]]
 name = "vsimd"

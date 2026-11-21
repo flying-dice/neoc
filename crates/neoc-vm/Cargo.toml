@@ -237,7 +237,7 @@ path = "benches/vnd/vnd.rs"
 harness = false
 required-features = ["bench"]
 
-# The root `[workspace.lints]` table (clippy pedantic, `unsafe_code = "forbid"`) is inherited by the AgentOS crates
+# The root `[workspace.lints]` table (clippy pedantic, `unsafe_code = "forbid"`) is inherited by the vos crates
 # only. This crate never inherited it: when it was imported with the old compiler crates, opting in meant ~700
 # pedantic findings (counted against the table as it was then, which did not deny `unwrap`/`expect`/`panic`; today's
 # table is stricter, so the count would be higher). `neoc-vm` has no `unsafe` outside tests and forbids it in

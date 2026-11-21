@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Checks every Lua app and fixture with lua-language-server (LuaLS) `--check` against the generated definitions
- * (config: .luarc.json; definitions: types/generated/luals, the `app` API and `@agentos/*`, written by agentos-codegen).
+ * (config: .luarc.json; definitions: types/generated/luals, the `app` API and `vos:*`, written by vos-codegen).
  * The std:/lib:/vnd: modules are NOT typed here: neoc's LuaCATS definitions (and lua-language-server) are gone from neoc
  * (NEOC-139: Luau declarations checked by luau-lsp), so an app's `require("std:fs")` is untyped (`any`) until the apps
  * move to typed Luau (NEOC-140).
@@ -15,7 +15,7 @@
  *
  * `lua-language-server` is found on PATH or at ~/.local/bin/lua-language-server and must be the pinned version
  * (its diagnostics change between releases). When it is missing the check SKIPS with a message and exits 0 on a
- * developer machine, and FAILS in the quality gate (AGENTOS_GATE=1 or CI set, see scripts/gate.ts).
+ * developer machine, and FAILS in the quality gate (VOS_GATE=1 or CI set, see scripts/gate.ts).
  *
  * Usage: bun scripts/lint-lua.ts
  */
@@ -59,7 +59,7 @@ interface Diagnostic {
 
 /** LuaLS's findings by repo-relative file, from `--check` over the whole workspace (the config picks the files). */
 function check(): Map<string, Diagnostic[]> {
-  const scratch = mkdtempSync(join(tmpdir(), 'agentos-luals-'))
+  const scratch = mkdtempSync(join(tmpdir(), 'vos-luals-'))
   try {
     const run = spawnSync(
       luals as string,

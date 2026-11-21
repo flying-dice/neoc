@@ -1,10 +1,10 @@
 /**
  * Apps as plain Lua 5.1 (scripts/lua51.ts, .darklua.json, lua/prelude.lua):
  *  - always: the sources stay plain Lua 5.1 (no Luau syntax) and use only what Lua 5.1 and the prelude provide,
- *    every app bundles into one file whose only requires are runtime ones (`@agentos/*` and the host's `std:`, `lib:` and
+ *    every app bundles into one file whose only requires are runtime ones (`vos:*` and the host's `std:`, `lib:` and
  *    `vnd:` modules), non-ASCII text survives the bundle
  *    untouched, and the polyfills agree with a native Lua 5.3+ when one is installed;
- *  - the bundles are loaded and run by the Rust tests (`crates/agentos-lua/tests`, `crates/agentos-host/tests`:
+ *  - the bundles are loaded and run by the Rust tests (`crates/vos-lua/tests`, `crates/vos-host/tests`:
  *    neoc-vm's Luau, on the bundle `scripts/lua51-build.ts` makes), so no system Lua 5.1 is needed here.
  *    darklua is never skipped: without it these tests fail, as `build:apps` does.
  */
@@ -93,8 +93,8 @@ describe("Lua sources stay plain Lua 5.1", () => {
   }
 });
 
-/** What stays a `require` in a bundle: `@agentos/*` and the host's neoc modules, which the VM resolves at run time. */
-const RUNTIME_MODULE = /^(@agentos\/|std:|lib:|vnd:)/;
+/** What stays a `require` in a bundle: `vos:*` and the host's neoc modules, which the VM resolves at run time. */
+const RUNTIME_MODULE = /^(vos:|std:|lib:|vnd:)/;
 
 describe("darklua", () => {
   const darklua = findDarklua();
@@ -123,20 +123,20 @@ describe("darklua", () => {
   }
 
   test("leaves the host modules (std:, lib:, vnd:) as runtime requires and bundles relative ones", () => {
-    const scratch = mkdtempSync(join(tmpdir(), "agentos-lua51-modules-"));
+    const scratch = mkdtempSync(join(tmpdir(), "vos-lua51-modules-"));
     try {
       writeFileSync(join(scratch, "helper.lua"), "return { answer = 42 }\n");
       writeFileSync(
         join(scratch, "app.lua"),
         'local fs = require("std:fs")\nlocal json = require("lib:json")\nlocal yaml = require("vnd:serde_yaml")\n' +
-          'local app = require("@agentos/app")\nlocal helper = require("./helper")\nreturn { fs, json, yaml, app, helper }\n',
+          'local app = require("vos:app")\nlocal helper = require("./helper")\nreturn { fs, json, yaml, app, helper }\n',
       );
       const out = toLua51(darklua, join(scratch, "app.lua"));
       for (const name of [
         "std:fs",
         "lib:json",
         "vnd:serde_yaml",
-        "@agentos/app",
+        "vos:app",
       ]) {
         expect(out).toContain(`require("${name}")`);
       }

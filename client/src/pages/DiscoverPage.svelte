@@ -1,17 +1,17 @@
 <!--
   @page DiscoverPage — the landing window: a store-style "Discover" app in an
-  iPadOS split view, introducing AgentOS, the apps you can install and the agents on this host.
+  iPadOS split view, introducing vos, the apps you can install and the agents on this host.
 -->
 <script lang="ts">
-  import type { IconName } from '@agentos/ui'
-  import { Button, Icon, IconTile, Text } from '@agentos/ui/atoms'
-  import { IconButton, ListRow, SearchField } from '@agentos/ui/molecules'
-  import { ListSection, NavigationBar } from '@agentos/ui/organisms'
-  import { ScreenTemplate, SplitViewTemplate } from '@agentos/ui/templates'
+  import type { IconName } from '@vos/ui'
+  import { Button, Icon, IconTile, Text } from '@vos/ui/atoms'
+  import { IconButton, ListRow, SearchField } from '@vos/ui/molecules'
+  import { ListSection, NavigationBar } from '@vos/ui/organisms'
+  import { ScreenTemplate, SplitViewTemplate } from '@vos/ui/templates'
   import AgentListing from '../molecules/AgentListing.svelte'
   import AppListing from '../molecules/AppListing.svelte'
-  import { Alert } from '@agentos/ui/molecules'
-  import { TextInput } from '@agentos/ui/atoms'
+  import { Alert } from '@vos/ui/molecules'
+  import { TextInput } from '@vos/ui/atoms'
   import { windowManager as wm } from '../lib/windowManager.svelte'
   import { AGENTS_APP_ID, appOf } from '../lib/apps.svelte'
   import { host } from '../lib/host.svelte'
@@ -224,7 +224,7 @@
     <ListSection sidebar>
       <ListRow
         testid="discover-account"
-        title="AgentOS User"
+        title="vos User"
         subtitle={plural(host.agents.length, 'agent')}
       >
         {#snippet leading()}
@@ -239,7 +239,7 @@
   {#snippet detail()}
     <ScreenTemplate background="plain">
       {#snippet navigationBar()}
-        <NavigationBar testid="discover-nav" title="AgentOS">
+        <NavigationBar testid="discover-nav" title="vos">
           {#snippet trailing()}
             {#if agentsRunning}
               <Button testid="discover-open" size="small" capsule onclick={openAgents}>OPEN</Button>
@@ -253,7 +253,7 @@
         <div class="page">
           <section class="hero">
             <div class="hero-copy">
-              <Text style="caption1" weight="semibold" color="inherit">WELCOME TO AGENTOS</Text>
+              <Text style="caption1" weight="semibold" color="inherit">WELCOME TO VOS</Text>
               <h1>Your agents, on one desktop.</h1>
               <p>
                 Run research, code, inbox and ops agents side by side. Watch them work, step in when
@@ -445,7 +445,7 @@
                   <Text style="subheadline" color="secondary">
                     {query
                       ? `No agents match “${query}”.`
-                      : 'No agents on this host yet. Add one to agentos.toml.'}
+                      : 'No agents on this host yet. Add one to vos.toml.'}
                   </Text>
                 {/each}
               </div>

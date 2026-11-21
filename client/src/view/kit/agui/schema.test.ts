@@ -62,7 +62,7 @@ describe('lists the UI keys by an agent-chosen id are deduplicated at the edge',
       id: 'i',
       reason: 'tool_call',
       metadata: {
-        'agentos:options': [
+        'vos:options': [
           { optionId: 'ok', name: 'Allow', kind: 'allow_once' },
           { optionId: 'ok', name: 'Allow (again)', kind: 'allow_always' },
           { optionId: 'no', name: 'Deny', kind: 'reject_once' }

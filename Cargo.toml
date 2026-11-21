@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-# neoc's crates and AgentOS's crates share the repository. The neoc crates are edition 2024; the AgentOS crates
+# neoc's crates and vos's crates share the repository. The neoc crates are edition 2024; the vos crates
 # keep edition 2021 (set per crate) until they move deliberately.
 edition = "2024"
 version = "0.1.0"
@@ -16,15 +16,15 @@ publish = false
 [workspace.dependencies]
 neoc-vm = { path = "crates/neoc-vm" }
 # internal (path deps; the arrows in the dependency diagram)
-agentos-domain      = { path = "crates/agentos-domain" }
-agentos-application = { path = "crates/agentos-application" }
-agentos-lua        = { path = "crates/agentos-lua" }
-agentos-sqlite      = { path = "crates/agentos-sqlite" }
-agentos-fetch       = { path = "crates/agentos-fetch" }
-agentos-mcp         = { path = "crates/agentos-mcp" }
-agentos-acp         = { path = "crates/agentos-acp" }
-agentos-agui        = { path = "crates/agentos-agui" }
-agentos-http        = { path = "crates/agentos-http" }
+vos-domain      = { path = "crates/vos-domain" }
+vos-application = { path = "crates/vos-application" }
+vos-lua        = { path = "crates/vos-lua" }
+vos-sqlite      = { path = "crates/vos-sqlite" }
+vos-fetch       = { path = "crates/vos-fetch" }
+vos-mcp         = { path = "crates/vos-mcp" }
+vos-acp         = { path = "crates/vos-acp" }
+vos-agui        = { path = "crates/vos-agui" }
+vos-http        = { path = "crates/vos-http" }
 # external
 anyhow      = "1.0"
 async-trait = "0.1"
@@ -67,7 +67,7 @@ panic = "deny"
 module_name_repetitions = "allow"
 missing_errors_doc = "allow"
 must_use_candidate = "allow"
-# new in clippy 1.100's pedantic group: `assert!(x.is_empty())` is the idiom for the AgentOS tests; the lint's
+# new in clippy 1.100's pedantic group: `assert!(x.is_empty())` is the idiom for the vos tests; the lint's
 # `assert_eq!(x, [] as [T; 0])` needs a type annotation on every site
 assert_is_empty = "allow"
 
@@ -77,8 +77,8 @@ lto = "thin"
 codegen-units = 1
 strip = "symbols"
 
-# The AgentOS host: one small self-contained binary. `bun start` builds and runs it with
-# `cargo run --profile release-host -p agentos-host`.
+# The vos host: one small self-contained binary. `bun start` builds and runs it with
+# `cargo run --profile release-host -p vos-host`.
 [profile.release-host]
 inherits = "release"
 opt-level = "z"

@@ -92,7 +92,7 @@ describe('the shell channel', () => {
     const channel = createHostChannel(wire.transport)
     const error = await channel.call('app.list').catch((e: unknown) => e)
     expect(error).toBeInstanceOf(HostError)
-    expect((error as HostError).message).toBe('Not connected to AgentOS')
+    expect((error as HostError).message).toBe('Not connected to vos')
   })
 
   test('a call the host never answers times out with a HostError', async () => {

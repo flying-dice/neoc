@@ -6,7 +6,7 @@
   Atoms: Children.
 -->
 <script lang="ts">
-  import { Popover } from '@agentos/ui/molecules'
+  import { Popover } from '@vos/ui/molecules'
   import Children from '../atoms/Children.svelte'
   import { useView } from '../context'
   import { commonOf, oneOf } from '../props'

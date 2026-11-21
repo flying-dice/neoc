@@ -1,13 +1,13 @@
 /**
- * @agentos/ui — shared, non-component exports.
+ * @vos/ui — shared, non-component exports.
  *
  * Components are only reachable through their atomic layer entry point so
  * the layer of every import is explicit and checkable:
  *
- *   import { Button } from '@agentos/ui/atoms'
- *   import { ListRow } from '@agentos/ui/molecules'
- *   import { Window } from '@agentos/ui/organisms'
- *   import { DesktopTemplate } from '@agentos/ui/templates'
+ *   import { Button } from '@vos/ui/atoms'
+ *   import { ListRow } from '@vos/ui/molecules'
+ *   import { Window } from '@vos/ui/organisms'
+ *   import { DesktopTemplate } from '@vos/ui/templates'
  */
 export { icons, type IconName } from './icons'
 export type {

@@ -16,7 +16,7 @@
 
 ## Checked
 
-Ran the shell on the real host headless (Chromium 1280x800, 1024x768 for the panel), on ports of `AGENTOS_PORT_BASE=9900`:
+Ran the shell on the real host headless (Chromium 1280x800, 1024x768 for the panel), on ports of `VOS_PORT_BASE=9900`:
 
 - [x] Light and dark shell, pending `-` after `9 x 3`: outlined `-` key, caption `27 -`, display `27`; the body is dark in both.
 - [x] Error state: `Error` with `Can't divide by zero` above it (dark; the same text is asserted in J4).
@@ -129,8 +129,8 @@ Driven on fresh hosts with `e2e/tools/session.mjs` and a scripted probe (Chromiu
 ## How
 
 `bun run lint`, `bun run typecheck`, `bun run test`, `bun run test:e2e` (counts in the commit message and the report),
-`AGENTOS_PORT_BASE=9900`; changed and new baselines reviewed as a contact sheet; driven with `e2e/tools/session.mjs`
-and a scripted probe against the real host (`cargo run -p agentos-host`, ports 9921 to 9924, stopped afterwards); round 3 and the Split View and Slide Over pass ran on ports 9921 to 9926, all stopped afterwards.
+`VOS_PORT_BASE=9900`; changed and new baselines reviewed as a contact sheet; driven with `e2e/tools/session.mjs`
+and a scripted probe against the real host (`cargo run -p vos-host`, ports 9921 to 9924, stopped afterwards); round 3 and the Split View and Slide Over pass ran on ports 9921 to 9926, all stopped afterwards.
 
 ## Not checked
 

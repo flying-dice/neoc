@@ -7,7 +7,7 @@
   NavigationStack. Atoms: NavLevel, Children.
 -->
 <script lang="ts">
-  import { NavigationStack as Stack } from '@agentos/ui/organisms'
+  import { NavigationStack as Stack } from '@vos/ui/organisms'
   import { untrack } from 'svelte'
   import Children from '../atoms/Children.svelte'
   import NavLevel from '../atoms/NavLevel.svelte'

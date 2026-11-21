@@ -6,7 +6,7 @@
   whole row is the hit target for the label side. Atoms: Toggle, Text, Children.
 -->
 <script lang="ts">
-  import { Text, Toggle } from '@agentos/ui/atoms'
+  import { Text, Toggle } from '@vos/ui/atoms'
   import Children from '../atoms/Children.svelte'
   import { useView } from '../context'
   import { commonOf, oneOf, str } from '../props'

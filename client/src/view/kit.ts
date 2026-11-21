@@ -1,7 +1,7 @@
 /**
  * The kit registered by default: the tier-1 catalogue in two modules, one `register` call per component:
  * `kit/layout.ts` (layout, navigation, collections: wave B1a) and `kit/controls.ts` (controls, presentation, display:
- * wave B1b). Every adapter wraps an `@agentos/ui` component and passes the derived test id.
+ * wave B1b). Every adapter wraps an `@vos/ui` component and passes the derived test id.
  */
 import { registerChat } from './kit/chat'
 import { registerControls } from './kit/controls'

@@ -12,8 +12,8 @@
  *     never from its own layer or above. Atoms import no components at all.
  *  3. Each component starts with a `<!-- @<layer> Name — … -->` header that
  *     matches its folder, so the layer is visible when reading the file.
- *  4. Components from @agentos/ui are imported through their layer entry
- *     point (`@agentos/ui/atoms`, …), never by deep path.
+ *  4. Components from @vos/ui are imported through their layer entry
+ *     point (`@vos/ui/atoms`, …), never by deep path.
  *
  * Usage: bun scripts/check-atomic.ts
  */
@@ -40,7 +40,7 @@ function layerOfPath(path: string): Layer | null {
 }
 
 function layerOfSpecifier(spec: string, fromFile: string): Layer | 'deep-ui' | null {
-  const ui = spec.match(/^@agentos\/ui(?:\/(.*))?$/)
+  const ui = spec.match(/^@vos\/ui(?:\/(.*))?$/)
   if (ui) {
     const sub = ui[1]
     if (!sub) return null
@@ -93,7 +93,7 @@ for (const pattern of SOURCE_GLOBS) {
       const target = layerOfSpecifier(spec, abs)
       if (target === null) continue
       if (target === 'deep-ui') {
-        errors.push(`${rel}: deep import '${spec}' — use a layer entry point like '@agentos/ui/atoms'`)
+        errors.push(`${rel}: deep import '${spec}' — use a layer entry point like '@vos/ui/atoms'`)
         continue
       }
       if (rank(target) >= rank(layer)) {

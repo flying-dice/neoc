@@ -5,7 +5,7 @@
   as colour. The accessible name is the name (or `label`) plus the status. Atoms: Avatar.
 -->
 <script lang="ts">
-  import { Avatar } from '@agentos/ui/atoms'
+  import { Avatar } from '@vos/ui/atoms'
   import { useView } from '../context'
   import { commonOf, oneOf, str } from '../props'
   import type { AdapterProps } from '../registry'

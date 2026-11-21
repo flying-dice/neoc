@@ -1,26 +1,26 @@
 ---
 name: coding-styleguide
-description: Use while writing or changing any AgentOS code - Rust in crates/ (the hexagonal host), Lua apps in apps/ (the app API, table-call constructors, StyLua, lua-language-server), or the client and kit in TypeScript and Svelte 5 (client/, packages/ui, scripts). The house rules for where code belongs (domain, ports and use cases, adapters, the composition root; per-app VM isolation (not a security boundary); the managed renderer), types and expected errors, validating at trust boundaries, and Svelte 5 runes. Read references/rust.md, references/lua.md or references/typescript-svelte.md for the language details.
+description: Use while writing or changing any vos code - Rust in crates/ (the hexagonal host), Lua apps in apps/ (the app API, table-call constructors, StyLua, lua-language-server), or the client and kit in TypeScript and Svelte 5 (client/, packages/ui, scripts). The house rules for where code belongs (domain, ports and use cases, adapters, the composition root; per-app VM isolation (not a security boundary); the managed renderer), types and expected errors, validating at trust boundaries, and Svelte 5 runes. Read references/rust.md, references/lua.md or references/typescript-svelte.md for the language details.
 ---
 
-# AgentOS coding styleguide
+# vos coding styleguide
 
 Read the neighbouring code and its tests first and match them. Apply these rules to the code you are changing;
 don't migrate unrelated APIs, add dependencies or change configuration on the way.
 
 ## Where code belongs
 
-AgentOS is hexagonal. A Rust host runs Lua apps, each in its own VM, and serves a managed client; nothing crosses a process or
+vos is hexagonal. A Rust host runs Lua apps, each in its own VM, and serves a managed client; nothing crosses a process or
 crate seam except through a port or the protocol.
 
-| Role | AgentOS |
+| Role | vos |
 |---|---|
-| Domain | `crates/agentos-domain`: pure model (app ids, app refs and manifests, tool grants, agent identity, tools, notifications, the view tree and component schema, protocol messages). No I/O, no framework. |
-| Ports and use cases | `crates/agentos-application`: the port traits (`AppRuntime`, `DataStore` / `AppData`, `ToolRegistry`, `Notifier`, `AgentConnector`, `Fetcher`, `Clock`, ...) and the services that orchestrate domain objects through them. In-memory fakes in `testing`. |
-| Driven adapters | `agentos-lua` (per-app VMs), `agentos-sqlite`, `agentos-fetch`, `agentos-acp` (agent processes) |
-| Driving adapters | `agentos-http` (`/rpc`, pairing, guard, static client), `agentos-mcp` (`/mcp`), `agentos-agui` (`/agui`) |
-| Dev-time adapter | `agentos-codegen`: the Rust schema to `types/generated/*` and `docs/reference/components.md` |
-| Composition root | `agentos-host`: wiring only (build adapters, hand each to its port, mount routers) |
+| Domain | `crates/vos-domain`: pure model (app ids, app refs and manifests, tool grants, agent identity, tools, notifications, the view tree and component schema, protocol messages). No I/O, no framework. |
+| Ports and use cases | `crates/vos-application`: the port traits (`AppRuntime`, `DataStore` / `AppData`, `ToolRegistry`, `Notifier`, `AgentConnector`, `Fetcher`, `Clock`, ...) and the services that orchestrate domain objects through them. In-memory fakes in `testing`. |
+| Driven adapters | `vos-lua` (per-app VMs), `vos-sqlite`, `vos-fetch`, `vos-acp` (agent processes) |
+| Driving adapters | `vos-http` (`/rpc`, pairing, guard, static client), `vos-mcp` (`/mcp`), `vos-agui` (`/agui`) |
+| Dev-time adapter | `vos-codegen`: the Rust schema to `types/generated/*` and `docs/reference/components.md` |
+| Composition root | `vos-host`: wiring only (build adapters, hand each to its port, mount routers) |
 | Apps | `apps/<id>`: Lua packages; their only contract is the `app` table (`types/generated/luals/`) |
 | Client | `client/`: the shell and the renderer (`client/src/view`); it renders view trees and runs no app code |
 | Kit | `packages/ui`: Svelte components in atomic layers, tokens, stories; knows nothing about apps |
@@ -45,7 +45,7 @@ case in application, the adapter, the codegen output (`bun run codegen`), and te
 change: call it out in the MR.
 
 UI layering is atomic (`docs/design/DESIGN_LANGUAGE.md`, `bun run lint:atomic`): atoms < molecules < organisms <
-templates < pages, each importing only strictly lower layers. Reach for `@agentos/ui` first; a generic need goes into the
+templates < pages, each importing only strictly lower layers. Reach for `@vos/ui` first; a generic need goes into the
 kit (with a story and a required `testid` prop), never into one renderer adapter or app.
 
 ## Types and errors, in short

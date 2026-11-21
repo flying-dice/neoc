@@ -1,8 +1,8 @@
 {
-  "name": "@agentos/ui",
+  "name": "@vos/ui",
   "version": "0.1.0",
   "private": true,
-  "description": "AgentOS UI kit \u2014 iOS / iPadOS (pre-Liquid Glass) design language for Svelte 5",
+  "description": "vos UI kit \u2014 iOS / iPadOS (pre-Liquid Glass) design language for Svelte 5",
   "type": "module",
   "svelte": "./src/index.ts",
   "types": "./src/index.ts",

@@ -1,7 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect } from 'storybook/test'
-  import AppWindow from '@agentos/storybook/AppWindow.svelte'
+  import AppWindow from '@vos/storybook/AppWindow.svelte'
   import FilesPage from './FilesPage.svelte'
   import { apps } from '../lib/apps.svelte'
 

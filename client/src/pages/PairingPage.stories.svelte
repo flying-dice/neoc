@@ -47,7 +47,7 @@
       ok: false,
       reason: 'invalid',
       message:
-        'That code did not work. It may be mistyped, already used, or older than 10 minutes. Run “agentos-host pair” for a new one.'
+        'That code did not work. It may be mistyped, already used, or older than 10 minutes. Run “vos pair” for a new one.'
     })
   }}
   play={async (context) => {

@@ -8,7 +8,7 @@
  * person who tabbed to a key and then types a sum is typing, not navigating: Enter finishes the sum.
  */
 
-import { isTypingKey } from '@agentos/ui'
+import { isTypingKey } from '@vos/ui'
 
 export type Modality = 'keyboard' | 'pointer' | 'typing'
 

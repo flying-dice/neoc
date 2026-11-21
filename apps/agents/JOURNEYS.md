@@ -10,7 +10,7 @@ so each test starts its own chat and finds it by what it said.
 
 Beyond these journeys: the transcript and session bar rendering is covered by the "Renderer/Chat transcript" stories and
 `client/.../kit/agui/*.test.ts`; the roster, thread source, starting and titling a chat by
-`crates/agentos-host/tests/agents_app.rs`; a restarted host keeping the transcript by the host's own tests (not drivable
+`crates/vos-host/tests/agents_app.rs`; a restarted host keeping the transcript by the host's own tests (not drivable
 on the shared e2e host).
 
 | Id  | Who / goal | Starts at | Done when |

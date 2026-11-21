@@ -1,4 +1,4 @@
-import type { IconName } from '@agentos/ui'
+import type { IconName } from '@vos/ui'
 import { iconOf, tintBackground, type AppSummary } from '../shell/hostApi'
 
 /** Apps whose pages still ship with the shell. */

@@ -1,7 +1,7 @@
-# @agentos/client
+# @vos/client
 
-The AgentOS client: an installable PWA (Vite + Svelte 5) that is the iPadOS-style shell. It talks to the Rust host
-(`crates/agentos-host`) over one WebSocket with JSON-RPC 2.0 (`/rpc`), pairs through `/session` and `/pair`, and renders
+The vos client: an installable PWA (Vite + Svelte 5) that is the iPadOS-style shell. It talks to the Rust host
+(`crates/vos-host`) over one WebSocket with JSON-RPC 2.0 (`/rpc`), pairs through `/session` and `/pair`, and renders
 the windows of the Lua apps installed on the host with the managed renderer below. It runs no app code.
 
 ```sh
@@ -15,7 +15,7 @@ for the host.
 ## The shell (`src`)
 
 ```
-boot.ts                 start: GET /session, then the pairing screen or one Session; exposes window.__agentos (tests)
+boot.ts                 start: GET /session, then the pairing screen or one Session; exposes window.__vos (tests)
 App.svelte              composition root: pairing gate, built-in pages, ViewWindow for installed apps
 lib/host.svelte.ts      the host connection: phase (checking, unpaired, connecting, ready), the one Session, the app list,
                         window.open requests, re-pairing after a revoke
@@ -28,7 +28,7 @@ shell/results.ts        zod schemas for what the host answers the shell (app.lis
 shell/links.ts          opening a link the person confirmed (web in a new tab, mailto to the mail client); the
                         confirmation itself is ViewHost's (view/core/link.ts describes the link: host and full URL)
 shell/pairing.ts        GET /session, POST /pair and their messages (wrong code, rate limit, unreachable)
-shell/hostApi.ts        the wire types of app.* / agents.* / host.devices.*: re-exported from types/generated/agentos.ts
+shell/hostApi.ts        the wire types of app.* / agents.* / host.devices.*: re-exported from types/generated/vos.ts
 shell/fakeHost.ts       a fake of those methods for stories
 organisms/ViewWindow    an installed app's window: view.open on mount, view.close on destroy, <ViewHost> in between
 pages/                  PairingPage, DiscoverPage (apps: install, enable, disable, remove, add by URL), SettingsPage
@@ -45,12 +45,12 @@ streaming over AG-UI (`/agui`).
 ## The managed renderer (`src/view`)
 
 The client half of the server-driven UI (`docs/architecture/ui-system.md`, sections 2 and 3). The host owns truth and
-structure; this renders view trees with the `@agentos/ui` kit, holds client-managed state and drafts, and runs **no app
+structure; this renders view trees with the `@vos/ui` kit, holds client-managed state and drafts, and runs **no app
 code**. The shell's `ViewWindow` organism hosts it for every installed app.
 
 ```
 protocol.ts      every wire type (view.tree/ops, data.patch, requests, actions): re-exported from the types generated
-                 from the Rust schema (`types/generated/agentos.ts`, `bun run codegen`). The only module that
+                 from the Rust schema (`types/generated/vos.ts`, `bun run codegen`). The only module that
                  reaches the generated file.
 rpc/             peer.ts  JSON-RPC 2.0 peer, by-name params          websocket.ts  /rpc transport, backoff + jitter
 core/            framework-free, plain objects under bun test; Svelte hands it a $state store

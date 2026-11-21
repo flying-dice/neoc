@@ -73,10 +73,10 @@ test.describe('Settings journeys', () => {
     await expect(row).toContainText('Answers by script, for tests')
   })
 
-  test('S6: find out which version of AgentOS and the host this is', async ({ page }) => {
+  test('S6: find out which version of vos and the host this is', async ({ page }) => {
     await openDesktop(page, { open: ['settings'] })
     await page.getByTestId('settings-pane-general').click()
-    await expect(page.getByTestId('settings-about-name')).toContainText('AgentOS')
+    await expect(page.getByTestId('settings-about-name')).toContainText('vos')
     await expect(page.getByTestId('settings-about-version')).toContainText('0.1.0')
     // the host answered with its own version, not the "—" placeholder
     await expect(page.getByTestId('settings-about-host')).toContainText(/\d+\.\d+\.\d+/)

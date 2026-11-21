@@ -1,6 +1,6 @@
 # The Calculator: the reference app
 
-The smallest app that uses every part of an AgentOS app: shared state, a view built from kit components, keyboard
+The smallest app that uses every part of a vos app: shared state, a view built from kit components, keyboard
 shortcuts, agent tools and a little durable data. Read it next to [`apps/README.md`](../README.md) (the full `app`
 API and "Adding an app"); copy the folder to start a new app.
 
@@ -16,7 +16,7 @@ history. Both use **one calculator** however many windows are open.
 | `calc.lua` | Pure arithmetic with no UI and no `app`: `evaluate` (the expression parser), `combine` (one operation, as the keypad chains), `reason` (the sentence to show for a failure), `format`/`formatEntry` (what the display shows). |
 | `JOURNEYS.md` | Seven key user journeys, as goals with an observable "Done when". |
 | `e2e/journeys.spec.ts` | Their automated twins (one test per id), against the real host. Not shipped. |
-| `../../crates/agentos-lua/tests/calculator_app.rs` | The Rust tests of the keypad and the tools, run against the built package. |
+| `../../crates/vos-lua/tests/calculator_app.rs` | The Rust tests of the keypad and the tools, run against the built package. |
 
 It is plain Lua 5.1. `bun run build:apps` bundles `app.lua` and the `calc.lua` it `require`s into one file with
 darklua; `app.json` and `app.manifest` must agree on `id`, `icon` and `tint`.
@@ -54,7 +54,7 @@ The keypad is a small state machine, in the iPadOS Calculator's way:
 
 ## View: `app.window` and the kit
 
-`render` is a pure function of `s`: it builds a tree of `@agentos/ui` constructors (`ui.VStack`, `ui.Text`,
+`render` is a pure function of `s`: it builds a tree of `vos:ui` constructors (`ui.VStack`, `ui.Text`,
 `ui.Grid`, `ui.Button`...) and the client draws it with the kit in `packages/ui`. The app picks semantic tokens only
 (`style = "display"`, `fill = "gray4"`, `foreground = "secondary"`); it never styles, and it ships no client code. The
 components are listed in [`docs/reference/components.md`](../../docs/reference/components.md).
@@ -104,14 +104,14 @@ already installed on the e2e host). Save `app.lua` or `calc.lua` and the running
 ```sh
 bun run lint:lua       # lua-language-server against the generated LuaCATS API (strict)
 bun run lint:stylua    # formatting; `bun run format` fixes it
-cargo nextest run -p agentos-lua --test calculator_app     # logic, keypad and tools (builds the package first)
+cargo nextest run -p vos-lua --test calculator_app     # logic, keypad and tools (builds the package first)
 bun run test:e2e --project=journeys --grep Calculator      # the seven journeys, headless, against the real host
 bun run test:e2e                                           # the whole gate's UI half, with the snapshots
 ```
 
 The Rust tests tap the real nodes `render` returned (`Keypad::press("1 2 add 7 eq")`), then read the display and caption
 back from the next render, so they cover the handlers and the view as well as `calc.lua`. The journeys press the same
-keys in a browser, once per journey id. Set `AGENTOS_PORT_BASE=9100` to run the e2e suite in a second worktree.
+keys in a browser, once per journey id. Set `VOS_PORT_BASE=9100` to run the e2e suite in a second worktree.
 
 ## Extending it
 

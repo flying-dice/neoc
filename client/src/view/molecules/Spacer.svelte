@@ -1,6 +1,6 @@
 <!-- @molecule Spacer — flexible empty space; `min` is its smallest size in pt. Atoms: Spacer. -->
 <script lang="ts">
-  import { Spacer } from '@agentos/ui/atoms'
+  import { Spacer } from '@vos/ui/atoms'
   import { useView } from '../context'
   import { commonOf } from '../props'
   import type { AdapterProps } from '../registry'

@@ -1,8 +1,8 @@
 <!-- @page FilesPage — workspace file browser (placeholder data). -->
 <script lang="ts">
-  import { ListRow, SearchField, IconButton } from '@agentos/ui/molecules'
-  import { ListSection, NavigationBar } from '@agentos/ui/organisms'
-  import { ScreenTemplate } from '@agentos/ui/templates'
+  import { ListRow, SearchField, IconButton } from '@vos/ui/molecules'
+  import { ListSection, NavigationBar } from '@vos/ui/organisms'
+  import { ScreenTemplate } from '@vos/ui/templates'
 
   let query = $state('')
 
@@ -32,7 +32,7 @@
       <ListSection header="Locations">
         <ListRow
           testid="files-location-drive"
-          title="AgentOS Drive"
+          title="vos Drive"
           icon="folder"
           iconColor="var(--ios-blue)"
           chevron

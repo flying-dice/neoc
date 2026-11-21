@@ -7,32 +7,32 @@ function workspace(
   without: string[] = [],
 ): WorkspaceCrate[] {
   const edges: Record<string, string[]> = {
-    "agentos-domain": [],
-    "agentos-application": ["agentos-domain"],
-    "agentos-lua": ["agentos-domain", "agentos-application", "neoc-vm"],
+    "vos-domain": [],
+    "vos-application": ["vos-domain"],
+    "vos-lua": ["vos-domain", "vos-application", "neoc-vm"],
     "neoc-vm": ["mlua", "rusqlite"],
     neoc: ["neoc-vm", "mlua"],
-    "agentos-sqlite": ["agentos-domain", "agentos-application", "rusqlite"],
-    "agentos-fetch": ["agentos-application"],
-    "agentos-mcp": ["agentos-domain", "agentos-application", "rmcp", "axum"],
-    "agentos-acp": [
-      "agentos-domain",
-      "agentos-application",
+    "vos-sqlite": ["vos-domain", "vos-application", "rusqlite"],
+    "vos-fetch": ["vos-application"],
+    "vos-mcp": ["vos-domain", "vos-application", "rmcp", "axum"],
+    "vos-acp": [
+      "vos-domain",
+      "vos-application",
       "agent-client-protocol",
     ],
-    "agentos-agui": ["agentos-domain", "agentos-application", "axum"],
-    "agentos-http": ["agentos-domain", "agentos-application", "axum"],
-    "agentos-codegen": ["agentos-domain"],
-    "agentos-host": [
-      "agentos-domain",
-      "agentos-application",
-      "agentos-lua",
-      "agentos-sqlite",
-      "agentos-fetch",
-      "agentos-mcp",
-      "agentos-acp",
-      "agentos-agui",
-      "agentos-http",
+    "vos-agui": ["vos-domain", "vos-application", "axum"],
+    "vos-http": ["vos-domain", "vos-application", "axum"],
+    "vos-codegen": ["vos-domain"],
+    "vos-host": [
+      "vos-domain",
+      "vos-application",
+      "vos-lua",
+      "vos-sqlite",
+      "vos-fetch",
+      "vos-mcp",
+      "vos-acp",
+      "vos-agui",
+      "vos-http",
       "axum",
       "axum-server",
     ],
@@ -56,45 +56,45 @@ describe("the crate-direction gate", () => {
 
   test("refuses an edge from one product into the other, and the host reaching the VM", () => {
     expect(
-      findProblems(workspace({ neoc: [{ name: "agentos-lua", kind: null }] }))
+      findProblems(workspace({ neoc: [{ name: "vos-lua", kind: null }] }))
         .problems,
     ).toEqual([
-      "neoc -> agentos-lua: internal edge not allowed (allowed: neoc-vm)",
+      "neoc -> vos-lua: internal edge not allowed (allowed: neoc-vm)",
     ]);
     expect(
       findProblems(
-        workspace({ "neoc-vm": [{ name: "agentos-domain", kind: null }] }),
+        workspace({ "neoc-vm": [{ name: "vos-domain", kind: null }] }),
       ).problems,
     ).toEqual([
-      "neoc-vm -> agentos-domain: internal edge not allowed (allowed: none)",
+      "neoc-vm -> vos-domain: internal edge not allowed (allowed: none)",
     ]);
     const host = findProblems(
-      workspace({ "agentos-host": [{ name: "neoc-vm", kind: null }] }),
+      workspace({ "vos-host": [{ name: "neoc-vm", kind: null }] }),
     ).problems;
     expect(host).toHaveLength(1);
     expect(host[0]).toStartWith(
-      "agentos-host -> neoc-vm: internal edge not allowed",
+      "vos-host -> neoc-vm: internal edge not allowed",
     );
   });
 
   test("refuses an adapter that reaches another adapter", () => {
     const problems = findProblems(
-      workspace({ "agentos-http": [{ name: "agentos-sqlite", kind: null }] }),
+      workspace({ "vos-http": [{ name: "vos-sqlite", kind: null }] }),
     ).problems;
     expect(problems).toHaveLength(1);
     expect(problems[0]).toStartWith(
-      "agentos-http -> agentos-sqlite: internal edge not allowed",
+      "vos-http -> vos-sqlite: internal edge not allowed",
     );
   });
 
   test("holds a framework crate to its home as a normal or a build dependency, not as a test dependency", () => {
     const fetchAxum = (kind: string | null) =>
-      workspace({ "agentos-fetch": [{ name: "axum", kind }] });
+      workspace({ "vos-fetch": [{ name: "axum", kind }] });
     expect(findProblems(fetchAxum(null)).problems).toEqual([
-      "agentos-fetch -> axum: framework crate is not allowed here as a normal dependency (allowed in: agentos-http, agentos-mcp, agentos-agui, agentos-host)",
+      "vos-fetch -> axum: framework crate is not allowed here as a normal dependency (allowed in: vos-http, vos-mcp, vos-agui, vos-host)",
     ]);
     expect(findProblems(fetchAxum("build")).problems).toEqual([
-      "agentos-fetch -> axum: framework crate is not allowed here as a build dependency (allowed in: agentos-http, agentos-mcp, agentos-agui, agentos-host)",
+      "vos-fetch -> axum: framework crate is not allowed here as a build dependency (allowed in: vos-http, vos-mcp, vos-agui, vos-host)",
     ]);
     expect(findProblems(fetchAxum("dev")).problems).toEqual([]);
     expect(
@@ -103,10 +103,10 @@ describe("the crate-direction gate", () => {
     ).toHaveLength(1);
     expect(
       findProblems(
-        workspace({ "agentos-lua": [{ name: "tonic", kind: null }] }),
+        workspace({ "vos-lua": [{ name: "tonic", kind: null }] }),
       ).problems,
     ).toEqual([
-      "agentos-lua -> tonic: framework crate is not allowed here as a normal dependency (allowed in: none)",
+      "vos-lua -> tonic: framework crate is not allowed here as a normal dependency (allowed in: none)",
     ]);
   });
 
@@ -114,10 +114,10 @@ describe("the crate-direction gate", () => {
     // not a framework crate, so only the allow-list rule can fire
     expect(
       findProblems(
-        workspace({ "agentos-domain": [{ name: "regex", kind: null }] }),
+        workspace({ "vos-domain": [{ name: "regex", kind: null }] }),
       ).problems,
     ).toEqual([
-      "agentos-domain -> regex: external crate is not on the core allow-list",
+      "vos-domain -> regex: external crate is not on the core allow-list",
     ]);
   });
 
@@ -125,13 +125,13 @@ describe("the crate-direction gate", () => {
     // tokio is on neither the allow-list nor the frameworks' homes' table, so the allow-list rule and the
     // framework-in-core rule both fire: each message must be there
     const problems = findProblems(
-      workspace({ "agentos-application": [{ name: "tokio", kind: null }] }),
+      workspace({ "vos-application": [{ name: "tokio", kind: null }] }),
     ).problems;
     expect(problems).toContain(
-      "agentos-application -> tokio: external crate is not on the core allow-list",
+      "vos-application -> tokio: external crate is not on the core allow-list",
     );
     expect(problems).toContain(
-      "agentos-application -> tokio: framework or runtime crate in the core",
+      "vos-application -> tokio: framework or runtime crate in the core",
     );
     expect(problems).toHaveLength(2);
   });
@@ -141,8 +141,8 @@ describe("the crate-direction gate", () => {
     expect(findProblems(stray).problems).toEqual([
       "mystery: workspace crate is not placed (add it to INTERNAL in scripts/check-deps.ts)",
     ]);
-    expect(findProblems(workspace({}, ["agentos-codegen"])).problems).toEqual([
-      "agentos-codegen: listed in INTERNAL but not in the workspace",
+    expect(findProblems(workspace({}, ["vos-codegen"])).problems).toEqual([
+      "vos-codegen: listed in INTERNAL but not in the workspace",
     ]);
   });
 });

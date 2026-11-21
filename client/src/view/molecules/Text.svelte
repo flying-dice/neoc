@@ -5,7 +5,7 @@
   `selectable` allows copying, `digits = tabular` keeps numbers from jittering. Atoms: Text.
 -->
 <script lang="ts">
-  import { Text } from '@agentos/ui/atoms'
+  import { Text } from '@vos/ui/atoms'
   import { useView } from '../context'
   import { commonOf, oneOf, str } from '../props'
   import type { AdapterProps } from '../registry'

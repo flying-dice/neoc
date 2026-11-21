@@ -1,11 +1,11 @@
-# Building AgentOS apps
+# Building vos apps
 
-An AgentOS app is a **server-side package, written in plain Lua 5.1**, that runs inside the Rust host. It holds its state, data, tools,
+A vos app is a **server-side package, written in plain Lua 5.1**, that runs inside the Rust host. It holds its state, data, tools,
 notifications and a description of its UI. It ships no client code: the managed client renders the view trees the app
 produces and sends events back.
 
 ```
- Browser: managed client                         Rust host (crates/agentos-host)
+ Browser: managed client                         Rust host (crates/vos-host)
  ┌──────────────────────────────┐  JSON-RPC/WS   ┌─────────────────────────────────────────┐
  │ shell: windows, Dock         │◀──── /rpc ────▶│ one Lua VM per app (isolated)          │
  │ renderer: view trees → kit   │                │   app.window → view tree → client       │
@@ -68,7 +68,7 @@ permissions: a `permissions` key in `app.json` or in `app.manifest` (from before
 plus the app as **one bundled Lua 5.1 file** (`app.lua`) and its migrations, and one `dist/apps/registry.json`
 (`{ "apps": ["calculator/0.1.0/app-ref.json", ...] }`). Apps are plain Lua 5.1 and run as written:
 [darklua](https://github.com/seaofvoices/darklua) (`.darklua.json`) only bundles: it inlines the package's relative
-`require`s into the one file and strips comments; `require("@agentos/app")` and `require("@agentos/ui")` stay runtime
+`require`s into the one file and strips comments; `require("vos:app")` and `require("vos:ui")` stay runtime
 calls. The ref's `manifest.main` is the bundled file; the separate source modules are not shipped. Two things to know
 when writing an app: write Lua 5.1 (`unpack`, `string.gsub`, `x = x + 1`, `a and b or c`: no `+=`, `continue`,
 backtick strings, `if` expressions or `for k, v in t do`), and use only the library members Lua 5.1 and
@@ -79,11 +79,11 @@ backtick strings, `if` expressions or `for k, v in t do`), and use only the libr
 modules is shifted by the size of the modules bundled before it (the Calculator: `calc.lua` +2, `app.lua` +183).
 
 - **A registry** is a list of app-ref URLs. The host's default registry is `dist/apps/registry.json` over `file://`
-  when it exists; `registries` in `agentos.toml` (or `AGENTOS_REGISTRIES`) adds more. Discover lists what they offer.
+  when it exists; `registries` in `vos.toml` (or `VOS_REGISTRIES`) adds more. Discover lists what they offer.
 - **An app is installed from an app ref URL** (`file://`, `http://`, `https://`): the host fetches it, verifies every
   file's sha256, runs the migrations, loads the app in its VM and publishes its tools. Discover previews an app ref
   first (manifest, source host) without running anything, then asks for confirmation. `install` in
-  `agentos.toml` makes sure listed app refs are installed at every start.
+  `vos.toml` makes sure listed app refs are installed at every start.
 - **Lifecycle:** install, enable, disable (VM unloaded, tools withdrawn, data kept), delete data, uninstall. At start
   the host re-fetches and re-verifies every installed app. An app that fails to load is marked failed and the rest
   start. All of it is in `docs/architecture/host-stack.md` ("Apps: lifecycle").
@@ -97,17 +97,17 @@ modules is shifted by the size of the modules bundled before it (the Calculator:
 An app file starts like this (the Calculator):
 
 ```lua
-local app = require("@agentos/app")   -- the host module; also a global named `app`
-local ui = require("@agentos/ui")     -- component constructors and helpers, generated from the component schema
+local app = require("vos:app")   -- the host module; also a global named `app`
+local ui = require("vos:ui")     -- component constructors and helpers, generated from the component schema
 local calc = require("./calc")        -- a module of this package: inlined into the bundle at build time
 ```
 
-In the source, `require` accepts `./x`, `../x` (bundled into the one built file when the app is built), `@agentos/app`
-and `@agentos/ui`. At run time the built file can `require` `@agentos/app`, `@agentos/ui` and the host's `std:`, `lib:` and `vnd:` modules
+In the source, `require` accepts `./x`, `../x` (bundled into the one built file when the app is built), `vos:app`
+and `vos:ui`. At run time the built file can `require` `vos:app`, `vos:ui` and the host's `std:`, `lib:` and `vnd:` modules
 (the build leaves those as `require` calls, see "Every library module is yours" below), and never the filesystem
 (`require("./x")` in a running app is an error that says so). The
 LuaCATS definitions in `types/generated/luals/` (generated, `---@meta`) are the contract: lua-language-server reads
-them through `.luarc.json` (so an editor with the Lua extension knows `app`, `ui.*` and `require("@agentos/ui")`), and
+them through `.luarc.json` (so an editor with the Lua extension knows `app`, `ui.*` and `require("vos:ui")`), and
 `bun run lint:lua` checks every app against them. Annotations in app code (`---@param`, `---@type`) are optional;
 write one where it helps a reader or silences a false alarm. The `std:`, `lib:` and `vnd:` modules are **not typed
 here**: neoc describes them for luau-lsp (`types/neoc.d.luau`), not for lua-language-server, so `require("std:fs")` is
@@ -286,7 +286,7 @@ it in the app's own VM and keeps it going for as long as the app is loaded.
   end)
   ```
 
-  Use `task.delay` for a job that runs once later. `crates/agentos-host/tests/fixtures/ticker` is a complete example
+  Use `task.delay` for a job that runs once later. `crates/vos-host/tests/fixtures/ticker` is a complete example
   (a loop, a window that shows it, a tool that reads it).
 - **Closing a window leaves the work running.** A window is a view of the app, not the app. Tools, tasks and servers
   go on with no window open, and a window opened later shows the state as it is by then.
@@ -304,7 +304,7 @@ it in the app's own VM and keeps it going for as long as the app is loaded.
 - **Apps keep their Lua state apart; that is not a security boundary.** One Lua VM per app (Luau, running the app's Lua 5.1 source), and one
   **environment table** per app (its globals are its own; two apps share no Lua state, not even the module tables
   below). Through `std:fs` and `vnd:rusqlite` an app can still read and write other apps' data and the host's own
-  database under `~/.agentos`, and a runaway app (a loop that never yields, a `std:thread` worker) can hang the host
+  database under `~/.vos`, and a runaway app (a loop that never yields, a `std:thread` worker) can hang the host
   and outlive its uninstall: unloading stops an app's work only where it yields to the host. The base functions are
   an allow-list: no `load`, `loadstring`, `dofile`, `loadfile`, `getfenv`, `setfenv`, `newproxy`, `module`,
   `collectgarbage`, `print`, no `string.dump`, no `io`, `os`, `debug` or `package`. Chunks load as text only (Luau
@@ -313,8 +313,8 @@ it in the app's own VM and keeps it going for as long as the app is loaded.
   so an app cannot change what other code in its VM sees. `math.random` has a generator of its own per VM, seeded by
   the host. The functions themselves are Lua's own (C `string` and `table`, including `table.sort` and the pattern
   matcher).
-- **Every library module is yours, with no permission to ask for.** Next to `require("@agentos/app")` and
-  `require("@agentos/ui")`, an app can `require("std:fs")`, `require("lib:json")`, `require("vnd:hyper")` and the rest
+- **Every library module is yours, with no permission to ask for.** Next to `require("vos:app")` and
+  `require("vos:ui")`, an app can `require("std:fs")`, `require("lib:json")`, `require("vnd:hyper")` and the rest
   of `neoc-vm`'s modules, spelled as neoc spells them: `std:` (collections, env, fs, io, net, task, thread, time),
   `lib:` (archive, args, base64, cache, chrono, compress, crypto, csv, diff, glob, hash, hex, hmac, html, http, ini,
   json, log, mime, pkey, random, regex, semver, template, tempfile, text, unicode, url, vcr) and `vnd:` (hyper,
@@ -390,12 +390,12 @@ it in the app's own VM and keeps it going for as long as the app is loaded.
    Every interactive node gets a `key`; every tool gets a described schema and a `readOnly` that is true when the tool
    does not write.
 4. **Make it clean.** `bun run lint:lua` (`lua-language-server --check` against the generated definitions, which
-   cover `@agentos/app`, `@agentos/ui` and every `std:`, `lib:` and `vnd:` module you `require`) and
+   cover `vos:app`, `vos:ui` and every `std:`, `lib:` and `vnd:` module you `require`) and
    `bun run lint:stylua` pass; `bun run format` fixes formatting. Fix what the checker reports, do not silence it.
-5. **Test the logic and tools in Rust.** Add a test beside `crates/agentos-lua/tests/calculator_app.rs` that loads the
+5. **Test the logic and tools in Rust.** Add a test beside `crates/vos-lua/tests/calculator_app.rs` that loads the
    shipped package under the real runtime, calls its tools (`call_tool`) and asserts results and
-   `readOnly`. A host-level test (`crates/agentos-host/tests/agents_app.rs`) is for what needs the data layer, views or
-   agents. Run `cargo nextest run -p agentos-lua`.
+   `readOnly`. A host-level test (`crates/vos-host/tests/agents_app.rs`) is for what needs the data layer, views or
+   agents. Run `cargo nextest run -p vos-lua`.
 6. **Write `JOURNEYS.md`** (4 to 8 journeys: id, who and what they want, start state, an observable "Done when"; never
    steps, including an error case, a minimum-window case, a keyboard-only case and, where it applies, an agent driving
    the app) **and `e2e/journeys.spec.ts`** with a test of the same id per journey, driven by test ids on the real host
@@ -410,7 +410,7 @@ it in the app's own VM and keeps it going for as long as the app is loaded.
    and `bun run test:e2e` on a Mac (update the baselines deliberately and look at them).
 9. **Design it.** Run the `app-design` loop (`ux-research` rounds) until the exit criteria hold, with the report at
    `docs/ux/<id>/round-<n>.md`.
-10. **Ship it** through a PR with the full gate and the readiness table in `agentos-code-review` §6. Until then the app
+10. **Ship it** through a PR with the full gate and the readiness table in `vos-code-review` §6. Until then the app
     stays in its MR. To change a released app, bump `version` in `app.json`.
 
 ## Rules that are enforced

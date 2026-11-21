@@ -356,7 +356,7 @@ describe('the api before and after a connection', () => {
     const s = setup()
     const error = await s.host.api.call('app.list').catch((e: unknown) => e)
     expect(error).toBeInstanceOf(HostError)
-    expect((error as HostError).message).toBe('Not connected to AgentOS')
+    expect((error as HostError).message).toBe('Not connected to vos')
   })
 
   test('a story can supply how a window’s view opens (it fails, or never answers) without a session', async () => {

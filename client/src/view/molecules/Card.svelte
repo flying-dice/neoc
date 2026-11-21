@@ -3,7 +3,7 @@
   material). Atoms: Card, Children.
 -->
 <script lang="ts">
-  import { Card } from '@agentos/ui/atoms'
+  import { Card } from '@vos/ui/atoms'
   import Children from '../atoms/Children.svelte'
   import { useView } from '../context'
   import { commonOf, oneOf } from '../props'

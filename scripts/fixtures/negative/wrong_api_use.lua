@@ -1,7 +1,7 @@
 -- A deliberately wrong app. `bun run lint:lua` requires lua-language-server to report a diagnostic on every line
 -- marked `expect-error`, and none elsewhere. If the generated definitions (types/generated/luals) stop parsing or
 -- stop constraining `app`, these lines check clean and the gate fails.
-local app = require("@agentos/app")
+local app = require("vos:app")
 app.notify { title = 123 } -- expect-error
 app.db:exec("DELETE FROM notes", "not a list") -- expect-error
 app.nope() -- expect-error

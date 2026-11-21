@@ -8,12 +8,12 @@
  *   domain      -> nothing internal; external: serde, serde_json, sha2, thiserror (+ ts-rs, schemars)
  *   application -> domain; external: async-trait, futures-channel, futures-util (its runtime-free `lock::Mutex`), parking_lot, serde_json, sha2, thiserror, tracing
  *   adapters    -> application, domain; never each other
- *   lua         -> application, domain, neoc-vm (the one agentos crate that may use the Lua VM library)
+ *   lua         -> application, domain, neoc-vm (the one vos crate that may use the Lua VM library)
  *   neoc-vm     -> nothing internal (the Lua VM library; the lua adapter and the `neoc` CLI may depend on it)
- *   neoc        -> neoc-vm only (the CLI over the VM; it never reaches into the agentos crates)
+ *   neoc        -> neoc-vm only (the CLI over the VM; it never reaches into the vos crates)
  *   host        -> every adapter, never neoc-vm
  *
- * The workspace holds two products, the agentos hexagon and neoc (`neoc-vm` and the `neoc` CLI); the lists below
+ * The workspace holds two products, the vos hexagon and neoc (`neoc-vm` and the `neoc` CLI); the lists below
  * keep each side's edges inside its own. A crate that is not in INTERNAL fails the gate, so a new crate has to be
  * placed on purpose.
  * `cargo deny` (deny.toml `bans` with `wrappers`) is the second line of defence for the framework crates.
@@ -26,39 +26,39 @@
 import { spawnSync } from 'node:child_process'
 
 const INTERNAL: Record<string, string[]> = {
-  'agentos-domain': [],
-  'agentos-application': ['agentos-domain'],
+  'vos-domain': [],
+  'vos-application': ['vos-domain'],
   // The Lua adapter runs apps (plain Lua 5.1 source) on top of the Lua VM library below.
-  'agentos-lua': ['agentos-domain', 'agentos-application', 'neoc-vm'],
+  'vos-lua': ['vos-domain', 'vos-application', 'neoc-vm'],
   // The Lua VM (Luau): a support library, not an adapter. It depends on no other crate here, and among the
-  // agentos crates only the Lua adapter may depend on it (the one place a script engine is wired to a port), so
+  // vos crates only the Lua adapter may depend on it (the one place a script engine is wired to a port), so
   // the VM stays swappable. The `neoc` CLI is its other client.
   'neoc-vm': [],
   neoc: ['neoc-vm'],
-  'agentos-sqlite': ['agentos-domain', 'agentos-application'],
-  'agentos-fetch': ['agentos-application'],
-  'agentos-mcp': ['agentos-domain', 'agentos-application'],
-  'agentos-acp': ['agentos-domain', 'agentos-application'],
-  'agentos-agui': ['agentos-domain', 'agentos-application'],
-  'agentos-http': ['agentos-domain', 'agentos-application'],
-  'agentos-codegen': ['agentos-domain'],
-  'agentos-host': [
-    'agentos-domain',
-    'agentos-application',
-    'agentos-lua',
-    'agentos-sqlite',
-    'agentos-fetch',
-    'agentos-mcp',
-    'agentos-acp',
-    'agentos-agui',
-    'agentos-http'
+  'vos-sqlite': ['vos-domain', 'vos-application'],
+  'vos-fetch': ['vos-application'],
+  'vos-mcp': ['vos-domain', 'vos-application'],
+  'vos-acp': ['vos-domain', 'vos-application'],
+  'vos-agui': ['vos-domain', 'vos-application'],
+  'vos-http': ['vos-domain', 'vos-application'],
+  'vos-codegen': ['vos-domain'],
+  'vos-host': [
+    'vos-domain',
+    'vos-application',
+    'vos-lua',
+    'vos-sqlite',
+    'vos-fetch',
+    'vos-mcp',
+    'vos-acp',
+    'vos-agui',
+    'vos-http'
   ]
 }
 
 /** Crates whose EXTERNAL dependencies are restricted too (the pure core). */
 const CORE_EXTERNAL: Record<string, Set<string>> = {
-  'agentos-domain': new Set(['serde', 'serde_json', 'sha2', 'thiserror', 'ts-rs', 'schemars']),
-  'agentos-application': new Set(['async-trait', 'futures-channel', 'futures-util', 'parking_lot', 'serde_json', 'sha2', 'thiserror', 'tracing'])
+  'vos-domain': new Set(['serde', 'serde_json', 'sha2', 'thiserror', 'ts-rs', 'schemars']),
+  'vos-application': new Set(['async-trait', 'futures-channel', 'futures-util', 'parking_lot', 'serde_json', 'sha2', 'thiserror', 'tracing'])
 }
 
 /**
@@ -69,11 +69,11 @@ const CORE_EXTERNAL: Record<string, Set<string>> = {
  */
 const FRAMEWORK_HOMES: Record<string, string[]> = {
   mlua: ['neoc-vm', 'neoc'],
-  rusqlite: ['agentos-sqlite', 'neoc-vm'],
-  rmcp: ['agentos-mcp'],
-  'agent-client-protocol': ['agentos-acp'],
-  axum: ['agentos-http', 'agentos-mcp', 'agentos-agui', 'agentos-host'],
-  'axum-server': ['agentos-host'],
+  rusqlite: ['vos-sqlite', 'neoc-vm'],
+  rmcp: ['vos-mcp'],
+  'agent-client-protocol': ['vos-acp'],
+  axum: ['vos-http', 'vos-mcp', 'vos-agui', 'vos-host'],
+  'axum-server': ['vos-host'],
   // reached only through neoc-vm's dependencies (deny.toml lets tonic use axum); no workspace crate names it
   tonic: []
 }

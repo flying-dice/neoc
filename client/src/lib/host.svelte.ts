@@ -93,7 +93,7 @@ export class Host {
   readonly api: HostApi = {
     call: (method: string, params: Record<string, unknown> = {}): Promise<unknown> => {
       if (this.fake) return this.fake.call(method, params)
-      if (!this.channel) return Promise.reject(new HostError(-32000, 'Not connected to AgentOS'))
+      if (!this.channel) return Promise.reject(new HostError(-32000, 'Not connected to vos'))
       return this.channel.call(method, params)
     },
     onNotification: (listener) =>
@@ -134,7 +134,7 @@ export class Host {
     const session = new Session({
       transport: channel.transport,
       createStore: reactiveStore,
-      onError: (e) => console.warn('[agentos]', e)
+      onError: (e) => console.warn('[vos]', e)
     })
     this.session = session
     session.onState((state) => {
@@ -199,7 +199,7 @@ export class Host {
           this.appsError = null
         } catch (e) {
           this.appsError = messageOf(e)
-          console.warn('[agentos] app.list:', e)
+          console.warn('[vos] app.list:', e)
         }
       } while (this.stale)
     })().finally(() => (this.refreshing = null))
@@ -212,7 +212,7 @@ export class Host {
       this.agentsError = null
     } catch (e) {
       this.agentsError = messageOf(e)
-      console.warn('[agentos] agents.list:', e)
+      console.warn('[vos] agents.list:', e)
     }
   }
 
@@ -228,7 +228,7 @@ export class Host {
 
   openView(...args: Parameters<Session['openView']>): Promise<ViewCore> {
     if (this.fakeViews) return this.fakeViews.openView(...args)
-    if (!this.session) return Promise.reject(new Error('Not connected to AgentOS'))
+    if (!this.session) return Promise.reject(new Error('Not connected to vos'))
     return this.session.openView(...args)
   }
 

@@ -1,10 +1,10 @@
 {
-  "name": "@agentos/client",
+  "name": "@vos/client",
   "private": true,
   "type": "module",
   "version": "1.0.0",
-  "description": "The AgentOS client: an installable PWA shell (Vite + Svelte) that talks to the Rust host over WebSocket JSON-RPC",
-  "author": "AgentOS",
+  "description": "The vos client: an installable PWA shell (Vite + Svelte) that talks to the Rust host over WebSocket JSON-RPC",
+  "author": "vos",
   "scripts": {
     "format": "prettier --plugin prettier-plugin-svelte --write .",
     "lint": "eslint --cache .",
@@ -20,7 +20,7 @@
   },
   "dependencies": {
     "@ag-ui/core": "1.0.5",
-    "@agentos/ui": "workspace:*",
+    "@vos/ui": "workspace:*",
     "zod": "4.6.7"
   },
   "devDependencies": {
@@ -39,7 +39,7 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "8.72.1",
     "vite": "^8.3.4",
-    "@agentos/storybook": "workspace:*",
+    "@vos/storybook": "workspace:*",
     "@storybook/addon-a11y": "10.6.7",
     "@storybook/addon-docs": "10.6.7",
     "@storybook/addon-svelte-csf": "5.1.6",

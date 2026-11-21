@@ -9,8 +9,8 @@
   Test ids: the node's test id on the root, `-thread`, `-session`, `-composer`, `-retry` below it.
 -->
 <script lang="ts">
-  import { ActivityIndicator, Button, Icon, Text } from '@agentos/ui/atoms'
-  import { ChatThread, Composer, SessionBar } from '@agentos/ui/organisms'
+  import { ActivityIndicator, Button, Icon, Text } from '@vos/ui/atoms'
+  import { ChatThread, Composer, SessionBar } from '@vos/ui/organisms'
   import { useView } from '../context'
   import { liveActivityId, toBlocks } from '../kit/agui/blocks'
   import { ChatSession, scopedThread, type ChatState } from '../kit/agui/session'

@@ -1,4 +1,4 @@
-# The AgentOS crates' formatting. The neoc crates carry their own rustfmt.toml (rustfmt's defaults); a file in a
+# The vos crates' formatting. The neoc crates carry their own rustfmt.toml (rustfmt's defaults); a file in a
 # crate directory wins over this one.
 edition = "2021"
 max_width = 110

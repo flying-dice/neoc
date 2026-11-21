@@ -1,6 +1,6 @@
 # Terminal: key user journeys
 
-Agent shell output. **Placeholder page:** it shows fixed sample output (an `agentos status` listing); it is not a shell
+Agent shell output. **Placeholder page:** it shows fixed sample output (an `vos status` listing); it is not a shell
 and not connected to the host's agents, so the journeys describe what the page does today. Start at the host's address
 in a paired browser with Terminal open.
 

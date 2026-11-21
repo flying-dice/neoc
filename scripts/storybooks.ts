@@ -5,7 +5,7 @@
  *   bun scripts/storybooks.ts list     names, one per line
  *   bun scripts/storybooks.ts build    build them all (storybook-static/)
  *   bun scripts/storybooks.ts serve    serve them all on one port (building missing ones first):
- *                                      http://localhost:6100/<name>/ (AGENTOS_PORT_BASE moves it)  and  /storybooks.json
+ *                                      http://localhost:6100/<name>/ (VOS_PORT_BASE moves it)  and  /storybooks.json
  *
  * `bun run test:e2e` builds first, so the stories spec can read each
  * storybook-static/index.json; a new package with a `.storybook/` folder is picked up automatically.

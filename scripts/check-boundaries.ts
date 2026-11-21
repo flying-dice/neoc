@@ -8,8 +8,8 @@
  *  1. No relative import leaves its workspace package (client, packages/<name>, apps/<name>): the client never
  *     reaches host internals (crates/); the one exception is the types generated from the Rust schema
  *     (types/generated), which the renderer's protocol.ts re-exports. Test support may reach the repo's e2e/.
- *  2. The UI kit imports no other @agentos package; the client imports only @agentos/ui (and, in stories,
- *     @agentos/storybook).
+ *  2. The UI kit imports no other @vos package; the client imports only @vos/ui (and, in stories,
+ *     @vos/storybook).
  *  3. Browser code (client/src, packages/ui/src) imports no Node or Bun builtins.
  *  4. Client <-> host traffic is JSON-RPC over /rpc: `new WebSocket` only in the renderer's transport.
  *  5. No {@html}, innerHTML, outerHTML, insertAdjacentHTML or document.write: agent and tool
@@ -165,20 +165,20 @@ function checkRelative(rel: string, imp: Import, abs: string, test: boolean): vo
     report(rel, imp.line, `relative import '${imp.spec}' leaves ${pkg}: cross packages only through their published entry points`)
 }
 
-function checkAgentosImport(rel: string, imp: Import, test: boolean): void {
+function checkVosImport(rel: string, imp: Import, test: boolean): void {
   const { spec } = imp
-  const kit = matches(spec, ['@agentos/ui', '@agentos/ui/*'])
-  const storybook = test && matches(spec, ['@agentos/storybook', '@agentos/storybook/*'])
-  if (rel.startsWith('packages/ui/src/') && !test) return report(rel, imp.line, `the UI kit depends on no other @agentos package ('${spec}')`)
+  const kit = matches(spec, ['@vos/ui', '@vos/ui/*'])
+  const storybook = test && matches(spec, ['@vos/storybook', '@vos/storybook/*'])
+  if (rel.startsWith('packages/ui/src/') && !test) return report(rel, imp.line, `the UI kit depends on no other @vos package ('${spec}')`)
   if (!kit && !storybook && !rel.startsWith('packages/storybook/'))
-    report(rel, imp.line, `'${spec}' is not importable here: the client uses only @agentos/ui (stories also @agentos/storybook)`)
+    report(rel, imp.line, `'${spec}' is not importable here: the client uses only @vos/ui (stories also @vos/storybook)`)
 }
 
 function checkImport(rel: string, imp: Import, abs: string): void {
   const { spec } = imp
   const test = isTestSupport(rel)
   if (spec.startsWith('.')) return checkRelative(rel, imp, abs, test)
-  if (spec.startsWith('@agentos/')) checkAgentosImport(rel, imp, test)
+  if (spec.startsWith('@vos/')) checkVosImport(rel, imp, test)
   if (under(rel, BROWSER) && !test && isBuiltin(spec)) report(rel, imp.line, `'${spec}' is a Node/Bun builtin in code that runs in the browser`)
 }
 
