@@ -99,7 +99,7 @@ copy, is in git history at `51f47f4`: `git show 51f47f4:docs/architecture/ui-sys
   list: the adapter refuses them and the declarations type each as unusable. What an app starts (tasks, servers, workers)
   belongs to it: unloading or replacing the app aborts it and closes its listeners, and what a task or a request handler runs
   queues behind the app's other calls (one call at a time per VM). Still enforced: a tool declared `readOnly` cannot write
-  through the `app.*` API (db, kv, state, notify, shell, windows, and registering tools, windows and handlers), and neither can
+  through the `app.*` API (db, kv, files, state, notify, shell, windows, and registering tools, windows and handlers), and neither can
   the tasks it starts or the requests it triggers through the app's own server (a request is read-only while any read-only call
   is acting: running, queued, or waiting at something in flight such as a request; one asleep at a timer does not count, so a
   poller that also makes requests still taints webhooks intermittently: put long-lived work that must write in a writable

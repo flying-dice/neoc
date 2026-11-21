@@ -13,6 +13,7 @@ local env = require("std:env")
 local fs = require("std:fs")
 local io = require("std:io")
 local net = require("std:net")
+local path = require("std:path")
 local task = require("std:task")
 local thread = require("std:thread")
 local time = require("std:time")
@@ -121,6 +122,9 @@ local _db = assert(rusqlite.open(":memory:"))
 log.info("typed")
 local _dice: number? = random.random_int(1, 6)
 local _file: string? = fs.read("/tmp/x")
+local _entries = assert(fs.read_dir("/tmp"))
+local _name: string? = path.file_name("/tmp/x")
+local _kind: string? = fs.error_kind("fs.read: not_found: /tmp/x: gone")
 local _slept: number = task.wait(0)
 
 -- ── the globals an app has: the base library of Luau, `utf8` and `typeof` from the prelude, `bit32` ────────────
@@ -158,6 +162,23 @@ local _tx: number = app.db:tx(function()
 end)
 app.kv:set("k", { 1, 2 })
 local _stored: any = app.kv:get("k")
+local docs: vos_Files = app.files.documents
+local _made: boolean?, _madeErr: string? = docs:createDir("notes")
+local _wrote: boolean? = docs:write("notes/a.txt", "hello")
+local _text: string?, readErr: string? = docs:read("notes/a.txt")
+local _missing: string? = app.files.errorKind(readErr)
+local entries: { vos_FileInfo } = docs:list("notes") or {}
+for _, entry in entries do
+  local _entryName: string, _size: number, _modified: number? = entry.name, entry.size, entry.modified
+end
+local _rootEntries = app.files.cache:list()
+local info: vos_FileInfo? = docs:info("notes/a.txt")
+if info and info.kind == "file" then
+  docs:move("notes/a.txt", "notes/b.txt")
+end
+docs:copy("notes", "backup")
+docs:remove("backup", { recursive = true })
+app.files.temp:remove("scratch.txt")
 app.notify { title = "hello", body = "world" }
 app:notify { title = "hello" }
 app.log("usage")

@@ -929,7 +929,7 @@ async fn lib_log_lines_go_to_the_embedders_sink_and_a_worker_logs_there_too() {
 #[test]
 fn the_registry_is_an_api_an_embedder_can_build_its_own_require_from() {
     let names: Vec<&str> = modules::names().collect();
-    assert_eq!(names.len(), 50);
+    assert_eq!(names.len(), 51);
     assert!(names.contains(&"std:task") && names.contains(&"vnd:hyper"));
     let lua = make_bare_engine().unwrap();
     // no `require` at all on a bare engine, and a module is built on request, a new table each time

@@ -28,9 +28,12 @@ use std::sync::Arc;
 pub use vos_domain::NOT_FOR_APPS;
 
 /// The library modules an app (and a `std:thread` worker it starts) is offered: every one the library has,
-/// less [`NOT_FOR_APPS`]. The one place that rule is written.
-pub(crate) fn offered_modules() -> Vec<&'static str> {
-    modules::names().filter(|name| !NOT_FOR_APPS.contains(name)).collect()
+/// less [`NOT_FOR_APPS`] and less `refused` (`VmConfig::refused_modules`, empty in the host). The one place that
+/// rule is written.
+pub(crate) fn offered_modules(refused: &[String]) -> Vec<&'static str> {
+    modules::names()
+        .filter(|name| !NOT_FOR_APPS.contains(name) && !refused.iter().any(|r| r == name))
+        .collect()
 }
 
 /// What a `require` may name, for the error message of one that names something else.
@@ -71,11 +74,11 @@ fn library(lua: &Lua, sh: &Arc<Shared>, spec: &str) -> mlua::Result<LuaValue> {
     if let Some(done) = sh.modules.lock().get(spec) {
         return Ok(done.clone());
     }
-    let offered = offered_modules();
+    let offered = &sh.offered;
     if !offered.contains(&spec) {
-        return Err(modules::unknown_module(spec, &offered));
+        return Err(modules::unknown_module(spec, offered));
     }
-    let built = modules::build(lua, spec).ok_or_else(|| modules::unknown_module(spec, &offered))??;
+    let built = modules::build(lua, spec).ok_or_else(|| modules::unknown_module(spec, offered))??;
     let value = LuaValue::Table(built);
     sh.modules.lock().insert(spec.to_owned(), value.clone());
     Ok(value)

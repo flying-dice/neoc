@@ -15,28 +15,27 @@
 //! notes { folder = 1 }   -- a source handle
 //! ```
 
-use super::{check_effects_allowed, host};
+use super::{check_effects_allowed, host, vm_function};
 use crate::{
     convert::{json_to_lua, lua_to_json, lua_to_params},
     tx::{answer, OpenTx, Reply},
     vm::Shared,
 };
-use neoc_vm::lua::lifecycle::{async_function, turn_id, Role};
+use neoc_vm::lua::lifecycle::turn_id;
 use neoc_vm::mlua;
-use neoc_vm::mlua::{FromLuaMulti, Function, IntoLuaMulti, Lua, Table, Value as LuaValue};
+use neoc_vm::mlua::{Function, Lua, Table, Value as LuaValue};
 use serde_json::{json, Value};
-use std::{future::Future, sync::Arc};
 use vos_application::{
     data::{ExecOutcome, Params, QueryInfo, SqlMigration},
     live::{Conflict, SourceDef, SourceId, SourceKind, TotalMode},
 };
 
-type Sh = Arc<Shared>;
+use super::Sh;
 
 impl Shared {
     /// The gate every write passes: the call is not a `readOnly` tool (the host's read-only handle would
     /// refuse the statement too, this gives the app an error that says why) and it is not a render.
-    fn require_write(&self, what: &str) -> mlua::Result<()> {
+    pub(crate) fn require_write(&self, what: &str) -> mlua::Result<()> {
         self.writable(what)?;
         check_effects_allowed(self, what)
     }
@@ -79,22 +78,6 @@ async fn await_reply<T>(sh: &Shared, reply: Reply<T>) -> mlua::Result<T> {
     host(sh, answer(reply)).await
 }
 
-/// An async host function of the app's own state: it takes the turn before its body runs ([`Role::Vm`]), and the
-/// body gets the app's shared state. Every function of `app.db` and `app.kv` is made here.
-fn vm_function<A, R, Fut>(
-    lua: &Lua,
-    sh: &Sh,
-    body: impl Fn(Sh, Lua, A) -> Fut + Send + 'static,
-) -> mlua::Result<Function>
-where
-    A: FromLuaMulti,
-    R: IntoLuaMulti + Send + 'static,
-    Fut: Future<Output = mlua::Result<R>> + Send + 'static,
-{
-    let sh = sh.clone();
-    async_function(lua, Role::Vm, move |lua, args| body(sh.clone(), lua, args))
-}
-
 fn opt_string(opts: &Table, key: &str) -> mlua::Result<Option<String>> {
     match opts.get::<LuaValue>(key)? {
         LuaValue::Nil => Ok(None),
@@ -105,7 +88,7 @@ fn opt_string(opts: &Table, key: &str) -> mlua::Result<Option<String>> {
     }
 }
 
-fn reject_unknown(opts: &Table, allowed: &[&str], what: &str) -> mlua::Result<()> {
+pub(super) fn reject_unknown(opts: &Table, allowed: &[&str], what: &str) -> mlua::Result<()> {
     for pair in opts.pairs::<String, LuaValue>() {
         let (k, _) = pair?;
         if !allowed.contains(&k.as_str()) {

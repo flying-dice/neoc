@@ -19,26 +19,20 @@ app.manifest {
 
 -- One calculator for the whole app, however many windows are open.
 -- `entry` is the text being typed; once a result is in (`fresh`) the number lives in `value`, so a result is never
--- parsed back from its own display text.
+-- parsed back from its own display text. `terms` is the sum in progress: the numbers and operators entered so far
+-- (`{ 2, "+", 3, "*" }`, always ending with an operator while there is one). `waiting` is true from an operator key
+-- until a number is started: the display then holds what that operator has completed, not an operand.
 local s = app.state {
   entry = "0",
   value = 0,
-  acc = 0,
-  hasAcc = false,
-  pending = "",
+  terms = {} :: { number | string },
+  waiting = false,
   fresh = true,
   caption = "",
   err = false,
 }
 
-local SYMBOL: { [string]: string } = { ["+"] = "+", ["-"] = "−", ["*"] = "×", ["/"] = "÷" }
-
 -- ── Logic (pure Lua; no UI in here) ──────────────────────────────────────
-
-local function apply(a: number, op: string, b: number): number
-  s.caption = calc.format(a) .. " " .. SYMBOL[op] .. " " .. calc.format(b)
-  return calc.combine(a, op, b) -- raises on division by zero
-end
 
 -- The number on the display: the result once one is in, else what has been typed.
 local function current(): number
@@ -54,6 +48,7 @@ local function show(value: number)
 end
 
 local function digit(d: string)
+  s.waiting = false -- a number is being started
   if s.fresh then
     s.entry, s.fresh = (d == "." and "0." or d), false
   elseif d == "." then
@@ -69,32 +64,48 @@ local function digit(d: string)
   end
 end
 
-local function operator(op: string)
-  local value = current()
-  if s.hasAcc and s.pending ~= "" and not s.fresh then
-    s.acc = apply(s.acc, s.pending, value)
-    show(s.acc)
-  else
-    s.acc, s.hasAcc = value, true
-    show(value)
-  end
-  s.pending = op
-  s.caption = calc.format(s.acc) .. " " .. SYMBOL[op] -- "27 −": what is waiting, in words as well as on the key
+-- The sum in progress as a new list (state is only ever assigned, never edited in place), ready to be added to.
+local function copyOfTerms(): { number | string }
+  return table.clone(s.terms)
 end
 
+-- An operator key adds the number on the display and the operator to the sum, and works out only what that operator
+-- completes (`calc.progress`), as on an iPad: `2 + 3 ×` still shows 3, `2 × 3 +` shows 6. Another operator before
+-- the next number replaces the waiting one.
+local function operator(op: string)
+  local terms = copyOfTerms()
+  if s.waiting then
+    terms[#terms] = op
+  else
+    table.insert(terms, current())
+    table.insert(terms, op)
+  end
+  local reduced = calc.progress(terms) -- raises on division by zero, before anything changes
+  s.terms, s.waiting = terms, true
+  show(reduced)
+  s.caption = calc.describe(terms) -- "9 × 3 −": the sum so far, in words as well as on the key
+end
+
+-- `=` adds the number on the display and evaluates the whole sum with the precedence `calculate` uses. With nothing
+-- in progress it does nothing; with an operator waiting (`5 +`) the displayed number is the operand.
 local function equals()
-  if not s.hasAcc or s.pending == "" then
+  if #s.terms == 0 then
     return
   end
-  show(apply(s.acc, s.pending, current()))
-  s.hasAcc, s.pending = false, ""
+  local terms = copyOfTerms()
+  table.insert(terms, current())
+  local result = calc.total(terms) -- raises on division by zero and on a result too large
+  s.caption = calc.describe(terms)
+  s.terms, s.waiting = {}, false
+  show(result)
 end
 
 local function clear() -- "C" clears what is being typed; "AC" (nothing typed) clears everything
   if s.entry ~= "0" and not s.fresh then
     s.entry = "0"
+    s.waiting = #s.terms > 0 -- the sum goes on: the display is not an operand until a digit is typed
   else
-    s.entry, s.hasAcc, s.pending, s.caption = "0", false, "", ""
+    s.entry, s.terms, s.waiting, s.caption = "0", {}, false, ""
   end
   s.err, s.value, s.fresh = false, 0, true
 end
@@ -105,6 +116,7 @@ local actions: { [string]: (arg: string) -> () } = {
   equals = equals,
   clear = clear,
   negate = function()
+    s.waiting = false -- the number on the display is the operand now
     if s.fresh then
       if s.value == 0 then
         s.value = 0 -- never "-0"
@@ -119,6 +131,7 @@ local actions: { [string]: (arg: string) -> () } = {
   end,
   percent = function()
     show(calc.combine(current(), "/", 100))
+    s.waiting = false
   end,
   backspace = function()
     if not s.fresh then
@@ -150,7 +163,7 @@ local function press(w: Window, kind: string, arg: string?)
   local ok, err = pcall(actions[kind] :: (string) -> any, arg or "")
   if not ok then
     local reason = calc.reason(err) -- an unexpected error is a generic sentence, never a source position
-    s.err, s.hasAcc, s.pending, s.fresh = true, false, "", true
+    s.err, s.terms, s.waiting, s.fresh = true, {}, false, true
     s.caption = reason
     w:announce(reason)
   elseif wasErr and not s.err then
@@ -240,7 +253,7 @@ local function keyView(k: KeyDef, w: Window): Node
     size = "fill",
     fill = FILL[k.face],
     span = k.span,
-    selected = k.kind == "operator" and s.pending == k.arg and s.fresh, -- aria-pressed on the pending operator
+    selected = k.kind == "operator" and s.waiting and s.terms[#s.terms] == k.arg, -- aria-pressed on the waiting operator
     shortcut = k.shortcut,
     onTap = function()
       press(w, k.kind, k.arg)
@@ -356,7 +369,7 @@ app.tool {
     local result = calc.evaluate(input.expression)
     record(input.expression, result)
     show(result)
-    s.caption, s.hasAcc, s.pending, s.err = input.expression, false, "", false
+    s.caption, s.terms, s.waiting, s.err = input.expression, {}, false, false
     for _, w in ipairs(app:windows("main")) do
       w:announce("") -- the error that was showing is gone: empty the announcers, or the same error would not be read again
     end

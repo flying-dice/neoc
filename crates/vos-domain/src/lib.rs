@@ -14,6 +14,7 @@ pub mod contact;
 pub mod decl;
 pub mod device;
 pub mod error;
+pub mod files;
 pub mod limits;
 pub mod merge;
 pub mod notification;
@@ -35,6 +36,7 @@ pub use contact::{hash_token, hex_of, same_hash, Agent, AgentRuntime, ApprovalPo
 pub use decl::{AppDecl, KitRequirement, WindowDecl};
 pub use device::{Device, DeviceId};
 pub use error::DomainError;
+pub use files::{FileError, FileErrorKind, FileInfo, FileKind, FilePath, FileResult, Location};
 pub use limits::PackageBudget;
 pub use merge::{merge3, Merge};
 pub use notification::Notification;

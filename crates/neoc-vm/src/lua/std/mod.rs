@@ -11,6 +11,8 @@ pub mod env;
 pub mod fs;
 pub mod io;
 pub mod net;
+pub mod osstr;
+pub mod path;
 pub mod task;
 pub mod thread;
 pub mod time;

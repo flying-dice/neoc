@@ -301,7 +301,7 @@ async fn simple_sums_and_the_caption() {
 }
 
 #[tokio::test]
-async fn chained_operations_run_left_to_right_and_show_each_intermediate_result() {
+async fn operators_of_equal_precedence_chain_left_to_right_and_show_each_intermediate_result() {
     let mut pad = Keypad::open().await;
     pad.press("9 mul").await;
     assert_eq!((pad.display(), pad.pending()), ("9".into(), vec!["mul"]), "the pending operator is selected");
@@ -310,21 +310,21 @@ async fn chained_operations_run_left_to_right_and_show_each_intermediate_result(
     pad.press("sub").await;
     assert_eq!(
         (pad.display(), pad.caption()),
-        ("27".into(), "27 −".into()),
-        "the caption says what is waiting"
+        ("27".into(), "9 × 3 −".into()),
+        "9 × 3 is complete once a lower operator comes, so it is shown; the caption is the sum so far"
     );
     pad.press("7").await;
     assert_eq!(
         (pad.display(), pad.caption()),
-        ("7".into(), "27 −".into()),
-        "and keeps saying it while typing"
+        ("7".into(), "9 × 3 −".into()),
+        "and the caption keeps saying it while typing"
     );
     pad.press("eq").await;
-    assert_eq!((pad.display(), pad.caption()), ("20".into(), "27 − 7".into()));
+    assert_eq!((pad.display(), pad.caption()), ("20".into(), "9 × 3 − 7".into()));
 
-    // no precedence: 2 + 3 × 4 is (2 + 3) × 4
-    assert_eq!(shows("2 add 3 mul 4 eq").await, "20");
     assert_eq!(shows("1 add 2 add 3 add 4 eq").await, "10");
+    assert_eq!(shows("8 sub 2 sub 1 eq").await, "5", "subtraction is left to right");
+    assert_eq!(shows("8 div 4 div 2 eq").await, "1", "so is division");
     // changing your mind about the operator before the next number does not calculate anything
     let mut pad = Keypad::open().await;
     pad.press("5 add sub").await;
@@ -336,6 +336,273 @@ async fn chained_operations_run_left_to_right_and_show_each_intermediate_result(
     assert_eq!(shows("2 add 3 eq eq").await, "5");
     // `5 +` then `=` uses the displayed number twice, as the iPadOS calculator does
     assert_eq!(shows("5 add eq").await, "10");
+}
+
+/// The iPadOS Calculator's way: a higher operator waits (`2 + 3 ×` still shows 3), a lower or equal one completes
+/// what is waiting (`2 × 3 +` shows 6), and `=` evaluates the whole sum.
+#[tokio::test]
+async fn multiplication_and_division_wait_for_their_second_number_before_addition_and_subtraction() {
+    let mut pad = Keypad::open().await;
+    pad.press("2 add 3 mul").await;
+    assert_eq!(
+        (pad.display(), pad.caption(), pad.pending()),
+        ("3".into(), "2 + 3 ×".into(), vec!["mul"]),
+        "nothing is reduced yet"
+    );
+    pad.press("4").await;
+    assert_eq!((pad.display(), pad.caption(), pad.pending()), ("4".into(), "2 + 3 ×".into(), vec![]));
+    pad.press("eq").await;
+    assert_eq!((pad.display(), pad.caption(), pad.pending()), ("14".into(), "2 + 3 × 4".into(), vec![]));
+
+    for (keys, display, caption) in [
+        ("2 mul 3 add", "6", "2 × 3 +"),
+        ("2 add 3 mul 4 add", "14", "2 + 3 × 4 +"),
+        ("2 add 3 mul 4 sub", "14", "2 + 3 × 4 −"),
+        ("2 add 3 mul 4 mul", "12", "2 + 3 × 4 ×"),
+        ("2 add 8 div 4 div", "2", "2 + 8 ÷ 4 ÷"),
+        ("2 sub 3 mul 4 div", "12", "2 − 3 × 4 ÷"),
+        ("2 add 3 sub", "5", "2 + 3 −"),
+    ] {
+        let mut pad = Keypad::open().await;
+        pad.press(keys).await;
+        assert_eq!((pad.display(), pad.caption()), (display.to_owned(), caption.to_owned()), "{keys}");
+    }
+    for (keys, shown) in [
+        ("2 add 3 mul 4 mul 5 eq", "62"),
+        ("2 mul 3 add 4 eq", "10"),
+        ("2 sub 3 mul 4 sub 5 eq", "-15"),
+        // the displayed number is the operand of `=`, as with `5 + =`
+        ("2 add 3 mul eq", "11"),
+        ("2 mul 3 add eq", "12"),
+        ("2 add 3 mul 4 add eq", "28"),
+    ] {
+        assert_eq!(shows(keys).await, shown, "{keys}");
+    }
+}
+
+/// Changing your mind about the operator before the next number re-reads the sum with the new one: nothing was
+/// worked out for the replaced operator.
+#[tokio::test]
+async fn changing_the_operator_before_the_next_number_re_reads_the_sum_with_the_new_one() {
+    for (keys, display, caption, pending) in [
+        ("2 add 3 mul add", "5", "2 + 3 +", "add"),
+        ("2 mul 3 add mul", "6", "2 × 3 ×", "mul"),
+        ("2 add 3 mul sub", "5", "2 + 3 −", "sub"),
+        ("2 add 3 mul div", "3", "2 + 3 ÷", "div"),
+        ("2 add mul", "2", "2 ×", "mul"),
+    ] {
+        let mut pad = Keypad::open().await;
+        pad.press(keys).await;
+        assert_eq!(
+            (pad.display(), pad.caption(), pad.pending()),
+            (display.to_owned(), caption.to_owned(), vec![pending]),
+            "{keys}"
+        );
+    }
+    for (keys, shown) in [
+        ("2 add 3 mul add 4 eq", "9"),
+        ("2 add 3 add mul 4 eq", "14"),
+        ("2 add 3 mul sub 4 eq", "1"),
+        ("2 add add add 3 eq", "5"),
+    ] {
+        assert_eq!(shows(keys).await, shown, "{keys}");
+    }
+}
+
+/// `=` finishes a sum and nothing repeats it: a second `=` does nothing (the iPadOS Calculator repeats the last
+/// operation; this one never did, and the change is only about how a sum is evaluated).
+#[tokio::test]
+async fn equals_finishes_the_sum_and_a_second_equals_does_nothing() {
+    let mut pad = Keypad::open().await;
+    pad.press("2 add 3 mul 4 eq").await;
+    assert_eq!((pad.display(), pad.caption()), ("14".into(), "2 + 3 × 4".into()));
+    pad.press("eq eq").await;
+    assert_eq!((pad.display(), pad.caption(), pad.pending()), ("14".into(), "2 + 3 × 4".into(), vec![]));
+    assert_eq!(shows("eq").await, "0", "nothing to finish");
+    assert_eq!(shows("7 eq").await, "7", "a typed number alone");
+}
+
+/// A result is the first number of the next sum, which has its own precedence; so is a result an agent put there.
+#[tokio::test]
+async fn a_chain_can_start_from_the_previous_result() {
+    for (keys, shown, caption) in [
+        ("2 add 3 mul 4 eq add 1 mul 2 eq", "16", "14 + 1 × 2"),
+        ("2 add 3 mul 4 eq mul 2 add 1 eq", "29", "14 × 2 + 1"),
+        ("2 add 3 eq mul 4 add 1 eq", "21", "5 × 4 + 1"),
+        ("2 add 3 mul 4 eq sub 1 sub 1 eq", "12", "14 − 1 − 1"),
+    ] {
+        let mut pad = Keypad::open().await;
+        pad.press(keys).await;
+        assert_eq!((pad.display(), pad.caption()), (shown.to_owned(), caption.to_owned()), "{keys}");
+    }
+    let mut pad = Keypad::open().await;
+    tool(&pad.rt, "show_on_calculator", json!({ "expression": "2 + 3 * 4" }), agent_ctx(0)).await.unwrap();
+    pad.refresh().await;
+    assert_eq!(pad.display(), "14");
+    pad.press("add 1 mul").await;
+    assert_eq!((pad.display(), pad.caption()), ("1".into(), "14 + 1 ×".into()));
+    pad.press("2 eq").await;
+    assert_eq!((pad.display(), pad.caption()), ("16".into(), "14 + 1 × 2".into()));
+}
+
+/// Chains and mixed operators typed on the keypad, and the same text given to `calculate`: they run one evaluator
+/// (`calc.luau`), so the display must be the same however the sum arrives.
+#[tokio::test]
+async fn the_keypad_and_the_calculate_tool_evaluate_alike() {
+    for (keys, expression, shown) in [
+        ("2 add 3 mul 4 eq", "2 + 3 × 4", "14"),
+        ("2 mul 3 add 4 eq", "2 × 3 + 4", "10"),
+        ("8 sub 2 sub 1 eq", "8 − 2 − 1", "5"),
+        ("8 div 4 div 2 eq", "8 ÷ 4 ÷ 2", "1"),
+        ("2 add 3 mul 4 sub 5 div 5 eq", "2 + 3 × 4 − 5 ÷ 5", "13"),
+        ("1 0 sub 2 mul 3 eq", "10 − 2 × 3", "4"),
+        ("1 0 sub 2 mul 3 sub 1 eq", "10 − 2 × 3 − 1", "3"),
+        ("1 2 div 4 add 2 mul 3 eq", "12 ÷ 4 + 2 × 3", "9"),
+        ("1 div 3 add 1 div 3 eq", "1 / 3 + 1 / 3", "0.666666667"),
+        // decimals
+        ("0 dot 1 add 0 dot 2 mul 3 eq", "0.1 + 0.2 × 3", "0.7"),
+        ("1 dot 5 mul 2 add 0 dot 2 5 eq", "1.5 × 2 + 0.25", "3.25"),
+        ("1 0 0 0 mul 1 0 0 0 add 1 eq", "1000 × 1000 + 1", "1,000,001"),
+        ("0 dot 0 0 0 0 0 0 1 add 1 mul 2 eq", "0.0000001 + 1 × 2", "2.0000001"),
+        // ± is the minus sign of the number typed, `−` the operator
+        ("2 sub 5 negate eq", "2 − −5", "7"),
+        ("5 negate mul 3 add 1 eq", "-5 × 3 + 1", "-14"),
+        ("3 sub 2 mul 5 negate eq", "3 − 2 × -5", "13"),
+        ("2 add 3 mul 4 negate eq", "2 + 3 × -4", "-10"),
+        ("2 add 3 mul negate eq", "2 + 3 × -3", "-7"),
+        // % on the keypad is "divide by 100"
+        ("5 0 percent mul 4 add 1 eq", "50 / 100 × 4 + 1", "3"),
+        ("2 add 5 0 percent mul 4 eq", "2 + 50 / 100 × 4", "4"),
+        ("2 0 0 mul 5 percent add 1 eq", "200 × (5 / 100) + 1", "11"),
+        // a long chain
+        ("1 add 2 mul 3 add 4 mul 5 add 6 mul 7 add 8 mul 9 eq", "1 + 2 × 3 + 4 × 5 + 6 × 7 + 8 × 9", "141"),
+        (
+            "1 add 2 add 3 add 4 add 5 add 6 add 7 add 8 add 9 add 1 0 eq",
+            "1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9 + 10",
+            "55",
+        ),
+        ("1 0 0 sub 1 sub 2 sub 3 div 3 mul 2 sub 1 eq", "100 − 1 − 2 − 3 ÷ 3 × 2 − 1", "94"),
+    ] {
+        let mut pad = Keypad::open().await;
+        pad.press(keys).await;
+        let out =
+            tool(&pad.rt, "calculate", json!({ "expression": expression }), agent_ctx(0)).await.unwrap();
+        assert_eq!(pad.display(), shown, "keypad: {keys}");
+        assert_eq!(out["display"], shown, "calculate: {expression}");
+    }
+}
+
+/// The keys that type a whole number: `12` is `1 2`.
+fn typed(number: u32) -> String {
+    number.to_string().chars().map(String::from).collect::<Vec<_>>().join(" ")
+}
+
+/// Not a handful of examples: every sum of four numbers with every combination of the three operators, so a
+/// difference in precedence or associativity between the keypad and the tool cannot hide.
+#[tokio::test]
+async fn every_four_number_sum_gives_the_same_on_the_keypad_and_from_the_tool() {
+    const OPS: [(&str, &str); 4] = [("add", "+"), ("sub", "-"), ("mul", "*"), ("div", "/")];
+    let mut pad = Keypad::open().await;
+    let mut compared = 0;
+    for (a, b, c, d) in [(12, 3, 4, 2), (7, 5, 9, 6)] {
+        for (op1, sym1) in OPS {
+            for (op2, sym2) in OPS {
+                for (op3, sym3) in OPS {
+                    let (ka, kb, kc, kd) = (typed(a), typed(b), typed(c), typed(d));
+                    let keys = format!("{ka} {op1} {kb} {op2} {kc} {op3} {kd} eq");
+                    let expression = format!("{a} {sym1} {b} {sym2} {c} {sym3} {d}");
+                    pad.press("clear clear").await;
+                    pad.press(&keys).await;
+                    let out = tool(&pad.rt, "calculate", json!({ "expression": expression }), agent_ctx(0))
+                        .await
+                        .unwrap();
+                    assert_eq!(pad.display(), out["display"].as_str().unwrap(), "{expression} ({keys})");
+                    compared += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(compared, 128);
+}
+
+/// A failure inside a mixed sum is the same sentence from the keypad and from the tool.
+#[tokio::test]
+async fn a_failing_mixed_sum_gives_the_same_reason_on_the_keypad_and_from_the_tool() {
+    for (keys, expression) in [
+        ("8 div 0 eq", "8 / 0"),
+        ("5 add 3 div 0 eq", "5 + 3 / 0"),
+        ("1 add 2 mul 3 div 0 eq", "1 + 2 * 3 / 0"),
+        ("4 div 2 sub 2 div 0 eq", "4 / 2 - 2 / 0"),
+    ] {
+        let mut pad = Keypad::open().await;
+        pad.press(keys).await;
+        let attempt = tool(&pad.rt, "calculate", json!({ "expression": expression }), agent_ctx(0)).await;
+        assert_eq!(
+            (pad.display(), pad.caption()),
+            ("Error".into(), "Can't divide by zero".into()),
+            "keypad: {keys}"
+        );
+        assert!(attempt.unwrap_err().to_string().contains("Can't divide by zero"), "calculate: {expression}");
+    }
+
+    // 1 + 999999999 × 999999999 × ...: the keypad stops at the press that cannot be shown, the tool at the same sum
+    let nine = "9 9 9 9 9 9 9 9 9";
+    let mut pad = Keypad::open().await;
+    pad.press(&format!("1 add {nine}")).await;
+    let mut factors = 1;
+    while pad.display() != "Error" && factors < 45 {
+        pad.press("mul").await; // an error is raised here; a digit after it would start a new sum
+        if pad.display() != "Error" {
+            pad.press(nine).await;
+            factors += 1;
+        }
+    }
+    assert_eq!((pad.display(), pad.caption()), ("Error".into(), "Result too large".into()));
+    let expression = format!("1 + {}", vec!["999999999"; factors].join(" * "));
+    let err =
+        tool(&pad.rt, "calculate", json!({ "expression": expression }), agent_ctx(0)).await.unwrap_err();
+    assert!(err.to_string().contains("Result too large"), "{err}");
+}
+
+/// A division by zero in the part an operator completes is raised when that operator is pressed (as `8 ÷ 0 +` is),
+/// not later; one that is still waiting (`1 + 8 ÷ 0` before the next operator) is raised by `=` or by the next
+/// operator, and the error clears like any other.
+#[tokio::test]
+async fn a_mixed_sum_fails_when_the_part_that_cannot_be_worked_out_is_complete() {
+    for keys in [
+        "1 add 8 div 0 add",
+        "1 add 8 div 0 sub",
+        "1 add 8 div 0 mul",
+        "1 add 8 div 0 div",
+        "1 add 8 div 0 eq",
+        "2 mul 3 add 8 div 0 eq",
+    ] {
+        let mut pad = Keypad::open().await;
+        pad.press(keys).await;
+        assert_eq!((pad.display(), pad.caption()), ("Error".into(), "Can't divide by zero".into()), "{keys}");
+        assert_eq!(pad.pending(), Vec::<&str>::new(), "{keys}: nothing of the failed sum is left");
+        pad.press("clear 2 add 3 mul 4 eq").await;
+        assert_eq!(pad.display(), "14", "{keys}: a new sum after the error");
+    }
+    let mut pad = Keypad::open().await;
+    pad.press("1 add 8 div 0").await;
+    assert_eq!(pad.display(), "0", "typing the divisor does not fail yet");
+    // a zero that is not a divisor is fine, and a zero divided is too
+    assert_eq!(shows("1 add 0 mul 8 add 0 div 5 eq").await, "1");
+}
+
+/// The caption is one line: a long chain keeps its last terms behind an ellipsis, and the key and the display
+/// still tell the rest.
+#[tokio::test]
+async fn a_long_chain_keeps_the_caption_to_its_last_terms() {
+    let mut pad = Keypad::open().await;
+    pad.press("1 add 2 add 3 add 4 add 5 add 6 add 7 add").await;
+    assert_eq!((pad.display(), pad.caption()), ("28".into(), "… 2 + 3 + 4 + 5 + 6 + 7 +".into()));
+    pad.press("8 eq").await;
+    assert_eq!((pad.display(), pad.caption()), ("36".into(), "… 3 + 4 + 5 + 6 + 7 + 8".into()));
+    // a short sum is written in full, even with long numbers
+    pad.press("clear 1 2 3 4 5 6 7 8 9 mul 9 9 9 add").await;
+    assert_eq!(pad.caption(), "123,456,789 × 999 +", "two long numbers still fit");
 }
 
 #[tokio::test]
@@ -360,6 +627,10 @@ async fn plus_minus_flips_the_sign_of_what_is_shown() {
         ("5 negate mul 3 eq", "-15"),
         ("5 mul 3 negate eq", "-15"),
         ("3 sub 3 eq negate", "0"),
+        // in a pending sum the displayed number becomes the operand
+        ("5 add negate eq", "0"),
+        ("2 add 3 mul negate eq", "-7"),
+        ("2 add 3 mul 4 negate eq", "-10"),
     ] {
         assert_eq!(shows(keys).await, shown, "{keys}");
     }
@@ -373,6 +644,9 @@ async fn percent_divides_by_a_hundred_and_leaves_a_fresh_entry() {
         ("2 0 0 percent percent", "0.02"),
         ("5 0 percent mul 2 0 0 eq", "100"),
         ("5 0 percent add 1 eq", "1.5"),
+        ("2 add 5 0 percent eq", "2.5"),
+        ("2 add 3 mul 5 0 percent eq", "3.5"),
+        ("2 add 3 mul percent eq", "2.09"),
     ] {
         assert_eq!(shows(keys).await, shown, "{keys}");
     }
@@ -500,6 +774,36 @@ async fn clear_clears_the_entry_first_and_everything_the_second_time() {
     assert_eq!(shows("1 2 3 clear clear").await, "0");
 }
 
+/// `C` in the middle of a mixed sum clears the number being typed and leaves the sum going; `AC` drops it.
+#[tokio::test]
+async fn clear_entry_in_a_mixed_sum_keeps_the_sum_and_all_clear_drops_it() {
+    let mut pad = Keypad::open().await;
+    pad.press("2 add 3 mul 4 clear").await;
+    assert_eq!(
+        (pad.clear_title(), pad.display(), pad.caption(), pad.pending()),
+        ("AC".into(), "0".into(), "2 + 3 ×".into(), vec!["mul"]),
+        "the 4 is gone, the sum is not"
+    );
+    pad.press("5 eq").await;
+    assert_eq!((pad.display(), pad.caption()), ("17".into(), "2 + 3 × 5".into()));
+
+    // an operator before the next number replaces the waiting one, as it does without a clear
+    assert_eq!(shows("2 add 3 mul 4 clear add 5 eq").await, "10");
+    // `=` takes the cleared 0 as the operand
+    assert_eq!(shows("2 add 3 mul 4 clear eq").await, "2");
+
+    // the second clear is AC: the whole sum goes, and nothing of it comes back
+    let mut pad = Keypad::open().await;
+    pad.press("2 add 3 mul 4 clear clear").await;
+    assert_eq!((pad.display(), pad.caption(), pad.pending()), ("0".into(), String::new(), vec![]));
+    pad.press("6 eq").await;
+    assert_eq!(pad.display(), "6");
+    // AC while an operator waits (the display shows what it completed, nothing is being typed) clears it all
+    let mut pad = Keypad::open().await;
+    pad.press("2 add 3 mul clear").await;
+    assert_eq!((pad.display(), pad.caption(), pad.pending()), ("0".into(), String::new(), vec![]));
+}
+
 #[tokio::test]
 async fn the_agent_tool_and_the_keypad_share_one_calculator() {
     let mut pad = Keypad::open().await;
@@ -546,9 +850,15 @@ async fn the_pending_operator_is_in_the_caption_and_on_its_key() {
     pad.press("mul").await;
     assert_eq!((pad.caption(), pad.pending()), ("2 ×".into(), vec!["mul"]), "changing your mind");
     pad.press("3 sub").await;
-    assert_eq!((pad.caption(), pad.pending()), ("6 −".into(), vec!["sub"]));
+    assert_eq!((pad.display(), pad.caption(), pad.pending()), ("6".into(), "2 × 3 −".into(), vec!["sub"]));
     pad.press("eq").await;
-    assert_eq!((pad.display(), pad.caption(), pad.pending()), ("0".into(), "6 − 6".into(), vec![]));
+    assert_eq!((pad.display(), pad.caption(), pad.pending()), ("0".into(), "2 × 3 − 6".into(), vec![]));
+    // typing a number, or turning the display into one with ± or %, ends the wait: the key is no longer pressed
+    for keys in ["2 add 3", "2 add negate", "2 add percent"] {
+        let mut pad = Keypad::open().await;
+        pad.press(keys).await;
+        assert_eq!(pad.pending(), Vec::<&str>::new(), "{keys}");
+    }
 }
 
 // ---- error states: what the person and the agent are told --------------------------------------------------
@@ -648,6 +958,13 @@ async fn the_equals_sign_on_the_keyboard_is_equals() {
     pad.press("6 mul 7").await;
     pad.fire("equals", "trigger").await;
     assert_eq!((pad.display(), pad.caption()), ("42".into(), "6 × 7".into()));
+    // a typed `=` finishes a mixed sum the same way, and the keys of the pad are the keys of the keyboard
+    let mut pad = Keypad::open().await;
+    pad.press("2 add 3 mul 4").await;
+    pad.fire("equals", "trigger").await;
+    assert_eq!((pad.display(), pad.caption()), ("14".into(), "2 + 3 × 4".into()));
+    pad.press("back").await;
+    assert_eq!(pad.display(), "14", "Backspace leaves a result alone");
 }
 
 /// An agent gets the reason as a plain sentence, not a source position.
