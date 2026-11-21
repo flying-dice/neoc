@@ -56,13 +56,13 @@
 
     {#if unreachable}
       <div class="notice" role="alert" data-testid="pairing-unreachable">
-        <Text style="subheadline" color="destructive">Can’t reach the AgentOS host.</Text>
+        <Text style="subheadline" color="destructive">Can’t reach the vos host.</Text>
         <Text style="footnote" color="secondary">{unreachable}</Text>
         <Button testid="pairing-retry" size="small" capsule onclick={onretry}>Try again</Button>
       </div>
     {:else}
       <Text style="subheadline" color="secondary" as="p">
-        Enter the pairing code shown where AgentOS is running. It is single use and lasts 10
+        Enter the pairing code shown where vos is running. It is single use and lasts 10
         minutes. Need a new one? Run <code>vos pair</code>.
       </Text>
 

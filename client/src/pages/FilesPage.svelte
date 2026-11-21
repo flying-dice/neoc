@@ -32,7 +32,7 @@
       <ListSection header="Locations">
         <ListRow
           testid="files-location-drive"
-          title="AgentOS Drive"
+          title="vos Drive"
           icon="folder"
           iconColor="var(--ios-blue)"
           chevron

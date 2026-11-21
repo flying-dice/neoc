@@ -93,7 +93,7 @@ export class Host {
   readonly api: HostApi = {
     call: (method: string, params: Record<string, unknown> = {}): Promise<unknown> => {
       if (this.fake) return this.fake.call(method, params)
-      if (!this.channel) return Promise.reject(new HostError(-32000, 'Not connected to AgentOS'))
+      if (!this.channel) return Promise.reject(new HostError(-32000, 'Not connected to vos'))
       return this.channel.call(method, params)
     },
     onNotification: (listener) =>
@@ -228,7 +228,7 @@ export class Host {
 
   openView(...args: Parameters<Session['openView']>): Promise<ViewCore> {
     if (this.fakeViews) return this.fakeViews.openView(...args)
-    if (!this.session) return Promise.reject(new Error('Not connected to AgentOS'))
+    if (!this.session) return Promise.reject(new Error('Not connected to vos'))
     return this.session.openView(...args)
   }
 

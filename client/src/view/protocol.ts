@@ -1,5 +1,5 @@
 /**
- * Wire types of the AgentOS view protocol (proto 1, kit 1.0).
+ * Wire types of the vos view protocol (proto 1, kit 1.0).
  *
  * The Rust schema is the source of truth: `types/generated/vos.ts` is generated from it (`bun run codegen`).
  * This module is the renderer's only door to it: it re-exports the generated shapes under the names the renderer

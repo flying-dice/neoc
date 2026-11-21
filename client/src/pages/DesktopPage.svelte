@@ -1,5 +1,5 @@
 <!--
-  @page DesktopPage — the AgentOS desktop, iPadOS Stage Manager style: status
+  @page DesktopPage — the vos desktop, iPadOS Stage Manager style: status
   bar, recent-apps strip, the current stage (floating / full screen / split
   windows), Slide Over, widgets and the dock. Window contents are supplied by
   the composition root through the `windowContent` snippet.
@@ -97,10 +97,10 @@
           {#if connection !== 'online'}
             <span class="connection" role="status" data-testid="status-connection">
               {connection === 'connecting'
-                ? 'Connecting to AgentOS…'
+                ? 'Connecting to vos…'
                 : connection === 'incompatible'
-                  ? 'Reload to update AgentOS'
-                  : 'Reconnecting to AgentOS…'}
+                  ? 'Reload to update vos'
+                  : 'Reconnecting to vos…'}
             </span>
           {/if}
         {/snippet}

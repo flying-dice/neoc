@@ -1,6 +1,6 @@
-# Building AgentOS apps
+# Building vos apps
 
-An AgentOS app is a **server-side package, written in plain Lua 5.1**, that runs inside the Rust host. It holds its state, data, tools,
+A vos app is a **server-side package, written in plain Lua 5.1**, that runs inside the Rust host. It holds its state, data, tools,
 notifications and a description of its UI. It ships no client code: the managed client renders the view trees the app
 produces and sends events back.
 

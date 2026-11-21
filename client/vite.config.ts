@@ -1,5 +1,5 @@
 /**
- * The AgentOS PWA client (Vite + Svelte).
+ * The vos PWA client (Vite + Svelte).
  *
  *   index.html   the shell: it talks to the Rust host over /rpc (WebSocket JSON-RPC) and pairs through
  *                /session and /pair

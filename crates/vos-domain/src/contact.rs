@@ -68,7 +68,7 @@ impl Grants {
     }
 }
 
-/// What the host does with an agent's ACP permission request about an `AgentOS` tool.
+/// What the host does with an agent's ACP permission request about a `vos` tool.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalPolicy {
@@ -82,7 +82,7 @@ pub enum ApprovalPolicy {
     #[default]
     AutoReadOnly,
     /// Never ask: **every** permission request is allowed, whatever it is for (a shell command, a file edit, a
-    /// delete, as well as an `AgentOS` tool). It is not limited to app tools; grants still bound which app tools
+    /// delete, as well as a `vos` tool). It is not limited to app tools; grants still bound which app tools
     /// the agent can see. The stored and wire value stays `allow_all`.
     #[serde(rename = "allow_all")]
     AllowEverything,

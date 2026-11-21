@@ -1,5 +1,5 @@
 /**
- * What a window may ask the shell to open outside AgentOS (Markdown links, `view.command openUrl`), described for the
+ * What a window may ask the shell to open outside vos (Markdown links, `view.command openUrl`), described for the
  * confirmation the person sees first. The text a link shows says nothing about where it goes, so the confirmation
  * names the host (read from the parsed URL, in its ASCII form: a look-alike domain shows as `xn--...`) and the full
  * address. Only web pages and mail addresses qualify; anything else is refused before a dialog is shown.

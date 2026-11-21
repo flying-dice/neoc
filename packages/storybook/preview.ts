@@ -1,5 +1,5 @@
 /**
- * Shared Storybook preview: AgentOS tokens and base styles, light/dark theme
+ * Shared Storybook preview: vos tokens and base styles, light/dark theme
  * switch (the `theme` global: Light | Dark), and a11y checks set to fail.
  *
  *   // apps/<app>/.storybook/preview.ts

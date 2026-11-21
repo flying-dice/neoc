@@ -738,7 +738,7 @@ describe('session settings', () => {
 })
 
 describe('pieces', () => {
-  test('friendlyTool shortens AgentOS MCP tool names and leaves the rest', () => {
+  test('friendlyTool shortens vos MCP tool names and leaves the rest', () => {
     expect(friendlyTool('mcp__vos__calculator__show_on_calculator')).toBe(
       'Calculator · show on calculator'
     )

@@ -252,7 +252,7 @@ pub struct PermissionRequest {
 }
 
 impl PermissionRequest {
-    /// The `<app>__<tool>` an `AgentOS` MCP tool call is called in a title that is exactly
+    /// The `<app>__<tool>` a `vos` MCP tool call is called in a title that is exactly
     /// `mcp__vos__<app>__<tool>` (`mcp__<server>__<app>__<tool>`). The title is the agent's text, so
     /// anything else in it (trailing words, another prefix) means this is not such a call.
     #[must_use]
@@ -451,7 +451,7 @@ pub struct ErrorMeta {
 }
 
 /// AG-UI messages in order (`role` discriminates). A tool call is an assistant message carrying `toolCalls`
-/// and an `vos` extension, followed by a `tool` message with its output.
+/// and a `vos` extension, followed by a `tool` message with its output.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "role", rename_all = "camelCase")]
 pub enum ThreadMessage {

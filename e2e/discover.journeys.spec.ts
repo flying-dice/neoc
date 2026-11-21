@@ -9,11 +9,11 @@ import { chooseLayout, expect, expectNoOverflow, openDesktop, test, windowOf } f
 const content = 'window-discover-content'
 
 test.describe('Discover journeys', () => {
-  test('V1: a newcomer can tell what AgentOS does from the landing window', async ({ page }) => {
+  test('V1: a newcomer can tell what vos does from the landing window', async ({ page }) => {
     await openDesktop(page)
     await expect(windowOf(page, 'discover')).toBeVisible()
     const text = page.getByTestId(content)
-    await expect(text).toContainText('WELCOME TO AGENTOS')
+    await expect(text).toContainText('WELCOME TO VOS')
     await expect(text).toContainText('Your agents, on one desktop.')
     await expect(text).toContainText('Run research, code, inbox and ops agents side by side')
     await expect(text).toContainText('keep everything on your machine')

@@ -1,6 +1,6 @@
 # UI Kit: key user journeys
 
-The living catalogue of `vos:ui`, for people building AgentOS apps (the app id is `gallery`, the window is titled
+The living catalogue of `vos:ui`, for people building vos apps (the app id is `gallery`, the window is titled
 "UI Kit"). It is opened from the Dock's recents or from Discover's "Explore the UI Kit". Start at the host's address in
 a paired browser with UI Kit open.
 

@@ -17,7 +17,7 @@ export class ResultError extends Error {
     readonly method: string,
     detail: string
   ) {
-    super(`AgentOS sent an unexpected answer to “${method}” (${detail}). Reload to update.`)
+    super(`vos sent an unexpected answer to “${method}” (${detail}). Reload to update.`)
     this.name = 'ResultError'
   }
 }

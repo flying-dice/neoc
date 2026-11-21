@@ -47,7 +47,7 @@
     </NavigationBar>
 
     <ListSection sidebar>
-      <ListRow testid="settings-account" title="AgentOS User" subtitle="Account, Sync & Agents">
+      <ListRow testid="settings-account" title="vos User" subtitle="Account, Sync & Agents">
         {#snippet leading()}
           <IconTile size={44} background="linear-gradient(180deg, #c7c7cc, #8e8e93)">
             <Icon name="person" size={26} color="#fff" />
@@ -80,7 +80,7 @@
         <div class="pane">
           {#if pane === 'general'}
             <ListSection header="About">
-              <ListRow testid="settings-about-name" title="Name" value="AgentOS" />
+              <ListRow testid="settings-about-name" title="Name" value="vos" />
               <ListRow testid="settings-about-version" title="Version" value="0.1.0" />
               <ListRow testid="settings-about-host" title="Host" value={hostVersion} />
               <ListRow testid="settings-about-browser" title="Browser" value={browser} />
@@ -277,7 +277,7 @@
       }
     }
     title="Revoke {devices.asked.name}?"
-    message="It will be signed out of AgentOS and must pair again to come back."
+    message="It will be signed out of vos and must pair again to come back."
     actions={[
       { label: 'Cancel', style: 'cancel' },
       {

@@ -1,6 +1,6 @@
 <!--
   @page DiscoverPage — the landing window: a store-style "Discover" app in an
-  iPadOS split view, introducing AgentOS, the apps you can install and the agents on this host.
+  iPadOS split view, introducing vos, the apps you can install and the agents on this host.
 -->
 <script lang="ts">
   import type { IconName } from '@vos/ui'
@@ -224,7 +224,7 @@
     <ListSection sidebar>
       <ListRow
         testid="discover-account"
-        title="AgentOS User"
+        title="vos User"
         subtitle={plural(host.agents.length, 'agent')}
       >
         {#snippet leading()}
@@ -239,7 +239,7 @@
   {#snippet detail()}
     <ScreenTemplate background="plain">
       {#snippet navigationBar()}
-        <NavigationBar testid="discover-nav" title="AgentOS">
+        <NavigationBar testid="discover-nav" title="vos">
           {#snippet trailing()}
             {#if agentsRunning}
               <Button testid="discover-open" size="small" capsule onclick={openAgents}>OPEN</Button>
@@ -253,7 +253,7 @@
         <div class="page">
           <section class="hero">
             <div class="hero-copy">
-              <Text style="caption1" weight="semibold" color="inherit">WELCOME TO AGENTOS</Text>
+              <Text style="caption1" weight="semibold" color="inherit">WELCOME TO VOS</Text>
               <h1>Your agents, on one desktop.</h1>
               <p>
                 Run research, code, inbox and ops agents side by side. Watch them work, step in when

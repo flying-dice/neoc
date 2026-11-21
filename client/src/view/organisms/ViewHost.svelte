@@ -195,7 +195,7 @@
       initialFocus="cancel"
       title={target.kind === 'web' ? 'Open this link?' : 'Write to this address?'}
       message={target.kind === 'web'
-        ? 'It opens a page outside AgentOS, in your browser.'
+        ? 'It opens a page outside vos, in your browser.'
         : 'It opens your mail app.'}
       actions={[
         { label: 'Cancel', style: 'cancel' },

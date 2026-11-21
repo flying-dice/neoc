@@ -1,6 +1,6 @@
 # The Calculator: the reference app
 
-The smallest app that uses every part of an AgentOS app: shared state, a view built from kit components, keyboard
+The smallest app that uses every part of a vos app: shared state, a view built from kit components, keyboard
 shortcuts, agent tools and a little durable data. Read it next to [`apps/README.md`](../README.md) (the full `app`
 API and "Adding an app"); copy the folder to start a new app.
 

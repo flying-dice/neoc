@@ -1,5 +1,5 @@
 /**
- * The AgentOS PWA entry (`index.html`): ask the host whether this browser is paired, show the pairing screen or
+ * The vos PWA entry (`index.html`): ask the host whether this browser is paired, show the pairing screen or
  * connect one session over `/rpc`, and start the shell.
  *
  *   ?theme=light|dark   force the appearance (tests, screenshots)

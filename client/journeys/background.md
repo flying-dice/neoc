@@ -31,7 +31,7 @@ Ran the real shell on the real host headless (Chromium, 1280x800, light and dark
 - [x] Dark theme at the window's 320x240 minimum: the count, status and three buttons fit, nothing is clipped, the
       "Smallest size" cue shows (screenshot).
 - [x] Stopping the host: the window shows "This window is no longer available / shutting down" and the shell shows
-      "Reconnecting to AgentOS…"; restarting the host: the shell reconnected and the Ticker window came back counting
+      "Reconnecting to vos…"; restarting the host: the shell reconnected and the Ticker window came back counting
       (the count restarts from the new host's state). This is the existing shutdown behaviour, not changed here.
 - [x] `bun run test:e2e`: the five BG journeys pass (BG4 drops the `/rpc` socket and checks the dim and the
       "Reconnecting" banner, then that the window is current and moving again).

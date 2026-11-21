@@ -1,5 +1,5 @@
 /**
- * Shared Playwright fixtures and checks for AgentOS UI tests.
+ * Shared Playwright fixtures and checks for vos UI tests.
  *
  *   import { test, expect, openDesktop, expectAccessible, expectNoOverflow } from '../../e2e/fixtures'
  *

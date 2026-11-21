@@ -173,7 +173,7 @@ async fn run(settings: Settings, cwd: &Path) -> anyhow::Result<()> {
     let mcp_file = write_mcp_json(&settings.data_dir, &mcp_url, &mcp_token)?;
 
     let code = host.devices.issue_pairing_code().await.context("issuing the first pairing code")?;
-    println!("AgentOS host listening (data: {})", settings.data_dir.display());
+    println!("vos host listening (data: {})", settings.data_dir.display());
     print_urls(&settings, port);
     println!("  MCP:      {mcp_url}  (token in {})", mcp_file.display());
     print_code(&code.code, &settings.data_dir);

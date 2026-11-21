@@ -1,5 +1,5 @@
 /**
- * Every story in every AgentOS Storybook, in light and dark:
+ * Every story in every vos Storybook, in light and dark:
  *  • renders, and its play function (if any) passes,
  *  • logs no errors,
  *  • passes axe (WCAG 2.1 AA),

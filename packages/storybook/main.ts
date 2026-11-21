@@ -1,5 +1,5 @@
 /**
- * Storybook config factory shared by every AgentOS Storybook.
+ * Storybook config factory shared by every vos Storybook.
  *
  *   // apps/<app>/.storybook/main.ts
  *   import { defineStorybook } from '@vos/storybook/main'

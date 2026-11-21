@@ -1,5 +1,5 @@
 /**
- * Headless UI tests for AgentOS (see docs/TESTING.md).
+ * Headless UI tests for vos (see docs/TESTING.md).
  *
  *   stories   every story of every Storybook: renders, axe, snapshots, resize
  *   desktop   the real shell on the real host: every app from the Dock, resize, every layout, axe, snapshots

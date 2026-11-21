@@ -1,6 +1,6 @@
 # @vos/ui
 
-AgentOS UI kit — the iOS / iPadOS 16–17 design language (before Liquid Glass) for Svelte 5.
+vos UI kit — the iOS / iPadOS 16–17 design language (before Liquid Glass) for Svelte 5.
 
 ## Strict atomic design
 
