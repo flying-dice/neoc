@@ -46,9 +46,12 @@
 //!
 //! `open` returns canonical `ReaderHandle` / `WriterHandle` wrappers so the result plugs directly into `std:io`
 //! operations and any future consumer that accepts a stream handle.
+//!
+//! [`ops`] (the operations, free of Lua) and [`error`] (their classified errors) are public, so an embedder that
+//! offers files its own way builds on these operations instead of writing its own copy, move or remove.
 
-mod error;
-mod ops;
+pub mod error;
+pub mod ops;
 
 use std::ffi::OsStr;
 use std::io::{BufReader, BufWriter};

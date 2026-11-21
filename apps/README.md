@@ -50,6 +50,7 @@ local calc = require("./calc")   -- a module of this package, inlined at build t
 | `app.window(name, { title, size, client, state, render, onOpen, onClose })` | declare a window kind; `render(w)` returns the view tree |
 | `app.state(initial)` | shared in-memory state; reads in `render` are tracked, assignments re-render the windows that read them; lost on restart |
 | `app.kv`, `app.db` | small durable key/value store; SQLite per app (`migrate`, `exec`, `all`, `one`, `tx`, live sources `query`/`row`/`scalar`) |
+| `app.files.documents`, `.cache`, `.temp` | the app's managed files: `read`, `write`, `list`, `info`, `createDir`, `remove`, `move`, `copy` (see "Files") |
 | `app.tool { name, title, description, readOnly, input, run }` | an agent tool (MCP name `<id>__<name>`, local name `[a-z][a-z0-9_]*`) |
 | `app.notify { ... }`, `w:toast { ... }` | a notification, an in-window message |
 | `app:openWindow(name, params)`, `app.thread()`, `app.agents:list()` | bring a window forward, a chat source for `ChatTranscript`, the roster (`{ id, name, avatar, role }` only) |
@@ -70,7 +71,7 @@ semantic tokens only.
   windows and live deltas, so an agent's write through a tool updates every open window with no UI code. SQL `ATTACH` is
   denied through `app.db`.
 - **Tools:** describe every input field with `app.t` builders (agents read them); the host validates input before `run`.
-  `readOnly = true` is enforced for the `app.*` API (no db, kv, state, notify, shell or window writes, no registering
+  `readOnly = true` is enforced for the `app.*` API (no db, kv, files, state, notify, shell or window writes, no registering
   anything; tasks and requests the call starts inherit it) and lets an agent with the default `auto_read_only` policy call
   the tool without a prompt. It does not cover the `std:`/`vnd:` modules. A tool that writes is not `readOnly`.
 - **Background work:** start loops with `task.spawn` from `std:task` and let the entry return (the app is not loaded until
@@ -84,6 +85,37 @@ semantic tokens only.
   own host: `CLAUDE.md` ("Boundaries") says what the VM does and does not keep apart.
 - **Your own modules are `any` in the editor.** luau-lsp resolves a relative `require` only while `require` is its
   built-in; `bun run lint:luau` checks them in a second pass. A wrong call into one is an error there, not in the editor.
+
+## Files
+
+`app.files` gives the app three managed locations, found from its identity: `documents` (what the person would miss),
+`cache` (what the app can rebuild) and `temp` (scratch). They are one shared set per app, not per person or device, and
+live next to the app's database (`<data>/apps/<id>.files/<location>/`). The app never names a host path:
+
+```lua
+local docs = app.files.documents
+assert(docs:createDir("notes"))                      -- and the missing directories above it
+local ok, err = docs:write("notes/a.txt", "hello")   -- replaces the file in one step; the parent must exist
+local text = docs:read("notes/a.txt")                -- the whole file, binary-safe, at most 64 MiB
+for _, e in docs:list("notes") or {} do end          -- { name, kind, size, modified }, sorted by name
+docs:move("notes/a.txt", "notes/b.txt")              -- also :copy (a file, or a tree to a new path), :info, :remove
+docs:remove("notes", { recursive = true })
+if app.files.errorKind(err) == "not_found" then end  -- the kinds of std:fs
+```
+
+- **Paths** are relative to the location and written with `/`; `""` is the location itself (it can be listed, not
+  written, moved or removed). An absolute path, `..`, `:`, a backslash, NUL, or a name over 255 bytes is
+  `invalid_input`, and a symbolic link inside a location is never followed (`info` and `list` show it as
+  `"symlink"`, `remove` deletes the link, everything else refuses it).
+- **Errors** are values: `nil, "files.<method>: <kind>: <path>: <message>"`, without the path when the path itself
+  was refused (`invalid_input`) or the host keeps no files (`unsupported`). Never a host path. A wrong argument type, an unknown option
+  and a write inside a `readOnly` tool or a render raise.
+- **Lifetime:** the files stay when the app is updated, disabled or uninstalled without purging, so a reinstall finds
+  them; uninstall with purge and "delete data" remove them with the database.
+- A call holds the app's turn while it runs, like `app.db`: a large tree copy or remove, or a big write (writes have
+  no size cap), keeps the app's other calls (its windows included) waiting until it ends. It does not need `std:fs`.
+- Scoping is a convention that keeps apps out of each other's files by accident, **not a sandbox**: `std:fs` reaches
+  any file the host can. `crates/vos-lua/src/files.rs` says how links and races are handled.
 
 ## Adding an app
 

@@ -39,8 +39,8 @@ use vos_application::{
         AgentConnector, AgentDirectory, AppActivity, AppRuntime, Clock, DataStore, DeviceRegistry, EventSink,
         Fetcher, InstalledAppStore, RandomSource, ThreadStore, ToolRegistry,
     },
-    AgentProcesses, AgentService, AppService, ChatPorts, ChatService, DeviceService, NoAgentProcesses,
-    PairingPolicy, Ports, ViewService,
+    AgentProcesses, AgentService, AppService, ChatPorts, ChatService, DeviceService, FileStore,
+    NoAgentProcesses, PairingPolicy, Ports, ViewService,
 };
 use vos_domain::{limits, Agent};
 use vos_fetch::UrlFetcher;
@@ -48,7 +48,7 @@ use vos_http::{
     origin_guard, require_session, rpc_router, session_router, static_router, HostGuard, RpcHub,
     SessionConfig,
 };
-use vos_lua::LuaRuntime;
+use vos_lua::{DiskFiles, LuaRuntime};
 use vos_mcp::{mcp_router, McpState};
 use vos_sqlite::{SqliteDataStore, SqliteSystemDb};
 
@@ -164,6 +164,8 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     let fetcher: Arc<dyn Fetcher> = Arc::new(UrlFetcher::new(limits::MAX_FILE_BYTES as u64)?); // one fetch is one package file
     let data: Arc<dyn DataStore> =
         Arc::new(SqliteDataStore::new(cfg.data_dir.as_ref().map(|d| d.join("apps"))));
+    // each app's managed files sit next to its database (`<data>/apps/<id>.files`), and are purged with it
+    let files: Arc<dyn FileStore> = Arc::new(DiskFiles::new(cfg.data_dir.as_ref().map(|d| d.join("apps"))));
     let system = open_system(cfg.data_dir.as_deref())?;
     let random = cfg.random;
     // the agent processes: real ACP ones unless a test scripts the connector. The roster stops a process when
@@ -173,7 +175,9 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     // apps list
     let contacts = Arc::new(AgentService::new(system.clone(), mcp_state.clone(), random.clone(), processes));
     contacts.load().await?;
-    let lua = Arc::new(LuaRuntime::new(hub.clone(), hub.clone()).with_roster(contacts.clone()));
+    let lua = Arc::new(
+        LuaRuntime::new(hub.clone(), hub.clone()).with_roster(contacts.clone()).with_files(files.clone()),
+    );
     let runtime: Arc<dyn AppRuntime> = lua.clone();
     let tools: Arc<dyn ToolRegistry> = mcp_state.clone();
     let events: Arc<dyn EventSink> = hub.clone();
@@ -186,6 +190,7 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     let service = Arc::new(AppService::new(Ports {
         fetcher,
         data,
+        files,
         runtime,
         tools,
         events,

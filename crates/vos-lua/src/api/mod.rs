@@ -5,6 +5,7 @@
 //! app.window(name, spec)          a window kind (rendered by the view layer)
 //! app.state { ... }               shared state, reads tracked
 //! app.db / app.kv                 data (sources, migrations, exec) and a small key-value store
+//! app.files.documents:read(path)  the app's managed files (documents, cache, temp)
 //! app.tools.register { ... }      agent tools (alias: app.tool { ... })
 //! app.t.string { ... } ...        input schema builders
 //! app.notify { ... }              notifications
@@ -12,6 +13,7 @@
 //! ```
 
 mod data;
+mod files;
 mod misc;
 mod schema;
 mod tools;
@@ -20,10 +22,13 @@ use crate::{
     require,
     vm::{Effect, Shared, ShellEffect},
 };
+use neoc_vm::lua::lifecycle::{async_function, Role};
 use neoc_vm::mlua;
-use neoc_vm::mlua::Lua;
+use neoc_vm::mlua::{FromLuaMulti, Function, IntoLuaMulti, Lua};
 use std::{future::Future, sync::Arc};
 use vos_application::PortError;
+
+type Sh = Arc<Shared>;
 
 /// Install the `app` table and `require` into the app's environment (they are globals of its chunks, not of
 /// the engine).
@@ -34,10 +39,27 @@ pub(crate) fn install(lua: &Lua, sh: &Arc<Shared>, env: &mlua::Table) -> mlua::R
     app.set("t", schema::builders(lua)?)?;
     tools::install(lua, sh, &app)?;
     data::install(lua, sh, &app)?;
+    files::install(lua, sh, &app)?;
     app.set("state", crate::state::state_constructor(lua, sh.tracker.clone())?)?;
     *sh.app_table.lock() = Some(app.clone());
     env.set("app", app)?;
     require::install(lua, sh, env)
+}
+
+/// An async host function of the app's own state: it takes the turn before its body runs ([`Role::Vm`]), and the
+/// body gets the app's shared state. Every function of `app.db`, `app.kv` and `app.files` is made here.
+pub(crate) fn vm_function<A, R, Fut>(
+    lua: &Lua,
+    sh: &Sh,
+    body: impl Fn(Sh, Lua, A) -> Fut + Send + 'static,
+) -> mlua::Result<Function>
+where
+    A: FromLuaMulti,
+    R: IntoLuaMulti + Send + 'static,
+    Fut: Future<Output = mlua::Result<R>> + Send + 'static,
+{
+    let sh = sh.clone();
+    async_function(lua, Role::Vm, move |lua, args| body(sh.clone(), lua, args))
 }
 
 /// Run a host call (a database call) from inside a `lifecycle::Role::Vm` function, which holds the turn already.

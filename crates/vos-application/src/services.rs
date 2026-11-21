@@ -6,6 +6,7 @@
 
 use crate::{
     data::Params,
+    files::FileStore,
     live::{pump_changes, LiveSources},
     ports::{
         AppActivity, AppData, AppObserver, AppPackage, AppRuntime, Background, CallContext, Clock, DataStore,
@@ -30,6 +31,8 @@ use vos_domain::{
 pub struct Ports {
     pub fetcher: Arc<dyn Fetcher>,
     pub data: Arc<dyn DataStore>,
+    /// The app's managed files, removed together with its database.
+    pub files: Arc<dyn FileStore>,
     pub runtime: Arc<dyn AppRuntime>,
     pub tools: Arc<dyn ToolRegistry>,
     pub events: Arc<dyn EventSink>,
@@ -287,7 +290,7 @@ impl AppService {
         }
         self.p.installed.remove(app).await?;
         if purge_data {
-            self.p.data.purge(app).await?;
+            self.purge_data(app).await?;
         }
         self.p.events.emit(ServerEvent::AppUninstalled(app.clone())).await;
         Ok(())
@@ -411,6 +414,17 @@ impl AppService {
         }
     }
 
+    /// The app's database and its managed files. Removing the files is best effort, as removing the database is
+    /// (the SQLite adapter ignores what it cannot delete): a failure is logged and the uninstall or "delete data"
+    /// still finishes its state changes and events, rather than stopping half way with the app gone or without a VM.
+    async fn purge_data(&self, app: &AppId) -> Result<(), AppError> {
+        self.p.data.purge(app).await?;
+        if let Err(e) = self.p.files.purge(app).await {
+            tracing::warn!(%app, error = %e, "removing the app's files failed: what could not be removed stays on disk");
+        }
+        Ok(())
+    }
+
     /// Erase the app's data. A running app is reloaded on an empty database (its migrations run again).
     pub async fn delete_data(&self, app: &AppId) -> Result<(), AppError> {
         self.announce_stopping(app, "data deleted").await;
@@ -422,7 +436,7 @@ impl AppService {
         if let Some(active) = active {
             self.deactivate(app, active).await;
         }
-        self.p.data.purge(app).await?;
+        self.purge_data(app).await?;
         if !was_running {
             return Ok(());
         }
