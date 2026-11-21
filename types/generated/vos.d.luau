@@ -1805,7 +1805,13 @@ export type vos_ToolDef = {
 	run: (input: any, ctx: vos_ToolContext) -> any,
 }
 
-export type vos_Notification = { title: string, body: string?, at: string?, actions: { any }? }
+--- A notification: a title and an optional body, and no other key. The shell names the sender itself.
+export type vos_Notification = {
+	--- 1 to 200 characters, not blank
+	title: string,
+	--- up to 2000 characters
+	body: string?,
+}
 
 --- The desktop shell's side of the app: a deep link is accepted and dropped until the shell shows it.
 export type vos_Shell = {
@@ -1838,7 +1844,11 @@ export type vos_AppApi = {
 	--- got. An undeclared name raises `app:windows: no window ... is declared`. Listing is a read, so a `readOnly`
 	--- tool may do it; changing a window through its `w` is not.
 	windows: (self: vos_AppApi, name: string) -> { vos_WindowContext },
-	--- `app.notify { ... }` or `app:notify { ... }`.
+	--- `app.notify { title, body }` or `app:notify { ... }`: tell the person something now. It reaches the clients
+	--- connected now; one that is not connected never gets it. The shell shows the app's own name and icon.
+	--- Raises (each message starts `app.notify`): a key other than title and body ("unknown key"), no title
+	--- ("needs"), a title that is blank or over 200 characters, a body over 2000, a value that is not a string,
+	--- a 65th notification in one call ("at most 64 notifications per call"), and a call in render or a readOnly tool.
 	notify: ((notification: vos_Notification) -> ()) & ((self: vos_AppApi, notification: vos_Notification) -> ()),
 	log: (message: string) -> (),
 }

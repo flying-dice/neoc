@@ -147,6 +147,10 @@ impl Default for VmConfig {
     }
 }
 
+/// The most notifications one call may queue before the host takes them (`app.notify` raises past it). The
+/// number is Apple's: the system keeps an app's 64 soonest scheduled local notifications (`UILocalNotification`).
+pub const MAX_QUEUED_NOTIFICATIONS: usize = 64;
+
 /// Something the app asked the host to do, collected during a call and taken afterwards.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Effect {
@@ -271,6 +275,21 @@ impl Shared {
     #[allow(clippy::unnecessary_wraps)] // the same shape as the other effect pushes
     pub fn push_effect(&self, effect: Effect) -> mlua::Result<()> {
         self.effects.lock().push(effect);
+        Ok(())
+    }
+
+    /// Queue a notification. At most [`MAX_QUEUED_NOTIFICATIONS`] wait for the host at once (the runtime takes
+    /// them when a call ends, and when a background call pauses at a wait), so a call that loops on `app.notify`
+    /// raises instead of growing the queue without bound.
+    pub fn push_notification(&self, notification: Notification) -> mlua::Result<()> {
+        let mut effects = self.effects.lock();
+        let queued = effects.iter().filter(|e| matches!(e, Effect::Notify(_))).count();
+        if queued >= MAX_QUEUED_NOTIFICATIONS {
+            return Err(mlua::Error::runtime(format!(
+                "app.notify: at most {MAX_QUEUED_NOTIFICATIONS} notifications per call"
+            )));
+        }
+        effects.push(Effect::Notify(notification));
         Ok(())
     }
 

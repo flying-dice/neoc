@@ -52,7 +52,7 @@ local calc = require("./calc")   -- a module of this package, inlined at build t
 | `app.kv`, `app.db` | small durable key/value store; SQLite per app (`migrate`, `exec`, `all`, `one`, `tx`, live sources `query`/`row`/`scalar`) |
 | `app.files.documents`, `.cache`, `.temp` | the app's managed files: `read`, `write`, `list`, `info`, `createDir`, `remove`, `move`, `copy` (see "Files") |
 | `app.tool { name, title, description, readOnly, input, run }` | an agent tool (MCP name `<id>__<name>`, local name `[a-z][a-z0-9_]*`) |
-| `app.notify { ... }`, `w:toast { ... }` | a notification, an in-window message |
+| `app.notify { title, body }`, `w:toast { ... }` | a notification (see "Notifications" below), an in-window message |
 | `app:openWindow(name, params)`, `app.thread()`, `app.agents:list()` | bring a window forward, a chat source for `ChatTranscript`, the roster (`{ id, name, avatar, role }` only) |
 
 Constructors are table calls, StyLua-formatted: positional entries are children (or the text), named keys are props, slots
@@ -74,6 +74,13 @@ semantic tokens only.
   `readOnly = true` is enforced for the `app.*` API (no db, kv, files, state, notify, shell or window writes, no registering
   anything; tasks and requests the call starts inherit it) and lets an agent with the default `auto_read_only` policy call
   the tool without a prompt. It does not cover the `std:`/`vnd:` modules. A tool that writes is not `readOnly`.
+- **Notifications:** `app.notify { title = "Backup done", body = "12 files" }` tells the person something now. It takes a
+  `title` (1 to 200 characters, not blank) and an optional `body` (up to 2000) and no other key; the shell names the sender
+  from the app's own name and icon. It goes to the clients connected at that moment: one that is not connected never
+  gets it (nothing is queued). Bad input raises, each message starting `app.notify`: a key other than `title` and `body`
+  (`unknown key`), no title (`needs`), a title that is blank or too long, a body that is too long, a value that is not a
+  string, a 65th notification in one call (`at most 64 notifications per call`), and a call in `render` or a `readOnly`
+  tool.
 - **Background work:** start loops with `task.spawn` from `std:task` and let the entry return (the app is not loaded until
   it does). Closing a window leaves the work running; assigning `app.state` from a task re-renders open windows; unloading
   aborts tasks and closes servers (`crates/vos-host/tests/fixtures/ticker` is an example).
