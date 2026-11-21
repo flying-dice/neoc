@@ -18,6 +18,10 @@ local state = app.state { count = 1 }
 state.count = "text" -- expect-error: Expected this to be 'number', but got 'string'
 app.t.string { description = 5 } -- expect-error: Expected this to be 'vos_SchemaOptions?'
 local _name: string = json.nope -- expect-error: Key 'nope' not found in table 'lib_json'
+app.files.documents:write("a.txt") -- expect-error: expects 3 arguments, but only 2 are specified
+app.files.documents:remove("a", { recursive = "yes" }) -- expect-error: Expected this to be '{ recursive: boolean? }?' but got
+app.files.photos:read("a.jpg") -- expect-error: Key 'photos' not found in table 'vos_FilesApi'
+app.files.cache:createDir(5) -- expect-error: Expected this to be 'string', but got 'number'
 app.notify { title = "fine", body = "this line is correct" }
 app.tool {
   name = "fine",
