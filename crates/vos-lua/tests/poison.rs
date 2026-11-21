@@ -112,7 +112,7 @@ async fn run_case(name: &str) -> String {
         }
         // an event handler raises the value
         "event_handler" => {
-            let vm = load(&app("app.on('e', function() error(poison) end)")).await;
+            let vm = load(&app("hook('e', function() error(poison) end)")).await;
             let e = vm.emit("e", json!({})).await.unwrap_err();
             ping(&vm).await;
             poisoned(&e)

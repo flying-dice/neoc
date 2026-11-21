@@ -21,8 +21,8 @@ async fn sandbox_blocks_escape_hatches_and_global_mutation() {
         out.string_ro = not pcall(function() string.evil = 1 end)   -- builtins are readonly
         -- app writes to globals land in ITS OWN env, not shared
         counter = 1
-        app.on("probe", function() counter = counter + 1; return counter end)
-        app.on("report", function() return out end)
+        hook("probe", function() counter = counter + 1; return counter end)
+        hook("report", function() return out end)
     "#;
     let vm = load(src).await;
     let report = vm.emit("report", json!(null)).await.unwrap();
@@ -37,7 +37,7 @@ async fn sandbox_blocks_escape_hatches_and_global_mutation() {
 
 #[tokio::test]
 async fn errors_carry_the_app_file_and_line_and_never_crash_the_host() {
-    let src = "local x = 1\napp.on('boom', function()\n  local y = nil\n  return y.field\nend)\napp.on('err', function() error('custom failure') end)\napp.on('tbl', function() error({ code = 7 }) end)";
+    let src = "local x = 1\nhook('boom', function()\n  local y = nil\n  return y.field\nend)\nhook('err', function() error('custom failure') end)\nhook('tbl', function() error({ code = 7 }) end)";
     let vm = try_load("broken", src).await.unwrap();
     let e = vm.emit("boom", json!(null)).await.unwrap_err().to_string();
     assert!(e.starts_with("broken/app.lua:4:"), "{e}");
@@ -57,8 +57,8 @@ async fn errors_carry_the_app_file_and_line_and_never_crash_the_host() {
 #[tokio::test]
 async fn host_function_errors_get_the_calling_line() {
     let src =
-        "app.on('bad', function()\n  local rows = app.db:all('select * from nope')\n  return rows\nend)\n\
-               app.on('tail', function()\n  return app.db:all('select * from nope')\nend)";
+        "hook('bad', function()\n  local rows = app.db:all('select * from nope')\n  return rows\nend)\n\
+               hook('tail', function()\n  return app.db:all('select * from nope')\nend)";
     let vm = try_load("err", src).await.unwrap();
     let e = vm.emit("bad", json!(null)).await.unwrap_err().to_string();
     assert!(e.starts_with("err/app.lua:2:"), "{e}");
@@ -73,7 +73,7 @@ async fn unload_frees_the_vm_and_hot_reload_swaps_in_new_code() {
     let dir = std::env::temp_dir().join(format!("hot-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let write = |n: u32| {
-        std::fs::write(dir.join("app.lua"), format!("app.on('v', function() return {n} end)")).unwrap();
+        std::fs::write(dir.join("app.lua"), format!("hook('v', function() return {n} end)")).unwrap();
     };
     write(1);
     let mut w = reload::watch_dir(&dir).unwrap();

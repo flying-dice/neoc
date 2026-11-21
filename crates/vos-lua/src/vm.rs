@@ -40,7 +40,7 @@ use std::{
 use tokio::sync::Notify;
 use vos_application::{
     live::{SourceDef, SourceId},
-    ports::{AgentCard, AgentRoster, AppData, AppPackage, CallContext, MenuCommand, ViewEffect},
+    ports::{AgentCard, AgentRoster, AppData, AppPackage, CallContext, ViewEffect},
     AppFiles, Files, NoFiles,
 };
 use vos_domain::{time, tool_schema, AppDecl, AppId, Notification, ToolSpec};
@@ -120,6 +120,10 @@ pub struct VmConfig {
     /// The host leaves it empty and there is no setting for it: a test uses it to show that a capability works
     /// for an app that cannot `require` a module (`app.files` without `std:fs`).
     pub refused_modules: Vec<String>,
+    /// Give the app's chunks a `hook(name, fn)` global that [`AppVm::emit`] calls: how the adapter's tests reach
+    /// app code without declaring a tool. It is not part of the app API (`app` has no event hook, and the host
+    /// emits nothing), the host leaves it off and there is no setting for it.
+    pub test_hooks: bool,
 }
 
 impl std::fmt::Debug for VmConfig {
@@ -143,6 +147,7 @@ impl Default for VmConfig {
             roster: Arc::new(NoRoster),
             files: Arc::new(NoFiles),
             refused_modules: Vec::new(),
+            test_hooks: false,
         }
     }
 }
@@ -161,8 +166,6 @@ pub enum Effect {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ShellEffect {
-    Badge(Option<String>),
-    Commands(Vec<MenuCommand>),
     DeepLinks(Vec<String>),
 }
 
@@ -184,11 +187,12 @@ pub(crate) struct Shared {
     pub roster: Arc<dyn AgentRoster>,
     pub tracker: SharedTracker,
     pub tools: Mutex<Vec<ToolDecl>>,
+    /// What `hook(name, fn)` registered (only with [`VmConfig::test_hooks`]).
     pub handlers: Mutex<HashMap<String, Function>>,
+    pub test_hooks: bool,
     pub sources: Mutex<Vec<SourceDef>>,
     pub writers: Mutex<HashMap<String, Function>>,
     pub windows: Mutex<HashMap<String, Table>>,
-    pub commands: Mutex<Vec<(MenuCommand, Function)>>,
     pub deep_links: Mutex<Vec<(String, Function)>>,
     pub decl: Mutex<Option<AppDecl>>,
     pub effects: Mutex<Vec<Effect>>,
@@ -310,7 +314,6 @@ impl Shared {
         self.handlers.lock().clear();
         self.writers.lock().clear();
         self.windows.lock().clear();
-        self.commands.lock().clear();
         self.deep_links.lock().clear();
         self.modules.lock().clear();
         self.views.lock().clear();
@@ -593,7 +596,7 @@ impl AppVm {
         db: Arc<dyn AppData>,
         config: VmConfig,
     ) -> Result<Self> {
-        let VmConfig { host_modules, roster, files, refused_modules } = config;
+        let VmConfig { host_modules, roster, files, refused_modules, test_hooks } = config;
         let offered = Arc::new(crate::require::offered_modules(&refused_modules));
         let load_err =
             |e: &mlua::Error| VmError::Load { app: app.to_string(), error: ScriptError::from_lua(e) };
@@ -637,10 +640,10 @@ impl AppVm {
             tracker: Arc::new(Mutex::new(Tracker::new(read_only.clone()))),
             tools: Mutex::default(),
             handlers: Mutex::default(),
+            test_hooks,
             sources: Mutex::default(),
             writers: Mutex::default(),
             windows: Mutex::default(),
-            commands: Mutex::default(),
             deep_links: Mutex::default(),
             decl: Mutex::default(),
             effects: Mutex::default(),
@@ -835,7 +838,8 @@ impl AppVm {
         .await
     }
 
-    /// Dispatch an event to `app.on(name, fn)` with a JSON payload; returns the handler's JSON result.
+    /// Call what the app registered with `hook(name, fn)` (a VM loaded with [`VmConfig::test_hooks`]) with a JSON
+    /// payload, as one call of its own; returns the handler's JSON result, or null when nothing is registered.
     pub async fn emit(&self, event: &str, payload: Value) -> Result<Value> {
         self.emit_inner(event, payload, false).await.map(|(v, _)| v)
     }

@@ -182,8 +182,7 @@ app.files.temp:remove("scratch.txt")
 app.notify { title = "hello", body = "world" }
 app:notify { title = "hello" }
 app.log("usage")
-app.shell.badge(3)
-app.timer.every(60, function() end)
+app.shell.deepLink("note/:id", function(_params) end)
 for _, card in ipairs(app.agents:list()) do
   local _name: string = card.name
 end

@@ -9,7 +9,7 @@
 //! app.tools.register { ... }      agent tools (alias: app.tool { ... })
 //! app.t.string { ... } ...        input schema builders
 //! app.notify { ... }              notifications
-//! app.shell.badge / command / deepLink
+//! app.shell.deepLink(pattern, f)  deep links
 //! ```
 
 mod data;
@@ -43,7 +43,24 @@ pub(crate) fn install(lua: &Lua, sh: &Arc<Shared>, env: &mlua::Table) -> mlua::R
     app.set("state", crate::state::state_constructor(lua, sh.tracker.clone())?)?;
     *sh.app_table.lock() = Some(app.clone());
     env.set("app", app)?;
+    if sh.test_hooks {
+        install_test_hook(lua, sh, env)?;
+    }
     require::install(lua, sh, env)
+}
+
+/// `hook(name, fn)`, for the adapter's tests ([`crate::VmConfig::test_hooks`]): a function `AppVm::emit` calls.
+/// Registering one changes the app's wiring, so a `readOnly` call may not.
+fn install_test_hook(lua: &Lua, sh: &Arc<Shared>, env: &mlua::Table) -> mlua::Result<()> {
+    let s = sh.clone();
+    env.set(
+        "hook",
+        lua.create_function(move |_, (name, f): (String, Function)| {
+            s.writable("hook")?;
+            s.handlers.lock().insert(name, f);
+            Ok(())
+        })?,
+    )
 }
 
 /// An async host function of the app's own state: it takes the turn before its body runs ([`Role::Vm`]), and the
@@ -88,7 +105,7 @@ pub(crate) fn check_effects_allowed(sh: &Shared, what: &str) -> mlua::Result<()>
 }
 
 /// Queue a shell declaration. A later declaration of the same kind replaces the earlier one (the shell only
-/// ever needs the last badge, command list or link list), so a loop of them cannot grow the queue.
+/// ever needs the last link list), so a loop of them cannot grow the queue.
 pub(crate) fn push_shell(sh: &Shared, effect: ShellEffect) {
     let mut effects = sh.effects.lock();
     effects.retain(|queued| match queued {

@@ -874,6 +874,10 @@ fn std_fs_tree_operations_survive_deep_nests_and_symlink_loops() {
         "copy_dir:ok",
         "copy_dir again:err already_exists",
         "copy_dir into itself:err invalid_input",
+        // the cycle of two (`one` -> `two` -> `one`): resolving it fails at once, with the kind of a symlink loop
+        "copy over loop:err other",
+        "walk loop link:err other",
+        "metadata loop link:err other",
         "remove copy:ok",
         "remove deep:ok",
         "remove loop link:err not_a_directory",

@@ -104,8 +104,6 @@ async fn deliver_effects(
         }
         match effect {
             Effect::Notify(n) => notifier.notify(n).await?,
-            Effect::Shell(ShellEffect::Badge(b)) => shell.set_badge(app, b).await,
-            Effect::Shell(ShellEffect::Commands(c)) => shell.set_menu_commands(app, c).await,
             Effect::Shell(ShellEffect::DeepLinks(l)) => shell.set_deep_links(app, l).await,
             Effect::OpenWindow { name, params } => {
                 let params = match params {
@@ -146,6 +144,7 @@ impl AppRuntime for LuaRuntime {
             roster: self.roster.clone().unwrap_or_else(|| VmConfig::default().roster),
             files: self.files.files(app),
             refused_modules: Vec::new(),
+            test_hooks: false,
         };
         // An app that serves a port cannot be replaced by a version that serves the same one while the old
         // still holds it: stop what the old version started (listeners, tasks, workers) before the new one
