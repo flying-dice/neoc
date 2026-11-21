@@ -6,7 +6,7 @@ mod common;
 use common::{agent_ctx, db, id, load, package, try_load, user_ctx};
 use serde_json::{json, Value};
 use std::sync::Arc;
-use vos_application::{live::SourceKind, ports::MenuCommand};
+use vos_application::live::SourceKind;
 use vos_domain::Notification;
 use vos_lua::{AppVm, Effect, ShellEffect, VmConfig, VmError};
 
@@ -63,11 +63,11 @@ async fn require_loads_the_two_host_modules_and_caches_them() {
         local app2 = require("vos:app")
         local ui = require("vos:ui")
         local again = require("vos:ui")
-        app.on("t", function() return { app = app2 == app, same = ui == again, kit = type(ui.VStack), t = type(ui.each) } end)
+        hook("t", function() return { app = app2 == app, same = ui == again, kit = type(ui.VStack), t = type(ui.each) } end)
     "#;
     let host_modules =
         std::collections::HashMap::from([("ui".to_owned(), vos_lua::UI_MODULE.as_bytes().to_vec())]);
-    let config = VmConfig { host_modules: Arc::new(host_modules), ..VmConfig::default() };
+    let config = VmConfig { host_modules: Arc::new(host_modules), ..common::config() };
     let vm = AppVm::load(&id("probe"), package(src, &[]), db(), config).await.unwrap();
     assert_eq!(
         vm.emit("t", json!(null)).await.unwrap(),
@@ -119,8 +119,8 @@ async fn a_host_module_that_requires_itself_is_a_cycle_not_a_stack_overflow() {
 async fn host_modules_are_registered_by_the_host_and_load_once() {
     let mut modules = std::collections::HashMap::new();
     modules.insert("ui".to_owned(), b"local n = (n or 0) return { version = 1 }".to_vec());
-    let cfg = VmConfig { host_modules: Arc::new(modules), ..VmConfig::default() };
-    let src = "local ui = require('vos:ui')\napp.on('t', function() return ui.version end)";
+    let cfg = VmConfig { host_modules: Arc::new(modules), ..common::config() };
+    let src = "local ui = require('vos:ui')\nhook('t', function() return ui.version end)";
     let vm = AppVm::load(&id("probe"), package(src, &[]), db(), cfg).await.unwrap();
     assert_eq!(vm.emit("t", json!(null)).await.unwrap(), json!(1));
 }
@@ -132,7 +132,7 @@ async fn migrate_exec_all_one_with_named_and_positional_params() {
     let src = app(r#"
         local db = app.db
         db:migrate { [1] = "create table notes(id integer primary key, body text not null, rev integer not null default 0)" }
-        app.on("go", function()
+        hook("go", function()
             local a = db:exec("insert into notes(body) values (:b)", { b = "milk" })
             local b = db:exec("insert into notes(body) values (?)", { "eggs" })
             local all = db:all("select id, body from notes where id > :n order by id", { n = 0 })
@@ -180,23 +180,23 @@ async fn tx_commits_together_rolls_back_on_error_and_cannot_nest() {
     let src = app(r#"
         local db = app.db
         db:migrate { [1] = "create table t(a integer unique)" }
-        app.on("both", function()
+        hook("both", function()
             db:tx(function() db:exec("insert into t values (1)") db:exec("insert into t values (2)") end)
             return db:one("select count(*) as n from t").n
         end)
-        app.on("failing", function()
+        hook("failing", function()
             local ok, err = pcall(function() db:tx(function()
                 db:exec("insert into t values (10)")
                 db:exec("insert into t values (1)")        -- unique violation
             end) end)
             return { ok = ok, n = db:one("select count(*) as n from t").n }
         end)
-        app.on("raise", function()
+        hook("raise", function()
             pcall(function() db:tx(function() db:exec("insert into t values (20)") error("changed my mind") end) end)
             return db:one("select count(*) as n from t where a = 20").n
         end)
-        app.on("nested", function() return pcall(function() db:tx(function() db:tx(function() end) end) end) end)
-        app.on("value", function() return db:tx(function() return "from tx" end) end)
+        hook("nested", function() return pcall(function() db:tx(function() db:tx(function() end) end) end) end)
+        hook("value", function() return db:tx(function() return "from tx" end) end)
     "#);
     let vm = load(&src).await;
     assert_eq!(vm.emit("both", json!(null)).await.unwrap(), json!(2));
@@ -213,7 +213,7 @@ async fn tx_commits_together_rolls_back_on_error_and_cannot_nest() {
 #[tokio::test]
 async fn kv_stores_json_values() {
     let src = app(r#"
-        app.on("go", function()
+        hook("go", function()
             local before = app.kv:get("history")
             app.kv:set("history", { { expression = "1+1", result = 2 } })
             app.kv:set("n", 7)
@@ -234,7 +234,7 @@ async fn kv_stores_json_values() {
 #[tokio::test]
 async fn params_with_whole_numbers_bind_as_integers() {
     let src = app(r#"
-        app.on("go", function()
+        hook("go", function()
             return app.db:one("select typeof(:id) as t, :id as v, typeof(:name) as s", { id = 7, name = "x" })
         end)"#);
     let vm = load(&src).await;
@@ -258,10 +258,10 @@ async fn sources_are_prepared_validated_and_listed_with_their_dependencies() {
         "{NOTES_DB}
         local folders = db:query([[select f.id, f.name, (select count(*) from notes n where n.folder_id = f.id) as count from folders f order by f.id]], {{ key = 'id' }})
         local list = db:query([[select id, body from notes where (:folder = 0 or folder_id = :folder) and body like '%' || :q || '%' order by id desc]], {{ key = 'id', page = 60 }})
-        app.on('peek', function() return db:one('select body from notes where id = 1').body end)
+        hook('peek', function() return db:one('select body from notes where id = 1').body end)
         local note = db:row('select id, body, rev from notes where id = :id', {{ key = 'id', rev = 'rev', write = function() end }})
         local n = db:scalar('select count(*) from notes')
-        app.on('handles', function()
+        hook('handles', function()
             local h = list {{ folder = 1, q = '' }}
             return {{ folders = folders {{}}['$source'], list = h['$source'], note = note {{ id = 3 }}['$source'], n = n()['$source'], field = note {{ id = 3 }}.body['$ref'], bound = note {{ id = 3 }}:bind('body')['$ref'], dollar = h['$nothing'] }}
         end)"
@@ -305,9 +305,9 @@ async fn source_handles_check_their_params() {
     let src = app(&format!(
         "{NOTES_DB}
         local note = db:row('select id, body from notes where id = :id', {{ key = 'id' }})
-        app.on('ok', function() return note {{ id = 1 }}['$source'] end)
-        app.on('missing', function() return note {{}} end)
-        app.on('extra', function() return note {{ id = 1, other = 2 }} end)"
+        hook('ok', function() return note {{ id = 1 }}['$source'] end)
+        hook('missing', function() return note {{}} end)
+        hook('extra', function() return note {{ id = 1, other = 2 }} end)"
     ));
     let vm = load(&src).await;
     assert_eq!(vm.emit("ok", json!(null)).await.unwrap(), json!("s1"));
@@ -320,7 +320,7 @@ async fn source_handles_check_their_params() {
 async fn the_write_callback_runs_with_key_field_value_and_a_context() {
     let src = app(&format!(
         "{NOTES_DB}
-        app.on('peek', function() return db:one('select body from notes where id = 1').body end)
+        hook('peek', function() return db:one('select body from notes where id = 1').body end)
         local note = db:row('select id, body, rev from notes where id = :id', {{ key = 'id', rev = 'rev',
           write = function(id, field, value, ctx)
             assert(field == 'body', 'only body is writable')
@@ -456,11 +456,11 @@ async fn a_write_made_by_a_tool_is_visible_to_the_next_read() {
 async fn state_reads_are_tracked_and_assignments_mark_fields_dirty() {
     let src = app(r#"
         local s = app.state { entry = "0", acc = 0, caption = "" }
-        app.on("render", function() return s.entry .. "|" .. s.caption end)
-        app.on("press", function(d) s.entry = d.digit return s.entry end)
-        app.on("noop", function() s.acc = 0 end)
-        app.on("render_write", function() return s.entry end)
-        app.on("shared", function() return app.state { x = 1 } ~= s end)
+        hook("render", function() return s.entry .. "|" .. s.caption end)
+        hook("press", function(d) s.entry = d.digit return s.entry end)
+        hook("noop", function() s.acc = 0 end)
+        hook("render_write", function() return s.entry end)
+        hook("shared", function() return app.state { x = 1 } ~= s end)
     "#);
     let vm = load(&src).await;
     let (out, deps) = vm.emit_tracked("render", json!(null)).await.unwrap();
@@ -487,10 +487,10 @@ async fn render_is_pure_state_db_and_effects_raise_while_tracking_a_render() {
     let src = app(r#"
         local s = app.state { n = 0 }
         app.db:migrate { [1] = "create table t(a)" }
-        app.on("bad_state", function() s.n = 1 end)
-        app.on("bad_db", function() app.db:exec("insert into t values (1)") end)
-        app.on("bad_notify", function() app.notify { title = "x" } end)
-        app.on("ok_read", function() return app.db:all("select * from t") end)
+        hook("bad_state", function() s.n = 1 end)
+        hook("bad_db", function() app.db:exec("insert into t values (1)") end)
+        hook("bad_notify", function() app.notify { title = "x" } end)
+        hook("ok_read", function() return app.db:all("select * from t") end)
     "#);
     let vm = load(&src).await;
     // outside a render all of these are fine
@@ -508,9 +508,7 @@ async fn notify_and_shell_calls_become_effects_for_the_host() {
         app.manifest { id = "probe", name = "Probe", icon = "gear" }
         app.notify { title = "Reminder", body = "Call mum" }
         app:notify { title = "Colon call" }
-        app.shell.badge(3)
-        app.shell.badge(0)
-        app.shell.command { id = "new", title = "New Note", shortcut = "cmd+n", run = function() end }
+        app.shell.deepLink("note/:old", function(params) end)
         app.shell.deepLink("note/:id", function(params) end)
         app.window("main", { render = function(w) end })
         app:openWindow("main", { noteId = 12 })
@@ -524,14 +522,8 @@ async fn notify_and_shell_calls_become_effects_for_the_host() {
         vec![
             n("Reminder", Some("Call mum")),
             n("Colon call", None),
-            // `badge(3)` then `badge(0)`: the shell only ever needs the last, so the first is replaced
-            Effect::Shell(ShellEffect::Badge(None)),
-            Effect::Shell(ShellEffect::Commands(vec![MenuCommand {
-                id: "new".into(),
-                title: "New Note".into(),
-                shortcut: Some("cmd+n".into())
-            }])),
-            Effect::Shell(ShellEffect::DeepLinks(vec!["note/:id".into()])),
+            // two links: the shell only ever needs the last list, so the first declaration's is replaced
+            Effect::Shell(ShellEffect::DeepLinks(vec!["note/:old".into(), "note/:id".into()])),
             Effect::OpenWindow { name: "main".into(), params: json!({"noteId": 12}) },
         ]
     );
@@ -539,13 +531,11 @@ async fn notify_and_shell_calls_become_effects_for_the_host() {
 }
 
 #[tokio::test]
-async fn notify_and_commands_are_validated() {
+async fn notify_and_deep_links_are_validated() {
     for (call, needle) in [
         ("app.notify { body = 'no title' }", "needs `title`"),
         ("app.notify { title = '' }", "1 to 200"),
         ("app.notify { title = 5 }", "must be a string"),
-        ("app.shell.command { id = 'a', title = 'A' }", "needs `run"),
-        ("app.shell.badge({})", "badge must be"),
         ("app.shell.deepLink('', function() end)", "1 to 128"),
     ] {
         let src = format!("app.manifest {{ id = 'probe', name = 'P', icon = 'gear' }}\n{call}");

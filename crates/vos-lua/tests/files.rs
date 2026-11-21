@@ -20,7 +20,7 @@ async fn load_in(root: &Path, name: &str, src: &str, refused: &[&str]) -> AppVm 
     let config = VmConfig {
         files: store.files(&id(name)),
         refused_modules: refused.iter().map(|m| (*m).to_owned()).collect(),
-        ..VmConfig::default()
+        ..common::config()
     };
     AppVm::load(&id(name), package(src, &[]), db(), config).await.unwrap()
 }
@@ -199,9 +199,9 @@ async fn no_path_leaves_the_apps_location() {
 
 const SHARED_NAME: &str = r#"
     local docs = app.files.documents
-    app.on("write", function(text) return docs:write("shared.txt", text) end)
-    app.on("read", function() local text, err = docs:read("shared.txt") return { text = text, kind = app.files.errorKind(err) } end)
-    app.on("list", function() return #assert(docs:list()) end)
+    hook("write", function(text) return docs:write("shared.txt", text) end)
+    hook("read", function() local text, err = docs:read("shared.txt") return { text = text, kind = app.files.errorKind(err) } end)
+    hook("list", function() return #assert(docs:list()) end)
 "#;
 
 #[tokio::test]
@@ -281,7 +281,7 @@ async fn errors_are_values_with_a_stable_kind_and_misuse_raises() {
     let root = TempDir::new().unwrap();
     let src = r#"
         local docs = app.files.documents
-        app.on("probe", function()
+        hook("probe", function()
           local _, missing = docs:read("nope.txt")
           local _, bad = docs:read("../x")
           local _, root_write = docs:write("", "x")
@@ -322,8 +322,8 @@ async fn purging_removes_the_apps_files_and_a_host_without_a_data_directory_keep
     store.purge(&id("files-demo")).await.unwrap();
 
     let none = DiskFiles::new(None);
-    let config = VmConfig { files: none.files(&id("probe")), ..VmConfig::default() };
-    let src = r#"app.on("probe", function() local _, err = app.files.documents:list() return app.files.errorKind(err) end)"#;
+    let config = VmConfig { files: none.files(&id("probe")), ..common::config() };
+    let src = r#"hook("probe", function() local _, err = app.files.documents:list() return app.files.errorKind(err) end)"#;
     let vm = AppVm::load(&id("probe"), package(src, &[]), db(), config).await.unwrap();
     assert_eq!(vm.emit("probe", json!(null)).await.unwrap(), json!("unsupported"));
     none.purge(&id("probe")).await.unwrap();
@@ -336,7 +336,7 @@ async fn a_file_call_where_luau_cannot_yield_fails_and_changes_nothing() {
     let root = TempDir::new().unwrap();
     let src = r#"
         local docs = app.files.documents
-        app.on("probe", function()
+        hook("probe", function()
           assert(docs:write("kept.txt", "kept"))
           local function why(f) local ok, e = pcall(f) return (not ok) and tostring(e) or "ran" end
           return {
@@ -377,7 +377,7 @@ async fn a_failed_write_or_copy_names_the_app_path_never_a_host_path() {
     }
     let src = r#"
         local docs = app.files.documents
-        app.on("probe", function()
+        hook("probe", function()
           local _, write = docs:write("locked/a.txt", "x")
           local _, copy = docs:copy("src.txt", "locked/b.txt")
           return { write = write, copy = copy }

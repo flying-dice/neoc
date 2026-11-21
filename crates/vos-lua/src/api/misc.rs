@@ -1,4 +1,4 @@
-//! `app.manifest`, `app.window`, `app:openWindow`, `app:windows`, `app.on`, `app.log`, `app.notify`, `app.shell`.
+//! `app.manifest`, `app.window`, `app:openWindow`, `app:windows`, `app.log`, `app.notify`, `app.shell`.
 
 use super::{check_effects_allowed, push_shell};
 use crate::{
@@ -9,7 +9,6 @@ use neoc_vm::mlua;
 use neoc_vm::mlua::{Function, Lua, Table, Value as LuaValue, Variadic};
 use serde_json::Value;
 use std::sync::Arc;
-use vos_application::ports::MenuCommand;
 use vos_domain::{AppDecl, Notification};
 
 /// The table argument of `f { ... }` / `f({ ... })` / `app:f { ... }`: the last table given.
@@ -144,17 +143,6 @@ pub(super) fn install(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<
 
     install_windows(lua, sh, app)?;
 
-    // app.on(event, fn): a named hook the host can call
-    let s = sh.clone();
-    app.set(
-        "on",
-        lua.create_function(move |_, (name, f): (String, Function)| {
-            s.writable("app.on")?;
-            s.handlers.lock().insert(name, f);
-            Ok(())
-        })?,
-    )?;
-
     // app.log(message)
     let id = sh.app.to_string();
     app.set(
@@ -209,56 +197,9 @@ fn install_agents(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<()> 
     app.set("agents", agents)
 }
 
-/// `app.shell`: Dock badge, menu commands, deep links. Declarations only: the shell implements them later.
+/// `app.shell`: deep links, accepted and dropped until the shell shows them.
 fn install_shell(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<()> {
     let shell = lua.create_table()?;
-
-    // app.shell.badge(value): a string, a number, or nil to clear
-    let s = sh.clone();
-    shell.set(
-        "badge",
-        lua.create_function(move |_, value: Option<LuaValue>| {
-            s.writable("app.shell.badge")?;
-            let badge = match value {
-                None | Some(LuaValue::Nil) => None,
-                Some(LuaValue::String(t)) => Some(t.to_string_lossy()),
-                Some(LuaValue::Integer(n)) => Some(n.to_string()),
-                Some(LuaValue::Number(n)) => Some(n.to_string()),
-                Some(other) => {
-                    return Err(mlua::Error::runtime(format!(
-                        "badge must be a string, a number or nil, got {}",
-                        other.type_name()
-                    )))
-                }
-            };
-            push_shell(&s, ShellEffect::Badge(badge.filter(|b| !b.is_empty() && b != "0")));
-            Ok(())
-        })?,
-    )?;
-
-    // app.shell.command { id, title, shortcut?, run = function() end }
-    let s = sh.clone();
-    shell.set(
-        "command",
-        lua.create_function(move |_, def: Table| {
-            s.writable("app.shell.command")?;
-            let id = text_field(&def, "id", "app.shell.command", true, 64)?.unwrap_or_default();
-            let title = text_field(&def, "title", "app.shell.command", true, 80)?.unwrap_or_default();
-            let shortcut = text_field(&def, "shortcut", "app.shell.command", false, 32)?;
-            let run: Function = def
-                .get("run")
-                .map_err(|_| mlua::Error::runtime("app.shell.command needs `run = function() ... end`"))?;
-            let mut commands = s.commands.lock();
-            if commands.iter().any(|(c, _)| c.id == id) {
-                return Err(mlua::Error::runtime(format!("menu command `{id}` is already declared")));
-            }
-            commands.push((MenuCommand { id, title, shortcut }, run));
-            let all = commands.iter().map(|(c, _)| c.clone()).collect();
-            drop(commands);
-            push_shell(&s, ShellEffect::Commands(all));
-            Ok(())
-        })?,
-    )?;
 
     // app.shell.deepLink(pattern, handler): e.g. "note/:id"
     let s = sh.clone();

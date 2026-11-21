@@ -27,8 +27,9 @@ pub fn package(entry: &str, modules: &[(&str, &str)]) -> AppPackage {
     AppPackage { entry: "app.lua".into(), files }
 }
 
+/// The config of these tests: the host's, plus the `hook(name, fn)` global `AppVm::emit` calls.
 pub fn config() -> VmConfig {
-    VmConfig::default()
+    VmConfig { test_hooks: true, ..VmConfig::default() }
 }
 
 pub async fn try_load_with(name: &str, src: &str, db: Arc<dyn AppData>) -> vos_lua::Result<AppVm> {
