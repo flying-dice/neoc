@@ -53,16 +53,18 @@ bun run gate:neoc      # the scoped gate (= scripts/check-neoc.sh): a change con
    - `cargo deny check`
    - `cargo run -p neoc-vm --example luau_decls -- --check`
    - `cargo run -p vos-codegen -- --check`
-   - no `vos-*` crate in the dependency tree of `neoc` or `neoc-vm` (`cargo tree`)
+   - no `vos-*` crate in the dependency tree of `neoc` or `neoc-vm` (`scripts/check-no-vos-leak.sh`, which fails when `cargo tree` itself fails; tested in `scripts/check-no-vos-leak.test.ts`)
    - `cargo check --workspace --all-targets --locked`
 2. the vos checks: `bun run lint`, `bun run typecheck`, `bun run test`, `bun run test:e2e`.
 
 `bun run gate --neoc` and `--vos` run one half (for a loop; the gate before a PR is both).
 
 **Which one.** `bun run gate:neoc` needs Rust, `cargo-deny` and `luau-lsp`, and neither `bun` nor `darklua`. Use it only when the
-diff touches none of `crates/vos-*`, `apps/`, `client/`, `packages/`, `e2e/` and `scripts/` (apart from `check-neoc.sh`, the
+diff touches none of `crates/vos-*`, `apps/`, `client/`, `packages/`, `e2e/` and `scripts/` (apart from `check-neoc.sh`, `check-no-vos-leak.sh`, the
 install scripts and the toolchain pin) and leaves alone `neoc-vm`'s embedding API and sandbox (`lifecycle`, `script_env`,
-`modules`, `sandbox`), which the vos Lua adapter embeds. Anything else, and every change before a merge that touches vos, runs the
+`modules`, `sandbox`), which the vos Lua adapter embeds, and the turn behaviour of a module: the `Role` of an async host function
+(`task.wait` in `std/task.rs`, `std:thread`, `vnd:hyper`, `lib:http`, `Mutex`, ...) or what a module registers with `Life`
+(vos's `turns.rs` and `chaos.rs` pin those choices, and only the full gate runs them). Anything else, and every change before a merge that touches vos, runs the
 full `bun run gate`. e2e needs a Mac (the screenshot baselines are macOS-only); `VOS_PORT_BASE=9100` runs it in a second
 worktree beside another run. Leave `VOS_DATA` unset for it: the e2e host uses its own data directory under `test-results/host/`, and an override breaks the specs that read `mcp.json` there.
 

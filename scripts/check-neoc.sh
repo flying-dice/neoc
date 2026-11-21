@@ -58,10 +58,7 @@ cargo run -q -p vos-codegen -- --check
 
 # neoc and neoc-vm never depend on a vos-* crate, not even as a dev-dependency (no vos concept in the runtime).
 step "no vos-* crate in the dependency tree of neoc or neoc-vm"
-if cargo tree -p neoc -p neoc-vm -e all --prefix none | grep -E '^vos-'; then
-  echo "neoc and neoc-vm must not depend on a vos-* crate" >&2
-  exit 1
-fi
+scripts/check-no-vos-leak.sh
 
 step "cargo check --workspace --all-targets --locked"
 cargo check --workspace --all-targets --locked

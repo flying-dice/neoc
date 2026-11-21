@@ -154,7 +154,7 @@ Given / when / then table. Each category run or `N/A — <reason>`:
 - G1–G9 re-run against the fix diff. Comment / doc lines the fix introduced get G2.
 
 ### G11 — vos checks
-`N/A — no vos paths` unless the diff touches `crates/vos-*`, `apps/`, `client/`, `packages/`, `e2e/`, `types/generated` or the vos scripts. Otherwise run the section "vos checks" of `.claude/skills/pr-review/SKILL.md` (V2 tests and coverage, V3 accessibility, V4 boundaries and security, V5 UI structure and design, V6 the app readiness table when an app or what a person sees or does in one changed) and record each row PASS, FAIL or `N/A — <reason>` with command + output or `file:line`.
+`N/A — no vos paths` unless the diff touches `crates/vos-*`, `apps/`, `client/`, `packages/`, `e2e/`, `types/generated` or the vos scripts. Otherwise run the section "vos checks" of `.claude/skills/pr-review/SKILL.md` (V1 tests and coverage, V2 accessibility, V3 boundaries and security, V4 UI structure and design, V5 the app readiness table when an app or what a person sees or does in one changed) and record each row PASS, FAIL or `N/A — <reason>` with command + output or `file:line`.
 - The gate for vos paths is the full `bun run gate`; e2e not run = unverified = FAIL.
 - A UI change carries a `verify-change` "Manual verification" section in the PR.
 
@@ -179,7 +179,7 @@ reaches the client and every app), **app** (`apps/<id>`, Luau), **kit** (`packag
 (scripts, e2e, skills). Every finding names `file:line`, the failure it causes and the fix; skip what lint enforces. The gate
 itself is G1 (`bun run gate`).
 
-**V2. Tests and coverage**
+**V1. Tests and coverage**
 - New or changed Rust logic has a `cargo nextest` test in its layer, for success and expected failure: domain unit tests, use
   cases against the port fakes, adapter integration tests, and a host test when the change crosses layers. Logic sitting in
   an adapter, a Luau `render` or handler, or a Svelte page where it can't be unit-tested is a finding. New client or kit
@@ -193,7 +193,7 @@ itself is G1 (`bun run gate`).
 - Snapshot baselines changed: the PR shows the images were looked at. Any lowered threshold, skipped test or disabled axe
   rule is a finding unless the PR justifies it.
 
-**V3. Accessibility** (the generic specs run axe WCAG 2.1 AA in light and dark on every story and app window; they don't catch)
+**V2. Accessibility** (the generic specs run axe WCAG 2.1 AA in light and dark on every story and app window; they don't catch)
 - controls without an accessible name (icon-only buttons need a `label` in the tree or `aria-label` in the kit), wrong or
   missing roles on custom controls, labels not tied to their inputs;
 - keyboard paths: every journey is doable with Tab, Shift+Tab, Enter, Space, Escape and arrows, no traps, sheets and menus
@@ -203,7 +203,7 @@ itself is G1 (`bun run gate`).
 - targets under 44 pt, text clipped at 125% text size or at the minimum window;
 - live updates (agent replies, results pushed by tools) that a screen reader never hears.
 
-**V4. Boundaries and security** (`bun run lint:deps` and `cargo deny check` enforce crate direction and framework placement)
+**V3. Boundaries and security** (`bun run lint:deps` and `cargo deny check` enforce crate direction and framework placement)
 - **Hexagon.** Policy sits in the right layer: rules about apps, grants and tools are domain or use cases, not adapters; a new
   outside need is a port with a fake, then an adapter; an adapter doesn't reach another adapter; no adapter or framework type
   leaks into a port signature. A new crate is added to `scripts/check-deps.ts` and `deny.toml` on purpose.
@@ -236,7 +236,7 @@ itself is G1 (`bun run gate`).
 - **The client runs no app code.** No app-specific knowledge in `client/` or `packages/ui`; nothing executable crosses the
   wire; the client writes to the host only through the protocol (Bindings, events). Apps reach other apps only through tools.
 
-**V5. UI structure, design and clean code**
+**V4. UI structure, design and clean code**
 - Atomic placement makes sense (an organism isn't a page in disguise), the kit is used before a one-off, and a generic
   component goes into `packages/ui` with a story. Renderer adapters wrap kit components and take their props from the Rust
   schema. Test ids come from stable node keys, never indices or display text.
@@ -245,7 +245,7 @@ itself is G1 (`bun run gate`).
 - A UI change has a "Manual verification" section from `verify-change` with screenshots of the states it claims.
 - Run `clean-code-review` on the diff and carry over its findings above 0.5.
 
-**V6. Readiness gate (apps).** Applies to a new app and to any change that alters what a person sees or does in an app. Every
+**V5. Readiness gate (apps).** Applies to a new app and to any change that alters what a person sees or does in an app. Every
 row needs evidence; one missing row is a finding, and the app stays in its PR.
 
 | Requirement | Evidence |
@@ -254,7 +254,7 @@ row needs evidence; one missing row is a finding, and the app stays in its PR.
 | Package | `app.json` is valid and agrees with `app.manifest` (id, icon, tint), `version` bumped for a change to a released app; `bun run build:apps` builds it, and it installs from Discover, opens, works and uninstalls cleanly on a real host (`bun run dev`) |
 | Types and format | `bun run lint:luau` and `bun run lint:stylua` pass (not skipped) |
 | Tests | the app's logic and tools are covered from Rust (`crates/vos-lua/tests`, or `crates/vos-host/tests` for views, data and agents), including `readOnly` behaviour |
-| States | every screen and state is reached by a journey or a JSON-tree story (V2), green in the stories, desktop and journeys projects |
+| States | every screen and state is reached by a journey or a JSON-tree story (V1), green in the stories, desktop and journeys projects |
 | Journeys | `JOURNEYS.md` with 4 to 8 journeys (goal, start state, observable "Done when"), each with a passing spec of the same id |
 | Verified | the PR's "Manual verification" section (`verify-change`) covers light and dark, the minimum and large windows, Split View and Slide Over, and keyboard |
 | Researched | `ux/<app>/round-<n>.md` from the `app-design` skill whose scorecard meets the exit criteria (all journeys succeed for all three participants, mean ease at least 6.0, no blocker or major open, conformance at least 90 with no category below 70), and no layout or flow change landed after that round |

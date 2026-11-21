@@ -31,8 +31,11 @@ Run before every push. Loop until everything below is clean.
    the same for `crates/neoc-vm/tests/luau_decls.rs`.
 
    Use the **scoped variant** only when the diff touches no `crates/vos-*`, `apps/`, `client/`, `packages/`, `e2e/`,
-   `scripts/` (other than `scripts/check-neoc.sh`, the install scripts and the toolchain pin) and does not change
-   `neoc-vm`'s embedding API or sandbox (`lifecycle`, `script_env`, `modules`, `sandbox`), which `vos-lua` embeds. It
+   `scripts/` (other than `scripts/check-neoc.sh`, `scripts/check-no-vos-leak.sh`, the install scripts and the toolchain pin) and does not change
+   `neoc-vm`'s embedding API or sandbox (`lifecycle`, `script_env`, `modules`, `sandbox`), which `vos-lua` embeds, nor the
+   turn behaviour of a module: the `Role` of an async host function (`task.wait` in `std/task.rs`, `std:thread`, `vnd:hyper`,
+   `lib:http`, `Mutex`, ...) or what a module registers with `Life`. vos's `turns.rs` and `chaos.rs` pin those choices, and
+   only the full gate runs them. It
    covers `cargo fmt`, clippy with `-D warnings`, `cargo test -p neoc -p neoc-vm`, the Lua suites, the release
    `abort_regressions` run, the bench smoke, the toolchain pin, `cargo deny`, the Luau declarations (`luau_decls --check` and
    the luau-lsp fixtures), `vos-codegen --check` (a new neoc module regenerates `types/generated/vos.d.luau`: run

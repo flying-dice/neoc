@@ -269,7 +269,7 @@ One command set, defined once in [CONTRIBUTING.md](CONTRIBUTING.md#pre-pr-checks
 
 ```sh
 bun run gate           # the neoc checks (scripts/check-neoc.sh), then the vos checks: lint, typecheck, test, test:e2e
-bun run gate:neoc      # = scripts/check-neoc.sh: the scoped gate for a change confined to the neoc crates (no bun, no darklua)
+bun run gate:neoc      # = scripts/check-neoc.sh: the scoped gate for a change confined to the neoc crates (no bun, no darklua; not for a change to the embedding API or sandbox, to an async host function's `Role` or to what a module registers with `Life`: `vos-lua`'s `turns.rs` and `chaos.rs` pin those, so they get the full gate)
 ```
 
 `bun run gate` sets `VOS_GATE=1` and `NEOC_REQUIRE_LUAU_LSP=1`, so a missing `luau-lsp`, `stylua` or `darklua` fails instead of
@@ -315,7 +315,7 @@ A change is done when all of these hold:
 3. Every interactive vos element has a `data-testid` (kit components take a required `testid` prop; a Luau app's interactive
    nodes have a `key`); it works by keyboard, in light and dark, and at the app's minimum window.
 4. UI changes carry a `verify-change` "Manual verification" record in the PR.
-5. For a new app or a change people will notice in one: the `pr-review` section "vos checks" (V6, the readiness table) holds,
+5. For a new app or a change people will notice in one: the `pr-review` section "vos checks" (V5, the readiness table) holds,
    including a `ux/<app>/round-<n>.md` that meets the `app-design` exit criteria.
 
 ## Adding things
