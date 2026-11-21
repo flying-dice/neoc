@@ -51,7 +51,36 @@ describe('the slow-suite selection', () => {
   test('stops on a slow: test that nextest does not list as ignored', () => {
     const r = list(TODAY.filter((t) => !t.endsWith(' no_module_function_panics_on_hostile_input')))
     expect(r.status).toBe(1)
-    expect(r.stderr).toContain('does not list as ignored: no_module_function_panics_on_hostile_input')
+    expect(r.stderr).toContain('does not list as ignored: neoc-vm::hostile_inputs no_module_function_panics_on_hostile_input')
+  })
+
+  test('selects each slow: test by binary id and full path', () => {
+    const r = list(TODAY)
+    expect(r.stdout).toContain(
+      '(binary_id(=vos-domain) & test(=ui::diff::tests::apply_of_diff_reproduces_the_new_tree_for_edited_trees_full))'
+    )
+    expect(r.stdout).not.toContain('test(/')
+  })
+
+  test('does not take an ignored test in another binary with the same last name for the slow: one', () => {
+    const r = list([...TODAY, 'vos-lua::views no_module_function_panics_on_hostile_input'])
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('nor on NOT_SLOW: vos-lua::views no_module_function_panics_on_hostile_input')
+  })
+
+  test('stops when the slow: test is missing and a test of its name is ignored in another binary', () => {
+    const r = list([
+      ...TODAY.filter((t) => !t.endsWith(' no_module_function_panics_on_hostile_input')),
+      'vos-lua::views no_module_function_panics_on_hostile_input'
+    ])
+    expect(r.status).toBe(1)
+    expect(r.stdout).not.toContain('slow tests (')
+  })
+
+  test('stops when two ignored tests of one binary end in the same slow: name', () => {
+    const r = list([...TODAY, 'neoc-vm::hostile_inputs other::no_module_function_panics_on_hostile_input'])
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('two ignored tests in neoc-vm::hostile_inputs end in no_module_function_panics_on_hostile_input')
   })
 
   test('stops when cargo nextest list fails', () => {
