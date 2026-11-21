@@ -14,7 +14,7 @@ description: Clear one vos clean-code TODO marker per pass (left by vos-clean-co
 4. If the fix would change a public contract, stop. That is a design change for an MR of its own, not a refactor:
    report it and leave the marker. Contracts are: a port trait in `vos-application`, a domain or schema type that
    feeds codegen (`types/generated`), a JSON-RPC method, view message or AG-UI event, anything in the `app` API
-   (`types/generated/luals/`), a tool's name or input, an app's `app.json`, a kit component's props or test ids.
+   (`types/generated/vos.d.luau`), a tool's name or input, an app's `app.json`, a kit component's props or test ids.
 5. Run `bun run lint && bun run typecheck && bun run test`, plus `bun run test:e2e` if anything rendered changed.
 6. Report the file, what changed and the score cleared. Stop.
 

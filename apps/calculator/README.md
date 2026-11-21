@@ -12,14 +12,14 @@ history. Both use **one calculator** however many windows are open.
 | File | What it is |
 |---|---|
 | `app.json` | The package manifest Discover shows before the app runs: id, name, `version` (bump it when the source changes), icon, tint, `main`. |
-| `app.lua` | The entry: `app.manifest` (window sizes), `app.state`, the key handlers, the window's `render`, the three tools. |
-| `calc.lua` | Pure arithmetic with no UI and no `app`: `evaluate` (the expression parser), `combine` (one operation, as the keypad chains), `reason` (the sentence to show for a failure), `format`/`formatEntry` (what the display shows). |
+| `app.luau` | The entry: `app.manifest` (window sizes), `app.state`, the key handlers, the window's `render`, the three tools. |
+| `calc.luau` | Pure arithmetic with no UI and no `app`: `evaluate` (the expression parser), `combine` (one operation, as the keypad chains), `reason` (the sentence to show for a failure), `format`/`formatEntry` (what the display shows). |
 | `JOURNEYS.md` | Seven key user journeys, as goals with an observable "Done when". |
 | `e2e/journeys.spec.ts` | Their automated twins (one test per id), against the real host. Not shipped. |
 | `../../crates/vos-lua/tests/calculator_app.rs` | The Rust tests of the keypad and the tools, run against the built package. |
 
-It is plain Lua 5.1. `bun run build:apps` bundles `app.lua` and the `calc.lua` it `require`s into one file with
-darklua; `app.json` and `app.manifest` must agree on `id`, `icon` and `tint`.
+It is typed Luau (`--!strict`, checked by `bun run lint:luau`). `bun run build:apps` bundles `app.luau` and the
+`calc.luau` it `require`s into one file with darklua, types stripped; `app.json` and `app.manifest` must agree on `id`, `icon` and `tint`.
 
 ## State: `app.state`
 
@@ -43,11 +43,11 @@ The keypad is a small state machine, in the iPadOS Calculator's way:
 - Typing stops at nine digits; a result shows at most nine significant digits, grouped, in exponent form (`1e12`,
   `3.33e-9`) when it will not fit.
 - **Errors.** A calculation that cannot be shown (divide by zero, a result that is infinite or not a real number)
-  raises a plain sentence in `calc.lua`. `press` catches it: the display says `Error`, the sentence is shown under it
+  raises a plain sentence in `calc.luau`. `press` catches it: the display says `Error`, the sentence is shown under it
   and announced with `w:announce` (the window's announcer is on the page from the start, so a screen reader hears it;
   the caption is not a live region, because a live region that appears together with its text is often missed). `AC`
   clears it, and so does a digit, which starts a new sum; the other keys have nothing to work on and are ignored. A
-  bug in the app is not shown as a source position: `calc.reason` turns anything `calc.lua` did not raise on purpose
+  bug in the app is not shown as a source position: `calc.reason` turns anything `calc.luau` did not raise on purpose
   into `Something went wrong`.
 - The pending operator is shown three ways: the key is `selected` (an outlined key, and `aria-pressed`), and the caption
   says what is waiting (`27 −`), then the whole sum once `=` is pressed (`27 − 7`).
@@ -97,12 +97,12 @@ bun run dev        # builds the apps, then the host on :7400 and Vite on :5173; 
 ```
 
 Open <http://127.0.0.1:5173>, pair with the code the host prints, open Discover and install the Calculator (it is
-already installed on the e2e host). Save `app.lua` or `calc.lua` and the running app reloads.
+already installed on the e2e host). Save `app.luau` or `calc.luau` and the running app reloads.
 
 ## Check it
 
 ```sh
-bun run lint:lua       # lua-language-server against the generated LuaCATS API (strict)
+bun run lint:luau      # luau-lsp (strict) against the generated Luau declarations
 bun run lint:stylua    # formatting; `bun run format` fixes it
 cargo nextest run -p vos-lua --test calculator_app     # logic, keypad and tools (builds the package first)
 bun run test:e2e --project=journeys --grep Calculator      # the seven journeys, headless, against the real host
@@ -110,11 +110,11 @@ bun run test:e2e                                           # the whole gate's UI
 ```
 
 The Rust tests tap the real nodes `render` returned (`Keypad::press("1 2 add 7 eq")`), then read the display and caption
-back from the next render, so they cover the handlers and the view as well as `calc.lua`. The journeys press the same
+back from the next render, so they cover the handlers and the view as well as `calc.luau`. The journeys press the same
 keys in a browser, once per journey id. Set `VOS_PORT_BASE=9100` to run the e2e suite in a second worktree.
 
 ## Extending it
 
 Add a key by adding a row to `KEYS` and an entry to `actions`; add a tool with one more `app.tool` (a described `input`
-schema, `readOnly` when it writes nothing); do arithmetic in `calc.lua` so it stays testable without a window. Then add a
+schema, `readOnly` when it writes nothing); do arithmetic in `calc.luau` so it stays testable without a window. Then add a
 Rust test for it and a line to a journey.

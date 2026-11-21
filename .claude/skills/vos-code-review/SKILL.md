@@ -16,7 +16,7 @@ git diff main...HEAD --stat && git diff main...HEAD
 ```
 
 Classify each touched area: **host** (`crates/*`: domain, application ports and use cases, adapters, the composition
-root; a protocol or schema change reaches the client and every app), **app** (`apps/<id>`, Lua), **kit** (`packages/ui`:
+root; a protocol or schema change reaches the client and every app), **app** (`apps/<id>`, Luau), **kit** (`packages/ui`:
 reaches every app), **client** (`client/`: the shell and the renderer), **generated** (`types/generated`,
 `docs/reference`: must match `bun run codegen`), **tooling** (scripts, e2e, skills, docs). Read the files around each
 change, not just the hunks.
@@ -33,14 +33,14 @@ bun run lint && bun run typecheck && bun run test && bun run test:e2e
 ```
 
 Red, missing, or run against an older commit means **STAYS IN MR**. If you couldn't run or see e2e (it needs a Mac for the
-baselines), say so; it is then unverified, not passed. A `SKIPPED` from `lint:lua` or `lint:stylua` (tool not installed)
+baselines), say so; it is then unverified, not passed. A `SKIPPED` from `lint:luau` or `lint:stylua` (tool not installed)
 is not a pass: install the tool and rerun.
 
 ## 2. Tests and coverage
 
 - New or changed Rust logic has a `cargo nextest` test in its layer, for success and expected failure: domain unit tests,
   use cases against the port fakes, adapter integration tests, and a host test when the change crosses layers. Logic sitting
-  in an adapter, a Lua `render` or handler, or a Svelte page where it can't be unit-tested is a finding. New client or kit
+  in an adapter, a Luau `render` or handler, or a Svelte page where it can't be unit-tested is a finding. New client or kit
   logic has bun tests next to it.
 - Every new screen and state is covered: a journey that reaches it on the real host, or a story (a kit component in its own
   story, a renderer or shell state as a JSON-tree story on the fake host). List the states the code can reach (empty,
@@ -117,7 +117,7 @@ one missing row means **STAYS IN MR**.
 |---|---|
 | Window size | `app.manifest.window` has `w`/`h` and `minW`/`minH`, with a comment saying why when the layout needs more than 320x240; the `desktop` project's resize check passes |
 | Package | `app.json` is valid and agrees with `app.manifest` (id, icon, tint), `version` bumped for a change to a released app; `bun run build:apps` builds it, and it installs from Discover, opens, works and uninstalls cleanly on a real host (`bun run dev`) |
-| Types and format | `bun run lint:lua` and `bun run lint:stylua` pass (not skipped) |
+| Types and format | `bun run lint:luau` and `bun run lint:stylua` pass (not skipped) |
 | Tests | the app's logic and tools are covered from Rust (`crates/vos-lua/tests`, or `crates/vos-host/tests` for views, data and agents), including `readOnly` behaviour |
 | States | every screen and state is reached by a journey or a JSON-tree story (section 2), green in the stories, desktop and journeys projects |
 | Journeys | `JOURNEYS.md` with 4 to 8 journeys (goal, start state, observable "Done when"), each with a passing spec of the same id |

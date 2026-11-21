@@ -1,4 +1,4 @@
-# vos architecture: Rust host, Lua 5.1 apps, managed client
+# vos architecture: Rust host, Luau apps, managed client
 
 Status: **approved** (2026-11-18). LAN binding with device pairing (see `host-stack.md`). Detail lives in two companion documents, both backed by working prototypes:
 
@@ -26,10 +26,10 @@ This replaces the Bun/TypeScript server, the app client bundles and the shared-m
                                                          └───────────────────────────────────────────┘
 ```
 
-- **Apps are entirely server side, written in plain Lua 5.1.** They hold their state, data, tools,
-  notifications and UI description. The client runs no app code. Lua 5.1 is the authoring language (checked by
-  lua-language-server against generated LuaCATS definitions); `bun run build:apps` bundles an app's modules into one
-  Lua 5.1 file (darklua), and that file is what the host loads and runs.
+- **Apps are entirely server side, written in typed Luau.** They hold their state, data, tools,
+  notifications and UI description. The client runs no app code. Luau (`--!strict`) is the authoring language (checked
+  by luau-lsp against the generated Luau declarations in `types/generated/vos.d.luau`); `bun run build:apps` bundles an
+  app's modules into one Luau file (darklua, types stripped), and that file is what the host loads and runs.
 - **The client is a managed renderer.** It renders view trees with the kit, holds client-managed state (drafts,
   selection, scroll, navigation) for instant response, and sends events back.
 - **Transports:**
@@ -45,7 +45,7 @@ crates/
   vos-domain        pure model, no I/O: app ids, app refs, manifests, tool grants, agent identity, tools,
                         notifications, view tree and component schema, protocol messages
   vos-application   ports (traits) and use cases; in-memory fakes for tests; no frameworks
-  vos-lua          adapter: runs apps (Lua 5.1 source, on Luau), one VM per app: the app API modules, views, the call queue
+  vos-lua          adapter: runs apps (Luau source), one VM per app: the app API modules, views, the call queue
   neoc-vm               support library (not an adapter): the Lua VM (Luau) on mlua, the per-app environment, the
                         `std:`/`lib:`/`vnd:` modules, the lifecycle of what apps spawn; depends on no other
                         crate; among the vos crates only `lua` may depend on it (and the
@@ -56,7 +56,7 @@ crates/
   vos-agui          adapter: AG-UI events and the SSE endpoint, mapped from ACP
   vos-fetch         adapter: app refs and registries over file/http/https, sha256 checks
   vos-http          adapter: axum, the /rpc peer, Origin/Host guard, static client, event hub
-  vos-codegen       adapter: schema → TypeScript types, the Lua `ui` module, LuaCATS definitions, docs
+  vos-codegen       adapter: schema → TypeScript types, the Lua `ui` runtime module, the Luau declarations for apps, docs
   vos-host          composition root binary (wiring only)
 ```
 
@@ -75,7 +75,7 @@ crates/
   - `cargo nextest`.
 - **Crates** (versions in `host-stack.md`):
   - runtime: tokio, axum;
-  - Lua: mlua (`luau`, `async`, `serialize`, `send`, `macros`), in `neoc-vm` and the `neoc` CLI, never in a vos crate (apps are Lua 5.1 source);
+  - Lua: mlua (`luau`, `async`, `serialize`, `send`, `macros`), in `neoc-vm` and the `neoc` CLI, never in a vos crate (apps are Luau source);
   - SQLite: rusqlite (bundled);
   - protocols: rmcp, agent-client-protocol;
   - fetch: reqwest (rustls);
@@ -94,7 +94,7 @@ crates/
   Users can also add an app by URL; the host shows a preview, then a confirmation that it runs on this host and its
   tools reach agents. A later installer bundles host, client and apps.
 - **Isolation between apps, not a sandbox from the host** (details in `host-stack.md` §1):
-  - one Lua VM per app (the apps' source is Lua 5.1) and one environment table per app: an allow-list of base functions, no `load*`,
+  - one Lua VM per app (the apps' source is Luau) and one environment table per app: an allow-list of base functions, no `load*`,
     `getfenv`/`setfenv`, read-only standard libraries, text-only chunks, a locked string metatable. Apps cannot reach
     each other's state;
   - `require` knows `vos:app`, `vos:ui` (an app's own modules are bundled at build time) and **every
@@ -107,7 +107,7 @@ crates/
     module;
   - the VM keeps apps' Lua state apart but is not a security boundary: `std:fs` and `vnd:rusqlite` reach other apps'
     data and the host database, and a runaway app can hang the host.
-- **App API** (described by generated LuaCATS definitions, `types/generated/luals/`):
+- **App API** (described by the generated Luau declarations, `types/generated/vos.d.luau`):
   - **Window and UI:** `app.manifest`, `app.window(name, { client = …, render = fn })`, `ui.*` constructors.
   - **Data:** `db:migrate`, `db:query` / `db:row` (live sources), `db:exec`.
   - **Everything else:** `app.state`, `app.tools.register`, `app.notify`, and `app.shell` (Dock badge, menu commands,
@@ -146,7 +146,7 @@ crates/
   Test ids derive from node keys.
 - **Type pipeline: Rust first.** The component schema lives in `vos-domain` as Rust types plus metadata (events,
   slots, accessibility rules, tier). `vos-codegen` emits the TypeScript types for the renderer, the Lua
-  `ui` module and the LuaCATS definitions for app authors, and docs. Contract tests fail the build on drift. One
+  `ui` module and the Luau declarations for app authors, and docs. Contract tests fail the build on drift. One
   toolchain, and R1 proved the ts-rs → TypeScript and schemars → Lua definitions path.
 
 ## 5. Repo layout after the move
@@ -156,7 +156,7 @@ Cargo.toml, crates/        the host (above)
 client/                    the managed client: shell + renderer (was apps/desktop), Vite + Svelte 5
 packages/ui/               the kit: Svelte components implementing the schema, tokens, stories (Storybook on Vite)
 apps/<id>/                 Lua app packages only
-types/                     generated: TypeScript for the client, the Lua `ui` module and LuaCATS for apps
+types/                     generated: TypeScript for the client, the Lua `ui` module and Luau declarations for apps
 docs/, .claude/skills/     rewritten for Rust and Lua (coding style, review, testing)
 ```
 

@@ -1,13 +1,13 @@
 # Building vos apps
 
-A vos app is a **server-side package, written in plain Lua 5.1**, that runs inside the Rust host. It holds its state, data, tools,
+A vos app is a **server-side package, written in typed Luau** (`--!strict`), that runs inside the Rust host. It holds its state, data, tools,
 notifications and a description of its UI. It ships no client code: the managed client renders the view trees the app
 produces and sends events back.
 
 ```
  Browser: managed client                         Rust host (crates/vos-host)
  ┌──────────────────────────────┐  JSON-RPC/WS   ┌─────────────────────────────────────────┐
- │ shell: windows, Dock         │◀──── /rpc ────▶│ one Lua VM per app (isolated)          │
+ │ shell: windows, Dock         │◀──── /rpc ────▶│ one Luau VM per app (isolated)         │
  │ renderer: view trees → kit   │                │   app.window → view tree → client       │
  │ client state, drafts         │  AG-UI / SSE   │   app.db / app.kv  (per-app SQLite)     │
  │ no app code, ever            │◀──── /agui ────│   app.tool ──▶ /mcp ◀── agents          │
@@ -17,8 +17,8 @@ produces and sends events back.
 
 The reference apps are `apps/calculator` (a keypad window, shared state, three agent tools; [its walkthrough](calculator/README.md) covers files, state, view, tools, running and testing) and `apps/agents` (a
 SQLite-backed chat list around the `ChatTranscript` component). Read them next to this page. The architecture is in
-`docs/architecture/` (`host-stack.md` for the host, `ui-system.md` for the UI protocol and the Lua API); the generated
-LuaCATS definitions of the API are in `types/generated/luals/`; the components are listed in `docs/reference/components.md`. The last two are
+`docs/architecture/` (`host-stack.md` for the host, `ui-system.md` for the UI protocol and the Luau API); the generated
+Luau declarations of the API are in `types/generated/vos.d.luau`; the components are listed in `docs/reference/components.md`. The last two are
 generated from the Rust schema (`bun run codegen`): never edit them.
 
 ## The package
@@ -26,8 +26,8 @@ generated from the Rust schema (`bun run codegen`): never edit them.
 ```
 apps/<id>/
   app.json         the package manifest (below)
-  app.lua          the entry (`main` in app.json): declares the manifest, windows, tools, data
-  *.lua            modules the entry loads with require("./calc") (calc.lua in the Calculator)
+  app.luau         the entry (`main` in app.json): declares the manifest, windows, tools, data
+  *.luau           modules the entry loads with require("./calc") (calc.luau in the Calculator)
   JOURNEYS.md      4 to 8 key user journeys
   e2e/journeys.spec.ts   their automated twins
   tests/, negative/, e2e/   never shipped: the build leaves these folders out of the package
@@ -41,7 +41,7 @@ apps/<id>/
   "name": "Calculator",
   "version": "0.1.0",
   "description": "Arithmetic for you and your agents: type or tap a sum, or let an agent put a result on it.",
-  "main": "app.lua",
+  "main": "app.luau",
   "icon": "plus",
   "tint": "orange",
   "requires": { "host": ">=1.0" }
@@ -52,7 +52,7 @@ apps/<id>/
 |---|---|
 | `id` | 3 to 40 characters: lowercase letters, digits, dashes, not starting with a dash. Namespaces the app's data and its tools (`<id>__<tool>`). |
 | `name`, `version` | `version` is `major.minor.patch` digits (`0.1.0`); bump it to ship a change. |
-| `main` | the Lua entry file (default `app.lua`). |
+| `main` | the Luau entry file (default `app.luau`). The host also loads an app ref whose `main` ends in `.lua` (a plain-Lua bundle published before apps were Luau). |
 | `icon`, `tint`, `description` | what Discover and the add-by-URL preview show *before* the app runs. `icon` is a symbol name, `tint` a palette role. |
 | `requires.host` | the host API range the app needs (checked against the host at install). |
 | `migrations` | optional list of `{ version, name, file }` SQL files; most apps call `db:migrate` in Lua instead. |
@@ -65,18 +65,21 @@ permissions: a `permissions` key in `app.json` or in `app.manifest` (from before
 
 `bun run build:apps` (`scripts/build-apps.ts`) turns every `apps/*/app.json` into an **app ref** under
 `dist/apps/<id>/<version>/`: `app-ref.json` (`{ manifest, files: [{ path, url, sha256 }] }`, file URLs relative to it)
-plus the app as **one bundled Lua 5.1 file** (`app.lua`) and its migrations, and one `dist/apps/registry.json`
-(`{ "apps": ["calculator/0.1.0/app-ref.json", ...] }`). Apps are plain Lua 5.1 and run as written:
+plus the app as **one bundled Luau file** (`app.luau`) and its migrations, and one `dist/apps/registry.json`
+(`{ "apps": ["calculator/0.1.0/app-ref.json", ...] }`). Apps run as written, less their types:
 [darklua](https://github.com/seaofvoices/darklua) (`.darklua.json`) only bundles: it inlines the package's relative
-`require`s into the one file and strips comments; `require("vos:app")` and `require("vos:ui")` stay runtime
-calls. The ref's `manifest.main` is the bundled file; the separate source modules are not shipped. Two things to know
-when writing an app: write Lua 5.1 (`unpack`, `string.gsub`, `x = x + 1`, `a and b or c`: no `+=`, `continue`,
-backtick strings, `if` expressions or `for k, v in t do`), and use only the library members Lua 5.1 and
-`lua/prelude.lua` provide (the prelude adds `typeof`, `table.clone`, `table.move`, `table.pack`, `table.unpack` and
-`utf8.*`); `bun test scripts` fails on Luau syntax and on `table.find`, `math.clamp`, `bit32`, `buffer` and the like.
-`darklua` 0.18.0 must be installed (see AGENTS.md). The bundle keeps each statement on its source line
-(`retain_lines`), so an error at `app.lua:N` is line N of `app.lua` for an app with no relative `require`; an app with
-modules is shifted by the size of the modules bundled before it (the Calculator: `calc.lua` +2, `app.lua` +183).
+`require`s (`require("./calc")` finds `calc.luau`) into the one file and strips comments and type annotations (the host
+does not read them); `require("vos:app")` and `require("vos:ui")` stay runtime calls. Nothing is lowered, so the
+Luau you write is the Luau that runs. The ref's `manifest.main` is the bundled file (named `app.luau` like its source:
+the host takes any name ending in `.luau` or `.lua`, and the bundle is Luau, not Lua 5.1); the separate source modules
+are not shipped. What an app has: Luau's base library (`string.split`, `table.find`, `table.clone`, `math.clamp`,
+`bit32`, ...), plus `typeof` and `utf8` from `lua/prelude.lua` (the app environment does not copy those two from the
+engine). What it does not have: `print`, `os`, `debug`, `buffer`, `vector`, `load*`, `getfenv`/`setfenv`,
+`newproxy`, `collectgarbage` (`vos_domain::GLOBALS_NOT_FOR_APPS`: the declarations type each as unusable, so using
+one is a type error). `darklua` 0.18.0 must be installed (see AGENTS.md). The bundle keeps each statement on its
+source line (`retain_lines`), so an error at `app.luau:N` is line N of `app.luau` for an app with no relative
+`require`; an app with modules is shifted by the size of the modules bundled before it (the Calculator: `calc.luau`
++4, `app.luau` +242).
 
 - **A registry** is a list of app-ref URLs. The host's default registry is `dist/apps/registry.json` over `file://`
   when it exists; `registries` in `vos.toml` (or `VOS_REGISTRIES`) adds more. Discover lists what they offer.
@@ -88,7 +91,7 @@ modules is shifted by the size of the modules bundled before it (the Calculator:
   the host re-fetches and re-verifies every installed app. An app that fails to load is marked failed and the rest
   start. All of it is in `docs/architecture/host-stack.md` ("Apps: lifecycle").
 - **Dev loop:** `bun run dev` builds the apps, starts the host with `dev_reload` and Vite, and **watches `apps/**`**
-  (`*.lua`, `app.json`, migrations): save a file and it re-runs `build:apps`; the host (which cannot run darklua)
+  (`*.luau`, `app.json`, migrations): save a file and it re-runs `build:apps`; the host (which cannot run darklua)
   watches the built refs under `dist/apps`, rebuilds that app's VM and keeps its database (the old version keeps
   running if the new one does not load).
 
@@ -97,6 +100,7 @@ modules is shifted by the size of the modules bundled before it (the Calculator:
 An app file starts like this (the Calculator):
 
 ```lua
+--!strict
 local app = require("vos:app")   -- the host module; also a global named `app`
 local ui = require("vos:ui")     -- component constructors and helpers, generated from the component schema
 local calc = require("./calc")        -- a module of this package: inlined into the bundle at build time
@@ -106,13 +110,36 @@ In the source, `require` accepts `./x`, `../x` (bundled into the one built file 
 and `vos:ui`. At run time the built file can `require` `vos:app`, `vos:ui` and the host's `std:`, `lib:` and `vnd:` modules
 (the build leaves those as `require` calls, see "Every library module is yours" below), and never the filesystem
 (`require("./x")` in a running app is an error that says so). The
-LuaCATS definitions in `types/generated/luals/` (generated, `---@meta`) are the contract: lua-language-server reads
-them through `.luarc.json` (so an editor with the Lua extension knows `app`, `ui.*` and `require("vos:ui")`), and
-`bun run lint:lua` checks every app against them. Annotations in app code (`---@param`, `---@type`) are optional;
-write one where it helps a reader or silences a false alarm. The `std:`, `lib:` and `vnd:` modules are **not typed
-here**: neoc describes them for luau-lsp (`types/neoc.d.luau`), not for lua-language-server, so `require("std:fs")` is
-untyped in an app until the apps move to typed Luau (NEOC-140). A fallible function returns `value, err` (`local s,
-err = base64.decode(x)`).
+Luau declarations in `types/generated/vos.d.luau` (generated by `vos-codegen`) are the contract, and `--!strict` is
+required (`bun run lint:luau` checks every app, every file starts with it). The file holds, in one definitions file for
+luau-lsp: the `app` API (types named `vos_<Name>`: `vos_WindowContext`, `vos_Node`, `vos_Ref<T>`, `vos_ToolDef`, ...),
+a props type per component (`vos_ButtonProps`) and the `ui` module, `ClientDecl`, the declarations of every
+`std:`, `lib:` and `vnd:` module an app is offered (neoc's own, from `types/neoc.d.luau`, so `require("lib:json")` is
+the module's real type), and the one `declare require`. Name a type with an alias (`type Node = vos_Node`).
+
+- **In an editor** (VS Code with the luau-lsp extension): point it at the declarations and use the standard platform,
+  `"luau-lsp.types.definitionFiles": { "@vos": "types/generated/vos.d.luau" }` and
+  `"luau-lsp.platform.type": "standard"`; then `app`, `ui.*` and every module are typed, with the docs on hover.
+  `luau-lsp analyze --platform=standard --definitions:@vos=types/generated/vos.d.luau apps/calculator/app.luau`
+  is the command line (what `bun run lint:luau` runs, pinned to luau-lsp 1.70.1).
+- **Modules the host refuses are a type error.** `lib:test`, `lib:compile` and `std:workers` are not offered
+  (`vos_domain::NOT_FOR_APPS`, one list for the adapter and the declarations): they are left out of the typed overloads
+  of `require` and typed as unusable, so `local test = require("lib:test"); test.describe(...)` fails with
+  `Key 'describe' not found in table 'vos_NotForApps_lib_test'`. The same goes for the globals above.
+- **Your own modules type as `any`.** luau-lsp resolves `require("./calc")` to the module's type only while `require`
+  is its built-in; the declarations replace `require` (that is how `vos:*` and `std:*` get their types), and a second
+  `declare require` would replace the first. So a relative module is `any` to the file that requires it (annotate the
+  functions you call, or cast), and each module is itself checked in strict mode. Because the types cannot catch a
+  misspelt name there, `bun run lint:luau` also checks every literal `require` of an app: a relative path, `vos:app`,
+  `vos:ui` or an offered module, nothing else (`require("lib:jsno")` fails the lint).
+- **Limits of the types.** An unknown prop in a constructor call (`ui.Button { key = "a", titel = "x" }`) is not a type
+  error (Luau accepts extra fields in a table literal; the host rejects it when it validates the tree). A handler list
+  that mixes actions and functions needs a typed local
+  (`local both: { vos_Action | ((vos_EventArg<{}>) -> ()) } = { ui.act.set(ref, 0), function() end }`): Luau infers a
+  literal in a union position from its first entry. `ctx:fail` and `pcall` of a function that returns nothing
+  need a cast or a value (see the Calculator's `press`).
+
+A fallible function of a library module returns `value, err` (`local s, err = base64.decode(x)`).
 
 | Call | What it does |
 |---|---|
@@ -218,7 +245,7 @@ app.tool {
   description = "List recent calculations, newest first.",   -- agents read this: say what it does
   readOnly = true,
   input = { limit = app.t.integer { default = 10, min = 1, max = 50 } },
-  run = function(input, ctx) ... return { entries = ... } end,
+  run = function(input: { limit: number }, ctx: vos_ToolContext) ... return { entries = ... } end,
 }
 ```
 
@@ -264,7 +291,7 @@ A thread source declares only the thread and the agent (literals or Refs); it ru
 client opens the conversation on `/agui` (AG-UI over SSE, mapped from the agent's ACP session), so messages, tool calls,
 permission prompts and the agent's settings live with the host, and the app never sees them. The `send` and `stop`
 events also reach the app (`e.payload.text`), which is how the Agents app titles a chat and keeps its chat list in
-SQLite (`apps/agents/app.lua`).
+SQLite (`apps/agents/app.luau`).
 
 ## Background work
 
@@ -301,7 +328,7 @@ it in the app's own VM and keeps it going for as long as the app is loaded.
 
 ## Security
 
-- **Apps keep their Lua state apart; that is not a security boundary.** One Lua VM per app (Luau, running the app's Lua 5.1 source), and one
+- **Apps keep their Lua state apart; that is not a security boundary.** One Lua VM per app (Luau), and one
   **environment table** per app (its globals are its own; two apps share no Lua state, not even the module tables
   below). Through `std:fs` and `vnd:rusqlite` an app can still read and write other apps' data and the host's own
   database under `~/.vos`, and a runaway app (a loop that never yields, a `std:thread` worker) can hang the host
@@ -382,15 +409,15 @@ it in the app's own VM and keeps it going for as long as the app is loaded.
 ## Adding an app
 
 1. **Create the package.** Copy `apps/calculator` (read [its README](calculator/README.md) first) to `apps/<id>` and edit `app.json` (id, name, version `0.1.0`,
-   description, icon, tint). Rewrite `app.lua`, starting with the two `require`s and `app.manifest { ... }`.
+   description, icon, tint). Rewrite `app.luau` (it starts with `--!strict`, the two `require`s and `app.manifest { ... }`).
 2. **Set the window.** `window = { w, h, minW, minH }`. The minimum is the smallest size at which every control is
    fully visible and at least 44 pt (the Calculator's 320x500 is justified by the keypad: say why in a comment when
    it is more than 320x240). The host clamps the window to it.
-3. **Write the logic as plain Lua functions** (the Calculator's `calc.lua`), the view as `render`, and the tools.
-   Every interactive node gets a `key`; every tool gets a described schema and a `readOnly` that is true when the tool
-   does not write.
-4. **Make it clean.** `bun run lint:lua` (`lua-language-server --check` against the generated definitions, which
-   cover `vos:app`, `vos:ui` and every `std:`, `lib:` and `vnd:` module you `require`) and
+3. **Write the logic as typed Luau functions** (the Calculator's `calc.luau`), the view as `render`, and the tools.
+   Annotate parameters and results; every interactive node gets a `key`; every tool gets a described schema and a
+   `readOnly` that is true when the tool does not write.
+4. **Make it clean.** `bun run lint:luau` (`luau-lsp analyze` in strict mode against the generated declarations,
+   which cover `vos:app`, `vos:ui` and every `std:`, `lib:` and `vnd:` module an app is offered) and
    `bun run lint:stylua` pass; `bun run format` fixes formatting. Fix what the checker reports, do not silence it.
 5. **Test the logic and tools in Rust.** Add a test beside `crates/vos-lua/tests/calculator_app.rs` that loads the
    shipped package under the real runtime, calls its tools (`call_tool`) and asserts results and
@@ -415,7 +442,7 @@ it in the app's own VM and keeps it going for as long as the app is loaded.
 
 ## Rules that are enforced
 
-- `bun run lint:lua` and `lint:stylua` (types and format of every app), `bun run lint:testids` (test ids in the
+- `bun run lint:luau` and `lint:stylua` (types and format of every app), `bun run lint:testids` (test ids in the
   kit and the client), `bun run codegen:check` (generated types match the Rust schema).
 - In the host, always: app ids, manifests and app refs are validated and checksum-verified at install; tool input is validated against the schema; `readOnly` blocks writes.
 - Missing a capability? Extend the host API (domain type and schema, application port and use case, the Lua adapter,

@@ -1,6 +1,6 @@
 ---
 name: vos-pre-commit
-description: Mandatory vos quality gate before every push and before opening or updating a PR. Reviews the outgoing change adversarially, runs vos-clean-code-review, clears markers above 0.5, and runs the real gates (lint with clippy, crate direction, cargo deny, lua-language-server, StyLua, atomic and test-id checks; typecheck; cargo nextest and bun test; and test:e2e for anything rendered). Loops until clean. No exceptions for small changes.
+description: Mandatory vos quality gate before every push and before opening or updating a PR. Reviews the outgoing change adversarially, runs vos-clean-code-review, clears markers above 0.5, and runs the real gates (lint with clippy, crate direction, cargo deny, luau-lsp, StyLua, atomic and test-id checks; typecheck; cargo nextest and bun test; and test:e2e for anything rendered). Loops until clean. No exceptions for small changes.
 ---
 
 # Pre-commit gate
@@ -19,16 +19,16 @@ Run before every push. Loop until everything below is clean.
 4. **Gates**, after every fix:
 
    ```sh
-   export VOS_GATE=1  # a missing lua-language-server or stylua then fails lint:lua / lint:stylua instead of skipping
+   export VOS_GATE=1  # a missing luau-lsp or stylua then fails lint:luau / lint:stylua instead of skipping
    bun run lint         # atomic layers, test ids, conflict markers, cargo fmt + clippy -D warnings, crate direction
-                        # (check-deps), cargo deny, lua-language-server, StyLua, codegen:check, eslint
+                        # (check-deps), cargo deny, luau-lsp (strict), StyLua, codegen:check, eslint
    bun run typecheck    # cargo check --workspace --all-targets, tsc on types/, svelte-check (required testid props)
    bun run test         # cargo nextest over the vos crates, then bun test (types, client, kit)
    bun run test:e2e     # required if the change touches anything rendered (packages/ui, the client, apps, stories,
                         # e2e/), and always before asking for a merge; needs a Mac for the baselines
    ```
 
-   Without `VOS_GATE=1` (or `CI`), `lint:lua` and `lint:stylua` say `SKIPPED` when `lua-language-server` or `stylua` is
+   Without `VOS_GATE=1` (or `CI`), `lint:luau` and `lint:stylua` say `SKIPPED` when `luau-lsp` or `stylua` is
    missing; with it they fail. A skip is not green either way, so install them (and `cargo-nextest`, `cargo-deny`) before
    calling the gate clean. If you changed the Rust schema or the app API,
    run `bun run codegen` first and commit the regenerated files.

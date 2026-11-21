@@ -54,8 +54,8 @@ given the diff and the file list, not your conclusions. Otherwise one inline pas
      (Lua) output, ACP messages from an agent process, app-ref contents, SQL rows from an older version, files, the network.
    - **JSON-RPC params:** a method that reads `params` without parsing it into a typed message (by-name params, `-32602` on a
      bad shape).
-   - **Lua:** a value from `app.kv`, a db row, a tool input or `e.payload` used without checking its shape (LuaLS
-     `---@type` annotations are not a check); SQL built by string concatenation.
+   - **Luau:** a value from `app.kv`, a db row, a tool input or `e.payload` used without checking its shape (a type
+     annotation or a `::` cast on it is not a check); SQL built by string concatenation.
    - **TypeScript and Svelte:** `as T` over `unknown` (RPC and AG-UI payloads, `JSON.parse`, stored client state); a non-null
      `!`; indexing assumed defined; a throw inside a subscription or `$effect` that nothing catches; a fallible promise fired
      with `void` and no catch; `{@html}` or `innerHTML` with agent or tool text.
