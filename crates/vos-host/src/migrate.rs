@@ -68,6 +68,29 @@ pub fn reject_legacy_env(names: impl IntoIterator<Item = String>) -> anyhow::Res
     )
 }
 
+/// Where the host looks for a config file (the working directory, the data directory): `dir` holds an old-named
+/// config file.
+///
+/// With no `vos.toml` beside it the old file is refused: it is no longer read, and starting without it would change
+/// what the host does without a word (an old `bind = "127.0.0.1"` would become the default `0.0.0.0`). With a
+/// `vos.toml` beside it, that one is used and the old file is left alone with a warning.
+pub fn check_legacy_config(dir: &Path, has_new: bool) -> anyhow::Result<()> {
+    let old = dir.join(LEGACY_CONFIG);
+    if !old.is_file() {
+        return Ok(());
+    }
+    let new = dir.join(CONFIG);
+    if has_new {
+        tracing::warn!(old = %old.display(), used = %new.display(), "a config file from before the rename is ignored: {CONFIG} beside it is used");
+        return Ok(());
+    }
+    bail!(
+        "{} is a config file from before the rename to vos and is no longer read: rename it to {} (and start again)",
+        old.display(),
+        new.display()
+    )
+}
+
 /// What [`migrate_legacy_data_dir`] did.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Migration {
@@ -116,26 +139,35 @@ fn migrate_with(home: &Path, rename: &dyn Fn(&Path, &Path) -> io::Result<()>) ->
     let old_config = from.join(LEGACY_CONFIG);
     let new_config = from.join(CONFIG);
     let rename_config = old_config.is_file() && std::fs::symlink_metadata(&new_config).is_err();
+    let mut renamed_config_here = false;
     if rename_config {
-        if let Err(e) = rename(&old_config, &new_config) {
-            if moved_by_another() {
-                return Ok(Migration::NotNeeded);
+        match rename(&old_config, &new_config) {
+            Ok(()) => renamed_config_here = true,
+            Err(e) => {
+                if moved_by_another() {
+                    return Ok(Migration::NotNeeded);
+                }
+                // another start may have renamed the config between our look and our rename (and not yet moved the
+                // directory): the config is where it should be, so go on to the move, which that start may win
+                let renamed_by_another = !old_config.exists() && new_config.exists();
+                if !renamed_by_another {
+                    return Err(e).with_context(|| {
+                        format!(
+                            "could not rename {} to {} (nothing was moved; {} is untouched)",
+                            old_config.display(),
+                            new_config.display(),
+                            from.display()
+                        )
+                    });
+                }
             }
-            return Err(e).with_context(|| {
-                format!(
-                    "could not rename {} to {} (nothing was moved; {} is untouched)",
-                    old_config.display(),
-                    new_config.display(),
-                    from.display()
-                )
-            });
         }
     }
     if let Err(e) = rename(&from, &to) {
         if moved_by_another() {
             return Ok(Migration::NotNeeded);
         }
-        let restored = if rename_config { rename(&new_config, &old_config) } else { Ok(()) };
+        let restored = if renamed_config_here { rename(&new_config, &old_config) } else { Ok(()) };
         if let Err(restore) = restored {
             bail!(
                 "could not move {} to {}: {e}; and could not put {} back as {}: {restore} (no data was lost: it \
@@ -406,6 +438,47 @@ mod tests {
             assert_eq!(fs::read(home.join(DIR).join("system.db")).unwrap(), b"paired devices", "{label}");
             let _ = fs::remove_dir_all(home);
         }
+    }
+
+    #[test]
+    fn a_start_that_loses_the_config_rename_but_not_the_move_goes_on_and_moves() {
+        // the other start renames the config between this one's look and its rename, and has not moved the directory yet
+        let home = home("race-config-then-move");
+        let old = legacy_dir(&home);
+        let calls = std::cell::Cell::new(0);
+        let racing = |from: &Path, to: &Path| -> io::Result<()> {
+            calls.set(calls.get() + 1);
+            if calls.get() == 1 {
+                fs::rename(old.join(LEGACY_CONFIG), old.join(CONFIG)).unwrap();
+                return Err(io::Error::from(io::ErrorKind::NotFound));
+            }
+            fs::rename(from, to)
+        };
+
+        let outcome = migrate_with(&home, &racing).unwrap();
+
+        assert!(matches!(outcome, Migration::Moved { config_renamed: true, .. }), "{outcome:?}");
+        let new = home.join(DIR);
+        assert_eq!(fs::read(new.join(CONFIG)).unwrap(), b"port = 7500\n");
+        assert_eq!(fs::read(new.join("system.db")).unwrap(), b"paired devices");
+        assert!(!new.join(LEGACY_CONFIG).exists() && !old.exists());
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn a_config_file_with_the_old_name_is_refused_unless_a_new_one_sits_beside_it() {
+        let dir = home("legacy-config");
+        // nothing there: fine
+        assert!(check_legacy_config(&dir, false).is_ok());
+        fs::write(dir.join(LEGACY_CONFIG), b"bind = \"127.0.0.1\"\n").unwrap();
+        // the old name alone: refused, naming the file and the new name
+        let text = format!("{:#}", check_legacy_config(&dir, false).unwrap_err());
+        assert!(text.contains(dir.join(LEGACY_CONFIG).to_str().unwrap()), "{text}");
+        assert!(text.contains(dir.join(CONFIG).to_str().unwrap()) && text.contains("rename it"), "{text}");
+        // both: the new one wins, the old one is left alone
+        assert!(check_legacy_config(&dir, true).is_ok());
+        assert!(dir.join(LEGACY_CONFIG).is_file());
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[cfg(unix)]

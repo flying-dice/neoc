@@ -348,3 +348,75 @@ fn a_clean_environment_starts_normally() {
     assert!(String::from_utf8_lossy(&out.stdout).contains("Pairing code:"));
     let _ = std::fs::remove_dir_all(data);
 }
+
+// -- an old config file where a vos.toml would be read is refused, not ignored -----------------------------------
+
+fn pair_output(cmd: &mut Command) -> (bool, String, String) {
+    let out = cmd.arg("pair").output().unwrap();
+    (
+        out.status.success(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn an_old_config_file_in_the_working_directory_stops_the_start_naming_the_file() {
+    let data = temp_dir("old-config-cwd-data");
+    let cwd = temp_dir("old-config-cwd");
+    std::fs::write(cwd.join("agentos.toml"), "bind = \"127.0.0.1\"\n").unwrap();
+
+    let (ok, stdout, stderr) = pair_output(host_command(&data).current_dir(&cwd));
+
+    assert!(!ok, "the start must not go on without the old bind");
+    assert!(stderr.contains(cwd.join("agentos.toml").to_str().unwrap()), "{stderr}");
+    assert!(
+        stderr.contains(cwd.join("vos.toml").to_str().unwrap()) && stderr.contains("rename it"),
+        "{stderr}"
+    );
+    assert!(
+        stdout.is_empty() && !data.join("system.db").exists(),
+        "it stopped before touching the data directory"
+    );
+    let _ = std::fs::remove_dir_all(data);
+    let _ = std::fs::remove_dir_all(cwd);
+}
+
+#[test]
+fn an_old_config_file_in_a_custom_data_directory_stops_the_start_naming_the_file() {
+    let data = temp_dir("old-config-data");
+    let cwd = temp_dir("old-config-data-cwd");
+    std::fs::write(data.join("agentos.toml"), "bind = \"127.0.0.1\"\n").unwrap();
+
+    let (ok, stdout, stderr) = pair_output(host_command(&data).current_dir(&cwd));
+
+    assert!(!ok);
+    assert!(stderr.contains(data.join("agentos.toml").to_str().unwrap()), "{stderr}");
+    assert!(
+        stderr.contains(data.join("vos.toml").to_str().unwrap()) && stderr.contains("rename it"),
+        "{stderr}"
+    );
+    assert!(stdout.is_empty());
+    let _ = std::fs::remove_dir_all(data);
+    let _ = std::fs::remove_dir_all(cwd);
+}
+
+#[test]
+fn a_vos_toml_beside_an_old_config_file_wins_and_the_old_one_is_warned_about() {
+    let data = temp_dir("both-configs-data");
+    let cwd = temp_dir("both-configs-cwd");
+    std::fs::write(cwd.join("agentos.toml"), "port = 1\n").unwrap();
+    std::fs::write(cwd.join("vos.toml"), "bind = \"127.0.0.1\"\n").unwrap();
+
+    let (ok, stdout, stderr) = pair_output(host_command(&data).current_dir(&cwd));
+
+    assert!(ok, "{stderr}");
+    assert!(stdout.contains("Pairing code:"));
+    assert!(
+        stderr.contains("from before the rename") && stderr.contains("vos.toml"),
+        "the old file is warned about: {stderr}"
+    );
+    assert!(cwd.join("agentos.toml").is_file(), "never touched");
+    let _ = std::fs::remove_dir_all(data);
+    let _ = std::fs::remove_dir_all(cwd);
+}

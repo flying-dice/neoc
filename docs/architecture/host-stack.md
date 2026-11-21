@@ -246,7 +246,7 @@ if `~/.vos` exists nothing happens and the two are never merged; if neither exis
 `VOS_DATA` or `data_dir` is never a reason to move the old default. A rename that fails stops the start with an error
 naming both paths and loses no data (nothing is copied or deleted; at worst the config file keeps its new name inside the old directory). A browser's session cookie and
 the client's local settings are keyed by the old name, so each paired device pairs again once (`vos pair`).
-The old environment variables (the same names with the old prefix) are no longer read, and the host refuses to start while any is set (`serve` and `pair` both): the error names each variable and its `VOS_*` replacement, so a loopback `bind` kept in the environment cannot silently become the default `0.0.0.0`.
+A config file with the old name, found where a `vos.toml` would be read (the working directory, the data directory) with no `vos.toml` beside it, stops the start: the error names the file and says to rename it (with a `vos.toml` beside it, that one is used and the old file is warned about). The old environment variables (the same names with the old prefix) are no longer read, and the host refuses to start while any is set (`serve` and `pair` both): the error names each variable and its `VOS_*` replacement, so a loopback `bind` kept in the environment cannot silently become the default `0.0.0.0`.
 
 ### The gate
 
@@ -255,7 +255,7 @@ The old environment variables (the same names with the old prefix) are no longer
 `tsc -p types`), `bun run test` (adds `cargo nextest run --workspace --exclude neoc --exclude neoc-vm` and `bun test types scripts`), `bun run format` (adds
 `cargo fmt` and StyLua). `codegen:check` fails when the committed `types/generated/*` and `docs/reference/components.md`
 are stale against the Rust schema (`bun run codegen` regenerates them). `lint:lua` runs `lua-language-server --check` (pinned 3.19.2) over every Lua app and fixture against the generated
-LuaCATS definitions in `types/generated/luals/` (`vos/*.lua` for `vos:*`, `vos.lua`), which LuaLS finds through `.luarc.json`'s library setting (and its `completion.requireSeparator: ":"`, which turns `vos:ui` into the path `vos/ui`) (the `std:`/`lib:`/`vnd:` modules are untyped until NEOC-140: neoc's own types are Luau declarations for luau-lsp); negative fixtures (`scripts/fixtures/negative/*.lua`, lines marked
+LuaCATS definitions in `types/generated/luals/` (`vos/*.lua` for `vos:*`, `vos.lua`), which LuaLS finds through `.luarc.json`'s library setting (and its `completion.requireSeparator: ":"`, which turns `vos:ui` into the path `vos/ui`; without it the `require` finds nothing and returns `any`) (the `std:`/`lib:`/`vnd:` modules are untyped until NEOC-140: neoc's own types are Luau declarations for luau-lsp); negative fixtures (`scripts/fixtures/negative/*.lua`, lines marked
 `-- expect-error`) must be flagged, so a broken definitions file cannot pass silently. `lint:lua` and `lint:stylua`
 skip with a message when `lua-language-server` or `stylua` is not installed.
 

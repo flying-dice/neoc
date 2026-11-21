@@ -182,6 +182,7 @@ impl Settings {
         data_dir: &Path,
         cwd: &Path,
     ) -> anyhow::Result<(FileSettings, PathBuf)> {
+        let implicit = explicit.is_none();
         let candidates: Vec<(PathBuf, bool)> = match explicit {
             Some(p) => vec![(cwd.join(p), true)],
             None => vec![(cwd.join("vos.toml"), false), (data_dir.join("vos.toml"), false)],
@@ -192,9 +193,17 @@ impl Settings {
                     let parsed: FileSettings = toml::from_str(&text)
                         .with_context(|| format!("{}: invalid config", path.display()))?;
                     let dir = path.parent().map_or_else(|| cwd.to_path_buf(), Path::to_path_buf);
+                    if implicit {
+                        migrate::check_legacy_config(&dir, true)?;
+                    }
                     return Ok((parsed, dir));
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound && !required => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound && !required => {
+                    // a config file from before the rename where this one would be read is refused, not ignored
+                    if implicit {
+                        migrate::check_legacy_config(path.parent().unwrap_or(cwd), false)?;
+                    }
+                }
                 Err(e) => return Err(e).with_context(|| format!("reading config {}", path.display())),
             }
         }

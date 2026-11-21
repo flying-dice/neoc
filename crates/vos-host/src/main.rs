@@ -98,11 +98,20 @@ async fn run_cli() -> anyhow::Result<()> {
             // the config file may have come with it
             settings = load()?;
             if settings.data_dir != to {
-                tracing::warn!(
-                    configured = %settings.data_dir.display(),
-                    moved_to = %to.display(),
-                    "the moved config file sets a data_dir other than the default: the host uses it, and the moved data stays in the default directory until data_dir is changed or removed"
-                );
+                // the config file came with the directory; the data is where its `data_dir` points
+                if settings.data_dir == from {
+                    tracing::warn!(
+                        data_dir = %settings.data_dir.display(),
+                        moved_to = %to.display(),
+                        "the moved config file's data_dir names the old directory, whose contents are now in the moved-to directory: set data_dir to it"
+                    );
+                } else {
+                    tracing::warn!(
+                        data_dir = %settings.data_dir.display(),
+                        config_moved_to = %to.display(),
+                        "only the config file moved: the moved config file's data_dir points elsewhere, so the host keeps using the data there"
+                    );
+                }
             }
         }
     }

@@ -70,7 +70,7 @@ under `bun test` too, through the preload in `client/bunfig.toml` (`client/test/
   every `.lua` file `.luarc.json` does not ignore (apps, `lua/prelude.lua`, the codegen example app), against the
   generated LuaCATS definitions in `types/generated/luals/` (`vos.lua` for the global `app`, `vos/ui.lua` and
   `vos/app.lua` for the two `require`s: a colon is not portable in a file name (Windows), so `.luarc.json` sets
-  `completion.requireSeparator` to `":"` and LuaLS reads `require("vos:ui")` as the path `vos/ui`; `.luarc.json` is vos's own). The `std:`/`lib:`/`vnd:` modules are not
+  `completion.requireSeparator` to `":"` and LuaLS reads `require("vos:ui")` as the path `vos/ui`; without it the `require` finds nothing and returns `any` on LuaLS 3.19.2, and the negative fixtures stop being flagged; `.luarc.json` is vos's own). The `std:`/`lib:`/`vnd:` modules are not
   typed here (neoc moved its module types to Luau declarations for luau-lsp, `types/neoc.d.luau`, in NEOC-139; typed
   apps come with NEOC-140). Files in `negative/` folders (`scripts/fixtures/negative/`) mark lines with
   `-- expect-error`; the check demands exactly those lines are flagged, so a broken definitions file cannot pass

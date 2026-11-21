@@ -2,8 +2,11 @@
 //! and `bun run lint:lua`. They are never loaded by the host.
 //!
 //! A module name has a colon, which is not portable in a file name (Windows) and which `---@meta <name>` cannot
-//! carry either, so the files are laid out by the part of the name after the prefix: `.luarc.json` sets `completion.requireSeparator` to `:`, which makes `LuaLS` read `require("vos:ui")`
-//! as the path `vos/ui` and find it through the workspace library (the library root is `types/generated/luals/`).
+//! carry either, so the files are laid out by the part of the name after the prefix. `.luarc.json` sets
+//! `completion.requireSeparator` to `:`, which makes `LuaLS` read `require("vos:ui")` as the path `vos/ui` and find
+//! it through the workspace library (the library root is `types/generated/luals/`). Without that setting (checked
+//! on `LuaLS` 3.19.2) the `require` finds nothing and returns `any`, so `ui` and `app` lose their types and the
+//! negative fixtures of `bun run lint:lua` stop being flagged.
 //! The files live at `vos/ui.lua` and `vos/app.lua`, and `vos.lua` holds the shared types and the global `app`.
 //! Classes and aliases are global to the workspace, so
 //! the module files use the shared types without importing them.
