@@ -766,7 +766,7 @@ async fn every_entry_point_starts_a_thread_the_script_cannot_resume() {
               return { status = 200, body = "ok" }
             end)
             local url = "http://" .. server:addr() .. "/"
-            app.on("event", function() stash("event") return "event done" end)
+            hook("event", function() stash("event") return "event done" end)
             app.tool { name = "tool", run = function() stash("tool") return "tool done" end }
             app.tool { name = "lock", run = function() mu:with_lock(function() stash("with_lock") end) return "lock done" end }
             app.tool { name = "later", run = function()

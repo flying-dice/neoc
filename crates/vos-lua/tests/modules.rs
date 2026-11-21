@@ -172,7 +172,7 @@ async fn the_globals_the_declarations_refuse_are_absent_from_the_environment() {
     let names =
         vos_domain::GLOBALS_NOT_FOR_APPS.iter().map(|n| format!("{n:?}")).collect::<Vec<_>>().join(", ");
     let src = format!(
-        r#"app.on("present", function()
+        r#"hook("present", function()
              local found = {{}}
              for _, name in ipairs({{ {names} }}) do
                if _G[name] ~= nil or rawget(_G, name) ~= nil then found[#found + 1] = name end
@@ -196,7 +196,7 @@ async fn every_library_module_can_be_required_and_is_one_table_per_app() {
     assert!(names.len() >= 46, "{names:?}");
     let list = names.iter().map(|n| format!("{n:?}")).collect::<Vec<_>>().join(", ");
     let src = format!(
-        r#"app.on("probe", function()
+        r#"hook("probe", function()
              local out = {{}}
              for _, name in ipairs({{ {list} }}) do
                local ok, m = pcall(require, name)
@@ -213,9 +213,9 @@ async fn every_library_module_can_be_required_and_is_one_table_per_app() {
     assert_eq!(out["same"], true, "one handle per module, as with Lua's own require");
 
     // two apps never share a module table: a change one makes is invisible to the other
-    let writer = load(r#"require("lib:json").mine = 1 app.on("probe", function() return 1 end)"#).await;
+    let writer = load(r#"require("lib:json").mine = 1 hook("probe", function() return 1 end)"#).await;
     drop(writer);
-    let reader = load(r#"app.on("probe", function() return require("lib:json").mine == nil end)"#).await;
+    let reader = load(r#"hook("probe", function() return require("lib:json").mine == nil end)"#).await;
     assert_eq!(reader.emit("probe", json!(null)).await.unwrap(), json!(true));
 }
 
@@ -535,7 +535,7 @@ async fn what_a_request_handler_asks_of_the_host_is_forwarded() {
         local net, hyper = require("std:net"), require("vnd:hyper")
         local server = hyper.serve(net.TcpListener.bind("127.0.0.1:0"), function(req)
           app.notify {{ title = "webhook " .. req.path }}
-          app.shell.badge(7)
+          app.shell.deepLink("hook/:id", function() end)
           return "ok"
         end)
         app.tool {{ name = "addr", run = function() return server:addr() end }}"#
@@ -546,7 +546,7 @@ async fn what_a_request_handler_asks_of_the_host_is_forwarded() {
     assert_eq!(body_of(&response), "ok");
     eventually(5, "the notification", || !r.notes.0.lock().is_empty()).await;
     assert_eq!(r.notes.0.lock()[0].title, "webhook /hook");
-    eventually(5, "the badge", || !r.shell.badges.lock().unwrap().is_empty()).await;
+    eventually(5, "the deep link", || !r.shell.links.lock().unwrap().is_empty()).await;
 }
 
 // ---- unload and replace stop what the app started -----------------------------------------------------------
@@ -720,7 +720,6 @@ async fn a_read_only_tool_cannot_register_or_change_the_apps_wiring() {
     let r = rig();
     let src = r#"
         local function try(f) local ok, err = pcall(f) return { ok = ok, err = (not ok) and tostring(err) or nil } end
-        app.tool { name = "on", readOnly = true, run = function() return try(function() app.on("late", function() end) end) end }
         app.tool { name = "window", readOnly = true, run = function()
           return try(function() app.window("late", { render = function() return { type = "Stack", key = "n" } end }) end) end }
         app.tool { name = "register", readOnly = true, run = function()
@@ -731,12 +730,12 @@ async fn a_read_only_tool_cannot_register_or_change_the_apps_wiring() {
         app.tool { name = "reads", readOnly = true, run = function()
           return { one = app.db:one("select 1 as n").n, query = type(app.db:query("select 1 as n", { key = "n" })) } end }
         app.tool { name = "wire", run = function()
-          app.on("late", function() return "ok" end)
+          app.window("late", { render = function() return { type = "Stack", key = "n" } end })
           return "wired"
         end }
     "#;
     r.load("probe", &format!("{MANIFEST}\n{src}")).await;
-    for tool in ["on", "window", "register", "thread", "manifest"] {
+    for tool in ["window", "register", "thread", "manifest"] {
         let out = r.tool("probe", tool).await;
         assert_eq!(out["ok"], false, "{tool} must be refused: {out}");
         assert!(out["err"].as_str().unwrap().contains("readOnly"), "{tool}: {out}");
@@ -795,7 +794,7 @@ async fn effects_queued_after_the_app_was_unloaded_are_dropped_not_flushed() {
         app.tool {{ name = "late", run = function()
           task.wait(0.3) -- the call is still in flight when the app is unloaded
           app.notify {{ title = "from a ghost" }}
-          app.shell.badge(9)
+          app.shell.deepLink("ghost/:id", function() end)
           return "done"
         end }}
         app.tool {{ name = "now", run = function() app.notify {{ title = "from a live app" }} return "done" end }}"#
@@ -804,7 +803,7 @@ async fn effects_queued_after_the_app_was_unloaded_are_dropped_not_flushed() {
     // control: a live app's effects are delivered
     assert_eq!(r.tool("probe", "now").await, "done");
     assert_eq!(r.notes.0.lock().len(), 1);
-    r.shell.badges.lock().unwrap().clear();
+    r.shell.links.lock().unwrap().clear();
 
     let runtime = r.runtime.clone();
     let call =
@@ -817,7 +816,7 @@ async fn effects_queued_after_the_app_was_unloaded_are_dropped_not_flushed() {
     tokio::time::sleep(Duration::from_millis(200)).await;
     let titles: Vec<String> = r.notes.0.lock().iter().map(|n| n.title.clone()).collect();
     assert_eq!(titles, ["from a live app"], "nothing queued after the unload was delivered");
-    assert!(r.shell.badges.lock().unwrap().is_empty(), "no badge from an app that is gone");
+    assert!(r.shell.links.lock().unwrap().is_empty(), "no deep link from an app that is gone");
 }
 
 /// `bun run build:apps` bundles an app's relative requires and leaves `vos:*` and the neoc modules

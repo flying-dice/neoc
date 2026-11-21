@@ -53,7 +53,7 @@ export const DEFINITIONS = 'types/generated/vos.d.luau'
  * in the same change.
  */
 export const NEGATIVE_MARKERS: Record<string, number> = {
-  'scripts/fixtures/negative/wrong_api_use.luau': 15,
+  'scripts/fixtures/negative/wrong_api_use.luau': 18,
   'scripts/fixtures/negative/wrong_module_use.luau': 5,
   'scripts/fixtures/negative/wrong_requires.luau': 16,
   'scripts/fixtures/negative/wrong_ui_usage.luau': 14

@@ -22,6 +22,9 @@ app.files.documents:write("a.txt") -- expect-error: expects 3 arguments, but onl
 app.files.documents:remove("a", { recursive = "yes" }) -- expect-error: Expected this to be '{ recursive: boolean? }?' but got
 app.files.photos:read("a.jpg") -- expect-error: Key 'photos' not found in table 'vos_FilesApi'
 app.files.cache:createDir(5) -- expect-error: Expected this to be 'string', but got 'number'
+app.timer.every(60, function() end) -- expect-error: Key 'timer' not found in table 'vos_AppApi'
+app.shell.badge(3) -- expect-error: Key 'badge' not found in table 'vos_Shell'
+app.on("event", function() end) -- expect-error: Key 'on' not found in table 'vos_AppApi'
 app.notify { title = "fine", body = "this line is correct" }
 app.tool {
   name = "fine",
