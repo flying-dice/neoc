@@ -1,19 +1,6 @@
 {
   "client": {},
-  "manifest": {
-    "icon": "calculator",
-    "id": "calculator",
-    "name": "Calculator",
-    "tint": "orange",
-    "window": {
-      "h": 560,
-      "minH": 500,
-      "minW": 320,
-      "w": 340
-    }
-  },
   "sources": {},
-  "tools": 3,
   "tree": {
     "children": [
       {

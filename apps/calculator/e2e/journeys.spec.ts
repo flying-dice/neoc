@@ -111,11 +111,77 @@ test.describe('Calculator journeys', () => {
     await page.getByTestId(key('3')).click()
     await expect(page.getByTestId(key('mul'))).toHaveAttribute('aria-pressed', 'false')
     await expect.poll(() => fillOf('mul')).toBe(idle)
+    await expect(page.getByTestId(caption)).toHaveText('9 ×') // typing the next number leaves the caption alone
     await page.getByTestId(key('sub')).click()
-    await expect(page.getByTestId(display)).toHaveText('27')
+    await expect(page.getByTestId(display), '9 × 3 is complete once a lower operator comes').toHaveText('27')
+    await expect(page.getByTestId(caption)).toHaveText('9 × 3 −')
     await page.getByTestId(key('7')).click()
     await page.getByTestId(key('eq')).click()
     await expect(page.getByTestId(display)).toHaveText('20')
+    await expect(page.getByTestId(caption)).toHaveText('9 × 3 − 7')
+  })
+
+  test('J8: the keypad multiplies before it adds, as the agent tool does', async ({ page }) => {
+    await openCalculator(page)
+    const pressed = (k: string, value: 'true' | 'false') =>
+      expect(page.getByTestId(key(k))).toHaveAttribute('aria-pressed', value)
+
+    // with the mouse: 2 + 3 × is not worked out yet, so the display still shows 3 and the caption is the sum so far
+    for (const k of ['2', 'add', '3', 'mul']) await page.getByTestId(key(k)).click()
+    await expect(page.getByTestId(display)).toHaveText('3')
+    await expect(page.getByTestId(caption)).toHaveText('2 + 3 ×')
+    await pressed('mul', 'true')
+    await pressed('add', 'false')
+    await page.getByTestId(key('4')).click()
+    await expect(page.getByTestId(display)).toHaveText('4')
+    await expect(page.getByTestId(caption)).toHaveText('2 + 3 ×')
+    await page.getByTestId(key('eq')).click()
+    await expect(page.getByTestId(display), '2 + 3 × 4 is 14, not 20').toHaveText('14')
+    await expect(page.getByTestId(caption)).toHaveText('2 + 3 × 4')
+
+    // with the keyboard: 2 × 3 + is complete as far as the multiplication, so the display shows 6
+    await clearCalculator(page)
+    await page.getByTestId('calculator-view').focus()
+    await page.keyboard.type('2*3+')
+    await expect(page.getByTestId(display)).toHaveText('6')
+    await expect(page.getByTestId(caption)).toHaveText('2 × 3 +')
+    await page.keyboard.type('4=')
+    await expect(page.getByTestId(display)).toHaveText('10')
+
+    // a longer chain, finished with Enter
+    await clearCalculator(page)
+    await page.getByTestId('calculator-view').focus()
+    await page.keyboard.type('2+3*4-5/5')
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId(display)).toHaveText('13')
+    await expect(page.getByTestId(caption)).toHaveText('2 + 3 × 4 − 5 ÷ 5')
+
+    // the result carries on as the first number of the next sum; changing your mind about an operator costs nothing
+    await page.keyboard.type('+1*')
+    await expect(page.getByTestId(display)).toHaveText('1')
+    await page.keyboard.type('+2=')
+    await expect(page.getByTestId(display)).toHaveText('16') // 13 + 1 + 2: the × was replaced by +
+    await expect(page.getByTestId(caption)).toHaveText('13 + 1 + 2')
+
+    // a division by zero inside a chain is the same error, and a new sum gets out of it
+    await clearCalculator(page)
+    await page.getByTestId('calculator-view').focus()
+    await page.keyboard.type('5+3/0=')
+    await expect(page.getByTestId(display)).toHaveText('Error')
+    await expect(page.getByTestId(caption)).toHaveText("Can't divide by zero")
+    await page.keyboard.type('2+3*4=')
+    await expect(page.getByTestId(display)).toHaveText('14')
+
+    // the agent's calculate tool gives the same answers for the same sums
+    for (const [expression, result] of [
+      ['2 + 3 * 4', 14],
+      ['2 * 3 + 4', 10],
+      ['2 + 3 * 4 - 5 / 5', 13]
+    ] as const) {
+      expect(await callTool('calculator__calculate', { expression }), expression).toMatch(
+        new RegExp(`"result":\\s*${result}\\b`)
+      )
+    }
   })
 
   test('J4: recover from an error', async ({ page }) => {

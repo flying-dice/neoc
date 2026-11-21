@@ -1,6 +1,7 @@
 --!strict
 -- A safe arithmetic evaluator (a small shunting-yard parser: nothing is ever compiled from the text, and the
--- sandbox has no `loadstring`), `format` for results and `formatEntry` for the number being typed.
+-- sandbox has no `loadstring`), `format` for results and `formatEntry` for the number being typed. The `calculate`
+-- tool and the keypad both run it, so `2 + 3 * 4` is 14 for an agent and for a person.
 local calc = {}
 
 -- A failure calc raises on purpose is a plain sentence for a person ("Can't divide by zero") and for an agent, with
@@ -122,18 +123,24 @@ local function checked(result: number): number
   return tidy(result)
 end
 
--- `a op b` on numbers, the way the keypad chains: no text round trip, so a result shown as 2e-7 or 1e21 is an
--- ordinary operand. Raises on division by zero and on a result too large to show.
+-- `a op b` on numbers with no text round trip (the keypad's `%` is `value / 100`): a result shown as 2e-7 or 1e21 is
+-- an ordinary operand. Raises on division by zero and on a result too large to show.
 function calc.combine(a: number, op: string, b: number): number
   return checked(operate(op, a, b))
 end
 
--- Evaluate an arithmetic expression; raises a descriptive error when invalid.
-function calc.evaluate(expression: string): number
-  local tokens = tokenize(expression)
-  if #tokens == 0 then
-    fail("Empty expression")
+-- Reduce the operators waiting on the stack for as long as `ready(top)` says so.
+local function reduceWhile(ops: { string }, values: { number }, ready: (top: string) -> boolean)
+  while #ops > 0 and ops[#ops] ~= "(" and ready(ops[#ops]) do
+    apply(table.remove(ops) :: string, values)
   end
+end
+
+-- The one evaluator: shunting-yard over tokens. With no `trailing` operator it evaluates the whole expression and
+-- returns its value. With one (the operator just pressed on the keypad) it reduces only what that operator completes,
+-- the waiting operators of equal or higher precedence, and returns the number on top of the stack: `2 + 3 ×` is 3,
+-- `2 × 3 +` is 6, `2 + 3 × 4 +` is 14. The result is not yet `checked`.
+local function run(tokens: { Token }, trailing: string?): number
   local values: { number } = {}
   local ops: { string } = {}
   for _, token in ipairs(tokens) do
@@ -142,28 +149,30 @@ function calc.evaluate(expression: string): number
     elseif token.value == "(" then
       table.insert(ops, "(")
     elseif token.kind == "paren" then
-      while #ops > 0 and ops[#ops] ~= "(" do
-        apply(table.remove(ops) :: string, values)
-      end
+      reduceWhile(ops, values, function()
+        return true
+      end)
       if table.remove(ops) ~= "(" then
         fail("Mismatched parentheses")
       end
     else
       local precedence = PRECEDENCE[token.value]
-      while #ops > 0 do
-        local top = ops[#ops]
-        if top == "(" then
-          break
-        end
+      reduceWhile(ops, values, function(top)
         local other = PRECEDENCE[top]
-        if other > precedence or (other == precedence and not RIGHT_ASSOCIATIVE[token.value]) then
-          apply(table.remove(ops) :: string, values)
-        else
-          break
-        end
-      end
+        return other > precedence or (other == precedence and not RIGHT_ASSOCIATIVE[token.value])
+      end)
       table.insert(ops, token.value)
     end
+  end
+  if trailing ~= nil then
+    local precedence = PRECEDENCE[trailing]
+    reduceWhile(ops, values, function(top)
+      return PRECEDENCE[top] >= precedence
+    end)
+    if #values == 0 then
+      return fail("Malformed expression")
+    end
+    return values[#values]
   end
   while #ops > 0 do
     local op = table.remove(ops) :: string
@@ -175,7 +184,72 @@ function calc.evaluate(expression: string): number
   if #values ~= 1 then
     fail("Malformed expression")
   end
-  return checked(values[1])
+  return values[1]
+end
+
+-- Evaluate an arithmetic expression; raises a descriptive error when invalid.
+function calc.evaluate(expression: string): number
+  local tokens = tokenize(expression)
+  if #tokens == 0 then
+    fail("Empty expression")
+  end
+  return checked(run(tokens))
+end
+
+-- The keypad's sum is a flat list of terms: numbers, and the operators `+ - * /` between them (`{ 2, "+", 3, "*" }`).
+-- They become the tokens `tokenize` makes, so the keypad runs the evaluator above and not a copy of it.
+local function tokensOf(terms: { number | string }): { Token }
+  local tokens: { Token } = {}
+  for _, term in terms do
+    if type(term) == "number" then
+      table.insert(tokens, { kind = "num", value = tostring(term), number = term })
+    else
+      table.insert(tokens, { kind = "op", value = term, number = 0 })
+    end
+  end
+  return tokens
+end
+
+-- The value of a finished list of terms (it ends with a number): what `=` shows. Raises like `evaluate`.
+function calc.total(terms: { number | string }): number
+  return checked(run(tokensOf(terms)))
+end
+
+-- The number to show while the terms end with an operator that waits for its operand: the part of the sum that
+-- operator completes. Raises on a division by zero in that part as soon as the operator is pressed.
+function calc.progress(terms: { number | string }): number
+  local tokens = tokensOf(terms)
+  local trailing = table.remove(tokens)
+  if trailing == nil then
+    return fail("Malformed expression")
+  end
+  return checked(run(tokens, trailing.value))
+end
+
+local SYMBOL: { [string]: string } = { ["+"] = "+", ["-"] = "−", ["*"] = "×", ["/"] = "÷" }
+local CAPTION_WIDTH = 24 -- characters: the caption is one line, 296 pt wide
+
+-- The terms as the caption writes them (`2 + 3 ×`). A long chain keeps its last terms behind an ellipsis, starting
+-- at a number (`… 3 + 4 + 5`, not `… + 4 + 5`).
+function calc.describe(terms: { number | string }): string
+  local words: { string } = {}
+  local first: number | string | nil -- the term of words[1]
+  local width = 0
+  for i = #terms, 1, -1 do
+    local term = terms[i]
+    local word = if type(term) == "number" then calc.format(term) else SYMBOL[term]
+    width += (if type(term) == "number" then #word else 1) + 1 -- an operator symbol is one character, however many bytes
+    if width > CAPTION_WIDTH and #words > 0 then
+      if type(first) ~= "number" then
+        table.remove(words, 1)
+      end
+      table.insert(words, 1, "…")
+      break
+    end
+    table.insert(words, 1, word)
+    first = term
+  end
+  return table.concat(words, " ")
 end
 
 local function group(digits: string): string

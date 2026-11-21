@@ -1,7 +1,7 @@
 {
   "id": "calculator",
   "name": "Calculator",
-  "version": "0.2.4",
+  "version": "0.3.0",
   "description": "Arithmetic for you and your agents: type or tap a sum, or let an agent put a result on it.",
   "main": "app.luau",
   "icon": "calculator",

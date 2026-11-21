@@ -1,13 +1,13 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
-//! Windows over the real runtime: the Calculator and Notes (the fixtures the
-//! codegen contract test type-checks) run as real apps, render through the generated `ui` module, and every
+//! Windows over the real runtime: the Calculator and Notes (the examples the
+//! codegen contract test checks) run as real apps, render through the generated `ui` module, and every
 //! tree passes the schema validator.
 
 mod common;
 
 use common::{agent_ctx, built_app, db, id};
 use serde_json::{json, Map, Value};
-use std::{path::Path, sync::Arc};
+use std::{collections::BTreeMap, path::Path, sync::Arc};
 use vos_application::{
     ports::{AppData, AppPackage, AppRuntime, LoadedApp, RenderOutput, ViewEffect, ViewEventCall},
     PortError,
@@ -371,16 +371,59 @@ app.window("main", { render = function(w) s.n = s.n + 1 return ui.Text { "x", ke
     assert!(matches!(&err, PortError::Rejected(m) if m.contains("must be pure")), "{err:?}");
 }
 
-#[test]
-fn the_fixture_trees_the_codegen_test_committed_are_what_a_stub_host_rendered() {
-    // the real runtime must produce the same shape: see the Notes and Calculator tests above, which validate
-    // the trees; this keeps the committed JSON honest about what each app's root is
-    for app in ["calculator", "notes"] {
+/// What a view sends on `view.open`, minus the snapshot envelope: the shape of `vos-codegen/tests/fixtures/trees`.
+fn wire(out: &RenderOutput) -> Value {
+    json!({
+        "tree": out.tree,
+        "client": out.client_decls,
+        "sources": out.sources.iter().map(|(id, binding)| (id.clone(), &binding.decl)).collect::<BTreeMap<_, _>>(),
+    })
+}
+
+/// The trees under `crates/vos-codegen/tests/fixtures/trees` are what the real runtime renders for the Calculator and
+/// Notes: `vos-codegen` checks them against the schema and `types/tests/trees.test.ts` against the component table, so
+/// they must not drift from the apps. Re-bless with `UPDATE_FIXTURES=1 cargo test -p vos-lua --test views`.
+#[tokio::test]
+async fn the_committed_example_trees_are_what_the_real_runtime_renders() {
+    let bless = std::env::var_os("UPDATE_FIXTURES").is_some();
+    let calculator = calculator().await;
+    let (notes, _) = notes().await;
+    for (app, rig) in [("calculator", &calculator), ("notes", &notes)] {
+        let fresh = wire(&open(rig, app, "v1").await);
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("../vos-codegen/tests/fixtures/trees/{app}.json"));
-        let v: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-        assert_eq!(v["tree"]["key"], "main");
+        if bless {
+            std::fs::write(&path, serde_json::to_string_pretty(&fresh).unwrap() + "\n").unwrap();
+        } else {
+            let committed: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(
+                fresh,
+                committed,
+                "{app}: the tree the app renders changed; review it, then run \
+                 `UPDATE_FIXTURES=1 cargo test -p vos-lua --test views` to re-bless {}",
+                path.display()
+            );
+        }
     }
+}
+
+/// The generated `ui.lua` constructors do what the docs promise (positional children, slots, auto keys, handlers,
+/// bindings, errors that name the constructor and the prop), checked by an app on the real runtime.
+#[tokio::test]
+async fn the_ui_constructors_behave_as_documented() {
+    let source = include_str!("fixtures/constructors.lua");
+    let (rig, _) = load("constructors", common::package(source, &[])).await;
+    let checked = id("constructors");
+    let out = rig.runtime.call_tool(&checked, "constructors_checked", json!({}), agent_ctx(0), false).await;
+    assert_eq!(out.unwrap(), json!({ "ok": true }), "every check of constructors.lua ran");
+
+    // the checks bite: a constructor that stopped doing what is documented fails the load
+    let broken = source.replace("check(stack.props.axis == \"v\"", "check(stack.props.axis == \"h\"");
+    assert_ne!(broken, source);
+    let rig = Rig::new();
+    let data: Arc<dyn AppData> = rig.db.clone();
+    let err = rig.runtime.load(&id("constructors"), common::package(&broken, &[]), data).await.unwrap_err();
+    assert!(err.to_string().contains("VStack sets axis"), "{err}");
 }
 
 const TOASTER: &str = r#"
