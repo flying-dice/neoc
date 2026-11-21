@@ -13,9 +13,12 @@ files (`types/neoc.d.luau`, `types/generated/*`) and pre-existing issues outside
 clippy, the crate-direction check, atomic layers, test ids and Luau types; don't report what `bun run lint` or
 `scripts/check-neoc.sh` reports.
 
-**Proportionality.** More than 50 changed lines or more than 3 files: run sub-agents, one per principle group (1 to 3, 4 to
-6, 7, 8), each given the diff and the file list, not your conclusions. Otherwise one inline pass over the same principles
-with no sub-agents. Each agent reports file, line range, principle, a one-line description and a severity from 0 to 1.
+**Proportionality.** Iteration speed is a requirement (CLAUDE.md, "Non-functional requirements"): the audit scales with the
+change. A small or ordinary diff (up to about 400 changed lines and 10 files) gets one inline pass over the principles, no
+sub-agents. Run sub-agents, one per principle group (1 to 3, 4 to 6, 7, 8), each given the diff and the file list, not your
+conclusions, only for a large or risky diff: more than about 400 changed lines or 10 files, or a change to the VM's embedding
+API or sandbox, the protocol, the host's HTTP surface or a crate boundary. Each agent reports file, line range, principle, a
+one-line description and a severity from 0 to 1.
 
 ## Principles (both products)
 

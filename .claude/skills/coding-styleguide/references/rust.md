@@ -67,9 +67,22 @@ Rules of thumb:
   uses derives `TS` behind the `codegen` feature, and `bun run codegen` regenerates `types/generated/*`
   (`bun run codegen:check` fails when stale).
 
+## Filesystem and hardened routines
+
+- Never replace a hardened standard-library or well-known crate routine with a hand-written one. Delete a tree with
+  `std::fs::remove_dir_all`, make temporary files and directories with `tempfile`, copy and walk with `std::fs` or an
+  established crate. A hand-rolled recursive delete once brought back a known CVE (a symlink race): the standard routines
+  carry the fixes, yours does not.
+- Create temporary files exclusively (`O_EXCL`, which `tempfile` does) under random names; never a predictable name in a
+  shared directory, and never check-then-create.
+- In anything that touches the filesystem, check for symlink races, TOCTOU (a check followed by a use of the same path:
+  open once, then act on the handle) and path traversal (`..`, absolute paths and symlinks escaping the intended root:
+  canonicalise or reject, then confine).
+
 ## Tests
 
-`cargo nextest run --workspace --exclude neoc --exclude neoc-vm`. Domain: unit tests. Application: use cases against the fakes in `testing`, no mocking
+`cargo nextest run --workspace --exclude neoc --exclude neoc-vm`. A new test is fast (it fits the gate, see "The gate" in
+`CLAUDE.md`); one that is inherently slow is an `#[ignore = "slow: ..."]` test that `bun run slow` runs. Domain: unit tests. Application: use cases against the fakes in `testing`, no mocking
 library. Adapters: integration tests in `tests/` through the real library. Host: `crates/vos-host/tests` start the real
 wiring on an ephemeral loopback port. Test the failure path beside the success path; a bug fix gets a regression test in the
 layer where it lived.

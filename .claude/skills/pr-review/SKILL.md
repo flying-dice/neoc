@@ -1,17 +1,17 @@
 ---
 name: pr-review
-description: Use when you are the reviewer on a pull request, neoc or vos — before giving a verdict (READY TO MERGE, CHANGES NEEDED or HOLD), requesting changes, or posting review comments. Runs the 11-gate rubric; G11 applies the vos checks (tests, stories and journeys, accessibility, boundaries, design, app readiness) when the diff touches vos paths.
+description: Use when you are the reviewer on a pull request, neoc or vos — before giving a verdict (READY TO MERGE, with or without follow-ups, CHANGES NEEDED for blocking findings only, or HOLD), requesting changes, or posting review comments. Rounds continue until READY TO MERGE at the head. Runs the 11-gate rubric; G11 applies the vos checks (tests, stories and journeys, accessibility, boundaries, design, app readiness) when the diff touches vos paths.
 ---
 
 Assigned as reviewer: a fresh reviewer with no session context, independent of the author. Code speaks for itself. Author ran this rubric via `pr-self-review` — your job: prove their evidence, then find what they missed.
 
 ## Standard
 
-Highest clean-code bar. No tradeoff, no mercy, no benefit of the doubt. Every defect — correctness or clean-code — named and blocked at the line. Brutal honesty: wrong is wrong, cite file/line/failure-mode, don't soften it. Resolve in-review or it does not merge. "Good enough" is a finding. The author's table is a claim, not evidence.
+Honest and exact, weighed by time. Velocity and iteration speed are a key non-functional requirement (CLAUDE.md, "Non-functional requirements"). Name every defect you find, with file, line and failure mode, and don't soften it, but **hold a merge only for** a real bug; data loss or a security hole; a broken acceptance criterion; a failing gate; a no-vos-leak or boundary violation. Everything else (doc wording, comment accuracy, extra test coverage, cosmetic issues, naming) is a follow-up ticket and the PR merges. Review rounds continue until you can return READY TO MERGE at the exact head: every fix round is re-reviewed, and you do not pass a head with a blocking finding open. A re-review reads the fix delta as new code under the full blocking rules, so it catches regressions the fix introduced. The author's table is a claim, not evidence.
 
 ## Process
 
-Cost-ordered. Phase 0–1 block → pass ends — no deep probing on a build a cheaper phase already failed. Phase 2–3 findings never end the pass — collect every finding, post once.
+Cost-ordered. Phase 0–1 block → pass ends — no deep probing on a build a cheaper phase already failed. Phase 2–3 findings never end the pass — collect every finding, sort it into blocking or follow-up, post once.
 
 ### Phase 0 — Dedupe
 - Fetch PR head SHA and unresolved thread count. Compare with your last review note.
@@ -20,13 +20,13 @@ Cost-ordered. Phase 0–1 block → pass ends — no deep probing on a build a c
 
 ### Phase 1 — Prerequisites
 1. Read PR description + linked Jira ticket (`gh pr view <n>`).
-2. **Checks** at head SHA. GitHub Actions is not a gate and a PR has no checks: run the G1 local checks yourself and record them. Any check fails → one `[issue]` thread `Checks failing @ <sha8>`, hand back, stop.
+2. **Checks** at head SHA. GitHub Actions is not a gate and a PR has no checks: run the G1 local checks yourself and record them (on a re-request, only what the delta since your last review touches). Any check fails → one `[issue]` thread `Checks failing @ <sha8>`, hand back, stop.
 3. **Self-review note** for the head SHA present. Absent or names an older SHA → one `[issue]` thread `No self-review @ <sha8>`, hand back, stop.
 
 ### Phase 2 — Evidence audit
-- Re-derive ≥ 3 rows of the author's evidence yourself at head: one G5 test row, one G2 claim, one AC row. Re-run the command; compare output.
+- Re-derive ≥ 3 rows of the author's evidence yourself at head: one G5 test row, one G2 claim, one AC row. Re-run the command (one targeted run, not the whole gate); compare output. A test row is judged by reading the test and the code, not by mutating either.
 - Any mismatch → finding, then audit every row. Accept a finding, never someone else's evidence for it. Continue to Phase 3.
-- Re-request: verify each prior thread against the new head → `RESOLVED` (resolve the thread via `gh api graphql` `resolveReviewThread`) or `STANDS` (reply with the measurement, keep open).
+- Re-request: verify each prior thread against the new head by reading the fix and running its test once → `RESOLVED` (resolve the thread via `gh api graphql` `resolveReviewThread`) or `STANDS` (reply with the measurement, keep open). Re-run only what the delta touches.
 
 ### Phase 3 — Adversarial rubric
 1. Code locally only to read it or run scenarios the pre-PR checks don't — **detached worktree at the PR head SHA**, fetched from the PR ref (`<pr-head-sha>` = PR head `sha` recorded in Phase 0):
@@ -43,26 +43,28 @@ Cost-ordered. Phase 0–1 block → pass ends — no deep probing on a build a c
 ### Phase 4 — Post
 1. **Re-fetch head SHA.** Moved since Phase 0 → re-verify every finding against the new head. Mark each `STANDS` / `WITHDRAWN`; post only `STANDS`.
 2. Every `file:line` from `grep -n` / `sed -n` at head, run in this pass.
-3. Inline review comments. One thread per finding, anchored at the head SHA (`commit_id` = head). Read the stored comment back after posting.
+3. Inline review comments. One thread per **blocking** finding, anchored at the head SHA (`commit_id` = head). Read the stored comment back after posting. Each follow-up becomes a Jira NEOC ticket (`Refs` the PR) and one line in the note under "Follow-ups (not blocking)"; no thread.
 4. Multi-line bodies as JSON payloads (`gh api`). GET the review thread back; confirm it landed.
 5. Post the review comment.
 6. Count unresolved review threads via `gh api graphql` (`reviewThreads { isResolved }`). Never trust the review decision alone.
-7. Changes needed → threads stay open; hand back with a PR comment that **@mentions the PR assignee once**. Reference other comments by link, not `@name`.
-8. Clean → post the review note with verdict **READY TO MERGE** at the head SHA. The author cannot approve their own PR and nothing reads GitHub approvals: the squash-merge requires this note, for the exact head SHA.
+7. Blocking findings → threads stay open, verdict CHANGES NEEDED; hand back with a PR comment that **@mentions the PR assignee once**. Reference other comments by link, not `@name`.
+8. No blocking finding (follow-ups or not) → post the review note with verdict **READY TO MERGE** at the head SHA. The author cannot approve their own PR and nothing reads GitHub approvals: the squash-merge requires this note, for the exact head SHA.
 
 <!-- rubric:begin -->
 ## Rubric
 
 11 gates. Cost-ordered. Each gate: PASS / FAIL / `N/A — <reason>`. No blanks. Evidence = command + measured output at head SHA. Assertion without evidence = FAIL.
 
+Blocking: a gate is FAIL, and a merge is held, only for a real bug; data loss or a security hole; a broken acceptance criterion; a failing gate (a pre-PR check that does not pass); a no-vos-leak or boundary violation. Every other defect a gate turns up (doc wording, comment accuracy, extra test coverage, cosmetic issues, naming, clean-code nits) is recorded as a follow-up ticket in Jira NEOC and does not hold the merge: that gate is PASS, with the ticket key beside it. Iteration speed is a requirement (CLAUDE.md, "Non-functional requirements"), and it comes from fast checks and small PRs, never from fewer review rounds or a shortcut that lets a bug through.
+
 Stop rules:
 - **Author mode** (`pr-self-review`): G1–G4 fail-fast — first FAIL → fix, push, restart at G1. G5–G11 run in full; fix every FAIL, push, restart at G1.
-- **Reviewer mode** (`pr-review`): G1 FAIL → hand back, stop — no probing a red or stale head. G2–G11 run in full; post every finding in one pass. A partial review buys another round.
+- **Reviewer mode** (`pr-review`): G1 FAIL → hand back, stop — no probing a red or stale head. G2–G11 run in full; post every blocking finding in one pass and list the follow-ups beside them. A partial review buys another round.
 
-Local runs: run the pre-PR checks once at the head SHA (G1), then only what the rubric adds — unhappy-path probes, greps, link checks. A gate needing a check the pre-PR checks lack → run it by command and record the gap.
+Local runs: run the pre-PR checks once at the head SHA (G1), then only what the rubric adds — unhappy-path probes, greps, link checks. A gate needing a check the pre-PR checks lack → run it by command and record the gap. Never mutate code, revert a fix, or loop a test N times to see it fail or to rule out a flake: judge a test by reading it and the code it covers, and run it once, targeted. A new test is fast (it fits the gate) or is `#[ignore = "slow: ..."]` under `bun run slow`.
 
 ### Fan-out
-`git diff --stat origin/<target>...HEAD` → > 50 lines changed OR > 3 files: one message, 4 parallel `Agent` calls (5 when the diff touches vos paths, see G11), `subagent_type: "Explore"`, model as the skill pins. Read-only — never edit, push, or post. Otherwise single-reader: run every gate yourself.
+`git diff --stat origin/<target>...HEAD` → a large or risky diff only (> 400 lines changed, > 10 files, or a change to the VM's embedding API or sandbox, the protocol, the host's HTTP surface or a crate boundary): one message, 4 parallel `Agent` calls (5 when the diff touches vos paths, see G11), `subagent_type: "Explore"`, model as the skill pins. Read-only — never edit, push, or post. Otherwise single-reader: run every gate yourself.
 
 | Agent | Gates |
 |---|---|
@@ -79,9 +81,9 @@ G1, G3, G4, G10: run yourself.
 - `Agent` tool absent or denied → fan-out NOT RUN. Run single-reader, record `Mode: degraded — <reason>`. Never present a single-reader pass as fan-out.
 
 ### G1 — Head & checks
-GitHub Actions is not a gate. Run the pre-PR checks from CONTRIBUTING.md locally at the head SHA and record command + output: `bun run gate` (the neoc checks, then the vos checks: lint, typecheck, test, test:e2e), or `scripts/check-neoc.sh` for a change confined to the neoc crates (the scoped variant, see `pre-commit`). A lint that printed `SKIPPED`, or an e2e you could not run (it needs a Mac), is unverified, not passed.
+GitHub Actions is not a gate. Run the pre-PR checks from CONTRIBUTING.md locally at the head SHA and record command + output: `bun run gate` (the neoc checks, then the vos checks: lint, typecheck, test, and e2e), `bun run gate --no-e2e` when e2e is not required, or `bun run gate:neoc` for a change confined to the neoc crates (see "The gate" in CLAUDE.md for which one and when e2e is required). The slow suites are not part of the gate (`bun run slow`). A lint that printed `SKIPPED`, or a required e2e you could not run (it needs a Mac), is unverified, not passed.
 - Head SHA recorded: local `git rev-parse HEAD` == PR head `sha`.
-- Every pre-PR check passes at that exact SHA. Any failure = FAIL. The scoped variant on a diff that touches vos paths = FAIL.
+- Every pre-PR check passes at that exact SHA. Any failure = FAIL. `gate:neoc` on a diff outside its scope (CLAUDE.md, "The gate"), or `--no-e2e` on a diff that requires e2e = FAIL.
 - The checks cover the change: the Lua suite or Rust tests for the touched area ran (not filtered out).
 - Re-request: ≥ 1 new commit since the last reviewed head. 0 = FAIL.
 - `main` exists as the target. No merge conflicts.
@@ -109,7 +111,7 @@ Scope: PR description, commit messages, every comment and doc line added or edit
 
 ### G5 — Test validity
 - Every new public fn / branch / error arm → ≥ 1 test exercising it. Report count: new items vs tested items.
-- Each regression test asserts the reported behaviour, read from the test body. An assertion that would still hold with the defect present (attribute-only, tautological, mocked-out subject) = FAIL. Judge tests by reading them — never by re-running them against altered code.
+- Each regression test asserts the reported behaviour, read from the test body. An assertion that would still hold with the defect present (attribute-only, tautological, mocked-out subject) = FAIL. Judge tests by reading the test and the code — never by mutating the code, reverting the fix, re-running against altered code, or looping the test to prove it bites or is not flaky. A targeted run of the test at head is fine.
 - Test reaches the call site the defect lived at — not a helper beside it, not a fixture that skips the branch.
 - Deny / allow lists: assert an unlisted entry is rejected, not only that listed ones are.
 - BDD: runner fails on undefined / skipped steps (`fail_on_skipped` or equivalent); summary shows skipped = 0. Count scenarios with `grep -cE '^\s*(Scenario|Scenario Outline):'`, compare names not totals.
@@ -119,6 +121,7 @@ Scope: PR description, commit messages, every comment and doc line added or edit
   - Playwright `click()` auto-scrolls → native `el.click()` for scroll assertions.
   - Signal races → in-process same-tick `process.kill`; external `kill(2)` never enters the window.
 - Removed or weakened test → justified in the description. Removed to satisfy a done-check = FAIL.
+- New test is fast: it runs in the gate's budget (CLAUDE.md, "The gate"), or it is `#[ignore = "slow: ..."]` and listed under `bun run slow`. A slow test in the gate is a follow-up to move it, unless it adds more than ~10 s to the gate: then FAIL.
 
 ### G6 — Unhappy paths
 Given / when / then table. Each category run or `N/A — <reason>`:
@@ -135,7 +138,7 @@ Given / when / then table. Each category run or `N/A — <reason>`:
 | CI config | triggers fire on the intended events; steps fail closed |
 
 ### G7 — Narrowing & deletion audit
-- New or narrowed predicate / match arm / filter → list the shapes it now excludes; run each against the pre-fix and post-fix build; diff outputs. Valid case silenced = FAIL.
+- New or narrowed predicate / match arm / filter → list the shapes it now excludes, from the code, and find the test that holds each one (or run one targeted probe at head). No pre-fix build, no reverted code. Valid case silenced = FAIL.
 - Deleted read / query / guard → list every clause it carried (WHERE, LIMIT, permission check); probe the state each one excluded.
 - Same function fixed twice → review its contract, not the symptom.
 
@@ -149,16 +152,18 @@ Given / when / then table. Each category run or `N/A — <reason>`:
 - Every `file:line` posted comes from `grep -n` / `sed -n` at the head SHA in the same pass. No `cat -n` window offsets. No recall.
 
 ### G10 — Fix-round discipline (re-request only)
-- Per prior thread: fix commit SHA + test name + the finding's given/when/then reproduced at the new head → fixed behaviour observed.
+Rounds continue until the independent reviewer returns READY TO MERGE at the exact head; every fix round is re-reviewed, and nobody merges over an open blocking finding. A re-review reads the delta (the lines since the last reviewed head and their tests) and treats it as new code under the full blocking rules: it checks the fix, and checks for regressions the fix itself introduced. Re-run only the checks the delta touches (G1), but read all of the delta.
+- Per prior thread: fix commit SHA + test name + the finding's given/when/then run at the new head (a targeted run of that test) → fixed behaviour observed.
 - Diff since the last reviewed head touches only finding sites + their tests. Prose rewrites and new behaviour → separate PR.
-- G1–G9 re-run against the fix diff. Comment / doc lines the fix introduced get G2.
+- G1–G9 re-run against the fix diff only: re-run just the checks and tests the delta touches (`git diff <last-reviewed-head>..HEAD`), not the whole gate again unless the delta reaches outside what the last green run covered. Comment / doc lines the fix introduced get G2.
 
 ### G11 — vos checks
 `N/A — no vos paths` unless the diff touches `crates/vos-*`, `apps/`, `client/`, `packages/`, `e2e/`, `types/generated` or the vos scripts. Otherwise run the section "vos checks" of `.claude/skills/pr-review/SKILL.md` (V1 tests and coverage, V2 accessibility, V3 boundaries and security, V4 UI structure and design, V5 the app readiness table when an app or what a person sees or does in one changed) and record each row PASS, FAIL or `N/A — <reason>` with command + output or `file:line`.
-- The gate for vos paths is the full `bun run gate`; e2e not run = unverified = FAIL.
+- The gate for vos paths is `bun run gate`, with e2e where the e2e rule requires it (CLAUDE.md, "The gate"); a required e2e not run = unverified = FAIL.
 - A UI change carries a `verify-change` "Manual verification" section in the PR.
 
 ### Target shape — one-round PRs
+- Small PRs, merged soon, over a long-lived branch.
 - One defect / one concern per PR.
 - Minimal diff. Description matches the diff exactly.
 - Test drives the original defect's given/when/then and asserts the fixed behaviour.
@@ -229,6 +234,11 @@ itself is G1 (`bun run gate`).
   `/mcp` accepts only per-agent bearer tokens (a device session is not one); tokens are stored hashed and shown once. Agent
   and tool output (ACP messages, tool results, permission prompts, `/agui` events) is untrusted: rendered as text, never as
   HTML, URLs, file paths or commands without validation, and parsed before use in the client.
+- **Filesystem and hardened routines.** A hand-written replacement for a hardened standard-library or well-known crate routine
+  (`std::fs::remove_dir_all`, `tempfile`, a path join or canonicalise, a hash or a parser) is a `bug`: a hand-rolled recursive
+  delete once brought back a known CVE. Temporary files are created exclusively under random names. Anything that touches the
+  filesystem is checked for symlink races, TOCTOU (a check and a later use of the same path) and path traversal (`..`,
+  absolute paths, symlinks escaping the root), by reading the code.
 - **Network surface.** Every route except the static client, `/pair` and `/session` needs a paired device, including from
   loopback; the Origin/Host guard covers every route; pairing codes stay single-use, short-lived and rate limited; app-ref
   files are sha256-verified and size-capped before install; the add-by-URL preview runs nothing; TLS and cookie flags are
@@ -257,16 +267,19 @@ row needs evidence; one missing row is a finding, and the app stays in its PR.
 | States | every screen and state is reached by a journey or a JSON-tree story (V1), green in the stories, desktop and journeys projects |
 | Journeys | `JOURNEYS.md` with 4 to 8 journeys (goal, start state, observable "Done when"), each with a passing spec of the same id |
 | Verified | the PR's "Manual verification" section (`verify-change`) covers light and dark, the minimum and large windows, Split View and Slide Over, and keyboard |
-| Researched | `ux/<app>/round-<n>.md` from the `app-design` skill whose scorecard meets the exit criteria (all journeys succeed for all three participants, mean ease at least 6.0, no blocker or major open, conformance at least 90 with no category below 70), and no layout or flow change landed after that round |
+| Researched | `ux/<app>/round-<n>.md` from the `app-design` skill whose scorecard meets the exit criteria (all journeys succeed for all three participants, mean ease at least 6.0, no blocker or major open, conformance at least 90 with no category below 70), and no layout or flow change landed after that round. Proportionality: a change to behaviour or text only, with no layout, control or flow change and identical snapshots, needs a `postbuild-synthetic-usability` review (`ux/<app>/review-<n>.md`), not a research panel; the panel is for a new app and for changes to screens or flows |
 
 A change to an app that doesn't alter what people see or do (a pure-logic fix, a new read-only tool) needs the gate, the
-tests and green journeys, but not a new research round.
+tests and green journeys, but not a new research round. A change to behaviour or text only (no layout, control or flow
+change, identical snapshots) needs a usability review (`postbuild-synthetic-usability`), not the panel.
 
 For an app whose earlier research rounds predate NEOC-115 (the Calculator's reports were dropped with `docs/`; they are in git at `51f47f4`), the next change to what a person sees or does starts a fresh round under `ux/<app>/`.
 
-Severity: a bug, data loss, a host panic or stack overflow reachable from app input, a boundary violation, a missing gate or
-readiness row, or an accessibility failure that stops a journey is a `bug`; new behaviour without a check, or an
-accessibility or design defect people will hit, is an `issue`. Every finding blocks.
+Severity: a bug, data loss, a security hole, a host panic or stack overflow reachable from app input, a boundary violation,
+a broken acceptance criterion, or an accessibility failure that stops a journey is a `bug` and blocks; a failed check (a
+missing or red gate) blocks as an `issue`. Everything else is a follow-up and the PR merges: new behaviour with only part of
+its checks, an accessibility or design defect that does not stop a journey, a missing or stale readiness row on an app
+change that is not a new app or a change to screens or flows, a cosmetic or wording defect.
 
 ## Review note
 
@@ -278,7 +291,7 @@ Post on the PR. Every gate PASS, FAIL, or `N/A — <reason>`. No blanks.
 Mode: fan-out (4× opus, 5× when vos paths) | single-reader | degraded — <reason>
 Evidence audit: <n> rows re-derived, <m> mismatched
 Prior threads: <r> resolved, <s> stand
-New findings: <k>
+New findings: <k> blocking, <f> follow-ups
 
 - [ ] G1 Head & checks
 - [ ] G2 Claims ↔ evidence
@@ -293,6 +306,8 @@ New findings: <k>
 - [ ] G11 vos checks
 
 Readiness (an app changed): <app>: window ✓ · package ✓ · types ✓ · tests ✓ · states ✓ · journeys ✓ · verified ✗ · researched ✗ (no ux/<app>/)
+
+Follow-ups (not blocking): <NEOC-n — one line each> | none
 ```
 
 ## Comment format
@@ -303,18 +318,19 @@ Readiness (an app changed): <app>: window ✓ · package ✓ · types ✓ · tes
 detail
 ```
 
-- `bug` — breaks at runtime.
-- `issue` — wrong but won't crash (incl. any clean-code defect: SRP/DRY/naming/coupling/dead/KISS, and any failed gate).
-- `question` — need answer before a READY TO MERGE verdict.
+- `bug` — breaks at runtime, loses data, opens a security hole, breaks an acceptance criterion, or violates the no-vos-leak or a crate boundary. Blocks.
+- `issue` — a failed gate (a pre-PR check that does not pass). Blocks.
+- `follow-up` — everything else, clean-code defects included (SRP/DRY/naming/coupling/dead/KISS, doc wording, comment accuracy, extra test coverage, cosmetic issues). A Jira NEOC ticket and a line in the note; does not block.
+- `question` — an answer you need to decide whether something blocks. Blocks only until answered.
 
-Every finding blocks. No severity scale. No non-blocking tier. No "nit". No defer-to-follow-up. One unresolved thread per finding. READY TO MERGE is forbidden while any thread is open. Name the gate in the summary: `**[issue]** G5 — regression test asserts the attribute, not the behaviour`.
+Only `bug` and `issue` block. One unresolved thread per blocking finding. READY TO MERGE is forbidden while any blocking thread is open, and allowed with follow-ups listed. Name the gate in the summary: `**[bug]** G5 — regression test asserts the attribute, not the behaviour, so a host panic goes unnoticed`.
 
 ## Focus
 
 Weight unhappy paths. Happy path probably works — author tested it. Find where it falls apart.
 
-Regressions. Edge cases. Error paths. Concurrency. Rollback safety. Interface changes without migration. Silent reverts. On re-requests: the fix diff itself — fixes introduce the next round's findings.
+Regressions. Edge cases. Error paths. Concurrency. Rollback safety. Interface changes without migration. Silent reverts. On re-requests: the fix diff itself, read as new code (G10): fixes introduce the next round's findings.
 
 ## Out of scope
 
-Only what the linter already enforces — don't duplicate the tool. Targeted runs the rubric demands (unhappy-path probes) are in scope. Everything else with a clean-code or correctness basis is a finding and blocks, regardless of size.
+Only what the linter already enforces — don't duplicate the tool. Targeted runs the rubric demands (unhappy-path probes) are in scope; mutation testing (editing code to see a test fail, reverting a fix, looping a test) is not, and neither is re-running checks the fix delta does not touch. Everything else with a clean-code or correctness basis is a finding: it blocks only if it is a `bug` or `issue`, otherwise it is a follow-up.
