@@ -35,7 +35,7 @@ crates/neoc-vm/              # the runtime library
   src/lua/{std,lib,vnd}/     # one file per module
   examples/luau_decls.rs     # writes (or `-- --check`s) the Luau declarations in types/neoc.d.luau
   tests/embedding.rs         # the embedding hooks on Luau: yield boundaries, environments, ownership
-  tests/abort_regressions.rs # poisoned error values and recursion through host functions, each in a child process on a 2 MiB thread
+  tests/abort_regressions.rs # poisoned error values and recursion through host functions, each in a child process, on `VM_THREAD_STACK` (8 MiB) in a debug build and 2 MiB in a release build
   tests/lifetimes.rs         # what a script leaves running (`neoc run` and under a Life), worker module sets
   tests/signals.rs           # Ctrl-C and the process shutdown signal against serve_static and server:wait
   tests/luau_decls.rs        # drift check of types/neoc.d.luau, no colon in a file name, the luau-lsp fixtures (NEOC_REQUIRE_LUAU_LSP)

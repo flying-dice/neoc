@@ -31,7 +31,7 @@ snapshots deliberately with `bun run test:e2e:update`, then open the changed PNG
   builds `apps/calculator` with darklua and runs the bundle under the real runtime. The Lua apps and fixtures the Rust
   tests run are built with the product's own pipeline (`scripts/lua51-build.ts`, which `crates/agentos-lua/tests/common`
   and `crates/agentos-host/tests/common` call, so `bun` and `darklua` must be installed); inline snippets in those tests
-  are plain Lua 5.1. `crates/agentos-lua/tests/lua51.rs` holds what is specific to running on Lua 5.1: the
+  are plain Lua 5.1. `crates/agentos-lua/tests/lua51.rs` holds what is specific to running on this VM (Luau, running Lua 5.1 source): the
   isolation of the per-app VMs, the read-only libraries and host calls under `pcall` and in coroutines; `modules.rs` holds the modules and
   the lifecycle: every `std:`/`lib:`/`vnd:` module an app is offered can be required (not `lib:test`, `lib:compile`, `std:workers`), a request handler and a task take their turn in
   the VM's one-call-at-a-time queue, an unloaded or replaced app's listener port is free again and its tasks and
