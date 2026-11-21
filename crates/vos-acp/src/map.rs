@@ -238,7 +238,7 @@ pub fn permission_request(request_id: String, req: &RequestPermissionRequest) ->
 pub fn mcp_server(url: &str, token: &str) -> McpServer {
     use agent_client_protocol::v1::schema::{HttpHeader, McpServerHttp};
     McpServer::Http(
-        McpServerHttp::new("agentos", url)
+        McpServerHttp::new("vos", url)
             .headers(vec![HttpHeader::new("Authorization", format!("Bearer {token}"))]),
     )
 }
@@ -272,7 +272,7 @@ mod tests {
 
     #[test]
     fn a_tool_call_and_its_update_keep_title_kind_status_and_text_output() {
-        let call = ToolCall::new("tc1", "mcp__agentos__notes__search")
+        let call = ToolCall::new("tc1", "mcp__vos__notes__search")
             .kind(ToolKind::Search)
             .status(ToolCallStatus::InProgress);
         let Some(AgentEvent::ToolCall { id, title, kind, status, .. }) =
@@ -282,7 +282,7 @@ mod tests {
         };
         assert_eq!(
             (id.as_str(), title.as_str(), kind.as_deref()),
-            ("tc1", "mcp__agentos__notes__search", Some("search"))
+            ("tc1", "mcp__vos__notes__search", Some("search"))
         );
         assert_eq!(status, ToolStatus::InProgress);
 
@@ -365,7 +365,7 @@ mod tests {
     fn a_permission_request_keeps_its_typed_kind_and_option_kinds() {
         use agent_client_protocol::v1::schema::PermissionOption as AcpOption;
         let request = |kind| {
-            let fields = ToolCallUpdateFields::new().title("mcp__agentos__notes__search").kind(kind);
+            let fields = ToolCallUpdateFields::new().title("mcp__vos__notes__search").kind(kind);
             RequestPermissionRequest::new(
                 "s1",
                 ToolCallUpdate::new("tc", fields),

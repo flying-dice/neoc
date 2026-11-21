@@ -128,11 +128,11 @@ export class FakeRun {
     const meta = { toolCallId, title, kind: o.kind ?? 'other' }
     this.send({
       type: EventType.CUSTOM,
-      name: 'agentos.tool',
+      name: 'vos.tool',
       value: { ...meta, status: 'in_progress' }
     })
     if (o.delay) await this.wait(o.delay)
-    this.send({ type: EventType.CUSTOM, name: 'agentos.tool', value: { ...meta, status } })
+    this.send({ type: EventType.CUSTOM, name: 'vos.tool', value: { ...meta, status } })
     if (status === 'completed')
       this.send({
         type: EventType.TOOL_CALL_RESULT,
@@ -144,7 +144,7 @@ export class FakeRun {
       id: this.id('call-'),
       role: 'assistant',
       toolCalls: [{ id: toolCallId, type: 'function', function: { name: title, arguments: '{}' } }],
-      agentos: { title, kind: meta.kind, status }
+      vos: { title, kind: meta.kind, status }
     })
     return toolCallId
   }
@@ -174,12 +174,12 @@ export class FakeRun {
       message: o.title,
       toolCallId: o.toolCallId,
       metadata: {
-        'agentos:options': o.options ?? [
+        'vos:options': o.options ?? [
           { optionId: 'allow', name: 'Allow once', kind: 'allow_once' },
           { optionId: 'allow-always', name: 'Always allow', kind: 'allow_always' },
           { optionId: 'reject', name: 'Deny', kind: 'reject_once' }
         ],
-        'agentos:tool': { title: o.title, kind: 'execute' }
+        'vos:tool': { title: o.title, kind: 'execute' }
       }
     }
     this.thread.interrupts.push(interrupt)

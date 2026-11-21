@@ -20,7 +20,7 @@ export function issuePairingCode(): string {
 }
 
 export interface PairedDevice {
-  /** `agentos_session`, a Playwright cookie for the host's origin. */
+  /** `vos_session`, a Playwright cookie for the host's origin. */
   cookie: { name: string; value: string; domain: string; path: string; httpOnly: boolean; sameSite: 'Strict' }
   deviceId: string
 }
@@ -32,11 +32,11 @@ export async function pairDevice(deviceName: string): Promise<PairedDevice> {
     body: JSON.stringify({ code: issuePairingCode(), deviceName })
   })
   if (!res.ok) throw new Error(`POST /pair answered ${res.status}: ${await res.text()}`)
-  const value = res.headers.getSetCookie().join(';').match(/agentos_session=([a-f0-9]+)/)?.[1]
+  const value = res.headers.getSetCookie().join(';').match(/vos_session=([a-f0-9]+)/)?.[1]
   if (!value) throw new Error('POST /pair set no session cookie')
   const { device } = (await res.json()) as { device: { id: string } }
   return {
-    cookie: { name: 'agentos_session', value, domain: '127.0.0.1', path: '/', httpOnly: true, sameSite: 'Strict' },
+    cookie: { name: 'vos_session', value, domain: '127.0.0.1', path: '/', httpOnly: true, sameSite: 'Strict' },
     deviceId: device.id
   }
 }

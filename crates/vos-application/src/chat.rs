@@ -223,7 +223,7 @@ impl Inner {
                 id: id.clone(),
                 content: Some(String::new()),
                 tool_calls: vec![],
-                agentos: None,
+                vos: None,
             });
             self.open_text = Some(self.messages.len() - 1);
             self.emit(AgUiEvent::TextMessageStart { message_id: id, role: Role::Assistant });
@@ -260,7 +260,7 @@ impl Inner {
 
     fn tool_event(id: &str, meta: &ToolMeta) -> AgUiEvent {
         AgUiEvent::Custom {
-            name: "agentos.tool".to_owned(),
+            name: "vos.tool".to_owned(),
             value: json!({ "toolCallId": id, "title": meta.title, "kind": meta.kind, "status": meta.status }),
         }
     }
@@ -284,7 +284,7 @@ impl Inner {
                 kind: "function".to_owned(),
                 function: ToolFunction { name: title.to_owned(), arguments: arguments.clone() },
             }],
-            agentos: Some(meta.clone()),
+            vos: Some(meta.clone()),
         });
         self.tool_messages.insert(id.to_owned(), self.messages.len() - 1);
         self.emit(AgUiEvent::ToolCallStart {
@@ -310,7 +310,7 @@ impl Inner {
     ) {
         let Some(&index) = self.tool_messages.get(id) else { return };
         let mut changed = None;
-        if let Some(ThreadMessage::Assistant { agentos: Some(meta), .. }) = self.messages.get_mut(index) {
+        if let Some(ThreadMessage::Assistant { vos: Some(meta), .. }) = self.messages.get_mut(index) {
             if let Some(title) = title {
                 meta.title = title;
             }
@@ -356,7 +356,7 @@ impl Inner {
         self.messages.push(ThreadMessage::System {
             id: hex_id(random, "error-"),
             content: text.to_owned(),
-            agentos: Some(ErrorMeta { error: true }),
+            vos: Some(ErrorMeta { error: true }),
         });
     }
 }
@@ -382,12 +382,12 @@ impl AgentEventSink for ThreadSink {
                     .map(|o| o.option_id.clone())
             }),
             ApprovalPolicy::Ask => None,
-            // the title and kind are the agent's text: only an exact `mcp__agentos__<app>__<tool>` that exists, is
+            // the title and kind are the agent's text: only an exact `mcp__vos__<app>__<tool>` that exists, is
             // granted to this agent, was declared readOnly (the runtime refuses writes through `app.*` and trusts
             // the app for the rest: apps are the person's own code) and comes with a read-only kind skips the
             // prompt, and then only as allow-once, never as a standing allow
             ApprovalPolicy::AutoReadOnly => request
-                .agentos_tool()
+                .vos_tool()
                 .filter(|_| request.kind_allows_auto_approval())
                 .filter(|tool| agent.as_ref().is_some_and(|a| a.grants.allows(tool.app())))
                 .filter(|tool| self.apps.tool_is_read_only(tool) == Some(true))

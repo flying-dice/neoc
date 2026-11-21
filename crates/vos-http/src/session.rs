@@ -9,7 +9,7 @@
 //!   future data endpoint). **Protected is the default**: public routes are the exception, listed in
 //!   one place (the host's router).
 //!
-//! The cookie is `HttpOnly; SameSite=Strict`, and with TLS `Secure` and named `__Host-agentos_session`: the
+//! The cookie is `HttpOnly; SameSite=Strict`, and with TLS `Secure` and named `__Host-vos_session`: the
 //! `__Host-` prefix makes browsers refuse a copy set by another (plain-HTTP or sub-domain) origin and
 //! refuse any `Domain`, so only this host can set it; the host accepts only that name then. It carries a random
 //! 256-bit token; the database holds only its SHA-256. A paired session is **not** an MCP credential:
@@ -30,9 +30,9 @@ use vos_application::{DeviceService, PairError};
 use vos_domain::device::device_name_from_user_agent;
 
 /// Name of the session cookie over plain HTTP.
-pub const SESSION_COOKIE: &str = "agentos_session";
+pub const SESSION_COOKIE: &str = "vos_session";
 /// Name of the session cookie when the host serves TLS (`Secure`, `Path=/`, no `Domain`).
-pub const SECURE_SESSION_COOKIE: &str = "__Host-agentos_session";
+pub const SECURE_SESSION_COOKIE: &str = "__Host-vos_session";
 /// 400 days is the longest lifetime browsers honour. The session itself lasts until it is revoked.
 const COOKIE_MAX_AGE_SECS: u64 = 400 * 24 * 60 * 60;
 const MAX_PAIR_BODY: usize = 4 * 1024;
@@ -180,11 +180,11 @@ mod tests {
     #[test]
     fn the_session_token_is_read_from_among_other_cookies() {
         let mut h = HeaderMap::new();
-        h.append(header::COOKIE, HeaderValue::from_static("theme=dark; agentos_session=abc123; other=1"));
+        h.append(header::COOKIE, HeaderValue::from_static("theme=dark; vos_session=abc123; other=1"));
         assert_eq!(session_token(&h, SESSION_COOKIE).as_deref(), Some("abc123"));
         assert_eq!(session_token(&HeaderMap::new(), SESSION_COOKIE), None);
         let mut h = HeaderMap::new();
-        h.append(header::COOKIE, HeaderValue::from_static("agentos_session_extra=nope"));
+        h.append(header::COOKIE, HeaderValue::from_static("vos_session_extra=nope"));
         assert_eq!(
             session_token(&h, SESSION_COOKIE),
             None,
@@ -196,20 +196,17 @@ mod tests {
     fn over_tls_only_the_host_prefixed_cookie_counts() {
         // a copy set from a plain-HTTP origin (cookie tossing) under the unprefixed name is ignored
         let mut h = HeaderMap::new();
-        h.append(
-            header::COOKIE,
-            HeaderValue::from_static("agentos_session=tossed; __Host-agentos_session=real"),
-        );
+        h.append(header::COOKIE, HeaderValue::from_static("vos_session=tossed; __Host-vos_session=real"));
         assert_eq!(session_token(&h, SECURE_SESSION_COOKIE).as_deref(), Some("real"));
         let mut tossed = HeaderMap::new();
-        tossed.append(header::COOKIE, HeaderValue::from_static("agentos_session=tossed"));
+        tossed.append(header::COOKIE, HeaderValue::from_static("vos_session=tossed"));
         assert_eq!(session_token(&tossed, SECURE_SESSION_COOKIE), None);
         // and without TLS the prefixed name is not accepted either
         assert_eq!(session_token(&h, SESSION_COOKIE).as_deref(), Some("tossed"));
         let set = set_cookie("tok", true);
         let set = set.to_str().unwrap();
-        assert!(set.starts_with("__Host-agentos_session=tok; Path=/;") && !set.contains("Domain"), "{set}");
-        assert!(set_cookie("tok", false).to_str().unwrap().starts_with("agentos_session=tok;"));
+        assert!(set.starts_with("__Host-vos_session=tok; Path=/;") && !set.contains("Domain"), "{set}");
+        assert!(set_cookie("tok", false).to_str().unwrap().starts_with("vos_session=tok;"));
     }
 
     #[test]

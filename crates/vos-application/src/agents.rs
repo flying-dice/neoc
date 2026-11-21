@@ -83,7 +83,7 @@ pub struct AgentService {
 /// is minted here, the host's own local MCP client's included.
 #[must_use]
 pub fn mint_agent_token(random: &dyn RandomSource) -> String {
-    format!("agentos_{}", random_hex(random, 24))
+    format!("vos_{}", random_hex(random, 24))
 }
 
 impl AgentService {

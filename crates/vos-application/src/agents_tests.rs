@@ -92,7 +92,7 @@ async fn a_persistent_token_is_stored_only_as_a_hash_and_rotating_replaces_it() 
     let r = rig();
     let a = r.svc.create(new("Claude")).await.unwrap();
     let first = r.svc.rotate_token(&a.id).await.unwrap();
-    assert!(first.starts_with("agentos_") && first.len() > 40);
+    assert!(first.starts_with("vos_") && first.len() > 40);
     let hashes = r.store.token_hashes().await.unwrap();
     assert_eq!(hashes, [(a.id.clone(), hash_token(&first))]);
     assert!(!hashes[0].1.contains(&first), "the plaintext is not stored");
@@ -255,11 +255,11 @@ async fn deleting_an_agent_stops_its_process() {
 }
 
 #[test]
-fn every_agent_token_is_minted_with_the_agentos_prefix_and_192_random_bits() {
+fn every_agent_token_is_minted_with_the_vos_prefix_and_192_random_bits() {
     let random = SeededRandom::default();
     let (a, b) = (crate::mint_agent_token(&random), crate::mint_agent_token(&random));
     for token in [&a, &b] {
-        let hex = token.strip_prefix("agentos_").expect("a leaked token is recognisable by its prefix");
+        let hex = token.strip_prefix("vos_").expect("a leaked token is recognisable by its prefix");
         assert_eq!(hex.len(), 48);
         assert!(hex.bytes().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
     }

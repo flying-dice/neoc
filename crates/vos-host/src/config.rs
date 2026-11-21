@@ -306,8 +306,7 @@ mod tests {
     use std::collections::HashMap;
 
     fn load(file: Option<&str>, env: &[(&str, &str)]) -> anyhow::Result<Settings> {
-        let dir =
-            std::env::temp_dir().join(format!("agentos-config-{}-{}", std::process::id(), rand_suffix()));
+        let dir = std::env::temp_dir().join(format!("vos-config-{}-{}", std::process::id(), rand_suffix()));
         std::fs::create_dir_all(&dir).unwrap();
         let config_arg = file.map(|text| {
             std::fs::write(dir.join("vos.toml"), text).unwrap();
@@ -351,7 +350,7 @@ mod tests {
             port = 8000
             registries = ["file:///apps/notes/app-ref.json"]
             install = ["file:///apps/notes/app-ref.json"]
-            allowed_hosts = ["agentos.example.org"]
+            allowed_hosts = ["vos.example.org"]
             [tls]
             cert = "certs/host.pem"
             key = "certs/host.key"
@@ -382,7 +381,7 @@ mod tests {
 
     #[test]
     fn the_catalog_is_the_configured_registries_else_the_built_registry() {
-        let root = std::env::temp_dir().join(format!("agentos-catalog-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("vos-catalog-{}", std::process::id()));
         std::fs::create_dir_all(root.join("dist/apps")).unwrap();
         let s = load(None, &[]).unwrap();
         std::fs::write(root.join("dist/apps/registry.json"), r#"{"apps":[]}"#).unwrap();
@@ -405,7 +404,7 @@ mod tests {
 
     #[test]
     fn an_explicit_client_dir_must_be_built_but_the_default_may_be_missing() {
-        let dir = std::env::temp_dir().join(format!("agentos-client-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("vos-client-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let explicit = Settings { client: ClientSource::Explicit(dir.clone()), ..load(None, &[]).unwrap() };
         assert!(explicit.resolve_client_dir(&dir).is_err(), "no index.html yet");
@@ -416,7 +415,7 @@ mod tests {
 
     #[test]
     fn the_default_client_is_client_dist_and_nothing_older() {
-        let root = std::env::temp_dir().join(format!("agentos-default-client-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("vos-default-client-{}", std::process::id()));
         std::fs::create_dir_all(root.join("apps/desktop/dist")).unwrap();
         std::fs::write(root.join("apps/desktop/dist/index.html"), "old").unwrap();
         let s = load(None, &[]).unwrap();

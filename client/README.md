@@ -15,7 +15,7 @@ for the host.
 ## The shell (`src`)
 
 ```
-boot.ts                 start: GET /session, then the pairing screen or one Session; exposes window.__agentos (tests)
+boot.ts                 start: GET /session, then the pairing screen or one Session; exposes window.__vos (tests)
 App.svelte              composition root: pairing gate, built-in pages, ViewWindow for installed apps
 lib/host.svelte.ts      the host connection: phase (checking, unpaired, connecting, ready), the one Session, the app list,
                         window.open requests, re-pairing after a revoke

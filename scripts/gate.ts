@@ -3,7 +3,7 @@
  * stylua).
  *
  * On a developer machine it SKIPS with a message and exits 0, so a fresh checkout still lints what it can. In the
- * quality gate it FAILS: a skipped check is not a pass. The gate is a run with `VOS_GATE=1` (the `agentos-pre-commit`
+ * quality gate it FAILS: a skipped check is not a pass. The gate is a run with `VOS_GATE=1` (the `vos-pre-commit`
  * skill sets it) or with `CI` set (the usual flag of an automated run).
  */
 

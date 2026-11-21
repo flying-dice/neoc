@@ -71,7 +71,7 @@ export function createHostChannel(base: Transport, timeoutMs = 30_000): HostChan
     onNotification: (method, params) => {
       for (const l of [...notifications]) l(method, params)
     },
-    onError: (e) => console.warn('[agentos] host channel:', e),
+    onError: (e) => console.warn('[vos] host channel:', e),
     timeoutMs,
     idPrefix: 's'
   })

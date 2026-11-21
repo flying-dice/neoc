@@ -48,7 +48,7 @@ pub struct AgentHello {
 pub async fn handshake(launch: &AgentLaunch) -> Result<AgentHello, agent_client_protocol::Error> {
     Client
         .v1()
-        .name("agentos")
+        .name("vos")
         .connect_with(launch.acp_agent(), async |cx| {
             let r = cx.send_request(InitializeRequest::new(ProtocolVersion::V1)).block_task().await?;
             Ok(AgentHello {

@@ -83,7 +83,7 @@ fn now_ms() -> u64 {
 }
 
 /// Issue a pairing code at the host and exchange it over HTTP like a browser would; returns the
-/// `Cookie` header value (`agentos_session=...`) of the new session.
+/// `Cookie` header value (`vos_session=...`) of the new session.
 pub async fn pair(r: &Running, device_name: &str) -> String {
     let code = r.devices().issue_pairing_code().await.unwrap();
     let res = reqwest::Client::new()

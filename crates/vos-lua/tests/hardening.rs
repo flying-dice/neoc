@@ -366,7 +366,7 @@ async fn loadstring_getfenv_and_setfenv_are_not_in_the_sandbox() {
 /// refuse by other means; `ATTACH` is denied by the authorizer. Through Lua `db:all` and `db:exec`.
 #[tokio::test]
 async fn vacuum_into_and_attach_are_refused_through_db_all_and_exec() {
-    let dir = std::env::temp_dir().join(format!("agentos-vacuum-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("vos-vacuum-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let (vacuumed, attached) = (dir.join("vacuumed.db"), dir.join("attached.db"));
     let src = format!(

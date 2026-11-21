@@ -59,7 +59,7 @@ interface Diagnostic {
 
 /** LuaLS's findings by repo-relative file, from `--check` over the whole workspace (the config picks the files). */
 function check(): Map<string, Diagnostic[]> {
-  const scratch = mkdtempSync(join(tmpdir(), 'agentos-luals-'))
+  const scratch = mkdtempSync(join(tmpdir(), 'vos-luals-'))
   try {
     const run = spawnSync(
       luals as string,

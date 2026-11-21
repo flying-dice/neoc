@@ -233,7 +233,7 @@ mod tests {
             Some("Studio-Mac".into()),
         )
         .allow_port(5173)
-        .allow_hosts(["agentos.example.org".to_owned()])
+        .allow_hosts(["vos.example.org".to_owned()])
     }
 
     #[test]
@@ -289,11 +289,8 @@ mod tests {
     fn the_dev_client_port_and_configured_hosts_work() {
         let g = guard();
         assert!(g.permits(Some("http://localhost:5173"), Some("localhost:5173")), "Vite dev server");
-        assert!(
-            g.permits(Some("https://agentos.example.org"), Some("agentos.example.org")),
-            "behind a proxy"
-        );
-        assert!(!g.permits(Some("https://other.example.org"), Some("agentos.example.org")));
+        assert!(g.permits(Some("https://vos.example.org"), Some("vos.example.org")), "behind a proxy");
+        assert!(!g.permits(Some("https://other.example.org"), Some("vos.example.org")));
     }
 
     #[test]

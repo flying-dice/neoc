@@ -113,7 +113,7 @@ async fn a_host_launched_agent_reaches_the_tools_with_its_own_session_token_not_
     // and it is not a device session
     let as_session = http
         .post(r.url("/agui"))
-        .header("cookie", format!("agentos_session={token}"))
+        .header("cookie", format!("vos_session={token}"))
         .json(&json!({}))
         .send()
         .await
@@ -150,7 +150,7 @@ async fn the_roster_is_managed_over_rpc_and_every_change_reaches_the_agents_mcp_
     assert_eq!(agent["approval"], "auto_read_only");
     assert_eq!(agent["runtime"]["args"], json!(["--x"]));
     let token = created["result"]["token"].as_str().unwrap().to_owned();
-    assert!(token.starts_with("agentos_"));
+    assert!(token.starts_with("vos_"));
     assert_eq!(
         rpc(&mut ws, 2, "agents.create", json!({"name": "x", "runtime": {"command": "x"}, "bogus": 1})).await
             ["error"]["code"],

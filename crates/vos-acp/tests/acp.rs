@@ -127,7 +127,7 @@ async fn the_agent_gets_the_host_mcp_url_and_its_own_token() {
     let opened = within(c.open_session(&fake(), Some(mcp), sink.clone())).await.unwrap();
     assert!(opened.session.tools_connected);
     within(c.prompt(&fake().id, &opened.session_id, "mcp")).await.unwrap();
-    assert_eq!(sink.text(), "mcp: agentos http://127.0.0.1:7400/mcp auth=Bearer tok-claude");
+    assert_eq!(sink.text(), "mcp: vos http://127.0.0.1:7400/mcp auth=Bearer tok-claude");
     c.stop_all().await;
 }
 
@@ -158,7 +158,7 @@ async fn tool_calls_carry_their_title_kind_status_and_output() {
     };
     assert_eq!(
         (id.as_str(), title.as_str(), kind.as_deref()),
-        ("tc-1", "mcp__agentos__notes__search", Some("search"))
+        ("tc-1", "mcp__vos__notes__search", Some("search"))
     );
     assert_eq!(status, ToolStatus::InProgress);
     assert_eq!(raw_input.unwrap()["query"], "milk");
@@ -192,7 +192,7 @@ async fn a_permission_request_waits_for_the_person_and_the_answer_reaches_the_ag
 
     wait_for("the request", || !sink.permissions.lock().is_empty()).await;
     let request = sink.permissions.lock()[0].clone();
-    assert_eq!(request.title, "mcp__agentos__notes__search");
+    assert_eq!(request.title, "mcp__vos__notes__search");
     assert_eq!(request.options.len(), 3);
     assert!(!turn.is_finished(), "the turn waits for an answer");
     // a session update that arrives while the request is pending is still delivered (the loop keeps running)

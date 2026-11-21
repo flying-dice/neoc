@@ -7,4 +7,4 @@ export interface ListStyleContext {
   readonly selectable: boolean
 }
 
-export const LIST_CONTEXT = Symbol('agentos.ui.list')
+export const LIST_CONTEXT = Symbol('vos.ui.list')

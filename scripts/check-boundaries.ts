@@ -165,7 +165,7 @@ function checkRelative(rel: string, imp: Import, abs: string, test: boolean): vo
     report(rel, imp.line, `relative import '${imp.spec}' leaves ${pkg}: cross packages only through their published entry points`)
 }
 
-function checkAgentosImport(rel: string, imp: Import, test: boolean): void {
+function checkVosImport(rel: string, imp: Import, test: boolean): void {
   const { spec } = imp
   const kit = matches(spec, ['@vos/ui', '@vos/ui/*'])
   const storybook = test && matches(spec, ['@vos/storybook', '@vos/storybook/*'])
@@ -178,7 +178,7 @@ function checkImport(rel: string, imp: Import, abs: string): void {
   const { spec } = imp
   const test = isTestSupport(rel)
   if (spec.startsWith('.')) return checkRelative(rel, imp, abs, test)
-  if (spec.startsWith('@vos/')) checkAgentosImport(rel, imp, test)
+  if (spec.startsWith('@vos/')) checkVosImport(rel, imp, test)
   if (under(rel, BROWSER) && !test && isBuiltin(spec)) report(rel, imp.line, `'${spec}' is a Node/Bun builtin in code that runs in the browser`)
 }
 

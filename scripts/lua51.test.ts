@@ -123,7 +123,7 @@ describe("darklua", () => {
   }
 
   test("leaves the host modules (std:, lib:, vnd:) as runtime requires and bundles relative ones", () => {
-    const scratch = mkdtempSync(join(tmpdir(), "agentos-lua51-modules-"));
+    const scratch = mkdtempSync(join(tmpdir(), "vos-lua51-modules-"));
     try {
       writeFileSync(join(scratch, "helper.lua"), "return { answer = 42 }\n");
       writeFileSync(

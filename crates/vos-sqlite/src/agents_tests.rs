@@ -67,7 +67,7 @@ async fn transcripts_are_stored_whole_and_replaced_by_the_next_save() {
         id: "m1".into(),
         content: Some("hello".into()),
         tool_calls: vec![],
-        agentos: None,
+        vos: None,
     });
     db.save("t1", &thread, 20).await.unwrap();
     assert_eq!(ThreadStore::load(&db, "t1").await.unwrap(), Some(thread));

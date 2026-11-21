@@ -144,7 +144,7 @@ mod tests {
 
     #[test]
     fn mcp_json_is_private_and_holds_the_url_and_bearer_token() {
-        let dir = std::env::temp_dir().join(format!("agentos-mcpjson-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("vos-mcpjson-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("mcp.json"), "old and world-readable").unwrap();
         std::fs::set_permissions(dir.join("mcp.json"), std::fs::Permissions::from_mode(0o644)).unwrap();
@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn the_data_dir_is_private_to_this_user() {
-        let dir = std::env::temp_dir().join(format!("agentos-datadir-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("vos-datadir-{}", std::process::id()));
         prepare_data_dir(&dir).unwrap();
         assert!(dir.join("apps").is_dir());
         assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);

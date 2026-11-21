@@ -58,7 +58,7 @@ async fn a_pairing_code_becomes_an_http_only_strict_session_cookie() {
     let res = post_pair(&r, &json!({"code": code.code.to_lowercase(), "deviceName": "Safari on iPad"})).await;
     assert_eq!(res.status(), 200);
     let cookie = res.headers().get("set-cookie").unwrap().to_str().unwrap().to_owned();
-    assert!(cookie.starts_with("agentos_session="), "{cookie}");
+    assert!(cookie.starts_with("vos_session="), "{cookie}");
     for attr in ["HttpOnly", "SameSite=Strict", "Path=/"] {
         assert!(cookie.contains(attr), "{attr} in {cookie}");
     }
@@ -139,7 +139,7 @@ async fn unpaired_requests_are_refused_on_rpc_and_agui_even_from_loopback() {
     let r = start(|_| {}).await; // the test client IS on loopback
     let err = connect_rpc(r.addr, None, None).await.unwrap_err();
     assert!(err.to_string().contains("401"), "{err}");
-    let err = connect_rpc(r.addr, Some("agentos_session=made-up"), None).await.unwrap_err();
+    let err = connect_rpc(r.addr, Some("vos_session=made-up"), None).await.unwrap_err();
     assert!(err.to_string().contains("401"), "a forged cookie is not a session: {err}");
 
     let agui = http().post(r.url("/agui")).json(&agui_body()).send().await.unwrap();
@@ -157,7 +157,7 @@ async fn unpaired_requests_are_refused_on_rpc_and_agui_even_from_loopback() {
 
 #[tokio::test]
 async fn the_client_files_load_without_pairing_so_the_shell_can_show_its_pairing_screen() {
-    let dir = std::env::temp_dir().join(format!("agentos-client-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("vos-client-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("index.html"), "<h1>shell</h1>").unwrap();
     let r = start(|c| c.client_dir = Some(dir.clone())).await;
@@ -286,7 +286,7 @@ async fn mcp_initialize(r: &Running, headers: &[(&str, &str)]) -> reqwest::Statu
 async fn the_mcp_token_and_the_session_are_different_credentials() {
     let r = start(|c| c.agents = vec![local_agent()]).await;
     let cookie = pair(&r, "Mac").await;
-    let session_token = cookie.strip_prefix("agentos_session=").unwrap().to_owned();
+    let session_token = cookie.strip_prefix("vos_session=").unwrap().to_owned();
 
     // /mcp: the agent's bearer token works; a paired session (cookie or as a bearer) does not
     assert_eq!(mcp_initialize(&r, &[]).await, 401, "no credential");
@@ -295,7 +295,7 @@ async fn the_mcp_token_and_the_session_are_different_credentials() {
     assert_eq!(mcp_initialize(&r, &[("authorization", "Bearer agent-token")]).await, 200);
 
     // /rpc and /agui: the MCP token is not a session, as a cookie or as a bearer
-    let as_cookie = "agentos_session=agent-token";
+    let as_cookie = "vos_session=agent-token";
     assert!(connect_rpc(r.addr, Some(as_cookie), None).await.is_err());
     let agui =
         http().post(r.url("/agui")).header("cookie", as_cookie).json(&agui_body()).send().await.unwrap();
@@ -333,7 +333,7 @@ async fn mcp_is_behind_the_origin_and_host_guard_too() {
 
 /// Self-signed TLS files for `localhost` in a directory of their own.
 fn tls_files(tag: &str) -> (vos_host::config::TlsFiles, std::path::PathBuf) {
-    let dir = std::env::temp_dir().join(format!("agentos-tls-{tag}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("vos-tls-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let cert =
         rcgen::generate_simple_self_signed(vec!["localhost".to_owned(), "127.0.0.1".to_owned()]).unwrap();
@@ -379,7 +379,7 @@ async fn over_tls_the_session_cookie_is_secure() {
     assert_eq!(res.status(), 200);
     let cookie = res.headers().get("set-cookie").unwrap().to_str().unwrap().to_owned();
     assert!(cookie.ends_with("; Secure") && cookie.contains("HttpOnly"), "{cookie}");
-    assert!(cookie.starts_with("__Host-agentos_session="), "the __Host- prefix with TLS: {cookie}");
+    assert!(cookie.starts_with("__Host-vos_session="), "the __Host- prefix with TLS: {cookie}");
     // the browser sends it back under that name, and the host honours it (and only it)
     let sent = cookie.split(';').next().unwrap().to_owned();
     let paired =
@@ -388,7 +388,7 @@ async fn over_tls_the_session_cookie_is_secure() {
     let value = sent.split_once('=').unwrap().1;
     let tossed = client
         .get(format!("https://{}/session", r.addr))
-        .header("cookie", format!("agentos_session={value}"))
+        .header("cookie", format!("vos_session={value}"))
         .send()
         .await
         .unwrap();

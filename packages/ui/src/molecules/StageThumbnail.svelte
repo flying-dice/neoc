@@ -20,7 +20,7 @@
   const label = $derived(stage.apps.map((a) => a.name).join(' + '))
 
   function ondragstart(e: DragEvent): void {
-    e.dataTransfer?.setData('application/x-agentos-stage', stage.id)
+    e.dataTransfer?.setData('application/x-vos-stage', stage.id)
     if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
   }
 </script>

@@ -4,7 +4,7 @@
  *  • Hashed build assets (immutable URLs): cache first.
  *  • Never touches /rpc (WebSocket), /mcp (always live).
  */
-const CACHE = 'agentos-shell-v1'
+const CACHE = 'vos-shell-v1'
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon-512.png']
 
 self.addEventListener('install', (event) => {

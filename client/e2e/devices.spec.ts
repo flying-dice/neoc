@@ -51,7 +51,7 @@ test.describe('Devices journeys', () => {
 
     // and its old cookie no longer opens anything
     const session = await fetch(`${page.url().split('/').slice(0, 3).join('/')}/session`, {
-      headers: { cookie: `agentos_session=${other.cookie.value}` }
+      headers: { cookie: `vos_session=${other.cookie.value}` }
     })
     expect(await session.json()).toEqual({ paired: false })
     await second.close()

@@ -8,8 +8,8 @@ import type { Scope, ViewCore } from './core/view'
 import type { Node, RowKey } from './protocol'
 import type { ComponentRegistry } from './registry'
 
-const VIEW = Symbol('agentos.view')
-const LIST = Symbol('agentos.view.list')
+const VIEW = Symbol('vos.view')
+const LIST = Symbol('vos.view.list')
 
 export interface ViewContext {
   view: ViewCore
@@ -59,7 +59,7 @@ export interface NavLevel {
   setTitle(title: string): void
 }
 
-const NAV = Symbol('agentos.view.nav')
+const NAV = Symbol('vos.view.nav')
 export const provideNavLevel = (level: NavLevel): void => void setContext(NAV, level)
 export const useNavLevel = (): NavLevel | undefined => getContext<NavLevel | undefined>(NAV)
 
@@ -67,7 +67,7 @@ export const useNavLevel = (): NavLevel | undefined => getContext<NavLevel | und
 export interface ColumnContext {
   advance(): void
 }
-const COLUMN = Symbol('agentos.view.column')
+const COLUMN = Symbol('vos.view.column')
 export const provideColumn = (ctx: ColumnContext): void => void setContext(COLUMN, ctx)
 export const useColumn = (): ColumnContext | undefined =>
   getContext<ColumnContext | undefined>(COLUMN)

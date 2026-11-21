@@ -17,14 +17,14 @@ test.describe.configure({ mode: 'serial' })
 const ticks = 'ticker-ticks'
 const status = 'ticker-status'
 
-/** The host-management call the shell makes (`window.__agentos.host.api`), as the Get button of Discover does. */
+/** The host-management call the shell makes (`window.__vos.host.api`), as the Get button of Discover does. */
 interface HostApi {
   call(method: string, params?: Record<string, unknown>): Promise<unknown>
 }
 const hostCall = <T>(page: Page, method: string, params: Record<string, unknown>): Promise<T> =>
   page.evaluate(
     ([m, p]) =>
-      (window as unknown as { __agentos: { host: { api: HostApi } } }).__agentos.host.api.call(
+      (window as unknown as { __vos: { host: { api: HostApi } } }).__vos.host.api.call(
         m as string,
         p as Record<string, unknown>
       ),

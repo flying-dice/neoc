@@ -156,24 +156,22 @@ async fn migrations_are_recorded_ordered_and_a_changed_one_fails_the_load() {
     let shared = db();
     let v1 = app(r#"app.db:migrate { [1] = "create table t(a)" }"#);
     let v2 = app(r#"app.db:migrate { [1] = "create table t(a)", [2] = "alter table t add column b" }"#);
-    agentos_lua_load(&v1, shared.clone()).await.unwrap();
-    agentos_lua_load(&v2, shared.clone()).await.unwrap(); // an app upgrade: only [2] runs
-    agentos_lua_load(&v2, shared.clone()).await.unwrap(); // idempotent
-    let e = agentos_lua_load(&app(r#"app.db:migrate { [1] = "create table t(a, c)" }"#), shared.clone())
+    vos_lua_load(&v1, shared.clone()).await.unwrap();
+    vos_lua_load(&v2, shared.clone()).await.unwrap(); // an app upgrade: only [2] runs
+    vos_lua_load(&v2, shared.clone()).await.unwrap(); // idempotent
+    let e = vos_lua_load(&app(r#"app.db:migrate { [1] = "create table t(a, c)" }"#), shared.clone())
         .await
         .err()
         .unwrap();
     assert!(e.to_string().contains("edited after being applied"), "{e}");
-    let e = agentos_lua_load(&app(r#"app.db:migrate { [1] = "x", [3] = "y" }"#), shared.clone())
-        .await
-        .err()
-        .unwrap();
+    let e =
+        vos_lua_load(&app(r#"app.db:migrate { [1] = "x", [3] = "y" }"#), shared.clone()).await.err().unwrap();
     assert!(e.to_string().contains("without gaps"), "{e}");
-    let e = agentos_lua_load(&app(r"app.db:migrate { [1] = 5 }"), shared).await.err().unwrap();
+    let e = vos_lua_load(&app(r"app.db:migrate { [1] = 5 }"), shared).await.err().unwrap();
     assert!(e.to_string().contains("[1] must be a SQL string"), "{e}");
 }
 
-async fn agentos_lua_load(src: &str, db: Arc<vos_sqlite::AppDb>) -> Result<AppVm, VmError> {
+async fn vos_lua_load(src: &str, db: Arc<vos_sqlite::AppDb>) -> Result<AppVm, VmError> {
     common::try_load_with("probe", src, db).await
 }
 

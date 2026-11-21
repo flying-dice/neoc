@@ -5,7 +5,7 @@
   import { ScreenTemplate } from '@vos/ui/templates'
 
   const lines = [
-    '$ agentos status',
+    '$ vos status',
     'research   running   62%   reading 5/14 papers',
     'coder      waiting         PR ready for review',
     'inbox      idle',

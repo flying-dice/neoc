@@ -8,12 +8,12 @@
  *   domain      -> nothing internal; external: serde, serde_json, sha2, thiserror (+ ts-rs, schemars)
  *   application -> domain; external: async-trait, futures-channel, futures-util (its runtime-free `lock::Mutex`), parking_lot, serde_json, sha2, thiserror, tracing
  *   adapters    -> application, domain; never each other
- *   lua         -> application, domain, neoc-vm (the one agentos crate that may use the Lua VM library)
+ *   lua         -> application, domain, neoc-vm (the one vos crate that may use the Lua VM library)
  *   neoc-vm     -> nothing internal (the Lua VM library; the lua adapter and the `neoc` CLI may depend on it)
- *   neoc        -> neoc-vm only (the CLI over the VM; it never reaches into the agentos crates)
+ *   neoc        -> neoc-vm only (the CLI over the VM; it never reaches into the vos crates)
  *   host        -> every adapter, never neoc-vm
  *
- * The workspace holds two products, the agentos hexagon and neoc (`neoc-vm` and the `neoc` CLI); the lists below
+ * The workspace holds two products, the vos hexagon and neoc (`neoc-vm` and the `neoc` CLI); the lists below
  * keep each side's edges inside its own. A crate that is not in INTERNAL fails the gate, so a new crate has to be
  * placed on purpose.
  * `cargo deny` (deny.toml `bans` with `wrappers`) is the second line of defence for the framework crates.
@@ -31,7 +31,7 @@ const INTERNAL: Record<string, string[]> = {
   // The Lua adapter runs apps (plain Lua 5.1 source) on top of the Lua VM library below.
   'vos-lua': ['vos-domain', 'vos-application', 'neoc-vm'],
   // The Lua VM (Luau): a support library, not an adapter. It depends on no other crate here, and among the
-  // agentos crates only the Lua adapter may depend on it (the one place a script engine is wired to a port), so
+  // vos crates only the Lua adapter may depend on it (the one place a script engine is wired to a port), so
   // the VM stays swappable. The `neoc` CLI is its other client.
   'neoc-vm': [],
   neoc: ['neoc-vm'],

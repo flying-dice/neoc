@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
-//! The `vos-host` binary itself: the banner, `mcp.json`, `pair`, and graceful shutdown on SIGTERM
+//! The `vos` binary itself: the banner, `mcp.json`, `pair`, and graceful shutdown on SIGTERM
 //! and SIGINT.
 
 use serde_json::{json, Value};
@@ -87,7 +87,7 @@ fn code_in(line: &str) -> String {
 }
 
 fn temp_dir(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("agentos-cli-{tag}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("vos-cli-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -108,7 +108,7 @@ async fn the_host_prints_a_code_writes_mcp_json_pairs_a_device_and_stops_on_sigt
     let mcp: Value = serde_json::from_slice(&std::fs::read(data.join("mcp.json")).unwrap()).unwrap();
     assert_eq!(mcp["url"], format!("{base}/mcp"));
     assert!(
-        mcp["headers"]["Authorization"].as_str().unwrap().starts_with("Bearer agentos_"),
+        mcp["headers"]["Authorization"].as_str().unwrap().starts_with("Bearer vos_"),
         "the local client's token is minted like every agent token"
     );
     #[cfg(unix)]
@@ -184,7 +184,7 @@ async fn pair_prints_a_fresh_code_that_a_running_host_accepts() {
             .send()
             .await
             .unwrap();
-        assert_eq!(res.status(), 200, "a code issued by `vos-host {flag}` pairs against the running host");
+        assert_eq!(res.status(), 200, "a code issued by `vos {flag}` pairs against the running host");
     }
     let _ = std::fs::remove_dir_all(data);
 }

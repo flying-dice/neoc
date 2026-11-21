@@ -52,10 +52,10 @@
 
   // Dragging a strip group onto the stage merges it into the current group.
   function ondragover(e: DragEvent): void {
-    if (e.dataTransfer?.types.includes('application/x-agentos-stage')) e.preventDefault()
+    if (e.dataTransfer?.types.includes('application/x-vos-stage')) e.preventDefault()
   }
   function ondrop(e: DragEvent): void {
-    const id = e.dataTransfer?.getData('application/x-agentos-stage')
+    const id = e.dataTransfer?.getData('application/x-vos-stage')
     if (id) {
       e.preventDefault()
       wm.mergeStage(id)

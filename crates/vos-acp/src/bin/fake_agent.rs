@@ -6,8 +6,8 @@
 //! | `think`  | a thought chunk, then a message                                                              |
 //! | `tool`   | a tool call that completes with text output, then a message                                  |
 //! | `fail`   | a tool call that fails, then the prompt itself fails                                         |
-//! | `ask`    | asks permission for `mcp__agentos__notes__search`, then says what the answer was             |
-//! | `ask-write` | the same for `mcp__agentos__notes__append`                                                |
+//! | `ask`    | asks permission for `mcp__vos__notes__search`, then says what the answer was             |
+//! | `ask-write` | the same for `mcp__vos__notes__append`                                                |
 //! | `state`  | commands, usage, a plan, a title, and a mode update                                          |
 //! | `mcp`    | says which MCP servers the session got (name, url, Authorization header)                     |
 //! | `slow`   | streams chunks until cancelled, then ends with `cancelled`                                   |
@@ -121,7 +121,7 @@ async fn prompt(
                 cx,
                 session,
                 SessionUpdate::ToolCall(
-                    ToolCall::new("tc-1", "mcp__agentos__notes__search")
+                    ToolCall::new("tc-1", "mcp__vos__notes__search")
                         .kind(ToolKind::Search)
                         .status(ToolCallStatus::InProgress)
                         .raw_input(serde_json::json!({"query": "milk"})),
@@ -159,9 +159,9 @@ async fn prompt(
             say(cx, session, "Asking. ")?;
             // a search says it is one (the host auto-approves only read, search and fetch); an append does not
             let (tool, kind) = if input.trim() == "ask" {
-                ("mcp__agentos__notes__search", ToolKind::Search)
+                ("mcp__vos__notes__search", ToolKind::Search)
             } else {
-                ("mcp__agentos__notes__append", ToolKind::Other)
+                ("mcp__vos__notes__append", ToolKind::Other)
             };
             let answer = ask(cx, session, tool, kind).await?;
             say(cx, session, &format!("Answer: {answer}"))?;

@@ -4,7 +4,7 @@
  *
  *   ?theme=light|dark   force the appearance (tests, screenshots)
  *
- * `window.__agentos` exposes the shell's stores for tests and the research panel (the window manager, the app
+ * `window.__vos` exposes the shell's stores for tests and the research panel (the window manager, the app
  * definitions, the host state); nothing in the product reads it.
  */
 import { mount } from 'svelte'
@@ -18,7 +18,7 @@ import { windowManager } from './lib/windowManager.svelte'
 
 declare global {
   interface Window {
-    __agentos: {
+    __vos: {
       host: typeof host
       wm: typeof windowManager
       settings: typeof settings
@@ -34,10 +34,10 @@ if (theme === 'light' || theme === 'dark') settings.theme = theme
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   void navigator.serviceWorker
     .register('/sw.js')
-    .catch((e: unknown) => console.warn('[agentos] service worker:', e))
+    .catch((e: unknown) => console.warn('[vos] service worker:', e))
 }
 
-window.__agentos = { host, wm: windowManager, settings, apps }
+window.__vos = { host, wm: windowManager, settings, apps }
 mount(App, { target: document.getElementById('app')! })
 void host.start().then(() => {
   document.documentElement.dataset.ready = 'true'

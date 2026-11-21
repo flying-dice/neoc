@@ -80,7 +80,7 @@ for (const id of APPS) {
     test('resizes', async ({ page }) => {
       await openDesktop(page, { open: [id] })
       const win = windowOf(page, id)
-      const { minWidth, minHeight } = await page.evaluate((appId) => window.__agentos.apps[appId], id)
+      const { minWidth, minHeight } = await page.evaluate((appId) => window.__vos.apps[appId], id)
 
       await resizeWindow(page, id, 100, 100)
       const small = (await win.boundingBox())!

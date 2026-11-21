@@ -124,10 +124,10 @@ async fn reasoning_a_tool_call_and_state_changes_map_to_their_events() {
         "{types:?}"
     );
     let start = tool.iter().find(|e| e["type"] == "TOOL_CALL_START").unwrap();
-    assert_eq!(start["toolCallName"], "mcp__agentos__notes__search");
+    assert_eq!(start["toolCallName"], "mcp__vos__notes__search");
     let statuses: Vec<&str> = tool
         .iter()
-        .filter(|e| e["type"] == "CUSTOM" && e["name"] == "agentos.tool")
+        .filter(|e| e["type"] == "CUSTOM" && e["name"] == "vos.tool")
         .map(|e| e["value"]["status"].as_str().unwrap())
         .collect();
     assert_eq!(statuses, ["in_progress", "completed"]);
@@ -151,7 +151,7 @@ async fn reasoning_a_tool_call_and_state_changes_map_to_their_events() {
     // the tool call is in the history with its final status, and its output follows as a tool message
     let messages = snap["messages"].as_array().unwrap();
     let call = messages.iter().find(|m| m["toolCalls"].is_array()).unwrap();
-    assert_eq!(call["agentos"]["status"], "completed");
+    assert_eq!(call["vos"]["status"], "completed");
     assert!(messages.iter().any(|m| m["role"] == "tool" && m["content"] == "2 notes"));
     c.r.stop().await;
 }
@@ -166,8 +166,8 @@ async fn a_permission_request_interrupts_the_run_and_the_resume_finishes_the_tur
     assert_eq!(last["outcome"]["type"], "interrupt");
     let interrupt = &last["outcome"]["interrupts"][0];
     assert_eq!(interrupt["reason"], "tool_call");
-    assert_eq!(interrupt["message"], "mcp__agentos__notes__append");
-    let options: Vec<&str> = interrupt["metadata"]["agentos:options"]
+    assert_eq!(interrupt["message"], "mcp__vos__notes__append");
+    let options: Vec<&str> = interrupt["metadata"]["vos:options"]
         .as_array()
         .unwrap()
         .iter()
@@ -425,7 +425,7 @@ async fn an_unpaired_request_is_refused_on_every_agui_route() {
     }
     let forged = anonymous
         .post(c.r.url("/agui"))
-        .header("cookie", "agentos_session=made-up")
+        .header("cookie", "vos_session=made-up")
         .json(&json!({}))
         .send()
         .await

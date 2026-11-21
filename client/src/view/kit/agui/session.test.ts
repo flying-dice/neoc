@@ -105,21 +105,21 @@ describe('opening a thread', () => {
           {
             id: 'tc1',
             type: 'function',
-            function: { name: 'mcp__agentos__notes__search', arguments: '{}' }
+            function: { name: 'mcp__vos__notes__search', arguments: '{}' }
           }
         ],
-        agentos: { title: 'mcp__agentos__notes__search', kind: 'read', status: 'failed' }
+        vos: { title: 'mcp__vos__notes__search', kind: 'read', status: 'failed' }
       },
       { id: 'tr1', role: 'tool', toolCallId: 'tc1', content: 'x' },
       { id: 'a1', role: 'assistant', content: 'done' },
-      { id: 's1', role: 'system', content: 'it broke', agentos: { error: true } }
+      { id: 's1', role: 'system', content: 'it broke', vos: { error: true } }
     ]
     t.interrupts = [
       {
         id: 'i1',
         reason: 'tool_call',
         message: 'Run it',
-        metadata: { 'agentos:options': [{ optionId: 'ok', name: 'Allow', kind: 'allow_once' }] }
+        metadata: { 'vos:options': [{ optionId: 'ok', name: 'Allow', kind: 'allow_once' }] }
       }
     ]
     await chat.open()
@@ -241,7 +241,7 @@ describe('a run', () => {
     expect(chat.getState().items[1]).toMatchObject({ text: 'thinking it over' })
   })
 
-  test('a tool call goes pending, in progress, then completed through agentos.tool', async () => {
+  test('a tool call goes pending, in progress, then completed through vos.tool', async () => {
     const { fake, chat } = setup()
     const seen: string[] = []
     chat.subscribe(() => {
@@ -250,7 +250,7 @@ describe('a run', () => {
     })
     fake.onRun = async (run) => {
       run.start()
-      await run.tool('mcp__agentos__calculator__show_on_calculator', { kind: 'execute' })
+      await run.tool('mcp__vos__calculator__show_on_calculator', { kind: 'execute' })
       run.finish()
     }
     await chat.open()
@@ -270,7 +270,7 @@ describe('a run', () => {
       run.start()
       run.send({
         type: 'CUSTOM',
-        name: 'agentos.tool',
+        name: 'vos.tool',
         value: { toolCallId: 'z', title: 'Bash', status: 'failed' }
       })
       run.finish()
@@ -450,7 +450,7 @@ describe('permission prompts (interrupts)', () => {
   const askThenFinish = (
     fake: FakeAgui,
     ask: (run: FakeRun) => void = (run) =>
-      run.interrupt({ title: 'mcp__agentos__calculator__show_on_calculator', id: 'int-1' })
+      run.interrupt({ title: 'mcp__vos__calculator__show_on_calculator', id: 'int-1' })
   ): void => {
     fake.onRun = async (run) => {
       run.start()
@@ -459,7 +459,7 @@ describe('permission prompts (interrupts)', () => {
     }
     fake.onResume = async (run) => {
       run.start()
-      await run.tool('mcp__agentos__calculator__show_on_calculator')
+      await run.tool('mcp__vos__calculator__show_on_calculator')
       await run.text('Done.')
       run.finish()
     }
@@ -582,7 +582,7 @@ describe('permission prompts (interrupts)', () => {
               reason: 'tool_call',
               message: 'One',
               metadata: {
-                'agentos:options': [{ optionId: 'ok', name: 'Allow', kind: 'allow_once' }]
+                'vos:options': [{ optionId: 'ok', name: 'Allow', kind: 'allow_once' }]
               }
             },
             {
@@ -590,7 +590,7 @@ describe('permission prompts (interrupts)', () => {
               reason: 'tool_call',
               message: 'Two',
               metadata: {
-                'agentos:options': [{ optionId: 'ok', name: 'Allow', kind: 'allow_once' }]
+                'vos:options': [{ optionId: 'ok', name: 'Allow', kind: 'allow_once' }]
               }
             }
           ]
@@ -739,7 +739,7 @@ describe('session settings', () => {
 
 describe('pieces', () => {
   test('friendlyTool shortens AgentOS MCP tool names and leaves the rest', () => {
-    expect(friendlyTool('mcp__agentos__calculator__show_on_calculator')).toBe(
+    expect(friendlyTool('mcp__vos__calculator__show_on_calculator')).toBe(
       'Calculator · show on calculator'
     )
     expect(friendlyTool('Bash')).toBe('Bash')

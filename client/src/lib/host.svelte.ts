@@ -134,7 +134,7 @@ export class Host {
     const session = new Session({
       transport: channel.transport,
       createStore: reactiveStore,
-      onError: (e) => console.warn('[agentos]', e)
+      onError: (e) => console.warn('[vos]', e)
     })
     this.session = session
     session.onState((state) => {
@@ -199,7 +199,7 @@ export class Host {
           this.appsError = null
         } catch (e) {
           this.appsError = messageOf(e)
-          console.warn('[agentos] app.list:', e)
+          console.warn('[vos] app.list:', e)
         }
       } while (this.stale)
     })().finally(() => (this.refreshing = null))
@@ -212,7 +212,7 @@ export class Host {
       this.agentsError = null
     } catch (e) {
       this.agentsError = messageOf(e)
-      console.warn('[agentos] agents.list:', e)
+      console.warn('[vos] agents.list:', e)
     }
   }
 

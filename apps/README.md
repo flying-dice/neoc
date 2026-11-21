@@ -410,7 +410,7 @@ it in the app's own VM and keeps it going for as long as the app is loaded.
    and `bun run test:e2e` on a Mac (update the baselines deliberately and look at them).
 9. **Design it.** Run the `app-design` loop (`ux-research` rounds) until the exit criteria hold, with the report at
    `docs/ux/<id>/round-<n>.md`.
-10. **Ship it** through a PR with the full gate and the readiness table in `agentos-code-review` §6. Until then the app
+10. **Ship it** through a PR with the full gate and the readiness table in `vos-code-review` §6. Until then the app
     stays in its MR. To change a released app, bump `version` in `app.json`.
 
 ## Rules that are enforced

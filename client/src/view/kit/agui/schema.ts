@@ -1,6 +1,6 @@
 /**
  * The `/agui` wire (docs/architecture/host-stack.md, "Agents over AG-UI"): what the host sends that AG-UI does not
- * define (session state, thread snapshot, permission options, our `agentos.tool` custom event), validated with zod at
+ * define (session state, thread snapshot, permission options, our `vos.tool` custom event), validated with zod at
  * the edge. The standard events, interrupts and resume entries come from `@ag-ui/core` (types, plus its zod
  * `EventSchemas` for every frame); nothing here re-declares them.
  */
@@ -134,11 +134,11 @@ export const permissionOptionSchema = z.object({
 export type PermissionOption = z.infer<typeof permissionOptionSchema>
 
 const permissionMetaSchema = z.object({
-  'agentos:options': z
+  'vos:options': z
     .array(permissionOptionSchema)
     .default([])
     .transform(uniqueBy((o) => o.optionId)),
-  'agentos:tool': z.object({ title: text.optional(), kind: z.string().nullish() }).optional()
+  'vos:tool': z.object({ title: text.optional(), kind: z.string().nullish() }).optional()
 })
 
 export interface Permission {
@@ -151,18 +151,18 @@ export interface Permission {
 /** The permission a `tool_call` interrupt asks for. Unknown reasons and malformed metadata still produce a prompt. */
 export function permissionOf(interrupt: Interrupt): Permission {
   const meta = permissionMetaSchema.safeParse(interrupt.metadata ?? {})
-  const parsed = meta.success ? meta.data : { 'agentos:options': [], 'agentos:tool': undefined }
+  const parsed = meta.success ? meta.data : { 'vos:options': [], 'vos:tool': undefined }
   return {
     interruptId: interrupt.id,
     toolCallId: interrupt.toolCallId,
-    title: parsed['agentos:tool']?.title || interrupt.message || 'run a tool',
-    options: parsed['agentos:options']
+    title: parsed['vos:tool']?.title || interrupt.message || 'run a tool',
+    options: parsed['vos:options']
   }
 }
 
-// ── the `agentos.tool` custom event ────────────────────────────────────────────────────────────────────────
+// ── the `vos.tool` custom event ────────────────────────────────────────────────────────────────────────
 
-export const TOOL_EVENT = 'agentos.tool'
+export const TOOL_EVENT = 'vos.tool'
 export const toolEventSchema = z.object({
   toolCallId: text,
   title: text.optional(),

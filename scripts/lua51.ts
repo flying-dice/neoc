@@ -62,7 +62,7 @@ export function requireDarklua(): string {
  * Throws with darklua's message when the file does not process.
  */
 export function toLua51(darklua: string, entry: string): string {
-  const scratch = mkdtempSync(join(tmpdir(), 'agentos-darklua-'))
+  const scratch = mkdtempSync(join(tmpdir(), 'vos-darklua-'))
   try {
     const output = join(scratch, 'out.lua')
     const run = spawnSync(darklua, ['process', '--config', CONFIG, entry, output], { cwd: root, encoding: 'utf8' })

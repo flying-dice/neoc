@@ -235,7 +235,7 @@ async fn serve(
     let request_sessions = sessions.clone();
     let result = Client
         .v1()
-        .name("agentos")
+        .name("vos")
         .on_receive_notification(
             async move |n: SessionNotification, _cx| {
                 if let Some(event) = map::event_of(&n) {
