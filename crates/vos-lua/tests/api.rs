@@ -593,6 +593,31 @@ async fn one_call_queues_at_most_64_notifications() {
     assert_eq!(vm.take_effects().len(), 1);
 }
 
+/// The cap is each call's own: what another call queued while this one was parked at a wait does not count
+/// against it, so one call cannot make another hit the cap early.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_parked_call_does_not_use_up_another_calls_notifications() {
+    let vm = Arc::new(
+        load(&app(r#"
+            local task = require("std:task")
+            local function burst(n) for i = 1, n do app.notify { title = "n" .. i } end end
+            hook("a", function() burst(40) task.wait(0.3) burst(24) end)
+            hook("b", function() burst(64) end)
+        "#))
+        .await,
+    );
+    let a = {
+        let vm = vm.clone();
+        tokio::spawn(async move { vm.emit("a", json!(null)).await })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    // `a` has 40 waiting and is parked: `b` still gets its own 64
+    vm.emit("b", json!(null)).await.unwrap();
+    // and `a` its remaining 24, though 104 are queued in all
+    a.await.unwrap().unwrap();
+    assert_eq!(vm.take_effects().len(), 128);
+}
+
 // ---- windows ------------------------------------------------------------------------------------------------
 
 #[tokio::test]

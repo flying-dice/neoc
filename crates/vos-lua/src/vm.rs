@@ -196,6 +196,9 @@ pub(crate) struct Shared {
     pub deep_links: Mutex<Vec<(String, Function)>>,
     pub decl: Mutex<Option<AppDecl>>,
     pub effects: Mutex<Vec<Effect>>,
+    /// How many of the notifications in `effects` each call queued, by its turn id ([`lifecycle::turn_id`]).
+    /// Emptied with `effects`, so it counts what a call has waiting for the host, not what it ever sent.
+    pub queued_notifications: Mutex<HashMap<u64, usize>>,
     /// The table the app's chunks (and the host modules it requires) run in as their globals.
     pub env: Mutex<Option<Table>>,
     pub modules: Mutex<HashMap<String, LuaValue>>,
@@ -279,17 +282,20 @@ impl Shared {
         Ok(())
     }
 
-    /// Queue a notification. At most [`MAX_QUEUED_NOTIFICATIONS`] wait for the host at once (the runtime takes
-    /// them when a call ends, and when a background call pauses at a wait), so a call that loops on `app.notify`
-    /// raises instead of growing the queue without bound.
+    /// Queue a notification. Each call may have at most [`MAX_QUEUED_NOTIFICATIONS`] waiting for the host (the
+    /// runtime takes them when a call ends, and when a background call pauses at a wait), so a call that loops on
+    /// `app.notify` raises instead of growing the queue without bound. The count is the calling turn's own: what
+    /// another call queued while this one was parked does not count against it.
     pub fn push_notification(&self, notification: Notification) -> mlua::Result<()> {
         let mut effects = self.effects.lock();
-        let queued = effects.iter().filter(|e| matches!(e, Effect::Notify(_))).count();
-        if queued >= MAX_QUEUED_NOTIFICATIONS {
+        let mut counts = self.queued_notifications.lock();
+        let queued = counts.entry(lifecycle::turn_id().unwrap_or(0)).or_default();
+        if *queued >= MAX_QUEUED_NOTIFICATIONS {
             return Err(mlua::Error::runtime(format!(
                 "app.notify: at most {MAX_QUEUED_NOTIFICATIONS} notifications per call"
             )));
         }
+        *queued += 1;
         effects.push(Effect::Notify(notification));
         Ok(())
     }
@@ -662,6 +668,7 @@ impl AppVm {
             deep_links: Mutex::default(),
             decl: Mutex::default(),
             effects: Mutex::default(),
+            queued_notifications: Mutex::default(),
             env: Mutex::new(None),
             modules: Mutex::default(),
             loading: Mutex::default(),
@@ -761,7 +768,9 @@ impl AppVm {
 
     /// Everything the app asked the host to do since the last call to this.
     pub fn take_effects(&self) -> Vec<Effect> {
-        std::mem::take(&mut *self.shared.effects.lock())
+        let mut effects = self.shared.effects.lock();
+        self.shared.queued_notifications.lock().clear();
+        std::mem::take(&mut *effects)
     }
 
     // ---- calls into the app -----------------------------------------------------------------------------
