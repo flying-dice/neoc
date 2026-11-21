@@ -1,7 +1,8 @@
 //! Path manipulation — `std:path` (mirrors `std::path`).
 //!
-//! Pure text operations on paths: none touches the disk (`fs.canonicalize` is the one that resolves symlinks) and
-//! none can fail on a path that is valid for the platform. They follow the platform's own rules (`/` on Unix, `\`
+//! Text operations on paths: none looks at the files (`fs.canonicalize` is the one that resolves symlinks). Only
+//! `absolute` can fail on a valid path (an empty path, or no current directory, which it reads), and
+//! `with_extension` raises on an extension that holds a separator. They follow the platform's own rules (`/` on Unix, `\`
 //! and `/` plus drive prefixes on Windows), so `join`, `parent` and the rest behave as the operating system's
 //! paths do; `separator` says which. On Windows a string that is not valid UTF-8 is not a path and raises a Lua
 //! error; on Unix every string is one.
@@ -91,7 +92,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.func(
         "with_file_name",
         &[("path", "string"), ("name", "string")],
-        "The path with its last component replaced by `name` (appended when the path has none).",
+        "The path with its last component replaced by `name` (appended when the path has none). A `name` that is absolute or has several components is joined as `Path::with_file_name` does, so an absolute one replaces the whole path.",
         |lua, (p, name): (LuaString, LuaString)| {
             let name = path(&name)?;
             osstr::to_lua(lua, path(&p)?.with_file_name(name).as_os_str())

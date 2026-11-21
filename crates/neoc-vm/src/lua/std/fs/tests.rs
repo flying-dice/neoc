@@ -200,7 +200,7 @@ async fn rename_and_move_have_the_same_destination_rules() {
     run(r#"
         for _, op in ipairs { fs.rename, fs.move } do
           ok(fs.write(p("a"), "a"))
-          ok(op(p("a"), p("b")))
+          check(ok(op(p("a"), p("b"))) == true)
           check(fs.exists(p("a")) == false and ok(fs.read(p("b"))) == "a")
           ok(fs.write(p("a"), "new"))
           ok(op(p("a"), p("b")))
@@ -543,11 +543,49 @@ async fn the_long_calls_yield_like_any_wait() {
         ok(fs.write(p("t/sub/f"), "f"))
         local t = task.spawn(function() return ok(fs.copy_dir(p("t"), p("u"))) end)
         check(t:await() == 1)
-        check(#ok(fs.walk(p("u"))) == 2)
-        check(ok(fs.remove_dir_all(p("u"))) == true)
-        -- Luau refuses a yield inside a comparator: the call fails, it does not hang or panic
-        local sorted = pcall(table.sort, { 1, 2, 3 }, function(a, b) fs.walk(dir) return a < b end)
-        check(sorted == false)
+        local w = task.spawn(function() return #ok(fs.walk(p("u"))) end)
+        check(w:await() == 2)
+        local r = task.spawn(function() return ok(fs.remove_dir_all(p("u"))) end)
+        check(r:await() == true)
+        check(fs.exists(p("u")) == false)
+        local c = task.spawn(function() return ok(fs.copy(p("t/sub/f"), p("copied"))) end)
+        check(c:await() == 1)
+        local m = task.spawn(function() return ok(fs.move(p("copied"), p("moved"))) end)
+        check(m:await() == true)
+        check(fs.exists(p("moved")) == true)
+    "#)
+    .await;
+}
+
+/// Luau refuses a yield inside these; a call that waits fails there instead of hanging or panicking.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_long_calls_fail_where_luau_refuses_a_yield() {
+    run(r#"
+        ok(fs.create_dir_all(p("t")))
+        local comparator = pcall(table.sort, { 1, 2, 3 }, function(a, b) fs.walk(dir) return a < b end)
+        check(comparator == false, "table.sort comparator")
+        local replacement = pcall(string.gsub, "abc", "b", function() fs.copy_dir(p("t"), p("u")) return "x" end)
+        check(replacement == false, "string.gsub callback")
+        local meta = setmetatable({}, { __index = function() fs.walk(dir) return 1 end })
+        check(pcall(function() return meta.anything end) == false, "__index")
+        check(fs.exists(p("u")) == false, "a refused call does nothing")
+        -- the functions that run in place are fine in all of them
+        check(pcall(table.sort, { 1, 2, 3 }, function(a, b) fs.metadata(dir) return a < b end) == true)
+    "#)
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn error_kind_and_trailing_separators_on_hostile_strings() {
+    run(r#"
+        check(fs.error_kind("\255\254") == nil, "invalid UTF-8 is not one of ours")
+        ok(fs.create_dir(p("real")))
+        ok(fs.write(p("real/f"), "f"))
+        if fs.symlink("real", p("lnk")) ~= nil then
+          check(ok(fs.rename(p("lnk") .. "/", p("moved"))) == true)
+          check(fs.exists(p("real/f")) == true, "the target stays")
+          check(ok(fs.symlink_metadata(p("moved"))):is_symlink())
+        end
     "#)
     .await;
 }

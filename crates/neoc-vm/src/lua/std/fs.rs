@@ -11,12 +11,14 @@
 //!
 //! - **`(value, err)`.** A failure returns `nil, err`; `err` is one string, `fs.<function>: <kind>: <path>:
 //!   <message>`, with a stable `kind` (see [`error::Kind`], read it with `error_kind`). A wrong argument type is
-//!   a Lua error, as everywhere in the VM.
+//!   a Lua error, as everywhere in the VM (`open` is the exception for its options table: a missing or
+//!   mistyped `path` or `mode` is `invalid_input`).
 //! - **Options are tables of booleans or counts** (`missing_ok`, `max_depth`); an unknown name, or a value of the
 //!   wrong type, is `invalid_input` rather than being ignored, so a typo cannot silently change what a call does.
 //! - **Rust's behaviour where Rust has the function.** `copy` and `rename` replace an existing destination file
 //!   (and `write` replaces its content). `copy_dir` refuses an existing destination instead of merging.
-//!   Symlinks are not followed while walking, copying or removing a tree; see [`ops`] for the rules.
+//!   Symlinks found inside a tree are not followed while walking, copying or removing it (the path a script names
+//!   is: `walk` and `copy_dir` resolve a symlink given as their root, `remove_dir_all` refuses one); see [`ops`].
 //! - **Calls that can run for long wait; the rest run in place.** `copy`, `copy_dir`, `move`, `remove_dir_all`
 //!   and `walk` do their work on the blocking pool (a `Role::Wait`, like a network call): the call waits, and
 //!   an embedder can run other calls meanwhile. Luau refuses a yield inside a metamethod, a `table.sort`
@@ -32,7 +34,7 @@
 //!   Windows are usually insensitive, Linux is not, and no function folds case.
 //! - **Symlinks.** Creating one on Windows needs a privilege (`permission_denied` without it) and the kind of link,
 //!   file or directory, is chosen from what the target is at that moment. `exists`, `metadata` and `canonicalize`
-//!   follow links, `symlink_metadata`, `read_dir`, `walk`, `copy_dir` and the removals do not.
+//!   follow links, `symlink_metadata`, `read_dir`, and what `walk`, `copy_dir` and the removals meet inside a tree, do not.
 //! - **Permissions.** `mode()` and `set_permissions { mode }` are Unix bits and are `nil` / `unsupported` on Windows,
 //!   where `readonly` is the read-only attribute. A removal of a read-only or open file can be `permission_denied`
 //!   on Windows.
@@ -118,7 +120,7 @@ fn declare_files(m: &mut Module<'_>) -> mlua::Result<()> {
     m.try_func(
         "exists",
         &[("path", "string")],
-        "Whether `path` exists, following symlinks: `false` for a missing path and for a dangling symlink. A path that cannot be checked (permission denied on a parent directory) is `permission_denied`, not `false`. Use `symlink_metadata` to see a dangling link itself. Mirrors `std::fs::exists`.",
+        "Whether `path` exists, following symlinks: `false` for a missing path and for a dangling symlink. Any other failure to check is an error with its kind, not `false`: `permission_denied`, `not_a_directory` when a parent is a file, `other` for a symlink loop. Use `symlink_metadata` to see a dangling link itself. Mirrors `std::fs::exists`.",
         |_, path: Path1| ops::exists(&path_of(&path)?),
     )?;
     m.try_func(
@@ -181,7 +183,7 @@ fn declare_directories(m: &mut Module<'_>) -> mlua::Result<()> {
     m.try_async_func(
         "walk",
         &[("path", "string"), ("opts", "{ max_depth: number? }?")],
-        "List everything under the directory `path`, recursively: an array of `DirEntry` (the directory itself is not in it), depth first, the children of each directory sorted by name, so the order is the same on every platform. A symlink is listed and never entered, so a link loop cannot make a walk run for ever; `path` itself may be a symlink to a directory. Option `{ max_depth }` (a non-negative whole number) limits how far down it goes: `1` is `read_dir`. It is `not_found` for a missing path and `not_a_directory` for a file; an unreadable subdirectory fails the whole walk with `permission_denied` and its path. At most 1048576 entries (`too_large` past that: walk the subdirectories separately). It waits like `task.wait` (see the module notes).",
+        "List everything under the directory `path`, recursively: an array of `DirEntry` (the directory itself is not in it), depth first, the children of each directory sorted by name, so the order is the same on every platform. A symlink inside is listed and never entered, so a link loop cannot make a walk run for ever; `path` itself may be a symlink to a directory and is followed. Option `{ max_depth }` (a non-negative whole number) limits how far down it goes: `1` is `read_dir`. It is `not_found` for a missing path and `not_a_directory` for a file; an unreadable subdirectory fails the whole walk with `permission_denied` and its path. At most 1048576 entries (`too_large` past that: walk the subdirectories separately). It waits like `task.wait` (see the module notes).",
         |_, (path, opts): (Path1, Option<Table>)| {
             let parsed = path_of(&path).and_then(|path| {
                 let options = read_options(opts.as_ref(), WALK_OPTIONS)?;
@@ -201,7 +203,7 @@ fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
     m.try_async_func(
         "copy",
         &[("from", "string"), ("to", "string")],
-        "Copy the file `from` to the path `to` and return the number of bytes written. Mirrors `std::fs::copy`: `to` is created or replaced and takes the permission bits of `from`; a symlink given as `from` is resolved. `to` is the new path of the copy, not a directory to copy into (`is_directory`), `from` must be a file (`is_directory` for a directory: use `copy_dir`; `invalid_input` for a device or FIFO), and copying a file onto itself is `invalid_input` rather than emptying it. Its parent must exist (`not_found`). It waits like `task.wait` (see the module notes).",
+        "Copy the file `from` to the path `to` and return the number of bytes written. Mirrors `std::fs::copy`: `to` is created or replaced and takes the permission bits of `from`; a symlink given as `from` is resolved. `to` is the new path of the copy, not a directory to copy into (`is_directory`), `from` must be a file (`is_directory` for a directory: use `copy_dir`; `invalid_input` for a device or FIFO), as must an existing `to` (`invalid_input` for a FIFO or device: opening one for writing could block for ever), and copying a file onto itself is `invalid_input` rather than emptying it. Its parent must exist (`not_found`). It waits like `task.wait` (see the module notes).",
         |_, (from, to): (Path1, Path1)| {
             let paths = path_of(&from).and_then(|from| Ok((from, path_of(&to)?)));
             async move {
@@ -213,7 +215,7 @@ fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
     m.try_async_func(
         "copy_dir",
         &[("from", "string"), ("to", "string")],
-        "Copy the directory `from` and everything under it to the new path `to`, and return the bytes of file data copied. `to` must not exist (`already_exists`; nothing is merged) and its parent must; a destination inside the source is `invalid_input`. Files keep their permission bits, directories get the default ones, and symlinks are recreated as symlinks with the target as stored (a relative target stays relative), never followed, so a link loop cannot make it run for ever. A source that holds something that is not a file, directory or symlink (a device, FIFO, socket) is `invalid_input`. A failure part way removes the partial `to`: the copy is whole or absent. A symlink given as `from` is resolved. It waits like `task.wait` (see the module notes).",
+        "Copy the directory `from` and everything under it to the new path `to`, and return the bytes of file data copied. `to` must not exist (`already_exists`; nothing is merged) and its parent must; a destination inside the source is `invalid_input`. Files keep their permission bits, directories get the default ones, and symlinks are recreated as symlinks with the target as stored (a relative target stays relative), never followed, so a link loop cannot make it run for ever. A source that holds something that is not a file, directory or symlink (a device, FIFO, socket) is `invalid_input`. A failure part way removes the partial `to` again (best effort: if that removal fails too, the partial copy stays). A symlink given as `from` is resolved. It waits like `task.wait` (see the module notes).",
         |_, (from, to): (Path1, Path1)| {
             let paths = path_of(&from).and_then(|from| Ok((from, path_of(&to)?)));
             async move {
@@ -225,13 +227,13 @@ fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
     m.try_func(
         "rename",
         &[("from", "string"), ("to", "string")],
-        "Rename or move `from` to `to` on the same filesystem, in one atomic step: the operating system's rename, as `std::fs::rename` calls it. An existing file or symlink at `to` is replaced; a directory replaces an empty directory only (`not_empty` otherwise); a file over a directory is `is_directory`, a directory over a file `not_a_directory`; a move across filesystems is `cross_device` (use `move`). Platform differences: Windows refuses a directory over an existing directory (`permission_denied`) and cannot rename a file that is open.",
+        "Rename or move `from` to `to` on the same filesystem, in one atomic step: the operating system's rename, as `std::fs::rename` calls it. An existing file or symlink at `to` is replaced; a directory replaces an empty directory only (`not_empty` otherwise); a file over a directory is `is_directory`, a directory over a file `not_a_directory`; a move across filesystems is `cross_device` (use `move`). A trailing separator or `.` on either path is dropped first, so a symlink is renamed as a link on every platform (macOS would otherwise follow `link/`). Platform differences: Windows refuses a directory over an existing directory (`permission_denied`) and cannot rename a file that is open.",
         |_, (from, to): (Path1, Path1)| ops::rename(&path_of(&from)?, &path_of(&to)?).map(|()| true),
     )?;
     m.try_async_func(
         "move",
         &[("from", "string"), ("to", "string")],
-        "Move `from` to `to`, with the rules of `rename`. When the two are on different filesystems it copies instead (a file, a symlink as a symlink, or a whole directory tree, never following a link) and removes `from` only after the copy completed; that case is not atomic, and a failure part way leaves the source whole and, for a file, possibly a partial `to`. It waits like `task.wait` (see the module notes).",
+        "Move `from` to `to`, with the rules of `rename`. When the two are on different filesystems it copies instead (a file, a symlink as a symlink, or a whole directory tree, never following a link) and removes `from` only after the copy completed. That case is not atomic: a failed copy leaves the source whole, a failure while removing a source tree leaves it partly removed and the destination complete, an existing symlink or empty directory at `to` is removed before the copy starts, and an existing file at `to` is overwritten by it. A trailing separator on either path is dropped, so `link/` moves the link, not its target. It waits like `task.wait` (see the module notes).",
         |_, (from, to): (Path1, Path1)| {
             let paths = path_of(&from).and_then(|from| Ok((from, path_of(&to)?)));
             async move {
@@ -253,7 +255,7 @@ fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
     m.try_func(
         "remove_dir",
         &[("path", "string"), ("opts", "{ missing_ok: bool? }?")],
-        "Remove an empty directory (`not_empty` otherwise; `remove_dir_all` removes a tree). A symlink to a directory is `not_a_directory` (use `remove_file`), also when written `link/`; so is a file. Option `{ missing_ok }` as for `remove_file`. Mirrors `std::fs::remove_dir`.",
+        "Remove an empty directory (`not_empty` otherwise; `remove_dir_all` removes a tree). A symlink to a directory is `not_a_directory` (use `remove_file`), also when written `link/`; so is a file. Option `{ missing_ok }` as for `remove_file`. Like `std::fs::remove_dir`, but a symlink is `not_a_directory` on every platform.",
         |_, (path, opts): (Path1, Option<Table>)| {
             let path = path_of(&path)?;
             let missing_ok = read_options(opts.as_ref(), MISSING_OK)?.flag("missing_ok")?.unwrap_or(false);
@@ -263,7 +265,7 @@ fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
     m.try_async_func(
         "remove_dir_all",
         &[("path", "string"), ("opts", "{ missing_ok: bool? }?")],
-        "Remove a directory and everything under it, children before parents. Symlinks inside are deleted without being followed, so nothing outside the tree is touched. It refuses `/`, `.`, `..` and the empty path (`invalid_input`, a guard against a typo, not a security boundary) and a symlink to a directory (`not_a_directory`, also when written `link/`: use `remove_file`). Option `{ missing_ok }` as for `remove_file`. A failure part way (a permission, an open file on Windows) leaves what was not yet removed. Mirrors `std::fs::remove_dir_all`. It waits like `task.wait` (see the module notes).",
+        "Remove a directory and everything under it, children before parents. Symlinks inside are deleted without being followed, so nothing outside the tree is touched. It refuses `/`, `.`, `..` and the empty path (`invalid_input`, a guard against a typo, not a security boundary) and a symlink to a directory (`not_a_directory`, also when written `link/`: use `remove_file`). Option `{ missing_ok }` as for `remove_file`. A failure part way (a permission, an open file on Windows) leaves what was not yet removed. Like `std::fs::remove_dir_all`, but it deletes entry by entry and refuses a symlink root. It waits like `task.wait` (see the module notes).",
         |_, (path, opts): (Path1, Option<Table>)| {
             let parsed = path_of(&path).and_then(|path| {
                 let missing_ok = read_options(opts.as_ref(), MISSING_OK)?.flag("missing_ok")?.unwrap_or(false);
@@ -271,7 +273,7 @@ fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
             });
             async move {
                 let (path, missing_ok) = parsed?;
-                blocking(move |_| ops::remove_dir_all(&path, missing_ok)).await
+                blocking(move |cancel| ops::remove_dir_all(&path, missing_ok, cancel)).await
             }
         },
     )?;
@@ -307,7 +309,7 @@ fn declare_links_and_errors(m: &mut Module<'_>) -> mlua::Result<()> {
         "error_kind",
         &[("err", "string")],
         "The stable kind inside an error string returned by a `std:fs` function, or `nil` when the string is not one of theirs. Kinds: `not_found`, `permission_denied`, `already_exists`, `not_empty`, `is_directory`, `not_a_directory`, `cross_device`, `invalid_input`, `read_only_filesystem`, `storage_full`, `unsupported`, `too_large`, `other`. They mean the same on every platform; the rest of the message is the operating system's wording and differs.",
-        |_, err: String| Ok(error::kind_of(&err).map(str::to_owned)),
+        |_, err: mlua::LuaString| Ok(error::kind_of(&err.to_string_lossy()).map(str::to_owned)),
     )?;
     Ok(())
 }

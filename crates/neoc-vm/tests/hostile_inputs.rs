@@ -713,9 +713,10 @@ fn std_fs_tree_operations_survive_deep_nests_and_symlink_loops() {
                       deep, levels = nested, levels + 1
                     end
                     assert(levels > 20, "the nest is too shallow to mean anything: " .. levels)
-                    -- loops, in the nest and beside it
-                    fs.symlink(root, deep .. "/up")
-                    fs.symlink(".", root .. "/deep/self")
+                    -- loops, near the top of the nest (a link at its bottom would exceed the path limit)
+                    assert(fs.symlink(root, root .. "/deep/up"))
+                    assert(fs.symlink(root .. "/victim", root .. "/deep/to_victim"))
+                    assert(fs.symlink(".", root .. "/deep/self"))
                     fs.symlink("two", root .. "/one")
                     fs.symlink("one", root .. "/two")
 
