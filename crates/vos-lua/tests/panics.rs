@@ -182,9 +182,7 @@ struct PanicsOnce {
 #[async_trait::async_trait]
 impl Notifier for PanicsOnce {
     async fn notify(&self, n: Notification) -> PortResult<()> {
-        if !self.panicked.swap(true, std::sync::atomic::Ordering::SeqCst) {
-            panic!("the notifier broke");
-        }
+        assert!(self.panicked.swap(true, std::sync::atomic::Ordering::SeqCst), "the notifier broke");
         self.titles.lock().push(n.title);
         Ok(())
     }

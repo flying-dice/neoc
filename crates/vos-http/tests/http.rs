@@ -39,9 +39,7 @@ impl RpcHandler for H {
         if method == "hello" {
             let _ = peer.notify("server/welcome", json!({"n": 1}));
         }
-        if method == "explode" {
-            panic!("the notification handler broke");
-        }
+        assert!(method != "explode", "the notification handler broke");
     }
 }
 

@@ -309,10 +309,7 @@ async fn serve(
     let reason = match vos_application::panics::caught(connection).await {
         Ok(Ok(())) => "the agent process stopped".to_owned(),
         Ok(Err(e)) => format!("the agent process ended: {}", err(&e)),
-        Err(message) => {
-            tracing::error!(%message, "the agent connection panicked");
-            format!("the agent connection failed: the host panicked: {message}")
-        }
+        Err(message) => format!("the agent connection failed: the host panicked: {message}"),
     };
     sessions.exit_all(&reason);
 }

@@ -907,9 +907,7 @@ mod tests {
     #[async_trait]
     impl LiveSink for PanicsOnce {
         async fn deliver(&self, subscription: SubscriptionId, update: SourceUpdate) {
-            if !self.panicked.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                panic!("the sink broke");
-            }
+            assert!(self.panicked.swap(true, std::sync::atomic::Ordering::SeqCst), "the sink broke");
             self.rest.deliver(subscription, update).await;
         }
     }

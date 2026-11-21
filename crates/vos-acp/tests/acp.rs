@@ -90,15 +90,16 @@ async fn open(c: &AcpConnector, sink: &Arc<Sink>) -> SessionOpened {
     within(c.open_session(&fake(), None, sink.clone())).await.unwrap()
 }
 
-/// A sink whose first event panics (a bug in the host's handling of the agent's data).
+/// A sink that panics on a message chunk (a bug in the host's handling of the agent's data), which the connection
+/// delivers while a prompt streams.
 #[derive(Default)]
 struct PanicsOnEvent {
     exits: Mutex<Vec<String>>,
 }
 
 impl AgentEventSink for PanicsOnEvent {
-    fn on_event(&self, _event: AgentEvent) {
-        panic!("handling the agent's event broke");
+    fn on_event(&self, event: AgentEvent) {
+        assert!(!matches!(event, AgentEvent::MessageChunk(_)), "handling the agent's event broke");
     }
     fn on_permission(&self, _request: &PermissionRequest) -> PermissionDecision {
         PermissionDecision::Ask
@@ -114,11 +115,10 @@ impl AgentEventSink for PanicsOnEvent {
 async fn a_panic_in_the_agent_connection_ends_it_like_an_exit_and_the_agent_starts_again() {
     let c = connector();
     let sink = Arc::new(PanicsOnEvent::default());
-    let opened = within(c.open_session(&fake(), None, sink.clone())).await;
-    // the agent reports its commands right after session/new: that event panics, here or during the prompt
-    if let Ok(opened) = opened {
-        let _ = within(c.prompt(&fake().id, &opened.session_id, "hello")).await;
-    }
+    let opened = within(c.open_session(&fake(), None, sink.clone())).await.unwrap();
+    // the prompt's first chunk panics in the connection: the prompt fails instead of hanging
+    let prompt = within(c.prompt(&fake().id, &opened.session_id, "hello")).await;
+    assert!(prompt.is_err(), "{prompt:?}");
     wait_for("the session was told the connection ended", || !sink.exits.lock().is_empty()).await;
     let reason = sink.exits.lock()[0].clone();
     assert!(reason.contains("the host panicked: handling the agent's event broke"), "{reason}");

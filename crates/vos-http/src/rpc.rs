@@ -221,9 +221,9 @@ async fn serve_socket(socket: WebSocket, handler: Arc<dyn RpcHandler>, device: O
             Ok(RpcMessage::Notification { method, params, .. }) => {
                 // in order, before the next frame is read: `client.state` is FIFO ahead of a later event. A panic
                 // in it is logged and the connection reads on (a notification has no reply to carry an error)
-                let handled =
+                let outcome =
                     vos_application::panics::caught(handler.notification(&peer, &method, params)).await;
-                if let Err(message) = handled {
+                if let Err(message) = outcome {
                     tracing::error!(%method, %message, "handling a notification panicked");
                 }
             }
