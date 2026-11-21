@@ -4,7 +4,7 @@
  *    every app bundles into one file whose only requires are runtime ones (`@agentos/*` and the host's `std:`, `lib:` and
  *    `vnd:` modules), non-ASCII text survives the bundle
  *    untouched, and the polyfills agree with a native Lua 5.3+ when one is installed;
- *  - the bundles are loaded and run by the Rust tests (`crates/agentos-lua/tests`, `crates/agentos-host/tests`:
+ *  - the bundles are loaded and run by the Rust tests (`crates/vos-lua/tests`, `crates/vos-host/tests`:
  *    neoc-vm's Luau, on the bundle `scripts/lua51-build.ts` makes), so no system Lua 5.1 is needed here.
  *    darklua is never skipped: without it these tests fail, as `build:apps` does.
  */

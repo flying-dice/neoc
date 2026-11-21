@@ -16,7 +16,7 @@ history. Both use **one calculator** however many windows are open.
 | `calc.lua` | Pure arithmetic with no UI and no `app`: `evaluate` (the expression parser), `combine` (one operation, as the keypad chains), `reason` (the sentence to show for a failure), `format`/`formatEntry` (what the display shows). |
 | `JOURNEYS.md` | Seven key user journeys, as goals with an observable "Done when". |
 | `e2e/journeys.spec.ts` | Their automated twins (one test per id), against the real host. Not shipped. |
-| `../../crates/agentos-lua/tests/calculator_app.rs` | The Rust tests of the keypad and the tools, run against the built package. |
+| `../../crates/vos-lua/tests/calculator_app.rs` | The Rust tests of the keypad and the tools, run against the built package. |
 
 It is plain Lua 5.1. `bun run build:apps` bundles `app.lua` and the `calc.lua` it `require`s into one file with
 darklua; `app.json` and `app.manifest` must agree on `id`, `icon` and `tint`.
@@ -104,7 +104,7 @@ already installed on the e2e host). Save `app.lua` or `calc.lua` and the running
 ```sh
 bun run lint:lua       # lua-language-server against the generated LuaCATS API (strict)
 bun run lint:stylua    # formatting; `bun run format` fixes it
-cargo nextest run -p agentos-lua --test calculator_app     # logic, keypad and tools (builds the package first)
+cargo nextest run -p vos-lua --test calculator_app     # logic, keypad and tools (builds the package first)
 bun run test:e2e --project=journeys --grep Calculator      # the seven journeys, headless, against the real host
 bun run test:e2e                                           # the whole gate's UI half, with the snapshots
 ```

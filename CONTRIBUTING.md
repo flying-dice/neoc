@@ -16,7 +16,7 @@ cargo test -p neoc -p neoc-vm
 
 `cargo test -p neoc -p neoc-vm` runs the `neoc-vm` unit tests, the `neoc` binary tests, the CLI integration tests and the Gherkin spec in `tooling/cli/`.
 
-The workspace also holds the AgentOS crates (`crates/agentos-*`, governed by [AGENTS.md](AGENTS.md)). neoc's own checks do not need what those crates need: the test line names `-p neoc -p neoc-vm`, so neoc contributors need neither `bun` nor `darklua`. The AgentOS crates have their own gate (`bun run lint`, `typecheck`, `test`, `test:e2e`, in AGENTS.md); their tests build the bundled apps, which needs `bun` and `darklua` 0.18.0 on `PATH`, and `cargo test --workspace` would run them. `cargo build` and `cargo clippy --all-targets` cover the AgentOS crates too, and need nothing extra. NEOC-115 unifies the two gates.
+The workspace also holds the AgentOS crates (`crates/vos-*`, governed by [AGENTS.md](AGENTS.md)). neoc's own checks do not need what those crates need: the test line names `-p neoc -p neoc-vm`, so neoc contributors need neither `bun` nor `darklua`. The AgentOS crates have their own gate (`bun run lint`, `typecheck`, `test`, `test:e2e`, in AGENTS.md); their tests build the bundled apps, which needs `bun` and `darklua` 0.18.0 on `PATH`, and `cargo test --workspace` would run them. `cargo build` and `cargo clippy --all-targets` cover the AgentOS crates too, and need nothing extra. NEOC-115 unifies the two gates.
 
 Lua suites run with the binary itself:
 

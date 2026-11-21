@@ -13,7 +13,7 @@
     "e2e",
     "crates/neoc",
     "crates/neoc-vm",
-    "crates/agentos-codegen/tests/fixtures/stub",
+    "crates/vos-codegen/tests/fixtures/stub",
     "scripts/*.lua",
     "types/generated/*.lua"
   ],

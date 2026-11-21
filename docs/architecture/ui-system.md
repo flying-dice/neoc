@@ -1,8 +1,8 @@
 # AgentOS server-driven UI: component kit, view protocol, bindings, Lua API
 
 Status: the design the platform is built on, and still its reference for the view protocol, bindings, state and the
-Lua authoring API. It is implemented: the host in `crates/` (`agentos-domain` holds the schema and the protocol,
-`agentos-lua` the app API), the renderer in `client/src/view` and the kit in `packages/ui`. Where the
+Lua authoring API. It is implemented: the host in `crates/` (`vos-domain` holds the schema and the protocol,
+`vos-lua` the app API), the renderer in `client/src/view` and the kit in `packages/ui`. Where the
 code and this text differ, the code wins: the generated `types/generated/luals/` (LuaCATS) and
 `docs/reference/components.md` are the exact catalogue. Sections 6 to 8 record the original type-pipeline proposal,
 the prototype and the build plan; each opens with what was actually built. Sources of truth beside it:
@@ -1427,8 +1427,8 @@ unless the app sets `testid`).
 
 ## 6. The type pipeline
 
-**As built: Rust first, not the YAML below.** The component schema is Rust (`crates/agentos-domain`, the `ui` module:
-types plus the component catalogue tables); `agentos-codegen` turns it into `types/generated/agentos.ts` (protocol types
+**As built: Rust first, not the YAML below.** The component schema is Rust (`crates/vos-domain`, the `ui` module:
+types plus the component catalogue tables); `vos-codegen` turns it into `types/generated/agentos.ts` (protocol types
 and the runtime `COMPONENTS` table), `ui.lua`, the LuaCATS definitions under `types/generated/luals/` and `docs/reference/components.md`.
 `bun run codegen` writes them and `bun run codegen:check` (part of `bun run lint`) fails when they are stale; there is no
 `gen:ui` or `schema:diff` command. The diagram below is the real flow; from "Authoring format" on, the text is the
@@ -1438,8 +1438,8 @@ are not the real ones.
 One component schema, generated outputs that are committed, and a no-diff check (the proposal asked for exactly this):
 
 ```
-crates/agentos-domain, ui module   (Rust types + the component catalogue: tokens, Action, Expr, Source decls, event payloads)
-        │   bun run codegen     (cargo run -p agentos-codegen; `bun run codegen:check` is the no-diff check)
+crates/vos-domain, ui module   (Rust types + the component catalogue: tokens, Action, Expr, Source decls, event payloads)
+        │   bun run codegen     (cargo run -p vos-codegen; `bun run codegen:check` is the no-diff check)
         ├─▶ types/generated/agentos.ts        protocol types + the runtime COMPONENTS table  ──▶  client/src/view/protocol.ts
         ├─▶ types/generated/ui.lua            constructors (the Lua runtime's `@agentos/ui`)
         ├─▶ types/generated/luals/            LuaCATS: `agentos.lua` (the `app` API and shared types), `@agentos/ui.lua`, `@agentos/app.lua`

@@ -118,7 +118,7 @@ one missing row means **STAYS IN MR**.
 | Window size | `app.manifest.window` has `w`/`h` and `minW`/`minH`, with a comment saying why when the layout needs more than 320x240; the `desktop` project's resize check passes |
 | Package | `app.json` is valid and agrees with `app.manifest` (id, icon, tint), `version` bumped for a change to a released app; `bun run build:apps` builds it, and it installs from Discover, opens, works and uninstalls cleanly on a real host (`bun run dev`) |
 | Types and format | `bun run lint:lua` and `bun run lint:stylua` pass (not skipped) |
-| Tests | the app's logic and tools are covered from Rust (`crates/agentos-lua/tests`, or `crates/agentos-host/tests` for views, data and agents), including `readOnly` behaviour |
+| Tests | the app's logic and tools are covered from Rust (`crates/vos-lua/tests`, or `crates/vos-host/tests` for views, data and agents), including `readOnly` behaviour |
 | States | every screen and state is reached by a journey or a JSON-tree story (section 2), green in the stories, desktop and journeys projects |
 | Journeys | `JOURNEYS.md` with 4 to 8 journeys (goal, start state, observable "Done when"), each with a passing spec of the same id |
 | Verified | the PR's "Manual verification" section (`verify-change`) covers light and dark, the minimum and large windows, Split View / Slide Over and keyboard |
@@ -138,7 +138,7 @@ Gate: lint ✓ · typecheck ✓ · test ✓ · e2e ✓ (local, on <sha>)
 Readiness: <app>: window ✓ · package ✓ · types ✓ · tests ✓ · states ✓ · journeys ✓ · verified ✗ · researched ✗ (no docs/ux/<app>/)
 
 ### Findings
-1. **Blocker**, `crates/agentos-lua/src/api/misc.rs:153`: `app.agents:list` returns the agents' launch commands.
+1. **Blocker**, `crates/vos-lua/src/api/misc.rs:153`: `app.agents:list` returns the agents' launch commands.
    Failure: an app can read what only the host may see.
    Fix: return `{ id, name, avatar, role }` only, plus a test that the roster rows carry nothing else.
 2. **Major**, …

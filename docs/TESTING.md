@@ -22,16 +22,16 @@ snapshots deliberately with `bun run test:e2e:update`, then open the changed PNG
 
 `cargo nextest run --workspace --exclude neoc --exclude neoc-vm` (neoc's crates have their own gate: `cargo test -p neoc -p neoc-vm`), one convention per layer (the hexagon in `docs/architecture/ARCHITECTURE.md` §2):
 
-- **Domain** (`agentos-domain`): plain unit tests, no framework, no I/O.
-- **Application** (`agentos-application`): use cases tested against the in-memory port fakes in `agentos_application::testing`
+- **Domain** (`vos-domain`): plain unit tests, no framework, no I/O.
+- **Application** (`vos-application`): use cases tested against the in-memory port fakes in `vos_application::testing`
   (`ManualClock`, `RecordingShell`, ...). Tests sit beside the code in `*_tests.rs`. No mocking library: write a fake.
 - **Adapters**: integration tests in `crates/<adapter>/tests/`, through the real library (per-app VM isolation and the
   module set, SQLite migrations and live queries, MCP with an `rmcp` client, ACP against the scripted agent, `/rpc` with a
-  WebSocket client, fetch against a local server). The shipped apps are tested here too: `crates/agentos-lua/tests/calculator_app.rs`
+  WebSocket client, fetch against a local server). The shipped apps are tested here too: `crates/vos-lua/tests/calculator_app.rs`
   builds `apps/calculator` with darklua and runs the bundle under the real runtime. The Lua apps and fixtures the Rust
-  tests run are built with the product's own pipeline (`scripts/lua51-build.ts`, which `crates/agentos-lua/tests/common`
-  and `crates/agentos-host/tests/common` call, so `bun` and `darklua` must be installed); inline snippets in those tests
-  are plain Lua 5.1. `crates/agentos-lua/tests/lua51.rs` holds what is specific to running on this VM (Luau, running Lua 5.1 source): the
+  tests run are built with the product's own pipeline (`scripts/lua51-build.ts`, which `crates/vos-lua/tests/common`
+  and `crates/vos-host/tests/common` call, so `bun` and `darklua` must be installed); inline snippets in those tests
+  are plain Lua 5.1. `crates/vos-lua/tests/lua51.rs` holds what is specific to running on this VM (Luau, running Lua 5.1 source): the
   isolation of the per-app VMs, the read-only libraries and host calls under `pcall` and in coroutines; `modules.rs` holds the modules and
   the lifecycle: every `std:`/`lib:`/`vnd:` module an app is offered can be required (not `lib:test`, `lib:compile`, `std:workers`), a request handler and a task take their turn in
   the VM's one-call-at-a-time queue, an unloaded or replaced app's listener port is free again and its tasks and
@@ -44,14 +44,14 @@ snapshots deliberately with `bun run test:e2e:update`, then open the changed PNG
   and the host did not panic; 600 cases take about a second. `CHAOS_CASES=20000` (and `CHAOS_SEED`) go further, and
   `CHAOS_ONLY=<case>` prints and runs one. A second generated test drops a call (timeout or abort) while its own coroutine waits, and checks that another call can neither run nor refuse for ever what it left behind (`CHAOS_DROPPED_CASES`). `neoc-vm` has its own unit tests (the module registry, the lifecycle,
   and the `vnd:hyper` client against a local TLS server).
-- **Host** (`agentos-host/tests`): the real wiring on an ephemeral loopback port (`tests/common`), driven like a
+- **Host** (`vos-host/tests`): the real wiring on an ephemeral loopback port (`tests/common`), driven like a
   browser or an agent would: `/rpc`, `/agui`, `/mcp`, pairing, the Agents app.
 - Tests may use `unwrap`, `expect` and `panic!` (`clippy.toml`); an integration-test file with helpers carries
   `#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]`. Name a test after the behaviour
   (`calculate_evaluates_exactly_and_rejects_what_is_not_arithmetic`), cover the failure path next to the success path,
   and keep each test independent (its own data directory, no fixed ports).
 - A protocol or adapter change adds the test in the layer it touches and, if it crosses layers, one in the host.
-- `cargo nextest run -p agentos-lua`, or a test name, runs a slice. `bun run lint:rust` is the other half of the Rust
+- `cargo nextest run -p vos-lua`, or a test name, runs a slice. `bun run lint:rust` is the other half of the Rust
   gate: `cargo fmt --check`, clippy with `-D warnings`, the crate-direction check (`bun run lint:deps`) and `cargo deny`.
 
 ## Client, kit and generated types
@@ -119,10 +119,10 @@ a fake host) and `packages/ui` (each kit component and its states). Stories are 
 
 `playwright.config.ts` starts the host itself (`e2e/host/start.ts`):
 
-1. builds the client (`client/dist`), the host (`cargo build -p agentos-host`), the scripted ACP agent
-   (`cargo build -p agentos-acp --bin fake_agent`) and the apps into a **test registry** (`bun scripts/build-apps.ts`:
+1. builds the client (`client/dist`), the host (`cargo build -p vos-host`), the scripted ACP agent
+   (`cargo build -p vos-acp --bin fake_agent`) and the apps into a **test registry** (`bun scripts/build-apps.ts`:
    every `apps/*/app.json`, plus Notes, the codegen fixture, as a second app the Discover journeys install and remove
-   without disturbing the Calculator), and the Ticker (`crates/agentos-host/tests/fixtures/ticker`, an app whose
+   without disturbing the Calculator), and the Ticker (`crates/vos-host/tests/fixtures/ticker`, an app whose
    background task counts up) built into `test-results/host/hidden`, which no registry lists: the background journeys
    (`e2e/background.journeys.spec.ts`) install it by its app ref and remove it again;
 2. writes `agentos.toml` for it: port **7410** (never the default 7400, so a host you have running is untouched). All e2e ports come from
@@ -130,16 +130,16 @@ a fake host) and `packages/ui` (each kit component and its states). Stories are 
    host is base + 10. Set it (e.g. `AGENTOS_PORT_BASE=9100`) to run e2e in a second worktree at the same time; loopback
    only, a fresh data directory under `test-results/host/`, the test registry as `registries`, the Calculator and
    Agents as `install` (Notes is only offered), and one agent on the roster;
-3. runs `agentos-host` in the foreground; Playwright stops it with SIGTERM.
+3. runs `vos-host` in the foreground; Playwright stops it with SIGTERM.
 
 **The scripted agent.** The roster's agent is `scripted`, a real ACP process with no model
-(`crates/agentos-acp/src/bin/fake_agent.rs`): the prompt text picks what it does (`hello` streams a short reply, `think`
+(`crates/vos-acp/src/bin/fake_agent.rs`): the prompt text picks what it does (`hello` streams a short reply, `think`
 adds a thought, `tool` and `fail` make tool calls, `ask` and `ask-write` request permission, `state` sends commands, usage
 and a plan, `slow` streams until cancelled, `exit` crashes; anything else is echoed). Its approval policy is `ask` and it
 is granted the Calculator. The Agents journeys (`apps/agents/e2e`) talk to it over the real `/agui`.
 
 **Pairing in tests.** Every client route needs a paired device, including from loopback. `e2e/host/global-setup.ts`
-**pairs one browser** the way a person does: `agentos-host pair --config ...` prints a code (it lands in the shared
+**pairs one browser** the way a person does: `vos pair --config ...` prints a code (it lands in the shared
 system database, so the running host accepts it), `POST /pair` trades it for the session cookie, and the cookie is saved
 as the storage state every desktop and journey spec shares. Always use `http://127.0.0.1:<port>` (the cookie is
 host-only, so `localhost` would be a different device). The pairing journeys (`e2e/pairing.journeys.spec.ts`) start unpaired

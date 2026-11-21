@@ -34,7 +34,7 @@ given the diff and the file list, not your conclusions. Otherwise one inline pas
    where a concrete type will do. Ask why up to five times; if no answer survives, it is a violation.
 7. **BOUNDARY**: coupling across a real AgentOS seam that lint can't see. Seams:
    - **crate ports**: a port that leaks adapter types (`rusqlite`, `mlua`, `axum`, `rmcp` types in a signature of
-     `agentos-application` or `agentos-domain`); a driving adapter reaching into a driven one instead of a use case; a use
+     `vos-application` or `vos-domain`); a driving adapter reaching into a driven one instead of a use case; a use
      case that bypasses a port; policy (permissions, grants, `readOnly`) enforced in an adapter instead of the layer that owns it;
    - **app state hygiene** (the VM is not a security boundary): a new `app.*` capability that exposes another app's data or state, a module or library that
      opens a listener, task, worker or pool without registering it with the app's `Life`, anything that lets a VM

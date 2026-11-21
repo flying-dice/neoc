@@ -15,12 +15,12 @@ crate seam except through a port or the protocol.
 
 | Role | AgentOS |
 |---|---|
-| Domain | `crates/agentos-domain`: pure model (app ids, app refs and manifests, tool grants, agent identity, tools, notifications, the view tree and component schema, protocol messages). No I/O, no framework. |
-| Ports and use cases | `crates/agentos-application`: the port traits (`AppRuntime`, `DataStore` / `AppData`, `ToolRegistry`, `Notifier`, `AgentConnector`, `Fetcher`, `Clock`, ...) and the services that orchestrate domain objects through them. In-memory fakes in `testing`. |
-| Driven adapters | `agentos-lua` (per-app VMs), `agentos-sqlite`, `agentos-fetch`, `agentos-acp` (agent processes) |
-| Driving adapters | `agentos-http` (`/rpc`, pairing, guard, static client), `agentos-mcp` (`/mcp`), `agentos-agui` (`/agui`) |
-| Dev-time adapter | `agentos-codegen`: the Rust schema to `types/generated/*` and `docs/reference/components.md` |
-| Composition root | `agentos-host`: wiring only (build adapters, hand each to its port, mount routers) |
+| Domain | `crates/vos-domain`: pure model (app ids, app refs and manifests, tool grants, agent identity, tools, notifications, the view tree and component schema, protocol messages). No I/O, no framework. |
+| Ports and use cases | `crates/vos-application`: the port traits (`AppRuntime`, `DataStore` / `AppData`, `ToolRegistry`, `Notifier`, `AgentConnector`, `Fetcher`, `Clock`, ...) and the services that orchestrate domain objects through them. In-memory fakes in `testing`. |
+| Driven adapters | `vos-lua` (per-app VMs), `vos-sqlite`, `vos-fetch`, `vos-acp` (agent processes) |
+| Driving adapters | `vos-http` (`/rpc`, pairing, guard, static client), `vos-mcp` (`/mcp`), `vos-agui` (`/agui`) |
+| Dev-time adapter | `vos-codegen`: the Rust schema to `types/generated/*` and `docs/reference/components.md` |
+| Composition root | `vos-host`: wiring only (build adapters, hand each to its port, mount routers) |
 | Apps | `apps/<id>`: Lua packages; their only contract is the `app` table (`types/generated/luals/`) |
 | Client | `client/`: the shell and the renderer (`client/src/view`); it renders view trees and runs no app code |
 | Kit | `packages/ui`: Svelte components in atomic layers, tokens, stories; knows nothing about apps |

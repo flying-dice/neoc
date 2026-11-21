@@ -1,7 +1,7 @@
 # @agentos/client
 
 The AgentOS client: an installable PWA (Vite + Svelte 5) that is the iPadOS-style shell. It talks to the Rust host
-(`crates/agentos-host`) over one WebSocket with JSON-RPC 2.0 (`/rpc`), pairs through `/session` and `/pair`, and renders
+(`crates/vos-host`) over one WebSocket with JSON-RPC 2.0 (`/rpc`), pairs through `/session` and `/pair`, and renders
 the windows of the Lua apps installed on the host with the managed renderer below. It runs no app code.
 
 ```sh

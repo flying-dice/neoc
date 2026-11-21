@@ -11,16 +11,16 @@ Read [README.md](README.md) for what neoc is and [CONTRIBUTING.md](CONTRIBUTING.
 
 ## AgentOS
 
-This repository also holds **AgentOS**, an iPadOS-style virtual desktop for agents (to be renamed vos): the host (`crates/agentos-*`, the `agentos-host` binary), the apps (`apps/`, plain Lua 5.1 run on `neoc-vm`), the client (`client/`) and the UI kit (`packages/ui`). It has its own gate, boundaries, test layout and skills, all governed by [AGENTS.md](AGENTS.md), which stays as it is: read it before touching any of that. Its skills are in `.claude/skills/`: the `agentos-*` ones (`agentos-pre-commit`, `agentos-clean-code-review`, `agentos-refactor`, `agentos-code-review`) and the AgentOS-only `app-design`, `coding-styleguide`, `prebuild-synthetic-ux`, `postbuild-synthetic-usability`, `verify-change`; the unprefixed `pre-commit`, `clean-code-review` and `refactor` (and `change-review`, `pr-review`, `pr-self-review`, ...) are neoc's. `AGENTS.md` is imported below, so its rules load with this file; where it and this file differ (Jira project, merge policy, review skills), NEOC-115 settles it, and for the neoc crates this file wins.
+This repository also holds **AgentOS**, an iPadOS-style virtual desktop for agents (to be renamed vos): the host (`crates/vos-*`, the `vos` binary), the apps (`apps/`, plain Lua 5.1 run on `neoc-vm`), the client (`client/`) and the UI kit (`packages/ui`). It has its own gate, boundaries, test layout and skills, all governed by [AGENTS.md](AGENTS.md), which stays as it is: read it before touching any of that. Its skills are in `.claude/skills/`: the `vos-*` ones (`agentos-pre-commit`, `agentos-clean-code-review`, `agentos-refactor`, `agentos-code-review`) and the AgentOS-only `app-design`, `coding-styleguide`, `prebuild-synthetic-ux`, `postbuild-synthetic-usability`, `verify-change`; the unprefixed `pre-commit`, `clean-code-review` and `refactor` (and `change-review`, `pr-review`, `pr-self-review`, ...) are neoc's. `AGENTS.md` is imported below, so its rules load with this file; where it and this file differ (Jira project, merge policy, review skills), NEOC-115 settles it, and for the neoc crates this file wins.
 
 @AGENTS.md
 
-The AgentOS adapter (`crates/agentos-lua`) is an embedder of `neoc-vm`: AgentOS policy (apps, `readOnly`, views, `app.*`, the `@agentos/*` modules) stays in that adapter and never moves into `neoc-vm`. The AgentOS crates keep edition 2021 and inherit the workspace lint table; the neoc crates do not yet (see "Rust style").
+The AgentOS adapter (`crates/vos-lua`) is an embedder of `neoc-vm`: AgentOS policy (apps, `readOnly`, views, `app.*`, the `@agentos/*` modules) stays in that adapter and never moves into `neoc-vm`. The AgentOS crates keep edition 2021 and inherit the workspace lint table; the neoc crates do not yet (see "Rust style").
 
 ## Layout
 
 ```
-crates/neoc/                 # the `neoc` binary (the AgentOS crates add `agentos-host` and the `agentos-codegen` tool)
+crates/neoc/                 # the `neoc` binary (the AgentOS crates add the `vos` host binary, crate `vos-host`, and the `vos-codegen` tool)
   src/main.rs                # CLI entry: `run`, embedded-payload executables
   tests/                     # Lua suites (*.test.lua, *.spec.lua), cli.rs, cucumber.rs
 crates/neoc-vm/              # the runtime library

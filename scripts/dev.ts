@@ -47,7 +47,7 @@ const sources = watch(join(root, 'apps'), { recursive: true }, (_event, file) =>
   timer = setTimeout(rebuild, 150)
 })
 
-const host = spawn('cargo', ['run', '-q', '-p', 'agentos-host'], {
+const host = spawn('cargo', ['run', '-q', '-p', 'vos-host'], {
   cwd: root,
   stdio: 'inherit',
   env: { ...process.env, AGENTOS_DEV_CLIENT_PORT: '5173', AGENTOS_DEV_RELOAD: '1' }

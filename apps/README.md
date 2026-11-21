@@ -5,7 +5,7 @@ notifications and a description of its UI. It ships no client code: the managed 
 produces and sends events back.
 
 ```
- Browser: managed client                         Rust host (crates/agentos-host)
+ Browser: managed client                         Rust host (crates/vos-host)
  ┌──────────────────────────────┐  JSON-RPC/WS   ┌─────────────────────────────────────────┐
  │ shell: windows, Dock         │◀──── /rpc ────▶│ one Lua VM per app (isolated)          │
  │ renderer: view trees → kit   │                │   app.window → view tree → client       │
@@ -286,7 +286,7 @@ it in the app's own VM and keeps it going for as long as the app is loaded.
   end)
   ```
 
-  Use `task.delay` for a job that runs once later. `crates/agentos-host/tests/fixtures/ticker` is a complete example
+  Use `task.delay` for a job that runs once later. `crates/vos-host/tests/fixtures/ticker` is a complete example
   (a loop, a window that shows it, a tool that reads it).
 - **Closing a window leaves the work running.** A window is a view of the app, not the app. Tools, tasks and servers
   go on with no window open, and a window opened later shows the state as it is by then.
@@ -392,10 +392,10 @@ it in the app's own VM and keeps it going for as long as the app is loaded.
 4. **Make it clean.** `bun run lint:lua` (`lua-language-server --check` against the generated definitions, which
    cover `@agentos/app`, `@agentos/ui` and every `std:`, `lib:` and `vnd:` module you `require`) and
    `bun run lint:stylua` pass; `bun run format` fixes formatting. Fix what the checker reports, do not silence it.
-5. **Test the logic and tools in Rust.** Add a test beside `crates/agentos-lua/tests/calculator_app.rs` that loads the
+5. **Test the logic and tools in Rust.** Add a test beside `crates/vos-lua/tests/calculator_app.rs` that loads the
    shipped package under the real runtime, calls its tools (`call_tool`) and asserts results and
-   `readOnly`. A host-level test (`crates/agentos-host/tests/agents_app.rs`) is for what needs the data layer, views or
-   agents. Run `cargo nextest run -p agentos-lua`.
+   `readOnly`. A host-level test (`crates/vos-host/tests/agents_app.rs`) is for what needs the data layer, views or
+   agents. Run `cargo nextest run -p vos-lua`.
 6. **Write `JOURNEYS.md`** (4 to 8 journeys: id, who and what they want, start state, an observable "Done when"; never
    steps, including an error case, a minimum-window case, a keyboard-only case and, where it applies, an agent driving
    the app) **and `e2e/journeys.spec.ts`** with a test of the same id per journey, driven by test ids on the real host

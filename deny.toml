@@ -17,16 +17,16 @@ multiple-versions = "allow"
 deny = [
   # the Lua adapter reaches mlua through neoc-vm's re-export: it does not depend on it directly
   { crate = "mlua", wrappers = ["neoc-vm", "neoc"], reason = "Lua lives in neoc-vm (the neoc CLI names the error type it surfaces)" },
-  { crate = "neoc-vm", wrappers = ["agentos-lua", "neoc"], reason = "only the Lua adapter wires the VM library to the AppRuntime port (and the neoc CLI is its own front end)" },
+  { crate = "neoc-vm", wrappers = ["vos-lua", "neoc"], reason = "only the Lua adapter wires the VM library to the AppRuntime port (and the neoc CLI is its own front end)" },
   # the VM exposes SQLite to scripts as `vnd:rusqlite`
-  { crate = "rusqlite", wrappers = ["agentos-sqlite", "neoc-vm"], reason = "SQLite lives in the sqlite adapter (and the VM's vnd:rusqlite module)" },
+  { crate = "rusqlite", wrappers = ["vos-sqlite", "neoc-vm"], reason = "SQLite lives in the sqlite adapter (and the VM's vnd:rusqlite module)" },
   # `wrappers` also sees dev-dependencies (the graph keeps them so neoc's test-only crates stay checked): the host's
   # end-to-end tests use rmcp as the MCP client, and the fetch tests run an axum server. That makes these two bans
   # blind to a move from dev to normal dependency, so scripts/check-deps.ts (FRAMEWORK_HOMES) holds the normal edges.
-  { crate = "rmcp", wrappers = ["agentos-mcp", "agentos-host"], reason = "MCP lives in the mcp adapter (agentos-host: dev-dependency, the test client)" },
-  { crate = "agent-client-protocol", wrappers = ["agentos-acp"], reason = "ACP lives in the acp adapter" },
-  { crate = "axum", wrappers = ["agentos-http", "agentos-mcp", "agentos-agui", "agentos-host", "agentos-fetch", "tonic"], reason = "HTTP stack in driving adapters and the host (agentos-fetch: dev-dependency, a test server; tonic: gRPC under neoc-vm's vnd:testcontainers_modules)" },
-  { crate = "axum-server", wrappers = ["agentos-host"], reason = "TLS termination is wiring: the host owns the listener" },
+  { crate = "rmcp", wrappers = ["vos-mcp", "vos-host"], reason = "MCP lives in the mcp adapter (vos-host: dev-dependency, the test client)" },
+  { crate = "agent-client-protocol", wrappers = ["vos-acp"], reason = "ACP lives in the acp adapter" },
+  { crate = "axum", wrappers = ["vos-http", "vos-mcp", "vos-agui", "vos-host", "vos-fetch", "tonic"], reason = "HTTP stack in driving adapters and the host (vos-fetch: dev-dependency, a test server; tonic: gRPC under neoc-vm's vnd:testcontainers_modules)" },
+  { crate = "axum-server", wrappers = ["vos-host"], reason = "TLS termination is wiring: the host owns the listener" },
   # rustls only: no system OpenSSL, so every binary stays self-contained
   { crate = "openssl" },
   { crate = "openssl-sys" },
@@ -40,7 +40,7 @@ ignore = [
     { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml unmaintained, no vulnerability advisory, no fixed version (serde_yaml is archived at 0.9.34+deprecated). Ships in neoc and the AgentOS host via neoc-vm -> serde_yaml 0.9 (vnd:serde_yaml); no safe upgrade exists. Upstream: https://github.com/dtolnay/serde-yaml/releases/tag/0.9.34 and https://rustsec.org/advisories/RUSTSEC-2024-0449. Replacement tracked in NEOC-91. Review: 2027-01-10." },
     { id = "RUSTSEC-2026-0440", reason = "astral-tokio-tar unmaintained (Astral ended maintenance 2026-11-03), no vulnerability advisory, no fixed version: every release is deprecated. Pulled by testcontainers 0.27 and 0.28 (^0.6.1) via testcontainers-modules 0.15, which backs vnd:testcontainers_modules; no testcontainers release has dropped it yet. Upstream: https://github.com/astral-sh/tokio-tar/pull/130 and https://rustsec.org/advisories/RUSTSEC-2026-0440. Remove once testcontainers moves to a maintained tar crate. Review: 2027-01-10." },
     { id = "RUSTSEC-2026-0542", reason = "humantime unmaintained (it wraps chrono, which is unmaintained), no vulnerability advisory, no fixed version. Dev-dependency only: pulled by cucumber 0.23 for the Gherkin CLI spec (crates/neoc/tests/cucumber.rs), never linked into the neoc binary. Upstream: https://github.com/chronotope/chrono/issues/1768 and https://rustsec.org/advisories/RUSTSEC-2026-0542. Remove once cucumber drops humantime. Review: 2027-01-10." },
-    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained (an advisory of the unmaintained kind: no vulnerability, no fixed version). Pulled by rmcp and by schemars, which agentos-domain and agentos-codegen use too (cargo tree -i chrono); not used directly. Upstream: https://github.com/chronotope/chrono/issues/1768 and https://rustsec.org/advisories/RUSTSEC-2026-0543. Revisit when rmcp and schemars drop it. Review: 2027-01-10." },
+    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained (an advisory of the unmaintained kind: no vulnerability, no fixed version). Pulled by rmcp and by schemars, which vos-domain and vos-codegen use too (cargo tree -i chrono); not used directly. Upstream: https://github.com/chronotope/chrono/issues/1768 and https://rustsec.org/advisories/RUSTSEC-2026-0543. Revisit when rmcp and schemars drop it. Review: 2027-01-10." },
 ]
 
 [licenses]

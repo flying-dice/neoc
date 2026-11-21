@@ -28,7 +28,7 @@
 <div data-testid="settings-devices">
   <ListSection
     header="Paired devices"
-    footer="A device that is paired can use this host and everything on it. Revoke one you no longer trust; it must pair again with a new code (run “agentos-host pair”)."
+    footer="A device that is paired can use this host and everything on it. Revoke one you no longer trust; it must pair again with a new code (run “vos pair”)."
   >
     {#each devices.list as d (d.id)}
       <ListRow

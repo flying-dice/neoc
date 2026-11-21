@@ -1,6 +1,6 @@
 <!--
   @page PairingPage — shown to a browser the host does not know yet: enter the code the host printed (and
-  `agentos-host pair` prints again) to pair this device. iPadOS "Sign in" style: a card on the wallpaper. Wrong
+  `vos pair` prints again) to pair this device. iPadOS "Sign in" style: a card on the wallpaper. Wrong
   code, rate limiting and expiry are said plainly, once, under the field.
 
   Test ids: `pairing` (the page), `pairing-code`, `pairing-device-name`, `pairing-submit`, `pairing-error`.
@@ -63,7 +63,7 @@
     {:else}
       <Text style="subheadline" color="secondary" as="p">
         Enter the pairing code shown where AgentOS is running. It is single use and lasts 10
-        minutes. Need a new one? Run <code>agentos-host pair</code>.
+        minutes. Need a new one? Run <code>vos pair</code>.
       </Text>
 
       <label class="field">

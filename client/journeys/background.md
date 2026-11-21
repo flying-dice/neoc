@@ -19,7 +19,7 @@ another).
 ## Manual verification
 
 Ran the real shell on the real host headless (Chromium, 1280x800, light and dark) with the Ticker installed at start
-(`agentos-host` on port 7420, a fresh data directory, driven with `e2e/tools/session.mjs`), and checked:
+(`vos-host` on port 7420, a fresh data directory, driven with `e2e/tools/session.mjs`), and checked:
 
 - [x] Opening the Ticker from the Dock shows the current count at once, and it rises with no input (49, then 126 and
       127 a few seconds apart); the accessibility tree and the screenshot agree (light, 360x280 floating).

@@ -1,7 +1,7 @@
 /**
  * Pairing and agent access for the specs, the way a person or an agent would do it against the real host:
  *
- *   issuePairingCode()   runs `agentos-host pair` with the host's own config (the code lands in the shared
+ *   issuePairingCode()   runs `vos pair` with the host's own config (the code lands in the shared
  *                        system database, so the running host accepts it)
  *   pairDevice(name)     POST /pair with a fresh code and returns the session cookie
  *   callTool(name, args) an agent calls an app's tool over MCP with the token the host wrote to mcp.json
@@ -15,7 +15,7 @@ import { CONFIG, DATA, HOST_BIN, ORIGIN, ROOT } from './config'
 export function issuePairingCode(): string {
   const run = spawnSync(HOST_BIN, ['pair', '--config', CONFIG], { cwd: ROOT, encoding: 'utf8' })
   const code = run.stdout.match(/Pairing code:\s+([A-Z0-9]{4}-[A-Z0-9]{4})/)?.[1]
-  if (!code) throw new Error(`agentos-host pair printed no code:\n${run.stdout}\n${run.stderr}`)
+  if (!code) throw new Error(`vos pair printed no code:\n${run.stdout}\n${run.stderr}`)
   return code
 }
 

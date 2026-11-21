@@ -130,7 +130,7 @@ Driven on fresh hosts with `e2e/tools/session.mjs` and a scripted probe (Chromiu
 
 `bun run lint`, `bun run typecheck`, `bun run test`, `bun run test:e2e` (counts in the commit message and the report),
 `AGENTOS_PORT_BASE=9900`; changed and new baselines reviewed as a contact sheet; driven with `e2e/tools/session.mjs`
-and a scripted probe against the real host (`cargo run -p agentos-host`, ports 9921 to 9924, stopped afterwards); round 3 and the Split View and Slide Over pass ran on ports 9921 to 9926, all stopped afterwards.
+and a scripted probe against the real host (`cargo run -p vos-host`, ports 9921 to 9924, stopped afterwards); round 3 and the Split View and Slide Over pass ran on ports 9921 to 9926, all stopped afterwards.
 
 ## Not checked
 

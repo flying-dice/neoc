@@ -1,7 +1,7 @@
 # Pairing: key user journeys
 
 How a browser becomes a device the host trusts. Automated twins (same ids): `e2e/pairing.journeys.spec.ts`. The host
-prints a code at start (`agentos-host pair` prints another); there is no trusted-network shortcut, not even from the same
+prints a code at start (`vos pair` prints another); there is no trusted-network shortcut, not even from the same
 machine. Rate limiting (5 wrong codes a minute) is covered by the host's pairing tests and the "Too many attempts" story,
 not here: exhausting it would lock every other journey out.
 

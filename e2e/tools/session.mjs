@@ -38,14 +38,14 @@ const dirOf = (name) => join(ROOT, 'test-results', 'sessions', name)
 
 /** The e2e host's port is AGENTOS_PORT_BASE + 10 (scripts/ports.ts); a host you run yourself is on 7400. */
 const E2E_CONFIG = join(ROOT, 'test-results/host/agentos.toml')
-const E2E_HOST_BIN = join(ROOT, 'target/debug/agentos-host')
+const E2E_HOST_BIN = join(ROOT, 'target/debug/vos')
 const PORT_BASE = process.env.AGENTOS_PORT_BASE
 const DEFAULT_URL = `http://127.0.0.1:${PORT_BASE ? Number(PORT_BASE) + 10 : 7400}/`
 
 /** A fresh pairing code from the host this session talks to: the e2e host's own config when it is the e2e one. */
 function issuePairingCode() {
   const e2e = PORT_BASE && existsSync(E2E_CONFIG) && existsSync(E2E_HOST_BIN)
-  const [cmd, args] = e2e ? [E2E_HOST_BIN, ['pair', '--config', E2E_CONFIG]] : ['cargo', ['run', '-q', '-p', 'agentos-host', '--', 'pair']]
+  const [cmd, args] = e2e ? [E2E_HOST_BIN, ['pair', '--config', E2E_CONFIG]] : ['cargo', ['run', '-q', '-p', 'vos-host', '--', 'pair']]
   const run = spawnSync(cmd, args, { cwd: ROOT, encoding: 'utf8' })
   const code = run.stdout.match(/Pairing code:\s+([A-Z0-9]{4}-[A-Z0-9]{4})/)?.[1]
   if (!code) throw new Error(`\`${cmd} ${args.join(' ')}\` printed no pairing code:\n${run.stdout}${run.stderr}`)

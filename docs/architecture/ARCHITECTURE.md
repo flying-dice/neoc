@@ -42,22 +42,22 @@ This replaces the Bun/TypeScript server, the app client bundles and the shared-m
 
 ```
 crates/
-  agentos-domain        pure model, no I/O: app ids, app refs, manifests, tool grants, agent identity, tools,
+  vos-domain        pure model, no I/O: app ids, app refs, manifests, tool grants, agent identity, tools,
                         notifications, view tree and component schema, protocol messages
-  agentos-application   ports (traits) and use cases; in-memory fakes for tests; no frameworks
-  agentos-lua          adapter: runs apps (Lua 5.1 source, on Luau), one VM per app: the app API modules, views, the call queue
+  vos-application   ports (traits) and use cases; in-memory fakes for tests; no frameworks
+  vos-lua          adapter: runs apps (Lua 5.1 source, on Luau), one VM per app: the app API modules, views, the call queue
   neoc-vm               support library (not an adapter): the Lua VM (Luau) on mlua, the per-app environment, the
                         `std:`/`lib:`/`vnd:` modules, the lifecycle of what apps spawn; depends on no other
                         crate; among the agentos crates only `lua` may depend on it (and the
                         `neoc` CLI, which is not part of the hexagon)
-  agentos-sqlite        adapter: per-app rusqlite DBs, migrations, live queries via commit hooks
-  agentos-mcp           adapter: rmcp server, dynamic tool list, per-agent bearer identity
-  agentos-acp           adapter: agent-client-protocol client, agent processes
-  agentos-agui          adapter: AG-UI events and the SSE endpoint, mapped from ACP
-  agentos-fetch         adapter: app refs and registries over file/http/https, sha256 checks
-  agentos-http          adapter: axum, the /rpc peer, Origin/Host guard, static client, event hub
-  agentos-codegen       adapter: schema → TypeScript types, the Lua `ui` module, LuaCATS definitions, docs
-  agentos-host          composition root binary (wiring only)
+  vos-sqlite        adapter: per-app rusqlite DBs, migrations, live queries via commit hooks
+  vos-mcp           adapter: rmcp server, dynamic tool list, per-agent bearer identity
+  vos-acp           adapter: agent-client-protocol client, agent processes
+  vos-agui          adapter: AG-UI events and the SSE endpoint, mapped from ACP
+  vos-fetch         adapter: app refs and registries over file/http/https, sha256 checks
+  vos-http          adapter: axum, the /rpc peer, Origin/Host guard, static client, event hub
+  vos-codegen       adapter: schema → TypeScript types, the Lua `ui` module, LuaCATS definitions, docs
+  vos-host          composition root binary (wiring only)
 ```
 
 - **Direction:** dependencies point inward only. Adapters depend on application and domain, never on each other;
@@ -88,7 +88,7 @@ crates/
 
 - **Package:** a Lua package `apps/<id>/`: `app.lua` (the entry), modules, `JOURNEYS.md` and e2e. It is built into one
   `app.lua` (the entry and its modules bundled by darklua); that file is
-  what the app ref lists and the host runs. App logic is tested from Rust integration tests that load the real package (`crates/agentos-lua/tests/calculator_app.rs`, `crates/agentos-host/tests/agents_app.rs`); an in-package `tests/*.lua` harness is planned, not built.
+  what the app ref lists and the host runs. App logic is tested from Rust integration tests that load the real package (`crates/vos-lua/tests/calculator_app.rs`, `crates/vos-host/tests/agents_app.rs`); an in-package `tests/*.lua` harness is planned, not built.
   Built into an app ref: manifest, file URLs and sha256s, and `requires` (host API range).
 - **Registries:** a list of app-ref URLs. The default registry is the build's unpacked apps folder over `file://`.
   Users can also add an app by URL; the host shows a preview, then a confirmation that it runs on this host and its
@@ -144,8 +144,8 @@ crates/
 - **Styling:** apps don't style. They get semantic tokens only (spacing, text styles, palette roles, tints, radii).
   The host owns tokens and theme. Accessibility (labels, roles, focus, keyboard, WCAG AA) is built into the kit.
   Test ids derive from node keys.
-- **Type pipeline: Rust first.** The component schema lives in `agentos-domain` as Rust types plus metadata (events,
-  slots, accessibility rules, tier). `agentos-codegen` emits the TypeScript types for the renderer, the Lua
+- **Type pipeline: Rust first.** The component schema lives in `vos-domain` as Rust types plus metadata (events,
+  slots, accessibility rules, tier). `vos-codegen` emits the TypeScript types for the renderer, the Lua
   `ui` module and the LuaCATS definitions for app authors, and docs. Contract tests fail the build on drift. One
   toolchain, and R1 proved the ts-rs → TypeScript and schemars → Lua definitions path.
 

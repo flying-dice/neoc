@@ -1,7 +1,7 @@
 /**
  * What the shell asks the host besides the view protocol: the app lifecycle (`app.*`), the catalog Discover
  * browses, the agent roster (`agents.*`) and the paired devices (`host.devices.*`). The shapes are generated from
- * `crates/agentos-domain/src/api.rs` into `types/generated/agentos.ts`.
+ * `crates/vos-domain/src/api.rs` into `types/generated/agentos.ts`.
  */
 import { icons, type IconName } from '@agentos/ui'
 import type {
@@ -15,7 +15,7 @@ import type {
   HostInstalledInfo
 } from '../view/protocol'
 
-// The wire shapes are the generated ones (the Rust schema in `crates/agentos-domain/src/api.rs`, re-exported by
+// The wire shapes are the generated ones (the Rust schema in `crates/vos-domain/src/api.rs`, re-exported by
 // `view/protocol.ts`, the renderer's one door to `types/generated`) under the names the shell uses, so a wire
 // change is a compile error there and here, and nowhere else.
 export type AppState = HostAppState

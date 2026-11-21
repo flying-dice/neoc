@@ -13,7 +13,7 @@ export { EventType } from '@ag-ui/core'
 export { uniqueBy }
 export type { Event as AguiEvent, Interrupt, ResumeEntry, RunAgentInput } from '@ag-ui/core'
 
-// ── state the host keeps per thread (agentos_domain::thread) ───────────────────────────────────────────────
+// ── state the host keeps per thread (vos_domain::thread) ───────────────────────────────────────────────
 
 const text = z.string()
 const note = z.string().nullish()

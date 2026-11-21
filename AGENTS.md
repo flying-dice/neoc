@@ -8,7 +8,7 @@ AgentOS is an iPadOS-style virtual desktop for agents. It has three parts:
   client must pair as a device first.
 - **The apps** (`apps/<id>/`): server-side code **authored in plain Lua 5.1** (`app.json` + `*.lua`, checked by
   lua-language-server against generated LuaCATS definitions): `bun run build:apps` bundles an app into one `app.lua`
-  with darklua, and the host runs that in one VM per app (the `agentos-lua` adapter on the `neoc-vm` library, Luau, running the Lua 5.1 source; see "Language" in the neoc README for how Luau's base library differs),
+  with darklua, and the host runs that in one VM per app (the `vos-lua` adapter on the `neoc-vm` library, Luau, running the Lua 5.1 source; see "Language" in the neoc README for how Luau's base library differs),
   loaded from an app ref over `file://`, `http://` or `https://`. An app holds its state, data, tools, notifications
   and UI description. Examples: `apps/calculator`, `apps/agents`.
 - **The client** (`client/`): a managed Vite + Svelte 5 PWA. It renders the view trees the host sends with the kit in
@@ -72,12 +72,12 @@ A change is done when all of these hold:
 
 ## Boundaries
 
-- **Crate dependency direction** (hexagonal; inward only): `agentos-domain` is pure and depends on no other crate;
-  `agentos-application` (ports and use cases) depends on domain; each adapter (`lua`, `sqlite`, `mcp`, `acp`, `agui`,
-  `fetch`, `http`, `codegen`) depends on application and domain and **never on another adapter**; `agentos-host` is the
+- **Crate dependency direction** (hexagonal; inward only): `vos-domain` is pure and depends on no other crate;
+  `vos-application` (ports and use cases) depends on domain; each adapter (`lua`, `sqlite`, `mcp`, `acp`, `agui`,
+  `fetch`, `http`, `codegen`) depends on application and domain and **never on another adapter**; `vos-host` is the
   composition root and the only crate that sees them all. `neoc-vm` is a support library, not an adapter: the
   per-app Lua VM (mlua on Luau, built from source), depending on no other crate here (the `neoc` CLI is its other client, and
-  `neoc`/`neoc-vm` never depend on an `agentos-*` crate). Among the `agentos-*` crates only the `lua` adapter may depend
+  `neoc`/`neoc-vm` never depend on an `vos-*` crate). Among the `vos-*` crates only the `lua` adapter may depend
   on it (it reaches mlua through neoc-vm's re-export, so mlua stays out of every agentos crate). Enforced by `bun run lint:deps` (`scripts/check-deps.ts`,
   an allow-list over `cargo metadata`) and `cargo deny check` (`deny.toml`: each framework crate is pinned to its
   adapter). A new crate must be placed in the allow-list on purpose.
@@ -109,13 +109,13 @@ A change is done when all of these hold:
   load as text only.
 - **Luau, the stack and what an error value can do.** The engine is Luau. An error value whose `__tostring` makes a
   protected call and then fails (which aborted the host on LuaJIT) is answered `error in error handling` once, so it
-  reaches the adapter as an ordinary error on every path; `crates/agentos-lua/tests/poison.rs` holds one test per path
+  reaches the adapter as an ordinary error on every path; `crates/vos-lua/tests/poison.rs` holds one test per path
   (entry chunk, a table given to `app.tool`, `app.notify` or `app.window`, tool, event, request, write-back,
   transaction body, task, render). Recursion through a Rust host function that calls back into Lua stops at Luau's
   C-call limit (200) with `C stack overflow`, provided the thread's stack holds those levels: **every thread that polls
-  a VM has `neoc_vm::VM_THREAD_STACK` (8 MiB)**, which `agentos_host::runtime` gives the workers and the blocking
-  pool (the host re-exports it through `agentos_lua`, since the host may not depend on neoc-vm), and the top-level
-  future runs on a worker, not on the `block_on` thread; `crates/agentos-host/tests/stack.rs` holds it in a debug
+  a VM has `neoc_vm::VM_THREAD_STACK` (8 MiB)**, which `vos_host::runtime` gives the workers and the blocking
+  pool (the host re-exports it through `vos_lua`, since the host may not depend on neoc-vm), and the top-level
+  future runs on a worker, not on the `block_on` thread; `crates/vos-host/tests/stack.rs` holds it in a debug
   build. A new thread of the host's own that calls into Lua must be built with that stack too. (A Tera panic in
   `lib:template` aborts under `release-host`'s `panic = "abort"`: NEOC-125.)
 - **The client runs no app code.** The renderer draws view trees and sends events; nothing executable crosses the
@@ -156,7 +156,7 @@ Also: atomic layers (`lint:atomic`, in `packages/ui` and `client/src`) and test 
 bun run dev             # build:apps, then the host on :7400 (dev_reload) + Vite on :5173; pair with the code the host prints
 bun run build:apps      # bundle every apps/*/app.json into one Lua 5.1 file (darklua) + app refs + registry.json under dist/apps
 bun run build           # build the client (client/dist)
-bun run host            # cargo run -p agentos-host: serves client/dist, /rpc, /agui, /mcp on :7400
+bun run host            # cargo run -p vos-host: serves client/dist, /rpc, /agui, /mcp on :7400
 bun run host pair       # print a fresh device pairing code (every client must pair; see host-stack.md)
 bun start               # the same host, built with the release-host profile (opt-level z, panic abort)
 bun run lint            # conflict markers + atomic layers + test ids + boundaries + rust + lua (LuaLS) + stylua + codegen:check + package eslint
@@ -189,7 +189,7 @@ prelude's polyfills with the native ones.
 
 Follow `apps/README.md` → "Adding an app". From its first commit the app has an `app.json`, an `app.manifest`
 with a `window` min size (and a comment when the layout needs more than 320x240), a `JOURNEYS.md` plus
-`e2e/journeys.spec.ts`, and a Rust test of its logic and tools next to the others in `crates/agentos-lua/tests`.
+`e2e/journeys.spec.ts`, and a Rust test of its logic and tools next to the others in `crates/vos-lua/tests`.
 The generic `desktop` project opens every `apps/*/app.json` in the real shell (sizes, layouts, light and dark, axe,
 snapshots) with no extra code; each screen and state beyond the landing view is reached by a journey, or, when a
 journey can't reach it cheaply, shown by a JSON-tree story in the client Storybook. The app is `lint:lua` (LuaLS) and

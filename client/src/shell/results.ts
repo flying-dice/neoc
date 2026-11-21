@@ -3,7 +3,7 @@
  * one) can answer `{ "agents": null }`; a cast would carry that into the desktop and crash it on the first read. A
  * failed parse is an error the caller shows, never a throw out of a render.
  *
- * The shapes mirror `crates/agentos-domain/src/api.rs`; the `satisfies` clauses make a drift from `hostApi.ts`
+ * The shapes mirror `crates/vos-domain/src/api.rs`; the `satisfies` clauses make a drift from `hostApi.ts`
  * (and so from the generated types) a type error. Unknown fields are dropped, so a field the shell never reads
  * (an agent's runtime `env`) does not travel further than this module.
  */

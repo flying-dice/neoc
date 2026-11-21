@@ -16,15 +16,15 @@ publish = false
 [workspace.dependencies]
 neoc-vm = { path = "crates/neoc-vm" }
 # internal (path deps; the arrows in the dependency diagram)
-agentos-domain      = { path = "crates/agentos-domain" }
-agentos-application = { path = "crates/agentos-application" }
-agentos-lua        = { path = "crates/agentos-lua" }
-agentos-sqlite      = { path = "crates/agentos-sqlite" }
-agentos-fetch       = { path = "crates/agentos-fetch" }
-agentos-mcp         = { path = "crates/agentos-mcp" }
-agentos-acp         = { path = "crates/agentos-acp" }
-agentos-agui        = { path = "crates/agentos-agui" }
-agentos-http        = { path = "crates/agentos-http" }
+vos-domain      = { path = "crates/vos-domain" }
+vos-application = { path = "crates/vos-application" }
+vos-lua        = { path = "crates/vos-lua" }
+vos-sqlite      = { path = "crates/vos-sqlite" }
+vos-fetch       = { path = "crates/vos-fetch" }
+vos-mcp         = { path = "crates/vos-mcp" }
+vos-acp         = { path = "crates/vos-acp" }
+vos-agui        = { path = "crates/vos-agui" }
+vos-http        = { path = "crates/vos-http" }
 # external
 anyhow      = "1.0"
 async-trait = "0.1"
@@ -78,7 +78,7 @@ codegen-units = 1
 strip = "symbols"
 
 # The AgentOS host: one small self-contained binary. `bun start` builds and runs it with
-# `cargo run --profile release-host -p agentos-host`.
+# `cargo run --profile release-host -p vos-host`.
 [profile.release-host]
 inherits = "release"
 opt-level = "z"

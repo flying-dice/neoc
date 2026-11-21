@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Checks every Lua app and fixture with lua-language-server (LuaLS) `--check` against the generated definitions
- * (config: .luarc.json; definitions: types/generated/luals, the `app` API and `@agentos/*`, written by agentos-codegen).
+ * (config: .luarc.json; definitions: types/generated/luals, the `app` API and `@agentos/*`, written by vos-codegen).
  * The std:/lib:/vnd: modules are NOT typed here: neoc's LuaCATS definitions (and lua-language-server) are gone from neoc
  * (NEOC-139: Luau declarations checked by luau-lsp), so an app's `require("std:fs")` is untyped (`any`) until the apps
  * move to typed Luau (NEOC-140).

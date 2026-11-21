@@ -1,6 +1,6 @@
 /**
  * Background work journeys (client/journeys/background.md): an app that works on its own, on the real host. The
- * Ticker (crates/agentos-host/tests/fixtures/ticker) counts up from a task it starts at load; the window follows
+ * Ticker (crates/vos-host/tests/fixtures/ticker) counts up from a task it starts at load; the window follows
  * it with no input, the count goes on while the window is closed, and a dropped connection comes back to a
  * current, un-dimmed window. The Ticker is built outside the registry (e2e/host/start.ts), so Discover never
  * offers it; these specs install it and remove it again. They share one Ticker, so they run one after another.
