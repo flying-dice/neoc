@@ -126,7 +126,7 @@ Rounds continue until the independent reviewer returns READY TO MERGE at the exa
 
 ### G11 — vos checks
 `N/A — no vos paths` unless the diff touches `crates/vos-*`, `apps/`, `client/`, `packages/`, `e2e/`, `types/generated` or the vos scripts. Otherwise run the section "vos checks" of `.claude/skills/pr-review/SKILL.md` (V1 tests and coverage, V2 accessibility, V3 boundaries and security, V4 UI structure and design, V5 the app readiness table when an app or what a person sees or does in one changed) and record each row PASS, FAIL or `N/A — <reason>` with command + output or `file:line`.
-- The gate for vos paths is `bun run gate` with e2e. `--no-e2e` passes here only where the e2e rule in CLAUDE.md ("The gate") allows it, such as a test-only change inside the vos crates; a change to `vos-lua`, `vos-application` or a protocol adapter takes e2e although it draws no screen. A required e2e not run = unverified = FAIL.
+- The gate for vos paths is `bun run gate` with e2e. `--no-e2e` passes here only where the e2e rule in CLAUDE.md ("The gate") allows it, such as a test-only change inside the vos crates that e2e does not read (`git grep crates/vos- -- e2e` lists the fixtures it copies); a change to `vos-lua`, `vos-application` or a protocol adapter takes e2e although it draws no screen. A required e2e not run = unverified = FAIL.
 - A UI change carries a `verify-change` "Manual verification" section in the PR.
 
 ### Target shape — one-round PRs

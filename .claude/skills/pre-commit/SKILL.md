@@ -21,7 +21,8 @@ Run before every push. Loop until everything below is clean. Scale the work to t
 4. **The gate**, on the final head and after a fix that touches more than a test or a doc line. There is one command set, the
    one `CONTRIBUTING.md` lists, and the rule for which one and when e2e is required is stated once, in `CLAUDE.md` ("The
    gate"). Check every path the diff touches (`git diff --name-only main...HEAD`) against it: a code change in a vos crate
-   takes e2e even when no screen changes, and so does a `neoc-vm` change that already takes the full gate.
+   takes e2e even when no screen changes, and so do a vos test fixture e2e copies, a lockfile bump and a `neoc-vm` change
+   that already takes the full gate.
 
    ```sh
    bun run gate            # the neoc checks (scripts/check-neoc.sh), then the vos checks: lint, typecheck, test, e2e

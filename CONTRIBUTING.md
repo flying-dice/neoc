@@ -69,7 +69,9 @@ it is stated.
 ring test (`neoc-vm`), the full case counts of the generated-tree properties (`vos-domain`), `cargo test --release -p neoc-vm
 --test abort_regressions` (the release build proves a default 2 MiB thread survives; the debug run is in the gate) and the bench
 bodies (`cargo bench -p neoc-vm --features bench --bench lib --bench vnd -- --test`). A test too slow for the gate is
-`#[ignore = "slow: ..."]`, and the script runs exactly those (found by that reason, not every ignored test). Run it before a PR that changes what they
+`#[ignore = "slow: ..."]`, and the script runs exactly those (found by that reason, not every ignored test; it stops on an
+ignored test that is neither `slow:` nor on its `NOT_SLOW` list, and `bash scripts/check-slow.sh --list` shows the selection
+without running it). Run it before a PR that changes what they
 guard, not for every change and never in a review or a fix round. No mutation testing: nobody edits code to watch a test fail,
 reverts a fix, or loops a test to prove it is not flaky.
 

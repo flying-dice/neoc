@@ -296,16 +296,24 @@ bun run slow            # = scripts/check-slow.sh: the slow suites, opt-in (belo
   the apps, and also their server side: the app runtime and view rendering (`vos-lua`), the view and chat services
   (`vos-application`), the protocol adapters (`vos-agui`, `vos-mcp`, `vos-acp`), the host's HTTP surface (`vos-http`,
   `vos-host`) and the wire types (`vos-domain`);
-- a change to what e2e is built from outside those paths: `playwright.config.ts` and the scripts that build the apps, the
-  generated types or the Storybooks it runs (`scripts/build-apps.ts`, `luau.ts`, `codegen-lua.ts`, `storybooks.ts`,
-  `ports.ts`);
+- a change to anything else e2e reads or is built from, wherever it lives. Today, outside those paths, that is:
+  - the root build inputs: `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `package.json`, `bun.lock`, `.darklua.json`
+    (a lockfile-only dependency bump changes the host or the client);
+  - `lua/prelude.lua` (built into every app VM through `types/generated/prelude.lua`);
+  - `playwright.config.ts` and the scripts that build the apps, the generated types or the Storybooks it runs
+    (`scripts/build-apps.ts`, `luau.ts`, `codegen-lua.ts`, `storybooks.ts`, `ports.ts`);
+  - the vos test fixtures e2e copies into its registry: `crates/vos-codegen/tests/fixtures/notes/app.luau` (Notes) and
+    `crates/vos-host/tests/fixtures/ticker/app.luau` (the Ticker the Background journeys drive).
+
+  The list goes stale; the reads do not. `git grep crates/vos- -- e2e` finds the fixtures e2e copies, and
+  `git grep -n -e ROOT -e "scripts/" -- e2e playwright.config.ts` what else it reads;
 - a `neoc-vm` change that already takes the full gate: to the embedding API or the sandbox (`lifecycle`, `script_env`,
   `modules`, `sandbox`), to the `Role` of an async host function, or to what a module registers with `Life`.
 
 `bun run gate --no-e2e` is allowed only for the rest: a change to the neoc crates outside the last item (`gate:neoc` when it
 qualifies, see "Which one" in CONTRIBUTING.md), a change to the other scripts, the skills or the docs, and a test-only change
-inside the vos crates (their `tests/` files and `#[cfg(test)]` modules, nothing they compile into the host). A diff that mixes
-kinds takes the strictest. The skills point here; none restates it. A fix round re-runs only what the fix touches, and the gate
+inside the vos crates that e2e does not read (their `tests/` files and `#[cfg(test)]` modules, nothing they compile into the
+host, and none of the fixtures above). A path neither list names takes e2e, and a diff that mixes kinds takes the strictest. The skills point here; none restates it. A fix round re-runs only what the fix touches, and the gate
 once on the final head.
 
 **The slow suites are not in the gate.** `bun run slow` runs them: the full `hostile_inputs` sweep (about two million hostile
@@ -313,7 +321,8 @@ calls over every module; the gate runs a quick sweep of the same harness) and th
 of the vos-domain generated-tree properties, the release-build `abort_regressions` run (the debug run is in the gate) and the
 bench bodies (the gate compiles them). One mechanism: a test too slow for the gate is `#[ignore = "slow: ..."]` and
 `check-slow.sh` runs those tests (found by that reason; an ignored test with another reason, such as `vos-lua`'s `baseline.rs`
-measurement, does not run); a new slow test needs nothing else. Run it before a PR that changes
+measurement, is on the script's short `NOT_SLOW` list and does not run, and an ignored test on neither stops the script); a new
+slow test needs nothing else. Run it before a PR that changes
 what these suites guard (a module's argument handling, stack use or recursion, `vos-domain`'s tree diff, the VM's call
 scheduling), and when you want the whole sweep. A review, a fix round and the gate do not run it. A new test is fast, or it is
 opt-in under `bun run slow`.
