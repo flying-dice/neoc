@@ -1,0 +1,2 @@
+# neoc's own formatting is rustfmt's defaults (style edition 2024). A rustfmt.toml in a crate directory stops the
+# search for one further up, so the repository root's file (the AgentOS crates' style: width 110) does not apply here.

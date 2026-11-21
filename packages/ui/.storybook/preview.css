@@ -1,0 +1,6 @@
+/* Storybook canvas uses the grouped background, like an iPad screen. */
+body.sb-show-main {
+  background: var(--bg-grouped);
+  -webkit-user-select: auto;
+  user-select: auto;
+}

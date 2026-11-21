@@ -11,10 +11,12 @@ Build, test, add a module, release. The module design rules are in [CLAUDE.md](C
 
 ```sh
 cargo build
-cargo test --workspace
+cargo test -p neoc -p neoc-vm
 ```
 
-`cargo test --workspace` runs the `neoc-vm` unit tests, the `neoc` binary tests, the CLI integration tests and the Gherkin spec in `tooling/cli/`.
+`cargo test -p neoc -p neoc-vm` runs the `neoc-vm` unit tests, the `neoc` binary tests, the CLI integration tests and the Gherkin spec in `tooling/cli/`.
+
+The workspace also holds the AgentOS crates (`crates/agentos-*`, governed by [AGENTS.md](AGENTS.md)). neoc's own checks do not need what those crates need: the test line names `-p neoc -p neoc-vm`, so neoc contributors need neither `bun` nor `darklua`. The AgentOS crates have their own gate (`bun run lint`, `typecheck`, `test`, `test:e2e`, in AGENTS.md); their tests build the bundled apps, which needs `bun` and `darklua` 0.18.0 on `PATH`, and `cargo test --workspace` would run them. `cargo build` and `cargo clippy --all-targets` cover the AgentOS crates too, and need nothing extra. NEOC-115 unifies the two gates.
 
 Lua suites run with the binary itself:
 
@@ -29,7 +31,7 @@ Run all of these locally before opening a PR. They must pass exactly as written.
 ```sh
 cargo fmt --check
 RUSTFLAGS="-D warnings" cargo clippy --all-targets
-cargo test --workspace
+cargo test -p neoc -p neoc-vm
 cargo run -p neoc -- run \
   "crates/neoc/tests/lib/*.test.lua" \
   "crates/neoc/tests/std/*.test.lua" \
@@ -53,7 +55,7 @@ NEOC_REQUIRE_LUAU_LSP=1 cargo test -p neoc-vm --test luau_decls
 
 The Lua list leaves out the suites that need a Docker daemon (`sqlx_mysql`, `sqlx_postgres`, `testcontainers_modules`). With Docker running, run every suite instead: `cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.lua' 'crates/neoc/tests/**/*.spec.lua'`.
 
-The last two lines are the editor types. `luau_decls -- --check` fails when `types/neoc.d.luau` (the generated Luau declarations of every module, one definitions file) no longer matches what the modules record; fix it with `cargo run -p neoc-vm --example luau_decls` and commit the result. The `luau_decls` test runs the fixtures in `types/fixtures/` through `luau-lsp analyze` in strict mode: the files in `types/fixtures/` outside `negative/` must check clean, and a line of `types/fixtures/negative/` marked with `-- expect-error: <text>` must carry exactly one finding per marker (a line with two findings carries two markers), each marker matching a different finding's message up to its `caused by:` lines, and no unmarked line may carry a finding. `NEGATIVE_MARKERS` in the test pins the number of markers per file, so deleting a wrong line with its marker is an edit of that table. luau-lsp must be on `PATH` (`luau-lsp.exe` on Windows) at the pinned version (`LUAU_LSP_VERSION` in `crates/neoc-vm/tests/luau_decls.rs`; take the release binary of that version from the luau-lsp GitHub releases, there is no Homebrew formula; a binary that is not on `PATH` counts as missing); without `NEOC_REQUIRE_LUAU_LSP=1` it skips with a notice when the tool is missing or not that version, so a plain `cargo test --workspace` still passes without it. The same file also runs the language server the way the editor starts it (typed `require`, a wrong member, hover), under the same variable. The other tests in that file (the committed file is current, the example's `--check` and argument exit codes, the fixture matcher, no file name has a colon, the positive fixture requires every module) always run.
+The last two lines are the editor types. `luau_decls -- --check` fails when `types/neoc.d.luau` (the generated Luau declarations of every module, one definitions file) no longer matches what the modules record; fix it with `cargo run -p neoc-vm --example luau_decls` and commit the result. The `luau_decls` test runs the fixtures in `types/fixtures/` through `luau-lsp analyze` in strict mode: the files in `types/fixtures/` outside `negative/` must check clean, and a line of `types/fixtures/negative/` marked with `-- expect-error: <text>` must carry exactly one finding per marker (a line with two findings carries two markers), each marker matching a different finding's message up to its `caused by:` lines, and no unmarked line may carry a finding. `NEGATIVE_MARKERS` in the test pins the number of markers per file, so deleting a wrong line with its marker is an edit of that table. luau-lsp must be on `PATH` (`luau-lsp.exe` on Windows) at the pinned version (`LUAU_LSP_VERSION` in `crates/neoc-vm/tests/luau_decls.rs`; take the release binary of that version from the luau-lsp GitHub releases, there is no Homebrew formula; a binary that is not on `PATH` counts as missing); without `NEOC_REQUIRE_LUAU_LSP=1` it skips with a notice when the tool is missing or not that version, so `cargo test -p neoc -p neoc-vm` still passes without it. The same file also runs the language server the way the editor starts it (typed `require`, a wrong member, hover), under the same variable. The other tests in that file (the committed file is current, the example's `--check` and argument exit codes, the fixture matcher, no file name has a colon, the positive fixture requires every module) always run.
 
 The bench line compiles every bench and runs each body once, with no timing. It catches stale bench code the other checks never build. To time a module, drop `-- --test` and name it: `cargo bench -p neoc-vm --features bench --bench lib <name>`.
 
@@ -68,7 +70,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs similar checks on pushes to `ma
 3. Open the PR into `main` (a draft is fine). One module or one well-scoped change per PR. Say why in the description, not only what. Reference the Jira key (`Refs NEOC-<n>`).
 4. Self-review with the `pr-self-review` skill and post the `Self-review` note on the PR for the head SHA.
 5. Hand off to an independent `pr-review` pass: a fresh reviewer with no session context, who posts a verdict note for the head SHA (`READY TO MERGE` or `CHANGES NEEDED`). Fix and re-run from step 2 until `READY TO MERGE`.
-6. Squash-merge only on `READY TO MERGE` for the current head, then delete the branch.
+6. Squash-merge only on `READY TO MERGE` for the current head, then delete the branch. The one exception is the merge of AgentOS (NEOC-113, PR #34), which lands with a merge commit so that AgentOS's history stays in `main`: never squash it.
 
 ### Commits and PR titles
 

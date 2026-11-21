@@ -1,0 +1,22 @@
+[package]
+name = "agentos-domain"
+description = "Pure core model: apps, app refs, manifests, tool grants, agents, tools, notifications, UI tree, protocol messages. No I/O."
+version.workspace = true
+edition = "2021"
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+# derive-only helpers (no I/O): lets the codegen adapter export TS types and JSON Schema from these types
+codegen = ["dep:ts-rs", "dep:schemars"]
+
+[dependencies]
+ts-rs = { workspace = true, optional = true }
+schemars = { workspace = true, optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }   # pure computation (checksum verification)
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,15 @@
+{
+  "name": "AgentOS",
+  "short_name": "AgentOS",
+  "description": "An iPadOS-style desktop for agents and the apps they use.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "any",
+  "background_color": "#2a2d6b",
+  "theme_color": "#2a2d6b",
+  "icons": [
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

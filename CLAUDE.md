@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Guidance for Claude (and any LLM agent) working in **neoc**: one Cargo workspace holding a Lua runtime.
+Guidance for Claude (and any LLM agent) working in **neoc**: one Cargo workspace holding a Lua runtime and, next to it, AgentOS (see "AgentOS" below).
 
 - **Runtime** (`crates/neoc-vm`): an embedded Luau engine (through `mlua`) backed by Rust. Scripts are written in Luau (Lua 5.1 syntax plus type annotations, `continue`, compound assignment and string interpolation, all of which run); their editor types are the generated Luau declarations of every module (see Modules, Types); the base library is Luau's (`bit32`, `table.clone`, no `goto`, `string.format('%s')` takes strings and numbers only (`%*` for anything else): the list is in [README.md](README.md#language)). Scripts run in a VM with a curated module surface (`std:*`, `lib:*`, `vnd:*`). The unsafe halves of the Lua standard library are stripped; everything else comes through explicit modules. Not a security boundary.
 - **Binary** (`crates/neoc`): the thin `neoc` CLI over the runtime. `run` only.
@@ -9,10 +9,18 @@ neoc used to be a language that compiled to Lua. That is gone; the last state is
 
 Read [README.md](README.md) for what neoc is and [CONTRIBUTING.md](CONTRIBUTING.md) for the build, the pre-PR checks, how to add a module and how to release.
 
+## AgentOS
+
+This repository also holds **AgentOS**, an iPadOS-style virtual desktop for agents (to be renamed vos): the host (`crates/agentos-*`, the `agentos-host` binary), the apps (`apps/`, plain Lua 5.1 run on `neoc-vm`), the client (`client/`) and the UI kit (`packages/ui`). It has its own gate, boundaries, test layout and skills, all governed by [AGENTS.md](AGENTS.md), which stays as it is: read it before touching any of that. Its skills are in `.claude/skills/`: the `agentos-*` ones (`agentos-pre-commit`, `agentos-clean-code-review`, `agentos-refactor`, `agentos-code-review`) and the AgentOS-only `app-design`, `coding-styleguide`, `prebuild-synthetic-ux`, `postbuild-synthetic-usability`, `verify-change`; the unprefixed `pre-commit`, `clean-code-review` and `refactor` (and `change-review`, `pr-review`, `pr-self-review`, ...) are neoc's. `AGENTS.md` is imported below, so its rules load with this file; where it and this file differ (Jira project, merge policy, review skills), NEOC-115 settles it, and for the neoc crates this file wins.
+
+@AGENTS.md
+
+The AgentOS adapter (`crates/agentos-lua`) is an embedder of `neoc-vm`: AgentOS policy (apps, `readOnly`, views, `app.*`, the `@agentos/*` modules) stays in that adapter and never moves into `neoc-vm`. The AgentOS crates keep edition 2021 and inherit the workspace lint table; the neoc crates do not yet (see "Rust style").
+
 ## Layout
 
 ```
-crates/neoc/                 # the `neoc` binary (the only bin)
+crates/neoc/                 # the `neoc` binary (the AgentOS crates add `agentos-host` and the `agentos-codegen` tool)
   src/main.rs                # CLI entry: `run`, embedded-payload executables
   tests/                     # Lua suites (*.test.lua, *.spec.lua), cli.rs, cucumber.rs
 crates/neoc-vm/              # the runtime library
@@ -27,7 +35,7 @@ crates/neoc-vm/              # the runtime library
   src/lua/{std,lib,vnd}/     # one file per module
   examples/luau_decls.rs     # writes (or `-- --check`s) the Luau declarations in types/neoc.d.luau
   tests/embedding.rs         # the embedding hooks on Luau: yield boundaries, environments, ownership
-  tests/abort_regressions.rs # poisoned error values and recursion through host functions, each in a child process on a 2 MiB thread
+  tests/abort_regressions.rs # poisoned error values and recursion through host functions, each in a child process, on `VM_THREAD_STACK` (8 MiB) in a debug build and 2 MiB in a release build
   tests/lifetimes.rs         # what a script leaves running (`neoc run` and under a Life), worker module sets
   tests/signals.rs           # Ctrl-C and the process shutdown signal against serve_static and server:wait
   tests/luau_decls.rs        # drift check of types/neoc.d.luau, no colon in a file name, the luau-lsp fixtures (NEOC_REQUIRE_LUAU_LSP)
@@ -35,6 +43,7 @@ crates/neoc-vm/              # the runtime library
 types/neoc.d.luau            # GENERATED Luau declarations of every module (one definitions file for luau-lsp, `require` overloads at its end)
 types/fixtures/              # luau-lsp fixtures: usage.luau, syntax.luau (clean, strict) and negative/ (expect-error)
 (types/fixtures/.luaurc)     # Luau config of the fixtures: strict mode (each fixture also says `--!strict`)
+.luarc.json                  # AgentOS's lua-language-server config for the apps (Lua 5.1, library types/generated/luals): neoc itself has none
 tooling/cli/                 # Gherkin spec for the CLI, run against the built binary
 ```
 
@@ -44,14 +53,14 @@ The crate boundary is enforced by `Cargo.toml`. `neoc-vm` owns the `mlua`/`tokio
 
 ```sh
 cargo build                                          # debug build
-cargo test --workspace                               # Rust, CLI integration and the Gherkin spec
+cargo test -p neoc -p neoc-vm                         # Rust, CLI integration and the Gherkin spec
 cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.lua' 'crates/neoc/tests/**/*.spec.lua'   # all Lua suites (Docker ones need a daemon)
 cargo bench -p neoc-vm --features bench --bench lib --bench vnd -- --test   # bench smoke
 cargo clippy --workspace --all-targets               # lint
 cargo fmt --check                                    # formatting
 ```
 
-The full pre-PR gate, including the Lua suite set that needs no Docker, is in [CONTRIBUTING.md](CONTRIBUTING.md#pre-pr-checks).
+`--workspace` would also build and test the AgentOS crates, whose tests need `bun` and `darklua` on `PATH`; the neoc gate names `-p neoc -p neoc-vm`, and the AgentOS crates have the gate in `AGENTS.md`. The full pre-PR gate, including the Lua suite set that needs no Docker, is in [CONTRIBUTING.md](CONTRIBUTING.md#pre-pr-checks).
 
 ## Modules
 
@@ -119,7 +128,7 @@ Adding a module: see [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-new-module).
 
 ## Rust style
 
-- Edition 2024. `unsafe_code` is denied in the workspace lint table, which the crates do not inherit yet (see their `[lints.cargo]` comment). `neoc-vm` forbids `unsafe` outside tests (`lib.rs`); the `neoc` binary crate still has some, in its CLI test helper.
+- Edition 2024 for the neoc crates (the AgentOS crates set edition 2021 themselves). The workspace lint table (`unsafe_code = forbid`, clippy pedantic, `unwrap`/`expect`/`panic` denied) is inherited by the AgentOS crates only; the neoc crates do not inherit it yet (see their `[lints.cargo]` comment: the ~700 pedantic findings and six `unsafe` blocks it mentions were counted when the table was imported, against neoc's table of that time, which did not deny `unwrap`/`expect`/`panic`; this one is stricter, so the count would be higher). `neoc-vm` forbids `unsafe` outside tests (`lib.rs`); the `neoc` binary crate still has some, in its CLI test helper.
 - `clippy::all` + `clippy::pedantic`; warnings are errors (`RUSTFLAGS="-D warnings"`). Use `#[allow(...)]` with a comment when you must.
 - `thiserror` for library error enums; the CLI renders them with `miette`. No `unwrap()` / `expect()` in library code.
 - `///` on public items is full, normal English. Everywhere else, write tight: cut filler, keep every fact. Never abbreviate code, API names, types, commands, paths or error text.
@@ -135,7 +144,7 @@ Adding a module: see [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-new-module).
 3. Open a PR into `main` (a draft is fine). Title and commits are Conventional Commits (the squash commit message comes from the PR title for a multi-commit PR, from the commit for a single-commit one). Reference the Jira key in the body or footer (`Refs NEOC-6`).
 4. Self-review with the `pr-self-review` skill and post its `Self-review` note on the PR for the head SHA.
 5. Hand off to an independent `pr-review` pass: a fresh reviewer with no session context, who posts a verdict note for the head SHA (`READY TO MERGE` or `CHANGES NEEDED`). Fix and repeat from step 2 until `READY TO MERGE`.
-6. Squash-merge only on `READY TO MERGE` for the current head, then delete the branch. Mark the Jira ticket Done.
+6. Squash-merge only on `READY TO MERGE` for the current head, then delete the branch. The one exception is the merge of AgentOS (NEOC-113, PR #34), which lands with a merge commit so that AgentOS's history stays in `main`: never squash it. Mark the Jira ticket Done.
 
 Releases are cut by pushing a `vX.Y.Z` tag on `main` (see CONTRIBUTING.md). Don't push release tags unless asked.
 

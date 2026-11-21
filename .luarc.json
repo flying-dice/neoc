@@ -1,0 +1,24 @@
+{
+  "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
+  "runtime.version": "Lua 5.1",
+  "workspace.library": ["types/generated/luals"],
+  "workspace.checkThirdParty": false,
+  "workspace.ignoreDir": [
+    ".claude",
+    "node_modules",
+    "target",
+    "dist",
+    "client",
+    "packages",
+    "e2e",
+    "crates/neoc",
+    "crates/neoc-vm",
+    "crates/agentos-codegen/tests/fixtures/stub",
+    "scripts/*.lua",
+    "types/generated/*.lua"
+  ],
+  "diagnostics.disable": ["lowercase-global"],
+  "diagnostics.unusedLocalExclude": ["_*"],
+  "type.checkTableShape": true,
+  "hint.enable": false
+}

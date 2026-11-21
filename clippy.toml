@@ -1,3 +1,7 @@
+doc-valid-idents = ["LuaJIT", ".."]   # ".." keeps clippy's default list (GitHub, SQLite, ...)
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
 # `add_async_meta_*` do not exist on Luau (a metamethod cannot yield there), so those entries are `allow-invalid`:
 # they stay so that an engine that has them cannot use them outside `lifecycle`.
 disallowed-methods = [

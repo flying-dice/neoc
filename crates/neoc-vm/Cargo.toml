@@ -237,10 +237,11 @@ path = "benches/vnd/vnd.rs"
 harness = false
 required-features = ["bench"]
 
-# The root `[workspace.lints]` table (clippy pedantic, `unsafe_code = "deny"`) was
-# imported with the old compiler crates and never inherited here: opting in
-# today means ~700 pedantic findings. (`neoc-vm` has no `unsafe` outside tests and
-# forbids it in `lib.rs`; the `neoc` crate has the rest.) Adopting it is its own
-# change, so silence cargo's "missing lints inheritance" nag until then.
+# The root `[workspace.lints]` table (clippy pedantic, `unsafe_code = "forbid"`) is inherited by the AgentOS crates
+# only. This crate never inherited it: when it was imported with the old compiler crates, opting in meant ~700
+# pedantic findings (counted against the table as it was then, which did not deny `unwrap`/`expect`/`panic`; today's
+# table is stricter, so the count would be higher). `neoc-vm` has no `unsafe` outside tests and forbids it in
+# `lib.rs`; the `neoc` crate has the rest. Adopting it is its own change, so silence cargo's "missing lints
+# inheritance" nag until then.
 [lints.cargo]
 missing_lints_inheritance = "allow"

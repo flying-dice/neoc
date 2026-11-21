@@ -1,0 +1,16 @@
+{
+  "generator": "retain_lines",
+  "bundle": {
+    "require_mode": "path",
+    "excludes": [
+      "@agentos/*",
+      "std[:]*",
+      "lib[:]*",
+      "vnd[:]*"
+    ]
+  },
+  "rules": [
+    "remove_comments",
+    "remove_types"
+  ]
+}
