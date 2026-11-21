@@ -30,6 +30,7 @@ use serde_json::Value as Json;
 use tracing::instrument;
 
 use crate::lua::facade::Module;
+use crate::lua::serde_guard::refuse_buffer;
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(declare(lua)?.into_table())
@@ -161,10 +162,10 @@ fn record_call(
     key: &str,
     args: MultiValue,
 ) -> mlua::Result<MultiValue> {
-    let json_args = args.iter().map(to_json).collect();
+    let json_args = to_json_all(&args)?;
     let f: mlua::Function = lua.registry_value(reg_key)?;
     let result: MultiValue = f.call(args)?;
-    let json_result = result.iter().map(to_json).collect();
+    let json_result = to_json_all(&result)?;
 
     let mut locked = tape.lock();
     locked.record(
@@ -253,6 +254,18 @@ fn replay(lua: &Lua, path: &str) -> mlua::Result<Table> {
 /// do — it exists only so callers can call it unconditionally.
 fn set_noop_dump(lua: &Lua, t: &Table) -> mlua::Result<()> {
     t.set("dump", lua.create_function(|_, _: mlua::Value| Ok(()))?)
+}
+
+/// `values` as JSON for the tape. A buffer raises (replay would hand back an array of numbers in its place); the
+/// arguments are checked before the wrapped function runs, its results after.
+fn to_json_all(values: &MultiValue) -> mlua::Result<Vec<Json>> {
+    values
+        .iter()
+        .map(|v| {
+            refuse_buffer(v, "vcr.record")?;
+            Ok(to_json(v))
+        })
+        .collect()
 }
 
 fn to_json(v: &mlua::Value) -> Json {

@@ -13,5 +13,6 @@ pub(crate) mod limits;
 pub mod modules;
 pub mod sandbox;
 pub mod script_env;
+pub(crate) mod serde_guard;
 pub mod std;
 pub mod vnd;
