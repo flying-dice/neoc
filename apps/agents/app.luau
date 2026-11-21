@@ -1,3 +1,4 @@
+--!strict
 -- Agents: chats with the agents on this host. The sidebar lists the agents (from the host's roster) and the
 -- chats (SQLite, newest first); the detail is a `ChatTranscript` bound to the selected chat.
 --
@@ -7,6 +8,9 @@
 local app = require("vos:app")
 local ui = require("vos:ui")
 local db = app.db
+
+type Node = vos_Node
+type Window = vos_WindowContext
 
 app.manifest {
   id = "agents",
@@ -42,7 +46,7 @@ local chat = app.thread()
 local TITLE_MAX = 48
 
 -- the first message names the chat; later messages only move it to the top
-local function titleOf(text)
+local function titleOf(text: string): string
   local line = string.gsub(string.match(text, "^%s*([^\n]*)") or "", "%s+$", "")
   if utf8.len(line) == nil or utf8.len(line) <= TITLE_MAX then
     if line == "" then
@@ -64,13 +68,13 @@ app.window("main", {
     threadId = { init = "", persist = "app" },
   },
 
-  render = function(w)
+  render = function(w: Window): Node
     local c = w.client
     local current = thread { id = c.threadId }
     local roster = app.agents:list()
     local chatList = threads {}
 
-    local function startChat(agentId, agentName)
+    local function startChat(agentId: string, agentName: string)
       local made = db:exec("insert into threads(agent_id, agent_name) values (:a, :n)", { a = agentId, n = agentName })
       local row = db:one("select id from threads where rowid = :r", { r = made.last_insert_id })
       if row then
@@ -78,7 +82,7 @@ app.window("main", {
       end
     end
 
-    local agentRows = {}
+    local agentRows: { Node } = {}
     for _, agent in ipairs(roster) do
       table.insert(
         agentRows,
@@ -96,7 +100,7 @@ app.window("main", {
     end
 
     -- one agent: the button starts the chat; several: it opens a menu of them
-    local newChat
+    local newChat: Node?
     if #roster == 1 then
       local only = roster[1]
       newChat = ui.Button {
@@ -109,7 +113,7 @@ app.window("main", {
         end,
       }
     elseif #roster > 1 then
-      local items = {}
+      local items: { Node } = {}
       for _, agent in ipairs(roster) do
         table.insert(
           items,

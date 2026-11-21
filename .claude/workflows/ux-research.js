@@ -17,7 +17,7 @@ const previous = args && args.previous // path to the previous round's report, i
 const base = (args && args.baseUrl) || 'http://127.0.0.1:7400/'
 const dataDir = (args && args.dataDir) || '' // the host's VOS_DATA, if it is not the default ~/.vos
 
-const journeysPath = `apps/${app}/JOURNEYS.md (Lua apps) or client/journeys/${app}.md (built-in pages and the desktop shell)`
+const journeysPath = `apps/${app}/JOURNEYS.md (Luau apps) or client/journeys/${app}.md (built-in pages and the desktop shell)`
 const reportPath = `docs/ux/${app}/round-${round}.md`
 
 // ── Participants ────────────────────────────────────────────────────────
@@ -151,9 +151,9 @@ styleguide in docs/design/DESIGN_LANGUAGE.md, using the rubric in .claude/skills
 (categories, weights, and what earns each score are defined there — follow it exactly, do not invent categories).
 
 Evidence to gather (all of it, before scoring):
-  • \`bun scripts/design-audit.ts ${app}\` — static token/flat/spacing findings, for a built-in shell page. A Lua app
+  • \`bun scripts/design-audit.ts ${app}\` — static token/flat/spacing findings, for a built-in shell page. A Luau app
     has no CSS of its own (it picks semantic tokens only), so the script does not apply: audit what the kit renders for
-    its tree, and its props, keys and labels in apps/${app}/app.lua.
+    its tree, and its props, keys and labels in apps/${app}/app.luau.
   • The visual baselines: e2e/__screenshots__/stories.spec.ts/** and e2e/__screenshots__/desktop.spec.ts/** files
     for this app (light, dark, min, large, fullscreen, split, slideover, screen sizes). Open them with Read and look.
   • A live look on the real host: node e2e/tools/session.mjs start audit-r${round} --url "${base}" (pair it as in

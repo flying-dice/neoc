@@ -26,7 +26,7 @@ use vos_lua::LuaRuntime;
 
 /// The tests' own fixture apps, which the product's build pipeline (darklua) bundles.
 fn fixture(name: &str) -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name).join("app.lua")
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name).join("app.luau")
 }
 
 /// The library modules an app is not offered, spelled out here on purpose: the adapter's own `NOT_FOR_APPS` must
@@ -115,6 +115,78 @@ impl Rig {
 }
 
 // ---- the modules ------------------------------------------------------------------------------------------
+
+/// The `(module, type)` of every `require` overload of the generated app declarations, in order.
+fn declared_overloads() -> Vec<(String, String)> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../types/generated/vos.d.luau");
+    let text = std::fs::read_to_string(path).unwrap();
+    let start = text.find("\ndeclare require:").expect("the one declare require");
+    text[start..]
+        .lines()
+        .filter_map(|line| {
+            let rest = line.trim().trim_start_matches('&').trim().strip_prefix("((path: \"")?;
+            let (module, rest) = rest.split_once("\") -> ")?;
+            Some((module.to_owned(), rest.strip_suffix(')')?.to_owned()))
+        })
+        .collect()
+}
+
+/// What luau-lsp checks an app against (`types/generated/vos.d.luau`) and what the host gives it are one list: every
+/// module the VM library has, less `NOT_FOR_APPS`, is typed by its own type, `vos:app` and `vos:ui` are the two
+/// host modules, and every refused module is typed as unusable; nothing else is declared.
+#[test]
+fn the_declared_require_offers_exactly_what_the_host_offers() {
+    let declared = declared_overloads();
+    let typed: Vec<&str> = declared
+        .iter()
+        .filter(|(_, ty)| !ty.starts_with("vos_NotForApps_") && ty.as_str() != "any")
+        .map(|(module, _)| module.as_str())
+        .collect();
+    let mut offered: Vec<&str> = modules::names().filter(|name| !REFUSED.contains(name)).collect();
+    offered.extend(["vos:app", "vos:ui"]);
+    let mut expected = offered.clone();
+    expected.sort_unstable();
+    let mut got = typed.clone();
+    got.sort_unstable();
+    assert_eq!(got, expected, "the declarations (bun run codegen) and the host's offered modules disagree");
+
+    let unusable: Vec<&str> = declared
+        .iter()
+        .filter(|(_, ty)| ty.starts_with("vos_NotForApps_"))
+        .map(|(module, _)| module.as_str())
+        .collect();
+    assert_eq!(unusable, REFUSED, "the refused modules are typed unusable");
+
+    // and the host really does refuse them, and really does give the rest
+    for module in REFUSED {
+        assert!(
+            modules::names().any(|name| name == module),
+            "{module} exists in the VM library, and is refused"
+        );
+    }
+}
+
+/// The globals the declarations type as unusable are the ones the app's environment lacks.
+#[tokio::test]
+async fn the_globals_the_declarations_refuse_are_absent_from_the_environment() {
+    let names =
+        vos_domain::GLOBALS_NOT_FOR_APPS.iter().map(|n| format!("{n:?}")).collect::<Vec<_>>().join(", ");
+    let src = format!(
+        r#"app.on("present", function()
+             local found = {{}}
+             for _, name in ipairs({{ {names} }}) do
+               if _G[name] ~= nil or rawget(_G, name) ~= nil then found[#found + 1] = name end
+             end
+             return found
+           end)"#
+    );
+    let out = load(&src).await.emit("present", json!(null)).await.unwrap();
+    assert_eq!(
+        out,
+        json!([]),
+        "these exist in the app's environment, so the declarations must not refuse them"
+    );
+}
 
 #[tokio::test]
 async fn every_library_module_can_be_required_and_is_one_table_per_app() {
@@ -755,7 +827,7 @@ async fn effects_queued_after_the_app_was_unloaded_are_dropped_not_flushed() {
 #[tokio::test]
 async fn an_app_built_by_the_real_pipeline_requires_the_neoc_modules() {
     let package = built_package(&fixture("neoc_modules"));
-    let bundle = String::from_utf8(package.files["app.lua"].clone()).unwrap();
+    let bundle = String::from_utf8(package.files["app.luau"].clone()).unwrap();
     for required in ["vos:app", "std:fs", "lib:json", "vnd:serde_yaml"] {
         assert!(bundle.contains(&format!("require(\"{required}\")")), "{required} stays a runtime require");
     }

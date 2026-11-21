@@ -1,39 +1,51 @@
-# Lua apps in vos (`apps/<id>/*.lua`)
+# Luau apps in vos (`apps/<id>/*.luau`)
 
-An app is server-side **plain Lua 5.1** in its own VM (no permissions, no budgets): no Luau syntax (no `+=`, `continue`, backtick strings, `if`
-expressions, `for k, v in t do`, type annotations in signatures). Its contract is the `app` table and the `ui` constructors,
-described by the LuaCATS definitions in `types/generated/luals/` (generated: never edit them; `ui.lua` next to them is the
-runtime module). `apps/calculator` and `apps/agents` are the models; the API is described in `apps/README.md`.
+An app is server-side **typed Luau** (`--!strict`) in its own VM (no permissions, no budgets). Its contract is the `app` table
+and the `ui` constructors, described by the Luau declarations in `types/generated/vos.d.luau` (generated: never edit it;
+`ui.lua` next to it is the runtime module). `apps/calculator` and `apps/agents` are the models; the API is described in
+`apps/README.md`.
 
-Gates: `bun run lint:lua` (`lua-language-server --check` against the generated definitions, plus the `negative/` fixtures),
-`bun run lint:stylua`, `bun run format`.
+Gates: `bun run lint:luau` (`luau-lsp analyze`, strict, against the generated declarations, plus the usage fixture and the
+`negative/` fixtures), `bun run lint:stylua` (syntax `Luau`), `bun run format`.
 
 ## File shape
 
 ```lua
+--!strict
 -- One line on what the app is and where its state lives.
 local app = require("vos:app")
 local ui = require("vos:ui")
-local calc = require("./calc")      -- a module of this package (bundle-only require)
+local calc = require("./calc")      -- a module of this package (bundle-only require; `any` in the editor, typed by `lint:luau`'s second pass)
 local t = app.t
+
+type Node = vos_Node               -- the declarations name their types vos_<Name>
+type Window = vos_WindowContext
 
 app.manifest { id = "calculator", name = "Calculator", icon = "plus", tint = "orange",
   window = { w = 340, h = 560, minW = 320, minH = 500 } }   -- say why the minimum is above 320x240
 ```
 
-- Annotations are optional LuaCATS comments (`---@param`, `---@return`, `---@type`, `---@cast`); write one where it helps a
-  reader or the checker (a `tonumber(...)` the code knows is a number: `---@cast rounded number`). Fix what
-  lua-language-server reports, don't silence it: a `---@cast` needs an invariant established just above it, or a one-line
-  comment saying why the checker can't see it. Don't write annotations that only repeat the obvious.
+- **Every file starts with `--!strict`** (the lint checks it). Annotate parameters and results of functions, and the
+  tables whose shape matters (`type KeyDef = { ... }`); let locals be inferred. Fix what luau-lsp reports, don't silence
+  it: a `::` cast or an `assert(x ~= nil)` needs an invariant established just above it, or a one-line comment saying
+  why the checker can't see it (a `tonumber(...)` the code knows is a number: `tonumber(text) :: number`). A `pcall` of a
+  function that returns nothing is typed `(boolean)` only: cast the function (`f :: (string) -> any`) to get the error
+  as its second result. Don't write annotations that only repeat the obvious.
+- **Luau is the language**: `+=`, `continue`, `if` expressions, string interpolation, generalized iteration (`for _, v in t do`),
+  generics and type aliases are all fine, as are Luau's library members (`string.split`, `table.find`, `math.clamp`,
+  `table.clone`). Use what makes the code shorter and clearer, not for its own sake. The app environment lacks `print`,
+  `os`, `debug`, `buffer`, `load*`, `getfenv`/`setfenv`, `collectgarbage` (the declarations make each a type error); `typeof`
+  and `utf8` come from `lua/prelude.lua`.
 - `app.json` and `app.manifest` agree on `id`, `icon` and `tint` (the build checks).
 - `require` takes `vos:app`, `vos:ui`, the package's own modules (bundled at build time) and the host's `std:`,
-  `lib:` and `vnd:` modules; there is no bare `io`, `os` or `debug` and no filesystem `require`: files and the network
+  `lib:` and `vnd:` modules (all typed, except the refused `lib:test`, `lib:compile` and `std:workers`, which are type errors, and
+  never a misspelt name: `lint:luau` fails it); there is no bare `io`, `os` or `debug` and no filesystem `require`: files and the network
   come through `std:fs`, `std:net`, `lib:http` and the rest. Don't reach for globals; the per-app VM leaves out the
   ones that load code or reach the engine.
 
 ## Structure
 
-- **Logic is plain Lua functions with no UI in them** (`calc.lua`: `evaluate`, `format`), so it is testable from Rust and
+- **Logic is plain functions with no UI in them** (`calc.luau`: `evaluate`, `format`), so it is testable from Rust and
   readable on its own. State that must be shared by every window is one `app.state { ... }` table; anything that must
   survive a restart goes to `app.kv` or `app.db`.
 - **`render` is pure.** It reads state and returns a tree. No `app.db:exec`, no `app:openWindow`, no state assignment in it
@@ -65,8 +77,9 @@ ui.Grid { columns = 4, spacing = 2, ui.each(KEYS, keyView) }
 - Icon-only controls need a `label`; an `Image` needs `alt` or `decorative = true`; the accessible name keeps the visible
   text (WCAG 2.5.3).
 - `and`, `or`, `not` are Lua keywords: in a tree use `ui.all`, `ui.any`, `ui.negate`, and `ui.when(cond, a, b)` for a value.
-  A Ref has no value on the host: `tostring(ref)` and `"x" .. ref` raise, use `ui.concat`. Pass a list of nodes with
-  `unpack(items)` or `ui.each`. Write `cond and a or b` only when `a` can't be `false` or `nil`.
+  A Ref has no value on the host: `tostring(ref)` and `"x" .. ref` (or an interpolated string) raise, use `ui.concat`. Pass a
+  list of nodes with `unpack(items)` or `ui.each`. Write `cond and a or b` only when `a` can't be `false` or `nil`
+  (`if cond then a else b` is Luau's expression form for plain values).
 - A Binding prop (`TextField.text`, `List.selection`) takes a Ref (`w.client.x`, a source field), never a plain value; the
   checker flags the plain value.
 - Declare client state in the window (`client = { threadId = { init = "", persist = "app" } }`) for selection and similar UI
@@ -74,7 +87,7 @@ ui.Grid { columns = 4, spacing = 2, ui.each(KEYS, keyView) }
 
 ## Formatting (StyLua)
 
-`stylua.toml`: `syntax = "Lua51"`, 120 columns, 2-space indent, Unix line endings, `quote_style = "AutoPreferDouble"`,
+`stylua.toml`: `syntax = "Luau"`, 120 columns, 2-space indent, Unix line endings, `quote_style = "AutoPreferDouble"`,
 `call_parentheses = "NoSingleTable"` (so `ui.VStack { ... }` stays a table call), no collapsed simple statements. Run
 `bun run format`; don't hand-format against it. Build text with `..`; an
 `if` statement beats a nested `and`/`or` chain.
@@ -87,5 +100,7 @@ Say why, not what: the reason for a minimum window size, a cast, an invariant, a
 ## Negative fixtures
 
 To prove a type rule holds, add a file under a `negative/` folder (see `scripts/fixtures/negative/`) with
-`-- expect-error` on each line that must be flagged; `lint:lua` demands exactly those lines are flagged. (lua-language-server
-checks the types of values and the shape of tables, but not an unknown key in a table literal.)
+`-- expect-error: <text from the message>` at the end of each line that must be flagged (one marker per finding);
+`lint:luau` demands exactly those findings, and `NEGATIVE_MARKERS` in `scripts/lint-luau.ts` pins the count per file: a
+deleted line is an edit of that table. (luau-lsp checks the types of values and the shape of tables, but not an unknown
+key in a table literal.)

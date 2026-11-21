@@ -3,16 +3,16 @@ import { isGateRun, missingTool } from './gate'
 
 describe('a missing lint tool', () => {
   test('skips on a developer machine', () => {
-    expect(missingTool('lint:lua', 'lua-language-server not found', {})).toEqual({
-      line: 'lint:lua SKIPPED: lua-language-server not found',
+    expect(missingTool('lint:luau', 'luau-lsp not found', {})).toEqual({
+      line: 'lint:luau SKIPPED: luau-lsp not found',
       code: 0
     })
   })
 
   test('fails in the gate (VOS_GATE=1)', () => {
-    const { line, code } = missingTool('lint:lua', 'lua-language-server not found', { VOS_GATE: '1' })
+    const { line, code } = missingTool('lint:luau', 'luau-lsp not found', { VOS_GATE: '1' })
     expect(code).toBe(1)
-    expect(line).toContain('lint:lua FAILED: lua-language-server not found')
+    expect(line).toContain('lint:luau FAILED: luau-lsp not found')
   })
 
   test('fails under CI', () => {

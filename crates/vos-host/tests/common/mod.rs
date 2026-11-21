@@ -308,13 +308,13 @@ pub async fn notification_where(ws: &mut Ws, method: &str, ok: impl Fn(&Value) -
     }
 }
 
-/// The bundled Lua 5.1 text of an app entry file, built with the product's own pipeline (`scripts/lua51.ts`: darklua
+/// The bundled Luau text of an app entry file, built with the product's own pipeline (`scripts/luau.ts`: darklua
 /// with `.darklua.json`), so these tests run what `bun run build:apps` ships. Needs bun and darklua.
-pub fn build_lua(entry: &std::path::Path) -> Vec<u8> {
+pub fn build_luau(entry: &std::path::Path) -> Vec<u8> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let out = std::env::temp_dir().join(format!("vos-host-test-{}-{}.lua", std::process::id(), nonce()));
+    let out = std::env::temp_dir().join(format!("vos-host-test-{}-{}.luau", std::process::id(), nonce()));
     let run = std::process::Command::new("bun")
-        .arg("scripts/lua51-build.ts")
+        .arg("scripts/luau-build.ts")
         .arg(entry)
         .arg(&out)
         .current_dir(&root)
@@ -322,7 +322,7 @@ pub fn build_lua(entry: &std::path::Path) -> Vec<u8> {
         .expect("bun is needed to build the apps these tests run (https://bun.sh)");
     assert!(
         run.status.success(),
-        "building {} failed (is darklua 0.18.0 installed? see scripts/lua51.ts):\n{}{}",
+        "building {} failed (is darklua 0.18.0 installed? see scripts/luau.ts):\n{}{}",
         entry.display(),
         String::from_utf8_lossy(&run.stdout),
         String::from_utf8_lossy(&run.stderr)
@@ -337,17 +337,17 @@ fn nonce() -> usize {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
-/// The built Lua 5.1 file of the shipped app `apps/<id>` (or, when the repo has none, the codegen example, or the
+/// The built Luau file of the shipped app `apps/<id>` (or, when the repo has none, the codegen example, or the
 /// host's own fixture app in `tests/fixtures/<id>`).
 pub fn built_app(app: &str) -> Vec<u8> {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let found = [
         manifest.join("../../apps").join(app).join("app.json"),
-        manifest.join("../vos-codegen/tests/fixtures").join(app).join("app.lua"),
-        manifest.join("tests/fixtures").join(app).join("app.lua"),
+        manifest.join("../vos-codegen/tests/fixtures").join(app).join("app.luau"),
+        manifest.join("tests/fixtures").join(app).join("app.luau"),
     ]
     .into_iter()
     .find(|f| f.exists())
     .unwrap_or_else(|| panic!("no app or fixture `{app}`"));
-    build_lua(&found.with_file_name("app.lua"))
+    build_luau(&found.with_file_name("app.luau"))
 }

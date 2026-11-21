@@ -1,4 +1,4 @@
-//! One sandboxed Lua VM (Luau, running the app's Lua 5.1 source) per app.
+//! One sandboxed Lua VM (Luau, running the app's Luau source) per app.
 //!
 //! The VM is a bare `neoc-vm` engine with the app's own environment table (see
 //! `neoc_vm::lua::script_env`): the prelude's polyfills, the `app` capability table and a `require` that
@@ -43,8 +43,8 @@ use vos_application::{
 };
 use vos_domain::{time, tool_schema, AppDecl, AppId, Notification, ToolSpec};
 
-/// The Lua 5.1 polyfills of the Lua 5.3 standard-library members 5.1 lacks (`lua/prelude.lua`, copied by `bun run codegen`): run
-/// once in each app's environment before the app.
+/// The prelude (`lua/prelude.lua`, copied by `bun run codegen`): `typeof` and `utf8`, which Luau has and the app's
+/// environment does not copy from the engine. Run once in each app's environment before the app.
 const PRELUDE: &str = include_str!("../../../types/generated/prelude.lua");
 
 #[derive(Debug, thiserror::Error)]
@@ -103,7 +103,7 @@ impl From<VmError> for BootError {
 /// How a VM is built.
 #[derive(Clone)]
 pub struct VmConfig {
-    /// Lua 5.1 source of host modules `require("vos:<name>")` can load besides `vos:app`
+    /// Luau source of host modules `require("vos:<name>")` can load besides `vos:app`
     /// (the generated `vos:ui` constructors), by module name.
     pub host_modules: Arc<HashMap<String, Vec<u8>>>,
     /// The agent contacts `app.agents:list()` shows (empty unless the host gives a roster).

@@ -1,3 +1,4 @@
+--!strict
 -- Requires the host's neoc modules (std:, lib:, vnd:) next to a relative module and `vos:app`; the test
 -- builds it through the product's pipeline (darklua), which must leave all of those requires in the bundle.
 local app = require("vos:app")

@@ -58,7 +58,7 @@ pub struct Manifest {
     pub id: AppId,
     pub name: String,
     pub version: String,
-    /// The entry file, a path in the app ref: the app built into one Lua 5.1 file (`app.lua`).
+    /// The entry file, a path in the app ref: the app built into one Luau file (`app.luau`).
     pub main: String,
     // No `permissions`: apps are not sandboxed from the host's capabilities. A `permissions` key in an older
     // manifest or app ref is ignored when it is parsed (this struct does not deny unknown fields).
@@ -78,6 +78,33 @@ pub struct Manifest {
     pub requires: Option<Requires>,
 }
 
+/// The `std:`, `lib:` and `vnd:` modules an app is not offered: `lib:test` (a test harness that prints to stdout),
+/// `lib:compile` (builds standalone executables) and `std:workers` (a process-wide shutdown signal). Which modules a
+/// script may have is vos's policy, not the VM library's (it offers all of them). The one list: the Lua adapter
+/// refuses these at run time, and the Luau declarations (`types/generated/vos.d.luau`) leave them out of `require`
+/// and type each as unusable, so an app that names one is a type error before it is a run-time one.
+pub const NOT_FOR_APPS: &[&str] = &["lib:test", "lib:compile", "std:workers"];
+
+/// The globals Luau (and luau-lsp's idea of it) has that an app's environment does not: the escape hatches and
+/// the process-wide ones (`print` writes to the host's stdout). The Luau declarations type each as unusable. The
+/// Lua adapter's tests hold every one of them to be absent from the app environment.
+pub const GLOBALS_NOT_FOR_APPS: &[&str] = &[
+    "buffer",
+    "collectgarbage",
+    "debug",
+    "dofile",
+    "gcinfo",
+    "getfenv",
+    "load",
+    "loadfile",
+    "loadstring",
+    "newproxy",
+    "os",
+    "print",
+    "setfenv",
+    "vector",
+];
+
 /// The host API version this build serves (`major.minor`). Packages state the range they need in
 /// [`Requires::host`]; a newer major is a breaking change, so it never satisfies an older requirement.
 pub const HOST_API: (u32, u32) = (1, 0);
@@ -94,9 +121,11 @@ pub struct Requires {
 impl Manifest {
     /// Self-consistency of the package manifest (before anything is fetched).
     pub fn validate(&self) -> Result<(), DomainError> {
-        if std::path::Path::new(&self.main).extension().is_none_or(|e| e != "lua") {
+        // `.luau` is what `bun run build:apps` writes; `.lua` stays accepted for an app ref published before apps
+        // were Luau (the VM runs both: Luau reads plain Lua source)
+        if std::path::Path::new(&self.main).extension().is_none_or(|e| e != "luau" && e != "lua") {
             return Err(DomainError::InvalidManifest(format!(
-                "main must be the built Lua 5.1 file (ending in `.lua`), not `{}`; build the app with `bun run build:apps`",
+                "main must be the built Luau file (ending in `.luau`, or `.lua`), not `{}`; build the app with `bun run build:apps`",
                 self.main
             )));
         }
@@ -129,7 +158,7 @@ pub fn source_label(url: &str) -> String {
 }
 
 /// `file` resolved against the URL of the document that names it: absolute URLs stay as they are, a
-/// relative one is looked up next to the document (`dir/app-ref.json` + `app.lua` = `dir/app.lua`).
+/// relative one is looked up next to the document (`dir/app-ref.json` + `app.luau` = `dir/app.luau`).
 ///
 /// For the entries of a registry, which may point anywhere. A package's files go through
 /// [`resolve_package_url`] instead.
@@ -274,6 +303,30 @@ mod tests {
     }
 
     #[test]
+    fn the_entry_is_a_luau_or_a_lua_file() {
+        let manifest = |main: &str| Manifest {
+            id: AppId::parse("notes").unwrap(),
+            name: "n".into(),
+            version: "1".into(),
+            main: main.into(),
+            migrations: vec![],
+            icon: None,
+            tint: None,
+            description: None,
+            requires: None,
+        };
+        assert!(manifest("app.luau").validate().is_ok());
+        assert!(
+            manifest("app.lua").validate().is_ok(),
+            "an app ref published before apps were Luau still loads"
+        );
+        for bad in ["app", "app.js", "app.luau.js", "app.txt"] {
+            let err = manifest(bad).validate().unwrap_err().to_string();
+            assert!(err.contains("main must be the built Luau file"), "{bad}: {err}");
+        }
+    }
+
+    #[test]
     fn host_requirements_are_checked_against_the_host_api() {
         let mut m = Manifest {
             id: AppId::parse("notes").unwrap(),
@@ -398,25 +451,6 @@ mod tests {
         };
         assert_eq!(m.validate(), Err(DomainError::MigrationOrder));
         m.migrations[0].version = 1;
-        assert!(m.validate().is_ok());
-    }
-
-    #[test]
-    fn the_entry_must_be_the_built_lua_file() {
-        let mut m = Manifest {
-            id: AppId::parse("notes").unwrap(),
-            name: "n".into(),
-            version: "1".into(),
-            main: "app.luau".into(),
-            migrations: vec![],
-            icon: None,
-            tint: None,
-            description: None,
-            requires: None,
-        };
-        let err = m.validate().unwrap_err().to_string();
-        assert!(err.contains("app.luau") && err.contains("bun run build:apps"), "{err}");
-        m.main = "app.lua".into();
         assert!(m.validate().is_ok());
     }
 }

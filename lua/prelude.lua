@@ -1,22 +1,19 @@
--- The Lua 5.1 prelude. Apps are plain Lua 5.1 source, which lacks a few standard-library members that Lua 5.3 has and
--- that apps want, so they are provided here: `typeof` (the same as `type`), `table.clone`, `table.move`,
--- `table.pack`, `table.unpack` and the `utf8` library.
+-- The prelude. Apps are Luau, and the app's environment (neoc-vm's `script_env`) copies only a few things from the
+-- engine: the base functions, `string`, `table`, `math`, `coroutine` and `bit32`. Two members of Luau's own standard
+-- library are not among them, and apps (and the Luau declarations luau-lsp checks them against) expect both, so
+-- they are provided here: `typeof` and the `utf8` library, with Lua 5.3's semantics.
 --
--- The engine is Luau (neoc-vm), whose base library already has most of these: `table.pack`, `table.clone`,
--- `table.move` and `unpack` are there in the app's environment (the environment copies Luau's `table`), so the
--- definitions below skip them (nothing is overwritten). Two are still defined: `typeof`, which Luau has but the
--- environment does not copy (it gets `type`, as before), and `utf8`, which the environment does not copy either (the
--- polyfill below is what an app sees). `bit32` is Luau's and is in the environment, but an app stays Lua 5.1: it does
--- not use it (`scripts/lua51.test.ts` fails when one appears).
+-- What it used to polyfill for Lua 5.1 source and no longer does: `table.pack`, `table.clone`, `table.move` and
+-- `table.unpack`. They are Luau's own and the environment's copy of `table` has them (these definitions were
+-- already skipped, `define` never overwrites), so an app gets the real ones.
 --
 -- The host runs this file once per app, before any app chunk or `vos:ui`, and passes the table those chunks
 -- will run in as the chunk's `...` argument (`types/generated/prelude.lua`, copied by `bun run codegen`). It
 -- installs into that table rather than reaching for `getfenv()`, which an app's sandbox does not have. Nothing
--- is overwritten: a member the interpreter already has is left alone.
+-- is overwritten: a member the environment already has is left alone.
 --
 -- The `utf8` functions follow Lua 5.3's strict semantics: they reject overlong forms, surrogates and code points
--- above U+10FFFF. Apps must not use members that are not listed here and that Lua 5.1 lacks (`table.find`,
--- `math.clamp`, `bit32`, `buffer`, ...): `scripts/lua51.test.ts` fails when one appears.
+-- above U+10FFFF (`scripts/luau.test.ts` compares them with a native Lua 5.3+ when one is installed).
 
 local env = ...
 
@@ -26,7 +23,7 @@ local function define(library, name, value)
   end
 end
 
--- `typeof` exists for code written against Luau. Here it is `type`: the library modules return userdata (a JSON
+-- `typeof` is Luau's, for code written against Luau. Here it is `type`: the library modules return userdata (a JSON
 -- `Object`, a `Duration`, a `TcpListener`, ...), and every one of them is `"userdata"`, because their metatables
 -- are locked and name no type. Tell them apart by what they do, not by `typeof`.
 define(env, "typeof", type)
@@ -43,61 +40,11 @@ local function checkInteger(position, name, value, default)
   if number == nil then
     argError(position, name, "number expected, got " .. type(value))
   end
-  ---@cast number number
   if math.floor(number) ~= number then
     argError(position, name, "number has no integer representation")
   end
   return number
 end
-
--- ── table ────────────────────────────────────────────────────────────────
-
-local tableLibrary = env.table
-
-define(tableLibrary, "unpack", env.unpack)
-
-define(tableLibrary, "pack", function(...)
-  return { n = select("#", ...), ... }
-end)
-
--- A shallow copy that keeps the metatable.
-define(tableLibrary, "clone", function(source)
-  if type(source) ~= "table" then
-    argError(1, "clone", "table expected, got " .. type(source))
-  end
-  local copy = {}
-  for key, value in pairs(source) do
-    copy[key] = value
-  end
-  local metatable = getmetatable(source)
-  if type(metatable) == "table" then
-    setmetatable(copy, metatable)
-  end
-  return copy
-end)
-
--- Copies `source[first..last]` to `target[to..]` (Lua 5.3 `table.move`; the ranges may overlap).
-define(tableLibrary, "move", function(source, first, last, to, target)
-  local from = checkInteger(2, "move", first)
-  local upTo = checkInteger(3, "move", last)
-  local destination = checkInteger(4, "move", to)
-  local into = target
-  if into == nil then
-    into = source
-  end
-  if upTo >= from then
-    if destination > upTo or destination <= from or into ~= source then
-      for offset = 0, upTo - from do
-        into[destination + offset] = source[from + offset]
-      end
-    else
-      for offset = upTo - from, 0, -1 do
-        into[destination + offset] = source[from + offset]
-      end
-    end
-  end
-  return into
-end)
 
 -- ── utf8 ─────────────────────────────────────────────────────────────────
 

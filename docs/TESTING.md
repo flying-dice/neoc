@@ -8,7 +8,7 @@ tested where it lives, in Rust, with fakes for the ports.
 | -------------------- | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | Rust                 | domain, use cases (against port fakes), adapters, the host end to end                                            | `crates/*/src`, `crates/*/tests`                                             | `cargo nextest run --workspace --exclude neoc --exclude neoc-vm`                                             |
 | Client and kit unit  | the renderer core (peer, expressions, ops, drafts, sources, offline), the shell's channel, kit logic             | `*.test.ts` next to the code                                                 | `bun run test` (runs `bun test` in `client/` and `packages/ui`, and `bun test types`) |
-| Lua check and format | every app and fixture checks clean with lua-language-server against the generated LuaCATS API; StyLua formatting | `scripts/lint-lua.ts`, `scripts/stylua.ts`                                   | `bun run lint:lua`, `bun run lint:stylua`                                             |
+| Luau check and format | every app and fixture checks clean in strict mode with luau-lsp against the generated Luau declarations; StyLua formatting | `scripts/lint-luau.ts`, `scripts/stylua.ts`                                  | `bun run lint:luau`, `bun run lint:stylua`                                            |
 | Stories              | every screen and state of the shell, the renderer and the kit, in isolation                                      | `client/` and `packages/ui` Storybooks (`*.stories.svelte`)                  | `bun run storybook` in the package                                                    |
 | Story checks         | every story: renders, axe WCAG 2.1 AA, visual snapshot light and dark, no overflow                               | `e2e/stories.spec.ts` (generic: new stories are picked up)                   | `bun run test:e2e --project=stories`                                                  |
 | Desktop              | the real shell on the real host: every app from the Dock, resize, every layout, axe, snapshots                   | `e2e/desktop.spec.ts` (generic over built-in pages and `apps/*/app.json`)    | `bun run test:e2e --project=desktop`                                                  |
@@ -28,10 +28,10 @@ snapshots deliberately with `bun run test:e2e:update`, then open the changed PNG
 - **Adapters**: integration tests in `crates/<adapter>/tests/`, through the real library (per-app VM isolation and the
   module set, SQLite migrations and live queries, MCP with an `rmcp` client, ACP against the scripted agent, `/rpc` with a
   WebSocket client, fetch against a local server). The shipped apps are tested here too: `crates/vos-lua/tests/calculator_app.rs`
-  builds `apps/calculator` with darklua and runs the bundle under the real runtime. The Lua apps and fixtures the Rust
-  tests run are built with the product's own pipeline (`scripts/lua51-build.ts`, which `crates/vos-lua/tests/common`
+  builds `apps/calculator` with darklua and runs the bundle under the real runtime. The Luau apps and fixtures the Rust
+  tests run are built with the product's own pipeline (`scripts/luau-build.ts`, which `crates/vos-lua/tests/common`
   and `crates/vos-host/tests/common` call, so `bun` and `darklua` must be installed); inline snippets in those tests
-  are plain Lua 5.1. `crates/vos-lua/tests/lua51.rs` holds what is specific to running on this VM (Luau, running Lua 5.1 source): the
+  are plain Lua syntax (Luau reads it). `crates/vos-lua/tests/luau.rs` holds what is specific to running on this VM (Luau): the
   isolation of the per-app VMs, the read-only libraries and host calls under `pcall` and in coroutines; `modules.rs` holds the modules and
   the lifecycle: every `std:`/`lib:`/`vnd:` module an app is offered can be required (not `lib:test`, `lib:compile`, `std:workers`), a request handler and a task take their turn in
   the VM's one-call-at-a-time queue, an unloaded or replaced app's listener port is free again and its tasks and
@@ -64,41 +64,64 @@ under `bun test` too, through the preload in `client/bunfig.toml` (`client/test/
 `bun run codegen:check` fails when `types/generated/*` or
 `docs/reference/components.md` are stale against the Rust schema; `bun run codegen` regenerates them.
 
-## Lua apps
+## Luau apps
 
-- **Check:** `bun run lint:lua` runs `lua-language-server --check` (pinned: 3.19.2, in `scripts/lint-lua.ts`) over
-  every `.lua` file `.luarc.json` does not ignore (apps, `lua/prelude.lua`, the codegen example app), against the
-  generated LuaCATS definitions in `types/generated/luals/` (`vos.lua` for the global `app`, `vos/ui.lua` and
-  `vos/app.lua` for the two `require`s: a colon is not portable in a file name (Windows), so `.luarc.json` sets
-  `completion.requireSeparator` to `":"` and LuaLS reads `require("vos:ui")` as the path `vos/ui`; without it the `require` finds nothing and returns `any` on LuaLS 3.19.2, and the negative fixtures stop being flagged; `.luarc.json` is vos's own). The `std:`/`lib:`/`vnd:` modules are not
-  typed here (neoc moved its module types to Luau declarations for luau-lsp, `types/neoc.d.luau`, in NEOC-139; typed
-  apps come with NEOC-140). Files in `negative/` folders (`scripts/fixtures/negative/`) mark lines with
-  `-- expect-error`; the check demands exactly those lines are flagged, so a broken definitions file cannot pass
-  silently (`wrong_api_use.lua` for the `app` API, `wrong_ui_usage.lua` for `vos:ui`).
-- **Format:** `bun run lint:stylua` (`stylua.toml`, syntax `Lua51`; `.styluaignore`); `bun run format` rewrites.
-  Both lints print a `SKIPPED` message when `lua-language-server` (PATH or `~/.local/bin`) or `stylua` (PATH or
+- **Check:** `bun run lint:luau` runs `luau-lsp analyze --platform=standard` (pinned: 1.70.1, in `scripts/lint-luau.ts`)
+  over every `.luau` file of an app or an app fixture (`apps/`, `crates/*/tests/fixtures/`, `scripts/fixtures/`), against
+  the generated declarations in `types/generated/vos.d.luau`: one definitions file with the `app` API, `vos:ui`, neoc's
+  declarations of every `std:`/`lib:`/`vnd:` module an app is offered (taken from `types/neoc.d.luau`; `lib:test`,
+  `lib:compile` and `std:workers` are `vos_domain::NOT_FOR_APPS` and are typed unusable) and the one `declare require`
+  (two do not merge, so the typed overloads of neoc's modules and vos's are written together; a colon is not portable in
+  a file name, so a module is an overload, not a file). Every checked file starts with `--!strict` and must come out with
+  no type error and no lint warning. `scripts/fixtures/usage.luau` is the positive fixture: it `require`s every module
+  an app is offered (the check fails when it misses one) and uses the API and the constructors correctly. Files in
+  `negative/` folders (`scripts/fixtures/negative/`: `wrong_api_use.luau`, `wrong_ui_usage.luau`, `wrong_requires.luau`, `wrong_module_use.luau`)
+  end a line with `-- expect-error: <text>`: luau-lsp must give exactly one finding per marker on that line, each
+  matching a different finding's message (up to its `caused by:` lines), and none on an unmarked line, so a broken
+  declarations file cannot pass silently (`require("vos:app")` would be `any` and nothing would be flagged).
+  `NEGATIVE_MARKERS` in the script pins how many markers each file holds: deleting a wrong line with its marker is an
+  edit of that table. luau-lsp runs **twice** over the same files: against the declarations, and against the declarations
+  without their `declare require`. The first pass types `vos:*` and the library modules; in it an app's own module
+  (`require("./calc")`) is `any`, because luau-lsp resolves a relative `require` only while `require` is its built-in. The
+  second pass has the built-in, so `./calc` has its real type and a wrong call into it is an error (the editor still shows
+  `any`: the gate is what catches these); there the "Unknown require" of `vos:*` and of an offered module is dropped and
+  every other finding counts, so a misspelt or refused module name is an error too (`wrong_requires.luau` marks the
+  require lines, `lib/shout.luau` with `module_use.luau` and `negative/wrong_module_use.luau` pin the module case). A
+  negative fixture's findings are those of both passes. The check also reads every literal `require` of an app source (a
+  relative path, `vos:app`, `vos:ui` or an offered module, nothing else) for a plain message. `bun test scripts` runs the matcher (`scripts/lint-luau.test.ts`).
+  The editor path is tested too: `crates/vos-codegen/tests/luau_lsp.rs` starts `luau-lsp lsp --stdio` as the extension
+  does and checks that `require("vos:app")` is typed, a wrong member and a refused module are flagged and the docs show
+  on hover. `crates/vos-lua/tests/modules.rs` holds the declared `require` to the modules the host offers (every module
+  of the VM library less `NOT_FOR_APPS`, plus `vos:app` and `vos:ui`) and the declared-unusable globals to the ones the
+  app environment lacks; `crates/vos-codegen/tests/contract.rs` holds the declarations to the Rust schema.
+- **Format:** `bun run lint:stylua` (`stylua.toml`, syntax `Luau`; `.styluaignore`); `bun run format` rewrites.
+  Both lints print a `SKIPPED` message when `luau-lsp` (PATH or `~/.local/bin`) or `stylua` (PATH or
   `~/.cargo/bin`) is not installed, and **fail** instead when `VOS_GATE=1` or `CI` is set (`scripts/gate.ts`; the
   `vos-pre-commit` skill's gate sets it): install them, a skipped lint is not a pass.
-- **Lua 5.1 build:** apps run as plain Lua 5.1 (`scripts/lua51.ts`, `.darklua.json`; see `apps/README.md`).
+- **Luau build:** apps run as Luau, less their types (`scripts/luau.ts`, `.darklua.json`; see `apps/README.md`).
   `darklua` 0.18.0 is required and **never skipped** (`cargo install darklua --version 0.18.0 --locked`):
   `bun run build:apps` fails with that message without it. `bun test scripts`
-  (`scripts/lua51.test.ts`) checks the sources stay plain Lua 5.1 (no Luau syntax, no library members Lua 5.1 and `lua/prelude.lua` lack), that each
-  app bundles into one file whose only requires are runtime ones (`vos:*` and the `std:`/`lib:`/`vnd:` modules, with a fixture that requires them), and (with a native Lua 5.3+ on PATH) that the prelude's
-  `utf8`/`table.move` polyfills agree with the native ones. The prelude, `ui.lua` and the bundles are loaded and run
-  under Lua 5.1 by the Rust tests (neoc-vm's Luau), so no system Lua 5.1 is needed. `bun run codegen:check`
-  also fails when `types/generated/ui.lua`, `luals/*` or `prelude.lua` is stale.
+  (`scripts/luau.test.ts`) checks that `lua/prelude.lua` and `ui.lua` (embedded, and also run with a native Lua) stay
+  plain Lua source, that every app's entry is a `--!strict` `.luau` file, that each app bundles into one file whose only
+  requires are runtime ones (`vos:*` and the `std:`/`lib:`/`vnd:` modules, with a fixture that requires them) with its
+  types stripped and its Luau syntax (`continue`, `+=`, interpolation) and line numbers kept, and (with a native Lua 5.3+
+  on PATH) that the prelude's `utf8` agrees with the native one. The prelude, `ui.lua` and the bundles are loaded and run
+  by the Rust tests (neoc-vm's Luau), so no system Lua is needed; `crates/vos-host/tests/typed_luau.rs` installs a typed
+  Luau app (`crates/vos-host/tests/fixtures/typed`) on the real host and calls its tool and renders its window. `bun run
+  codegen:check` also fails when `types/generated/ui.lua`, `vos.d.luau` or `prelude.lua` is stale.
 - **Logic and tools:** tested from Rust against the shipped package (see "Rust"); views and journeys against the real
   host (below).
 
 ## Tools the gate uses
 
 Required: Rust (the pinned toolchain), `cargo-nextest`, `cargo-deny`, Bun, `darklua` 0.18.0 (never skipped), Chromium
-for Playwright (`bun run test:e2e`, on a Mac for the snapshots). Needed for the Lua lints, which print `SKIPPED` without
-them (a skipped lint is not a pass; with `VOS_GATE=1` or `CI` they fail): `lua-language-server` and `stylua`.
-**Optional interpreter**, used by `scripts/lua51.test.ts` only: a native **Lua 5.3+** compares the polyfills with the
-native `utf8`/`table.move`. Without it that test is skipped, not failed: the skip is written to stderr
+for Playwright (`bun run test:e2e`, on a Mac for the snapshots), and `luau-lsp` 1.70.1 (the luau-lsp release binary on `PATH`; the editor test in
+`crates/vos-codegen` fails without it under `VOS_GATE=1`). Needed for the Luau lints, which print `SKIPPED` without
+them (a skipped lint is not a pass; with `VOS_GATE=1` or `CI` they fail): `luau-lsp` and `stylua`.
+**Optional interpreter**, used by `scripts/luau.test.ts` and the codegen contract test: a native **Lua 5.3+** compares the
+prelude's `utf8` with the native one and runs the example apps' bundles against `ui.lua`. Without it that test is skipped, not failed: the skip is written to stderr
 (`!! polyfill comparison SKIPPED`) and in the test name (`[SKIPPED: ...]`). The bundles themselves run on mlua's
-Luau in the Rust tests, so no system Lua 5.1 is involved.
+Luau in the Rust tests, so no system Lua is involved.
 
 ## Storybook and the fake hosts
 

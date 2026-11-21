@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
-//! Luau notes (the VM is `neoc-vm`, Luau, here; the apps are Lua 5.1 syntax): the tests that were PUC Lua 5.1 facts
-//! hold on Luau, whose yield boundaries are those of PUC 5.1, with these differences, each said where it matters:
+//! The engine facts about the VM (`neoc-vm`, Luau) that apps run on: the sandbox of an app's environment, text-only
+//! loading, the standard libraries, yields. The tests were once PUC Lua 5.1 facts (the apps were Lua 5.1 source);
+//! they hold on Luau, whose yield boundaries are those of PUC 5.1, with these differences, each said where it matters:
 //! a Luau bytecode chunk starts with a version byte (`string.dump` does not exist), `bit` is `bit32`, the pattern
 //! matcher bounds its own recursion (`pattern too complex`: no guard of ours, no abort), a wait suspends inside
 //! `pcall`, `xpcall`, `__call` and the iterator function of a `for ... in` (PUC 5.1 refused it in an iterator) and is

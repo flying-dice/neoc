@@ -1,18 +1,19 @@
 #!/usr/bin/env bun
 /**
- * Build the Lua app packages under apps/ (every folder with an `app.json`) into app refs.
+ * Build the Luau app packages under apps/ (every folder with an `app.json`) into app refs.
  *
  *   bun run build:apps [ids…] [--out <dir>] [--root <dir>]...
  *
  * For each app this writes, under <out>/<id>/<version>/ (default out: dist/apps):
  *   app-ref.json   { manifest, files: [{ path, url, sha256 }] }, file URLs relative to the app ref
- *   app.lua        the app as ONE Lua 5.1 file: the entry (app.json `main`, app.lua) and the modules it
- *                  requires, bundled by darklua (.darklua.json); `vos:app` and `vos:ui` stay runtime
- *                  `require` calls, the host provides them (with types/generated/prelude.lua, a few standard-library
- *                  polyfills from lua/prelude.lua)
+ *   app.luau       the app as ONE Luau file: the entry (app.json `main`, app.luau) and the modules it
+ *                  requires, bundled by darklua (.darklua.json), types and comments stripped; `vos:app` and `vos:ui`
+ *                  stay runtime `require` calls, the host provides them (with types/generated/prelude.lua: `typeof`
+ *                  and `utf8`, from lua/prelude.lua)
  *   <migrations>   the SQL migrations app.json lists, copied as they are
- * The ref's `manifest.main` names the bundled `.lua` file (the entry the host loads); the separate source modules are not shipped.
- * darklua is required (pinned, see scripts/lua51.ts): the build fails with an install message without it.
+ * The ref's `manifest.main` names the bundled `.luau` file (the entry the host loads; the host takes any name, the
+ * bundle keeps its source's name and is Luau, not Lua 5.1); the separate source modules are not shipped.
+ * darklua is required (pinned, see scripts/luau.ts): the build fails with an install message without it.
  * `--root <dir>` also builds the packages under <dir>/* (the e2e harness builds a test-only app that way).
  * and one <out>/registry.json listing every app's app ref: { "apps": ["calculator/0.1.0/app-ref.json", ...] }.
  *
@@ -21,14 +22,14 @@
  *
  * `app.json` is the package manifest (id, name, version, main, icon, tint, description,
  * requires, migrations; a `permissions` key from before apps lost their permissions is ignored); the build checks it
- * against the `app.manifest { ... }` the app declares in Lua, so
+ * against the `app.manifest { ... }` the app declares in Luau, so
  * the two cannot disagree about the id, icon or tint.
  */
 import { createHash } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { z } from 'zod'
-import { requireDarklua, root, toLua51 } from './lua51'
+import { requireDarklua, root, toLuau } from './luau'
 
 const args = process.argv.slice(2)
 const outFlag = args.indexOf('--out')
@@ -43,7 +44,7 @@ const PackageManifest = z.object({
   name: z.string().min(1).max(60),
   version: z.string().regex(/^\d+\.\d+\.\d+$/),
   description: z.string().optional(),
-  main: z.string().default('app.lua'),
+  main: z.string().default('app.luau'),
   icon: z.string().optional(),
   tint: z.string().optional(),
   requires: z.object({ host: z.string().optional() }).optional(),
@@ -69,7 +70,7 @@ if (appDirs.length === 0) {
 const darklua = requireDarklua()
 const started = performance.now()
 const registry: string[] = []
-// TODO: clean-code - 0.4 - SRP: this loop parses the manifest, checks it against the Lua source, bundles, copies and hashes migrations, writes the app ref and registers it; extract `checkManifestAgainstLua`, `buildApp` and `writeAppRef`.
+// TODO: clean-code - 0.4 - SRP: this loop parses the manifest, checks it against the Luau source, bundles, copies and hashes migrations, writes the app ref and registers it; extract `checkManifestAgainstLua`, `buildApp` and `writeAppRef`.
 for (const dir of appDirs) {
   const manifest = PackageManifest.parse(JSON.parse(readFileSync(join(dir, 'app.json'), 'utf8')))
   const source = readFileSync(join(dir, manifest.main), 'utf8')
@@ -87,7 +88,7 @@ for (const dir of appDirs) {
   const entry = manifest.main
   let bundle: string
   try {
-    bundle = toLua51(darklua, join(dir, manifest.main))
+    bundle = toLuau(darklua, join(dir, manifest.main))
   } catch (error) {
     console.error(`✗ ${manifest.id}: darklua could not build ${manifest.main}:\n${(error as Error).message}`)
     process.exit(1)

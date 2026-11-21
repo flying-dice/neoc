@@ -1,6 +1,6 @@
 # Agents: key user journeys
 
-The Lua Agents app (`app.lua`) on the host: chats with the agents on its roster. The app only lists agents and chats;
+The Luau Agents app (`app.luau`) on the host: chats with the agents on its roster. The app only lists agents and chats;
 the conversation itself streams over AG-UI (`ChatTranscript`) from the host, which talks to each agent over ACP.
 
 Each journey is a goal, not a script: research participants work out *how* themselves. The automated twin of each is the

@@ -114,7 +114,7 @@ async fn calculate_writes_history_so_it_is_not_read_only() {
 #[tokio::test]
 async fn only_the_tools_that_change_nothing_are_marked_read_only() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/calculator");
-    let source = std::fs::read_to_string(dir.join("app.lua")).unwrap();
+    let source = std::fs::read_to_string(dir.join("app.luau")).unwrap();
     // `calculate` and `show_on_calculator` write app.kv / app.state; `history` only reads
     let marked: Vec<&str> = source
         .split("app.tool {")
@@ -625,13 +625,15 @@ async fn show_on_calculator_empties_the_announcer_of_every_open_window() {
     assert_eq!(views, ["v1", "v2"]);
 }
 
-/// A bug in the app (not a failure `calc.lua` raises on purpose) must not show a source position to the person.
+/// A bug in the app (not a failure `calc.luau` raises on purpose) must not show a source position to the person.
 #[tokio::test]
 async fn an_unexpected_error_shows_a_generic_sentence_not_a_source_position() {
     let mut package = built_app("calculator");
-    let source = String::from_utf8(package.files["app.lua"].clone()).unwrap();
+    let source = String::from_utf8(package.files["app.luau"].clone()).unwrap();
     assert!(source.contains("return a / b"), "the bundle changed: update the anchor");
-    package.files.insert("app.lua".into(), source.replacen("return a / b", "return a / nil", 1).into_bytes());
+    package
+        .files
+        .insert("app.luau".into(), source.replacen("return a / b", "return a / nil", 1).into_bytes());
     let mut pad = Keypad::open_on(calculator_from(package).await).await;
     pad.press("8 div 2 eq").await;
     assert_eq!((pad.display(), pad.caption()), ("Error".into(), "Something went wrong".into()));

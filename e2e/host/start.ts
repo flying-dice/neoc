@@ -34,7 +34,7 @@ run('cargo', ['build', '-q', '-p', 'vos-acp', '--bin', 'fake_agent']) // the scr
 // Notes: the codegen fixture, packaged for the registry like any app
 const extra = join(DIR, 'extra-apps/notes')
 mkdirSync(extra, { recursive: true })
-cpSync(join(ROOT, 'crates/vos-codegen/tests/fixtures/notes/app.lua'), join(extra, 'app.lua'))
+cpSync(join(ROOT, 'crates/vos-codegen/tests/fixtures/notes/app.luau'), join(extra, 'app.luau'))
 writeFileSync(
   join(extra, 'app.json'),
   JSON.stringify({
@@ -51,7 +51,7 @@ run('bun', ['scripts/build-apps.ts', '--out', join(DIR, 'registry'), '--root', j
 // Ticker: built the same way, into a folder of its own that no registry lists (Discover must not offer it)
 const hidden = join(DIR, 'hidden-apps/ticker')
 mkdirSync(hidden, { recursive: true })
-cpSync(join(ROOT, 'crates/vos-host/tests/fixtures/ticker/app.lua'), join(hidden, 'app.lua'))
+cpSync(join(ROOT, 'crates/vos-host/tests/fixtures/ticker/app.luau'), join(hidden, 'app.luau'))
 writeFileSync(
   join(hidden, 'app.json'),
   JSON.stringify({

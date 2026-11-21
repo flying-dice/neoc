@@ -3,7 +3,7 @@
 Status: the design the platform is built on, and still its reference for the view protocol, bindings, state and the
 Lua authoring API. It is implemented: the host in `crates/` (`vos-domain` holds the schema and the protocol,
 `vos-lua` the app API), the renderer in `client/src/view` and the kit in `packages/ui`. Where the
-code and this text differ, the code wins: the generated `types/generated/luals/` (LuaCATS) and
+code and this text differ, the code wins: the generated `types/generated/vos.d.luau` (Luau declarations) and
 `docs/reference/components.md` are the exact catalogue. Sections 6 to 8 record the original type-pipeline proposal,
 the prototype and the build plan; each opens with what was actually built. Sources of truth beside it:
 `docs/architecture/ARCHITECTURE.md`, `docs/TESTING.md`, `docs/design/DESIGN_LANGUAGE.md`, `apps/README.md`.
@@ -820,7 +820,7 @@ Three options were weighed.
 |---|---|---|
 | SwiftUI-style chained modifiers | `ui.Text("Hi"):font("title"):foreground("secondary")` | Reads well, but in Lua every modifier returns the generic node type, so per-component props cannot be checked or autocompleted; errors point at the chain; and it hides the data shape. Rejected. |
 | Plain tables + reconciler | `{ type = "Text", props = { text = "Hi" } }` | Maximally simple and exactly the wire form, but noisy, no autocomplete, typos become runtime errors. Kept **as the escape hatch** (generated UI, JSON from a database). |
-| **Table-call constructors (chosen)** | `ui.Text { "Hi", style = "title" }` | Lua-native (`f{...}` call sugar; Roblox's Roact and Fusion use the same idiom), JSON-shaped, checkable against the generated LuaCATS definitions with lua-language-server, children are just positional entries, slots are just named keys, diffs and snapshots are readable. |
+| **Table-call constructors (chosen)** | `ui.Text { "Hi", style = "title" }` | Lua-native (`f{...}` call sugar; Roblox's Roact and Fusion use the same idiom), JSON-shaped, checkable against the generated Luau declarations with luau-lsp, children are just positional entries, slots are just named keys, diffs and snapshots are readable. |
 
 So: **both layers exist**. Constructors are thin: they validate, auto-key, capture the caller's `file:line` (dev only, for
 error messages) and return the **plain node table** of 2.1. `render` may return raw tables too; they pass through the same
@@ -886,10 +886,10 @@ per frame; a CPU time slice per call (counted by the VM's count hook); interacti
 icon-only controls need a `label`; every `Image` needs `alt` or `decorative = true`; only whitelisted props exist.
 Errors carry the Lua `file:line` of the constructor call (dev builds).
 
-**Typing.** The component schema (section 6) generates LuaCATS definitions (`types/generated/luals/vos/ui.lua`); a wrong
-enum value, a `Binding` prop given a plain value, a missing required prop or a wrong slot type is a lua-language-server
-diagnostic (`bun run lint:lua`, wired into `bun run lint`), not a runtime surprise. An unknown prop name is still caught only
-at run time (LuaLS does not check a table literal for extra fields).
+**Typing.** The component schema (section 6) generates Luau declarations (`types/generated/vos.d.luau`); a wrong
+enum value, a `Binding` prop given a plain value, a missing required prop or a wrong slot type is a luau-lsp
+diagnostic (`bun run lint:luau`, wired into `bun run lint`), not a runtime surprise. An unknown prop name is still caught only
+at run time (Luau does not check a table literal for extra fields).
 
 ### 4.3 Example 1: Calculator
 
@@ -1322,7 +1322,7 @@ notes or 5 000. Test ids that fall out: `notes-folders-row-3`, `notes-new-note`,
   e2e specs: `local v = test.mount(app, "main"); v:tap("calculator-key-7"); v:expectText("calculator-display", "7")`;
   `v:type("notes-body", "hi")`; `v:tree()` for snapshots (the tree is JSON). Tool tests call `app.tool` directly against a
   temp SQLite and assert the resulting `data.patch` for an open view.
-- **Isolation (not a security boundary).** One Lua VM per app (Luau; apps are plain Lua 5.1 source, which darklua only bundles into one file), its own environment table with no `load*`/`getfenv`/`setfenv` and no bare `os`/`io`/`debug`, and its
+- **Isolation (not a security boundary).** One Lua VM per app (Luau; apps are Luau source, which darklua bundles into one file and strips of its types), its own environment table with no `load*`/`getfenv`/`setfenv` and no bare `os`/`io`/`debug`, and its
   own per-app SQLite file. An app's `require` takes `vos:app`, `vos:ui` and every `std:`/`lib:`/`vnd:` module except `lib:test`, `lib:compile` and `std:workers`
   (files, network, servers, threads), so it can reach other apps' data and the host's. There are no app permissions and
   no CPU, memory or time limits: an app is the person's own code on their own host (see host-stack.md, "No permissions,
@@ -1429,7 +1429,7 @@ unless the app sets `testid`).
 
 **As built: Rust first, not the YAML below.** The component schema is Rust (`crates/vos-domain`, the `ui` module:
 types plus the component catalogue tables); `vos-codegen` turns it into `types/generated/vos.ts` (protocol types
-and the runtime `COMPONENTS` table), `ui.lua`, the LuaCATS definitions under `types/generated/luals/` and `docs/reference/components.md`.
+and the runtime `COMPONENTS` table), `ui.lua`, the Luau declarations `types/generated/vos.d.luau` and `docs/reference/components.md`.
 `bun run codegen` writes them and `bun run codegen:check` (part of `bun run lint`) fails when they are stale; there is no
 `gen:ui` or `schema:diff` command. The diagram below is the real flow; from "Authoring format" on, the text is the
 original schema-first proposal (YAML authoring), kept to explain the shape of the outputs: its paths and command names
@@ -1442,7 +1442,7 @@ crates/vos-domain, ui module   (Rust types + the component catalogue: tokens, Ac
         │   bun run codegen     (cargo run -p vos-codegen; `bun run codegen:check` is the no-diff check)
         ├─▶ types/generated/vos.ts        protocol types + the runtime COMPONENTS table  ──▶  client/src/view/protocol.ts
         ├─▶ types/generated/ui.lua            constructors (the Lua runtime's `vos:ui`)
-        ├─▶ types/generated/luals/            LuaCATS: `vos.lua` (the `app` API and shared types), `vos/ui.lua`, `vos/app.lua`
+        ├─▶ types/generated/vos.d.luau        Luau declarations: the `app` API, `ui`, the shared types, the modules an app may require, the one `declare require`
         └─▶ docs/reference/components.md      the component reference
 ```
 
@@ -1474,22 +1474,22 @@ examples:
 maps: { adapter: TextField, kit: "@vos/ui/molecules#TextFieldRow" }
 ```
 
-**Generated LuaCATS** (`luals/vos/ui.lua`): every prop, enum, `Binding` (typed `Ref<T>`, so a plain value in a `Binding` prop is a diagnostic),
+**Generated Luau declarations** (`vos.d.luau`): every prop, enum, `Binding` (typed `vos_Ref<T>`, so a plain value in a `Binding` prop is a diagnostic),
 slot and event payload:
 
 ```lua
----@class TextFieldProps
----@field key string                              interactive nodes need an explicit key
----@field text Ref<string>                        binding
----@field placeholder Expr<string>?
----@field kind Expr<"text"|"email"|"url"|"number"|"tel"|"search">?
----@field validate Validation?
----@field sync Expr<string>?
----@field onSubmit Handler<{ value: string }>?
+export type vos_TextFieldProps = {
+	key: string,                              -- interactive nodes need an explicit key
+	text: vos_Ref<string>,                    -- binding
+	placeholder: vos_Expr<string>?,
+	kind: vos_Expr<"text" | "email" | "url" | "number" | "tel" | "search">?,
+	validate: vos_Validation?,
+	sync: vos_Expr<string>?,
+	onSubmit: vos_Handler<{ value: string }>?,
+}
 
----@param props TextFieldProps
----@return Node
-function ui.TextField(props) end
+-- in the `vos_ui` table that `require("vos:ui")` returns:
+--   TextField: (props: vos_TextFieldProps) -> vos_Node,
 ```
 
 `ui.lua` is generated too: defaults, positional mapping, a11y checks, auto-keys, `fallback` slots for post-1.0 components.

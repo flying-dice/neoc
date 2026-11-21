@@ -6,7 +6,7 @@ use std::fmt;
 /// A failure inside app code (or a host call it made).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScriptError {
-    /// `notes/app.lua:12: message`: what is shown to people and agents.
+    /// `notes/app.luau:12: message`: what is shown to people and agents.
     pub summary: String,
     /// The Lua stack, for logs and the dev banner.
     pub traceback: Option<String>,
@@ -31,7 +31,7 @@ impl fmt::Display for ToolFailure {
 }
 impl std::error::Error for ToolFailure {}
 
-/// Does a message already begin with `chunk.lua:LINE:`?
+/// Does a message already begin with `chunk.luau:LINE:` (or `chunk.lua:LINE:`)?
 fn has_location(message: &str) -> bool {
     let Some((head, rest)) = message.split_once(':') else { return false };
     if !head.contains(".lua") {
@@ -40,7 +40,7 @@ fn has_location(message: &str) -> bool {
     rest.split_once(':').is_some_and(|(line, _)| !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// The first `file.lua:LINE` frame of a Lua traceback.
+/// The first `file.luau:LINE` (or `file.lua:LINE`) frame of a Lua traceback.
 fn first_frame(traceback: &str) -> Option<String> {
     traceback.lines().find_map(|l| {
         let l = l.trim();
@@ -127,6 +127,19 @@ mod tests {
     fn a_syntax_error_names_its_line() {
         let e = ScriptError::from_lua(&run("local x = = 1"));
         assert!(e.summary.starts_with("notes/app.lua:1:"), "{e}");
+    }
+
+    #[test]
+    fn a_luau_chunk_is_located_like_a_lua_one() {
+        // an app is built into `app.luau` now: its errors must keep their location
+        let lua = Lua::new();
+        let err = lua.load("local x = 1\nerror('boom')").set_name("=calculator/app.luau").exec().unwrap_err();
+        assert_eq!(ScriptError::from_lua(&err).summary, "calculator/app.luau:2: boom");
+        assert!(has_location("calculator/app.luau:12: boom"));
+        assert_eq!(
+            first_frame("stack traceback:\n\t[C] in ?\n\tcalculator/app.luau:7 function f").as_deref(),
+            Some("calculator/app.luau:7")
+        );
     }
 
     #[test]

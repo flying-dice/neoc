@@ -1,26 +1,21 @@
-//! Lua 5.1 output for app authors:
-//!
-//! * `types/generated/ui.lua`: the `ui.*` constructor module that apps load with `require("vos:ui")` and the
-//!   host embeds. Plain Lua 5.1, no annotations (see [`module`]);
-//! * `types/generated/luals/*`: lua-language-server (`LuaLS`) definition files, `---@meta` `LuaCATS`, for the editor
-//!   and `bun run lint:lua` (see [`meta`]). Never loaded by the host.
+//! The runtime `ui` module that apps load with `require("vos:ui")` and the host embeds: `types/generated/ui.lua`.
+//! Plain Lua (no annotations, no Luau syntax), so the contract tests can also run it with a native `lua`
+//! (see [`module`]); the Luau declarations of the same constructors are [`crate::luau`].
 //!
 //! `docs/reference/components.md` is the prose reference for the constructors and their props.
 
-mod meta;
 mod ui;
 
-pub use meta::{app_module_definitions, ui_module_definitions, vos_definitions};
 pub use ui::{module, ACTION_BUILDERS};
 
 use std::collections::BTreeMap;
 
 use vos_domain::ui::{
     expr::Func,
-    spec::{ComponentSpec, EnumDef, ObjectDef, PropSpec, PropType, SlotSpec},
+    spec::{ComponentSpec, SlotSpec},
 };
 
-use crate::walk::{contains_source, split_group};
+use crate::walk::split_group;
 
 /// The Lua keywords, which cannot be bare table keys.
 const RESERVED: &[&str] = &[
@@ -81,100 +76,9 @@ pub(crate) fn describe(c: &ComponentSpec) -> String {
     format!("-- {} (Tier {}, since {})", c.doc, c.tier as u8, c.since)
 }
 
-/// A string literal type union: `"a"|"b"`.
-pub(crate) fn literals(values: &[&str]) -> String {
-    values.iter().map(|v| format!("\"{v}\"")).collect::<Vec<_>>().join("|")
-}
-
-pub(crate) fn enum_type(def: &EnumDef) -> String {
-    if def.name.is_empty() {
-        literals(def.values)
-    } else {
-        def.name.to_owned()
-    }
-}
-
-/// `T?` for a field or parameter, parenthesised when `T` is a union.
-pub(crate) fn optional(ty: &str) -> String {
-    if ty.contains('|') {
-        format!("({ty})?")
-    } else {
-        format!("{ty}?")
-    }
-}
-
-/// The `LuaCATS` type of a value of `ty`, without the `Expr` wrapper.
-pub(crate) fn value_type(ty: &PropType) -> String {
-    match ty {
-        PropType::Str => "string".to_owned(),
-        PropType::Number | PropType::Int | PropType::Spacing => "number".to_owned(),
-        PropType::Bool => "boolean".to_owned(),
-        PropType::Json => "any".to_owned(),
-        PropType::Source => "Source".to_owned(),
-        PropType::Enum(def) => enum_type(def),
-        PropType::Insets => "number|Insets".to_owned(),
-        PropType::Frame => "\"fill\"|Frame".to_owned(),
-        PropType::List(inner) => {
-            let inner = value_type(inner);
-            if inner.contains('|') {
-                format!("({inner})[]")
-            } else {
-                format!("{inner}[]")
-            }
-        }
-        PropType::Object(def) if def.name.is_empty() => object_type(def),
-        PropType::Object(def) => def.name.to_owned(),
-        PropType::Union(options) => options.iter().map(value_type).collect::<Vec<_>>().join("|"),
-    }
-}
-
-/// The type of a prop as an author writes it: a binding is a ref, a source handle is a source, the rest may be
-/// an expression.
-pub(crate) fn field_type(prop: &PropSpec) -> String {
-    let value = value_type(&prop.ty);
-    if prop.binding.is_some() {
-        format!("Ref<{}>", if matches!(prop.ty, PropType::Json) { "any" } else { &value })
-    } else if contains_source(&prop.ty) {
-        // a source id, or a literal list for unions such as `Picker.options`
-        value
-    } else {
-        format!("Expr<{value}>")
-    }
-}
-
-/// `{ name: T, other?: U }` for an object type.
-pub(crate) fn object_type(def: &ObjectDef) -> String {
-    let mut fields: Vec<String> = def.fields.iter().map(field_decl).collect();
-    if def.open {
-        fields.push("[string]: any".to_owned());
-    }
-    format!("{{ {} }}", fields.join(", "))
-}
-
-fn field_decl(field: &PropSpec) -> String {
-    let optional = if field.required { "" } else { "?" };
-    format!("{}{optional}: {}", key(field.name), field_type(field))
-}
-
-/// `{ value: string }` for an event payload (what a handler receives: plain values), `{}` when it carries nothing.
-pub(crate) fn payload_type(fields: &[PropSpec]) -> String {
-    if fields.is_empty() {
-        return "{}".to_owned();
-    }
-    let declared: Vec<String> = fields
-        .iter()
-        .map(|f| format!("{}{}: {}", key(f.name), if f.required { "" } else { "?" }, value_type(&f.ty)))
-        .collect();
-    format!("{{ {} }}", declared.join(", "))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vos_domain::ui::{
-        components::{lookup, PALETTE},
-        spec::BindingKind,
-    };
 
     #[test]
     fn keys_are_quoted_when_they_are_not_identifiers_or_are_reserved() {
@@ -185,41 +89,5 @@ mod tests {
         assert_eq!(key("end"), "[\"end\"]");
         assert_eq!(key("$ref"), "[\"$ref\"]");
         assert_eq!(key("2x"), "[\"2x\"]");
-    }
-
-    #[test]
-    fn optional_parenthesises_unions() {
-        assert_eq!(optional("string"), "string?");
-        assert_eq!(optional("\"a\"|\"b\""), "(\"a\"|\"b\")?");
-    }
-
-    #[test]
-    fn value_types() {
-        use vos_domain::ui::spec::PropType as T;
-        assert_eq!(value_type(&T::Str), "string");
-        assert_eq!(value_type(&T::Spacing), "number");
-        assert_eq!(value_type(&T::Json), "any");
-        assert_eq!(value_type(&T::Insets), "number|Insets");
-        assert_eq!(value_type(&T::List(&T::Str)), "string[]");
-        assert_eq!(value_type(&T::List(&T::Insets)), "(number|Insets)[]");
-        assert_eq!(value_type(&T::Enum(&PALETTE)), "PaletteToken");
-        assert_eq!(value_type(&T::Union(&[T::Number, T::Str])), "number|string");
-    }
-
-    #[test]
-    fn a_binding_is_a_ref_and_a_plain_prop_may_be_an_expression() {
-        let toggle = lookup("Toggle").unwrap();
-        let on = toggle.props.iter().find(|p| p.name == "on").unwrap();
-        assert_eq!(on.binding, Some(BindingKind::Scalar));
-        assert_eq!(field_type(on), "Ref<boolean>");
-        let title = toggle.props.iter().find(|p| p.name == "title").unwrap();
-        assert_eq!(field_type(title), "Expr<string>");
-    }
-
-    #[test]
-    fn event_payloads_are_plain_values() {
-        let field = lookup("TextField").unwrap().events.iter().find(|e| e.name == "submit").unwrap();
-        assert_eq!(payload_type(field.payload), "{ value: string }");
-        assert_eq!(payload_type(&[]), "{}");
     }
 }

@@ -19,8 +19,8 @@ async fn host_with_agents_app() -> Running {
     let url = publish_package(
         &temp("agents-app").join("pkg"),
         "agents",
-        "app.lua",
-        &[("app.lua", common::built_app("agents"))],
+        "app.luau",
+        &[("app.luau", common::built_app("agents"))],
     );
     r.host.service.install_from_url(&url).await.unwrap();
     r

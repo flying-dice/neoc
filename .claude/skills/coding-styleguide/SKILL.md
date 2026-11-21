@@ -1,6 +1,6 @@
 ---
 name: coding-styleguide
-description: Use while writing or changing any vos code - Rust in crates/ (the hexagonal host), Lua apps in apps/ (the app API, table-call constructors, StyLua, lua-language-server), or the client and kit in TypeScript and Svelte 5 (client/, packages/ui, scripts). The house rules for where code belongs (domain, ports and use cases, adapters, the composition root; per-app VM isolation (not a security boundary); the managed renderer), types and expected errors, validating at trust boundaries, and Svelte 5 runes. Read references/rust.md, references/lua.md or references/typescript-svelte.md for the language details.
+description: Use while writing or changing any vos code - Rust in crates/ (the hexagonal host), Luau apps in apps/ (the app API, table-call constructors, StyLua, luau-lsp), or the client and kit in TypeScript and Svelte 5 (client/, packages/ui, scripts). The house rules for where code belongs (domain, ports and use cases, adapters, the composition root; per-app VM isolation (not a security boundary); the managed renderer), types and expected errors, validating at trust boundaries, and Svelte 5 runes. Read references/rust.md, references/luau.md or references/typescript-svelte.md for the language details.
 ---
 
 # vos coding styleguide
@@ -10,7 +10,7 @@ don't migrate unrelated APIs, add dependencies or change configuration on the wa
 
 ## Where code belongs
 
-vos is hexagonal. A Rust host runs Lua apps, each in its own VM, and serves a managed client; nothing crosses a process or
+vos is hexagonal. A Rust host runs Luau apps, each in its own VM, and serves a managed client; nothing crosses a process or
 crate seam except through a port or the protocol.
 
 | Role | vos |
@@ -21,7 +21,7 @@ crate seam except through a port or the protocol.
 | Driving adapters | `vos-http` (`/rpc`, pairing, guard, static client), `vos-mcp` (`/mcp`), `vos-agui` (`/agui`) |
 | Dev-time adapter | `vos-codegen`: the Rust schema to `types/generated/*` and `docs/reference/components.md` |
 | Composition root | `vos-host`: wiring only (build adapters, hand each to its port, mount routers) |
-| Apps | `apps/<id>`: Lua packages; their only contract is the `app` table (`types/generated/luals/`) |
+| Apps | `apps/<id>`: Luau packages; their only contract is the `app` table (`types/generated/vos.d.luau`) |
 | Client | `client/`: the shell and the renderer (`client/src/view`); it renders view trees and runs no app code |
 | Kit | `packages/ui`: Svelte components in atomic layers, tokens, stories; knows nothing about apps |
 
@@ -52,8 +52,8 @@ kit (with a story and a required `testid` prop), never into one renderer adapter
 
 - **Rust:** typed errors per layer (`DomainError`, `PortError`, `AppError`), `?` to propagate, no `unwrap`, `expect` or
   `panic!` outside tests, no `unsafe`. Details in `references/rust.md`.
-- **Lua:** plain Lua 5.1 that `lint:lua` accepts, LuaCATS annotations where they help, plain functions for logic,
-  `render` pure. Details in `references/lua.md`.
+- **Luau:** `--!strict` typed Luau that `lint:luau` accepts, annotated signatures, plain functions for logic,
+  `render` pure. Details in `references/luau.md`.
 - **TypeScript and Svelte:** `strict` on, `unknown` until parsed, no `any`, no `as` on data you didn't construct, no
   non-null `!`; Svelte 5 runes only. Details in `references/typescript-svelte.md`.
 

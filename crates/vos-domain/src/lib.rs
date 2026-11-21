@@ -29,7 +29,7 @@ pub use actor::{Actor, ActorKind};
 pub use agent::{AgentId, AgentIdentity, ToolGrant};
 pub use app::{
     resolve_package_url, resolve_url, source_label, AppId, AppRef, FileRef, Manifest, MigrationSpec,
-    Registry, Requires, HOST_API,
+    Registry, Requires, GLOBALS_NOT_FOR_APPS, HOST_API, NOT_FOR_APPS,
 };
 pub use contact::{hash_token, hex_of, same_hash, Agent, AgentRuntime, ApprovalPolicy, Grants};
 pub use decl::{AppDecl, KitRequirement, WindowDecl};

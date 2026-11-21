@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Lua formatting with StyLua (config: stylua.toml, syntax Lua51, ignores: .styluaignore), the Lua counterpart of
+ * Lua formatting with StyLua (config: stylua.toml, syntax Luau, ignores: .styluaignore), the Lua counterpart of
  * `cargo fmt`.
  *
  *   bun scripts/stylua.ts check    exit 1 if any .lua file is not formatted (part of `bun run lint`)
@@ -30,7 +30,7 @@ function findStylua(): string | undefined {
 }
 
 const stylua = findStylua()
-if (!stylua) skipTool(`stylua ${mode}`, 'stylua not found (cargo install stylua --features lua51, or put it on PATH)')
+if (!stylua) skipTool(`stylua ${mode}`, 'stylua not found (cargo install stylua --features luau, or put it on PATH)')
 
 // one stylua.toml at the root (call_parentheses = "NoSingleTable" keeps the table-call idiom, `ui.VStack { ... }`)
 const args = ['--search-parent-directories', ...(mode === 'check' ? ['--check'] : []), '.']

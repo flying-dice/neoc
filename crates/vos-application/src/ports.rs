@@ -21,7 +21,7 @@ pub use crate::data::{
 // ---- running apps -------------------------------------------------------------------------
 
 /// The files of an app package handed to the runtime: the entry point, by path inside the app ref. An app is
-/// built into one self-contained Lua 5.1 file, so the entry is the only source; there is no filesystem and
+/// built into one self-contained Luau file, so the entry is the only source; there is no filesystem and
 /// `require` loads no package file.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 // TODO: clean-code - 0.4 - KISS: `files` is always the one entry named by `entry`; a single `source: Vec<u8>` would do.

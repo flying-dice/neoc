@@ -1,5 +1,5 @@
 /**
- * What a check does when its tool is not installed (`lint:lua` needs lua-language-server, `lint:stylua` needs
+ * What a check does when its tool is not installed (`lint:luau` needs luau-lsp, `lint:stylua` needs
  * stylua).
  *
  * On a developer machine it SKIPS with a message and exits 0, so a fresh checkout still lints what it can. In the

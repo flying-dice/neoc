@@ -6,16 +6,17 @@ vos (Virtual OS) is an iPadOS-style virtual desktop for agents. It has three par
   data, serves the client, and speaks JSON-RPC 2.0 over WebSocket at `/rpc`, AG-UI over HTTP + SSE at `/agui` (agent
   chats), MCP at `/mcp` (the tools agents call) and ACP to the agent processes it launches. It binds the LAN and every
   client must pair as a device first.
-- **The apps** (`apps/<id>/`): server-side code **authored in plain Lua 5.1** (`app.json` + `*.lua`, checked by
-  lua-language-server against generated LuaCATS definitions): `bun run build:apps` bundles an app into one `app.lua`
-  with darklua, and the host runs that in one VM per app (the `vos-lua` adapter on the `neoc-vm` library, Luau, running the Lua 5.1 source; see "Language" in the neoc README for how Luau's base library differs),
+- **The apps** (`apps/<id>/`): server-side code **authored in typed Luau** (`app.json` + `*.luau`, `--!strict`, checked
+  by luau-lsp against the generated Luau declarations in `types/generated/vos.d.luau`): `bun run build:apps` bundles an
+  app into one `app.luau` with darklua (types and comments stripped), and the host runs that in one VM per app (the
+  `vos-lua` adapter on the `neoc-vm` library, Luau; see "Language" in the neoc README for how Luau's base library differs),
   loaded from an app ref over `file://`, `http://` or `https://`. An app holds its state, data, tools, notifications
   and UI description. Examples: `apps/calculator`, `apps/agents`.
 - **The client** (`client/`): a managed Vite + Svelte 5 PWA. It renders the view trees the host sends with the kit in
   `packages/ui` (atomic layers) through adapters in `client/src/view/`, holds client-managed state, and
   runs **no app code**.
 
-Bun workspaces cover `client` and `packages/*` (an app is Lua, `app.json` + `*.lua`, not a Bun package); Cargo covers
+Bun workspaces cover `client` and `packages/*` (an app is Luau, `app.json` + `*.luau`, not a Bun package); Cargo covers
 `crates/*`.
 
 The direction is a self-hosted home lab: apps can provide LAN services such as DNS, DHCP and container-backed services,
@@ -27,9 +28,9 @@ so vos can stand in for the services people run on a home NAS.
 |---|---|
 | The platform: shape, crates, decisions | `docs/architecture/ARCHITECTURE.md` |
 | The host: ports, adapters, pairing, config, `/agui`, tool permissions | `docs/architecture/host-stack.md` |
-| The server-driven UI: view protocol, bindings, state, the Lua authoring API | `docs/architecture/ui-system.md`, `docs/reference/components.md` (generated) |
+| The server-driven UI: view protocol, bindings, state, the Luau authoring API | `docs/architecture/ui-system.md`, `docs/reference/components.md` (generated) |
 | The client: shell, renderer, adding a component | `client/README.md` |
-| Writing an app: manifest, `app.*` API, security, adding an app | `apps/README.md`, `types/generated/luals/` (the generated LuaCATS definitions of the API) |
+| Writing an app: manifest, `app.*` API, security, adding an app | `apps/README.md`, `types/generated/vos.d.luau` (the generated Luau declarations of the API and of the modules an app may require) |
 | Tests, test ids, headless runs | `docs/TESTING.md` |
 | Design language, WCAG AA, §11 checklist | `docs/design/DESIGN_LANGUAGE.md` |
 
@@ -64,7 +65,7 @@ A change is done when all of these hold:
    adapters, the host end to end), `bun test` for client and kit logic, a story per new screen or state (a kit
    component's own story, or a JSON-tree story on a fake host for a renderer or shell state), a journey spec per new
    or changed journey. Changed snapshots were looked at.
-3. Every interactive element has a `data-testid` (kit components take a required `testid` prop; a Lua app's
+3. Every interactive element has a `data-testid` (kit components take a required `testid` prop; a Luau app's
    interactive nodes have a `key`); it works by keyboard, in light and dark, and at the app's minimum window.
 4. UI changes carry a `verify-change` "Manual verification" record in the PR.
 5. For a new app or a change people will notice in one: the readiness gate in `vos-code-review` §6 holds,
@@ -85,16 +86,17 @@ A change is done when all of these hold:
   `unwrap`, `expect` and `panic!` are denied outside tests; `thiserror` in library crates, `anyhow` only in the host
   binary.
 - **Apps are the person's own code on their own host. The VM keeps their Lua state apart; it is not a security
-  boundary.** An app runs as plain Lua 5.1 in its own VM and its own environment table: its globals, its standard
+  boundary.** An app runs as Luau in its own VM and its own environment table: its globals, its standard
   libraries (read-only) and its module tables are its own, so apps do not share state by accident, and it has no
   `load*`/`getfenv`/`setfenv`. That is all the separation there is. Through `std:fs`, `vnd:rusqlite` and the other
   modules an app can read and write other apps' data and the host's own database under `~/.vos`. There are **no
   permissions** and **no budgets** (no CPU, memory or time limits): a runaway app (a loop that never yields, a
   `std:thread` worker) can hang the host, not just itself, and can outlive its uninstall, because unloading aborts
-  work only at the points where the app yields to the host. That is accepted. It reaches the host through the `app` table (typed by the generated LuaCATS definitions in `types/generated/luals/`) and
+  work only at the points where the app yields to the host. That is accepted. It reaches the host through the `app` table (typed by the generated Luau declarations in `types/generated/vos.d.luau`) and
   through **every `std:`, `lib:` and `vnd:` module of `neoc-vm` except `lib:test`, `lib:compile` and `std:workers`** (`require("std:fs")`, `require("lib:json")`,
   `require("vnd:hyper")`, ...: files, network, servers, tasks, threads, SQLite, TLS), next to `vos:app` and
-  `vos:ui`. What an app starts (tasks, servers, workers) belongs to it: unloading or replacing the app aborts
+  `vos:ui`. All of them are typed in the declarations; the refused three are not (`vos_domain::NOT_FOR_APPS` is the one
+  list: the adapter refuses them, the declarations type each as unusable so naming one is a type error). What an app starts (tasks, servers, workers) belongs to it: unloading or replacing the app aborts
   it and closes its listeners, and what a task or a request handler runs queues behind the app's other calls (one
   call at a time per VM). Still enforced: a tool declared `readOnly` cannot write through the `app.*` API (db, kv, state,
   notify, shell, windows, and registering tools, windows and handlers), and neither can the tasks it starts or the
@@ -142,7 +144,7 @@ Also: atomic layers (`lint:atomic`, in `packages/ui` and `client/src`) and test 
 
 | When | Skill |
 |---|---|
-| Writing or changing code (Rust, Lua, Svelte/TypeScript) | `coding-styleguide` |
+| Writing or changing code (Rust, Luau, Svelte/TypeScript) | `coding-styleguide` |
 | Before pushing | `vos-clean-code-review`, then `vos-pre-commit` (loops until clean; `vos-refactor` clears markers) |
 | Every MR, and before calling a branch ready | `vos-code-review` (verdict: READY TO MERGE or STAYS IN MR) |
 | Any change to what a person sees or does | `verify-change` |
@@ -154,15 +156,15 @@ Also: atomic layers (`lint:atomic`, in `packages/ui` and `client/src`) and test 
 
 ```sh
 bun run dev             # build:apps, then the host on :7400 (dev_reload) + Vite on :5173; pair with the code the host prints
-bun run build:apps      # bundle every apps/*/app.json into one Lua 5.1 file (darklua) + app refs + registry.json under dist/apps
+bun run build:apps      # bundle every apps/*/app.json into one Luau file (darklua) + app refs + registry.json under dist/apps
 bun run build           # build the client (client/dist)
 bun run host            # cargo run -p vos-host: serves client/dist, /rpc, /agui, /mcp on :7400
 bun run host pair       # print a fresh device pairing code (every client must pair; see host-stack.md)
 bun start               # the same host, built with the release-host profile (opt-level z, panic abort)
-bun run lint            # conflict markers + atomic layers + test ids + boundaries + rust + lua (LuaLS) + stylua + codegen:check + package eslint
+bun run lint            # conflict markers + atomic layers + test ids + boundaries + rust + luau (luau-lsp) + stylua + codegen:check + package eslint
 bun run lint:conflicts  # leftover merge-conflict markers in tracked files (runs first)
 bun run lint:rust       # cargo fmt --check, clippy -D warnings, lint:deps (crate direction), cargo deny
-bun run lint:lua        # lua-language-server --check of every app against types/generated/luals (plus negative fixtures; the std:/lib:/vnd: modules are untyped until NEOC-140)
+bun run lint:luau       # luau-lsp analyze, strict, of every app against types/generated/vos.d.luau (plus the usage fixture and the negative fixtures, their marker counts pinned)
 bun run lint:stylua     # StyLua check (skipped with a message when stylua is not installed)
 bun run typecheck       # cargo check --workspace --all-targets + tsc on types/ + svelte-check in each package
 bun run test            # cargo nextest over the vos crates (neoc's crates have their own gate) + bun test (types, scripts, client, kit)
@@ -171,7 +173,7 @@ bun run test:e2e        # all Storybooks + desktop + journeys, headless, against
                         # VOS_PORT_BASE=9100 for a second worktree (Storybook = base, e2e host = base + 10)
 bun run test:e2e:update # rebaseline snapshots (then look at them)
 bun run storybooks list # every Storybook (client, packages/ui); each package: bun run storybook
-bun run codegen         # regenerate types/generated/* (incl. ui.lua, prelude.lua) and docs/reference/components.md from the Rust schema
+bun run codegen         # regenerate types/generated/* (incl. vos.d.luau, ui.lua, prelude.lua) and docs/reference/components.md from the Rust schema
 bun run codegen:check   # fails when they are stale (part of bun run lint)
 bun scripts/design-audit.ts <page>  # static styleguide audit of a built-in shell page's styles
 ```
@@ -179,11 +181,13 @@ bun scripts/design-audit.ts <page>  # static styleguide audit of a built-in shel
 Visual baselines (`e2e/__screenshots__`) are macOS-only, so run `test:e2e` on a Mac. There is no hosted CI: the
 `vos-pre-commit` skill runs the gate and `vos-code-review` checks it. Needed tools: Rust (the pinned toolchain),
 `cargo-nextest`, `cargo-deny`, Bun, `darklua` 0.18.0 (`cargo install darklua --version 0.18.0 --locked`; building the
-apps fail without it, they never skip) and, for the Lua checks, `lua-language-server` 3.19.2 (`brew install lua-language-server`) and `stylua`.
-Without them `lint:lua` and `lint:stylua` skip on a developer machine and **fail** when `VOS_GATE=1` or `CI` is
-set (the `vos-pre-commit` skill runs the gate that way). No system Lua 5.1 is needed: the Rust tests load and run the
-bundled apps on neoc-vm's Luau. A native Lua 5.3+ is optional: with it `bun test scripts` also compares the
-prelude's polyfills with the native ones.
+apps fail without it, they never skip) and, for the Luau checks, `luau-lsp` 1.70.1 (the release binary from the luau-lsp GitHub releases, on `PATH` or in
+`~/.local/bin`; there is no Homebrew formula) and `stylua` (with Luau syntax). Without them `lint:luau` and
+`lint:stylua` skip on a developer machine and **fail** when `VOS_GATE=1` or `CI` is set (the `vos-pre-commit` skill
+runs the gate that way; the luau-lsp editor test in `crates/vos-codegen` follows the same rule). No system Lua is
+needed: the Rust tests load and run the bundled apps on neoc-vm's Luau. A native Lua 5.3+ is optional: with it
+`bun test scripts` also compares the prelude's `utf8` with the native one, and the codegen contract test runs the
+example apps' bundles with it.
 
 ## Adding an app
 
@@ -192,6 +196,6 @@ with a `window` min size (and a comment when the layout needs more than 320x240)
 `e2e/journeys.spec.ts`, and a Rust test of its logic and tools next to the others in `crates/vos-lua/tests`.
 The generic `desktop` project opens every `apps/*/app.json` in the real shell (sizes, layouts, light and dark, axe,
 snapshots) with no extra code; each screen and state beyond the landing view is reached by a journey, or, when a
-journey can't reach it cheaply, shown by a JSON-tree story in the client Storybook. The app is `lint:lua` (LuaLS) and
+journey can't reach it cheaply, shown by a JSON-tree story in the client Storybook. The app is `lint:luau` (strict) and
 StyLua clean from the first commit. Then design it with `app-design` until the exit criteria hold; until then it
 stays in its MR.
