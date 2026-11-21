@@ -45,9 +45,29 @@ impl Drop for AbortOnDrop {
 impl Background for TokioBackground {
     fn spawn(
         &self,
-        _name: &'static str,
+        name: &'static str,
         task: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) -> Box<dyn TaskHandle> {
-        Box::new(AbortOnDrop(tokio::spawn(task)))
+        Box::new(AbortOnDrop(tokio::spawn(logged(name, task))))
+    }
+}
+
+/// Run `work` (a background task, or one step of one of the host's loops); a panic in it is logged at error level
+/// under `name` instead of unwinding further, so a loop goes on to its next step and a task does not end unseen.
+/// The background tasks catch a panic in their own steps first (`pump_changes` goes on, an agent turn ends its run
+/// with an error), so for them this is the last net.
+pub(crate) async fn logged(name: &'static str, work: impl Future<Output = ()>) {
+    if let Err(message) = vos_application::panics::caught(work).await {
+        tracing::error!(task = name, %message, "host work panicked");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[tokio::test]
+    async fn work_that_panics_ends_logged_without_unwinding_further() {
+        // the join would be a panic error if the panic had escaped `logged`
+        let joined = tokio::spawn(super::logged("probe", async { panic!("the task broke") })).await;
+        assert!(joined.is_ok(), "{joined:?}");
     }
 }

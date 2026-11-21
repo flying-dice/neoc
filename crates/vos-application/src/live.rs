@@ -599,9 +599,14 @@ impl LiveSources {
 }
 
 /// Drive a [`LiveSources`] from a database's change feed until the feed ends. The host spawns this per app.
+///
+/// A panic in one refresh (a port, a sink) is logged and the pump goes on with the next batch: the open windows
+/// keep following the app's data instead of freezing for as long as the app runs (see [`crate::panics`]).
 pub async fn pump_changes(mut feed: Box<dyn ChangeFeed>, live: Arc<LiveSources>) {
     while let Some(batch) = feed.next_batch().await {
-        live.refresh(&batch).await;
+        if let Err(message) = crate::panics::caught(live.refresh(&batch)).await {
+            tracing::error!(%message, "refreshing the live sources panicked; the next change refreshes them again");
+        }
     }
 }
 
@@ -891,5 +896,49 @@ mod tests {
         assert_eq!(sink.take().len(), 1);
         data.close_feed();
         task.await.unwrap();
+    }
+
+    /// A sink whose first delivery panics, then collects.
+    #[derive(Default)]
+    struct PanicsOnce {
+        panicked: std::sync::atomic::AtomicBool,
+        rest: CollectingSink,
+    }
+    #[async_trait]
+    impl LiveSink for PanicsOnce {
+        async fn deliver(&self, subscription: SubscriptionId, update: SourceUpdate) {
+            if !self.panicked.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                panic!("the sink broke");
+            }
+            self.rest.deliver(subscription, update).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn a_refresh_that_panics_leaves_the_pump_following_the_next_change() {
+        let (data, live, _) = setup(None, vec![note(1, "a")]);
+        let live = Arc::new(live);
+        let sink = Arc::new(PanicsOnce::default());
+        live.subscribe(&SourceId("notes".into()), Params::None, None, sink.clone()).await.unwrap();
+        let task = tokio::spawn(pump_changes(data.feed(), live));
+        data.set_rows("from notes", vec![note(1, "a"), note(2, "b")]);
+        data.commit(["notes"]); // this refresh panics in the sink
+        for _ in 0..100 {
+            if sink.panicked.load(std::sync::atomic::Ordering::SeqCst) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        data.set_rows("from notes", vec![note(1, "a"), note(2, "b"), note(3, "c")]);
+        data.commit(["notes"]);
+        for _ in 0..100 {
+            if !sink.rest.peek().is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(sink.rest.take().len(), 1, "the pump survived the panic and delivered the next change");
+        data.close_feed();
+        task.await.expect("the pump ended normally, not by a panic");
     }
 }

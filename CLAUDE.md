@@ -117,15 +117,23 @@ copy, is in git history at `51f47f4`: `git show 51f47f4:docs/architecture/ui-sys
   blocking pool (the host re-exports it through `vos_lua`, since the host may not depend on neoc-vm), and the top-level future
   runs on a worker, not on the `block_on` thread (`crates/vos-host/tests/stack.rs`). A new thread of the host's own that calls
   into Lua is built with that stack too.
-- **A panic in a host function fails one call, not the host.** The host unwinds on panic (`release-host` keeps Rust's
-  `panic = "unwind"`; `vos-host` does not compile under `panic = "abort"`, Decision NEOC-258). mlua turns a panic in a host
-  function into an error the script can `pcall`; one the script does not catch is ended by whatever drove the call
-  (`neoc_vm::lua::panics`): `vos-lua`'s call gate fails that call (`VmError::Panicked`, `PortError::Internal` to the caller,
-  logged) and the app stays loaded, with the call's turn, `db:tx` and `readOnly` flag released as for a dropped call; a
-  `std:task` task or a `std:thread` worker fails (its `await` returns the error); a `vnd:hyper` handler answers 500; a `std:fs`
-  watch whose watching thread dies (inotify, kqueue) hands out an error, then ends (`crates/vos-lua/tests/panics.rs` and the
-  neoc-vm unit tests). The panic hook still prints it to stderr. What stays fatal: a panic in a userdata's destructor (mlua
-  aborts), an allocation failure, and `vos-host`'s top-level task. A panic is still a bug: a module must not panic on app input.
+- **A panic fails one call or one step, never the host, and never silently.** The host unwinds on panic (`release-host` keeps
+  Rust's `panic = "unwind"`; `vos-host` does not compile under `panic = "abort"`, Decision NEOC-258). mlua turns a panic in a
+  host function into an error the script can `pcall`; one the script does not catch is ended by whatever drove the call
+  (`neoc_vm::lua::panics`): `vos-lua`'s call gate fails that call (tools, events, views, load: `VmError::Panicked`,
+  `PortError::Internal` to the caller, logged) and the app stays loaded, with the call's turn, `db:tx` and `readOnly` count
+  released as for a dropped call and a half-opened window removed; a `std:task` task or a `std:thread` worker fails (its `await`
+  returns the error); a `vnd:hyper` handler answers 500; a panic in an `std:fs` watch callback is an `overflow` (the script
+  rescans) and a watch whose watching thread dies (inotify, kqueue) hands out an error, then ends. The host's own long-lived
+  work catches a panic per step (`vos_application::panics`): an `/rpc` request is answered `-32603` and the connection, its
+  ordered `view.event` task included, serves on (a panicking notification is logged); the effects pump, the live-source pump,
+  the hourly revision purge and dev reload log it and go on; an agent turn ends its run with an error and frees the thread; the
+  agent connection ends as if the agent process had exited (its sessions are told, and the agent starts again); any other
+  `Background` task is logged under its name. Tests: `crates/vos-lua/tests/panics.rs`, `crates/vos-http/tests/http.rs`,
+  `crates/vos-acp/tests/acp.rs` and the unit tests beside each catch. The panic hook still prints every panic to stderr. What
+  stays fatal: a panic in a userdata's destructor (mlua aborts), an allocation failure, and `vos-host`'s top-level task. What is
+  not caught and ends only its own task: the host's one-shot tasks (a connection's writer, the shutdown watchers, a `db:tx`
+  opener, a self-revoke's grace timer). A panic is still a bug: a module must not panic on app input.
 - **The client runs no app code.** The renderer draws view trees and sends events; nothing executable crosses the wire. Kit
   knowledge of apps, and app knowledge in the client, are both bugs.
 - **Agent and tool output is untrusted:** render it as text. No `{@html}` or `innerHTML` for it (the only `{@html}` is

@@ -101,6 +101,22 @@ impl Drop for RenderScopeGuard {
     }
 }
 
+/// A view being opened: dropped before the open succeeded (an error, or a panic unwinding through it), it removes
+/// the instance, so a failed open leaves nothing in [`Shared::views`].
+struct HalfOpen<'a> {
+    shared: &'a Shared,
+    /// The view, until the open succeeds.
+    view: Option<&'a str>,
+}
+
+impl Drop for HalfOpen<'_> {
+    fn drop(&mut self) {
+        if let Some(view) = self.view {
+            self.shared.views.lock().remove(view);
+        }
+    }
+}
+
 fn dollar(key: &LuaValue) -> bool {
     matches!(key, LuaValue::String(s) if s.as_bytes().first() == Some(&b'$'))
 }
@@ -586,6 +602,9 @@ impl AppVm {
                 opening: Some(Map::new()),
             },
         );
+        // a failed open leaves no instance behind, whether it failed with an error or unwound (a panic the call
+        // gate catches above this frame)
+        let mut half_open = HalfOpen { shared: &sh, view: Some(view) };
         let opened = async {
             if let Some(on_open) = spec.get::<Option<Function>>("onOpen").map_err(convert)? {
                 let p = json_to_lua(lua, &Value::Object(params)).map_err(convert)?;
@@ -594,19 +613,13 @@ impl AppVm {
             self.render_inner(view).await
         }
         .await;
-        match opened {
-            Ok(mut out) => {
-                if let Some(opening) = sh.views.lock().get_mut(view).and_then(|i| i.opening.take()) {
-                    overrides.extend(opening);
-                }
-                out.client = overrides;
-                Ok(out)
-            }
-            Err(e) => {
-                sh.views.lock().remove(view);
-                Err(e)
-            }
+        let mut out = opened?;
+        half_open.view = None;
+        if let Some(opening) = sh.views.lock().get_mut(view).and_then(|i| i.opening.take()) {
+            overrides.extend(opening);
         }
+        out.client = overrides;
+        Ok(out)
     }
 
     /// Render the instance again.

@@ -14,6 +14,7 @@ use std::{
 };
 use vos_application::{
     live::SourceId,
+    panics,
     ports::{
         AgentRoster, AppActivity, AppData, AppPackage, AppRuntime, CallContext, LoadedApp, Notifier,
         PortResult, RenderOutput, Shell, ViewEffect, ViewEventCall,
@@ -181,17 +182,26 @@ impl AppRuntime for LuaRuntime {
                 // window request has nothing to follow (data changes are pushed by the live sources)
                 let follow = !life.is_closed() && vm.has_unsettled_views();
                 drop(vm);
-                if let Err(error) = deliver_effects(&*notifier, &*shell, &id, effects, &life).await {
-                    tracing::warn!(app = %id, %error, "could not forward what the app asked for");
-                }
-                if !follow || life.is_closed() {
-                    continue;
-                }
-                // The application is held for the settle only. A settle that hangs (the VM's gate is held by a
-                // runaway call) holds it until the app is unloaded, which aborts this task: apps have no budgets.
-                let listener = activity.get().and_then(Weak::upgrade);
-                if let Some(listener) = listener {
-                    listener.background_settled(&id).await;
+                // a panic in a port while forwarding is logged and the pump waits for the next signal: the app's
+                // later notifications and window refreshes still go out (see `vos_application::panics`)
+                let forwarded = panics::caught(async {
+                    if let Err(error) = deliver_effects(&*notifier, &*shell, &id, effects, &life).await {
+                        tracing::warn!(app = %id, %error, "could not forward what the app asked for");
+                    }
+                    if !follow || life.is_closed() {
+                        return;
+                    }
+                    // The application is held for the settle only. A settle that hangs (the VM's gate is held by
+                    // a runaway call) holds it until the app is unloaded, which aborts this task: apps have no
+                    // budgets.
+                    let listener = activity.get().and_then(Weak::upgrade);
+                    if let Some(listener) = listener {
+                        listener.background_settled(&id).await;
+                    }
+                })
+                .await;
+                if let Err(message) = forwarded {
+                    tracing::error!(app = %id, %message, "forwarding what the app's background work asked for panicked");
                 }
             }
         });

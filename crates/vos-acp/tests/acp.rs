@@ -90,6 +90,46 @@ async fn open(c: &AcpConnector, sink: &Arc<Sink>) -> SessionOpened {
     within(c.open_session(&fake(), None, sink.clone())).await.unwrap()
 }
 
+/// A sink whose first event panics (a bug in the host's handling of the agent's data).
+#[derive(Default)]
+struct PanicsOnEvent {
+    exits: Mutex<Vec<String>>,
+}
+
+impl AgentEventSink for PanicsOnEvent {
+    fn on_event(&self, _event: AgentEvent) {
+        panic!("handling the agent's event broke");
+    }
+    fn on_permission(&self, _request: &PermissionRequest) -> PermissionDecision {
+        PermissionDecision::Ask
+    }
+    fn on_exit(&self, reason: String) {
+        self.exits.lock().push(reason);
+    }
+}
+
+/// A panic in the agent connection ends it like the process ending: the session is told (so its chat starts a
+/// fresh one) and the next session starts the agent again.
+#[tokio::test]
+async fn a_panic_in_the_agent_connection_ends_it_like_an_exit_and_the_agent_starts_again() {
+    let c = connector();
+    let sink = Arc::new(PanicsOnEvent::default());
+    let opened = within(c.open_session(&fake(), None, sink.clone())).await;
+    // the agent reports its commands right after session/new: that event panics, here or during the prompt
+    if let Ok(opened) = opened {
+        let _ = within(c.prompt(&fake().id, &opened.session_id, "hello")).await;
+    }
+    wait_for("the session was told the connection ended", || !sink.exits.lock().is_empty()).await;
+    let reason = sink.exits.lock()[0].clone();
+    assert!(reason.contains("the host panicked: handling the agent's event broke"), "{reason}");
+
+    let fresh = Arc::new(Sink::default());
+    let s = open(&c, &fresh).await;
+    let stop = within(c.prompt(&fake().id, &s.session_id, "hello")).await.unwrap();
+    assert_eq!(stop, StopReason::EndTurn, "the agent was started again");
+    c.stop_all().await;
+}
+
 #[tokio::test]
 async fn handshake_with_fake_agent() {
     let launch = AgentLaunch::new(PathBuf::from(env!("CARGO_BIN_EXE_fake_agent")), vec![]);

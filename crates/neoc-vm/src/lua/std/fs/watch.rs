@@ -268,18 +268,35 @@ fn classify(event: &notify::Event) -> Option<Change> {
 
 /// What the watching thread's callback holds: the queue it fills and the roots it reports under.
 ///
-/// If that thread dies (a panic in notify, or in this callback, on a backend whose thread owns the callback:
-/// inotify, kqueue), the callback is dropped as the thread unwinds and the watch fails: `receive` hands out what
-/// was queued, then an error saying the watch stopped, instead of waiting for changes that will never come. (On
-/// macOS notify catches a panic in the callback itself and drops that one event.)
+/// A panic in the callback loses that event and nothing else: it is reported as an `overflow` (the script rescans)
+/// and the watch goes on, on every platform. If the thread itself dies (a panic in notify's own code, on a backend
+/// whose thread owns the callback: inotify, kqueue), the callback is dropped as the thread unwinds and the watch
+/// fails: `receive` hands out what was queued, then an error saying the watch stopped, instead of waiting for
+/// changes that will never come.
 struct Sink {
     queue: Arc<Queue>,
     roots: Roots,
 }
 
 impl Sink {
-    /// Classify, relocate and queue.
+    /// Classify, relocate and queue. A panic doing so is an overflow: the event is lost, so the script must rescan.
     fn deliver(&self, received: notify::Result<notify::Event>) {
+        if crate::lua::panics::caught_sync(|| self.queue_event(received)).is_err() {
+            self.queue.push_overflow();
+        }
+    }
+
+    fn queue_event(&self, received: notify::Result<notify::Event>) {
+        // a way for the tests to make the callback panic
+        #[cfg(test)]
+        if received.as_ref().is_ok_and(|event| {
+            event
+                .paths
+                .iter()
+                .any(|path| path.ends_with("panic-in-the-callback"))
+        }) {
+            panic!("the callback broke");
+        }
         match received {
             Ok(event) => match classify(&event) {
                 None => {}
@@ -805,6 +822,27 @@ mod tests {
         assert!(
             matches!(queue.try_next(), Some(Next::Closed)),
             "nothing comes after"
+        );
+    }
+
+    /// A panic in the callback loses that event only: it is an overflow (rescan), and the watch goes on.
+    #[test]
+    fn a_panic_in_the_callback_is_an_overflow_and_the_watch_goes_on() {
+        use notify::event::CreateKind;
+        let sink = sink();
+        let created = |path: &str| {
+            notify::Event::new(EventKind::Create(CreateKind::File)).add_path(path.into())
+        };
+        sink.deliver(Ok(created("/resolved/a")));
+        sink.deliver(Ok(created("/resolved/panic-in-the-callback")));
+        assert_eq!(path_of(sink.queue.try_next().unwrap()), "/given/a");
+        assert!(matches!(sink.queue.try_next(), Some(Next::Overflow)));
+        assert!(sink.queue.try_next().is_none(), "still open");
+        sink.deliver(Ok(created("/resolved/b")));
+        assert_eq!(
+            path_of(sink.queue.try_next().unwrap()),
+            "/given/b",
+            "the watch goes on"
         );
     }
 
