@@ -126,8 +126,9 @@ copy, is in git history at `51f47f4`: `git show 51f47f4:docs/architecture/ui-sys
   returns the error); a `vnd:hyper` handler answers 500; a panic in an `std:fs` watch callback is an `overflow` (the script
   rescans) and a watch whose watching thread dies (inotify, kqueue) hands out an error, then ends. The host's own long-lived
   work catches a panic per step (`vos_application::panics`): an `/rpc` request is answered `-32603` and the connection, its
-  ordered `view.event` task included, serves on (a panicking notification is logged); the effects pump, the live-source pump,
-  the hourly revision purge and dev reload log it and go on; an agent turn ends its run with an error and frees the thread; the
+  ordered `view.event` task included, serves on (a panicking notification is logged); the effects pump (per effect) and the
+  live-source pump (per delivery: a subscription whose delivery panicked is sent everything again on the next change) log it and
+  go on, as do the hourly revision purge and dev reload; an agent turn ends its run with an error and frees the thread; the
   agent connection ends as if the agent process had exited (its sessions are told, and the agent starts again); any other
   `Background` task is logged under its name. Tests: `crates/vos-lua/tests/panics.rs`, `crates/vos-http/tests/http.rs`,
   `crates/vos-acp/tests/acp.rs` and the unit tests beside each catch. The panic hook still prints every panic to stderr. What

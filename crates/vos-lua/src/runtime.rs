@@ -103,15 +103,27 @@ async fn deliver_effects(
         if life.is_closed() {
             break;
         }
-        match effect {
-            Effect::Notify(n) => notifier.notify(n).await?,
-            Effect::Shell(ShellEffect::DeepLinks(l)) => shell.set_deep_links(app, l).await,
-            Effect::OpenWindow { name, params } => {
-                let params = match params {
-                    Value::Object(map) => map,
-                    _ => Map::new(),
-                };
-                shell.open_window(app, &name, params).await;
+        // one effect whose port panics costs only that effect: the rest of the batch is still delivered (see
+        // `vos_application::panics`)
+        let delivered = panics::caught(async {
+            match effect {
+                Effect::Notify(n) => notifier.notify(n).await?,
+                Effect::Shell(ShellEffect::DeepLinks(l)) => shell.set_deep_links(app, l).await,
+                Effect::OpenWindow { name, params } => {
+                    let params = match params {
+                        Value::Object(map) => map,
+                        _ => Map::new(),
+                    };
+                    shell.open_window(app, &name, params).await;
+                }
+            }
+            Ok::<(), PortError>(())
+        })
+        .await;
+        match delivered {
+            Ok(result) => result?,
+            Err(message) => {
+                tracing::error!(%app, %message, "delivering what the app asked for panicked; the rest is still delivered");
             }
         }
     }

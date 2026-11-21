@@ -188,8 +188,8 @@ impl Notifier for PanicsOnce {
     }
 }
 
-/// The pump that forwards what an app's background work asks for survives a panic in a port: the next
-/// notification still goes out.
+/// The pump that forwards what an app's background work asks for survives a panic in a port, and one effect that
+/// panics costs only itself: the rest of its batch and the next batch still go out.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_panic_forwarding_background_effects_leaves_the_pump_running() {
     let notifier = Arc::new(PanicsOnce::default());
@@ -201,8 +201,9 @@ async fn a_panic_forwarding_background_effects_leaves_the_pump_running() {
           task.spawn(function()
             task.wait(0)
             app.notify {{ title = "first" }}
-            task.wait(0.05)
             app.notify {{ title = "second" }}
+            task.wait(0.05)
+            app.notify {{ title = "third" }}
           end)
         end }}
         "#
@@ -211,13 +212,17 @@ async fn a_panic_forwarding_background_effects_leaves_the_pump_running() {
     runtime.load(&id("probe"), package(&src, &[]), data).await.unwrap();
     runtime.call_tool(&id("probe"), "later", json!({}), agent_ctx(0), false).await.unwrap();
     for _ in 0..200 {
-        if !notifier.titles.lock().is_empty() {
+        if notifier.titles.lock().len() >= 2 {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     assert!(notifier.panicked.load(std::sync::atomic::Ordering::SeqCst), "the first notification panicked");
-    assert_eq!(*notifier.titles.lock(), ["second"], "the pump forwarded the next one");
+    assert_eq!(
+        *notifier.titles.lock(),
+        ["second", "third"],
+        "the rest of the batch, and the next batch, were forwarded"
+    );
 }
 
 // ---- windows ---------------------------------------------------------------------------------------------
