@@ -131,6 +131,20 @@ print(object:len(), object:has("name"))
 local list = json.array()
 list:push(1)
 list:set(1, "one")
+-- a path is object keys and 1-based array indexes
+print(object:get("name"), list:get(1), object:get("name", 1, "x"))
+
+-- a parsed document is a handle, the null sentinel or a scalar: narrow it before calling a method
+local document = assert(serde_json.from_str('{"users": [{"name": "Ada"}]}')) :: lib_json_Object
+print(document:get("users", 1, "name"), document:keys())
+local rows = assert(serde_json.from_str("[1, 2]")) :: lib_json_Array
+print(rows:len(), rows:get(2))
+local scalar = assert(serde_json.from_str("42"))
+if type(scalar) == "number" then
+	print(scalar + 1)
+end
+print(serde_json.from_str("null") == json.null)
+local _null: lib_json_JsonNull = json.null
 
 -- constructors live on a sub-table of the module, fields read as plain values
 local parsed = assert(url.Url.parse("https://example.com/a?b=1"))

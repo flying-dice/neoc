@@ -13,6 +13,7 @@ local json = require("lib:json")
 local net = require("std:net")
 local rusqlite = require("vnd:rusqlite")
 local semver = require("lib:semver")
+local serde_json = require("vnd:serde_json")
 local task = require("std:task")
 local test = require("lib:test")
 local time = require("std:time")
@@ -78,3 +79,12 @@ fs.copy_dir("a") -- expect-error: Function 'fs.copy_dir' expects 2 arguments, bu
 fs.remove_file("a", { missing_ok = "yes" }) -- expect-error: Expected this to be '{ missing_ok: boolean? }?' but got '{| missing_ok: string |}'
 assert(fs.metadata("a")):size() -- expect-error: Key 'size' not found in table 'std_fs_Metadata'
 assert(fs.watch("a")):recv() -- expect-error: Key 'recv' not found in table 'std_fs_Watcher'
+
+-- a `lib:json` path is keys and indexes, and needs at least one
+json.object():get() -- expect-error: Function expects at least 2 arguments, but only 1 is specified
+json.object():get(true) -- expect-error: Expected this to be 'number | string', but got 'boolean'
+json.array():get(1, {}) -- expect-error: Expected this to be 'number | string', but got '{|  |}'
+
+-- a parsed document may be a scalar or the null sentinel, so it is not a handle until it is narrowed
+assert(serde_json.from_str("{}")):get("a") -- expect-error: Key 'get' is missing from
+local _document: lib_json_Object = assert(serde_json.from_str("{}")) -- expect-error: Expected this to be 'lib_json_Object'

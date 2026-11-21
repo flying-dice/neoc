@@ -962,9 +962,9 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.userdata("Object", |o| {
         o.method(
             "get",
-            &[("path", "LuaValue"), ("...", "LuaValue")],
+            &[("path", "string | number"), ("...", "string | number")],
             "LuaValue",
-            "Walk a path of segments and return the leaf node.",
+            "Walk a path of segments (a string is an object key, a number a 1-based array index) and return the leaf node.",
         )
         .method(
             "set",
@@ -991,9 +991,9 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.userdata("Array", |a| {
         a.method(
             "get",
-            &[("path", "LuaValue"), ("...", "LuaValue")],
+            &[("path", "string | number"), ("...", "string | number")],
             "LuaValue",
-            "Walk a path starting from a 1-based index.",
+            "Walk a path of segments (a number is a 1-based array index, a string an object key) and return the leaf node.",
         )
         .method(
             "set",
@@ -1016,9 +1016,12 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         );
     });
 
+    // `JsonNull` has no methods (only `__eq` and `__tostring`); it is recorded so `json.null` and the parse
+    // results of `vnd:serde_json` can name its type.
+    m.userdata("JsonNull", |_| {});
     m.const_(
         "null",
-        "LuaValue",
+        "JsonNull",
         "Sentinel userdata for explicit JSON `null`, distinct from Lua `nil`.",
     );
 

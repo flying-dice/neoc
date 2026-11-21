@@ -857,8 +857,8 @@ export type lib_ini = {
 -- ===== lib:json =====
 
 export type lib_json_Object = {
-	--- Walk a path of segments and return the leaf node.
-	get: (self: lib_json_Object, path: any, ...any) -> any,
+	--- Walk a path of segments (a string is an object key, a number a 1-based array index) and return the leaf node.
+	get: (self: lib_json_Object, path: string | number, ...(string | number)) -> any,
 	--- Insert or replace `key` with `value`.
 	set: (self: lib_json_Object, key: string, value: any) -> (),
 	--- Whether the object contains an entry for `key`.
@@ -872,8 +872,8 @@ export type lib_json_Object = {
 }
 
 export type lib_json_Array = {
-	--- Walk a path starting from a 1-based index.
-	get: (self: lib_json_Array, path: any, ...any) -> any,
+	--- Walk a path of segments (a number is a 1-based array index, a string an object key) and return the leaf node.
+	get: (self: lib_json_Array, path: string | number, ...(string | number)) -> any,
 	--- Replace the element at a 1-based index.
 	set: (self: lib_json_Array, index: number, value: any) -> (),
 	--- Append `value` to the end of the array.
@@ -884,9 +884,11 @@ export type lib_json_Array = {
 	to_table: (self: lib_json_Array) -> any,
 }
 
+export type lib_json_JsonNull = {}
+
 export type lib_json = {
 	--- Sentinel userdata for explicit JSON `null`, distinct from Lua `nil`.
-	null: any,
+	null: lib_json_JsonNull,
 	--- Construct an empty mutable JSON object handle on a fresh root.
 	object: () -> lib_json_Object,
 	--- Construct an empty mutable JSON array handle on a fresh root.
@@ -1388,10 +1390,10 @@ export type vnd_rusqlite = {
 -- ===== vnd:serde_json =====
 
 export type vnd_serde_json = {
-	--- Parse a JSON string into a `JsonObject` or `JsonArray` handle.
-	from_str: (s: string) -> (any, string?),
-	--- Parse JSON from a reader handle.
-	from_reader: (reader: any) -> (any, string?),
+	--- Parse a JSON string: an object or array becomes a `lib:json` handle, `null` the `json.null` sentinel, any other scalar a Lua value.
+	from_str: (s: string) -> ((lib_json_Object | lib_json_Array | lib_json_JsonNull | string | number | boolean)?, string?),
+	--- Parse JSON from a reader handle, with the same results as `from_str`.
+	from_reader: (reader: any) -> ((lib_json_Object | lib_json_Array | lib_json_JsonNull | string | number | boolean)?, string?),
 	--- Serialise a Lua value to a compact JSON string.
 	to_string: (value: any) -> (string?, string?),
 	--- Serialise a Lua value to an indented, human-readable JSON string.
