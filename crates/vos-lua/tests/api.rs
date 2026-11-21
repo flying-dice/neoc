@@ -565,12 +565,14 @@ async fn notify_refuses_a_key_it_does_not_have() {
         assert!(e.contains(needle), "wanted `{needle}` in `{e}`");
         assert!(e.contains("(it takes `title`, `body`)"), "names what it takes: {e}");
     }
-    // the most a body can be, and an empty body, are fine
-    let vm = load(&app(
-        "app.notify { title = 't', body = string.rep('b', 2000) }\napp.notify { title = 't', body = '' }",
-    ))
-    .await;
+    // the longest title and body, and an empty body, are fine
+    let vm = load(&app("app.notify { title = string.rep('t', 200), body = string.rep('b', 2000) }\napp.notify { title = 't', body = '' }")).await;
     assert_eq!(vm.take_effects().len(), 2);
+    // a colon call with no table is told it needs one; `app`'s own keys are not read as a notification's
+    for call in ["app:notify()", "app.notify(app)", "app.notify()"] {
+        let e = try_load("probe", &app(call)).await.err().unwrap().to_string();
+        assert!(e.contains("app.notify takes a table"), "{call}: {e}");
+    }
 }
 
 /// A call can queue only so many notifications before the host takes them: the next one raises, so a loop

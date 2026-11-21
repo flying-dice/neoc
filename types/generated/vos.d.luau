@@ -1805,7 +1805,7 @@ export type vos_ToolDef = {
 	run: (input: any, ctx: vos_ToolContext) -> any,
 }
 
---- A notification: a title and an optional body, and no other key. The shell names the sender itself.
+--- A notification: a title and an optional body, and no other key. The host adds which app sent it.
 export type vos_Notification = {
 	--- 1 to 200 characters, not blank
 	title: string,
@@ -1845,7 +1845,7 @@ export type vos_AppApi = {
 	--- tool may do it; changing a window through its `w` is not.
 	windows: (self: vos_AppApi, name: string) -> { vos_WindowContext },
 	--- `app.notify { title, body }` or `app:notify { ... }`: tell the person something now. It reaches the clients
-	--- connected now; one that is not connected never gets it. The shell shows the app's own name and icon.
+	--- connected now; one that is not connected never gets it. The host sends the app's id with it, never text from the app.
 	--- Raises (each message starts `app.notify`): a key other than title and body ("unknown key"), no title
 	--- ("needs"), a title that is blank or over 200 characters, a body over 2000, a value that is not a string,
 	--- a 65th notification in one call ("at most 64 notifications per call"), and a call in render or a readOnly tool.

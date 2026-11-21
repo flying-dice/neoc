@@ -54,6 +54,19 @@ fn text_field(t: &Table, key: &str, what: &str, required: bool, max: usize) -> m
     }
 }
 
+/// The table of `app.notify { ... }` or `app:notify { ... }`: the last table given that is not `app` itself, so a
+/// colon call with no table says it takes one instead of reading `app`'s own keys as a notification's.
+fn notification_table(sh: &Shared, args: Variadic<LuaValue>) -> mlua::Result<Table> {
+    let app = sh.app_table.lock().as_ref().map(Table::to_pointer);
+    args.into_iter()
+        .rev()
+        .find_map(|v| match v {
+            LuaValue::Table(t) if Some(t.to_pointer()) != app => Some(t),
+            _ => None,
+        })
+        .ok_or_else(|| mlua::Error::runtime("app.notify takes a table"))
+}
+
 /// Refuse a key of `t` that is not in `allowed`, so a misspelt or unsupported field raises instead of being
 /// dropped. The keys are read raw (no `__pairs`, no `__index`): what the table holds, not what it pretends to.
 fn only_keys(t: &Table, what: &str, allowed: &[&str]) -> mlua::Result<()> {
@@ -196,7 +209,7 @@ pub(super) fn install(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<
         lua.create_function(move |_, args: Variadic<LuaValue>| {
             check_effects_allowed(&s, "app.notify")?;
             s.writable("app.notify")?;
-            let t = last_table(args, "app.notify")?;
+            let t = notification_table(&s, args)?;
             only_keys(&t, "app.notify", &["title", "body"])?;
             let title = text_field(&t, "title", "app.notify", true, 200)?.unwrap_or_default();
             let body = text_field(&t, "body", "app.notify", false, 2000)?;

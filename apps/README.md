@@ -75,8 +75,8 @@ semantic tokens only.
   anything; tasks and requests the call starts inherit it) and lets an agent with the default `auto_read_only` policy call
   the tool without a prompt. It does not cover the `std:`/`vnd:` modules. A tool that writes is not `readOnly`.
 - **Notifications:** `app.notify { title = "Backup done", body = "12 files" }` tells the person something now. It takes a
-  `title` (1 to 200 characters, not blank) and an optional `body` (up to 2000) and no other key; the shell names the sender
-  from the app's own name and icon. It goes to the clients connected at that moment: one that is not connected never
+  `title` (1 to 200 characters, not blank) and an optional `body` (up to 2000) and no other key; the host sends the app's id
+  with it, so the sender is never text the app wrote. It goes to the clients connected at that moment: one that is not connected never
   gets it (nothing is queued). Bad input raises, each message starting `app.notify`: a key other than `title` and `body`
   (`unknown key`), no title (`needs`), a title that is blank or too long, a body that is too long, a value that is not a
   string, a 65th notification in one call (`at most 64 notifications per call`), and a call in `render` or a `readOnly`

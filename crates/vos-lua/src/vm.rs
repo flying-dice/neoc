@@ -148,7 +148,8 @@ impl Default for VmConfig {
 }
 
 /// The most notifications one call may queue before the host takes them (`app.notify` raises past it). The
-/// number is Apple's: the system keeps an app's 64 soonest scheduled local notifications (`UILocalNotification`).
+/// number is Apple's (Decision NEOC-287): the system keeps an app's 64 soonest scheduled local notifications
+/// (`UILocalNotification`).
 pub const MAX_QUEUED_NOTIFICATIONS: usize = 64;
 
 /// Something the app asked the host to do, collected during a call and taken afterwards.
