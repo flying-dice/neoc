@@ -31,7 +31,6 @@ pub use feed::SqliteFeed;
 pub use ports::SqliteDataStore;
 pub use tx::SqliteTx;
 
-use vos_application::data::{Params, QueryInfo};
 use parking_lot::Mutex;
 use rusqlite::{
     hooks::{Action, AuthAction, Authorization},
@@ -52,6 +51,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::broadcast;
+use vos_application::data::{Params, QueryInfo};
 
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {

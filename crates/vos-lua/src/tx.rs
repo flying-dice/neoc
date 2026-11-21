@@ -15,13 +15,13 @@
 //! The task is registered in the app's `Life`: unloading the app, or stopping its background work for a reload,
 //! aborts it, and the transaction is rolled back (the call that was running it gets "the transaction has ended").
 
+use neoc_vm::lua::lifecycle::Life;
+use serde_json::Value;
+use tokio::sync::{mpsc, oneshot};
 use vos_application::{
     data::{DataTx, ExecOutcome, Params, PortResult},
     PortError,
 };
-use neoc_vm::lua::lifecycle::Life;
-use serde_json::Value;
-use tokio::sync::{mpsc, oneshot};
 
 /// A statement for the transaction's task to run.
 enum Statement {

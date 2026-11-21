@@ -1,10 +1,10 @@
 //! The change feed: commit batches coalesced into one batch per burst.
 
 use crate::{AppDb, Change};
-use vos_application::data::{ChangeBatch, ChangeFeed};
 use async_trait::async_trait;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::broadcast::{self, error::RecvError};
+use vos_application::data::{ChangeBatch, ChangeFeed};
 
 /// How long after the first commit of a burst to keep collecting (one frame).
 pub const COALESCE_WINDOW: Duration = Duration::from_millis(16);

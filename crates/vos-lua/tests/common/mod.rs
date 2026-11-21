@@ -1,13 +1,13 @@
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
 //! Shared by the Lua adapter's integration tests: apps run against the REAL SQLite adapter.
 
+use serde_json::{json, Value};
+use std::{collections::BTreeMap, path::Path, process::Command, sync::Arc, time::Duration};
 use vos_application::data::{ExecOutcome, Params, PortResult, QueryInfo, SqlMigration};
 use vos_application::ports::{AppData, AppPackage, CallContext};
 use vos_domain::{Actor, AppId};
 use vos_lua::{AppVm, VmConfig};
 use vos_sqlite::AppDb;
-use serde_json::{json, Value};
-use std::{collections::BTreeMap, path::Path, process::Command, sync::Arc, time::Duration};
 
 pub fn db() -> Arc<AppDb> {
     Arc::new(AppDb::open(None, &[]).unwrap())

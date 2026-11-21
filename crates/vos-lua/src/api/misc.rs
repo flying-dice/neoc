@@ -5,12 +5,12 @@ use crate::{
     convert::lua_to_json,
     vm::{Effect, Shared, ShellEffect},
 };
-use vos_application::ports::MenuCommand;
-use vos_domain::{AppDecl, Notification};
 use neoc_vm::mlua;
 use neoc_vm::mlua::{Function, Lua, Table, Value as LuaValue, Variadic};
 use serde_json::Value;
 use std::sync::Arc;
+use vos_application::ports::MenuCommand;
+use vos_domain::{AppDecl, Notification};
 
 /// The table argument of `f { ... }` / `f({ ... })` / `app:f { ... }`: the last table given.
 fn last_table(args: Variadic<LuaValue>, what: &str) -> mlua::Result<Table> {

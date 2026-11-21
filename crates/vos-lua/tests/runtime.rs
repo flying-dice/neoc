@@ -4,6 +4,10 @@
 
 mod common;
 
+use common::{agent_ctx, db, id, package, user_ctx};
+use parking_lot::Mutex;
+use serde_json::{json, Value};
+use std::{sync::Arc, time::Duration};
 use vos_application::{
     data::{ChangeFeed, Params},
     live::{pump_changes, LiveSources, SourceId, SourceUpdate, Window},
@@ -14,10 +18,6 @@ use vos_application::{
 use vos_domain::Notification;
 use vos_lua::LuaRuntime;
 use vos_sqlite::{AppDb, SqliteFeed};
-use common::{agent_ctx, db, id, package, user_ctx};
-use parking_lot::Mutex;
-use serde_json::{json, Value};
-use std::{sync::Arc, time::Duration};
 
 const NOTES: &str = r#"
 app.manifest { id = "notes", name = "Notes", icon = "note.text" }
@@ -86,10 +86,7 @@ async fn load(rig: &Rig, src: &str) -> PortResult<vos_application::ports::Loaded
     rig.runtime.load(&id("notes"), package(src, &[]), data).await
 }
 
-async fn wait_for(
-    sink: &CollectingSink,
-    n: usize,
-) -> Vec<(vos_application::SubscriptionId, SourceUpdate)> {
+async fn wait_for(sink: &CollectingSink, n: usize) -> Vec<(vos_application::SubscriptionId, SourceUpdate)> {
     for _ in 0..200 {
         if sink.peek().len() >= n {
             break;

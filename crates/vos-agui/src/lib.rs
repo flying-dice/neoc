@@ -16,11 +16,6 @@
 
 pub use vos_domain::agui::{AgUiEvent, ReasoningRole, Role, RunAgentInput, RunOutcome};
 
-use vos_application::{ChatError, ChatService, RunEvents};
-use vos_domain::{
-    thread::{json_of, SettingsChange},
-    Device, DeviceId,
-};
 use axum::{
     body::Bytes,
     extract::{FromRef, Path, State},
@@ -44,6 +39,11 @@ use std::{
     task::{Context, Poll},
 };
 use tokio_util::sync::CancellationToken;
+use vos_application::{ChatError, ChatService, RunEvents};
+use vos_domain::{
+    thread::{json_of, SettingsChange},
+    Device, DeviceId,
+};
 
 /// The open run streams by device, so that revoking a device can end them: a revoked session must not keep
 /// receiving what an agent says.

@@ -17,11 +17,11 @@ use crate::{
     ports::{AgentCard, AgentDirectory, AgentProcesses, AgentRoster, AgentStore, RandomSource, ToolRegistry},
     tokens::random_hex,
 };
+use parking_lot::RwLock;
+use std::{collections::BTreeMap, sync::Arc};
 use vos_domain::{
     hash_token, same_hash, Agent, AgentId, AgentIdentity, AgentRuntime, ApprovalPolicy, DomainError, Grants,
 };
-use parking_lot::RwLock;
-use std::{collections::BTreeMap, sync::Arc};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AgentError {

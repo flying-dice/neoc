@@ -5,13 +5,13 @@
 
 mod common;
 
-use vos_host::startup::prepare_data_dir;
 use common::{
     browser, built_app, call, claude, connect_agent, next_notification, notification_where, notify, path_of,
     publish_package, rpc, start, temp, text_of, tool_names, wait_until, Agent, Running, Ws,
 };
 use serde_json::{json, Value};
 use std::{path::Path, time::Duration};
+use vos_host::startup::prepare_data_dir;
 
 async fn host_with(tmp: &Path, apps: &[&str]) -> Running {
     prepare_data_dir(&tmp.join("data")).unwrap();

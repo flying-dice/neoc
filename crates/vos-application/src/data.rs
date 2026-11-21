@@ -4,10 +4,10 @@
 //! testable with in-memory fakes and the SQLite adapter is one implementation among possible others.
 
 use crate::error::PortError;
-use vos_domain::{Revision, StoredRevision};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::{collections::BTreeSet, sync::Arc};
+use vos_domain::{Revision, StoredRevision};
 
 pub type PortResult<T> = Result<T, PortError>;
 

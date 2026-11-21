@@ -10,7 +10,7 @@
 mod meta;
 mod ui;
 
-pub use meta::{vos_definitions, app_module_definitions, ui_module_definitions};
+pub use meta::{app_module_definitions, ui_module_definitions, vos_definitions};
 pub use ui::{module, ACTION_BUILDERS};
 
 use std::collections::BTreeMap;

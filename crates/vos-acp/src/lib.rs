@@ -12,14 +12,6 @@ mod process;
 
 pub use launch::{handshake, AgentHello, AgentLaunch};
 
-use vos_application::{
-    ports::{AgentConnector, AgentEventSink, McpAccess, PortResult, SessionOpened},
-    AgentProcesses, PortError,
-};
-use vos_domain::{
-    thread::{ConfigOption, ConfigValue, PermissionAnswer, StopReason},
-    Agent, AgentId,
-};
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use process::{AgentProcess, Permissions};
@@ -30,6 +22,14 @@ use std::{
     time::Duration,
 };
 use tokio::sync::Mutex as AsyncMutex;
+use vos_application::{
+    ports::{AgentConnector, AgentEventSink, McpAccess, PortResult, SessionOpened},
+    AgentProcesses, PortError,
+};
+use vos_domain::{
+    thread::{ConfigOption, ConfigValue, PermissionAnswer, StopReason},
+    Agent, AgentId,
+};
 
 /// How long an agent gets to answer `initialize` before the host gives up on it.
 pub const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(30);

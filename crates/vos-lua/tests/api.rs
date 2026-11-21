@@ -3,12 +3,12 @@
 
 mod common;
 
-use vos_application::{live::SourceKind, ports::MenuCommand};
-use vos_domain::Notification;
-use vos_lua::{AppVm, Effect, ShellEffect, VmConfig, VmError};
 use common::{agent_ctx, db, id, load, package, try_load, user_ctx};
 use serde_json::{json, Value};
 use std::sync::Arc;
+use vos_application::{live::SourceKind, ports::MenuCommand};
+use vos_domain::Notification;
+use vos_lua::{AppVm, Effect, ShellEffect, VmConfig, VmError};
 
 const MANIFEST: &str = r#"app.manifest { id = "probe", name = "Probe", icon = "gear" }"#;
 

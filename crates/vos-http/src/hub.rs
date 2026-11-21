@@ -3,6 +3,14 @@
 //! `EventSink` and `Notifier` adapter).
 
 use crate::rpc::{RpcHandler, RpcPeer};
+use async_trait::async_trait;
+use parking_lot::Mutex;
+use serde::Deserialize;
+use serde_json::{json, Map, Value};
+use std::{
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 use vos_application::{
     ports::{EventSink, MenuCommand, Notifier, PortResult, ServerEvent, Shell},
     AgentError, AgentPatch, AgentService, AppError, AppInfo, AppService, AppStatus, DeviceService, NewAgent,
@@ -17,14 +25,6 @@ use vos_domain::{
     },
     ui::{KIT_VERSION, PROTO_VERSION},
     AgentId, AgentRuntime, AppId, ApprovalPolicy, DeviceId, Grants, Notification,
-};
-use async_trait::async_trait;
-use parking_lot::Mutex;
-use serde::Deserialize;
-use serde_json::{json, Map, Value};
-use std::{
-    sync::{Arc, OnceLock},
-    time::Duration,
 };
 
 /// A client that revokes its own device gets its answer before the socket is closed.

@@ -1,6 +1,9 @@
 //! Driven ports. Each is a trait the application owns; an adapter crate implements it.
 
 use crate::live::{SourceDef, SourceId};
+use async_trait::async_trait;
+use serde_json::{Map, Value};
+use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
 use vos_domain::{
     thread::{
         AgentEvent, ConfigOption, ConfigValue, PermissionAnswer, PermissionRequest, SessionState, StopReason,
@@ -9,9 +12,6 @@ use vos_domain::{
     ui::{protocol::Command, ClientDecl, Node, SourceDecl},
     Actor, Agent, AgentId, AppDecl, AppId, Device, DeviceId, Notification, ToolSpec,
 };
-use async_trait::async_trait;
-use serde_json::{Map, Value};
-use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
 
 pub use crate::data::{
     AppData, ChangeBatch, ChangeFeed, DataStore, DataTx, ExecOutcome, Params, PortResult, QueryInfo,

@@ -2,11 +2,6 @@
 //! `POST /pair` counts attempts against the address the request came from: one noisy client is limited, the
 //! others still pair.
 
-use vos_application::{
-    testing::{ManualClock, MemDevices, SeededRandom},
-    DeviceService, PairingPolicy,
-};
-use vos_http::{session_router, SessionConfig};
 use axum::{
     extract::{ConnectInfo, Request},
     middleware::{from_fn, Next},
@@ -14,6 +9,11 @@ use axum::{
 };
 use std::{net::SocketAddr, sync::Arc};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use vos_application::{
+    testing::{ManualClock, MemDevices, SeededRandom},
+    DeviceService, PairingPolicy,
+};
+use vos_http::{session_router, SessionConfig};
 
 /// The test's stand-in for `into_make_service_with_connect_info`: the peer address is the `x-peer` header.
 async fn peer_from_header(mut req: Request, next: Next) -> Response {

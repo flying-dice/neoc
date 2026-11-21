@@ -15,11 +15,6 @@ use crate::{
     tx::OpenTx,
     view::{RenderScope, ViewInstance},
 };
-use vos_application::{
-    live::{SourceDef, SourceId},
-    ports::{AgentCard, AgentRoster, AppData, AppPackage, CallContext, MenuCommand, ViewEffect},
-};
-use vos_domain::{time, tool_schema, AppDecl, AppId, Notification, ToolSpec};
 use neoc_vm::mlua;
 use neoc_vm::{
     lua::{
@@ -42,6 +37,11 @@ use std::{
     task::{Context, Poll},
 };
 use tokio::sync::Notify;
+use vos_application::{
+    live::{SourceDef, SourceId},
+    ports::{AgentCard, AgentRoster, AppData, AppPackage, CallContext, MenuCommand, ViewEffect},
+};
+use vos_domain::{time, tool_schema, AppDecl, AppId, Notification, ToolSpec};
 
 /// The Lua 5.1 polyfills of the Lua 5.3 standard-library members 5.1 lacks (`lua/prelude.lua`, copied by `bun run codegen`): run
 /// once in each app's environment before the app.
@@ -872,8 +872,8 @@ impl AppVm {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vos_application::testing::ScriptedData;
     use std::time::Duration;
+    use vos_application::testing::ScriptedData;
 
     async fn vm() -> AppVm {
         let package = AppPackage {

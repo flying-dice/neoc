@@ -8,9 +8,9 @@
 //! worker (`tokio::spawn`), not on the thread that calls `block_on`, whose stack the operating system decides. The host
 //! has no dedicated thread that calls into Lua.
 
-use vos_lua::VM_THREAD_STACK;
 use anyhow::Context;
 use std::future::Future;
+use vos_lua::VM_THREAD_STACK;
 
 /// A multi-thread runtime whose every thread has [`VM_THREAD_STACK`] of stack.
 ///

@@ -24,6 +24,13 @@ pub mod runtime;
 pub mod serve;
 pub mod startup;
 
+use axum::{middleware::from_fn_with_state, Router};
+use std::{
+    net::IpAddr,
+    path::PathBuf,
+    sync::{Arc, Weak},
+};
+use tokio_util::sync::CancellationToken;
 use vos_acp::AcpConnector;
 use vos_agui::{agui_router_with, DeviceStreams};
 use vos_application::{
@@ -43,13 +50,6 @@ use vos_http::{
 use vos_lua::LuaRuntime;
 use vos_mcp::{mcp_router, McpState};
 use vos_sqlite::{SqliteDataStore, SqliteSystemDb};
-use axum::{middleware::from_fn_with_state, Router};
-use std::{
-    net::IpAddr,
-    path::PathBuf,
-    sync::{Arc, Weak},
-};
-use tokio_util::sync::CancellationToken;
 
 pub struct HostConfig {
     /// `None` = in-memory databases (tests).

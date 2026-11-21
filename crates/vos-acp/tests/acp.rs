@@ -1,10 +1,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
 //! The ACP adapter against a scripted fake agent process (no model).
 
+use parking_lot::Mutex;
+use std::{path::PathBuf, sync::Arc, time::Duration};
 use vos_acp::{handshake, AcpConnector, AgentLaunch};
-use vos_application::ports::{
-    AgentConnector, AgentEventSink, McpAccess, PermissionDecision, SessionOpened,
-};
+use vos_application::ports::{AgentConnector, AgentEventSink, McpAccess, PermissionDecision, SessionOpened};
 use vos_application::AgentProcesses;
 use vos_domain::{
     thread::{
@@ -12,8 +12,6 @@ use vos_domain::{
     },
     Agent, AgentId, AgentRuntime, ApprovalPolicy, Grants,
 };
-use parking_lot::Mutex;
-use std::{path::PathBuf, sync::Arc, time::Duration};
 
 fn fake_agent(command: &str) -> Agent {
     Agent {

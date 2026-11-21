@@ -20,10 +20,10 @@ use crate::{
     require,
     vm::{Effect, Shared, ShellEffect},
 };
-use vos_application::PortError;
 use neoc_vm::mlua;
 use neoc_vm::mlua::Lua;
 use std::{future::Future, sync::Arc};
+use vos_application::PortError;
 
 /// Install the `app` table and `require` into the app's environment (they are globals of its chunks, not of
 /// the engine).

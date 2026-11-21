@@ -20,13 +20,6 @@ use agent_client_protocol::{
     },
     Agent, Client,
 };
-use vos_application::{
-    ports::{AgentEventSink, PermissionDecision},
-    PERMISSION_TTL_MS,
-};
-use vos_domain::thread::{
-    AgentEvent, AgentInfo, ConfigOption, ConfigValue, PermissionAnswer, StopReason,
-};
 use parking_lot::Mutex;
 use std::{
     collections::HashMap,
@@ -38,6 +31,11 @@ use std::{
     time::Duration,
 };
 use tokio::sync::{mpsc, oneshot};
+use vos_application::{
+    ports::{AgentEventSink, PermissionDecision},
+    PERMISSION_TTL_MS,
+};
+use vos_domain::thread::{AgentEvent, AgentInfo, ConfigOption, ConfigValue, PermissionAnswer, StopReason};
 
 /// What `session/new` answered, with what the process told at `initialize`.
 pub(crate) struct NewSession {

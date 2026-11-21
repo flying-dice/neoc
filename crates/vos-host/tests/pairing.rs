@@ -4,13 +4,13 @@
 
 mod common;
 
-use vos_domain::Grants;
-use vos_host::Interfaces;
 use common::{connect_rpc, next_json, pair, start, Running};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use std::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
+use vos_domain::Grants;
+use vos_host::Interfaces;
 
 const LAN_IP: &str = "192.168.1.20";
 

@@ -9,6 +9,12 @@ use crate::{
     services::AppService,
     testing::{Fakes, FixedClock, MemAgentStore, MemThreadStore, SeededRandom},
 };
+use async_trait::async_trait;
+use futures_util::StreamExt;
+use parking_lot::Mutex;
+use serde_json::{json, Value};
+use std::{collections::VecDeque, future::Future, pin::Pin, sync::Arc, time::Duration};
+use tokio::sync::{oneshot, Notify};
 use vos_domain::{
     agui::{AgUiEvent, RunAgentInput, RunOutcome},
     thread::{
@@ -18,12 +24,6 @@ use vos_domain::{
     },
     Agent, AgentId, AgentRuntime, AppId, ApprovalPolicy, Grants,
 };
-use async_trait::async_trait;
-use futures_util::StreamExt;
-use parking_lot::Mutex;
-use serde_json::{json, Value};
-use std::{collections::VecDeque, future::Future, pin::Pin, sync::Arc, time::Duration};
-use tokio::sync::{oneshot, Notify};
 
 // ---- fakes --------------------------------------------------------------------------------------------
 

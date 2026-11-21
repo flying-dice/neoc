@@ -15,16 +15,16 @@ use crate::{
     writeback::{self, WriteAck, WriteRequest},
     AppError, PortError,
 };
-use vos_domain::{
-    api::{AppPreview, Catalog, InstalledInfo},
-    resolve_url, source_label, Actor, AgentIdentity, AppDecl, AppId, AppRef, DomainError, Manifest,
-    PackageBudget, QualifiedToolName, Registry, Revision, StoredRevision, ToolSpec, WindowDecl,
-};
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{collections::HashMap, sync::Arc};
+use vos_domain::{
+    api::{AppPreview, Catalog, InstalledInfo},
+    resolve_url, source_label, Actor, AgentIdentity, AppDecl, AppId, AppRef, DomainError, Manifest,
+    PackageBudget, QualifiedToolName, Registry, Revision, StoredRevision, ToolSpec, WindowDecl,
+};
 
 /// Every collaborator of [`AppService`].
 pub struct Ports {

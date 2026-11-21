@@ -2,8 +2,6 @@
 //! addresses inside the host's own network.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
 
-use vos_application::{ports::Fetcher, PortError};
-use vos_fetch::UrlFetcher;
 use axum::{
     body::{Body, Bytes},
     response::Redirect,
@@ -11,6 +9,8 @@ use axum::{
     Router,
 };
 use std::{convert::Infallible, net::SocketAddr, time::Duration};
+use vos_application::{ports::Fetcher, PortError};
+use vos_fetch::UrlFetcher;
 
 /// Fails the test (instead of hanging it) when a fetch does not come back: the old fetcher read without
 /// bound.

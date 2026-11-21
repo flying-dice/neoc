@@ -15,10 +15,10 @@
 //! fields into the tool's schema and validates every call against it.
 
 use crate::convert::{json_to_lua, lua_to_json};
-use vos_domain::tool_schema::{compile_fields, OPTIONAL_KEY};
 use neoc_vm::mlua;
 use neoc_vm::mlua::{Lua, Table, Value as LuaValue};
 use serde_json::{Map, Value};
+use vos_domain::tool_schema::{compile_fields, OPTIONAL_KEY};
 
 /// Options a builder understands, renamed to their JSON Schema keys.
 const RENAMES: &[(&str, &str)] = &[

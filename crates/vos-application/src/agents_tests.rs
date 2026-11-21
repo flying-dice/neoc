@@ -3,10 +3,10 @@ use crate::{
     ports::{AgentDirectory, AgentStore},
     testing::{MemAgentStore, MemRegistry, SeededRandom},
 };
+use std::sync::Arc;
 use vos_domain::{
     hash_token, Agent, AgentId, AgentRuntime, AppId, ApprovalPolicy, Grants, QualifiedToolName, ToolGrant,
 };
-use std::sync::Arc;
 
 struct Rig {
     store: Arc<MemAgentStore>,

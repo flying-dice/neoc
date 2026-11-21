@@ -1,11 +1,11 @@
 //! The operating-system implementations of the small infrastructure ports: wall clock and secure randomness.
 
-use vos_application::ports::{Background, Clock, RandomSource, TaskHandle};
 use std::{
     future::Future,
     pin::Pin,
     time::{SystemTime, UNIX_EPOCH},
 };
+use vos_application::ports::{Background, Clock, RandomSource, TaskHandle};
 
 pub struct SystemClock;
 

@@ -4,12 +4,12 @@
 
 mod common;
 
-use vos_domain::Grants;
 use common::{
     agents::launchable, browser, next_notification, notification_where, path_of, publish_package, rpc, start,
     temp, Running, Ws,
 };
 use serde_json::{json, Value};
+use vos_domain::Grants;
 
 async fn host_with_agents_app() -> Running {
     let mut fake = launchable("fake", "Fake", Grants::default());
@@ -153,10 +153,8 @@ async fn starting_a_chat_adds_it_to_the_list_and_the_first_message_titles_it() {
     // a later message moves the chat but keeps its name
     event(&mut ws, 6, &view, 3, "chat", "send", &json!({"text": "something else"})).await;
     let data = r.host.service.data_of(&vos_domain::AppId::parse("agents").unwrap()).unwrap();
-    let rows = data
-        .query("select title from threads".into(), vos_application::data::Params::None)
-        .await
-        .unwrap();
+    let rows =
+        data.query("select title from threads".into(), vos_application::data::Params::None).await.unwrap();
     assert_eq!(rows[0]["title"], "Plan my week please");
     r.stop().await;
 }

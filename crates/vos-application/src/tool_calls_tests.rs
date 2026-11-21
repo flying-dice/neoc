@@ -1,8 +1,8 @@
 //! `AppService::call_tool` hands the runtime the `readOnly` requirement of the tool it runs.
 
 use crate::testing::Fakes;
-use vos_domain::{AgentId, AgentIdentity, QualifiedToolName, ToolGrant};
 use serde_json::json;
+use vos_domain::{AgentId, AgentIdentity, QualifiedToolName, ToolGrant};
 
 fn agent() -> AgentIdentity {
     AgentIdentity {

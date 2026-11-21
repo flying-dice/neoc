@@ -1,6 +1,4 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
-use vos_domain::protocol::{RpcError, RpcMessage};
-use vos_http::{origin_guard, rpc_router, static_router, HostGuard, RpcHandler, RpcPeer};
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
@@ -9,6 +7,8 @@ use tokio_tungstenite::{
     connect_async,
     tungstenite::{client::IntoClientRequest, Message},
 };
+use vos_domain::protocol::{RpcError, RpcMessage};
+use vos_http::{origin_guard, rpc_router, static_router, HostGuard, RpcHandler, RpcPeer};
 
 struct H;
 #[async_trait]

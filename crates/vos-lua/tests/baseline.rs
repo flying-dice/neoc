@@ -19,12 +19,12 @@
 
 mod common;
 
-use vos_lua::{AppVm, VmConfig, UI_MODULE};
 use common::{built_app, db, id};
 use std::{
     process::Command,
     time::{Duration, Instant},
 };
+use vos_lua::{AppVm, VmConfig, UI_MODULE};
 
 /// How many VMs to create when `VOS_BASELINE_VMS` is not set.
 const DEFAULT_VMS: usize = 50;

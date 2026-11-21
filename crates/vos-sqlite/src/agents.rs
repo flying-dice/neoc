@@ -2,13 +2,13 @@
 //! and `ThreadStore` ports. A bearer token is stored only as its SHA-256 hash.
 
 use crate::devices::{sql_ms, SqliteSystemDb};
+use async_trait::async_trait;
+use serde_json::{json, Value};
 use vos_application::{
     ports::{AgentStore, PortResult, StoredThread, ThreadStore},
     PortError,
 };
 use vos_domain::{thread::ThreadMessage, Agent, AgentId, AgentRuntime, ApprovalPolicy, Grants};
-use async_trait::async_trait;
-use serde_json::{json, Value};
 
 /// Contacts. `args`, `env` and `grants` are JSON text; `token_hash` is NULL until a token is minted.
 pub(crate) const AGENTS: &str = "

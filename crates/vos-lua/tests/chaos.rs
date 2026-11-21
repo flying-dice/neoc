@@ -43,12 +43,6 @@
 
 mod common;
 
-use vos_application::{
-    ports::{AppData, AppRuntime, Notifier, PortResult},
-    testing::RecordingShell,
-};
-use vos_domain::Notification;
-use vos_lua::LuaRuntime;
 use common::{agent_ctx, db, id, package, timed_tool as tool, try_load_with};
 use serde_json::{json, Value};
 use std::{
@@ -61,6 +55,12 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::{io::AsyncWriteExt, net::TcpListener, sync::Semaphore};
+use vos_application::{
+    ports::{AppData, AppRuntime, Notifier, PortResult},
+    testing::RecordingShell,
+};
+use vos_domain::Notification;
+use vos_lua::LuaRuntime;
 
 // ---- a seeded generator ----------------------------------------------------------------------------------------
 

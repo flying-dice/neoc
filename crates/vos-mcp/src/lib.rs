@@ -8,11 +8,6 @@
 //! - per-agent bearer tokens (`AgentDirectory` port) -> `AgentIdentity` in request extensions ->
 //!   `AppService::call_tool` does the permission check and attribution.
 
-use vos_application::{
-    ports::{AgentDirectory, PortResult, ToolRegistry},
-    AppService,
-};
-use vos_domain::{AgentId, AgentIdentity, AppId, QualifiedToolName, ToolSpec};
 use async_trait::async_trait;
 use axum::{
     extract::{Request, State},
@@ -36,6 +31,11 @@ use rmcp::{
 };
 use std::{borrow::Cow, collections::HashMap, future::Future, sync::Arc};
 use tokio_util::sync::CancellationToken;
+use vos_application::{
+    ports::{AgentDirectory, PortResult, ToolRegistry},
+    AppService,
+};
+use vos_domain::{AgentId, AgentIdentity, AppId, QualifiedToolName, ToolSpec};
 
 /// The agent a request was authenticated as (the bearer middleware put it in the request's extensions).
 fn identity_of(extensions: &rmcp::model::Extensions) -> Option<AgentIdentity> {

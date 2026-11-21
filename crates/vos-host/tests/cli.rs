@@ -184,11 +184,7 @@ async fn pair_prints_a_fresh_code_that_a_running_host_accepts() {
             .send()
             .await
             .unwrap();
-        assert_eq!(
-            res.status(),
-            200,
-            "a code issued by `vos-host {flag}` pairs against the running host"
-        );
+        assert_eq!(res.status(), 200, "a code issued by `vos-host {flag}` pairs against the running host");
     }
     let _ = std::fs::remove_dir_all(data);
 }

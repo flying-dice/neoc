@@ -6,14 +6,14 @@
 //! operation here is a single atomic statement.
 
 use crate::{AppDb, DbError, Migration};
+use async_trait::async_trait;
+use serde_json::{json, Value};
+use std::path::Path;
 use vos_application::{
     ports::{DeviceRegistry, InstalledApp, InstalledAppStore, PortResult},
     PortError,
 };
 use vos_domain::{AppId, Device, DeviceId};
-use async_trait::async_trait;
-use serde_json::{json, Value};
-use std::path::Path;
 
 const SCHEMA: &str = "
 CREATE TABLE pairing_codes(

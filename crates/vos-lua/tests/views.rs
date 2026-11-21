@@ -5,6 +5,9 @@
 
 mod common;
 
+use common::{agent_ctx, built_app, db, id};
+use serde_json::{json, Map, Value};
+use std::{path::Path, sync::Arc};
 use vos_application::{
     ports::{AppData, AppPackage, AppRuntime, LoadedApp, RenderOutput, ViewEffect, ViewEventCall},
     PortError,
@@ -12,9 +15,6 @@ use vos_application::{
 use vos_domain::ui::{diff, protocol::Command, Node, Op};
 use vos_lua::LuaRuntime;
 use vos_sqlite::AppDb;
-use common::{agent_ctx, built_app, db, id};
-use serde_json::{json, Map, Value};
-use std::{path::Path, sync::Arc};
 
 fn obj(pairs: &[(&str, Value)]) -> Map<String, Value> {
     pairs.iter().map(|(k, v)| ((*k).to_owned(), v.clone())).collect()
@@ -30,10 +30,7 @@ fn runtime(shell: Arc<vos_application::testing::RecordingShell>) -> LuaRuntime {
     struct Quiet;
     #[async_trait::async_trait]
     impl vos_application::ports::Notifier for Quiet {
-        async fn notify(
-            &self,
-            _: vos_domain::Notification,
-        ) -> vos_application::ports::PortResult<()> {
+        async fn notify(&self, _: vos_domain::Notification) -> vos_application::ports::PortResult<()> {
             Ok(())
         }
     }

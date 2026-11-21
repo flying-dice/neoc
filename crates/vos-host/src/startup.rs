@@ -1,6 +1,5 @@
 //! Things the binary does around [`crate::build`]: local MCP discovery and installing the configured apps.
 
-use vos_application::AppService;
 use anyhow::Context;
 use serde_json::json;
 use std::{
@@ -9,6 +8,7 @@ use std::{
     time::Duration,
 };
 use tokio_util::sync::CancellationToken;
+use vos_application::AppService;
 
 /// Write `<data>/mcp.json` (mode 0600) so local MCP clients can find `/mcp` and its bearer token, in
 /// the shape MCP clients take as a server entry: `{ "url": ..., "headers": { "Authorization": ... } }`.

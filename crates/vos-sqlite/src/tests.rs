@@ -1,11 +1,11 @@
 use super::*;
+use std::time::Duration;
 use vos_application::{
     data::{ChangeBatch, ChangeFeed, Params},
     ports::{AppData, DataStore, InstalledApp, InstalledAppStore, SqlMigration},
     PortError,
 };
 use vos_domain::{Actor, AppId, Revision, RevisionReason};
-use std::time::Duration;
 
 fn migs() -> Vec<Migration> {
     vec![

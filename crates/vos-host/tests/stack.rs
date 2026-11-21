@@ -18,16 +18,16 @@
 //! of its argument through a metatable, whose `__index` calls `app.notify` again). The `run` tests below hold the
 //! wrapper's error and panic arms. What no test holds is `main.rs` calling the two functions (two lines).
 
-use vos_application::ports::{AppPackage, CallContext};
-use vos_domain::{Actor, AppId};
-use vos_lua::{AppVm, VmConfig};
-use vos_sqlite::AppDb;
 use serde_json::json;
 use std::{
     collections::BTreeMap,
     process::Command,
     sync::{Arc, Mutex},
 };
+use vos_application::ports::{AppPackage, CallContext};
+use vos_domain::{Actor, AppId};
+use vos_lua::{AppVm, VmConfig};
+use vos_sqlite::AppDb;
 
 const CASE: &str = "STACK_CASE";
 

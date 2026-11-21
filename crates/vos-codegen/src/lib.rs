@@ -22,7 +22,7 @@ mod ts;
 mod walk;
 
 pub use lua::{
-    vos_definitions, app_module_definitions, module as ui_module, ui_module_definitions, ACTION_BUILDERS,
+    app_module_definitions, module as ui_module, ui_module_definitions, vos_definitions, ACTION_BUILDERS,
 };
 pub use schema_lua::schema_to_lua;
 pub use ts::generate as typescript;
@@ -43,14 +43,8 @@ pub fn generate() -> Vec<GeneratedFile> {
         GeneratedFile { path: "types/generated/vos.ts", contents: ts::generate() },
         GeneratedFile { path: "types/generated/ui.lua", contents: lua::module() },
         GeneratedFile { path: "types/generated/luals/vos.lua", contents: lua::vos_definitions() },
-        GeneratedFile {
-            path: "types/generated/luals/vos/ui.lua",
-            contents: lua::ui_module_definitions(),
-        },
-        GeneratedFile {
-            path: "types/generated/luals/vos/app.lua",
-            contents: lua::app_module_definitions(),
-        },
+        GeneratedFile { path: "types/generated/luals/vos/ui.lua", contents: lua::ui_module_definitions() },
+        GeneratedFile { path: "types/generated/luals/vos/app.lua", contents: lua::app_module_definitions() },
         GeneratedFile { path: "docs/reference/components.md", contents: docs::generate() },
     ]
 }

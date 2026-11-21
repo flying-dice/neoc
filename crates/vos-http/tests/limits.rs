@@ -1,8 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
 //! What one `/rpc` connection may do: how many requests it may have in flight, and the id it is given.
 
-use vos_domain::protocol::{RpcError, RpcId, RpcMessage};
-use vos_http::{rpc_router, RpcHandler, RpcPeer, BUSY, MAX_IN_FLIGHT};
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use parking_lot::Mutex;
@@ -10,6 +8,8 @@ use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::Semaphore;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
+use vos_domain::protocol::{RpcError, RpcId, RpcMessage};
+use vos_http::{rpc_router, RpcHandler, RpcPeer, BUSY, MAX_IN_FLIGHT};
 
 /// `block` waits for the test to open the gate; `ping` answers at once.
 struct Gate {

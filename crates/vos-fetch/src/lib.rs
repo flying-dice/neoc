@@ -12,13 +12,13 @@
 
 mod guard;
 
+use async_trait::async_trait;
+use reqwest::{redirect::Policy, Url};
+use std::{io::Read, time::Duration};
 use vos_application::{
     ports::{Fetcher, PortResult},
     PortError,
 };
-use async_trait::async_trait;
-use reqwest::{redirect::Policy, Url};
-use std::{io::Read, time::Duration};
 
 /// How long one fetch (a whole file read or a whole HTTP exchange, body included) may take.
 const FETCH_TIMEOUT: Duration = Duration::from_secs(30);

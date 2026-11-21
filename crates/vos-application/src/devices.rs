@@ -13,13 +13,13 @@ use crate::{
     tokens::random_hex,
     PortError,
 };
-use vos_domain::{hash_token, Device, DeviceId};
 use parking_lot::Mutex;
 use std::{
     collections::{HashMap, VecDeque},
     net::{IpAddr, Ipv6Addr},
     sync::Arc,
 };
+use vos_domain::{hash_token, Device, DeviceId};
 
 /// 31 symbols with no `0 O 1 I L`: safe to read aloud and to type from a screen.
 const ALPHABET: &[u8; 31] = b"23456789ABCDEFGHJKMNPQRSTUVWXYZ";

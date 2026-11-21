@@ -25,10 +25,7 @@ fn main() -> ExitCode {
         Some("--check") => {
             let stale = vos_codegen::stale(root);
             if stale.is_empty() {
-                println!(
-                    "codegen:check OK ({} generated files up to date)",
-                    vos_codegen::generate().len()
-                );
+                println!("codegen:check OK ({} generated files up to date)", vos_codegen::generate().len());
                 ExitCode::SUCCESS
             } else {
                 eprintln!(

@@ -11,13 +11,13 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
+use schemars::schema_for;
 use vos_domain::ui::{
     components::{CATALOGUE, STACK_SUGAR},
     expr::{Arity, Func},
     source::ClientDecl,
     spec::{ComponentSpec, SlotScope},
 };
-use schemars::schema_for;
 
 use super::{
     classify, describe, field_type, group_name, helper_name, key, literals, object_type, optional,

@@ -21,8 +21,8 @@ use crate::{
     ports::{AppRuntime, CallContext},
     AppError,
 };
-use vos_domain::{merge3, Actor, AppId, Revision, RevisionReason};
 use serde_json::Value;
+use vos_domain::{merge3, Actor, AppId, Revision, RevisionReason};
 
 /// How the host reconciles a stale write of this field.
 #[derive(Clone, Debug, PartialEq, Eq)]

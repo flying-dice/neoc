@@ -3,8 +3,8 @@
 use agent_client_protocol::{
     schema::ProtocolVersion, v1::schema::InitializeRequest, AcpAgent, AcpAgentConfig, Client,
 };
-use vos_domain::Agent;
 use std::{collections::BTreeMap, path::PathBuf};
+use vos_domain::Agent;
 
 /// A program and its arguments and environment.
 #[derive(Clone, Debug)]

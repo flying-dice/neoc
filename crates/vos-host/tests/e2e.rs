@@ -5,14 +5,6 @@
 
 mod common;
 
-use vos_application::{
-    data::Params,
-    live::{SourceId, SourceUpdate},
-    testing::CollectingSink,
-    AppStatus, BindingKind, Resolution, WriteRequest,
-};
-use vos_domain::{Actor, AppId, AppRef, FileRef, Manifest};
-use vos_host::startup::{prepare_data_dir, start_apps};
 use common::{
     browser, call, claude, connect_agent, connect_rpc, next_notification, pair, publish_package, rpc, start,
     temp, text_of, tool_names, wait_until, Ws,
@@ -24,6 +16,14 @@ use std::{
     sync::{atomic::Ordering, Arc},
     time::Duration,
 };
+use vos_application::{
+    data::Params,
+    live::{SourceId, SourceUpdate},
+    testing::CollectingSink,
+    AppStatus, BindingKind, Resolution, WriteRequest,
+};
+use vos_domain::{Actor, AppId, AppRef, FileRef, Manifest};
+use vos_host::startup::{prepare_data_dir, start_apps};
 
 /// Publish the fixture app under `root` as an app ref with the id `id`; returns the `file://` URL of the ref.
 fn publish_app(root: &Path, id: &str) -> String {

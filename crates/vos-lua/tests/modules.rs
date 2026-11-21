@@ -5,12 +5,6 @@
 
 mod common;
 
-use vos_application::{
-    ports::{AppActivity, AppData, AppRuntime, Notifier, PortResult},
-    testing::RecordingShell,
-};
-use vos_domain::{AppId, Notification};
-use vos_lua::LuaRuntime;
 use common::{agent_ctx, built_package, db, id, load, package};
 use neoc_vm::lua::modules;
 use parking_lot::Mutex;
@@ -23,6 +17,12 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
 };
+use vos_application::{
+    ports::{AppActivity, AppData, AppRuntime, Notifier, PortResult},
+    testing::RecordingShell,
+};
+use vos_domain::{AppId, Notification};
+use vos_lua::LuaRuntime;
 
 /// The tests' own fixture apps, which the product's build pipeline (darklua) bundles.
 fn fixture(name: &str) -> std::path::PathBuf {

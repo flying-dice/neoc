@@ -19,6 +19,13 @@ use crate::{
     services::AppService,
     tokens::random_hex,
 };
+use futures_channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
+use parking_lot::Mutex;
+use serde_json::{json, Value};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Weak},
+};
 use vos_domain::{
     agui::{AgUiEvent, ReasoningRole, Role, RunAgentInput, RunOutcome},
     thread::{
@@ -28,13 +35,6 @@ use vos_domain::{
     },
     time::iso8601_utc,
     AgentId, ApprovalPolicy,
-};
-use futures_channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
-use parking_lot::Mutex;
-use serde_json::{json, Value};
-use std::{
-    collections::HashMap,
-    sync::{Arc, Weak},
 };
 
 /// How long a permission request waits for the person before it resolves as cancelled.

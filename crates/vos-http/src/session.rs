@@ -15,8 +15,6 @@
 //! 256-bit token; the database holds only its SHA-256. A paired session is **not** an MCP credential:
 //! `/mcp` has its own per-agent bearer tokens and never looks at this cookie.
 
-use vos_application::{DeviceService, PairError};
-use vos_domain::device::device_name_from_user_agent;
 use axum::{
     extract::{ConnectInfo, DefaultBodyLimit, Request, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
@@ -28,6 +26,8 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 use std::{net::SocketAddr, sync::Arc};
+use vos_application::{DeviceService, PairError};
+use vos_domain::device::device_name_from_user_agent;
 
 /// Name of the session cookie over plain HTTP.
 pub const SESSION_COOKIE: &str = "agentos_session";

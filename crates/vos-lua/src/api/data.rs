@@ -21,15 +21,15 @@ use crate::{
     tx::{answer, OpenTx, Reply},
     vm::Shared,
 };
-use vos_application::{
-    data::{ExecOutcome, Params, QueryInfo, SqlMigration},
-    live::{Conflict, SourceDef, SourceId, SourceKind, TotalMode},
-};
 use neoc_vm::lua::lifecycle::{async_function, turn_id, Role};
 use neoc_vm::mlua;
 use neoc_vm::mlua::{FromLuaMulti, Function, IntoLuaMulti, Lua, Table, Value as LuaValue};
 use serde_json::{json, Value};
 use std::{future::Future, sync::Arc};
+use vos_application::{
+    data::{ExecOutcome, Params, QueryInfo, SqlMigration},
+    live::{Conflict, SourceDef, SourceId, SourceKind, TotalMode},
+};
 
 type Sh = Arc<Shared>;
 

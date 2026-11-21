@@ -61,9 +61,7 @@ fn load(lua: &Lua, sh: &Arc<Shared>, spec: &str) -> mlua::Result<LuaValue> {
             .ok_or_else(|| mlua::Error::runtime("the app table is gone (the app was unloaded)"));
     }
     let source = sh.host_modules.get(name).ok_or_else(|| {
-        mlua::Error::runtime(format!(
-            "unknown host module \"vos:{name}\": only {ALLOWED} can be required"
-        ))
+        mlua::Error::runtime(format!("unknown host module \"vos:{name}\": only {ALLOWED} can be required"))
     })?;
     run_module(lua, sh, &format!("vos:{name}"), source)
 }

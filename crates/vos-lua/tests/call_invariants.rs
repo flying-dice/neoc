@@ -16,10 +16,10 @@
 
 mod common;
 
-use vos_application::{data::Params, ports::AppData};
 use common::{load, timed_tool, try_load_with, Stalling};
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
+use vos_application::{data::Params, ports::AppData};
 
 async fn call(vm: &Arc<vos_lua::AppVm>, tool: &str) -> Value {
     timed_tool(vm, tool, 10).await.unwrap_or_else(|why| panic!("{tool}: {why}"))

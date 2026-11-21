@@ -3,15 +3,15 @@
 
 mod common;
 
+use common::{agent_ctx, db, id, load, package};
+use serde_json::json;
+use std::sync::Arc;
 use vos_application::{
     live::SourceKind,
     ports::{AgentCard, AgentRoster},
 };
 use vos_domain::AgentId;
 use vos_lua::{AppVm, VmConfig};
-use common::{agent_ctx, db, id, load, package};
-use serde_json::json;
-use std::sync::Arc;
 
 const MANIFEST: &str = r#"app.manifest { id = "probe", name = "Probe", icon = "gear" }"#;
 

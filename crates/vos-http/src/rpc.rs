@@ -2,11 +2,6 @@
 //! notifications. Why not jsonrpsee: its server API is request/response + subscriptions; it has no
 //! way for the server to issue a *request* to a connected client and await the answer.
 
-use vos_domain::{
-    protocol::{RpcError, RpcId, RpcMessage},
-    ui::node::limits::MAX_MESSAGE_BYTES,
-    Device,
-};
 use async_trait::async_trait;
 use axum::{
     extract::{
@@ -30,6 +25,11 @@ use std::{
 };
 use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
+use vos_domain::{
+    protocol::{RpcError, RpcId, RpcMessage},
+    ui::node::limits::MAX_MESSAGE_BYTES,
+    Device,
+};
 
 /// How many requests one connection may have in flight (queued or running) at once. The next one is answered
 /// at once with [`BUSY`], so a client that floods `/rpc` slows only itself.
@@ -252,8 +252,6 @@ type Job = (RpcId, String, Value);
 async fn answer(handler: &dyn RpcHandler, peer: &RpcPeer, (id, method, params): Job) -> RpcMessage {
     match handler.request(peer, &method, params).await {
         Ok(v) => RpcMessage::ok(id, v),
-        Err(e) => {
-            RpcMessage::Error { jsonrpc: vos_domain::protocol::Version::V2, id: Some(id), error: e }
-        }
+        Err(e) => RpcMessage::Error { jsonrpc: vos_domain::protocol::Version::V2, id: Some(id), error: e },
     }
 }

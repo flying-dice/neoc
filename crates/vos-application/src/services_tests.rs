@@ -6,8 +6,8 @@ use crate::{
     testing::Fakes,
     AppError,
 };
-use vos_domain::{Actor, AgentId, AgentIdentity, AppId, DomainError, QualifiedToolName, ToolGrant};
 use serde_json::json;
+use vos_domain::{Actor, AgentId, AgentIdentity, AppId, DomainError, QualifiedToolName, ToolGrant};
 
 fn agent(grants: Vec<ToolGrant>) -> AgentIdentity {
     AgentIdentity { id: AgentId("claude".into()), name: "Claude".into(), grants }
@@ -307,10 +307,7 @@ async fn preview_reads_the_app_ref_only_and_says_whether_it_is_installed() {
     svc.install_from_url(&url).await.unwrap();
     let after = svc.preview(&url).await.unwrap();
     let installed = after.installed.unwrap();
-    assert_eq!(
-        (installed.version.as_str(), installed.state),
-        ("1.0.0", vos_domain::api::AppState::Running)
-    );
+    assert_eq!((installed.version.as_str(), installed.state), ("1.0.0", vos_domain::api::AppState::Running));
     assert!(svc.preview("mem://missing/app-ref.json").await.is_err());
 }
 

@@ -1,11 +1,4 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
-use vos_application::{
-    ports::AgentDirectory,
-    testing::{Fakes, StaticDirectory},
-    AppService,
-};
-use vos_domain::{AgentId, AgentIdentity, AppId, ToolGrant};
-use vos_mcp::{mcp_router, McpState};
 use rmcp::{
     model::{CallToolRequestParams, ClientConfig, ProtocolVersion},
     service::NotificationContext,
@@ -20,6 +13,13 @@ use std::{
     time::Duration,
 };
 use tokio_util::sync::CancellationToken;
+use vos_application::{
+    ports::AgentDirectory,
+    testing::{Fakes, StaticDirectory},
+    AppService,
+};
+use vos_domain::{AgentId, AgentIdentity, AppId, ToolGrant};
+use vos_mcp::{mcp_router, McpState};
 
 struct Harness {
     url: String,

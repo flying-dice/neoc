@@ -3,9 +3,9 @@
 //! tries to write.
 
 use super::{agent_with, publish_package, temp, Running};
-use vos_domain::{Agent, AgentRuntime, Grants};
 use serde_json::{json, Value};
 use std::path::PathBuf;
+use vos_domain::{Agent, AgentRuntime, Grants};
 
 /// The scripted ACP agent of `vos-acp` (a workspace binary): built on demand when this test run did not
 /// already build it, so `cargo nextest run -p vos-host` works on its own.

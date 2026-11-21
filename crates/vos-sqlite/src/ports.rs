@@ -1,16 +1,16 @@
 //! The port implementations: map `AppDb` onto `vos_application::ports::{DataStore, AppData}`.
 
 use crate::{feed::SqliteFeed, tx::SqliteTx, AppDb, DbError, Migration};
+use async_trait::async_trait;
+use parking_lot::Mutex;
+use serde_json::{json, Value};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use vos_application::{
     data::{ChangeFeed, DataTx, ExecOutcome, Params, QueryInfo},
     ports::{AppData, DataStore, PortResult, SqlMigration},
     PortError,
 };
 use vos_domain::{Actor, AppId, Revision, RevisionReason, StoredRevision};
-use async_trait::async_trait;
-use parking_lot::Mutex;
-use serde_json::{json, Value};
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 impl From<DbError> for PortError {
     fn from(e: DbError) -> Self {

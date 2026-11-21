@@ -4,6 +4,14 @@
 //! to that caller with the app's file and line, and no other VM, and not the host, is touched.
 
 use crate::vm::{AppVm, Effect, ShellEffect, VmConfig, VmError};
+use async_trait::async_trait;
+use neoc_vm::lua::lifecycle::Life;
+use parking_lot::RwLock;
+use serde_json::{Map, Value};
+use std::{
+    collections::HashMap,
+    sync::{Arc, OnceLock, Weak},
+};
 use vos_application::{
     live::SourceId,
     ports::{
@@ -13,14 +21,6 @@ use vos_application::{
     PortError,
 };
 use vos_domain::AppId;
-use async_trait::async_trait;
-use neoc_vm::lua::lifecycle::Life;
-use parking_lot::RwLock;
-use serde_json::{Map, Value};
-use std::{
-    collections::HashMap,
-    sync::{Arc, OnceLock, Weak},
-};
 
 /// The generated constructors (`types/generated/ui.lua`) every app gets as `require("vos:ui")`. Lua 5.1 source of
 /// `vos:ui` (hosts and tests that build a [`VmConfig`] by hand register it as `ui`).

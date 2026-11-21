@@ -2,8 +2,6 @@
 //! Shared by the host's integration tests: start the REAL wiring on an ephemeral loopback port and
 //! talk to it like a browser or an agent would.
 
-use vos_application::{ports::Clock, testing::ManualClock, DeviceService};
-use vos_host::{build, serve::serve, HostConfig};
 use futures_util::{SinkExt, StreamExt};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::task::JoinHandle;
@@ -13,8 +11,9 @@ use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream,
 };
 use tokio_util::sync::CancellationToken;
+use vos_application::{ports::Clock, testing::ManualClock, DeviceService};
+use vos_host::{build, serve::serve, HostConfig};
 
-use vos_domain::{Agent as Contact, AgentId, AgentRuntime, ApprovalPolicy, Grants};
 use rmcp::{
     model::CallToolRequestParams,
     service::{NotificationContext, RunningService},
@@ -26,6 +25,7 @@ use std::{
     path::PathBuf,
     sync::atomic::{AtomicUsize, Ordering},
 };
+use vos_domain::{Agent as Contact, AgentId, AgentRuntime, ApprovalPolicy, Grants};
 
 pub mod agents;
 
@@ -231,8 +231,8 @@ pub fn temp(name: &str) -> PathBuf {
 
 /// Publish an app package (`files` by path) under `root` as an app ref; returns the `file://` URL of the ref.
 pub fn publish_package(root: &std::path::Path, id: &str, main: &str, files: &[(&str, Vec<u8>)]) -> String {
-    use vos_domain::{AppId, AppRef, FileRef, Manifest};
     use sha2::{Digest, Sha256};
+    use vos_domain::{AppId, AppRef, FileRef, Manifest};
     std::fs::create_dir_all(root).unwrap();
     let mut refs = vec![];
     for (path, bytes) in files {

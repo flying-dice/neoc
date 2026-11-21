@@ -7,8 +7,8 @@ use crate::{
     testing::Fakes,
     AppError, BindingKind, PortError, Resolution, WriteRequest,
 };
-use vos_domain::{Actor, AppId, RevisionReason};
 use serde_json::json;
+use vos_domain::{Actor, AppId, RevisionReason};
 
 fn note_source(conflict: Conflict, writable: Option<Vec<String>>, rev: bool) -> SourceDef {
     SourceDef {

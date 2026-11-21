@@ -3,13 +3,13 @@
 
 mod common;
 
-use vos_domain::{AppId, Grants};
 use common::{
     agents::{event_types, launchable, resume_body, run_body, sse_events},
     pair, publish_package, start, temp, Running,
 };
 use serde_json::{json, Value};
 use std::time::Duration;
+use vos_domain::{AppId, Grants};
 
 struct Chat {
     r: Running,

@@ -13,6 +13,7 @@ use std::{
     process::Command,
 };
 
+use serde_json::Value;
 use vos_domain::ui::{
     components::{lookup, CATALOGUE, STACK_SUGAR},
     expr::Func,
@@ -22,7 +23,6 @@ use vos_domain::ui::{
     validate::{is_valid, validate_with, Context, Severity},
     ViewDecls,
 };
-use serde_json::Value;
 
 fn root() -> &'static Path {
     vos_codegen::repo_root()
@@ -395,10 +395,7 @@ fn the_notes_tree_has_the_documented_sources_bindings_and_ids() {
 }
 
 /// The first node of this type, depth first.
-fn find<'a>(
-    node: &'a vos_domain::ui::node::Node,
-    type_: &str,
-) -> Option<&'a vos_domain::ui::node::Node> {
+fn find<'a>(node: &'a vos_domain::ui::node::Node, type_: &str) -> Option<&'a vos_domain::ui::node::Node> {
     if node.type_ == type_ {
         return Some(node);
     }
@@ -406,10 +403,7 @@ fn find<'a>(
 }
 
 /// The first node with this key, depth first.
-fn find_key<'a>(
-    node: &'a vos_domain::ui::node::Node,
-    key: &str,
-) -> Option<&'a vos_domain::ui::node::Node> {
+fn find_key<'a>(node: &'a vos_domain::ui::node::Node, key: &str) -> Option<&'a vos_domain::ui::node::Node> {
     if node.key == key {
         return Some(node);
     }

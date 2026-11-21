@@ -5,11 +5,11 @@ use crate::{
     error::ToolFailure,
     vm::{Shared, ToolDecl},
 };
-use vos_domain::{tool_schema, QualifiedToolName, ToolSpec};
 use neoc_vm::mlua;
 use neoc_vm::mlua::{Function, Lua, Table, Value as LuaValue};
 use serde_json::{json, Value};
 use std::sync::Arc;
+use vos_domain::{tool_schema, QualifiedToolName, ToolSpec};
 
 fn text(t: &Table, key: &str) -> mlua::Result<Option<String>> {
     match t.get::<LuaValue>(key)? {

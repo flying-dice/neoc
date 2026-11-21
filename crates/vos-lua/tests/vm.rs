@@ -3,10 +3,10 @@
 
 mod common;
 
-use vos_lua::{reload, VmError};
 use common::{agent_ctx, db, load, package, try_load, try_load_with};
 use serde_json::json;
 use std::{sync::Arc, time::Duration};
+use vos_lua::{reload, VmError};
 
 #[tokio::test]
 async fn sandbox_blocks_escape_hatches_and_global_mutation() {

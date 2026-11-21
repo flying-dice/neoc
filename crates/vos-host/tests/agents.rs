@@ -4,13 +4,13 @@
 
 mod common;
 
-use vos_domain::{AppId, Grants};
 use common::{
     agents::{install_ledger, launchable, run_body, sse_events},
     call, connect_agent, connect_rpc, pair, rpc, start, text_of, tool_names, wait_until, Ws,
 };
 use serde_json::{json, Value};
 use std::sync::atomic::Ordering;
+use vos_domain::{AppId, Grants};
 
 fn grants_ledger() -> Grants {
     Grants::apps([AppId::parse("ledger").unwrap()])

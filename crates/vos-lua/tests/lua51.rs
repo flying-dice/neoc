@@ -12,13 +12,13 @@
 
 mod common;
 
-use vos_lua::VmError;
 use common::{agent_ctx, db, load, try_load, try_load_with};
 use serde_json::{json, Value};
 use std::{
     fmt::Write as _,
     time::{Duration, Instant},
 };
+use vos_lua::VmError;
 
 /// "Ended, not hung": far above what any of these takes, even on a busy machine.
 const PROMPTLY: Duration = Duration::from_secs(8);
@@ -378,11 +378,9 @@ async fn the_proxies_apps_index_never_yield_so_they_work_anywhere() {
     "#;
     let host_modules =
         std::collections::HashMap::from([("ui".to_owned(), vos_lua::UI_MODULE.as_bytes().to_vec())]);
-    let config =
-        vos_lua::VmConfig { host_modules: std::sync::Arc::new(host_modules), ..Default::default() };
-    let vm = vos_lua::AppVm::load(&common::id("probe"), common::package(src, &[]), db(), config)
-        .await
-        .unwrap();
+    let config = vos_lua::VmConfig { host_modules: std::sync::Arc::new(host_modules), ..Default::default() };
+    let vm =
+        vos_lua::AppVm::load(&common::id("probe"), common::package(src, &[]), db(), config).await.unwrap();
     let out = vm.call_tool("bump", json!({}), &agent_ctx(0), false).await.unwrap();
     assert_eq!(out["n"], 4, "{out}");
     assert_eq!(out["viaPcall"], 2, "{out}");

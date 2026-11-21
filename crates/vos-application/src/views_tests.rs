@@ -9,6 +9,8 @@ use crate::{
     testing::{Fakes, RecordingViewSink, ScriptedData},
     views::{ViewError, ViewService},
 };
+use serde_json::{json, Map, Value};
+use std::{collections::BTreeMap, sync::Arc};
 use vos_domain::{
     ui::{
         protocol::{
@@ -20,8 +22,6 @@ use vos_domain::{
     },
     AppId,
 };
-use serde_json::{json, Map, Value};
-use std::{collections::BTreeMap, sync::Arc};
 
 const CONN: u64 = 7;
 

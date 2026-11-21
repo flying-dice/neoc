@@ -20,6 +20,16 @@ use crate::{
     writeback::{BindingKind, Resolution, WriteAck as HostAck, WriteRequest},
     AppError,
 };
+use async_trait::async_trait;
+use parking_lot::Mutex;
+use serde_json::{json, Map, Value};
+use std::{
+    collections::{BTreeMap, HashMap, VecDeque},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Weak,
+    },
+};
 use vos_domain::{
     protocol::RpcError,
     ui::{
@@ -36,16 +46,6 @@ use vos_domain::{
         ClientDecl, Node, SourceDecl,
     },
     Actor, AppId,
-};
-use async_trait::async_trait;
-use parking_lot::Mutex;
-use serde_json::{json, Map, Value};
-use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc, Weak,
-    },
 };
 
 /// Where a view's notifications go: the connection that opened it. Sending never blocks.
@@ -375,9 +375,7 @@ impl ViewService {
         // drafts the client never saw acked: replay them with the `baseRev` they were written on
         if let Some(resume) = req.resume {
             for draft in resume.drafts {
-                if let vos_domain::ui::protocol::Draft::Row { source, key, field, value, base_rev } =
-                    draft
-                {
+                if let vos_domain::ui::protocol::Draft::Row { source, key, field, value, base_rev } = draft {
                     let write = RowSet { view_id: id.clone(), source, key, field, value, base_rev };
                     if let Err(e) = self.row_set(conn, write).await {
                         tracing::debug!(view = %id, error = %e, "a replayed draft was not applied");

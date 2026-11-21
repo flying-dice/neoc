@@ -6,13 +6,13 @@ use agent_client_protocol::v1::schema::{
     SessionConfigSelectOptions, SessionNotification, SessionUpdate, StopReason as AcpStop, ToolCallContent,
     ToolCallStatus,
 };
+use serde::Serialize;
+use serde_json::Value;
 use vos_domain::thread::{
     AgentEvent, ConfigChoice, ConfigOption, ContextUsage, Cost, Mode, ModeState, PermissionKind,
     PermissionOption, PermissionRequest, PlanEntry, PlanStatus, SessionState, SlashCommand, StopReason,
     ToolKind, ToolStatus,
 };
-use serde::Serialize;
-use serde_json::Value;
 
 /// The `snake_case` name serde gives a unit-like ACP enum (`SwitchMode` is `switch_mode`).
 fn name_of(value: &impl Serialize) -> Option<String> {

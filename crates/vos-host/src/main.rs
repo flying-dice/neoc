@@ -7,6 +7,13 @@
 //! ```
 //! Logging is `tracing` with `RUST_LOG` (default `info`).
 
+use anyhow::Context;
+use std::{
+    net::{SocketAddr, TcpListener},
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+use tracing_subscriber::EnvFilter;
 use vos_application::{mint_agent_token, PairingPolicy};
 use vos_domain::{Agent, AgentId, AgentRuntime, ApprovalPolicy, Grants};
 use vos_host::{
@@ -20,13 +27,6 @@ use vos_host::{
     HostConfig,
 };
 use vos_http::{system_hostname, system_interface_ips};
-use anyhow::Context;
-use std::{
-    net::{SocketAddr, TcpListener},
-    path::{Path, PathBuf},
-    sync::Arc,
-};
-use tracing_subscriber::EnvFilter;
 
 const HELP: &str = "\
 vos: the host

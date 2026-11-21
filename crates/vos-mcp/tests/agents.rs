@@ -1,13 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
 //! Per-agent tool lists over MCP, with the real roster (`AgentService`) as the directory.
 
-use vos_application::{
-    ports::AgentDirectory,
-    testing::{Fakes, MemAgentStore, SeededRandom},
-    AgentService, NewAgent, NoAgentProcesses,
-};
-use vos_domain::{AgentRuntime, AppId, Grants};
-use vos_mcp::{mcp_router, McpState};
 use rmcp::{
     model::CallToolRequestParams,
     service::NotificationContext,
@@ -22,6 +15,13 @@ use std::{
     time::Duration,
 };
 use tokio_util::sync::CancellationToken;
+use vos_application::{
+    ports::AgentDirectory,
+    testing::{Fakes, MemAgentStore, SeededRandom},
+    AgentService, NewAgent, NoAgentProcesses,
+};
+use vos_domain::{AgentRuntime, AppId, Grants};
+use vos_mcp::{mcp_router, McpState};
 
 struct Harness {
     url: String,

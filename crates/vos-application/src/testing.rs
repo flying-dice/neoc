@@ -12,11 +12,6 @@ use crate::{
     services::{AppService, Ports},
     PortError,
 };
-use vos_domain::{
-    ui::{ClientDecl, Node},
-    Agent, AgentId, AppId, AppRef, Device, DeviceId, FileRef, Manifest, MigrationSpec, Revision,
-    StoredRevision, ToolSpec,
-};
 use async_trait::async_trait;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
@@ -29,6 +24,11 @@ use std::{
         Arc, Mutex,
     },
     task::{Poll, Waker},
+};
+use vos_domain::{
+    ui::{ClientDecl, Node},
+    Agent, AgentId, AppId, AppRef, Device, DeviceId, FileRef, Manifest, MigrationSpec, Revision,
+    StoredRevision, ToolSpec,
 };
 
 #[derive(Default)]

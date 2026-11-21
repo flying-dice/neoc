@@ -23,13 +23,13 @@
 //! Relative paths in the file are relative to the file; relative paths in the environment, to the working
 //! directory.
 
-use vos_domain::{Agent, AgentId, AgentRuntime, ApprovalPolicy, Grants};
 use anyhow::{bail, Context};
 use serde::Deserialize;
 use std::{
     net::{IpAddr, Ipv4Addr},
     path::{Path, PathBuf},
 };
+use vos_domain::{Agent, AgentId, AgentRuntime, ApprovalPolicy, Grants};
 
 pub const DEFAULT_PORT: u16 = 7400;
 /// Where the managed client is built, when `client_dir` is not set.
@@ -137,9 +137,7 @@ impl Settings {
         };
         let list = |key: &str| env(key).filter(|v| !v.is_empty()).map(|v| split_list(&v));
         let dev_client_port = match env("VOS_DEV_CLIENT_PORT").filter(|v| !v.is_empty()) {
-            Some(v) => {
-                Some(v.parse().with_context(|| format!("VOS_DEV_CLIENT_PORT `{v}` is not a port"))?)
-            }
+            Some(v) => Some(v.parse().with_context(|| format!("VOS_DEV_CLIENT_PORT `{v}` is not a port"))?),
             None => file.dev_client_port,
         };
 

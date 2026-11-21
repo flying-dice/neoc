@@ -2,12 +2,12 @@
 //! A proxy in the environment must not carry a fetch: it would resolve (and connect to) the target itself, past
 //! the address guard. Kept in its own test binary because it sets process-wide environment variables.
 
-use vos_application::ports::Fetcher;
-use vos_fetch::UrlFetcher;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
+use vos_application::ports::Fetcher;
+use vos_fetch::UrlFetcher;
 
 #[tokio::test]
 async fn a_proxy_in_the_environment_is_never_used() {
