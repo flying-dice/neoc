@@ -41,4 +41,10 @@
       transform: rotate(360deg);
     }
   }
+  /* It says the app is busy: it keeps turning under Reduce Motion, as iOS's does (base.css stops every other animation). */
+  @media (prefers-reduced-motion: reduce) {
+    svg {
+      animation-duration: 0.8s !important;
+    }
+  }
 </style>
