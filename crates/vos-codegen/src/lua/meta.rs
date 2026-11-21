@@ -1,8 +1,8 @@
 //! The `LuaLS` (lua-language-server) definition files under `types/generated/luals/`: `---@meta` `LuaCATS` for editors
 //! and `bun run lint:lua`. They are never loaded by the host.
 //!
-//! A module name has a colon, which no file name may carry, so the files are laid out by the part of the name after
-//! the prefix: `.luarc.json` sets `completion.requireSeparator` to `:`, which makes `LuaLS` read `require("vos:ui")`
+//! A module name has a colon, which is not portable in a file name (Windows) and which `---@meta <name>` cannot
+//! carry either, so the files are laid out by the part of the name after the prefix: `.luarc.json` sets `completion.requireSeparator` to `:`, which makes `LuaLS` read `require("vos:ui")`
 //! as the path `vos/ui` and find it through the workspace library (the library root is `types/generated/luals/`).
 //! The files live at `vos/ui.lua` and `vos/app.lua`, and `vos.lua` holds the shared types and the global `app`.
 //! Classes and aliases are global to the workspace, so

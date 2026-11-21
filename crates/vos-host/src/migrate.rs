@@ -2,7 +2,8 @@
 //! `agentos.toml` in it) to `~/.vos`, so that paired devices, app data, the agent roster and the chat history
 //! survive the rename.
 //!
-//! This module is the only place in the program that still spells the old name.
+//! This module is, with the `agentos` alias that reads chat threads saved before the rename (`ThreadMessage` in
+//! `vos-domain`'s `thread.rs`), the only place in the program that still spells the old name.
 //!
 //! The rules, in order:
 //!
@@ -10,12 +11,15 @@
 //!    program already (or made the directory on purpose), and two directories are never merged.
 //! 2. `~/.agentos` is not a directory: nothing happens (a fresh install).
 //! 3. Otherwise `~/.agentos/agentos.toml` becomes `~/.agentos/vos.toml` (when there is no `vos.toml` beside it) and
-//!    the directory is renamed to `~/.vos`. A rename inside one parent is atomic, so a failure leaves everything
-//!    where it was: a failed rename of the directory puts the config file's name back, and the error says which
-//!    two paths were involved. Nothing is ever copied or deleted.
+//!    the directory is renamed to `~/.vos`. A rename inside one parent is atomic and nothing is ever copied or
+//!    deleted, so no data is lost on a failure: a failed rename of the directory puts the config file's name back
+//!    (if even that fails, the error says so, and `vos.toml` stays inside the old directory), and the error says
+//!    which two paths were involved. If another process moved the directory first (two starts at once), this one
+//!    finds `~/.vos` in place and the old directory gone, and reports nothing to do.
 //!
-//! It runs only when the data directory in use is the default `~/.vos` (an explicit `VOS_DATA` or `data_dir`
-//! names a directory of the person's choice, and an old default directory is not theirs to be moved then).
+//! It runs only when the data directory in use is the default `~/.vos`, so a `VOS_DATA` that names a directory of
+//! the person's choice never moves an old default directory. (A `data_dir` in the old config file is read only
+//! after the move, with the config file: the host warns when it then names a directory other than `~/.vos`.)
 
 use anyhow::{bail, Context};
 use std::{
@@ -35,7 +39,8 @@ const CONFIG: &str = "vos.toml";
 /// What [`migrate_legacy_data_dir`] did.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Migration {
-    /// There was nothing to move (a fresh install, or `~/.vos` exists already).
+    /// There was nothing to move: a fresh install, `~/.vos` exists already, the old path is not a directory, the
+    /// data directory in use is not the default, or another process moved it first.
     NotNeeded,
     /// `~/.agentos` was moved to `~/.vos`; `config_renamed` says whether its `agentos.toml` became `vos.toml`.
     Moved { from: PathBuf, to: PathBuf, config_renamed: bool },
@@ -49,8 +54,8 @@ pub fn default_data_dir(home: &Path) -> PathBuf {
 
 /// Move `~/.agentos` to `~/.vos` when the data directory in use is that default and only the old one exists.
 ///
-/// An error means nothing was lost and nothing was changed (see the module docs); the caller stops and tells the
-/// person, rather than starting on an empty directory beside their data.
+/// An error means no data was lost (see the module docs for what a failure can leave behind); the caller stops and
+/// tells the person, rather than starting on an empty directory beside their data.
 pub fn migrate_if_default(data_dir: &Path, home: &Path) -> anyhow::Result<Migration> {
     if data_dir != default_data_dir(home) {
         return Ok(Migration::NotNeeded);
@@ -71,20 +76,33 @@ fn migrate_with(home: &Path, rename: &dyn Fn(&Path, &Path) -> io::Result<()>) ->
         return Ok(Migration::NotNeeded);
     }
 
+    // another process (a second start at the same moment) may move the directory under us: then `~/.vos` is in place
+    // and the old directory is gone, and there is nothing left for this one to do
+    let moved_by_another =
+        || std::fs::symlink_metadata(&to).is_ok() && std::fs::symlink_metadata(&from).is_err();
+
     let old_config = from.join(LEGACY_CONFIG);
     let new_config = from.join(CONFIG);
     let rename_config = old_config.is_file() && std::fs::symlink_metadata(&new_config).is_err();
     if rename_config {
-        rename(&old_config, &new_config).with_context(|| {
-            format!(
-                "could not rename {} to {} (nothing was moved; {} is untouched)",
-                old_config.display(),
-                new_config.display(),
-                from.display()
-            )
-        })?;
+        if let Err(e) = rename(&old_config, &new_config) {
+            if moved_by_another() {
+                return Ok(Migration::NotNeeded);
+            }
+            return Err(e).with_context(|| {
+                format!(
+                    "could not rename {} to {} (nothing was moved; {} is untouched)",
+                    old_config.display(),
+                    new_config.display(),
+                    from.display()
+                )
+            });
+        }
     }
     if let Err(e) = rename(&from, &to) {
+        if moved_by_another() {
+            return Ok(Migration::NotNeeded);
+        }
         let restored = if rename_config { rename(&new_config, &old_config) } else { Ok(()) };
         if let Err(restore) = restored {
             bail!(
@@ -99,7 +117,7 @@ fn migrate_with(home: &Path, rename: &dyn Fn(&Path, &Path) -> io::Result<()>) ->
         }
         return Err(e).with_context(|| {
             format!(
-                "could not move {} to {} (nothing was changed: your data is still in {})",
+                "could not move {} to {} (no data was lost: it is still in {})",
                 from.display(),
                 to.display(),
                 from.display()
@@ -296,6 +314,61 @@ mod tests {
         let text = format!("{err:#}");
         assert!(text.contains("could not put") && text.contains("no data was lost"), "{text}");
         assert!(old.join("system.db").is_file() && old.join(CONFIG).is_file());
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn a_failed_move_with_no_config_to_restore_loses_nothing() {
+        let home = home("rename-fails-no-config");
+        let old = legacy_dir(&home);
+        fs::remove_file(old.join(LEGACY_CONFIG)).unwrap();
+        let failing = |_: &Path, _: &Path| -> io::Result<()> { Err(io::Error::other("denied")) };
+
+        let err = migrate_with(&home, &failing).unwrap_err();
+
+        assert!(format!("{err:#}").contains("denied"));
+        assert!(!home.join(DIR).exists());
+        assert_eq!(fs::read(old.join("system.db")).unwrap(), b"paired devices");
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn a_start_that_loses_the_race_to_another_start_finds_nothing_to_do() {
+        // the other process moves the directory just before this one's rename (of the config, then of the directory)
+        for (label, moves_on_call) in [("config-step", 1), ("dir-step", 2)] {
+            let home = home(&format!("race-{label}"));
+            let old = legacy_dir(&home);
+            let calls = std::cell::Cell::new(0);
+            let racing = |from: &Path, to: &Path| -> io::Result<()> {
+                calls.set(calls.get() + 1);
+                if calls.get() == moves_on_call {
+                    // the winner: moves the whole directory (its config renamed first), then this rename finds nothing
+                    if moves_on_call == 1 {
+                        fs::rename(old.join(LEGACY_CONFIG), old.join(CONFIG)).unwrap();
+                    }
+                    fs::rename(&old, home.join(DIR)).unwrap();
+                    return Err(io::Error::from(io::ErrorKind::NotFound));
+                }
+                fs::rename(from, to)
+            };
+
+            assert_eq!(migrate_with(&home, &racing).unwrap(), Migration::NotNeeded, "{label}");
+            assert_eq!(fs::read(home.join(DIR).join("system.db")).unwrap(), b"paired devices", "{label}");
+            let _ = fs::remove_dir_all(home);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_new_directory_that_is_a_file_or_a_dangling_link_also_blocks_the_move() {
+        let home = home("new-is-not-a-dir");
+        let old = legacy_dir(&home);
+        fs::write(home.join(DIR), b"in the way").unwrap();
+        assert_eq!(migrate_legacy_data_dir(&home).unwrap(), Migration::NotNeeded);
+        fs::remove_file(home.join(DIR)).unwrap();
+        std::os::unix::fs::symlink(home.join("nowhere"), home.join(DIR)).unwrap();
+        assert_eq!(migrate_legacy_data_dir(&home).unwrap(), Migration::NotNeeded);
+        assert!(old.join("system.db").is_file(), "the old directory is left alone");
         let _ = fs::remove_dir_all(home);
     }
 

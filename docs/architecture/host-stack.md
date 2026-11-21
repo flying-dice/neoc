@@ -34,7 +34,7 @@ Apps are written in plain Lua 5.1 (checked by lua-language-server against the ge
 
   | What | Measured | How |
   |---|---|---|
-  | Release binary (`vos-host`) | 13 418 960 bytes (12.8 MiB; PUC VM, 15.1 MiB on neoc-vm with Luau) | `cargo build --profile release-host -p vos-host`, then `ls -l target/release-host/vos-host` |
+  | Release binary (`vos`) | 13 418 960 bytes (12.8 MiB; PUC VM, 15.1 MiB on neoc-vm with Luau) | `cargo build --profile release-host -p vos-host`, then `ls -l target/release-host/vos` |
   | Clean release build | 1 min 58 s (378 s of CPU) | `CARGO_TARGET_DIR=<empty dir> cargo build --profile release-host -p vos-host` |
   | Incremental release build (touched `crates/vos-lua/src/api/misc.rs`) | 1 min 06 s: the adapter and the host are recompiled and relinked with LTO | `touch crates/vos-lua/src/api/misc.rs`, then the same build |
   | Incremental dev build (same file) | 1.7 s | `cargo build -p vos-host` after a first build, then `touch` the file and build again |
@@ -143,7 +143,7 @@ Apps are written in plain Lua 5.1 (checked by lua-language-server against the ge
 
 ## What I did not do / failed
 - Did not run Docker/Linux builds (daemon down). Did not test `jsonrpsee` (reasoned from docs). Did not test `https://` fetches (no network test; reqwest+rustls is compiled and works for `http://`).
-- No file in `/Users/jonathanturnock/Projects/vos` was modified; no processes left running.
+- No file in the source checkout was modified; no processes left running.
 
 ## Running the host
 
@@ -241,10 +241,10 @@ API only and logs a warning.
 hidden directory of the home folder named after it. On start, when the data directory in use is the default `~/.vos`,
 `~/.vos` does not exist and that older directory does, the host renames it to `~/.vos` (and its config file to
 `vos.toml`, when there is no `vos.toml` yet), so paired devices, app data, the agent roster and the chat history carry
-over. `crates/vos-host/src/migrate.rs` holds the exact old names (it is the only code that spells them) and the rules:
+over. `crates/vos-host/src/migrate.rs` holds the exact old names (with the stored-thread alias in `crates/vos-domain/src/thread.rs`, the only code that spells them) and the rules:
 if `~/.vos` exists nothing happens and the two are never merged; if neither exists nothing happens; an explicit
 `VOS_DATA` or `data_dir` is never a reason to move the old default. A rename that fails stops the start with an error
-naming both paths and leaves every file where it was (nothing is copied or deleted). A browser's session cookie and
+naming both paths and loses no data (nothing is copied or deleted; at worst the config file keeps its new name inside the old directory). A browser's session cookie and
 the client's local settings are keyed by the old name, so each paired device pairs again once (`vos pair`).
 
 ### The gate

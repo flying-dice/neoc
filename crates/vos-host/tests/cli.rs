@@ -209,8 +209,8 @@ fn host_in_home(home: &Path) -> Command {
         .env_remove("VOS_DATA")
         .env_remove("VOS_CONFIG")
         .env_remove("VOS_CLIENT_DIR")
-        .env("VOS_BIND", "127.0.0.1")
-        .env("VOS_PORT", "0")
+        .env_remove("VOS_BIND")
+        .env_remove("VOS_PORT")
         .env("RUST_LOG", "warn");
     cmd
 }
@@ -225,7 +225,8 @@ fn legacy_home(tag: &str) -> (std::path::PathBuf, String) {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let stdout = String::from_utf8(out.stdout).unwrap();
     let code = code_in(stdout.lines().find(|l| l.contains("Pairing code:")).unwrap());
-    std::fs::write(old.join("agentos.toml"), "bind = \"127.0.0.1\"\n").unwrap();
+    // the old config sets what the environment does not here, so a start that did not read it would show
+    std::fs::write(old.join("agentos.toml"), "bind = \"127.0.0.1\"\nport = 0\n").unwrap();
     (home, code)
 }
 
@@ -245,6 +246,10 @@ async fn the_first_start_after_the_rename_moves_the_old_data_directory_and_its_p
     let new = home.join(".vos");
     assert!(host.line_with("listening").contains(new.to_str().unwrap()), "it serves from ~/.vos");
     let base = base_url(&host);
+    assert!(
+        !base.ends_with(":7400"),
+        "{base}: the port 0 of the migrated vos.toml was read (the default is 7400)"
+    );
     assert!(!home.join(".agentos").exists(), "moved, not copied");
     assert!(new.join("system.db").is_file(), "the system database came along");
     assert!(
@@ -290,6 +295,7 @@ fn a_move_that_fails_is_reported_and_stops_the_start_with_the_data_where_it_was(
     std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o555)).unwrap();
     let can_write_anyway = std::fs::write(home.join("probe"), "x").is_ok(); // root ignores the mode
     if can_write_anyway {
+        eprintln!("skipped: this process can write to a read-only directory (running as root?)");
         std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o755)).unwrap();
         let _ = std::fs::remove_dir_all(home);
         return;

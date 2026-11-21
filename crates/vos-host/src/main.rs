@@ -87,13 +87,20 @@ async fn run_cli() -> anyhow::Result<()> {
     let load = || Settings::load(cli.config.as_deref(), &|k| std::env::var(k).ok(), &cwd, home.as_deref());
     let mut settings = load()?;
     if let Some(home) = home.as_deref() {
-        // once, on the first start after the rename: `~/.vos` becomes `~/.vos` (see `vos_host::migrate`)
+        // once, on the first start after the rename: the old data directory becomes `~/.vos` (see `vos_host::migrate`)
         let moved = migrate_if_default(&settings.data_dir, home)
-            .context("moving the data directory to its new name (it was not changed)")?;
+            .context("moving the data directory to its new name (no data was lost)")?;
         if let Migration::Moved { from, to, config_renamed } = moved {
             tracing::info!(from = %from.display(), to = %to.display(), config_renamed, "moved the data directory to its new name");
             // the config file may have come with it
             settings = load()?;
+            if settings.data_dir != to {
+                tracing::warn!(
+                    configured = %settings.data_dir.display(),
+                    moved_to = %to.display(),
+                    "the moved config file sets a data_dir other than the default: the host uses it, and the moved data stays in the default directory until data_dir is changed or removed"
+                );
+            }
         }
     }
     match cli.command {
