@@ -3,6 +3,10 @@
 # cargo-deny and luau-lsp (the pinned version, on PATH), and neither bun nor darklua. `bun run gate` runs it first, then
 # the vos checks. Every step must pass exactly as written; the first failure stops the run.
 #
+# It is fast on purpose (iteration speed is a requirement, CLAUDE.md, "The gate"): what takes minutes is not here but in
+# scripts/check-slow.sh (`bun run slow`): the full hostile-input sweep, the release-build abort regressions, the bench
+# bodies and the full generated-case counts.
+#
 # NEOC_REQUIRE_LUAU_LSP=1 is set here: a missing or other-version luau-lsp fails the Luau declaration tests instead of
 # skipping them (see CONTRIBUTING.md, "Pre-PR checks").
 set -euo pipefail
@@ -35,11 +39,9 @@ cargo run -p neoc -- run \
   "crates/neoc/tests/vnd/serde_yaml.test.lua" \
   "crates/neoc/tests/vnd/toml.test.lua"
 
-step "cargo test --release -p neoc-vm --test abort_regressions"
-cargo test --release -p neoc-vm --test abort_regressions
-
-step "bench smoke (compiles every bench, runs each body once)"
-cargo bench -p neoc-vm --features bench --bench lib --bench vnd -- --test
+# The benches must keep compiling; running their bodies and the release-build abort regressions are in `bun run slow`.
+step "cargo check -p neoc-vm --features bench --benches --locked"
+cargo check -p neoc-vm --features bench --benches --locked
 
 step "scripts/check-toolchain-pin.sh"
 scripts/check-toolchain-pin.sh

@@ -2,16 +2,22 @@
 /**
  * `bun run gate`: the one pre-PR command set for the whole repository.
  *
- *   1. the neoc checks (`scripts/check-neoc.sh`: fmt, clippy, the neoc and neoc-vm tests, the Lua suites, the abort
- *      regressions, the bench smoke, the toolchain pin, cargo deny, the Luau declarations, vos-codegen --check, the
- *      no-vos-leak dependency check, `cargo check --workspace --all-targets --locked`);
+ *   1. the neoc checks (`scripts/check-neoc.sh`: fmt, clippy, the neoc and neoc-vm tests, the Lua suites, the bench
+ *      build, the toolchain pin, cargo deny, the Luau declarations, vos-codegen --check, the no-vos-leak dependency
+ *      check, `cargo check --workspace --all-targets --locked`);
  *   2. the vos checks: `bun run lint`, `typecheck`, `test`, `test:e2e` (a Mac, for the screenshot baselines).
+ *
+ * It is fast on purpose (iteration speed is a requirement: CLAUDE.md, "The gate"). The slow suites are not in it: `bun run
+ * slow` (`scripts/check-slow.sh`). e2e is required only for a change to vos UI, apps, the client, the protocol or the
+ * host's HTTP surface; `--no-e2e` leaves it out for any other change.
  *
  * It runs with `VOS_GATE=1` and `NEOC_REQUIRE_LUAU_LSP=1` so that a missing luau-lsp, stylua or darklua fails instead of
  * skipping (a skipped check is not a pass), stops at the first failing step and prints what ran. A change confined to the
  * neoc crates can run `scripts/check-neoc.sh` alone (no bun, no darklua): `bun run gate:neoc`, see CONTRIBUTING.md.
  *
- * Usage: bun run gate [--neoc | --vos]   (a half of it, for a loop; the gate before a PR is the whole of it)
+ * Usage: bun run gate [--neoc | --vos] [--no-e2e]
+ *   --neoc / --vos  a half of it, for a loop; the gate before a PR is the whole of it (or --no-e2e, per CLAUDE.md)
+ *   --no-e2e        everything but test:e2e
  */
 import { resolve } from 'node:path'
 
@@ -33,12 +39,16 @@ const VOS: Step[] = [
 
 /** The steps to run, in order, for the flags given (none: the whole gate). */
 export function plan(args: string[]): Step[] {
+  const known = ['--neoc', '--vos', '--no-e2e']
+  const unknown = args.filter((a) => !known.includes(a))
+  if (unknown.length) throw new Error(`unknown argument ${unknown.join(' ')}: the flags are ${known.join(', ')}`)
   const neoc = args.includes('--neoc')
   const vos = args.includes('--vos')
   if (neoc && vos) throw new Error('--neoc and --vos together is the whole gate: pass neither')
+  const vosSteps = args.includes('--no-e2e') ? VOS.filter((s) => s.name !== 'test:e2e') : VOS
   if (neoc) return NEOC
-  if (vos) return VOS
-  return [...NEOC, ...VOS]
+  if (vos) return vosSteps
+  return [...NEOC, ...vosSteps]
 }
 
 async function main(): Promise<number> {

@@ -317,10 +317,13 @@ fn mutate_list(rng: &mut Rng, list: &mut Vec<Node>, depth: usize) {
     }
 }
 
-#[test]
-fn apply_of_diff_reproduces_the_new_tree_for_unrelated_trees() {
+/// The generated-tree properties run a fifth of their cases in the gate; `bun run slow` runs all of them (the
+/// `#[ignore]`d `_full` tests below).
+const GATE_CASES: usize = 300;
+
+fn apply_reproduces_the_new_tree_for_unrelated_trees(cases: usize) {
     let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
-    for _ in 0..1500 {
+    for _ in 0..cases {
         let (a, b) = (random_node(&mut rng, "main", 3), random_node(&mut rng, "main", 3));
         let ops = diff(&a, &b);
         let mut applied = a.clone();
@@ -330,10 +333,20 @@ fn apply_of_diff_reproduces_the_new_tree_for_unrelated_trees() {
 }
 
 #[test]
-fn apply_of_diff_reproduces_the_new_tree_for_edited_trees() {
+fn apply_of_diff_reproduces_the_new_tree_for_unrelated_trees() {
+    apply_reproduces_the_new_tree_for_unrelated_trees(GATE_CASES);
+}
+
+#[test]
+#[ignore = "slow: 1500 generated trees in a debug build; run with `bun run slow` (scripts/check-slow.sh)"]
+fn apply_of_diff_reproduces_the_new_tree_for_unrelated_trees_full() {
+    apply_reproduces_the_new_tree_for_unrelated_trees(1500);
+}
+
+fn apply_reproduces_the_new_tree_for_edited_trees(cases: usize) {
     let mut rng = Rng(0xD1B5_4A32_D192_ED03);
     let mut changed = 0;
-    for _ in 0..3000 {
+    for _ in 0..cases {
         let a = random_node(&mut rng, "main", 3);
         let b = mutate(&mut rng, &a);
         let ops = diff(&a, &b);
@@ -342,7 +355,18 @@ fn apply_of_diff_reproduces_the_new_tree_for_edited_trees() {
         apply(&mut applied, &ops).unwrap_or_else(|e| panic!("{e}\nold: {a:#?}\nnew: {b:#?}\nops: {ops:#?}"));
         assert_eq!(applied, b, "old: {a:#?}\nops: {ops:#?}");
     }
-    assert!(changed > 1500, "the generator must actually change trees ({changed})");
+    assert!(changed > cases / 2, "the generator must actually change trees ({changed} of {cases})");
+}
+
+#[test]
+fn apply_of_diff_reproduces_the_new_tree_for_edited_trees() {
+    apply_reproduces_the_new_tree_for_edited_trees(GATE_CASES * 2);
+}
+
+#[test]
+#[ignore = "slow: 3000 generated trees in a debug build; run with `bun run slow` (scripts/check-slow.sh)"]
+fn apply_of_diff_reproduces_the_new_tree_for_edited_trees_full() {
+    apply_reproduces_the_new_tree_for_edited_trees(3000);
 }
 
 #[test]

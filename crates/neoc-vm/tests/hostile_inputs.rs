@@ -12,6 +12,11 @@
 //! into a failure that names the call. Allocation failures and stack overflows abort the process: that
 //! is a failure too, the test binary dies on the call it printed last (`HOSTILE_TRACE=1`).
 //!
+//! The sweep comes in two sizes. `no_module_function_panics_on_a_quick_hostile_sweep` is in the gate: every function with
+//! every hostile value alone and in pairs from the reduced pool, no three-argument combinations and no deeply nested
+//! text (those are covered by the targeted tests below). `no_module_function_panics_on_hostile_input` is the full sweep
+//! (about two million calls, minutes), `#[ignore]`d as slow: `bun run slow` runs it.
+//!
 //! The sweep and the other tests here run on a 2 MiB thread (the stack of a default runtime worker): a
 //! recursion that only fits a bigger stack is a stack overflow, which aborts the host, so it fails here.
 //!
@@ -117,7 +122,17 @@ const SMALL_POOL: &[usize] = &[4, 5, 15, 16, 18, 22, 26, 27, 32, 38, 39, 40, 41,
 
 static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+/// How much of the pool a sweep uses.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Size {
+    /// Every combination: single values, all pairs of the pool, all triples of the reduced pool, the deep texts.
+    Full,
+    /// The gate's size: single values and the pairs of the reduced pool.
+    Quick,
+}
+
 struct Harness {
+    size: Size,
     lua: Lua,
     pool: Vec<Value>,
     deep: Vec<Value>,
@@ -194,7 +209,7 @@ impl Harness {
         }
         // A handle accumulates what earlier calls did to it, so its methods get the reduced pool throughout
         // (a million-element array would make every later call a slow one).
-        let wide: Vec<&Value> = if prefix.is_empty() {
+        let wide: Vec<&Value> = if prefix.is_empty() && self.size == Size::Full {
             pool.iter().collect()
         } else {
             SMALL_POOL.iter().map(|&i| &pool[i]).collect()
@@ -208,7 +223,7 @@ impl Harness {
         // the deep nesting goes in as an argument, alone and next to a plain one (a pattern to
         // compile or a text to parse, whichever way round), for module functions: the methods of a handle take the same text
         // through the constructors swept here, and sweeping them too would only repeat the cost
-        if prefix.is_empty() {
+        if prefix.is_empty() && self.size == Size::Full {
             let plain = self.lua.create_string("x").map(Value::String).unwrap();
             for d in self.deep.clone() {
                 for args in [
@@ -221,7 +236,7 @@ impl Harness {
                 }
             }
         }
-        if prefix.is_empty() {
+        if prefix.is_empty() && self.size == Size::Full {
             for &i in SMALL_POOL {
                 for &j in SMALL_POOL {
                     for &k in SMALL_POOL {
@@ -294,7 +309,7 @@ fn describe(v: &Value) -> String {
     }
 }
 
-fn sweep() -> (usize, Vec<String>) {
+fn sweep(size: Size) -> (usize, Vec<String>) {
     let scratch = tempfile::tempdir().unwrap();
     std::env::set_current_dir(scratch.path()).unwrap();
 
@@ -349,7 +364,7 @@ fn sweep() -> (usize, Vec<String>) {
             .sequence_values::<Value>()
             .map(Result::unwrap)
             .collect();
-        let deep: Table = if std::env::var_os("HOSTILE_NO_DEEP").is_some() {
+        let deep: Table = if size == Size::Quick || std::env::var_os("HOSTILE_NO_DEEP").is_some() {
             lua.create_table().unwrap()
         } else {
             lua.load(DEEP).eval().unwrap()
@@ -363,6 +378,7 @@ fn sweep() -> (usize, Vec<String>) {
             .eval()
             .unwrap();
         let mut h = Harness {
+            size,
             lua,
             pool,
             deep,
@@ -390,16 +406,16 @@ fn sweep() -> (usize, Vec<String>) {
     (total, found)
 }
 
-#[test]
-fn no_module_function_panics_on_hostile_input() {
+/// Runs a sweep on a 2 MiB thread and fails on any panic it recorded (or a hang).
+fn assert_sweep_is_quiet(size: Size, limit: Duration) {
     let (tx, rx) = mpsc::channel();
     std::thread::Builder::new()
         .stack_size(2 << 20)
         .spawn(move || {
-            let _ = tx.send(sweep());
+            let _ = tx.send(sweep(size));
         })
         .unwrap();
-    match rx.recv_timeout(Duration::from_mins(15)) {
+    match rx.recv_timeout(limit) {
         Ok((calls, panics)) => {
             eprintln!("{calls} hostile calls");
             let mut by_site: std::collections::BTreeMap<String, String> =
@@ -418,6 +434,21 @@ fn no_module_function_panics_on_hostile_input() {
         }
         Err(e) => panic!("the sweep hung or died: {e}"),
     }
+}
+
+/// The gate's sweep: see the module comment. The sweep installs a process-wide panic hook, so run it by itself
+/// (`cargo nextest`, one process per test, does; `cargo test` runs the other tests of this file beside it, and a
+/// failure of one of those shows up here too).
+#[test]
+fn no_module_function_panics_on_a_quick_hostile_sweep() {
+    assert_sweep_is_quiet(Size::Quick, Duration::from_mins(5));
+}
+
+/// The full sweep, about two million calls: minutes. `bun run slow` runs it.
+#[test]
+#[ignore = "slow: about two million hostile calls; run with `bun run slow` (scripts/check-slow.sh)"]
+fn no_module_function_panics_on_hostile_input() {
+    assert_sweep_is_quiet(Size::Full, Duration::from_mins(15));
 }
 
 /// Run `f` on a 2 MiB thread, the stack of a default runtime worker; a panic or stack overflow fails the test.
@@ -657,6 +688,7 @@ fn unbounded_macro_recursion_is_a_render_error_on_a_small_stack() {
 /// cycle (a membership scan per edge took 12.6 s in debug); the recursion is bounded at run time, so the render
 /// is an ordinary error.
 #[test]
+#[ignore = "slow: a wall-clock bound over a 60 000-macro ring, seconds in a debug build and flaky under load; run with `bun run slow` (scripts/check-slow.sh)"]
 fn a_ring_of_sixty_thousand_macros_is_planned_in_linear_time() {
     let n = 60_000;
     let mut src = String::new();
