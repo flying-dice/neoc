@@ -1,13 +1,16 @@
 //! Driving adapter: axum. Owns `/rpc` (WebSocket), the Origin/Host guard, device pairing and sessions
-//! (`/pair`, `/session`, the session guard) and static serving of the built client. `/mcp` and `/agui`
+//! (`/pair`, `/session`, the session guard), the frames an app's client runs in (`/frame`) and static serving of
+//! the built client. `/mcp` and `/agui`
 //! routers come from their own adapter crates; the composition root merges them and decides which routes
 //! sit behind the session guard.
 
+mod frame;
 mod guard;
 mod hub;
 mod rpc;
 mod session;
 
+pub use frame::{frame_routes, FrameRoutes, FRAME_CSP};
 pub use guard::{origin_guard, system_hostname, system_interface_ips, HostGuard, InterfaceIps};
 pub use hub::RpcHub;
 pub use rpc::{rpc_router, RpcCallError, RpcHandler, RpcPeer, BUSY, MAX_IN_FLIGHT};

@@ -105,6 +105,7 @@ async fn deliver_effects(
         match effect {
             Effect::Notify(n) => notifier.notify(n).await?,
             Effect::Shell(ShellEffect::DeepLinks(l)) => shell.set_deep_links(app, l).await,
+            Effect::Emit { name, data } => shell.emit_event(app, &name, data).await,
             Effect::OpenWindow { name, params } => {
                 let params = match params {
                     Value::Object(map) => map,
@@ -152,11 +153,16 @@ impl AppRuntime for LuaRuntime {
             // read-only: stated in the `AppRuntime::load` port doc, accepted in AGOS-64.
             old.stop_background();
         }
+        let has_client = package.has_client;
         let vm = AppVm::load(app, package, data, config).await.map_err(|e| port_error(app, e))?;
-        let decl = vm.decl().ok_or_else(|| {
-            PortError::Rejected(format!("{app}: the app must declare itself with app.manifest {{ ... }}"))
-        })?;
-        let loaded = LoadedApp { decl: Some(decl), tools: vm.tools(), sources: vm.sources() };
+        // an app with a client says who it is in app.json; one without describes its windows, so it must declare
+        let decl = vm.decl();
+        if decl.is_none() && !has_client {
+            return Err(PortError::Rejected(format!(
+                "{app}: the app must declare itself with app.manifest {{ ... }}"
+            )));
+        }
+        let loaded = LoadedApp { decl, tools: vm.tools(), sources: vm.sources() };
         forward_effects(&*self.notifier, &*self.shell, app, &vm).await?;
         // a call that comes from inside the VM (a request to the app's own server, a task) queues effects too:
         // forward them when it ends. The pump is one of the app's own tasks, so it goes with the app.
@@ -224,6 +230,19 @@ impl AppRuntime for LuaRuntime {
     ) -> PortResult<Value> {
         let vm = self.vm(app)?;
         let out = vm.call_tool(tool, args, &ctx, read_only).await.map_err(|e| port_error(app, e));
+        forward_effects(&*self.notifier, &*self.shell, app, &vm).await?;
+        out
+    }
+
+    async fn call_handler(
+        &self,
+        app: &AppId,
+        method: &str,
+        args: Value,
+        ctx: CallContext,
+    ) -> PortResult<Value> {
+        let vm = self.vm(app)?;
+        let out = vm.call_handler(method, args, &ctx).await.map_err(|e| port_error(app, e));
         forward_effects(&*self.notifier, &*self.shell, app, &vm).await?;
         out
     }

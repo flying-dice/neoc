@@ -58,6 +58,7 @@ async fn text_only_loading_binary_chunks_never_run() {
     let package = vos_application::ports::AppPackage {
         entry: "app.lua".into(),
         files: [("app.lua".to_owned(), bytecode)].into(),
+        ..Default::default()
     };
     let err = vos_lua::AppVm::load(&common::id("probe"), package, db(), common::config())
         .await

@@ -48,6 +48,17 @@ use vos_domain::{time, tool_schema, AppDecl, AppId, Notification, ToolSpec};
 /// environment does not copy from the engine. Run once in each app's environment before the app.
 const PRELUDE: &str = include_str!("../../../types/generated/prelude.lua");
 
+/// A value's type as Luau's `type()` names it (the engine tells integers from other numbers; a script does not).
+fn lua_type(value: &LuaValue) -> &'static str {
+    match value {
+        LuaValue::Integer(_) | LuaValue::Number(_) => "number",
+        other => other.type_name(),
+    }
+}
+
+/// The longest name a handler may have (and so the longest `rpc` method a client may call).
+pub const MAX_HANDLER_NAME: usize = 128;
+
 #[derive(Debug, thiserror::Error)]
 pub enum VmError {
     /// The entry point (or a module it requires) failed while loading.
@@ -61,6 +72,12 @@ pub enum VmError {
     ToolFailed(String),
     #[error("no such tool `{0}`")]
     NoSuchTool(String),
+    /// A client called a handler the backend does not have.
+    #[error("the app has no handler `{0}`")]
+    NoSuchHandler(String),
+    /// The entry returned something that is not a table of handler functions.
+    #[error("the entry must return nothing or a table of functions by name: {0}")]
+    BadHandlers(String),
     #[error("no such source `{0}`, or it has no write callback")]
     NoSuchWriter(String),
     #[error("no such window `{0}`")]
@@ -157,6 +174,11 @@ pub enum Effect {
         name: String,
         params: Value,
     },
+    /// `app.emit(name, data)`: an event for the app's open clients.
+    Emit {
+        name: String,
+        data: Value,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -184,6 +206,9 @@ pub(crate) struct Shared {
     pub tools: Mutex<Vec<ToolDecl>>,
     /// What `hook(name, fn)` registered (only with [`VmConfig::test_hooks`]).
     pub handlers: Mutex<HashMap<String, Function>>,
+    /// The backend of an app with a client: the functions its entry returned, by name. A client's `rpc(name, args)`
+    /// calls one.
+    pub rpc_handlers: Mutex<HashMap<String, Function>>,
     pub test_hooks: bool,
     pub sources: Mutex<Vec<SourceDef>>,
     pub writers: Mutex<HashMap<String, Function>>,
@@ -307,6 +332,7 @@ impl Shared {
     fn release(&self) {
         self.tools.lock().clear();
         self.handlers.lock().clear();
+        self.rpc_handlers.lock().clear();
         self.writers.lock().clear();
         self.windows.lock().clear();
         self.deep_links.lock().clear();
@@ -635,6 +661,7 @@ impl AppVm {
             tracker: Arc::new(Mutex::new(Tracker::new(read_only.clone()))),
             tools: Mutex::default(),
             handlers: Mutex::default(),
+            rpc_handlers: Mutex::default(),
             test_hooks,
             sources: Mutex::default(),
             writers: Mutex::default(),
@@ -684,11 +711,44 @@ impl AppVm {
         let entry = self.shared.package.entry.clone();
         let source =
             self.shared.package.files.get(&entry).cloned().ok_or_else(|| VmError::NoEntry(entry.clone()))?;
-        load_source(&self.lua, source.as_slice())
+        let returned: LuaValue = load_source(&self.lua, source.as_slice())
             .set_name(self.shared.chunk_name(&entry))
             .set_environment(env)
-            .exec_async()
+            .call_async(())
             .await?;
+        self.keep_handlers(returned)?;
+        Ok(())
+    }
+
+    /// What the entry returned is the backend: a table of functions by name (or nothing, for an app that only
+    /// declares tools and windows). Anything else is a mistake the author should hear about at load.
+    fn keep_handlers(&self, returned: LuaValue) -> std::result::Result<(), VmError> {
+        let table = match returned {
+            LuaValue::Nil => return Ok(()),
+            LuaValue::Table(t) => t,
+            other => return Err(VmError::BadHandlers(format!("it returned a {}", lua_type(&other)))),
+        };
+        let mut handlers = HashMap::new();
+        for pair in table.pairs::<LuaValue, LuaValue>() {
+            let (key, value) = pair.map_err(|e| VmError::BadHandlers(e.to_string()))?;
+            let LuaValue::String(name) = key else {
+                return Err(VmError::BadHandlers(format!("a key is a {}, not a name", lua_type(&key))));
+            };
+            let name = name.to_string_lossy();
+            let LuaValue::Function(handler) = value else {
+                return Err(VmError::BadHandlers(format!(
+                    "`{name}` is a {}, not a function",
+                    lua_type(&value)
+                )));
+            };
+            if name.is_empty() || name.len() > MAX_HANDLER_NAME {
+                return Err(VmError::BadHandlers(format!(
+                    "a handler name is 1 to {MAX_HANDLER_NAME} characters"
+                )));
+            }
+            handlers.insert(name, handler);
+        }
+        *self.shared.rpc_handlers.lock() = handlers;
         Ok(())
     }
 
@@ -786,6 +846,27 @@ impl AppVm {
             let arg = json_to_lua(&self.lua, &input).map_err(convert)?;
             let ctx = self.ctx_table(ctx).map_err(convert)?;
             let out: LuaValue = run.call_async((arg, ctx)).await.map_err(|e| script(&e))?;
+            lua_to_json(&out).map_err(|e| VmError::BadValue(e.to_string()))
+        })
+        .await
+    }
+
+    /// A client's `rpc(method, args)`: run the handler the entry returned under that name as `handler(ctx, args)`,
+    /// as a call of its own. It is the person's own client asking, so the call may write (an agent's tool is the
+    /// one that can be `readOnly`).
+    pub async fn call_handler(&self, name: &str, args: Value, ctx: &CallContext) -> Result<Value> {
+        let handler = self
+            .shared
+            .rpc_handlers
+            .lock()
+            .get(name)
+            .cloned()
+            .ok_or_else(|| VmError::NoSuchHandler(name.chars().take(MAX_HANDLER_NAME).collect()))?;
+        self.in_call(false, async {
+            let convert = |e: mlua::Error| VmError::BadValue(e.to_string());
+            let arg = json_to_lua(&self.lua, &args).map_err(convert)?;
+            let ctx = self.ctx_table(ctx).map_err(convert)?;
+            let out: LuaValue = handler.call_async((ctx, arg)).await.map_err(|e| script(&e))?;
             lua_to_json(&out).map_err(|e| VmError::BadValue(e.to_string()))
         })
         .await
@@ -912,6 +993,7 @@ mod tests {
         let package = AppPackage {
             entry: "app.lua".into(),
             files: [("app.lua".to_owned(), b"-- an app that declares nothing".to_vec())].into(),
+            ..AppPackage::default()
         };
         AppVm::load(
             &AppId::parse("probe").unwrap(),

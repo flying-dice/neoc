@@ -1794,6 +1794,17 @@ export type vos_ToolContext = {
 	fail: (self: vos_ToolContext, message: string) -> any,
 }
 
+--- What a handler of an app's backend gets: who is calling and when (the person's client, so `actor.kind` is `"user"`).
+--- `ctx:fail(message)` ends the call with `message`, which the client's `rpc` rejects with (no file or line).
+export type vos_HandlerContext = {
+	actor: vos_Actor,
+	now: string,
+	fail: (self: vos_HandlerContext, message: string) -> any,
+}
+
+--- What an app's entry returns: the handlers a client reaches with `rpc(name, args)`, as `handler(ctx, args)`.
+export type vos_Handlers = { [string]: (ctx: vos_HandlerContext, args: any) -> any }
+
 export type vos_ToolDef = {
 	--- a local identifier: [a-z][a-z0-9_]* (agents see it as `<appId>__<name>`)
 	name: string,
@@ -1841,6 +1852,10 @@ export type vos_AppApi = {
 	--- `app.notify { ... }` or `app:notify { ... }`.
 	notify: ((notification: vos_Notification) -> ()) & ((self: vos_AppApi, notification: vos_Notification) -> ()),
 	log: (message: string) -> (),
+	--- Tell the app's open clients something changed outside them (`host.on(name, fn)` in the client): after an
+	--- agent's tool changed data, or from a background task. `name` is 1 to 64 letters, digits and `. _ : -` (not
+	--- `host:...`), `data` is JSON of at most 64 KiB. A change to the world like `notify`: a `readOnly` tool may not.
+	emit: (name: string, data: any?) -> (),
 }
 
 -- ===== vos:ui =====
