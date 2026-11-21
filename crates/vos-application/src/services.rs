@@ -414,10 +414,14 @@ impl AppService {
         }
     }
 
-    /// The app's database and its managed files.
+    /// The app's database and its managed files. Removing the files is best effort, as removing the database is
+    /// (the SQLite adapter ignores what it cannot delete): a failure is logged and the uninstall or "delete data"
+    /// still finishes its state changes and events, rather than stopping half way with the app gone or without a VM.
     async fn purge_data(&self, app: &AppId) -> Result<(), AppError> {
         self.p.data.purge(app).await?;
-        self.p.files.purge(app).await.map_err(|e| PortError::Internal(e.to_string()))?;
+        if let Err(e) = self.p.files.purge(app).await {
+            tracing::warn!(%app, error = %e, "removing the app's files failed: what could not be removed stays on disk");
+        }
         Ok(())
     }
 

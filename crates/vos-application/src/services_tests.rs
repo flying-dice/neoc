@@ -258,6 +258,28 @@ async fn delete_data_purges_and_reloads_a_running_app_on_an_empty_database() {
     assert!(matches!(svc.delete_data(&AppId::parse("ghost").unwrap()).await, Err(AppError::NotInstalled(_))));
 }
 
+#[tokio::test]
+async fn a_files_purge_that_fails_still_finishes_uninstall_and_delete_data() {
+    let f = Fakes::new();
+    f.files.fail_purges();
+    let svc = f.service();
+    let id = svc.install_from_url(&f.add_app("notes", &[("add_note", "x")])).await.unwrap();
+    svc.delete_data(&id).await.unwrap();
+    assert!(f.files.purged("notes"), "the purge was tried");
+    assert_eq!(svc.status(&id), Some(AppStatus::Running), "and the app was reloaded on its empty database");
+    assert_eq!(f.runtime.loads("notes"), 2);
+    assert_eq!(f.registry.names(), vec!["notes__add_note".to_string()]);
+
+    f.events.take();
+    svc.uninstall(&id, true).await.unwrap();
+    assert!(f.store.purged("notes"));
+    assert!(f.installed.records().is_empty() && svc.installed_apps().is_empty());
+    assert!(
+        f.events.take().iter().any(|e| matches!(e, ServerEvent::AppUninstalled(a) if a == &id)),
+        "clients are told the app is gone"
+    );
+}
+
 // ---- reload -------------------------------------------------------------------------------------------
 
 #[tokio::test]

@@ -28,18 +28,24 @@
 //!   closed. Closed: a write or a file copy never follows a link at the destination (rename); a read opens the
 //!   file and then checks that what it opened is the file it looked at (same device and inode, on Unix), so a
 //!   last name swapped for a link meanwhile is refused; a recursive remove cannot be redirected while it runs.
-//!   Open: a directory on the way that is swapped for a link between the check and the system call is followed.
-//!   Closing that needs handle-relative resolution (`openat2` with `RESOLVE_BENEATH`, or `cap-std`), a new
-//!   dependency this change does not take. Only something that can already write the app's files wins that
-//!   race (the app itself through `std:fs`, or another process of the host's user), and it can already write
-//!   anywhere the host can.
+//!   Open, between the check and the system call: a directory on the way swapped for a link is followed; the
+//!   source of a copy (a file or a tree root) swapped for a link is followed, so what it points at is copied in;
+//!   and a file swapped for a FIFO makes `read`'s open wait until something writes to it, holding the app's
+//!   turn. Closing these needs handle-relative resolution (`openat2` with `RESOLVE_BENEATH`, or `cap-std`) and a
+//!   non-following, non-blocking open, which this change does not take on. Only something that can already
+//!   write the app's files wins such a race (the app itself through `std:fs`, or another process of the host's
+//!   user), and it can already write anywhere the host can.
 //!
 //! This is the convention that keeps apps out of each other's files by accident. It is **not a sandbox**: an app
 //! reaches any file the host can through `std:fs`.
 //!
-//! **Errors** name the app's own path, never a host path. **Every operation runs on the blocking pool**; if the
-//! call is dropped (the app was unloaded) a tree copy or move stops at its next entry and a write is not put in
-//! place.
+//! **Errors** read `<kind>: <app path>: <message>` (the use case's refusals carry no path) and never carry a
+//! host path: the message is the operating system's text for the error code, or a fixed description of the
+//! kind, never an error's own `Display`, which can name the path (`tempfile` adds `at path <host path>`, a walk
+//! error names both ends of a loop).
+//!
+//! **Every operation runs on the blocking pool**; if the call is dropped (the app was unloaded) a tree copy or
+//! move stops at its next entry and a write is not put in place.
 
 use async_trait::async_trait;
 use neoc_vm::lua::std::fs::{
@@ -200,11 +206,9 @@ fn write(base: &Path, path: &FilePath, data: &[u8], cancel: &AtomicBool) -> File
         replaceable(&seen, path)?;
     }
     let mut temp = temp_beside(&full, path)?;
-    temp.write_all(data).map_err(|e| io_error(&e, path))?;
-    temp.as_file().sync_all().map_err(|e| io_error(&e, path))?;
-    check_cancel(cancel)?;
-    temp.persist(&full).map_err(|e| io_error(&e.error, path))?;
-    Ok(())
+    // through the `File`: `NamedTempFile`'s own `Write` wraps an error with the host path
+    temp.as_file_mut().write_all(data).map_err(|e| io_error(&e, path))?;
+    put_in_place(temp.into_temp_path(), &full, path, cancel)
 }
 
 fn list(base: &Path, path: &FilePath) -> FileResult<Vec<FileInfo>> {
@@ -293,9 +297,24 @@ fn copy(base: &Path, from: &FilePath, to: &FilePath, cancel: &AtomicBool) -> Fil
     }
     let temp = temp_beside(&dst, to)?.into_temp_path();
     ops::copy_file(&src, &temp).map_err(|e| fs_error(&e, &pair(from, to)))?;
+    put_in_place(temp, &dst, to, cancel)
+}
+
+/// The last step of a write and of a file copy: flush the finished temporary file to the disk, then rename it
+/// over `full`. Synced first, so a crash after the rename cannot leave the destination empty or partial (the
+/// old file is replaced only by a whole new one); not put in place at all when the call was dropped meanwhile.
+fn put_in_place(
+    temp: tempfile::TempPath,
+    full: &Path,
+    path: &FilePath,
+    cancel: &AtomicBool,
+) -> FileResult<()> {
+    // opened for writing: Windows flushes only a handle that may write
+    let file = fs::OpenOptions::new().write(true).open(&temp).map_err(|e| io_error(&e, path))?;
+    file.sync_all().map_err(|e| io_error(&e, path))?;
+    drop(file);
     check_cancel(cancel)?;
-    temp.persist(&dst).map_err(|e| io_error(&e.error, to))?;
-    Ok(())
+    temp.persist(full).map_err(|e| io_error(&e.error, path))
 }
 
 /// Remove an app's whole file tree: a real directory with `std::fs::remove_dir_all` (through `std:fs`), a link
@@ -504,14 +523,40 @@ fn too_large(path: &FilePath) -> FileError {
     )
 }
 
-/// An I/O error, classified with `std:fs`'s kinds; its message is the platform's (no path in it).
+/// An I/O error, classified with `std:fs`'s kinds. The message is rebuilt from the OS error code (or the kind),
+/// never taken from the error's `Display`: an error that wraps another (`tempfile`'s) adds the host path there.
 fn io_error(e: &io::Error, about: &(impl Subject + ?Sized)) -> FileError {
-    error(kind_of(Kind::from(e.kind())), about, &e.to_string())
+    let kind = kind_of(Kind::from(e.kind()));
+    match e.raw_os_error() {
+        Some(code) => error(kind, about, &io::Error::from_raw_os_error(code).to_string()),
+        None => error(kind, about, describe(kind)),
+    }
 }
 
-/// A `std:fs` operation's error: its kind, its message without the host path it carries.
+/// A `std:fs` operation's error: its kind and a fixed description of it. Its own text is not used, because it
+/// can name host paths (a walk error names the paths of a loop).
 fn fs_error(e: &FsError, about: &(impl Subject + ?Sized)) -> FileError {
-    error(kind_of(e.kind()), about, e.message())
+    let kind = kind_of(e.kind());
+    error(kind, about, describe(kind))
+}
+
+/// What a kind means, in words that name no path.
+fn describe(kind: FileErrorKind) -> &'static str {
+    match kind {
+        FileErrorKind::NotFound => "no such file or directory",
+        FileErrorKind::PermissionDenied => "permission denied",
+        FileErrorKind::AlreadyExists => "already exists",
+        FileErrorKind::NotEmpty => "the directory is not empty",
+        FileErrorKind::IsDirectory => "is a directory",
+        FileErrorKind::NotADirectory => "not a directory",
+        FileErrorKind::CrossDevice => "crosses a filesystem boundary",
+        FileErrorKind::InvalidInput => "invalid input",
+        FileErrorKind::ReadOnlyFilesystem => "read-only filesystem",
+        FileErrorKind::StorageFull => "no space left",
+        FileErrorKind::Unsupported => "not supported",
+        FileErrorKind::TooLarge => "too large",
+        FileErrorKind::Other => "the operation failed",
+    }
 }
 
 fn kind_of(kind: Kind) -> FileErrorKind {

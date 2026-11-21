@@ -357,3 +357,40 @@ async fn a_file_call_where_luau_cannot_yield_fails_and_changes_nothing() {
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(!docs.join("gsub.txt").exists() && docs.join("kept.txt").exists());
 }
+
+/// A write or a file copy into a directory the host cannot write fails with the app's path and the OS's words,
+/// never a host path (`tempfile` names the host path in its own errors). Skipped as root, who can write anyway.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_failed_write_or_copy_names_the_app_path_never_a_host_path() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = TempDir::new().unwrap();
+    let docs = root.path().join("probe.files/documents");
+    let locked = docs.join("locked");
+    std::fs::create_dir_all(&locked).unwrap();
+    std::fs::write(docs.join("src.txt"), "x").unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o500)).unwrap();
+    if std::fs::write(locked.join("probe"), "").is_ok() {
+        eprintln!("skipped: running as a user who can write a 0500 directory (root)");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+        return;
+    }
+    let src = r#"
+        local docs = app.files.documents
+        app.on("probe", function()
+          local _, write = docs:write("locked/a.txt", "x")
+          local _, copy = docs:copy("src.txt", "locked/b.txt")
+          return { write = write, copy = copy }
+        end)
+    "#;
+    let vm = load_in(root.path(), "probe", src, &[]).await;
+    let out = vm.emit("probe", json!(null)).await.unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let host = root.path().display().to_string();
+    for (call, app_path) in [("write", "locked/a.txt"), ("copy", "locked/b.txt")] {
+        let err = out[call].as_str().unwrap_or_else(|| panic!("{call} failed: {out}"));
+        assert!(err.starts_with(&format!("files.{call}: permission_denied: {app_path}: ")), "{err}");
+        assert!(!err.contains(&host) && !err.contains(".vos-tmp-") && !err.contains("at path"), "{err}");
+    }
+    assert_eq!(std::fs::read_dir(&locked).unwrap().count(), 0, "nothing was left in the directory");
+}

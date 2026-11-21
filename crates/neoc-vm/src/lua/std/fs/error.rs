@@ -139,11 +139,6 @@ impl FsError {
     pub fn kind(&self) -> Kind {
         self.kind
     }
-
-    /// The platform's wording, without the kind or the path (for an embedder that names the path itself).
-    pub fn message(&self) -> &str {
-        &self.message
-    }
 }
 
 impl fmt::Display for FsError {

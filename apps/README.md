@@ -107,11 +107,13 @@ if app.files.errorKind(err) == "not_found" then end  -- the kinds of std:fs
   written, moved or removed). An absolute path, `..`, `:`, a backslash, NUL, or a name over 255 bytes is
   `invalid_input`, and a symbolic link inside a location is never followed (`info` and `list` show it as
   `"symlink"`, `remove` deletes the link, everything else refuses it).
-- **Errors** are values: `nil, "files.<method>: <kind>: <path>: <message>"`. A wrong argument type, an unknown option
+- **Errors** are values: `nil, "files.<method>: <kind>: <path>: <message>"`, without the path when the path itself
+  was refused (`invalid_input`) or the host keeps no files (`unsupported`). Never a host path. A wrong argument type, an unknown option
   and a write inside a `readOnly` tool or a render raise.
 - **Lifetime:** the files stay when the app is updated, disabled or uninstalled without purging, so a reinstall finds
   them; uninstall with purge and "delete data" remove them with the database.
-- A call holds the app's turn while it runs, like `app.db`. It does not need `std:fs`.
+- A call holds the app's turn while it runs, like `app.db`: a large tree copy or remove, or a big write (writes have
+  no size cap), keeps the app's other calls (its windows included) waiting until it ends. It does not need `std:fs`.
 - Scoping is a convention that keeps apps out of each other's files by accident, **not a sandbox**: `std:fs` reaches
   any file the host can. `crates/vos-lua/src/files.rs` says how links and races are handled.
 

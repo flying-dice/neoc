@@ -900,8 +900,13 @@ impl DeviceRegistry for MemDevices {
 pub struct RecordingFiles {
     calls: Mutex<Vec<String>>,
     purged: Mutex<Vec<String>>,
+    fail_purge: std::sync::atomic::AtomicBool,
 }
 impl RecordingFiles {
+    /// Make every later purge fail (after recording it), as a tree the host cannot remove would.
+    pub fn fail_purges(&self) {
+        self.fail_purge.store(true, Ordering::SeqCst);
+    }
     /// Every call so far, in order, and forget them.
     pub fn take(&self) -> Vec<String> {
         std::mem::take(&mut *self.calls.lock().unwrap())
@@ -961,6 +966,12 @@ impl FileStore for RecordingFiles {
     }
     async fn purge(&self, app: &AppId) -> FileResult<()> {
         self.purged.lock().unwrap().push(app.to_string());
+        if self.fail_purge.load(Ordering::SeqCst) {
+            return Err(vos_domain::FileError::new(
+                vos_domain::FileErrorKind::PermissionDenied,
+                "the app's files: denied",
+            ));
+        }
         Ok(())
     }
 }

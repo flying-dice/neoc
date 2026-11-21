@@ -1658,8 +1658,9 @@ export type vos_FileInfo = {
 --- One managed location of the app (`app.files.documents`, `.cache`, `.temp`). A path is relative to it,
 --- written with `/` (`"notes/a.txt"`; `""` is the location itself); an absolute path, `..`, `:`, a backslash,
 --- NUL or a name over 255 bytes is `invalid_input`, and a symbolic link inside it is never followed. A failure
---- returns `nil, "files.<method>: <kind>: <path>: <message>"` with the kinds of `std:fs` (`app.files.errorKind`
---- reads it). A write inside a `readOnly` tool or a render raises. Scoped to the app by convention: not a sandbox.
+--- returns `nil, "files.<method>: <kind>: [<path>: ]<message>"` (no path when the path itself is refused), with
+--- the kinds of `std:fs` (`app.files.errorKind` reads it). A write inside a `readOnly` tool or a render raises.
+--- A call holds the app's turn until it ends. Scoped to the app by convention: not a sandbox.
 export type vos_Files = {
 	--- The whole file (binary-safe); at most 64 MiB (`too_large`). A directory is `is_directory`.
 	read: (self: vos_Files, path: string) -> (string?, string?),
