@@ -103,3 +103,12 @@ quick_xml.decode("<a/>") -- expect-error: Expected this to be 'std_io_ReaderHand
 
 -- a request body parsed as JSON may be absent
 hyper.serve(_listener, function(req) return req.json:get("id") end) -- expect-error: Value of type -- expect-error: Key 'get' is missing from
+
+-- a client option of the wrong type, a body that is not a string or a buffer, a response that may be an error
+hyper.get("http://127.0.0.1:1/", { timeout = "5" }) -- expect-error: '{| timeout: string |}'
+hyper.get("http://127.0.0.1:1/", { follow_redirects = "yes" }) -- expect-error: '{| follow_redirects: string |}'
+hyper.post({ body = "x" }) -- expect-error: because the former is missing field 'url'
+hyper.request({ method = "GET", url = "http://127.0.0.1:1/", body = {} }) -- expect-error: '{| body: {|  |}, method: string, url: string |}'
+hyper.error_kind(5) -- expect-error: Expected this to be 'string?', but got 'number'
+print(hyper.get("http://127.0.0.1:1/").status) -- expect-error: could be nil
+print(assert(hyper.get("http://127.0.0.1:1/")).body + 1) -- expect-error: Expected this to be 'number', but got 'string'
