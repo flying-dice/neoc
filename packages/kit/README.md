@@ -36,8 +36,11 @@ The app writes no theme code and imports nothing:
     </ui-row>
   </ui-section>
 </ui-list>
-<ui-button variant="tinted">Add</ui-button>
+<ui-button variant="tinted" hit>Add</ui-button>
 ```
+
+`hit` is on the button because nothing else gives it a 44 pt touch target (a row does, so the check in it needs none); see
+"Touch targets" below.
 
 ```css
 .card {

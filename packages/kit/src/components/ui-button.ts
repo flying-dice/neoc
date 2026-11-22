@@ -78,6 +78,7 @@ export class UiButton extends FormControl {
         vertical-align: middle;
         min-width: var(--ui-hit, 0px);
         min-height: var(--ui-hit, 0px);
+        pointer-events: none; /* only the drawn button (or its hit box) takes a click, not an empty part of a stretched element */
       }
       :host([size='fill']) {
         display: flex;
@@ -91,6 +92,7 @@ export class UiButton extends FormControl {
       }
       button {
         --_tint: var(--btn-tint, var(--tint));
+        pointer-events: auto;
         position: relative; /* the hit area below */
         appearance: none;
         border: 0;

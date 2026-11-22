@@ -5,12 +5,12 @@ export const valid = (
     <ui-section header="Today">
       <ui-row heading="Buy milk" subheading="Two litres" icon="bell" icon-color="red" tappable selected onpress={(e) => e.type satisfies string} />
     </ui-section>
-    <ui-button variant="tinted" size="small" shape="capsule" fill="orange" onClick={() => {}} data-testid="add">
+    <ui-button variant="tinted" size="small" shape="capsule" fill="orange" hit onClick={() => {}} data-testid="add">
       Add
     </ui-button>
-    <ui-toggle checked label="Sync" onchange={(e) => e.detail.checked satisfies boolean} />
-    <ui-segmented label="Filter" value="a" options={[{ value: 'a', label: 'A' }]} onchange={(e) => e.detail.value.toUpperCase()} />
-    <ui-text-field label="Name" type="email" oninput={(e) => e.data} onchange={() => {}} />
+    <ui-toggle checked hit label="Sync" onchange={(e) => e.detail.checked satisfies boolean} />
+    <ui-segmented hit label="Filter" value="a" options={[{ value: 'a', label: 'A' }]} onchange={(e) => e.detail.value.toUpperCase()} />
+    <ui-text-field hit label="Name" type="email" oninput={(e) => e.data} onchange={() => {}} />
     <ui-banner tone="warning" heading="Low storage" />
   </ui-list>
 )

@@ -21,17 +21,21 @@ export class UiToggle extends BooleanControl {
       :host([hit]) {
         --ui-hit: 44px;
       }
+      /* Only the drawn control (or its hit box) takes a click: the element can be larger than that (a flex column or a grid
+         cell stretches it), and the empty part must do nothing. The inner control turns pointer events back on. */
       :host {
         display: inline-flex;
         align-items: center;
         vertical-align: middle;
         flex: none;
         min-height: var(--ui-hit, 0px);
+        pointer-events: none;
       }
       :host([disabled]) {
         pointer-events: none;
       }
       button {
+        pointer-events: auto;
         appearance: none;
         border: 0;
         padding: 0;

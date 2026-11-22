@@ -492,3 +492,112 @@ for (const hit of [false, true]) {
     expect(wrong).toEqual([])
   })
 }
+
+for (const hit of [false, true]) {
+  test(`a click on the empty part of a stretched element does nothing (hit ${hit ? 'on' : 'off'})`, async ({
+    page
+  }) => {
+    await page.goto(`${origin}/frame`)
+    // A control activates only when the click lands on the drawn control (or its 44 pt box with hit), or comes through a
+    // label, never because its element is larger (a flex column or a grid cell stretches it, and so does a taller neighbour
+    // in a flex row). Click just outside the drawn box (hit off) or the 44 pt box (hit on), inside the element.
+    const points = await page.evaluate(async (hit) => {
+      const w = window as unknown as { log: string[] }
+      w.log = []
+      const kinds: [string, Record<string, string>, string][] = [
+        ['ui-button', { variant: 'tinted', size: 'small', type: 'button' }, 'Go'],
+        ['ui-toggle', { label: 't' }, ''],
+        ['ui-check', { label: 'c' }, ''],
+        ['ui-segmented', { label: 's', value: 'a' }, ''],
+        ['ui-text-field', { label: 'f' }, '']
+      ]
+      const layouts: [string, string, string[]][] = [
+        ['column', 'display:flex;flex-direction:column;align-items:stretch;width:300px', ['right']],
+        [
+          'grid',
+          'display:grid;grid-template-columns:300px;grid-auto-rows:110px',
+          ['right', 'below']
+        ],
+        ['row', 'display:flex;align-items:stretch;gap:12px', ['below', 'above']]
+      ]
+      const area = document.createElement('div')
+      area.style.cssText = 'display:grid;gap:24px;padding:24px'
+      const items: { id: string; el: HTMLElement; sides: string[] }[] = []
+      for (const [layout, css, sides] of layouts)
+        for (const [tag, attrs, text] of kinds) {
+          const box = document.createElement('div')
+          box.style.cssText = css
+          const el = document.createElement(tag)
+          for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v)
+          if (hit) el.setAttribute('hit', '')
+          el.textContent = text
+          const id = `${layout}-${tag}`
+          el.dataset.testid = id
+          if (tag === 'ui-segmented')
+            (el as HTMLElement & { options: unknown }).options = ['A', 'B'].map((v) => ({
+              value: v,
+              label: v
+            }))
+          box.append(el)
+          if (layout === 'row') {
+            const tall = document.createElement('div')
+            tall.style.cssText = 'height:120px;width:40px;background:#ddd'
+            box.append(tall)
+          }
+          area.append(box)
+          for (const type of ['click', 'change', 'focusin'])
+            el.addEventListener(type, () => w.log.push(`${id}:${type}`))
+          items.push({ id, el, sides })
+        }
+      document.body.replaceChildren(area)
+      await Promise.all(
+        items.map((i) => (i.el as unknown as { updateComplete: Promise<unknown> }).updateComplete)
+      )
+      const out: { id: string; side: string; x: number; y: number }[] = []
+      for (const { id, el, sides } of items) {
+        const host = el.getBoundingClientRect()
+        const inner = el
+          .shadowRoot!.querySelector<HTMLElement>(
+            el.localName === 'ui-segmented'
+              ? '.group'
+              : el.localName === 'ui-text-field'
+                ? 'input'
+                : 'button'
+          )!
+          .getBoundingClientRect()
+        const cx = inner.left + inner.width / 2
+        const cy = inner.top + inner.height / 2
+        // the area that may take a click: the drawn box, or the 44 pt box centred on it (a segmented control is only taller)
+        const halfW =
+          hit && el.localName !== 'ui-segmented' && el.localName !== 'ui-text-field'
+            ? Math.max(inner.width, 44) / 2
+            : inner.width / 2
+        const halfH = hit ? Math.max(inner.height, 44) / 2 : inner.height / 2
+        const spots: Record<string, [number, number]> = {
+          right: [cx + halfW + 8, cy],
+          below: [cx, cy + halfH + 6],
+          above: [cx, cy - halfH - 6]
+        }
+        for (const side of sides) {
+          const [x, y] = spots[side]!
+          // only where the point is inside the (stretched) element, so that the element is what is being clicked
+          if (x > host.left && x < host.right && y > host.top && y < host.bottom)
+            out.push({ id, side, x, y })
+        }
+      }
+      return out
+    }, hit)
+    expect(points.length, 'the layouts stretch most of the controls').toBeGreaterThan(10)
+    const wrong: string[] = []
+    for (const p of points) {
+      await page.evaluate(() => {
+        ;(window as unknown as { log: string[] }).log = []
+        ;(document.activeElement as HTMLElement | null)?.blur()
+      })
+      await page.mouse.click(p.x, p.y)
+      const log = await page.evaluate(() => (window as unknown as { log: string[] }).log)
+      if (log.length) wrong.push(`${p.id} ${p.side}: ${JSON.stringify(log)}`)
+    }
+    expect(wrong).toEqual([])
+  })
+}

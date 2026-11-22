@@ -50,6 +50,7 @@ export class UiSegmented extends FormControl {
         align-items: center;
         vertical-align: middle;
         min-height: var(--ui-hit, 0px);
+        pointer-events: none; /* only the segments take a click, not an empty part of a stretched element */
       }
       :host([block]) {
         display: flex;
@@ -88,6 +89,7 @@ export class UiSegmented extends FormControl {
         display: none;
       }
       .segment {
+        pointer-events: auto;
         appearance: none;
         border: 0;
         background: none;

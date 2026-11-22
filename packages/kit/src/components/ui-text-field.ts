@@ -87,14 +87,23 @@ export class UiTextField extends FormControl {
       :host([hit]) {
         --ui-hit: 44px;
       }
-      :host(:not([variant='bare'])) {
-        display: inline-flex;
+      /* Only the box around the input (36 pt, or the 44 pt hit box) takes a click, not an empty part of a stretched element. */
+      :host {
+        pointer-events: none;
+      }
+      .box {
+        pointer-events: auto;
+        display: flex;
         align-items: center;
+        width: 100%;
         min-height: var(--ui-hit, 0px);
       }
       :host([variant='bare']) {
         display: block;
         flex: 1;
+      }
+      :host([variant='bare']) .box {
+        min-height: 0;
       }
       input {
         display: block;
@@ -212,31 +221,32 @@ export class UiTextField extends FormControl {
 
   render(): TemplateResult {
     const type = TYPES.includes(this.type) ? this.type : 'text'
-    return html`<input
-      part="input"
-      .value=${this.value}
-      type=${type}
-      placeholder=${ifDefined(this.placeholder || undefined)}
-      autocomplete=${ifDefined(this.autocomplete || undefined)}
-      inputmode=${ifDefined(this.inputMode || undefined)}
-      enterkeyhint=${ifDefined(this.enterKeyHint || undefined)}
-      autocapitalize=${ifDefined(this.autocapitalize || undefined)}
-      maxlength=${ifDefined(this.maxlength)}
-      minlength=${ifDefined(this.minlength)}
-      pattern=${ifDefined(this.pattern || undefined)}
-      min=${ifDefined(this.min)}
-      max=${ifDefined(this.max)}
-      step=${ifDefined(this.step)}
-      aria-label=${ifDefined(this.accessibleName)}
-      aria-description=${ifDefined(this.description || undefined)}
-      aria-invalid=${ifDefined(this.invalid ? 'true' : undefined)}
-      ?disabled=${this.isDisabled}
-      ?readonly=${this.readonly}
-      ?required=${this.required}
-      @input=${this.onInput}
-      @change=${this.onChange}
-      @keydown=${this.onKeydown}
-    />`
+    return html`<label class="box"
+      ><input
+        part="input"
+        .value=${this.value}
+        type=${type}
+        placeholder=${ifDefined(this.placeholder || undefined)}
+        autocomplete=${ifDefined(this.autocomplete || undefined)}
+        inputmode=${ifDefined(this.inputMode || undefined)}
+        enterkeyhint=${ifDefined(this.enterKeyHint || undefined)}
+        autocapitalize=${ifDefined(this.autocapitalize || undefined)}
+        maxlength=${ifDefined(this.maxlength)}
+        minlength=${ifDefined(this.minlength)}
+        pattern=${ifDefined(this.pattern || undefined)}
+        min=${ifDefined(this.min)}
+        max=${ifDefined(this.max)}
+        step=${ifDefined(this.step)}
+        aria-label=${ifDefined(this.accessibleName)}
+        aria-description=${ifDefined(this.description || undefined)}
+        aria-invalid=${ifDefined(this.invalid ? 'true' : undefined)}
+        ?disabled=${this.isDisabled}
+        ?readonly=${this.readonly}
+        ?required=${this.required}
+        @input=${this.onInput}
+        @change=${this.onChange}
+        @keydown=${this.onKeydown}
+    /></label>`
   }
 }
 

@@ -39,6 +39,7 @@ export const Typing: Story = {
     html`<form data-testid="form" style="width:320px" @submit=${(e: Event) => e.preventDefault()}>
       <ui-text-field
         data-testid="typing"
+        hit
         name="title"
         label="Title"
         required

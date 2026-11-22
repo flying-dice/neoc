@@ -70,8 +70,8 @@ export const InAForm: Story = {
       @submit=${(e: Event) => e.preventDefault()}
     >
       <label for="f-toggle">Sync</label>
-      <ui-toggle id="f-toggle" data-testid="form-toggle" name="sync"></ui-toggle>
-      <ui-check data-testid="form-check" name="done" value="yes" label="Done"></ui-check>
+      <ui-toggle id="f-toggle" data-testid="form-toggle" name="sync" hit></ui-toggle>
+      <ui-check data-testid="form-check" name="done" value="yes" label="Done" hit></ui-check>
     </form>`,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
@@ -109,7 +109,7 @@ export const RequiredCheck: Story = {
       @submit=${(e: Event) => e.preventDefault()}
       style="display:flex;gap:12px;align-items:center"
     >
-      <ui-check id="agree" data-testid="agree" name="agree" required label="I agree"></ui-check>
+      <ui-check id="agree" data-testid="agree" name="agree" required label="I agree" hit></ui-check>
       <label for="agree">I agree to the terms</label>
     </form>`,
   play: async ({ canvasElement }) => {
