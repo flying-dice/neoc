@@ -450,6 +450,68 @@ if app.files.errorKind(err) == "not_found" then end  -- the kinds of std:fs
 - Scoping is a convention that keeps apps out of each other's files by accident, **not a sandbox**: `std:fs` reaches
   any file the host can. `crates/vos-lua/src/files.rs` says how links and races are handled.
 
+## Web requests
+
+An app calls the web with `vnd:hyper` (`require("vnd:hyper")`, nothing to ask for; the declarations are in
+`types/generated/vos.d.luau`). A request is safe to make with no options: it does not hang, does not fill the host's
+memory, and follows a moved URL without handing out your credentials.
+
+```lua
+local hyper = require("vnd:hyper")
+local resp, err = hyper.get("https://example.com/feed.xml", { headers = { Accept = "application/xml" } })
+if not resp then
+  if hyper.error_kind(err) == "timed_out" then --[[ say "the server is not answering" ]] end
+  return
+end
+print(resp.status, resp.headers["content-type"], resp.body, resp.url) -- url: where it ended, after redirects
+hyper.post { url = "https://example.com/api", body = '{"a":1}', headers = { ["Content-Type"] = "application/json" } }
+hyper.request { method = "DELETE", url = "https://example.com/items/1" }
+```
+
+- **A 4xx or 5xx is a response, not an error.** An error is `nil, "hyper.<function>: <kind>: <message>"`, and
+  `hyper.error_kind(err)` returns the kind to branch on: `invalid_input` (an option, header or body refused before anything
+  was sent), `invalid_url`, `connect` (no connection), `tls` (usually the certificate), `timed_out`, `too_many_redirects`,
+  `too_large`, `connection_lost` (the connection ended before the response did), `bad_response` (not valid HTTP) and `other`.
+  The message is for a log; do not parse it.
+- **Time.** A request gives up after 10 s of connecting (`connect_timeout`, the TLS handshake included) and after 60 s
+  with no data moving in either direction (`idle_timeout`; reset whenever any bytes move, so a long download is fine).
+  A server that sends one byte every 59 s never trips the idle timeout: set `timeout` (seconds, no default) to bound the
+  whole request, redirects and body included. A call that waits does not stop the app's other calls.
+- **Size.** The body is read up to 64 MiB (`max_body`, in bytes): a declared length over it fails at once, and a body that
+  grows past it is cut off and the connection dropped (`too_large`). The module never decompresses: it sends no
+  `Accept-Encoding` and returns the bytes as the server sent them, so a small response cannot expand past the cap. If you
+  decode a body yourself (`lib:compress`), you bound the decoded size.
+- **Redirects.** 301, 302, 303, 307 and 308 with a `Location` are followed, 16 at most (`follow_redirects = <n>` changes
+  the limit, `false` returns the 3xx as it is). A 303 becomes a GET without a body, a POST becomes a GET on 301 and
+  302, and 307 and 308 keep the method and body (after Swift's async-http-client). A hop to another origin (another
+  scheme, host or port) drops `Authorization`, `Cookie`, `Proxy-Authorization`, `Origin` and a `Host` you set. A relative
+  `Location` is resolved against the current URL; one that is not `http` or `https` is `invalid_url`.
+- **Only those headers are dropped.** A credential in a header of your own (`X-Api-Key`, a token in `X-Auth`) is sent to
+  every hop, whatever its origin, as in the reference clients. If a redirect could take it somewhere it must not go,
+  pass `follow_redirects = false`, look at `resp.headers.location` and follow it yourself.
+- **Where a redirect goes is not checked, and there is no permission to check it.** A public URL can redirect to
+  `http://192.168.1.1/`, to `http://localhost:7400/` (the host itself) or from `https` to `http`. If your app fetches a URL
+  someone else chose, look at `resp.url` and decide, or pass `follow_redirects = false` and follow the `Location` yourself.
+- **Response headers.** `resp.headers` has one value per lower-case name. A header the server sent more than once is
+  one value joined with `", "`, as Fetch's `Headers.get` does, except `set-cookie`, whose values are joined with `"\n"`
+  (a cookie may contain a comma; a header value never contains a line feed), so `for cookie in
+  resp.headers["set-cookie"]:gmatch("[^\n]+") do ... end` gives each one. Bytes that are not UTF-8 become U+FFFD. A
+  `vnd:hyper` server's `req.headers` follows the same rules.
+- **A body with no length.** A response that has neither `Content-Length` nor chunked encoding ends when the server
+  closes the connection, so one cut short cannot be told from a complete one (that is HTTP/1.1, not this module). Any
+  other cut-off body is an error (`connection_lost`, `timed_out` or `too_large`), never a short body.
+- **The request is what you asked for.** A `Content-Length` header that is not the body's length is `invalid_input` (leave it
+  out: the module sets it), and so are a header name given twice in different case (`Host` and `host`) and a
+  `Transfer-Encoding` header (the module frames the body), and so is a `headers` key that is not a string (`{ "Accept:
+  text/plain" }`). A `Host` header replaces the built-in one. A standard method
+  in any case is the standard method (`put` is `PUT`); any other is sent as written. Credentials written in the URL
+  (`https://user:pass@host/`) are not sent: set an `Authorization` header.
+- **Turning a limit off.** The time and size options take positive finite numbers (anything else is `invalid_input`,
+  naming the option); a very large one, such as `idle_timeout = 1e9` or `max_body = 2^53`, is in effect no limit.
+- **Your own certificate authority.** `ca_pem = "<PEM>"` trusts exactly those certificates, on every hop; without it the
+  system's trust store decides. It is checked before anything is sent, on an `http://` URL too: a value that is not a
+  string of usable PEM certificates is `invalid_input`.
+
 ## Adding an app
 
 **What you need installed first:** Bun, Rust (the host), **darklua 0.18.0** (`cargo install darklua --version 0.18.0 --locked`: bundles the Luau),

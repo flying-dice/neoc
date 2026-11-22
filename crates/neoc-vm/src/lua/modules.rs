@@ -559,7 +559,7 @@ mod tests {
             }
             let known = matches!(
                 word.as_str(),
-                "string" | "number" | "boolean" | "any" | "nil"
+                "string" | "number" | "boolean" | "any" | "nil" | "buffer"
             ) || declared.contains(&word.as_str());
             assert!(
                 known,

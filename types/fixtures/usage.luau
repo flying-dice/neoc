@@ -229,6 +229,25 @@ end)
 local response, request_err = hyper.get("http://127.0.0.1:1/")
 print(response, request_err)
 
+-- the client: options are typed, the response is a table, a failure has a kind
+local fetched, fetch_err = hyper.get("http://127.0.0.1:1/feed.xml", {
+	headers = { Accept = "application/xml" },
+	connect_timeout = 5,
+	idle_timeout = 30,
+	timeout = 120,
+	follow_redirects = 4,
+	max_body = 1024 * 1024,
+	ca_pem = "-----BEGIN CERTIFICATE-----",
+})
+if fetched then
+	print(fetched.status + 1, fetched.body:upper(), fetched.headers["content-type"], fetched.url:lower())
+elseif hyper.error_kind(fetch_err) == "timed_out" then
+	print("the server is not answering")
+end
+print(hyper.get("http://127.0.0.1:1/", { follow_redirects = false }))
+print(hyper.post({ url = "http://127.0.0.1:1/", body = buffer.create(4), headers = { ["Content-Type"] = "application/octet-stream" } }))
+print(hyper.request({ method = "put", url = "http://127.0.0.1:1/", body = "x", timeout = 1.5 }))
+
 -- the SQL parameters of the network databases are trailing arguments too
 local function network_databases(
 	mysql: vnd_sqlx_mysql_Database,
