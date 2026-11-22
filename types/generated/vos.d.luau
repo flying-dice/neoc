@@ -1862,8 +1862,9 @@ export type vos_AppApi = {
 	--- ("unknown key", "unknown positional entry"), no title ("needs"), a title that is blank or over 200
 	--- characters, a body over 2000, a value that is not a string, a call in render or a readOnly tool, and a 65th
 	--- while 64 from the same call are still waiting ("already has 64 notifications waiting"). The host delivers
-	--- waiting notifications whenever a call of the app ends or a task or request handler waits, so the limit
-	--- guards against a runaway loop; it is not a quota to plan around.
+	--- waiting notifications whenever a call of the app ends, and when a call waits (`task.wait`, a request, a task or
+	--- request handler pausing, or a tool that has notified and then works on), so a tool that notifies half way is
+	--- heard then, not when it returns. The limit guards against a runaway loop; it is not a quota to plan around.
 	notify: ((notification: vos_Notification) -> ()) & ((self: vos_AppApi, notification: vos_Notification) -> ()),
 	log: (message: string) -> (),
 }
