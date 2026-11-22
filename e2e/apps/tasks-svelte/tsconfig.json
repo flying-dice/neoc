@@ -9,5 +9,5 @@
     "noEmit": true,
     "types": []
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", ".app/rpc.d.ts"]
 }

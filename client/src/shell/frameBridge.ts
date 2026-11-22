@@ -18,6 +18,7 @@
  */
 import { z } from 'zod'
 import { messageOf } from '../view/errors'
+import { HostError } from './channel'
 import { callGate, MAX_WAITING_PER_FRAME, type CallGate } from './callGate'
 import type { HostAppEvent } from '../view/protocol'
 
@@ -49,7 +50,7 @@ const fromFrame = z.discriminatedUnion('t', [
 /** What the shell sends into a frame. */
 export type ToFrame =
   | { t: 'res'; id: number; result: unknown }
-  | { t: 'res'; id: number; error: string }
+  | { t: 'res'; id: number; error: { code: number; message: string; data?: unknown } }
   | { t: 'event'; name: string; data: unknown }
 
 export interface FrameBridgeOptions {
@@ -93,6 +94,23 @@ export interface FrameBridge {
   event(name: string, data: unknown): void
   /** The frame is going away: answers still on their way are dropped. */
   dispose(): void
+}
+
+/** JSON-RPC's invalid request and invalid params: what a call the bridge refuses is answered with. */
+const INVALID_REQUEST = -32600
+/** The code of a call the bridge refuses because the frame already has too many waiting (the host's own is -32001). */
+const BUSY = -32001
+const INVALID_PARAMS = -32602
+
+/** JSON-RPC's internal error: what a failure that is not the host's own answer is reported as. */
+const INTERNAL_ERROR = -32603
+
+/** The JSON-RPC error a failed call answers with: the host's code, message and data, else an internal error. */
+function rpcErrorOf(error: unknown): { code: number; message: string; data?: unknown } {
+  if (error instanceof HostError) {
+    return { code: error.code, message: error.message, ...(error.data === undefined ? {} : { data: error.data }) }
+  }
+  return { code: INTERNAL_ERROR, message: messageOf(error) }
 }
 
 /** The nesting depth of a JSON text: arrays and objects opened and not yet closed, outside strings. */
@@ -156,7 +174,7 @@ export function createFrameBridge(options: FrameBridgeOptions): FrameBridge {
           post({
             t: 'res',
             id: sent.id as number,
-            error: 'That is not a call: it needs a method name'
+            error: { code: INVALID_REQUEST, message: 'That is not a call: it needs a method name' }
           })
         }
         return
@@ -168,13 +186,13 @@ export function createFrameBridge(options: FrameBridgeOptions): FrameBridge {
             post({
               t: 'res',
               id: message.id,
-              error: `A method name is 1 to ${MAX_METHOD} characters`
+              error: { code: INVALID_REQUEST, message: `A method name is 1 to ${MAX_METHOD} characters` }
             })
             return
           }
           const refusal = refuseArgs(message.args)
           if (refusal) {
-            post({ t: 'res', id: message.id, error: refusal })
+            post({ t: 'res', id: message.id, error: { code: INVALID_PARAMS, message: refusal } })
             return
           }
           void gate
@@ -184,7 +202,10 @@ export function createFrameBridge(options: FrameBridgeOptions): FrameBridge {
                 post({
                   t: 'res',
                   id: message.id,
-                  error: `Too many calls are waiting (at most ${MAX_WAITING_PER_FRAME}): let some finish first`
+                  error: {
+                    code: BUSY,
+                    message: `Too many calls are waiting (at most ${MAX_WAITING_PER_FRAME}): let some finish first`
+                  }
                 })
                 return
               }
@@ -200,7 +221,7 @@ export function createFrameBridge(options: FrameBridgeOptions): FrameBridge {
                 )
                 .then(
                   (result) => post({ t: 'res', id: message.id, result: result ?? null }),
-                  (error: unknown) => post({ t: 'res', id: message.id, error: messageOf(error) })
+                  (error: unknown) => post({ t: 'res', id: message.id, error: rpcErrorOf(error) })
                 )
                 .finally(release)
             })

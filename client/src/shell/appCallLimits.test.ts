@@ -195,7 +195,7 @@ describe('an app whose handlers hang', () => {
     host.disconnect()
     await sleep(5)
     for (const n of ids)
-      expect(hung.answered(n)).toMatchObject({ t: 'res', error: 'The connection to vos closed' })
+      expect(hung.answered(n)).toMatchObject({ t: 'res', error: { message: 'The connection to vos closed' } })
     // a place is free again: the next call starts
     hung.rpc('list')
     await sleep(5)

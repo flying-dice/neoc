@@ -20,15 +20,17 @@
  * The host's default registry is dist/apps/registry.json over file://;
  * with `dev_reload` it rebuilds an app's VM when its files change, so `bun run build:apps` is the dev loop.
  *
- * An app with a client (`client` in app.json, the script's name in the app ref) is built with its own package: the
- * build runs `bun run build` in the app's folder, which writes `dist/client.js`, one classic script that defines
- * `vosApp.mount(el, { rpc, host })` (see apps/README.md), and that file goes into the app ref with its sha256.
+ * An app that is a Vite project (an `openrpc.json`, its contract and only descriptor, and a `vite.config.ts` using the vos plugin:
+ * `packages/vite-plugin`) is built by its own project: `bun run build` writes the whole app ref into its `dist/` (backend
+ * bundled by the plugin, the client script, `app-ref.json`), and that folder is copied under <out>/<id>/<version>/. Every
+ * other app (`app.json` + Luau) is bundled here.
  *
- * `app.json` is the package manifest (id, name, version, main, client, window, icon, tint, description,
+ * `app.json` is the package manifest (id, name, version, main, window, icon, tint, description,
  * requires, migrations; a `permissions` key from before apps lost their permissions is ignored); the build checks it
  * against the `app.manifest { ... }` the app declares in Luau, so
  * the two cannot disagree about the id, icon or tint.
  */
+import { DefinitionError, parseDefinition } from '../packages/vite-plugin/src/definition.ts'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -53,8 +55,6 @@ const PackageManifest = z.object({
   icon: z.string().optional(),
   tint: z.string().optional(),
   requires: z.object({ host: z.string().optional() }).optional(),
-  /** The app's client: the one script the host loads into the app's frame (defines `vosApp.mount`). */
-  client: z.string().endsWith('.js').optional(),
   window: z.object({ w: z.number().int(), h: z.number().int(), minW: z.number().int(), minH: z.number().int() }).optional(),
   migrations: z.array(z.object({ version: z.number().int(), name: z.string(), file: z.string() })).default([])
 })
@@ -65,24 +65,43 @@ function declared(source: string, field: string): string | undefined {
   return block.match(new RegExp(`\\b${field}\\s*=\\s*"([^"]*)"`))?.[1]
 }
 
-/** Builds an app's client with its own package's `build` script and returns the script it wrote (`dist/client.js`). */
-function buildClient(dir: string, id: string): Buffer {
-  if (!existsSync(join(dir, 'package.json'))) {
-    console.error(`✗ ${id}: app.json names a client, but ${relative(root, dir)} has no package.json with a build script`)
+/** An app that is a Vite project has its contract, `openrpc.json`, as its only descriptor (no `app.json`). */
+const isViteApp = (dir: string): boolean => existsSync(join(dir, 'openrpc.json'))
+
+/**
+ * The id and version of a Vite project: `x-app.id` and `info.version` of its contract, read with the plugin's own parser so that
+ * they are the validated ones (an id and a version become directory names under the output folder).
+ */
+function viteAppIdentity(dir: string): { id: string; version: string } {
+  try {
+    const definition = parseDefinition(readFileSync(join(dir, 'openrpc.json'), 'utf8'), `${relative(root, dir)}/openrpc.json`)
+    return { id: definition.app.id, version: definition.version }
+  } catch (error) {
+    if (!(error instanceof DefinitionError)) throw error
+    console.error(`✗ ${error.message}`)
     process.exit(1)
   }
+}
+
+/**
+ * Builds an app that is a Vite project (its `openrpc.json` and `vite.config.ts`, with the vos plugin): `bun run build` in the
+ * project writes the whole app ref into its `dist/` (the backend bundled, the client script, `app-ref.json` with a sha256
+ * per file), and that folder is what goes under `<out>/<id>/<version>/`.
+ */
+function buildViteApp(dir: string, target: string, id: string): string[] {
   const result = spawnSync('bun', ['run', 'build'], { cwd: dir, encoding: 'utf8' })
-  const output = join(dir, 'dist/client.js')
-  if (result.status !== 0 || !existsSync(output)) {
-    console.error(`✗ ${id}: the client build failed (bun run build in ${relative(root, dir)}, expecting dist/client.js):\n${result.stdout}${result.stderr}`)
+  const dist = join(dir, 'dist')
+  if (result.status !== 0 || !existsSync(join(dist, 'app-ref.json'))) {
+    console.error(`✗ ${id}: the build failed (bun run build in ${relative(root, dir)}, expecting dist/app-ref.json):\n${result.stdout}${result.stderr}`)
     process.exit(1)
   }
-  return readFileSync(output)
+  cpSync(dist, target, { recursive: true })
+  return (JSON.parse(readFileSync(join(dist, 'app-ref.json'), 'utf8')) as { files: unknown[] }).files.map(String)
 }
 
 const appDirs = [join(root, 'apps'), ...extraRoots]
   .flatMap((parent) => readdirSync(parent).map((d) => join(parent, d)))
-  .filter((d) => existsSync(join(d, 'app.json')))
+  .filter((d) => existsSync(join(d, 'app.json')) || isViteApp(d))
   .filter((d) => only.length === 0 || only.some((id) => d.endsWith(`/${id}`)))
 
 if (appDirs.length === 0) {
@@ -95,6 +114,16 @@ const started = performance.now()
 const registry: string[] = []
 // TODO: clean-code - 0.4 - SRP: this loop parses the manifest, checks it against the Luau source, bundles, copies and hashes migrations, writes the app ref and registers it; extract `checkManifestAgainstLua`, `buildApp` and `writeAppRef`.
 for (const dir of appDirs) {
+  if (isViteApp(dir)) {
+    const { id, version } = viteAppIdentity(dir)
+    const target = join(outDir, id, version)
+    rmSync(target, { recursive: true, force: true })
+    mkdirSync(target, { recursive: true })
+    const files = buildViteApp(dir, target, id)
+    registry.push(`${id}/${version}/app-ref.json`)
+    console.log(`✓ ${id} ${version}  ${files.length} files (vite)`)
+    continue
+  }
   const manifest = PackageManifest.parse(JSON.parse(readFileSync(join(dir, 'app.json'), 'utf8')))
   const source = readFileSync(join(dir, manifest.main), 'utf8')
   for (const field of ['id', 'icon', 'tint'] as const) {
@@ -119,14 +148,6 @@ for (const dir of appDirs) {
   mkdirSync(dirname(join(target, entry)), { recursive: true })
   writeFileSync(join(target, entry), bundle)
   const refs = [{ path: entry, url: entry, sha256: sha256(bundle) }]
-  if (manifest.client) {
-    // the client is built by the app's own package (`bun run build` in its folder writes dist/client.js): any
-    // framework, one classic script that defines `vosApp.mount(el, { rpc, host })`
-    const built = buildClient(dir, manifest.id)
-    mkdirSync(dirname(join(target, manifest.client)), { recursive: true })
-    writeFileSync(join(target, manifest.client), built)
-    refs.push({ path: manifest.client, url: manifest.client, sha256: sha256(built) })
-  }
   for (const { file } of manifest.migrations) {
     mkdirSync(dirname(join(target, file)), { recursive: true })
     cpSync(join(dir, file), join(target, file))
@@ -143,7 +164,6 @@ for (const dir of appDirs) {
       ...(manifest.tint ? { tint: manifest.tint } : {}),
       ...(manifest.description ? { description: manifest.description } : {}),
       ...(manifest.requires ? { requires: manifest.requires } : {}),
-      ...(manifest.client ? { client: manifest.client } : {}),
       ...(manifest.window ? { window: manifest.window } : {})
     },
     files: refs

@@ -93,7 +93,7 @@ pub(super) fn install(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<
     app.set("tools", tools)?;
     app.set("tool", make(sh)?)?;
 
-    // ctx:fail(message): the tool reports a problem to its caller
+    // ctx:fail(message): the tool or handler reports a problem to its caller
     let fail = lua.create_function(|_, args: mlua::Variadic<LuaValue>| -> mlua::Result<()> {
         let message = args
             .into_iter()

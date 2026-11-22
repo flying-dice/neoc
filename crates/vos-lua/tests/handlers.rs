@@ -64,6 +64,9 @@ return {
   nothing = function() end,
   fail = function(ctx) return ctx:fail("A task needs a title.") end,
   explode = function() error("boom") end,
+  coded = function() error("RPC-32001 not today", 0) end,
+  notcoded = function() error("RPC-32001: not today", 0) end,
+  zero = function() error("RPC0 nothing", 0) end,
   raise_table = function() error({ code = 7 }) end,
   raise_function = function() error(function() end) end,
   loop = function() local t = {} t.t = t return t end,
@@ -118,13 +121,31 @@ async fn a_handler_that_fails_answers_with_its_message() {
 }
 
 #[tokio::test]
+async fn an_error_that_starts_with_rpc_and_a_code_reaches_the_caller_as_that_json_rpc_error() {
+    let rig = rig();
+    load(&rig, "tasks", TASKS).await.unwrap();
+    assert_eq!(
+        call(&rig, "tasks", "coded", Value::Null).await.unwrap_err(),
+        PortError::Rpc { code: -32001, message: "not today".into(), data: None }
+    );
+    // not a code (no space after the number, or a zero): an ordinary error of the app, with its location
+    for handler in ["notcoded", "zero"] {
+        let PortError::Rejected(message) = call(&rig, "tasks", handler, Value::Null).await.unwrap_err()
+        else {
+            panic!("{handler}: rejected");
+        };
+        assert!(message.contains("RPC"), "{handler}: {message}");
+    }
+}
+
+#[tokio::test]
 async fn a_call_for_a_handler_that_does_not_exist_says_so() {
     let rig = rig();
     load(&rig, "tasks", TASKS).await.unwrap();
-    let PortError::Rejected(message) = call(&rig, "tasks", "nope", Value::Null).await.unwrap_err() else {
-        panic!("rejected");
-    };
-    assert_eq!(message, "the app has no handler `nope`");
+    assert_eq!(
+        call(&rig, "tasks", "nope", Value::Null).await.unwrap_err(),
+        PortError::Rpc { code: -32601, message: "Method not found: nope".into(), data: None }
+    );
     // a name no handler can have is the same answer, whatever its length
     assert!(call(&rig, "tasks", &"x".repeat(10_000), Value::Null).await.is_err());
     // a tool is not a handler

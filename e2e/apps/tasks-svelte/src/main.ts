@@ -1,9 +1,8 @@
 import { mount as mountSvelte, unmount } from 'svelte'
 import App from './App.svelte'
-import type { Host, Rpc } from './vos'
 
-/** The mount contract: the host calls this with the frame's root element and `{ rpc, host }`. */
-export function mount(el: HTMLElement, props: { rpc: Rpc; host: Host }): () => void {
-  const app = mountSvelte(App, { target: el, props })
+/** The mount contract: the generated entry binds `app:rpc` to the host, then calls this with the frame's root element. */
+export function mount(el: HTMLElement): () => void {
+  const app = mountSvelte(App, { target: el })
   return () => void unmount(app)
 }

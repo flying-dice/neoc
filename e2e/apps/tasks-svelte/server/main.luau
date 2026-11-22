@@ -1,8 +1,10 @@
 --!strict
--- The backend of a fixture app whose client is written in Svelte (`e2e/apps/tasks-react` is the same app in React):
--- a task list in the app's own database. The entry returns the handlers a client reaches with `rpc(name, args)`;
--- `add_task` is an agent's tool, which changes the same data and tells the open window with `app.emit`.
+-- The backend of a fixture app whose client is written in Svelte (`e2e/apps/tasks-react` is the same app in React): a task list in
+-- the app's own database. The RPC is defined once, in openrpc.json; the plugin generates `.app/rpc.luau` from it, with the
+-- `Handlers` interface this file implements; it returns the handlers, and the generated entry puts the router in front. `add_task` is an agent's tool, which
+-- changes the same data and tells the open window with `app.emit`.
 local app = require("vos:app")
+local rpc = require("../.app/rpc")
 local task = require("std:task")
 local t = app.t
 local db = app.db
@@ -17,55 +19,49 @@ db:migrate {
   ]],
 }
 
-local function list(): { any }
-  local tasks = {}
+local function list(): { rpc.Task }
+  local tasks: { rpc.Task } = {}
   for _, row in db:all("select id, title, done from tasks order by id") do
     table.insert(tasks, { id = row.id, title = row.title, done = row.done == 1 })
   end
   return tasks
 end
 
-local function titleOf(args: any): string
-  if type(args) == "table" and type(args.title) == "string" then
-    return string.match(args.title, "^%s*(.-)%s*$") :: string
-  end
-  return ""
+local function trim(text: string): string
+  return string.match(text, "^%s*(.-)%s*$") :: string
 end
 
--- `hang` waits until `release` is called (the journeys' stand-in for a handler that waits on something that never answers)
+-- `hang` waits until `release_all` (an agent's tool) lets it go: the journeys' stand-in for a handler that waits on something that never answers
 local generation = 0
 
-local handlers: vos_Handlers = {
-  list = function(_ctx, _args)
+local handlers: rpc.Handlers = {
+  list = function(_ctx)
     return list()
   end,
-  add = function(ctx, args)
-    local title = titleOf(args)
+  add = function(ctx, params)
+    local title = trim(params.title)
     if title == "" then
       return ctx:fail("A task needs a title.")
     end
     db:exec("insert into tasks (title) values (:title)", { title = title })
     return list()
   end,
-  toggle = function(ctx, args)
-    if type(args) ~= "table" or type(args.id) ~= "number" then
-      return ctx:fail("toggle needs the id of a task.")
-    end
-    db:exec("update tasks set done = 1 - done where id = :id", { id = args.id })
+  toggle = function(_ctx, params)
+    db:exec("update tasks set done = 1 - done where id = :id", { id = params.id })
     return list()
   end,
-  hang = function(_ctx, _args)
+  hang = function(_ctx)
     local mine = generation
     while generation == mine do
       task.wait(0.05)
     end
     return "released"
   end,
-  release = function(_ctx, _args)
+  release = function(_ctx)
     generation += 1
     return "ok"
   end,
-  whoami = function(ctx, _args)
+  whoami = function(ctx)
     return { kind = ctx.actor.kind, app = app.id }
   end,
 }

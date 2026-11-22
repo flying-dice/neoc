@@ -177,7 +177,8 @@ async fn a_client_call_reaches_the_handler_of_the_app_it_names_and_only_that_app
     let ghost = rpc(&mut ws, 3, "app.call", json!({"app": "ghost", "method": "whose"})).await;
     assert_eq!(ghost["error"]["code"], -32002, "{ghost}");
     let nope = rpc(&mut ws, 4, "app.call", json!({"app": "alpha", "method": "nope"})).await;
-    assert_eq!(nope["error"]["message"], "the app has no handler `nope`", "{nope}");
+    assert_eq!(nope["error"]["code"], -32601, "{nope}");
+    assert_eq!(nope["error"]["message"], "Method not found: nope");
 
     // the params are the shell's, exactly: a field it does not know is an invalid call
     let extra = rpc(&mut ws, 5, "app.call", json!({"app": "alpha", "method": "whose", "as": "beta"})).await;

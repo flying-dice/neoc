@@ -31,6 +31,18 @@ impl fmt::Display for ToolFailure {
 }
 impl std::error::Error for ToolFailure {}
 
+/// `error("RPC-32602 Title cannot be empty", 0)`: the app's way to fail a call with a JSON-RPC error code. A message that
+/// starts with `RPC`, a whole number and a space is that error: the code, and the message after the space (no file or
+/// line: the app wrote it for the caller). Any other error an app raises is an application error with its location.
+#[must_use]
+pub fn rpc_failure(e: &mlua::Error) -> Option<(i32, String)> {
+    let (message, _) = flatten(e);
+    let (code, text) = message.trim().strip_prefix("RPC")?.split_once(' ')?;
+    let code: i32 = code.parse().ok()?;
+    let text = text.trim();
+    (code != 0 && !text.is_empty()).then(|| (code, text.to_owned()))
+}
+
 /// Does a message already begin with `chunk.luau:LINE:` (or `chunk.lua:LINE:`)?
 fn has_location(message: &str) -> bool {
     let Some((head, rest)) = message.split_once(':') else { return false };
