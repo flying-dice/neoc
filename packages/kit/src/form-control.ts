@@ -44,7 +44,6 @@ export abstract class FormControl extends LitElement {
   declare label: string
   declare description: string
   protected internals = this.attachInternals()
-  private fieldsetDisabled = false
   private customMessage = ''
 
   constructor() {
@@ -75,9 +74,13 @@ export abstract class FormControl extends LitElement {
     return this.renderRoot.querySelector<HTMLElement>('button, input') ?? undefined
   }
 
-  /** Whether the control takes no input: itself disabled, or inside a disabled fieldset. */
+  /**
+   * Whether the control takes no input: itself disabled, or inside a disabled fieldset. One answer, the browser's own
+   * (`:disabled` is true for the `disabled` attribute and for a disabled ancestor fieldset), so the two cannot disagree.
+   * `willUpdate` keeps the attribute in step with the property before the render that reads this.
+   */
   protected get isDisabled(): boolean {
-    return this.disabled || this.fieldsetDisabled
+    return this.matches(':disabled')
   }
 
   /** The accessible name: `label`, else the text of the first `<label>` that names this element. */
@@ -139,6 +142,15 @@ export abstract class FormControl extends LitElement {
     }
   }
 
+  /**
+   * Lit reflects `disabled` to its attribute after the render, and the browser tells the control about the attribute
+   * (`formDisabledCallback`) only then, inside the update, where a request for another update is lost. So the attribute is
+   * set here, before the render: `disabled = true` then `disabled = false` (the everyday `disabled={busy}`) must end enabled.
+   */
+  protected willUpdate(changed: Map<PropertyKey, unknown>): void {
+    if (changed.has('disabled')) this.toggleAttribute('disabled', this.disabled)
+  }
+
   protected firstUpdated(): void {
     this.captureInitial()
   }
@@ -163,8 +175,8 @@ export abstract class FormControl extends LitElement {
     this.resetValue()
   }
 
-  formDisabledCallback(disabled: boolean): void {
-    this.fieldsetDisabled = disabled
+  /** The element's own attribute or a fieldset turned it on or off: draw again (`isDisabled` reads the browser). */
+  formDisabledCallback(): void {
     this.requestUpdate()
   }
 

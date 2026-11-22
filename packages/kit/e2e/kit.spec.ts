@@ -866,7 +866,11 @@ test('Enter and Space press a button, flip a toggle and a check, and press a tap
 // "Disabled" means one thing for every control, in every place: a disabled control, however it is disabled, hears nothing,
 // activates nothing, submits nothing, cannot be focused, swallows the click so that the parent hears nothing either, and
 // looks disabled. The native disabled button is the control experiment for the click cases.
-for (const way of ['its own attribute', 'a disabled fieldset'] as const) {
+for (const way of [
+  'its own attribute',
+  'its property, set after it was drawn',
+  'a disabled fieldset'
+] as const) {
   test(`a control disabled by ${way} does nothing and lets nothing through, however it is activated`, async ({
     page
   }) => {
@@ -892,6 +896,7 @@ for (const way of ['its own attribute', 'a disabled fieldset'] as const) {
       const area = document.createElement('div')
       area.style.cssText = 'display:grid;gap:16px;padding:16px;width:600px'
       const out: { id: string; kind: string; context: string; hasLabel: boolean }[] = []
+      const controls: (HTMLElement & { disabled: boolean })[] = []
       const listen = (el: HTMLElement, id: string): void => {
         for (const type of ['click', 'change', 'focusin', 'press'])
           el.addEventListener(type, () => w.log.push(`${id}:${type}`))
@@ -921,6 +926,7 @@ for (const way of ['its own attribute', 'a disabled fieldset'] as const) {
           } else control = mk(kind, { label: kind, ...off })
           control.dataset.testid = id
           control.id = id
+          controls.push(control as HTMLElement & { disabled: boolean })
           listen(control, id)
           const label = mk('label', { for: id }, 'label')
           label.addEventListener('click', () => undefined)
@@ -975,11 +981,19 @@ for (const way of ['its own attribute', 'a disabled fieldset'] as const) {
         out.push({ id, kind, context: 'card', hasLabel: false })
       }
       document.body.replaceChildren(area)
-      await Promise.all(
-        [...document.querySelectorAll('*')]
-          .filter((e) => 'updateComplete' in e)
-          .map((e) => (e as unknown as { updateComplete: Promise<unknown> }).updateComplete)
-      )
+      const settled = (): Promise<unknown> =>
+        Promise.all(
+          [...document.querySelectorAll('*')]
+            .filter((e) => 'updateComplete' in e)
+            .map((e) => (e as unknown as { updateComplete: Promise<unknown> }).updateComplete)
+        )
+      await settled()
+      // the everyday `disabled={busy}`: drawn enabled, then disabled by its property
+      if (way === 'its property, set after it was drawn') {
+        for (const c of controls) c.disabled = true
+        await settled()
+        await settled()
+      }
       return out
     }, way)
     const centre = (id: string): Promise<{ x: number; y: number }> =>
@@ -1075,3 +1089,301 @@ for (const way of ['its own attribute', 'a disabled fieldset'] as const) {
     expect(wrong).toEqual([])
   })
 }
+
+// A control that is disabled and then enabled again, however each was done, hears, activates and takes focus again, and
+// one that is disabled in two ways stays disabled until both are undone. The everyday case is `disabled={busy}`:
+// the property, set after the control was drawn, then cleared. Every control (and the native button as the experiment)
+// in every route is one cell of this table.
+const KINDS = [
+  'native',
+  'ui-button',
+  'ui-toggle',
+  'ui-check',
+  'ui-segmented',
+  'ui-text-field'
+] as const
+type Step =
+  'property on' | 'property off' | 'attribute on' | 'attribute off' | 'fieldset on' | 'fieldset off'
+const ROUTES: { name: string; steps: Step[]; deadAfter: boolean[] }[] = [
+  // each step, and whether the control is still dead after it
+  { name: 'its property', steps: ['property on', 'property off'], deadAfter: [true, false] },
+  { name: 'its attribute', steps: ['attribute on', 'attribute off'], deadAfter: [true, false] },
+  { name: 'a fieldset', steps: ['fieldset on', 'fieldset off'], deadAfter: [true, false] },
+  {
+    name: 'the property and a fieldset, the property undone first',
+    steps: ['property on', 'fieldset on', 'property off', 'fieldset off'],
+    deadAfter: [true, true, true, false]
+  },
+  {
+    name: 'the fieldset and the property, the fieldset undone first',
+    steps: ['fieldset on', 'property on', 'fieldset off', 'property off'],
+    deadAfter: [true, true, true, false]
+  },
+  {
+    name: 'the property and the attribute, the attribute undone first',
+    steps: ['property on', 'attribute on', 'attribute off', 'property off'],
+    deadAfter: [true, true, false, false]
+  }
+]
+
+test('a control disabled and enabled again, by its property, its attribute or a fieldset, hears, activates and focuses again', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 900, height: 900 })
+  await page.goto(`${origin}/standalone`)
+  const wrong: string[] = []
+  for (const route of ROUTES) {
+    for (const kind of KINDS) {
+      const id = 'cell'
+      await page.evaluate(
+        async ({ kind, id }) => {
+          const w = window as unknown as { log: string[] }
+          w.log = []
+          const form = document.createElement('form')
+          form.addEventListener('submit', (e) => {
+            e.preventDefault()
+            w.log.push('submit')
+          })
+          const fieldset = document.createElement('fieldset')
+          fieldset.style.cssText = 'border:0;margin:0;padding:12px;min-width:0'
+          let control: HTMLElement
+          if (kind === 'native' || kind === 'ui-button') {
+            control = document.createElement(kind === 'native' ? 'button' : 'ui-button')
+            control.setAttribute('type', 'submit')
+            control.textContent = 'Go'
+          } else {
+            control = document.createElement(kind)
+            control.setAttribute('label', kind)
+            if (kind === 'ui-segmented')
+              (control as HTMLElement & { options: unknown }).options = ['A', 'B'].map((v) => ({
+                value: v,
+                label: v
+              }))
+          }
+          control.id = id
+          for (const type of ['click', 'change', 'focusin'])
+            control.addEventListener(type, () => w.log.push(type))
+          fieldset.append(control)
+          form.append(fieldset)
+          document.body.replaceChildren(form)
+          await Promise.all(
+            [...document.querySelectorAll('*')]
+              .filter((e) => 'updateComplete' in e)
+              .map((e) => (e as unknown as { updateComplete: Promise<unknown> }).updateComplete)
+          )
+        },
+        { kind, id }
+      )
+      const drive = (step: Step): Promise<void> =>
+        page.evaluate(async (step) => {
+          const el = document.getElementById('cell') as HTMLElement & { disabled: boolean }
+          const fieldset = el.closest('fieldset')!
+          if (step === 'property on') el.disabled = true
+          else if (step === 'property off') el.disabled = false
+          else if (step === 'attribute on') el.setAttribute('disabled', '')
+          else if (step === 'attribute off') el.removeAttribute('disabled')
+          else fieldset.disabled = step === 'fieldset on'
+          // twice: a framework sets a property, and the control draws on the next microtask, and again for what that did
+          for (let i = 0; i < 2; i++)
+            await Promise.all(
+              [...document.querySelectorAll('*')]
+                .filter((e) => 'updateComplete' in e)
+                .map((e) => (e as unknown as { updateComplete: Promise<unknown> }).updateComplete)
+            )
+        }, step)
+      // what a person doing the thing with a pointer and the keyboard gets, in the order it is tried
+      const attempt = async (): Promise<{ heard: string[]; focused: boolean }> => {
+        await page.evaluate(() => {
+          ;(window as unknown as { log: string[] }).log = []
+          ;(document.activeElement as HTMLElement | null)?.blur()
+        })
+        const point = await page.evaluate(() => {
+          const el = document.getElementById('cell')!
+          const inner =
+            el.localName === 'ui-segmented'
+              ? // a segment that is not the chosen one: choosing the chosen one is no change
+                ([...el.shadowRoot!.querySelectorAll('button')].find(
+                  (b) => b.getAttribute('aria-checked') !== 'true'
+                ) as HTMLElement)
+              : (el.shadowRoot?.querySelector('button, input') ?? el)
+          const r = inner.getBoundingClientRect()
+          return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+        })
+        await page.mouse.click(point.x, point.y)
+        await page.evaluate(() => document.getElementById('cell')!.click())
+        const focused = await page.evaluate(() => {
+          const el = document.getElementById('cell')!
+          ;(document.activeElement as HTMLElement | null)?.blur()
+          el.focus()
+          return document.activeElement === el || !!el.contains(document.activeElement)
+        })
+        const heard = await page.evaluate(() => [...(window as unknown as { log: string[] }).log])
+        return { heard, focused }
+      }
+      for (const [i, step] of route.steps.entries()) {
+        await drive(step)
+        const { heard, focused } = await attempt()
+        const where = `${kind}, by ${route.name}, after "${step}"`
+        if (route.deadAfter[i]) {
+          // dead: nothing heard (not a click, not a change, not a submit) and no focus
+          if (heard.length)
+            wrong.push(`${where}: still disabled but heard ${JSON.stringify(heard)}`)
+          if (focused) wrong.push(`${where}: still disabled but took focus`)
+        } else {
+          // alive: the click is heard, the control acts (a submit, a change, or the field taking focus), focus works
+          const acts =
+            kind === 'native' || kind === 'ui-button'
+              ? 'submit'
+              : kind === 'ui-text-field'
+                ? 'focusin'
+                : 'change'
+          if (!heard.includes('click') && kind !== 'ui-text-field' && kind !== 'ui-segmented')
+            wrong.push(`${where}: enabled again but heard no click (${JSON.stringify(heard)})`)
+          if (!heard.includes(acts))
+            wrong.push(`${where}: enabled again but did not act (${JSON.stringify(heard)})`)
+          if (!focused) wrong.push(`${where}: enabled again but takes no focus`)
+        }
+      }
+    }
+  }
+  expect(wrong).toEqual([])
+})
+
+// Four more cells of the disabled table: where a disabled control sits matters as little as how it was disabled.
+test('a disabled control in a wrapping label, a disabled segment, a control in a disabled row and a disabled option row do nothing', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 900, height: 900 })
+  await page.goto(`${origin}/standalone`)
+  await page.evaluate(async () => {
+    const w = window as unknown as { log: string[] }
+    w.log = []
+    const mk = (tag: string, attrs: Record<string, string> = {}, text = ''): HTMLElement => {
+      const el = document.createElement(tag)
+      for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v)
+      el.textContent = text
+      return el
+    }
+    const listen = (el: HTMLElement, id: string): void => {
+      for (const type of ['click', 'change', 'press', 'focusin'])
+        el.addEventListener(type, () => w.log.push(`${id}:${type}`))
+    }
+    const area = mk('div')
+    area.style.cssText = 'display:grid;gap:16px;padding:16px;width:600px'
+    // 1. a disabled toggle inside a label that wraps it: a click on the label's own text does nothing, as for an input
+    const wrap = mk('label', { id: 'wrap-label' })
+    const wrapped = mk('ui-toggle', { id: 'wrapped', label: 'Sync', disabled: '' })
+    listen(wrapped, 'wrapped')
+    wrap.append(wrapped, ' Sync over the network')
+    // 2. a segmented control with one disabled segment
+    const seg = mk('ui-segmented', { id: 'seg', label: 's' }) as HTMLElement & {
+      options: unknown
+      value: string
+    }
+    seg.options = [
+      { value: 'a', label: 'A' },
+      { value: 'b', label: 'B', disabled: true },
+      { value: 'c', label: 'C' }
+    ]
+    seg.value = 'a'
+    listen(seg, 'seg')
+    // 3. an enabled toggle in a disabled row
+    const list = mk('ui-list', { label: 'l' })
+    const section = mk('ui-section')
+    const row = mk('ui-row', { id: 'dead-row', heading: 'Row', tappable: '', disabled: '' })
+    const inRow = mk('ui-toggle', { id: 'in-row', label: 'In row', slot: 'trailing' })
+    listen(row, 'row')
+    listen(inRow, 'in-row')
+    row.append(inRow)
+    section.append(row)
+    list.append(section)
+    // 4. a disabled option row
+    const list2 = mk('ui-list', { label: 'o', selection: 'single' })
+    const section2 = mk('ui-section')
+    const option = mk('ui-row', { id: 'option', heading: 'Option', option: '', disabled: '' })
+    listen(option, 'option')
+    section2.append(option)
+    list2.append(section2)
+    area.append(wrap, seg, list, list2)
+    document.body.replaceChildren(area)
+    await Promise.all(
+      [...document.querySelectorAll('*')]
+        .filter((e) => 'updateComplete' in e)
+        .map((e) => (e as unknown as { updateComplete: Promise<unknown> }).updateComplete)
+    )
+  })
+  const heard = (): Promise<string[]> =>
+    page.evaluate(() => [...(window as unknown as { log: string[] }).log])
+  const clear = (): Promise<void> =>
+    page.evaluate(() => {
+      ;(window as unknown as { log: string[] }).log = []
+      ;(document.activeElement as HTMLElement | null)?.blur()
+    })
+  const pointOf = (js: () => Element): Promise<{ x: number; y: number }> =>
+    page.evaluate((src) => {
+      const r = (new Function(`return (${src})()`)() as Element).getBoundingClientRect()
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+    }, js.toString())
+
+  // 1. the label's text (the right end of the label, past the toggle)
+  await clear()
+  const labelBox = await page.locator('#wrap-label').boundingBox()
+  await page.mouse.click(labelBox!.x + labelBox!.width - 8, labelBox!.y + labelBox!.height / 2)
+  expect(await heard(), 'a click on the text of a label that wraps a disabled toggle').toEqual([])
+  expect(
+    await page.evaluate(() =>
+      (document.getElementById('wrapped') as HTMLInputElement).matches(':disabled')
+    )
+  ).toBe(true)
+
+  // 2. the disabled segment: a click, and the keyboard from the segment before it, never choose it
+  await clear()
+  const b = await pointOf(
+    () => document.getElementById('seg')!.shadowRoot!.querySelectorAll('button')[1]
+  )
+  await page.mouse.click(b.x, b.y)
+  // (the group may take focus, as a click on the empty part of a labelled group does: only an action would be wrong)
+  expect(
+    (await heard()).filter((e) => !e.endsWith(':focusin')),
+    'a click on a disabled segment'
+  ).toEqual([])
+  expect(
+    await page.evaluate(
+      () => (document.getElementById('seg') as HTMLElement & { value: string }).value
+    )
+  ).toBe('a')
+  await page.evaluate(() => document.getElementById('seg')!.focus())
+  await page.keyboard.press('ArrowRight')
+  const afterArrow = await page.evaluate(
+    () => (document.getElementById('seg') as HTMLElement & { value: string }).value
+  )
+  expect(afterArrow, 'ArrowRight from A skips the disabled B').toBe('c')
+
+  // 3. an enabled control in a disabled row is dead: no change, no press (NEOC-325 decides what it should look like)
+  await clear()
+  const t = await pointOf(() =>
+    document.getElementById('in-row')!.shadowRoot!.querySelector('input, button, .track, .box')!
+  )
+  await page.mouse.click(t.x, t.y)
+  // (a press may move focus to the toggle, as in a disabled segment's group: only an action would be wrong)
+  expect(
+    (await heard()).filter((e) => !e.endsWith(':focusin')),
+    'a click on a toggle in a disabled row'
+  ).toEqual([])
+
+  // 4. a disabled option row takes no focus, by any call, and no tab stop
+  await clear()
+  const focus = await page.evaluate(() => {
+    const el = document.getElementById('option') as HTMLElement & { focusRow?: () => void }
+    el.focusRow?.()
+    el.focus()
+    return {
+      focused: document.activeElement === el,
+      tabindex: el.getAttribute('tabindex'),
+      ariaDisabled: el.getAttribute('aria-disabled')
+    }
+  })
+  expect(focus).toEqual({ focused: false, tabindex: null, ariaDisabled: 'true' })
+  await page.keyboard.press('Enter')
+  expect(await heard()).toEqual([])
+})
