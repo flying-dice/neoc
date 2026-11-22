@@ -192,8 +192,12 @@ or over the shell; it is not a security boundary. Lasting data belongs in the ba
 128 characters: a call over a limit rejects at once with a message that says which. A result may be at most 4 MiB, and a
 larger one comes back as an error. A call the shell cannot read is rejected too, so a promise never hangs. Calls in
 flight are limited so that one window can neither be refused by the host's own connection limit for an ordinary burst (a
-call per item of a list) nor crowd out the shell or another window: 8 at a time per window and 32 across all windows, the
-rest wait their turn (windows take turns); a window with 1,000 calls waiting gets an error for the next one.
+call per item of a list) nor crowd out the shell or another app: 8 at a time per app and 32 across all apps, the
+rest wait their turn (apps take turns); an app with 1,000 calls waiting gets an error for the next one. A place is taken for
+as long as the host is running the call: a call has no time limit on the client, and its place comes back when the handler
+answers or the connection to the host goes, so a handler that never returns takes up to eight places of its own app and no
+one else's (closing its window does not stop the handler, so the places stay taken; uninstalling or replacing the app
+ends its calls, with the reason). The shell's own calls and the other apps keep working.
 
 **When a client fails to start**, the window shows the reason as text with a "Try again" button: the error the page raised
 while it loaded (a top-level throw, a missing import, a syntax error: the script comes from another origin than the
@@ -369,13 +373,28 @@ semantic tokens only.
 - **Notifications:** `app.notify { title = "Backup done", body = "12 files" }` tells the person something now. It takes
   a `title` (1 to 200 characters, not blank) and an optional `body` (up to 2000) and no other key; the host sends the
   app's id with it, so the sender is never text the app wrote. It goes to the clients connected at that moment: one that
-  is not connected never gets it (nothing is queued). Bad input raises, each message starting `app.notify`: no table
-  (`takes a table`), a key other than `title` and `body` (`unknown key`, or `unknown positional entry` for `app.notify {
+  is not connected never gets it (nothing is queued). The shell of each client draws it as a banner above its windows,
+  with the app's name and icon from the shell's own app list: it is not drawn on a client where one of the app's windows
+  is in front, and is drawn on every other client, whether or not the app has a window open. The person can dismiss it
+  or choose it to open the app's main window; it goes by itself after ten seconds of the page being on screen (held while the keyboard is on it or the pointer is
+  being moved over it), and at most three show at once (a fourth replaces the same app's oldest first, so one app's
+  burst does not push another's off; a tab in the background does not count as the app being in front, so it is shown).
+  A page with no shell (the app opened on its own at `/apps/<id>`) draws none: the banner is the shell's, and the call is
+  the same either way. The title is shown on one line (line breaks and control characters become spaces; direction overrides and
+  characters that draw nothing are removed, except the joiners and variation selectors that make an emoji or a word,
+  such as a family emoji, the flag of England or a Persian word) and the body as lines of text, never as markup; a
+  title with nothing visible left shows the app's name. A screen reader hears the sender, the title and the start of
+  the body. The journeys are in `client/journeys/notifications.md`. Bad input raises, each message
+  starting `app.notify`: no table (`takes a table`), a key other than `title` and `body` (`unknown key`, or `unknown positional entry` for `app.notify {
   "text" }`), no title (`needs`), a title that is blank or too long, a body that is too long, a value that is not a
   string, and a call in `render` or a `readOnly` tool. A call may also have at most 64 notifications waiting to be
   delivered at once (`already has 64 notifications waiting`). The host delivers waiting notifications whenever a call of
-  the app ends or a task or request handler waits, so the limit guards against a runaway loop; it is not a quota to plan
-  around. `at` and `actions` are type errors too.
+  the app ends, and when a call waits (at `task.wait` or a request; a task or request handler pausing; a tool that has
+  notified and then works on), so a tool that notifies half way is heard then, not when it returns. The limit guards
+  against a runaway loop; it is not a quota to plan around. A client whose connection stalls without closing (a sleeping
+  tablet) is dropped by the host, either once more than 32 MiB is waiting to be sent to it or when its socket takes no
+  message for 30 s (plus the time the message needs at 16 KiB/s), and reconnects; it does not get what was raised while
+  it was away, like any client that was not connected. `at` and `actions` are type errors too.
 - **Background work:** start loops with `task.spawn` from `std:task` and let the entry return (the app is not loaded until
   it does). Closing a window leaves the work running; assigning `app.state` from a task re-renders open windows; unloading
   aborts tasks and closes servers (`crates/vos-host/tests/fixtures/ticker` is an example).

@@ -9,7 +9,7 @@
 import { type Page } from '@playwright/test'
 import { FIXTURE_APPS, fixtureAppRef, type FixtureApp } from './host/config'
 import { callTool } from './host/pair'
-import { expect, frameOf, openDesktop, settle, test, windowOf } from './fixtures'
+import { chooseLayout, expect, frameOf, openDesktop, settle, test, windowOf } from './fixtures'
 
 test.describe.configure({ mode: 'serial' })
 
@@ -171,7 +171,9 @@ for (const id of FIXTURE_APPS) {
       // every probe reports what happened: `allowed` is a failure (the others throw, or say `blocked`)
       for (const [probe, outcome] of Object.entries(probes)) expect(outcome, probe).not.toBe('allowed')
       expect(probes.popup, 'window.open returns null').toBe('blocked')
-      expect(probes.formSubmit, 'the submit event fired and the prevented submission left the document alone').toBe('blocked')
+      expect(probes.formSubmit, 'the submit event fired and the prevented submission left the document alone').toBe(
+        'blocked'
+      )
       // a prevented submission is not a page the frame left
       await page.waitForTimeout(500)
       await expect(page.getByTestId(`${id}-failed`)).toHaveCount(0)
@@ -185,7 +187,7 @@ for (const id of FIXTURE_APPS) {
       errors.splice(0, errors.length, ...errors.filter((e) => !refused.includes(e)))
     })
 
-    test(`AF10 (${id}): the router refuses a call the definition does not allow`, async ({ page }) => {
+    test(`AF12 (${id}): the router refuses a call the definition does not allow`, async ({ page }) => {
       await openDesktop(page)
       // what a client could send if it ignored its generated types: the shell forwards it, the router answers
       const answer = (method: string, args: unknown): Promise<{ code?: number; message: string }> =>
@@ -218,13 +220,18 @@ for (const id of FIXTURE_APPS) {
       await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()
     })
 
-    test(`AF8 (${id}): a client that navigates its own frame away is noticed, and the window offers the way back`, async ({ page }) => {
+
+    test(`AF8 (${id}): a client that navigates its own frame away is noticed, and the window offers the way back`, async ({
+      page
+    }) => {
       await openDesktop(page, { open: [id] })
       await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()
       // no policy stops a frame navigating itself: the shell sees a document it did not load
-      await frame(page).locator('body').evaluate(() => {
-        location.href = '/session'
-      })
+      await frame(page)
+        .locator('body')
+        .evaluate(() => {
+          location.href = '/session'
+        })
       await expect(page.getByTestId(`${id}-failed`)).toBeVisible({ timeout: 10_000 })
       await expect(page.getByTestId(`${id}-failed`)).toContainText('left its page')
       await page.getByTestId(`${id}-failed-retry`).click()
@@ -232,7 +239,10 @@ for (const id of FIXTURE_APPS) {
       await expect(page.getByTestId(`${id}-failed`)).toHaveCount(0)
     })
 
-    test(`AF9 (${id}): a form nobody prevented stays on the page; one submitted by script, with no event, sends the frame away and the window notices`, async ({ page, errors }) => {
+    test(`AF9 (${id}): a form nobody prevented stays on the page; one submitted by script, with no event, sends the frame away and the window notices`, async ({
+      page,
+      errors
+    }) => {
       await openDesktop(page, { open: [id] })
       await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()
       // the bridge prevents a submission the app's handlers did not: the handlers run and the page stays (a dialog form still closes its dialog)
@@ -266,13 +276,15 @@ for (const id of FIXTURE_APPS) {
       await expect(page.getByTestId(`${id}-failed`)).toHaveCount(0)
       // `form.submit()` fires no event, so nothing can prevent it: the browser starts the navigation. The policy refuses to send the
       // data (`form-action 'none'`), but the page is gone all the same: the window says the app left its page
-      await frame(page).locator('body').evaluate(() => {
-        const form = document.createElement('form')
-        form.action = 'http://127.0.0.1:9/'
-        form.method = 'post'
-        document.body.append(form)
-        setTimeout(() => form.submit(), 0)
-      })
+      await frame(page)
+        .locator('body')
+        .evaluate(() => {
+          const form = document.createElement('form')
+          form.action = 'http://127.0.0.1:9/'
+          form.method = 'post'
+          document.body.append(form)
+          setTimeout(() => form.submit(), 0)
+        })
       await expect(page.getByTestId(`${id}-failed`)).toBeVisible({ timeout: 10_000 })
       await expect(page.getByTestId(`${id}-failed`)).toContainText('left its page')
       await page.getByTestId(`${id}-failed-retry`).click()
@@ -288,13 +300,17 @@ for (const id of FIXTURE_APPS) {
       await expect(frame(page).getByTestId(`${id}-theme`)).toHaveText('light')
       const shellBackground = await page.evaluate(() => getComputedStyle(document.body).backgroundColor)
       // a mark in the frame's own window: a reload of the frame would lose it
-      await frame(page).locator('body').evaluate(() => ((window as unknown as { marked: boolean }).marked = true))
+      await frame(page)
+        .locator('body')
+        .evaluate(() => ((window as unknown as { marked: boolean }).marked = true))
 
       await page.evaluate(() => (window.__vos.settings.theme = 'dark'))
       await expect(frame(page).getByTestId(`${id}-theme`)).toHaveText('dark')
       await expect(frame(page).locator('html')).toHaveAttribute('data-theme', 'dark')
       expect(
-        await frame(page).locator('body').evaluate(() => (window as unknown as { marked?: boolean }).marked),
+        await frame(page)
+          .locator('body')
+          .evaluate(() => (window as unknown as { marked?: boolean }).marked),
         'the frame was not reloaded'
       ).toBe(true)
       // the client's styles (`body { background }`, `h1`) did not reach the shell
@@ -313,10 +329,9 @@ test('AF7: two apps with clients each reach only their own backend', async ({ pa
   // the second beside the first, on the same stage: both are on screen
   await page.evaluate(
     (id) =>
-      (window as unknown as { __vos: { wm: { open(app: string, options: { alongside: boolean }): void } } }).__vos.wm.open(
-        id,
-        { alongside: true }
-      ),
+      (
+        window as unknown as { __vos: { wm: { open(app: string, options: { alongside: boolean }): void } } }
+      ).__vos.wm.open(id, { alongside: true }),
     b
   )
   await expect(windowOf(page, b)).toBeVisible()
@@ -328,4 +343,98 @@ test('AF7: two apps with clients each reach only their own backend', async ({ pa
   await settle(page)
   await expect(frameOf(page, b).locator('li', { hasText: title })).toHaveCount(0)
   await expect(frameOf(page, b).getByTestId(`${b}-app`)).toBeVisible()
+})
+
+test('AF10: an app whose handlers never answer is stuck alone: the shell, another app and the host carry on', async ({
+  page
+}) => {
+  const [hung, other] = ['tasks-svelte', 'tasks-react'] as const
+  await openDesktop(page, { open: [hung] })
+  await page.evaluate(
+    (id) =>
+      (window as unknown as { __vos: { wm: { open(app: string, o: { alongside: boolean }): void } } }).__vos.wm.open(
+        id,
+        { alongside: true }
+      ),
+    other
+  )
+  await expect(frameOf(page, other).getByTestId(`${other}-app`)).toBeVisible()
+  await expect(frameOf(page, hung).getByTestId(`${hung}-app`)).toBeVisible()
+
+  // ten calls of a handler that waits (the app's eight places are taken, two wait), and then some more, as a page that retries does
+  const startHung = (): Promise<void> =>
+    frameOf(page, hung)
+      .locator('body')
+      .evaluate((_el, count) => {
+        const w = window as unknown as {
+          __rpc: (m: string, a?: unknown) => Promise<unknown>
+          __hung: Promise<unknown>[]
+        }
+        w.__hung = [
+          ...(w.__hung ?? []),
+          ...Array.from({ length: count }, () => w.__rpc('hang').catch((e: unknown) => String(e)))
+        ]
+      }, 10)
+  await startHung()
+  await startHung()
+
+  // the shell's own calls and the other app go on at once
+  await expect
+    .poll(() => hostCall<{ apps: unknown[] }>(page, 'app.list', {}).then((r) => Array.isArray(r.apps)))
+    .toBe(true)
+  const title = unique('While another app hangs')
+  await frameOf(page, other).getByTestId(`${other}-title`).fill(title)
+  await frameOf(page, other).getByTestId(`${other}-add`).click()
+  await expect(frameOf(page, other).locator('li', { hasText: title })).toBeVisible()
+
+  // closing the window of the hung app and opening it again finds the same places taken (the host is still running the handlers):
+  // the app's own calls wait, nothing else does
+  await chooseLayout(page, hung, 'close')
+  await expect(windowOf(page, hung)).toHaveCount(0)
+  await page.getByTestId(`dock-${hung}`).click()
+  await expect(frameOf(page, hung).getByTestId(`${hung}-app`)).toBeVisible()
+  await expect
+    .poll(() => hostCall<{ apps: unknown[] }>(page, 'app.list', {}).then((r) => Array.isArray(r.apps)))
+    .toBe(true)
+
+  // an agent's tool is not one of the client's calls: it lets the handlers go, and the app is whole again
+  await callTool(`${hung}__release_all`, {})
+  const title2 = unique('After the release')
+  await frameOf(page, hung).getByTestId(`${hung}-title`).fill(title2)
+  await frameOf(page, hung).getByTestId(`${hung}-add`).click()
+  await expect(frameOf(page, hung).locator('li', { hasText: title2 })).toBeVisible()
+})
+
+test('AF11: uninstalling an app answers the calls its handlers still hold, so the host keeps no permit for them', async ({
+  page
+}) => {
+  const id = 'tasks-svelte'
+  await openDesktop(page)
+  // straight to the host (no window, no gate): five calls of a handler that waits
+  await page.evaluate((app) => {
+    const w = window as unknown as {
+      __vos: { host: { api: { call(m: string, p: object): Promise<unknown> } } }
+      __direct: Promise<string>[]
+    }
+    w.__direct = Array.from({ length: 5 }, () =>
+      w.__vos.host.api.call('app.call', { app, method: 'hang', args: null }).then(
+        () => 'answered',
+        (e: unknown) => `refused: ${e instanceof Error ? e.message : String(e)}`
+      )
+    )
+  }, id)
+  await hostCall(page, 'app.uninstall', { app: id, purge: true })
+  // answered (with the reason) well inside the shell's 30 s, not left running
+  const outcomes = await page.evaluate(() =>
+    Promise.race([
+      (window as unknown as { __direct: Promise<string>[] }).__direct.length &&
+        Promise.all((window as unknown as { __direct: Promise<string>[] }).__direct),
+      new Promise<string[]>((r) => setTimeout(() => r(['still waiting']), 8000))
+    ])
+  )
+  expect(outcomes).not.toContain('still waiting')
+  // the host carries on, and the app comes back for the journeys after this one
+  const url = fixtureAppRef(id)
+  const preview = await hostCall<{ sha256: string }>(page, 'app.preview', { url })
+  await hostCall(page, 'app.install', { url, sha256: preview.sha256 })
 })

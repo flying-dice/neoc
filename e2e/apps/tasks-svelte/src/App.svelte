@@ -1,6 +1,10 @@
 <script lang="ts">
   import { api, host, type Task } from 'app:rpc'
 
+  // the journeys reach the backend with calls the screen has no control for (`hang`, `release`)
+  ;(window as unknown as { __rpc: (method: string, args?: unknown) => Promise<unknown> }).__rpc = (method, args) =>
+    (api as unknown as Record<string, (args?: unknown) => Promise<unknown>>)[method](args)
+
   let tasks = $state<Task[]>([])
   let title = $state('')
   let error = $state<string | null>(null)

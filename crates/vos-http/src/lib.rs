@@ -13,7 +13,10 @@ mod session;
 pub use frame::{frame_routes, FrameRoutes, FRAME_CSP};
 pub use guard::{origin_guard, system_hostname, system_interface_ips, HostGuard, InterfaceIps};
 pub use hub::RpcHub;
-pub use rpc::{rpc_router, RpcCallError, RpcHandler, RpcPeer, BUSY, MAX_IN_FLIGHT};
+pub use rpc::{
+    rpc_router, RpcCallError, RpcHandler, RpcPeer, BUSY, MAX_IN_FLIGHT, MAX_QUEUED_BYTES,
+    MIN_WRITE_BYTES_PER_SEC, WRITE_TIMEOUT,
+};
 pub use session::{require_session, session_router, SessionConfig, SECURE_SESSION_COOKIE, SESSION_COOKIE};
 
 use axum::Router;

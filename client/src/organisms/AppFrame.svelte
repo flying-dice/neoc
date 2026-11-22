@@ -80,7 +80,9 @@
       appId,
       frame: () => frame.contentWindow,
       post: (message) => frame.contentWindow?.postMessage(message, '*'),
-      call: (method, params) => host.api.call(method, params),
+      call: (method, params, options) => host.api.call(method, params, options),
+      // once the window says the app failed (it left its page, or never started) the frame is not listened to until Try again
+      muted: () => phase === 'failed',
       onHello: () => {
         frame.dataset.hellos = String(Number(frame.dataset.hellos ?? 0) + 1)
       },

@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use neoc_vm::lua::lifecycle::Life;
 use parking_lot::RwLock;
 use serde_json::{Map, Value};
+use std::future::Future;
 use std::{
     collections::HashMap,
     sync::{Arc, OnceLock, Weak},
@@ -76,6 +77,24 @@ impl LuaRuntime {
 
     fn vm(&self, app: &AppId) -> PortResult<Arc<AppVm>> {
         self.vms.read().get(app).cloned().ok_or_else(|| PortError::NotFound(app.to_string()))
+    }
+}
+
+/// Run a call the host made into the app, and end it with an error when the app is unloaded or replaced while it runs. Stopping
+/// an app aborts what it started (tasks, servers, workers); a call is not one of those, it is whoever asked, so without this a
+/// handler waiting at `task.wait` (a long poll, a LAN service that is down) outlives its uninstall and the client that made the
+/// call, and the host connection it came in on, keep waiting and keep the request's permit. Dropping the call is what a caller
+/// that gives up does everywhere else (`AppVm::in_call`): the turn is handed on, a transaction it opened is rolled back.
+async fn until_unloaded<T>(
+    app: &AppId,
+    vm: &AppVm,
+    call: impl Future<Output = PortResult<T>>,
+) -> PortResult<T> {
+    tokio::select! {
+        out = call => out,
+        () = vm.life().closed() => {
+            Err(PortError::Rejected(format!("`{app}` was unloaded while the call was running")))
+        }
     }
 }
 
@@ -261,7 +280,10 @@ impl AppRuntime for LuaRuntime {
         read_only: bool,
     ) -> PortResult<Value> {
         let vm = self.vm(app)?;
-        let out = vm.call_tool(tool, args, &ctx, read_only).await.map_err(|e| port_error(app, e));
+        let out = until_unloaded(app, &vm, async {
+            vm.call_tool(tool, args, &ctx, read_only).await.map_err(|e| port_error(app, e))
+        })
+        .await;
         forward_effects(&*self.notifier, &*self.shell, app, &vm).await?;
         out
     }
@@ -274,7 +296,10 @@ impl AppRuntime for LuaRuntime {
         ctx: CallContext,
     ) -> PortResult<Value> {
         let vm = self.vm(app)?;
-        let out = vm.call_handler(method, args, &ctx).await.map_err(|e| port_error(app, e));
+        let out = until_unloaded(app, &vm, async {
+            vm.call_handler(method, args, &ctx).await.map_err(|e| port_error(app, e))
+        })
+        .await;
         forward_effects(&*self.notifier, &*self.shell, app, &vm).await?;
         out
     }

@@ -5,7 +5,7 @@
  *   1. builds the client (client/dist) and the host (cargo), and the apps into a test registry:
  *      the repo's apps plus Notes (the codegen fixture), a second app the Discover journeys install and remove
  *      so they never disturb the Calculator the other specs use, and the Ticker (the host's background-work
- *      fixture) outside the registry, which only the background journeys install; and the two framework fixtures
+ *      fixture) and the Notifier (the notification journeys' sender) outside the registry, which only their journeys install; and the two framework fixtures
  *      (e2e/apps: a task list with a Svelte client and one with a React client, each on a Luau backend), built
  *      into a folder no registry lists and installed at start like the Calculator;
  *   2. writes vos.toml (port 7410 or VOS_PORT_BASE + 10, loopback, a fresh data directory, the test registry; the Calculator and
@@ -70,6 +70,23 @@ run('bun', ['scripts/build-apps.ts', 'ticker', '--out', join(DIR, 'hidden'), '--
 // The framework fixtures: each is built with its own package (its client is a Vite build), into a folder of its own that
 // no registry lists, so Discover does not offer them
 run('bun', ['scripts/build-apps.ts', ...FIXTURE_APPS, '--out', join(DIR, 'fixtures'), '--root', join(ROOT, 'e2e/apps')])
+
+// Notifier (the notification journeys' sender): the same way, also kept out of the registry
+const notifier = join(DIR, 'hidden-apps/notifier')
+mkdirSync(notifier, { recursive: true })
+cpSync(join(ROOT, 'crates/vos-host/tests/fixtures/notifier/app.luau'), join(notifier, 'app.luau'))
+writeFileSync(
+  join(notifier, 'app.json'),
+  JSON.stringify({
+    id: 'notifier',
+    name: 'Notifier',
+    version: '0.1.0',
+    description: 'Buttons that raise notifications, for the notification journeys.',
+    icon: 'bell',
+    tint: 'pink'
+  })
+)
+run('bun', ['scripts/build-apps.ts', 'notifier', '--out', join(DIR, 'hidden'), '--root', join(DIR, 'hidden-apps')])
 
 mkdirSync(DATA, { recursive: true })
 writeFileSync(

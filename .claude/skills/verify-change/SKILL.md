@@ -137,7 +137,8 @@ blocker or major defect.
 `playwright.config.ts` starts the host itself (`e2e/host/start.ts`): it builds the client, `vos-host`, the scripted ACP agent
 (`cargo build -p vos-acp --bin fake_agent`) and the apps into a test registry (`bun scripts/build-apps.ts`, plus Notes as a
 second app the Discover journeys install and remove, and the Ticker, `crates/vos-host/tests/fixtures/ticker`, an app whose
-background task counts up, which no registry lists). It writes a `vos.toml` for a loopback host with a fresh data directory
+background task counts up, and the Notifier, `crates/vos-host/tests/fixtures/notifier`, an app whose buttons raise
+notifications, which no registry lists). It writes a `vos.toml` for a loopback host with a fresh data directory
 under `test-results/host/`, the Calculator and Agents installed and one agent on the roster. Ports come from
 `VOS_PORT_BASE` (`scripts/ports.ts`): unset, Storybooks are on 6100 and the host on 7410 (never 7400); set, Storybooks are
 on the base and the host on base + 10 (`VOS_PORT_BASE=9100` gives 9110, for a second worktree). Never run two `test:e2e` on

@@ -270,13 +270,20 @@ export type vos_AppApi = {
 	--- tool may do it; changing a window through its `w` is not.
 	windows: (self: vos_AppApi, name: string) -> { vos_WindowContext },
 	--- `app.notify { title, body }` or `app:notify { ... }`: tell the person something now. It reaches the clients
-	--- connected now; one that is not connected never gets it. The host sends the app's id with it, never text from the app.
+	--- connected now; one that is not connected never gets it (nothing is kept for later). The host sends the app's id
+	--- with it, never text from the app, and each shell client draws it as a banner above its windows with the app's name
+	--- and icon from its own app list: not on a client where one of the app's windows is in front, on every other client,
+	--- with or without a window open. A page with no shell (the app opened on its own) draws none. The title is shown on
+	--- one line (line breaks and control characters become spaces; direction overrides and characters that draw
+	--- nothing are removed, but not the joiners and variation selectors that make an emoji or a word) and both are text,
+	--- never markup.
 	--- Raises (each message starts `app.notify`): no table ("takes a table"), a key other than title and body
 	--- ("unknown key", "unknown positional entry"), no title ("needs"), a title that is blank or over 200
 	--- characters, a body over 2000, a value that is not a string, a call in render or a readOnly tool, and a 65th
 	--- while 64 from the same call are still waiting ("already has 64 notifications waiting"). The host delivers
-	--- waiting notifications whenever a call of the app ends or a task or request handler waits, so the limit
-	--- guards against a runaway loop; it is not a quota to plan around.
+	--- waiting notifications whenever a call of the app ends, and when a call waits (`task.wait`, a request, a task or
+	--- request handler pausing, or a tool that has notified and then works on), so a tool that notifies half way is
+	--- heard then, not when it returns. The limit guards against a runaway loop; it is not a quota to plan around.
 	notify: ((notification: vos_Notification) -> ()) & ((self: vos_AppApi, notification: vos_Notification) -> ()),
 	log: (message: string) -> (),
 	--- Tell the app's open clients something changed outside them (`host.on(name, fn)` in the client): after an

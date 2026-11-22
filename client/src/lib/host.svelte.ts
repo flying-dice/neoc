@@ -5,7 +5,7 @@ import type { Transport } from '../view/rpc/transport'
 import { createWebSocketTransport, defaultRpcUrl } from '../view/rpc/websocket'
 import { messageOf } from '../view/errors'
 import { reactiveStore } from '../view/store.svelte'
-import { createHostChannel, HostError, type HostChannel } from '../shell/channel'
+import { createHostChannel, HostError, type CallOptions, type HostChannel } from '../shell/channel'
 import type { AgentSummary, AppSummary, Catalog, HostApi } from '../shell/hostApi'
 import { isPaired, pairDevice, type PairResult } from '../shell/pairing'
 import { agentListSchema, appListSchema, callParsed, catalogSchema } from '../shell/results'
@@ -84,6 +84,11 @@ export class Host {
   private fakeViews: FakeViews | null = null
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a list of callbacks, not state
   private windowRequests = new Set<(request: WindowRequest) => void>()
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a list of callbacks, not state
+  private appNotificationListeners = new Set<(params: unknown) => void>()
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a list of callbacks, not state
+  private uninstalledListeners = new Set<(app: string) => void>()
+  private fakeNotifications: (() => void) | null = null
   private refreshing: Promise<void> | null = null
   private stale = false
 
@@ -91,10 +96,14 @@ export class Host {
 
   /** The host-management calls (`app.*`, `host.*`): the session's connection, or a fake in stories. */
   readonly api: HostApi = {
-    call: (method: string, params: Record<string, unknown> = {}): Promise<unknown> => {
+    call: (
+      method: string,
+      params: Record<string, unknown> = {},
+      options?: CallOptions
+    ): Promise<unknown> => {
       if (this.fake) return this.fake.call(method, params)
       if (!this.channel) return Promise.reject(new HostError(-32000, 'Not connected to vos'))
-      return this.channel.call(method, params)
+      return this.channel.call(method, params, options)
     },
     onNotification: (listener) =>
       this.fake
@@ -174,8 +183,28 @@ export class Host {
         ...(isRecord(params.params) ? { params: params.params } : {})
       }
       for (const l of [...this.windowRequests]) l(request)
-    } else if (LIST_CHANGED.has(method)) void this.refresh()
-    else if (method === 'agents.changed') void this.refreshAgents()
+    } else if (method === 'notification.deliver') {
+      for (const l of [...this.appNotificationListeners]) l(params)
+    } else if (LIST_CHANGED.has(method)) {
+      // told before the list is read again: an app uninstalled and installed again under the same id can look, in the
+      // refreshed list, as if it never left
+      if (method === 'app.uninstalled' && typeof params.app === 'string') {
+        for (const l of [...this.uninstalledListeners]) l(params.app)
+      }
+      void this.refresh()
+    } else if (method === 'agents.changed') void this.refreshAgents()
+  }
+
+  /** The host delivers an app's notification (`notification.deliver`); the shell decides whether to show it. */
+  onAppNotification(listener: (params: unknown) => void): () => void {
+    this.appNotificationListeners.add(listener)
+    return () => void this.appNotificationListeners.delete(listener)
+  }
+
+  /** An app was uninstalled (`app.uninstalled`): whatever the shell holds of that instance of it goes with it. */
+  onAppUninstalled(listener: (app: string) => void): () => void {
+    this.uninstalledListeners.add(listener)
+    return () => void this.uninstalledListeners.delete(listener)
   }
 
   /** The shell opens a window when an app asks (an agent's tool bringing it forward). */
@@ -241,6 +270,12 @@ export class Host {
   useFake(api: HostApi, apps: AppSummary[] = [], views: FakeViews | null = null): void {
     this.fake = api
     this.fakeViews = views
+    this.fakeNotifications?.()
+    // a story's fake can deliver an app's notification (the other messages are for the pages that listen to the fake)
+    this.fakeNotifications = api.onNotification((method, params) => {
+      if (method === 'notification.deliver' || method === 'app.uninstalled')
+        this.onNotification(method, params)
+    })
     this.phase = 'ready'
     this.connection = 'online'
     this.setApps(apps)

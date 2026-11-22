@@ -9,7 +9,15 @@
  */
 import { uniqueBy } from '@vos/ui'
 import { z } from 'zod'
-import type { AgentSummary, AppPreview, AppSummary, Catalog, DeviceRow, HostApi } from './hostApi'
+import type {
+  AgentSummary,
+  AppNotification,
+  AppPreview,
+  AppSummary,
+  Catalog,
+  DeviceRow,
+  HostApi
+} from './hostApi'
 
 /** The host's answer was not what `method` promises. */
 export class ResultError extends Error {
@@ -84,6 +92,13 @@ export const deviceListSchema = z.object({
     }) satisfies z.ZodType<DeviceRow>
   )
 })
+
+/** The params of `notification.deliver`. A message of another shape is dropped, not drawn. */
+export const appNotificationSchema = z.object({
+  app: text,
+  title: text,
+  body: text.optional()
+}) satisfies z.ZodType<AppNotification>
 
 /** Call a host method and parse its result; a result of another shape rejects with a `ResultError`. */
 export async function callParsed<S extends z.ZodType>(

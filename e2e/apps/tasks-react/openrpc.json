@@ -86,6 +86,28 @@
       }
     },
     {
+      "name": "hang",
+      "summary": "Waits until an agent's `release_all` tool lets it go (a handler that waits on something that never answers: the journeys use it).",
+      "params": [],
+      "result": {
+        "name": "outcome",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "name": "release",
+      "summary": "Lets the calls of `hang` that are waiting return.",
+      "params": [],
+      "result": {
+        "name": "outcome",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    {
       "name": "whoami",
       "summary": "Who is calling, and which app answered.",
       "params": [],

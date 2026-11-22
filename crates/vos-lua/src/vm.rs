@@ -268,8 +268,9 @@ pub(crate) struct Shared {
     /// Everything the app spawned (tasks, servers, workers): aborted when the app is unloaded.
     pub life: Life,
     /// Woken when a call that nobody made through the host (a request to the app's own server, a task's next
-    /// slice) ends or pauses at a wait, so the runtime forwards the effects it queued (`app.notify`, `app.shell`)
-    /// and tells the application that state may have changed.
+    /// slice) ends or pauses at a wait, and when any call that has raised a notification pauses at a wait, so the
+    /// runtime forwards the effects it queued (`app.notify`, `app.shell`) and tells the application that state may
+    /// have changed.
     pub effects_signal: Arc<Notify>,
     /// The app's background work has been stopped (a reload began, or the app is being unloaded): its listeners are
     /// gone, so what still reaches its own server is a straggler of work that was cut off, and a straggler whose
@@ -316,9 +317,10 @@ impl Shared {
     }
 
     /// Queue a notification. Each call may have at most [`MAX_QUEUED_NOTIFICATIONS`] waiting for the host (the
-    /// runtime takes the whole queue when any call of the app ends, and when a task or request handler pauses at a
-    /// wait), so a call that loops on `app.notify` raises instead of growing the queue without bound. The count is the calling turn's own: what
-    /// another call queued while this one was parked does not count against it.
+    /// runtime takes the whole queue when any call of the app ends, when a task or request handler pauses at a wait,
+    /// and when a call that has notified pauses at a wait), so a call that loops on `app.notify` raises instead of
+    /// growing the queue without bound. The count is the calling turn's own: what another call queued while this one
+    /// was parked does not count against it.
     pub fn push_notification(&self, notification: Notification) -> mlua::Result<()> {
         let mut effects = self.effects.lock();
         let mut counts = self.queued_notifications.lock();
@@ -546,8 +548,10 @@ impl Baton for Turn {
         self.held = None;
         // a background call that pauses has run some script since the last time it let go of the VM: its state
         // changes (and a window's `w:toast`) are for the host to see now, not when the call is finally over,
-        // which for a loop is never. The gate is free by now.
-        if self.inbound {
+        // which for a loop is never. A tool or an event is over when it returns, so it says nothing at a wait, except
+        // that a notification it raised is not for later: a tool that notifies and then works for a minute (an agent's
+        // build, a download) would otherwise tell the person when it is done, not when it said. The gate is free by now.
+        if self.inbound || self.has_notifications_waiting() {
             self.shared.effects_signal.notify_one();
         }
     }
@@ -571,6 +575,13 @@ impl Baton for Turn {
             self.shared.tracker.lock().resume(parked.scope);
         }
         Poll::Ready(())
+    }
+}
+
+impl Turn {
+    /// Has this call raised a notification the host has not taken yet?
+    fn has_notifications_waiting(&self) -> bool {
+        self.shared.queued_notifications.lock().get(&self.id).is_some_and(|waiting| *waiting > 0)
     }
 }
 
@@ -810,7 +821,8 @@ impl AppVm {
         &self.shared.life
     }
 
-    /// Woken when a call that came from inside the VM ends or pauses (see [`Shared::effects_signal`]).
+    /// Woken when a call that came from inside the VM ends or pauses, or any call that has notified pauses (see
+    /// [`Shared::effects_signal`]).
     pub fn effects_signal(&self) -> Arc<Notify> {
         self.shared.effects_signal.clone()
     }

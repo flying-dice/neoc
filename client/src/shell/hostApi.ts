@@ -4,6 +4,7 @@
  * `crates/vos-domain/src/api.rs` into `types/generated/vos.ts`.
  */
 import { icons, type IconName } from '@vos/ui'
+import type { CallOptions } from './channel'
 import type {
   HostAgentList,
   HostAgentRow,
@@ -12,7 +13,8 @@ import type {
   HostAppSummary,
   HostCatalog,
   HostDeviceRow,
-  HostInstalledInfo
+  HostInstalledInfo,
+  HostNotifications
 } from '../view/protocol'
 
 // The wire shapes are the generated ones (the Rust schema in `crates/vos-domain/src/api.rs`, re-exported by
@@ -29,10 +31,12 @@ export type AgentList = HostAgentList
 /** What the shell shows of an agent (the roster row also carries its launch command and grants, which the shell never reads). */
 export type AgentSummary = Pick<HostAgentRow, 'id' | 'name' | 'avatar' | 'role'>
 export type DeviceRow = HostDeviceRow
+/** What an app's backend asked to tell the person (`notification.deliver`): the sender's id, which the host sets, a title and a body. */
+export type AppNotification = HostNotifications['notification.deliver']
 
 /** The calls the shell makes. The real one is the session's `call`; stories and tests pass a fake. */
 export interface HostApi {
-  call(method: string, params?: Record<string, unknown>): Promise<unknown>
+  call(method: string, params?: Record<string, unknown>, options?: CallOptions): Promise<unknown>
   /** Host notifications that no window owns (`window.open`, `app.installed`, ...). */
   onNotification(listener: (method: string, params: Record<string, unknown>) => void): () => void
 }

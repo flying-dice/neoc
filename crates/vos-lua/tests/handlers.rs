@@ -310,6 +310,54 @@ async fn handlers_stop_with_the_app() {
     assert!(matches!(call(&rig, "tasks", "nothing", Value::Null).await, Err(PortError::NotFound(_))));
 }
 
+/// A handler that waits for ever (a long poll, a LAN service that is down): the host holds the client's request until the
+/// handler answers, so what happens to the request when the app goes away decides whether a connection keeps a permit for it.
+const WAITER: &str = r#"
+local task = require("std:task")
+return {
+  hang = function() while true do task.wait(0.05) end end,
+  ping = function() return "pong" end,
+}
+"#;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn uninstalling_an_app_ends_the_calls_its_handlers_still_hold() {
+    let rig = Arc::new(rig());
+    load(&rig, "waiter", WAITER).await.unwrap();
+    let held: Vec<_> = (0..3)
+        .map(|_| {
+            let rig = rig.clone();
+            tokio::spawn(async move { call(&rig, "waiter", "hang", Value::Null).await })
+        })
+        .collect();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(held.iter().all(|h| !h.is_finished()), "the handlers wait");
+    // another call is answered meanwhile: a waiting handler lends the app's turn
+    assert_eq!(call(&rig, "waiter", "ping", Value::Null).await.unwrap(), json!("pong"));
+
+    rig.runtime.unload(&id("waiter")).await.unwrap();
+    for h in held {
+        let ended = tokio::time::timeout(Duration::from_secs(5), h).await;
+        let outcome = ended.expect("a call the app held ends when the app is unloaded").unwrap();
+        assert!(outcome.is_err(), "it ends with an error, not a result: {outcome:?}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn replacing_an_app_ends_the_calls_the_old_version_still_holds() {
+    let rig = Arc::new(rig());
+    load(&rig, "waiter", WAITER).await.unwrap();
+    let held = {
+        let rig = rig.clone();
+        tokio::spawn(async move { call(&rig, "waiter", "hang", Value::Null).await })
+    };
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    load(&rig, "waiter", WAITER).await.unwrap();
+    let ended = tokio::time::timeout(Duration::from_secs(5), held).await;
+    assert!(ended.expect("a call the old version held ends when it is replaced").unwrap().is_err());
+    assert_eq!(call(&rig, "waiter", "ping", Value::Null).await.unwrap(), json!("pong"));
+}
+
 // ---- a panic in the host ------------------------------------------------------------------------------------
 
 /// The agent roster behind `app.agents:list()`: a port the app API calls, here one that panics.
