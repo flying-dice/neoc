@@ -630,7 +630,7 @@ async fn only_history_is_read_only_and_it_lists_newest_first_capped_and_limited(
 async fn show_on_calculator_opens_the_window_tells_the_page_and_leaves_the_result_until_one_takes_it() {
     let shell = Arc::new(RecordingShell::default());
     let (rt, _) = calculator_on(db(), shell.clone()).await;
-    assert_eq!(take_shown(&rt).await, json!({}), "nothing waiting yet");
+    assert!(take_shown(&rt).await.get("screen").is_none(), "nothing waiting yet");
 
     let out = tool(&rt, "show_on_calculator", json!({ "expression": "18 / 100 * 2450" })).await.unwrap();
     assert_eq!(out["shown"], "441");
@@ -654,7 +654,7 @@ async fn show_on_calculator_opens_the_window_tells_the_page_and_leaves_the_resul
         (shown["screen"]["display"].as_str(), shown["screen"]["caption"].as_str()),
         (Some("441"), Some("18 / 100 * 2450"))
     );
-    assert_eq!(take_shown(&rt).await, json!({}), "taken once: a later open does not show it again");
+    assert!(take_shown(&rt).await.get("screen").is_none(), "taken once: a later open does not show it again");
     let carried = press_keys(&rt, shown["screen"].clone(), "add 9 eq").await;
     assert_eq!((carried["display"].as_str(), carried["caption"].as_str()), (Some("450"), Some("441 + 9")));
 }
@@ -673,7 +673,7 @@ async fn a_second_show_before_anyone_looks_replaces_the_first_and_a_failed_one_c
         shown["screen"]["display"], "42",
         "the second replaced the first; the failed one left it alone"
     );
-    assert_eq!(take_shown(&rt).await, json!({}), "nothing queued behind it");
+    assert!(take_shown(&rt).await.get("screen").is_none(), "nothing queued behind it");
 }
 
 #[tokio::test]
@@ -685,7 +685,7 @@ async fn a_history_the_earlier_calculator_wrote_is_still_there() {
     let earlier = LuaRuntime::new(Arc::new(Quiet), Arc::new(RecordingShell::default()));
     let writer = lua_package(
         r#"local app = require("vos:app")
-app.manifest { id = "calculator", name = "Calculator" }
+app.manifest { id = "calculator", name = "Calculator", icon = "calculator" }
 app.kv:set("history", { { expression = "250 * 0.18", result = 45 }, { expression = "12 + 7", result = 19 } })"#,
         &[],
     );

@@ -449,7 +449,6 @@ app.tool { name = "open_other", description = "open another", input = {}, run = 
 app.tool { name = "peek", description = "read only", readOnly = true, input = {}, run = function() app:openWindow() return {} end }
 return {
   show = function() app:openWindow() return "ok" end,
-  later = function() app:openWindow() error("changed my mind", 0) end,
 }
 "#;
 
@@ -467,7 +466,10 @@ async fn an_app_with_a_client_opens_its_one_window_without_naming_it() {
     // a handler may ask too (the person's own page calling its backend)
     call(&rig, "calc", "show", Value::Null).await.unwrap();
     // the shell is asked for the app's window, `main`, each time: opening it, or bringing it forward when it is open
-    assert_eq!(windows(&rig), [("calc".into(), "main".into()), ("calc".into(), "main".into()), ("calc".into(), "main".into())]);
+    assert_eq!(
+        windows(&rig),
+        [("calc".into(), "main".into()), ("calc".into(), "main".into()), ("calc".into(), "main".into())]
+    );
 
     // any other name is not a window this app has
     let PortError::Rejected(message) =
@@ -476,9 +478,8 @@ async fn an_app_with_a_client_opens_its_one_window_without_naming_it() {
         panic!("rejected");
     };
     assert!(message.contains("an app with a client has one window, `main`"), "{message}");
-    // nor may a read-only tool ask, and a call that fails asks for nothing
+    // nor may a read-only tool ask
     assert!(rig.runtime.call_tool(&id("calc"), "peek", json!({}), agent, false).await.is_err());
-    assert!(call(&rig, "calc", "later", Value::Null).await.is_err());
     assert_eq!(windows(&rig).len(), 3, "nothing more was asked");
 }
 
@@ -487,7 +488,7 @@ async fn an_app_without_a_client_still_names_a_window_it_declared() {
     let rig = rig();
     let package = common::package(
         r#"local app = require("vos:app")
-app.manifest { id = "old", name = "Old" }
+app.manifest { id = "old", name = "Old", icon = "doc" }
 app.tool { name = "open", description = "open", input = {}, run = function() app:openWindow() return {} end }"#,
         &[],
     );

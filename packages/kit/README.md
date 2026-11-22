@@ -22,7 +22,7 @@ shell window or on its own page at `/apps/<id>` (`apps/README.md`). The host ser
 `/kit/kit.js`, and **the vos Vite plugin puts their tags into every app's page** at build time, first in the head:
 `<link rel="stylesheet" href="/kit/tokens.css" crossorigin>`, then `<script src="/kit/kit.js"></script>` (before the bridge and
 the app's own module, so the elements are defined and styled when the app first renders). An app writes nothing for it; a page
-that names them itself has them taken out, with a message. The stylesheet is loaded `crossorigin`, as Vite loads the app's
+that names them itself is not changed: the build tells the author to remove theirs, since they load twice until then. The stylesheet is loaded `crossorigin`, as Vite loads the app's
 own: the frame has an opaque origin, so the host lets `Origin: null` read `/kit/` (GET and HEAD only) and answers with
 `Access-Control-Allow-Origin: *`, and the page, and a checker such as axe running in it, can read the stylesheet's rules. If
 the stylesheet fails to load, the kit's buttons draw with no fill, which leaves a keypad invisible (NEOC-341). The app never bundles the kit, and the host serves one copy. The kit needs no host to draw. The host's bridge sets `data-theme="light|dark"` and `color-scheme` on the frame's

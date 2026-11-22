@@ -148,7 +148,7 @@ your styles and assets, code splitting as usual. There is no `mount` function an
 time: the kit's stylesheet (`/kit/tokens.css`, loaded `crossorigin`) and script (`/kit/kit.js`), so the kit's elements are
 defined and styled before the app's own code runs, then the host's bridge (`/apps/bridge.js`). The host serves one copy of
 each; the app never bundles them, and every app gets them whether it uses the kit or not. A page that names one of them
-itself has it taken out (the build says so), so nothing loads twice. Everything in
+itself is left as it is and the build tells you to remove yours (it loads twice until you do). Everything in
 `dist/static/` is listed in the app ref with its sha256.
 
 ```html
