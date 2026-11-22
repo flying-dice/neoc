@@ -41,7 +41,9 @@
   const FILL: Record<Face, string> = { digit: 'gray4', function: 'gray2', operator: 'orange' }
 
   // The keypad's state is this window's own: the backend keeps nothing, it answers each key with the next screen.
-  let screen = $state<Screen | null>(null)
+  // `raw`: the screen is replaced whole, never edited, and its state goes back over postMessage, which cannot clone
+  // Svelte's reactive proxy of a deep `$state`
+  let screen = $state.raw<Screen | null>(null)
   let failure = $state<string | null>(null)
 
   // Keys are sent one after another, each with the state the one before answered with, so fast typing keeps its order.
@@ -61,8 +63,8 @@
   const display = $derived(screen?.display ?? '0')
   const caption = $derived(failure ?? screen?.caption ?? '')
   const clearLabel = $derived(screen?.clear ?? 'AC')
-  // the display shrinks to fit a long number in the 296 pt column, as the iPadOS display does
-  const displaySize = $derived(Math.min(64, Math.floor((296 * 1.75) / Math.max(display.length, 1))))
+  // the display shrinks to fit a long number in the column, as the iPadOS display does
+  const displaySize = $derived(Math.min(64, Math.floor((280 * 1.75) / Math.max(display.length, 1))))
 
   const nameOf = (k: KeyDef): string | undefined =>
     k.key === 'clear' ? (clearLabel === 'C' ? 'C, clear entry' : 'AC, all clear') : k.name
@@ -146,14 +148,17 @@
     justify-content: flex-end;
     align-items: center;
     height: 100%;
-    padding: 12px;
+    /* the top clears the window's grabber, which the shell draws over the frame */
+    padding: 28px 12px 12px;
     background: var(--bg);
     color: var(--label);
     color-scheme: dark;
   }
-  /* one column, 296 pt wide (the narrowest window's content): the display's right edge is the keypad's */
+  /* one column, 296 pt wide (the narrowest window's content): the display's right edge is the keypad's. In a short
+     window it narrows so that the five rows of square keys, the display and the caption fit the height: 180 px is the
+     padding, the caption, the display and the gaps around them; the keypad is 5 rows to 4 columns plus its gaps */
   .column {
-    width: 296px;
+    width: min(296px, calc((100vh - 180px) * 0.8 + 24px));
     max-width: 100%;
     display: flex;
     flex-direction: column;
@@ -195,7 +200,7 @@
   /* iPadOS sets the wide 0's label over its first circle, not in the middle of the capsule */
   .zero::part(button) {
     justify-content: flex-start;
-    padding-inline-start: calc((296px - 3 * 8px) / 8 - 0.3em);
+    padding-inline-start: calc(25% - 2px - 0.3em); /* the centre of the first of its two cells, less half a glyph */
   }
   .announcer {
     position: absolute;
