@@ -9,11 +9,11 @@
  *      (e2e/apps: a task list with a Svelte client and one with a React client, each on a Luau backend), built
  *      into a folder no registry lists and installed at start like the Calculator;
  *   2. writes vos.toml (port 7410 or VOS_PORT_BASE + 10, loopback, a fresh data directory, the test registry; the Calculator and
- *      Agents are installed at start, Notes is only offered; one scripted ACP agent is on the roster);
+ *      Agents (and the Calculator built as a Vite project, calculator-web) are installed at start, Notes is only offered; one scripted ACP agent is on the roster);
  *   3. runs vos-host in the foreground, forwarding SIGTERM so the host shuts down gracefully.
  */
 import { spawn, spawnSync } from 'node:child_process'
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CONFIG, DATA, DIR, FAKE_AGENT, FIXTURE_APPS, HOST_BIN, PORT, REGISTRY, ROOT, fixtureAppRef } from './config'
 
@@ -22,9 +22,11 @@ const run = (cmd: string, args: string[]): void => {
   if (r.status !== 0) process.exit(r.status ?? 1)
 }
 
-/** The version a repo app ships (its app.json), so a bump needs no change here. */
+/** The version a repo app ships (its app.json, or for a Vite project its contract's `info.version`), so a bump needs no change here. */
 const versionOf = (id: string): string =>
-  (JSON.parse(readFileSync(join(ROOT, 'apps', id, 'app.json'), 'utf8')) as { version: string }).version
+  existsSync(join(ROOT, 'apps', id, 'openrpc.json'))
+    ? (JSON.parse(readFileSync(join(ROOT, 'apps', id, 'openrpc.json'), 'utf8')) as { info: { version: string } }).info.version
+    : (JSON.parse(readFileSync(join(ROOT, 'apps', id, 'app.json'), 'utf8')) as { version: string }).version
 
 rmSync(DIR, { recursive: true, force: true })
 mkdirSync(DIR, { recursive: true })
@@ -99,7 +101,7 @@ writeFileSync(
     `client_dir = "${join(ROOT, 'client/dist')}"`,
     `registries = ["file://${REGISTRY}"]`,
     `install = [${[
-      ...['calculator', 'agents'].map((id) => `file://${join(DIR, `registry/${id}/${versionOf(id)}/app-ref.json`)}`),
+      ...['calculator', 'calculator-web', 'agents'].map((id) => `file://${join(DIR, `registry/${id}/${versionOf(id)}/app-ref.json`)}`),
       ...FIXTURE_APPS.map(fixtureAppRef)
     ]
       .map((url) => `"${url}"`)

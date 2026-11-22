@@ -43,10 +43,13 @@ function installedAppIds(): string[] {
     .map((file) => (JSON.parse(readFileSync(file, 'utf8')) as { id: string }).id)
 }
 
-/** The framework fixtures (e2e/apps) are installed at start too: apps whose client runs in a frame of its own. */
+/**
+ * Apps whose client runs in a frame of its own (a contract, `openrpc.json`): the framework fixtures (e2e/apps) and the
+ * repo's Vite projects (apps/<dir>), all installed at start.
+ */
 function clientAppIds(): string[] {
-  return readdirSync(join(ROOT, 'e2e/apps'))
-    .map((dir) => join(ROOT, 'e2e/apps', dir, 'openrpc.json'))
+  return ['e2e/apps', 'apps']
+    .flatMap((parent) => readdirSync(join(ROOT, parent)).map((dir) => join(ROOT, parent, dir, 'openrpc.json')))
     .filter((file) => existsSync(file))
     .map((file) => (JSON.parse(readFileSync(file, 'utf8')) as { 'x-app': { id: string } })['x-app'].id)
 }
