@@ -16,15 +16,19 @@ copy of it to every app's frame, so a change here reaches every installed app wi
 
 ## Using it from an app
 
-An installed app is its own Vite build output, served by the host as static files, and runs in two ways: **embedded** in a
-shell window's iframe, and **standalone** as a full-screen page at `/apps/<id>` (the host's minimal page loads the same
-sandboxed app). The vos Vite plugin puts the `<link>` and `<script>` tags for `/kit/tokens.css` and `/kit/kit.js` into the
-app's `index.html` at build time; the app never bundles the kit, and the host serves one copy. The kit needs no host to
-draw. System settings reach the app's document through the host's bridge in both modes: `data-theme="light|dark"` (and
-`color-scheme`) on `<html>`, kept current; the kit also reads `data-reduce-motion` on `<html>`, which zeroes the motion tokens. Until the host has set a
-theme (and with none at all, for example in Storybook), the tokens follow the browser's `prefers-color-scheme`, and an
-explicit `data-theme` always wins. Components an app uses for its own page (a banner, a list, a field) work the same
-everywhere. Sheets, alerts, toasts and the notification banner (how the shell shows an app's notification) are not kit components: only the shell draws them, over an embedded app.
+An app's client is one classic script that the host loads into a frame of the app's window (`apps/README.md`). The host
+serves the kit's files at `/kit/tokens.css` and `/kit/kit.js`, but **the frame's page does not load them yet**: the host
+writes that page (`crates/vos-http/src/frame.rs`) and the wiring is not in place. Until it is, the app adds the two files to
+the frame's page itself, before it draws: a `<link rel="stylesheet" href="/kit/tokens.css">` and a
+`<script src="/kit/kit.js"></script>` appended to `document.head` (both load under the frame's policy, `style-src 'self'` and
+`script-src 'self'`; the tags upgrade when the script has loaded). The app never bundles the kit, and the host serves one
+copy. The kit needs no host to draw. The host's bridge sets `data-theme="light|dark"` and `color-scheme` on the frame's
+`<html>` from the shell's appearance and keeps them current (#56). The kit also reads `data-reduce-motion` on `<html>`, which
+zeroes the motion tokens; the host does not set that one yet. With no `data-theme` (a kit loaded outside any vos page, for
+example in Storybook), the tokens follow the browser's `prefers-color-scheme`, and an explicit `data-theme` always wins.
+Components an app uses for its own page (a banner, a list, a field) work the same everywhere. Sheets, alerts, toasts and the
+notification banner (how the shell shows an app's notification) are not kit components: only the shell draws them, over an
+embedded app.
 
 The app writes no theme code and imports nothing:
 
@@ -85,8 +89,10 @@ handler has no role; the element handles its own keys, so silence that warning f
   `form`, `labels`, `validity`, `validationMessage`, `willValidate`, `checkValidity()`, `reportValidity()` and
   `setCustomValidity(message)` (the way an app shows its own error). A `ui-button type="submit"` submits the form with its
   own `name` and `value` in the data, but a native submit button is the only thing that can be `event.submitter`: for a
-  kit button it is `null`. In an app frame the host's sandbox allows forms, so `submit` fires and Enter and validation work;
-  call `preventDefault()` in your handler (a submission nobody prevents sends nothing and leaves the frame on an error page).
+  kit button it is `null`. In an app frame the host's sandbox allows forms, so `submit` fires and Enter and validation work,
+  and the host's bridge cancels a submission your handlers did not prevent, so nothing is sent and the frame stays on its page;
+  call `preventDefault()` in your handler to take it over (`form.submit()` from a script, or a form inside a shadow root,
+  still navigates the frame, sending no data).
 - **Events** are the platform's names. `change` (the person committed a value) carries a `detail` on `ui-toggle`,
   `ui-check` (`{ checked }`) and `ui-segmented` (`{ value }`); on `ui-text-field` it is the plain event (read `value`).
   `input` is each keystroke of a field. `press` is a `ui-row` tapped (see below). `click` is the ordinary click: it bubbles
