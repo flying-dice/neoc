@@ -84,7 +84,11 @@ pub fn spawn_revision_purge(service: Arc<AppService>, stop: CancellationToken) {
             tokio::select! {
                 () = stop.cancelled() => return,
                 _ = tick.tick() => {
-                    service.purge_expired_revisions().await;
+                    // a panic in one purge is logged; the next hour purges again
+                    crate::platform::logged("revision-purge", async {
+                        service.purge_expired_revisions().await;
+                    })
+                    .await;
                 }
             }
         }
@@ -123,12 +127,17 @@ pub fn watch_for_reload(service: &Arc<AppService>, stop: &CancellationToken) -> 
                     () = stop.cancelled() => return,
                     change = vos_lua::reload::next_change(&mut watcher.rx, Duration::from_millis(200)) => {
                         if change.is_none() {
+                            tracing::warn!(app = %id, "the reload watch ended; this app no longer reloads on a change");
                             return;
                         }
-                        match service.reload(&id).await {
-                            Ok(()) => tracing::info!(app = %id, "reloaded"),
-                            Err(e) => tracing::warn!(app = %id, error = %e, "reload failed; the running version stays"),
-                        }
+                        // a panic in one reload is logged; the next change reloads again
+                        crate::platform::logged("dev-reload", async {
+                            match service.reload(&id).await {
+                                Ok(()) => tracing::info!(app = %id, "reloaded"),
+                                Err(e) => tracing::warn!(app = %id, error = %e, "reload failed; the running version stays"),
+                            }
+                        })
+                        .await;
                     }
                 }
             }

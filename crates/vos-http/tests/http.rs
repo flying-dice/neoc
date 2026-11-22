@@ -16,6 +16,8 @@ impl RpcHandler for H {
     async fn request(&self, peer: &RpcPeer, method: &str, params: Value) -> Result<Value, RpcError> {
         match method {
             "ping" => Ok(json!({"pong": params})),
+            // a bug in the host's own code, on the ordered path and on the concurrent one
+            "view.explode" | "app.explode" => panic!("the handler broke"),
             // the first of a burst is the slowest: unordered handling would answer it last
             "view.event" | "app.slow" => {
                 let n = params["n"].as_u64().unwrap_or(0);
@@ -37,6 +39,7 @@ impl RpcHandler for H {
         if method == "hello" {
             let _ = peer.notify("server/welcome", json!({"n": 1}));
         }
+        assert!(method != "explode", "the notification handler broke");
     }
 }
 
@@ -103,6 +106,49 @@ async fn rpc_bidirectional_requests_and_notifications_on_one_socket() {
             RpcMessage::Error { .. } => panic!("unexpected error"),
         }
     }
+    server.abort();
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A request whose handler panics gets an internal error, and the connection serves on: the next `view.event`
+/// (the ordered task) and the next request after a panicking notification are answered.
+#[tokio::test]
+async fn a_handler_that_panics_answers_an_internal_error_and_the_connection_serves_on() {
+    let dir = std::env::temp_dir().join(format!("static3-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (addr, server) = start(&dir).await;
+    let (mut ws, _) =
+        connect_async(req(addr, Some(&format!("http://127.0.0.1:{}", addr.port())))).await.unwrap();
+    let send = |m: RpcMessage| serde_json::to_string(&m).unwrap();
+    ws.send(Message::text(send(RpcMessage::request(1, "view.explode", json!({}))))).await.unwrap();
+    ws.send(Message::text(send(RpcMessage::request(2, "view.event", json!({"n": 0}))))).await.unwrap();
+    ws.send(Message::text(send(RpcMessage::request(3, "app.explode", json!({}))))).await.unwrap();
+    ws.send(Message::text(send(RpcMessage::notification("explode", json!({}))))).await.unwrap();
+    ws.send(Message::text(send(RpcMessage::request(4, "ping", json!(1))))).await.unwrap();
+
+    let mut answered = std::collections::BTreeMap::new();
+    while answered.len() < 4 {
+        let Message::Text(t) =
+            tokio::time::timeout(Duration::from_secs(3), ws.next()).await.unwrap().unwrap().unwrap()
+        else {
+            continue;
+        };
+        match serde_json::from_str::<RpcMessage>(&t).unwrap() {
+            RpcMessage::Response { id: vos_domain::protocol::RpcId::Num(n), result, .. } => {
+                answered.insert(n, Ok(result));
+            }
+            RpcMessage::Error { id: Some(vos_domain::protocol::RpcId::Num(n)), error, .. } => {
+                answered.insert(n, Err((error.code, error.message)));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    let internal =
+        |method: &str| Err((-32603, format!("internal error: the host panicked answering `{method}`")));
+    assert_eq!(answered[&1], internal("view.explode"));
+    assert_eq!(answered[&2], Ok(json!({"n": 0})), "the ordered task lived on");
+    assert_eq!(answered[&3], internal("app.explode"));
+    assert_eq!(answered[&4], Ok(json!({"pong": 1})), "the connection read on after the notification");
     server.abort();
     let _ = std::fs::remove_dir_all(dir);
 }

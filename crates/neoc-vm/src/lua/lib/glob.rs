@@ -119,8 +119,9 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 #[derive(Clone)]
 pub struct GlobHandle {
     pattern: String,
-    /// A set of one: `Glob::compile_matcher` compiles with `expect`, which panics (and a panic aborts the host)
-    /// on a pattern whose regex the engine refuses, such as deeply nested alternations.
+    /// A set of one: `Glob::compile_matcher` compiles with `expect`, which panics (a bug, even though the panic fails
+    /// only the call: `crate::lua::panics`) on a pattern whose regex the engine refuses, such as deeply nested
+    /// alternations.
     matcher: GsSet,
 }
 
