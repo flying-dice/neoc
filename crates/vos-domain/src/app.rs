@@ -1,13 +1,16 @@
-use crate::{app_ui::AppUi, error::DomainError, limits::MAX_PACKAGE_FILES, KitRequirement, WindowDecl};
+use crate::{
+    app_ui::{AppUi, WindowDecl},
+    error::DomainError,
+    limits::MAX_PACKAGE_FILES,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
 
 /// Validated app identifier; the only way to get one is `AppId::parse`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS))]
 #[cfg_attr(feature = "codegen", ts(type = "string"))]
-#[cfg_attr(feature = "codegen", schemars(with = "String"))]
 pub struct AppId(String);
 
 impl AppId {
@@ -52,40 +55,85 @@ pub struct MigrationSpec {
     pub file: String,
 }
 
-/// `manifest.json` of an app package.
+/// The manifest of an app package (the `manifest` of an app ref, written from the app's `openrpc.json`).
+///
+/// Every app is a page and a backend: the page is `ui` (its built static files, shown in a frame), the backend is
+/// `main` (one Luau file that returns the table of handlers the page calls).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "ManifestWire")]
 pub struct Manifest {
     pub id: AppId,
     pub name: String,
     pub version: String,
-    /// The entry file, a path in the app ref: the app built into one Luau file (`app.luau`).
+    /// The entry file, a path in the app ref: the app's backend built into one Luau file (`app.luau`).
     pub main: String,
+    pub migrations: Vec<MigrationSpec>,
+    /// What a registry or the "add by URL" preview shows without running the app: a symbol name for the icon.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    /// A palette role (`orange`, `blue`, ...): the icon's tint.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tint: Option<String>,
+    /// One or two sentences about the app.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// What the host must provide for the app to run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requires: Option<Requires>,
+    /// The app's page: its built static files (a directory of the app ref) and what the page needs. The shell opens
+    /// the app in a frame that loads the files' entry page.
+    pub ui: AppUi,
+    /// The default window and its minimum size, for the shell to open the app with.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window: Option<WindowDecl>,
+}
+
+/// A manifest as it is written. It differs from [`Manifest`] in one thing: `ui` may be missing, which is how an app
+/// of the kind vos no longer runs (one that drew its screens as a view tree, with `app.window`) reads. Such a
+/// manifest is refused with a message that says so, instead of serde's "missing field".
+#[derive(Deserialize)]
+struct ManifestWire {
+    id: AppId,
+    name: String,
+    version: String,
+    main: String,
     // No `permissions`: apps are not sandboxed from the host's capabilities. A `permissions` key in an older
     // manifest or app ref is ignored when it is parsed (this struct does not deny unknown fields).
     #[serde(default)]
-    pub migrations: Vec<MigrationSpec>,
-    /// What a registry or the "add by URL" preview shows without running the app: a symbol name for the icon.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub icon: Option<String>,
-    /// A palette role (`orange`, `blue`, ...): the icon's tint.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tint: Option<String>,
-    /// One or two sentences about the app.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    /// What the host must provide for the app to run.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub requires: Option<Requires>,
-    /// The app's client: its built static files (a directory of the app ref) and what its page needs. An app with
-    /// one opens in a frame that loads the files' entry page and its Luau entry is its backend (it returns a table
-    /// of handlers); an app without one describes its screens as a view tree with `app.window` (retired by
-    /// NEOC-298).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ui: Option<AppUi>,
-    /// The default window and its minimum size, for the shell to open the app with before anything runs. A view-tree
-    /// app may still declare it in `app.manifest`, which takes precedence.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub window: Option<WindowDecl>,
+    migrations: Vec<MigrationSpec>,
+    #[serde(default)]
+    icon: Option<String>,
+    #[serde(default)]
+    tint: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    requires: Option<Requires>,
+    #[serde(default)]
+    ui: Option<AppUi>,
+    #[serde(default)]
+    window: Option<WindowDecl>,
+}
+
+impl TryFrom<ManifestWire> for Manifest {
+    type Error = DomainError;
+
+    fn try_from(wire: ManifestWire) -> Result<Self, Self::Error> {
+        let Some(ui) = wire.ui else { return Err(DomainError::NoUi(wire.id.to_string())) };
+        Ok(Self {
+            id: wire.id,
+            name: wire.name,
+            version: wire.version,
+            main: wire.main,
+            migrations: wire.migrations,
+            icon: wire.icon,
+            tint: wire.tint,
+            description: wire.description,
+            requires: wire.requires,
+            ui,
+            window: wire.window,
+        })
+    }
 }
 
 /// The `std:`, `lib:` and `vnd:` modules an app is not offered: `lib:test` (a test harness that prints to stdout),
@@ -119,6 +167,41 @@ pub const GLOBALS_NOT_FOR_APPS: &[&str] = &[
 /// [`Requires::host`]; a newer major is a breaking change, so it never satisfies an older requirement.
 pub const HOST_API: (u32, u32) = (1, 0);
 
+/// `">=1.2"`: a `major.minor` the host must at least provide ([`Requires::host`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct KitRequirement {
+    pub major: u32,
+    pub minor: u32,
+}
+
+impl KitRequirement {
+    pub fn parse(s: &str) -> Result<Self, DomainError> {
+        let bad = || DomainError::InvalidManifest(format!("requirement `{s}` must look like `>=1.0`"));
+        let rest = s.trim().strip_prefix(">=").ok_or_else(bad)?;
+        let (major, minor) = rest.split_once('.').ok_or_else(bad)?;
+        Ok(Self { major: major.parse().map_err(|_| bad())?, minor: minor.parse().map_err(|_| bad())? })
+    }
+
+    /// Is `major.minor` new enough? A newer major is a breaking change, so it is not.
+    #[must_use]
+    pub fn satisfied_by(self, major: u32, minor: u32) -> bool {
+        major == self.major && minor >= self.minor
+    }
+}
+
+impl TryFrom<String> for KitRequirement {
+    type Error = DomainError;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::parse(&value)
+    }
+}
+impl From<KitRequirement> for String {
+    fn from(k: KitRequirement) -> Self {
+        format!(">={}.{}", k.major, k.minor)
+    }
+}
+
 /// `requires` in the package manifest.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -139,9 +222,7 @@ impl Manifest {
                 self.main
             )));
         }
-        if let Some(ui) = &self.ui {
-            ui.validate()?;
-        }
+        self.ui.validate()?;
         if let Some(window) = &self.window {
             window.validate()?;
         }
@@ -282,6 +363,16 @@ impl AppRef {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{Csp, Permissions};
+
+    fn page() -> AppUi {
+        AppUi {
+            root: "static".into(),
+            entry: "index.html".into(),
+            csp: Csp::default(),
+            permissions: Permissions::default(),
+        }
+    }
 
     #[test]
     fn app_id_rules() {
@@ -305,7 +396,7 @@ mod tests {
                 tint: None,
                 description: None,
                 requires: None,
-                ui: None,
+                ui: page(),
                 window: None,
             },
             files: vec![FileRef {
@@ -332,7 +423,7 @@ mod tests {
             tint: None,
             description: None,
             requires: None,
-            ui: None,
+            ui: page(),
             window: None,
         };
         assert!(manifest("app.luau").validate().is_ok());
@@ -358,7 +449,7 @@ mod tests {
             tint: None,
             description: None,
             requires: Some(Requires { host: Some(">=1.0".into()) }),
-            ui: None,
+            ui: page(),
             window: None,
         };
         assert!(m.validate().is_ok());
@@ -393,7 +484,7 @@ mod tests {
             tint: None,
             description: None,
             requires: None,
-            ui: None,
+            ui: page(),
             window: None,
         };
         AppRef { manifest, files }
@@ -461,7 +552,7 @@ mod tests {
     }
 
     #[test]
-    fn a_client_is_a_script_and_the_window_follows_the_shell_minimum() {
+    fn the_page_and_the_window_are_validated_with_the_manifest() {
         let mut m = Manifest {
             id: AppId::parse("tasks").unwrap(),
             name: "Tasks".into(),
@@ -472,22 +563,16 @@ mod tests {
             tint: None,
             description: None,
             requires: None,
-            ui: Some(crate::AppUi {
-                root: "static".into(),
-                entry: "index.html".into(),
-                csp: crate::Csp::default(),
-                permissions: crate::Permissions::default(),
-            }),
+            ui: page(),
             window: Some(WindowDecl { w: 420, h: 480, min_w: 320, min_h: 320 }),
         };
         assert!(m.validate().is_ok());
         for bad in ["", "../x", "/static"] {
-            m.ui.as_mut().unwrap().root = bad.into();
+            m.ui.root = bad.into();
             let err = m.validate().unwrap_err().to_string();
             assert!(err.contains("ui.root must be a directory"), "{bad}: {err}");
         }
-        m.ui = None;
-        assert!(m.validate().is_ok(), "an app without a client may state its window too");
+        m.ui = page();
         m.window = Some(WindowDecl { w: 300, h: 300, min_w: 300, min_h: 300 });
         assert!(m.validate().is_err(), "below the shell's 320x240");
         m.window = Some(WindowDecl { w: 400, h: 300, min_w: 480, min_h: 300 });
@@ -495,19 +580,42 @@ mod tests {
     }
 
     #[test]
-    fn a_manifest_without_a_client_or_window_reads_as_before() {
+    fn a_manifest_reads_its_page_and_window_and_ignores_the_permissions_of_an_older_one() {
         let m: Manifest = serde_json::from_str(
-            r#"{"id":"notes","name":"Notes","version":"1.0.0","main":"app.luau","permissions":["x"]}"#,
+            r#"{"id":"tasks","name":"T","version":"1.0.0","main":"app.luau","permissions":["x"],
+                "ui":{"root":"static"},"window":{"w":420,"h":480,"minW":320,"minH":320}}"#,
         )
         .unwrap();
-        assert_eq!((m.ui, m.window), (None, None));
-        let with: Manifest = serde_json::from_str(
-            r#"{"id":"tasks","name":"T","version":"1.0.0","main":"app.luau","ui":{"root":"static"},
-                "window":{"w":420,"h":480,"minW":320,"minH":320}}"#,
+        assert_eq!((m.ui.root.as_str(), m.ui.entry.as_str()), ("static", "index.html"));
+        assert_eq!(m.window.as_ref().map(|w| w.min_h), Some(320));
+        // what is written is what is read
+        let again: Manifest = serde_json::from_value(serde_json::to_value(&m).unwrap()).unwrap();
+        assert_eq!(again, m);
+    }
+
+    #[test]
+    fn a_manifest_without_a_page_is_refused_and_says_what_the_app_is() {
+        let err = serde_json::from_str::<Manifest>(
+            r#"{"id":"notes","name":"Notes","version":"1.0.0","main":"app.luau"}"#,
         )
-        .unwrap();
-        assert_eq!(with.ui.map(|u| (u.root, u.entry)), Some(("static".to_owned(), "index.html".to_owned())));
-        assert_eq!(with.window.map(|w| w.min_h), Some(320));
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("app `notes` has no `ui` in its manifest"), "{err}");
+        assert!(err.contains("no longer supported"), "{err}");
+        // and so is the app ref that carries it
+        assert!(serde_json::from_str::<AppRef>(
+            r#"{"manifest":{"id":"notes","name":"Notes","version":"1.0.0","main":"app.luau"},"files":[]}"#
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn host_requirements_parse_and_compare() {
+        let k = KitRequirement::parse(">=1.2").unwrap();
+        assert!(k.satisfied_by(1, 2) && k.satisfied_by(1, 9));
+        assert!(!k.satisfied_by(1, 1) && !k.satisfied_by(2, 0));
+        assert!(KitRequirement::parse("1.2").is_err());
+        assert!(KitRequirement::parse(">=x").is_err());
     }
 
     #[test]
@@ -522,7 +630,7 @@ mod tests {
             tint: None,
             description: None,
             requires: None,
-            ui: None,
+            ui: page(),
             window: None,
         };
         assert_eq!(m.validate(), Err(DomainError::MigrationOrder));

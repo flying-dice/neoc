@@ -8,9 +8,12 @@ use vos_application::{
     ports::{AgentStore, PortResult},
     PortError,
 };
-use vos_domain::{Agent, AgentId, AgentRuntime, ApprovalPolicy, Grants};
+use vos_domain::{Agent, AgentId, Grants};
 
-/// Contacts. `args`, `env` and `grants` are JSON text; `token_hash` is NULL until a token is minted.
+/// Contacts. `grants` is JSON text; `token_hash` is NULL until a token is minted. `command`, `args`, `env` and
+/// `approval` are from when the host launched agents itself: nothing reads or writes them any more (an insert
+/// leaves them at their defaults, an update leaves them as they are). They stay because migrations are numbered
+/// and checksummed, so this statement cannot change.
 pub(crate) const AGENTS: &str = "
 CREATE TABLE agents(
     id         TEXT PRIMARY KEY,
@@ -37,7 +40,7 @@ CREATE TABLE threads(
     updated_at INTEGER NOT NULL
 );";
 
-const COLUMNS: &str = "id, name, avatar, role, command, args, env, grants, approval";
+const COLUMNS: &str = "id, name, avatar, role, grants";
 
 fn to_agent(row: &Value) -> Option<Agent> {
     Some(Agent {
@@ -45,18 +48,8 @@ fn to_agent(row: &Value) -> Option<Agent> {
         name: row["name"].as_str()?.to_owned(),
         avatar: row["avatar"].as_str().map(str::to_owned),
         role: row["role"].as_str()?.to_owned(),
-        runtime: AgentRuntime {
-            command: row["command"].as_str()?.to_owned(),
-            args: serde_json::from_str(row["args"].as_str()?).ok()?,
-            env: serde_json::from_str(row["env"].as_str()?).ok()?,
-        },
         grants: serde_json::from_str::<Grants>(row["grants"].as_str()?).ok()?,
-        approval: ApprovalPolicy::parse(row["approval"].as_str()?)?,
     })
-}
-
-fn json_text(value: &impl serde::Serialize) -> PortResult<Value> {
-    serde_json::to_string(value).map(Value::String).map_err(|e| PortError::Internal(e.to_string()))
 }
 
 fn fields(agent: &Agent) -> PortResult<Vec<Value>> {
@@ -65,11 +58,9 @@ fn fields(agent: &Agent) -> PortResult<Vec<Value>> {
         json!(agent.name),
         agent.avatar.as_ref().map_or(Value::Null, |a| json!(a)),
         json!(agent.role),
-        json!(agent.runtime.command),
-        json_text(&agent.runtime.args)?,
-        json_text(&agent.runtime.env)?,
-        json_text(&agent.grants)?,
-        json!(agent.approval.as_str()),
+        serde_json::to_string(&agent.grants)
+            .map(Value::String)
+            .map_err(|e| PortError::Internal(e.to_string()))?,
     ])
 }
 
@@ -89,7 +80,7 @@ impl AgentStore for SqliteSystemDb {
             .exec(
                 format!(
                     "INSERT OR IGNORE INTO agents({COLUMNS}, token_hash) \
-                     VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
+                     VALUES(?1, ?2, ?3, ?4, ?5, ?6)"
                 ),
                 params,
             )
@@ -101,9 +92,7 @@ impl AgentStore for SqliteSystemDb {
         let done = self
             .db
             .exec(
-                "UPDATE agents SET name = ?2, avatar = ?3, role = ?4, command = ?5, args = ?6, env = ?7, \
-                 grants = ?8, approval = ?9 WHERE id = ?1"
-                    .into(),
+                "UPDATE agents SET name = ?2, avatar = ?3, role = ?4, grants = ?5 WHERE id = ?1".into(),
                 fields(agent)?,
             )
             .await?;

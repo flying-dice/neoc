@@ -2,18 +2,16 @@
 //!
 //! The VM is a bare `neoc-vm` engine with the app's own environment table (see
 //! `neoc_vm::lua::script_env`): the prelude's polyfills, the `app` capability table and a `require` that
-//! knows only the host modules. Nothing in it is budgeted (no CPU, memory or time limits: the host is a
-//! homelab's own and apps are meant to do real work); it then runs the app's entry. After that the host
-//! calls into it: tools, write-back callbacks, events. One call runs in a VM at a time (an app is
+//! knows only `vos:app` and the library's modules. Nothing in it is budgeted (no CPU, memory or time limits: the host is a
+//! homelab's own and apps are meant to do real work); it then runs the app's entry, which returns the app's
+//! handlers. After that the host calls into it: handlers and tools. One call runs in a VM at a time (an app is
 //! single-threaded by design); the VM lives as long as its `AppVm`.
 
 use crate::{
     api,
     convert::{json_to_lua, lua_to_json},
     error::{rpc_failure, ScriptError, ToolFailure},
-    state::{DepKey, SharedTracker, TrackGuard, Tracker, TrackerScope},
     tx::OpenTx,
-    view::{RenderScope, ViewInstance},
 };
 use neoc_vm::mlua;
 use neoc_vm::{
@@ -29,7 +27,7 @@ use neoc_vm::{
 use parking_lot::Mutex;
 use serde_json::Value;
 use std::{
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::HashMap,
     future::Future,
     sync::{
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -39,11 +37,10 @@ use std::{
 };
 use tokio::sync::Notify;
 use vos_application::{
-    live::{SourceDef, SourceId},
-    ports::{AgentCard, AgentRoster, AppData, AppPackage, CallContext, ViewEffect},
+    ports::{AgentCard, AgentRoster, AppData, AppPackage, CallContext},
     AppFiles, Files, NoFiles,
 };
-use vos_domain::{time, tool_schema, AppDecl, AppId, Notification, ToolSpec};
+use vos_domain::{time, tool_schema, AppId, Notification, ToolSpec};
 
 /// The prelude (`lua/prelude.lua`, copied by `bun run codegen`): `typeof` and `utf8`, which Luau has and the app's
 /// environment does not copy from the engine. Run once in each app's environment before the app.
@@ -80,26 +77,14 @@ pub enum VmError {
     #[error("method not found: {0}")]
     NoSuchHandler(String),
     /// The entry returned something that is not a table of handler functions.
-    #[error("the entry must return nothing or a table of functions by name: {0}")]
+    #[error("the entry must return the app's handlers, a table of functions by name: {0}")]
     BadHandlers(String),
-    #[error("no such source `{0}`, or it has no write callback")]
-    NoSuchWriter(String),
-    #[error("no such window `{0}`")]
-    NoSuchWindow(String),
-    #[error("no such view `{0}`")]
-    NoSuchView(String),
-    /// A window rendered a tree that fails the component schema.
-    #[error("the rendered tree is invalid:\n{}", .0.join("\n"))]
-    InvalidTree(Vec<String>),
     /// The caller's arguments do not fit the tool's input schema.
     #[error("invalid input: {0}")]
     InvalidInput(String),
     /// A value could not cross between Lua and JSON (a function, a cycle, a number with no JSON form).
     #[error("cannot convert a value between Lua and JSON: {0}")]
     BadValue(String),
-    /// The app declared or rendered a window wrongly (no `render`, a malformed tree, an unknown source).
-    #[error("invalid window: {0}")]
-    InvalidWindow(String),
     /// The package does not contain the file its manifest names as the entry.
     #[error("the package has no entry `{0}`")]
     NoEntry(String),
@@ -129,9 +114,6 @@ impl From<VmError> for BootError {
 /// How a VM is built.
 #[derive(Clone)]
 pub struct VmConfig {
-    /// Luau source of host modules `require("vos:<name>")` can load besides `vos:app`
-    /// (the generated `vos:ui` constructors), by module name.
-    pub host_modules: Arc<HashMap<String, Vec<u8>>>,
     /// The agent contacts `app.agents:list()` shows (empty unless the host gives a roster).
     pub roster: Arc<dyn AgentRoster>,
     /// The app's managed files (`app.files`); every call is `unsupported` unless the host gives a store.
@@ -163,7 +145,6 @@ impl AgentRoster for NoRoster {
 impl Default for VmConfig {
     fn default() -> Self {
         Self {
-            host_modules: Arc::default(),
             roster: Arc::new(NoRoster),
             files: Arc::new(NoFiles),
             refused_modules: Vec::new(),
@@ -181,8 +162,7 @@ pub const MAX_QUEUED_NOTIFICATIONS: usize = 64;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Effect {
     Notify(Notification),
-    Shell(ShellEffect),
-    /// `app:openWindow(name, params)`.
+    /// `app:openWindow(name?, params?)`.
     OpenWindow {
         name: String,
         params: Value,
@@ -192,11 +172,6 @@ pub enum Effect {
         name: String,
         data: Value,
     },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ShellEffect {
-    DeepLinks(Vec<String>),
 }
 
 pub(crate) struct ToolDecl {
@@ -213,37 +188,21 @@ pub(crate) struct Shared {
     pub files: Files,
     /// The library modules this app is offered (see [`crate::require::offered_modules`]).
     pub offered: Arc<Vec<&'static str>>,
-    pub host_modules: Arc<HashMap<String, Vec<u8>>>,
     pub roster: Arc<dyn AgentRoster>,
-    pub tracker: SharedTracker,
     pub tools: Mutex<Vec<ToolDecl>>,
     /// What `hook(name, fn)` registered (only with [`VmConfig::test_hooks`]).
     pub handlers: Mutex<HashMap<String, Function>>,
-    /// The backend of an app with a client: the functions its entry returned, by name. A client's `rpc(name, args)`
-    /// calls one.
+    /// The app's backend: the functions its entry returned, by name. Its page's `rpc(name, args)` calls one.
     pub rpc_handlers: Mutex<HashMap<String, Function>>,
     pub test_hooks: bool,
-    pub sources: Mutex<Vec<SourceDef>>,
-    pub writers: Mutex<HashMap<String, Function>>,
-    pub windows: Mutex<HashMap<String, Table>>,
-    pub deep_links: Mutex<Vec<(String, Function)>>,
-    pub decl: Mutex<Option<AppDecl>>,
     pub effects: Mutex<Vec<Effect>>,
     /// How many of the notifications in `effects` each call queued, by its turn id ([`lifecycle::turn_id`]).
     /// Emptied with `effects`, so it counts what a call has waiting for the host, not what it ever sent.
     pub queued_notifications: Mutex<HashMap<u64, usize>>,
-    /// The table the app's chunks (and the host modules it requires) run in as their globals.
-    pub env: Mutex<Option<Table>>,
+    /// The library modules the app has required, built once each (see [`crate::require`]).
     pub modules: Mutex<HashMap<String, LuaValue>>,
-    pub loading: Mutex<HashSet<String>>,
     pub app_table: Mutex<Option<Table>>,
     pub fail: Mutex<Option<Function>>,
-    /// Open windows by view id.
-    pub views: Mutex<HashMap<String, ViewInstance>>,
-    /// The source handles of the render in progress.
-    pub render_scope: Mutex<Option<RenderScope>>,
-    /// What windows asked for during a call (toasts, `client.set`).
-    pub view_effects: Mutex<Vec<(String, ViewEffect)>>,
     /// The open `db:tx(fn)` transaction, if any. It belongs to the turn that opened it (see [`crate::tx`]);
     /// nothing holds it across an await, so a call that was cut off cannot wedge the next one.
     pub tx: Mutex<Option<OpenTx>>,
@@ -269,8 +228,7 @@ pub(crate) struct Shared {
     pub life: Life,
     /// Woken when a call that nobody made through the host (a request to the app's own server, a task's next
     /// slice) ends or pauses at a wait, and when any call that has raised a notification pauses at a wait, so the
-    /// runtime forwards the effects it queued (`app.notify`, `app.shell`) and tells the application that state may
-    /// have changed.
+    /// runtime forwards the effects it queued (`app.notify`, `app.emit`, `app:openWindow`).
     pub effects_signal: Arc<Notify>,
     /// The app's background work has been stopped (a reload began, or the app is being unloaded): its listeners are
     /// gone, so what still reaches its own server is a straggler of work that was cut off, and a straggler whose
@@ -298,8 +256,8 @@ impl Shared {
     }
 
     /// The call may change the world: refused inside a tool declared `readOnly`, which may only read. A
-    /// `readOnly` tool that could open a window (whose `onOpen` writes), notify, change the shell or assign
-    /// `app.state` would write behind the guarantee that lets agents run it without a prompt.
+    /// `readOnly` tool that could open a window, notify, emit an event or change the shell would write behind
+    /// the guarantee that lets agents run it without a prompt.
     pub fn writable(&self, what: &str) -> mlua::Result<()> {
         if self.read_only.load(Ordering::SeqCst) {
             return Err(mlua::Error::runtime(format!(
@@ -336,50 +294,9 @@ impl Shared {
         Ok(())
     }
 
-    /// Queue what a window asked of its view. A window context outlives the call
-    /// that rendered it (an app can keep `w` in a variable), so this is refused inside a `readOnly` tool like
-    /// every other change to the world.
-    pub fn push_view_effect(&self, what: &str, view: &str, effect: ViewEffect) -> mlua::Result<()> {
-        self.writable(what)?;
-        self.view_effects.lock().push((view.to_owned(), effect));
-        Ok(())
-    }
-
-    /// A window named by `openWindow` (or listed by `app:windows`) must be one the app declared: an app cannot
-    /// ask the shell for anything else (the request is broadcast to every client). `call` is the call that
-    /// named it (`app:windows`), which the error says.
-    pub fn declared_window(&self, call: &str, name: &str) -> mlua::Result<()> {
-        let windows = self.windows.lock();
-        if windows.contains_key(name) {
-            return Ok(());
-        }
-        let mut declared: Vec<&str> = windows.keys().map(String::as_str).collect();
-        declared.sort_unstable();
-        Err(mlua::Error::runtime(format!(
-            "{call}: no window `{name}` is declared (declared: {})",
-            if declared.is_empty() { "none".to_owned() } else { declared.join(", ") }
-        )))
-    }
-
-    /// The window `app:openWindow(name?)` asks the shell for. An app with a client has one window, its frame: the name
-    /// may be left out, and if given must be `main` (a window of another name is a view-tree app's, declared with
-    /// `app.window`). An app without a client names one of the windows it declared.
-    pub fn window_to_open(&self, name: Option<String>) -> mlua::Result<String> {
-        if self.package.has_client {
-            return match name {
-                None => Ok("main".to_owned()),
-                Some(name) if name == "main" => Ok(name),
-                Some(name) => Err(mlua::Error::runtime(format!(
-                    "openWindow: an app with a client has one window, `main`; leave the name out (got `{name}`)"
-                ))),
-            };
-        }
-        let Some(name) = name else {
-            return Err(mlua::Error::runtime("openWindow: name the window to open (an app without a client declares its windows with app.window)"));
-        };
-        self.declared_window("openWindow", &name)?;
-        Ok(name)
-    }
+    /// The window `app:openWindow` asks the shell for. An app has one window, the frame that shows its page: it is
+    /// called `main`, and that is the only name the shell is ever asked for.
+    pub const WINDOW: &'static str = "main";
 
     pub fn chunk_name(&self, path: &str) -> String {
         format!("={}/{path}", self.app)
@@ -390,12 +307,7 @@ impl Shared {
         self.tools.lock().clear();
         self.handlers.lock().clear();
         self.rpc_handlers.lock().clear();
-        self.writers.lock().clear();
-        self.windows.lock().clear();
-        self.deep_links.lock().clear();
         self.modules.lock().clear();
-        self.views.lock().clear();
-        *self.env.lock() = None;
         *self.app_table.lock() = None;
         *self.fail.lock() = None;
     }
@@ -412,7 +324,7 @@ fn inherits_read_only(from: &Inherited) -> bool {
 
 /// Where a call came from, which decides what restricts it.
 enum Via {
-    /// Through the host (a tool, an event, a write-back): `read_only` is what the caller requires.
+    /// Through the host (a tool, a handler): `read_only` is what the caller requires.
     Host { read_only: bool },
     /// Work a call started (a deferred or delayed function): it is as restricted as that call was.
     Task(Inherited),
@@ -421,18 +333,12 @@ enum Via {
     Request,
 }
 
-/// What a call keeps while it waits without using the VM (see [`Baton::park`]).
-struct Parked {
-    scope: TrackerScope,
-}
-
 /// A call in progress: it holds the VM's gate, so one call runs in the VM at a time and `db:tx`, the
-/// `readOnly` flag and state tracking are unambiguous. Ending a call, or abandoning it (its caller gave up),
+/// `readOnly` flag are unambiguous. Ending a call, or abandoning it (its caller gave up),
 /// rolls back a transaction it left open, so the database's write gate is free the moment the call is over.
 ///
 /// It is also the call's *baton* (see `neoc_vm::lua::lifecycle`): at a wait that does not use the VM
-/// (`task.wait`, the network, a worker) the call sets its own state aside and lets the next call in, then
-/// takes the gate and its state back.
+/// (`task.wait`, the network, a worker) the call lets the next call in, then takes the gate back.
 pub(crate) struct Turn {
     id: u64,
     shared: Arc<Shared>,
@@ -442,7 +348,6 @@ pub(crate) struct Turn {
     /// here, not in the host call that is waiting, so it stays with this call whichever call polls that host
     /// call later.
     waiting: Option<BoxFuture<'static, tokio::sync::OwnedMutexGuard<()>>>,
-    parked: Option<Parked>,
     /// The call came from inside the VM (a request to the app's server, a task), not through the host: its
     /// effects are forwarded by the runtime's pump when it ends.
     inbound: bool,
@@ -513,7 +418,6 @@ impl Turn {
             gate,
             held,
             waiting: None,
-            parked: None,
             inbound,
             read_only,
             quiet: false,
@@ -554,23 +458,19 @@ impl Baton for Turn {
                     .to_owned(),
             );
         }
-        if self.shared.tracker.lock().is_pure() {
-            return Err("cannot wait while rendering: render must be pure and quick".to_owned());
-        }
         Ok(())
     }
 
     fn park(&mut self) {
-        let scope = self.shared.tracker.lock().suspend();
         // the next call to hold the gate is not this one: its restrictions are its own
         self.shared.read_only.store(false, Ordering::SeqCst);
-        self.parked = Some(Parked { scope });
         self.held = None;
-        // a background call that pauses has run some script since the last time it let go of the VM: its state
-        // changes (and a window's `w:toast`) are for the host to see now, not when the call is finally over,
-        // which for a loop is never. A tool or an event is over when it returns, so it says nothing at a wait, except
-        // that a notification it raised is not for later: a tool that notifies and then works for a minute (an agent's
-        // build, a download) would otherwise tell the person when it is done, not when it said. The gate is free by now.
+        // a background call that pauses has run some script since the last time it let go of the VM: what it asked
+        // of the host (an event for its page, a notification) is for the host to send now, not when the call is
+        // finally over, which for a loop is never. A tool or a handler is over when it returns, so it says nothing at
+        // a wait, except that a notification it raised is not for later: a tool that notifies and then works for a
+        // minute (an agent's build, a download) would otherwise tell the person when it is done, not when it said.
+        // The gate is free by now.
         if self.inbound || self.has_notifications_waiting() {
             self.shared.effects_signal.notify_one();
         }
@@ -591,9 +491,6 @@ impl Baton for Turn {
         self.waiting = None;
         self.held = Some(held);
         self.shared.read_only.store(self.read_only, Ordering::SeqCst);
-        if let Some(parked) = self.parked.take() {
-            self.shared.tracker.lock().resume(parked.scope);
-        }
         Poll::Ready(())
     }
 }
@@ -702,7 +599,7 @@ impl AppVm {
         db: Arc<dyn AppData>,
         config: VmConfig,
     ) -> Result<Self> {
-        let VmConfig { host_modules, roster, files, refused_modules, test_hooks } = config;
+        let VmConfig { roster, files, refused_modules, test_hooks } = config;
         let offered = Arc::new(crate::require::offered_modules(&refused_modules));
         let load_err =
             |e: &mlua::Error| VmError::Load { app: app.to_string(), error: ScriptError::from_lua(e) };
@@ -732,28 +629,16 @@ impl AppVm {
             db,
             files: Files::new(files),
             offered,
-            host_modules,
             roster,
-            tracker: Arc::new(Mutex::new(Tracker::new(read_only.clone()))),
             tools: Mutex::default(),
             handlers: Mutex::default(),
             rpc_handlers: Mutex::default(),
             test_hooks,
-            sources: Mutex::default(),
-            writers: Mutex::default(),
-            windows: Mutex::default(),
-            deep_links: Mutex::default(),
-            decl: Mutex::default(),
             effects: Mutex::default(),
             queued_notifications: Mutex::default(),
-            env: Mutex::new(None),
             modules: Mutex::default(),
-            loading: Mutex::default(),
             app_table: Mutex::default(),
             fail: Mutex::default(),
-            views: Mutex::default(),
-            render_scope: Mutex::default(),
-            view_effects: Mutex::default(),
             tx: Mutex::new(None),
             read_only,
             read_only_active: AtomicUsize::new(0),
@@ -783,7 +668,6 @@ impl AppVm {
             .set_environment(env.clone())
             .call::<()>(env.clone())?;
         script_env::freeze(&self.lua, &env)?;
-        *self.shared.env.lock() = Some(env.clone());
         api::install(&self.lua, &self.shared, &env)?;
         let entry = self.shared.package.entry.clone();
         let source =
@@ -797,12 +681,12 @@ impl AppVm {
         Ok(())
     }
 
-    /// What the entry returned is the backend: a table of functions by name (or nothing, for an app that only
-    /// declares tools and windows). Anything else is a mistake the author should hear about at load.
+    /// What the entry returned is the backend: a table of functions by name (an app with nothing for its page to
+    /// call returns `{}`). Anything else, nothing included, is a mistake the author should hear about at load.
     fn keep_handlers(&self, returned: LuaValue) -> std::result::Result<(), VmError> {
         let table = match returned {
-            LuaValue::Nil => return Ok(()),
             LuaValue::Table(t) => t,
+            LuaValue::Nil => return Err(VmError::BadHandlers("it returned nothing".to_owned())),
             other => return Err(VmError::BadHandlers(format!("it returned a {}", lua_type(&other)))),
         };
         let mut handlers = HashMap::new();
@@ -829,14 +713,6 @@ impl AppVm {
         Ok(())
     }
 
-    pub(crate) fn shared(&self) -> &Arc<Shared> {
-        &self.shared
-    }
-
-    pub(crate) fn lua(&self) -> &Lua {
-        &self.lua
-    }
-
     pub(crate) fn life(&self) -> &Life {
         &self.shared.life
     }
@@ -854,8 +730,8 @@ impl AppVm {
     /// A panic in a host function the call reached, which the script did not catch, ends the call with
     /// [`VmError::Panicked`] instead of unwinding into the caller (`neoc_vm::lua::panics`). It stops the call
     /// where script code called into Rust, where a caller that gives up may drop the call too, so it leaves what a
-    /// dropped call leaves: the turn handed on, a `db:tx` it opened rolled back, tracking and the render scope
-    /// closed (the guards of [`Turn`], `TrackGuard` and `RenderScopeGuard`). The app stays loaded.
+    /// dropped call leaves: the turn handed on, a `db:tx` it opened rolled back (the guard of [`Turn`]). The app
+    /// stays loaded.
     pub(crate) async fn in_call<T, E: From<VmError>>(
         &self,
         read_only: bool,
@@ -870,24 +746,8 @@ impl AppVm {
 
     // ---- what the app declared ------------------------------------------------------------------------
 
-    pub fn decl(&self) -> Option<AppDecl> {
-        self.shared.decl.lock().clone()
-    }
-
     pub fn tools(&self) -> Vec<ToolSpec> {
         self.shared.tools.lock().iter().map(|t| t.spec.clone()).collect()
-    }
-
-    /// The live-source definitions (`db:query`, `db:row`, `db:scalar`), in declaration order.
-    pub fn sources(&self) -> Vec<SourceDef> {
-        self.shared.sources.lock().clone()
-    }
-
-    /// Windows declared with `app.window(name, spec)`, by name.
-    pub fn window_names(&self) -> Vec<String> {
-        let mut v: Vec<String> = self.shared.windows.lock().keys().cloned().collect();
-        v.sort();
-        v
     }
 
     /// Everything the app asked the host to do since the last call to this.
@@ -899,7 +759,6 @@ impl AppVm {
 
     // ---- calls into the app -----------------------------------------------------------------------------
 
-    // TODO: clean-code - 0.4 - DRY: builds the `ctx.actor` table that `view::ctx_actor` builds; call it.
     fn ctx_table(&self, ctx: &CallContext) -> mlua::Result<Table> {
         let t = self.lua.create_table()?;
         let actor = self.lua.create_table()?;
@@ -944,7 +803,7 @@ impl AppVm {
         .await
     }
 
-    /// A client's `rpc(method, args)`: run the handler the entry returned under that name as `handler(ctx, args)`,
+    /// The page's `rpc(method, args)`: run the handler the entry returned under that name as `handler(ctx, args)`,
     /// as a call of its own. It is the person's own client asking, so the call may write (an agent's tool is the
     /// one that can be `readOnly`).
     pub async fn call_handler(&self, name: &str, args: Value, ctx: &CallContext) -> Result<Value> {
@@ -965,75 +824,17 @@ impl AppVm {
         .await
     }
 
-    /// Run a row source's `write(key, field, value, ctx)` callback (a two-way bound field was edited).
-    pub async fn write_row(
-        &self,
-        source: &SourceId,
-        key: &Value,
-        field: &str,
-        value: &Value,
-        ctx: &CallContext,
-    ) -> Result<()> {
-        let write = self
-            .shared
-            .writers
-            .lock()
-            .get(&source.0)
-            .cloned()
-            .ok_or_else(|| VmError::NoSuchWriter(source.0.clone()))?;
-        self.in_call(false, async {
-            let convert = |e: mlua::Error| VmError::BadValue(e.to_string());
-            let args = (
-                json_to_lua(&self.lua, key).map_err(convert)?,
-                field.to_owned(),
-                json_to_lua(&self.lua, value).map_err(convert)?,
-                self.ctx_table(ctx).map_err(convert)?,
-            );
-            write.call_async::<()>(args).await.map_err(|e| script(&e))
-        })
-        .await
-    }
-
     /// Call what the app registered with `hook(name, fn)` (a VM loaded with [`VmConfig::test_hooks`]) with a JSON
     /// payload, as one call of its own; returns the handler's JSON result, or null when nothing is registered.
     pub async fn emit(&self, event: &str, payload: Value) -> Result<Value> {
-        self.emit_inner(event, payload, false).await.map(|(v, _)| v)
-    }
-
-    /// Like [`AppVm::emit`], and report which `app.state` fields the handler read.
-    pub async fn emit_tracked(&self, event: &str, payload: Value) -> Result<(Value, BTreeSet<DepKey>)> {
-        self.emit_inner(event, payload, true).await
-    }
-
-    async fn emit_inner(
-        &self,
-        event: &str,
-        payload: Value,
-        track: bool,
-    ) -> Result<(Value, BTreeSet<DepKey>)> {
         let handler = self.shared.handlers.lock().get(event).cloned();
-        let Some(handler) = handler else { return Ok((Value::Null, BTreeSet::new())) };
+        let Some(handler) = handler else { return Ok(Value::Null) };
         self.in_call(false, async {
             let arg = json_to_lua(&self.lua, &payload).map_err(|e| VmError::BadValue(e.to_string()))?;
-            // closed by the guard if this call is dropped at a host call
-            let scope = track.then(|| TrackGuard::begin(&self.shared.tracker));
-            let result = handler.call_async::<LuaValue>(arg).await;
-            let deps = scope.map_or_default(TrackGuard::finish);
-            let out = result.map_err(|e| script(&e))?;
-            Ok((lua_to_json(&out).map_err(|e| VmError::BadValue(e.to_string()))?, deps))
+            let out = handler.call_async::<LuaValue>(arg).await.map_err(|e| script(&e))?;
+            lua_to_json(&out).map_err(|e| VmError::BadValue(e.to_string()))
         })
         .await
-    }
-
-    /// Has a window something to show that no call through the host has delivered: an `app.state` field changed
-    /// or a window asked for a toast or a client value since the last settle?
-    pub fn has_unsettled_views(&self) -> bool {
-        self.shared.tracker.lock().has_dirty() || !self.shared.view_effects.lock().is_empty()
-    }
-
-    /// The `app.state` fields assigned since the last call (views that read them are dirty).
-    pub fn take_dirty_state(&self) -> BTreeSet<DepKey> {
-        self.shared.tracker.lock().take_dirty()
     }
 
     // ---- accounting -------------------------------------------------------------------------------------
@@ -1061,12 +862,6 @@ impl AppVm {
         self.shared.life.shutdown();
     }
 
-    /// Has the app been unloaded or replaced ([`AppVm::shutdown`])? What a call it still had in flight queues
-    /// after that is dropped.
-    pub fn is_shut_down(&self) -> bool {
-        self.shared.life.is_closed()
-    }
-
     /// Unload: release every Rust-held reference to Lua values, then the VM. Returns the heap size freed.
     pub fn unload(self) -> usize {
         let used = self.lua.used_memory();
@@ -1085,8 +880,7 @@ mod tests {
     async fn vm() -> AppVm {
         let package = AppPackage {
             entry: "app.lua".into(),
-            files: [("app.lua".to_owned(), b"-- an app that declares nothing".to_vec())].into(),
-            ..AppPackage::default()
+            files: [("app.lua".to_owned(), b"return {} -- an app with nothing to call".to_vec())].into(),
         };
         AppVm::load(
             &AppId::parse("probe").unwrap(),

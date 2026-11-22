@@ -1,8 +1,8 @@
-//! The host-management methods on `/rpc`: `app.list`, `app.available`, `app.preview`, `host.devices.list`, and the
-//! `app.event` notification.
+//! The host-management methods on `/rpc`: `app.list`, `app.available`, `app.preview`, `host.devices.list`,
+//! `host.files.list`, and the `app.event` notification.
 //!
-//! Next to the view protocol (`ui::protocol`) these are what the shell, not an app window, talks to the host
-//! about. They are plain serde types, so the generated TypeScript (`types/generated/vos.ts`) cannot drift
+//! Next to the handshake and the host's notifications ([`crate::protocol`]) these are what the shell talks to the
+//! host about. They are plain serde types, so the generated TypeScript (`types/generated/vos.ts`) cannot drift
 //! from what the host sends.
 
 use serde::{Deserialize, Serialize};
@@ -60,15 +60,12 @@ wire! {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(feature = "codegen", ts(optional))]
         pub description: Option<String>,
-        /// The default window and its minimum size (only while the app runs: the app declares it).
+        /// The default window and its minimum size, when the app's manifest states one.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(feature = "codegen", ts(optional))]
         pub window: Option<AppWindow>,
         /// Where it was installed from, for people to read ("this computer", "apps.example.org").
         pub source: String,
-        /// The app has a client of its own: its window is a frame that loads `/apps/<id>/static/`. Without one the
-        /// app describes its screens as a view tree (retired by NEOC-298).
-        pub client: bool,
         /// The browser features the app's frame asks for (`camera`, `microphone`, `geolocation`,
         /// `clipboard-write`): the shell puts them in the iframe's `allow` attribute.
         #[serde(default)]
@@ -147,13 +144,57 @@ wire! {
         pub devices: Vec<DeviceRow>,
     }
 
-    /// How the host starts an agent, as clients see it: the program and its arguments. The environment holds
-    /// credentials, so only the variable names come over the wire, never the values.
+    /// What an entry of a folder is.
+    #[serde(rename_all = "lowercase")]
+    pub enum FileEntryKind {
+        File,
+        Dir,
+        /// A symbolic link that could not be followed: in an app's Documents no link is; on the computer one that
+        /// leads nowhere or in a circle.
+        Link,
+        /// Something else (a device, a socket): shown, never opened.
+        Other,
+    }
+
+    /// One entry of a directory in `host.files.list`: a name inside the directory that was listed.
     #[serde(rename_all = "camelCase")]
-    pub struct AgentRuntimeRow {
-        pub command: String,
-        pub args: Vec<String>,
-        pub env_keys: Vec<String>,
+    pub struct FileEntry {
+        pub name: String,
+        pub kind: FileEntryKind,
+        /// Bytes (whatever the platform reports for a directory).
+        #[cfg_attr(feature = "codegen", ts(type = "number"))]
+        pub size: u64,
+        /// Unix milliseconds; absent where the filesystem does not record it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "codegen", ts(optional, type = "number"))]
+        pub modified_at: Option<u64>,
+        /// The entry is a symbolic link (on the computer `kind` is then what it leads to).
+        pub link: bool,
+        /// Why the entry cannot be opened, when the listing already knows ("the link leads nowhere").
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "codegen", ts(optional))]
+        pub problem: Option<String>,
+    }
+
+    /// `host.files.list` result: the entries of one directory, sorted by name.
+    pub struct FileList {
+        pub entries: Vec<FileEntry>,
+        /// The directory holds more than the listing's cap: these are the first of them, and there are others.
+        pub truncated: bool,
+    }
+
+    /// `host.files.locations` result: what the Files page can browse besides the installed apps' Documents.
+    #[serde(rename_all = "camelCase")]
+    pub struct FileLocations {
+        /// Whether this host lets the Files page browse its own file system ("This Computer").
+        pub computer: bool,
+        /// The home directory of the user running the host, as a path to list (`/Users/me`), when there is one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "codegen", ts(optional))]
+        pub home: Option<String>,
+        /// The largest file an upload may carry, in bytes.
+        #[cfg_attr(feature = "codegen", ts(type = "number"))]
+        pub max_upload_bytes: u64,
     }
 
     /// Which apps an agent may call (`all` is the explicit "every app" option).
@@ -163,7 +204,7 @@ wire! {
     }
 
     /// One agent on the host's roster, as `agents.list` and the `agents.*` results describe it. Tokens never
-    /// come with it, and neither does the runtime environment.
+    /// come with it.
     #[serde(rename_all = "camelCase")]
     pub struct AgentRow {
         pub id: String,
@@ -172,11 +213,7 @@ wire! {
         #[cfg_attr(feature = "codegen", ts(optional))]
         pub avatar: Option<String>,
         pub role: String,
-        pub runtime: AgentRuntimeRow,
         pub grants: AgentGrantsRow,
-        /// What the host does with the agent's permission requests (`ApprovalPolicy`).
-        #[cfg_attr(feature = "codegen", ts(type = "'ask' | 'auto_read_only' | 'allow_all'"))]
-        pub approval: String,
     }
 
     /// `agents.list` result.
@@ -192,16 +229,10 @@ impl From<&crate::Agent> for AgentRow {
             name: a.name.clone(),
             avatar: a.avatar.clone(),
             role: a.role.clone(),
-            runtime: AgentRuntimeRow {
-                command: a.runtime.command.clone(),
-                args: a.runtime.args.clone(),
-                env_keys: a.runtime.env.keys().cloned().collect(),
-            },
             grants: AgentGrantsRow {
                 all: a.grants.all,
                 apps: a.grants.apps.iter().map(ToString::to_string).collect(),
             },
-            approval: a.approval.as_str().to_owned(),
         }
     }
 }
@@ -209,33 +240,22 @@ impl From<&crate::Agent> for AgentRow {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Agent, AgentId, AgentRuntime, AppId, ApprovalPolicy, Grants};
+    use crate::{Agent, AgentId, AppId, Grants};
     use serde_json::json;
-    use std::collections::BTreeMap;
 
     #[test]
-    fn an_agent_row_carries_no_environment_values() {
+    fn an_agent_row_is_the_contact_and_its_grants() {
         let agent = Agent {
             id: AgentId("claude".into()),
             name: "Claude".into(),
             avatar: None,
             role: "Pair".into(),
-            runtime: AgentRuntime {
-                command: "claude-agent-acp".into(),
-                args: vec!["--x".into()],
-                env: BTreeMap::from([("ANTHROPIC_API_KEY".to_owned(), "sk-secret".to_owned())]),
-            },
             grants: Grants::apps([AppId::parse("notes").unwrap()]),
-            approval: ApprovalPolicy::AllowEverything,
         };
         let v = serde_json::to_value(AgentRow::from(&agent)).unwrap();
         assert_eq!(
-            v["runtime"],
-            json!({"command": "claude-agent-acp", "args": ["--x"], "envKeys": ["ANTHROPIC_API_KEY"]})
+            v,
+            json!({"id": "claude", "name": "Claude", "role": "Pair", "grants": {"all": false, "apps": ["notes"]}})
         );
-        assert_eq!(v["grants"], json!({"all": false, "apps": ["notes"]}));
-        assert_eq!(v["approval"], "allow_all");
-        assert!(v.get("avatar").is_none());
-        assert!(!v.to_string().contains("sk-secret"), "{v}");
     }
 }

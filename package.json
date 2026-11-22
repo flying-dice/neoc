@@ -10,7 +10,7 @@
   ],
   "scripts": {
     "dev": "bun scripts/dev.ts",
-    "dev:vos": "concurrently --kill-others --names host,vite --prefix-colors blue,green \"VOS_DEV_CLIENT_PORT=5173 VOS_DEV_RELOAD=1 cargo run -q -p vos-host\" \"bun run --filter @vos/client dev\"",
+    "dev:vos": "bun scripts/dev.ts",
     "build:kit": "bun run --filter @vos/kit build",
     "build": "bun run build:kit && bun run --filter @vos/client build",
     "start": "cargo run --profile release-host -p vos-host --",
@@ -45,7 +45,6 @@
     "@playwright/test": "^1.65.1",
     "@types/bun": "1.4.4",
     "concurrently": "^10.0.7",
-    "typescript": "^5.9.3",
-    "zod": "4.6.7"
+    "typescript": "^5.9.3"
   }
 }

@@ -1,6 +1,6 @@
 <!--
-  @organism NavigationBar — UINavigationBar (inline or large title). Molecules: BackButton.
-  Test ids: `testid` on the header, `${testid}-back` on the back button.
+  @organism NavigationBar — UINavigationBar (inline or large title), with an optional "‹ Back" item.
+  Atoms: Icon. Test ids: `testid` on the header, `${testid}-back` on the back button.
 
   Behaves like iOS 15+: only the bar row is sticky. It is transparent at the
   scroll edge and gains the chrome material once content scrolls beneath it.
@@ -9,34 +9,23 @@
 -->
 <script lang="ts">
   import type { Snippet } from 'svelte'
-  import BackButton from '../molecules/BackButton.svelte'
+  import Icon from '../atoms/Icon.svelte'
 
   interface Props {
     testid: string
     title: string
     large?: boolean
-    /** Renders a "‹ backLabel" button when set. */
+    /** Shows a "‹ backLabel" button at the leading edge (where the bar's screen was pushed from). */
     backLabel?: string
     onback?: () => void
     /** Always show the chrome material, even at the scroll edge. */
     material?: boolean
-    leading?: Snippet
     trailing?: Snippet
     /** Rendered under the title, e.g. a SearchField or SegmentedControl. */
     accessory?: Snippet
   }
 
-  let {
-    testid,
-    title,
-    large = false,
-    backLabel,
-    onback,
-    material = false,
-    leading,
-    trailing,
-    accessory
-  }: Props = $props()
+  let { testid, title, large = false, backLabel, onback, material = false, trailing, accessory }: Props = $props()
 
   let bar: HTMLElement | undefined = $state()
   let largeTitle: HTMLElement | undefined = $state()
@@ -74,9 +63,13 @@
 
 <header class="ios-navbar" class:large data-testid={testid}>
   <div class="bar" class:material={material || scrolled} bind:this={bar}>
-    <div class="side leading">
-      {#if backLabel}<BackButton testid="{testid}-back" label={backLabel} onclick={onback} />{/if}
-      {#if leading}{@render leading()}{/if}
+    <div class="side">
+      {#if backLabel}
+        <button type="button" class="back" data-testid="{testid}-back" onclick={onback}>
+          <Icon name="chevron.left" size={22} weight={2.6} />
+          <span>{backLabel}</span>
+        </button>
+      {/if}
     </div>
     <!-- In large mode the large title is the heading; this is a visual echo. -->
     <svelte:element
@@ -129,6 +122,31 @@
   }
   .trailing {
     justify-content: flex-end;
+  }
+  .back {
+    appearance: none;
+    border: 0;
+    background: none;
+    /* a 44 pt hit area (the label and glyph are what is drawn) */
+    min-height: 44px;
+    min-width: 44px;
+    padding: 0 8px 0 0;
+    margin-left: -8px;
+    display: inline-flex;
+    align-items: center;
+    color: var(--tint);
+    font: var(--type-body);
+    letter-spacing: var(--tracking-body);
+    cursor: pointer;
+    max-width: 100%;
+  }
+  .back span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .back:active {
+    opacity: 0.4;
   }
   .inline-title {
     margin: 0;

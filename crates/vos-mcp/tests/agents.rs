@@ -20,7 +20,7 @@ use vos_application::{
     testing::{Fakes, MemAgentStore, SeededRandom},
     AgentService, NewAgent,
 };
-use vos_domain::{AgentRuntime, AppId, Grants};
+use vos_domain::{AppId, Grants};
 use vos_mcp::{mcp_router, McpState};
 
 struct Harness {
@@ -56,12 +56,7 @@ async fn harness() -> Harness {
 async fn agent(h: &Harness, id: &str) -> (vos_domain::AgentId, String) {
     let a = h
         .agents
-        .create(NewAgent {
-            id: Some(id.into()),
-            name: id.to_uppercase(),
-            runtime: AgentRuntime { command: "x".into(), ..AgentRuntime::default() },
-            ..NewAgent::default()
-        })
+        .create(NewAgent { id: Some(id.into()), name: id.to_uppercase(), ..NewAgent::default() })
         .await
         .unwrap();
     let token = h.agents.rotate_token(&a.id).await.unwrap();
@@ -135,35 +130,5 @@ async fn an_agent_lists_only_the_tools_of_its_granted_apps_and_a_grant_change_re
 
     claude_client.cancel().await.unwrap();
     other_client.cancel().await.unwrap();
-    h.cancel.cancel();
-}
-
-#[tokio::test]
-async fn a_launch_token_works_like_a_persistent_one_and_stops_working_when_revoked() {
-    let h = harness().await;
-    let (claude, _) = agent(&h, "claude").await;
-    h.agents.set_grants(&claude, Grants::allow_all()).await.unwrap();
-    let url = h.fakes.add_app("notes", &[("search?", "x")]);
-    h.svc.install_from_url(&url).await.unwrap();
-    let launch = h.agents.launch_token(&claude, "thread-1").unwrap();
-    let client = Counting::default().serve(transport(&h.url, &launch)).await.unwrap();
-    assert_eq!(names(&client).await, ["notes__search"]);
-    let ok = client.peer().call_tool(CallToolRequestParams::new("notes__search")).await.unwrap();
-    assert_ne!(ok.is_error, Some(true));
-    let calls = h.fakes.runtime.calls();
-    assert_eq!(calls, 1);
-    client.cancel().await.unwrap();
-
-    h.agents.revoke_launch_tokens("thread-1");
-    let res = reqwest::Client::new()
-        .post(&h.url)
-        .header("authorization", format!("Bearer {launch}"))
-        .header("content-type", "application/json")
-        .header("accept", "application/json, text/event-stream")
-        .body("{}")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(res.status(), 401, "a revoked token is no credential");
     h.cancel.cancel();
 }

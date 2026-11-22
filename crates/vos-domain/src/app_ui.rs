@@ -1,5 +1,6 @@
-//! What an app's client declares about its page: where its built files are, and what the page needs from the
-//! browser. The names follow MCP Apps' `_meta.ui` (`csp`, `permissions`) so an app's descriptor reads like one.
+//! What an app declares about its page: where its built files are, what the page needs from the browser, and the
+//! window the shell opens it in. The names follow MCP Apps' `_meta.ui` (`csp`, `permissions`) so an app's descriptor
+//! reads like one.
 //!
 //! This is a declaration the host applies to the page's content security policy and the frame's `allow` attribute.
 //! It is not a permission system: nothing here asks the person, grants anything or can be revoked.
@@ -7,7 +8,38 @@
 use crate::error::DomainError;
 use serde::{Deserialize, Serialize};
 
-/// `ui` in the package manifest: an app with a client of its own.
+/// No window is smaller than this (the shell's minimum, 320x240).
+pub const MIN_WINDOW_W: u32 = 320;
+pub const MIN_WINDOW_H: u32 = 240;
+
+/// `window` in the package manifest: the size the shell opens the app's window at, and its minimum.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WindowDecl {
+    pub w: u32,
+    pub h: u32,
+    #[serde(rename = "minW")]
+    pub min_w: u32,
+    #[serde(rename = "minH")]
+    pub min_h: u32,
+}
+
+impl WindowDecl {
+    /// A window is at least the shell's minimum, and its default size is not below its own minimum.
+    pub fn validate(&self) -> Result<(), DomainError> {
+        if self.min_w < MIN_WINDOW_W || self.min_h < MIN_WINDOW_H {
+            return Err(DomainError::InvalidManifest(format!(
+                "window min size must be at least {MIN_WINDOW_W}x{MIN_WINDOW_H}"
+            )));
+        }
+        if self.w < self.min_w || self.h < self.min_h {
+            return Err(DomainError::InvalidManifest("window size must not be below its minimum".into()));
+        }
+        Ok(())
+    }
+}
+
+/// `ui` in the package manifest: the app's page.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppUi {
@@ -204,6 +236,21 @@ mod tests {
             csp: Csp::default(),
             permissions: Permissions::default(),
         }
+    }
+
+    #[test]
+    fn a_window_is_at_least_the_shells_minimum_and_not_below_its_own() {
+        let window: WindowDecl = serde_json::from_str(r#"{"w":960,"h":640,"minW":480,"minH":360}"#).unwrap();
+        assert_eq!(window, WindowDecl { w: 960, h: 640, min_w: 480, min_h: 360 });
+        window.validate().unwrap();
+        assert!(
+            serde_json::from_str::<WindowDecl>(r#"{"w":960,"h":640,"minW":480,"minH":360,"x":1}"#).is_err()
+        );
+        assert!(WindowDecl { w: 300, h: 300, min_w: 300, min_h: 300 }.validate().is_err(), "below 320x240");
+        assert!(
+            WindowDecl { w: 400, h: 300, min_w: 480, min_h: 300 }.validate().is_err(),
+            "default smaller than minimum"
+        );
     }
 
     #[test]

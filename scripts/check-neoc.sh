@@ -34,8 +34,11 @@ cargo run -p neoc -- run \
   "crates/neoc/tests/std/task.spec.lua" \
   "crates/neoc/tests/app.test.lua" \
   "crates/neoc/tests/buffer.test.lua" \
+  "crates/neoc/tests/vnd/bollard.test.lua" \
   "crates/neoc/tests/vnd/hyper.test.lua" \
   "crates/neoc/tests/vnd/jsonschema.test.lua" \
+  "crates/neoc/tests/vnd/keyring.test.lua" \
+  "crates/neoc/tests/vnd/portable_pty.test.lua" \
   "crates/neoc/tests/vnd/quick_xml.test.lua" \
   "crates/neoc/tests/vnd/rusqlite.test.lua" \
   "crates/neoc/tests/vnd/serde_json.test.lua" \

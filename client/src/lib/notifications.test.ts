@@ -20,7 +20,6 @@ const summary = (id: string, extra: Partial<AppSummary> = {}): AppSummary => ({
   version: '1.0.0',
   state: 'running',
   source: 'file',
-  client: false,
   permissions: [],
   icon: 'clock',
   tint: 'teal',
@@ -75,6 +74,8 @@ let wm: WindowManager
 let time: ReturnType<typeof clock>
 let tab: ReturnType<typeof page>
 let center: Notifications
+/** Settings > General > Show Banners, as the person left it. */
+let bannersOn: boolean
 const titles = () => center.banners.map((b) => b.title)
 let warn: ReturnType<typeof spyOn>
 
@@ -84,7 +85,14 @@ beforeEach(() => {
   wm.bounds = { width: 1280, height: 800 }
   time = clock()
   tab = page()
-  center = new Notifications({ wm, appOf, schedule: time.schedule, ...tab.deps })
+  bannersOn = true
+  center = new Notifications({
+    bannersOn: () => bannersOn,
+    wm,
+    appOf,
+    schedule: time.schedule,
+    ...tab.deps
+  })
   warn = spyOn(console, 'warn').mockImplementation(() => {})
 })
 
@@ -153,6 +161,35 @@ describe('what is shown', () => {
     center.deliver({ app: 'ticker', title: '\u200B\u200B', body: '\u200B' })
     expect(center.banners[0]?.title).toBe('Ticker')
     expect(center.banners[0]).not.toHaveProperty('body')
+  })
+})
+
+describe('banners turned off in Settings', () => {
+  test('nothing that arrives is shown, and nothing is logged about it', () => {
+    bannersOn = false
+    center.deliver({ app: 'ticker', title: 'a' })
+    expect(center.banners).toEqual([])
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  test('what arrived while they were off is not kept for when they are back on', () => {
+    bannersOn = false
+    center.deliver({ app: 'ticker', title: 'missed' })
+    bannersOn = true
+    center.deliver({ app: 'ticker', title: 'seen' })
+    expect(titles()).toEqual(['seen'])
+  })
+
+  test('turning them off takes away the ones on screen, read or not, and stops their clocks', () => {
+    center.deliver({ app: 'ticker', title: 'a' })
+    center.deliver({ app: 'notes', title: 'b' })
+    center.hold(center.banners[0]!.id)
+    center.clear()
+    expect(center.banners).toEqual([])
+    expect(time.live()).toBe(0)
+    // the one that was being read does not count as held any more: three new ones push out the oldest as usual
+    for (const title of ['c', 'd', 'e', 'f']) center.deliver({ app: 'alpha', title })
+    expect(titles()).toEqual(['f', 'e', 'd'])
   })
 })
 

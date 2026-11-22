@@ -53,7 +53,7 @@ export class UiTextField extends FormControl {
     autocapitalize: { type: String },
     /** `field` (default): a rounded filled field. `bare`: no box, for use inside a `ui-row`. */
     variant: { type: String, reflect: true },
-    /** Shows the field as invalid (`aria-invalid`) with the message from an error `ui-banner` or the row's footer. */
+    /** Shows the field as invalid (`aria-invalid`): a red outline, or red text for a `bare` field in a row. The message is the footer of the row's `ui-section` (`footer-tone="error"`). */
     invalid: { type: Boolean, reflect: true }
   }
   declare value: string
@@ -130,6 +130,11 @@ export class UiTextField extends FormControl {
       }
       :host([invalid]) input:not(:focus-visible) {
         box-shadow: inset 0 0 0 1.5px var(--ios-red);
+      }
+      /* in a row there is no box to outline: the text itself is red, as an invalid value is in an iPadOS form */
+      :host([variant='bare'][invalid]) input:not(:focus-visible) {
+        box-shadow: none;
+        color: var(--ios-red);
       }
       input:disabled {
         opacity: 0.4;

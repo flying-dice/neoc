@@ -1,23 +1,16 @@
-//! Dev-time adapter: code generation from the domain's UI schema. Not linked into the host.
-//!
-//! One source of truth (the `ui` module of `vos-domain`: Rust types plus the component catalogue tables) feeds
-//! every consumer:
+//! Dev-time adapter: the generated type files. Not linked into the host.
 //!
 //! | Output | For | How |
 //! |---|---|---|
-//! | `types/generated/vos.ts` | the client renderer | protocol types via `ts-rs` (reads the serde attributes), component types and the runtime `COMPONENTS` table from the catalogue |
-//! | `types/generated/ui.lua` | the Luau runtime (`require("vos:ui")`) | the `ui.*` constructors, `ui.act`, `ui.fmt`, expression helpers (plain Lua source, no annotations) |
-//! | `types/generated/vos.d.luau` | app authors (luau-lsp) | Luau declarations: the `std:`/`lib:`/`vnd:` modules an app is offered (from `types/neoc.d.luau`), the `app` API and its global, the core and component types, `ClientDecl` via JSON Schema (`schemars`), `ui`, and the one `declare require` |
+//! | `types/generated/vos.ts` | the shell | the wire types of the `/rpc` socket via `ts-rs` (reads the serde attributes of `vos-domain`'s `protocol` and `api`), the version constants and the method table |
+//! | `types/generated/vos.d.luau` | app authors (luau-lsp) | Luau declarations: the `std:`/`lib:`/`vnd:` modules an app is offered (from `types/neoc.d.luau`), the `app` API and its global, and the one `declare require` |
 //!
 //! `bun run codegen` writes them; `bun run codegen:check` (part of `bun run lint`) fails when the committed files
-//! are stale, so drift between the Rust schema and any consumer is a build failure.
+//! are stale, so drift between the Rust types and a consumer is a build failure.
 
-mod lua;
 mod luau;
 mod ts;
-mod walk;
 
-pub use lua::{module as ui_module, ACTION_BUILDERS};
 pub use luau::defs::{definitions as luau_definitions, require_overloads};
 pub use ts::generate as typescript;
 
@@ -42,7 +35,6 @@ pub fn generate(root: &Path) -> Result<Vec<GeneratedFile>, String> {
         .map_err(|e| format!("cannot read {NEOC_DECLARATIONS}: {e}"))?;
     Ok(vec![
         GeneratedFile { path: "types/generated/vos.ts", contents: ts::generate() },
-        GeneratedFile { path: "types/generated/ui.lua", contents: lua::module() },
         GeneratedFile { path: "types/generated/vos.d.luau", contents: luau::defs::definitions(&neoc)? },
     ])
 }
@@ -134,14 +126,14 @@ mod tests {
         dir
     }
 
-    /// A generated file that nothing writes any more (`ui.luau` after the move to Lua 5.1, the `luals/` definition
-    /// files after the move to Luau declarations) kept being read by whatever globbed the directory, and `codegen:check`
-    /// was green with it there.
+    /// A generated file that nothing writes any more (`ui.lua` since the host stopped drawing apps' windows, the
+    /// `luals/` definition files after the move to Luau declarations) kept being read by whatever globbed the
+    /// directory, and `codegen:check` was green with it there.
     #[test]
     fn a_file_no_generator_writes_any_more_is_stale() {
         let dir = scratch("orphans");
         assert!(stale(&dir).is_empty(), "{:?}", stale(&dir));
-        fs::write(dir.join("types/generated/ui.luau"), "-- old output").unwrap();
+        fs::write(dir.join("types/generated/ui.lua"), "-- old output").unwrap();
         fs::create_dir_all(dir.join("types/generated/luals/old")).unwrap();
         fs::write(dir.join("types/generated/luals/old/extra.lua"), "-- old output").unwrap();
         // the prelude is another generator's (scripts/codegen-lua.ts)
@@ -151,7 +143,7 @@ mod tests {
         let flagged = stale(&dir);
         assert_eq!(flagged.len(), 3, "{flagged:?}");
         assert!(flagged.iter().any(|p| p.starts_with("types/generated/luals/vos.lua")), "{flagged:?}");
-        assert!(flagged.iter().any(|p| p.starts_with("types/generated/ui.luau")), "{flagged:?}");
+        assert!(flagged.iter().any(|p| p.starts_with("types/generated/ui.lua")), "{flagged:?}");
         assert!(flagged.iter().any(|p| p.starts_with("types/generated/luals/old/extra.lua")), "{flagged:?}");
         fs::remove_dir_all(dir).unwrap();
     }
@@ -159,9 +151,9 @@ mod tests {
     #[test]
     fn a_missing_or_edited_file_is_stale() {
         let dir = scratch("drift");
-        fs::write(dir.join("types/generated/ui.lua"), "-- edited").unwrap();
+        fs::write(dir.join("types/generated/vos.d.luau"), "-- edited").unwrap();
         fs::remove_file(dir.join("types/generated/vos.ts")).unwrap();
-        assert_eq!(stale(&dir), ["types/generated/vos.ts", "types/generated/ui.lua"]);
+        assert_eq!(stale(&dir), ["types/generated/vos.ts", "types/generated/vos.d.luau"]);
         fs::remove_dir_all(dir).unwrap();
     }
 

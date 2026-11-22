@@ -23,7 +23,6 @@ tracing = { workspace = true }
 # adapter integration tests run apps against the REAL sqlite adapter (dev-only edge, not a runtime one)
 vos-sqlite = { path = "../vos-sqlite" }
 vos-application = { workspace = true, features = ["testing"] }
-serde_json = { workspace = true }
 
 [lints]
 workspace = true

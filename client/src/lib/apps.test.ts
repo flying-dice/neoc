@@ -1,12 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
-import {
-  appOf,
-  apps,
-  dockOrder,
-  installedApp,
-  onAppsRemoved,
-  setInstalledApps
-} from './apps.svelte'
+import { appOf, appOrder, apps, installedApp, onAppsRemoved, setInstalledApps } from './apps.svelte'
 import type { AppSummary } from '../shell/hostApi'
 
 const summary = (id: string, extra: Partial<AppSummary> = {}): AppSummary => ({
@@ -15,7 +8,6 @@ const summary = (id: string, extra: Partial<AppSummary> = {}): AppSummary => ({
   version: '1.0.0',
   state: 'running',
   source: 'file',
-  client: false,
   permissions: [],
   ...extra
 })
@@ -53,7 +45,7 @@ describe('setInstalledApps', () => {
       summary('broken', { state: 'failed', message: 'bad lua' })
     ])
     expect(
-      Object.keys(apps).filter((id) => !['discover', 'settings', 'files', 'terminal'].includes(id))
+      Object.keys(apps).filter((id) => !['discover', 'settings', 'files'].includes(id))
     ).toEqual(['calculator'])
     expect(appOf('calculator')).toMatchObject({
       width: 340,
@@ -104,24 +96,37 @@ describe('setInstalledApps', () => {
   })
 })
 
-describe('dockOrder', () => {
-  test('built-ins first, then the running installed apps, then Settings', () => {
+describe('appOrder', () => {
+  test('the built-in pages in their fixed order, then the running installed apps by name', () => {
     setInstalledApps([
+      summary('notes'),
       summary('calculator'),
-      summary('notes', { state: 'disabled' }),
+      summary('todos', { state: 'disabled' }),
       summary('agents')
     ])
-    expect(dockOrder()).toEqual([
-      'discover',
-      'files',
-      'terminal',
-      'calculator',
-      'agents',
-      'settings'
+    expect(appOrder()).toEqual(['discover', 'files', 'settings', 'agents', 'calculator', 'notes'])
+  })
+
+  test('the order is by the name a person reads, not the id or the order the host listed them in', () => {
+    setInstalledApps([
+      summary('zz', { name: 'alpha' }),
+      summary('aa', { name: 'Émile' }),
+      summary('mm', { name: 'Beta' })
     ])
+    expect(appOrder().slice(3)).toEqual(['zz', 'mm', 'aa'])
+  })
+
+  test('two apps with one name keep a fixed order (by id)', () => {
+    setInstalledApps([summary('b', { name: 'Notes' }), summary('a', { name: 'Notes' })])
+    expect(appOrder().slice(3)).toEqual(['a', 'b'])
+  })
+
+  test('an app with a built-in page’s id is not listed twice', () => {
+    setInstalledApps([summary('files', { name: 'Impostor' })])
+    expect(appOrder()).toEqual(['discover', 'files', 'settings'])
   })
 
   test('an empty host still has the built-ins', () => {
-    expect(dockOrder()).toEqual(['discover', 'files', 'terminal', 'settings'])
+    expect(appOrder()).toEqual(['discover', 'files', 'settings'])
   })
 })

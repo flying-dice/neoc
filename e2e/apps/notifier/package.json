@@ -1,0 +1,23 @@
+{
+  "name": "@vos-fixtures/notifier",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "A fixture app: buttons whose backend raises notifications a moment later, for the notification journeys. `bun run build` writes the app ref (dist/app-ref.json, app.luau, static/); `bun run dev` rebuilds on a change.",
+  "scripts": {
+    "generate": "vos generate",
+    "build": "vite build",
+    "dev": "vite build --watch",
+    "typecheck": "vos typecheck && svelte-check --tsconfig ./tsconfig.json",
+    "lint": "vos lint",
+    "format": "vos format"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@vos/vite-plugin": "workspace:*",
+    "svelte": "^5.57.2",
+    "svelte-check": "^4.7.6",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.4"
+  }
+}

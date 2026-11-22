@@ -69,30 +69,6 @@ pub async fn start_apps(service: &AppService, install: &[String]) {
         Err(e) => tracing::warn!(error = %e, "could not read the installed apps"),
     }
     service.ensure_installed(install).await;
-    let removed = service.purge_expired_revisions().await;
-    if removed > 0 {
-        tracing::info!(removed, "purged revisions older than 30 days");
-    }
-}
-
-/// Keep expired revisions from piling up in a long-running host: purge once an hour until `stop` fires.
-pub fn spawn_revision_purge(service: Arc<AppService>, stop: CancellationToken) {
-    tokio::spawn(async move {
-        let mut tick = tokio::time::interval(Duration::from_secs(3600));
-        tick.tick().await; // the first tick is immediate: start-up already purged
-        loop {
-            tokio::select! {
-                () = stop.cancelled() => return,
-                _ = tick.tick() => {
-                    // a panic in one purge is logged; the next hour purges again
-                    crate::platform::logged("revision-purge", async {
-                        service.purge_expired_revisions().await;
-                    })
-                    .await;
-                }
-            }
-        }
-    });
 }
 
 /// The directory a `file://` app-ref URL lives in (what a dev watcher watches).

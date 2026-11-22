@@ -5,22 +5,46 @@
   the Dock, one app at a time (`WindowManager.compact`). Window contents are supplied by
   the composition root through the `windowContent` snippet.
 
-  Test ids: `status-bar`, `desktop-stage`, `widget-clock`,
+  The Home Screen: while no window is on stage (`WindowManager.atHome`) the wallpaper shows every app that can be
+  opened (the built-in pages, then the running installed apps by name: `appOrder`) as a grid of icons, with a
+  "Search" capsule above the Dock. It is not drawn at all under a window, so nothing of it takes a press or a key meant
+  for the window. While a Split View waits for its second app, the same grid fills the empty half: that is where the
+  app is chosen. Opening an app from the grid sends the keyboard to its window (the icon that had it is gone).
+
+  The Dock holds the apps the person pinned (`dockPins`), then, after a divider, up to three open apps that are not
+  pinned, most recent first (`recentApps`). An icon of the Dock or the Home Screen has a context menu (right-click, a
+  long press, the Menu key or Shift+F10): Open, and Add to Dock or Remove from Dock. Leaving the menu, or pinning,
+  gives focus back to the icon it was opened on (or the app's other icon when that one went with the change).
+
+  System search (`spotlight`): the magnifier in the status bar, the "Search" capsule, and Cmd+K (Ctrl+K off a Mac)
+  from anywhere in the shell open it; opening a result sends the keyboard to that app's window. A key pressed inside
+  an app's frame never reaches this page (the frame is sandboxed and its bridge sends no keys), so the shortcut does
+  not work while an app has the keyboard: the status bar's button does.
+
+  Test ids: `status-bar` (+ `status-bar-search`), `desktop-stage`, `widget-clock`, `home-screen`, `home`
+  (+ `home-${appId}`, see HomeGrid), `home-search`,
   `stage-strip` (+ `stage-strip-<appIds>`), `window-${appId}` (+ parts, see Window),
-  `split-divider`, `split-placeholder`, `slideover-tab`, `dock` (+ `dock-${appId}`), `desktop-notice` (+ `-dismiss`), and the system alerts (see NotificationBanners).
+  `split-divider`, `split-placeholder`, `slideover-tab`, `dock` (+ `dock-${appId}`, `dock-divider`), `app-menu`
+  (+ `-open`, `-pin`, `-unpin`, `-layer`), `spotlight` (+ parts, see Spotlight), `desktop-notice` (+ `-dismiss`), and
+  the system alerts (see NotificationBanners).
 -->
 <script lang="ts">
-  import type { Snippet } from 'svelte'
-  import type { DockApp } from '@vos/ui'
+  import { tick, untrack, type Snippet } from 'svelte'
+  import type { AnchorRect, DockApp, MenuItem } from '@vos/ui'
   import { SplitHandle, Toast } from '@vos/ui/atoms'
+  import { ContextMenu, SearchPill, Spotlight } from '@vos/ui/molecules'
   import { DesktopTemplate } from '@vos/ui/templates'
-  import { StatusBar, Dock, Window, StageStrip } from '@vos/ui/organisms'
+  import { StatusBar, Dock, HomeGrid, Window, StageStrip } from '@vos/ui/organisms'
   import ClockWidget from '../organisms/ClockWidget.svelte'
   import NotificationBanners from '../organisms/NotificationBanners.svelte'
-  import { appOf, dockOrder, installedApp, onAppsRemoved, type AppId } from '../lib/apps.svelte'
+  import { appOf, appOrder, installedApp, onAppsRemoved, type AppId } from '../lib/apps.svelte'
+  import { dockPins, recentApps } from '../lib/dock.svelte'
+  import { recentlyOpened, spotlight } from '../lib/search.svelte'
+  import { isApplePlatform, isSearchShortcut, searchShortcut } from '../lib/shortcuts'
   import { windowManager as wm, type WindowState } from '../lib/windowManager.svelte'
   import { host } from '../lib/host.svelte'
   import { listenToHost, notifications } from '../lib/notifications.svelte'
+  import { settings } from '../lib/settings.svelte'
 
   interface Props {
     windowContent: Snippet<[WindowState]>
@@ -33,6 +57,11 @@
   let bannersHeight = $state(0)
   $effect(() => listenToHost(host))
   $effect(() => onAppsRemoved((ids) => notifications.forgetApps(ids)))
+  // banners turned off in Settings (here, or in another tab of this browser): the ones on screen go too
+  // (the setting is all this follows: what is on screen is read without being watched, or clearing it would run this again)
+  $effect(() => {
+    if (!settings.banners) untrack(() => notifications.clear())
+  })
 
   /** Where the keys go when a banner that had them leaves and nothing nearer is left: the front window, else the Dock. */
   function restingFocus(): HTMLElement | null {
@@ -53,15 +82,148 @@
   // The link to the host: say so in the status bar while it's down.
   const connection = $derived(host.connection)
 
-  function toDock(id: AppId): DockApp[] {
+  /** An app as an icon: `running` (the dot under it) is the Dock's to show, not the Home Screen's. */
+  function toIcon(id: AppId, inDock: boolean): DockApp[] {
     const app = appOf(id)
     return app
-      ? [{ id, name: app.name, icon: app.icon, background: app.background, running: wm.isOpen(id) }]
+      ? [
+          {
+            id,
+            name: app.name,
+            icon: app.icon,
+            background: app.background,
+            running: inDock && wm.isOpen(id)
+          }
+        ]
       : []
   }
 
-  const dockApps = $derived(dockOrder().flatMap(toDock))
+  // The Dock: what the person pinned (an id whose app is not there now is skipped, and kept), then the open apps
+  // that are not pinned.
+  const pinnedApps = $derived(
+    dockPins.shown((id) => appOf(id) !== undefined).flatMap((id) => toIcon(id, true))
+  )
+  const recentDockApps = $derived(
+    recentApps(wm.windows, (id) => dockPins.isPinned(id)).flatMap((id) => toIcon(id, true))
+  )
+  // The Home Screen: every app, in the one order.
+  const homeApps = $derived(appOrder().flatMap((id) => toIcon(id, false)))
   const awaitingSplit = $derived(wm.activeStage?.awaitingSplit ?? null)
+
+  const byTestId = (testid: string): HTMLElement | null =>
+    document.querySelector<HTMLElement>(`[data-testid="${CSS.escape(testid)}"]`)
+
+  /**
+   * Send the keyboard to an app's window: to its frame when the app's page is up, else to the window itself (a
+   * built-in page; an app still opening, whose frame takes over from its window when it is ready: `focusFrame`).
+   */
+  async function focusWindow(appId: AppId): Promise<void> {
+    await tick()
+    const win = byTestId(`window-${appId}`)
+    if (!win) return
+    const frame = win.querySelector<HTMLIFrameElement>('iframe:not(.hidden)')
+    if (frame) frame.focus({ preventScroll: true })
+    else win.focus({ preventScroll: true })
+  }
+
+  /** Open an app from the Home Screen: its icon goes away with the grid, so the keys go to the window. */
+  function openFromHome(id: string): void {
+    wm.open(id)
+    void focusWindow(id)
+  }
+
+  // ── The context menu of an app's icon ──
+  let menu = $state<{ appId: AppId; anchor: HTMLElement; rect: AnchorRect } | null>(null)
+  const menuApp = $derived(menu ? appOf(menu.appId) : undefined)
+  const menuItems = $derived<MenuItem[]>(
+    menu
+      ? [
+          { id: 'open', label: 'Open', icon: 'arrow.up.forward.square' },
+          dockPins.isPinned(menu.appId)
+            ? { id: 'unpin', label: 'Remove from Dock', icon: 'dock.rectangle.slash' }
+            : { id: 'pin', label: 'Add to Dock', icon: 'dock.rectangle' }
+        ]
+      : []
+  )
+
+  function askMenu(id: string, anchor: HTMLElement): void {
+    const { left, top, width, height } = anchor.getBoundingClientRect()
+    menu = { appId: id, anchor, rect: { left, top, width, height } }
+  }
+
+  /**
+   * Focus back on the icon the menu was opened on. Pinning can take that icon away (an app that is not open leaves the
+   * Dock when it is unpinned; one that is open moves across the divider): then the app's icon wherever it is now, the
+   * Home Screen's first, else where the keys rest.
+   */
+  async function focusIcon(anchor: HTMLElement, appId: AppId): Promise<void> {
+    await tick()
+    const icon = anchor.isConnected
+      ? anchor
+      : (byTestId(`home-${appId}`) ?? byTestId(`dock-${appId}`) ?? restingFocus())
+    icon?.focus({ preventScroll: true })
+  }
+
+  function dismissMenu(): void {
+    if (!menu) return
+    const { anchor, appId } = menu
+    menu = null
+    void focusIcon(anchor, appId)
+  }
+
+  function chooseFromMenu(item: string): void {
+    if (!menu) return
+    const { anchor, appId } = menu
+    menu = null
+    if (item === 'open') {
+      wm.open(appId)
+      void focusWindow(appId)
+      return
+    }
+    if (item === 'pin') dockPins.pin(appId)
+    else dockPins.unpin(appId)
+    void focusIcon(anchor, appId)
+  }
+
+  // an app that stops running takes its menu with it
+  $effect(() => {
+    if (menu && !menuApp) menu = null
+  })
+
+  // ── System search ──
+  const mac = isApplePlatform()
+  // what was brought to the front, most recent first: what search suggests before anything is typed
+  $effect(() => {
+    const front = wm.focused?.appId
+    if (front) untrack(() => recentlyOpened.note(front))
+  })
+
+  function openSearch(): void {
+    menu = null
+    spotlight.show()
+  }
+
+  /** Open a result: the keyboard follows it to the window it opened, or to the Home Screen it showed. */
+  function openResult(id: string): void {
+    const result = spotlight.activate(id)
+    if (!result) return
+    if (result.opens) void focusWindow(result.opens)
+    else
+      void tick().then(() =>
+        document
+          .querySelector<HTMLElement>('[data-testid="home"] button[tabindex="0"]')
+          ?.focus({ preventScroll: true })
+      )
+  }
+
+  /** Cmd+K / Ctrl+K, heard before anything else on the page: it opens search, and closes it again. */
+  function onshortcut(e: KeyboardEvent): void {
+    if (!isSearchShortcut(e, mac)) return
+    e.preventDefault()
+    e.stopPropagation()
+    menu = null
+    spotlight.toggle()
+  }
 
   // Dragging a strip group onto the stage merges it into the current group.
   function ondragover(e: DragEvent): void {
@@ -94,18 +256,40 @@
   // as a window covers any part of them, instead of peeking out from behind it.
   let widgetsWidth = $state(0)
   let widgetsHeight = $state(0)
+  // (The empty half of a waiting Split View, where the apps are listed to choose from, covers them like a window.)
   const widgetsObscured = $derived(
-    [...wm.onStage, ...(wm.slideOver && !wm.slideOverHidden ? [wm.slideOver] : [])].some((w) => {
-      const f = wm.frameOf(w)
-      return f.x + f.width > wm.bounds.width - 24 - widgetsWidth && f.y < 16 + widgetsHeight
-    })
+    [
+      ...wm.onStage.map((w) => wm.frameOf(w)),
+      ...(wm.slideOver && !wm.slideOverHidden ? [wm.frameOf(wm.slideOver)] : []),
+      ...(wm.splitPlaceholderFrame ? [wm.splitPlaceholderFrame] : [])
+    ].some((f) => f.x + f.width > wm.bounds.width - 24 - widgetsWidth && f.y < 16 + widgetsHeight)
   )
+
+  // The Home Screen's grid is centred between the strip's width at each side (the screen's edge on a compact screen,
+  // where there is no strip). Where it would run under the widgets it starts below them instead.
+  const HOME_GRID_MAX = 736 // HomeGrid's eight columns
+  const homeSide = $derived(wm.compact ? 16 : 150)
+  const homeTop = $derived.by(() => {
+    const width = wm.bounds.width
+    const gridRight = (width + Math.min(HOME_GRID_MAX, width - homeSide * 2)) / 2
+    const clearOfWidgets = widgetsWidth === 0 || gridRight <= width - 24 - widgetsWidth - 16
+    return clearOfWidgets ? 24 : 16 + widgetsHeight + 16
+  })
 </script>
+
+{#snippet homeGrid()}
+  <HomeGrid testid="home" apps={homeApps} onselect={openFromHome} onmenu={askMenu} />
+{/snippet}
 
 <DesktopTemplate bind:workspaceWidth bind:workspaceHeight dockHidden={wm.dockHidden}>
   {#snippet statusBar()}
     <div data-testid="status-bar">
-      <StatusBar battery={0.86}>
+      <StatusBar
+        testid="status-bar"
+        battery={0.86}
+        onsearch={openSearch}
+        searchShortcut={searchShortcut(mac)}
+      >
         {#snippet center()}
           {#if connection !== 'online'}
             <span class="connection" role="status" data-testid="status-connection">
@@ -130,6 +314,18 @@
         fallback={restingFocus}
       />
 
+      {#if wm.atHome}
+        <div
+          class="home"
+          data-testid="home-screen"
+          style:padding-top="{homeTop}px"
+          style:padding-inline="{homeSide}px"
+        >
+          <div class="home-apps">{@render homeGrid()}</div>
+          <SearchPill testid="home-search" shortcut={searchShortcut(mac)} onclick={openSearch} />
+        </div>
+      {/if}
+
       <div
         class="widgets"
         class:obscured={widgetsObscured}
@@ -151,11 +347,11 @@
       {#each wm.windows as win (win.id)}
         {@const app = appOf(win.appId)}
         {@const onStage = win.stageId === wm.activeStageId || win.layout === 'slideover'}
-        <!-- An app with a client of its own keeps its page for as long as its window exists: off the active stage the window is
+        <!-- An installed app keeps its page for as long as its window exists: off the active stage the window is
              kept in the page, hidden (`display: none` keeps the frame's document: it is not reloaded when shown again, takes
-             no focus or pointer events and is not read by a screen reader), so what the client holds in its page survives
-             switching apps. The windows of the other apps are drawn again from the host's state when their stage returns. -->
-        {#if app && (onStage || installedApp(win.appId)?.client)}
+             no focus or pointer events and is not read by a screen reader), so what the app holds in its page survives
+             switching apps. The built-in pages are drawn again when their stage returns. -->
+        {#if app && (onStage || installedApp(win.appId))}
           {@const frame = wm.frameOf(win)}
           <div class="slot" class:away={!onStage} inert={!onStage} aria-hidden={!onStage}>
             <Window
@@ -203,7 +399,8 @@
           style:width="{pane.width}px"
           style:height="{pane.height}px"
         >
-          <p>Choose an app from the Dock</p>
+          <p>Choose an app</p>
+          <div class="home-apps">{@render homeGrid()}</div>
         </div>
       {/if}
 
@@ -241,13 +438,43 @@
     <Dock
       available={workspaceWidth > 0 ? workspaceWidth - 24 : undefined}
       testid="dock"
-      apps={dockApps}
-      onselect={(id) => wm.open(id as AppId)}
+      apps={pinnedApps}
+      recents={recentDockApps}
+      onselect={(id) => wm.open(id)}
+      onmenu={askMenu}
     />
+  {/snippet}
+
+  {#snippet overlay()}
+    {#if menu && menuApp}
+      <ContextMenu
+        testid="app-menu"
+        label={menuApp.name}
+        items={menuItems}
+        anchor={menu.rect}
+        onselect={chooseFromMenu}
+        ondismiss={dismissMenu}
+      />
+    {/if}
+    {#if spotlight.open}
+      <Spotlight
+        testid="spotlight"
+        bind:query={spotlight.query}
+        items={spotlight.results}
+        activeId={spotlight.activeId}
+        heading={spotlight.suggesting ? 'Suggestions' : undefined}
+        status={spotlight.status}
+        onmove={(delta) => spotlight.move(delta)}
+        onhighlight={(id) => spotlight.highlight(id)}
+        onactivate={openResult}
+        ondismiss={() => spotlight.close()}
+      />
+    {/if}
   {/snippet}
 </DesktopTemplate>
 
 <svelte:window
+  onkeydowncapture={onshortcut}
   onpointerdown={() => {
     // Remember the divider origin for the next drag.
     dividerStart = wm.splitDividerX ?? 0
@@ -274,6 +501,31 @@
   .slot.away {
     display: none;
   }
+  /* The Home Screen: the grid of apps over the wallpaper, down to the "Search" capsule above the Dock. */
+  .home {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding-bottom: 116px; /* the Dock's room (104) and some air above it */
+    animation: home-in var(--duration) var(--ease-ios);
+  }
+  /* it comes back as the last window leaves (at once under Reduce Motion: base.css) */
+  @keyframes home-in {
+    from {
+      opacity: 0;
+    }
+  }
+  .home-apps {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    display: flex;
+    justify-content: center;
+  }
   .widgets {
     position: absolute;
     top: 16px;
@@ -297,8 +549,11 @@
   }
   .split-placeholder {
     position: absolute;
-    display: grid;
-    place-items: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 20px 12px 12px;
     border-radius: var(--radius-xl);
     background: rgb(255 255 255 / 0.12);
     -webkit-backdrop-filter: blur(20px);
@@ -307,6 +562,10 @@
     color: #fff;
     font: var(--type-headline);
     z-index: 5;
+  }
+  .split-placeholder p {
+    flex: none;
+    margin: 0;
   }
   .sr-only {
     position: absolute;

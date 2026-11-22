@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The slow suites: everything that is kept out of `bun run gate` because it costs minutes, not seconds. Run it
 # (`bun run slow`) before a PR that changes what these suites guard, and when you want the full sweep; it is not
-# part of the pre-PR gate, a review or a fix round (CLAUDE.md, "The gate": iteration speed is a requirement).
+# part of the pre-PR gate, a review or a fix round (iteration speed is a requirement).
 #
 # One mechanism for every slow suite: a test that is too slow for the gate is `#[ignore = "slow: ..."]`, and this
 # script runs those tests and no other ignored one. It finds them by that reason: the function after each
@@ -20,7 +20,6 @@
 # What runs:
 #   - hostile_inputs: the full sweep (about two million hostile calls over every module) and the 60 000-macro
 #     ring (a wall-clock bound in a debug build);
-#   - vos-domain: the full case counts of the generated-tree diff properties (the gate runs a fifth of them);
 #   - abort_regressions in a release build: proves a default 2 MiB thread survives (the debug run is in the gate);
 #   - the bench bodies, each once (the gate only compiles them).
 #

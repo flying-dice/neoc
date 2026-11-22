@@ -24,7 +24,7 @@
  *
  * Everything it generates is a list of `{ path, contents }` (`generate.ts`).
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { HtmlTagDescriptor, Logger, Plugin } from 'vite'
 import { promote, writeApp } from './backend.ts'

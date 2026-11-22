@@ -8,7 +8,6 @@ import {
   DEFINITIONS,
   expectedErrors,
   finding,
-  inViteApp,
   markerCount,
   mergeFindings,
   NEGATIVE_MARKERS,
@@ -90,18 +89,19 @@ describe('the module names an app may require', () => {
   const offered = offeredModules(definitions)
 
   test('are the declarations overloads less the unusable ones', () => {
-    expect(offered.has('vos:app') && offered.has('vos:ui') && offered.has('lib:json') && offered.has('std:fs')).toBe(true)
+    expect(offered.has('vos:app') && offered.has('lib:json') && offered.has('std:fs')).toBe(true)
+    expect(offered.has('vos:ui'), 'the view-tree constructors are gone').toBe(false)
     for (const refused of ['lib:test', 'lib:compile', 'std:workers']) {
       expect(offered.has(refused), refused).toBe(false)
       expect(overloads(definitions).find((o) => o.name === refused)?.type).toStartWith('vos_NotForApps_')
     }
   })
 
-  test('a relative path, vos:app, vos:ui and an offered module are allowed; a refused or misspelt one is not', () => {
-    for (const ok of ['./calc', '../shared/calc', 'vos:app', 'vos:ui', 'lib:json', 'vnd:serde_yaml']) {
+  test('a relative path, vos:app and an offered module are allowed; a refused, removed or misspelt one is not', () => {
+    for (const ok of ['./calc', '../shared/calc', 'vos:app', 'lib:json', 'vnd:serde_yaml']) {
       expect(allowedRequire(ok, offered), ok).toBe(true)
     }
-    for (const bad of ['lib:test', 'lib:jsno', 'vos:nope', 'calc', 'json', '@pkg/x']) {
+    for (const bad of ['lib:test', 'lib:jsno', 'vos:nope', 'vos:ui', 'calc', 'json', '@pkg/x']) {
       expect(allowedRequire(bad, offered), bad).toBe(false)
     }
   })
@@ -123,7 +123,7 @@ describe('the second pass (the declarations without their `declare require`)', (
     const bare = withoutRequire(definitions)
     expect(bare.split('\n').some((l) => l.startsWith('declare require'))).toBe(false)
     expect(bare).toContain('declare app: vos_AppApi')
-    expect(bare).toContain('export type vos_ui = {')
+    expect(bare).toContain('export type vos_AppApi = {')
     expect(definitions.startsWith(bare.trimEnd())).toBe(true)
     expect(() => withoutRequire('-- nothing\n')).toThrow('no `-- ===== require =====` section')
   })
@@ -141,7 +141,9 @@ describe('the second pass (the declarations without their `declare require`)', (
       ],
       offered
     )
+    // `vos:ui` is no module an app is offered any more: a require of it is a finding like any unknown name
     expect(kept.map((f) => f.primary)).toEqual([
+      'TypeError: Unknown require: /x/y/vos:ui.lua',
       'TypeError: Unknown require: /x/y/lib:test.lua',
       'TypeError: Unknown require: /x/y/lib:jsno.lua',
       "TypeError: Expected this to be 'string', but got 'number'"
@@ -166,18 +168,5 @@ describe('the pinned negative fixtures', () => {
     for (const [file, expected] of Object.entries(NEGATIVE_MARKERS)) {
       expect(markerCount(file, readFileSync(join(root, file), 'utf8')), file).toBe(expected)
     }
-  })
-})
-
-describe('which apps the repository check leaves to their own project', () => {
-  const projects = new Set(['apps/calculator'])
-  const isProject = (dir: string): boolean => projects.has(dir)
-  test('every file of a Vite project, its sources and its generated and built Luau', () => {
-    for (const file of ['apps/calculator/server/main.luau', 'apps/calculator/.app/rpc.luau', 'apps/calculator/dist/app.luau'])
-      expect(inViteApp(file, isProject)).toBe(true)
-  })
-  test('a view-tree app, a fixture and a file named like a project elsewhere are still checked', () => {
-    for (const file of ['apps/notes/app.luau', 'crates/vos-codegen/tests/fixtures/calculator/app.luau', 'scripts/fixtures/usage.luau', 'apps'])
-      expect(inViteApp(file, isProject)).toBe(false)
   })
 })

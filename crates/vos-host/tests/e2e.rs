@@ -6,60 +6,25 @@
 mod common;
 
 use common::{
-    browser, call, claude, connect_agent, connect_rpc, next_notification, pair, publish_package, rpc, start,
-    temp, text_of, tool_names, wait_until, Ws,
+    browser, built_backend, call, claude, connect_agent, connect_rpc, next_notification, notification_where,
+    pair, publish_app_ref, publish_package, rpc, start, temp, text_of, tool_names, wait_until, Ws,
 };
-use serde_json::json;
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{
-    path::Path,
-    sync::{atomic::Ordering, Arc},
-    time::Duration,
-};
-use vos_application::{
-    data::Params,
-    live::{SourceId, SourceUpdate},
-    testing::CollectingSink,
-    AppStatus, BindingKind, Resolution, WriteRequest,
-};
+use std::{path::Path, sync::atomic::Ordering, time::Duration};
+use vos_application::AppStatus;
 use vos_domain::{
-    ui::protocol::{AppNotification, HostNotification},
-    Actor, AppId, AppRef, FileRef, Manifest,
+    protocol::{AppNotification, HostNotification},
+    AppId,
 };
 use vos_host::startup::{prepare_data_dir, start_apps};
 
-/// Publish the fixture app under `root` as an app ref with the id `id`; returns the `file://` URL of the ref.
+/// Publish the Notes fixture backend (`tests/fixtures/backends/notes.luau`, built with the app pipeline: the one
+/// Luau file an app ref ships) under `root` as the app `id`; returns the `file://` URL of the ref.
 fn publish_app(root: &Path, id: &str) -> String {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/notes/app.luau");
-    let lua = std::fs::read_to_string(src).unwrap().replace("\"notes\"", &format!("\"{id}\""));
-    std::fs::create_dir_all(root).unwrap();
-    // build the fixture with the app pipeline: the one Luau file an app ref ships
-    std::fs::write(root.join("source.luau"), &lua).unwrap();
-    let lua = String::from_utf8(common::build_luau(&root.join("source.luau"))).unwrap();
-    std::fs::remove_file(root.join("source.luau")).unwrap();
-    std::fs::write(root.join("app.luau"), &lua).unwrap();
-    let r = AppRef {
-        manifest: Manifest {
-            id: AppId::parse(id).unwrap(),
-            name: id.into(),
-            version: "1.0.0".into(),
-            main: "app.luau".into(),
-            migrations: vec![],
-            icon: None,
-            tint: None,
-            description: None,
-            requires: None,
-            ui: None,
-            window: None,
-        },
-        files: vec![FileRef {
-            path: "app.luau".into(),
-            url: format!("file://{}/app.luau", root.display()),
-            sha256: format!("{:x}", Sha256::digest(lua.as_bytes())),
-        }],
-    };
-    std::fs::write(root.join("app-ref.json"), serde_json::to_vec(&r).unwrap()).unwrap();
-    format!("file://{}/app-ref.json", root.display())
+    let name = if id == "notes" { "Notes" } else { id };
+    let manifest = json!({ "id": id, "name": name, "main": "app.luau", "ui": { "root": "static" } });
+    publish_app_ref(root, manifest, &[("app.luau", built_backend("notes"))])
 }
 
 fn publish_notes_app(root: &Path) -> String {
@@ -91,7 +56,7 @@ async fn install_over_rpc_then_use_from_mcp_and_ui_and_uninstall() {
     assert_eq!(next_notification(&mut ws, "app.installed").await["app"], "notes");
     let listed = rpc(&mut ws, 2, "app.list", json!({})).await;
     assert_eq!(listed["result"]["apps"][0]["state"], "running", "{listed}");
-    assert_eq!(listed["result"]["apps"][0]["name"], "Notes", "the name the app declared");
+    assert_eq!(listed["result"]["apps"][0]["name"], "Notes", "the name its manifest gives it");
 
     // --- an agent connects on /mcp with its own bearer token and sees the tools
     let (agent, _) = connect_agent(addr, "tok-claude").await;
@@ -102,17 +67,14 @@ async fn install_over_rpc_then_use_from_mcp_and_ui_and_uninstall() {
     assert_eq!(search.title.as_deref(), Some("Search Notes"));
     assert_eq!(search.input_schema["required"], json!(["query"]), "the schema the app.t builders compiled");
 
-    // --- an open view subscribes to the app's live sources (the view layer does this per window)
+    // --- the app's page (the shell forwards its calls as `app.call`) reads through a handler
     let notes = AppId::parse("notes").unwrap();
-    let live = r.host.service.live(&notes).unwrap();
-    let sink = Arc::new(CollectingSink::default());
-    let (_, list) = live.subscribe(&SourceId("s1".into()), Params::None, None, sink.clone()).await.unwrap();
-    assert!(matches!(&list, SourceUpdate::Rows(d) if d.keys.is_empty() && d.total == Some(0)));
-    let (_, count) = live.subscribe(&SourceId("s2".into()), Params::None, None, sink.clone()).await.unwrap();
-    assert_eq!(count, SourceUpdate::Scalar(json!(0)));
+    let page = |method: &'static str, args: Value| json!({"app": "notes", "method": method, "args": args});
+    let list = rpc(&mut ws, 3, "app.call", page("list", json!({}))).await;
+    assert_eq!(list["result"], json!([]), "{list}");
 
-    // --- the agent calls a tool: Lua runs as that agent, SQLite writes, app.notify reaches the UI, and the
-    //     live sources push their deltas with no UI code anywhere
+    // --- the agent calls a tool: Lua runs as that agent, SQLite writes, app.notify reaches the UI, and the app
+    //     tells its open pages what changed (`app.emit`) with no window code in the host
     let out = call(&agent, "notes__add_note", json!({"body": "from the agent"})).await;
     assert_ne!(out.is_error, Some(true), "{out:?}");
     // the typed `notification.deliver` message: the sender is the host's id for the app, not anything the app wrote
@@ -125,59 +87,37 @@ async fn install_over_rpc_then_use_from_mcp_and_ui_and_uninstall() {
             body: Some("from the agent".into()),
         })
     );
-    wait_until("the list and count deltas", || sink.peek().len() >= 2).await;
-    let updates = sink.take();
-    let rows = updates
-        .iter()
-        .find_map(|(_, u)| if let SourceUpdate::Rows(d) = u { Some(d) } else { None })
-        .expect("a rows delta");
-    assert_eq!(rows.keys, vec![json!(1)]);
-    assert_eq!(rows.changed[0].1["title"], "from the agent");
-    assert!(updates.iter().any(|(_, u)| *u == SourceUpdate::Scalar(json!(1))));
+    let event = next_notification(&mut ws, "app.event").await;
+    assert_eq!(event, json!({"app": "notes", "name": "notes.changed", "data": {"id": 1}}));
+    // the page reads again, as it does when it hears the event
+    let list = rpc(&mut ws, 4, "app.call", page("list", json!({}))).await;
+    assert_eq!(list["result"][0]["title"], "from the agent", "{list}");
+    assert_eq!(list["result"].as_array().unwrap().len(), 1);
 
-    // --- a note is open in a view; the agent appends to it while the human types
-    let (_, open) = live
-        .subscribe(&SourceId("s3".into()), Params::named([("id", json!(1))]), None, sink.clone())
-        .await
-        .unwrap();
-    let SourceUpdate::Row(open) = open else { panic!("row") };
-    assert_eq!(open.rev, Some(json!(0)));
+    // --- the note is open in the page; the agent appends to it and the page hears it
     let out = call(&agent, "notes__append", json!({"id": 1, "text": "- buy oat milk"})).await;
     assert_ne!(out.is_error, Some(true), "{out:?}");
-    wait_until("the open note's delta", || {
-        sink.peek().iter().any(|(_, u)| matches!(u, SourceUpdate::Row(r) if r.rev == Some(json!(1))))
-    })
-    .await;
-    sink.take();
+    notification_where(&mut ws, "app.event", |p| p["name"] == "notes.changed" && p["data"]["id"] == 1).await;
+    let open = rpc(&mut ws, 6, "app.call", page("get", json!({"id": 1}))).await;
+    assert_eq!(open["result"]["body"], "from the agent\n- buy oat milk", "{open}");
+    assert_eq!((&open["result"]["rev"], &open["result"]["author"]), (&json!(1), &json!("Claude")));
 
-    // the human edited "from the agent" -> "From the agent" at rev 0 (their last sent value): the host merges
-    let ack = r
-        .host
-        .service
-        .write_field(
-            &notes,
-            WriteRequest {
-                source: SourceId("s3".into()),
-                params: Params::named([("id", json!(1))]),
-                key: json!(1),
-                field: "body".into(),
-                value: json!("From the agent"),
-                base_rev: Some(json!(0)),
-                binding: BindingKind::Text { base: Some("from the agent".into()) },
-                actor: Actor::user("You"),
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(ack.resolution, Resolution::Merged);
-    assert_eq!(ack.value, json!("From the agent\n- buy oat milk"));
-    assert_eq!(ack.rev, Some(json!(2)));
-    wait_until("the merged note", || {
-        sink.peek()
-            .iter()
-            .any(|(_, u)| matches!(u, SourceUpdate::Row(r) if r.row.as_ref().is_some_and(|row| row["author"] == "You")))
-    })
-    .await;
+    // --- the person edits the note in the page: the handler runs as them, and may write
+    let saved =
+        rpc(&mut ws, 7, "app.call", page("save", json!({"id": 1, "body": "From the agent\n- buy oat milk"})))
+            .await;
+    assert_eq!(
+        saved["result"],
+        json!({"body": "From the agent\n- buy oat milk", "rev": 2, "author": "You"}),
+        "{saved}"
+    );
+    // a handler's own failure is the app's error (-32010), with the message it gave
+    let missing = rpc(&mut ws, 8, "app.call", page("save", json!({"id": 99, "body": "x"}))).await;
+    assert_eq!(missing["error"]["code"], -32010, "{missing}");
+    assert_eq!(missing["error"]["message"], "No note with id 99");
+    // and a method the backend does not have is JSON-RPC's own
+    let unknown = rpc(&mut ws, 9, "app.call", page("nope", json!({}))).await;
+    assert_eq!(unknown["error"]["code"], -32601, "{unknown}");
 
     // --- the agent's bad calls are tool errors, not host failures
     let out = call(&agent, "notes__append", json!({"id": 99, "text": "x"})).await;
@@ -190,7 +130,7 @@ async fn install_over_rpc_then_use_from_mcp_and_ui_and_uninstall() {
     // --- uninstall: the tool disappears for the agent (list_changed), VM + registry cleaned up
     let (agent2, counter) = connect_agent(addr, "tok-claude").await;
     let before = counter.0.load(Ordering::SeqCst);
-    let reply = rpc(&mut ws, 5, "app.uninstall", json!({"app":"notes"})).await;
+    let reply = rpc(&mut ws, 10, "app.uninstall", json!({"app":"notes"})).await;
     assert!(reply.get("error").is_none(), "{reply}");
     wait_until("tools/list_changed", || counter.0.load(Ordering::SeqCst) > before).await;
     assert!(agent.peer().list_tools(None).await.unwrap().tools.is_empty());
@@ -332,15 +272,18 @@ async fn dev_reload_rebuilds_the_vm_when_the_bundle_changes_and_keeps_the_data()
     call(&agent, "notes__add_note", json!({"body": "before"})).await;
     tokio::time::sleep(Duration::from_millis(300)).await; // let the watcher settle
 
-    // "rebuild" the bundle: a new tool, a new checksum
+    // "rebuild" the bundle: a new tool (declared before the entry returns its handlers), a new checksum
     let before = counter.0.load(Ordering::SeqCst);
     let lua = std::fs::read_to_string(pkg.join("app.luau")).unwrap();
-    let v2 =
-        format!("{lua}\napp.tools.register({{ name = \"extra\", run = function() return \"v2\" end }})\n");
+    let extra = "app.tools.register({ name = \"extra\", run = function() return \"v2\" end })";
+    let v2 = lua.replacen("\nreturn handlers", &format!("\n{extra}\nreturn handlers"), 1);
+    assert_ne!(v2, lua, "the bundle ends by returning its handlers: {lua}");
     std::fs::write(pkg.join("app.luau"), &v2).unwrap();
-    let mut app_ref: AppRef =
+    let mut app_ref: Value =
         serde_json::from_slice(&std::fs::read(pkg.join("app-ref.json")).unwrap()).unwrap();
-    app_ref.files[0].sha256 = format!("{:x}", Sha256::digest(v2.as_bytes()));
+    let entry =
+        app_ref["files"].as_array_mut().unwrap().iter_mut().find(|f| f["path"] == "app.luau").unwrap();
+    entry["sha256"] = json!(format!("{:x}", Sha256::digest(v2.as_bytes())));
     std::fs::write(pkg.join("app-ref.json"), serde_json::to_vec(&app_ref).unwrap()).unwrap();
 
     wait_until("the reloaded tool list", || counter.0.load(Ordering::SeqCst) > before).await;

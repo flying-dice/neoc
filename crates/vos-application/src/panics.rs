@@ -1,9 +1,9 @@
-//! A panic in host code that runs for a long time (a pump, a connection's request loop, an agent turn), caught
+//! A panic in host code that runs for a long time (a pump, a connection's request loop), caught
 //! where it starts so it ends one step of the work, not the work.
 //!
 //! The host unwinds on panic (NEOC-125): a panic ends only the tokio task it happens in. For a task that serves
 //! for as long as the host or an app runs, that would leave something that looks alive and is not (a window that
-//! no longer answers, notifications that stop, a chat that stays "running"), so each such task catches a panic in
+//! no longer answers, notifications that stop), so each such task catches a panic in
 //! one step, logs it at error level and carries on, or ends what it was doing with an error the person sees.
 //! (A panic inside a call into an app's VM is caught by the Lua adapter; this is for the host's own code.)
 

@@ -1,0 +1,552 @@
+{
+  "openrpc": "1.3.2",
+  "info": {
+    "title": "Containers",
+    "version": "0.1.0",
+    "description": "The Docker containers and Compose stacks of this machine: see what runs, start, stop and restart it, read its logs."
+  },
+  "x-app": {
+    "id": "containers",
+    "icon": "rectangle.stack",
+    "tint": "teal",
+    "description": "The Docker containers and Compose stacks of this machine: see what runs, start, stop and restart it, read its logs.",
+    "window": {
+      "w": 980,
+      "h": 640,
+      "minW": 440,
+      "minH": 420
+    }
+  },
+  "methods": [
+    {
+      "name": "overview",
+      "summary": "Whether Docker can be reached, and every container and Compose stack it has. A Docker that cannot be reached is an answer (`engine.reachable` is false and says why), not an error.",
+      "params": [],
+      "result": {
+        "name": "overview",
+        "schema": {
+          "$ref": "#/components/schemas/Overview"
+        }
+      }
+    },
+    {
+      "name": "connect",
+      "summary": "Choose the Docker this app manages, and answer with what it has.",
+      "params": [
+        {
+          "name": "host",
+          "required": true,
+          "description": "Where Docker listens: `unix:///path/docker.sock`, `tcp://host:2375` or `http://host:2375`. Empty for this machine's own Docker.",
+          "schema": {
+            "type": "string",
+            "maxLength": 300
+          }
+        }
+      ],
+      "result": {
+        "name": "overview",
+        "schema": {
+          "$ref": "#/components/schemas/Overview"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "The address is not one Docker can be reached at."
+        }
+      ]
+    },
+    {
+      "name": "start",
+      "summary": "Start a container.",
+      "params": [
+        {
+          "name": "container",
+          "required": true,
+          "description": "The id of one of the containers of `overview`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 128
+          }
+        }
+      ],
+      "result": {
+        "name": "overview",
+        "schema": {
+          "$ref": "#/components/schemas/Overview"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "Docker cannot be reached, the container or stack is gone, or Docker refused: the message says which."
+        }
+      ]
+    },
+    {
+      "name": "stop",
+      "summary": "Stop a container: Docker asks it to end, and kills it after ten seconds.",
+      "params": [
+        {
+          "name": "container",
+          "required": true,
+          "description": "The id of one of the containers of `overview`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 128
+          }
+        }
+      ],
+      "result": {
+        "name": "overview",
+        "schema": {
+          "$ref": "#/components/schemas/Overview"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "Docker cannot be reached, the container or stack is gone, or Docker refused: the message says which."
+        }
+      ]
+    },
+    {
+      "name": "restart",
+      "summary": "Stop a container and start it again.",
+      "params": [
+        {
+          "name": "container",
+          "required": true,
+          "description": "The id of one of the containers of `overview`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 128
+          }
+        }
+      ],
+      "result": {
+        "name": "overview",
+        "schema": {
+          "$ref": "#/components/schemas/Overview"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "Docker cannot be reached, the container or stack is gone, or Docker refused: the message says which."
+        }
+      ]
+    },
+    {
+      "name": "remove",
+      "summary": "Remove a container, running or not. Its named volumes stay.",
+      "params": [
+        {
+          "name": "container",
+          "required": true,
+          "description": "The id of one of the containers of `overview`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 128
+          }
+        }
+      ],
+      "result": {
+        "name": "overview",
+        "schema": {
+          "$ref": "#/components/schemas/Overview"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "Docker cannot be reached, the container or stack is gone, or Docker refused: the message says which."
+        }
+      ]
+    },
+    {
+      "name": "startStack",
+      "summary": "Start every container of a Compose stack, the services others depend on first.",
+      "params": [
+        {
+          "name": "stack",
+          "required": true,
+          "description": "The name of one of the stacks of `overview`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 128
+          }
+        }
+      ],
+      "result": {
+        "name": "overview",
+        "schema": {
+          "$ref": "#/components/schemas/Overview"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "Docker cannot be reached, the container or stack is gone, or Docker refused: the message says which."
+        }
+      ]
+    },
+    {
+      "name": "stopStack",
+      "summary": "Stop every container of a Compose stack, the services others depend on last.",
+      "params": [
+        {
+          "name": "stack",
+          "required": true,
+          "description": "The name of one of the stacks of `overview`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 128
+          }
+        }
+      ],
+      "result": {
+        "name": "overview",
+        "schema": {
+          "$ref": "#/components/schemas/Overview"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "Docker cannot be reached, the container or stack is gone, or Docker refused: the message says which."
+        }
+      ]
+    },
+    {
+      "name": "restartStack",
+      "summary": "Stop a Compose stack and start it again.",
+      "params": [
+        {
+          "name": "stack",
+          "required": true,
+          "description": "The name of one of the stacks of `overview`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 128
+          }
+        }
+      ],
+      "result": {
+        "name": "overview",
+        "schema": {
+          "$ref": "#/components/schemas/Overview"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "Docker cannot be reached, the container or stack is gone, or Docker refused: the message says which."
+        }
+      ]
+    },
+    {
+      "name": "removeStack",
+      "summary": "Take a Compose stack down: remove its containers and its networks. Its volumes stay.",
+      "params": [
+        {
+          "name": "stack",
+          "required": true,
+          "description": "The name of one of the stacks of `overview`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 128
+          }
+        }
+      ],
+      "result": {
+        "name": "overview",
+        "schema": {
+          "$ref": "#/components/schemas/Overview"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "Docker cannot be reached, the container or stack is gone, or Docker refused: the message says which."
+        }
+      ]
+    },
+    {
+      "name": "details",
+      "summary": "What a container was made with: its command, restart policy, mounts, networks and the names of its environment variables.",
+      "params": [
+        {
+          "name": "container",
+          "required": true,
+          "description": "The id of one of the containers of `overview`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 128
+          }
+        }
+      ],
+      "result": {
+        "name": "details",
+        "schema": {
+          "$ref": "#/components/schemas/Details"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "Docker cannot be reached, the container or stack is gone, or Docker refused: the message says which."
+        }
+      ]
+    },
+    {
+      "name": "logs",
+      "summary": "The end of what a container has written, both its output and its errors, as text.",
+      "params": [
+        {
+          "name": "container",
+          "required": true,
+          "description": "The id of one of the containers of `overview`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 128
+          }
+        },
+        {
+          "name": "tail",
+          "required": false,
+          "description": "How many lines from the end (200 when left out).",
+          "schema": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2000
+          }
+        }
+      ],
+      "result": {
+        "name": "logs",
+        "schema": {
+          "$ref": "#/components/schemas/Logs"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "Docker cannot be reached, the container or stack is gone, or Docker refused: the message says which."
+        }
+      ]
+    }
+  ],
+  "components": {
+    "schemas": {
+      "Engine": {
+        "type": "object",
+        "properties": {
+          "reachable": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "string",
+            "description": "Docker's version, empty when it cannot be reached."
+          },
+          "host": {
+            "type": "string",
+            "description": "Where Docker is looked for, as given to `connect`. Empty for this machine's own Docker."
+          },
+          "problem": {
+            "type": "string",
+            "description": "Why Docker cannot be reached, as a sentence. Empty when it can."
+          }
+        },
+        "required": [
+          "reachable",
+          "version",
+          "host",
+          "problem"
+        ]
+      },
+      "State": {
+        "type": "string",
+        "description": "Docker's state of a container.",
+        "enum": [
+          "created",
+          "running",
+          "paused",
+          "restarting",
+          "removing",
+          "exited",
+          "dead"
+        ]
+      },
+      "Container": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "image": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/State"
+          },
+          "status": {
+            "type": "string",
+            "description": "Docker's own words for the state: `Up 2 hours`, `Exited (0) 3 days ago`."
+          },
+          "ports": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The published ports, each as `8080:80` (the machine's port, then the container's)."
+          },
+          "stack": {
+            "type": "string",
+            "description": "The Compose stack it belongs to; empty for a container on its own."
+          },
+          "service": {
+            "type": "string",
+            "description": "Its service in the stack; empty for a container on its own."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "image",
+          "state",
+          "status",
+          "ports",
+          "stack",
+          "service"
+        ]
+      },
+      "Stack": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "running": {
+            "type": "integer",
+            "description": "How many of its containers are running."
+          },
+          "total": {
+            "type": "integer",
+            "description": "How many containers it has."
+          },
+          "folder": {
+            "type": "string",
+            "description": "The folder it was brought up from; empty when Compose did not record one."
+          }
+        },
+        "required": [
+          "name",
+          "running",
+          "total",
+          "folder"
+        ]
+      },
+      "Overview": {
+        "type": "object",
+        "properties": {
+          "engine": {
+            "$ref": "#/components/schemas/Engine"
+          },
+          "containers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Container"
+            },
+            "description": "Every container, running or not, by name."
+          },
+          "stacks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Stack"
+            },
+            "description": "The Compose stacks the containers belong to, by name."
+          }
+        },
+        "required": [
+          "engine",
+          "containers",
+          "stacks"
+        ]
+      },
+      "Details": {
+        "type": "object",
+        "properties": {
+          "container": {
+            "type": "string",
+            "description": "The container's id."
+          },
+          "command": {
+            "type": "string",
+            "description": "What it runs, as one line."
+          },
+          "restart": {
+            "type": "string",
+            "description": "Its restart policy: `no`, `always`, `unless-stopped` or `on-failure`."
+          },
+          "health": {
+            "type": "string",
+            "description": "`healthy`, `unhealthy` or `starting` for a container with a health check; empty without one."
+          },
+          "mounts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Each mount as `source -> path in the container`."
+          },
+          "networks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "environment": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The names of its environment variables. Their values are not sent: they often hold passwords."
+          }
+        },
+        "required": [
+          "container",
+          "command",
+          "restart",
+          "health",
+          "mounts",
+          "networks",
+          "environment"
+        ]
+      },
+      "Logs": {
+        "type": "object",
+        "properties": {
+          "container": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "The text is the end of something longer."
+          }
+        },
+        "required": [
+          "container",
+          "text",
+          "truncated"
+        ]
+      }
+    }
+  }
+}

@@ -1,18 +1,17 @@
 /**
  * The shell's side channel on the session's one connection.
  *
- * The renderer's `Session` speaks the view protocol (`view.*`, `data.*`, ...) and nothing else. The shell also
- * needs the host's own methods (`app.list`, `app.install`, `host.devices.list`, ...) and the notifications no
- * window owns (`window.open`, `app.installed`, ...). Rather than a second socket, this wraps the one transport:
+ * The `Session` makes the handshake (`session.hello`) and nothing else. The shell also needs the host's own
+ * methods (`app.list`, `app.install`, `host.devices.list`, ...) and the host's notifications (`window.open`,
+ * `app.installed`, ...). Rather than a second socket, this wraps the one transport:
  *
  *   - the shell's requests carry string ids (`s1`, `s2`, ...), the session's are numbers, so the two never
  *     meet: responses to a string id are the shell's and never reach the session;
  *   - every notification reaches the session (it ignores what it does not know) and the shell's listeners;
  */
-import type { SessionOptions } from '../view'
-import { createRpcPeer, RpcError } from '../view/rpc/peer'
+import { createRpcPeer, RpcError } from './rpc/peer'
+import type { Transport } from './rpc/transport'
 
-type Transport = SessionOptions['transport']
 type Params = Record<string, unknown>
 
 /** How a call waits for its answer. */

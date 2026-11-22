@@ -1,6 +1,6 @@
 import type { Frame, StageSummary, WindowLayout } from '@vos/ui'
 import { appOf, MIN_WIDTH, type AppDefinition, type AppId } from './apps.svelte'
-import { sizeClassOf } from '../view/protocol'
+import { sizeClassOf } from '../shell/sizeClass'
 import { randomId } from './randomId'
 
 /**
@@ -25,7 +25,7 @@ import { randomId } from './randomId'
  *
  * Compact screens (a phone): floating windows, Split View and Slide Over are what iPadOS does on a regular-size screen;
  * on a compact one iOS shows one app at a time, full screen. A workspace narrower or shorter than the size-class
- * breakpoint (`COMPACT_BELOW`, the one a window's own content switches at) is `compact`, and there every window is
+ * breakpoint (`COMPACT_BELOW`) is `compact`, and there every window is
  * presented full screen above the Dock (`layoutOf`, `frameOf`), whatever layout it has; the Dock stays up (a touch
  * screen has no pointer to bring it back) and the recent-apps strip steps back to the screen's edge (`stripObscured`).
  * An app's minimum size is a regular-size window's: on a compact screen the window is the screen's size. Nothing a
@@ -38,10 +38,6 @@ import { randomId } from './randomId'
 export interface WindowState {
   id: string
   appId: AppId
-  /** The window kind an installed app declared (`app.window("main", ...)`). */
-  kind: string
-  /** The deep link the app's `onOpen(w, params)` receives. */
-  params?: Record<string, unknown>
   stageId: string | null
   layout: WindowLayout
   /** Frame used when floating (kept while in other layouts, to restore). */
@@ -166,6 +162,11 @@ export class WindowManager {
     return this.compact || this.immersive || this.onStage.some((w) => w.frame.x < STRIP_WIDTH - 10)
   }
 
+  /** The Home Screen is what is on show: no group is on stage and no Slide Over is out. */
+  get atHome(): boolean {
+    return this.onStage.length === 0 && !(this.slideOver && !this.slideOverHidden)
+  }
+
   isOpen(appId: AppId): boolean {
     return this.windows.some((w) => w.appId === appId)
   }
@@ -270,10 +271,7 @@ export class WindowManager {
    * looking at rather than replacing it. An id that is not an app the shell can
    * show (not installed, disabled, failed) is ignored.
    */
-  open(
-    appId: AppId,
-    options: { alongside?: boolean; kind?: string; params?: Record<string, unknown> } = {}
-  ): void {
+  open(appId: AppId, options: { alongside?: boolean } = {}): void {
     const app = appOf(appId)
     if (!app) return
     const existing = this.windows.find((w) => w.appId === appId)
@@ -286,7 +284,7 @@ export class WindowManager {
       return this.focus(existing.id)
     }
 
-    const win = this.#createWindow(app, options.kind ?? 'main', options.params)
+    const win = this.#createWindow(app)
     const stage = this.activeStage
 
     // Filling the empty side of a pending Split View, when the two apps fit side by side at their minimums. On a compact
@@ -475,6 +473,19 @@ export class WindowManager {
     this.#focusTopmost()
   }
 
+  /**
+   * Leave the stage for the Home Screen. Nothing is closed or rearranged: the group that was on stage waits in the
+   * recent-apps strip as it is (a split stays a split, first in the strip), a Slide Over steps aside, and no window
+   * has the keys.
+   */
+  showHome(): void {
+    const stage = this.activeStage
+    if (stage) stage.lastActive = Date.now()
+    this.activeStageId = null
+    if (this.slideOver) this.slideOverHidden = true
+    this.focusedId = null
+  }
+
   close(id: string): void {
     const win = this.windows.find((w) => w.id === id)
     if (!win) return
@@ -486,7 +497,7 @@ export class WindowManager {
   // ── Internals ──────────────────────────────────────────────────────────
 
   /** Only called for an app `open` has checked. */
-  #createWindow(app: AppDefinition, kind: string, params?: Record<string, unknown>): WindowState {
+  #createWindow(app: AppDefinition): WindowState {
     const frame = this.#cascade(this.onStage.length)
     const size = {
       width: Math.max(app.minWidth, Math.min(app.width, this.bounds.width - frame.x - INSET * 3)),
@@ -498,8 +509,6 @@ export class WindowManager {
     return {
       id: `${app.id}-${uid()}`,
       appId: app.id,
-      kind,
-      params,
       stageId: null,
       layout: 'floating',
       // an app's minimum can be wider than the room right of the strip: the window moves left rather than past the edge

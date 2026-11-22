@@ -47,8 +47,11 @@ local task = require("std:task")
 local thread = require("std:thread")
 local time = require("std:time")
 local workers = require("std:workers")
+local bollard = require("vnd:bollard")
 local hyper = require("vnd:hyper")
 local jsonschema = require("vnd:jsonschema")
+local keyring = require("vnd:keyring")
+local portable_pty = require("vnd:portable_pty")
 local quick_xml = require("vnd:quick_xml")
 local rusqlite = require("vnd:rusqlite")
 local serde_json = require("vnd:serde_json")
@@ -61,8 +64,8 @@ local toml = require("vnd:toml")
 -- every module is a table of its own, so naming it is not an unused import
 local _modules: { any } = {
 	archive, args, cache, compile, compress, crypto, csv, diff, glob, hex, hmac, html, http, ini, log, mime,
-	pkey, random, template, tempfile, text, unicode, vcr, collections, env, io, net, thread, workers, hyper,
-	jsonschema, quick_xml, serde_json, serde_yaml, sqlx_mysql, sqlx_postgres, testcontainers_modules, toml,
+	pkey, random, template, tempfile, text, unicode, vcr, collections, env, io, net, thread, workers, bollard, hyper,
+	jsonschema, keyring, portable_pty, quick_xml, serde_json, serde_yaml, sqlx_mysql, sqlx_postgres, testcontainers_modules, toml,
 }
 
 -- a fallible function returns the value, then an error message; checking the value narrows it
@@ -247,6 +250,62 @@ end
 print(hyper.get("http://127.0.0.1:1/", { follow_redirects = false }))
 print(hyper.post({ url = "http://127.0.0.1:1/", body = buffer.create(4), headers = { ["Content-Type"] = "application/octet-stream" } }))
 print(hyper.request({ method = "put", url = "http://127.0.0.1:1/", body = "x", timeout = 1.5 }))
+
+-- Docker: a client sends nothing until its first call; Docker's own tables come back untyped, a failure has a kind
+local docker = assert(bollard.connect({ host = "tcp://127.0.0.1:1", timeout = 5 }))
+local containers, list_err = docker:list_containers({ all = true, filters = { label = { "app=web" }, status = "running" } })
+if containers then
+	print(containers[1].Names[1])
+elseif bollard.error_kind(list_err) == "connect" then
+	print("Docker is not running")
+end
+print(docker:create_container({ name = "web", Image = "nginx", HostConfig = { RestartPolicy = { Name = "always" } } }))
+print(docker:stop_container("web", { timeout = 5 }), docker:remove_container("web", { force = true, volumes = true }))
+local ran = docker:exec("web", { "nginx", "-t" }, { user = "root" })
+if ran then
+	print(ran.stdout:upper(), ran.stderr, (ran.exit_code or 0) + 1)
+end
+local following = docker:logs("web", { follow = true, tail = 100 })
+if following then
+	local piece, piece_err = following:next()
+	print(piece, piece_err)
+	following:close()
+end
+print(docker:pull_image("nginx:1.27", { platform = "linux/arm64" }), docker:events({ filters = { type = "container" } }))
+
+-- a pseudo-terminal: a command on it, its output as bytes until the end (`nil, nil`), and how it ended
+local shell, spawn_err = portable_pty.spawn_command({ rows = 24, cols = 80, env = { TERM = "xterm-256color" } })
+if shell then
+	print(shell:write("echo hello\n"), shell:resize(40, 120), (shell:process_id() or 0) + 1)
+	local output, read_err = shell:read(4096)
+	print(if output then output:upper() else portable_pty.error_kind(read_err))
+	shell:kill()
+	local status = shell:wait()
+	if status then
+		print(status.exit_code + 1, status.success, status.signal)
+	end
+	shell:close()
+elseif portable_pty.error_kind(spawn_err) == "spawn" then
+	print("the shell could not be started")
+end
+print(portable_pty.spawn_command({ program = "ls", args = { "-l" }, cwd = "/tmp" }))
+
+-- the credential store: a mock here; no credential is an answer (`nil, nil`), and a failure has a kind
+local credentials = keyring.mock()
+local credential, credential_err = credentials:entry("example.com", "ada")
+if credential then
+	print(credential:set_password("secret"), credential:delete_credential(), credential:get_specifiers())
+	local password, password_err = credential:get_password()
+	print(if password then password:upper() else keyring.error_kind(password_err))
+elseif keyring.error_kind(credential_err) == "invalid_input" then
+	print("not a service the store takes")
+end
+local found = credentials:search({ service = "example.com" })
+if found then
+	print(#found, found[1]:get_secret())
+end
+local system_store, store_err = keyring.store()
+print(system_store, keyring.error_kind(store_err) == "no_store")
 
 -- the SQL parameters of the network databases are trailing arguments too
 local function network_databases(

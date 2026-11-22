@@ -17,7 +17,10 @@
       "minH": 320
     },
     "csp": {
-      "resourceDomains": ["https://cdn.example.com", "https://*.images.example.org"]
+      "resourceDomains": [
+        "https://cdn.example.com",
+        "https://*.images.example.org"
+      ]
     },
     "permissions": {
       "camera": {}
@@ -135,6 +138,42 @@
           ]
         }
       }
+    },
+    {
+      "name": "saveDocument",
+      "summary": "Write a text file into the app's Documents (the folders above it are made). The Files journeys use it to give the host's Files page something to browse.",
+      "params": [
+        {
+          "name": "path",
+          "description": "Where in Documents, with `/` between folders.",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "maxLength": 512
+          }
+        },
+        {
+          "name": "text",
+          "description": "What the file holds.",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "maxLength": 65536
+          }
+        }
+      ],
+      "result": {
+        "name": "saved",
+        "schema": {
+          "type": "boolean"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "The file could not be written."
+        }
+      ]
     }
   ],
   "components": {

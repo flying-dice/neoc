@@ -6,8 +6,11 @@
 //! Result<Table>` and are wired into the `require` registry by
 //! `crate::lua::modules::install`.
 
+pub mod bollard;
 pub mod hyper;
 pub mod jsonschema;
+pub mod keyring;
+pub mod portable_pty;
 pub mod quick_xml;
 pub mod rusqlite;
 pub mod serde_json;

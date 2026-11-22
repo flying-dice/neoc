@@ -11,6 +11,7 @@
 //! | static client files          | none (the shell shows its pairing screen when the session is missing) |
 //! | `POST /pair`, `GET /session` | none: a pairing code is the credential for `/pair`                    |
 //! | `/rpc`                       | a paired device's session cookie, **including from loopback**         |
+//! | `GET`, `PUT /files/host/{path}`, `/files/app/{app}/{path}` | a paired device's session cookie: download (always `attachment`, `nosniff`, never a page) or upload a file of This Computer (the host's whole file system, unless `host_files = false`) or of an app's Documents. The Origin/Host guard refuses a `PUT` from any other origin |
 //! | `GET /apps/{app}`            | a paired device's session cookie (an unpaired visitor gets a page that says to pair) |
 //! | `/apps/bridge.js`, `/apps/{app}/static/...` | none (a sandboxed frame sends no cookie, its module scripts send `Origin: null`: the origin guard lets those reads through, GET and HEAD under this prefix only). An app's static content is public like the shell's own files: nothing secret or personal belongs in it |
 //! | `/mcp`                       | a per-agent bearer token; a session cookie is not accepted here       |
@@ -37,26 +38,22 @@ pub mod serve;
 pub mod startup;
 
 use axum::{middleware::from_fn_with_state, Router};
-use std::{
-    net::IpAddr,
-    path::PathBuf,
-    sync::{Arc, Weak},
-};
+use std::{net::IpAddr, path::PathBuf, sync::Arc};
 use tokio_util::sync::CancellationToken;
 use vos_application::{
     ports::{
-        AgentDirectory, AppActivity, AppRuntime, Clock, DataStore, DeviceRegistry, EventSink, Fetcher,
-        InstalledAppStore, RandomSource, ToolRegistry,
+        AgentDirectory, AppRuntime, Clock, DataStore, DeviceRegistry, EventSink, Fetcher, InstalledAppStore,
+        RandomSource, ToolRegistry,
     },
-    AgentService, AppService, DeviceService, FileStore, PairingPolicy, Ports, ViewService,
+    AgentService, AppService, DeviceService, FileStore, FilesService, HostFiles, PairingPolicy, Ports,
 };
 use vos_domain::{limits, Agent};
 use vos_fetch::UrlFetcher;
 use vos_http::{
-    app_routes, origin_guard, require_session, rpc_router, session_router, static_router, HostGuard, RpcHub,
-    SessionConfig,
+    app_routes, files_router, origin_guard, require_session, rpc_router, session_router, static_router,
+    HostGuard, RpcHub, SessionConfig,
 };
-use vos_lua::{DiskFiles, LuaRuntime};
+use vos_lua::{DiskFiles, LocalFiles, LuaRuntime};
 use vos_mcp::{mcp_router, McpState};
 use vos_sqlite::{SqliteDataStore, SqliteSystemDb};
 
@@ -74,6 +71,11 @@ pub struct HostConfig {
     pub secure_cookies: bool,
     /// The machine's own addresses and hostname for the Origin/Host guard; `None` = ask the OS.
     pub interfaces: Option<Interfaces>,
+    /// Whether the Files page may browse this machine's own file system ("This Computer"): all of it, as the user
+    /// running the host.
+    pub host_files: bool,
+    /// That user's home directory, the Files page's shortcut (`None`: there is none to offer).
+    pub home: Option<PathBuf>,
     /// The catalog Discover browses (`app.available`): registry files or app refs, by URL.
     pub registries: Vec<String>,
     /// Agents to add to the roster at start if they are not there yet, each with a fixed persistent MCP
@@ -103,6 +105,8 @@ impl HostConfig {
             allowed_hosts: vec![],
             secure_cookies: false,
             interfaces: None,
+            host_files: true,
+            home: None,
             registries: vec![],
             agents: vec![],
             pairing: PairingPolicy::default(),
@@ -115,7 +119,6 @@ impl HostConfig {
 pub struct Host {
     pub router: Router,
     pub service: Arc<AppService>,
-    pub views: Arc<ViewService>,
     pub devices: Arc<DeviceService>,
     /// The agent roster (contacts, grants, tokens).
     pub agents: Arc<AgentService>,
@@ -151,16 +154,17 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
         Arc::new(SqliteDataStore::new(cfg.data_dir.as_ref().map(|d| d.join("apps"))));
     // each app's managed files sit next to its database (`<data>/apps/<id>.files`), and are purged with it
     let files: Arc<dyn FileStore> = Arc::new(DiskFiles::new(cfg.data_dir.as_ref().map(|d| d.join("apps"))));
+    let computer: Option<Arc<dyn HostFiles>> =
+        cfg.host_files.then(|| Arc::new(LocalFiles::new(cfg.home.as_deref())) as Arc<dyn HostFiles>);
     let system = open_system(cfg.data_dir.as_deref())?;
     let random = cfg.random;
     // the roster is also the MCP adapter's directory, tells it when an agent's tool list changes, and is what
     // apps list
     let contacts = Arc::new(AgentService::new(system.clone(), mcp_state.clone(), random.clone()));
     contacts.load().await?;
-    let lua = Arc::new(
+    let runtime: Arc<dyn AppRuntime> = Arc::new(
         LuaRuntime::new(hub.clone(), hub.clone()).with_roster(contacts.clone()).with_files(files.clone()),
     );
-    let runtime: Arc<dyn AppRuntime> = lua.clone();
     let tools: Arc<dyn ToolRegistry> = mcp_state.clone();
     let events: Arc<dyn EventSink> = hub.clone();
     let installed: Arc<dyn InstalledAppStore> = system.clone();
@@ -171,25 +175,23 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     let service = Arc::new(AppService::new(Ports {
         fetcher,
         data,
-        files,
+        files: files.clone(),
         runtime,
         tools,
         events,
         installed,
         clock: cfg.clock.clone(),
-        background: Arc::new(platform::TokioBackground),
         registries: cfg.registries,
     }));
-    // what an app's background work changes reaches its open windows: the runtime tells the application
-    lua.bind_activity(Arc::downgrade(&service) as Weak<dyn AppActivity>);
     for (token, agent) in cfg.agents {
         contacts.ensure(agent, Some(&token)).await?;
     }
     hub.bind(service.clone(), devices.clone());
     hub.bind_agents(contacts.clone());
-    let views = Arc::new(ViewService::new(service.clone()));
-    service.add_observer(views.clone());
-    hub.bind_views(views.clone());
+    // the Files page: every installed app's Documents, and this machine's own file system
+    let installed_apps = service.clone();
+    let browsable = Arc::new(FilesService::new(files, move |app| installed_apps.is_installed(app), computer));
+    hub.bind_files(browsable.clone());
 
     // the Origin/Host guard knows the machine's own network identity
     let mut guard = match cfg.interfaces {
@@ -205,7 +207,9 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     // listed below it, and /mcp has its own per-agent bearer authentication.
     let session = SessionConfig { devices: devices.clone(), secure_cookies: cfg.secure_cookies };
     let apps = app_routes(service.clone(), session.clone());
-    let protected = rpc_router(hub).layer(from_fn_with_state(session.clone(), require_session));
+    let protected = rpc_router(hub)
+        .merge(files_router(browsable))
+        .layer(from_fn_with_state(session.clone(), require_session));
     // an app's static files are public: a sandboxed frame sends no cookie. The wrapper checks the session itself, to
     // answer an unpaired visitor with a page rather than the guard's JSON.
     let public = session_router(session).merge(apps.files).merge(apps.wrapper);
@@ -218,5 +222,5 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     }
     let router = router.layer(from_fn_with_state(Arc::new(guard), origin_guard));
 
-    Ok(Host { router, service, views, devices, agents: contacts, shutdown })
+    Ok(Host { router, service, devices, agents: contacts, shutdown })
 }

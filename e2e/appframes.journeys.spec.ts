@@ -13,7 +13,7 @@ import { dirname, join } from 'node:path'
 import { type Page } from '@playwright/test'
 import { FIXTURE_APPS, fixtureAppRef, type FixtureApp } from './host/config'
 import { callTool } from './host/pair'
-import { chooseLayout, expect, frameOf, openDesktop, settle, test, windowOf } from './fixtures'
+import { chooseLayout, expect, expectRunning, frameOf, openDesktop, openFromHome, settle, test, windowOf } from './fixtures'
 
 test.describe.configure({ mode: 'serial' })
 
@@ -45,15 +45,16 @@ for (const id of FIXTURE_APPS) {
       await openDesktop(page)
       // start from a host that does not have it (it is installed at start): the same two calls Discover's Get makes
       await hostCall(page, 'app.uninstall', { app: id, purge: true })
-      await expect(page.getByTestId(`dock-${id}`)).toHaveCount(0)
+      await expectRunning(page, id, false)
       const url = fixtureAppRef(id)
       const preview = await hostCall<{ sha256: string; id: string }>(page, 'app.preview', { url })
       expect(preview.id).toBe(id)
       await hostCall(page, 'app.install', { url, sha256: preview.sha256 })
-      await expect(page.getByTestId(`dock-${id}`)).toBeVisible()
+      await expectRunning(page, id)
 
-      await page.getByTestId(`dock-${id}`).click()
-      await expect(windowOf(page, id)).toBeVisible()
+      // it is on the Home Screen (not in the Dock: nobody pinned it), and opens from there
+      await openFromHome(page, id)
+      await expect(page.getByTestId(`dock-${id}`), 'open and not pinned: one of the Dock’s recent apps').toBeVisible()
       await expect(frame(page).getByTestId(`${id}-framework`)).toHaveText(FRAMEWORK[id])
       await expect(page.getByTestId(`${id}-opening`)).toHaveCount(0)
       // the handshake told the app it is in the shell, which draws UI of its own
@@ -388,14 +389,13 @@ for (const id of FIXTURE_APPS) {
       await frame(page).locator('body').evaluate((_el, m) => ((window as unknown as { __kept: string }).__kept = m), typed)
 
       // another app takes the stage; this one's window is off it, and is hidden, not gone
-      await page.getByTestId(`dock-${other}`).click()
-      await expect(windowOf(page, other)).toBeVisible()
+      await openFromHome(page, other)
       await expect(windowOf(page, id)).toBeHidden()
       await expect(page.getByTestId(`${id}-frame`)).toBeAttached()
       // a hidden frame takes no focus and is not in the accessibility tree
       expect(await page.getByTestId(`${id}-frame`).evaluate((el) => !!el.closest('[inert]') && !!el.closest('[aria-hidden="true"]'))).toBe(true)
 
-      // back: the same document, with what was typed in it
+      // back, from the Dock's recent apps (it is open): the same document, with what was typed in it
       await page.getByTestId(`dock-${id}`).click()
       await expect(windowOf(page, id)).toBeVisible()
       await expect(frame(page).getByTestId(`${id}-title`)).toHaveValue(typed)
@@ -505,7 +505,8 @@ test('AF15: a page whose script throws while it loads is reported with its own m
     const preview = await hostCall<{ sha256: string }>(page, 'app.preview', { url })
     await hostCall(page, 'app.install', { url, sha256: preview.sha256 })
     try {
-      await page.getByTestId(`dock-${id}`).click()
+      await expectRunning(page, id)
+      await openFromHome(page, id)
       const failed = page.getByTestId(`${id}-failed`)
       await expect(failed).toBeVisible({ timeout: 15_000 })
       // the script is loaded from the host as a module, which the host answers with the header that lets the browser say what went wrong
@@ -566,7 +567,7 @@ test('AF10: an app whose handlers never answer is stuck alone: the shell, anothe
   // handlers it was running for it, so opening it again finds the app whole at once
   await chooseLayout(page, hung, 'close')
   await expect(windowOf(page, hung)).toHaveCount(0)
-  await page.getByTestId(`dock-${hung}`).click()
+  await openFromHome(page, hung)
   await expect(frameOf(page, hung).getByTestId(`${hung}-app`)).toBeVisible()
   await expect
     .poll(() => hostCall<{ apps: unknown[] }>(page, 'app.list', {}).then((r) => Array.isArray(r.apps)))

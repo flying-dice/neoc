@@ -13,7 +13,11 @@
 //!   writable tool's delayed write read-only, while a request to the app's own listener while a read-only call
 //!   is acting (running, queued, or waiting at something in flight) still is, and one that arrives while every
 //!   read-only call is asleep at a timer or gone is not;
-//! - an emit that is cancelled mid-call does not leave the state tracker recording.
+//! - an emit that is cancelled mid-call hands the turn on.
+//!
+//! `state` in these apps is an in-memory value whose every assignment also sends an event to the app's pages (`app.emit`),
+//! which is a change to the world: a call that is read-only cannot assign it, and the error says `readOnly`. It is
+//! how a test sees, without a wait, whether the call that is running is still restricted.
 
 mod common;
 
@@ -119,7 +123,7 @@ async fn a_read_only_tool_stays_read_only_across_every_wait_inside_luas_own_mach
     let src = format!(
         r#"
         local task, time, hyper = require("std:task"), require("std:time"), require("vnd:hyper")
-        local state = app.state {{ v = 0 }}
+        local state = setmetatable({{}}, {{ __index = {{ v = 0 }}, __newindex = function(t, k, x) app.emit("state") getmetatable(t).__index[k] = x end }})
         local counter = 0
         app.db:migrate {{ [1] = "create table t(a)" }}
         app.tool {{ name = "bump", run = function() counter = counter + 1 return counter end }}
@@ -224,7 +228,7 @@ async fn stale_lend_case(container: &str, wait: &str, later: &str, url: &str) ->
     let src = format!(
         r#"
         local task, time, hyper = require("std:task"), require("std:time"), require("vnd:hyper")
-        local state = app.state {{ v = 0 }}
+        local state = setmetatable({{}}, {{ __index = {{ v = 0 }}, __newindex = function(t, k, x) app.emit("state") getmetatable(t).__index[k] = x end }})
         local counter = 0
         local result
         local function refused(f) local ok, e = pcall(f) return (not ok) and tostring(e):find("readOnly", 1, true) ~= nil end
@@ -539,7 +543,7 @@ async fn a_task_spawned_by_a_read_only_tool_in_a_transaction_stays_read_only() {
 async fn a_read_only_poller_does_not_make_a_writable_tools_delayed_write_read_only() {
     let src = r#"
         local task = require("std:task")
-        local state = app.state { v = 0 }
+        local state = setmetatable({}, { __index = { v = 0 }, __newindex = function(t, k, x) app.emit("state") getmetatable(t).__index[k] = x end })
         local delayed, deferred = "unset", "unset"
         app.tool { name = "ro", readOnly = true, run = function()
           task.spawn(function() while true do task.wait(0.02) end end) -- lives for as long as the app does
@@ -564,7 +568,7 @@ async fn a_read_only_poller_does_not_make_a_writable_tools_delayed_write_read_on
 async fn work_started_by_a_read_only_tool_stays_read_only_whenever_it_runs() {
     let src = r#"
         local task = require("std:task")
-        local state = app.state { v = 0 }
+        local state = setmetatable({}, { __index = { v = 0 }, __newindex = function(t, k, x) app.emit("state") getmetatable(t).__index[k] = x end })
         local results = {}
         app.tool { name = "ro", readOnly = true, run = function()
           task.delay(0.05, function() results.delay = tostring(pcall(function() state.v = 1 end)) end)
@@ -585,7 +589,7 @@ async fn a_request_to_the_apps_own_server_is_read_only_while_a_read_only_call_wa
     // the handler tries to write; the answer says whether it could
     let src = r#"
         local task, net, hyper = require("std:task"), require("std:net"), require("vnd:hyper")
-        local state = app.state { v = 0 }
+        local state = setmetatable({}, { __index = { v = 0 }, __newindex = function(t, k, x) app.emit("state") getmetatable(t).__index[k] = x end })
         local server = hyper.serve(net.TcpListener.bind("127.0.0.1:0"), function(req)
           local ok = pcall(function() state.v = state.v + 1 end)
           return { status = 200, body = tostring(ok) }
@@ -611,11 +615,11 @@ async fn a_request_to_the_apps_own_server_is_read_only_while_a_read_only_call_wa
 
 // ---- the taint on requests to the app's own server lasts while a read-only call acts, not while it is alive -----
 
-/// An app whose server writes (`app.state`) on every request and reports whether it could, by path, and the
+/// An app whose server writes (`state`, see the top of this file) on every request and reports whether it could, by path, and the
 /// readOnly tools that reach the server in the ways a readOnly call might try to write through it.
 const OWN_SERVER_REACH: &str = r#"
     local task, net, hyper = require("std:task"), require("std:net"), require("vnd:hyper")
-    local state = app.state { v = 0 }
+    local state = setmetatable({}, { __index = { v = 0 }, __newindex = function(t, k, x) app.emit("state") getmetatable(t).__index[k] = x end })
     local seen = {}
     local server
     local function own(path) return "http://" .. server:addr() .. path end
@@ -755,18 +759,14 @@ async fn get_path(addr: &str, path: &str) -> String {
 // ---- a cancelled emit -------------------------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_cancelled_tracked_emit_leaves_the_vm_usable_and_the_next_one_tracks_afresh() {
+async fn a_cancelled_emit_leaves_the_vm_usable_for_the_next_call() {
     let src = r#"
-        local state = app.state { a = 1, b = 2 }
-        hook("stuck", function() local _ = state.a app.db:all("select 'stall'") end)
-        hook("reads_b", function() return state.b end)
+        local seen = { a = 1, b = 2 }
+        hook("stuck", function() local _ = seen.a app.db:all("select 'stall'") end)
+        hook("reads_b", function() return seen.b end)
     "#;
     let vm = try_load_with("emit", src, Stalling::new()).await.unwrap();
-    let cancelled =
-        tokio::time::timeout(Duration::from_millis(200), vm.emit_tracked("stuck", json!(null))).await;
+    let cancelled = tokio::time::timeout(Duration::from_millis(200), vm.emit("stuck", json!(null))).await;
     assert!(cancelled.is_err(), "the emit is held at a host call and its caller gives up");
-    let (value, deps) = vm.emit_tracked("reads_b", json!(null)).await.unwrap();
-    assert_eq!(value, json!(2));
-    let keys: Vec<&str> = deps.iter().map(|d| d.key.as_str()).collect();
-    assert_eq!(keys, ["b"], "the cancelled emit's reads are not carried over");
+    assert_eq!(vm.emit("reads_b", json!(null)).await.unwrap(), json!(2), "the turn was handed on");
 }

@@ -9,6 +9,7 @@
 local test = require("lib:test") -- expect-error: Unknown require
 local compile = require("lib:compile") -- expect-error: Unknown require
 local workers = require("std:workers") -- expect-error: Unknown require
+local _ui = require("vos:ui") -- expect-error: Unknown require
 local base64 = require("lib:base64")
 
 test.describe("x", function() end) -- expect-error: Key 'describe' not found in table 'vos_NotForApps_lib_test'

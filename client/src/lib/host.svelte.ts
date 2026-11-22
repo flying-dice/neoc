@@ -1,10 +1,7 @@
-// Narrow imports: the `../view` barrel pulls in Svelte components, which a bun test cannot load.
-import type { ViewCore } from '../view/core/view'
-import { Session } from '../view/core/session'
-import type { Transport } from '../view/rpc/transport'
-import { createWebSocketTransport, defaultRpcUrl } from '../view/rpc/websocket'
-import { messageOf } from '../view/errors'
-import { reactiveStore } from '../view/store.svelte'
+import { Session } from '../shell/session'
+import type { Transport } from '../shell/rpc/transport'
+import { createWebSocketTransport, defaultRpcUrl } from '../shell/rpc/websocket'
+import { messageOf } from '../shell/errors'
 import { createHostChannel, HostError, type CallOptions, type HostChannel } from '../shell/channel'
 import type { AppSummary, Catalog, HostApi } from '../shell/hostApi'
 import { isPaired, pairDevice, type PairResult } from '../shell/pairing'
@@ -18,15 +15,13 @@ import { setInstalledApps } from './apps.svelte'
  *   checking → connecting → ready                              a paired device
  *   checking → unreachable                                     the host did not answer
  *
- * `ready` means the session is online at least once; a later drop is `connection`, which the status bar shows
- * while every open window dims and keeps its drafts (the renderer's offline mode).
+ * `ready` means the session is online at least once; a later drop is `connection`, which the status bar shows.
  */
 export type Phase = 'checking' | 'unpaired' | 'connecting' | 'ready' | 'unreachable'
 
+/** The host asks for an app's window (`window.open`). */
 export interface WindowRequest {
   app: string
-  window: string
-  params?: Record<string, unknown>
 }
 
 /** The app lifecycle notifications that make the app list stale. */
@@ -54,17 +49,8 @@ const browserDeps: HostDeps = {
   schedule: (run, ms) => void setTimeout(run, ms)
 }
 
-/** What a story supplies in place of the session's views: how a window's view opens (or fails to). */
-export interface FakeViews {
-  openView(...args: Parameters<Session['openView']>): Promise<ViewCore>
-  closeView?(view: ViewCore): Promise<void>
-}
-
 /** A socket that never opens may be a revoked session (the host answers 401): ask once, after this long. */
 const REVOKED_CHECK_MS = 3000
-
-const isRecord = (v: unknown): v is Record<string, unknown> =>
-  typeof v === 'object' && v !== null && !Array.isArray(v)
 
 export class Host {
   phase = $state<Phase>('checking')
@@ -78,7 +64,6 @@ export class Host {
   session: Session | null = null
   private channel: HostChannel | null = null
   private fake: HostApi | null = null
-  private fakeViews: FakeViews | null = null
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a list of callbacks, not state
   private windowRequests = new Set<(request: WindowRequest) => void>()
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a list of callbacks, not state
@@ -139,7 +124,6 @@ export class Host {
     this.channel = channel
     const session = new Session({
       transport: channel.transport,
-      createStore: reactiveStore,
       onError: (e) => console.warn('[vos]', e)
     })
     this.session = session
@@ -173,11 +157,7 @@ export class Host {
 
   private onNotification(method: string, params: Record<string, unknown>): void {
     if (method === 'window.open' && typeof params.app === 'string') {
-      const request: WindowRequest = {
-        app: params.app,
-        window: typeof params.window === 'string' ? params.window : 'main',
-        ...(isRecord(params.params) ? { params: params.params } : {})
-      }
+      const request: WindowRequest = { app: params.app }
       for (const l of [...this.windowRequests]) l(request)
     } else if (method === 'notification.deliver') {
       for (const l of [...this.appNotificationListeners]) l(params)
@@ -241,21 +221,9 @@ export class Host {
     return callParsed(this.api, 'app.available', {}, catalogSchema)
   }
 
-  openView(...args: Parameters<Session['openView']>): Promise<ViewCore> {
-    if (this.fakeViews) return this.fakeViews.openView(...args)
-    if (!this.session) return Promise.reject(new Error('Not connected to vos'))
-    return this.session.openView(...args)
-  }
-
-  closeView(view: ViewCore): Promise<void> {
-    if (this.fakeViews) return this.fakeViews.closeView?.(view) ?? Promise.resolve()
-    return this.session?.closeView(view) ?? Promise.resolve()
-  }
-
-  /** Stories and tests: serve the shell from a fake instead of a host (and, optionally, its windows' views). */
-  useFake(api: HostApi, apps: AppSummary[] = [], views: FakeViews | null = null): void {
+  /** Stories and tests: serve the shell from a fake instead of a host. */
+  useFake(api: HostApi, apps: AppSummary[] = []): void {
     this.fake = api
-    this.fakeViews = views
     this.fakeNotifications?.()
     // a story's fake can deliver an app's notification (the other messages are for the pages that listen to the fake)
     this.fakeNotifications = api.onNotification((method, params) => {

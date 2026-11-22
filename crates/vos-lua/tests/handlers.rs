@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration tests
-//! The backend of an app with a client: the table its entry returns is the set of handlers a client's `rpc(name,
+//! The backend of an app: the table its entry returns is the set of handlers a client's `rpc(name,
 //! args)` calls, as `handler(ctx, args)`, in that app's VM; `app.emit` sends an event to the app's open clients.
 //! Real Lua adapter, real SQLite adapter.
 
@@ -34,12 +34,11 @@ fn rig() -> Rig {
     Rig { runtime: LuaRuntime::new(Arc::new(Quiet), shell.clone()), shell }
 }
 
-/// A package of an app that has a client: its entry is the backend.
+/// A package whose entry is the backend `src`.
 fn backend(src: &str) -> AppPackage {
     AppPackage {
         entry: "app.luau".into(),
         files: BTreeMap::from([("app.luau".to_owned(), src.as_bytes().to_vec())]),
-        has_client: true,
     }
 }
 
@@ -77,7 +76,7 @@ return {
 async fn a_client_call_runs_the_handler_with_a_context_and_the_arguments() {
     let rig = rig();
     let loaded = load(&rig, "tasks", TASKS).await.unwrap();
-    assert!(loaded.decl.is_none(), "an app with a client declares nothing in Luau");
+    assert!(loaded.tools.is_empty(), "handlers are not tools: an agent does not see them");
 
     let added = call(&rig, "tasks", "add", json!({ "title": "Buy milk" })).await.unwrap();
     assert_eq!(
@@ -183,17 +182,13 @@ async fn an_entry_that_returns_the_wrong_thing_does_not_load() {
         let err = load(&rig, "bad", src).await.unwrap_err().to_string();
         assert!(err.contains(why), "{src}: {err}");
     }
-    // nothing at all is fine: an app with a client may have no backend
-    load(&rig, "bad", "-- no backend").await.unwrap();
-}
-
-#[tokio::test]
-async fn an_app_without_a_client_must_still_declare_itself() {
-    let rig = rig();
-    let data: Arc<dyn AppData> = db();
-    let package = AppPackage { has_client: false, ..backend("return {}") };
-    let err = rig.runtime.load(&id("plain"), package, data).await.unwrap_err();
-    assert!(err.to_string().contains("must declare itself with app.manifest"), "{err}");
+    // nothing at all is not a backend either: an app with nothing for its page to call returns `{}`
+    let err = load(&rig, "bad", "-- no backend").await.unwrap_err().to_string();
+    assert!(
+        err.contains("the entry must return the app's handlers") && err.contains("it returned nothing"),
+        "{err}"
+    );
+    load(&rig, "bad", "return {}").await.unwrap();
 }
 
 const EMITTER: &str = r#"
@@ -406,7 +401,6 @@ struct PanicsOnFirstEmit {
 #[async_trait::async_trait]
 impl Shell for PanicsOnFirstEmit {
     async fn open_window(&self, _: &vos_domain::AppId, _: &str, _: serde_json::Map<String, Value>) {}
-    async fn set_deep_links(&self, _: &vos_domain::AppId, _: Vec<String>) {}
     async fn emit_event(&self, _: &vos_domain::AppId, name: &str, _: Value) {
         assert!(self.panicked.swap(true, std::sync::atomic::Ordering::SeqCst), "the shell broke");
         self.names.lock().push(name.to_owned());
@@ -477,28 +471,8 @@ async fn an_app_with_a_client_opens_its_one_window_without_naming_it() {
     else {
         panic!("rejected");
     };
-    assert!(message.contains("an app with a client has one window, `main`"), "{message}");
+    assert!(message.contains("an app has one window, `main`"), "{message}");
     // nor may a read-only tool ask
     assert!(rig.runtime.call_tool(&id("calc"), "peek", json!({}), agent, false).await.is_err());
     assert_eq!(windows(&rig).len(), 3, "nothing more was asked");
-}
-
-#[tokio::test]
-async fn an_app_without_a_client_still_names_a_window_it_declared() {
-    let rig = rig();
-    let package = common::package(
-        r#"local app = require("vos:app")
-app.manifest { id = "old", name = "Old", icon = "doc" }
-app.tool { name = "open", description = "open", input = {}, run = function() app:openWindow() return {} end }"#,
-        &[],
-    );
-    let data: Arc<dyn AppData> = db();
-    rig.runtime.load(&id("old"), package, data).await.unwrap();
-    let PortError::Rejected(message) =
-        rig.runtime.call_tool(&id("old"), "open", json!({}), common::agent_ctx(1), false).await.unwrap_err()
-    else {
-        panic!("rejected");
-    };
-    assert!(message.contains("name the window to open"), "{message}");
-    assert!(windows(&rig).is_empty());
 }

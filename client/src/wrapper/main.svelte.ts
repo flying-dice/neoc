@@ -15,7 +15,7 @@ import { callWhenConnected, createHostChannel, type CallOptions } from '../shell
 import { contextChange, hostContextOf, type HostContext } from '../shell/hostContext'
 import { focusFrame } from '../shell/frameFocus'
 import { baseServices } from '../shell/hostServices'
-import { createWebSocketTransport, defaultRpcUrl } from '../view/rpc/websocket'
+import { createWebSocketTransport, defaultRpcUrl } from '../shell/rpc/websocket'
 
 const MODES = ['fullscreen'] as const
 

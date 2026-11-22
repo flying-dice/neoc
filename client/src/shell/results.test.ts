@@ -13,7 +13,6 @@ const app = {
   version: '1.0.0',
   state: 'running',
   source: 'file',
-  client: false,
   permissions: []
 }
 

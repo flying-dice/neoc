@@ -1,5 +1,5 @@
 /**
- * Headless UI tests for vos (see the `verify-change` skill).
+ * Headless UI tests for vos.
  *
  *   stories   every story of every Storybook: renders, axe, snapshots, resize
  *   desktop   the real shell on the real host: every app from the Dock, resize, every layout, axe, snapshots

@@ -12,8 +12,14 @@ pub enum DomainError {
     PermissionDenied { agent: String, action: String },
     #[error("migrations must be numbered 1..N without gaps")]
     MigrationOrder,
-    #[error("invalid app.manifest: {0}")]
+    #[error("invalid manifest: {0}")]
     InvalidManifest(String),
+    #[error(
+        "app `{0}` has no `ui` in its manifest: vos runs apps that are a page and a backend (a Vite project with an \
+         `openrpc.json`, built with `bun run build:apps`). An app that drew its windows with `app.window` is no longer \
+         supported: rebuild it as a page"
+    )]
+    NoUi(String),
     #[error("this app needs host API {needs}, this host provides {has}")]
     UnsupportedHost { needs: String, has: String },
     #[error("invalid agent: {0}")]

@@ -6,15 +6,11 @@
 <script lang="ts">
   import type { Snippet } from 'svelte'
   import type { HTMLButtonAttributes } from 'svelte/elements'
-  import { cssColor, inkFor } from '../contrast'
 
   interface Props extends HTMLButtonAttributes {
     testid: string
-    /** Accessible description (read after the name). */
-    'aria-description'?: string
     variant?: 'filled' | 'tinted' | 'gray' | 'plain'
-    /** `fill` takes the whole box its parent gives it (a grid cell, a stretched stack slot), at least 44 pt tall. */
-    size?: 'small' | 'medium' | 'large' | 'fill'
+    size?: 'small' | 'medium' | 'large'
     /** Capsule (pill) corners instead of rounded rect. */
     capsule?: boolean
     /** Square button sized for a single glyph. */
@@ -24,13 +20,6 @@
      * fill stops at the padding edge, so the button looks as before but is as easy to hit as a native one.
      */
     hit?: boolean
-    /** Any CSS colour; defaults to the inherited --tint. */
-    tint?: string
-    /**
-     * A data colour (palette token or `#rrggbb`) for a `filled` button: the text colour is chosen for 4.5:1 on it.
-     * Unlike `tint`, which is the accent of the control, this is content.
-     */
-    fill?: string
     destructive?: boolean
     block?: boolean
     children: Snippet
@@ -43,33 +32,24 @@
     capsule = false,
     square = false,
     hit = false,
-    tint,
-    fill,
     destructive = false,
     block = false,
     type = 'button',
     children,
-    class: klass = '',
     ...rest
   }: Props = $props()
 
-  const color = $derived(destructive ? 'var(--ios-red)' : tint)
-  const fillColor = $derived(fill ? cssColor(fill) : undefined)
-  const ink = $derived(fill && variant === 'filled' ? inkFor(fill) : undefined)
 </script>
 
 <button
   {type}
   data-testid={testid}
-  class="ios-button {variant} {size} {klass}"
+  class="ios-button {variant} {size}"
   class:capsule
   class:square
   class:hit
   class:block
-  class:inverts={fill && variant === 'filled'}
-  style:--btn-tint={color}
-  style:--btn-fill={fillColor ?? (tint && !destructive ? tint : undefined)}
-  style:--btn-ink={ink}
+  class:destructive
   {...rest}
 >
   {@render children()}
@@ -77,7 +57,7 @@
 
 <style>
   .ios-button {
-    --_tint: var(--btn-tint, var(--tint));
+    --_tint: var(--tint);
     appearance: none;
     border: 0;
     margin: 0;
@@ -98,6 +78,9 @@
   .ios-button:disabled {
     cursor: default;
     opacity: 0.35;
+  }
+  .destructive {
+    --_tint: var(--ios-red);
   }
   .block {
     display: flex;
@@ -123,17 +106,6 @@
     font-weight: 600;
     letter-spacing: var(--tracking-body);
     min-height: 50px;
-    padding: 0 20px;
-    border-radius: 12px;
-  }
-  .fill {
-    display: flex;
-    width: 100%;
-    height: 100%;
-    font: var(--type-body);
-    font-weight: 600;
-    letter-spacing: var(--tracking-body);
-    min-height: 44px;
     padding: 0 20px;
     border-radius: 12px;
   }
@@ -200,23 +172,9 @@
   }
 
   .filled {
-    /*
-     * White text on the system tint: darkened in dark mode to keep 4.5:1 (see
-     * --tint-fill). An explicit `tint` is used exactly as given.
-     */
-    --_bg: var(--btn-fill, light-dark(var(--_tint), color-mix(in oklab, var(--_tint) 70%, black)));
-    color: var(--btn-ink, #fff);
-  }
-  /*
-   * A pressed (`aria-pressed`) data-colour button swaps its fill and its text and gains a ring in the fill colour:
-   * the selected operation of a keypad, the active toggle of a toolbar. The ink was picked for 4.5:1 on the fill,
-   * so the swap keeps that contrast both ways, and the ring keeps the key visible on a canvas the ink matches.
-   */
-  .inverts[aria-pressed='true'] {
-    --_bg: var(--btn-ink);
-    color: var(--btn-fill);
-    outline: 2px solid var(--btn-fill);
-    outline-offset: -2px;
+    /* White text on the system tint: darkened in dark mode to keep 4.5:1 (see --tint-fill). */
+    --_bg: light-dark(var(--_tint), color-mix(in oklab, var(--_tint) 70%, black));
+    color: #fff;
   }
   /*
    * Tint-coloured text on a tinted or gray fill: darker in light mode, lighter

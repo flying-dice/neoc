@@ -80,42 +80,30 @@ async fn the_roster_is_managed_over_rpc_and_every_change_reaches_the_agents_mcp_
     install_ledger(&r).await;
     let mut ws = paired_rpc(&r).await;
 
-    // create: deny by default, the safe approval policy, and the token shown once
-    let created = rpc(
-        &mut ws,
-        1,
-        "agents.create",
-        json!({"name": "Code Reviewer", "role": "Reviews diffs", "runtime": {"command": "claude-agent-acp", "args": ["--x"]}}),
-    )
-    .await;
+    // create: deny by default, and the token shown once
+    let created =
+        rpc(&mut ws, 1, "agents.create", json!({"name": "Code Reviewer", "role": "Reviews diffs"})).await;
     assert!(created.get("error").is_none(), "{created}");
     let agent = &created["result"]["agent"];
     assert_eq!(agent["id"], "code-reviewer");
     assert_eq!(agent["grants"], json!({"all": false, "apps": []}));
-    assert_eq!(agent["approval"], "auto_read_only");
-    assert_eq!(agent["runtime"]["args"], json!(["--x"]));
+    assert!(agent.get("runtime").is_none() && agent.get("approval").is_none(), "{agent}");
     let token = created["result"]["token"].as_str().unwrap().to_owned();
     assert!(token.starts_with("vos_"));
     assert_eq!(
-        rpc(&mut ws, 2, "agents.create", json!({"name": "x", "runtime": {"command": "x"}, "bogus": 1})).await
-            ["error"]["code"],
+        rpc(&mut ws, 2, "agents.create", json!({"name": "x", "bogus": 1})).await["error"]["code"],
         -32602
     );
+    // the launch settings of older versions are no longer parameters: refused like any unknown field
+    for old in [json!({"name": "x", "runtime": {"command": "x"}}), json!({"name": "x", "approval": "ask"})] {
+        assert_eq!(rpc(&mut ws, 2, "agents.create", old).await["error"]["code"], -32602);
+    }
     assert_eq!(
-        rpc(
-            &mut ws,
-            3,
-            "agents.create",
-            json!({"id": "code-reviewer", "name": "Dup", "runtime": {"command": "x"}})
-        )
-        .await["error"]["code"],
+        rpc(&mut ws, 3, "agents.create", json!({"id": "code-reviewer", "name": "Dup"})).await["error"]
+            ["code"],
         -32004
     );
-    assert_eq!(
-        rpc(&mut ws, 4, "agents.create", json!({"name": "", "runtime": {"command": "x"}})).await["error"]
-            ["code"],
-        -32001
-    );
+    assert_eq!(rpc(&mut ws, 4, "agents.create", json!({"name": ""})).await["error"]["code"], -32001);
 
     // the token is a working MCP credential with no tools yet
     let (mcp, events) = connect_agent(r.addr, &token).await;
@@ -138,18 +126,13 @@ async fn the_roster_is_managed_over_rpc_and_every_change_reaches_the_agents_mcp_
     assert_eq!(denied.is_error, Some(true), "a grant revoked mid-session applies to the next call");
 
     // update changes only what it is given; null clears the avatar
-    let updated = rpc(
-        &mut ws,
-        7,
-        "agents.update",
-        json!({"id": "code-reviewer", "avatar": "sparkles", "approval": "ask"}),
-    )
-    .await;
+    let updated =
+        rpc(&mut ws, 7, "agents.update", json!({"id": "code-reviewer", "avatar": "sparkles"})).await;
     assert_eq!(updated["result"]["agent"]["avatar"], "sparkles");
     assert_eq!(updated["result"]["agent"]["role"], "Reviews diffs");
     let cleared = rpc(&mut ws, 8, "agents.update", json!({"id": "code-reviewer", "avatar": null})).await;
     assert!(cleared["result"]["agent"].get("avatar").is_none());
-    assert_eq!(cleared["result"]["agent"]["approval"], "ask");
+    assert_eq!(cleared["result"]["agent"]["role"], "Reviews diffs");
 
     // list
     let listed = rpc(&mut ws, 9, "agents.list", json!({})).await;
@@ -200,13 +183,7 @@ async fn agents_and_their_grants_and_tokens_survive_a_restart() {
     let configure = |c: &mut vos_host::HostConfig| c.data_dir = Some(tmp.join("data"));
     let r = start(configure).await;
     let mut ws = paired_rpc(&r).await;
-    let created = rpc(
-        &mut ws,
-        1,
-        "agents.create",
-        json!({"name": "Claude", "runtime": {"command": "x"}, "grants": {"all": true}}),
-    )
-    .await;
+    let created = rpc(&mut ws, 1, "agents.create", json!({"name": "Claude", "grants": {"all": true}})).await;
     let token = created["result"]["token"].as_str().unwrap().to_owned();
     r.stop().await;
 

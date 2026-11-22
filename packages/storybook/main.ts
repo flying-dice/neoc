@@ -20,7 +20,7 @@ export interface StorybookOptions {
 
 export function defineStorybook(options: StorybookOptions = {}): StorybookConfig {
   return {
-    stories: options.stories ?? ['../docs/**/*.mdx', '../src/**/*.stories.@(svelte|ts)'],
+    stories: options.stories ?? ['../src/**/*.stories.@(svelte|ts)'],
     addons: [
       '@storybook/addon-svelte-csf',
       '@storybook/addon-docs',

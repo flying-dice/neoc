@@ -11,13 +11,16 @@
 //! | `allowed_hosts`               | `VOS_ALLOWED_HOSTS` (comma list) | none                                |
 //! | `dev_client_port`             | `VOS_DEV_CLIENT_PORT`            | none                                |
 //! | `dev_reload`                  | `VOS_DEV_RELOAD`                 | off: rebuild an app's VM when its `file://` bundle changes |
+//! | `host_files`                  | `VOS_HOST_FILES`                 | on: the Files page browses this machine's whole file system as the user running vos ("This Computer"). `false` turns that off, and Files shows only the apps' documents |
 //! | `secure_cookies`              | `VOS_SECURE_COOKIES`             | true when TLS is configured         |
 //! | `[tls] cert`, `[tls] key`     | `VOS_TLS_CERT`, `VOS_TLS_KEY`| TLS off                             |
 //! | `[[agents]]`                  | (file only)                          | none                                |
 //!
 //! `[[agents]]` seed the agent roster: an entry is added at start when no agent has its `id`, and left alone
-//! after that (edit agents through `agents.*` on `/rpc`). Each is an `Agent`: `id`, `name`, `role`, `avatar`,
-//! `[agents.runtime] command/args/env`, `[agents.grants] all/apps` (deny by default) and `approval`.
+//! after that (edit agents through `agents.*` on `/rpc`). Each is an `Agent`: `id`, `name`, `role`, `avatar` and
+//! `[agents.grants] all/apps` (deny by default). The host does not launch agents: an entry with the
+//! `[agents.runtime]` table or the `approval` key of older versions is refused as an unknown field, like any other
+//! unknown key in the file.
 //!
 //! The file is `--config <path>`, else `VOS_CONFIG`, else `./vos.toml`, else `<data_dir>/vos.toml`.
 //! Relative paths in the file are relative to the file; relative paths in the environment, to the working
@@ -51,6 +54,7 @@ struct FileSettings {
     dev_client_port: Option<u16>,
     dev_reload: Option<bool>,
     secure_cookies: Option<bool>,
+    host_files: Option<bool>,
     tls: Option<FileTls>,
     agents: Option<Vec<Agent>>,
 }
@@ -96,6 +100,9 @@ pub struct Settings {
     /// Dev: watch the `file://` app bundles and rebuild an app's VM (keeping its database) when one changes.
     pub dev_reload: bool,
     pub secure_cookies: bool,
+    /// Whether the Files page may browse this machine's own file system ("This Computer"), all of it, as the user
+    /// running the host.
+    pub host_files: bool,
     pub tls: Option<TlsFiles>,
     /// Agents added to the roster at start when absent.
     pub agents: Vec<Agent>,
@@ -160,6 +167,11 @@ impl Settings {
             None => file.secure_cookies.unwrap_or(tls.is_some()),
         };
 
+        let host_files = match env("VOS_HOST_FILES").filter(|v| !v.is_empty()) {
+            Some(v) => flag(v),
+            None => file.host_files.unwrap_or(true),
+        };
+
         Ok(Self {
             data_dir,
             bind,
@@ -171,6 +183,7 @@ impl Settings {
             dev_client_port,
             dev_reload,
             secure_cookies,
+            host_files,
             tls,
             agents: file.agents.unwrap_or_default(),
         })
@@ -388,6 +401,23 @@ mod tests {
     }
 
     #[test]
+    fn an_agent_entry_is_a_contact_and_the_launch_settings_of_older_versions_are_refused_by_name() {
+        let s = load(
+            Some("[[agents]]\nid = \"claude\"\nname = \"Claude\"\n[agents.grants]\napps = [\"notes\"]"),
+            &[],
+        )
+        .unwrap();
+        assert_eq!((s.agents[0].id.0.as_str(), s.agents[0].grants.apps.len()), ("claude", 1));
+        for (old, field) in [
+            ("[[agents]]\nid = \"c\"\nname = \"C\"\n[agents.runtime]\ncommand = \"x\"", "runtime"),
+            ("[[agents]]\nid = \"c\"\nname = \"C\"\napproval = \"ask\"", "approval"),
+        ] {
+            let err = format!("{:#}", load(Some(old), &[]).unwrap_err());
+            assert!(err.contains(&format!("unknown field `{field}`")), "{err}");
+        }
+    }
+
+    #[test]
     fn an_explicit_client_dir_must_be_built_but_the_default_may_be_missing() {
         let dir = std::env::temp_dir().join(format!("vos-client-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -414,5 +444,18 @@ mod tests {
         let found = s.resolve_client_dir(&root).unwrap().unwrap();
         assert!(found.ends_with("client/dist"), "{found:?}");
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn this_computer_is_browsable_unless_it_is_turned_off() {
+        assert!(load(None, &[]).unwrap().host_files);
+        assert!(!load(Some("host_files = false"), &[]).unwrap().host_files);
+        assert!(!load(None, &[("VOS_HOST_FILES", "off")]).unwrap().host_files);
+        // the environment wins over the file
+        assert!(load(Some("host_files = false"), &[("VOS_HOST_FILES", "true")]).unwrap().host_files);
+        assert!(
+            load(Some("host_files = \"/srv\""), &[]).is_err(),
+            "there is no root to set: it is all or nothing"
+        );
     }
 }

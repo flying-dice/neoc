@@ -1,18 +1,11 @@
 //! Driven ports. Each is a trait the application owns; an adapter crate implements it.
 
-use crate::live::{SourceDef, SourceId};
 use async_trait::async_trait;
 use serde_json::{Map, Value};
-use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
-use vos_domain::{
-    ui::{protocol::Command, ClientDecl, Node, SourceDecl},
-    Actor, Agent, AgentId, AppDecl, AppId, Device, DeviceId, Notification, ToolSpec,
-};
+use std::{collections::BTreeMap, sync::Arc};
+use vos_domain::{Actor, Agent, AgentId, AppId, Device, DeviceId, Notification, ToolSpec};
 
-pub use crate::data::{
-    AppData, ChangeBatch, ChangeFeed, DataStore, DataTx, ExecOutcome, Params, PortResult, QueryInfo,
-    SqlMigration,
-};
+pub use crate::data::{AppData, DataStore, DataTx, ExecOutcome, Params, PortResult, SqlMigration};
 
 // ---- running apps -------------------------------------------------------------------------
 
@@ -24,9 +17,6 @@ pub use crate::data::{
 pub struct AppPackage {
     pub entry: String,
     pub files: BTreeMap<String, Vec<u8>>,
-    /// The app has a client of its own (a frame in the shell): its entry is a backend that returns handlers, and
-    /// it need not declare itself with `app.manifest`, which an app without a client must.
-    pub has_client: bool,
 }
 
 /// Who is calling and when: `ctx.actor` and `ctx.now` in Lua.
@@ -39,62 +29,17 @@ pub struct CallContext {
 /// What the runtime learned from running an app's entry point.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LoadedApp {
-    /// The app's `app.manifest { ... }`, if it declared one.
-    pub decl: Option<AppDecl>,
     pub tools: Vec<ToolSpec>,
-    /// Live-source definitions (`db:query`, `db:row`, `db:scalar`), already validated.
-    pub sources: Vec<SourceDef>,
-}
-
-/// A source a render used: which declaration it is an instance of, and what the client is told about it.
-#[derive(Clone, Debug, PartialEq)]
-pub struct SourceBinding {
-    pub def: SourceId,
-    pub decl: SourceDecl,
-}
-
-/// What rendering a window produced.
-#[derive(Clone, Debug, PartialEq)]
-pub struct RenderOutput {
-    /// The validated wire tree (handlers are `true` or client actions; the closures stay in the VM).
-    pub tree: Node,
-    pub client_decls: BTreeMap<String, ClientDecl>,
-    /// By source id as it appears in the tree.
-    pub sources: BTreeMap<String, SourceBinding>,
-    /// Client-managed values that differ from their declared `init`: restored from the host's copy or the
-    /// client's, seeded by `onOpen` or by deep-link params. Only filled by `open_view`.
-    pub client: Map<String, Value>,
-    /// Orders renders of one view: a result older than one already applied is dropped.
-    pub seq: u64,
-}
-
-/// A user event on a node.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ViewEventCall {
-    pub path: String,
-    pub event: String,
-    pub row_key: Option<Value>,
-    /// The host's last-sent snapshot of that row (`e.row`).
-    pub row: Option<Value>,
-    pub payload: Option<Value>,
-}
-
-/// What a window's code asked of its view during a call.
-#[derive(Clone, Debug, PartialEq)]
-pub enum ViewEffect {
-    /// `w:toast`, `w:focus`, `w:scrollTo`, `w:announce`, `w:copy`, `w:close`.
-    Command(Command),
-    /// `w.client:set(name, value)`.
-    ClientSet { path: String, value: Value, force: bool },
 }
 
 #[async_trait]
 pub trait AppRuntime: Send + Sync {
-    /// Compile + run the package's entry. Loading an app
+    /// Compile + run the package's entry, which returns the table of handlers the app's page calls (anything else
+    /// is an error). Loading an app
     /// that is already loaded replaces it (hot reload): the database handle is the caller's, so data is kept.
     ///
     /// A hot reload stops the old version's background work (listeners, tasks, workers) before the new version
-    /// is known to load. If the new version fails to load, the old one keeps serving its tools and windows
+    /// is known to load. If the new version fails to load, the old one keeps serving its tools and handlers
     /// without that background work, and if it starts a server again, requests to that server run read-only
     /// until the next successful reload or a host restart. That fails safe and is the accepted behaviour
     /// (Jira AGOS-64); restarting the previous version in full is the option to revisit if failed reloads
@@ -104,7 +49,7 @@ pub trait AppRuntime: Send + Sync {
     /// alive), so an uninstalled app never runs on.
     async fn unload(&self, app: &AppId) -> PortResult<()>;
     /// Run one of the app's tools. `read_only` is the caller's requirement: the call runs with every write
-    /// refused (data, `app.kv`, `app.state`, notifications, windows, shell) even if the tool itself is not
+    /// refused (data, `app.kv`, `app.files`, notifications, events, windows) even if the tool itself is not
     /// declared `readOnly`. The use case sets it for a tool the app declared `readOnly`, so the guarantee that
     /// lets an agent run such a tool without a prompt holds whatever the adapter does with its own bookkeeping;
     /// an adapter may only tighten it (a tool it knows is `readOnly` runs read-only regardless).
@@ -125,71 +70,6 @@ pub trait AppRuntime: Send + Sync {
         args: Value,
         ctx: CallContext,
     ) -> PortResult<Value>;
-    /// Run a row source's `write(key, field, value, ctx)` callback.
-    async fn write_row(
-        &self,
-        app: &AppId,
-        source: &SourceId,
-        key: Value,
-        field: &str,
-        value: Value,
-        ctx: CallContext,
-    ) -> PortResult<()>;
-
-    // ---- windows: one view instance per open window ----
-    /// The window kinds the app declared.
-    async fn windows(&self, app: &AppId) -> PortResult<Vec<String>>;
-    /// Create the instance, run `onOpen`, render. `restored` holds stored client values by name.
-    async fn open_view(
-        &self,
-        app: &AppId,
-        view: &str,
-        window: &str,
-        params: Map<String, Value>,
-        restored: Map<String, Value>,
-    ) -> PortResult<RenderOutput>;
-    /// Render again (state or data it read changed). A render that fails keeps the last good tree.
-    async fn render_view(&self, app: &AppId, view: &str) -> PortResult<RenderOutput>;
-    /// Run the handlers of `path#event`. `false`: no such handler any more (stale).
-    async fn dispatch_view_event(
-        &self,
-        app: &AppId,
-        view: &str,
-        call: ViewEventCall,
-        ctx: CallContext,
-    ) -> PortResult<bool>;
-    /// The client mirrored synced or persisted entries (`w.client:get`).
-    async fn set_client_values(&self, app: &AppId, view: &str, values: Map<String, Value>) -> PortResult<()>;
-    async fn close_view(&self, app: &AppId, view: &str) -> PortResult<()>;
-    /// Views whose last render read state that has since changed.
-    async fn dirty_views(&self, app: &AppId) -> PortResult<Vec<String>>;
-    /// What views asked for since the last call (toasts, `client.set`), by view.
-    async fn take_view_effects(&self, app: &AppId) -> PortResult<Vec<(String, ViewEffect)>>;
-}
-
-/// Told when an app changed data or went away, so open views can follow. The view service implements it.
-#[async_trait]
-pub trait AppObserver: Send + Sync {
-    /// A tool call (or anything else outside a view event) may have changed state or data.
-    async fn mutated(&self, app: &AppId);
-    /// The app's own background work (a task, a request to its own server) may have changed its state or what a
-    /// window asked for. Data it wrote is pushed by the live sources, so unlike [`AppObserver::mutated`] this does
-    /// not re-query them.
-    async fn background_changed(&self, app: &AppId);
-    /// The app is about to stop (disable, delete data, reload, uninstall, shutdown).
-    async fn stopping(&self, app: &AppId, reason: &str);
-}
-
-/// Told by the runtime when something happened in an app that no call through the host made: a task's slice
-/// ended or paused at a wait, a request to the app's own server finished. State, view effects or data may have
-/// changed, so open views must follow without waiting for the next event. The runtime adapter calls it (late
-/// bound: the application is built after the runtime); [`crate::AppService`] implements it by telling its
-/// [`AppObserver`]s. An app's pump makes one call at a time and waits for it to end before the next (a reload
-/// stops the old VM's pump before the new one starts), and the adapter coalesces its signals.
-#[async_trait]
-pub trait AppActivity: Send + Sync {
-    /// A call nobody made through the host ended or paused; state may have changed.
-    async fn background_settled(&self, app: &AppId);
 }
 
 // ---- tools / notifications / clients --------------------------------------------------------
@@ -303,29 +183,14 @@ pub trait InstalledAppStore: Send + Sync {
 // ---- shell -------------------------------------------------------------------------------------
 
 /// What an app asks of the desktop shell: `app:openWindow` (an agent's tool bringing an app forward) and
-/// `app.emit` (an event for the app's open clients) are delivered to the clients; the deep links of `app.shell` are accepted and dropped until the shell shows them.
+/// `app.emit` (an event for the app's open clients). Both are delivered to the connected clients.
 #[async_trait]
 pub trait Shell: Send + Sync {
     /// `app:openWindow(name, params)`: the connected shells open the window or bring the app's forward.
     async fn open_window(&self, app: &AppId, window: &str, params: Map<String, Value>);
-    async fn set_deep_links(&self, app: &AppId, patterns: Vec<String>);
     /// `app.emit(name, data)`: the app's backend tells its open clients something changed. The connected shells
     /// hand it to the frames of that app.
     async fn emit_event(&self, app: &AppId, name: &str, data: Value);
-}
-
-// ---- background tasks ---------------------------------------------------------------------------
-
-/// A running background task; dropping the handle stops it (release on dispose).
-pub trait TaskHandle: Send {}
-
-/// Spawns long-running work (the live-source pump) without the core knowing the async runtime.
-pub trait Background: Send + Sync {
-    fn spawn(
-        &self,
-        name: &'static str,
-        task: Pin<Box<dyn Future<Output = ()> + Send>>,
-    ) -> Box<dyn TaskHandle>;
 }
 
 // ---- paired devices ---------------------------------------------------------------------------

@@ -1,22 +1,25 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
-//! A typed Luau app (`tests/fixtures/typed`: `--!strict`, type aliases, annotations, a generic function, casts, `continue`,
-//! `+=`, string interpolation, an `if` expression) built by the product's pipeline and run on the real host: it loads, an
-//! agent calls its tool over MCP, and its window renders through `view.open`.
+//! A typed Luau backend (`tests/fixtures/backends/typed.luau`: `--!strict`, type aliases, annotations, a generic function,
+//! casts, `continue`, `+=`, string interpolation, an `if` expression) built by the product's pipeline and run on the real
+//! host: it loads, an agent calls its tool over MCP, and its page calls its handler through `app.call`.
 
 mod common;
 
 use common::{
-    browser, built_app, call, claude, connect_agent, publish_package, rpc, start, temp, tool_names,
+    browser, built_backend, call, claude, connect_agent, publish_package, rpc, start, temp, tool_names,
 };
 use serde_json::{json, Value};
 
 #[tokio::test]
 async fn a_typed_luau_app_loads_and_runs() {
-    let bundle = common::built_app("typed");
+    let bundle = built_backend("typed");
     let source = String::from_utf8(bundle.clone()).unwrap();
     // the types are stripped, the Luau syntax is not: the host's VM reads it as written
     assert!(
-        !source.contains("type Stats") && !source.contains(": number") && !source.contains(":: string"),
+        !source.contains("type Stats")
+            && !source.contains(": number")
+            && !source.contains(":: string")
+            && !source.contains("vos_HandlerContext"),
         "{source}"
     );
     for luau in ["continue", "stats.count += 1", "`{label}: {value}`", "if stats.count > 2 then"] {
@@ -25,7 +28,7 @@ async fn a_typed_luau_app_loads_and_runs() {
 
     let tmp = temp("typed-luau");
     let r = start(|c| c.agents = vec![claude()]).await;
-    let url = publish_package(&tmp.join("pkg"), "typed", "app.luau", &[("app.luau", built_app("typed"))]);
+    let url = publish_package(&tmp.join("pkg"), "typed", "app.luau", &[("app.luau", bundle)]);
     r.host.service.install_from_url(&url).await.unwrap();
 
     // the tool, over MCP as an agent: the typed code ran
@@ -40,24 +43,13 @@ async fn a_typed_luau_app_loads_and_runs() {
         "{result}"
     );
 
-    // the window, over /rpc as the browser: `vos:ui` is typed and runs
+    // the handler, over /rpc as the app's page: the typed handler ran, as the person
     let mut ws = browser(&r).await;
-    let hello = rpc(
-        &mut ws,
-        1,
-        "session.hello",
-        json!({"proto": 1, "kit": "1.0", "locale": "en", "timeZone": "UTC"}),
-    )
-    .await;
-    assert!(hello.get("error").is_none(), "{hello}");
-    let opened = rpc(
-        &mut ws,
-        2,
-        "view.open",
-        json!({"app": "typed", "window": "main", "windowId": "w1", "size": {"w": 320, "h": 240}}),
-    )
-    .await;
-    assert!(opened.get("error").is_none(), "{opened}");
-    let tree = opened["result"]["tree"].to_string();
-    assert!(tree.contains("Hello from window "), "{tree}");
+    let greeted =
+        rpc(&mut ws, 1, "app.call", json!({"app": "typed", "method": "greet", "args": {"name": "Ada"}}))
+            .await;
+    assert_eq!(greeted["result"], "Hello Ada from a user", "{greeted}");
+    agent.cancel().await.unwrap();
+    r.stop().await;
+    let _ = std::fs::remove_dir_all(tmp);
 }

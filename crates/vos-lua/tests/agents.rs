@@ -10,7 +10,8 @@ use vos_application::ports::{AgentCard, AgentRoster};
 use vos_domain::AgentId;
 use vos_lua::{AppVm, VmConfig};
 
-const MANIFEST: &str = r#"app.manifest { id = "probe", name = "Probe", icon = "gear" }"#;
+/// The first line of every source here: the line numbers the tests name are the body's plus one.
+const MANIFEST: &str = "-- probe";
 
 struct Cards;
 impl AgentRoster for Cards {
@@ -34,7 +35,9 @@ impl AgentRoster for Cards {
 
 async fn with_roster(body: &str) -> AppVm {
     let config = VmConfig { roster: Arc::new(Cards), ..VmConfig::default() };
-    AppVm::load(&id("probe"), package(&format!("{MANIFEST}\n{body}"), &[]), db(), config).await.unwrap()
+    AppVm::load(&id("probe"), package(&common::backend(&format!("{MANIFEST}\n{body}")), &[]), db(), config)
+        .await
+        .unwrap()
 }
 
 #[tokio::test]

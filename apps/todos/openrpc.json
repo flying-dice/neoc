@@ -1,0 +1,345 @@
+{
+  "openrpc": "1.3.2",
+  "info": {
+    "title": "Todos",
+    "version": "0.1.0",
+    "description": "Lists of things to do, for you and your agents: add a todo, give it a day, flag it, tick it off."
+  },
+  "x-app": {
+    "id": "todos",
+    "icon": "checkmark",
+    "tint": "blue",
+    "description": "Lists of things to do, for you and your agents: add a todo, give it a day, flag it, tick it off.",
+    "window": {
+      "w": 860,
+      "h": 600,
+      "minW": 420,
+      "minH": 420
+    }
+  },
+  "methods": [
+    {
+      "name": "board",
+      "summary": "Every list and its todos: the open ones in the order they were added, then the completed ones, the most recently completed first.",
+      "params": [],
+      "result": {
+        "name": "board",
+        "schema": {
+          "$ref": "#/components/schemas/Board"
+        }
+      }
+    },
+    {
+      "name": "addList",
+      "summary": "Add a list, and answer with the board as it now stands.",
+      "params": [
+        {
+          "name": "name",
+          "required": true,
+          "description": "What the list is called. Blank is refused with a message.",
+          "schema": {
+            "type": "string",
+            "maxLength": 60
+          }
+        },
+        {
+          "name": "color",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Color"
+          }
+        }
+      ],
+      "result": {
+        "name": "board",
+        "schema": {
+          "$ref": "#/components/schemas/Board"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "The name is blank."
+        }
+      ]
+    },
+    {
+      "name": "removeList",
+      "summary": "Delete a list and the todos in it.",
+      "params": [
+        {
+          "name": "list",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "result": {
+        "name": "board",
+        "schema": {
+          "$ref": "#/components/schemas/Board"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such list, or it is the last one."
+        }
+      ]
+    },
+    {
+      "name": "add",
+      "summary": "Add a todo to a list.",
+      "params": [
+        {
+          "name": "list",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "title",
+          "required": true,
+          "description": "What has to be done. Blank is refused with a message.",
+          "schema": {
+            "type": "string",
+            "maxLength": 500
+          }
+        },
+        {
+          "name": "due",
+          "required": false,
+          "description": "The day it is due, as 2026-06-09; left out or empty for none.",
+          "schema": {
+            "type": "string",
+            "maxLength": 10
+          }
+        },
+        {
+          "name": "flagged",
+          "required": false,
+          "schema": {
+            "type": "boolean"
+          }
+        }
+      ],
+      "result": {
+        "name": "board",
+        "schema": {
+          "$ref": "#/components/schemas/Board"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such list, the title is blank, or the day is not a day."
+        }
+      ]
+    },
+    {
+      "name": "update",
+      "summary": "Change a todo: only what is given changes.",
+      "params": [
+        {
+          "name": "todo",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "title",
+          "required": false,
+          "description": "Blank is refused with a message.",
+          "schema": {
+            "type": "string",
+            "maxLength": 500
+          }
+        },
+        {
+          "name": "notes",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        },
+        {
+          "name": "due",
+          "required": false,
+          "description": "The day it is due, as 2026-06-09; empty takes the day away.",
+          "schema": {
+            "type": "string",
+            "maxLength": 10
+          }
+        },
+        {
+          "name": "flagged",
+          "required": false,
+          "schema": {
+            "type": "boolean"
+          }
+        }
+      ],
+      "result": {
+        "name": "board",
+        "schema": {
+          "$ref": "#/components/schemas/Board"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such todo, the title is blank, or the day is not a day."
+        }
+      ]
+    },
+    {
+      "name": "toggle",
+      "summary": "Complete a todo, or bring a completed one back.",
+      "params": [
+        {
+          "name": "todo",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "result": {
+        "name": "board",
+        "schema": {
+          "$ref": "#/components/schemas/Board"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such todo."
+        }
+      ]
+    },
+    {
+      "name": "remove",
+      "summary": "Delete a todo.",
+      "params": [
+        {
+          "name": "todo",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "result": {
+        "name": "board",
+        "schema": {
+          "$ref": "#/components/schemas/Board"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such todo."
+        }
+      ]
+    }
+  ],
+  "components": {
+    "schemas": {
+      "Color": {
+        "type": "string",
+        "description": "A list's colour, a role of the palette.",
+        "enum": [
+          "red",
+          "orange",
+          "yellow",
+          "green",
+          "blue",
+          "purple",
+          "brown"
+        ]
+      },
+      "List": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "color": {
+            "$ref": "#/components/schemas/Color"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "color"
+        ]
+      },
+      "Todo": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "list": {
+            "type": "integer",
+            "description": "The id of the list it is in."
+          },
+          "title": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string",
+            "description": "Empty when there are none."
+          },
+          "due": {
+            "type": "string",
+            "description": "The day it is due, as 2026-06-09; empty when it has none."
+          },
+          "flagged": {
+            "type": "boolean"
+          },
+          "done": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "list",
+          "title",
+          "notes",
+          "due",
+          "flagged",
+          "done"
+        ]
+      },
+      "Board": {
+        "type": "object",
+        "properties": {
+          "lists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/List"
+            }
+          },
+          "todos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Todo"
+            }
+          }
+        },
+        "required": [
+          "lists",
+          "todos"
+        ]
+      }
+    }
+  }
+}

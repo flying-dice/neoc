@@ -2,12 +2,10 @@
 
 use crate::{
     files::{AppFiles, FileStore},
-    live::{SourceDef, SourceId, SourceUpdate, SubscriptionId},
     ports::{
-        AgentDirectory, AgentStore, AppData, AppPackage, AppRuntime, Background, CallContext, ChangeBatch,
-        ChangeFeed, Clock, DataStore, DataTx, DeviceRegistry, EventSink, ExecOutcome, Fetcher, InstalledApp,
-        InstalledAppStore, LoadedApp, Params, PortResult, QueryInfo, RandomSource, RenderOutput, ServerEvent,
-        Shell, SourceBinding, SqlMigration, TaskHandle, ToolRegistry, ViewEffect, ViewEventCall,
+        AgentDirectory, AgentStore, AppData, AppPackage, AppRuntime, CallContext, Clock, DataStore, DataTx,
+        DeviceRegistry, EventSink, ExecOutcome, Fetcher, InstalledApp, InstalledAppStore, LoadedApp, Params,
+        PortResult, RandomSource, ServerEvent, Shell, SqlMigration, ToolRegistry,
     },
     services::{AppService, Ports},
     PortError,
@@ -16,19 +14,15 @@ use async_trait::async_trait;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
-    future::Future,
-    pin::Pin,
+    collections::{HashMap, HashSet},
     sync::{
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicU64, Ordering},
         Arc, Mutex,
     },
-    task::{Poll, Waker},
 };
 use vos_domain::{
-    ui::{ClientDecl, Node},
-    Agent, AgentId, AppId, AppRef, Device, DeviceId, FileInfo, FileKind, FilePath, FileRef, FileResult,
-    Location, Manifest, MigrationSpec, Revision, StoredRevision, ToolSpec,
+    Agent, AgentId, AppId, Device, DeviceId, FileInfo, FileKind, FilePath, FileRef, FileResult, Location,
+    ToolSpec,
 };
 
 #[derive(Default)]
@@ -43,117 +37,30 @@ impl Fetcher for MemFetcher {
 // ---- data -----------------------------------------------------------------------------------------
 
 #[derive(Default)]
-struct FeedState {
-    queue: VecDeque<ChangeBatch>,
-    waker: Option<Waker>,
-    closed: bool,
-}
-
-#[derive(Default)]
 struct Inner {
-    rows: Mutex<Vec<(String, Vec<Value>)>>,
-    tables: Mutex<Vec<String>>,
-    fail: Mutex<String>,
-    begun: AtomicU64,
     migrations: Mutex<Vec<SqlMigration>>,
     execs: Mutex<Vec<(String, Params)>>,
-    feed: Mutex<FeedState>,
-    revs: Mutex<Vec<StoredRevision>>,
-    ui_state: Mutex<HashMap<String, serde_json::Map<String, Value>>>,
 }
 
-/// A scripted database: rows are registered per SQL fragment and returned for any statement containing it
-/// (the longest fragment wins). Windowed (`limit :__limit offset :__offset`) and `count(*) as n` wrappers
-/// are interpreted, so a source behaves like it does over SQLite.
+/// A recording database: it remembers the migrations and statements it is given, and every query returns no
+/// rows.
 #[derive(Default, Clone)]
 pub struct ScriptedData(Arc<Inner>);
 
 impl ScriptedData {
-    pub fn set_rows(&self, sql_fragment: &str, rows: Vec<Value>) {
-        let mut all = self.0.rows.lock().unwrap();
-        all.retain(|(k, _)| k != sql_fragment);
-        all.push((sql_fragment.to_owned(), rows));
-    }
-    /// Every query fails with this message while it is non-empty.
-    pub fn fail_queries(&self, message: &str) {
-        message.clone_into(&mut self.0.fail.lock().unwrap());
-    }
-    pub fn transactions_begun(&self) -> u64 {
-        self.0.begun.load(Ordering::SeqCst)
-    }
     pub fn migrations(&self) -> Vec<SqlMigration> {
         self.0.migrations.lock().unwrap().clone()
     }
     pub fn execs(&self) -> Vec<(String, Params)> {
         self.0.execs.lock().unwrap().clone()
     }
-    /// A commit touching these tables, as the database's commit hook would report it.
-    pub fn commit<'a>(&self, tables: impl IntoIterator<Item = &'a str>) {
-        let mut feed = self.0.feed.lock().unwrap();
-        feed.queue.push_back(ChangeBatch::of(tables));
-        if let Some(w) = feed.waker.take() {
-            w.wake();
-        }
-    }
-    /// End every change feed (the database closed).
-    pub fn close_feed(&self) {
-        let mut feed = self.0.feed.lock().unwrap();
-        feed.closed = true;
-        if let Some(w) = feed.waker.take() {
-            w.wake();
-        }
-    }
-    pub fn feed(&self) -> Box<dyn ChangeFeed> {
-        Box::new(ScriptedFeed(self.0.clone()))
-    }
-
-    fn run(&self, sql: &str, params: &Params) -> PortResult<Vec<Value>> {
-        let fail = self.0.fail.lock().unwrap().clone();
-        if !fail.is_empty() {
-            return Err(PortError::Rejected(fail));
-        }
-        let all = self.0.rows.lock().unwrap();
-        let best = all.iter().filter(|(k, _)| sql.contains(k.as_str())).max_by_key(|(k, _)| k.len());
-        let rows = best.map_or_default(|(_, r)| r.clone());
-        if sql.contains("count(*) as n from (") {
-            return Ok(vec![json!({ "n": rows.len() })]);
-        }
-        if let (Some(limit), Some(offset)) = (params.get("__limit"), params.get("__offset")) {
-            let (limit, offset) = (
-                usize::try_from(limit.as_u64().unwrap_or(0)).unwrap_or(0),
-                usize::try_from(offset.as_u64().unwrap_or(0)).unwrap_or(0),
-            );
-            return Ok(rows.into_iter().skip(offset).take(limit).collect());
-        }
-        Ok(rows)
-    }
-}
-
-struct ScriptedFeed(Arc<Inner>);
-#[async_trait]
-impl ChangeFeed for ScriptedFeed {
-    async fn next_batch(&mut self) -> Option<ChangeBatch> {
-        let inner = self.0.clone();
-        std::future::poll_fn(move |cx| {
-            let mut feed = inner.feed.lock().unwrap();
-            if let Some(b) = feed.queue.pop_front() {
-                Poll::Ready(Some(b))
-            } else if feed.closed {
-                Poll::Ready(None)
-            } else {
-                feed.waker = Some(cx.waker().clone());
-                Poll::Pending
-            }
-        })
-        .await
-    }
 }
 
 struct ScriptedTx(ScriptedData);
 #[async_trait]
 impl DataTx for ScriptedTx {
-    async fn query(&mut self, sql: String, params: Params) -> PortResult<Vec<Value>> {
-        self.0.run(&sql, &params)
+    async fn query(&mut self, _: String, _: Params) -> PortResult<Vec<Value>> {
+        Ok(vec![])
     }
     async fn exec(&mut self, sql: String, params: Params) -> PortResult<ExecOutcome> {
         AppData::exec(&self.0, sql, params).await
@@ -166,110 +73,25 @@ impl DataTx for ScriptedTx {
     }
 }
 
-/// Named parameters (`:name`) in a SQL string, in order of first use.
-fn named_params(sql: &str) -> Vec<String> {
-    let bytes = sql.as_bytes();
-    let mut out: Vec<String> = Vec::new();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b':' && i + 1 < bytes.len() && bytes[i + 1] != b':' && (i == 0 || bytes[i - 1] != b':')
-        {
-            let end = bytes[i + 1..]
-                .iter()
-                .position(|b| !(b.is_ascii_alphanumeric() || *b == b'_'))
-                .map_or(bytes.len(), |p| i + 1 + p);
-            let name = &sql[i + 1..end];
-            if !name.is_empty() && !out.iter().any(|n| n == name) && !name.starts_with("__") {
-                out.push(name.to_owned());
-            }
-            i = end;
-        } else {
-            i += 1;
-        }
-    }
-    out
-}
-
 #[async_trait]
 impl AppData for ScriptedData {
     async fn migrate(&self, migrations: Vec<SqlMigration>) -> PortResult<()> {
         self.0.migrations.lock().unwrap().extend(migrations);
         Ok(())
     }
-    async fn query(&self, sql: String, params: Params) -> PortResult<Vec<Value>> {
-        self.run(&sql, &params)
+    async fn query(&self, _: String, _: Params) -> PortResult<Vec<Value>> {
+        Ok(vec![])
     }
     async fn exec(&self, sql: String, params: Params) -> PortResult<ExecOutcome> {
         let mut execs = self.0.execs.lock().unwrap();
         execs.push((sql, params));
         Ok(ExecOutcome { changes: 1, last_insert_id: i64::try_from(execs.len()).unwrap_or(0) })
     }
-    async fn analyze(&self, sql: String) -> PortResult<QueryInfo> {
-        let mut tables: std::collections::BTreeSet<String> =
-            self.0.tables.lock().unwrap().iter().cloned().collect();
-        if tables.is_empty() {
-            tables.insert("notes".into());
-        }
-        let columns = self
-            .run(&sql, &Params::None)
-            .ok()
-            .and_then(|r| r.first().and_then(|v| v.as_object().map(|o| o.keys().cloned().collect())))
-            .unwrap_or_default();
-        Ok(QueryInfo {
-            tables,
-            columns,
-            named_params: named_params(&sql),
-            read_only: sql.trim_start().to_lowercase().starts_with("select"),
-        })
-    }
     async fn begin(&self) -> PortResult<Box<dyn DataTx>> {
-        self.0.begun.fetch_add(1, Ordering::SeqCst);
         Ok(Box::new(ScriptedTx(self.clone())))
-    }
-    fn changes(&self) -> Box<dyn ChangeFeed> {
-        self.feed()
     }
     fn read_only(&self) -> Arc<dyn AppData> {
         Arc::new(ReadOnlyData(self.clone()))
-    }
-    async fn ui_state(&self, window: &str) -> PortResult<serde_json::Map<String, Value>> {
-        Ok(self.0.ui_state.lock().unwrap().get(window).cloned().unwrap_or_default())
-    }
-    async fn set_ui_state(&self, window: &str, entries: serde_json::Map<String, Value>) -> PortResult<()> {
-        self.0.ui_state.lock().unwrap().entry(window.to_owned()).or_default().extend(entries);
-        Ok(())
-    }
-    async fn clear_ui_state(&self) -> PortResult<()> {
-        self.0.ui_state.lock().unwrap().clear();
-        Ok(())
-    }
-    async fn record_revision(&self, revision: Revision) -> PortResult<i64> {
-        let mut all = self.0.revs.lock().unwrap();
-        let id = i64::try_from(all.len()).unwrap_or(0) + 1;
-        all.push(StoredRevision { id, revision });
-        Ok(id)
-    }
-    async fn revision(&self, id: i64) -> PortResult<Option<StoredRevision>> {
-        Ok(self.0.revs.lock().unwrap().iter().find(|r| r.id == id).cloned())
-    }
-    async fn revisions(&self, source: &str, key: &Value, field: &str) -> PortResult<Vec<StoredRevision>> {
-        let mut v: Vec<StoredRevision> = self
-            .0
-            .revs
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|r| r.revision.source == source && &r.revision.key == key && r.revision.field == field)
-            .cloned()
-            .collect();
-        v.reverse();
-        Ok(v)
-    }
-    async fn purge_revisions(&self, cutoff_ms: u64) -> PortResult<u64> {
-        let mut all = self.0.revs.lock().unwrap();
-        let before = all.len();
-        all.retain(|r| r.revision.recorded_at_ms >= cutoff_ms);
-        Ok(u64::try_from(before - all.len()).unwrap_or(0))
     }
 }
 
@@ -308,56 +130,11 @@ impl AppData for ReadOnlyData {
     async fn exec(&self, _sql: String, _params: Params) -> PortResult<ExecOutcome> {
         refused()
     }
-    async fn analyze(&self, sql: String) -> PortResult<QueryInfo> {
-        self.0.analyze(sql).await
-    }
     async fn begin(&self) -> PortResult<Box<dyn DataTx>> {
         Ok(Box::new(ReadOnlyTx(ScriptedTx(self.0.clone()))))
     }
-    fn changes(&self) -> Box<dyn ChangeFeed> {
-        self.0.feed()
-    }
     fn read_only(&self) -> Arc<dyn AppData> {
         Arc::new(ReadOnlyData(self.0.clone()))
-    }
-    async fn ui_state(&self, window: &str) -> PortResult<serde_json::Map<String, Value>> {
-        self.0.ui_state(window).await
-    }
-    async fn set_ui_state(&self, _window: &str, _entries: serde_json::Map<String, Value>) -> PortResult<()> {
-        refused()
-    }
-    async fn clear_ui_state(&self) -> PortResult<()> {
-        refused()
-    }
-    async fn record_revision(&self, _revision: Revision) -> PortResult<i64> {
-        refused()
-    }
-    async fn revision(&self, id: i64) -> PortResult<Option<StoredRevision>> {
-        self.0.revision(id).await
-    }
-    async fn revisions(&self, source: &str, key: &Value, field: &str) -> PortResult<Vec<StoredRevision>> {
-        self.0.revisions(source, key, field).await
-    }
-    async fn purge_revisions(&self, _cutoff_ms: u64) -> PortResult<u64> {
-        refused()
-    }
-}
-
-/// Collects what a refresh delivers.
-#[derive(Default)]
-pub struct CollectingSink(Mutex<Vec<(SubscriptionId, SourceUpdate)>>);
-impl CollectingSink {
-    pub fn take(&self) -> Vec<(SubscriptionId, SourceUpdate)> {
-        std::mem::take(&mut *self.0.lock().unwrap())
-    }
-    pub fn peek(&self) -> Vec<(SubscriptionId, SourceUpdate)> {
-        self.0.lock().unwrap().clone()
-    }
-}
-#[async_trait]
-impl crate::live::LiveSink for CollectingSink {
-    async fn deliver(&self, subscription: SubscriptionId, update: SourceUpdate) {
-        self.0.lock().unwrap().push((subscription, update));
     }
 }
 
@@ -396,12 +173,6 @@ impl DataStore for MemStore {
 
 // ---- runtime --------------------------------------------------------------------------------------
 
-/// (view, window, params, restored values) of a window the fake runtime opened.
-pub type OpenedView = (String, String, serde_json::Map<String, Value>, serde_json::Map<String, Value>);
-/// (source, key, field, value, context) of a write-back the fake runtime ran.
-pub type WriteRecord = (String, Value, String, Value, CallContext);
-type WriteHook = Box<dyn Fn(&str, &Value, &str, &Value) + Send>;
-
 #[derive(Default)]
 pub struct FakeRuntime {
     apps: Mutex<HashMap<String, Vec<ToolSpec>>>,
@@ -412,31 +183,9 @@ pub struct FakeRuntime {
     read_only_calls: Mutex<Vec<bool>>,
     loads: Mutex<HashMap<String, usize>>,
     packages: Mutex<HashMap<String, AppPackage>>,
-    sources: Mutex<HashMap<String, Vec<SourceDef>>>,
     fail_load: Mutex<HashSet<String>>,
-    writes: Mutex<Vec<WriteRecord>>,
-    on_write: Mutex<Option<WriteHook>>,
-    view: Mutex<ViewScript>,
 }
 
-/// What the fake runtime renders and records for windows.
-#[derive(Default)]
-struct ViewScript {
-    tree: Option<Node>,
-    sources: BTreeMap<String, SourceBinding>,
-    decls: BTreeMap<String, ClientDecl>,
-    seq: u64,
-    fail_render: Option<String>,
-    stale: HashSet<String>,
-    dirty: Vec<String>,
-    effects: Vec<(String, ViewEffect)>,
-    opened: Vec<OpenedView>,
-    events: Vec<(String, ViewEventCall)>,
-    closed: Vec<String>,
-    client_values: Vec<(String, serde_json::Map<String, Value>)>,
-    /// Makes the next `render_view` wait until the paired sender fires or is dropped.
-    hold_render: Option<futures_channel::oneshot::Receiver<()>>,
-}
 impl FakeRuntime {
     pub fn loaded(&self) -> Vec<String> {
         self.apps.lock().unwrap().keys().cloned().collect()
@@ -459,9 +208,6 @@ impl FakeRuntime {
     pub fn package(&self, app: &str) -> Option<AppPackage> {
         self.packages.lock().unwrap().get(app).cloned()
     }
-    pub fn set_sources(&self, app: &str, defs: Vec<SourceDef>) {
-        self.sources.lock().unwrap().insert(app.to_owned(), defs);
-    }
     /// The next loads of this app fail (until `fail_load(app, false)`).
     pub fn fail_load(&self, app: &str, fail: bool) {
         let mut set = self.fail_load.lock().unwrap();
@@ -471,77 +217,9 @@ impl FakeRuntime {
             set.remove(app);
         }
     }
-    /// What every window renders next (open and re-render).
-    pub fn set_render(
-        &self,
-        tree: Node,
-        sources: BTreeMap<String, SourceBinding>,
-        decls: BTreeMap<String, ClientDecl>,
-    ) {
-        let mut v = self.view.lock().unwrap();
-        v.tree = Some(tree);
-        v.sources = sources;
-        v.decls = decls;
-    }
-    /// The next `render_view` call (arm it after the open) waits until the returned sender is used or dropped:
-    /// a render that takes a while.
-    pub fn hold_next_render(&self) -> futures_channel::oneshot::Sender<()> {
-        let (release, held) = futures_channel::oneshot::channel();
-        self.view.lock().unwrap().hold_render = Some(held);
-        release
-    }
-    /// The next renders fail with this message.
-    pub fn fail_render(&self, message: Option<&str>) {
-        self.view.lock().unwrap().fail_render = message.map(str::to_owned);
-    }
-    /// `path#event` handlers that no longer exist (the event is stale).
-    pub fn set_stale(&self, handler: &str) {
-        self.view.lock().unwrap().stale.insert(handler.to_owned());
-    }
-    /// The next `dirty_views` call reports this view.
-    pub fn mark_dirty(&self, view: &str) {
-        self.view.lock().unwrap().dirty.push(view.to_owned());
-    }
-    pub fn push_effect(&self, view: &str, effect: ViewEffect) {
-        self.view.lock().unwrap().effects.push((view.to_owned(), effect));
-    }
-    pub fn opened_views(&self) -> Vec<OpenedView> {
-        self.view.lock().unwrap().opened.clone()
-    }
-    pub fn view_events(&self) -> Vec<(String, ViewEventCall)> {
-        self.view.lock().unwrap().events.clone()
-    }
-    pub fn closed_views(&self) -> Vec<String> {
-        self.view.lock().unwrap().closed.clone()
-    }
-    pub fn client_values(&self) -> Vec<(String, serde_json::Map<String, Value>)> {
-        self.view.lock().unwrap().client_values.clone()
-    }
-    fn render(&self) -> PortResult<RenderOutput> {
-        let mut v = self.view.lock().unwrap();
-        if let Some(message) = &v.fail_render {
-            return Err(PortError::Rejected(message.clone()));
-        }
-        let tree = v.tree.clone().ok_or_else(|| PortError::NotFound("no render scripted".into()))?;
-        v.seq += 1;
-        Ok(RenderOutput {
-            tree,
-            client_decls: v.decls.clone(),
-            sources: v.sources.clone(),
-            client: serde_json::Map::new(),
-            seq: v.seq,
-        })
-    }
     /// `(app, handler, args)` of every client `rpc` call so far.
     pub fn handler_calls(&self) -> Vec<(String, String, Value)> {
         self.handler_calls.lock().unwrap().clone()
-    }
-    pub fn writes(&self) -> Vec<WriteRecord> {
-        self.writes.lock().unwrap().clone()
-    }
-    /// Called with (source, key, field, value) when a write-back runs (to change the scripted rows).
-    pub fn on_write(&self, hook: impl Fn(&str, &Value, &str, &Value) + Send + 'static) {
-        *self.on_write.lock().unwrap() = Some(Box::new(hook));
     }
 }
 #[async_trait]
@@ -567,8 +245,7 @@ impl AppRuntime for FakeRuntime {
             .collect();
         self.apps.lock().unwrap().insert(app.to_string(), tools.clone());
         self.packages.lock().unwrap().insert(app.to_string(), package);
-        let sources = self.sources.lock().unwrap().get(app.as_str()).cloned().unwrap_or_default();
-        Ok(LoadedApp { decl: None, tools, sources })
+        Ok(LoadedApp { tools })
     }
     async fn unload(&self, app: &AppId) -> PortResult<()> {
         self.apps.lock().unwrap().remove(app.as_str());
@@ -595,75 +272,6 @@ impl AppRuntime for FakeRuntime {
     ) -> PortResult<Value> {
         self.handler_calls.lock().unwrap().push((app.to_string(), method.to_owned(), args.clone()));
         Ok(json!({ "app": app.as_str(), "method": method, "args": args }))
-    }
-    async fn write_row(
-        &self,
-        _: &AppId,
-        source: &SourceId,
-        key: Value,
-        field: &str,
-        value: Value,
-        ctx: CallContext,
-    ) -> PortResult<()> {
-        if let Some(hook) = self.on_write.lock().unwrap().as_ref() {
-            hook(&source.0, &key, field, &value);
-        }
-        self.writes.lock().unwrap().push((source.0.clone(), key, field.to_owned(), value, ctx));
-        Ok(())
-    }
-    async fn windows(&self, _: &AppId) -> PortResult<Vec<String>> {
-        Ok(vec!["main".into()])
-    }
-    async fn open_view(
-        &self,
-        _: &AppId,
-        view: &str,
-        window: &str,
-        params: serde_json::Map<String, Value>,
-        restored: serde_json::Map<String, Value>,
-    ) -> PortResult<RenderOutput> {
-        let mut out = self.render()?;
-        restored.clone_into(&mut out.client);
-        self.view.lock().unwrap().opened.push((view.to_owned(), window.to_owned(), params, restored));
-        Ok(out)
-    }
-    async fn render_view(&self, _: &AppId, _: &str) -> PortResult<RenderOutput> {
-        let held = self.view.lock().unwrap().hold_render.take();
-        if let Some(held) = held {
-            let _ = held.await;
-        }
-        self.render()
-    }
-    async fn dispatch_view_event(
-        &self,
-        _: &AppId,
-        view: &str,
-        call: ViewEventCall,
-        _: CallContext,
-    ) -> PortResult<bool> {
-        let mut v = self.view.lock().unwrap();
-        let stale = v.stale.contains(&format!("{}#{}", call.path, call.event));
-        v.events.push((view.to_owned(), call));
-        Ok(!stale)
-    }
-    async fn set_client_values(
-        &self,
-        _: &AppId,
-        view: &str,
-        values: serde_json::Map<String, Value>,
-    ) -> PortResult<()> {
-        self.view.lock().unwrap().client_values.push((view.to_owned(), values));
-        Ok(())
-    }
-    async fn close_view(&self, _: &AppId, view: &str) -> PortResult<()> {
-        self.view.lock().unwrap().closed.push(view.to_owned());
-        Ok(())
-    }
-    async fn dirty_views(&self, _: &AppId) -> PortResult<Vec<String>> {
-        Ok(std::mem::take(&mut self.view.lock().unwrap().dirty))
-    }
-    async fn take_view_effects(&self, _: &AppId) -> PortResult<Vec<(String, ViewEffect)>> {
-        Ok(std::mem::take(&mut self.view.lock().unwrap().effects))
     }
 }
 
@@ -776,7 +384,6 @@ pub type OpenedWindow = (String, String, Map<String, Value>);
 /// Records what apps asked of the shell.
 #[derive(Default)]
 pub struct RecordingShell {
-    pub links: Mutex<Vec<(String, Vec<String>)>>,
     /// `(app, window, params)` of every `app:openWindow`.
     pub windows: Mutex<Vec<OpenedWindow>>,
     /// `(app, name, data)` of every `app.emit`.
@@ -787,50 +394,8 @@ impl Shell for RecordingShell {
     async fn open_window(&self, app: &AppId, window: &str, params: Map<String, Value>) {
         self.windows.lock().unwrap().push((app.to_string(), window.to_owned(), params));
     }
-    async fn set_deep_links(&self, app: &AppId, patterns: Vec<String>) {
-        self.links.lock().unwrap().push((app.to_string(), patterns));
-    }
     async fn emit_event(&self, app: &AppId, name: &str, data: Value) {
         self.events.lock().unwrap().push((app.to_string(), name.to_owned(), data));
-    }
-}
-
-/// Collects what a view sends to its client.
-#[derive(Default)]
-pub struct RecordingViewSink(Mutex<Vec<vos_domain::ui::protocol::HostNotification>>);
-impl RecordingViewSink {
-    pub fn take(&self) -> Vec<vos_domain::ui::protocol::HostNotification> {
-        std::mem::take(&mut *self.0.lock().unwrap())
-    }
-    pub fn methods(&self) -> Vec<&'static str> {
-        self.0.lock().unwrap().iter().map(|n| n.to_rpc().0).collect()
-    }
-}
-impl crate::views::ViewSink for RecordingViewSink {
-    fn send(&self, notification: vos_domain::ui::protocol::HostNotification) {
-        self.0.lock().unwrap().push(notification);
-    }
-}
-
-/// A `Background` that never runs the task but counts the live handles (the pump's lifetime).
-#[derive(Default)]
-pub struct CountingBackground(Arc<AtomicUsize>);
-impl CountingBackground {
-    pub fn alive(&self) -> usize {
-        self.0.load(Ordering::SeqCst)
-    }
-}
-struct CountedHandle(Arc<AtomicUsize>);
-impl TaskHandle for CountedHandle {}
-impl Drop for CountedHandle {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::SeqCst);
-    }
-}
-impl Background for CountingBackground {
-    fn spawn(&self, _: &'static str, _: Pin<Box<dyn Future<Output = ()> + Send>>) -> Box<dyn TaskHandle> {
-        self.0.fetch_add(1, Ordering::SeqCst);
-        Box::new(CountedHandle(self.0.clone()))
     }
 }
 
@@ -988,6 +553,9 @@ impl FileStore for RecordingFiles {
     }
 }
 
+/// The page of an app published by [`Fakes::add_app`].
+pub const DEFAULT_PAGE: &str = "<!doctype html><title>app</title>";
+
 /// Bundle of all fakes + helpers to build the service under test.
 pub struct Fakes {
     pub fetcher: Arc<MemFetcher>,
@@ -998,7 +566,6 @@ pub struct Fakes {
     pub events: Arc<RecordingSink>,
     pub installed: Arc<MemInstalled>,
     pub clock: Arc<ManualClock>,
-    pub background: Arc<CountingBackground>,
 }
 impl Default for Fakes {
     fn default() -> Self {
@@ -1016,7 +583,6 @@ impl Fakes {
             events: Arc::default(),
             installed: Arc::default(),
             clock: Arc::new(ManualClock::new(1_000)),
-            background: Arc::default(),
         }
     }
     /// A fresh service over these fakes (call twice to simulate a restart: the fakes keep their state).
@@ -1041,7 +607,6 @@ impl Fakes {
             events: self.events.clone(),
             installed: self.installed.clone(),
             clock: self.clock.clone(),
-            background: self.background.clone(),
             registries,
         })
     }
@@ -1050,27 +615,37 @@ impl Fakes {
         let body = serde_json::to_vec(&json!({ "apps": apps })).unwrap();
         self.fetcher.0.lock().unwrap().insert(url.to_owned(), body);
     }
-    /// Publish an app ref at `mem://<id>/app-ref.json`; `main` content = comma-joined tool names.
+    /// Publish an app ref at `mem://<id>/app-ref.json`; `main` content = comma-joined tool names. Its page is
+    /// `static/index.html` ([`DEFAULT_PAGE`]).
     pub fn add_app(&self, id: &str, tools: &[(&str, &str)]) -> String {
         self.add_app_with(id, tools, &[])
     }
-    /// Like `add_app`, for an app with a client of its own: `static/index.html` is the page `client_source` and the
-    /// manifest names the directory (and a window), so the service keeps it for the frame.
-    pub fn add_client_app(&self, id: &str, tools: &[(&str, &str)], client_source: &str) -> String {
-        let url = self.add_app_with(id, tools, &[("static/index.html", client_source)]);
-        let mut mem = self.fetcher.0.lock().unwrap();
-        let mut app_ref: AppRef = serde_json::from_slice(&mem[&url]).unwrap();
-        app_ref.manifest.ui = Some(vos_domain::AppUi {
-            root: "static".into(),
-            entry: "index.html".into(),
-            csp: vos_domain::Csp::default(),
-            permissions: vos_domain::Permissions::default(),
+    /// Like `add_app`, with `page` as the source of `static/index.html` and a window in the manifest.
+    pub fn add_client_app(&self, id: &str, tools: &[(&str, &str)], page: &str) -> String {
+        let url = self.add_app_with(id, tools, &[("static/index.html", page)]);
+        self.edit_ref(&url, |app_ref| {
+            app_ref["manifest"]["window"] = json!({ "w": 420, "h": 480, "minW": 320, "minH": 320 });
         });
-        app_ref.manifest.window = Some(vos_domain::WindowDecl { w: 420, h: 480, min_w: 320, min_h: 320 });
-        mem.insert(url.clone(), serde_json::to_vec(&app_ref).unwrap());
         url
     }
-    /// Like `add_app`, with extra `.lua` modules (path, source).
+    /// Like `add_app`, but the manifest has no `ui`: an app ref of the kind this host no longer runs (it drew its
+    /// windows as a view tree).
+    pub fn add_app_without_page(&self, id: &str) -> String {
+        let url = self.add_app(id, &[]);
+        self.edit_ref(&url, |app_ref| {
+            app_ref["manifest"].as_object_mut().unwrap().remove("ui");
+        });
+        url
+    }
+    /// Rewrite the published app ref at `url` as JSON.
+    pub fn edit_ref(&self, url: &str, edit: impl FnOnce(&mut Value)) {
+        let mut mem = self.fetcher.0.lock().unwrap();
+        let mut app_ref: Value = serde_json::from_slice(&mem[url]).unwrap();
+        edit(&mut app_ref);
+        mem.insert(url.to_owned(), serde_json::to_vec(&app_ref).unwrap());
+    }
+    /// Like `add_app`, with extra files (path, source): `.lua` modules, or the page's own (`static/...`). Without a
+    /// `static/index.html` among them the page is [`DEFAULT_PAGE`].
     pub fn add_app_with(&self, id: &str, tools: &[(&str, &str)], modules: &[(&str, &str)]) -> String {
         let main = tools.iter().map(|t| t.0).collect::<Vec<_>>().join(",").into_bytes();
         let sql = b"CREATE TABLE t(a);".to_vec();
@@ -1083,39 +658,34 @@ impl Fakes {
                 sha256: sha(&sql),
             },
         ];
+        let mut modules = modules.to_vec();
+        if !modules.iter().any(|(path, _)| *path == "static/index.html") {
+            modules.push(("static/index.html", DEFAULT_PAGE));
+        }
         let mut mem = self.fetcher.0.lock().unwrap();
         for (path, src) in modules {
             files.push(FileRef {
-                path: (*path).into(),
+                path: path.into(),
                 url: format!("mem://{id}/{path}"),
                 sha256: sha(src.as_bytes()),
             });
             mem.insert(format!("mem://{id}/{path}"), src.as_bytes().to_vec());
         }
-        let r = AppRef {
-            manifest: Manifest {
-                id: AppId::parse(id).unwrap(),
-                name: id.into(),
-                version: "1.0.0".into(),
-                main: "main.lua".into(),
-                migrations: vec![MigrationSpec {
-                    version: 1,
-                    name: "init".into(),
-                    file: "001_init.sql".into(),
-                }],
-                icon: None,
-                tint: None,
-                description: None,
-                requires: None,
-                ui: None,
-                window: None,
+        let app_ref = json!({
+            "manifest": {
+                "id": id,
+                "name": id,
+                "version": "1.0.0",
+                "main": "main.lua",
+                "migrations": [{ "version": 1, "name": "init", "file": "001_init.sql" }],
+                "ui": { "root": "static" },
             },
-            files,
-        };
+            "files": files,
+        });
         mem.insert(format!("mem://{id}/main.lua"), main);
         mem.insert(format!("mem://{id}/001_init.sql"), sql);
         let url = format!("mem://{id}/app-ref.json");
-        mem.insert(url.clone(), serde_json::to_vec(&r).unwrap());
+        mem.insert(url.clone(), serde_json::to_vec(&app_ref).unwrap());
         url
     }
     pub fn tamper(&self, id: &str) {

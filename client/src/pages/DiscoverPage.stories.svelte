@@ -41,7 +41,6 @@
     tint: 'yellow',
     description: 'Plain notes your agents can read and append to.',
     source: 'this computer',
-    client: false,
     permissions: []
   }
 
@@ -128,48 +127,16 @@
   }}
 />
 
+<!-- The sidebar chooses what the page shows: the front page (the welcome, the apps, the numbers) or the apps alone. -->
 <Story
-  name="Add by URL: preview"
+  name="The apps alone"
+  beforeEach={withHost([FAKE_CALCULATOR])}
   play={async ({ canvas, userEvent }) => {
-    await userEvent.type(
-      canvas.getByTestId('discover-add-url'),
-      'https://apps.example.org/notes/app-ref.json'
-    )
-    // every button of the flow is a target a finger can hit (44 pt)
-    const tall = (id: string): number => canvas.getByTestId(id).getBoundingClientRect().height
-    await expect(tall('discover-add-preview')).toBeGreaterThanOrEqual(44)
-    await userEvent.click(canvas.getByTestId('discover-add-preview'))
-    await expect(await canvas.findByTestId('discover-add-preview-card')).toHaveTextContent(
-      'Version 0.2.0'
-    )
-    await expect(tall('discover-add-install')).toBeGreaterThanOrEqual(44)
-    await expect(tall('discover-add-cancel')).toBeGreaterThanOrEqual(44)
-  }}
-/>
-
-<Story
-  name="Add by URL: confirm"
-  play={async ({ canvas, userEvent }) => {
-    await userEvent.type(
-      canvas.getByTestId('discover-add-url'),
-      'https://apps.example.org/notes/app-ref.json'
-    )
-    await userEvent.click(canvas.getByTestId('discover-add-preview'))
-    await userEvent.click(await canvas.findByTestId('discover-add-install'))
-    const confirm = await canvas.findByTestId('discover-install-confirm')
-    await expect(confirm).toHaveTextContent('will run on this host')
-    await expect(confirm).toHaveTextContent(
-      'read and write files, use the network and run processes'
-    )
-  }}
-/>
-
-<Story
-  name="Add by URL: not an app"
-  play={async ({ canvas, userEvent }) => {
-    await userEvent.type(canvas.getByTestId('discover-add-url'), 'https://example.org/bad.json')
-    await userEvent.click(canvas.getByTestId('discover-add-preview'))
-    await expect(await canvas.findByTestId('discover-add-error')).toHaveTextContent('bad app ref')
+    await expect(await canvas.findByTestId('discover-hero')).toBeVisible()
+    await userEvent.click(canvas.getByTestId('discover-section-apps'))
+    await expect(canvas.queryByTestId('discover-hero')).toBeNull()
+    await expect(canvas.queryByTestId('discover-information')).toBeNull()
+    await expect(canvas.getByTestId('discover-apps')).toBeVisible()
   }}
 />
 
@@ -194,7 +161,6 @@
     await expect(await canvas.findByTestId('discover-apps-error')).toHaveTextContent(
       'unexpected answer to “app.available”'
     )
-    await expect(canvas.getByTestId('discover-add-url')).toBeVisible()
   }}
 />
 

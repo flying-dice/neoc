@@ -10,7 +10,6 @@ const summary = (id: string, extra: Partial<AppSummary> = {}): AppSummary => ({
   version: '1.0.0',
   state: 'running',
   source: 'file',
-  client: false,
   permissions: [],
   ...extra
 })
@@ -79,11 +78,6 @@ describe('opening', () => {
     expect(wm.stages).toHaveLength(1)
     expect(wm.onStage.map((w) => w.appId).sort()).toEqual(['calculator', 'notes'])
     expect(win('notes').frame.x).toBeGreaterThan(win('calculator').frame.x)
-  })
-
-  test('the window kind and params travel with the window', () => {
-    wm.open('notes', { kind: 'editor', params: { id: 4 } })
-    expect(win('notes')).toMatchObject({ kind: 'editor', params: { id: 4 } })
   })
 
   test('a window is never smaller than the app’s minimum, however small the screen', () => {
@@ -665,5 +659,64 @@ describe('a regular screen with little room', () => {
     expect(f.width).toBe(480)
     expect(f.x).toBeGreaterThanOrEqual(8)
     expect(f.x + f.width).toBeLessThanOrEqual(600 - 8)
+  })
+})
+
+describe('the Home Screen', () => {
+  test('with nothing open the Home Screen is on show; an open window takes its place', () => {
+    expect(wm.atHome).toBe(true)
+    wm.open('files')
+    expect(wm.atHome).toBe(false)
+    wm.close(win('files').id)
+    expect(wm.atHome).toBe(true)
+  })
+
+  test('showHome leaves the stage without closing anything: the group waits in the strip, as it is', () => {
+    wm.open('files')
+    wm.open('notes')
+    wm.open('calculator', { alongside: true })
+    const group = wm.activeStageId
+    wm.showHome()
+    expect(wm.atHome).toBe(true)
+    expect(wm.onStage).toEqual([])
+    expect(wm.focusedId).toBeNull()
+    expect(wm.windows.map((w) => w.appId)).toEqual(['files', 'notes', 'calculator'])
+    const waiting = wm.recentStages.find((s) => s.id === group)
+    expect(waiting?.apps.map((a) => a.id)).toEqual(['notes', 'calculator'])
+    // and it comes back whole
+    wm.open('notes')
+    expect(wm.activeStageId).toBe(group)
+    expect(wm.onStage.map((w) => w.appId)).toEqual(['notes', 'calculator'])
+  })
+
+  test('a split stays a split while the Home Screen is on show', () => {
+    wm.open('files')
+    wm.setLayout(win('files').id, 'split-left')
+    wm.open('notes')
+    wm.showHome()
+    expect(wm.dockHidden).toBe(false)
+    expect(wm.splitDividerX).toBeNull()
+    wm.activateStage(win('files').stageId!)
+    expect(win('files').layout).toBe('split-left')
+    expect(win('notes').layout).toBe('split-right')
+  })
+
+  test('a Slide Over steps aside, and is still there to bring back', () => {
+    wm.open('files')
+    wm.open('notes', { alongside: true })
+    wm.setLayout(win('notes').id, 'slideover')
+    expect(wm.atHome).toBe(false)
+    wm.showHome()
+    expect(wm.atHome).toBe(true)
+    expect(wm.slideOver?.appId).toBe('notes')
+    expect(wm.slideOverHidden).toBe(true)
+    wm.toggleSlideOver()
+    expect(wm.atHome).toBe(false) // a Slide Over that is out covers the Home Screen's edge
+  })
+
+  test('showHome with nothing on stage changes nothing', () => {
+    wm.showHome()
+    expect(wm.atHome).toBe(true)
+    expect(wm.stages).toEqual([])
   })
 })

@@ -10,7 +10,6 @@
         "@types/bun": "1.4.4",
         "concurrently": "^10.0.7",
         "typescript": "^5.9.3",
-        "zod": "4.6.7",
       },
     },
     "apps/agents": {
@@ -35,6 +34,188 @@
     },
     "apps/calculator": {
       "name": "@vos-apps/calculator",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@storybook/addon-a11y": "10.6.7",
+        "@storybook/addon-docs": "10.6.7",
+        "@storybook/addon-svelte-csf": "5.1.6",
+        "@storybook/addon-themes": "10.6.7",
+        "@storybook/svelte-vite": "10.6.7",
+        "@sveltejs/vite-plugin-svelte": "^7.3.1",
+        "@types/bun": "1.4.4",
+        "@vos/storybook": "workspace:*",
+        "@vos/vite-plugin": "workspace:*",
+        "storybook": "10.6.7",
+        "svelte": "^5.57.2",
+        "svelte-check": "^4.7.6",
+        "typescript": "^5.9.3",
+        "vite": "^8.3.4",
+      },
+    },
+    "apps/containers": {
+      "name": "@vos-apps/containers",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@storybook/addon-a11y": "10.6.7",
+        "@storybook/addon-docs": "10.6.7",
+        "@storybook/addon-svelte-csf": "5.1.6",
+        "@storybook/addon-themes": "10.6.7",
+        "@storybook/svelte-vite": "10.6.7",
+        "@sveltejs/vite-plugin-svelte": "^7.3.1",
+        "@types/bun": "1.4.4",
+        "@vos/storybook": "workspace:*",
+        "@vos/vite-plugin": "workspace:*",
+        "storybook": "10.6.7",
+        "svelte": "^5.57.2",
+        "svelte-check": "^4.7.6",
+        "typescript": "^5.9.3",
+        "vite": "^8.3.4",
+      },
+    },
+    "apps/dns": {
+      "name": "@vos-apps/dns",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@storybook/addon-a11y": "10.6.7",
+        "@storybook/addon-docs": "10.6.7",
+        "@storybook/addon-svelte-csf": "5.1.6",
+        "@storybook/addon-themes": "10.6.7",
+        "@storybook/svelte-vite": "10.6.7",
+        "@sveltejs/vite-plugin-svelte": "^7.3.1",
+        "@types/bun": "1.4.4",
+        "@vos/storybook": "workspace:*",
+        "@vos/vite-plugin": "workspace:*",
+        "storybook": "10.6.7",
+        "svelte": "^5.57.2",
+        "svelte-check": "^4.7.6",
+        "typescript": "^5.9.3",
+        "vite": "^8.3.4",
+      },
+    },
+    "apps/keychain": {
+      "name": "@vos-apps/keychain",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@storybook/addon-a11y": "10.6.7",
+        "@storybook/addon-docs": "10.6.7",
+        "@storybook/addon-svelte-csf": "5.1.6",
+        "@storybook/addon-themes": "10.6.7",
+        "@storybook/svelte-vite": "10.6.7",
+        "@sveltejs/vite-plugin-svelte": "^7.3.1",
+        "@types/bun": "1.4.4",
+        "@vos/storybook": "workspace:*",
+        "@vos/vite-plugin": "workspace:*",
+        "storybook": "10.6.7",
+        "svelte": "^5.57.2",
+        "svelte-check": "^4.7.6",
+        "typescript": "^5.9.3",
+        "vite": "^8.3.4",
+      },
+    },
+    "apps/notebooks": {
+      "name": "@vos-apps/notebooks",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@storybook/addon-a11y": "10.6.7",
+        "@storybook/addon-docs": "10.6.7",
+        "@storybook/addon-svelte-csf": "5.1.6",
+        "@storybook/addon-themes": "10.6.7",
+        "@storybook/svelte-vite": "10.6.7",
+        "@sveltejs/vite-plugin-svelte": "^7.3.1",
+        "@types/bun": "1.4.4",
+        "@vos/storybook": "workspace:*",
+        "@vos/vite-plugin": "workspace:*",
+        "storybook": "10.6.7",
+        "svelte": "^5.57.2",
+        "svelte-check": "^4.7.6",
+        "typescript": "^5.9.3",
+        "vite": "^8.3.4",
+      },
+    },
+    "apps/notes": {
+      "name": "@vos-apps/notes",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@storybook/addon-a11y": "10.6.7",
+        "@storybook/addon-docs": "10.6.7",
+        "@storybook/addon-svelte-csf": "5.1.6",
+        "@storybook/addon-themes": "10.6.7",
+        "@storybook/svelte-vite": "10.6.7",
+        "@sveltejs/vite-plugin-svelte": "^7.3.1",
+        "@types/bun": "1.4.4",
+        "@vos/storybook": "workspace:*",
+        "@vos/vite-plugin": "workspace:*",
+        "storybook": "10.6.7",
+        "svelte": "^5.57.2",
+        "svelte-check": "^4.7.6",
+        "typescript": "^5.9.3",
+        "vite": "^8.3.4",
+      },
+    },
+    "apps/pages": {
+      "name": "@vos-apps/pages",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@storybook/addon-a11y": "10.6.7",
+        "@storybook/addon-docs": "10.6.7",
+        "@storybook/addon-svelte-csf": "5.1.6",
+        "@storybook/addon-themes": "10.6.7",
+        "@storybook/svelte-vite": "10.6.7",
+        "@sveltejs/vite-plugin-svelte": "^7.3.1",
+        "@types/bun": "1.4.4",
+        "@vos/storybook": "workspace:*",
+        "@vos/vite-plugin": "workspace:*",
+        "storybook": "10.6.7",
+        "svelte": "^5.57.2",
+        "svelte-check": "^4.7.6",
+        "typescript": "^5.9.3",
+        "vite": "^8.3.4",
+      },
+    },
+    "apps/projects": {
+      "name": "@vos-apps/projects",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@storybook/addon-a11y": "10.6.7",
+        "@storybook/addon-docs": "10.6.7",
+        "@storybook/addon-svelte-csf": "5.1.6",
+        "@storybook/addon-themes": "10.6.7",
+        "@storybook/svelte-vite": "10.6.7",
+        "@sveltejs/vite-plugin-svelte": "^7.3.1",
+        "@types/bun": "1.4.4",
+        "@vos/storybook": "workspace:*",
+        "@vos/vite-plugin": "workspace:*",
+        "storybook": "10.6.7",
+        "svelte": "^5.57.2",
+        "svelte-check": "^4.7.6",
+        "typescript": "^5.9.3",
+        "vite": "^8.3.4",
+      },
+    },
+    "apps/terminal": {
+      "name": "@vos-apps/terminal",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@storybook/addon-a11y": "10.6.7",
+        "@storybook/addon-docs": "10.6.7",
+        "@storybook/addon-svelte-csf": "5.1.6",
+        "@storybook/addon-themes": "10.6.7",
+        "@storybook/svelte-vite": "10.6.7",
+        "@sveltejs/vite-plugin-svelte": "^7.3.1",
+        "@types/bun": "1.4.4",
+        "@vos/storybook": "workspace:*",
+        "@vos/vite-plugin": "workspace:*",
+        "@xterm/addon-fit": "0.11.0",
+        "@xterm/xterm": "6.0.0",
+        "storybook": "10.6.7",
+        "svelte": "^5.57.2",
+        "svelte-check": "^4.7.6",
+        "typescript": "^5.9.3",
+        "vite": "^8.3.4",
+      },
+    },
+    "apps/todos": {
+      "name": "@vos-apps/todos",
       "version": "0.1.0",
       "devDependencies": {
         "@storybook/addon-a11y": "10.6.7",
@@ -85,6 +266,30 @@
         "vite": "^8.3.4",
       },
     },
+    "e2e/apps/memos": {
+      "name": "@vos-fixtures/memos",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@sveltejs/vite-plugin-svelte": "^7.3.1",
+        "@vos/vite-plugin": "workspace:*",
+        "svelte": "^5.57.2",
+        "svelte-check": "^4.7.6",
+        "typescript": "^5.9.3",
+        "vite": "^8.3.4",
+      },
+    },
+    "e2e/apps/notifier": {
+      "name": "@vos-fixtures/notifier",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@sveltejs/vite-plugin-svelte": "^7.3.1",
+        "@vos/vite-plugin": "workspace:*",
+        "svelte": "^5.57.2",
+        "svelte-check": "^4.7.6",
+        "typescript": "^5.9.3",
+        "vite": "^8.3.4",
+      },
+    },
     "e2e/apps/tasks-react": {
       "name": "@vos-fixtures/tasks-react",
       "version": "0.1.0",
@@ -103,6 +308,18 @@
     },
     "e2e/apps/tasks-svelte": {
       "name": "@vos-fixtures/tasks-svelte",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@sveltejs/vite-plugin-svelte": "^7.3.1",
+        "@vos/vite-plugin": "workspace:*",
+        "svelte": "^5.57.2",
+        "svelte-check": "^4.7.6",
+        "typescript": "^5.9.3",
+        "vite": "^8.3.4",
+      },
+    },
+    "e2e/apps/ticker": {
+      "name": "@vos-fixtures/ticker",
       "version": "0.1.0",
       "devDependencies": {
         "@sveltejs/vite-plugin-svelte": "^7.3.1",
@@ -165,9 +382,6 @@
     "packages/ui": {
       "name": "@vos/ui",
       "version": "0.1.0",
-      "dependencies": {
-        "marked": "18.1.2",
-      },
       "devDependencies": {
         "@storybook/addon-a11y": "10.6.7",
         "@storybook/addon-docs": "10.6.7",
@@ -560,9 +774,33 @@
 
     "@vos-apps/calculator": ["@vos-apps/calculator@workspace:apps/calculator"],
 
+    "@vos-apps/containers": ["@vos-apps/containers@workspace:apps/containers"],
+
+    "@vos-apps/dns": ["@vos-apps/dns@workspace:apps/dns"],
+
+    "@vos-apps/keychain": ["@vos-apps/keychain@workspace:apps/keychain"],
+
+    "@vos-apps/notebooks": ["@vos-apps/notebooks@workspace:apps/notebooks"],
+
+    "@vos-apps/notes": ["@vos-apps/notes@workspace:apps/notes"],
+
+    "@vos-apps/pages": ["@vos-apps/pages@workspace:apps/pages"],
+
+    "@vos-apps/projects": ["@vos-apps/projects@workspace:apps/projects"],
+
+    "@vos-apps/terminal": ["@vos-apps/terminal@workspace:apps/terminal"],
+
+    "@vos-apps/todos": ["@vos-apps/todos@workspace:apps/todos"],
+
+    "@vos-fixtures/memos": ["@vos-fixtures/memos@workspace:e2e/apps/memos"],
+
+    "@vos-fixtures/notifier": ["@vos-fixtures/notifier@workspace:e2e/apps/notifier"],
+
     "@vos-fixtures/tasks-react": ["@vos-fixtures/tasks-react@workspace:e2e/apps/tasks-react"],
 
     "@vos-fixtures/tasks-svelte": ["@vos-fixtures/tasks-svelte@workspace:e2e/apps/tasks-svelte"],
+
+    "@vos-fixtures/ticker": ["@vos-fixtures/ticker@workspace:e2e/apps/ticker"],
 
     "@vos/client": ["@vos/client@workspace:client"],
 
@@ -595,6 +833,10 @@
     "@xn-sakina/rml-win32-arm64-msvc": ["@xn-sakina/rml-win32-arm64-msvc@2.9.0", "", { "os": "win32", "cpu": "arm64" }, "sha512-Q+Rpfm8KqMFaTUXgaUPClMEeNOXXG6LtEhuaVzpbj6omOy6AVWxSl6qJkxNQDe49Dmua7WRZK3HHidjczQjsCw=="],
 
     "@xn-sakina/rml-win32-x64-msvc": ["@xn-sakina/rml-win32-x64-msvc@2.9.0", "", { "os": "win32", "cpu": "x64" }, "sha512-FkbgYRj3+5l8D4ufTDAQ1eP8cCZjmt0XK41eNJvGguvokFCpH0y0HscVhDPjrH4EuLP9/8pZ4bEFFcSEZeFoZQ=="],
+
+    "@xterm/addon-fit": ["@xterm/addon-fit@0.11.0", "", {}, "sha512-jYcgT6xtVYhnhgxh3QgYDnnNMYTcf8ElbxxFzX0IZo+vabQqSPAjC3c1wJrKB5E19VwQei89QCiZZP86DCPF7g=="],
+
+    "@xterm/xterm": ["@xterm/xterm@6.0.0", "", {}, "sha512-TQwDdQGtwwDt+2cgKDLn0IRaSxYu1tSUjgKarSDkUM0ZNiSRXFpjxEsvc/Zgc5kq5omJ+V0a8/kIM2WD3sMOYg=="],
 
     "acorn": ["acorn@8.19.0", "", { "bin": { "acorn": "bin/acorn" } }, "sha512-oJlA3XiRm7Cyk6qFD2Jn8ak9B7jSy0qy00ADO3+8dpT0LSjFihQYv4C02LFCSYJV3Q37xYwwRy5m+IpIiUzqWw=="],
 
@@ -853,8 +1095,6 @@
     "lz-string": ["lz-string@1.5.0", "", { "bin": { "lz-string": "bin/bin.js" } }, "sha512-h5bgJWpxJNswbU7qCrV0tIKQCaS3blPDrqKWx+QxzuzL1zGUzij9XCWLrSLsJPu5t+eWA/ycetzYAO5IOMcWAQ=="],
 
     "magic-string": ["magic-string@0.30.21", "", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.5.5" } }, "sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ=="],
-
-    "marked": ["marked@18.1.2", "", { "bin": { "marked": "bin/marked.js" } }, "sha512-DfOnvLAQ6WYeWxWO1u4RyFOeqyHup6dks5PPqnoFiooU7ipRvidO/2j8plhAHIiZg574E9ZlzSjUiPMLAzFkgg=="],
 
     "merge2": ["merge2@1.4.1", "", {}, "sha512-8q7VEgMJW4J8tcfVPy8g09NcQwZdbwFEqhe/WZkoIzjn/3TGDwtOCYtXGxA3O8tPzpczCCDgv+P2P5y00ZJOOg=="],
 

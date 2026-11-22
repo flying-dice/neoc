@@ -1,7 +1,7 @@
 //! Use-case tests for `AppService` against the in-memory port fakes.
 
 use crate::{
-    ports::{InstalledAppStore, ServerEvent},
+    ports::{InstalledApp, InstalledAppStore, ServerEvent},
     services::AppStatus,
     testing::Fakes,
     AppError,
@@ -24,7 +24,6 @@ async fn install_verifies_files_then_wires_data_runtime_tools_and_announces() {
     assert_eq!(f.events.take(), vec![ServerEvent::AppInstalled(id.clone())]);
     assert_eq!(f.store.opened_with_migrations("notes"), Some(1));
     assert!(matches!(svc.install_from_url(&url).await, Err(AppError::AlreadyInstalled(_))));
-    assert_eq!(f.background.alive(), 1, "the live-source pump runs while the app does");
     let rec = f.installed.records();
     assert_eq!(
         (rec[0].source_url.as_str(), rec[0].enabled, rec[0].installed_at_ms),
@@ -64,7 +63,6 @@ async fn an_app_that_fails_to_load_is_not_recorded_and_nothing_is_published() {
     let err = f.service().install_from_url(&url).await.unwrap_err();
     assert!(err.to_string().contains("notes/app.lua:3"), "{err}");
     assert!(f.registry.names().is_empty() && f.installed.records().is_empty());
-    assert_eq!(f.background.alive(), 0);
 }
 
 #[tokio::test]
@@ -79,7 +77,6 @@ async fn uninstall_retracts_tools_unloads_vm_forgets_the_record_and_optionally_p
     assert!(f.store.purged("notes"));
     assert!(f.files.purged("notes"), "its managed files go with its database");
     assert!(f.installed.records().is_empty(), "an uninstalled app is not restored at the next start");
-    assert_eq!(f.background.alive(), 0, "the pump stops");
     assert!(matches!(svc.uninstall(&id, false).await, Err(AppError::NotInstalled(_))));
 
     let kept = svc.install_from_url(&f.add_app("todo", &[("add_task", "x")])).await.unwrap();
@@ -106,7 +103,6 @@ async fn shutdown_unloads_every_app_keeps_data_and_records() {
     assert_eq!(f.installed.records().len(), 2, "and remembers the installs");
     assert!(f.events.take().is_empty(), "clients are not told the apps were uninstalled");
     assert!(svc.installed_apps().is_empty());
-    assert_eq!(f.background.alive(), 0);
 }
 
 #[tokio::test]
@@ -144,7 +140,6 @@ async fn installed_apps_come_back_after_a_restart() {
     assert_eq!(apps[0].status, AppStatus::Running);
     assert_eq!(f.registry.names(), vec!["notes__add_note".to_string()]);
     assert_eq!(f.runtime.loads("notes"), 2);
-    assert_eq!(f.background.alive(), 1);
     assert_eq!(second.restore_installed().await.unwrap().len(), 1, "restoring twice changes nothing");
     assert_eq!(f.runtime.loads("notes"), 2);
 }
@@ -204,7 +199,6 @@ async fn disable_hides_the_app_from_agents_keeps_data_and_survives_a_restart() {
     assert!(f.registry.names().is_empty(), "agent access is blocked");
     assert!(f.runtime.loaded().is_empty(), "the VM is unloaded");
     assert!(!f.store.purged("notes"), "data is kept");
-    assert_eq!(f.background.alive(), 0);
     assert_eq!(svc.status(&id), Some(AppStatus::Disabled));
     assert!(!f.installed.records()[0].enabled);
     assert_eq!(f.events.take(), vec![ServerEvent::AppDisabled(id.clone())]);
@@ -294,7 +288,6 @@ async fn reload_rebuilds_the_vm_and_keeps_the_database() {
     assert_eq!(f.registry.names(), vec!["notes__new_tool".to_string()]);
     assert_eq!(f.runtime.loads("notes"), 2);
     assert!(!f.store.purged("notes"));
-    assert_eq!(f.background.alive(), 1, "one pump: the old one stopped");
 }
 
 #[tokio::test]
@@ -520,7 +513,7 @@ async fn files_over_the_cap_and_packages_over_the_cap_are_refused() {
         let mut fetcher = f.fetcher.0.lock().unwrap();
         let mut r: vos_domain::AppRef = serde_json::from_slice(&fetcher[&url]).unwrap();
         r.manifest.migrations.clear();
-        r.files.retain(|file| file.path == "main.lua");
+        r.files.retain(|file| file.path == "main.lua" || file.path == "static/index.html");
         for i in 1..=5u32 {
             let path = format!("{i:03}_m.sql");
             let sha = {
@@ -560,7 +553,7 @@ async fn files_over_the_cap_and_packages_over_the_cap_are_refused() {
 }
 
 #[tokio::test]
-async fn an_app_with_a_client_keeps_the_verified_bundle_for_its_frame() {
+async fn an_app_keeps_the_verified_files_of_its_page_for_its_frame() {
     let f = Fakes::new();
     let url = f.add_client_app("tasks", &[], "<!doctype html>");
     let svc = f.service();
@@ -573,7 +566,6 @@ async fn an_app_with_a_client_keeps_the_verified_bundle_for_its_frame() {
     assert!(site.get("nope.js").is_none(), "an exact path or nothing: there is no fallback page");
     assert!(site.get("static/index.html").is_none(), "paths are under the root");
     let package = f.runtime.package("tasks").unwrap();
-    assert!(package.has_client, "the runtime is told the app has a client: it need not declare itself");
     assert_eq!(
         package.files.keys().collect::<Vec<_>>(),
         vec!["main.lua"],
@@ -581,16 +573,15 @@ async fn an_app_with_a_client_keeps_the_verified_bundle_for_its_frame() {
     );
 
     let info = svc.apps().remove(0);
-    assert!(info.display.client);
     assert_eq!(
         info.display.window.map(|w| (w.w, w.min_w)),
         Some((420, 320)),
-        "the window comes from app.json"
+        "the window comes from the manifest"
     );
 }
 
 #[tokio::test]
-async fn a_tampered_client_is_refused_like_any_file_and_an_app_without_one_has_no_bundle() {
+async fn a_tampered_page_is_refused_like_any_file_and_so_is_a_ref_without_its_entry_page() {
     let f = Fakes::new();
     let url = f.add_client_app("tasks", &[], "good");
     f.fetcher.0.lock().unwrap().insert("mem://tasks/static/index.html".into(), b"evil".to_vec());
@@ -598,11 +589,68 @@ async fn a_tampered_client_is_refused_like_any_file_and_an_app_without_one_has_n
     assert!(matches!(err, AppError::Domain(DomainError::ChecksumMismatch { .. })), "{err:?}");
     assert!(f.installed.records().is_empty());
 
-    let plain = f.add_app("plain", &[("t", "x")]);
+    // the manifest names a page the ref does not list
+    let url = f.add_app("plain", &[("t", "x")]);
+    f.edit_ref(&url, |app_ref| app_ref["manifest"]["ui"]["entry"] = json!("home.html"));
+    let err = f.service().install_from_url(&url).await.unwrap_err().to_string();
+    assert!(err.contains("ui.entry `home.html` is not among the app ref's files"), "{err}");
+    assert!(f.installed.records().is_empty());
+    assert!(f.runtime.loaded().is_empty(), "nothing ran");
+}
+
+/// The kind of app this host no longer runs: its manifest has no `ui` (it drew its windows as a view tree).
+#[tokio::test]
+async fn an_app_ref_without_a_page_is_refused_at_preview_and_install_and_says_why() {
+    let f = Fakes::new();
+    let url = f.add_app_without_page("oldnotes");
     let svc = f.service();
-    let id = svc.install_from_url(&plain).await.unwrap();
-    assert!(matches!(svc.static_site(&id), Err(AppError::Port(crate::PortError::NotFound(_)))));
-    assert!(!svc.apps()[0].display.client);
+    for err in [svc.preview(&url).await.unwrap_err(), svc.install_from_url(&url).await.unwrap_err()] {
+        let message = err.to_string();
+        assert!(message.contains("app `oldnotes` has no `ui` in its manifest"), "{message}");
+        assert!(message.contains("no longer supported"), "{message}");
+    }
+    assert!(f.installed.records().is_empty(), "nothing was recorded");
+    assert!(f.runtime.loaded().is_empty(), "nothing ran");
+    assert!(f.store.opened_with_migrations("oldnotes").is_none(), "no database was opened");
+}
+
+/// An app installed by an older host, whose ref still has no `ui`: the host starts, the app is listed as failed
+/// with the reason, and the other apps run.
+#[tokio::test]
+async fn an_installed_app_without_a_page_is_failed_with_the_reason_at_start_and_the_others_run() {
+    let f = Fakes::new();
+    let good = f.add_app("calc", &[("add", "x")]);
+    f.service().install_from_url(&good).await.unwrap();
+    // the record an older host left: it installed the app when a manifest needed no `ui`
+    let old = f.add_app_without_page("oldnotes");
+    f.installed
+        .save(&InstalledApp {
+            id: AppId::parse("oldnotes").unwrap(),
+            source_url: old,
+            version: "1.0.0".into(),
+            enabled: true,
+            installed_at_ms: 1,
+            ref_sha256: String::new(),
+        })
+        .await
+        .unwrap();
+    f.events.take();
+
+    let svc = f.service();
+    let apps = svc.restore_installed().await.unwrap();
+    let status = |id: &str| apps.iter().find(|a| a.id.as_str() == id).map(|a| a.status.clone()).unwrap();
+    assert_eq!(status("calc"), AppStatus::Running);
+    let AppStatus::Failed(why) = status("oldnotes") else { panic!("{:?}", status("oldnotes")) };
+    assert!(why.contains("app `oldnotes` has no `ui` in its manifest"), "{why}");
+    assert_eq!(f.runtime.loads("oldnotes"), 0, "it was skipped: nothing of it ran");
+    assert!(f
+        .events
+        .take()
+        .iter()
+        .any(|e| matches!(e, ServerEvent::AppFailed { app, .. } if app.as_str() == "oldnotes")));
+    assert_eq!(f.installed.records().len(), 2, "its record stays, so it can be uninstalled");
+    svc.uninstall(&AppId::parse("oldnotes").unwrap(), true).await.unwrap();
+    assert_eq!(f.installed.records().len(), 1);
 }
 
 #[tokio::test]
@@ -636,4 +684,17 @@ async fn a_client_call_to_an_app_that_is_not_running_is_an_error() {
     let ghost = AppId::parse("ghost").unwrap();
     assert!(matches!(svc.call_handler(&ghost, "add", json!({})).await, Err(AppError::NotInstalled(_))));
     assert!(f.runtime.handler_calls().is_empty());
+}
+
+#[tokio::test]
+async fn an_app_is_installed_whatever_its_state_until_it_is_uninstalled() {
+    let f = Fakes::new();
+    let s = f.service();
+    let notes = AppId::parse("notes").unwrap();
+    assert!(!s.is_installed(&notes));
+    s.install_from_url(&f.add_app("notes", &[])).await.unwrap();
+    s.disable(&notes).await.unwrap();
+    assert!(s.is_installed(&notes), "a disabled app still has its files");
+    s.uninstall(&notes, false).await.unwrap();
+    assert!(!s.is_installed(&notes));
 }

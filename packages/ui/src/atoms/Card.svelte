@@ -8,8 +8,6 @@
     /** Widget sizes follow iPadOS small / medium / large proportions. */
     size?: 'small' | 'medium' | 'large' | 'auto'
     surface?: 'solid' | 'material'
-    padding?: string
-    background?: string
     children: Snippet
   }
 
@@ -17,19 +15,18 @@
     testid,
     size = 'auto',
     surface = 'solid',
-    padding = '16px',
-    background,
     children
   }: Props = $props()
 </script>
 
-<div class="ios-card {size} {surface}" data-testid={testid} style:padding style:background>
+<div class="ios-card {size} {surface}" data-testid={testid}>
   {@render children()}
 </div>
 
 <style>
   .ios-card {
     position: relative;
+    padding: 16px;
     border-radius: var(--radius-2xl);
     overflow: hidden;
     color: var(--label);

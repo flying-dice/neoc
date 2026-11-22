@@ -20,12 +20,12 @@
  * This is how apps do not trip over each other, not a defence against a hostile client.
  */
 import { z } from 'zod'
-import { messageOf } from '../view/errors'
+import { messageOf } from './errors'
 import { callGate, MAX_WAITING_PER_FRAME, type CallGate } from './callGate'
 import { HostError } from './channel'
 import type { HostContext } from './hostContext'
 import type { ServiceRegistry } from './hostServices'
-import type { HostAppEvent } from '../view/protocol'
+import type { HostAppEvent } from './protocol'
 
 /** The version of MCP Apps' dialect this host speaks. */
 export const PROTOCOL_VERSION = '2026-01-26'
@@ -41,7 +41,7 @@ const MAX_METHOD = 128
 export const MAX_ARGS_BYTES = 1_000_000
 
 /** The deepest nesting of arrays and objects in a call's arguments (the host's JSON parser stops at 128). */
-export const MAX_ARGS_DEPTH = 100
+const MAX_ARGS_DEPTH = 100
 
 const id = z.union([z.number().int().nonnegative(), z.string().max(64)])
 const method = z.string()

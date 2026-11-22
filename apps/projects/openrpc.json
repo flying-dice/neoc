@@ -1,0 +1,566 @@
+{
+  "openrpc": "1.3.2",
+  "info": {
+    "title": "Projects",
+    "version": "0.1.0",
+    "description": "Work kept a project at a time, for you and your agents: issues that move across a board, and pages of writing beside them."
+  },
+  "x-app": {
+    "id": "projects",
+    "icon": "rectangle.stack",
+    "tint": "indigo",
+    "description": "Work kept a project at a time, for you and your agents: issues that move across a board, and pages of writing beside them.",
+    "window": {
+      "w": 1040,
+      "h": 680,
+      "minW": 420,
+      "minH": 480
+    }
+  },
+  "methods": [
+    {
+      "name": "workspace",
+      "summary": "Every project, its issues in the order they were added, and its pages by title (a page without its text: `readPage` gives that).",
+      "params": [],
+      "result": {
+        "name": "workspace",
+        "schema": {
+          "$ref": "#/components/schemas/Workspace"
+        }
+      }
+    },
+    {
+      "name": "addProject",
+      "summary": "Add a project, and answer with the workspace as it now stands.",
+      "params": [
+        {
+          "name": "name",
+          "required": true,
+          "description": "What the project is called. Blank is refused with a message.",
+          "schema": {
+            "type": "string",
+            "maxLength": 60
+          }
+        },
+        {
+          "name": "key",
+          "required": true,
+          "description": "The short name its issues are numbered under, as in WEB-12: two to five capital letters or digits, a letter first. One that another project has is refused with a message.",
+          "schema": {
+            "type": "string",
+            "maxLength": 5
+          }
+        },
+        {
+          "name": "color",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Color"
+          }
+        }
+      ],
+      "result": {
+        "name": "workspace",
+        "schema": {
+          "$ref": "#/components/schemas/Workspace"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "The name is blank, the key is not a key, or another project has the key."
+        }
+      ]
+    },
+    {
+      "name": "removeProject",
+      "summary": "Delete a project, with its issues and its pages.",
+      "params": [
+        {
+          "name": "project",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "result": {
+        "name": "workspace",
+        "schema": {
+          "$ref": "#/components/schemas/Workspace"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such project."
+        }
+      ]
+    },
+    {
+      "name": "addIssue",
+      "summary": "Add an issue to a project. It starts as a task of medium priority, to do, unless told otherwise.",
+      "params": [
+        {
+          "name": "project",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "title",
+          "required": true,
+          "description": "What has to be done. Blank is refused with a message.",
+          "schema": {
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        {
+          "name": "type",
+          "required": false,
+          "schema": {
+            "$ref": "#/components/schemas/IssueType"
+          }
+        },
+        {
+          "name": "priority",
+          "required": false,
+          "schema": {
+            "$ref": "#/components/schemas/Priority"
+          }
+        },
+        {
+          "name": "status",
+          "required": false,
+          "schema": {
+            "$ref": "#/components/schemas/Status"
+          }
+        }
+      ],
+      "result": {
+        "name": "workspace",
+        "schema": {
+          "$ref": "#/components/schemas/Workspace"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such project, or the title is blank."
+        }
+      ]
+    },
+    {
+      "name": "updateIssue",
+      "summary": "Change an issue: only what is given changes. A new status moves it across the board.",
+      "params": [
+        {
+          "name": "issue",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "title",
+          "required": false,
+          "description": "Blank is refused with a message.",
+          "schema": {
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        {
+          "name": "description",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "maxLength": 5000
+          }
+        },
+        {
+          "name": "type",
+          "required": false,
+          "schema": {
+            "$ref": "#/components/schemas/IssueType"
+          }
+        },
+        {
+          "name": "priority",
+          "required": false,
+          "schema": {
+            "$ref": "#/components/schemas/Priority"
+          }
+        },
+        {
+          "name": "status",
+          "required": false,
+          "schema": {
+            "$ref": "#/components/schemas/Status"
+          }
+        }
+      ],
+      "result": {
+        "name": "workspace",
+        "schema": {
+          "$ref": "#/components/schemas/Workspace"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such issue, or the title is blank."
+        }
+      ]
+    },
+    {
+      "name": "removeIssue",
+      "summary": "Delete an issue.",
+      "params": [
+        {
+          "name": "issue",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "result": {
+        "name": "workspace",
+        "schema": {
+          "$ref": "#/components/schemas/Workspace"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such issue."
+        }
+      ]
+    },
+    {
+      "name": "addPage",
+      "summary": "Add an empty page to a project, on its own or under another page of the same project.",
+      "params": [
+        {
+          "name": "project",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "title",
+          "required": true,
+          "description": "What the page is called. Blank is refused with a message.",
+          "schema": {
+            "type": "string",
+            "maxLength": 120
+          }
+        },
+        {
+          "name": "parent",
+          "required": false,
+          "description": "The id of the page it goes under; left out or 0 for none.",
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "result": {
+        "name": "workspace",
+        "schema": {
+          "$ref": "#/components/schemas/Workspace"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such project, the title is blank, or the page it goes under is not in the project."
+        }
+      ]
+    },
+    {
+      "name": "readPage",
+      "summary": "A page with its text.",
+      "params": [
+        {
+          "name": "page",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "result": {
+        "name": "text",
+        "schema": {
+          "$ref": "#/components/schemas/PageText"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such page."
+        }
+      ]
+    },
+    {
+      "name": "writePage",
+      "summary": "Change a page: only what is given changes.",
+      "params": [
+        {
+          "name": "page",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "title",
+          "required": false,
+          "description": "Blank is refused with a message.",
+          "schema": {
+            "type": "string",
+            "maxLength": 120
+          }
+        },
+        {
+          "name": "body",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "maxLength": 20000
+          }
+        }
+      ],
+      "result": {
+        "name": "workspace",
+        "schema": {
+          "$ref": "#/components/schemas/Workspace"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such page, or the title is blank."
+        }
+      ]
+    },
+    {
+      "name": "removePage",
+      "summary": "Delete a page, and the pages under it.",
+      "params": [
+        {
+          "name": "page",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "result": {
+        "name": "workspace",
+        "schema": {
+          "$ref": "#/components/schemas/Workspace"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such page."
+        }
+      ]
+    }
+  ],
+  "components": {
+    "schemas": {
+      "Color": {
+        "type": "string",
+        "description": "A project's colour, a role of the palette.",
+        "enum": [
+          "blue",
+          "indigo",
+          "purple",
+          "pink",
+          "red",
+          "orange",
+          "green",
+          "teal"
+        ]
+      },
+      "IssueType": {
+        "type": "string",
+        "description": "What kind of work an issue is.",
+        "enum": [
+          "task",
+          "bug",
+          "story"
+        ]
+      },
+      "Priority": {
+        "type": "string",
+        "enum": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "Status": {
+        "type": "string",
+        "description": "The column of the board an issue is in.",
+        "enum": [
+          "todo",
+          "doing",
+          "done"
+        ]
+      },
+      "Project": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "key": {
+            "type": "string",
+            "description": "The short name its issues are numbered under: WEB."
+          },
+          "name": {
+            "type": "string"
+          },
+          "color": {
+            "$ref": "#/components/schemas/Color"
+          }
+        },
+        "required": [
+          "id",
+          "key",
+          "name",
+          "color"
+        ]
+      },
+      "Issue": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "project": {
+            "type": "integer",
+            "description": "The id of the project it is in."
+          },
+          "key": {
+            "type": "string",
+            "description": "What it is called by: the key of its project and its number there, as WEB-12."
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "description": "Empty when there is none."
+          },
+          "type": {
+            "$ref": "#/components/schemas/IssueType"
+          },
+          "priority": {
+            "$ref": "#/components/schemas/Priority"
+          },
+          "status": {
+            "$ref": "#/components/schemas/Status"
+          },
+          "updated": {
+            "type": "string",
+            "description": "When it last changed, as 2026-06-09T08:41:00.000Z."
+          }
+        },
+        "required": [
+          "id",
+          "project",
+          "key",
+          "title",
+          "description",
+          "type",
+          "priority",
+          "status",
+          "updated"
+        ]
+      },
+      "Page": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "project": {
+            "type": "integer",
+            "description": "The id of the project it is in."
+          },
+          "parent": {
+            "type": "integer",
+            "description": "The id of the page it is under; 0 for none."
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated": {
+            "type": "string",
+            "description": "When it last changed, as 2026-06-09T08:41:00.000Z."
+          }
+        },
+        "required": [
+          "id",
+          "project",
+          "parent",
+          "title",
+          "updated"
+        ]
+      },
+      "PageText": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          },
+          "body": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "page",
+          "body"
+        ]
+      },
+      "Workspace": {
+        "type": "object",
+        "properties": {
+          "projects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Project"
+            }
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Issue"
+            }
+          },
+          "pages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Page"
+            }
+          }
+        },
+        "required": [
+          "projects",
+          "issues",
+          "pages"
+        ]
+      }
+    }
+  }
+}

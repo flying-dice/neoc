@@ -2,11 +2,10 @@
 <script lang="ts">
   interface Props {
     size?: 'medium' | 'large'
-    color?: string
     label?: string
   }
 
-  let { size = 'medium', color = 'var(--label-secondary)', label = 'Loading' }: Props = $props()
+  let { size = 'medium', label = 'Loading' }: Props = $props()
   const px = $derived(size === 'large' ? 37 : 20)
 </script>
 
@@ -19,7 +18,7 @@
         width="2"
         height="5"
         rx="1"
-        fill={color}
+        fill="var(--label-secondary)"
         opacity={0.15 + (i / 8) * 0.85}
         transform="rotate({i * 45} 10 10)"
       />

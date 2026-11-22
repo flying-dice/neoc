@@ -133,8 +133,11 @@ const REGISTRY: &[(&str, Build)] = &[
     ("lib:url", lib::url::module),
     ("lib:vcr", lib::vcr::module),
     // vnd:* — vendored crates, named after the upstream crate.
+    ("vnd:bollard", vnd::bollard::module),
     ("vnd:hyper", vnd::hyper::module),
     ("vnd:jsonschema", vnd::jsonschema::module),
+    ("vnd:keyring", vnd::keyring::module),
+    ("vnd:portable_pty", vnd::portable_pty::module),
     ("vnd:quick_xml", vnd::quick_xml::module),
     ("vnd:rusqlite", vnd::rusqlite::module),
     ("vnd:serde_json", vnd::serde_json::module),
@@ -310,8 +313,11 @@ fn declared(lua: &Lua) -> mlua::Result<Vec<Module<'_>>> {
         lib::unicode::declare(lua)?,
         lib::url::declare(lua)?,
         lib::vcr::declare(lua)?,
+        vnd::bollard::declare(lua)?,
         vnd::hyper::declare(lua)?,
         vnd::jsonschema::declare(lua)?,
+        vnd::keyring::declare(lua)?,
+        vnd::portable_pty::declare(lua)?,
         vnd::quick_xml::declare(lua)?,
         vnd::rusqlite::declare(lua)?,
         vnd::serde_json::declare(lua)?,
@@ -401,7 +407,7 @@ mod tests {
             unregistered.is_empty(),
             "declared but not registered: {unregistered:?}"
         );
-        assert_eq!(registered_set.len(), 51);
+        assert_eq!(registered_set.len(), 54);
 
         for key in &registered_set {
             let kind: String = lua
@@ -458,7 +464,7 @@ mod tests {
         let lua = make_engine().expect("engine");
         let sections = luau_decl_sections(&lua).expect("sections");
         let file = luau_decls(&lua).expect("file");
-        assert_eq!(sections.len(), 51);
+        assert_eq!(sections.len(), 54);
         for (key, section) in &sections {
             let scope = luau_decls::scope(key);
             assert!(
@@ -479,7 +485,7 @@ mod tests {
         assert!(file.contains("declare require: \n\t((path: \"std:collections\")"));
         assert_eq!(
             file.matches("((path: \"").count(),
-            51,
+            54,
             "one `require` overload per module"
         );
     }
@@ -747,6 +753,37 @@ mod tests {
                 return writer, function() dir:close() end
             end)()"#,
         ),
+        // a client sends nothing until its first call, and a stream's request is its task's: neither needs a daemon
+        (
+            "vnd:bollard",
+            "Client",
+            r#"require("vnd:bollard").connect({ host = "tcp://127.0.0.1:1" })"#,
+        ),
+        (
+            "vnd:bollard",
+            "Stream",
+            r#"(function()
+                local docker = assert(require("vnd:bollard").connect({ host = "tcp://127.0.0.1:1" }))
+                local events = assert(docker:events())
+                return events, function() events:close() end
+            end)()"#,
+        ),
+        // a real terminal with a real process on it, ended by the cleanup
+        (
+            "vnd:portable_pty",
+            "Pty",
+            if cfg!(windows) {
+                r#"(function()
+                    local pty = assert(require("vnd:portable_pty").spawn_command({ program = "cmd.exe" }))
+                    return pty, function() pty:close() end
+                end)()"#
+            } else {
+                r#"(function()
+                    local pty = assert(require("vnd:portable_pty").spawn_command({ program = "/bin/sh" }))
+                    return pty, function() pty:close() end
+                end)()"#
+            },
+        ),
         (
             "vnd:hyper",
             "ServerHandle",
@@ -793,6 +830,13 @@ mod tests {
             "vnd:jsonschema",
             "ValidationResult",
             r#"require("vnd:jsonschema").compile("{}"):validate(1)"#,
+        ),
+        // a mock store: nothing here reaches the operating system's
+        ("vnd:keyring", "Store", r#"require("vnd:keyring").mock()"#),
+        (
+            "vnd:keyring",
+            "Entry",
+            r#"assert(require("vnd:keyring").mock():entry("example.com", "ada"))"#,
         ),
         (
             "vnd:rusqlite",
@@ -1013,8 +1057,11 @@ mod tests {
             "lib:unicode" => lib::unicode::module(lua),
             "lib:url" => lib::url::module(lua),
             "lib:vcr" => lib::vcr::module(lua),
+            "vnd:bollard" => vnd::bollard::module(lua),
             "vnd:hyper" => vnd::hyper::module(lua),
             "vnd:jsonschema" => vnd::jsonschema::module(lua),
+            "vnd:keyring" => vnd::keyring::module(lua),
+            "vnd:portable_pty" => vnd::portable_pty::module(lua),
             "vnd:quick_xml" => vnd::quick_xml::module(lua),
             "vnd:rusqlite" => vnd::rusqlite::module(lua),
             "vnd:serde_json" => vnd::serde_json::module(lua),

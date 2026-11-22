@@ -1,5 +1,5 @@
 --!strict
--- Correct use of the `app` API, `vos:ui` and the std:, lib: and vnd: modules an app is offered, in Luau. `bun run
+-- Correct use of the `app` API and the std:, lib: and vnd: modules an app is offered, in Luau. `bun run
 -- lint:luau` requires this file to check clean (no diagnostic, no lint warning) in strict mode against
 -- types/generated/vos.d.luau; the matching wrong uses are in negative/. If the declarations stop loading or stop
 -- matching the API, this file (or those) fails.
@@ -7,7 +7,6 @@
 -- The check also requires every module an app is offered to be `require`d here (a line of the form
 -- `= require("lib:json")`), so a new module needs a line in this file.
 local app = require("vos:app")
-local ui = require("vos:ui")
 local collections = require("std:collections")
 local env = require("std:env")
 local fs = require("std:fs")
@@ -46,8 +45,11 @@ local text = require("lib:text")
 local unicode = require("lib:unicode")
 local url = require("lib:url")
 local vcr = require("lib:vcr")
+local bollard = require("vnd:bollard")
 local hyper = require("vnd:hyper")
 local jsonschema = require("vnd:jsonschema")
+local keyring = require("vnd:keyring")
+local portable_pty = require("vnd:portable_pty")
 local quick_xml = require("vnd:quick_xml")
 local rusqlite = require("vnd:rusqlite")
 local serde_json = require("vnd:serde_json")
@@ -85,8 +87,11 @@ local _modules: { any } = {
   text,
   unicode,
   vcr,
+  bollard,
   hyper,
   jsonschema,
+  keyring,
+  portable_pty,
   quick_xml,
   serde_json,
   serde_yaml,
@@ -95,9 +100,6 @@ local _modules: { any } = {
   testcontainers_modules,
   toml,
 }
-
-type Node = vos_Node
-type Window = vos_WindowContext
 
 -- ── the std: and lib: modules are typed: a fallible function returns the value, then an error message ───────────
 local encoded = base64.encode("hello")
@@ -137,22 +139,7 @@ local _clamped: number = math.clamp(5, 0, 3)
 local _bits: number = bit32.band(6, 3)
 
 -- ── the app API ────────────────────────────────────────────────────────────────────────────────────────────────
-app.manifest {
-  id = "usage",
-  name = "Usage",
-  icon = "puzzlepiece",
-  tint = "blue",
-  window = { w = 320, h = 240, minW = 320, minH = 240 },
-}
-
-local state = app.state { count = 0, label = "" }
-state.count += 1
-state.label = "x"
-
 app.db:migrate { [1] = "create table items (id integer primary key, name text not null)" }
-local items = app.db:query("select id, name from items order by id", { key = "id", page = 50 })
-local item = app.db:row("select id, name from items where id = :id", { key = "id" })
-local itemCount = app.db:scalar("select count(*) from items")
 local _written: number = app.db:exec("insert into items(name) values (:n)", { n = "a" }).changes
 local _rows: { { [string]: any } } = app.db:all("select * from items")
 local _first: { [string]: any }? = app.db:one("select * from items limit 1")
@@ -181,7 +168,10 @@ app.files.temp:remove("scratch.txt")
 app.notify { title = "hello", body = "world" }
 app:notify { title = "hello" }
 app.log("usage")
-app.shell.deepLink("note/:id", function(_params) end)
+app.emit("items.changed", { id = 1 })
+app.emit("items.cleared")
+app:openWindow()
+app:openWindow("main", { item = 1 })
 for _, card in ipairs(app.agents:list()) do
   local _name: string = card.name
 end
@@ -200,77 +190,19 @@ app.tool {
   end,
 }
 
--- ── `vos:ui` ───────────────────────────────────────────────────────────────────────────────────────────────────
-local function row(r: vos_RowRefs): Node
-  return ui.Row { tag = r.id, title = r.name, subtitle = ui.concat("#", r.id), icon = "tray" }
-end
-
-local function screen(w: Window): Node
-  local c = w.client
-  local current = item { id = c.noteId }
-  local list = items {}
-  local save = function(e: vos_EventArg<{ value: string }>)
-    app.kv:set("last", e.payload.value)
-  end
-  -- a list of actions is a literal; a list that mixes actions and functions needs its type (Luau infers a literal
-  -- in a union position, as `onTap` is, from its first entry)
-  local both: { vos_Action | ((vos_EventArg<{}>) -> ()) } = { ui.act.set(c.noteId, 0), function() end }
-  return ui.VStack {
-    spacing = 2,
-    padding = { x = 2, top = 1 },
-    frame = { minW = 100, maxW = 300 },
-    ui.Text { "Hello", style = "title1", foreground = "secondary" },
-    ui.Text { key = "n", ui.concat("Items: ", ui.fmt.number(list.total)), live = "polite" },
-    ui.Button {
-      key = "go",
-      title = "Go",
-      shape = "circle",
-      onTap = function(e)
-        w:announce(e.actor.name)
-        w:toast { text = "gone", kind = "success" }
-        w.client:set("noteId", 3)
-      end,
-    },
-    ui.Button { key = "two", title = "Two", onTap = both },
-    ui.Button { key = "three", title = "Three", onTap = { ui.act.set(c.noteId, 1), ui.act.toggle(c.flag) } },
-    ui.TextField { key = "name", text = c.name, label = "Name", onSubmit = save },
-    ui.TextEditor { key = "body", text = current:bind("name"), label = "Body", sync = "debounce:400" },
-    ui.Toggle { key = "t", on = c.flag, title = "On" },
-    ui.Show {
-      when = ui.gt(list.total, 0),
-      ui.List {
-        key = "list",
-        label = "Items",
-        selection = c.noteId,
-        ui.ForEach { source = list, row = row },
-      },
-      otherwise = ui.EmptyState { key = "none", icon = "tray", title = "No items" },
-    },
-    ui.Show {
-      when = ui.eq(c.noteId, 0),
-      ui.Text { key = "none-selected", "Nothing selected" },
-    },
-    ui.each({ 1, 2, 3 }, function(n: number): Node?
-      if n == 2 then
-        return nil
-      end
-      return ui.Spacer { key = `s{n}` }
-    end),
-    ui.Shortcut { key = "sc", shortcut = "cmd+k", onTrigger = ui.act.focus("name") },
-  }
-end
-
-app.window("main", {
-  title = "Usage",
-  client = {
-    noteId = { init = 0, persist = "app" },
-    name = { init = "", persist = "session" },
-    flag = { init = false },
-  },
-  render = screen,
-  onOpen = function(w: Window, params)
-    w:focus("name")
+-- ── the handlers: what the entry returns, and the app's page calls with `rpc(name, args)` ───────────────────────
+local handlers: vos_Handlers = {
+  list = function(_ctx: vos_HandlerContext)
+    return app.db:all("select id, name from items order by id")
   end,
-})
+  rename = function(ctx: vos_HandlerContext, args: { id: number, name: string })
+    if args.name == "" then
+      return ctx:fail("A name cannot be empty")
+    end
+    local changed = app.db:exec("update items set name = :name where id = :id", { id = args.id, name = args.name })
+    app.emit("items.changed", { id = args.id, by = ctx.actor.name, kind = ctx.actor.kind, at = ctx.now })
+    return changed.changes
+  end,
+}
 
-local _totals: { any } = { itemCount, ui.act.copy("x"), ui.act.push { name = "note", id = 1 }, ui.when(true, 1, 2) }
+return handlers

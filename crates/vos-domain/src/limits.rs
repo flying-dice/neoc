@@ -1,5 +1,5 @@
-//! What the host accepts of an app package. The fetcher adapter bounds what it reads; the domain decides how
-//! much of an app is acceptable.
+//! What the host accepts: of an app package (the fetcher adapter bounds what it reads; the domain decides how much of
+//! an app is acceptable) and of one message on the `/rpc` socket.
 
 use crate::DomainError;
 
@@ -9,6 +9,16 @@ pub const MAX_FILE_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_PACKAGE_BYTES: usize = 8 * 1024 * 1024;
 /// The most files an app ref may list.
 pub const MAX_PACKAGE_FILES: usize = 256;
+/// The largest message a client may send on the `/rpc` socket (1 MiB).
+pub const MAX_MESSAGE_BYTES: usize = 1 << 20;
+
+/// The largest file a paired device may upload through the Files page (64 MiB: the same as the largest file that
+/// can be read back, `files::MAX_READ_BYTES`, so whatever was uploaded can be downloaded).
+pub const MAX_UPLOAD_BYTES: usize = 64 * 1024 * 1024;
+
+/// The most entries of one directory a listing carries (`host.files.list`). A directory with more is cut off here and
+/// the answer says so: a folder of a million files is not sent whole to a tablet.
+pub const MAX_LIST_ENTRIES: usize = 2000;
 
 /// Counts the bytes fetched for one package and refuses the file that tips it over a limit.
 #[derive(Debug, Default)]

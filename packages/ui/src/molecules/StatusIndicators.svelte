@@ -4,19 +4,16 @@
   import BatteryIndicator from '../atoms/BatteryIndicator.svelte'
 
   interface Props {
-    wifi?: boolean
     battery?: number
-    charging?: boolean
-    showPercentage?: boolean
   }
 
-  let { wifi = true, battery = 1, charging = false, showPercentage = true }: Props = $props()
+  let { battery = 1 }: Props = $props()
 </script>
 
 <span class="ios-status-indicators">
-  {#if wifi}<Icon name="wifi" size={17} weight={2.4} label="Wi-Fi connected" />{/if}
-  {#if showPercentage}<span class="pct">{Math.round(battery * 100)}%</span>{/if}
-  <BatteryIndicator level={battery} {charging} />
+  <Icon name="wifi" size={17} weight={2.4} label="Wi-Fi connected" />
+  <span class="pct">{Math.round(battery * 100)}%</span>
+  <BatteryIndicator level={battery} />
 </span>
 
 <style>

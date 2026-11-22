@@ -18,7 +18,7 @@
 //! and the adapter's (`crate::files`, which says how links and races are handled). A failure returns
 //! `nil, "files.<method>: <kind>: [<path>: ]<message>"` (no path when the path itself was refused, or for
 //! `unsupported`) with the kinds of `std:fs` (`errorKind` reads it); a wrong
-//! argument type, an unknown option, and a write inside a `readOnly` tool or a render raise, as everywhere in
+//! argument type, an unknown option, and a write inside a `readOnly` tool raise, as everywhere in
 //! `app.*`. A file call holds the app's turn while it runs (`Role::Vm`, like `app.db`): the app's other calls wait
 //! for it, and none of them sees it half done. It does not need `std:fs`: the host does the work.
 
@@ -136,7 +136,7 @@ fn location(lua: &Lua, sh: &Sh, at: Location) -> mlua::Result<Table> {
     Ok(t)
 }
 
-/// One file call, holding the turn (`Role::Vm`). A write is refused first inside a `readOnly` call or a render
+/// One file call, holding the turn (`Role::Vm`). A write is refused first inside a `readOnly` call
 /// (it raises, like `app.kv:set`); the files are the read-only handle inside a `readOnly` call either way.
 async fn call<T, Fut>(
     s: &Sh,

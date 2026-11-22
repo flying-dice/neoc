@@ -1,21 +1,17 @@
 use super::*;
 use std::time::Duration;
 use vos_application::{
-    data::{ChangeBatch, ChangeFeed, Params},
+    data::Params,
     ports::{AppData, DataStore, InstalledApp, InstalledAppStore, SqlMigration},
     PortError,
 };
-use vos_domain::{Actor, AppId, Revision, RevisionReason};
+use vos_domain::AppId;
 
 fn migs() -> Vec<Migration> {
     vec![
         Migration::new(1, "init", "CREATE TABLE notes(id INTEGER PRIMARY KEY, body TEXT NOT NULL);"),
         Migration::new(2, "add_pinned", "ALTER TABLE notes ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;"),
     ]
-}
-
-fn tables(names: &[&str]) -> std::collections::BTreeSet<String> {
-    names.iter().map(|n| (*n).to_owned()).collect()
 }
 
 #[tokio::test]
@@ -71,25 +67,19 @@ async fn db_migrate_through_the_port_is_incremental_and_checksummed() {
 }
 
 #[tokio::test]
-async fn change_notifications_fire_on_commit_only() {
+async fn the_statements_of_a_transaction_commit_together_or_not_at_all() {
     let db = AppDb::open(None, &migs()).unwrap();
-    let mut rx = db.subscribe();
     let r = db.exec("INSERT INTO notes(body) VALUES('a')".into(), vec![]).await.unwrap();
     assert_eq!(r, ExecResult { changes: 1, last_insert_rowid: 1 });
-    let batch = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await.unwrap().unwrap();
-    assert!(batch.contains(&Change { table: "notes".into(), op: "insert", rowid: 1 }), "{batch:?}");
 
-    // multi-statement txn => ONE batch
     db.transaction(vec![
         ("UPDATE notes SET body='b' WHERE id=1".into(), vec![]),
         ("INSERT INTO notes(body) VALUES('c')".into(), vec![]),
     ])
     .await
     .unwrap();
-    let batch = rx.recv().await.unwrap();
-    assert_eq!(batch.len(), 2);
 
-    // failed txn => rolled back => nothing published
+    // failed txn => rolled back => nothing of it is kept
     let err = db
         .transaction(vec![
             ("INSERT INTO notes(body) VALUES('d')".into(), vec![]),
@@ -97,7 +87,6 @@ async fn change_notifications_fire_on_commit_only() {
         ])
         .await;
     assert!(err.is_err());
-    assert!(tokio::time::timeout(Duration::from_millis(100), rx.recv()).await.is_err());
     let n = db.query("SELECT count(*) AS n FROM notes".into(), vec![]).await.unwrap();
     assert_eq!(n[0]["n"], 2);
 }
@@ -166,122 +155,11 @@ async fn concurrent_callers_do_not_block_the_runtime() {
     assert_eq!(n[0]["n"], 50);
 }
 
-// ---- dependency tracking -----------------------------------------------------------------------------
-
-fn shop() -> AppDb {
-    AppDb::open(
-        None,
-        &[Migration::new(
-            1,
-            "init",
-            "CREATE TABLE folders(id INTEGER PRIMARY KEY, name TEXT);
-             CREATE TABLE notes(id INTEGER PRIMARY KEY, folder_id INTEGER, body TEXT);
-             CREATE TABLE tags(note_id INTEGER, tag TEXT);
-             CREATE VIEW tagged AS SELECT n.id, t.tag FROM notes n JOIN tags t ON t.note_id = n.id;",
-        )],
-    )
-    .unwrap()
-}
-
-#[tokio::test]
-async fn analyze_reports_every_table_a_query_reads_and_what_it_selects() {
-    let db = shop();
-    let simple = db
-        .analyze("SELECT id, body FROM notes WHERE folder_id = :folder AND body LIKE :q".into())
-        .await
-        .unwrap();
-    assert_eq!(simple.tables, tables(&["notes"]));
-    assert_eq!(simple.columns, ["id", "body"]);
-    assert_eq!(simple.named_params, ["folder", "q"]);
-    assert!(simple.read_only);
-
-    let join = db
-        .analyze(
-            "SELECT f.name, (SELECT count(*) FROM notes n WHERE n.folder_id = f.id) AS count FROM folders f"
-                .into(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(join.tables, tables(&["folders", "notes"]), "a sub-select is a dependency too");
-    assert_eq!(join.columns, ["name", "count"]);
-
-    let view = db.analyze("SELECT * FROM tagged".into()).await.unwrap();
-    assert!(view.tables.contains("notes") && view.tables.contains("tags"), "a view's tables count: {view:?}");
-
-    let wrapped = db
-        .analyze(
-            "SELECT * FROM (\nSELECT id FROM notes ORDER BY id\n) LIMIT :__limit OFFSET :__offset".into(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(wrapped.tables, tables(&["notes"]));
-
-    assert!(!db.analyze("DELETE FROM notes WHERE id = 1".into()).await.unwrap().read_only);
-    assert!(db.analyze("SELECT * FROM nope".into()).await.is_err(), "bad SQL fails at declaration time");
-}
-
-#[tokio::test]
-async fn a_commit_reports_the_tables_it_wrote_even_where_the_update_hook_is_blind() {
-    let db = AppDb::open(
-        None,
-        &[Migration::new(
-            1,
-            "init",
-            "CREATE TABLE kv(k TEXT PRIMARY KEY, v) WITHOUT ROWID;
-             CREATE TABLE notes(id INTEGER PRIMARY KEY, body TEXT UNIQUE);",
-        )],
-    )
-    .unwrap();
-    let mut feed = SqliteFeed::new(&db).with_window(Duration::from_millis(5));
-    // the update hook never fires for WITHOUT ROWID tables
-    db.exec("INSERT INTO kv VALUES('a', 1)".into(), vec![]).await.unwrap();
-    let batch = tokio::time::timeout(Duration::from_secs(1), feed.next_batch()).await.unwrap().unwrap();
-    assert_eq!(batch, ChangeBatch::of(["kv"]));
-
-    // a REPLACE conflict deletes a row without the delete hook; the table is still reported
-    db.exec("INSERT INTO notes(id, body) VALUES(1, 'x')".into(), vec![]).await.unwrap();
-    feed.next_batch().await.unwrap();
-    db.exec("INSERT OR REPLACE INTO notes(id, body) VALUES(2, 'x')".into(), vec![]).await.unwrap();
-    assert_eq!(feed.next_batch().await.unwrap(), ChangeBatch::of(["notes"]));
-}
-
-#[tokio::test]
-async fn a_burst_of_commits_is_one_batch_and_a_lagging_reader_gets_everything() {
-    let db = AppDb::open(None, &migs()).unwrap();
-    let mut feed = SqliteFeed::new(&db).with_window(Duration::from_millis(100));
-    for i in 0..5 {
-        db.exec("INSERT INTO notes(body) VALUES(?1)".into(), vec![json!(format!("n{i}"))]).await.unwrap();
-    }
-    let batch = feed.next_batch().await.unwrap();
-    assert_eq!(batch, ChangeBatch::of(["notes"]), "five commits, one batch");
-    assert!(
-        tokio::time::timeout(Duration::from_millis(150), feed.next_batch()).await.is_err(),
-        "no second batch"
-    );
-
-    // 300 commits with nobody reading overflows the 256-slot channel
-    let mut slow = SqliteFeed::new(&db).with_window(Duration::from_millis(1));
-    for i in 0..300 {
-        db.exec("INSERT INTO notes(body) VALUES(?1)".into(), vec![json!(format!("m{i}"))]).await.unwrap();
-    }
-    let lagged = slow.next_batch().await.unwrap();
-    assert!(lagged.touches(&tables(&["anything"])), "unknown loss means every query re-runs");
-}
-
-#[tokio::test]
-async fn the_feed_ends_when_the_database_is_dropped() {
-    let db = AppDb::open(None, &migs()).unwrap();
-    let mut feed = SqliteFeed::new(&db);
-    drop(db);
-    assert_eq!(feed.next_batch().await, None);
-}
-
 // ---- transactions and limits --------------------------------------------------------------------------
 
 #[tokio::test]
-async fn a_transaction_holds_the_gate_and_commits_as_one_batch() {
+async fn a_transaction_holds_the_gate_until_it_commits() {
     let db = AppDb::open(None, &migs()).unwrap();
-    let mut feed = SqliteFeed::new(&db).with_window(Duration::from_millis(5));
     let mut tx = AppData::begin(&db).await.unwrap();
     tx.exec("INSERT INTO notes(body) VALUES('a')".into(), Params::None).await.unwrap();
     tx.exec("INSERT INTO notes(body) VALUES('b')".into(), Params::None).await.unwrap();
@@ -297,14 +175,11 @@ async fn a_transaction_holds_the_gate_and_commits_as_one_batch() {
 
     tx.commit().await.unwrap();
     assert_eq!(waiting.await.unwrap().unwrap()[0]["n"], 2);
-    assert_eq!(feed.next_batch().await.unwrap(), ChangeBatch::of(["notes"]));
-    assert!(tokio::time::timeout(Duration::from_millis(60), feed.next_batch()).await.is_err());
 }
 
 #[tokio::test]
 async fn a_dropped_or_rolled_back_transaction_leaves_nothing_and_frees_the_gate() {
     let db = AppDb::open(None, &migs()).unwrap();
-    let mut feed = SqliteFeed::new(&db).with_window(Duration::from_millis(5));
     {
         let mut tx = AppData::begin(&db).await.unwrap();
         tx.exec("INSERT INTO notes(body) VALUES('lost')".into(), Params::None).await.unwrap();
@@ -316,10 +191,6 @@ async fn a_dropped_or_rolled_back_transaction_leaves_nothing_and_frees_the_gate(
     tx2.rollback().await.unwrap();
     let n = db.query("SELECT count(*) AS n FROM notes".into(), vec![]).await.unwrap();
     assert_eq!(n[0]["n"], 0);
-    assert!(
-        tokio::time::timeout(Duration::from_millis(60), feed.next_batch()).await.is_err(),
-        "no change published"
-    );
     db.exec("INSERT INTO notes(body) VALUES('fine')".into(), vec![]).await.unwrap();
 }
 
@@ -349,52 +220,52 @@ async fn a_runaway_statement_is_interrupted_at_its_budget_and_the_database_stays
     assert_eq!(db.query("SELECT count(*) AS n FROM notes".into(), vec![]).await.unwrap()[0]["n"], 0);
 }
 
-// ---- app tables, revisions ---------------------------------------------------------------------------
+// ---- app tables ---------------------------------------------------------------------------------------
 
 #[tokio::test]
 async fn every_app_database_has_a_kv_table_and_the_system_database_does_not() {
     let app = AppDb::open(None, &[]).unwrap();
     app.exec("INSERT INTO _kv(key, value) VALUES('k', '1')".into(), vec![]).await.unwrap();
-    app.exec(
-        "INSERT INTO _ui_state(window, instance, name, value) VALUES('main', '', 'folder', '3')".into(),
-        vec![],
-    )
-    .await
-    .unwrap();
     let system = AppDb::open_system(None, &[]).unwrap();
     assert!(system.query("SELECT * FROM _kv".into(), vec![]).await.is_err());
 }
 
-fn revision(value: &str, at: u64) -> Revision {
-    Revision {
-        source: "note".into(),
-        key: json!(7),
-        field: "body".into(),
-        value: json!(value),
-        reason: RevisionReason::TextConflict,
-        replaced_by: Actor::user("You"),
-        recorded_at_ms: at,
-    }
-}
-
+/// The tables a host that drew apps' windows itself kept in every app database. A new database does not get them,
+/// and one that has them is opened as it is: nothing is dropped, nothing in them is touched.
 #[tokio::test]
-async fn revisions_are_kept_listed_newest_first_and_purged_by_age() {
-    let db = AppDb::open(None, &[]).unwrap();
-    let a = AppData::record_revision(&db, revision("first", 1_000)).await.unwrap();
-    let b = AppData::record_revision(&db, revision("second", 2_000)).await.unwrap();
-    let mut other = revision("elsewhere", 2_500);
-    other.field = "title".into();
-    AppData::record_revision(&db, other).await.unwrap();
+async fn the_window_tables_of_an_older_host_are_not_created_and_are_left_alone_where_they_exist() {
+    let internal = "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE '\\_ui\\_%' ESCAPE '\\' ORDER BY name";
+    let fresh = AppDb::open(None, &[]).unwrap();
+    assert!(fresh.query(internal.into(), vec![]).await.unwrap().is_empty());
 
-    let got = AppData::revision(&db, a).await.unwrap().unwrap();
-    assert_eq!((got.id, got.revision), (a, revision("first", 1_000)));
-    assert!(AppData::revision(&db, 999).await.unwrap().is_none());
-    let listed = AppData::revisions(&db, "note", &json!(7), "body").await.unwrap();
-    assert_eq!(listed.iter().map(|r| r.id).collect::<Vec<_>>(), vec![b, a]);
-    assert!(AppData::revisions(&db, "note", &json!(8), "body").await.unwrap().is_empty());
-
-    assert_eq!(AppData::purge_revisions(&db, 1_500).await.unwrap(), 1);
-    assert_eq!(AppData::revisions(&db, "note", &json!(7), "body").await.unwrap().len(), 1);
+    let dir = std::env::temp_dir().join(format!("vos-sqlite-old-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("notes.db");
+    let _ = std::fs::remove_file(&path);
+    {
+        let old = rusqlite::Connection::open(&path).unwrap();
+        old.execute_batch(
+            "CREATE TABLE _ui_state(window TEXT NOT NULL, instance TEXT NOT NULL, name TEXT NOT NULL, value TEXT NOT NULL,
+                PRIMARY KEY(window, instance, name));
+             CREATE TABLE _ui_revisions(id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, key TEXT NOT NULL,
+                field TEXT NOT NULL, value TEXT NOT NULL, reason TEXT NOT NULL, replaced_by TEXT NOT NULL,
+                recorded_at INTEGER NOT NULL);
+             INSERT INTO _ui_state VALUES('main', '', 'folder', '3');
+             INSERT INTO _ui_revisions(source, key, field, value, reason, replaced_by, recorded_at)
+                VALUES('s1', '7', 'body', '\"old\"', 'text_conflict', '{}', 1);",
+        )
+        .unwrap();
+    }
+    let db = AppDb::open(Some(&path), &migs()).unwrap();
+    let names: Vec<Value> = db.query(internal.into(), vec![]).await.unwrap();
+    assert_eq!(names, vec![json!({"name": "_ui_revisions"}), json!({"name": "_ui_state"})]);
+    assert_eq!(db.query("SELECT count(*) AS n FROM _ui_state".into(), vec![]).await.unwrap()[0]["n"], 1);
+    assert_eq!(db.query("SELECT count(*) AS n FROM _ui_revisions".into(), vec![]).await.unwrap()[0]["n"], 1);
+    // and the database works as any other
+    db.exec("INSERT INTO _kv(key, value) VALUES('k', '1')".into(), vec![]).await.unwrap();
+    db.exec("INSERT INTO notes(body) VALUES('a')".into(), vec![]).await.unwrap();
+    drop(db);
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 // ---- the system database and the data store ------------------------------------------------------------
@@ -470,6 +341,21 @@ async fn purge_deletes_the_database_files() {
 }
 
 // ---- read-only handles ----------------------------------------------------------------------------------
+
+fn shop() -> AppDb {
+    AppDb::open(
+        None,
+        &[Migration::new(
+            1,
+            "init",
+            "CREATE TABLE folders(id INTEGER PRIMARY KEY, name TEXT);
+             CREATE TABLE notes(id INTEGER PRIMARY KEY, folder_id INTEGER, body TEXT);
+             CREATE TABLE tags(note_id INTEGER, tag TEXT);
+             CREATE VIEW tagged AS SELECT n.id, t.tag FROM notes n JOIN tags t ON t.note_id = n.id;",
+        )],
+    )
+    .unwrap()
+}
 
 #[tokio::test]
 async fn a_read_only_handle_reads_and_refuses_every_write_while_the_writable_one_keeps_working() {

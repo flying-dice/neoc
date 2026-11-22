@@ -4,8 +4,6 @@
  *
  *   types/generated/prelude.lua  <- lua/prelude.lua   (`typeof` and `utf8`, which the app environment does not copy from Luau)
  *
- * (`types/generated/ui.lua`, the other embedded module, is written by the Rust generator, `vos-codegen`.)
- *
  *   bun scripts/codegen-lua.ts          write it (part of `bun run codegen`)
  *   bun scripts/codegen-lua.ts --check  exit 1 when it is missing or stale (part of `bun run codegen:check`)
  *

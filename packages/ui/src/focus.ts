@@ -14,32 +14,26 @@ const FOCUSABLE = [
 ].join(',')
 
 /** The tabbable elements inside `root`, in DOM order (hidden ones excluded). */
-export function focusables(root: HTMLElement): HTMLElement[] {
+function focusables(root: HTMLElement): HTMLElement[] {
   return [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
     (el) => !el.closest('[inert]') && el.getClientRects().length > 0
   )
 }
 
-export interface TrapOptions {
-  /** Where focus starts: a selector inside the dialog (default `[data-autofocus]`, then the first focusable). */
-  initial?: string
-  /** Put focus back on the previously focused element when the dialog is removed (default true). */
-  restore?: boolean
-  /** With no `initial` match: focus the first focusable (default) or the dialog itself. */
-  fallback?: 'first' | 'container'
+interface TrapOptions {
   /** Called on Escape (focus inside the dialog). */
   onescape?: () => void
 }
 
-/** A Svelte attachment: trap Tab inside `node`, focus into it on mount, restore on destroy. */
+/**
+ * A Svelte attachment: trap Tab inside `node`, focus into it on mount (the `[data-autofocus]` element, else the first
+ * focusable, else the dialog itself), restore on destroy.
+ */
 export function trapFocus(options: TrapOptions = {}): (node: HTMLElement) => () => void {
-  const { initial = '[data-autofocus]', restore = true, fallback = 'first', onescape } = options
+  const { onescape } = options
   return (node) => {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    const target =
-      node.querySelector<HTMLElement>(initial) ??
-      (fallback === 'first' ? focusables(node)[0] : undefined) ??
-      node
+    const target = node.querySelector<HTMLElement>('[data-autofocus]') ?? focusables(node)[0] ?? node
     if (target === node && !node.hasAttribute('tabindex')) node.setAttribute('tabindex', '-1')
     // After the transition frame: the element must be laid out to take focus.
     const frame = requestAnimationFrame(() => target.focus({ preventScroll: true }))
@@ -65,7 +59,7 @@ export function trapFocus(options: TrapOptions = {}): (node: HTMLElement) => () 
     return () => {
       cancelAnimationFrame(frame)
       node.removeEventListener('keydown', onkeydown)
-      if (restore && previous?.isConnected) previous.focus({ preventScroll: true })
+      if (previous?.isConnected) previous.focus({ preventScroll: true })
     }
   }
 }

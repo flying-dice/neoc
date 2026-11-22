@@ -10,7 +10,8 @@
 //! programs out of the ingredients and checks the invariants over all of them instead.
 //!
 //! A program is a few *steps*. A step is one **leaf** (an idle wait, a database or key-value read or write, a
-//! mutex, a write through `app.state`, `app.notify` or `app:openWindow`), put inside a **context** where the host
+//! mutex, a write through `state` (an in-memory value whose assignment sends an event to the app's pages), `app.notify` or
+//! `app:openWindow`), put inside a **context** where the host
 //! call cannot suspend (or none), and wrapped in **controls** (`pcall`, `xpcall`, coroutines, a plain yield, tasks,
 //! a nested `db:tx`, an error thrown mid-body, a wait left in flight and resumed inside a transaction). It runs as a
 //! tool of one of four kinds: `readOnly`, writable, writable with concurrent second tools, or `readOnly` calling the
@@ -127,7 +128,7 @@ fn leaf(rng: &mut Rng, n: usize, kind: Kind) -> Leaf {
         Leaf { code: "mu:with_lock(function() task.wait(0) end)".into(), idle: true },
         Leaf { code: format!("attempt('state', function() state.v = {n} end)"), idle: false },
         Leaf { code: "attempt('notify', function() app.notify { title = 'chaos' } end)".into(), idle: false },
-        Leaf { code: "attempt('window', function() app:openWindow('w') end)".into(), idle: false },
+        Leaf { code: "attempt('window', function() app:openWindow() end)".into(), idle: false },
     ];
     if kind == Kind::OwnServer {
         leaves.push(Leaf { code: "hyper.get(OWN)".into(), idle: true });
@@ -309,7 +310,7 @@ local hyper = require("vnd:hyper")
 local net = require("std:net")
 local collections = require("std:collections")
 local mu = collections.Mutex.new()
-local state = app.state { v = 0 }
+local state = setmetatable({}, { __index = { v = 0 }, __newindex = function(t, k, x) app.emit("state") getmetatable(t).__index[k] = x end })
 local counter, PROG = 0, 0
 local A, X, V, keep, pending, txp = {}, {}, {}, {}, 0, nil
 -- what the program leaves behind for another call to find: the threads it did not make (its top-level thread, the
@@ -351,7 +352,7 @@ local function TX(body)
 end
 
 app.db:migrate { [1] = "create table t(a integer primary key autoincrement, v integer)" }
-app.window("w", { render = function(w) end })
+-- the app's one window is its page's: `app:openWindow()` asks the shell for it
 "#;
 
 const TOOLS: &str = r#"
@@ -394,7 +395,7 @@ app.tool { name = "peek", readOnly = true, run = function()
   refused("kv", function() app.kv:set("k1", 97) end)
   refused("state", function() state.v = 97 end)
   refused("notify", function() app.notify { title = "peek" } end)
-  refused("window", function() app:openWindow("w") end)
+  refused("window", function() app:openWindow() end)
   refused("tx", function() app.db:tx(function() app.db:exec("insert into t(v) values (96)") end) end)
   steal("a readOnly call")
   resume_scripts()
@@ -606,7 +607,7 @@ async fn verify(
             failures.push(format!("(a) a readOnly call left the row {v} in the database"));
         }
         if report["state"] != 0 {
-            failures.push(format!("(a) a readOnly call changed app.state: {}", report["state"]));
+            failures.push(format!("(a) a readOnly call changed the app's state: {}", report["state"]));
         }
         let kv = data.query("select count(*) as n from _kv".into(), vec![]).await.unwrap();
         if kv[0]["n"] != 0 {
@@ -712,8 +713,8 @@ impl Notifier for Quiet {
     }
 }
 
-/// What the app is told to be, for the runtime (which needs a manifest; the plain VM does not).
-const MANIFEST: &str = "app.manifest { id = \"chaos\", name = \"Chaos\", icon = \"gear\" }\n";
+/// The first line of the program the runtime is given.
+const MANIFEST: &str = "-- chaos\n";
 
 /// A call through the runtime, as the host makes it; the error names what went wrong (a call that ended with an
 /// error because the app was unloaded is not a failure: one that never ends is).
@@ -746,7 +747,7 @@ async fn run_disturbed(case: &Case, disturbance: Disturbance, after_ms: u64) -> 
     let runtime = Arc::new(LuaRuntime::new(Arc::new(Quiet), Arc::new(RecordingShell::default())));
     let source = format!("{MANIFEST}{}", case.source);
     let load = |runtime: Arc<LuaRuntime>, data: Arc<dyn AppData>, source: String| async move {
-        runtime.load(&id("chaos"), package(&source, &[]), data).await
+        runtime.load(&id("chaos"), package(&common::backend(&source), &[]), data).await
     };
     if let Err(e) = load(runtime.clone(), data.clone(), source.clone()).await {
         return vec![format!("the generated program did not load: {e}")];

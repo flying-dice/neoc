@@ -37,13 +37,8 @@ async fn host_with_apps(tmp: &Path, ids: &[&str]) -> Running {
     let r = start(|c| c.data_dir = Some(tmp.join("data"))).await;
     for id in ids {
         let files = [("app.luau", BACKEND.as_bytes().to_vec()), ("static/index.html", b"<p>x</p>".to_vec())];
-        let url = publish_package_with_client(
-            &tmp.join(format!("pkg-{id}")),
-            id,
-            "app.luau",
-            Some("static"),
-            &files,
-        );
+        let url =
+            publish_package_with_client(&tmp.join(format!("pkg-{id}")), id, "app.luau", "static", &files);
         r.host.service.install_from_url(&url).await.unwrap();
     }
     r
@@ -200,7 +195,7 @@ async fn uninstalling_a_hung_app_answers_its_calls_and_a_reinstall_starts_clean(
         answered += 1;
     }
     let files = [("app.luau", BACKEND.as_bytes().to_vec()), ("static/index.html", b"<p>x</p>".to_vec())];
-    let url = publish_package_with_client(&tmp.join("pkg-again"), "hung", "app.luau", Some("static"), &files);
+    let url = publish_package_with_client(&tmp.join("pkg-again"), "hung", "app.luau", "static", &files);
     r.host.service.install_from_url(&url).await.unwrap();
     assert_eq!(
         rpc(&mut ws, 60, "app.call", json!({"app": "hung", "method": "ping"})).await["result"],

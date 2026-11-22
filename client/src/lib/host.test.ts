@@ -1,11 +1,11 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- test helpers infer their return types */
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { Host, type HostDeps } from './host.svelte'
-import { appOf, dockOrder, setInstalledApps } from './apps.svelte'
+import { appOf, appOrder, setInstalledApps } from './apps.svelte'
 import { HostError } from '../shell/channel'
 import type { PairResult } from '../shell/pairing'
 import type { AppSummary } from '../shell/hostApi'
-import type { Transport, TransportStatus } from '../view/rpc/transport'
+import type { Transport, TransportStatus } from '../shell/rpc/transport'
 
 const calculator: AppSummary = {
   id: 'calculator',
@@ -13,7 +13,6 @@ const calculator: AppSummary = {
   version: '0.1.0',
   state: 'running',
   source: 'file',
-  client: false,
   permissions: []
 }
 const agents: AppSummary = { ...calculator, id: 'agents', name: 'Agents' }
@@ -198,9 +197,9 @@ describe('verifyPairing (a revoked device goes back to the pairing screen)', () 
     expect(s.host.phase).toBe('unpaired')
     expect(s.host.session).toBeNull()
     expect(s.host.apps).toEqual([])
-    // the shell's registry (windows, Dock) is emptied with it, not only the host's own list
+    // the shell's registry (windows, the Home Screen) is emptied with it, not only the host's own list
     expect(appOf('calculator')).toBeUndefined()
-    expect(dockOrder()).not.toContain('calculator')
+    expect(appOrder()).not.toContain('calculator')
   })
 
   test('a drop with the device still paired keeps reconnecting', async () => {
@@ -305,24 +304,21 @@ describe('answers of another shape are an error state, not a crash', () => {
 })
 
 describe('window.open requests', () => {
-  test('reach the listeners with the window kind defaulting to main', async () => {
+  test('reach the listeners with the app to open', async () => {
     const s = await online()
     const seen: unknown[] = []
     const off = s.host.onWindowRequest((r) => seen.push(r))
     s.wire.notify('window.open', { app: 'calculator' })
     s.wire.notify('window.open', { app: 'notes', window: 'editor', params: { id: 3 } })
     await settle()
-    expect(seen).toEqual([
-      { app: 'calculator', window: 'main' },
-      { app: 'notes', window: 'editor', params: { id: 3 } }
-    ])
+    expect(seen).toEqual([{ app: 'calculator' }, { app: 'notes' }])
     off()
     s.wire.notify('window.open', { app: 'calculator' })
     await settle()
     expect(seen).toHaveLength(2)
   })
 
-  test('a request without an app id, or with params that are not an object, is ignored or stripped', async () => {
+  test('a request without an app id is ignored', async () => {
     const s = await online()
     const seen: unknown[] = []
     s.host.onWindowRequest((r) => seen.push(r))
@@ -330,7 +326,7 @@ describe('window.open requests', () => {
     s.wire.notify('window.open', { app: 7 })
     s.wire.notify('window.open', { app: 'notes', params: [1, 2] })
     await settle()
-    expect(seen).toEqual([{ app: 'notes', window: 'main' }])
+    expect(seen).toEqual([{ app: 'notes' }])
   })
 })
 
@@ -340,24 +336,5 @@ describe('the api before and after a connection', () => {
     const error = await s.host.api.call('app.list').catch((e: unknown) => e)
     expect(error).toBeInstanceOf(HostError)
     expect((error as HostError).message).toBe('Not connected to vos')
-  })
-
-  test('a story can supply how a window’s view opens (it fails, or never answers) without a session', async () => {
-    const s = setup()
-    const api = { call: () => Promise.resolve({ apps: [] }), onNotification: () => () => undefined }
-    s.host.useFake(api as never, [], {
-      openView: () => Promise.reject(new Error('refused'))
-    })
-    await expect(
-      s.host.openView({ app: 'calculator', window: 'main', windowId: 'w', size: { w: 1, h: 1 } })
-    ).rejects.toThrow('refused')
-    await expect(s.host.closeView({} as never)).resolves.toBeUndefined()
-  })
-
-  test('openView with no session rejects instead of throwing', async () => {
-    const s = setup()
-    await expect(
-      s.host.openView({ app: 'calculator', window: 'main', windowId: 'w', size: { w: 1, h: 1 } })
-    ).rejects.toThrow('Not connected')
   })
 })

@@ -2,7 +2,7 @@
  * The vos PWA entry (`index.html`): ask the host whether this browser is paired, show the pairing screen or
  * connect one session over `/rpc`, and start the shell.
  *
- *   ?theme=light|dark   force the appearance (tests, screenshots)
+ *   ?theme=light|dark   force the appearance (tests, screenshots); such a page stores no settings
  *
  * `window.__vos` exposes the shell's stores for tests and the research panel (the window manager, the app
  * definitions, the host state); nothing in the product reads it.
@@ -28,7 +28,7 @@ declare global {
 }
 
 const theme = new URLSearchParams(location.search).get('theme')
-if (theme === 'light' || theme === 'dark') settings.theme = theme
+if (theme === 'light' || theme === 'dark') settings.forceTheme(theme)
 
 // Offline shell + installability. Dev serves modules live, so only register in production builds.
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {

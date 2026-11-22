@@ -17,7 +17,7 @@ function fieldsOf(name: string): string[] {
   return [...body.matchAll(/(?:^|,)\s*(\w+)\??:/g)].map((m) => m[1]).sort()
 }
 
-describe('the generated wire types hostApi re-exports', () => {
+describe('the generated wire types the shell reads', () => {
   const expected: Record<string, string[]> = {
     AppSummary: [
       'id',
@@ -30,7 +30,6 @@ describe('the generated wire types hostApi re-exports', () => {
       'description',
       'window',
       'source',
-      'client',
       'permissions'
     ],
     AppEvent: ['app', 'name', 'data'],
@@ -49,9 +48,7 @@ describe('the generated wire types hostApi re-exports', () => {
     ],
     InstalledInfo: ['version', 'state'],
     Catalog: ['apps', 'errors'],
-    DeviceRow: ['id', 'name', 'createdAt', 'lastSeenAt', 'current'],
-    AgentRow: ['id', 'name', 'avatar', 'role', 'runtime', 'grants', 'approval'],
-    AgentRuntimeRow: ['command', 'args', 'envKeys']
+    DeviceRow: ['id', 'name', 'createdAt', 'lastSeenAt', 'current']
   }
   for (const [name, fields] of Object.entries(expected)) {
     test(name, () => expect(fieldsOf(name)).toEqual([...fields].sort()))

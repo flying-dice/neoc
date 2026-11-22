@@ -52,9 +52,6 @@ pub struct SqliteSystemDb {
     pub(crate) db: AppDb,
 }
 
-/// The old name, from when the system database held only devices.
-pub type SqliteDeviceRegistry = SqliteSystemDb;
-
 impl SqliteSystemDb {
     /// Open (or create) the system database. `path = None` is in memory (tests).
     pub fn open(path: Option<&Path>) -> Result<Self, DbError> {
@@ -280,7 +277,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_pairing_code_is_consumed_once_and_only_before_it_expires() {
-        let reg = SqliteDeviceRegistry::open(None).unwrap();
+        let reg = SqliteSystemDb::open(None).unwrap();
         reg.add_pairing_code("h1", 5_000).await.unwrap();
         reg.add_pairing_code("h2", 5_000).await.unwrap();
         assert!(reg.take_pairing_code("h1", 4_999).await.unwrap());
@@ -294,7 +291,7 @@ mod tests {
 
     #[tokio::test]
     async fn sessions_are_found_by_token_hash_listed_touched_and_revoked() {
-        let reg = SqliteDeviceRegistry::open(None).unwrap();
+        let reg = SqliteSystemDb::open(None).unwrap();
         reg.add_session(&device("b", 2), "tok-b").await.unwrap();
         reg.add_session(&device("a", 1), "tok-a").await.unwrap();
         assert_eq!(reg.find_session("tok-a").await.unwrap(), Some(device("a", 1)));
@@ -313,8 +310,8 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("system-db-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("system.db");
-        let host = SqliteDeviceRegistry::open(Some(&path)).unwrap();
-        let cli = SqliteDeviceRegistry::open(Some(&path)).unwrap(); // a second process, as far as SQLite knows
+        let host = SqliteSystemDb::open(Some(&path)).unwrap();
+        let cli = SqliteSystemDb::open(Some(&path)).unwrap(); // a second process, as far as SQLite knows
         cli.add_pairing_code("from-cli", u64::MAX).await.unwrap();
         assert!(host.take_pairing_code("from-cli", 1).await.unwrap());
         host.add_session(&device("d", 1), "t").await.unwrap();

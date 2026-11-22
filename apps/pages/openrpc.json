@@ -1,0 +1,482 @@
+{
+  "openrpc": "1.3.2",
+  "info": {
+    "title": "Pages",
+    "version": "0.1.0",
+    "description": "Host websites from folders of this machine: give each site a port, a name, or both. They are served by nginx, in a container in Docker which this app makes and keeps."
+  },
+  "x-app": {
+    "id": "pages",
+    "icon": "globe",
+    "tint": "green",
+    "description": "Host websites from folders of this machine: give each site a port, a name, or both. They are served by nginx, in a container in Docker which this app makes and keeps.",
+    "window": {
+      "w": 760,
+      "h": 620,
+      "minW": 420,
+      "minH": 440
+    }
+  },
+  "methods": [
+    {
+      "name": "overview",
+      "summary": "Whether Docker can be reached, how the web server's container is doing, and the settings and sites it is made from. A Docker that cannot be reached is an answer (`engine.reachable` is false and says why), not an error.",
+      "params": [],
+      "result": {
+        "name": "overview",
+        "schema": {
+          "$ref": "#/components/schemas/Overview"
+        }
+      }
+    },
+    {
+      "name": "connect",
+      "summary": "Choose the Docker the server runs in, and answer with what is there. A server left running in the Docker chosen before is not touched. The folders of the sites are folders of the machine that Docker runs on.",
+      "params": [
+        {
+          "name": "host",
+          "required": true,
+          "description": "Where Docker listens: `unix:///path/docker.sock`, `tcp://host:2375` or `http://host:2375`. Empty for this machine's own Docker.",
+          "schema": {
+            "type": "string",
+            "maxLength": 300
+          }
+        }
+      ],
+      "result": {
+        "name": "overview",
+        "schema": {
+          "$ref": "#/components/schemas/Overview"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "The address is not one Docker can be reached at."
+        }
+      ]
+    },
+    {
+      "name": "apply",
+      "summary": "Make the container again from the settings and the sites as they stand, and start it: the way out when it is not running, or was made from older ones. Does nothing while no site is on.",
+      "params": [],
+      "result": {
+        "name": "overview",
+        "schema": {
+          "$ref": "#/components/schemas/Overview"
+        }
+      }
+    },
+    {
+      "name": "saveSettings",
+      "summary": "Change the port that the sites with names share. A server that is running is made again with it.",
+      "params": [
+        {
+          "name": "port",
+          "required": true,
+          "description": "The port of the machine Docker runs on that every site with a name answers on. The web's own is 80.",
+          "schema": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          }
+        }
+      ],
+      "result": {
+        "name": "overview",
+        "schema": {
+          "$ref": "#/components/schemas/Overview"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "The port is the own port of one of the sites: the message says which."
+        }
+      ]
+    },
+    {
+      "name": "addSite",
+      "summary": "Host a folder as a site, on a port of its own, under names on the shared port, or both. It is on from the start, and the server is made again with it.",
+      "params": [
+        {
+          "name": "name",
+          "required": true,
+          "description": "What the site is called in the list.",
+          "schema": {
+            "type": "string",
+            "maxLength": 80
+          }
+        },
+        {
+          "name": "folder",
+          "required": true,
+          "description": "The folder the site's files are in, as a full path on the machine Docker runs on, like `/Users/me/Sites/blog`. Its `index.html` is the front page. It is only read.",
+          "schema": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        },
+        {
+          "name": "port",
+          "required": true,
+          "description": "A port of its own for the site, like 8081. 0 for none: the site then needs a name.",
+          "schema": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          }
+        },
+        {
+          "name": "hostnames",
+          "required": true,
+          "description": "The names the site answers to on the shared port, like `blog.home`: letters, digits and hyphens, in parts joined by dots. None: the site then needs a port.",
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 253
+            }
+          }
+        }
+      ],
+      "result": {
+        "name": "overview",
+        "schema": {
+          "$ref": "#/components/schemas/Overview"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "The name, the folder, the port or a hostname cannot be used, or there are too many sites: the message says which and why."
+        }
+      ]
+    },
+    {
+      "name": "updateSite",
+      "summary": "Change a site: what it is called, its folder, its port and its names. Whether it is on stays. The server is made again with it.",
+      "params": [
+        {
+          "name": "site",
+          "required": true,
+          "description": "The id of one of the sites of `overview`.",
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "name",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "maxLength": 80
+          }
+        },
+        {
+          "name": "folder",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        },
+        {
+          "name": "port",
+          "required": true,
+          "description": "0 for none.",
+          "schema": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          }
+        },
+        {
+          "name": "hostnames",
+          "required": true,
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 253
+            }
+          }
+        }
+      ],
+      "result": {
+        "name": "overview",
+        "schema": {
+          "$ref": "#/components/schemas/Overview"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such site, or the name, the folder, the port or a hostname cannot be used: the message says which and why."
+        }
+      ]
+    },
+    {
+      "name": "setSiteEnabled",
+      "summary": "Turn a site on (it is served) or off (it is kept, and not served). With the last site off the container is removed. What Docker refused is said by `server.problem` of the answer.",
+      "params": [
+        {
+          "name": "site",
+          "required": true,
+          "description": "The id of one of the sites of `overview`.",
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "enabled",
+          "required": true,
+          "schema": {
+            "type": "boolean"
+          }
+        }
+      ],
+      "result": {
+        "name": "overview",
+        "schema": {
+          "$ref": "#/components/schemas/Overview"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such site."
+        }
+      ]
+    },
+    {
+      "name": "removeSite",
+      "summary": "Stop hosting a site and forget it. Its folder and the files in it are not touched.",
+      "params": [
+        {
+          "name": "site",
+          "required": true,
+          "description": "The id of one of the sites of `overview`.",
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "result": {
+        "name": "overview",
+        "schema": {
+          "$ref": "#/components/schemas/Overview"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such site."
+        }
+      ]
+    },
+    {
+      "name": "logs",
+      "summary": "The end of what the server has written: how it started, what it could not do, and every request it answered.",
+      "params": [
+        {
+          "name": "tail",
+          "required": false,
+          "description": "How many lines from the end; 200 when left out.",
+          "schema": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2000
+          }
+        }
+      ],
+      "result": {
+        "name": "logs",
+        "schema": {
+          "$ref": "#/components/schemas/Logs"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "Docker cannot be reached, or the server has no container: the message says which."
+        }
+      ]
+    }
+  ],
+  "components": {
+    "schemas": {
+      "Engine": {
+        "type": "object",
+        "properties": {
+          "reachable": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "string",
+            "description": "Docker's version, empty when it cannot be reached."
+          },
+          "host": {
+            "type": "string",
+            "description": "Where Docker is looked for, as given to `connect`. Empty for this machine's own Docker."
+          },
+          "problem": {
+            "type": "string",
+            "description": "Why Docker cannot be reached, as a sentence. Empty when it can."
+          }
+        },
+        "required": [
+          "reachable",
+          "version",
+          "host",
+          "problem"
+        ]
+      },
+      "ServerState": {
+        "type": "string",
+        "description": "How the server's container is doing: there is none, it runs, Docker is starting it again, or it is there and not running.",
+        "enum": [
+          "absent",
+          "running",
+          "restarting",
+          "stopped"
+        ]
+      },
+      "Server": {
+        "type": "object",
+        "properties": {
+          "wanted": {
+            "type": "boolean",
+            "description": "At least one site is on, so the server is wanted running. Whether it is running is `state`."
+          },
+          "state": {
+            "$ref": "#/components/schemas/ServerState"
+          },
+          "status": {
+            "type": "string",
+            "description": "Docker's own words for the container: `Up 2 hours`, `Exited (1) 5 seconds ago`. Empty without one."
+          },
+          "current": {
+            "type": "boolean",
+            "description": "The container was made from the settings and the sites as they stand. False without one."
+          },
+          "image": {
+            "type": "string",
+            "description": "The image the container is made from."
+          },
+          "problem": {
+            "type": "string",
+            "description": "Why the container could not be made or started the last time it was tried, as a sentence. Empty when it could."
+          }
+        },
+        "required": [
+          "wanted",
+          "state",
+          "status",
+          "current",
+          "image",
+          "problem"
+        ]
+      },
+      "Settings": {
+        "type": "object",
+        "properties": {
+          "port": {
+            "type": "integer",
+            "description": "The port every site with a name answers on."
+          }
+        },
+        "required": [
+          "port"
+        ]
+      },
+      "Site": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string",
+            "description": "What the site is called in the list."
+          },
+          "folder": {
+            "type": "string",
+            "description": "The full path of the folder the site's files are in."
+          },
+          "port": {
+            "type": "integer",
+            "description": "The site's own port; 0 when it has none."
+          },
+          "hostnames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The names the site answers to on the shared port, in lower case."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "The site is wanted served."
+          },
+          "problem": {
+            "type": "string",
+            "description": "Why a site that is on is not served, as a sentence: its folder is not there. Empty when nothing is known to be wrong."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "folder",
+          "port",
+          "hostnames",
+          "enabled",
+          "problem"
+        ]
+      },
+      "Overview": {
+        "type": "object",
+        "properties": {
+          "engine": {
+            "$ref": "#/components/schemas/Engine"
+          },
+          "server": {
+            "$ref": "#/components/schemas/Server"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/Settings"
+          },
+          "sites": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Site"
+            },
+            "description": "Every site, by name."
+          }
+        },
+        "required": [
+          "engine",
+          "server",
+          "settings",
+          "sites"
+        ]
+      },
+      "Logs": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "The text is the end of something longer."
+          }
+        },
+        "required": [
+          "text",
+          "truncated"
+        ]
+      }
+    }
+  }
+}

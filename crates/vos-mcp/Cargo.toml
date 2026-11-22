@@ -14,14 +14,13 @@ axum = { workspace = true }
 parking_lot = { workspace = true }
 rmcp = { workspace = true }
 serde_json = { workspace = true }
-thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 
 [dev-dependencies]
 reqwest = { workspace = true }
+rmcp = { workspace = true, features = ["client", "transport-streamable-http-client-reqwest"] }   # the tests' MCP client
 vos-application = { workspace = true, features = ["testing"] }
-serde_json = { workspace = true }
 
 [lints]
 workspace = true

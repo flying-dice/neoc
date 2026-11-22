@@ -3,55 +3,34 @@
 //! An app that fails (it does not load, or a call raises) fails alone: its error is returned
 //! to that caller with the app's file and line, and no other VM, and not the host, is touched.
 
-use crate::vm::{AppVm, Effect, ShellEffect, VmConfig, VmError};
+use crate::vm::{AppVm, Effect, VmConfig, VmError};
 use async_trait::async_trait;
 use neoc_vm::lua::lifecycle::Life;
 use parking_lot::RwLock;
 use serde_json::{Map, Value};
 use std::future::Future;
-use std::{
-    collections::HashMap,
-    sync::{Arc, OnceLock, Weak},
-};
+use std::{collections::HashMap, sync::Arc};
 use vos_application::{
-    live::SourceId,
     panics,
     ports::{
-        AgentRoster, AppActivity, AppData, AppPackage, AppRuntime, CallContext, LoadedApp, Notifier,
-        PortResult, RenderOutput, Shell, ViewEffect, ViewEventCall,
+        AgentRoster, AppData, AppPackage, AppRuntime, CallContext, LoadedApp, Notifier, PortResult, Shell,
     },
     FileStore, NoFiles, PortError,
 };
 use vos_domain::AppId;
 
-/// The generated constructors (`types/generated/ui.lua`) every app gets as `require("vos:ui")`. Luau source of
-/// `vos:ui` (hosts and tests that build a [`VmConfig`] by hand register it as `ui`).
-pub const UI_MODULE: &str = include_str!("../../../types/generated/ui.lua");
-
 pub struct LuaRuntime {
     vms: RwLock<HashMap<AppId, Arc<AppVm>>>,
     notifier: Arc<dyn Notifier>,
     shell: Arc<dyn Shell>,
-    host_modules: HashMap<String, Vec<u8>>,
     roster: Option<Arc<dyn AgentRoster>>,
     /// Where each app's `app.files` live (none unless the host gives a store).
     files: Arc<dyn FileStore>,
-    /// Who hears that a background call settled; bound once the application exists (see [`Self::bind_activity`]).
-    activity: Arc<OnceLock<Weak<dyn AppActivity>>>,
 }
 
 impl LuaRuntime {
     pub fn new(notifier: Arc<dyn Notifier>, shell: Arc<dyn Shell>) -> Self {
-        let host_modules = HashMap::from([("ui".to_owned(), UI_MODULE.as_bytes().to_vec())]);
-        Self {
-            vms: RwLock::default(),
-            notifier,
-            shell,
-            host_modules,
-            roster: None,
-            files: Arc::new(NoFiles),
-            activity: Arc::default(),
-        }
+        Self { vms: RwLock::default(), notifier, shell, roster: None, files: Arc::new(NoFiles) }
     }
 
     /// The agent contacts `app.agents:list()` shows to every app.
@@ -66,13 +45,6 @@ impl LuaRuntime {
     pub fn with_files(mut self, files: Arc<dyn FileStore>) -> Self {
         self.files = files;
         self
-    }
-
-    /// Tell this runtime who to inform when an app's background work (a task, a request to its own server)
-    /// changed something. The runtime is built before the application that listens, so this is bound later and
-    /// holds the listener weakly. The first binding wins.
-    pub fn bind_activity(&self, activity: Weak<dyn AppActivity>) {
-        let _ = self.activity.set(activity);
     }
 
     fn vm(&self, app: &AppId) -> PortResult<Arc<AppVm>> {
@@ -98,7 +70,7 @@ async fn until_unloaded<T>(
     }
 }
 
-/// Forward what the app asked for during a call: notifications and shell declarations go to their ports.
+/// Forward what the app asked for during a call: notifications, events and its window go to their ports.
 async fn forward_effects(
     notifier: &dyn Notifier,
     shell: &dyn Shell,
@@ -127,7 +99,6 @@ async fn deliver_effects(
         let delivered = panics::caught(async {
             match effect {
                 Effect::Notify(n) => notifier.notify(n).await?,
-                Effect::Shell(ShellEffect::DeepLinks(l)) => shell.set_deep_links(app, l).await,
                 Effect::Emit { name, data } => shell.emit_event(app, &name, data).await,
                 Effect::OpenWindow { name, params } => {
                     let params = match params {
@@ -152,16 +123,13 @@ async fn deliver_effects(
 
 fn port_error(app: &AppId, e: VmError) -> PortError {
     match e {
-        VmError::NoSuchTool(t)
-        | VmError::NoSuchWriter(t)
-        | VmError::NoSuchWindow(t)
-        | VmError::NoSuchView(t) => PortError::NotFound(t),
+        VmError::NoSuchTool(t) => PortError::NotFound(t),
         VmError::Script(ref script) | VmError::Load { error: ref script, .. } => {
             tracing::warn!(%app, error = %script, traceback = script.traceback.as_deref().unwrap_or(""), "app code failed");
             PortError::Rejected(e.to_string())
         }
         VmError::Rpc { code, message, data } => PortError::Rpc { code, message, data },
-        // JSON-RPC's "method not found": the client called something the backend does not implement
+        // JSON-RPC's "method not found": the page called something the backend does not implement
         VmError::NoSuchHandler(name) => {
             PortError::Rpc { code: -32601, message: format!("Method not found: {name}"), data: None }
         }
@@ -178,7 +146,6 @@ fn port_error(app: &AppId, e: VmError) -> PortError {
 impl AppRuntime for LuaRuntime {
     async fn load(&self, app: &AppId, package: AppPackage, data: Arc<dyn AppData>) -> PortResult<LoadedApp> {
         let config = VmConfig {
-            host_modules: Arc::new(self.host_modules.clone()),
             roster: self.roster.clone().unwrap_or_else(|| VmConfig::default().roster),
             files: self.files.files(app),
             refused_modules: Vec::new(),
@@ -186,7 +153,7 @@ impl AppRuntime for LuaRuntime {
         };
         // An app that serves a port cannot be replaced by a version that serves the same one while the old
         // still holds it: stop what the old version started (listeners, tasks, workers) before the new one
-        // starts. Its tools and windows keep working until the new one has loaded, so a version that fails to
+        // starts. Its tools and handlers keep working until the new one has loaded, so a version that fails to
         // load leaves the old one answering, without its background work.
         let running = self.vms.read().get(app).cloned();
         if let Some(old) = running {
@@ -195,23 +162,14 @@ impl AppRuntime for LuaRuntime {
             // read-only: stated in the `AppRuntime::load` port doc, accepted in AGOS-64.
             old.stop_background();
         }
-        let has_client = package.has_client;
         let vm = AppVm::load(app, package, data, config).await.map_err(|e| port_error(app, e))?;
-        // an app with a client says who it is in app.json; one without describes its windows, so it must declare
-        let decl = vm.decl();
-        if decl.is_none() && !has_client {
-            return Err(PortError::Rejected(format!(
-                "{app}: the app must declare itself with app.manifest {{ ... }}"
-            )));
-        }
-        let loaded = LoadedApp { decl, tools: vm.tools(), sources: vm.sources() };
+        let loaded = LoadedApp { tools: vm.tools() };
         forward_effects(&*self.notifier, &*self.shell, app, &vm).await?;
         // a call that comes from inside the VM (a request to the app's own server, a task) queues effects too:
-        // forward them when it ends. The pump is one of the app's own tasks, so it goes with the app.
+        // forward them when it ends or pauses. The pump is one of the app's own tasks, so it goes with the app.
         let vm = Arc::new(vm);
         let (signal, weak) = (vm.effects_signal(), Arc::downgrade(&vm));
         let (notifier, shell, id) = (self.notifier.clone(), self.shell.clone(), app.clone());
-        let activity = self.activity.clone();
         let life = vm.life().clone();
         life.clone().spawn(async move {
             loop {
@@ -220,25 +178,12 @@ impl AppRuntime for LuaRuntime {
                 // must not be what keeps an unloaded VM alive
                 let Some(vm) = weak.upgrade() else { break };
                 let effects = vm.take_effects();
-                // open windows follow what the background work changed; a pause that changed no state or
-                // window request has nothing to follow (data changes are pushed by the live sources)
-                let follow = !life.is_closed() && vm.has_unsettled_views();
                 drop(vm);
                 // a panic in a port while forwarding is logged and the pump waits for the next signal: the app's
-                // later notifications and window refreshes still go out (see `vos_application::panics`)
+                // later notifications and events still go out (see `vos_application::panics`)
                 let forwarded = panics::caught(async {
                     if let Err(error) = deliver_effects(&*notifier, &*shell, &id, effects, &life).await {
                         tracing::warn!(app = %id, %error, "could not forward what the app asked for");
-                    }
-                    if !follow || life.is_closed() {
-                        return;
-                    }
-                    // The application is held for the settle only. A settle that hangs (the VM's gate is held by
-                    // a runaway call) holds it until the app is unloaded, which aborts this task: apps have no
-                    // budgets.
-                    let listener = activity.get().and_then(Weak::upgrade);
-                    if let Some(listener) = listener {
-                        listener.background_settled(&id).await;
                     }
                 })
                 .await;
@@ -302,77 +247,5 @@ impl AppRuntime for LuaRuntime {
         .await;
         forward_effects(&*self.notifier, &*self.shell, app, &vm).await?;
         out
-    }
-
-    async fn write_row(
-        &self,
-        app: &AppId,
-        source: &SourceId,
-        key: Value,
-        field: &str,
-        value: Value,
-        ctx: CallContext,
-    ) -> PortResult<()> {
-        let vm = self.vm(app)?;
-        let out = vm.write_row(source, &key, field, &value, &ctx).await.map_err(|e| port_error(app, e));
-        forward_effects(&*self.notifier, &*self.shell, app, &vm).await?;
-        out
-    }
-
-    async fn windows(&self, app: &AppId) -> PortResult<Vec<String>> {
-        Ok(self.vm(app)?.windows())
-    }
-
-    async fn open_view(
-        &self,
-        app: &AppId,
-        view: &str,
-        window: &str,
-        params: Map<String, Value>,
-        restored: Map<String, Value>,
-    ) -> PortResult<RenderOutput> {
-        let vm = self.vm(app)?;
-        let out = vm.open_view(view, window, params, restored).await.map_err(|e| port_error(app, e));
-        forward_effects(&*self.notifier, &*self.shell, app, &vm).await?;
-        out
-    }
-
-    async fn render_view(&self, app: &AppId, view: &str) -> PortResult<RenderOutput> {
-        let vm = self.vm(app)?;
-        let out = vm.render_view(view).await.map_err(|e| port_error(app, e));
-        forward_effects(&*self.notifier, &*self.shell, app, &vm).await?;
-        out
-    }
-
-    async fn dispatch_view_event(
-        &self,
-        app: &AppId,
-        view: &str,
-        call: ViewEventCall,
-        ctx: CallContext,
-    ) -> PortResult<bool> {
-        let vm = self.vm(app)?;
-        let out = vm.dispatch_view_event(view, call, &ctx).await.map_err(|e| port_error(app, e));
-        forward_effects(&*self.notifier, &*self.shell, app, &vm).await?;
-        out
-    }
-
-    async fn set_client_values(&self, app: &AppId, view: &str, values: Map<String, Value>) -> PortResult<()> {
-        self.vm(app)?.set_client_values(view, &values).await.map_err(|e| port_error(app, e))
-    }
-
-    async fn close_view(&self, app: &AppId, view: &str) -> PortResult<()> {
-        let vm = self.vm(app)?;
-        let out = vm.close_view(view).await.map_err(|e| port_error(app, e));
-        forward_effects(&*self.notifier, &*self.shell, app, &vm).await?;
-        out
-    }
-
-    async fn dirty_views(&self, app: &AppId) -> PortResult<Vec<String>> {
-        Ok(self.vm(app)?.dirty_views())
-    }
-
-    async fn take_view_effects(&self, app: &AppId) -> PortResult<Vec<(String, ViewEffect)>> {
-        Ok(self.vm(app)?.take_view_effects())
     }
 }

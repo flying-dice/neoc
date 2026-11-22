@@ -13,6 +13,9 @@
 //!    and changes nothing, and script code never runs in a call that does not hold the turn.
 //!
 //! `chaos.rs` generates scripts that combine these ingredients and checks the same invariants over all of them.
+//!
+//! `state` in these apps is an in-memory value whose every assignment also sends an event to the app's pages (`app.emit`),
+//! which is a change to the world: a call that is read-only cannot assign it, and the error says `readOnly`.
 
 mod common;
 
@@ -199,7 +202,7 @@ async fn a_plain_yield_after_a_failed_wait_does_not_lend_a_read_only_call() {
         load(
             r#"
             local task = require("std:task")
-            local state = app.state { v = 0 }
+            local state = setmetatable({}, { __index = { v = 0 }, __newindex = function(t, k, x) app.emit("state") getmetatable(t).__index[k] = x end })
             local counter = 0
             app.tool { name = "bump", run = function() counter = counter + 1 return counter end }
             app.tool { name = "ro", readOnly = true, run = function()
@@ -375,7 +378,7 @@ async fn the_thread_of_a_pcall_cannot_be_resumed_by_another_call() {
         load(
             r#"
             local task = require("std:task")
-            local state = app.state { v = 0 }
+            local state = setmetatable({}, { __index = { v = 0 }, __newindex = function(t, k, x) app.emit("state") getmetatable(t).__index[k] = x end })
             local t
             local log = {}
             app.tool { name = "a", readOnly = true, run = function()
@@ -639,7 +642,7 @@ async fn a_read_only_call_is_still_read_only_after_another_call_tried_to_resume_
         load(
             r#"
             local task = require("std:task")
-            local state = app.state { v = 0 }
+            local state = setmetatable({}, { __index = { v = 0 }, __newindex = function(t, k, x) app.emit("state") getmetatable(t).__index[k] = x end })
             local t
             local log = {}
             app.tool { name = "a", readOnly = true, run = function()

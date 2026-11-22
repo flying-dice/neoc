@@ -32,8 +32,9 @@ const isCompositionRoot = (rel: string): boolean => rel === 'client/src/App.svel
 
 function layerOfPath(path: string): Layer | null {
   const parts = path.split(sep)
-  // Use the innermost layer segment.
-  for (let i = parts.length - 2; i >= 0; i--) {
+  // Use the innermost layer segment, inside the package's `src`: a folder above it is a package's name, not a layer
+  // (the Pages app lives in apps/pages).
+  for (let i = parts.length - 2; i > parts.lastIndexOf('src'); i--) {
     if ((LAYERS as readonly string[]).includes(parts[i])) return parts[i] as Layer
   }
   return null

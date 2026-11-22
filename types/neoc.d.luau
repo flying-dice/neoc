@@ -1333,6 +1333,77 @@ export type lib_vcr = {
 	cassette: (opts: any) -> any,
 }
 
+-- ===== vnd:bollard =====
+
+export type vnd_bollard_Client = {
+	--- Ask the daemon whether it is there: `true`, or the error (`connect` when no daemon answers).
+	ping: (self: vnd_bollard_Client) -> (boolean?, string?),
+	--- The daemon's version: Docker's `/version` table (`Version`, `ApiVersion`, `Os`, `Arch`, ...).
+	version: (self: vnd_bollard_Client) -> (any, string?),
+	--- The daemon's system information: Docker's `/info` table (`Containers`, `Images`, `ServerVersion`, `OperatingSystem`, ...).
+	info: (self: vnd_bollard_Client) -> (any, string?),
+	--- The containers, as Docker's list of summaries (`Id`, `Names`, `Image`, `State`, `Status`, `Labels`, `Ports`, ...). Only running ones unless `all`; `limit` is the most recently created ones; `size` adds `SizeRw` and `SizeRootFs`; `filters` are Docker's (`{ label = { "com.docker.compose.project=blog" }, status = "running" }`).
+	list_containers: (self: vnd_bollard_Client, opts: { all: boolean?, limit: number?, size: boolean?, filters: { [string]: any }? }?) -> (any, string?),
+	--- Docker's inspect table of a container, by name or id (`Id`, `State`, `Config.Labels`, `HostConfig`, `NetworkSettings`, ...), or `(nil, nil)` when there is no such container.
+	inspect_container: (self: vnd_bollard_Client, name: string) -> (any, string?),
+	--- Create a container (not started) from Docker's create body, with Docker's field names: `{ name = "web", Image = "nginx", Env = { "A=1" }, Labels = { ... }, HostConfig = { Binds = { ... }, PortBindings = { ["80/tcp"] = { { HostPort = "8088" } } }, RestartPolicy = { Name = "unless-stopped" } } }`. The lower-case `name` (and `platform`) are the call's own. Returns `{ Id, Warnings }`. The image must be on the host already (`pull_image`): a missing one is `not_found`; a name in use is `conflict`.
+	create_container: (self: vnd_bollard_Client, config: { [string]: any }) -> (any, string?),
+	--- Start a container. Starting a running one succeeds.
+	start_container: (self: vnd_bollard_Client, name: string) -> (boolean?, string?),
+	--- Stop a container: Docker sends `signal` (default the image's stop signal, usually `SIGTERM`), waits `timeout` seconds (default 10) and then kills it. Stopping a stopped one succeeds.
+	stop_container: (self: vnd_bollard_Client, name: string, opts: { timeout: number?, signal: string? }?) -> (boolean?, string?),
+	--- Stop a container as `stop_container` does and start it again.
+	restart_container: (self: vnd_bollard_Client, name: string, opts: { timeout: number?, signal: string? }?) -> (boolean?, string?),
+	--- Send a signal to a running container (default `SIGKILL`; `SIGHUP` to make a server reload). A container that is not running is `conflict`.
+	kill_container: (self: vnd_bollard_Client, name: string, opts: { signal: string? }?) -> (boolean?, string?),
+	--- Suspend every process of a running container.
+	pause_container: (self: vnd_bollard_Client, name: string) -> (boolean?, string?),
+	--- Resume a paused container.
+	unpause_container: (self: vnd_bollard_Client, name: string) -> (boolean?, string?),
+	--- Remove a container. A running one is `conflict` unless `force` (which kills it first); `volumes` removes its anonymous volumes with it.
+	remove_container: (self: vnd_bollard_Client, name: string, opts: { force: boolean?, volumes: boolean? }?) -> (boolean?, string?),
+	--- A container's output as a `Stream` of `{ stream = "stdout" | "stderr", data = string }` pieces (a container with a TTY sends everything as `"console"`). `tail` is how many lines from the end to start with (default all), `since` and `until` are Unix times, `timestamps` prefixes each line, `stdout = false` or `stderr = false` leaves one out. The stream ends after what there is, or with `follow` stays open for new output until the container stops. A container that does not exist is the error of the first `next()`.
+	logs: (self: vnd_bollard_Client, name: string, opts: { follow: boolean?, stdout: boolean?, stderr: boolean?, tail: number?, since: number?, ["until"]: number?, timestamps: boolean? }?) -> (vnd_bollard_Stream?, string?),
+	--- One reading of a container's resource use: Docker's stats table (`cpu_stats`, `memory_stats`, `networks`, `blkio_stats`, ...).
+	stats: (self: vnd_bollard_Client, name: string) -> (any, string?),
+	--- Run a command in a running container and wait for it: `docker:exec("web", { "nginx", "-t" })`. Returns its exit code and what it wrote (at most 64 MiB together, `too_large` past that); a command that fails is a result with a non-zero `exit_code`, not an error. `env` is a list of `NAME=value`.
+	exec: (self: vnd_bollard_Client, name: string, cmd: { string }, opts: { env: { string }?, user: string?, working_dir: string?, privileged: boolean? }?) -> ({ exit_code: number?, stdout: string, stderr: string }?, string?),
+	--- The images on the host, as Docker's list of summaries (`Id`, `RepoTags`, `Size`, `Created`, `Containers`, ...). `all` includes intermediate layers.
+	list_images: (self: vnd_bollard_Client, opts: { all: boolean?, digests: boolean?, filters: { [string]: any }? }?) -> (any, string?),
+	--- Pull an image from its registry: a `Stream` of Docker's progress tables (`status`, `id`, `progressDetail = { current, total }`), which ends when the pull is over. `nginx` pulls `nginx:latest`, never every tag. The pull runs as the stream is read and stops if the stream is closed; a pull that fails (no such image, no network) is the error of a `next()`.
+	pull_image: (self: vnd_bollard_Client, image: string, opts: { platform: string? }?) -> (vnd_bollard_Stream?, string?),
+	--- Remove an image, by reference or id: Docker's list of what was untagged and deleted. An image a container uses is `conflict` unless `force`; `noprune` keeps its untagged parents.
+	remove_image: (self: vnd_bollard_Client, image: string, opts: { force: boolean?, noprune: boolean? }?) -> (any, string?),
+	--- The volumes: Docker's `{ Volumes = { ... }, Warnings }` (each volume `Name`, `Driver`, `Mountpoint`, `Labels`, ...).
+	list_volumes: (self: vnd_bollard_Client, opts: { filters: { [string]: any }? }?) -> (any, string?),
+	--- Create a volume from Docker's create body (`{ Name = "data", Labels = { ... } }`; without a `Name` Docker makes one up). Returns the volume. Creating one that exists returns it.
+	create_volume: (self: vnd_bollard_Client, config: { [string]: any }) -> (any, string?),
+	--- Remove a volume. One a container uses is `conflict`.
+	remove_volume: (self: vnd_bollard_Client, name: string, opts: { force: boolean? }?) -> (boolean?, string?),
+	--- The networks, as Docker's list (`Id`, `Name`, `Driver`, `Scope`, `Labels`, ...).
+	list_networks: (self: vnd_bollard_Client, opts: { filters: { [string]: any }? }?) -> (any, string?),
+	--- Create a network from Docker's create body (`{ Name = "backend", Driver = "bridge", Labels = { ... } }`). Returns `{ Id, Warning }`. A name in use is `conflict`.
+	create_network: (self: vnd_bollard_Client, config: { [string]: any }) -> (any, string?),
+	--- Remove a network, by name or id. One with containers attached is an error (`api`: Docker answers 403).
+	remove_network: (self: vnd_bollard_Client, name: string) -> (boolean?, string?),
+	--- What happens on the daemon from now on, as a `Stream` of Docker's event tables (`Type = "container"`, `Action = "start"`, `Actor = { ID, Attributes }`, `time`, ...). `since` (a Unix time) replays earlier events first, `until` ends the stream at that time, `filters` are Docker's (`{ type = "container", event = { "start", "die" } }`). Without `until` the stream stays open until it is closed.
+	events: (self: vnd_bollard_Client, opts: { since: number?, ["until"]: number?, filters: { [string]: any }? }?) -> (vnd_bollard_Stream?, string?),
+}
+
+export type vnd_bollard_Stream = {
+	--- Wait for the next item. `(nil, nil)` is the end: Docker sent everything, or the stream was closed. `(nil, err)` is a failure, and ends the stream too. It waits like `task.wait`: other tasks run while it does.
+	next: (self: vnd_bollard_Stream) -> (any, string?),
+	--- Stop reading and drop the connection to Docker. Items already read may still be returned by `next`; then it is the end. A stream is also closed when it is collected, and when the script that made it is unloaded or shut down.
+	close: (self: vnd_bollard_Stream) -> (),
+}
+
+export type vnd_bollard = {
+	--- A client for a Docker daemon. Nothing is sent until the client's first call. `host` is `unix:///path/docker.sock`, `tcp://host:2375`, `http://host:2375` or `https://host:2376`; without it `DOCKER_HOST` is used, and without that the local socket (`/var/run/docker.sock`, then Docker Desktop's and a rootless daemon's per-user socket). `timeout` is how long a call waits for the daemon's answer, in seconds (default 120). `tls_ca`, `tls_cert` and `tls_key` (all three, paths of PEM files) connect over TLS with a client certificate. Reaching Docker is root on its host: a script given this module is trusted with the machine. Errors are `bollard.<function>: <kind>: <message>` (see `error_kind`); a host with no Docker socket is `connect`.
+	connect: (opts: { host: string?, timeout: number?, tls_ca: string?, tls_cert: string?, tls_key: string? }?) -> (vnd_bollard_Client?, string?),
+	--- The stable kind inside an error string returned by a `vnd:bollard` function, or `nil` when the string is not one of theirs (or is `nil`, so `bollard.error_kind(err)` takes the `err` of any call). Such a string is `bollard.<function>: <kind>: <message>`. Kinds: `invalid_input` (an argument or option was refused, by this module or by Docker), `connect` (no Docker daemon could be reached: no socket, or nothing answers), `timed_out` (the daemon did not answer within the client's `timeout`), `not_found` (no such container, image, volume or network), `conflict` (the object's state does not allow it: a name in use, a running container, a volume in use), `api` (any other error status from Docker), `bad_response` (Docker's answer could not be read), `too_large` (a result longer than this module reads into memory), `other`. The message is Docker's own where Docker answered; it is for a log and may change.
+	error_kind: (err: string?) -> string?,
+}
+
 -- ===== vnd:hyper =====
 
 export type vnd_hyper_ServerHandle = {
@@ -1393,6 +1464,65 @@ export type vnd_jsonschema_ValidationResult = {
 export type vnd_jsonschema = {
 	--- Parse and compile a JSON Schema string into a `Schema` validator.
 	compile: (schema_json: string) -> (vnd_jsonschema_Schema?, string?),
+}
+
+-- ===== vnd:keyring =====
+
+export type vnd_keyring_Store = {
+	--- The entry for a service and a user in this store. Nothing is read or written: the credential need not exist. What a store accepts as a service or a user is its own (`invalid_input`).
+	entry: (self: vnd_keyring_Store, service: string, user: string) -> (vnd_keyring_Entry?, string?),
+	--- The entries of the credentials that match `spec`, whose keys are the store's own: macOS takes `service` and `user` (exact, and every generic password of the login keychain without them), the Secret Service takes any attribute (`service`, `username`, ...), a mock store matches `service` and `user` as substrings. A store with no search (the Windows Credential Manager) is `unsupported`. On the Secret Service a search may ask the person to unlock.
+	search: (self: vnd_keyring_Store, spec: { [string]: string }?) -> ({ vnd_keyring_Entry }?, string?),
+}
+
+export type vnd_keyring_Entry = {
+	--- The credential's secret as text, or `(nil, nil)` when the store has no such credential. A secret that is not UTF-8 is `bad_encoding` (read it with `get_secret`). The platform may ask the person first, and the call waits for them.
+	get_password: (self: vnd_keyring_Entry) -> (string?, string?),
+	--- Store text as the credential's secret: the credential is made, or its secret replaced.
+	set_password: (self: vnd_keyring_Entry, password: string) -> (boolean?, string?),
+	--- The credential's secret as the bytes the store holds (a string of bytes), or `(nil, nil)` when the store has no such credential.
+	get_secret: (self: vnd_keyring_Entry) -> (string?, string?),
+	--- Store bytes (a string of bytes) as the credential's secret: the credential is made, or its secret replaced.
+	set_secret: (self: vnd_keyring_Entry, secret: string) -> (boolean?, string?),
+	--- Delete the credential from the store: `true`, or `false` when the store had no such credential.
+	delete_credential: (self: vnd_keyring_Entry) -> (boolean?, string?),
+	--- The service and the user this entry was made from, or `nil, nil` for an entry from `search` whose store does not say.
+	get_specifiers: (self: vnd_keyring_Entry) -> (string?, string?),
+}
+
+export type vnd_keyring = {
+	--- The operating system's credential store: Keychain Services on macOS (the login keychain), the Credential Manager on Windows, the Secret Service on Linux and the other Unixes. A machine that has none, or whose store cannot be opened, is `no_store`. With `NEOC_KEYRING=mock` in the environment it is a mock store instead, one for the whole process (see `mock`). A script given this module is trusted with the secrets of the user it runs as. Errors are `keyring.<function>: <kind>: <message>` (see `error_kind`).
+	store: () -> (vnd_keyring_Store?, string?),
+	--- A new mock store, for tests: in memory, its own, and gone with the process. It takes any service and user, and `search` matches `service` and `user` as substrings.
+	mock: () -> vnd_keyring_Store,
+	--- The stable kind inside an error string returned by a `vnd:keyring` function, or `nil` when the string is not one of theirs (or is `nil`, so `keyring.error_kind(err)` takes the `err` of any call). Such a string is `keyring.<function>: <kind>: <message>`. Kinds: `invalid_input` (an argument was refused, by this module or by the store), `no_store` (this machine has no credential store that can be used), `no_access` (the store is locked, or the person refused), `not_found` (the credential an entry from `search` stood for is gone), `ambiguous` (more than one credential matches the service and user), `bad_encoding` (the secret is not UTF-8 text: read it with `get_secret`), `bad_data` (what the store holds could not be read), `unsupported` (the store does not do this), `platform` (the platform's store failed), `other`. The message is the store's own where it answered; it is for a log and may change, and never holds a secret.
+	error_kind: (err: string?) -> string?,
+}
+
+-- ===== vnd:portable_pty =====
+
+export type vnd_portable_pty_Pty = {
+	--- Wait for output and return it: the bytes the process wrote, at most `max` of them (a whole number from 1 to 65536, the default), as soon as there are any. The bytes are what a terminal receives: text in the process's encoding with its escape sequences, and a read may end in the middle of a character. `(nil, nil)` is the end of the output: every process that had the terminal open is gone, or the terminal was closed. `(nil, err)` is a failure (`io`), and the read after it is the end; a `max` out of range is `invalid_input`. At most 256 KiB of output wait to be read: a process that writes more waits in its write until the script reads. A read that is abandoned takes nothing. It waits like `task.wait`: other tasks run while it does.
+	read: (self: vnd_portable_pty_Pty, max: number?) -> (string?, string?),
+	--- Send bytes to the process as its input, as if typed: `true` once the terminal has taken them all. A line ends with `\r` or `\n` as the program on the terminal expects (a shell takes either). At most 1 MiB a call (`invalid_input` past that). Writes are made one after the other, and a process that does not read its input makes the write wait. `closed` after `close()`, also for a write that was waiting; `io` when the terminal refuses the bytes (every process on it is gone). It waits like `task.wait`: other tasks run while it does.
+	write: (self: vnd_portable_pty_Pty, data: string) -> (boolean?, string?),
+	--- Tell the terminal its new size, each a whole number from 1 to 32767 (`invalid_input` otherwise): `true`. The process in the foreground is told by the operating system (`SIGWINCH` on Unix). `closed` after `close()`.
+	resize: (self: vnd_portable_pty_Pty, rows: number, cols: number) -> (boolean?, string?),
+	--- The id of the process `spawn_command` started, while it runs. `nil` once it has ended or the terminal is closed: the number is then the operating system's to give to another process.
+	process_id: (self: vnd_portable_pty_Pty) -> number?,
+	--- Wait for the process to end and return how it ended: `exit_code` (0 to 255 on Unix, and 1 when a signal ended it), `signal` (the operating system's words for that signal, which differ between systems; `nil` when it ended by itself, and always on Windows) and `success` (it ended by itself with code 0). It may be called again, and after `close()`: the answer is the same. The output can outlive the process (a child of it still writes): read to the end for all of it. `io` when the operating system does not say how the process ended. It waits like `task.wait`: other tasks run while it does.
+	wait: (self: vnd_portable_pty_Pty) -> ({ exit_code: number, signal: string?, success: boolean }?, string?),
+	--- End the process: on Unix it is sent a hangup (`SIGHUP`, what a terminal that goes away sends) and, if it still runs a quarter of a second later, the kill it cannot refuse (`SIGKILL`); on Windows it is terminated. It returns at once: `wait()` says when the process is gone. A process that has ended is left alone. The process's own children are not signalled here: the operating system hangs up those in the terminal's foreground when the process ends.
+	kill: (self: vnd_portable_pty_Pty) -> (),
+	--- End the process as `kill()` does and let go of the terminal: output not yet read is dropped, every `read`, waiting or later, returns `(nil, nil)`, and `write` and `resize` fail with `closed`. `wait()` still says how the process ended. Closing again does nothing. A terminal is also closed when its handle is collected, and when the engine shuts down.
+	close: (self: vnd_portable_pty_Pty) -> (),
+}
+
+export type vnd_portable_pty = {
+	--- Open a pseudo-terminal of `rows` by `cols` (default 24 by 80; each 1 to 32767) and start a command on it: a `Pty`. `program` is a path, or a name looked up in `PATH`, and `args` its arguments (at most 1024). Without `program` it is the user's default shell, started as a login shell: `$SHELL`, else the one of the password database, else `/bin/sh`; on Windows `%ComSpec%`. `cwd` is the directory it starts in (default: the user's home directory, not the engine's working directory). `env` is added to the environment the engine's process has, replacing a variable of the same name; nothing is taken away, and `TERM` is whatever that environment says unless `env` sets it (`xterm-256color` for a terminal that draws like xterm). The process runs as the engine's user and can do what that user can: a script given this module is trusted with the machine. Errors are `portable_pty.<function>: <kind>: <message>` (see `error_kind`): `invalid_input` for an option that is unknown or of the wrong shape, `spawn` when the command could not be started (no such program, not executable, `cwd` is not a directory, or the system refused the terminal or the process). The terminal is closed, and the process ended, by `close()`, when the handle is collected, and when the engine shuts down. It waits like `task.wait`: other tasks run while it does.
+	spawn_command: (opts: { program: string?, args: { string }?, cwd: string?, env: { [string]: string }?, rows: number?, cols: number? }?) -> (vnd_portable_pty_Pty?, string?),
+	--- The stable kind inside an error string returned by a `vnd:portable_pty` function, or `nil` when the string is not one of theirs (or is `nil`, so `portable_pty.error_kind(err)` takes the `err` of any call). Such a string is `portable_pty.<function>: <kind>: <message>`. Kinds: `invalid_input` (an argument or option was refused), `spawn` (the command could not be started), `closed` (the terminal was closed), `io` (reading from the terminal or writing to it failed), `other`. The message is the crate's or the operating system's own; it is for a log and may change.
+	error_kind: (err: string?) -> string?,
 }
 
 -- ===== vnd:quick_xml =====
@@ -1613,8 +1743,11 @@ declare require:
 	& ((path: "lib:unicode") -> lib_unicode)
 	& ((path: "lib:url") -> lib_url)
 	& ((path: "lib:vcr") -> lib_vcr)
+	& ((path: "vnd:bollard") -> vnd_bollard)
 	& ((path: "vnd:hyper") -> vnd_hyper)
 	& ((path: "vnd:jsonschema") -> vnd_jsonschema)
+	& ((path: "vnd:keyring") -> vnd_keyring)
+	& ((path: "vnd:portable_pty") -> vnd_portable_pty)
 	& ((path: "vnd:quick_xml") -> vnd_quick_xml)
 	& ((path: "vnd:rusqlite") -> vnd_rusqlite)
 	& ((path: "vnd:serde_json") -> vnd_serde_json)

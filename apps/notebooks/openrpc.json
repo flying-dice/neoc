@@ -1,0 +1,545 @@
+{
+  "openrpc": "1.3.2",
+  "info": {
+    "title": "Notebooks",
+    "version": "0.1.0",
+    "description": "Notes in Markdown that link to each other, for you and your agents: write [[a link]], follow it, and see what links back."
+  },
+  "x-app": {
+    "id": "notebooks",
+    "icon": "doc",
+    "tint": "purple",
+    "description": "Notes in Markdown that link to each other, for you and your agents: write [[a link]], follow it, and see what links back.",
+    "window": {
+      "w": 1000,
+      "h": 660,
+      "minW": 420,
+      "minH": 420
+    }
+  },
+  "methods": [
+    {
+      "name": "library",
+      "summary": "Every notebook, every note without its text (the most recently changed first), and which note links to which.",
+      "params": [],
+      "result": {
+        "name": "library",
+        "schema": {
+          "$ref": "#/components/schemas/Library"
+        }
+      }
+    },
+    {
+      "name": "read",
+      "summary": "One note: its text, and the notes that link to it.",
+      "params": [
+        {
+          "name": "note",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "result": {
+        "name": "note",
+        "schema": {
+          "$ref": "#/components/schemas/Note"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such note."
+        }
+      ]
+    },
+    {
+      "name": "create",
+      "summary": "Make a note in a notebook, and answer with it and the library as it now stands.",
+      "params": [
+        {
+          "name": "notebook",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "title",
+          "required": false,
+          "description": "Left out, the note is called Untitled (Untitled 2, and so on). A title is at most 120 characters and has none of [ ] | # ^ in it: those are what a link is written with.",
+          "schema": {
+            "type": "string",
+            "maxLength": 120
+          }
+        }
+      ],
+      "result": {
+        "name": "opened",
+        "schema": {
+          "$ref": "#/components/schemas/Opened"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such notebook, the title is not one a note can have, or a note of the notebook already has it."
+        }
+      ]
+    },
+    {
+      "name": "follow",
+      "summary": "The note a link names: the note of the notebook with that title, whatever its capitals, or a new one when there is none. Today's note is the one named after the day.",
+      "params": [
+        {
+          "name": "notebook",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "title",
+          "required": true,
+          "description": "A title is at most 120 characters and has none of [ ] | # ^ in it: those are what a link is written with.",
+          "schema": {
+            "type": "string",
+            "maxLength": 120
+          }
+        }
+      ],
+      "result": {
+        "name": "opened",
+        "schema": {
+          "$ref": "#/components/schemas/Opened"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such notebook, or the title is not one a note can have."
+        }
+      ]
+    },
+    {
+      "name": "save",
+      "summary": "Replace a note's text. Its links, its tags and its first line are read from it again.",
+      "params": [
+        {
+          "name": "note",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "body",
+          "required": true,
+          "description": "Markdown. [[Title]] links to the note of the same notebook with that title ([[Title|shown text]] to show other words); #tag tags it.",
+          "schema": {
+            "type": "string",
+            "maxLength": 200000
+          }
+        }
+      ],
+      "result": {
+        "name": "library",
+        "schema": {
+          "$ref": "#/components/schemas/Library"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such note."
+        }
+      ]
+    },
+    {
+      "name": "rename",
+      "summary": "Give a note another title. The links to it in the other notes of its notebook are rewritten to the new title.",
+      "params": [
+        {
+          "name": "note",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "title",
+          "required": true,
+          "description": "A title is at most 120 characters and has none of [ ] | # ^ in it: those are what a link is written with.",
+          "schema": {
+            "type": "string",
+            "maxLength": 120
+          }
+        }
+      ],
+      "result": {
+        "name": "opened",
+        "schema": {
+          "$ref": "#/components/schemas/Opened"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such note, the title is not one a note can have, or another note of the notebook has it."
+        }
+      ]
+    },
+    {
+      "name": "pin",
+      "summary": "Bookmark a note, or take its bookmark away: bookmarked notes are first in their notebook.",
+      "params": [
+        {
+          "name": "note",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "pinned",
+          "required": true,
+          "schema": {
+            "type": "boolean"
+          }
+        }
+      ],
+      "result": {
+        "name": "library",
+        "schema": {
+          "$ref": "#/components/schemas/Library"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such note."
+        }
+      ]
+    },
+    {
+      "name": "remove",
+      "summary": "Delete a note. The links to it stay as they were written, and lead to a new note when followed.",
+      "params": [
+        {
+          "name": "note",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "result": {
+        "name": "library",
+        "schema": {
+          "$ref": "#/components/schemas/Library"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such note."
+        }
+      ]
+    },
+    {
+      "name": "search",
+      "summary": "The notes of a notebook whose title or text has the words, the ones with it in their title first.",
+      "params": [
+        {
+          "name": "notebook",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "query",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "maxLength": 200
+          }
+        }
+      ],
+      "result": {
+        "name": "found",
+        "schema": {
+          "$ref": "#/components/schemas/Found"
+        }
+      }
+    },
+    {
+      "name": "addNotebook",
+      "summary": "Add a notebook.",
+      "params": [
+        {
+          "name": "name",
+          "required": true,
+          "description": "What the notebook is called. Blank, or the name of another notebook, is refused with a message.",
+          "schema": {
+            "type": "string",
+            "maxLength": 60
+          }
+        }
+      ],
+      "result": {
+        "name": "library",
+        "schema": {
+          "$ref": "#/components/schemas/Library"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "The name is blank, or another notebook has it."
+        }
+      ]
+    },
+    {
+      "name": "removeNotebook",
+      "summary": "Delete a notebook and the notes in it.",
+      "params": [
+        {
+          "name": "notebook",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "result": {
+        "name": "library",
+        "schema": {
+          "$ref": "#/components/schemas/Library"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such notebook, or it is the last one."
+        }
+      ]
+    }
+  ],
+  "components": {
+    "schemas": {
+      "Notebook": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ]
+      },
+      "Summary": {
+        "type": "object",
+        "description": "A note without its text.",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "notebook": {
+            "type": "integer",
+            "description": "The id of the notebook it is in."
+          },
+          "title": {
+            "type": "string"
+          },
+          "excerpt": {
+            "type": "string",
+            "description": "Its first line of text; empty for an empty note."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Its tags, without the #, in lower case."
+          },
+          "pinned": {
+            "type": "boolean"
+          },
+          "updated": {
+            "type": "string",
+            "description": "When it last changed, as 2026-06-09T09:41:00.000Z."
+          }
+        },
+        "required": [
+          "id",
+          "notebook",
+          "title",
+          "excerpt",
+          "tags",
+          "pinned",
+          "updated"
+        ]
+      },
+      "Link": {
+        "type": "object",
+        "description": "One note links to another: the ids of the two.",
+        "properties": {
+          "from": {
+            "type": "integer"
+          },
+          "to": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ]
+      },
+      "Library": {
+        "type": "object",
+        "properties": {
+          "notebooks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Notebook"
+            }
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Summary"
+            }
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Link"
+            }
+          }
+        },
+        "required": [
+          "notebooks",
+          "notes",
+          "links"
+        ]
+      },
+      "Backlink": {
+        "type": "object",
+        "description": "A note that links to this one.",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "excerpt": {
+            "type": "string",
+            "description": "The line the link is in."
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "excerpt"
+        ]
+      },
+      "Note": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "notebook": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string",
+            "description": "Markdown."
+          },
+          "pinned": {
+            "type": "boolean"
+          },
+          "updated": {
+            "type": "string"
+          },
+          "backlinks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Backlink"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "notebook",
+          "title",
+          "body",
+          "pinned",
+          "updated",
+          "backlinks"
+        ]
+      },
+      "Opened": {
+        "type": "object",
+        "properties": {
+          "library": {
+            "$ref": "#/components/schemas/Library"
+          },
+          "note": {
+            "$ref": "#/components/schemas/Note"
+          }
+        },
+        "required": [
+          "library",
+          "note"
+        ]
+      },
+      "Hit": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "excerpt": {
+            "type": "string",
+            "description": "The line the words were found in, or the note's first line."
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "excerpt"
+        ]
+      },
+      "Found": {
+        "type": "object",
+        "properties": {
+          "hits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Hit"
+            }
+          }
+        },
+        "required": [
+          "hits"
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "openrpc": "1.3.2",
+  "info": {
+    "title": "Ticker",
+    "version": "0.1.0",
+    "description": "A counter that a background task raises on its own."
+  },
+  "x-app": {
+    "id": "ticker",
+    "icon": "clock",
+    "tint": "teal",
+    "description": "A counter that a background task raises on its own.",
+    "window": {
+      "w": 360,
+      "h": 280,
+      "minW": 320,
+      "minH": 240
+    }
+  },
+  "methods": [
+    {
+      "name": "read",
+      "summary": "The count now, and whether the background task is counting.",
+      "params": [],
+      "result": {
+        "name": "count",
+        "schema": {
+          "$ref": "#/components/schemas/Count"
+        }
+      }
+    },
+    {
+      "name": "toggle",
+      "summary": "Pause the counting, or resume it.",
+      "params": [],
+      "result": {
+        "name": "count",
+        "schema": {
+          "$ref": "#/components/schemas/Count"
+        }
+      }
+    },
+    {
+      "name": "reset",
+      "summary": "Start the count again from zero.",
+      "params": [],
+      "result": {
+        "name": "count",
+        "schema": {
+          "$ref": "#/components/schemas/Count"
+        }
+      }
+    },
+    {
+      "name": "fail",
+      "summary": "Always fails (the journeys use it: a control that fails says so, and the counting goes on).",
+      "params": [],
+      "result": {
+        "name": "outcome",
+        "schema": {
+          "type": "string"
+        }
+      }
+    }
+  ],
+  "components": {
+    "schemas": {
+      "Count": {
+        "type": "object",
+        "properties": {
+          "ticks": {
+            "type": "integer"
+          },
+          "running": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ticks",
+          "running"
+        ]
+      }
+    }
+  }
+}

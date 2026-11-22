@@ -9,8 +9,8 @@
 //! VOS_BASELINE_VMS=200 cargo test --release -p vos-lua --test baseline -- --ignored --nocapture
 //! ```
 //!
-//! It loads the built Calculator (the shipped bundle: darklua, then `AppVm::load`: the engine, the host API, the
-//! manifest and the window and tool declarations) into `N` VMs (default 50) and prints, per VM, how long the load
+//! It loads the built Calculator's backend (the shipped bundle: darklua, then `AppVm::load`: the engine, the host
+//! API, the generated router, the handlers and the tool declarations) into `N` VMs (default 50) and prints, per VM, how long the load
 //! took and what the Lua heap holds (`AppVm::used_memory`), plus the process's resident set before and after, which
 //! also counts what Rust allocated for each VM (the database handle, the tables of the host API). Rerun this to see whether a change
 //! made the VM slower or larger. It asserts nothing about the numbers (they depend on the machine), only that
@@ -18,23 +18,19 @@
 
 mod common;
 
-use common::{built_app, db, id};
+use common::{built_project, db, id};
 use std::{
     process::Command,
     time::{Duration, Instant},
 };
-use vos_lua::{AppVm, VmConfig, UI_MODULE};
+use vos_lua::{AppVm, VmConfig};
 
 /// How many VMs to create when `VOS_BASELINE_VMS` is not set.
 const DEFAULT_VMS: usize = 50;
 
-/// The config the host gives every app: the generated `vos:ui` module, and no agent roster.
+/// The config the host gives every app: no host module, and no agent roster.
 fn config() -> VmConfig {
-    VmConfig {
-        host_modules: std::collections::HashMap::from([("ui".to_owned(), UI_MODULE.as_bytes().to_vec())])
-            .into(),
-        ..VmConfig::default()
-    }
+    VmConfig::default()
 }
 
 /// The process's resident set in KiB (`ps`, so it works on macOS and Linux), or 0 when `ps` is not there.
@@ -64,7 +60,7 @@ async fn calculator_vm_create_time_and_memory() {
     let count: usize =
         std::env::var("VOS_BASELINE_VMS").ok().and_then(|n| n.parse().ok()).unwrap_or(DEFAULT_VMS);
     assert!(count >= 2, "VOS_BASELINE_VMS must be at least 2");
-    let package = built_app("calculator");
+    let package = built_project("apps/calculator");
     let bundle_bytes: usize = package.files.values().map(Vec::len).sum();
 
     // one VM first, dropped: the process's own warm-up (allocator, lazy statics) is not a VM's cost

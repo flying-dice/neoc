@@ -310,6 +310,13 @@ mod tests {
             (Method::GET, "/kit/..\\rpc", false),
             (Method::GET, "/kit/fonts/a..b.woff2", true),
             (Method::GET, "/pair", false),
+            // the files the Files page browses are behind a session: never a "public frame read", and never a write
+            (Method::GET, "/files/host/todo.md", false),
+            (Method::GET, "/files/app/notes/report.csv", false),
+            (Method::PUT, "/files/host/todo.md", false),
+            (Method::PUT, "/files/app/notes/static/x", false),
+            (Method::PUT, "/apps/tasks/static/index.html", false),
+            (Method::PUT, "/kit/kit.js", false),
         ] {
             assert_eq!(is_public_frame_read(&method, path), yes, "{method} {path}");
         }

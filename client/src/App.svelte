@@ -1,17 +1,15 @@
 <!--
   Composition root — the only component allowed outside an atomic layer.
-  It gates the shell on pairing, applies system settings, and maps app ids to built-in pages, to the frame of an
-  installed app that has a client of its own, or to the view window of one that describes its screens in Luau.
+  It gates the shell on pairing, applies system settings, and maps app ids to built-in pages or, for an installed
+  app, to the frame its page runs in.
 -->
 <script lang="ts">
   import DesktopPage from './pages/DesktopPage.svelte'
   import DiscoverPage from './pages/DiscoverPage.svelte'
   import SettingsPage from './pages/SettingsPage.svelte'
   import FilesPage from './pages/FilesPage.svelte'
-  import TerminalPage from './pages/TerminalPage.svelte'
   import PairingPage from './pages/PairingPage.svelte'
   import AppFrame from './organisms/AppFrame.svelte'
-  import ViewWindow from './organisms/ViewWindow.svelte'
   import { settings } from './lib/settings.svelte'
   import { host } from './lib/host.svelte'
   import { windowManager, type WindowState } from './lib/windowManager.svelte'
@@ -22,8 +20,8 @@
   // The host asks for a window (an agent's tool bringing an app forward): open it beside what the person is
   // looking at, or bring the app's own window forward.
   $effect(() =>
-    host.onWindowRequest(({ app, window, params }) => {
-      windowManager.open(app, { alongside: true, kind: window, params }) // ignores an app that is not running
+    host.onWindowRequest(({ app }) => {
+      windowManager.open(app, { alongside: true }) // ignores an app that is not running
     })
   )
 
@@ -52,22 +50,12 @@
     <SettingsPage />
   {:else if win.appId === 'files'}
     <FilesPage />
-  {:else if win.appId === 'terminal'}
-    <TerminalPage />
-  {:else if installedApp(win.appId)?.client}
+  {:else}
     <AppFrame
       appId={win.appId}
       name={installedApp(win.appId)?.name ?? win.appId}
       windowId={win.id}
       permissions={installedApp(win.appId)?.permissions ?? []}
-    />
-  {:else}
-    <ViewWindow
-      appId={win.appId}
-      windowId={win.id}
-      kind={win.kind}
-      params={win.params}
-      onclosewindow={() => windowManager.close(win.id)}
     />
   {/if}
 {/snippet}

@@ -1,11 +1,9 @@
-//! `require`: the host's modules, and nothing from the package.
+//! `require`: the `app` table and the library's modules, and nothing from the package.
 //!
 //! An app is built into one self-contained Luau file (its own modules are bundled in at build time), so at
-//! run time there is nothing to resolve in the package and no filesystem. Three kinds of name resolve:
+//! run time there is nothing to resolve in the package and no filesystem. Two kinds of name resolve:
 //!
-//! - `require("vos:app")` is the `app` table, and `require("vos:<name>")` a host module the host
-//!   registered (the generated `ui` constructors). A host module runs once, in the app's own environment (so
-//!   it sees the same polyfills), and is cached; a cycle is an error.
+//! - `require("vos:app")` is the `app` table, the only `vos:` name there is.
 //! - `require("std:<name>")`, `require("lib:<name>")` and `require("vnd:<name>")` are the library modules of
 //!   `neoc-vm` (neoc's own spelling: `std:task`, `lib:json`, `vnd:hyper`, ...). Each is built for the app
 //!   on first use in the app's VM and cached, so every `require` of one module in an app sees one table and
@@ -17,7 +15,7 @@
 
 use crate::vm::Shared;
 use neoc_vm::{
-    lua::{modules, sandbox::load_source},
+    lua::modules,
     mlua::{self, Lua, Value as LuaValue},
 };
 use std::sync::Arc;
@@ -37,7 +35,7 @@ pub(crate) fn offered_modules(refused: &[String]) -> Vec<&'static str> {
 }
 
 /// What a `require` may name, for the error message of one that names something else.
-const ALLOWED: &str = "\"vos:app\", \"vos:ui\" and the std:, lib: and vnd: modules";
+const ALLOWED: &str = "\"vos:app\" and the std:, lib: and vnd: modules";
 
 pub(crate) fn install(lua: &Lua, sh: &Arc<Shared>, env: &mlua::Table) -> mlua::Result<()> {
     let sh = sh.clone();
@@ -49,13 +47,7 @@ fn load(lua: &Lua, sh: &Arc<Shared>, spec: &str) -> mlua::Result<LuaValue> {
     if spec.starts_with("std:") || spec.starts_with("lib:") || spec.starts_with("vnd:") {
         return library(lua, sh, spec);
     }
-    let Some(name) = spec.strip_prefix("vos:") else {
-        return Err(mlua::Error::runtime(format!(
-            "require(\"{spec}\"): only {ALLOWED} can be required at run time (an app's own modules are bundled \
-             into its file when it is built)"
-        )));
-    };
-    if name == "app" {
+    if spec == "vos:app" {
         return sh
             .app_table
             .lock()
@@ -63,10 +55,15 @@ fn load(lua: &Lua, sh: &Arc<Shared>, spec: &str) -> mlua::Result<LuaValue> {
             .map(LuaValue::Table)
             .ok_or_else(|| mlua::Error::runtime("the app table is gone (the app was unloaded)"));
     }
-    let source = sh.host_modules.get(name).ok_or_else(|| {
-        mlua::Error::runtime(format!("unknown host module \"vos:{name}\": only {ALLOWED} can be required"))
-    })?;
-    run_module(lua, sh, &format!("vos:{name}"), source)
+    if let Some(name) = spec.strip_prefix("vos:") {
+        return Err(mlua::Error::runtime(format!(
+            "unknown host module \"vos:{name}\": only {ALLOWED} can be required"
+        )));
+    }
+    Err(mlua::Error::runtime(format!(
+        "require(\"{spec}\"): only {ALLOWED} can be required at run time (an app's own modules are bundled \
+         into its file when it is built)"
+    )))
 }
 
 /// A library module (`std:task`, `lib:json`, ...), built in this VM the first time it is required.
@@ -81,32 +78,5 @@ fn library(lua: &Lua, sh: &Arc<Shared>, spec: &str) -> mlua::Result<LuaValue> {
     let built = modules::build(lua, spec).ok_or_else(|| modules::unknown_module(spec, offered))??;
     let value = LuaValue::Table(built);
     sh.modules.lock().insert(spec.to_owned(), value.clone());
-    Ok(value)
-}
-
-fn run_module(lua: &Lua, sh: &Arc<Shared>, key: &str, source: &[u8]) -> mlua::Result<LuaValue> {
-    if let Some(done) = sh.modules.lock().get(key) {
-        return Ok(done.clone());
-    }
-    let env = sh
-        .env
-        .lock()
-        .clone()
-        .ok_or_else(|| mlua::Error::runtime("the app environment is gone (the app was unloaded)"))?;
-    if !sh.loading.lock().insert(key.to_owned()) {
-        let chain: Vec<String> = sh.loading.lock().iter().cloned().collect();
-        return Err(mlua::Error::runtime(format!(
-            "cyclic require of `{key}` (loading: {})",
-            chain.join(", ")
-        )));
-    }
-    let result =
-        load_source(lua, source).set_name(format!("={key}")).set_environment(env).call::<LuaValue>(());
-    sh.loading.lock().remove(key);
-    let value = match result? {
-        LuaValue::Nil => LuaValue::Boolean(true),
-        v => v,
-    };
-    sh.modules.lock().insert(key.to_owned(), value.clone());
     Ok(value)
 }

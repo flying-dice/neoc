@@ -17,7 +17,7 @@ use vos_application::data::Params;
 const MAX_DEPTH: usize = 32;
 
 /// Most JSON values (every scalar, array and object counts one) one conversion may produce. A tool result
-/// or window argument of a hundred thousand values is already far past anything a person or an agent reads.
+/// or handler result of a hundred thousand values is already far past anything a person or an agent reads.
 pub const MAX_NODES: usize = 100_000;
 
 /// Most bytes of string content and object keys one conversion may produce: 4 MiB: a value
@@ -25,7 +25,7 @@ pub const MAX_NODES: usize = 100_000;
 pub const MAX_BYTES: usize = 4 * 1024 * 1024;
 
 /// What a conversion has used so far, and the tables it is inside of right now. One `Walk` can span many
-/// `lua_to_json_in` calls (a whole view tree), so the budget is for the whole result.
+/// `lua_to_json_in` calls, so the budget is for the whole result.
 pub struct Walk {
     nodes: usize,
     bytes: usize,

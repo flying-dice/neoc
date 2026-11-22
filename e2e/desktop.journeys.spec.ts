@@ -1,10 +1,32 @@
 /**
- * Desktop shell journeys (client/journeys/desktop.md): the Dock, windows, the recent-apps strip, Split View and
- * full screen, on the real host. Nothing here presses a Calculator key or installs anything, so these can run
+ * Desktop shell journeys (client/journeys/desktop.md): the Home Screen, the Dock and what is pinned to it, windows,
+ * the recent-apps strip, Split View and full screen, on the real host. (System search has its own:
+ * spotlight.journeys.spec.ts.) Nothing here presses a Calculator key or installs anything, so these can run
  * beside the specs that do (see the `verify-change` skill, "The end-to-end host").
  */
 import type { Page } from '@playwright/test'
-import { chooseLayout, expect, openDesktop, resizeWindow, settle, test, windowOf } from './fixtures'
+import {
+  chooseFromAppMenu,
+  chooseLayout,
+  expect,
+  frameOf,
+  openDesktop,
+  openFromHome,
+  resizeWindow,
+  settle,
+  test,
+  windowOf
+} from './fixtures'
+
+/** The apps of the Dock in order, with `|` where the divider between the pinned and the recent ones is. */
+const dockOrder = (page: Page): Promise<string[]> =>
+  page.getByTestId('dock').evaluate((tray) =>
+    [...tray.children].map((el) =>
+      el.getAttribute('data-testid') === 'dock-divider'
+        ? '|'
+        : (el.querySelector('button')?.getAttribute('data-testid')?.replace('dock-', '') ?? '?')
+    )
+  )
 
 /**
  * Click an item of the recent-apps strip, as a person would. The strip auto-hides while a window covers it (its items then ignore
@@ -42,7 +64,7 @@ test.describe('Desktop journeys', () => {
     await openDesktop(page)
     // the landing window says what vos is
     await expect(windowOf(page, 'discover')).toBeVisible()
-    await expect(page.getByTestId('window-discover-content')).toContainText('Your agents, on one desktop.')
+    await expect(page.getByTestId('window-discover-content')).toContainText('Find and install apps')
     await expect(page.getByTestId('window-discover-content')).toContainText('Watch them work')
     // the Dock opens another app, and Discover steps back into the recent-apps strip
     await page.getByTestId('dock-files').click()
@@ -54,10 +76,12 @@ test.describe('Desktop journeys', () => {
     await openDesktop(page, { open: ['files'] })
     await chooseLayout(page, 'files', 'split-left')
     await expect(windowOf(page, 'files')).toHaveClass(/\bsplit-left\b/)
-    // the other half asks for an app; the Dock is still there to answer
+    // the other half asks for an app, and shows them all: the Calculator is chosen there (it is not in the Dock)
     await expect(page.getByTestId('split-placeholder')).toBeVisible()
-    await page.getByTestId('dock-calculator').click()
-    await settle(page)
+    await expect(page.getByTestId('split-placeholder')).toContainText('Choose an app')
+    await expect(page.getByTestId('dock-calculator')).toHaveCount(0)
+    await expect(page.getByTestId('split-placeholder').getByTestId('home-calculator')).toBeVisible()
+    await openFromHome(page, 'calculator')
     await expect(page.getByTestId('split-placeholder')).toHaveCount(0)
     await expect(windowOf(page, 'calculator')).toHaveClass(/\bsplit-right\b/)
     await expect(page.getByTestId('split-divider')).toBeVisible()
@@ -146,10 +170,10 @@ test.describe('Desktop journeys', () => {
 
   test('D7: tell the Dock icons apart by their names', async ({ page }) => {
     await openDesktop(page)
-    const name = page.getByTestId('dock-calculator-name')
-    await expect(name).toHaveText('Calculator')
+    const name = page.getByTestId('dock-settings-name')
+    await expect(name).toHaveText('Settings')
     await expect(name, 'a name shows only for the icon being pointed at').toHaveCSS('opacity', '0')
-    await page.getByTestId('dock-calculator').hover()
+    await page.getByTestId('dock-settings').hover()
     await expect(name).toHaveCSS('opacity', '1')
     await expect(page.getByTestId('dock-files-name')).toHaveCSS('opacity', '0')
     await page.mouse.move(1, 1)
@@ -202,7 +226,7 @@ test.describe('Desktop journeys', () => {
     await openDesktop(page, { open: ['files'] })
     await chooseLayout(page, 'files', 'split-left')
     await expect(page.getByTestId('split-placeholder')).toBeVisible()
-    await page.getByTestId('dock-agents').click()
+    await openFromHome(page, 'agents') // from the waiting half's own icons
     await expect(windowOf(page, 'agents')).toBeVisible()
     await expect(page.getByTestId('desktop-notice')).toContainText('opened on its own')
     await expect(page.getByTestId('desktop-notice')).toContainText('Files is in your recent apps') // where it actually is
@@ -261,5 +285,132 @@ test.describe('Desktop journeys', () => {
     await page.getByTestId('dock-settings').click()
     await expect(windowOf(page, 'settings')).toHaveClass(/\bfullscreen\b/)
     await expectWithin(page, 'settings', 390)
+  })
+
+  test('D14: with no window open the Home Screen shows every app, and one opens from it', async ({ page }) => {
+    await openDesktop(page, { open: [] })
+    const home = page.getByTestId('home')
+    await expect(home).toBeVisible()
+    await expect(home).toHaveAccessibleName('Apps')
+    // the Calculator is installed, and nobody pinned it: it is here, not in the Dock
+    await expect(page.getByTestId('home-calculator')).toHaveAccessibleName('Calculator')
+    await expect(page.getByTestId('home-calculator-name')).toHaveText('Calculator')
+    await expect(page.getByTestId('dock-calculator')).toHaveCount(0)
+    expect(await dockOrder(page)).toEqual(['discover', 'files', 'settings'])
+
+    await page.getByTestId('home-calculator').click()
+    await expect(windowOf(page, 'calculator')).toBeVisible()
+    await expect(frameOf(page, 'calculator').getByTestId('calculator-app')).toBeVisible()
+    // its icon is gone from under the window, and the keyboard is the app's
+    await expect(home).toHaveCount(0)
+    await expect(page.getByTestId('calculator-frame')).toBeFocused()
+    // closing the last window brings the Home Screen back
+    await chooseLayout(page, 'calculator', 'close')
+    await expect(home).toBeVisible()
+  })
+
+  test('D15: the Home Screen by keyboard: arrows across the icons, Enter opens', async ({ page }) => {
+    await openDesktop(page, { open: [] })
+    await page.getByTestId('home-discover').focus()
+    await page.keyboard.press('ArrowRight')
+    await expect(page.getByTestId('home-files')).toBeFocused()
+    await page.keyboard.press('ArrowRight')
+    await expect(page.getByTestId('home-settings')).toBeFocused()
+    await page.keyboard.press('ArrowLeft')
+    await expect(page.getByTestId('home-files')).toBeFocused()
+    // one stop in the tab order: Tab leaves the grid, Shift+Tab comes back to the same icon
+    await page.keyboard.press('Tab')
+    await expect(page.getByTestId('home-search')).toBeFocused()
+    await page.keyboard.press('Shift+Tab')
+    await expect(page.getByTestId('home-files')).toBeFocused()
+    await page.keyboard.press('Enter')
+    await expect(windowOf(page, 'files')).toBeVisible()
+    expect(await page.evaluate(() => !!document.activeElement?.closest('[data-testid="window-files"]')), 'the keyboard is in the window').toBe(true)
+  })
+
+  test('D16: pin an app to the Dock, find it there after a reload, and unpin it', async ({ page }) => {
+    await openDesktop(page, { open: [] })
+    expect(await dockOrder(page)).toEqual(['discover', 'files', 'settings'])
+    // a secondary click on its icon: Open, and Add to Dock
+    await page.getByTestId('home-calculator').click({ button: 'right' })
+    await expect(page.getByTestId('app-menu')).toHaveAccessibleName('Calculator')
+    await expect(page.getByTestId('app-menu-open')).toBeFocused()
+    await expect(page.getByTestId('app-menu-unpin')).toHaveCount(0)
+    await page.getByTestId('app-menu-pin').click()
+    await expect(page.getByTestId('app-menu')).toHaveCount(0)
+    await expect(page.getByTestId('dock-calculator')).toBeVisible()
+    expect(await dockOrder(page), 'at the end: in the order they were added').toEqual(['discover', 'files', 'settings', 'calculator'])
+
+    // it is this browser's: still there after a reload
+    await openDesktop(page, { open: [] })
+    expect(await dockOrder(page)).toEqual(['discover', 'files', 'settings', 'calculator'])
+    expect(await page.evaluate(() => localStorage.getItem('vos.dock.v1'))).toBe(
+      JSON.stringify({ pinned: ['discover', 'files', 'settings', 'calculator'] })
+    )
+    // and it opens from the Dock now
+    await page.getByTestId('dock-calculator').click()
+    await expect(windowOf(page, 'calculator')).toBeVisible()
+    await chooseLayout(page, 'calculator', 'close')
+
+    // unpin it from its icon in the Dock, with the keyboard: Shift+F10, the last item, Enter
+    await page.getByTestId('dock-calculator').focus()
+    await page.keyboard.press('Shift+F10')
+    await expect(page.getByTestId('app-menu-open')).toBeFocused()
+    await page.keyboard.press('ArrowDown')
+    await expect(page.getByTestId('app-menu-unpin')).toBeFocused()
+    await expect(page.getByTestId('app-menu-unpin')).toHaveText('Remove from Dock')
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('dock-calculator')).toHaveCount(0)
+    expect(await dockOrder(page)).toEqual(['discover', 'files', 'settings'])
+    // the icon the menu was opened on is gone: focus is on the app's icon on the Home Screen
+    await expect(page.getByTestId('home-calculator')).toBeFocused()
+    await openDesktop(page, { open: [] })
+    expect(await dockOrder(page), 'and it stays out after a reload').toEqual(['discover', 'files', 'settings'])
+  })
+
+  test('D17: leaving an icon’s menu without choosing: Escape and a click outside give focus back, and open nothing', async ({ page }) => {
+    await openDesktop(page, { open: [] })
+    await page.getByTestId('home-calculator').focus()
+    await page.keyboard.press('Shift+F10')
+    await expect(page.getByTestId('app-menu-open')).toBeFocused()
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('app-menu')).toHaveCount(0)
+    await expect(page.getByTestId('home-calculator')).toBeFocused()
+
+    await page.getByTestId('dock-files').click({ button: 'right' })
+    await expect(page.getByTestId('app-menu-unpin')).toBeVisible() // Files is pinned
+    const menu = (await page.getByTestId('app-menu').boundingBox())!
+    const icon = (await page.getByTestId('dock-files').boundingBox())!
+    expect(menu.y + menu.height, 'the menu of a Dock icon opens above it').toBeLessThanOrEqual(icon.y)
+    await page.mouse.click(300, 300) // on the wallpaper, where an icon of the Home Screen may be: the press only closes the menu
+    await expect(page.getByTestId('app-menu')).toHaveCount(0)
+    expect(await page.evaluate(() => window.__vos.wm.windows.length), 'nothing was opened').toBe(0)
+    expect(await dockOrder(page)).toEqual(['discover', 'files', 'settings'])
+  })
+
+  test('D18: an app that is open and not pinned is in the Dock’s recent apps, most recent first, three at most', async ({ page }) => {
+    await openDesktop(page, { open: [] })
+    await openFromHome(page, 'calculator')
+    // after the divider, with the dot of a running app; the pinned apps are as they were
+    expect(await dockOrder(page)).toEqual(['discover', 'files', 'settings', '|', 'calculator'])
+    await expect(page.getByTestId('dock-divider')).toHaveAccessibleName('Recent apps')
+    await openFromHome(page, 'tasks-svelte')
+    expect(await dockOrder(page)).toEqual(['discover', 'files', 'settings', '|', 'tasks-svelte', 'calculator'])
+    // the recent icon brings its app back to the front, and to the front of the recent apps
+    await page.getByTestId('dock-calculator').click()
+    await expect(windowOf(page, 'calculator')).toBeVisible()
+    expect(await dockOrder(page)).toEqual(['discover', 'files', 'settings', '|', 'calculator', 'tasks-svelte'])
+    await openFromHome(page, 'tasks-react')
+    await openFromHome(page, 'agents')
+    expect(await dockOrder(page), 'the three used most recently').toEqual(['discover', 'files', 'settings', '|', 'agents', 'tasks-react', 'calculator'])
+    // pinned from there, it moves across the divider and stays when it is closed
+    await chooseFromAppMenu(page, 'dock-agents', 'pin')
+    expect(await dockOrder(page)).toEqual(['discover', 'files', 'settings', 'agents', '|', 'tasks-react', 'calculator', 'tasks-svelte'])
+    await chooseLayout(page, 'agents', 'close')
+    await expect(page.getByTestId('dock-agents')).toBeVisible()
+    // closed, an app that is not pinned leaves the Dock
+    await page.getByTestId('dock-calculator').click()
+    await chooseLayout(page, 'calculator', 'close')
+    await expect(page.getByTestId('dock-calculator')).toHaveCount(0)
   })
 })

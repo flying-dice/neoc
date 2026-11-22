@@ -28,6 +28,19 @@ describe('the frame takes the keyboard once it is ready', () => {
     expect(focusFrame(f.frame, { activeElement: element(false), body })).toBe(false)
     expect(f.focused()).toBe(0)
   })
+  test('focus on the frame’s own window (system search put it there while the app was opening) yields to the frame', () => {
+    const f = frame()
+    const ownWindow = element(false)
+    const inWindow = {
+      ...f.frame,
+      closest: (selector: string) => (selector === '[role="dialog"]' ? ownWindow : null)
+    }
+    expect(focusFrame(inWindow, { activeElement: ownWindow, body })).toBe(true)
+    expect(f.focused()).toBe(1)
+    // another window's focus is still somewhere meaningful
+    expect(focusFrame(inWindow, { activeElement: element(false), body })).toBe(false)
+    expect(f.focused()).toBe(1)
+  })
   test('a frame with no window yet is not an error', () => {
     expect(focusFrame({ contentWindow: null }, { activeElement: null, body })).toBe(true)
   })

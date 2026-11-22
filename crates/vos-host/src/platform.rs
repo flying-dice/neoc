@@ -2,10 +2,9 @@
 
 use std::{
     future::Future,
-    pin::Pin,
     time::{SystemTime, UNIX_EPOCH},
 };
-use vos_application::ports::{Background, Clock, RandomSource, TaskHandle};
+use vos_application::ports::{Clock, RandomSource};
 
 pub struct SystemClock;
 
@@ -31,31 +30,9 @@ impl RandomSource for OsRandom {
     }
 }
 
-/// Runs background work (the live-source pumps) on the tokio runtime; dropping the handle aborts the task.
-pub struct TokioBackground;
-
-struct AbortOnDrop(tokio::task::JoinHandle<()>);
-impl TaskHandle for AbortOnDrop {}
-impl Drop for AbortOnDrop {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
-}
-
-impl Background for TokioBackground {
-    fn spawn(
-        &self,
-        name: &'static str,
-        task: Pin<Box<dyn Future<Output = ()> + Send>>,
-    ) -> Box<dyn TaskHandle> {
-        Box::new(AbortOnDrop(tokio::spawn(logged(name, task))))
-    }
-}
-
 /// Run `work` (a background task, or one step of one of the host's loops); a panic in it is logged at error level
 /// under `name` instead of unwinding further, so a loop goes on to its next step and a task does not end unseen.
-/// The background tasks catch a panic in their own steps first (`pump_changes` goes on, an agent turn ends its run
-/// with an error), so for them this is the last net.
+/// It is the last net: what a loop runs catches its own panics first where it can.
 pub(crate) async fn logged(name: &'static str, work: impl Future<Output = ()>) {
     if let Err(message) = vos_application::panics::caught(work).await {
         tracing::error!(task = name, %message, "host work panicked");

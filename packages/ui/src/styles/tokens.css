@@ -9,6 +9,8 @@
 
 :root {
   color-scheme: light dark;
+  /* The text size factor: 1 is the default size. Only on the root, so a themed subtree keeps the document's size. */
+  --text-scale: 1;
 }
 [data-theme='light'] {
   color-scheme: light;
@@ -130,18 +132,21 @@
     sans-serif;
   --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
 
-  /* Dynamic Type — "Large" (default) content size: size / line-height / tracking */
-  --type-large-title: 400 34px/41px var(--font-display);
-  --type-title1: 400 28px/34px var(--font-display);
-  --type-title2: 400 22px/28px var(--font-display);
-  --type-title3: 400 20px/25px var(--font-display);
-  --type-headline: 600 17px/22px var(--font-text);
-  --type-body: 400 17px/22px var(--font-text);
-  --type-callout: 400 16px/21px var(--font-text);
-  --type-subheadline: 400 15px/20px var(--font-text);
-  --type-footnote: 400 13px/18px var(--font-text);
-  --type-caption1: 400 12px/16px var(--font-text);
-  --type-caption2: 400 11px/13px var(--font-text);
+  /*
+   * Dynamic Type — "Large" (default) content size: size / line-height / tracking. Every size and line height is
+   * multiplied by --text-scale (declared on the root above), which Settings > Appearance > Text Size sets.
+   */
+  --type-large-title: 400 calc(34px * var(--text-scale)) / calc(41px * var(--text-scale)) var(--font-display);
+  --type-title1: 400 calc(28px * var(--text-scale)) / calc(34px * var(--text-scale)) var(--font-display);
+  --type-title2: 400 calc(22px * var(--text-scale)) / calc(28px * var(--text-scale)) var(--font-display);
+  --type-title3: 400 calc(20px * var(--text-scale)) / calc(25px * var(--text-scale)) var(--font-display);
+  --type-headline: 600 calc(17px * var(--text-scale)) / calc(22px * var(--text-scale)) var(--font-text);
+  --type-body: 400 calc(17px * var(--text-scale)) / calc(22px * var(--text-scale)) var(--font-text);
+  --type-callout: 400 calc(16px * var(--text-scale)) / calc(21px * var(--text-scale)) var(--font-text);
+  --type-subheadline: 400 calc(15px * var(--text-scale)) / calc(20px * var(--text-scale)) var(--font-text);
+  --type-footnote: 400 calc(13px * var(--text-scale)) / calc(18px * var(--text-scale)) var(--font-text);
+  --type-caption1: 400 calc(12px * var(--text-scale)) / calc(16px * var(--text-scale)) var(--font-text);
+  --type-caption2: 400 calc(11px * var(--text-scale)) / calc(13px * var(--text-scale)) var(--font-text);
 
   --tracking-large-title: 0.37px;
   --tracking-title1: 0.36px;

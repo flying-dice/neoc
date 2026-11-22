@@ -1,13 +1,13 @@
 /**
  * Every app, in the real shell on the real host (e2e/host/start.ts):
- *  • opens from the Dock,
+ *  • is on the Home Screen and opens from it (the Dock holds only what is pinned, and what is open),
  *  • floating at its preferred size, light and dark: axe + layout + snapshot,
  *  • resized to its minimum and to a large window,
  *  • full screen, Split View and Slide Over,
  *  • on an iPad-sized screen and a large one.
  *
- * The built-in pages come from the shell's app registry and the installed apps from `apps/<id>/app.json`, so a new
- * app is covered with no extra code. The Calculator's display is "0" in every shot: nothing here presses a key,
+ * The built-in pages come from the shell's app registry and the installed apps from their contracts (`openrpc.json`),
+ * so a new app is covered with no extra code. The Calculator's display is "0" in every shot: nothing here presses a key,
  * and the journeys (which do) run after this project.
  */
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
@@ -19,11 +19,13 @@ import {
   expectNoOverflow,
   frameOf,
   openDesktop,
+  openFromHome,
   resizeWindow,
   settle,
   test,
   windowOf
 } from './fixtures'
+import { FIXTURE_APPS } from './host/config'
 import type { Page } from '@playwright/test'
 
 const ROOT = join(import.meta.dirname, '..')
@@ -35,21 +37,16 @@ function builtinAppIds(): string[] {
   return [...block.matchAll(/^ {2}([a-z][a-z0-9-]*): \{/gm)].map((m) => m[1])
 }
 
-/** Lua app packages (apps/<dir>/app.json): the host installs the ones in the test registry at start. */
-function installedAppIds(): string[] {
-  return readdirSync(join(ROOT, 'apps'))
-    .map((dir) => join(ROOT, 'apps', dir, 'app.json'))
-    .filter((file) => existsSync(file))
-    .map((file) => (JSON.parse(readFileSync(file, 'utf8')) as { id: string }).id)
-}
-
 /**
- * Apps whose client runs in a frame of its own (a contract, `openrpc.json`): the framework fixtures (e2e/apps) and the
- * repo's Vite projects (apps/<dir>), all installed at start.
+ * The installed apps, each a page in a frame of its own (a contract, `openrpc.json`), that are installed at start: the framework
+ * fixtures (`FIXTURE_APPS`; the other apps of e2e/apps are installed only by their journeys) and the repo's Vite projects
+ * (apps/<dir>).
  */
-function clientAppIds(): string[] {
-  return ['e2e/apps', 'apps']
-    .flatMap((parent) => readdirSync(join(ROOT, parent)).map((dir) => join(ROOT, parent, dir, 'openrpc.json')))
+function installedAppIds(): string[] {
+  return [
+    ...FIXTURE_APPS.map((dir) => join(ROOT, 'e2e/apps', dir, 'openrpc.json')),
+    ...readdirSync(join(ROOT, 'apps')).map((dir) => join(ROOT, 'apps', dir, 'openrpc.json'))
+  ]
     .filter((file) => existsSync(file))
     .map((file) => (JSON.parse(readFileSync(file, 'utf8')) as { 'x-app': { id: string } })['x-app'].id)
 }
@@ -57,13 +54,41 @@ function clientAppIds(): string[] {
 /** Layout is checked inside the window's content: the resize corner deliberately overhangs the frame. */
 const contentOf = (page: Page, id: string) => page.getByTestId(`window-${id}-content`)
 
-const APPS = [...builtinAppIds(), ...installedAppIds(), ...clientAppIds()]
+const APPS = [...builtinAppIds(), ...installedAppIds()]
 
-test('the desktop renders with every app in the Dock', async ({ page }, testInfo) => {
+test('the desktop lands on Discover, with the pinned apps and the open ones in the Dock', async ({ page }, testInfo) => {
   await openDesktop(page)
-  for (const id of APPS) await expect(page.getByTestId(`dock-${id}`)).toBeVisible()
+  // someone who never chose has Discover, Files and Settings in the Dock, and no other app
+  for (const id of ['discover', 'files', 'settings']) await expect(page.getByTestId(`dock-${id}`)).toBeVisible()
+  for (const id of APPS.filter((app) => !['discover', 'files', 'settings'].includes(app)))
+    await expect(page.getByTestId(`dock-${id}`)).toHaveCount(0)
+  // the Home Screen is not under a window
+  await expect(page.getByTestId('home')).toHaveCount(0)
+  await expect(page.getByTestId('status-bar-search')).toBeVisible()
   await expectAccessible(page, testInfo)
   await expect(page).toHaveScreenshot('desktop-landing.png')
+})
+
+test('the Home Screen shows every app', async ({ page }, testInfo) => {
+  await openDesktop(page, { open: [] })
+  const home = page.getByTestId('home')
+  await expect(home).toBeVisible()
+  // the built-in pages first, in their fixed order; then the installed apps by name
+  const order = await home.locator('li').evaluateAll((items) => items.map((li) => (li as HTMLElement).dataset.app))
+  expect(order.slice(0, 3)).toEqual(['discover', 'files', 'settings'])
+  expect([...order].sort()).toEqual([...APPS].sort())
+  const names = await home.locator('li:nth-child(n+4) [data-testid$="-name"]').allTextContents()
+  expect(names, 'the installed apps are in the order of their names').toEqual(
+    [...names].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  )
+  for (const id of APPS) {
+    const icon = page.getByTestId(`home-${id}`)
+    await icon.scrollIntoViewIfNeeded()
+    await expect(icon).toBeVisible()
+  }
+  await expect(page.getByTestId('home-search')).toBeVisible()
+  await expectNoOverflow(page.getByTestId('desktop-stage'))
+  await expectAccessible(page, testInfo)
 })
 
 // With Reduce Motion (on in every spec) a window is drawn at its new frame as soon as the shell sets it: no transition
@@ -106,17 +131,16 @@ test('Reduce Motion: nothing in Discover keeps moving', async ({ page }) => {
 
 for (const id of APPS) {
   test.describe(`app: ${id}`, () => {
-    test('opens from the Dock', async ({ page }) => {
-      await openDesktop(page)
-      await page.getByTestId(`dock-${id}`).click()
+    test('opens from the Home Screen', async ({ page }) => {
+      await openDesktop(page, { open: [] })
+      await openFromHome(page, id)
       await settle(page)
       await expect(windowOf(page, id)).toBeVisible()
-      // (a frame has no text of its own: for an app with a client the check is that its client drew, below)
-      if (!clientAppIds().includes(id)) await expect(page.getByTestId(`window-${id}-content`)).not.toBeEmpty()
-      // an installed app's window is a view the host rendered: wait for it
-      if (installedAppIds().includes(id)) await expect(page.getByTestId(`${id}-view`)).toBeVisible()
-      // an app with a client of its own is a frame: wait for the client to draw
-      if (clientAppIds().includes(id)) await expect(frameOf(page, id).getByTestId(`${id}-app`)).toBeVisible()
+      await expect(page.getByTestId('home'), 'no icon is left under the window').toHaveCount(0)
+      await expect(page.getByTestId(`dock-${id}`), 'an open app is in the Dock, pinned or not').toBeVisible()
+      // an installed app's window is a frame, which has no text of its own: wait for its page to draw
+      if (installedAppIds().includes(id)) await expect(frameOf(page, id).getByTestId(`${id}-app`)).toBeVisible()
+      else await expect(page.getByTestId(`window-${id}-content`)).not.toBeEmpty()
     })
 
     for (const theme of ['light', 'dark'] as const) {

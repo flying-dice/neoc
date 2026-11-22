@@ -22,7 +22,7 @@ async fn load_in(root: &Path, name: &str, src: &str, refused: &[&str]) -> AppVm 
         refused_modules: refused.iter().map(|m| (*m).to_owned()).collect(),
         ..common::config()
     };
-    AppVm::load(&id(name), package(src, &[]), db(), config).await.unwrap()
+    AppVm::load(&id(name), package(&common::backend(src), &[]), db(), config).await.unwrap()
 }
 
 async fn tool(vm: &AppVm, name: &str) -> Value {
@@ -324,7 +324,7 @@ async fn purging_removes_the_apps_files_and_a_host_without_a_data_directory_keep
     let none = DiskFiles::new(None);
     let config = VmConfig { files: none.files(&id("probe")), ..common::config() };
     let src = r#"hook("probe", function() local _, err = app.files.documents:list() return app.files.errorKind(err) end)"#;
-    let vm = AppVm::load(&id("probe"), package(src, &[]), db(), config).await.unwrap();
+    let vm = AppVm::load(&id("probe"), package(&common::backend(src), &[]), db(), config).await.unwrap();
     assert_eq!(vm.emit("probe", json!(null)).await.unwrap(), json!("unsupported"));
     none.purge(&id("probe")).await.unwrap();
 }

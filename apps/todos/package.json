@@ -1,0 +1,34 @@
+{
+  "name": "@vos-apps/todos",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Todos: lists of things to do, a Svelte client on the kit, the lists and their todos in Luau, with tools for agents. `bun run build` writes the app ref (dist/app-ref.json, app.luau, static/).",
+  "scripts": {
+    "generate": "vos generate",
+    "build": "vite build",
+    "dev": "vite build --watch",
+    "typecheck": "vos typecheck && svelte-check --tsconfig ./tsconfig.json",
+    "test": "bun test ./src",
+    "lint": "vos lint",
+    "format": "vos format",
+    "storybook": "storybook dev -p 6011 --no-open",
+    "build-storybook": "storybook build -o storybook-static --quiet"
+  },
+  "devDependencies": {
+    "@storybook/addon-a11y": "10.6.7",
+    "@storybook/addon-docs": "10.6.7",
+    "@storybook/addon-svelte-csf": "5.1.6",
+    "@storybook/addon-themes": "10.6.7",
+    "@storybook/svelte-vite": "10.6.7",
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@types/bun": "1.4.4",
+    "@vos/storybook": "workspace:*",
+    "@vos/vite-plugin": "workspace:*",
+    "storybook": "10.6.7",
+    "svelte": "^5.57.2",
+    "svelte-check": "^4.7.6",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.4"
+  }
+}

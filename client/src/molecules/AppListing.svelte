@@ -1,5 +1,5 @@
 <!--
-  @molecule AppListing — an installable Lua app in Discover: icon, name, version and where it comes from, its
+  @molecule AppListing — an installable app in Discover: icon, name, version and where it comes from, its
   state, and what you can do (GET / OPEN / ENABLE, Disable while it runs, Remove). Atoms: IconTile, Icon, Text, Button,
   ActivityIndicator.
   Test ids: `testid` on the listing, `${testid}-get` (the main button), `${testid}-toggle` (Disable, only while the app runs),

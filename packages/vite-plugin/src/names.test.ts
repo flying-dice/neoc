@@ -26,7 +26,7 @@ import ts from 'typescript'
 import { DefinitionError, LUAU_KEYWORDS, parseDefinition, type Definition } from './definition.ts'
 import { emitDeclarations, emitModule } from './emit-client.ts'
 import { emitLuau, emitLuauEntry } from './emit-luau.ts'
-import { DEFAULTS, generate, write } from './generate.ts'
+import { write } from './generate.ts'
 import { JS_WORDS } from './names.ts'
 import { analyze } from './luau-tools.ts'
 

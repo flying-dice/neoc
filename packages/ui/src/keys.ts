@@ -1,6 +1,6 @@
 /**
- * Keyboard logic shared by the kit's composite controls (segmented control, menus, option lists, calendars,
- * focus traps). Pure functions over indexes, so they are tested without a DOM; the components own the events.
+ * Keyboard logic shared by the composite controls (segmented control, menus, focus traps), here and in the app kit
+ * (`kit:keys`). Pure functions, so they are tested without a DOM; the components own the events.
  */
 
 export type Orientation = 'vertical' | 'horizontal' | 'both'
@@ -48,29 +48,10 @@ export function trapIndex(count: number, current: number, shift: boolean): numbe
   return shift ? (current - 1 + count) % count : (current + 1) % count
 }
 
-/** Type-to-select: the next label starting with `buffer` after `from`, case-insensitive, wrapping; -1 for none. */
-export function typeAhead(labels: readonly string[], buffer: string, from: number): number {
-  const q = buffer.toLowerCase()
-  if (!q) return -1
-  const n = labels.length
-  for (let step = 1; step <= n; step++) {
-    const i = (((from + step) % n) + n) % n
-    if (labels[i]!.toLowerCase().startsWith(q)) return i
-  }
-  return -1
-}
-
-/** True for the keyboard path to a context menu: the Menu key, or Shift+F10. */
-export const isContextMenuKey = (e: { key: string; shiftKey: boolean }): boolean =>
-  e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)
-
-/** True for the keys that activate a control: Enter or Space. */
-export const isActivateKey = (key: string): boolean => key === 'Enter' || key === ' '
-
 type KeyEvent = { key: string; ctrlKey?: boolean; metaKey?: boolean; altKey?: boolean }
 
 /** Whether a keydown may be typed text (a printable single character with no command modifier). */
-export const isPrintable = (e: KeyEvent): boolean =>
+const isPrintable = (e: KeyEvent): boolean =>
   e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && e.key !== ' '
 
 /**
@@ -81,3 +62,43 @@ export const isPrintable = (e: KeyEvent): boolean =>
  */
 export const isTypingKey = (e: KeyEvent): boolean =>
   isPrintable(e) || ((e.key === 'Backspace' || e.key === 'Delete') && !e.ctrlKey && !e.metaKey && !e.altKey)
+
+/**
+ * The index an arrow key moves to in a grid of `count` items laid out in rows of `columns` (roving focus), or null when
+ * the key does not move. Left and Right step through the items in reading order (off the end of a row onto the next);
+ * Up and Down keep the column and stop at the first and last rows (Down from above a short last row lands on its last
+ * item); Home and End go to the ends of the row, and with Ctrl or Cmd to the first and last item.
+ */
+export function gridIndex(
+  count: number,
+  columns: number,
+  current: number,
+  key: string,
+  toEnds = false
+): number | null {
+  if (count <= 0) return null
+  const cols = Math.max(1, Math.min(columns, count))
+  const at = Math.min(Math.max(current, 0), count - 1)
+  const rowStart = at - (at % cols)
+  switch (key) {
+    case 'ArrowRight':
+      return Math.min(at + 1, count - 1)
+    case 'ArrowLeft':
+      return Math.max(at - 1, 0)
+    case 'ArrowDown':
+      // a row below exists: the same column there, or its last item when that row is short
+      return rowStart + cols < count ? Math.min(at + cols, count - 1) : at
+    case 'ArrowUp':
+      return at - cols >= 0 ? at - cols : at
+    case 'Home':
+      return toEnds ? 0 : rowStart
+    case 'End':
+      return toEnds ? count - 1 : Math.min(rowStart + cols - 1, count - 1)
+    default:
+      return null
+  }
+}
+
+/** The keyboard's way to ask for a context menu: the Menu key, or Shift+F10. */
+export const isContextMenuKey = (e: KeyEvent & { shiftKey?: boolean }): boolean =>
+  e.key === 'ContextMenu' || (e.key === 'F10' && !!e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey)

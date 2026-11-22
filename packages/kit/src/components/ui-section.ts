@@ -9,9 +9,13 @@ let nextId = 0
  * A group of rows with an optional header and footer. It takes the look of the `ui-list` it sits in; alone it is the
  * `insetGrouped` block of iPadOS Settings.
  *
+ * A form is a section of rows with a field each, and its footer is where the form speaks: a note on what the fields
+ * are for, or, with `footer-tone="error"`, what is wrong with what was typed (red, and announced when it appears).
+ *
  * @tag ui-section
  * @slot - The `ui-row`s.
  * @csspart rows - The box around the rows.
+ * @csspart footer - The note under the rows.
  */
 export class UiSection extends LitElement {
   static properties = {
@@ -19,11 +23,14 @@ export class UiSection extends LitElement {
     header: { type: String },
     /** A note under the rows. */
     footer: { type: String },
+    /** `note` (default): the footer explains the rows. `error`: it says what is wrong with them, in red, as an alert. */
+    footerTone: { type: String, attribute: 'footer-tone', reflect: true },
     /** The look; set by the list that holds the section. */
     variant: { type: String, reflect: true }
   }
   declare header: string
   declare footer: string
+  declare footerTone: 'note' | 'error'
   declare variant: 'insetGrouped' | 'inset' | 'plain' | 'grouped' | 'sidebar'
   private uid = `ui-section-${nextId++}`
 
@@ -51,6 +58,9 @@ export class UiSection extends LitElement {
         font: var(--type-footnote);
         letter-spacing: var(--tracking-footnote);
         color: var(--label-secondary);
+      }
+      :host([footer-tone='error']) .footer {
+        color: var(--ios-red);
       }
       .rows {
         overflow: hidden;
@@ -112,6 +122,7 @@ export class UiSection extends LitElement {
     super()
     this.header = ''
     this.footer = ''
+    this.footerTone = 'note'
     this.variant = 'insetGrouped'
   }
 
@@ -135,7 +146,17 @@ export class UiSection extends LitElement {
       >
         <slot></slot>
       </div>
-      ${this.footer ? html`<p class="footer" role=${ifDefined(presentation)}>${this.footer}</p>` : ''}`
+      ${
+        this.footer
+          ? html`<p
+              class="footer"
+              part="footer"
+              role=${ifDefined(presentation ?? (this.footerTone === 'error' ? 'alert' : undefined))}
+            >
+              ${this.footer}
+            </p>`
+          : ''
+      }`
   }
 }
 

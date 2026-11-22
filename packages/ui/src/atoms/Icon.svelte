@@ -9,15 +9,13 @@
     weight?: number
     color?: string
     label?: string
-    class?: string
   }
 
-  let { name, size = 22, weight = 2, color = 'currentColor', label, class: klass = '' }: Props =
-    $props()
+  let { name, size = 22, weight = 2, color = 'currentColor', label }: Props = $props()
 </script>
 
 <svg
-  class="ios-icon {klass}"
+  class="ios-icon"
   width={size}
   height={size}
   viewBox="0 0 24 24"

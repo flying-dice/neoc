@@ -21,7 +21,7 @@ struct Gate {
 impl RpcHandler for Gate {
     async fn request(&self, _peer: &RpcPeer, method: &str, _params: Value) -> Result<Value, RpcError> {
         match method {
-            "block" | "view.block" => {
+            "block" => {
                 let _ = self.open.acquire().await.unwrap();
                 Ok(json!("released"))
             }
@@ -64,8 +64,7 @@ async fn a_connection_over_its_in_flight_limit_gets_an_error_at_once_and_the_res
     let (mut ws, _) = connect_async(format!("ws://{addr}/rpc")).await.unwrap();
     let extra = 5;
     for id in 1..=(MAX_IN_FLIGHT + extra) {
-        let method = if id % 2 == 0 { "view.block" } else { "block" }; // ordered and unordered both count
-        ws.send(send(&RpcMessage::request(i64::try_from(id).unwrap(), method, json!({})))).await.unwrap();
+        ws.send(send(&RpcMessage::request(i64::try_from(id).unwrap(), "block", json!({})))).await.unwrap();
     }
     // the ones over the limit are refused immediately, while every permit is still held
     let mut refused = vec![];
@@ -254,7 +253,7 @@ async fn a_message_bigger_than_the_byte_limit_does_not_close_a_client_that_reads
 
     let huge = "z".repeat(MAX_QUEUED_BYTES + 1024);
     peer.notify("huge", json!({ "blob": huge })).unwrap();
-    // the writer has taken it by the time anything else is sent, as it has between a view tree and what follows it:
+    // the writer has taken it by the time anything else is sent, as it has between a large result and what follows it:
     // wait for that, not for a time
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     while peer.queued_bytes() > 0 {

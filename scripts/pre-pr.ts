@@ -7,16 +7,15 @@
  *      check, `cargo check --workspace --all-targets --locked`);
  *   2. the vos checks: `bun run lint`, `typecheck`, `test`, `test:e2e` (a Mac, for the screenshot baselines).
  *
- * It is fast on purpose (iteration speed is a requirement: CLAUDE.md, "The gate"). The slow suites are not in it: `bun run
- * slow` (`scripts/check-slow.sh`). When e2e is required, and so when `--no-e2e` may be used, is stated once: CLAUDE.md,
- * "The gate" (any code change in a `vos-*` crate, `apps/`, `client/` or `packages/` takes it, among others).
+ * It is fast on purpose (iteration speed is a requirement). The slow suites are not in it: `bun run slow`
+ * (`scripts/check-slow.sh`). `--no-e2e` is for a change that touches no `vos-*` crate, `apps/`, `client/` or `packages/`.
  *
  * It runs with `VOS_GATE=1` and `NEOC_REQUIRE_LUAU_LSP=1` so that a missing luau-lsp, stylua or darklua fails instead of
  * skipping (a skipped check is not a pass), stops at the first failing step and prints what ran. A change confined to the
- * neoc crates can run `scripts/check-neoc.sh` alone (no bun, no darklua): `bun run gate:neoc`, see CONTRIBUTING.md.
+ * neoc crates can run `scripts/check-neoc.sh` alone (no bun, no darklua): `bun run gate:neoc`.
  *
  * Usage: bun run gate [--neoc | --vos] [--no-e2e]
- *   --neoc / --vos  a half of it, for a loop; the gate before a PR is the whole of it (or --no-e2e, per CLAUDE.md)
+ *   --neoc / --vos  a half of it, for a loop; the gate before a PR is the whole of it (or --no-e2e)
  *   --no-e2e        everything but test:e2e
  */
 import { resolve } from 'node:path'

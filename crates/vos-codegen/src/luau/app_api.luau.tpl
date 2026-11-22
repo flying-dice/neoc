@@ -1,61 +1,9 @@
 -- ===== vos:app =====
--- `local app = require("vos:app")` in app code. The host provides it natively (one VM per app); it is also a
--- global named `app`.
+-- `local app = require("vos:app")` in an app's backend. The host provides it natively (one VM per app); it is also a
+-- global named `app`. The backend's entry returns the handlers its page calls (`vos_Handlers`).
 
-export type vos_ManifestWindow = { w: number, h: number, minW: number, minH: number }
-
-export type vos_Manifest = {
-	id: string,
-	name: string,
-	icon: string,
-	tint: vos_PaletteToken?,
-	kit: string?,
-	window: vos_ManifestWindow,
-}
-
-export type vos_WindowSize = { w: number, h: number }
-
---- `w.client.search` is a Ref to client-managed state; `w.client:get(name)` reads a synced entry (handlers only).
-export type vos_WindowClient = {
-	get: (self: vos_WindowClient, name: string) -> any,
-	set: (self: vos_WindowClient, name: string, value: any) -> (),
-	[string]: vos_Ref<any>,
-}
-
-export type vos_ToastOptions = {
-	text: string,
-	icon: string?,
-	kind: ("info" | "success" | "error")?,
-	action: { title: string, onTap: (() -> ())? }?,
-	duration: number?,
-}
-
-export type vos_WindowContext = {
-	id: string,
-	params: { [string]: any },
-	--- per-window server state: a value, tracked when read in render
-	state: { [string]: any },
-	client: vos_WindowClient,
-	--- Refs: sizeClass, heightClass, locale, timeZone, scheme, now
-	env: { [string]: vos_Ref<any> },
-	toast: (self: vos_WindowContext, options: vos_ToastOptions) -> (),
-	focus: (self: vos_WindowContext, key: string) -> (),
-	scrollTo: (self: vos_WindowContext, key: string) -> (),
-	announce: (self: vos_WindowContext, text: string) -> (),
-	copy: (self: vos_WindowContext, text: string) -> (),
-	close: (self: vos_WindowContext) -> (),
-	openWindow: (self: vos_WindowContext, name: string, params: { [string]: any }?) -> (),
-}
-
-export type vos_WindowSpec = {
-	title: string?,
-	size: vos_WindowSize?,
-	client: { [string]: vos_ClientDecl }?,
-	state: { [string]: any }?,
-	render: (w: vos_WindowContext) -> vos_Node,
-	onOpen: ((w: vos_WindowContext, params: { [string]: any }) -> ())?,
-	onClose: ((w: vos_WindowContext) -> ())?,
-}
+--- Who is calling: the person (`"user"`, from the app's page) or an agent (`"agent"`, through a tool).
+export type vos_Actor = { kind: "user" | "agent", id: string, name: string }
 
 export type vos_KvApi = {
 	get: (self: vos_KvApi, key: string) -> any,
@@ -76,7 +24,7 @@ export type vos_FileInfo = {
 --- written with `/` (`"notes/a.txt"`; `""` is the location itself); an absolute path, `..`, `:`, a backslash,
 --- NUL or a name over 255 bytes is `invalid_input`, and a symbolic link inside it is never followed. A failure
 --- returns `nil, "files.<method>: <kind>: [<path>: ]<message>"` (no path when the path itself is refused), with
---- the kinds of `std:fs` (`app.files.errorKind` reads it). A write inside a `readOnly` tool or a render raises.
+--- the kinds of `std:fs` (`app.files.errorKind` reads it). A write inside a `readOnly` tool raises.
 --- A call holds the app's turn until it ends. Scoped to the app by convention: not a sandbox.
 export type vos_Files = {
 	--- The whole file (binary-safe); at most 64 MiB (`too_large`). A directory is `is_directory`.
@@ -112,39 +60,6 @@ export type vos_ExecResult = { changes: number, last_insert_id: number }
 
 export type vos_SqlParams = { [string]: any }
 
---- `key` defaults to "id". A windowed query (`page`) needs a total order: end its `order by` with the key.
-export type vos_QueryOptions = {
-	key: string?,
-	page: number?,
-	total: ("exact" | "estimate" | "none")?,
-}
-
-export type vos_WriteContext = { now: string, actor: vos_Actor }
-
-export type vos_RowOptions = {
-	key: string?,
-	rev: string?,
-	write: ((key: any, field: string, value: any, ctx: vos_WriteContext) -> ())?,
-	conflict: ("merge" | "reject")?,
-	--- the fields a two-way binding may write (default: any)
-	writable: { string }?,
-}
-
---- A live source handle. The SQL never leaves the host; the tree carries only the source id.
-export type vos_RowsSource = {
-	["$source"]: string,
-	--- how many rows match
-	total: vos_Ref<number>,
-}
-
-export type vos_RowSource = {
-	["$source"]: string,
-	bind: (self: vos_RowSource, field: string) -> vos_Ref<any>,
-	[string]: vos_Ref<any>,
-}
-
-export type vos_ScalarSource = { ["$source"]: string }
-
 --- What an app may know of an agent contact.
 export type vos_AgentCard = { id: string, name: string, avatar: string?, role: string }
 
@@ -157,11 +72,8 @@ export type vos_Db = {
 	exec: (self: vos_Db, sql: string, params: vos_SqlParams?) -> vos_ExecResult,
 	all: (self: vos_Db, sql: string, params: vos_SqlParams?) -> { { [string]: any } },
 	one: (self: vos_Db, sql: string, params: vos_SqlParams?) -> { [string]: any }?,
-	--- The statements inside commit together or not at all; open views see one consistent change.
+	--- The statements inside commit together or not at all.
 	tx: <T>(self: vos_Db, body: () -> T) -> T,
-	query: (self: vos_Db, sql: string, options: vos_QueryOptions?) -> (params: vos_SqlParams?) -> vos_RowsSource,
-	row: (self: vos_Db, sql: string, options: vos_RowOptions?) -> (params: vos_SqlParams?) -> vos_RowSource,
-	scalar: (self: vos_Db, sql: string) -> (params: vos_SqlParams?) -> vos_ScalarSource,
 }
 
 --- A field is required unless it is `optional` or has a `default`.
@@ -193,17 +105,18 @@ export type vos_ToolContext = {
 	fail: (self: vos_ToolContext, message: string) -> any,
 }
 
---- What a handler of an app's backend gets: who is calling and when (the person's client, so `actor.kind` is `"user"`).
---- `ctx:fail(message)` ends the call with `message`, which the client's `rpc` rejects with (no file or line).
+--- What a handler of an app's backend gets: who is calling and when (the app's page, so `actor.kind` is `"user"`).
+--- `ctx:fail(message)` ends the call with `message`, which the page's `rpc` rejects with (no file or line).
 export type vos_HandlerContext = {
 	actor: vos_Actor,
 	now: string,
-	--- Ends the call with an application error (-32010) whose message the client's `rpc` rejects with: no file or line.
+	--- Ends the call with an application error (-32010) whose message the page's `rpc` rejects with: no file or line.
 	--- To fail with another JSON-RPC code, raise `error("RPC-32602 Title cannot be empty", 0)`.
 	fail: (self: vos_HandlerContext, message: string) -> any,
 }
 
---- What an app's entry returns: the handlers a client reaches with `rpc(name, args)`, as `handler(ctx, args)`.
+--- What an app's entry returns: the handlers its page reaches with `rpc(name, args)`, as `handler(ctx, args)`. An
+--- entry that returns anything else (nothing included) does not load; an app with nothing to call returns `{}`.
 export type vos_Handlers = { [string]: (ctx: vos_HandlerContext, args: any) -> any }
 
 export type vos_ToolDef = {
@@ -229,13 +142,9 @@ export type vos_Notification = {
 	actions: nil,
 }
 
---- The desktop shell's side of the app: a deep link is accepted and dropped until the shell shows it.
-export type vos_Shell = {
-	--- e.g. "note/:id"
-	deepLink: (pattern: string, handler: (params: { [string]: string }) -> ()) -> (),
+export type vos_ToolRegistry = {
+	register: (def: vos_ToolDef) -> (),
 }
-
-export type vos_ToolRegistry = { register: (def: vos_ToolDef) -> () }
 
 export type vos_AppApi = {
 	id: string,
@@ -245,22 +154,13 @@ export type vos_AppApi = {
 	--- the agent contacts
 	agents: vos_AgentsApi,
 	t: vos_SchemaBuilders,
-	shell: vos_Shell,
 	--- the same as `app.tool`
 	tools: vos_ToolRegistry,
-	manifest: (manifest: vos_Manifest) -> (),
-	window: (name: string, spec: vos_WindowSpec) -> (),
-	--- Shared, in-memory server state: reads in render are tracked, assignments schedule a re-render.
-	state: <T>(initial: T) -> T,
 	tool: (def: vos_ToolDef) -> (),
 	--- Open the app's window on the person's screen, or bring it forward if it is open (every connected shell is asked;
-	--- with none connected nothing happens). An app with a client has one window: leave `name` out (or pass `"main"`).
-	--- An app without one names a window it declared with `app.window`.
+	--- with none connected nothing happens). An app has one window, the frame of its page: leave `name` out (or pass
+	--- `"main"`; any other name raises). A change to the world like `notify`: a `readOnly` tool may not.
 	openWindow: (self: vos_AppApi, name: string?, params: { [string]: any }?) -> (),
-	--- The open instances of the declared window `name`, in the order they were opened, each the `w` its `render`
-	--- got. An undeclared name raises `app:windows: no window ... is declared`. Listing is a read, so a `readOnly`
-	--- tool may do it; changing a window through its `w` is not.
-	windows: (self: vos_AppApi, name: string) -> { vos_WindowContext },
 	--- `app.notify { title, body }` or `app:notify { ... }`: tell the person something now. It reaches the clients
 	--- connected now; one that is not connected never gets it (nothing is kept for later). The host sends the app's id
 	--- with it, never text from the app, and each shell client draws it as a banner above its windows with the app's name
@@ -271,14 +171,14 @@ export type vos_AppApi = {
 	--- never markup.
 	--- Raises (each message starts `app.notify`): no table ("takes a table"), a key other than title and body
 	--- ("unknown key", "unknown positional entry"), no title ("needs"), a title that is blank or over 200
-	--- characters, a body over 2000, a value that is not a string, a call in render or a readOnly tool, and a 65th
+	--- characters, a body over 2000, a value that is not a string, a call in a readOnly tool, and a 65th
 	--- while 64 from the same call are still waiting ("already has 64 notifications waiting"). The host delivers
 	--- waiting notifications whenever a call of the app ends, and when a call waits (`task.wait`, a request, a task or
 	--- request handler pausing, or a tool that has notified and then works on), so a tool that notifies half way is
 	--- heard then, not when it returns. The limit guards against a runaway loop; it is not a quota to plan around.
 	notify: ((notification: vos_Notification) -> ()) & ((self: vos_AppApi, notification: vos_Notification) -> ()),
 	log: (message: string) -> (),
-	--- Tell the app's open clients something changed outside them (`host.on(name, fn)` in the client): after an
+	--- Tell the app's open pages something changed outside them (`host.on(name, fn)` in the page): after an
 	--- agent's tool changed data, or from a background task. `name` is 1 to 64 letters, digits and `. _ : -` (not
 	--- `host:...`), `data` is JSON of at most 64 KiB. A change to the world like `notify`: a `readOnly` tool may not.
 	emit: (name: string, data: any?) -> (),

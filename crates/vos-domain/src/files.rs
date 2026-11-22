@@ -110,6 +110,81 @@ impl fmt::Display for FilePath {
     }
 }
 
+/// The longest host path taken, in bytes.
+pub const MAX_HOST_PATH_BYTES: usize = 4096;
+
+/// A path on the host's own file system, for the person browsing their machine ("This Computer"). It is a type of
+/// its own, with rules of its own: unlike a [`FilePath`] it is absolute and is confined to nothing.
+///
+/// On the wire a host path always starts with `/` and uses `/` between names, on every platform: `/` is the top
+/// (the root directory on Unix, the list of drives on Windows), `/Users/me` a directory, `/C:/Users/me` one on a
+/// Windows drive. It is tidied when parsed: empty names and `.` are dropped and `..` steps up (never above the top),
+/// so what is kept is the list of names from the top. The adapter turns that into the platform's own path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostPath(Vec<String>);
+
+impl HostPath {
+    /// The top: `/`.
+    #[must_use]
+    pub fn root() -> Self {
+        Self(Vec::new())
+    }
+
+    /// Parse a wire path. `""` is the top, like `/`.
+    ///
+    /// # Errors
+    /// `invalid_input` for a path that does not start with `/`, holds a NUL byte, or is too long.
+    pub fn parse(raw: &str) -> Result<Self, FileError> {
+        let refuse = |why: &str| Err(FileError::new(FileErrorKind::InvalidInput, why));
+        if raw.len() > MAX_HOST_PATH_BYTES {
+            return refuse(&format!("a path may be at most {MAX_HOST_PATH_BYTES} bytes"));
+        }
+        if raw.contains('\0') {
+            return refuse("a path cannot contain a NUL byte");
+        }
+        if !raw.is_empty() && !raw.starts_with('/') {
+            return refuse("a path on this computer starts with `/`");
+        }
+        let mut names: Vec<String> = Vec::new();
+        for name in raw.split('/') {
+            match name {
+                "" | "." => {}
+                ".." => {
+                    names.pop();
+                }
+                name if name.len() > MAX_NAME_BYTES => {
+                    return refuse(&format!("a name may be at most {MAX_NAME_BYTES} bytes"));
+                }
+                name => names.push(name.to_owned()),
+            }
+        }
+        Ok(Self(names))
+    }
+
+    /// The names from the top.
+    #[must_use]
+    pub fn names(&self) -> &[String] {
+        &self.0
+    }
+
+    #[must_use]
+    pub fn is_root(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The last name; `None` for the top.
+    #[must_use]
+    pub fn name(&self) -> Option<&str> {
+        self.0.last().map(String::as_str)
+    }
+}
+
+impl std::fmt::Display for HostPath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "/{}", self.0.join("/"))
+    }
+}
+
 /// What an entry is, without following a symbolic link.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileKind {
@@ -282,5 +357,26 @@ mod tests {
             assert_eq!(FileErrorKind::parse(kind.as_str()), Some(kind));
         }
         assert_eq!(FileErrorKind::parse("nonsense"), None);
+    }
+
+    #[test]
+    fn a_host_path_is_absolute_and_tidied_and_confined_to_nothing() {
+        let names = |raw: &str| HostPath::parse(raw).unwrap().names().to_vec();
+        assert_eq!(names("/Users/me/Documents"), ["Users", "me", "Documents"]);
+        assert_eq!(names("/etc/passwd"), ["etc", "passwd"], "anywhere on the machine");
+        assert!(HostPath::parse("/").unwrap().is_root() && HostPath::parse("").unwrap().is_root());
+        assert_eq!(names("//Users/./me//"), ["Users", "me"]);
+        assert_eq!(names("/Users/me/../you"), ["Users", "you"], "`..` steps up");
+        assert_eq!(names("/../../etc"), ["etc"], "and never above the top");
+        assert_eq!(names("/C:/Users/me"), ["C:", "Users", "me"], "a Windows drive is the first name");
+        assert_eq!(names("/a b/été \"1\""), ["a b", "été \"1\""]);
+        assert_eq!(HostPath::parse("/Users/me/").unwrap().to_string(), "/Users/me");
+        assert_eq!(HostPath::root().to_string(), "/");
+        assert_eq!(HostPath::parse("/a/b").unwrap().name(), Some("b"));
+        for bad in ["relative/path", "~/x", "C:/Users", "/a\0b"] {
+            assert_eq!(HostPath::parse(bad).unwrap_err().kind, FileErrorKind::InvalidInput, "{bad:?}");
+        }
+        assert!(HostPath::parse(&format!("/{}", "a".repeat(MAX_NAME_BYTES + 1))).is_err());
+        assert!(HostPath::parse(&format!("/{}", "a/".repeat(MAX_HOST_PATH_BYTES))).is_err());
     }
 }

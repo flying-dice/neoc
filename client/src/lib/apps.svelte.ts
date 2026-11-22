@@ -1,10 +1,10 @@
 import type { IconName } from '@vos/ui'
 import { iconOf, tintBackground, type AppSummary } from '../shell/hostApi'
 
-/** Apps whose pages still ship with the shell. */
-export type BuiltinAppId = 'discover' | 'settings' | 'files' | 'terminal'
+/** Apps whose pages ship with the shell. */
+type BuiltinAppId = 'discover' | 'settings' | 'files'
 
-/** Built-in ids plus the ids of the Lua apps installed on the host. */
+/** Built-in ids plus the ids of the apps installed on the host. */
 export type AppId = string
 
 export interface AppDefinition {
@@ -17,8 +17,6 @@ export interface AppDefinition {
   /** Smallest floating window the app's layout supports. */
   minWidth: number
   minHeight: number
-  /** Native-macOS layout (translucent sidebar) rather than a Catalyst-style iPad page. */
-  vibrant?: boolean
 }
 
 /** The smallest window any app gets (iPadOS Stage Manager's minimum is similar). */
@@ -35,8 +33,7 @@ const builtinApps: Record<BuiltinAppId, AppDefinition> = {
     width: 1020,
     height: 640,
     minWidth: MIN_WIDTH,
-    minHeight: MIN_HEIGHT,
-    vibrant: true
+    minHeight: MIN_HEIGHT
   },
   settings: {
     id: 'settings',
@@ -55,16 +52,6 @@ const builtinApps: Record<BuiltinAppId, AppDefinition> = {
     background: 'linear-gradient(180deg, #5ac8fa 0%, #007aff 100%)',
     width: 640,
     height: 520,
-    minWidth: MIN_WIDTH,
-    minHeight: MIN_HEIGHT
-  },
-  terminal: {
-    id: 'terminal',
-    name: 'Terminal',
-    icon: 'terminal',
-    background: 'linear-gradient(180deg, #3a3a3c 0%, #000000 100%)',
-    width: 640,
-    height: 420,
     minWidth: MIN_WIDTH,
     minHeight: MIN_HEIGHT
   }
@@ -133,15 +120,23 @@ export function setInstalledApps(list: AppSummary[]): void {
   installed.list = list
 }
 
+/** The built-in pages in the order they are shown wherever every app is listed. */
+const BUILTIN_ORDER: readonly BuiltinAppId[] = ['discover', 'files', 'settings']
+
 /**
- * Dock: the built-ins, then the running installed apps, then Settings.
+ * Every app the person can open, in the one order the Home Screen (and anything else that lists them all) shows
+ * them: the built-in pages in their fixed order, then the running installed apps by name (as a person reads them:
+ * case and accents do not matter), an id breaking a tie so the order never depends on what the host sent first.
  */
-export function dockOrder(): AppId[] {
-  return [
-    'discover',
-    'files',
-    'terminal',
-    ...installed.list.filter((a) => a.state === 'running' && !isBuiltin(a.id)).map((a) => a.id),
-    'settings'
-  ]
+export function appOrder(): AppId[] {
+  const running = installed.list.filter((a) => a.state === 'running' && !isBuiltin(a.id))
+  return [...BUILTIN_ORDER, ...byName(running).map((a) => a.id)]
+}
+
+/** `list` sorted by name, then id. */
+export function byName<T extends { id: string; name: string }>(list: readonly T[]): T[] {
+  return [...list].sort(
+    (a, b) =>
+      a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) || a.id.localeCompare(b.id)
+  )
 }

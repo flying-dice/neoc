@@ -58,7 +58,6 @@ async fn text_only_loading_binary_chunks_never_run() {
     let package = vos_application::ports::AppPackage {
         entry: "app.lua".into(),
         files: [("app.lua".to_owned(), bytecode)].into(),
-        ..Default::default()
     };
     let err = vos_lua::AppVm::load(&common::id("probe"), package, db(), common::config())
         .await
@@ -350,44 +349,6 @@ async fn host_calls_that_await_work_inside_pcall_coroutines_and_event_handlers()
 
     let out = vm.emit("event", json!({"n": 5})).await.unwrap();
     assert_eq!(out, json!({"ok": true, "v": 5}));
-}
-
-#[tokio::test]
-async fn the_proxies_apps_index_never_yield_so_they_work_anywhere() {
-    // app.state (and a window's state / client / env and a source handle, which this test does not render) are
-    // tables with __index / __newindex functions: they are plain synchronous Rust functions (PUC Lua 5.1 could not yield across a metamethod, which is
-    // why; Luau still cannot). What shows that they never wait is a place where Luau refuses a yield: a `string.gsub`
-    // callback. A proxy that suspended would fail there with "attempt to yield across C-call boundary".
-    let src = r#"
-        local ui = require("vos:ui")
-        local s = app.state { n = 0, items = {} }
-        app.window("main", {
-          client = { search = { init = "", persist = "app" } },
-          render = function(w)
-            local seen = s.n + #w.state.items
-            return ui.VStack { key = "root", ui.Text { "n=" .. tostring(seen), key = "t" },
-              ui.TextField { key = "q", text = w.client.search, label = "Search" } }
-          end,
-        })
-        app.tools.register { name = "bump", run = function()
-          s.n = s.n + 1
-          local viaPcall = select(2, pcall(function() s.n = s.n + 1 return s.n end))
-          app.kv:set("n", s.n)
-          s.n = app.kv:get("n") + 1
-          local inGsub, why = pcall(string.gsub, "a", "a", function() s.n = s.n + 1 return tostring(s.n) end)
-          return { n = s.n, viaPcall = viaPcall, inGsub = inGsub, why = tostring(why) }
-        end }
-    "#;
-    let host_modules =
-        std::collections::HashMap::from([("ui".to_owned(), vos_lua::UI_MODULE.as_bytes().to_vec())]);
-    let config = vos_lua::VmConfig { host_modules: std::sync::Arc::new(host_modules), ..Default::default() };
-    let vm =
-        vos_lua::AppVm::load(&common::id("probe"), common::package(src, &[]), db(), config).await.unwrap();
-    let out = vm.call_tool("bump", json!({}), &agent_ctx(0), false).await.unwrap();
-    assert_eq!(out["n"], 4, "{out}");
-    assert_eq!(out["viaPcall"], 2, "{out}");
-    assert_eq!(out["inGsub"], true, "a state proxy waited where the engine cannot yield: {out}");
-    assert_eq!(vm.window_names(), ["main"]);
 }
 
 #[tokio::test]

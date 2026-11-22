@@ -1,31 +1,27 @@
 <!--
   @organism StatusBar — iPadOS status bar (time + date leading, indicators trailing).
-  Molecules: StatusIndicators.
+  Molecules: StatusIndicators. Atoms: Icon.
+  With `onsearch` a magnifier button sits before the indicators: system search, reachable whatever covers the screen.
+  Test id: `${testid}-search` on that button.
 -->
 <script lang="ts">
   import type { Snippet } from 'svelte'
   import StatusIndicators from '../molecules/StatusIndicators.svelte'
+  import Icon from '../atoms/Icon.svelte'
 
   interface Props {
-    /** Light text over wallpaper, or dark text over light content. */
-    appearance?: 'light' | 'dark' | 'auto'
+    /** Names the bar's own controls (the search button). */
+    testid: string
+    /** Open system search: shows the magnifier button. */
+    onsearch?: () => void
+    /** The keyboard shortcut that does the same, for assistive technology (`aria-keyshortcuts`: "Meta+K"). */
+    searchShortcut?: string
     battery?: number
-    charging?: boolean
-    wifi?: boolean
-    /** Extra leading inset, e.g. to clear macOS traffic lights. */
-    insetLeading?: number
-    /** Center slot — e.g. an active agent / Dynamic Island–style activity. */
+    /** Center slot: the shell's connection state. */
     center?: Snippet
   }
 
-  let {
-    appearance = 'light',
-    battery = 1,
-    charging = false,
-    wifi = true,
-    insetLeading = 0,
-    center
-  }: Props = $props()
+  let { testid, onsearch, searchShortcut, battery = 1, center }: Props = $props()
 
   let now = $state(new Date())
 
@@ -40,13 +36,28 @@
   )
 </script>
 
-<div class="ios-statusbar {appearance}" style:padding-left="{20 + insetLeading}px">
+<div class="ios-statusbar">
   <span class="leading">
     <span class="time">{time}</span>
     <span class="date">{date}</span>
   </span>
   <span class="center">{#if center}{@render center()}{/if}</span>
-  <span class="trailing"><StatusIndicators {battery} {charging} {wifi} /></span>
+  <span class="trailing">
+    {#if onsearch}
+      <button
+        type="button"
+        class="search"
+        aria-label="Search"
+        aria-haspopup="dialog"
+        aria-keyshortcuts={searchShortcut}
+        data-testid="{testid}-search"
+        onclick={onsearch}
+      >
+        <Icon name="magnifyingglass" size={16} weight={2.6} />
+      </button>
+    {/if}
+    <StatusIndicators {battery} />
+  </span>
 </div>
 
 <style>
@@ -55,19 +66,12 @@
     grid-template-columns: 1fr auto 1fr;
     align-items: center;
     height: 28px;
-    padding-right: 20px;
+    padding: 0 20px;
     font: 600 15px/1 var(--font-text);
     letter-spacing: -0.2px;
-  }
-  .light {
+    /* light text over the wallpaper */
     color: #fff;
     text-shadow: 0 0 8px rgb(0 0 0 / 0.15);
-  }
-  .dark {
-    color: #000;
-  }
-  .auto {
-    color: var(--label);
   }
   .leading {
     display: flex;
@@ -79,5 +83,31 @@
   }
   .trailing {
     justify-self: end;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .search {
+    appearance: none;
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: none;
+    color: inherit;
+    cursor: pointer;
+  }
+  /* the glyph is small, as the bar is: the target reaches the 44 px the design language asks for, sideways and down */
+  .search::before {
+    content: '';
+    position: absolute;
+    inset: -6px -10px -14px;
+  }
+  .search:active {
+    opacity: 0.6;
   }
 </style>

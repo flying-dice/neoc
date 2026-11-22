@@ -25,7 +25,7 @@ use std::{
     path::PathBuf,
     sync::atomic::{AtomicUsize, Ordering},
 };
-use vos_domain::{Agent as Contact, AgentId, AgentRuntime, ApprovalPolicy, Grants};
+use vos_domain::{Agent as Contact, AgentId, Grants};
 
 pub mod agents;
 
@@ -171,15 +171,7 @@ pub async fn wait_until(what: &str, mut ok: impl FnMut() -> bool) {
 
 /// A test agent with a fixed MCP token. `grants` default to everything: tests that care say otherwise.
 pub fn agent_with(id: &str, name: &str, grants: Grants) -> Contact {
-    Contact {
-        id: AgentId(id.into()),
-        name: name.into(),
-        avatar: None,
-        role: String::new(),
-        runtime: AgentRuntime::default(),
-        grants,
-        approval: ApprovalPolicy::default(),
-    }
+    Contact { id: AgentId(id.into()), name: name.into(), avatar: None, role: String::new(), grants }
 }
 
 pub fn claude() -> (String, Contact) {
@@ -227,84 +219,59 @@ pub fn temp(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("host-{name}-{}", std::process::id()))
 }
 
-// ---- packages and view helpers ----------------------------------------------------------------------------
+// ---- packages -------------------------------------------------------------------------------------------
 
-/// Publish an app package (`files` by path) under `root` as an app ref; returns the `file://` URL of the ref.
+/// The page of a package published without one of its own.
+pub const DEFAULT_PAGE: &str = "<!doctype html><title>app</title>";
+
+/// Publish an app package (`files` by path) under `root` as an app ref; returns the `file://` URL of the ref. Its
+/// page is `static/index.html`: the one among `files`, or [`DEFAULT_PAGE`].
 pub fn publish_package(root: &std::path::Path, id: &str, main: &str, files: &[(&str, Vec<u8>)]) -> String {
-    publish_package_with_client(root, id, main, None, files)
+    publish_app_ref(root, json!({ "id": id, "name": id, "main": main, "ui": { "root": "static" } }), files)
 }
 
-/// Like [`publish_package`], for an app with a client: `ui_root` names the directory among `files` that holds its
-/// built page (with an `index.html`), and the manifest carries a window like an `app.json` does.
+/// Like [`publish_package`], with the page in the directory `ui_root` of `files` (which has an `index.html`) and a
+/// window in the manifest, like a built app has.
 pub fn publish_package_with_client(
     root: &std::path::Path,
     id: &str,
     main: &str,
-    ui_root: Option<&str>,
+    ui_root: &str,
     files: &[(&str, Vec<u8>)],
 ) -> String {
+    let window = json!({ "w": 420, "h": 480, "minW": 320, "minH": 320 });
+    let manifest = json!({ "id": id, "name": id, "main": main, "ui": { "root": ui_root }, "window": window });
+    publish_app_ref(root, manifest, files)
+}
+
+/// Publish `files` under `root` with an app ref whose manifest is `manifest` (`version` defaults to `1.0.0`). When
+/// the manifest's `ui.root` is `static` and no file is its `index.html`, [`DEFAULT_PAGE`] is published as one.
+pub fn publish_app_ref(root: &std::path::Path, mut manifest: Value, files: &[(&str, Vec<u8>)]) -> String {
     use sha2::{Digest, Sha256};
-    use vos_domain::{AppId, AppRef, FileRef, Manifest};
     std::fs::create_dir_all(root).unwrap();
+    let mut files = files.to_vec();
+    let default_page =
+        manifest["ui"]["root"] == "static" && !files.iter().any(|(path, _)| *path == "static/index.html");
+    if default_page {
+        files.push(("static/index.html", DEFAULT_PAGE.as_bytes().to_vec()));
+    }
     let mut refs = vec![];
-    for (path, bytes) in files {
+    for (path, bytes) in &files {
         let on_disk = root.join(path);
         std::fs::create_dir_all(on_disk.parent().unwrap()).unwrap();
         std::fs::write(on_disk, bytes).unwrap();
-        refs.push(FileRef {
-            path: (*path).into(),
-            url: format!("file://{}/{path}", root.display()),
-            sha256: format!("{:x}", Sha256::digest(bytes)),
-        });
+        refs.push(json!({
+            "path": path,
+            "url": format!("file://{}/{path}", root.display()),
+            "sha256": format!("{:x}", Sha256::digest(bytes)),
+        }));
     }
-    let r = AppRef {
-        manifest: Manifest {
-            id: AppId::parse(id).unwrap(),
-            name: id.into(),
-            version: "1.0.0".into(),
-            main: main.into(),
-            migrations: vec![],
-            icon: None,
-            tint: None,
-            description: None,
-            requires: None,
-            ui: ui_root.map(|root| vos_domain::AppUi {
-                root: root.to_owned(),
-                entry: "index.html".to_owned(),
-                csp: vos_domain::Csp::default(),
-                permissions: vos_domain::Permissions::default(),
-            }),
-            window: ui_root.map(|_| vos_domain::WindowDecl { w: 420, h: 480, min_w: 320, min_h: 320 }),
-        },
-        files: refs,
-    };
-    std::fs::write(root.join("app-ref.json"), serde_json::to_vec(&r).unwrap()).unwrap();
+    if manifest.get("version").is_none() {
+        manifest["version"] = json!("1.0.0");
+    }
+    let app_ref = json!({ "manifest": manifest, "files": refs });
+    std::fs::write(root.join("app-ref.json"), serde_json::to_vec(&app_ref).unwrap()).unwrap();
     format!("file://{}/app-ref.json", root.display())
-}
-
-/// The path of the node with this key in a wire tree (depth first, `@slot` segments for named slots).
-pub fn path_of(tree: &Value, key: &str) -> Option<String> {
-    fn walk(node: &Value, path: &str, key: &str) -> Option<String> {
-        if node["key"] == key {
-            return Some(path.to_owned());
-        }
-        let children = node["children"].as_array().into_iter().flatten().map(|c| (None, c));
-        let slots = node["slots"].as_object().into_iter().flatten().flat_map(|(name, list)| {
-            list.as_array().into_iter().flatten().map(move |c| (Some(name.as_str()), c))
-        });
-        for (slot, child) in children.chain(slots) {
-            let k = child["key"].as_str().unwrap_or_default();
-            let p = match slot {
-                Some(slot) => format!("{path}/@{slot}/{k}"),
-                None => format!("{path}/{k}"),
-            };
-            if let Some(found) = walk(child, &p, key) {
-                return Some(found);
-            }
-        }
-        None
-    }
-    walk(tree, tree["key"].as_str()?, key)
 }
 
 /// Send a notification (no id, no answer).
@@ -358,17 +325,11 @@ fn nonce() -> usize {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
-/// The built Luau file of the shipped app `apps/<id>` (or, when the repo has none, the codegen example, or the
-/// host's own fixture app in `tests/fixtures/<id>`).
-pub fn built_app(app: &str) -> Vec<u8> {
-    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let found = [
-        manifest.join("../../apps").join(app).join("app.json"),
-        manifest.join("../vos-codegen/tests/fixtures").join(app).join("app.luau"),
-        manifest.join("tests/fixtures").join(app).join("app.luau"),
-    ]
-    .into_iter()
-    .find(|f| f.exists())
-    .unwrap_or_else(|| panic!("no app or fixture `{app}`"));
-    build_luau(&found.with_file_name("app.luau"))
+/// The built Luau file of the host's own fixture backend `tests/fixtures/backends/<name>.luau`.
+pub fn built_backend(name: &str) -> Vec<u8> {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/backends")
+        .join(format!("{name}.luau"));
+    assert!(fixture.exists(), "no fixture backend `{name}`");
+    build_luau(&fixture)
 }

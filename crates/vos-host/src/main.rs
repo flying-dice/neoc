@@ -15,7 +15,7 @@ use std::{
 };
 use tracing_subscriber::EnvFilter;
 use vos_application::{mint_agent_token, PairingPolicy};
-use vos_domain::{Agent, AgentId, AgentRuntime, ApprovalPolicy, Grants};
+use vos_domain::{Agent, AgentId, Grants};
 use vos_host::{
     build,
     config::Settings,
@@ -24,7 +24,7 @@ use vos_host::{
     open_devices,
     platform::{OsRandom, SystemClock},
     serve::{serve, termination_signal},
-    startup::{prepare_data_dir, spawn_revision_purge, start_apps, watch_for_reload, write_mcp_json},
+    startup::{prepare_data_dir, start_apps, watch_for_reload, write_mcp_json},
     HostConfig,
 };
 use vos_http::{system_hostname, system_interface_ips};
@@ -117,7 +117,7 @@ async fn run_cli() -> anyhow::Result<()> {
     }
     match cli.command {
         Command::Pair => pair(&settings).await,
-        Command::Serve => run(settings, &cwd).await,
+        Command::Serve => run(settings, &cwd, home.as_deref()).await,
     }
 }
 
@@ -136,7 +136,7 @@ async fn pair(settings: &Settings) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn run(settings: Settings, cwd: &Path) -> anyhow::Result<()> {
+async fn run(settings: Settings, cwd: &Path, home: Option<&Path>) -> anyhow::Result<()> {
     prepare_data_dir(&settings.data_dir)?;
     let client_dir = settings.resolve_client_dir(cwd)?;
     match &client_dir {
@@ -157,10 +157,8 @@ async fn run(settings: Settings, cwd: &Path) -> anyhow::Result<()> {
         name: "Local MCP client".into(),
         avatar: None,
         role: "Your own MCP client, through <data>/mcp.json".into(),
-        runtime: AgentRuntime::default(),
         // the one seeded exception to deny-by-default: this is the token the person's own tools use
         grants: Grants::allow_all(),
-        approval: ApprovalPolicy::default(),
     };
     let mut config = HostConfig::new(port);
     config.data_dir = Some(settings.data_dir.clone());
@@ -169,6 +167,8 @@ async fn run(settings: Settings, cwd: &Path) -> anyhow::Result<()> {
     config.allowed_hosts = settings.allowed_hosts.clone();
     config.registries = settings.catalog(cwd);
     config.secure_cookies = settings.secure_cookies;
+    config.host_files = settings.host_files;
+    config.home = home.map(Path::to_path_buf);
     config.agents = vec![(mcp_token.clone(), local_agent)];
     // the URL in mcp.json: reachable for whatever `bind` is
     let mcp_url = local_url(settings.scheme(), settings.bind, port, "/mcp");
@@ -181,7 +181,6 @@ async fn run(settings: Settings, cwd: &Path) -> anyhow::Result<()> {
         }
     }
     start_apps(&host.service, &settings.install).await;
-    spawn_revision_purge(host.service.clone(), host.shutdown.clone());
     if settings.dev_reload {
         for dir in watch_for_reload(&host.service, &host.shutdown) {
             tracing::info!(dir = %dir.display(), "dev reload: watching");

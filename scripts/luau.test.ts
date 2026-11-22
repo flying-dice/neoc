@@ -3,8 +3,9 @@
  *  - the prelude (`lua/prelude.lua`) stays plain Lua source, no annotations and no Luau-only syntax, because the
  *    polyfill comparison below runs it on a native Lua 5.3+ as the reference for `utf8` (it is the host's own source,
  *    not app code; apps are Luau and run only on the Luau engine);
- *  - every app bundles into one file whose only requires are runtime ones (`vos:*` and the host's `std:`, `lib:` and
- *    `vnd:` modules), with its types and comments stripped, its Luau syntax untouched and its non-ASCII text intact;
+ *  - a backend bundles into one file whose only requires are runtime ones (`vos:app` and the host's `std:`, `lib:`
+ *    and `vnd:` modules), with its types and comments stripped, its Luau syntax untouched and its non-ASCII text
+ *    intact (an app is a Vite project: `packages/vite-plugin` bundles its backend with this same pipeline);
  *  - the prelude's `utf8` agrees with a native Lua 5.3+ when one is installed;
  *  - the bundles are loaded and run by the Rust tests (`crates/vos-lua/tests`, `crates/vos-host/tests`: the VM's
  *    Luau, on the bundle `scripts/luau-build.ts` makes). darklua is never skipped: without it these tests fail, as
@@ -21,20 +22,14 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { DARKLUA_VERSION, findDarklua, root, toLuau } from "./luau";
 
-const apps = [...new Glob("apps/*/app.json").scanSync({ cwd: root })].sort();
-
-function entryOf(manifest: string): string {
-  const main =
-    (
-      JSON.parse(readFileSync(join(root, manifest), "utf8")) as {
-        main?: string;
-      }
-    ).main ?? "app.luau";
-  return join(root, dirname(manifest), main);
-}
+/** The fixture backends the Rust tests build and run: each is one entry file, as an app's `server/main.luau` is. */
+const backends = [
+  ...new Glob("crates/vos-host/tests/fixtures/backends/*.luau").scanSync({ cwd: root }),
+  "crates/vos-lua/tests/fixtures/neoc_modules/app.luau",
+].sort();
 
 /** A source with its `--` comments dropped (good enough to scan: a `--` inside a string only hides text). */
 function code(file: string): string {
@@ -63,11 +58,10 @@ describe("the embedded prelude stays plain Lua", () => {
 
 describe("the apps are Luau", () => {
   test("every app's entry is a .luau file that opts in to strict mode", () => {
-    // a Vite project's backend (server/main.luau), and any view-tree app left (an app.json)
-    const entries = [
-      ...[...new Glob("apps/*/server/main.luau").scanSync({ cwd: root })].map((file) => join(root, file)),
-      ...apps.map(entryOf),
-    ].sort();
+    // an app is a Vite project: its backend is server/main.luau
+    const entries = [...new Glob("apps/*/server/main.luau").scanSync({ cwd: root })]
+      .map((file) => join(root, file))
+      .sort();
     expect(entries.length).toBeGreaterThan(0);
     for (const entry of entries) {
       expect(entry).toEndWith(".luau");
@@ -76,7 +70,7 @@ describe("the apps are Luau", () => {
   });
 });
 
-/** What stays a `require` in a bundle: `vos:*` and the host's neoc modules, which the VM resolves at run time. */
+/** What stays a `require` in a bundle: `vos:app` and the host's neoc modules, which the VM resolves at run time. */
 const RUNTIME_MODULE = /^(vos:|std:|lib:|vnd:)/;
 
 describe("darklua", () => {
@@ -89,10 +83,9 @@ describe("darklua", () => {
   });
   if (!darklua) return;
 
-  for (const manifest of apps) {
-    const dir = dirname(manifest);
-    test(`${dir} bundles into one file that requires only runtime modules`, () => {
-      const out = toLuau(darklua, entryOf(manifest));
+  for (const backend of backends) {
+    test(`${backend} bundles into one file that requires only runtime modules`, () => {
+      const out = toLuau(darklua, join(root, backend));
       const required = [
         ...out.matchAll(/\brequire\s*\(\s*(['"])(.*?)\1\s*\)/g),
       ].map((m) => m[2]);
@@ -171,9 +164,16 @@ describe("darklua", () => {
   });
 
   test("keeps non-ASCII text as it is written (the VM reads raw UTF-8 bytes in a string)", () => {
-    const out = toLuau(darklua, join(root, "crates/vos-codegen/tests/fixtures/calculator/app.luau"));
-    expect(out).toContain('"×"');
-    expect(out).not.toMatch(/\\u\{/);
+    const scratch = mkdtempSync(join(tmpdir(), "vos-luau-text-"));
+    try {
+      writeFileSync(join(scratch, "app.luau"), '--!strict\nreturn { times = "×", name = "Zoë" }\n');
+      const out = toLuau(darklua, join(scratch, "app.luau"));
+      expect(out).toContain('"×"');
+      expect(out).toContain('"Zoë"');
+      expect(out).not.toMatch(/\\u\{/);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
   });
 });
 

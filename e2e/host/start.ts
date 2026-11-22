@@ -2,20 +2,26 @@
 /**
  * Starts the real host for the end-to-end specs (Playwright's webServer runs this):
  *
- *   1. builds the app kit (client/public/kit), the client (client/dist) and the host (cargo), and the apps into a test registry:
- *      the repo's apps plus Notes (the codegen fixture), a second app the Discover journeys install and remove
- *      so they never disturb the Calculator the other specs use, and the Ticker (the host's background-work
- *      fixture) and the Notifier (the notification journeys' sender) outside the registry, which only their journeys install; and the two framework fixtures
- *      (e2e/apps: a task list with a Svelte client and one with a React client, each on a Luau backend), built
- *      into a folder no registry lists and installed at start like the Calculator;
- *   2. writes vos.toml (port 7410 or VOS_PORT_BASE + 10, loopback, a fresh data directory, the test registry; the Calculator and
- *      Agents are installed at start, Notes is only offered);
- *   3. runs vos-host in the foreground, forwarding SIGTERM so the host shuts down gracefully.
+ *   1. builds the app kit (client/public/kit), the client (client/dist) and the host (cargo), and the apps: the repo's apps
+ *      into a test registry, with Memos (e2e/apps/memos), a second app the Discover journeys install and remove so they
+ *      never disturb the Calculator the other specs use; and the rest of e2e/apps into a folder no registry lists: the two
+ *      framework fixtures (a task list with a Svelte client and one with a React client, each on a Luau backend),
+ *      installed at start like the Calculator, and the Ticker (background work) and the Notifier (the notification
+ *      journeys' sender), which only their journeys install;
+ *   2. writes vos.toml (port 7410 or VOS_PORT_BASE + 10, loopback, a fresh data directory, the test registry; the Calculator,
+ *      Agents, Todos, Notes, Containers, DNS and Pages are installed at start, Memos is only offered);
+ *   3. runs vos-host in the foreground, forwarding SIGTERM so the host shuts down gracefully. The host's own Docker is
+ *      one nothing listens at (`DOCKER_HOST`), so the Containers, DNS and Pages apps say "not reachable" on every machine, with
+ *      Docker running or not, until their journeys point them at a Docker of their own (apps/containers/e2e, apps/dns/e2e, apps/pages/e2e).
+ *      The Terminal app (installed at start too) runs the host's `SHELL`: here a plain `sh` with the prompt `$ ` that reads no
+ *      start-up file, so what its window shows is the same on every machine (apps/terminal/e2e, the desktop screenshots).
+ *      The keychain the host reaches is a mock one (`NEOC_KEYRING`), so the Keychain app's journeys (apps/keychain/e2e) keep their passwords in the host's
+ *      memory and never in the keychain of whoever runs the specs.
  */
 import { spawn, spawnSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { CONFIG, DATA, DIR, FIXTURE_APPS, HOST_BIN, PORT, REGISTRY, ROOT, fixtureAppRef } from './config'
+import { CONFIG, DATA, DIR, FIXTURE_APPS, HIDDEN_APPS, HOST_BIN, PORT, REGISTRY, REGISTRY_APPS, ROOT, fixtureAppRef } from './config'
 
 const run = (cmd: string, args: string[]): void => {
   const r = spawnSync(cmd, args, { cwd: ROOT, stdio: 'inherit' })
@@ -35,60 +41,14 @@ run('bun', ['run', '--filter', '@vos/kit', 'build']) // /kit/kit.js and /kit/tok
 run('bun', ['run', '--filter', '@vos/client', 'build'])
 run('cargo', ['build', '-q', '-p', 'vos-host'])
 
-// Notes: the codegen fixture, packaged for the registry like any app
-const extra = join(DIR, 'extra-apps/notes')
-mkdirSync(extra, { recursive: true })
-cpSync(join(ROOT, 'crates/vos-codegen/tests/fixtures/notes/app.luau'), join(extra, 'app.luau'))
-writeFileSync(
-  join(extra, 'app.json'),
-  JSON.stringify({
-    id: 'notes',
-    name: 'Notes',
-    version: '0.1.0',
-    description: 'Notes that you and your agents can both write in.',
-    icon: 'note.text',
-    tint: 'yellow'
-  })
-)
-run('bun', ['scripts/build-apps.ts', '--out', join(DIR, 'registry'), '--root', join(DIR, 'extra-apps')])
+// The test registry: the repo's apps, and Memos (e2e/apps/memos), which the registry offers and nothing installs at start
+const repoApps = readdirSync(join(ROOT, 'apps'))
+run('bun', ['scripts/build-apps.ts', ...repoApps, ...REGISTRY_APPS, '--out', join(DIR, 'registry'), '--root', join(ROOT, 'e2e/apps')])
 
-// Ticker: built the same way, into a folder of its own that no registry lists (Discover must not offer it)
-const hidden = join(DIR, 'hidden-apps/ticker')
-mkdirSync(hidden, { recursive: true })
-cpSync(join(ROOT, 'crates/vos-host/tests/fixtures/ticker/app.luau'), join(hidden, 'app.luau'))
-writeFileSync(
-  join(hidden, 'app.json'),
-  JSON.stringify({
-    id: 'ticker',
-    name: 'Ticker',
-    version: '0.1.0',
-    description: 'A counter that a background task raises on its own.',
-    icon: 'clock',
-    tint: 'teal'
-  })
-)
-run('bun', ['scripts/build-apps.ts', 'ticker', '--out', join(DIR, 'hidden'), '--root', join(DIR, 'hidden-apps')])
-
-// The framework fixtures: each is built with its own package (its client is a Vite build), into a folder of its own that
-// no registry lists, so Discover does not offer them
-run('bun', ['scripts/build-apps.ts', ...FIXTURE_APPS, '--out', join(DIR, 'fixtures'), '--root', join(ROOT, 'e2e/apps')])
-
-// Notifier (the notification journeys' sender): the same way, also kept out of the registry
-const notifier = join(DIR, 'hidden-apps/notifier')
-mkdirSync(notifier, { recursive: true })
-cpSync(join(ROOT, 'crates/vos-host/tests/fixtures/notifier/app.luau'), join(notifier, 'app.luau'))
-writeFileSync(
-  join(notifier, 'app.json'),
-  JSON.stringify({
-    id: 'notifier',
-    name: 'Notifier',
-    version: '0.1.0',
-    description: 'Buttons that raise notifications, for the notification journeys.',
-    icon: 'bell',
-    tint: 'pink'
-  })
-)
-run('bun', ['scripts/build-apps.ts', 'notifier', '--out', join(DIR, 'hidden'), '--root', join(DIR, 'hidden-apps')])
+// The other apps of e2e/apps: each is built with its own package (its client is a Vite build), into a folder of its own
+// that no registry lists, so Discover does not offer them. The framework fixtures are installed at start (below); the
+// Ticker and the Notifier are installed by their journeys
+run('bun', ['scripts/build-apps.ts', ...FIXTURE_APPS, ...HIDDEN_APPS, '--out', join(DIR, 'fixtures'), '--root', join(ROOT, 'e2e/apps')])
 
 mkdirSync(DATA, { recursive: true })
 writeFileSync(
@@ -100,7 +60,7 @@ writeFileSync(
     `client_dir = "${join(ROOT, 'client/dist')}"`,
     `registries = ["file://${REGISTRY}"]`,
     `install = [${[
-      ...['calculator', 'agents'].map((id) => `file://${join(DIR, `registry/${id}/${versionOf(id)}/app-ref.json`)}`),
+      ...['calculator', 'agents', 'todos', 'notes', 'notebooks', 'containers', 'dns', 'keychain', 'pages', 'projects', 'terminal'].map((id) => `file://${join(DIR, `registry/${id}/${versionOf(id)}/app-ref.json`)}`),
       ...FIXTURE_APPS.map(fixtureAppRef)
     ]
       .map((url) => `"${url}"`)
@@ -109,6 +69,11 @@ writeFileSync(
   ].join('\n')
 )
 
-const host = spawn(HOST_BIN, ['--config', CONFIG], { cwd: ROOT, stdio: 'inherit' })
+// the Terminal app's shell (see the header): the person's own would print their prompt, with the machine's name in it
+const SHELL = join(DIR, 'shell')
+writeFileSync(SHELL, "#!/bin/sh\nPS1='$ ' ENV= exec /bin/sh\n")
+chmodSync(SHELL, 0o755)
+
+const host = spawn(HOST_BIN, ['--config', CONFIG], { cwd: ROOT, stdio: 'inherit', env: { ...process.env, DOCKER_HOST: 'tcp://127.0.0.1:1', NEOC_KEYRING: 'mock', SHELL } })
 for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => host.kill('SIGTERM'))
 host.on('exit', (code) => process.exit(code ?? 0))

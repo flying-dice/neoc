@@ -11,8 +11,7 @@
     args: { testid: 'button', variant: 'filled', size: 'medium', capsule: false, destructive: false, disabled: false },
     argTypes: {
       variant: { control: 'inline-radio', options: ['filled', 'tinted', 'gray', 'plain'] },
-      size: { control: 'inline-radio', options: ['small', 'medium', 'large'] },
-      tint: { control: 'color' }
+      size: { control: 'inline-radio', options: ['small', 'medium', 'large'] }
     },
     render: template
   })
@@ -45,29 +44,5 @@
     <Button testid="button-new-agent"><Icon name="plus" size={17} weight={2.2} /> New Agent</Button>
     <Button testid="button-run" variant="tinted" capsule><Icon name="play" size={15} /> Run</Button>
     <Button testid="button-more" variant="gray" square aria-label="More"><Icon name="ellipsis" size={19} /></Button>
-  </div>
-</Story>
-
-<Story name="Data colour fill" asChild parameters={{ controls: { disable: true } }}>
-  <div style="display:flex;flex-wrap:wrap;gap:12px;max-width:420px">
-    {#each ['blue', 'red', 'green', 'orange', 'yellow', 'purple', 'pink', 'teal', 'mint', 'gray', '#1d3557', '#f1faee'] as const as fill (fill)}
-      <Button testid="button-fill-{fill.replace('#', '')}" {fill}>{fill}</Button>
-    {/each}
-  </div>
-</Story>
-
-<Story name="Pressed and described" asChild parameters={{ controls: { disable: true } }}>
-  <div style="display:flex;gap:12px">
-    <Button testid="button-pressed" variant="tinted" aria-pressed="true">Bold</Button>
-    <Button testid="button-described" variant="gray" aria-description="Moves the note to the archive">Archive</Button>
-  </div>
-</Story>
-
-<Story name="Pressed data colour" asChild parameters={{ controls: { disable: true } }}>
-  <div style="display:flex;gap:12px">
-    {#each ['orange', 'blue', 'green', 'gray4'] as const as fill (fill)}
-      <Button testid="button-off-{fill}" {fill} capsule aria-pressed="false">{fill}</Button>
-      <Button testid="button-on-{fill}" {fill} capsule aria-pressed="true">{fill}</Button>
-    {/each}
   </div>
 </Story>

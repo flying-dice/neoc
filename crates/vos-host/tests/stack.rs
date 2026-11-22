@@ -34,7 +34,6 @@ const CASE: &str = "STACK_CASE";
 /// An app with one tool per recursion: through `Mutex:with_lock`, a `string.gsub` callback, a `__tostring` and a
 /// `__index`. Each reports whether the recursion ended in an error and how deep it got.
 const APP: &str = r#"
-    app.manifest { id = "stack", name = "Stack", icon = "gear" }
     local Mutex = require("std:collections").Mutex
     local function probe(name, nest)
       app.tool { name = name, run = function()
@@ -64,13 +63,13 @@ const APP: &str = r#"
       local t = setmetatable({}, { __index = function(t) count() app.notify(t) end })
       app.notify(t)
     end)
+    return {}
 "#;
 
 async fn run_case(case: &str) -> String {
     let package = AppPackage {
         entry: "app.luau".into(),
         files: BTreeMap::from([("app.luau".to_owned(), APP.as_bytes().to_vec())]),
-        ..AppPackage::default()
     };
     let data = Arc::new(AppDb::open(None, &[]).unwrap());
     let vm = AppVm::load(&AppId::parse("stack").unwrap(), package, data, VmConfig::default()).await.unwrap();

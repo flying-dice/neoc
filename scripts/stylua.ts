@@ -32,7 +32,7 @@ function findStylua(): string | undefined {
 const stylua = findStylua()
 if (!stylua) skipTool(`stylua ${mode}`, 'stylua not found (cargo install stylua --features luau, or put it on PATH)')
 
-// one stylua.toml at the root (call_parentheses = "NoSingleTable" keeps the table-call idiom, `ui.VStack { ... }`)
+// one stylua.toml at the root (call_parentheses = "NoSingleTable" keeps the table-call idiom, `app.tool { ... }`)
 const args = ['--search-parent-directories', ...(mode === 'check' ? ['--check'] : []), '.']
 const run = spawnSync(stylua, args, { cwd: root, stdio: 'inherit' })
 if (run.status !== 0) {

@@ -18,10 +18,10 @@ use tokio::{
     net::{TcpListener, TcpStream},
 };
 use vos_application::{
-    ports::{AppActivity, AppData, AppRuntime, Notifier, PortResult},
+    ports::{AppData, AppRuntime, Notifier, PortResult},
     testing::RecordingShell,
 };
-use vos_domain::{AppId, Notification};
+use vos_domain::Notification;
 use vos_lua::LuaRuntime;
 
 /// The tests' own fixture apps, which the product's build pipeline (darklua) bundles.
@@ -33,7 +33,8 @@ fn fixture(name: &str) -> std::path::PathBuf {
 /// say exactly this (a test that read the list from the constant would still pass with the constant emptied).
 const REFUSED: [&str; 3] = ["lib:test", "lib:compile", "std:workers"];
 
-const MANIFEST: &str = r#"app.manifest { id = "probe", name = "Probe", icon = "gear" }"#;
+/// The first line of every source here: the line numbers the tests name are the body's plus one.
+const MANIFEST: &str = "-- probe";
 
 /// Wait (up to `secs`) for `check` to hold.
 async fn eventually(secs: u64, what: &str, mut check: impl FnMut() -> bool) {
@@ -71,43 +72,28 @@ impl Notifier for Recorder {
     }
 }
 
-/// The application's side of `AppActivity`: records which app reported that its background work settled.
-#[derive(Default)]
-struct Activity(Mutex<Vec<AppId>>);
-
-#[async_trait::async_trait]
-impl AppActivity for Activity {
-    async fn background_settled(&self, app: &AppId) {
-        self.0.lock().push(app.clone());
-    }
-}
-
-impl Activity {
-    fn count(&self) -> usize {
-        self.0.lock().len()
-    }
-}
-
 struct Rig {
     runtime: Arc<LuaRuntime>,
     notes: Arc<Recorder>,
     shell: Arc<RecordingShell>,
-    activity: Arc<Activity>,
 }
 
 fn rig() -> Rig {
     let notes = Arc::new(Recorder::default());
     let shell = Arc::new(RecordingShell::default());
     let runtime = Arc::new(LuaRuntime::new(notes.clone(), shell.clone()));
-    let activity = Arc::new(Activity::default());
-    runtime.bind_activity(Arc::downgrade(&activity) as std::sync::Weak<dyn AppActivity>);
-    Rig { runtime, notes, shell, activity }
+    Rig { runtime, notes, shell }
 }
 
 impl Rig {
+    /// Load `src` as a backend with no handlers (`common::backend`).
     async fn load(&self, name: &str, src: &str) {
         let data: Arc<dyn AppData> = db();
-        self.runtime.load(&id(name), package(src, &[]), data).await.unwrap();
+        self.runtime.load(&id(name), package(&common::backend(src), &[]), data).await.unwrap();
+    }
+    /// The names of the events the app has emitted to its pages so far (`app.emit`).
+    fn events(&self) -> Vec<String> {
+        self.shell.events.lock().unwrap().iter().map(|(_, name, _)| name.clone()).collect()
     }
     async fn tool(&self, name: &str, tool: &str) -> Value {
         self.runtime.call_tool(&id(name), tool, json!({}), agent_ctx(0), false).await.unwrap()
@@ -132,8 +118,8 @@ fn declared_overloads() -> Vec<(String, String)> {
 }
 
 /// What luau-lsp checks an app against (`types/generated/vos.d.luau`) and what the host gives it are one list: every
-/// module the VM library has, less `NOT_FOR_APPS`, is typed by its own type, `vos:app` and `vos:ui` are the two
-/// host modules, and every refused module is typed as unusable; nothing else is declared.
+/// module the VM library has, less `NOT_FOR_APPS`, is typed by its own type, `vos:app` is the one
+/// host module, and every refused module is typed as unusable; nothing else is declared.
 #[test]
 fn the_declared_require_offers_exactly_what_the_host_offers() {
     let declared = declared_overloads();
@@ -143,7 +129,7 @@ fn the_declared_require_offers_exactly_what_the_host_offers() {
         .map(|(module, _)| module.as_str())
         .collect();
     let mut offered: Vec<&str> = modules::names().filter(|name| !REFUSED.contains(name)).collect();
-    offered.extend(["vos:app", "vos:ui"]);
+    offered.push("vos:app");
     let mut expected = offered.clone();
     expected.sort_unstable();
     let mut got = typed.clone();
@@ -369,7 +355,7 @@ async fn a_background_loop_does_not_stop_the_app_and_tools_can_wait_too() {
     assert!(during >= 3, "{during}");
 }
 
-// ---- background work reaches the application ----------------------------------------------------------------
+// ---- what background work asks of the host is sent at once ----------------------------------------------------------------
 
 #[tokio::test]
 async fn long_running_work_started_with_task_spawn_does_not_hold_up_the_load() {
@@ -387,7 +373,7 @@ async fn long_running_work_started_with_task_spawn_does_not_hold_up_the_load() {
     );
     let data: Arc<dyn AppData> = db();
     let app = id("probe");
-    let load = r.runtime.load(&app, package(&src, &[]), data);
+    let load = r.runtime.load(&app, package(&common::backend(&src), &[]), data);
     tokio::time::timeout(Duration::from_secs(5), load).await.expect("the load returned").unwrap();
     let ticks = || async { r.tool("probe", "ticks").await.as_i64().unwrap() };
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -398,44 +384,44 @@ async fn long_running_work_started_with_task_spawn_does_not_hold_up_the_load() {
 }
 
 #[tokio::test]
-async fn a_loop_that_changes_state_tells_the_application_at_every_pause_not_only_when_it_ends() {
+async fn a_loop_that_emits_is_heard_at_every_pause_not_only_when_it_ends() {
     let r = rig();
     let src = format!(
         r#"{MANIFEST}
         local task = require("std:task")
-        local s = app.state {{ n = 0 }}
-        task.spawn(function() while true do s.n = s.n + 1 task.wait(0.01) end end)"#
+        local n = 0
+        task.spawn(function() while true do n = n + 1 app.emit("tick", {{ n = n }}) task.wait(0.01) end end)"#
     );
     r.load("probe", &src).await;
-    // the loop never ends, so only a pause can report: it keeps reporting while it runs
-    eventually(5, "the loop's pauses to be reported", || r.activity.count() >= 3).await;
-    assert!(r.activity.0.lock().iter().all(|a| a == &id("probe")), "reported against the app that ran");
+    // the loop never ends, so only a pause can send its events: they keep coming while it runs
+    eventually(5, "the loop's events to reach the shell", || r.events().len() >= 3).await;
+    let events = r.shell.events.lock().unwrap().clone();
+    assert!(events.iter().all(|(app, name, _)| app == "probe" && name == "tick"), "{events:?}");
+    assert_eq!(events[0].2, json!({"n": 1}), "in the order they were emitted");
 }
 
 #[tokio::test]
-async fn a_background_call_that_ends_after_changing_state_tells_the_application() {
+async fn a_background_call_that_ends_after_emitting_is_heard() {
     let r = rig();
     let src = format!(
         r#"{MANIFEST}
         local task = require("std:task")
-        local s = app.state {{ n = 0 }}
-        -- changes state and ends without ever waiting
-        task.spawn(function() s.n = 1 end)"#
+        -- emits and ends without ever waiting
+        task.spawn(function() app.emit("done") end)"#
     );
     r.load("probe", &src).await;
-    eventually(5, "the ended task to be reported", || r.activity.count() >= 1).await;
+    eventually(5, "the ended task's event", || r.events() == ["done"]).await;
 }
 
 #[tokio::test]
-async fn a_pause_that_changed_nothing_a_window_shows_is_not_reported() {
+async fn a_pause_that_asked_nothing_of_the_host_sends_nothing() {
     let r = rig();
     let src = format!(
         r#"{MANIFEST}
         local task = require("std:task")
-        local s = app.state {{ n = 0 }}
         local polls = 0
-        -- assigns the value it already has: nothing for a window to follow
-        task.spawn(function() while true do s.n = 0 polls = polls + 1 task.wait(0.01) end end)
+        -- works on its own: nothing for a page or the person to hear
+        task.spawn(function() while true do polls = polls + 1 task.wait(0.01) end end)
         app.tool {{ name = "polls", run = function() return polls end }}"#
     );
     r.load("probe", &src).await;
@@ -445,27 +431,27 @@ async fn a_pause_that_changed_nothing_a_window_shows_is_not_reported() {
         assert!(Instant::now() < deadline, "the loop never ran");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    assert_eq!(r.activity.count(), 0, "no state changed, so there was nothing to report");
+    assert!(r.events().is_empty(), "nothing was emitted, so nothing was sent");
+    assert!(r.notes.0.lock().is_empty());
 }
 
 #[tokio::test]
-async fn nothing_is_reported_for_an_app_after_it_is_unloaded() {
+async fn nothing_is_sent_for_an_app_after_it_is_unloaded() {
     let r = rig();
     let src = format!(
         r#"{MANIFEST}
         local task = require("std:task")
-        local s = app.state {{ n = 0 }}
-        task.spawn(function() while true do s.n = s.n + 1 task.wait(0.01) end end)"#
+        task.spawn(function() while true do app.emit("tick") task.wait(0.01) end end)"#
     );
     r.load("probe", &src).await;
-    eventually(5, "the loop to be reported", || r.activity.count() >= 1).await;
+    eventually(5, "the loop's first event", || !r.events().is_empty()).await;
 
     r.runtime.unload(&id("probe")).await.unwrap();
 
     tokio::time::sleep(Duration::from_millis(100)).await; // anything in flight settles
-    let then = r.activity.count();
+    let then = r.events().len();
     tokio::time::sleep(Duration::from_millis(300)).await;
-    assert_eq!(r.activity.count(), then, "an unloaded app's loop is stopped and reports nothing more");
+    assert_eq!(r.events().len(), then, "an unloaded app's loop is stopped and sends nothing more");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -507,20 +493,20 @@ async fn requests_to_the_apps_server_run_one_at_a_time_in_the_vm() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_call_waiting_in_a_read_only_tool_keeps_its_read_only_guarantee_while_others_run() {
-    // the readOnly tool waits; while it does, a task of the app writes state (allowed: it is not the tool);
+    // the readOnly tool waits; while it does, a task of the app writes (allowed: it is not the tool);
     // when the tool goes on, its own write is refused again
     let src = r#"
         local task = require("std:task")
-        local state = app.state { v = 0 }
+        app.kv:set("v", 0)
         local from_task = "unset"
         task.spawn(function()
           task.wait(0.05)
-          from_task = tostring(pcall(function() state.v = 1 end))
+          from_task = tostring(pcall(function() app.kv:set("v", 1) end))
         end)
         app.tool { name = "ro", readOnly = true, run = function()
           task.wait(0.25)
-          local wrote, why = pcall(function() state.v = 2 end)
-          return { tool_write = wrote, why = tostring(why), task_write = from_task, v = state.v }
+          local wrote, why = pcall(function() app.kv:set("v", 2) end)
+          return { tool_write = wrote, why = tostring(why), task_write = from_task, v = app.kv:get("v") }
         end }
     "#;
     let vm = load(src).await;
@@ -557,7 +543,7 @@ async fn what_a_request_handler_asks_of_the_host_is_forwarded() {
         local net, hyper = require("std:net"), require("vnd:hyper")
         local server = hyper.serve(net.TcpListener.bind("127.0.0.1:0"), function(req)
           app.notify {{ title = "webhook " .. req.path }}
-          app.shell.deepLink("hook/:id", function() end)
+          app.emit("hook.called", req.path)
           return "ok"
         end)
         app.tool {{ name = "addr", run = function() return server:addr() end }}"#
@@ -568,7 +554,8 @@ async fn what_a_request_handler_asks_of_the_host_is_forwarded() {
     assert_eq!(body_of(&response), "ok");
     eventually(5, "the notification", || !r.notes.0.lock().is_empty()).await;
     assert_eq!(r.notes.0.lock()[0].title, "webhook /hook");
-    eventually(5, "the deep link", || !r.shell.links.lock().unwrap().is_empty()).await;
+    eventually(5, "the event", || !r.events().is_empty()).await;
+    assert_eq!(r.events(), ["hook.called"]);
 }
 
 // ---- unload and replace stop what the app started -----------------------------------------------------------
@@ -643,7 +630,7 @@ async fn replacing_an_app_frees_the_port_of_the_version_it_replaces_for_the_new_
     // an instant later: the new version's bind may have to be tried again
     loop {
         let data: Arc<dyn AppData> = db();
-        match r.runtime.load(&id("probe"), package(&second_src, &[]), data).await {
+        match r.runtime.load(&id("probe"), package(&common::backend(&second_src), &[]), data).await {
             Ok(_) => break,
             Err(e) => {
                 tries += 1;
@@ -742,31 +729,24 @@ async fn a_read_only_tool_cannot_register_or_change_the_apps_wiring() {
     let r = rig();
     let src = r#"
         local function try(f) local ok, err = pcall(f) return { ok = ok, err = (not ok) and tostring(err) or nil } end
-        app.tool { name = "window", readOnly = true, run = function()
-          return try(function() app.window("late", { render = function() return { type = "Stack", key = "n" } end }) end) end }
         app.tool { name = "register", readOnly = true, run = function()
           return try(function() app.tools.register { name = "late", run = function() end } end) end }
-        app.tool { name = "manifest", readOnly = true, run = function()
-          return try(function() app.manifest { id = "probe", name = "Probe", icon = "gear" } end) end }
         app.tool { name = "reads", readOnly = true, run = function()
-          return { one = app.db:one("select 1 as n").n, query = type(app.db:query("select 1 as n", { key = "n" })) } end }
+          return { one = app.db:one("select 1 as n").n } end }
         app.tool { name = "wire", run = function()
-          app.window("late", { render = function() return { type = "Stack", key = "n" } end })
+          app.tools.register { name = "late", run = function() return "late" end }
           return "wired"
         end }
     "#;
     r.load("probe", &format!("{MANIFEST}\n{src}")).await;
-    for tool in ["window", "register", "manifest"] {
-        let out = r.tool("probe", tool).await;
-        assert_eq!(out["ok"], false, "{tool} must be refused: {out}");
-        assert!(out["err"].as_str().unwrap().contains("readOnly"), "{tool}: {out}");
-    }
-    let tools: Vec<String> = r.runtime.windows(&id("probe")).await.unwrap();
-    assert!(tools.is_empty(), "no window was registered: {tools:?}");
+    let out = r.tool("probe", "register").await;
+    assert_eq!(out["ok"], false, "register must be refused: {out}");
+    assert!(out["err"].as_str().unwrap().contains("readOnly"), "{out}");
     // reads stay allowed, and a writable tool may still wire the app
     let reads = r.tool("probe", "reads").await;
     assert_eq!(reads["one"], 1, "{reads}");
     assert_eq!(r.tool("probe", "wire").await, "wired");
+    assert_eq!(r.tool("probe", "late").await, "late", "the tool it registered is there");
 }
 
 // ---- a task that stopped at a plain yield takes its turn before it runs -------------------------------------
@@ -815,7 +795,7 @@ async fn effects_queued_after_the_app_was_unloaded_are_dropped_not_flushed() {
         app.tool {{ name = "late", run = function()
           task.wait(0.3) -- the call is still in flight when the app is unloaded
           app.notify {{ title = "from a ghost" }}
-          app.shell.deepLink("ghost/:id", function() end)
+          app.emit("ghost")
           return "done"
         end }}
         app.tool {{ name = "now", run = function() app.notify {{ title = "from a live app" }} return "done" end }}"#
@@ -824,7 +804,6 @@ async fn effects_queued_after_the_app_was_unloaded_are_dropped_not_flushed() {
     // control: a live app's effects are delivered
     assert_eq!(r.tool("probe", "now").await, "done");
     assert_eq!(r.notes.0.lock().len(), 1);
-    r.shell.links.lock().unwrap().clear();
 
     let runtime = r.runtime.clone();
     let call =
@@ -837,7 +816,7 @@ async fn effects_queued_after_the_app_was_unloaded_are_dropped_not_flushed() {
     tokio::time::sleep(Duration::from_millis(200)).await;
     let titles: Vec<String> = r.notes.0.lock().iter().map(|n| n.title.clone()).collect();
     assert_eq!(titles, ["from a live app"], "nothing queued after the unload was delivered");
-    assert!(r.shell.links.lock().unwrap().is_empty(), "no deep link from an app that is gone");
+    assert!(r.events().is_empty(), "no event from an app that is gone");
 }
 
 /// `bun run build:apps` bundles an app's relative requires and leaves `vos:*` and the neoc modules

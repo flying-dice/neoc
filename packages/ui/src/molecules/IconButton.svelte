@@ -1,4 +1,4 @@
-<!-- @molecule IconButton — Button with an SF-style glyph and optional title. Atoms: Button, Icon. Test id: `testid`. -->
+<!-- @molecule IconButton — a plain, square Button with an SF-style glyph. Atoms: Button, Icon. Test id: `testid`. -->
 <script lang="ts">
   import Button from '../atoms/Button.svelte'
   import Icon from '../atoms/Icon.svelte'
@@ -7,54 +7,13 @@
   interface Props {
     testid: string
     icon: IconName
-    /** Visible title; omit for a square glyph-only button (then `label` is required for a11y). */
-    title?: string
-    label?: string
-    variant?: 'filled' | 'tinted' | 'gray' | 'plain'
-    size?: 'small' | 'medium' | 'large'
-    capsule?: boolean
-    tint?: string
-    destructive?: boolean
-    disabled?: boolean
-    block?: boolean
-    /** A 44 x 44 pt hit area around the drawn button (see Button). */
-    hit?: boolean
-    onclick?: () => void
+    /** The accessible name: the glyph says nothing to a screen reader. */
+    label: string
   }
 
-  let {
-    testid,
-    icon,
-    title,
-    label,
-    variant = 'plain',
-    size = 'medium',
-    capsule = false,
-    tint,
-    destructive = false,
-    disabled = false,
-    block = false,
-    hit = false,
-    onclick
-  }: Props = $props()
-
-  const glyph = $derived(size === 'small' ? 15 : size === 'large' ? 22 : 19)
+  let { testid, icon, label }: Props = $props()
 </script>
 
-<Button
-  {testid}
-  {variant}
-  {size}
-  {capsule}
-  {tint}
-  {destructive}
-  {disabled}
-  {block}
-  {hit}
-  square={!title}
-  aria-label={title ? undefined : label}
-  {onclick}
->
-  <Icon name={icon} size={glyph} weight={2.2} />
-  {#if title}{title}{/if}
+<Button {testid} variant="plain" square aria-label={label}>
+  <Icon name={icon} size={19} weight={2.2} />
 </Button>

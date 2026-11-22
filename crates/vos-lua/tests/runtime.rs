@@ -1,26 +1,25 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
-//! The `AppRuntime` port over the real Lua adapter and the real SQLite adapter: live sources fed by a tool,
-//! effects forwarded to ports, a failing app isolated.
+//! The `AppRuntime` port over the real Lua adapter and the real SQLite adapter: data written by a tool and read by
+//! the page's handlers, effects forwarded to ports, a failing app isolated.
 
 mod common;
 
 use common::{agent_ctx, db, id, package, user_ctx};
 use parking_lot::Mutex;
 use serde_json::{json, Value};
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 use vos_application::{
-    data::{ChangeFeed, Params},
-    live::{pump_changes, LiveSources, SourceId, SourceUpdate, Window},
-    ports::{AppData, AppRuntime, Notifier, PortResult, Shell},
-    testing::{CollectingSink, RecordingShell},
+    data::Params,
+    ports::{AppData, AppRuntime, Notifier, PortResult},
+    testing::RecordingShell,
     PortError,
 };
 use vos_domain::Notification;
 use vos_lua::LuaRuntime;
-use vos_sqlite::{AppDb, SqliteFeed};
+use vos_sqlite::AppDb;
 
 const NOTES: &str = r#"
-app.manifest { id = "notes", name = "Notes", icon = "note.text" }
+-- notes
 local t = app.t
 local db = app.db
 
@@ -32,20 +31,12 @@ db:migrate { [1] = [[
   insert into notes(folder_id, body) values (1, 'first'), (1, 'second');
 ]] }
 
-local folders = db:query("select f.id, f.name, (select count(*) from notes n where n.folder_id = f.id) as count from folders f order by f.id", { key = "id" })
-local list = db:query("select id, body from notes order by id", { key = "id", page = 2 })
-local note = db:row("select id, body, rev from notes where id = :id", { key = "id", rev = "rev",
-  write = function(id, field, value, ctx)
-    assert(field == "body")
-    db:exec("update notes set body = :v, rev = rev + 1, author = :who where id = :id", { v = value, id = id, who = ctx.actor.name })
-  end })
-
 app.tool { name = "append", input = { id = t.integer {}, text = t.string {} }, run = function(input, ctx)
   local r = db:exec("update notes set body = body || char(10) || :text, rev = rev + 1, author = :who where id = :id",
     { text = input.text, id = input.id, who = ctx.actor.name })
   if r.changes == 0 then return ctx:fail("No note with id " .. input.id) end
   app.notify { title = "Note changed", body = ctx.actor.name }
-  app.shell.deepLink("note/" .. r.changes, function() end)
+  app.emit("notes.changed", { changes = r.changes })
   return { id = input.id }
 end }
 app.tool { name = "add_two", run = function(_, ctx)
@@ -55,6 +46,19 @@ app.tool { name = "add_two", run = function(_, ctx)
   end)
   return "ok"
 end }
+
+return {
+  -- the page's list: what it shows after an agent's tool (or anything else) changed the notes
+  list = function(ctx)
+    return db:all("select id, body, rev, author from notes order by id")
+  end,
+  -- the person edits a note from the page
+  edit = function(ctx, args)
+    assert(args.field == "body", "only the body can be edited")
+    db:exec("update notes set body = :v, rev = rev + 1, author = :who where id = :id", { v = args.value, id = args.id, who = ctx.actor.name })
+    return db:one("select body, rev from notes where id = :id", { id = args.id })
+  end,
+}
 "#;
 
 #[derive(Default)]
@@ -86,57 +90,31 @@ async fn load(rig: &Rig, src: &str) -> PortResult<vos_application::ports::Loaded
     rig.runtime.load(&id("notes"), package(src, &[]), data).await
 }
 
-async fn wait_for(sink: &CollectingSink, n: usize) -> Vec<(vos_application::SubscriptionId, SourceUpdate)> {
-    for _ in 0..200 {
-        if sink.peek().len() >= n {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    sink.take()
-}
-
 #[tokio::test]
 async fn loading_reports_what_the_app_declared() {
     let rig = rig();
     let loaded = load(&rig, NOTES).await.unwrap();
-    assert_eq!(loaded.decl.unwrap().name, "Notes");
     assert_eq!(loaded.tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["append", "add_two"]);
-    assert_eq!(loaded.sources.iter().map(|s| s.id.0.as_str()).collect::<Vec<_>>(), ["s1", "s2", "s3"]);
 }
 
 #[tokio::test]
-async fn an_app_without_a_manifest_does_not_load() {
+async fn an_entry_that_returns_no_handlers_does_not_load() {
     let rig = rig();
     let e = load(&rig, "local x = 1").await.unwrap_err();
-    assert!(matches!(&e, PortError::Rejected(m) if m.contains("app.manifest")), "{e:?}");
+    assert!(
+        matches!(&e, PortError::Rejected(m) if m.contains("the entry must return the app's handlers")),
+        "{e:?}"
+    );
 }
 
 #[tokio::test]
-async fn an_agent_tool_writes_data_and_every_live_source_gets_a_delta() {
+async fn an_agent_tool_writes_data_the_page_reads_it_and_the_tools_effects_reach_their_ports() {
     let rig = rig();
-    let loaded = load(&rig, NOTES).await.unwrap();
-    let live = Arc::new(LiveSources::new(rig.db.clone(), loaded.sources));
-    let sink = Arc::new(CollectingSink::default());
-
-    // an open view: the folder list, a window of the note list, and note 1 (the open note)
-    let (_, folders) =
-        live.subscribe(&SourceId("s1".into()), Params::None, None, sink.clone()).await.unwrap();
-    let (_, list) = live.subscribe(&SourceId("s2".into()), Params::None, None, sink.clone()).await.unwrap();
-    let (_, open) = live
-        .subscribe(&SourceId("s3".into()), Params::named([("id", json!(1))]), None, sink.clone())
-        .await
-        .unwrap();
-    let SourceUpdate::Rows(f) = folders else { panic!("rows") };
-    assert_eq!(f.changed[0].1["count"], 2);
-    let SourceUpdate::Rows(l) = list else { panic!("rows") };
-    assert_eq!((l.keys.len(), l.total), (2, Some(2)));
-    let SourceUpdate::Row(o) = open else { panic!("row") };
-    assert_eq!(o.rev, Some(json!(0)));
-
-    // the host pumps commits into refreshes
-    let pump =
-        tokio::spawn(pump_changes(Box::new(SqliteFeed::new(&rig.db)) as Box<dyn ChangeFeed>, live.clone()));
+    load(&rig, NOTES).await.unwrap();
+    let list =
+        || async { rig.runtime.call_handler(&id("notes"), "list", json!(null), user_ctx(2_000)).await };
+    let before = list().await.unwrap();
+    assert_eq!(before[0], json!({"id": 1, "body": "first", "rev": 0}), "a null column is no key");
 
     // the agent appends to note 1 over the tool: no UI code anywhere
     let out = rig
@@ -152,71 +130,40 @@ async fn an_agent_tool_writes_data_and_every_live_source_gets_a_delta() {
         .unwrap();
     assert_eq!(out, json!({"id": 1}));
 
-    let updates = wait_for(&sink, 2).await;
-    tokio::time::sleep(Duration::from_millis(60)).await;
-    let updates = [updates, sink.take()].concat();
-    assert_eq!(
-        updates.len(),
-        2,
-        "the note list row and the open note; the folder count did not change: {updates:?}"
-    );
-    let by_kind = |f: fn(&SourceUpdate) -> bool| updates.iter().filter(|(_, u)| f(u)).count();
-    assert_eq!(by_kind(|u| matches!(u, SourceUpdate::Rows(_))), 1);
-    let row =
-        updates.iter().find_map(|(_, u)| if let SourceUpdate::Row(r) = u { Some(r) } else { None }).unwrap();
-    assert_eq!(row.rev, Some(json!(1)));
-    assert_eq!(row.row.as_ref().unwrap()["body"], "first\n- buy oat milk");
-    let list_delta = updates
-        .iter()
-        .find_map(|(_, u)| match u {
-            SourceUpdate::Rows(d) if d.keys == [json!(1), json!(2)] && d.changed.len() == 1 => Some(d),
-            _ => None,
-        })
-        .expect("the note list sends only the changed row");
-    assert_eq!(list_delta.changed[0].0, json!(1));
+    // the page's next call sees the tool's write, and only that row changed
+    let after = list().await.unwrap();
+    assert_eq!(after[0], json!({"id": 1, "body": "first\n- buy oat milk", "rev": 1, "author": "Claude"}));
+    assert_eq!(after[1], before[1]);
 
-    // the tool's app.notify and app.shell.deepLink reached their ports
+    // the tool's app.notify and app.emit reached their ports
     let notes = rig.notifier.0.lock().clone();
     assert_eq!((notes[0].title.as_str(), notes[0].body.as_deref()), ("Note changed", Some("Claude")));
-    assert_eq!(rig.shell.links.lock().unwrap().last().unwrap().1, ["note/1"]);
-    pump.abort();
+    let events = rig.shell.events.lock().unwrap().clone();
+    assert_eq!(events, [("notes".to_owned(), "notes.changed".to_owned(), json!({"changes": 1}))]);
 }
 
 #[tokio::test]
-async fn a_transaction_in_a_tool_is_one_commit_and_one_delta() {
-    let rig = rig();
-    let loaded = load(&rig, NOTES).await.unwrap();
-    let live = Arc::new(LiveSources::new(rig.db.clone(), loaded.sources));
-    let sink = Arc::new(CollectingSink::default());
-    live.subscribe(&SourceId("s2".into()), Params::None, Some(Window { from: 0, to: 10 }), sink.clone())
-        .await
-        .unwrap();
-    let pump = tokio::spawn(pump_changes(Box::new(SqliteFeed::new(&rig.db)), live));
-    rig.runtime.call_tool(&id("notes"), "add_two", json!({}), agent_ctx(0), false).await.unwrap();
-    let updates = wait_for(&sink, 1).await;
-    tokio::time::sleep(Duration::from_millis(80)).await;
-    assert_eq!(updates.len(), 1);
-    let SourceUpdate::Rows(d) = &updates[0].1 else { panic!("rows") };
-    assert_eq!((d.keys.len(), d.total), (4, Some(4)), "both inserts, seen together");
-    assert!(sink.take().is_empty(), "and no second delta");
-    pump.abort();
-}
-
-#[tokio::test]
-async fn the_human_edits_a_bound_field_through_the_write_callback() {
+async fn a_transaction_in_a_tool_commits_its_statements_together() {
     let rig = rig();
     load(&rig, NOTES).await.unwrap();
-    rig.runtime
-        .write_row(&id("notes"), &SourceId("s3".into()), json!(2), "body", json!("edited"), user_ctx(5))
-        .await
-        .unwrap();
+    rig.runtime.call_tool(&id("notes"), "add_two", json!({}), agent_ctx(0), false).await.unwrap();
+    let rows = rig.runtime.call_handler(&id("notes"), "list", json!(null), user_ctx(0)).await.unwrap();
+    assert_eq!(rows.as_array().unwrap().len(), 4, "both inserts, seen together");
+}
+
+#[tokio::test]
+async fn the_person_edits_a_note_through_a_handler() {
+    let rig = rig();
+    load(&rig, NOTES).await.unwrap();
+    let runtime = &rig.runtime;
+    let edit = |field: &'static str| async move {
+        let args = json!({"id": 2, "field": field, "value": "edited"});
+        runtime.call_handler(&id("notes"), "edit", args, user_ctx(5)).await
+    };
+    assert_eq!(edit("body").await.unwrap(), json!({"body": "edited", "rev": 1}));
     let rows = rig.db.query_rows("select body, rev, author from notes where id = 2").await;
     assert_eq!(rows[0], json!({"body": "edited", "rev": 1, "author": "You"}));
-    let e = rig
-        .runtime
-        .write_row(&id("notes"), &SourceId("s3".into()), json!(2), "title", json!("x"), user_ctx(5))
-        .await
-        .unwrap_err();
+    let e = edit("title").await.unwrap_err();
     assert!(matches!(&e, PortError::Rejected(m) if m.contains("notes/app.lua:")), "{e:?}");
 }
 
@@ -257,9 +204,7 @@ async fn a_failing_app_is_isolated_and_a_failed_reload_keeps_the_old_version_run
     assert!(matches!(&e, PortError::Rejected(m) if m.contains("crashy/app.lua:2")), "{e:?}");
 
     // reload: new code that does not load leaves the running VM in place
-    let e =
-        load(&rig, "app.manifest { id = 'notes', name = 'N', icon = 'x' }\nerror('typo in the new version')")
-            .await;
+    let e = load(&rig, "-- the next version\nerror('typo in the new version')").await;
     assert!(matches!(&e, Err(PortError::Rejected(m)) if m.contains("typo in the new version")));
     assert!(rig.runtime.call_tool(&id("notes"), "add_two", json!({}), agent_ctx(0), false).await.is_ok());
 
@@ -295,6 +240,3 @@ impl QueryRows for AppDb {
         AppData::query(self, sql.to_owned(), Params::None).await.unwrap()
     }
 }
-
-#[allow(dead_code)]
-fn _shell_is_a_port(_: &dyn Shell) {}

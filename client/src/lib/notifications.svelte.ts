@@ -3,6 +3,7 @@ import type { Host } from './host.svelte'
 import { appNotificationSchema } from '../shell/results'
 import { cleanBody, cleanTitle, spokenBody } from '../shell/notificationText'
 import { appOf, type AppDefinition, type AppId } from './apps.svelte'
+import { settings } from './settings.svelte'
 import { windowManager, type WindowManager } from './windowManager.svelte'
 
 /** At most this many alerts are on screen: a fourth takes the place of the oldest. */
@@ -28,8 +29,10 @@ export interface Banner {
   announcement: string
 }
 
-/** What the alerts need from the shell: the window manager's focus, the app list, and a clock. */
+/** What the alerts need from the shell: the window manager's focus, the app list, the person's setting, and a clock. */
 export interface NotificationDeps {
+  /** Does the person want banners in this browser (Settings > General > Show Banners)? */
+  bannersOn(): boolean
   wm: Pick<WindowManager, 'focused' | 'activeStageId' | 'slideOverHidden' | 'open'>
   appOf(id: AppId): AppDefinition | undefined
   /** Run `run` once, `ms` from now; the result cancels it. */
@@ -46,6 +49,7 @@ export interface NotificationDeps {
 }
 
 const browserDeps: NotificationDeps = {
+  bannersOn: () => settings.banners,
   wm: windowManager,
   appOf,
   schedule: (run, ms) => {
@@ -68,6 +72,8 @@ const browserDeps: NotificationDeps = {
  * The system alerts of this client: what `notification.deliver` brings, as the shell shows it (the vos form of
  * UserNotifications' presentation step: the host delivers, this client decides to present).
  *
+ *  - Not shown at all while the person has banners turned off in Settings: what arrives then is dropped, not kept for
+ *    later (turning them off also takes away the ones on screen, see `clear`).
  *  - The sender's name and icon come from the shell's own app list. A sender that is not a running app here (not
  *    installed, disabled, or not in the list yet) shows nothing, and is logged.
  *  - Not shown on a client where the sender is in front: one of its windows is the focused one, in view, and the page is
@@ -101,6 +107,7 @@ export class Notifications {
       console.warn('[vos] ignored a malformed notification:', parsed.error.issues[0]?.message)
       return
     }
+    if (!this.deps.bannersOn()) return
     const { app, title, body } = parsed.data
     const sender = this.deps.appOf(app)
     if (!sender) {
@@ -147,7 +154,7 @@ export class Notifications {
     const banner = this.banners.find((b) => b.id === id)
     if (!banner) return
     this.dismiss(id)
-    this.deps.wm.open(banner.app, { kind: 'main' }) // ignores an app that stopped running meanwhile
+    this.deps.wm.open(banner.app) // ignores an app that stopped running meanwhile
   }
 
   /** The pointer is in use on the alert, or the keyboard is on it: it stays while it is read. */
@@ -160,6 +167,13 @@ export class Notifications {
   release(id: number): void {
     this.#held.delete(id)
     if (this.banners.some((b) => b.id === id)) this.#start(id)
+  }
+
+  /** Take every alert off the screen (the person turned banners off). */
+  clear(): void {
+    if (this.banners.length === 0) return
+    for (const banner of this.banners) this.#forget(banner.id)
+    this.banners = []
   }
 
   /** The apps that stop running take their alerts with them (there is nothing left to open). */

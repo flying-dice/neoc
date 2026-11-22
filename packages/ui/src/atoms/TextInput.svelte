@@ -4,8 +4,6 @@
 
   interface Props extends Omit<HTMLInputAttributes, 'value'> {
     testid: string
-    /** Accessible description (read after the name). */
-    'aria-description'?: string
     value?: string
     ref?: HTMLInputElement
   }

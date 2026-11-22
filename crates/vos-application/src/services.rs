@@ -5,18 +5,13 @@
 //! restored at start; an app that cannot load is marked failed and isolated, the others carry on.
 
 use crate::{
-    data::Params,
     files::FileStore,
-    live::{pump_changes, LiveSources},
     ports::{
-        AppActivity, AppData, AppObserver, AppPackage, AppRuntime, Background, CallContext, Clock, DataStore,
-        EventSink, Fetcher, InstalledApp, InstalledAppStore, ServerEvent, SqlMigration, TaskHandle,
-        ToolRegistry,
+        AppData, AppPackage, AppRuntime, CallContext, Clock, DataStore, EventSink, Fetcher, InstalledApp,
+        InstalledAppStore, ServerEvent, SqlMigration, ToolRegistry,
     },
-    writeback::{self, WriteAck, WriteRequest},
     AppError, PortError,
 };
-use async_trait::async_trait;
 use parking_lot::Mutex;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -29,8 +24,9 @@ use std::{
 };
 use vos_domain::{
     api::{AppPreview, Catalog, InstalledInfo},
-    resolve_url, source_label, Actor, AgentIdentity, AppDecl, AppId, AppRef, Csp, DomainError, Manifest,
-    PackageBudget, Permissions, QualifiedToolName, Registry, Revision, StoredRevision, ToolSpec, WindowDecl,
+    protocol::codes,
+    resolve_url, source_label, Actor, AgentIdentity, AppId, AppRef, Csp, DomainError, Manifest,
+    PackageBudget, Permissions, QualifiedToolName, Registry, ToolSpec, WindowDecl,
 };
 
 /// Every collaborator of [`AppService`].
@@ -44,7 +40,6 @@ pub struct Ports {
     pub events: Arc<dyn EventSink>,
     pub installed: Arc<dyn InstalledAppStore>,
     pub clock: Arc<dyn Clock>,
-    pub background: Arc<dyn Background>,
     /// The catalog Discover browses: registry files (`{"apps": [...]}`) or app refs, by URL.
     pub registries: Vec<String>,
 }
@@ -77,35 +72,31 @@ impl AppStatus {
     }
 }
 
-/// How an app presents itself in the Dock and the library: from its `app.manifest` while it runs, else from
-/// its package manifest.
+/// How an app presents itself in the Dock and the library, from its package manifest.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Display {
     pub icon: Option<String>,
     pub tint: Option<String>,
     pub description: Option<String>,
-    /// The default window and its minimum size: what `app.manifest` declared while the app runs, else `app.json`'s.
+    /// The default window and its minimum size, when the manifest states one.
     pub window: Option<WindowDecl>,
-    /// The app has a client of its own, so its window is a frame.
-    pub client: bool,
     /// The browser features its frame asks for (`allow` of the iframe): `camera`, `clipboard-write`, ...
     pub permissions: Vec<&'static str>,
 }
 
 impl Display {
-    fn of(manifest: &Manifest, decl: Option<&AppDecl>) -> Self {
+    fn of(manifest: &Manifest) -> Self {
         Self {
-            icon: decl.map(|d| d.icon.clone()).or_else(|| manifest.icon.clone()),
-            tint: decl.and_then(|d| d.tint.clone()).or_else(|| manifest.tint.clone()),
+            icon: manifest.icon.clone(),
+            tint: manifest.tint.clone(),
             description: manifest.description.clone(),
-            window: decl.and_then(|d| d.window.clone()).or_else(|| manifest.window.clone()),
-            client: manifest.ui.is_some(),
-            permissions: manifest.ui.as_ref().map_or_else(Vec::new, |u| u.permissions.features()),
+            window: manifest.window.clone(),
+            permissions: manifest.ui.permissions.features(),
         }
     }
 }
 
-/// An app's client, as fetched and verified at install: the static files of its built page, kept in memory by their
+/// An app's page, as fetched and verified at install: its built static files, kept in memory by their
 /// path under the app's `ui.root` (`assets/a.js`). The host serves them at `/apps/<id>/static/...`; whether they
 /// are kept in memory or in a directory is this type's business, not the route's.
 #[derive(Clone, Debug)]
@@ -150,7 +141,6 @@ pub struct AppInfo {
     pub display: Display,
 }
 
-/// A loaded app: its database, live sources and the tasks that serve them.
 /// The calls of one app's handlers that may run at once, whoever makes them and over however many connections: more are refused
 /// at once (`-32000`, "busy") instead of queuing behind handlers that may never return. The shell's own queue per app is a courtesy
 /// that stays under it; this is what holds against a client that ignores the courtesy.
@@ -179,15 +169,14 @@ impl Drop for CallSlot {
     }
 }
 
+/// A loaded app: its database, its tools and its page.
 struct Active {
     calls: CallSlots,
     data: Arc<dyn AppData>,
-    live: Arc<LiveSources>,
     name: String,
     display: Display,
     tools: Vec<ToolSpec>,
-    site: Option<Arc<StaticSite>>,
-    _pump: Box<dyn TaskHandle>,
+    site: Arc<StaticSite>,
 }
 
 struct AppEntry {
@@ -201,7 +190,6 @@ struct AppEntry {
 pub struct AppService {
     p: Ports,
     apps: Mutex<HashMap<AppId, AppEntry>>,
-    observers: Mutex<Vec<Arc<dyn AppObserver>>>,
 }
 
 /// An app ref as fetched: the parsed document and the SHA-256 (hex) of the bytes it came from, which is what
@@ -244,63 +232,15 @@ fn check_against_record(record: &InstalledApp, manifest: &Manifest) -> Result<()
     Ok(())
 }
 
-#[async_trait]
-impl AppActivity for AppService {
-    async fn background_settled(&self, app: &AppId) {
-        self.announce_background_changed(app).await;
-    }
-}
-
 impl AppService {
     #[must_use]
     pub fn new(ports: Ports) -> Self {
-        Self { p: ports, apps: Mutex::default(), observers: Mutex::default() }
+        Self { p: ports, apps: Mutex::default() }
     }
 
-    /// Register something that follows what apps do (the view service).
-    pub fn add_observer(&self, observer: Arc<dyn AppObserver>) {
-        self.observers.lock().push(observer);
-    }
-
-    fn observers(&self) -> Vec<Arc<dyn AppObserver>> {
-        self.observers.lock().clone()
-    }
-
-    /// State or data of the app may have changed: tell the observers (open views follow).
-    async fn announce_mutated(&self, app: &AppId) {
-        for o in self.observers() {
-            o.mutated(app).await;
-        }
-    }
-
-    /// The app's own background work may have changed its state: tell the observers (open views follow).
-    async fn announce_background_changed(&self, app: &AppId) {
-        for o in self.observers() {
-            o.background_changed(app).await;
-        }
-    }
-
-    async fn announce_stopping(&self, app: &AppId, reason: &str) {
-        for o in self.observers() {
-            o.stopping(app, reason).await;
-        }
-    }
-
-    /// The app's database handle (the view service reads and writes client state through it).
+    /// The app's database handle.
     pub fn data_of(&self, app: &AppId) -> Result<Arc<dyn AppData>, AppError> {
         self.with_active(app, |a| a.data.clone())
-    }
-
-    /// The runtime, for the view service.
-    #[must_use]
-    pub fn runtime(&self) -> Arc<dyn AppRuntime> {
-        self.p.runtime.clone()
-    }
-
-    /// The service's clock reading, in Unix milliseconds.
-    #[must_use]
-    pub fn now_ms(&self) -> u64 {
-        self.p.clock.now_unix_ms()
     }
 
     // ---- install / uninstall ------------------------------------------------------------------------
@@ -360,7 +300,6 @@ impl AppService {
     }
 
     pub async fn uninstall(&self, app: &AppId, purge_data: bool) -> Result<(), AppError> {
-        self.announce_stopping(app, "uninstalled").await;
         let entry = self.apps.lock().remove(app).ok_or_else(|| AppError::NotInstalled(app.to_string()))?;
         if let Some(active) = entry.active {
             self.deactivate(app, active).await;
@@ -441,7 +380,6 @@ impl AppService {
 
     /// Hide the app from agents and unload its VM. Its data is kept.
     pub async fn disable(&self, app: &AppId) -> Result<(), AppError> {
-        self.announce_stopping(app, "disabled").await;
         let active = {
             let mut apps = self.apps.lock();
             let entry = apps.get_mut(app).ok_or_else(|| AppError::NotInstalled(app.to_string()))?;
@@ -504,7 +442,6 @@ impl AppService {
 
     /// Erase the app's data. A running app is reloaded on an empty database (its migrations run again).
     pub async fn delete_data(&self, app: &AppId) -> Result<(), AppError> {
-        self.announce_stopping(app, "data deleted").await;
         let (was_running, record, active) = {
             let mut apps = self.apps.lock();
             let entry = apps.get_mut(app).ok_or_else(|| AppError::NotInstalled(app.to_string()))?;
@@ -549,13 +486,12 @@ impl AppService {
         };
         match self.load_from_record(&record, data).await {
             Ok((active, approval)) => {
-                self.announce_stopping(app, "reloaded").await;
                 self.remember(app, approval).await;
                 let mut apps = self.apps.lock();
                 if let Some(entry) = apps.get_mut(app) {
                     entry.name.clone_from(&active.name);
                     entry.display = active.display.clone();
-                    entry.active = Some(active); // the old pump stops when its handle drops
+                    entry.active = Some(active);
                     entry.status = AppStatus::Running;
                 }
                 Ok(())
@@ -584,20 +520,17 @@ impl AppService {
         // the runtime enforces `readOnly` too, but the guarantee must not rest on the adapter alone: it is
         // handed the requirement for every tool the app declared `readOnly`
         let read_only = self.tool_is_read_only(name).unwrap_or(false);
-        let out = self.p.runtime.call_tool(name.app(), name.tool(), args, ctx, read_only).await;
-        // a tool may have changed state or data (even when it then failed): open views follow
-        self.announce_mutated(name.app()).await;
-        Ok(out?)
+        Ok(self.p.runtime.call_tool(name.app(), name.tool(), args, ctx, read_only).await?)
     }
 
-    /// A client's `rpc(method, args)`: run the app's handler of that name in the app's VM. The call is the
+    /// An app page's `rpc(method, args)`: run the app's handler of that name in the app's VM. The call is the
     /// person's own (the shell sends it from the app's frame, naming the app that frame belongs to), so it may
     /// write; an app that is not running answers with an error.
     pub async fn call_handler(&self, app: &AppId, method: &str, args: Value) -> Result<Value, AppError> {
         self.require_running(app)?;
         let _slot = self.with_active(app, |a| a.calls.take())?.ok_or_else(|| {
             PortError::Rpc {
-                code: vos_domain::ui::protocol::codes::BUSY,
+                code: codes::BUSY,
                 message: format!(
                     "`{app}` already has {MAX_CALLS_PER_APP} calls running: let one finish, or end one, before sending another"
                 ),
@@ -608,15 +541,15 @@ impl AppService {
         Ok(self.p.runtime.call_handler(app, method, args, ctx).await?)
     }
 
-    /// The static files of a running app's client, for its frame. An app without a client has none.
+    /// The static files of a running app's page, for its frame.
     pub fn static_site(&self, app: &AppId) -> Result<Arc<StaticSite>, AppError> {
-        self.with_active(app, |a| a.site.clone())?
-            .ok_or_else(|| PortError::NotFound(format!("app `{app}` has no client")).into())
+        self.with_active(app, |a| a.site.clone())
     }
 
-    /// The app's live sources (views subscribe through this).
-    pub fn live(&self, app: &AppId) -> Result<Arc<LiveSources>, AppError> {
-        self.with_active(app, |a| a.live.clone())
+    /// Whether the app is installed, in any state (a disabled or failed app still has its files).
+    #[must_use]
+    pub fn is_installed(&self, app: &AppId) -> bool {
+        self.apps.lock().contains_key(app)
     }
 
     /// Whether the app's tool is declared `readOnly`; `None` when the app is not running or has no such tool.
@@ -630,70 +563,6 @@ impl AppService {
     /// The tools the app currently publishes.
     pub fn tools(&self, app: &AppId) -> Result<Vec<ToolSpec>, AppError> {
         self.with_active(app, |a| a.tools.clone())
-    }
-
-    /// Two-way write from a client: `baseRev` check, merge or human-wins, then the source's `write` callback.
-    pub async fn write_field(&self, app: &AppId, req: WriteRequest) -> Result<WriteAck, AppError> {
-        let (data, live) = self.with_active(app, |a| (a.data.clone(), a.live.clone()))?;
-        let env = writeback::Env {
-            runtime: self.p.runtime.as_ref(),
-            data: data.as_ref(),
-            live: &live,
-            app,
-            now_ms: self.p.clock.now_unix_ms(),
-        };
-        writeback::write_field(&env, req).await
-    }
-
-    /// Undo: restore a kept revision (`params` select the row, as for [`AppService::write_field`]).
-    pub async fn restore_revision(
-        &self,
-        app: &AppId,
-        revision_id: i64,
-        params: Params,
-        actor: Actor,
-    ) -> Result<WriteAck, AppError> {
-        let (data, live) = self.with_active(app, |a| (a.data.clone(), a.live.clone()))?;
-        let env = writeback::Env {
-            runtime: self.p.runtime.as_ref(),
-            data: data.as_ref(),
-            live: &live,
-            app,
-            now_ms: self.p.clock.now_unix_ms(),
-        };
-        writeback::restore_revision(&env, revision_id, params, actor).await
-    }
-
-    /// A field's kept revisions, newest first.
-    pub async fn revisions(
-        &self,
-        app: &AppId,
-        source: &str,
-        key: &Value,
-        field: &str,
-    ) -> Result<Vec<StoredRevision>, AppError> {
-        let data = self.with_active(app, |a| a.data.clone())?;
-        Ok(data.revisions(source, key, field).await?)
-    }
-
-    /// Delete revisions older than the retention (30 days) from every running app's database. Run at start
-    /// and periodically. Returns how many were removed.
-    pub async fn purge_expired_revisions(&self) -> u64 {
-        let cutoff = Revision::expiry_cutoff(self.p.clock.now_unix_ms());
-        let handles: Vec<(AppId, Arc<dyn AppData>)> = self
-            .apps
-            .lock()
-            .iter()
-            .filter_map(|(id, e)| e.active.as_ref().map(|a| (id.clone(), a.data.clone())))
-            .collect();
-        let mut removed = 0;
-        for (app, data) in handles {
-            match data.purge_revisions(cutoff).await {
-                Ok(n) => removed += n,
-                Err(e) => tracing::warn!(%app, error = %e, "purging expired revisions failed"),
-            }
-        }
-        removed
     }
 
     // ---- inspection ---------------------------------------------------------------------------------
@@ -731,10 +600,6 @@ impl AppService {
     /// Host shutdown: retract every app's tools and unload its VM (data is kept). Nothing is purged or forgotten and clients are not told the apps were uninstalled: they
     /// are coming back with the host.
     pub async fn shutdown(&self) {
-        let ids: Vec<AppId> = self.apps.lock().keys().cloned().collect();
-        for app in &ids {
-            self.announce_stopping(app, "shutting down").await;
-        }
         let entries: Vec<(AppId, Option<Active>)> =
             self.apps.lock().drain().map(|(id, e)| (id, e.active)).collect();
         for (app, active) in entries {
@@ -802,7 +667,7 @@ impl AppService {
     /// unreachable source leaves the defaults).
     async fn package_display(&self, record: &InstalledApp) -> (String, Display) {
         match self.fetch_app_ref(&record.source_url).await {
-            Ok(f) => (f.app_ref.manifest.name.clone(), Display::of(&f.app_ref.manifest, None)),
+            Ok(f) => (f.app_ref.manifest.name.clone(), Display::of(&f.app_ref.manifest)),
             Err(_) => (record.id.to_string(), Display::default()),
         }
     }
@@ -893,42 +758,37 @@ impl AppService {
         Ok((active, Approval::of(&fetched)))
     }
 
-    /// Fetch and verify the package, open the database, run the app, publish its tools and start serving
-    /// its live sources. Nothing is left behind on failure.
+    /// Fetch and verify the package (the backend, the page's files, the migrations), open the database, run the
+    /// backend and publish its tools. Nothing is left behind on failure.
     async fn activate(&self, app_ref: &AppRef, reuse: Option<Arc<dyn AppData>>) -> Result<Active, AppError> {
         let m = &app_ref.manifest;
         m.validate()?;
         let mut budget = PackageBudget::default();
-        let mut package =
-            AppPackage { entry: m.main.clone(), has_client: m.ui.is_some(), ..AppPackage::default() };
-        // an app is built into ONE Luau file: the entry is the only source the runtime is handed
+        let mut package = AppPackage { entry: m.main.clone(), ..AppPackage::default() };
+        // an app's backend is built into ONE Luau file: the entry is the only source the runtime is handed
         package.files.insert(m.main.clone(), self.fetch_verified(app_ref, &m.main, &mut budget).await?);
-        // an app's client is its built static files, verified like the rest and kept for the frame to load
-        let site = match &m.ui {
-            Some(ui) => {
-                let mut files = HashMap::new();
-                for file in &app_ref.files {
-                    let Some(inside) = ui.under_root(&file.path) else { continue };
-                    let bytes = self.fetch_verified(app_ref, &file.path, &mut budget).await?;
-                    let sha256 = format!("{:x}", Sha256::digest(&bytes));
-                    files.insert(inside.to_owned(), StaticFile { bytes: bytes.into(), sha256 });
-                }
-                if !files.contains_key(&ui.entry) {
-                    return Err(DomainError::InvalidManifest(format!(
-                        "ui.entry `{}` is not among the app ref's files under `{}`",
-                        ui.entry, ui.root
-                    ))
-                    .into());
-                }
-                Some(Arc::new(StaticSite {
-                    files,
-                    entry: ui.entry.clone(),
-                    csp: ui.csp.clone(),
-                    permissions: ui.permissions.clone(),
-                }))
-            }
-            None => None,
-        };
+        // an app's page is its built static files, verified like the rest and kept for the frame to load
+        let ui = &m.ui;
+        let mut files = HashMap::new();
+        for file in &app_ref.files {
+            let Some(inside) = ui.under_root(&file.path) else { continue };
+            let bytes = self.fetch_verified(app_ref, &file.path, &mut budget).await?;
+            let sha256 = format!("{:x}", Sha256::digest(&bytes));
+            files.insert(inside.to_owned(), StaticFile { bytes: bytes.into(), sha256 });
+        }
+        if !files.contains_key(&ui.entry) {
+            return Err(DomainError::InvalidManifest(format!(
+                "ui.entry `{}` is not among the app ref's files under `{}`",
+                ui.entry, ui.root
+            ))
+            .into());
+        }
+        let site = Arc::new(StaticSite {
+            files,
+            entry: ui.entry.clone(),
+            csp: ui.csp.clone(),
+            permissions: ui.permissions.clone(),
+        });
         let mut migrations = Vec::new();
         for spec in &m.migrations {
             let sql = String::from_utf8(self.fetch_verified(app_ref, &spec.file, &mut budget).await?)
@@ -942,25 +802,17 @@ impl AppService {
         };
         // a failed load leaves the data in place (it is the user's) and the previous VM, if any, untouched
         let loaded = self.p.runtime.load(&m.id, package, data.clone()).await?;
-        let live = Arc::new(LiveSources::new(data.clone(), loaded.sources));
-        let pump =
-            self.p.background.spawn("live-sources", Box::pin(pump_changes(data.changes(), live.clone())));
         if let Err(e) = self.p.tools.publish(&m.id, loaded.tools.clone()).await {
-            drop(pump);
             self.p.runtime.unload(&m.id).await.ok();
             return Err(e.into());
         }
-        let display = Display::of(m, loaded.decl.as_ref());
-        let name = loaded.decl.map_or_else(|| m.name.clone(), |d| d.name);
         Ok(Active {
             calls: CallSlots::default(),
             data,
-            live,
-            name,
-            display,
+            name: m.name.clone(),
+            display: Display::of(m),
             tools: loaded.tools,
             site,
-            _pump: pump,
         })
     }
 
@@ -969,7 +821,7 @@ impl AppService {
         if let Err(e) = self.p.tools.retract(app).await {
             tracing::warn!(%app, error = %e, "retracting tools failed");
         }
-        drop(active); // stops the pump
+        drop(active);
         if let Err(e) = self.p.runtime.unload(app).await {
             tracing::warn!(%app, error = %e, "unloading app failed");
         }

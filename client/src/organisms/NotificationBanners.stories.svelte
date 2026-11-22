@@ -22,6 +22,7 @@
 
   // Nothing expires while a story is looked at: the clock never fires. The page is in use and on screen.
   const center = new Notifications({
+    bannersOn: () => true,
     wm,
     appOf,
     schedule: () => () => {},
@@ -220,7 +221,7 @@
     await expect(open).not.toHaveBeenCalled()
     await userEvent.click(canvas.getByTestId(/-open$/))
     await waitFor(() => expect(canvas.queryByTestId('notifications')).toBeNull())
-    await expect(open).toHaveBeenCalledWith('calculator', { kind: 'main' })
+    await expect(open).toHaveBeenCalledWith('calculator')
   }}
 />
 

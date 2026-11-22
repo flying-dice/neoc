@@ -5,13 +5,9 @@
 
 mod common;
 
-use common::{agent_ctx, built_package, db, id, user_ctx};
+use common::{agent_ctx, built_project, db, id, user_ctx};
 use serde_json::{json, Value};
-use std::{
-    path::Path,
-    process::Command,
-    sync::{Arc, Once},
-};
+use std::sync::Arc;
 use vos_application::{
     ports::{AppData, AppPackage, AppRuntime, LoadedApp, Notifier, PortResult},
     testing::RecordingShell,
@@ -30,24 +26,8 @@ impl Notifier for Quiet {
     }
 }
 
-/// The app's generated files are not committed: generate them once, as the project's own scripts do.
-fn generate() {
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        let project = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps").join(APP);
-        let run = Command::new("bun")
-            .args(["run", "generate"])
-            .current_dir(&project)
-            .output()
-            .expect("bun is needed to generate the app's router (https://bun.sh)");
-        assert!(run.status.success(), "bun run generate failed:\n{}", String::from_utf8_lossy(&run.stderr));
-    });
-}
-
 fn package() -> AppPackage {
-    generate();
-    let entry = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps").join(APP).join(".app/entry.luau");
-    AppPackage { has_client: true, ..built_package(&entry) }
+    built_project("apps/calculator")
 }
 
 async fn calculator() -> LuaRuntime {

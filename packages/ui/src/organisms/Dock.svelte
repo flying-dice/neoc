@@ -1,8 +1,11 @@
 <!--
-  @organism Dock — iPadOS floating dock with pinned apps and a recents group.
+  @organism Dock — iPadOS floating dock of app icons: the apps the person keeps there (`apps`), then, after a divider,
+  the recent apps that are open but not kept (`recents`), as iPadOS shows them. With nothing in either the Dock is not drawn.
   Molecules: AppIcon. Atoms: Material.
-  Test ids: `testid` on the tray, `${testid}-${app.id}` on each app (pinned and recents), `${testid}-${app.id}-name`
-  on the name capsule.
+  Test ids: `testid` on the tray, `${testid}-${app.id}` on each app (of either section), `${testid}-${app.id}-name`
+  on the name capsule, `${testid}-divider` between the sections (there only when both have apps).
+
+  `onmenu` gives every icon a context menu (see AppIcon): it is called with the app's id and the icon's button.
 
   Width: with `available` (the room the screen leaves it) the Dock stays one row, like iPadOS: when the icons do not fit it
   tightens the gaps, then shrinks the icons down to the 44 px the design language allows for a target, and only then
@@ -20,21 +23,27 @@
 
   interface Props {
     testid: string
+    /** The apps kept in the Dock, in the person's order. */
     apps: DockApp[]
-    /** Shown after a divider, like iPadOS suggested & recent apps. */
+    /** Open apps that are not kept in the Dock, most recent first: drawn after a divider. */
     recents?: DockApp[]
-    iconSize?: number
     /** The width the screen leaves the Dock, in px (the Dock keeps one row inside it); unset, the Dock is as wide as its icons. */
     available?: number
     onselect?: (id: string) => void
+    /** Ask for an icon's context menu. */
+    onmenu?: (id: string, anchor: HTMLElement) => void
   }
 
-  let { testid, apps, recents = [], iconSize = 58, available, onselect }: Props = $props()
+  let { testid, apps, recents = [], available, onselect, onmenu }: Props = $props()
 
+  const ICON = 58
   const GAP = 18
   const TIGHT_GAP = 8
   const MIN_ICON = 44 // the smallest target the design language allows
   const PADDING = 16 // the tray's inset at each side
+  const DIVIDER = 1 // the line between the kept apps and the recent ones
+
+  const divided = $derived(apps.length > 0 && recents.length > 0)
 
   /**
    * Focus brings an icon into view by the browser's own rule, which can leave it half hidden at an edge of a tray that scrolls:
@@ -53,60 +62,69 @@
   /** The icon size and gap that make the tray fit `available`, and whether it still has to scroll at the smallest. */
   const fit = $derived.by(() => {
     const count = apps.length + recents.length
-    if (available === undefined || count === 0) return { size: iconSize, gap: GAP, scrolls: false }
-    const dividers = recents.length > 0 ? 1 : 0
+    if (available === undefined || count === 0) return { size: ICON, gap: GAP, scrolls: false }
     const room = available - 2 * PADDING
+    // the divider is one more thing in the row: its own width and one more gap
+    const line = (gap: number): number => (divided ? DIVIDER + gap : 0)
     const width = (size: number, gap: number): number =>
-      count * size + dividers + (count + dividers - 1) * gap
-    if (width(iconSize, GAP) <= room) return { size: iconSize, gap: GAP, scrolls: false }
-    if (width(iconSize, TIGHT_GAP) <= room) return { size: iconSize, gap: TIGHT_GAP, scrolls: false }
+      count * size + (count - 1) * gap + line(gap)
+    if (width(ICON, GAP) <= room) return { size: ICON, gap: GAP, scrolls: false }
+    if (width(ICON, TIGHT_GAP) <= room) return { size: ICON, gap: TIGHT_GAP, scrolls: false }
     const size = Math.max(
       MIN_ICON,
-      Math.min(iconSize, Math.floor((room - dividers - (count + dividers - 1) * TIGHT_GAP) / count))
+      Math.min(ICON, Math.floor((room - (count - 1) * TIGHT_GAP - line(TIGHT_GAP)) / count))
     )
     return { size, gap: TIGHT_GAP, scrolls: width(size, TIGHT_GAP) > room }
   })
 </script>
 
-{#snippet dockItem(app: DockApp)}
+{#snippet icon(app: DockApp)}
   <span class="item">
     <AppIcon
       testid="{testid}-{app.id}"
       name={app.name}
       icon={app.icon}
       background={app.background}
-      badge={app.badge}
       running={app.running}
       size={fit.size}
-      showLabel={false}
       onclick={() => onselect?.(app.id)}
+      onmenu={onmenu ? (anchor) => onmenu(app.id, anchor) : undefined}
     />
     <span class="name" aria-hidden="true" data-testid="{testid}-{app.id}-name">{app.name}</span>
   </span>
 {/snippet}
 
-<Material thickness="thin" radius="var(--radius-dock)" class="ios-dock">
-  <div
-    class="tray"
-    class:scrolls={fit.scrolls}
-    style:gap="{fit.gap}px"
-    style:max-width={fit.scrolls && available !== undefined ? `${available}px` : undefined}
-    data-scrolls-x={fit.scrolls ? '' : undefined}
-    onfocusin={keepFocusedIconInView}
-    data-testid={testid}
-    data-launcher
-  >
-    {#each apps as app (app.id)}
-      {@render dockItem(app)}
-    {/each}
-    {#if recents.length}
-      <span class="divider" aria-hidden="true"></span>
-      {#each recents as app (app.id)}
-        {@render dockItem(app)}
+{#if apps.length + recents.length > 0}
+  <Material thickness="thin" radius="var(--radius-dock)" class="ios-dock">
+    <div
+      class="tray"
+      class:scrolls={fit.scrolls}
+      style:gap="{fit.gap}px"
+      style:max-width={fit.scrolls && available !== undefined ? `${available}px` : undefined}
+      data-scrolls-x={fit.scrolls ? '' : undefined}
+      onfocusin={keepFocusedIconInView}
+      data-testid={testid}
+      data-launcher
+    >
+      {#each apps as app (app.id)}
+        {@render icon(app)}
       {/each}
-    {/if}
-  </div>
-</Material>
+      {#if divided}
+        <span
+          class="divider"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Recent apps"
+          style:height="{Math.round(fit.size * 0.72)}px"
+          data-testid="{testid}-divider"
+        ></span>
+      {/if}
+      {#each recents as app (app.id)}
+        {@render icon(app)}
+      {/each}
+    </div>
+  </Material>
+{/if}
 
 <style>
   .tray {
@@ -130,6 +148,13 @@
     flex: none;
     display: inline-flex;
   }
+  /* the line between the kept apps and the recent ones: a separator that holds 3:1 on the tray in both themes */
+  .divider {
+    flex: none;
+    width: 1px;
+    border-radius: 1px;
+    background: var(--label-secondary);
+  }
   /* A flat capsule (no shadow, no material) in the neutral pair that holds 4.5:1 on any accent or wallpaper. */
   .name {
     position: absolute;
@@ -151,11 +176,5 @@
   .item:hover .name,
   .item:has(:global(:focus-visible)) .name {
     opacity: 1;
-  }
-  .divider {
-    align-self: stretch;
-    width: 1px;
-    margin: 4px 0;
-    background: var(--separator);
   }
 </style>

@@ -1,4 +1,4 @@
-//! `app.db`: migrations, statements and live sources; `app.kv`: a small durable key-value store.
+//! `app.db`: migrations, statements and transactions; `app.kv`: a small durable key-value store.
 //!
 //! ```lua
 //! local db = app.db
@@ -6,16 +6,10 @@
 //! db:exec("insert into notes(body) values (:b)", { b = "hi" })     -- { changes, last_insert_id }
 //! local rows = db:all("select * from notes where id > :n", { n = 3 })
 //! local row  = db:one("select * from notes where id = :id", { id = 7 })
-//! db:tx(function() db:exec(...); db:exec(...) end)                -- one commit, one consistent view
-//!
-//! -- sources: declared once, parameterised where they are used (a view)
-//! local notes = db:query("select id, title from notes order by title, id", { key = "id", page = 60 })
-//! local note  = db:row("select * from notes where id = :id", { key = "id", rev = "rev", write = fn })
-//! local count = db:scalar("select count(*) from notes")
-//! notes { folder = 1 }   -- a source handle
+//! db:tx(function() db:exec(...); db:exec(...) end)                -- one commit
 //! ```
 
-use super::{check_effects_allowed, host, vm_function};
+use super::{host, vm_function};
 use crate::{
     convert::{json_to_lua, lua_to_json, lua_to_params},
     tx::{answer, OpenTx, Reply},
@@ -25,19 +19,15 @@ use neoc_vm::lua::lifecycle::turn_id;
 use neoc_vm::mlua;
 use neoc_vm::mlua::{Function, Lua, Table, Value as LuaValue};
 use serde_json::{json, Value};
-use vos_application::{
-    data::{ExecOutcome, Params, SqlMigration},
-    live::{Conflict, SourceDef, SourceId, SourceKind, TotalMode},
-};
+use vos_application::data::{ExecOutcome, Params, SqlMigration};
 
 use super::Sh;
 
 impl Shared {
     /// The gate every write passes: the call is not a `readOnly` tool (the host's read-only handle would
-    /// refuse the statement too, this gives the app an error that says why) and it is not a render.
+    /// refuse the statement too, this gives the app an error that says why).
     pub(crate) fn require_write(&self, what: &str) -> mlua::Result<()> {
-        self.writable(what)?;
-        check_effects_allowed(self, what)
+        self.writable(what)
     }
 
     /// Queue a statement on the open transaction, when there is one: a transaction belongs to the turn that opened
@@ -78,16 +68,6 @@ async fn await_reply<T>(sh: &Shared, reply: Reply<T>) -> mlua::Result<T> {
     host(sh, answer(reply)).await
 }
 
-fn opt_string(opts: &Table, key: &str) -> mlua::Result<Option<String>> {
-    match opts.get::<LuaValue>(key)? {
-        LuaValue::Nil => Ok(None),
-        LuaValue::String(s) => Ok(Some(s.to_string_lossy())),
-        other => {
-            Err(mlua::Error::runtime(format!("option `{key}` must be a string, got {}", other.type_name())))
-        }
-    }
-}
-
 pub(super) fn reject_unknown(opts: &Table, allowed: &[&str], what: &str) -> mlua::Result<()> {
     for pair in opts.pairs::<String, LuaValue>() {
         let (k, _) = pair?;
@@ -101,57 +81,9 @@ pub(super) fn reject_unknown(opts: &Table, allowed: &[&str], what: &str) -> mlua
     Ok(())
 }
 
-/// Declare a source: prepare it (so bad SQL fails at load, with the app's file and line), validate it
-/// against what preparing found, and return the factory that makes handles.
-async fn declare(
-    sh: &Sh,
-    lua: &Lua,
-    sql: String,
-    build: impl FnOnce(String) -> SourceKind,
-) -> mlua::Result<Function> {
-    let info = host(sh, sh.db.analyze(sql.clone())).await?;
-    let id = {
-        let sources = sh.sources.lock();
-        format!("s{}", sources.len() + 1)
-    };
-    let def = SourceDef { id: SourceId(id.clone()), kind: build(id.clone()), sql, info };
-    def.validate().map_err(|e| mlua::Error::runtime(format!("source {id}: {e}")))?;
-    let params = def.info.named_params.clone();
-    sh.sources.lock().push(def);
-    source_factory(sh, lua, id, params)
-}
-
-/// The function an app calls to get a handle on a declared source: `notes { folder = 1 }`. Every param the
-/// declaration names must be given, and no other.
-fn source_factory(sh: &Sh, lua: &Lua, id: String, params: Vec<String>) -> mlua::Result<Function> {
-    let sh = sh.clone();
-    lua.create_function(move |lua, given: Option<Table>| {
-        let values = lua.create_table()?;
-        if let Some(given) = &given {
-            for pair in given.pairs::<String, LuaValue>() {
-                let (k, v) = pair?;
-                if !params.contains(&k) {
-                    return Err(mlua::Error::runtime(format!(
-                        "source {id} has no param `{k}` (its params: {})",
-                        if params.is_empty() { "none".to_owned() } else { params.join(", ") }
-                    )));
-                }
-                values.set(k, v)?;
-            }
-        }
-        for p in &params {
-            if values.get::<LuaValue>(p.as_str())?.is_nil() {
-                return Err(mlua::Error::runtime(format!("source {id} needs param `{p}`")));
-            }
-        }
-        crate::view::make_handle(lua, &sh, &id, &values)
-    })
-}
-
 pub(super) fn install(lua: &Lua, sh: &Sh, app: &Table) -> mlua::Result<()> {
     let db = lua.create_table()?;
     install_statements(lua, sh, &db)?;
-    install_sources(lua, sh, &db)?;
     app.set("db", db)?;
     install_kv(lua, sh, app)
 }
@@ -244,7 +176,6 @@ fn install_statements(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
         vm_function(lua, sh, |s, _, (_this, body): (LuaValue, Function)| async move {
             // the call holds the turn here (`Role::Vm`): the checks below, the transaction and the `readOnly`
             // flag `database()` reads belong to it (a task started inside another `db:tx` waited for it)
-            check_effects_allowed(&s, "db:tx")?;
             if s.tx.lock().is_some() {
                 return Err(mlua::Error::runtime("db:tx cannot be nested"));
             }
@@ -301,97 +232,6 @@ impl Drop for TxGuard<'_> {
     fn drop(&mut self) {
         drop(self.release());
     }
-}
-
-/// `db:query`, `db:row`, `db:scalar`: live sources.
-fn install_sources(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
-    // db:query(sql, { key, page, total }) -> factory of `rows` source handles
-    db.set(
-        "query",
-        vm_function(lua, sh, |s, lua, (_this, sql, opts): (LuaValue, String, Table)| async move {
-            reject_unknown(&opts, &["key", "page", "total"], "db:query")?;
-            let key = opt_string(&opts, "key")?
-                .ok_or_else(|| mlua::Error::runtime("db:query needs { key = \"<unique column>\" }"))?;
-            let page = match opts.get::<LuaValue>("page")? {
-                LuaValue::Nil => None,
-                LuaValue::Integer(p) => {
-                    Some(u32::try_from(p).map_err(|_| mlua::Error::runtime("page must be positive"))?)
-                }
-                LuaValue::Number(p) if p.fract() == 0.0 && (0.0..=f64::from(u32::MAX)).contains(&p) =>
-                {
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                    Some(p as u32)
-                }
-                _ => return Err(mlua::Error::runtime("page must be a whole number")),
-            };
-            let total = match opt_string(&opts, "total")?.as_deref() {
-                None | Some("exact") => TotalMode::Exact,
-                Some("estimate") => TotalMode::Estimate,
-                Some("none") => TotalMode::None,
-                Some(other) => {
-                    return Err(mlua::Error::runtime(format!(
-                        "total must be exact, estimate or none, got `{other}`"
-                    )))
-                }
-            };
-            declare(&s, &lua, sql, |_| SourceKind::Rows { key, page, total }).await
-        })?,
-    )?;
-
-    // db:row(sql, { key, rev, write, conflict, writable }) -> factory of `row` source handles
-    db.set(
-        "row",
-        vm_function(lua, sh, |s, lua, (_this, sql, opts): (LuaValue, String, Table)| async move {
-            reject_unknown(&opts, &["key", "rev", "write", "conflict", "writable"], "db:row")?;
-            let key = opt_string(&opts, "key")?
-                .ok_or_else(|| mlua::Error::runtime("db:row needs { key = \"<unique column>\" }"))?;
-            let rev = opt_string(&opts, "rev")?;
-            let conflict = match opt_string(&opts, "conflict")?.as_deref() {
-                None | Some("merge") => Conflict::HumanWins,
-                Some("reject") => Conflict::Reject,
-                Some(other) => {
-                    return Err(mlua::Error::runtime(format!(
-                        "conflict must be \"merge\" or \"reject\", got `{other}`"
-                    )))
-                }
-            };
-            let writable = match opts.get::<LuaValue>("writable")? {
-                LuaValue::Nil => None,
-                v => match lua_to_json(&v)? {
-                    Value::Array(a) => Some(
-                        a.iter()
-                            .map(|f| f.as_str().map(str::to_owned))
-                            .collect::<Option<Vec<_>>>()
-                            .ok_or_else(|| mlua::Error::runtime("writable must be a list of field names"))?,
-                    ),
-                    _ => return Err(mlua::Error::runtime("writable must be a list of field names")),
-                },
-            };
-            let write = match opts.get::<LuaValue>("write")? {
-                LuaValue::Nil => None,
-                LuaValue::Function(f) => Some(f),
-                _ => return Err(mlua::Error::runtime("write must be a function(key, field, value, ctx)")),
-            };
-            let has_write = write.is_some();
-            let factory =
-                declare(&s, &lua, sql, |_| SourceKind::Row { key, rev, writable, has_write, conflict })
-                    .await?;
-            if let Some(write) = write {
-                let id = s.sources.lock().last().map_or_default(|d| d.id.0.clone());
-                s.writers.lock().insert(id, write);
-            }
-            Ok(factory)
-        })?,
-    )?;
-
-    // db:scalar(sql) -> factory of `value` source handles
-    db.set(
-        "scalar",
-        vm_function(lua, sh, |s, lua, (_this, sql): (LuaValue, String)| async move {
-            declare(&s, &lua, sql, |_| SourceKind::Scalar).await
-        })?,
-    )?;
-    Ok(())
 }
 
 /// `app.kv:get(key)`, `:set(key, value)`, `:delete(key)`: JSON values in the app's `_kv` table.

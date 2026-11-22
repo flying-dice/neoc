@@ -250,6 +250,11 @@ export class UiRow extends LitElement {
       ::slotted(ui-text-field) {
         margin-block: -4px;
       }
+      /* a bare field has no box to take back: its text sits on the row's own line, level with the label before it */
+      ::slotted(ui-text-field[variant='bare']) {
+        margin-block: 0;
+        align-self: center;
+      }
       ::slotted(ui-button) {
         margin-block: -5px; /* drawn 34 pt high */
       }

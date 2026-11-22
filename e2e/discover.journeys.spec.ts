@@ -13,9 +13,7 @@ test.describe('Discover journeys', () => {
     await openDesktop(page)
     await expect(windowOf(page, 'discover')).toBeVisible()
     const text = page.getByTestId(content)
-    await expect(text).toContainText('WELCOME TO VOS')
-    await expect(text).toContainText('Your agents, on one desktop.')
-    await expect(text).toContainText('Run research, code, inbox and ops agents side by side')
+    await expect(text).toContainText('Find and install apps')
     await expect(text).toContainText('keep everything on your machine')
     // and the obvious next step is there
     await expect(page.getByTestId('discover-apps')).toContainText('Calculator')
@@ -37,13 +35,17 @@ test.describe('Discover journeys', () => {
     await expect(text).not.toContainText('No apps match')
   })
 
-  test('V4: the sidebar has Discover and Apps, and no Agents; the apps are listed under both', async ({ page }) => {
+  test('V4: the sidebar has Discover and Apps, and no Agents; Apps shows the apps alone', async ({ page }) => {
     await openDesktop(page, { open: ['discover'] })
     await expect(page.getByTestId('discover-section-agents')).toHaveCount(0)
     await expect(page.getByTestId('discover-agents')).toHaveCount(0)
+    // Discover is the front page (the welcome over the apps); Apps is the apps alone
+    await expect(page.getByTestId('discover-hero')).toBeVisible()
     await page.getByTestId('discover-section-apps').click()
+    await expect(page.getByTestId('discover-hero')).toHaveCount(0)
     await expect(page.getByTestId('discover-apps')).toBeVisible()
     await page.getByTestId('discover-section-discover').click()
+    await expect(page.getByTestId('discover-hero')).toBeVisible()
     await expect(page.getByTestId('discover-apps')).toBeVisible()
   })
 

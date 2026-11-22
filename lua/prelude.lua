@@ -7,7 +7,7 @@
 -- `table.unpack`. They are Luau's own and the environment's copy of `table` has them (these definitions were
 -- already skipped, `define` never overwrites), so an app gets the real ones.
 --
--- The host runs this file once per app, before any app chunk or `vos:ui`, and passes the table those chunks
+-- The host runs this file once per app, before any app chunk, and passes the table those chunks
 -- will run in as the chunk's `...` argument (`types/generated/prelude.lua`, copied by `bun run codegen`). It
 -- installs into that table rather than reaching for `getfenv()`, which an app's sandbox does not have. Nothing
 -- is overwritten: a member the environment already has is left alone.

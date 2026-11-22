@@ -5,11 +5,6 @@
 //!
 //! - recorded, checksummed, incremental migrations (`_migrations`);
 //! - named parameters, with the gotcha around rusqlite's JSON params handled (see [`to_sql_value`]);
-//! - **dependency tracking**: the authorizer reports every table a statement reads (joins, sub-selects,
-//!   views) and writes at prepare time;
-//! - **change feed**: `update_hook` buffers, `commit_hook` publishes one batch per commit, `rollback_hook`
-//!   discards; tables written are also recorded from the authorizer, so changes the hook cannot see
-//!   (`WITHOUT ROWID` tables, `REPLACE` conflict deletes, DDL) still reach live queries;
 //! - **interrupt**: a progress handler aborts a statement that runs past its wall-clock budget;
 //! - `ATTACH` is denied;
 //! - **limits**: one value (string, blob, row) is at most [`MAX_VALUE_BYTES`] (`SQLITE_LIMIT_LENGTH`), and a
@@ -20,20 +15,18 @@ mod agents;
 #[cfg(test)]
 mod agents_tests;
 mod devices;
-mod feed;
 #[cfg(test)]
 mod limits_tests;
 mod ports;
 mod tx;
 
-pub use devices::{SqliteDeviceRegistry, SqliteSystemDb};
-pub use feed::SqliteFeed;
+pub use devices::SqliteSystemDb;
 pub use ports::SqliteDataStore;
 pub use tx::SqliteTx;
 
 use parking_lot::Mutex;
 use rusqlite::{
-    hooks::{Action, AuthAction, Authorization},
+    hooks::{AuthAction, Authorization},
     limits::Limit,
     types::ValueRef,
     Connection, Statement,
@@ -42,7 +35,6 @@ use serde::Serialize;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeSet,
     path::Path,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -50,8 +42,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::sync::broadcast;
-use vos_application::data::{Params, QueryInfo};
+use vos_application::data::Params;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
@@ -94,41 +85,19 @@ impl Migration {
     }
 }
 
-/// One committed change: (table, op) pairs. Row ids are included for fine-grained invalidation if wanted.
-#[derive(Clone, Debug, Serialize, PartialEq)]
-pub struct Change {
-    pub table: String,
-    pub op: &'static str,
-    pub rowid: i64,
-}
-
 #[derive(Debug, Serialize, PartialEq)]
 pub struct ExecResult {
     pub changes: usize,
     pub last_insert_rowid: i64,
 }
 
-/// Tables the authorizer saw while a statement was being prepared.
-#[derive(Default)]
-struct Collector {
-    reads: BTreeSet<String>,
-    writes: BTreeSet<String>,
-}
-
-/// Internal tables every app database has (key-value store for `app.kv`, persisted client state).
-const APP_TABLES: &str = "
-CREATE TABLE IF NOT EXISTS _kv(key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS _ui_state(
-    window TEXT NOT NULL, instance TEXT NOT NULL, name TEXT NOT NULL, value TEXT NOT NULL,
-    PRIMARY KEY(window, instance, name)
-);
-CREATE TABLE IF NOT EXISTS _ui_revisions(
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    source TEXT NOT NULL, key TEXT NOT NULL, field TEXT NOT NULL,
-    value TEXT NOT NULL, reason TEXT NOT NULL, replaced_by TEXT NOT NULL, recorded_at INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS _ui_revisions_by_field ON _ui_revisions(source, key, field, id);
-CREATE INDEX IF NOT EXISTS _ui_revisions_by_age ON _ui_revisions(recorded_at);";
+/// The internal table every app database has: the key-value store behind `app.kv`.
+///
+/// A database made by a host that still drew apps' windows itself also has `_ui_state` (client state kept per
+/// window) and `_ui_revisions` (values a person's edit replaced), with their two indexes. Nothing creates, reads or
+/// writes them any more. They are left where they are: no migration drops them, so opening an older database
+/// changes nothing in it, and "delete data" or an uninstall with purge removes them with the file.
+const APP_TABLES: &str = "CREATE TABLE IF NOT EXISTS _kv(key TEXT PRIMARY KEY, value TEXT NOT NULL);";
 
 /// The largest string, blob or row SQLite will build (`SQLITE_LIMIT_LENGTH`; its default is 1 GB, which
 /// `zeroblob(500000000)` would happily allocate).
@@ -145,9 +114,6 @@ struct Shared {
     conn: Mutex<Connection>,
     /// Held across a whole transaction; every other caller waits for it.
     gate: Arc<tokio::sync::Mutex<()>>,
-    tx: broadcast::Sender<Arc<Vec<Change>>>,
-    pending: Arc<Mutex<Vec<Change>>>,
-    collector: Arc<Mutex<Option<Collector>>>,
     /// Interrupt deadline in ms since `base`; 0 = none.
     deadline: Arc<AtomicU64>,
     base: Instant,
@@ -158,8 +124,7 @@ struct Shared {
 
 impl Drop for Shared {
     fn drop(&mut self) {
-        // a transaction nobody ended is rolled back while the hooks are still alive (closing the connection
-        // rolls it back through them)
+        // a transaction nobody ended is rolled back before the connection closes
         let conn = self.conn.get_mut();
         if !conn.is_autocommit() {
             let _ = conn.execute_batch("ROLLBACK");
@@ -204,32 +169,22 @@ impl AppDb {
             conn.execute_batch(APP_TABLES)?;
         }
 
-        let collector: Arc<Mutex<Option<Collector>>> = Arc::default();
         let deadline = Arc::new(AtomicU64::new(0));
         let base = Instant::now();
 
-        // The authorizer sandboxes the app's SQL (no ATTACH: it would escape the per-app file) and, while a
-        // collector is armed, records every table the statement reads and writes.
-        let c = collector.clone();
+        // The authorizer sandboxes the app's SQL: no ATTACH (it would escape the per-app file), and a read-only
+        // handle stays read-only.
         let privileged = Arc::new(AtomicBool::new(false));
         let host_pragma = privileged.clone();
-        conn.authorizer(Some(move |ctx: rusqlite::hooks::AuthContext<'_>| {
-            match ctx.action {
-                AuthAction::Attach { .. } | AuthAction::Detach { .. } => return Authorization::Deny,
-                // a read-only handle must stay read-only: app SQL may not lift `query_only`
-                AuthAction::Pragma { pragma_name, .. }
-                    if pragma_name.eq_ignore_ascii_case("query_only")
-                        && !host_pragma.load(Ordering::SeqCst) =>
-                {
-                    return Authorization::Deny
-                }
-                AuthAction::Read { table_name, .. } => note(&c, table_name, false),
-                AuthAction::Insert { table_name }
-                | AuthAction::Update { table_name, .. }
-                | AuthAction::Delete { table_name } => note(&c, table_name, true),
-                _ => {}
+        conn.authorizer(Some(move |ctx: rusqlite::hooks::AuthContext<'_>| match ctx.action {
+            AuthAction::Attach { .. } | AuthAction::Detach { .. } => Authorization::Deny,
+            // app SQL may not lift `query_only`
+            AuthAction::Pragma { pragma_name, .. }
+                if pragma_name.eq_ignore_ascii_case("query_only") && !host_pragma.load(Ordering::SeqCst) =>
+            {
+                Authorization::Deny
             }
-            Authorization::Allow
+            _ => Authorization::Allow,
         }))?;
 
         // Interrupt a statement that overstays its deadline (a huge or runaway query).
@@ -242,38 +197,11 @@ impl AppDb {
             }),
         )?;
 
-        // Change notifications. update_hook fires mid-transaction, so buffer and publish on commit.
-        let (tx, _) = broadcast::channel(256);
-        let pending: Arc<Mutex<Vec<Change>>> = Arc::default();
-        let p1 = pending.clone();
-        conn.update_hook(Some(move |action: Action, _db: &str, table: &str, rowid: i64| {
-            let op = match action {
-                Action::SQLITE_INSERT => "insert",
-                Action::SQLITE_UPDATE => "update",
-                Action::SQLITE_DELETE => "delete",
-                _ => "unknown",
-            };
-            p1.lock().push(Change { table: table.into(), op, rowid });
-        }))?;
-        let (p2, tx2) = (pending.clone(), tx.clone());
-        conn.commit_hook(Some(move || {
-            let batch = std::mem::take(&mut *p2.lock());
-            if !batch.is_empty() {
-                let _ = tx2.send(Arc::new(batch)); // Err = no subscribers; fine
-            }
-            false // do not veto the commit
-        }))?;
-        let p3 = pending.clone();
-        conn.rollback_hook(Some(move || p3.lock().clear()))?;
-
         Ok(Self {
             read_only: false,
             shared: Arc::new(Shared {
                 conn: Mutex::new(conn),
                 gate: Arc::default(),
-                tx,
-                pending,
-                collector,
                 deadline,
                 base,
                 timeout,
@@ -282,16 +210,12 @@ impl AppDb {
         })
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<Arc<Vec<Change>>> {
-        self.shared.tx.subscribe()
-    }
-
     /// Run a read query with positional params; returns rows as JSON objects. Runs on the blocking pool.
     pub async fn query(&self, sql: String, params: Vec<Value>) -> Result<Vec<Value>, DbError> {
         self.query_with(sql, Params::Positional(params)).await
     }
 
-    /// Run a write statement with positional params. Change notifications are published by the commit hook.
+    /// Run a write statement with positional params.
     pub async fn exec(&self, sql: String, params: Vec<Value>) -> Result<ExecResult, DbError> {
         self.exec_with(sql, Params::Positional(params)).await
     }
@@ -330,32 +254,7 @@ impl AppDb {
         self.blocking(move |s| apply_migrations(&mut s.conn.lock(), &migrations)).await
     }
 
-    /// Prepare `sql` without running it and report what it reads.
-    pub async fn analyze(&self, sql: String) -> Result<QueryInfo, DbError> {
-        self.blocking(move |s| {
-            let conn = s.conn.lock();
-            let (prepared, collected) = prepare_collecting(s, &conn, &sql);
-            let stmt = prepared?;
-            let mut named: Vec<String> = Vec::new();
-            for i in 1..=stmt.parameter_count() {
-                if let Some(name) = stmt.parameter_name(i) {
-                    let name = name.trim_start_matches([':', '@', '$']).to_owned();
-                    if !named.contains(&name) {
-                        named.push(name);
-                    }
-                }
-            }
-            Ok(QueryInfo {
-                tables: collected.reads,
-                columns: stmt.column_names().map(str::to_owned).collect(),
-                named_params: named,
-                read_only: stmt.readonly(),
-            })
-        })
-        .await
-    }
-
-    /// Run several statements atomically (one commit => one notification batch).
+    /// Run several statements atomically (one commit).
     pub async fn transaction(&self, stmts: Vec<(String, Vec<Value>)>) -> Result<(), DbError> {
         let _gate = self.shared.gate.lock().await;
         self.blocking(move |s| {
@@ -375,28 +274,6 @@ impl AppDb {
         let c = self.shared.conn.lock();
         Ok(c.query_row("SELECT COALESCE(MAX(version),0) FROM _migrations", [], |r| r.get(0))?)
     }
-}
-
-fn note(collector: &Mutex<Option<Collector>>, table: &str, write: bool) {
-    if table.starts_with("sqlite_") {
-        return;
-    }
-    if let Some(c) = collector.lock().as_mut() {
-        let set = if write { &mut c.writes } else { &mut c.reads };
-        set.insert(table.to_lowercase());
-    }
-}
-
-/// Prepare with the authorizer's collector armed.
-fn prepare_collecting<'c>(
-    s: &Shared,
-    conn: &'c Connection,
-    sql: &str,
-) -> (rusqlite::Result<Statement<'c>>, Collector) {
-    *s.collector.lock() = Some(Collector::default());
-    let prepared = conn.prepare(sql);
-    let collected = s.collector.lock().take().unwrap_or_default();
-    (prepared, collected)
 }
 
 /// Bind `params` onto a prepared statement.
@@ -533,16 +410,8 @@ pub(crate) fn run_exec(
 ) -> Result<ExecResult, DbError> {
     let conn = s.conn.lock();
     let _read_only = QueryOnly::new(s, &conn, read_only)?;
-    let (prepared, collected) = prepare_collecting(s, &conn, sql);
-    let mut stmt = prepared?;
+    let mut stmt = conn.prepare(sql)?;
     bind(&mut stmt, params)?;
-    // Record the written tables first: the commit that ends this statement then publishes them even when
-    // the update hook cannot see the change (WITHOUT ROWID tables, REPLACE conflicts, DDL).
-    s.pending.lock().extend(collected.writes.into_iter().map(|table| Change {
-        table,
-        op: "write",
-        rowid: 0,
-    }));
     let _armed = Armed::new(s);
     let changes = stmt.raw_execute().map_err(|e| map_run_error(s, e))?;
     Ok(ExecResult { changes, last_insert_rowid: conn.last_insert_rowid() })

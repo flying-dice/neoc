@@ -1,16 +1,16 @@
 //! The `app` capability table: the only way an app reaches the host.
 //!
 //! ```text
-//! app.manifest { ... }            identity, window, icon (validated)
-//! app.window(name, spec)          a window kind (rendered by the view layer)
-//! app.state { ... }               shared state, reads tracked
-//! app.db / app.kv                 data (sources, migrations, exec) and a small key-value store
+//! app.id                          the app's id
+//! app.db / app.kv                 data (migrations, statements, transactions) and a small key-value store
 //! app.files.documents:read(path)  the app's managed files (documents, cache, temp)
 //! app.tools.register { ... }      agent tools (alias: app.tool { ... })
 //! app.t.string { ... } ...        input schema builders
 //! app.notify { ... }              notifications
-//! app.emit(name, data)            an event for the app's open clients
-//! app.shell.deepLink(pattern, f)  deep links
+//! app.emit(name, data)            an event for the app's open pages
+//! app:openWindow(name?, params?)  the app's window, opened or brought forward
+//! app.agents:list()               the agent contacts
+//! app.log(message)                a line in the host's log
 //! ```
 
 mod data;
@@ -19,10 +19,7 @@ mod misc;
 mod schema;
 mod tools;
 
-use crate::{
-    require,
-    vm::{Effect, Shared, ShellEffect},
-};
+use crate::{require, vm::Shared};
 use neoc_vm::lua::lifecycle::{async_function, Role};
 use neoc_vm::mlua;
 use neoc_vm::mlua::{FromLuaMulti, Function, IntoLuaMulti, Lua};
@@ -41,7 +38,6 @@ pub(crate) fn install(lua: &Lua, sh: &Arc<Shared>, env: &mlua::Table) -> mlua::R
     tools::install(lua, sh, &app)?;
     data::install(lua, sh, &app)?;
     files::install(lua, sh, &app)?;
-    app.set("state", crate::state::state_constructor(lua, sh.tracker.clone())?)?;
     *sh.app_table.lock() = Some(app.clone());
     env.set("app", app)?;
     if sh.test_hooks {
@@ -93,25 +89,4 @@ pub(crate) async fn host<T>(
         done = call => done.map_err(mlua::Error::external),
         () = sh.life.closed() => Err(mlua::Error::runtime("the app was unloaded")),
     }
-}
-
-/// Render must be pure: anything that changes the world raises while a render is open.
-pub(crate) fn check_effects_allowed(sh: &Shared, what: &str) -> mlua::Result<()> {
-    if sh.tracker.lock().is_pure() {
-        return Err(mlua::Error::runtime(format!(
-            "{what} is not allowed while rendering: render must be pure"
-        )));
-    }
-    Ok(())
-}
-
-/// Queue a shell declaration. A later declaration of the same kind replaces the earlier one (the shell only
-/// ever needs the last link list), so a loop of them cannot grow the queue.
-pub(crate) fn push_shell(sh: &Shared, effect: ShellEffect) {
-    let mut effects = sh.effects.lock();
-    effects.retain(|queued| match queued {
-        Effect::Shell(old) => std::mem::discriminant(old) != std::mem::discriminant(&effect),
-        Effect::Notify(_) | Effect::OpenWindow { .. } | Effect::Emit { .. } => true,
-    });
-    effects.push(Effect::Shell(effect));
 }

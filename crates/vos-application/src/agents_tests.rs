@@ -4,9 +4,7 @@ use crate::{
     testing::{MemAgentStore, MemRegistry, SeededRandom},
 };
 use std::sync::Arc;
-use vos_domain::{
-    hash_token, Agent, AgentId, AgentRuntime, AppId, ApprovalPolicy, Grants, QualifiedToolName, ToolGrant,
-};
+use vos_domain::{hash_token, Agent, AgentId, AppId, Grants, QualifiedToolName, ToolGrant};
 
 struct Rig {
     store: Arc<MemAgentStore>,
@@ -22,11 +20,7 @@ fn rig() -> Rig {
 }
 
 fn new(name: &str) -> NewAgent {
-    NewAgent {
-        name: name.into(),
-        runtime: AgentRuntime { command: "claude-agent-acp".into(), ..AgentRuntime::default() },
-        ..NewAgent::default()
-    }
+    NewAgent { name: name.into(), ..NewAgent::default() }
 }
 
 fn app(id: &str) -> AppId {
@@ -34,12 +28,11 @@ fn app(id: &str) -> AppId {
 }
 
 #[tokio::test]
-async fn a_new_agent_has_a_slug_id_no_grants_and_the_safe_default_policy() {
+async fn a_new_agent_has_a_slug_id_and_no_grants() {
     let r = rig();
     let a = r.svc.create(new("Code Reviewer")).await.unwrap();
     assert_eq!(a.id.0, "code-reviewer");
     assert_eq!(a.grants, Grants::default(), "deny by default");
-    assert_eq!(a.approval, ApprovalPolicy::AutoReadOnly);
     let b = r.svc.create(new("Code Reviewer")).await.unwrap();
     assert_eq!(b.id.0, "code-reviewer-2", "a taken slug gets a number");
     let dup = NewAgent { id: Some("code-reviewer".into()), ..new("Other") };
@@ -102,24 +95,17 @@ async fn a_persistent_token_is_stored_only_as_a_hash_and_rotating_replaces_it() 
 }
 
 #[tokio::test]
-async fn a_launch_token_names_the_agent_and_dies_with_its_session() {
+async fn deleting_an_agent_revokes_its_token_and_tells_its_sessions() {
     let r = rig();
     let a = r.svc.create(new("Claude")).await.unwrap();
     let b = r.svc.create(new("Other")).await.unwrap();
-    let t1 = r.svc.launch_token(&a.id, "thread-1").unwrap();
-    let t2 = r.svc.launch_token(&a.id, "thread-2").unwrap();
-    let tb = r.svc.launch_token(&b.id, "thread-3").unwrap();
-    assert_eq!(r.svc.authenticate(&t1).unwrap().name, "Claude");
+    let ta = r.svc.rotate_token(&a.id).await.unwrap();
+    let tb = r.svc.rotate_token(&b.id).await.unwrap();
+    assert_eq!(r.svc.authenticate(&ta).unwrap().name, "Claude");
     assert_eq!(r.svc.authenticate(&tb).unwrap().name, "Other");
-    assert_ne!(t1, t2);
-    assert!(r.store.token_hashes().await.unwrap().is_empty(), "launch tokens are never stored");
-
-    r.svc.revoke_launch_tokens("thread-1");
-    assert!(r.svc.authenticate(&t1).is_none());
-    assert!(r.svc.authenticate(&t2).is_some(), "other sessions keep theirs");
 
     r.svc.delete(&a.id).await.unwrap();
-    assert!(r.svc.authenticate(&t2).is_none(), "deleting the agent revokes everything it had");
+    assert!(r.svc.authenticate(&ta).is_none(), "deleting the agent revokes its token");
     assert!(r.svc.authenticate(&tb).is_some());
     assert_eq!(r.tools.visibility_changes(), ["claude"]);
     assert!(matches!(r.svc.delete(&a.id).await, Err(AgentError::NotFound(_))));
@@ -135,17 +121,13 @@ async fn update_changes_only_what_it_is_given() {
             &a.id,
             AgentPatch {
                 role: Some("Pair programmer".into()),
-                approval: Some(ApprovalPolicy::Ask),
                 avatar: Some(Some("sparkles".into())),
                 ..AgentPatch::default()
             },
         )
         .await
         .unwrap();
-    assert_eq!(
-        (u.name.as_str(), u.role.as_str(), u.approval),
-        ("Claude", "Pair programmer", ApprovalPolicy::Ask)
-    );
+    assert_eq!((u.name.as_str(), u.role.as_str()), ("Claude", "Pair programmer"));
     assert_eq!(u.avatar.as_deref(), Some("sparkles"));
     let cleared =
         r.svc.update(&a.id, AgentPatch { avatar: Some(None), ..AgentPatch::default() }).await.unwrap();
@@ -163,9 +145,7 @@ async fn ensure_seeds_an_agent_once_and_never_overwrites_what_the_person_edited(
         name: "Claude".into(),
         avatar: None,
         role: String::new(),
-        runtime: AgentRuntime { command: "x".into(), ..AgentRuntime::default() },
         grants: Grants::default(),
-        approval: ApprovalPolicy::default(),
     };
     r.svc.ensure(seed.clone(), Some("fixed-token")).await.unwrap();
     assert!(r.svc.authenticate("fixed-token").is_some());

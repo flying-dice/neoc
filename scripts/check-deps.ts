@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
 /**
- * Dependency-direction gate for the Rust host's hexagonal layout (CLAUDE.md, "Crate dependency direction").
+ * Dependency-direction gate for the Rust host's hexagonal layout.
  *
  * Reads `cargo metadata` and checks every workspace crate's normal dependencies against an explicit allow-list
  * (and, for the framework crates in FRAMEWORK_HOMES, its build dependencies too; a dev-dependency is exempt):
  *
- *   domain      -> nothing internal; external: serde, serde_json, sha2, thiserror (+ ts-rs, schemars)
- *   application -> domain; external: async-trait, futures-channel, futures-util (its runtime-free `lock::Mutex`), parking_lot, serde_json, sha2, thiserror, tracing
+ *   domain      -> nothing internal; external: serde, serde_json, sha2, thiserror (+ ts-rs)
+ *   application -> domain; external: async-trait, futures-util (its runtime-free `FutureExt::catch_unwind`), parking_lot, serde_json, sha2, thiserror, tracing
  *   adapters    -> application, domain; never each other
  *   lua         -> application, domain, neoc-vm (the one vos crate that may use the Lua VM library)
  *   neoc-vm     -> nothing internal (the Lua VM library; the lua adapter and the `neoc` CLI may depend on it)
@@ -53,8 +53,8 @@ const INTERNAL: Record<string, string[]> = {
 
 /** Crates whose EXTERNAL dependencies are restricted too (the pure core). */
 const CORE_EXTERNAL: Record<string, Set<string>> = {
-  'vos-domain': new Set(['serde', 'serde_json', 'sha2', 'thiserror', 'ts-rs', 'schemars']),
-  'vos-application': new Set(['async-trait', 'futures-channel', 'futures-util', 'parking_lot', 'serde_json', 'sha2', 'thiserror', 'tracing'])
+  'vos-domain': new Set(['serde', 'serde_json', 'sha2', 'thiserror', 'ts-rs']),
+  'vos-application': new Set(['async-trait', 'futures-util', 'parking_lot', 'serde_json', 'sha2', 'thiserror', 'tracing'])
 }
 
 /**

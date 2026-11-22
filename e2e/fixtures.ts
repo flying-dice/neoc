@@ -53,7 +53,13 @@ export interface DesktopOptions {
 /** The shell's debug handle (`window.__vos`, see client boot.ts). */
 interface ShellHandle {
   host: { phase: string; apps: unknown[] }
-  wm: { windows: { id: string }[]; close(id: string): void; open(appId: string): void }
+  wm: {
+    windows: { id: string }[]
+    focused?: { appId: string }
+    close(id: string): void
+    open(appId: string): void
+    showHome(): void
+  }
   apps: Record<string, { minWidth: number; minHeight: number }>
 }
 declare global {
@@ -64,7 +70,8 @@ declare global {
 
 /**
  * Load the shell, paired (the project's storage state), and wait until the desktop has settled. With `open`,
- * the landing window is replaced by exactly these apps' windows, opened as the Dock would.
+ * the landing window is replaced by exactly these apps' windows, opened as an icon would (none, `open: []`, leaves the
+ * Home Screen on show).
  */
 export async function openDesktop(page: Page, options: DesktopOptions = {}): Promise<void> {
   const params = new URLSearchParams()
@@ -87,6 +94,45 @@ export async function openDesktop(page: Page, options: DesktopOptions = {}): Pro
     }, options.open)
     await settle(page)
   }
+}
+
+/**
+ * The Home Screen (the grid of every app on the wallpaper), which is only there while no window is on stage: what is
+ * on stage steps aside into the recent-apps strip, closing nothing (the shell's "Show Home Screen").
+ */
+export async function showHome(page: Page): Promise<void> {
+  await page.evaluate(() => window.__vos.wm.showHome())
+  await page.getByTestId('home').waitFor()
+}
+
+/**
+ * Open an app as a person does when it is not in the Dock: from its icon on the Home Screen (going there first if a
+ * window covers it). While a Split View waits for its second app the icons are in its empty half, and that is where
+ * this clicks. The Dock holds only what is pinned (Discover, Files and Settings unless a test pins more) and the open
+ * apps, so `dock-<appId>` is not a way to open any app.
+ */
+export async function openFromHome(page: Page, appId: string): Promise<void> {
+  const icon = page.getByTestId(`home-${appId}`)
+  if (!(await page.getByTestId('home').isVisible())) await showHome(page)
+  await icon.click()
+  await expect(windowOf(page, appId)).toBeVisible()
+  await settle(page)
+}
+
+/** Whether the shell has this app to open (installed and running): what its icon on the Home Screen follows. */
+export const isRunning = (page: Page, appId: string): Promise<boolean> =>
+  page.evaluate((id) => Object.hasOwn(window.__vos.apps, id), appId)
+
+/** Wait until the shell has (or no longer has) an app: an install or a removal has reached this page. */
+export async function expectRunning(page: Page, appId: string, running = true): Promise<void> {
+  await expect.poll(() => isRunning(page, appId), `${appId} is ${running ? '' : 'not '}running`).toBe(running)
+}
+
+/** Open an icon's context menu (a secondary click) and choose from it. `icon` is `home-<appId>` or `dock-<appId>`. */
+export async function chooseFromAppMenu(page: Page, icon: string, item: 'open' | 'pin' | 'unpin'): Promise<void> {
+  await page.getByTestId(icon).click({ button: 'right' })
+  await page.getByTestId(`app-menu-${item}`).click()
+  await expect(page.getByTestId('app-menu')).toHaveCount(0)
 }
 
 /** Wait for fonts, the network and two animation frames. */

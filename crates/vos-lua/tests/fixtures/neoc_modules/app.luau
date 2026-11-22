@@ -8,14 +8,6 @@ local base64 = require("lib:base64")
 local yaml = require("vnd:serde_yaml")
 local helpers = require("./helpers")
 
-app.manifest {
-  id = "neoc-modules",
-  name = "Neoc modules",
-  icon = "puzzlepiece",
-  tint = "blue",
-  window = { w = 320, h = 240, minW = 320, minH = 240 },
-}
-
 app.tool {
   name = "probe",
   readOnly = true,
@@ -31,3 +23,6 @@ app.tool {
     }
   end,
 }
+
+-- nothing for a page to call: these apps are driven through their tools
+return {}

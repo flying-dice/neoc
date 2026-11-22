@@ -145,6 +145,55 @@ export const Rows: Story = {
     </div>`
 }
 
+/** A form: a field per row, and the section's footer for what is wrong with what was typed. */
+export const FormWithAProblem: Story = {
+  render: () =>
+    html`<div style="width:420px">
+      <ui-list data-testid="form" label="New name">
+        <ui-section
+          data-testid="form-section"
+          footer="Not an IP address, like 192.168.1.10 or fd00::10."
+          footer-tone="error"
+        >
+          <ui-row
+            ><span style="min-width:90px">Name</span
+            ><ui-text-field
+              data-testid="form-name"
+              variant="bare"
+              label="Name"
+              value="nas.home"
+            ></ui-text-field
+          ></ui-row>
+          <ui-row
+            ><span style="min-width:90px">Address</span
+            ><ui-text-field
+              data-testid="form-address"
+              variant="bare"
+              label="Address"
+              value="upstairs"
+              invalid
+            ></ui-text-field
+          ></ui-row>
+        </ui-section>
+      </ui-list>
+    </div>`,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const footer = canvas.getByTestId('form-section').shadowRoot?.querySelector('.footer')
+    // the problem is announced when it appears, and the field it is about says it is invalid
+    await expect(footer?.getAttribute('role')).toBe('alert')
+    await expect(footer?.textContent?.trim()).toBe(
+      'Not an IP address, like 192.168.1.10 or fd00::10.'
+    )
+    await expect(
+      canvas
+        .getByTestId('form-address')
+        .shadowRoot?.querySelector('input')
+        ?.getAttribute('aria-invalid')
+    ).toBe('true')
+  }
+}
+
 export const Navigating: Story = {
   render: () =>
     html`<div style="width:420px">

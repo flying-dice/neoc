@@ -4,17 +4,14 @@
 -->
 <script lang="ts">
   import type { IconName } from '@vos/ui'
-  import { Button, Icon, IconTile, Text } from '@vos/ui/atoms'
-  import { IconButton, ListRow, SearchField } from '@vos/ui/molecules'
+  import { Icon, IconTile, Text } from '@vos/ui/atoms'
+  import { ListRow, SearchField } from '@vos/ui/molecules'
   import { ListSection, NavigationBar } from '@vos/ui/organisms'
   import { ScreenTemplate, SplitViewTemplate } from '@vos/ui/templates'
   import AppListing from '../molecules/AppListing.svelte'
-  import { Alert } from '@vos/ui/molecules'
-  import { TextInput } from '@vos/ui/atoms'
   import { windowManager as wm } from '../lib/windowManager.svelte'
   import { host } from '../lib/host.svelte'
-  import { messageOf } from '../view/errors'
-  import { appPreviewSchema, callParsed } from '../shell/results'
+  import { messageOf } from '../shell/errors'
   import {
     iconOf,
     tintBackground,
@@ -119,46 +116,11 @@
   const remove = (l: Listing): Promise<boolean> =>
     run(l.id, () => host.api.call('app.uninstall', { app: l.id }))
 
-  /**
-   * What an installed app can do, said once for every way to install one (Get, add by URL). There is no
-   * permission model to describe: an app is the person's own code on their own host.
-   */
+  /** What an installed app can do, said before one is installed: an app is the person's own code on their own host. */
   const accessNote =
     'Apps can read and write files, use the network and run processes on this machine.'
 
-  // ── Add by URL: preview first, then say plainly what installing means ──
-  let addUrl = $state('')
-  let preview = $state<AppPreview | null>(null)
-  let previewError = $state<string | null>(null)
-  let previewing = $state(false)
-  let confirming = $state(false)
-
-  async function showPreview(): Promise<void> {
-    const url = addUrl.trim()
-    if (!url || previewing) return
-    previewing = true
-    previewError = null
-    preview = null
-    try {
-      preview = await callParsed(host.api, 'app.preview', { url }, appPreviewSchema)
-    } catch (e) {
-      previewError = messageOf(e)
-    } finally {
-      previewing = false
-    }
-  }
-
-  async function confirmInstall(): Promise<void> {
-    const p = preview
-    if (!p) return
-    if (await run(p.url, () => host.api.call('app.install', { url: p.url, sha256: p.sha256 }))) {
-      preview = null
-      addUrl = ''
-      wm.open(p.id)
-    }
-  }
-
-  /** The sidebar's rows. */
+  /** The sidebar's rows: the front page, or the apps alone. */
   type Section = 'discover' | 'apps'
 
   const sections: { id: Section; label: string; icon: IconName }[] = [
@@ -205,48 +167,38 @@
         />
       {/each}
     </ListSection>
-    <ListSection sidebar>
-      <ListRow testid="discover-account" title="vos User">
-        {#snippet leading()}
-          <IconTile size={34} background="linear-gradient(180deg,#c7c7cc,#8e8e93)">
-            <Icon name="person" size={20} color="#fff" />
-          </IconTile>
-        {/snippet}
-      </ListRow>
-    </ListSection>
   {/snippet}
 
   {#snippet detail()}
     <ScreenTemplate background="plain">
       {#snippet navigationBar()}
-        <NavigationBar testid="discover-nav" title="vos">
-          {#snippet trailing()}
-            <IconButton testid="discover-share" icon="square.and.arrow.up" label="Share" />
-          {/snippet}
-        </NavigationBar>
+        <NavigationBar
+          testid="discover-nav"
+          title={sections.find((s) => s.id === section)?.label ?? 'Discover'}
+        />
       {/snippet}
 
       {#snippet content()}
         <div class="page">
-          <section class="hero">
-            <div class="hero-copy">
-              <Text style="caption1" weight="semibold" color="inherit">WELCOME TO VOS</Text>
-              <h1>Your agents, on one desktop.</h1>
-              <p>
-                Run research, code, inbox and ops agents side by side. Watch them work, step in when
-                they need you, and keep everything on your machine.
-              </p>
-            </div>
-            <div class="hero-art" aria-hidden="true">
-              {#each heroTiles as tile, i (tile.icon)}
-                <span class="float f{i}">
-                  <IconTile size={84 - i * 8} background={tile.background} shadow>
-                    <Icon name={tile.icon} size={44 - i * 4} weight={1.7} color="#fff" />
-                  </IconTile>
-                </span>
-              {/each}
-            </div>
-          </section>
+          {#if section === 'discover'}
+            <section class="hero" data-testid="discover-hero">
+              <div class="hero-copy">
+                <h1>Find and install apps</h1>
+                <p>
+                  Customise your system with the apps you want, and remove them whenever you like.
+                </p>
+              </div>
+              <div class="hero-art" aria-hidden="true">
+                {#each heroTiles as tile, i (tile.icon)}
+                  <span class="float f{i}">
+                    <IconTile size={84 - i * 8} background={tile.background} shadow>
+                      <Icon name={tile.icon} size={44 - i * 4} weight={1.7} color="#fff" />
+                    </IconTile>
+                  </span>
+                {/each}
+              </div>
+            </section>
+          {/if}
 
           <section data-testid="discover-apps">
             <header class="section-head">
@@ -277,7 +229,7 @@
                 <Text style="subheadline" color="secondary">
                   {query
                     ? `No apps match “${query}”.`
-                    : 'No apps are available yet. Add one by URL below, or build the bundled apps with `bun run build:apps`.'}
+                    : 'No apps are available yet. Build the bundled apps with `bun run build:apps`.'}
                 </Text>
               {/each}
             </div>
@@ -298,118 +250,28 @@
                 {problem}
               </p>
             {/each}
+          </section>
 
-            <form
-              class="add"
-              data-testid="discover-add"
-              onsubmit={(e) => {
-                e.preventDefault()
-                void showPreview()
-              }}
-            >
-              <Text style="subheadline" weight="semibold" as="h3">Add an app by URL</Text>
-              <Text style="footnote" color="secondary" as="p"
-                >Paste the address of an app ref (https:// or file://). You will see what it is
-                before anything is installed.</Text
-              >
-              <div class="add-row">
-                <span class="url-box">
-                  <TextInput
-                    testid="discover-add-url"
-                    bind:value={addUrl}
-                    placeholder="https://example.org/apps/notes/app-ref.json"
-                    aria-label="App URL"
-                    autocomplete="off"
-                    spellcheck={false}
-                  />
-                </span>
-                <Button
-                  testid="discover-add-preview"
-                  type="submit"
-                  size="small"
-                  capsule
-                  hit
-                  disabled={!addUrl.trim() || previewing}
-                  >{previewing ? 'Looking…' : 'Preview'}</Button
-                >
-              </div>
-              {#if previewError}
-                <p class="store-error" role="alert" data-testid="discover-add-error">
-                  {previewError}
-                </p>
-              {/if}
-              {#if preview}
-                <div class="preview" data-testid="discover-add-preview-card">
-                  <IconTile size={56} background={tintBackground(preview.tint)} shadow>
-                    <Icon name={iconOf(preview.icon)} size={30} weight={1.8} color="#fff" />
-                  </IconTile>
-                  <div class="preview-meta">
-                    <Text style="headline">{preview.name}</Text>
-                    <Text style="caption1" color="secondary"
-                      >Version {preview.version} · from {preview.source}</Text
-                    >
-                    {#if preview.description}
-                      <Text style="footnote">{preview.description}</Text>
-                    {/if}
-                    {#if preview.installed}
-                      <Text style="caption1" color="secondary"
-                        >Already installed (version {preview.installed.version}).</Text
-                      >
-                    {/if}
-                    <span class="preview-actions">
-                      <Button
-                        testid="discover-add-install"
-                        size="small"
-                        capsule
-                        hit
-                        disabled={!!preview.installed || !!busy[preview.url]}
-                        onclick={() => (confirming = true)}>Install…</Button
-                      >
-                      <Button
-                        testid="discover-add-cancel"
-                        variant="plain"
-                        size="small"
-                        hit
-                        onclick={() => (preview = null)}>Cancel</Button
-                      >
-                    </span>
+          {#if section === 'discover'}
+            <hr />
+
+            <section data-testid="discover-information">
+              <Text style="title3" weight="bold" as="h2">Information</Text>
+              <dl class="info">
+                {#each information as [k, v] (k)}
+                  <div>
+                    <dt><Text style="caption1" color="secondary">{k}</Text></dt>
+                    <dd><Text style="footnote">{v}</Text></dd>
                   </div>
-                </div>
-              {/if}
-            </form>
-          </section>
-
-          <hr />
-
-          <section>
-            <Text style="title3" weight="bold" as="h2">Information</Text>
-            <dl class="info">
-              {#each information as [k, v] (k)}
-                <div>
-                  <dt><Text style="caption1" color="secondary">{k}</Text></dt>
-                  <dd><Text style="footnote">{v}</Text></dd>
-                </div>
-              {/each}
-            </dl>
-          </section>
+                {/each}
+              </dl>
+            </section>
+          {/if}
         </div>
       {/snippet}
     </ScreenTemplate>
   {/snippet}
 </SplitViewTemplate>
-
-{#if preview}
-  <Alert
-    testid="discover-install-confirm"
-    bind:open={confirming}
-    title="Install {preview.name}?"
-    message="{preview.name} will run on this host, not in your browser, and the tools it provides will be available to your agents. {accessNote} Only install apps you trust."
-    actions={[
-      { label: 'Cancel', style: 'cancel' },
-      { label: 'Install', preferred: true, onclick: () => void confirmInstall() }
-    ]}
-  />
-{/if}
 
 <style>
   .page {
@@ -494,57 +356,6 @@
     margin: 0 0 12px;
     font: var(--type-footnote);
     color: var(--ios-red);
-  }
-  .add {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin-top: 22px;
-    padding: 16px;
-    border-radius: var(--radius-lg);
-    background: var(--bg-grouped-elevated, var(--bg-elevated));
-    border: var(--hairline) solid var(--separator);
-  }
-  .add :global(h3),
-  .add :global(p) {
-    margin: 0;
-  }
-  .add-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .url-box {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    min-height: 36px;
-    padding: 0 10px;
-    border-radius: var(--radius-md);
-    background: var(--fill-tertiary, var(--bg-grouped));
-    border: var(--hairline) solid var(--separator);
-  }
-  .url-box:focus-within {
-    outline: 3px solid var(--focus-ring);
-    outline-offset: 1px;
-  }
-  .preview {
-    display: flex;
-    gap: 12px;
-    align-items: flex-start;
-    padding-top: 6px;
-  }
-  .preview-meta {
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .preview-actions {
-    display: flex;
-    gap: 4px;
-    margin-top: 6px;
   }
   .section-head {
     display: flex;

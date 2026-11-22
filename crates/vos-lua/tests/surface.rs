@@ -1,7 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
-//! The app API an app gets is the one `types/generated/vos.d.luau` declares: every key of the live `app`,
-//! `app.shell` and window context (`w`) tables is declared, and every declared key is there, so a call that
-//! type-checks and then fails (declared, missing) or works unseen by the checker (present, undeclared) fails here.
+//! The app API an app gets is the one `types/generated/vos.d.luau` declares: every key of the live `app` table and
+//! of the tables under it (`app.db`, `app.kv`, `app.files`, `app.agents`, `app.tools`, `app.t`) is
+//! declared, and every declared key is there, so a call that type-checks and then fails (declared, missing) or works
+//! unseen by the checker (present, undeclared) fails here.
 
 mod common;
 
@@ -73,10 +74,19 @@ fn assert_same(what: &str, live: &BTreeSet<String>, declared: &BTreeSet<String>)
     );
 }
 
-/// An app with one open window; its tool lists the keys of `app`, `app.shell` and that window's `w`.
+/// The tables of the app API and the type each is declared as.
+const TABLES: [(&str, &str); 7] = [
+    ("app", "vos_AppApi"),
+    ("db", "vos_Db"),
+    ("kv", "vos_KvApi"),
+    ("files", "vos_FilesApi"),
+    ("agents", "vos_AgentsApi"),
+    ("tools", "vos_ToolRegistry"),
+    ("t", "vos_SchemaBuilders"),
+];
+
+/// An app whose tool lists the keys of `app` and of every table under it.
 const APP: &str = r#"
-    app.manifest { id = "probe", name = "Probe", icon = "gear" }
-    app.window("main", { render = function(w) return { type = "Stack", key = "n" } end })
     local function keys(t)
       local out = {}
       for k in pairs(t) do
@@ -85,21 +95,32 @@ const APP: &str = r#"
       return out
     end
     app.tool { name = "keys", readOnly = true, run = function()
-      return { app = keys(app), shell = keys(app.shell), w = keys(app:windows("main")[1]) }
+      return {
+        app = keys(app), db = keys(app.db), kv = keys(app.kv), files = keys(app.files), agents = keys(app.agents),
+        tools = keys(app.tools), t = keys(app.t),
+      }
     end }
+    return {}
 "#;
 
 #[tokio::test]
-async fn the_app_shell_and_window_tables_have_exactly_the_declared_keys() {
+async fn the_app_table_and_the_tables_under_it_have_exactly_the_declared_keys() {
     // the host's config: no test hooks
     let vm = AppVm::load(&id("probe"), package(APP, &[]), db(), VmConfig::default()).await.unwrap();
-    vm.open_view("v1", "main", Map::new(), Map::new()).await.unwrap();
     let live = vm.call_tool("keys", Value::Object(Map::new()), &agent_ctx(0), false).await.unwrap();
 
     let decls = declarations();
-    for (field, ty) in [("app", "vos_AppApi"), ("shell", "vos_Shell"), ("w", "vos_WindowContext")] {
+    for (field, ty) in TABLES {
         assert_same(field, &strings(&live[field]), &declared_keys(&decls, ty));
     }
+    // the whole surface, spelled out: a member that comes back (or one that goes) changes this list
+    let app: Vec<String> = strings(&live["app"]).into_iter().collect();
+    assert_eq!(
+        app,
+        ["agents", "db", "emit", "files", "id", "kv", "log", "notify", "openWindow", "t", "tool", "tools"]
+    );
+    let db: Vec<String> = strings(&live["db"]).into_iter().collect();
+    assert_eq!(db, ["all", "exec", "migrate", "one", "tx"]);
 }
 
 #[test]

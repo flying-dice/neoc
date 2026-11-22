@@ -6,24 +6,24 @@
 //! engine's message handler recursed on it until the stack overflowed, which aborted the process (the PUC Lua 5.1 VM
 //! this host first ran on turned the same recursion into a catchable "C stack overflow" error). On Luau the engine
 //! answers `error in error handling` once, so the value reaches the caller as an ordinary error, whichever path it
-//! takes: the entry chunk, a tool, an event or request handler, a task, a render, a write-back, a transaction body, or a
-//! field read of a table the app handed over (given to `app.tool`, `app.notify`, `app.window`, or returned from a
-//! render).
+//! takes: the entry chunk, a tool, a handler of the app's page, an event or request handler, a task, a transaction
+//! body, or a field read of a table the app handed over (given to `app.tool` or `app.notify`, or returned from a
+//! handler).
 //!
 //! Each case runs in a child process (this test binary again, `poison_case_child`) so that an abort would kill the
 //! child and not the harness; the case passes when the child exits normally after handling the value as an ordinary
 //! error and the app (or the next app) still answers. The child runs like the host does: a runtime built by
 //! the host's recipe (workers with `VM_THREAD_STACK`, the case run on a worker), driven from a plain thread. A case that read
 //! nothing would pass at any engine, so every case here asserts the outcome the raise produces: the engine's `error in
-//! error handling` in the error, the 500 the server answers, the task that ran (it sets a key first), or, for the render
-//! that returns a poisoned table, the host's own "a node has no type".
+//! error handling` in the error, the 500 the server answers, the task that ran (it sets a key first), or, for the
+//! handler that returns a poisoned table, the plain value the host read without running the app's `__index`.
 
 mod common;
 
 use common::{agent_ctx, db, id, load, package, try_load};
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 use std::{process::Command, sync::Arc, time::Duration};
-use vos_application::ports::{AppRuntime, Notifier};
+use vos_application::ports::{AppRuntime, CallContext, Notifier};
 use vos_lua::LuaRuntime;
 
 const CASE: &str = "POISON_CASE";
@@ -83,14 +83,19 @@ impl Notifier for Quiet {
     }
 }
 
-/// The app, through the runtime that views go through (it needs a manifest).
-async fn runtime_with(src: &str) -> LuaRuntime {
-    let src = format!("app.manifest {{ id = 'probe', name = 'Probe', icon = 'gear' }}\n{src}");
-    let src = src.as_str();
+/// The app with these handlers (a Luau table), through the runtime the page's calls go through.
+async fn runtime_with(handlers: &str) -> LuaRuntime {
+    let src = format!("{}\nreturn {handlers}", app(""));
     let shell = Arc::new(vos_application::testing::RecordingShell::default());
     let runtime = LuaRuntime::new(Arc::new(Quiet), shell);
-    runtime.load(&id("probe"), package(src, &[]), db()).await.unwrap();
+    runtime.load(&id("probe"), package(&src, &[]), db()).await.unwrap();
     runtime
+}
+
+/// The person's page calling the handler `name`.
+async fn call_handler(runtime: &LuaRuntime, name: &str) -> vos_application::ports::PortResult<Value> {
+    let ctx = CallContext { actor: vos_domain::Actor::user("You"), now_ms: 0 };
+    runtime.call_handler(&id("probe"), name, json!(null), ctx).await
 }
 
 /// Runs one case and says what it observed. A panic (an assertion) fails the child; an abort kills it.
@@ -152,45 +157,39 @@ async fn run_case(name: &str) -> String {
             }
             panic!("the task never ran")
         }
-        // a window's render raises the value
-        "render_error" => {
+        // a handler the app's page calls raises the value
+        "handler_body" => {
             let runtime =
-                runtime_with(&app("app.window('main', { render = function() error(poison) end })")).await;
-            let e = runtime.open_view(&id("probe"), "v1", "main", Map::new(), Map::new()).await.unwrap_err();
+                runtime_with("{ boom = function() error(poison) end, ok = function() return 'pong' end }")
+                    .await;
+            let e = call_handler(&runtime, "boom").await.unwrap_err();
+            assert_eq!(
+                call_handler(&runtime, "ok").await.unwrap(),
+                json!("pong"),
+                "the app no longer answers"
+            );
             poisoned(&e)
         }
-        // a window's render returns a table whose reads raise the value
-        "render_return_value" => {
+        // a handler returns a table whose reads raise the value
+        "handler_return_value" => {
             let runtime =
-                runtime_with(&app("app.window('main', { render = function() return booby end })")).await;
-            // the host reads `type` of the returned table with `Table::get`, which runs `__index`, which raises the poison;
-            // the host turns any failure of that read into "a node has no type" and refuses the render: an ordinary
-            // error, and the poison itself is not in it
-            let e = runtime.open_view(&id("probe"), "v1", "main", Map::new(), Map::new()).await.unwrap_err();
-            let text = e.to_string();
-            assert!(text.contains("a node has no type"), "{text}");
-            text
+                runtime_with("{ boom = function() return booby end, ok = function() return 'pong' end }")
+                    .await;
+            // the host reads what a handler returned raw (no `__index`, no `__pairs`): the booby trap is an empty
+            // table to it, so the call answers with one and the poison is never raised
+            let out = call_handler(&runtime, "boom").await.unwrap();
+            assert!(out == json!([]) || out == json!({}), "{out}");
+            assert_eq!(
+                call_handler(&runtime, "ok").await.unwrap(),
+                json!("pong"),
+                "the app no longer answers"
+            );
+            out.to_string()
         }
         // a table handed to `app.notify` raises the value when the host reads a field of it
         "notify_spec" => {
             failing_tool("app.tool { name = 'n', run = function() app.notify(booby) return 'ok' end }", "n")
                 .await
-        }
-        // a table handed to `app.window` raises the value when the host reads a field of it, at install
-        "window_spec" => match try_load("probe", &app("app.window('main', booby)")).await {
-            Ok(_) => panic!("the app loaded"),
-            Err(e) => poisoned(&e),
-        },
-        // a row source's write-back callback raises the value
-        "write_back" => {
-            let vm = load(&app(
-                "app.db:row('select 1 as id', { key = 'id', write = function() error(poison) end })",
-            ))
-            .await;
-            let source = vos_application::live::SourceId("s1".into());
-            let e = vm.write_row(&source, &json!(1), "body", &json!("x"), &agent_ctx(0)).await.unwrap_err();
-            ping(&vm).await;
-            poisoned(&e)
         }
         // the body of a transaction raises the value
         "tx_body" => {
@@ -275,28 +274,18 @@ fn a_task_raising_the_poison_fails_the_task() {
 }
 
 #[test]
-fn a_render_raising_the_poison_fails_the_render() {
-    survives("render_error");
+fn a_handler_raising_the_poison_fails_the_call() {
+    survives("handler_body");
 }
 
 #[test]
-fn a_render_returning_a_table_that_raises_the_poison_on_a_read() {
-    survives("render_return_value");
+fn a_handler_returning_a_table_that_raises_the_poison_on_a_read() {
+    survives("handler_return_value");
 }
 
 #[test]
 fn a_table_given_to_app_notify_that_raises_the_poison_on_a_field_read_fails_the_call() {
     survives("notify_spec");
-}
-
-#[test]
-fn a_table_given_to_app_window_that_raises_the_poison_on_a_field_read_fails_the_load() {
-    survives("window_spec");
-}
-
-#[test]
-fn a_write_back_raising_the_poison_fails_the_write() {
-    survives("write_back");
 }
 
 #[test]

@@ -5,13 +5,9 @@
 
 mod common;
 
-use common::{built_package, db, id, user_ctx};
+use common::{built_project, db, id, user_ctx};
 use serde_json::{json, Value};
-use std::{
-    path::Path,
-    process::Command,
-    sync::{Arc, Once},
-};
+use std::sync::Arc;
 use vos_application::{
     ports::{AppData, AppRuntime, Notifier, PortResult},
     PortError,
@@ -27,24 +23,8 @@ impl Notifier for Quiet {
     }
 }
 
-/// The fixture's generated files are not committed: generate them once, as the project's own scripts do.
-fn generate() {
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        let project = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../e2e/apps/tasks-svelte");
-        let run = Command::new("bun")
-            .args(["run", "generate"])
-            .current_dir(&project)
-            .output()
-            .expect("bun is needed to generate the fixture's router (https://bun.sh)");
-        assert!(run.status.success(), "bun run generate failed:\n{}", String::from_utf8_lossy(&run.stderr));
-    });
-}
-
 async fn tasks() -> LuaRuntime {
-    generate();
-    let entry = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../e2e/apps/tasks-svelte/.app/entry.luau");
-    let package = vos_application::ports::AppPackage { has_client: true, ..built_package(&entry) };
+    let package = built_project("e2e/apps/tasks-svelte");
     let runtime =
         LuaRuntime::new(Arc::new(Quiet), Arc::new(vos_application::testing::RecordingShell::default()));
     let data: Arc<dyn AppData> = db();

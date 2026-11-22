@@ -3,7 +3,6 @@
   Test ids: `testid` on the group, `${testid}-${segment.value}` on each segment.
 -->
 <script lang="ts" generics="T extends string">
-  import { describe } from '../aria'
   import { moveIndex, nextEnabled } from '../keys'
 
   interface Segment {
@@ -16,24 +15,10 @@
     testid: string
     segments: Segment[]
     value?: T
-    block?: boolean
     label?: string
-    /** Accessible description (read after the name). */
-    'aria-description'?: string
-    disabled?: boolean
-    onchange?: (value: T) => void
   }
 
-  let {
-    testid,
-    segments,
-    value = $bindable(),
-    block = false,
-    label,
-    'aria-description': description,
-    disabled = false,
-    onchange
-  }: Props = $props()
+  let { testid, segments, value = $bindable(), label }: Props = $props()
 
   const index = $derived(Math.max(0, segments.findIndex((s) => s.value === value)))
   const selectedIndex = $derived(segments.findIndex((s) => s.value === value))
@@ -42,14 +27,11 @@
   let group: HTMLElement | undefined = $state()
 
   function select(v: T): void {
-    if (disabled || v === value) return
     value = v
-    onchange?.(v)
   }
 
   /** Arrow keys move the selection (a radio group: focus and selection travel together). */
   function onkeydown(e: KeyboardEvent): void {
-    if (disabled) return
     const from = (e.target as HTMLElement).closest<HTMLElement>('[role="radio"]')
     const current = from ? Number(from.dataset.index) : stop
     const target = moveIndex(segments.length, current, e.key, 'both')
@@ -71,12 +53,9 @@
 <!-- svelte-ignore a11y_interactive_supports_focus (the radios inside are the tab stops) -->
 <div
   class="ios-segmented"
-  class:block
   role="radiogroup"
   data-testid={testid}
   aria-label={label}
-  {...describe(description)}
-  aria-disabled={disabled || undefined}
   bind:this={group}
   {onkeydown}
   style:--count={segments.length}
@@ -91,7 +70,7 @@
       aria-checked={segment.value === value}
       tabindex={i === stop ? 0 : -1}
       data-index={i}
-      disabled={disabled || segment.disabled}
+      disabled={segment.disabled}
       class="segment"
       class:selected={segment.value === value}
       class:hide-divider={i === index || i === index + 1 || i === 0}
@@ -112,10 +91,6 @@
     border-radius: 9px;
     background: var(--fill-tertiary);
     isolation: isolate;
-  }
-  .block {
-    display: grid;
-    width: 100%;
   }
   .thumb {
     position: absolute;

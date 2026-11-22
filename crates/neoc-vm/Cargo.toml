@@ -175,6 +175,24 @@ rusqlite = { version = "0.43", features = ["bundled"] }
 # `idn-email` formats, which silently pass anything without it.
 jsonschema = { version = "0.61", default-features = false, features = ["idna"] }
 
+# The Docker Engine API client behind `vnd:bollard`. Already in the tree through testcontainers (same version, and
+# the features it turns on: `ssl` is rustls over `ring`), so this adds no crate: it only names the dependency.
+bollard = { version = "0.20", features = ["ssl"] }
+
+# The pseudo-terminal layer of WezTerm behind `vnd:portable_pty`: openpty on Unix, ConPTY on Windows, and the spawn
+# of a command with the terminal as its controlling terminal. No features: `serde_support` only serialises its
+# command builder. Its reader, writer and child wait are blocking, so the module runs each on a thread of its own
+# (see the module docs for why not the blocking pool).
+portable-pty = "0.9"
+
+# The operating system's credential store behind `vnd:keyring`. `keyring` (its default `v1` feature) picks the store
+# of the platform and opens it: Keychain Services on macOS, the Credential Manager on Windows, the Secret Service on
+# the other Unixes (over zbus, with RustCrypto for the session: no libdbus and no OpenSSL to link). `keyring-core` is
+# the crate it is built on, named for what `keyring` does not re-export: entries in a given store, `search`, and the
+# mock store the tests (and `NEOC_KEYRING=mock`) use.
+keyring = "4.2"
+keyring-core = "1.1"
+
 # Exposed to Lua as `lib.testcontainers` so scripts (and our integration
 # tests) can spin up disposable backing services without external setup.
 testcontainers-modules = { version = "0.15", features = ["mysql", "postgres"] }

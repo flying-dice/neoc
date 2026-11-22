@@ -4,7 +4,7 @@
 use super::{publish_package, temp, Running};
 
 const LEDGER: &str = r#"
-app.manifest { id = "ledger", name = "Ledger", icon = "gear" }
+-- ledger
 local db = app.db
 local t = app.t
 db:migrate { [1] = "create table entries(id integer primary key, who text not null)" }
@@ -44,6 +44,9 @@ app.tool {
     return { blocked = blocked, count = db:one("select count(*) as n from entries").n }
   end,
 }
+
+-- nothing for a page to call
+return {}
 "#;
 
 /// Install the `ledger` app (see above) into a running host over its service; returns nothing, panics on failure.

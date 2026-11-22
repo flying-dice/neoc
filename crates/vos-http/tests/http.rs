@@ -51,10 +51,10 @@ impl RpcHandler for H {
                 self.0.install_finished.store(true, Ordering::SeqCst);
                 Ok(json!("installed"))
             }
-            // a bug in the host's own code, on the ordered path and on the concurrent one
-            "view.explode" | "app.explode" => panic!("the handler broke"),
-            // the first of a burst is the slowest: unordered handling would answer it last
-            "view.event" | "app.slow" => {
+            // a bug in the host's own code
+            "app.explode" => panic!("the handler broke"),
+            // the first of a burst is the slowest: it is answered last
+            "app.slow" => {
                 let n = params["n"].as_u64().unwrap_or(0);
                 tokio::time::sleep(Duration::from_millis(60 / (n + 1))).await;
                 Ok(json!({"n": n}))
@@ -152,8 +152,8 @@ async fn rpc_bidirectional_requests_and_notifications_on_one_socket() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// A request whose handler panics gets an internal error, and the connection serves on: the next `view.event`
-/// (the ordered task) and the next request after a panicking notification are answered.
+/// A request whose handler panics gets an internal error, and the connection serves on: the next request and the
+/// next request after a panicking notification are answered.
 #[tokio::test]
 async fn a_handler_that_panics_answers_an_internal_error_and_the_connection_serves_on() {
     let dir = std::env::temp_dir().join(format!("static3-{}", std::process::id()));
@@ -162,8 +162,8 @@ async fn a_handler_that_panics_answers_an_internal_error_and_the_connection_serv
     let (mut ws, _) =
         connect_async(req(addr, Some(&format!("http://127.0.0.1:{}", addr.port())))).await.unwrap();
     let send = |m: RpcMessage| serde_json::to_string(&m).unwrap();
-    ws.send(Message::text(send(RpcMessage::request(1, "view.explode", json!({}))))).await.unwrap();
-    ws.send(Message::text(send(RpcMessage::request(2, "view.event", json!({"n": 0}))))).await.unwrap();
+    ws.send(Message::text(send(RpcMessage::request(1, "app.explode", json!({}))))).await.unwrap();
+    ws.send(Message::text(send(RpcMessage::request(2, "app.slow", json!({"n": 0}))))).await.unwrap();
     ws.send(Message::text(send(RpcMessage::request(3, "app.explode", json!({}))))).await.unwrap();
     ws.send(Message::text(send(RpcMessage::notification("explode", json!({}))))).await.unwrap();
     ws.send(Message::text(send(RpcMessage::request(4, "ping", json!(1))))).await.unwrap();
@@ -187,8 +187,8 @@ async fn a_handler_that_panics_answers_an_internal_error_and_the_connection_serv
     }
     let internal =
         |method: &str| Err((-32603, format!("internal error: the host panicked answering `{method}`")));
-    assert_eq!(answered[&1], internal("view.explode"));
-    assert_eq!(answered[&2], Ok(json!({"n": 0})), "the ordered task lived on");
+    assert_eq!(answered[&1], internal("app.explode"));
+    assert_eq!(answered[&2], Ok(json!({"n": 0})), "the next request was answered");
     assert_eq!(answered[&3], internal("app.explode"));
     assert_eq!(answered[&4], Ok(json!({"pong": 1})), "the connection read on after the notification");
     server.abort();
@@ -294,7 +294,7 @@ async fn reqwest_get(addr: std::net::SocketAddr, path: &str) -> String {
 }
 
 #[tokio::test]
-async fn view_requests_are_handled_in_the_order_they_were_sent_and_others_are_not_held_up() {
+async fn requests_run_side_by_side_so_a_slow_one_does_not_hold_up_the_next() {
     let dir = std::env::temp_dir().join(format!("static-order-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("index.html"), "x").unwrap();
@@ -302,29 +302,7 @@ async fn view_requests_are_handled_in_the_order_they_were_sent_and_others_are_no
     let (mut ws, _) =
         connect_async(req(addr, Some(&format!("http://127.0.0.1:{}", addr.port())))).await.unwrap();
     let send = |m: RpcMessage| serde_json::to_string(&m).unwrap();
-    for n in 0..5u64 {
-        ws.send(Message::text(send(RpcMessage::request(
-            i64::try_from(n).unwrap(),
-            "view.event",
-            json!({"n": n}),
-        ))))
-        .await
-        .unwrap();
-    }
-    let mut order = vec![];
-    while order.len() < 5 {
-        let Message::Text(t) =
-            tokio::time::timeout(Duration::from_secs(3), ws.next()).await.unwrap().unwrap().unwrap()
-        else {
-            continue;
-        };
-        if let RpcMessage::Response { result, .. } = serde_json::from_str::<RpcMessage>(&t).unwrap() {
-            order.push(result["n"].as_u64().unwrap());
-        }
-    }
-    assert_eq!(order, [0, 1, 2, 3, 4], "keystrokes must not overtake one another");
-
-    // the same burst of a non-view method is concurrent: the fast ones answer first
+    // a burst whose first request is the slowest: the fast ones answer first
     for n in 0..3u64 {
         ws.send(Message::text(send(RpcMessage::request(
             10 + i64::try_from(n).unwrap(),

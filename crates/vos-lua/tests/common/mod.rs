@@ -3,7 +3,7 @@
 
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, path::Path, process::Command, sync::Arc, time::Duration};
-use vos_application::data::{ExecOutcome, Params, PortResult, QueryInfo, SqlMigration};
+use vos_application::data::{ExecOutcome, Params, PortResult, SqlMigration};
 use vos_application::ports::{AppData, AppPackage, CallContext};
 use vos_domain::{Actor, AppId};
 use vos_lua::{AppVm, VmConfig};
@@ -17,14 +17,22 @@ pub fn id(name: &str) -> AppId {
     AppId::parse(name).unwrap()
 }
 
-/// A package whose entry is `app.lua` plus extra modules.
+/// A package whose entry is `app.lua` plus extra modules. The entry is taken as it is: it must return the app's
+/// handlers itself (see [`backend`]).
 pub fn package(entry: &str, modules: &[(&str, &str)]) -> AppPackage {
     let mut files = BTreeMap::new();
     files.insert("app.lua".to_owned(), entry.as_bytes().to_vec());
     for (path, src) in modules {
         files.insert((*path).to_owned(), src.as_bytes().to_vec());
     }
-    AppPackage { entry: "app.lua".into(), files, ..AppPackage::default() }
+    AppPackage { entry: "app.lua".into(), files }
+}
+
+/// `src` as a whole backend: what it declares (tools, hooks, tasks), then the handlers an entry must return, here
+/// none. The return is on a line of its own after the source, so the line numbers of `src` are its own. For a
+/// source that says nothing about handlers; one that returns its own is loaded with [`try_load_entry`].
+pub fn backend(src: &str) -> String {
+    format!("{src}\nreturn {{}}\n")
 }
 
 /// The config of these tests: the host's, plus the `hook(name, fn)` global `AppVm::emit` calls.
@@ -32,8 +40,14 @@ pub fn config() -> VmConfig {
     VmConfig { test_hooks: true, ..VmConfig::default() }
 }
 
+/// Load `src` followed by `return {}` ([`backend`]): an app with tools or hooks and no handlers.
 pub async fn try_load_with(name: &str, src: &str, db: Arc<dyn AppData>) -> vos_lua::Result<AppVm> {
-    AppVm::load(&id(name), package(src, &[]), db, config()).await
+    AppVm::load(&id(name), package(&backend(src), &[]), db, config()).await
+}
+
+/// Load `src` exactly as it is: an entry that returns its handlers (or shows what happens when it does not).
+pub async fn try_load_entry(name: &str, src: &str) -> vos_lua::Result<AppVm> {
+    AppVm::load(&id(name), package(src, &[]), db(), config()).await
 }
 
 pub async fn try_load(name: &str, src: &str) -> vos_lua::Result<AppVm> {
@@ -100,22 +114,36 @@ fn nonce() -> u64 {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
-/// An app package of the one built file: `entry` is a Luau file (`apps/calculator/app.luau`, a fixture), bundled.
+/// An app package of the one built file: `entry` is a Luau file (an app's generated `.app/entry.luau`), bundled.
 pub fn built_package(entry: &Path) -> AppPackage {
     let files = BTreeMap::from([("app.luau".to_owned(), build_luau(entry))]);
-    AppPackage { entry: "app.luau".into(), files, ..AppPackage::default() }
+    AppPackage { entry: "app.luau".into(), files }
 }
 
-/// The shipped app `apps/<id>` (or, when the repo has none, the codegen example of that name), built.
-pub fn built_app(app: &str) -> AppPackage {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let shipped = manifest.join("../../apps").join(app);
-    let dir = if shipped.join("app.json").exists() {
-        shipped
-    } else {
-        manifest.join("../vos-codegen/tests/fixtures").join(app)
-    };
-    built_package(&dir.join("app.luau"))
+/// The backend of the app project in `dir` (relative to the repository root: `apps/calculator`,
+/// `e2e/apps/tasks-svelte`), built. Its generated files are not committed: they are generated first, once per
+/// project, as the project's own scripts do.
+pub fn built_project(dir: &str) -> AppPackage {
+    use std::sync::Mutex;
+    static GENERATED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let project = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(dir);
+    {
+        let mut generated = GENERATED.lock().unwrap();
+        if !generated.iter().any(|done| done == dir) {
+            let run = Command::new("bun")
+                .args(["run", "generate"])
+                .current_dir(&project)
+                .output()
+                .expect("bun is needed to generate the app's router (https://bun.sh)");
+            assert!(
+                run.status.success(),
+                "bun run generate failed in {dir}:\n{}",
+                String::from_utf8_lossy(&run.stderr)
+            );
+            generated.push(dir.to_owned());
+        }
+    }
+    built_package(&project.join(".app/entry.luau"))
 }
 
 /// The real database, except that a statement whose SQL contains `stall` never finishes (so a test can hold a
@@ -167,46 +195,10 @@ impl AppData for Stalling {
         maybe_stall(&sql).await;
         self.0.exec(sql, params).await
     }
-    async fn analyze(&self, sql: String) -> PortResult<QueryInfo> {
-        self.0.analyze(sql).await
-    }
     async fn begin(&self) -> PortResult<Box<dyn vos_application::data::DataTx>> {
         Ok(Box::new(StallingTx(self.0.begin().await?)))
     }
-    fn changes(&self) -> Box<dyn vos_application::data::ChangeFeed> {
-        self.0.changes()
-    }
     fn read_only(&self) -> Arc<dyn AppData> {
         self.0.read_only()
-    }
-    async fn ui_state(&self, window: &str) -> PortResult<serde_json::Map<String, serde_json::Value>> {
-        self.0.ui_state(window).await
-    }
-    async fn set_ui_state(
-        &self,
-        window: &str,
-        entries: serde_json::Map<String, serde_json::Value>,
-    ) -> PortResult<()> {
-        self.0.set_ui_state(window, entries).await
-    }
-    async fn clear_ui_state(&self) -> PortResult<()> {
-        self.0.clear_ui_state().await
-    }
-    async fn record_revision(&self, revision: vos_domain::Revision) -> PortResult<i64> {
-        self.0.record_revision(revision).await
-    }
-    async fn revision(&self, id: i64) -> PortResult<Option<vos_domain::StoredRevision>> {
-        self.0.revision(id).await
-    }
-    async fn revisions(
-        &self,
-        source: &str,
-        key: &serde_json::Value,
-        field: &str,
-    ) -> PortResult<Vec<vos_domain::StoredRevision>> {
-        self.0.revisions(source, key, field).await
-    }
-    async fn purge_revisions(&self, cutoff_ms: u64) -> PortResult<u64> {
-        self.0.purge_revisions(cutoff_ms).await
     }
 }

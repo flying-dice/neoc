@@ -1,6 +1,6 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
-  import { expect, userEvent, waitFor } from 'storybook/test'
+  import { expect, fn, userEvent, waitFor } from 'storybook/test'
   import Dock from './Dock.svelte'
   import type { DockApp } from '../types'
 
@@ -14,11 +14,17 @@
   const apps: DockApp[] = [
     { id: 'calculator', name: 'Calculator', icon: 'calculator', background: 'linear-gradient(180deg, #ffa733, #ff9500)', running: true },
     { id: 'files', name: 'Files', icon: 'folder', background: 'linear-gradient(180deg, #4da3ff, #0a84ff)' },
-    { id: 'terminal', name: 'Terminal', icon: 'terminal', background: 'linear-gradient(180deg, #4a4a4c, #1c1c1e)', badge: 3 }
-  ]
-  const recents: DockApp[] = [
+    { id: 'terminal', name: 'Terminal', icon: 'terminal', background: 'linear-gradient(180deg, #4a4a4c, #1c1c1e)' },
     { id: 'notes', name: 'Notes', icon: 'doc', background: 'linear-gradient(180deg, #ffe066, #ffcc00)' }
   ]
+
+  /** Open, but not kept in the Dock. */
+  const recents: DockApp[] = [
+    { id: 'notes', name: 'Notes', icon: 'doc', background: 'linear-gradient(180deg, #ffe066, #ffcc00)', running: true },
+    { id: 'agents', name: 'Agents', icon: 'sparkles', background: 'linear-gradient(180deg, #bf5af2, #5e5ce6)', running: true }
+  ]
+  const selected = fn()
+  const asked = fn()
 
   const nameOf = (canvas: { getByTestId: (id: string) => HTMLElement }, id: string): HTMLElement =>
     canvas.getByTestId(`dock-${id}-name`)
@@ -28,7 +34,7 @@
   <div
     style="display:flex;align-items:flex-end;justify-content:center;width:560px;height:200px;padding-bottom:16px;background:linear-gradient(135deg,#6e8efb,#c471ed);border-radius:var(--radius-xl)"
   >
-    <Dock testid="dock" {apps} {recents} />
+    <Dock testid="dock" {apps} />
   </div>
 {/snippet}
 
@@ -43,13 +49,11 @@
     await expect(nameOf(canvas, 'calculator')).toHaveAttribute('aria-hidden', 'true') // the button already names it
     for (const id of ['calculator', 'files', 'terminal', 'notes']) await expect(nameOf(canvas, id)).not.toBeVisible()
 
-    // every icon, pinned or recent, has its name beside it for the eye; it shows on hover and keyboard focus (a real
-    // pointer and real key presses are needed for those: the Dock journey, D7 in e2e/desktop.journeys.spec.ts)
-    for (const app of [...apps, ...recents]) {
+    // every icon has its name beside it for the eye; it shows on hover and keyboard focus (a real pointer and real key
+    // presses are needed for those: the Dock journey, D7 in e2e/desktop.journeys.spec.ts)
+    for (const app of apps) {
       await expect(nameOf(canvas, app.id)).toHaveTextContent(app.name)
-      await expect(canvas.getByTestId(`dock-${app.id}`)).toHaveAccessibleName(
-        app.badge ? `${app.name}, ${app.badge} new` : app.name
-      )
+      await expect(canvas.getByTestId(`dock-${app.id}`)).toHaveAccessibleName(app.name)
     }
   }}
 >
@@ -74,7 +78,86 @@
   {@render wallpaper()}
 </Story>
 
-{#snippet narrow(count: number, withRecents = false)}
+{#snippet divided(available?: number)}
+  <div
+    data-testid="dock-screen"
+    style="display:flex;align-items:flex-end;justify-content:center;width:{available ? available + 24 : 560}px;height:200px;padding-bottom:16px;background:linear-gradient(135deg,#6e8efb,#c471ed);border-radius:var(--radius-xl)"
+  >
+    <Dock testid="dock" apps={apps.slice(0, 3)} {recents} {available} onselect={selected} onmenu={(id) => asked(id)} />
+  </div>
+{/snippet}
+
+<!--
+  The apps kept in the Dock, then a divider, then the recent apps that are open but not kept there. Every icon opens its
+  app and has a context menu; the divider is a separator named for what follows it.
+-->
+<Story
+  name="Pinned and recent apps"
+  asChild
+  parameters={{ controls: { disable: true } }}
+  play={async ({ canvas }) => {
+    selected.mockClear()
+    asked.mockClear()
+    const tray = await canvas.findByTestId('dock')
+    // pinned, the divider, then the recents: in that order across the tray
+    const order = [...tray.querySelectorAll('[data-testid]')]
+      .map((el) => el.getAttribute('data-testid')!)
+      .filter((id) => !id.endsWith('-name'))
+    await expect(order).toEqual(['dock-calculator', 'dock-files', 'dock-terminal', 'dock-divider', 'dock-notes', 'dock-agents'])
+    const divider = canvas.getByTestId('dock-divider')
+    await expect(divider).toHaveAttribute('role', 'separator')
+    await expect(divider).toHaveAccessibleName('Recent apps')
+    await expect(divider.getBoundingClientRect().left).toBeGreaterThan(canvas.getByTestId('dock-terminal').getBoundingClientRect().right)
+    await expect(divider.getBoundingClientRect().right).toBeLessThan(canvas.getByTestId('dock-notes').getBoundingClientRect().left)
+
+    await userEvent.click(canvas.getByTestId('dock-notes'))
+    await expect(selected).toHaveBeenCalledWith('notes')
+    await userEvent.pointer({ keys: '[MouseRight]', target: canvas.getByTestId('dock-files') })
+    await expect(asked).toHaveBeenCalledWith('files')
+    canvas.getByTestId('dock-agents').focus()
+    await userEvent.keyboard('{Shift>}{F10}{/Shift}')
+    await expect(asked).toHaveBeenLastCalledWith('agents')
+  }}
+>
+  {@render divided()}
+</Story>
+
+<!-- A narrow screen: the divider is one more thing in the row, and the row still fits (the gaps tighten, the icons shrink). -->
+<Story
+  name="Pinned and recent apps, narrow"
+  asChild
+  parameters={{ controls: { disable: true } }}
+  play={async ({ canvas }) => {
+    const tray = await canvas.findByTestId('dock')
+    const screen = canvas.getByTestId('dock-screen').getBoundingClientRect()
+    await expect(tray.scrollWidth).toBeLessThanOrEqual(tray.clientWidth + 1)
+    const box = tray.getBoundingClientRect()
+    await expect(box.left).toBeGreaterThanOrEqual(screen.left)
+    await expect(box.right).toBeLessThanOrEqual(screen.right)
+    await expect(canvas.getByTestId('dock-agents').getBoundingClientRect().width).toBeGreaterThanOrEqual(44)
+  }}
+>
+  {@render divided(300)}
+</Story>
+
+<!-- Nothing kept and nothing open: there is no Dock to draw. With only recent apps there is no divider. -->
+<Story
+  name="Only recent apps"
+  asChild
+  parameters={{ controls: { disable: true } }}
+  play={async ({ canvas }) => {
+    await canvas.findByTestId('dock-notes')
+    await expect(canvas.queryByTestId('dock-divider')).toBeNull()
+    await expect(canvas.getByTestId('dock-none').querySelector('[data-testid="dock"]')).toBeNull()
+  }}
+>
+  <div style="display:grid;gap:12px;justify-items:center;width:560px;padding:16px;background:linear-gradient(135deg,#6e8efb,#c471ed);border-radius:var(--radius-xl)">
+    <Dock testid="dock" apps={[]} {recents} />
+    <div data-testid="dock-none"><Dock testid="dock" apps={[]} recents={[]} /></div>
+  </div>
+</Story>
+
+{#snippet narrow(count: number)}
   <div
     data-testid="dock-narrow"
     style="display:flex;align-items:flex-end;justify-content:center;width:360px;height:200px;padding-bottom:12px;background:linear-gradient(135deg,#6e8efb,#c471ed);border-radius:var(--radius-xl)"
@@ -88,7 +171,6 @@
         icon: 'folder',
         background: 'linear-gradient(180deg, #4da3ff, #0a84ff)'
       }))}
-      recents={withRecents ? recents : []}
     />
   </div>
 {/snippet}
@@ -126,7 +208,7 @@
     await expect(tray.scrollWidth).toBeGreaterThan(tray.clientWidth)
     // Tab through every icon: each one that has focus is wholly inside the tray (real key presses: the browser scrolls a focused
     // icon into view by its own rule, which can leave it half hidden at an edge)
-    const icons = ['a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7', 'a8', 'a9', 'notes']
+    const icons = ['a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7', 'a8', 'a9', 'a10']
     await userEvent.tab()
     for (const id of icons) {
       const icon = await canvas.findByTestId(`dock-${id}`)
@@ -140,5 +222,5 @@
     }
   }}
 >
-  {@render narrow(9, true)}
+  {@render narrow(10)}
 </Story>

@@ -1,7 +1,9 @@
 /**
- * Bundling a Luau app with darklua (config: .darklua.json), shared by `build-apps.ts` and `luau-build.ts`.
+ * Bundling a Luau backend with darklua (config: .darklua.json), for `luau-build.ts` (the Rust tests build their fixture
+ * backends with it) and the tests of the pipeline. An app's own build (`packages/vite-plugin`) bundles its backend with the
+ * same darklua and the same config.
  *
- * Apps are authored in Luau (`--!strict`, annotations, the whole language) and run as Luau: darklua bundles an
+ * Backends are authored in Luau (`--!strict`, annotations, the whole language) and run as Luau: darklua bundles an
  * app's relative `require`s into one chunk (darklua resolves `./calc` to `calc.luau`), strips the comments and the
  * type annotations (the host does not use them, and darklua's own bundle prelude carries one). `vos:*` requires and
  * the host's neoc modules (`std:*`, `lib:*`, `vnd:*`) stay as runtime `require` calls (the host provides those
@@ -50,7 +52,7 @@ export function requireDarklua(): string {
   const version = spawnSync(darklua, ['--version'], { encoding: 'utf8' }).stdout.trim()
   if (version !== `darklua ${DARKLUA_VERSION}`) {
     console.error(
-      `${darklua} is "${version}", the build is pinned to darklua ${DARKLUA_VERSION} (its output is committed and checked):\n` +
+      `${darklua} is "${version}", the build is pinned to darklua ${DARKLUA_VERSION} (its output is what the host runs):\n` +
         `  cargo install darklua --version ${DARKLUA_VERSION} --locked --force`
     )
     process.exit(1)

@@ -12,7 +12,7 @@ use tokio_tungstenite::{
 use vos_application::ports::Notifier;
 use vos_domain::{
     protocol::RpcMessage,
-    ui::protocol::{AppNotification, HostNotification},
+    protocol::{AppNotification, HostNotification},
     AppId, Notification,
 };
 use vos_http::{rpc_router, RpcHub};
@@ -32,7 +32,7 @@ async fn start() -> (Arc<RpcHub>, std::net::SocketAddr, tokio::task::JoinHandle<
 /// first frame it gets, so nothing was sent to it before it asked (a replayed notification would come first).
 async fn connect(addr: std::net::SocketAddr) -> Ws {
     let (mut ws, _) = connect_async(format!("ws://{addr}/rpc").into_client_request().unwrap()).await.unwrap();
-    let probe = RpcMessage::request(1, "view.sync", json!([]));
+    let probe = RpcMessage::request(1, "nope", json!([]));
     ws.send(Message::text(serde_json::to_string(&probe).unwrap())).await.unwrap();
     let first = next(&mut ws).await;
     assert!(

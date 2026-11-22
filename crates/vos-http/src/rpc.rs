@@ -26,8 +26,8 @@ use std::{
 use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
 use vos_domain::{
+    limits::MAX_MESSAGE_BYTES,
     protocol::{RpcError, RpcId, RpcMessage},
-    ui::node::limits::MAX_MESSAGE_BYTES,
     Device,
 };
 
@@ -36,7 +36,7 @@ use vos_domain::{
 pub const MAX_IN_FLIGHT: usize = 64;
 
 /// The JSON-RPC server error for a connection over [`MAX_IN_FLIGHT`].
-pub const BUSY: i32 = vos_domain::ui::protocol::codes::BUSY;
+pub const BUSY: i32 = vos_domain::protocol::codes::BUSY;
 
 /// How many bytes may wait to be written to one client. A client whose connection has stalled without closing (a
 /// sleeping tablet, a dead Wi-Fi link) stops taking messages, and everything the host sends it queues here: past this
@@ -46,8 +46,8 @@ pub const BUSY: i32 = vos_domain::ui::protocol::codes::BUSY;
 /// for a client that is not connected.
 ///
 /// The bound is bytes, not a count, and is far above any burst a client that reads will see, so a client that keeps up
-/// is never closed for one. The biggest bursts are opening an app whose view is large (one view tree is at most about
-/// a mebibyte, [`MAX_MESSAGE_BYTES`]) beside a few windows whose live sources refresh at once: a few mebibytes. 32 MiB is ten times that, and small enough for a host on a home server to hold
+/// is never closed for one. The biggest bursts are a handler's large result (a client's own message is at most a
+/// mebibyte, [`MAX_MESSAGE_BYTES`]; a result may be a few) beside the events of several apps: a few mebibytes. 32 MiB is ten times that, and small enough for a host on a home server to hold
 /// for one stalled tablet. A message is taken unless more than this is already waiting, whatever its own size, and it
 /// stops counting when the writer takes it, so a reader is not closed for one message that is big in itself; it is
 /// closed for more than this waiting to be taken (a burst of more than this, sent faster than the writer can take it,
@@ -59,7 +59,7 @@ pub const MAX_QUEUED_BYTES: usize = 32 << 20;
 pub const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The slowest rate at which a message still counts as moving: the time allowed for a message is [`WRITE_TIMEOUT`] plus
-/// its size at this rate, so a large message on a slow link (a 1 MiB view tree at 128 kbit/s takes about a minute) is
+/// its size at this rate, so a large message on a slow link (a 1 MiB result at 128 kbit/s takes about a minute) is
 /// not cut off while it is still going out. A link slower than this for the whole message is as good as stalled.
 pub const MIN_WRITE_BYTES_PER_SEC: u64 = 16 * 1024;
 
@@ -193,7 +193,7 @@ impl RpcPeer {
         self.device.as_ref()
     }
 
-    /// An id of this connection: unique for as long as the host runs, so state keyed by it (views) can never
+    /// An id of this connection: unique for as long as the host runs, so state keyed by it can never
     /// be inherited by a later connection.
     pub fn connection_id(&self) -> u64 {
         self.connection
@@ -299,26 +299,12 @@ async fn serve_socket(socket: WebSocket, handler: Arc<dyn RpcHandler>, device: O
 
     handler.connected(peer.clone()).await;
 
-    // The view protocol is ordered: a person's keystrokes are `view.event`s with increasing `seq`, and the host
-    // drops one that arrives after a later one as a replay. Those requests run one at a time, in arrival
-    // order; everything else (app management, anything that may call back into the client) runs concurrently.
+    // Every request runs on a task of its own, so one that waits (a handler, anything that calls back into the
+    // client) holds up nothing else on the connection.
     let in_flight = Arc::new(Semaphore::new(MAX_IN_FLIGHT));
-    // The concurrent requests that are running, by id: `notifications/cancelled` ends one (see [`CANCELLED`]), and the connection
+    // The requests that can be ended, by id: `notifications/cancelled` ends one (see [`CANCELLED`]), and the connection
     // closing ends them all, because each holds a child of the connection's own token.
     let running: Arc<Mutex<HashMap<String, CancellationToken>>> = Arc::default();
-    let (ordered_tx, mut ordered_rx) = mpsc::unbounded_channel::<(Job, OwnedSemaphorePermit)>();
-    let ordered = {
-        let (h, p) = (handler.clone(), peer.clone());
-        tokio::spawn(async move {
-            while let Some((job, permit)) = ordered_rx.recv().await {
-                let reply = answer(&*h, &p, job).await;
-                drop(permit);
-                if p.out.send(&reply).is_err() {
-                    break;
-                }
-            }
-        })
-    };
 
     loop {
         let frame = tokio::select! {
@@ -345,19 +331,14 @@ async fn serve_socket(socket: WebSocket, handler: Arc<dyn RpcHandler>, device: O
                     let _ = out.send(&RpcMessage::err(Some(id), BUSY, &busy));
                     continue;
                 };
-                let job = (id, method, params);
-                if is_ordered(&job.1) {
-                    let _ = ordered_tx.send((job, permit)); // one at a time, in the order sent
-                } else {
-                    spawn_concurrent(&handler, &peer, &running, job, permit);
-                }
+                spawn_concurrent(&handler, &peer, &running, (id, method, params), permit);
             }
             Ok(RpcMessage::Notification { method, params, .. }) if method == CANCELLED => {
                 cancel_running(&running, &params);
             }
             Ok(RpcMessage::Notification { method, params, .. }) => {
-                // in order, before the next frame is read: `client.state` is FIFO ahead of a later event. A panic
-                // in it is logged and the connection reads on (a notification has no reply to carry an error)
+                // in order, before the next frame is read. A panic in it is logged and the connection reads on (a
+                // notification has no reply to carry an error)
                 let outcome =
                     vos_application::panics::caught(handler.notification(&peer, &method, params)).await;
                 if let Err(message) = outcome {
@@ -382,7 +363,6 @@ async fn serve_socket(socket: WebSocket, handler: Arc<dyn RpcHandler>, device: O
     peer.out.closed.cancel();
     peer.pending.lock().clear(); // wakes every in-flight server->client request with Closed
     handler.disconnected(&peer).await;
-    ordered.abort();
     writer.abort();
 }
 
@@ -413,7 +393,7 @@ async fn pump<S: Sink<Message> + Unpin>(
     out.closed.cancel();
 }
 
-/// Run one concurrent request on its own task: an `app.call` can be ended ([`spawn_request`]); everything else runs to completion
+/// Run one request on its own task: an `app.call` can be ended ([`spawn_request`]); everything else runs to completion
 /// whatever the connection does or says, because an install, an uninstall or any other host request that is dropped half way could
 /// leave memory and the database out of step.
 fn spawn_concurrent(
@@ -472,7 +452,7 @@ fn spawn_request(
 pub const CANCELLED: &str = "notifications/cancelled";
 
 /// MCP's cancellation: `{ requestId, reason? }`. Unknown, finished or malformed ones are ignored (it is a notification: there is
-/// nobody to tell), and a request other than [`CANCELLABLE`] (the view protocol, an install, ...) is not cancellable.
+/// nobody to tell), and a request other than [`CANCELLABLE`] (an install, an uninstall, ...) is not cancellable.
 fn cancel_running(running: &Mutex<HashMap<String, CancellationToken>>, params: &Value) {
     let id = params.get("requestId").and_then(|v| serde_json::from_value::<RpcId>(v.clone()).ok());
     if let Some(token) = id.and_then(|id| running.lock().get(&id_key(&id)).cloned()) {
@@ -488,17 +468,11 @@ fn id_key(id: &RpcId) -> String {
     }
 }
 
-/// Requests that must be handled in the order the client sent them (the view protocol).
-fn is_ordered(method: &str) -> bool {
-    ["view.", "row.", "state.", "source."].iter().any(|p| method.starts_with(p))
-}
-
 /// A request taken off the socket: its id, method and params.
 type Job = (RpcId, String, Value);
 
 /// Answer one request. A panic in the handler answers it with an internal error (`-32603`) instead of ending the
-/// task that runs it: the request gets its reply, and the connection's ordered task goes on serving the next
-/// `view.event` (a window that stopped answering would look alive and not be).
+/// task that runs it: the request gets its reply, and its place among the connection's requests in flight back.
 async fn answer(handler: &dyn RpcHandler, peer: &RpcPeer, (id, method, params): Job) -> RpcMessage {
     match vos_application::panics::caught(handler.request(peer, &method, params)).await {
         Ok(Ok(v)) => RpcMessage::ok(id, v),
@@ -627,7 +601,7 @@ mod tests {
     fn a_message_gets_the_base_time_plus_what_its_size_needs_at_the_slowest_moving_rate() {
         assert_eq!(write_timeout(0), WRITE_TIMEOUT);
         let mebibyte = write_timeout(1 << 20).checked_sub(WRITE_TIMEOUT).unwrap();
-        // 1 MiB at 16 KiB/s is 64 s: a 128 kbit/s link is not cut off in the middle of a view tree
+        // 1 MiB at 16 KiB/s is 64 s: a 128 kbit/s link is not cut off in the middle of a large result
         assert_eq!(mebibyte, Duration::from_secs(64));
     }
 
@@ -665,7 +639,7 @@ mod tests {
         }));
         for _ in 0..3 {
             out.send(&note(MAX_QUEUED_BYTES + 1)).unwrap();
-            // the writer takes it (the connection is reading), as it does between a view tree and what follows it
+            // the writer takes it (the connection is reading), as it does between a large result and what follows it
             let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
             while out.queued.load(Ordering::SeqCst) > 0 {
                 assert!(tokio::time::Instant::now() < deadline, "the writer never took the big message");

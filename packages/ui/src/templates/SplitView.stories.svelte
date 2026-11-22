@@ -3,7 +3,6 @@
   import { expect, waitFor } from 'storybook/test'
   import Text from '../atoms/Text.svelte'
   import ListRow from '../molecules/ListRow.svelte'
-  import List from '../organisms/List.svelte'
   import ListSection from '../organisms/ListSection.svelte'
   import NavigationBar from '../organisms/NavigationBar.svelte'
   import ScreenTemplate from './ScreenTemplate.svelte'
@@ -19,107 +18,108 @@
 
 <script lang="ts">
   let folder = $state('notes')
-  let compact = $state<'sidebar' | 'content' | 'detail'>('sidebar')
-  let refreshed = $state(0)
+  // the collapsed navigation flow: the list first, a row shows its detail, Back returns to the list
+  let browsing = $state(true)
+  let collapsed = $state(false)
 </script>
 
 {#snippet sidebar()}
   <ScreenTemplate>
     {#snippet navigationBar()}<NavigationBar testid="sb-bar" title="Folders" />{/snippet}
     {#snippet content()}
-      <List testid="sb-list" style="sidebar" selection="single" label="Folders">
-        <ListSection>
-          <ListRow testid="sb-notes" title="Notes" icon="doc" role="option" selected={folder === 'notes'} onclick={() => ((folder = 'notes'), (compact = 'content'))} />
-          <ListRow testid="sb-reminders" title="Reminders" icon="checkmark" role="option" selected={folder === 'reminders'} onclick={() => ((folder = 'reminders'), (compact = 'content'))} />
-        </ListSection>
-      </List>
+      <ListSection sidebar>
+        <ListRow testid="sb-notes" title="Notes" icon="doc" selected={folder === 'notes'} onclick={() => (folder = 'notes')} />
+        <ListRow testid="sb-reminders" title="Reminders" icon="checkmark" selected={folder === 'reminders'} onclick={() => (folder = 'reminders')} />
+      </ListSection>
     {/snippet}
-  </ScreenTemplate>
-{/snippet}
-{#snippet content()}
-  <ScreenTemplate background="plain">
-    {#snippet navigationBar()}<NavigationBar testid="ct-bar" title={folder === 'notes' ? 'Notes' : 'Reminders'} backLabel={compact === 'content' ? 'Folders' : undefined} onback={() => (compact = 'sidebar')} />{/snippet}
-    {#snippet content()}<div style="padding:16px"><Text>The {folder} list</Text></div>{/snippet}
   </ScreenTemplate>
 {/snippet}
 {#snippet detail()}
   <ScreenTemplate background="plain">
-    {#snippet navigationBar()}<NavigationBar testid="dt-bar" title="Detail" />{/snippet}
-    {#snippet content()}<div style="padding:16px"><Text>The detail pane</Text></div>{/snippet}
+    {#snippet navigationBar()}<NavigationBar testid="dt-bar" title={folder === 'notes' ? 'Notes' : 'Reminders'} />{/snippet}
+    {#snippet content()}<div style="padding:16px"><Text>The {folder} list</Text></div>{/snippet}
   </ScreenTemplate>
 {/snippet}
 
 <Story
-  name="Three columns"
-  asChild
-  parameters={{ controls: { disable: true } }}
-  play={async ({ canvas }) => {
-    await expect(canvas.getByTestId('split-sidebar')).toBeVisible()
-    await expect(canvas.getByTestId('split-content')).toBeVisible()
-    await expect(canvas.getByTestId('split-detail')).toBeVisible()
-  }}
->
-  <div style="width:1000px;height:360px;border-radius:14px;overflow:hidden">
-    <SplitViewTemplate testid="split" {sidebar} {content} {detail} />
-  </div>
-</Story>
-
-<Story name="Two columns" asChild parameters={{ controls: { disable: true } }}>
-  <div style="width:760px;height:320px;border-radius:14px;overflow:hidden">
-    <SplitViewTemplate testid="split2" {sidebar} detail={content} />
-  </div>
-</Story>
-
-<!-- Narrow three columns: the sidebar is hidden first (`double`), the detail keeps the room. -->
-<Story
-  name="Three columns, narrow window hides the sidebar"
-  asChild
-  parameters={{ controls: { disable: true } }}
-  play={async ({ canvas }) => {
-    await waitFor(() => expect(canvas.queryByTestId('split-narrow-sidebar')).toBeNull())
-    await expect(canvas.getByTestId('split-narrow-content')).toBeVisible()
-  }}
->
-  <div style="width:800px;height:320px;border-radius:14px;overflow:hidden">
-    <SplitViewTemplate testid="split-narrow" {sidebar} {content} {detail} />
-  </div>
-</Story>
-
-<Story
-  name="Collapsed, one column at a time"
+  name="Two columns"
   asChild
   parameters={{ controls: { disable: true } }}
   play={async ({ canvas, userEvent }) => {
-    await waitFor(() => expect(canvas.getByTestId('collapsed-sidebar')).toBeVisible())
-    await waitFor(() => expect(canvas.getByTestId('collapsed-detail')).not.toBeVisible())
     await userEvent.click(canvas.getByTestId('sb-reminders'))
-    await waitFor(() => expect(canvas.getByTestId('collapsed-content')).toBeVisible())
-    await userEvent.click(await canvas.findByRole('button', { name: /Folders/ }))
-    await waitFor(() => expect(canvas.getByTestId('collapsed-sidebar')).toBeVisible())
+    await waitFor(() => expect(canvas.getByText('The reminders list')).toBeVisible())
+    await expect(canvas.getByTestId('sb-reminders')).toHaveAttribute('aria-current', 'true')
+  }}
+>
+  <div style="width:760px;height:320px;border-radius:14px;overflow:hidden">
+    <SplitViewTemplate {sidebar} {detail} />
+  </div>
+</Story>
+
+<!-- A window narrower than 560 px: the detail alone. -->
+<Story
+  name="Collapsed to the detail"
+  asChild
+  parameters={{ controls: { disable: true } }}
+  play={async ({ canvas }) => {
+    await waitFor(() => expect(canvas.queryByTestId('sb-bar')).toBeNull())
+    await expect(canvas.getByText('The notes list')).toBeVisible()
   }}
 >
   <div style="width:420px;height:320px;border-radius:14px;overflow:hidden">
-    <SplitViewTemplate testid="collapsed" collapseAt={700} keepMounted compactColumn={compact} {sidebar} {content} {detail} />
+    <SplitViewTemplate {sidebar} {detail} />
   </div>
 </Story>
 
-<!-- Screen with refresh: the keyboard "Refresh" button appears on focus; the spinner runs until the callback resolves. -->
+<!--
+  Collapsed with `compact`: the sidebar is the list, choosing a row shows the detail with a Back item in its bar
+  (NavigationBar `backLabel` / `onback`), and Back returns to the list.
+-->
 <Story
-  name="Screen, pull to refresh"
+  name="Collapsed, sidebar then detail"
   asChild
   parameters={{ controls: { disable: true } }}
   play={async ({ canvas, userEvent }) => {
-    const key = canvas.getByTestId('screen-refresh')
-    key.focus()
-    await expect(key).toBeVisible()
-    await userEvent.click(key)
-    await waitFor(() => expect(canvas.getByText(/Refreshed 1 time/)).toBeVisible())
+    await waitFor(() => expect(canvas.getByTestId('nav-collapsed')).toHaveTextContent('collapsed'))
+    await expect(canvas.queryByTestId('nav-dt-bar')).toBeNull()
+    await userEvent.click(canvas.getByTestId('nav-reminders'))
+    await waitFor(() => expect(canvas.getByText('The reminders list')).toBeVisible())
+    await expect(canvas.queryByTestId('nav-reminders')).toBeNull()
+    const back = canvas.getByTestId('nav-dt-bar-back')
+    await expect(back).toHaveAccessibleName('Folders')
+    back.focus()
+    await userEvent.keyboard('{Enter}')
+    await waitFor(() => expect(canvas.getByTestId('nav-reminders')).toHaveAttribute('aria-current', 'true'))
+    await expect(canvas.queryByTestId('nav-dt-bar')).toBeNull()
   }}
 >
-  <div style="width:360px;height:300px;border-radius:14px;overflow:hidden">
-    <ScreenTemplate testid="screen" onrefresh={() => new Promise((r) => setTimeout(() => ((refreshed += 1), r(undefined)), 300))}>
-      {#snippet navigationBar()}<NavigationBar testid="rf-bar" title="Feed" large />{/snippet}
-      {#snippet content()}<div style="padding:16px"><Text>Refreshed {refreshed} time{refreshed === 1 ? '' : 's'}</Text></div>{/snippet}
-    </ScreenTemplate>
+  <div style="width:420px;height:320px;border-radius:14px;overflow:hidden">
+    <SplitViewTemplate compact={browsing ? 'sidebar' : 'detail'} bind:collapsed>
+      {#snippet sidebar()}
+        <ScreenTemplate>
+          {#snippet navigationBar()}<NavigationBar testid="nav-sb-bar" title="Folders" />{/snippet}
+          {#snippet content()}
+            <ListSection sidebar>
+              <ListRow testid="nav-notes" title="Notes" icon="doc" selected={folder === 'notes'} onclick={() => ((folder = 'notes'), (browsing = false))} />
+              <ListRow testid="nav-reminders" title="Reminders" icon="checkmark" selected={folder === 'reminders'} onclick={() => ((folder = 'reminders'), (browsing = false))} />
+            </ListSection>
+          {/snippet}
+        </ScreenTemplate>
+      {/snippet}
+      {#snippet detail()}
+        <ScreenTemplate background="plain">
+          {#snippet navigationBar()}
+            <NavigationBar
+              testid="nav-dt-bar"
+              title={folder === 'notes' ? 'Notes' : 'Reminders'}
+              backLabel={collapsed ? 'Folders' : undefined}
+              onback={() => (browsing = true)}
+            />
+          {/snippet}
+          {#snippet content()}<div style="padding:16px"><Text>The {folder} list</Text></div>{/snippet}
+        </ScreenTemplate>
+      {/snippet}
+    </SplitViewTemplate>
   </div>
+  <p data-testid="nav-collapsed" style="font:var(--type-footnote);color:var(--label-secondary)">{collapsed ? 'collapsed' : 'two columns'}</p>
 </Story>

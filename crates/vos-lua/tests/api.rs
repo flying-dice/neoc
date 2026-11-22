@@ -1,78 +1,45 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
-//! The `app` API from Lua: manifest, require, db, kv, sources, tools, state, notify, shell.
+//! The `app` API from Lua: require, db, kv, tools, notify, events, the window.
 
 mod common;
 
-use common::{agent_ctx, db, id, load, package, try_load, user_ctx};
+use common::{agent_ctx, db, id, load, package, try_load};
 use serde_json::{json, Value};
 use std::sync::Arc;
-use vos_application::live::SourceKind;
 use vos_domain::Notification;
-use vos_lua::{AppVm, Effect, ShellEffect, VmConfig, VmError, MAX_QUEUED_NOTIFICATIONS};
+use vos_lua::{AppVm, Effect, VmConfig, VmError, MAX_QUEUED_NOTIFICATIONS};
 
-const MANIFEST: &str = r#"app.manifest { id = "probe", name = "Probe", icon = "gear" }"#;
+/// The first line of every source here, so the line numbers the tests name are the body's plus one.
+const HEADER: &str = "-- probe";
 
 fn app(body: &str) -> String {
-    format!("{MANIFEST}\n{body}")
+    format!("{HEADER}\n{body}")
 }
 
 async fn call(vm: &AppVm, tool: &str, args: Value) -> Result<Value, VmError> {
     vm.call_tool(tool, args, &agent_ctx(1_763_457_120_000), false).await
 }
 
-// ---- app.manifest ---------------------------------------------------------------------------------------
-
-#[tokio::test]
-async fn the_manifest_is_parsed_validated_and_checked_against_the_package() {
-    let vm = load(&app("")).await;
-    let decl = vm.decl().unwrap();
-    assert_eq!((decl.id.as_str(), decl.name.as_str(), decl.icon.as_str()), ("probe", "Probe", "gear"));
-
-    let full = r#"app.manifest { id = "probe", name = "P", icon = "gear", tint = "orange", kit = ">=1.0",
-        window = { w = 340, h = 560, minW = 320, minH = 480 } }"#;
-    let decl = load(full).await.decl().unwrap();
-    assert_eq!(decl.window.unwrap().min_h, 480);
-
-    let fails = |src: &'static str, needle: &'static str| async move {
-        let e = try_load("probe", src).await.err().unwrap().to_string();
-        assert!(e.contains(needle), "wanted `{needle}` in `{e}`");
-        assert!(e.contains("probe/app.lua:1"), "with the line: {e}");
-    };
-    fails(r#"app.manifest { id = "other", name = "P", icon = "gear" }"#, "does not match the package id")
-        .await;
-    fails(r#"app.manifest { id = "probe", name = "P", icon = "gear", colour = "red" }"#, "unknown field")
-        .await;
-    fails(r#"app.manifest { id = "probe", name = "P", icon = "gear", window = { w = 100, h = 100, minW = 100, minH = 100 } }"#, "at least 320x240").await;
-    fails(r#"app.manifest { id = "probe", name = "P", icon = "gear", kit = "1.0" }"#, "kit").await;
-    fails("app.manifest()", "takes a table").await;
-
-    // apps have no permissions: a `permissions` key from before is accepted and ignored
-    let legacy =
-        r#"app.manifest { id = "probe", name = "P", icon = "gear", permissions = { "data", "root" } }"#;
-    assert!(try_load("probe", legacy).await.is_ok());
-
-    let e = try_load("probe", &app(MANIFEST)).await.err().unwrap().to_string();
-    assert!(e.contains("already called"), "{e}");
-}
-
 // ---- require ----------------------------------------------------------------------------------------------
 
 #[tokio::test]
-async fn require_loads_the_two_host_modules_and_caches_them() {
+async fn require_gives_the_app_table_and_one_table_per_library_module() {
     let src = r#"
         local app2 = require("vos:app")
-        local ui = require("vos:ui")
-        local again = require("vos:ui")
-        hook("t", function() return { app = app2 == app, same = ui == again, kit = type(ui.VStack), t = type(ui.each) } end)
+        local json, again = require("lib:json"), require("lib:json")
+        hook("t", function() return { app = app2 == app, same = json == again, t = type(json) } end)
+        return {}
     "#;
-    let host_modules =
-        std::collections::HashMap::from([("ui".to_owned(), vos_lua::UI_MODULE.as_bytes().to_vec())]);
-    let config = VmConfig { host_modules: Arc::new(host_modules), ..common::config() };
-    let vm = AppVm::load(&id("probe"), package(src, &[]), db(), config).await.unwrap();
-    assert_eq!(
-        vm.emit("t", json!(null)).await.unwrap(),
-        json!({"app": true, "same": true, "kit": "function", "t": "function"})
-    );
+    let vm = AppVm::load(&id("probe"), package(src, &[]), db(), common::config()).await.unwrap();
+    assert_eq!(vm.emit("t", json!(null)).await.unwrap(), json!({"app": true, "same": true, "t": "table"}));
+}
+
+/// `vos:app` is the only `vos:` name an app can require: there is no other host module, and no way to register one.
+#[tokio::test]
+async fn the_host_offers_no_vos_module_but_the_app_table() {
+    let e = try_load("probe", "local ui = require('vos:ui')").await.err().unwrap().to_string();
+    assert!(e.contains("unknown host module \"vos:ui\""), "{e}");
+    assert!(e.contains("only \"vos:app\" and the std:, lib: and vnd: modules"), "{e}");
 }
 
 #[tokio::test]
@@ -100,29 +67,6 @@ require('./nope')"
         let src: &'static str = Box::leak(format!("require({spec:?})").into_boxed_str());
         assert!(load_with(src).await.contains("unknown module"), "{spec}");
     }
-}
-
-#[tokio::test]
-async fn a_host_module_that_requires_itself_is_a_cycle_not_a_stack_overflow() {
-    let mut modules = std::collections::HashMap::new();
-    modules.insert("loop".to_owned(), b"return require('vos:loop')".to_vec());
-    let config = VmConfig { host_modules: Arc::new(modules), ..VmConfig::default() };
-    let e = AppVm::load(&id("probe"), package("require('vos:loop')", &[]), db(), config)
-        .await
-        .err()
-        .unwrap()
-        .to_string();
-    assert!(e.contains("cyclic require"), "{e}");
-}
-
-#[tokio::test]
-async fn host_modules_are_registered_by_the_host_and_load_once() {
-    let mut modules = std::collections::HashMap::new();
-    modules.insert("ui".to_owned(), b"local n = (n or 0) return { version = 1 }".to_vec());
-    let cfg = VmConfig { host_modules: Arc::new(modules), ..common::config() };
-    let src = "local ui = require('vos:ui')\nhook('t', function() return ui.version end)";
-    let vm = AppVm::load(&id("probe"), package(src, &[]), db(), cfg).await.unwrap();
-    assert_eq!(vm.emit("t", json!(null)).await.unwrap(), json!(1));
 }
 
 // ---- app.db -----------------------------------------------------------------------------------------------
@@ -241,118 +185,6 @@ async fn params_with_whole_numbers_bind_as_integers() {
     assert_eq!(vm.emit("go", json!(null)).await.unwrap(), json!({"t": "integer", "v": 7, "s": "text"}));
 }
 
-// ---- sources ----------------------------------------------------------------------------------------------
-
-const NOTES_DB: &str = r"
-    local db = app.db
-    db:migrate { [1] = [[
-      create table folders(id integer primary key, name text not null);
-      create table notes(id integer primary key, folder_id integer not null, body text not null default '', rev integer not null default 0);
-      insert into folders(name) values ('Notes');
-    ]] }
-";
-
-#[tokio::test]
-async fn sources_are_prepared_validated_and_listed_with_their_dependencies() {
-    let src = app(&format!(
-        "{NOTES_DB}
-        local folders = db:query([[select f.id, f.name, (select count(*) from notes n where n.folder_id = f.id) as count from folders f order by f.id]], {{ key = 'id' }})
-        local list = db:query([[select id, body from notes where (:folder = 0 or folder_id = :folder) and body like '%' || :q || '%' order by id desc]], {{ key = 'id', page = 60 }})
-        hook('peek', function() return db:one('select body from notes where id = 1').body end)
-        local note = db:row('select id, body, rev from notes where id = :id', {{ key = 'id', rev = 'rev', write = function() end }})
-        local n = db:scalar('select count(*) from notes')
-        hook('handles', function()
-            local h = list {{ folder = 1, q = '' }}
-            return {{ folders = folders {{}}['$source'], list = h['$source'], note = note {{ id = 3 }}['$source'], n = n()['$source'], field = note {{ id = 3 }}.body['$ref'], bound = note {{ id = 3 }}:bind('body')['$ref'], dollar = h['$nothing'] }}
-        end)"
-    ));
-    let vm = load(&src).await;
-    let defs = vm.sources();
-    assert_eq!(defs.iter().map(|d| d.id.0.as_str()).collect::<Vec<_>>(), ["s1", "s2", "s3", "s4"]);
-    assert_eq!(defs[0].info.tables, ["folders".to_owned(), "notes".to_owned()].into(), "a sub-select counts");
-    assert_eq!(defs[1].info.named_params, ["folder", "q"]);
-    assert!(matches!(&defs[1].kind, SourceKind::Rows { key, page: Some(60), .. } if key == "id"));
-    assert!(matches!(&defs[2].kind, SourceKind::Row { rev: Some(r), has_write: true, .. } if r == "rev"));
-    assert!(matches!(defs[3].kind, SourceKind::Scalar));
-    assert_eq!(
-        vm.emit("handles", json!(null)).await.unwrap(),
-        json!({"folders": "s1", "list": "s2", "note": "s3", "n": "s4", "field": "src.s3.body", "bound": "src.s3.body"})
-    );
-}
-
-#[tokio::test]
-async fn bad_sources_fail_at_load_with_the_declaring_line() {
-    let fails = |sources: &'static str, needle: &'static str| async move {
-        let src = app(&format!("{NOTES_DB}\n{sources}"));
-        let e = try_load("probe", &src).await.err().unwrap().to_string();
-        assert!(e.contains(needle), "wanted `{needle}` in `{e}`");
-    };
-    fails("db:query('select * from nope', { key = 'id' })", "no such table").await;
-    fails("db:query('select id from notes order by body', { key = 'id', page = 10 })", "total order").await;
-    fails("db:query('select body from notes', { key = 'id' })", "key column `id`").await;
-    fails("db:query('select id from notes', {})", "needs { key").await;
-    fails("db:query('select id from notes', { key = 'id', pge = 3 })", "unknown option `pge`").await;
-    fails("db:query('delete from notes', { key = 'id' })", "read-only").await;
-    fails("db:row('select id from notes where id = :id', { key = 'id', rev = 'rev' })", "rev column").await;
-    fails("db:scalar('select id, body from notes')", "exactly one column").await;
-    fails("db:query('select id from notes order by id', { key = 'id', total = 'nope' })", "total must be")
-        .await;
-    fails("db:row('select id from notes', { key = 'id', write = 5 })", "write must be a function").await;
-}
-
-#[tokio::test]
-async fn source_handles_check_their_params() {
-    let src = app(&format!(
-        "{NOTES_DB}
-        local note = db:row('select id, body from notes where id = :id', {{ key = 'id' }})
-        hook('ok', function() return note {{ id = 1 }}['$source'] end)
-        hook('missing', function() return note {{}} end)
-        hook('extra', function() return note {{ id = 1, other = 2 }} end)"
-    ));
-    let vm = load(&src).await;
-    assert_eq!(vm.emit("ok", json!(null)).await.unwrap(), json!("s1"));
-    assert!(vm.emit("missing", json!(null)).await.unwrap_err().to_string().contains("needs param `id`"));
-    let e = vm.emit("extra", json!(null)).await.unwrap_err().to_string();
-    assert!(e.contains("has no param `other`") && e.contains("probe/app.lua:"), "{e}");
-}
-
-#[tokio::test]
-async fn the_write_callback_runs_with_key_field_value_and_a_context() {
-    let src = app(&format!(
-        "{NOTES_DB}
-        hook('peek', function() return db:one('select body from notes where id = 1').body end)
-        local note = db:row('select id, body, rev from notes where id = :id', {{ key = 'id', rev = 'rev',
-          write = function(id, field, value, ctx)
-            assert(field == 'body', 'only body is writable')
-            db:exec('update notes set body = :v, rev = rev + 1 where id = :id', {{ v = value .. ' (' .. ctx.actor.name .. ' at ' .. ctx.now .. ')', id = id }})
-          end }})
-        db:exec('insert into notes(folder_id, body) values (1, \\'x\\')')"
-    ));
-    let vm = load(&src).await;
-    let source = vos_application::live::SourceId("s1".into());
-    vm.write_row(&source, &json!(1), "body", &json!("hello"), &user_ctx(1_763_457_120_000)).await.unwrap();
-    let row = db_row(&vm).await;
-    assert_eq!(row, json!("hello (You at 2025-11-18T09:12:00.000Z)"));
-    let e =
-        vm.write_row(&source, &json!(1), "title", &json!("x"), &user_ctx(0)).await.unwrap_err().to_string();
-    assert!(e.contains("only body is writable") && e.contains("probe/app.lua:"), "{e}");
-    let e = vm
-        .write_row(
-            &vos_application::live::SourceId("s9".into()),
-            &json!(1),
-            "body",
-            &json!("x"),
-            &user_ctx(0),
-        )
-        .await;
-    assert!(matches!(e, Err(VmError::NoSuchWriter(_))));
-}
-
-async fn db_row(vm: &AppVm) -> Value {
-    // read through a tool-less path: a temporary hook is not available, so reuse the VM's own database
-    vm.emit("peek", json!(null)).await.unwrap()
-}
-
 // ---- tools ------------------------------------------------------------------------------------------------
 
 const TOOLS: &str = r#"
@@ -450,68 +282,32 @@ async fn a_write_made_by_a_tool_is_visible_to_the_next_read() {
     assert_eq!(call(&vm, "list", json!({})).await.unwrap(), json!([{"body": "milk by Claude"}]));
 }
 
-// ---- app.state --------------------------------------------------------------------------------------------
+// ---- a call from anywhere may write ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn state_reads_are_tracked_and_assignments_mark_fields_dirty() {
+async fn a_call_that_is_not_read_only_may_write_data_notify_and_read() {
     let src = app(r#"
-        local s = app.state { entry = "0", acc = 0, caption = "" }
-        hook("render", function() return s.entry .. "|" .. s.caption end)
-        hook("press", function(d) s.entry = d.digit return s.entry end)
-        hook("noop", function() s.acc = 0 end)
-        hook("render_write", function() return s.entry end)
-        hook("shared", function() return app.state { x = 1 } ~= s end)
-    "#);
-    let vm = load(&src).await;
-    let (out, deps) = vm.emit_tracked("render", json!(null)).await.unwrap();
-    assert_eq!(out, json!("0|"));
-    let keys: Vec<String> = deps.iter().map(|d| d.key.clone()).collect();
-    assert_eq!(keys, ["caption", "entry"], "exactly the fields read");
-    assert!(vm.take_dirty_state().is_empty());
-
-    vm.emit("press", json!({"digit": "7"})).await.unwrap();
-    let dirty = vm.take_dirty_state();
-    assert_eq!(dirty.iter().map(|d| d.key.as_str()).collect::<Vec<_>>(), ["entry"]);
-    assert!(deps.is_superset(&dirty), "a view that read `entry` must re-render");
-    assert!(vm.take_dirty_state().is_empty(), "taken once");
-
-    vm.emit("noop", json!(null)).await.unwrap();
-    assert!(vm.take_dirty_state().is_empty(), "assigning the same value is not a change");
-    assert_eq!(vm.emit("render_write", json!(null)).await.unwrap(), json!("7"));
-    assert_eq!(vm.emit("shared", json!(null)).await.unwrap(), json!(true));
-}
-
-#[tokio::test]
-async fn render_is_pure_state_db_and_effects_raise_while_tracking_a_render() {
-    // `emit_tracked(.., pure)` is the host's render scope; here the handler stands in for render
-    let src = app(r#"
-        local s = app.state { n = 0 }
         app.db:migrate { [1] = "create table t(a)" }
-        hook("bad_state", function() s.n = 1 end)
-        hook("bad_db", function() app.db:exec("insert into t values (1)") end)
-        hook("bad_notify", function() app.notify { title = "x" } end)
-        hook("ok_read", function() return app.db:all("select * from t") end)
+        hook("write", function() app.db:exec("insert into t values (1)") end)
+        hook("notify", function() app.notify { title = "x" } end)
+        hook("read", function() return app.db:all("select * from t") end)
     "#);
     let vm = load(&src).await;
-    // outside a render all of these are fine
-    vm.emit("bad_state", json!(null)).await.unwrap();
-    vm.emit("bad_db", json!(null)).await.unwrap();
-    vm.emit("bad_notify", json!(null)).await.unwrap();
-    assert_eq!(vm.emit("ok_read", json!(null)).await.unwrap(), json!([{"a": 1}]));
+    vm.emit("write", json!(null)).await.unwrap();
+    vm.emit("notify", json!(null)).await.unwrap();
+    assert_eq!(vm.emit("read", json!(null)).await.unwrap(), json!([{"a": 1}]));
 }
 
-// ---- notify and shell ---------------------------------------------------------------------------------------
+// ---- notify, emit and the window ---------------------------------------------------------------------------------------
 
 #[tokio::test]
-async fn notify_and_shell_calls_become_effects_for_the_host() {
+async fn notify_emit_and_open_window_become_effects_for_the_host() {
     let src = r#"
-        app.manifest { id = "probe", name = "Probe", icon = "gear" }
         app.notify { title = "Reminder", body = "Call mum" }
         app:notify { title = "Colon call" }
-        app.shell.deepLink("note/:old", function(params) end)
-        app.shell.deepLink("note/:id", function(params) end)
-        app.window("main", { render = function(w) end })
+        app.emit("notes.changed", { id = 12 })
         app:openWindow("main", { noteId = 12 })
+        return {}
     "#;
     let vm = AppVm::load(&id("probe"), package(src, &[]), db(), VmConfig::default()).await.unwrap();
     let n = |title: &str, body: Option<&str>| {
@@ -522,8 +318,7 @@ async fn notify_and_shell_calls_become_effects_for_the_host() {
         vec![
             n("Reminder", Some("Call mum")),
             n("Colon call", None),
-            // two links: the shell only ever needs the last list, so the first declaration's is replaced
-            Effect::Shell(ShellEffect::DeepLinks(vec!["note/:old".into(), "note/:id".into()])),
+            Effect::Emit { name: "notes.changed".into(), data: json!({"id": 12}) },
             Effect::OpenWindow { name: "main".into(), params: json!({"noteId": 12}) },
         ]
     );
@@ -531,7 +326,7 @@ async fn notify_and_shell_calls_become_effects_for_the_host() {
 }
 
 #[tokio::test]
-async fn notify_and_deep_links_are_validated() {
+async fn notify_and_emit_are_validated() {
     for (call, needle) in [
         ("app.notify { body = 'no title' }", "app.notify needs `title`"),
         ("app.notify { title = '' }", "app.notify: `title` must be 1 to 200 characters, not blank"),
@@ -543,9 +338,9 @@ async fn notify_and_deep_links_are_validated() {
             "app.notify { title = 't', body = string.rep('b', 2001) }",
             "app.notify: `body` must be at most 2000 characters",
         ),
-        ("app.shell.deepLink('', function() end)", "1 to 128"),
+        ("app.emit('')", "an event name is 1 to 64"),
     ] {
-        let src = format!("app.manifest {{ id = 'probe', name = 'P', icon = 'gear' }}\n{call}");
+        let src = app(call);
         let e = try_load("probe", &src).await.err().unwrap().to_string();
         assert!(e.contains(needle), "wanted `{needle}` in `{e}`");
     }
@@ -693,26 +488,6 @@ async fn a_call_that_notifies_and_then_waits_has_its_notification_taken_at_the_w
     slow.await.unwrap().unwrap();
     let rest = vm.take_effects();
     assert!(matches!(rest.as_slice(), [Effect::Notify(n)] if n.title == "done"), "{rest:?}");
-}
-
-// ---- windows ------------------------------------------------------------------------------------------------
-
-#[tokio::test]
-async fn windows_are_declared_by_name() {
-    let src = app("app.window('main', { title = 'Notes', render = function(w) end })\napp.window('settings', { render = function() end })");
-    let vm = load(&src).await;
-    assert_eq!(vm.window_names(), ["main", "settings"]);
-    for (call, needle) in [
-        ("app.window('main', { title = 'x' })", "needs `render"),
-        ("app.window('bad name', { render = function() end })", "letters, digits"),
-        (
-            "app.window('a', { render = function() end }) app.window('a', { render = function() end })",
-            "already declared",
-        ),
-    ] {
-        let e = try_load("probe", &app(call)).await.err().unwrap().to_string();
-        assert!(e.contains(needle), "wanted `{needle}` in `{e}`");
-    }
 }
 
 // ---- readOnly tools cannot write ----------------------------------------------------------------------------

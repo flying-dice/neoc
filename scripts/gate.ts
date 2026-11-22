@@ -3,8 +3,8 @@
  * stylua).
  *
  * On a developer machine it SKIPS with a message and exits 0, so a fresh checkout still lints what it can. In the
- * quality gate it FAILS: a skipped check is not a pass. The gate is a run with `VOS_GATE=1` (`bun run gate` and
- * the `pre-commit` skill set it) or with `CI` set (the usual flag of an automated run).
+ * quality gate it FAILS: a skipped check is not a pass. The gate is a run with `VOS_GATE=1` (`bun run gate`
+ * sets it) or with `CI` set (the usual flag of an automated run).
  */
 
 /** Whether this run is the quality gate: `VOS_GATE=1`, or a `CI` that is set and not `false`/`0`. */

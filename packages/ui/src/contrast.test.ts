@@ -147,7 +147,7 @@ describe('the focus ring', () => {
   })
 })
 
-// A focus ring drawn inside a tint fill (the selected list row, the picked day): system blue would vanish on a blue fill
+// A focus ring drawn inside a tint fill (the selected list row): system blue would vanish on a blue fill
 // (1.3:1), so those rings are --label (black in light, white in dark). Replay the fill rule for every accent.
 function fromOklab([L, a, b]: [number, number, number]): [number, number, number] {
   const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3
@@ -173,6 +173,7 @@ function toOklab([r, g, b]: [number, number, number]): [number, number, number] 
   ]
 }
 
+// The app kit's selected row draws its ring inside the tint fill (packages/kit/src/components/ui-row.ts) in --label.
 describe('the focus ring inside a tint fill', () => {
   for (const [name, values] of Object.entries(tokenValues())) {
     test(`${name}: --label holds 3:1 on its --tint-fill in light and dark (system blue would not)`, () => {
@@ -187,13 +188,6 @@ describe('the focus ring inside a tint fill', () => {
   test('the default accent shows why: the ring colour on the blue fill is under 2:1', () => {
     const blue = colourToken('--ios-blue')
     expect(ratio(colourToken('--focus-ring').light, blue.light)).toBeLessThan(2)
-  })
-
-  test('the selected list row and the picked day use --label for their inner ring', () => {
-    const row = readFileSync(new URL('./molecules/ListRow.svelte', import.meta.url), 'utf8')
-    expect(row).toMatch(/\.managed\.selected:not\(\.multi\) \.face:focus-visible[^}]*{\s*outline-color: var\(--label\)/)
-    const day = readFileSync(new URL('./molecules/DatePicker.svelte', import.meta.url), 'utf8')
-    expect(day).toMatch(/\.day\.picked:focus-visible\s*{\s*outline-color: var\(--label\)/)
   })
 })
 

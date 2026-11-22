@@ -15,6 +15,8 @@ import type {
   AppSummary,
   Catalog,
   DeviceRow,
+  FileEntry,
+  FileLocations,
   HostApi
 } from './hostApi'
 
@@ -31,9 +33,9 @@ export class ResultError extends Error {
 
 const text = z.string()
 
-export const appStateSchema = z.enum(['running', 'disabled', 'failed'])
+const appStateSchema = z.enum(['running', 'disabled', 'failed'])
 
-export const appSummarySchema = z.object({
+const appSummarySchema = z.object({
   id: text,
   name: text,
   version: text,
@@ -44,7 +46,6 @@ export const appSummarySchema = z.object({
   description: text.optional(),
   window: z.object({ w: z.number(), h: z.number(), minW: z.number(), minH: z.number() }).optional(),
   source: text,
-  client: z.boolean(),
   permissions: z.array(text)
 }) satisfies z.ZodType<AppSummary>
 
@@ -81,6 +82,26 @@ export const deviceListSchema = z.object({
     }) satisfies z.ZodType<DeviceRow>
   )
 })
+
+export const fileListSchema = z.object({
+  entries: z.array(
+    z.object({
+      name: text,
+      kind: z.enum(['file', 'dir', 'link', 'other']),
+      size: z.number(),
+      modifiedAt: z.number().optional(),
+      link: z.boolean(),
+      problem: text.optional()
+    }) satisfies z.ZodType<FileEntry>
+  ),
+  truncated: z.boolean()
+})
+
+export const fileLocationsSchema = z.object({
+  computer: z.boolean(),
+  home: text.optional(),
+  maxUploadBytes: z.number()
+}) satisfies z.ZodType<FileLocations>
 
 /** The params of `notification.deliver`. A message of another shape is dropped, not drawn. */
 export const appNotificationSchema = z.object({

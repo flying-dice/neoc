@@ -59,7 +59,7 @@ ${CLOSE}</body></html>`
     return () => host.useFake(createFakeHost(), [FAKE_CALCULATOR])
   }
 
-  /** An installed app's window when the app has a client of its own: a sandboxed frame, a bridge to the app's backend. */
+  /** An installed app's window: a sandboxed frame, a bridge to the app's backend. */
   const { Story } = defineMeta({
     title: 'Shell/App frame',
     component: AppFrame,

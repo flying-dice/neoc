@@ -12,9 +12,7 @@
     step?: number
     minIcon: IconName
     maxIcon: IconName
-    tint?: string
     label?: string
-    disabled?: boolean
   }
 
   let {
@@ -25,15 +23,13 @@
     step = 1,
     minIcon,
     maxIcon,
-    tint,
-    label,
-    disabled = false
+    label
   }: Props = $props()
 </script>
 
 <div class="ios-icon-slider">
   <Icon name={minIcon} size={16} />
-  <Slider {testid} bind:value {min} {max} {step} {tint} {label} {disabled} />
+  <Slider {testid} bind:value {min} {max} {step} {label} />
   <Icon name={maxIcon} size={22} />
 </div>
 

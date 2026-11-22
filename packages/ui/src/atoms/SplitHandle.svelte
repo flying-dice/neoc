@@ -2,13 +2,12 @@
 <script lang="ts">
   interface Props {
     testid: string
-    label?: string
     /** Pointer x delta since the drag began. */
     ondrag?: (dx: number) => void
     ondragend?: () => void
   }
 
-  let { testid, label = 'Resize split', ondrag, ondragend }: Props = $props()
+  let { testid, ondrag, ondragend }: Props = $props()
 
   let startX: number | null = $state(null)
 
@@ -33,7 +32,7 @@
   role="separator"
   data-testid={testid}
   aria-orientation="vertical"
-  aria-label={label}
+  aria-label="Resize split"
   onpointerdown={down}
   onpointermove={move}
   onpointerup={up}

@@ -8,20 +8,18 @@
 mod common;
 
 use common::{agent_ctx, db, id, package, timed_tool, user_ctx};
-use serde_json::{json, Map, Value};
-use std::{collections::HashMap, sync::Arc};
+use serde_json::{json, Value};
+use std::sync::Arc;
 use vos_application::{
-    ports::{AgentCard, AgentRoster, AppData, AppRuntime, Notifier, PortResult, ViewEventCall},
+    ports::{AgentCard, AgentRoster, AppData, AppRuntime, Notifier, PortResult},
     testing::RecordingShell,
     PortError,
 };
-use vos_domain::{
-    ui::{node::join_path, Node},
-    Notification,
-};
+use vos_domain::Notification;
 use vos_lua::{AppVm, LuaRuntime, VmConfig, VmError};
 
-const MANIFEST: &str = r#"app.manifest { id = "probe", name = "Probe", icon = "gear" }"#;
+/// The first line of every source here: the line numbers the tests name are the body's plus one.
+const MANIFEST: &str = "-- probe";
 
 struct PanickingRoster;
 impl AgentRoster for PanickingRoster {
@@ -72,7 +70,7 @@ app.tool { name = "values", run = function() return db:all("select a from t orde
 async fn panicking_app() -> Arc<AppVm> {
     let config = VmConfig { roster: Arc::new(PanickingRoster), ..VmConfig::default() };
     let src = format!("{MANIFEST}\n{APP}");
-    Arc::new(AppVm::load(&id("probe"), package(&src, &[]), db(), config).await.unwrap())
+    Arc::new(AppVm::load(&id("probe"), package(&common::backend(&src), &[]), db(), config).await.unwrap())
 }
 
 async fn call(vm: &AppVm, tool: &str) -> vos_lua::Result<Value> {
@@ -161,7 +159,10 @@ async fn the_port_reports_a_panic_as_an_internal_error_and_keeps_the_app_loaded(
     let runtime = LuaRuntime::new(Arc::new(Quiet), Arc::new(RecordingShell::default()))
         .with_roster(Arc::new(PanickingRoster));
     let data: Arc<dyn AppData> = db();
-    runtime.load(&id("probe"), package(&format!("{MANIFEST}\n{APP}"), &[]), data).await.unwrap();
+    runtime
+        .load(&id("probe"), package(&common::backend(&format!("{MANIFEST}\n{APP}")), &[]), data)
+        .await
+        .unwrap();
     let app = id("probe");
     let call = |tool: &'static str| runtime.call_tool(&app, tool, json!({}), agent_ctx(0), false);
     match call("uncaught").await {
@@ -209,7 +210,7 @@ async fn a_panic_forwarding_background_effects_leaves_the_pump_running() {
         "#
     );
     let data: Arc<dyn AppData> = db();
-    runtime.load(&id("probe"), package(&src, &[]), data).await.unwrap();
+    runtime.load(&id("probe"), package(&common::backend(&src), &[]), data).await.unwrap();
     runtime.call_tool(&id("probe"), "later", json!({}), agent_ctx(0), false).await.unwrap();
     for _ in 0..200 {
         if notifier.titles.lock().len() >= 2 {
@@ -225,74 +226,30 @@ async fn a_panic_forwarding_background_effects_leaves_the_pump_running() {
     );
 }
 
-// ---- windows ---------------------------------------------------------------------------------------------
+// ---- handlers --------------------------------------------------------------------------------------------
 
-const WINDOWS: &str = r#"
-local ui = require("vos:ui")
-local s = app.state { n = 0 }
-app.window("main", {
-  onOpen = function(w, p) if p.explode then app.agents:list() end end,
-  render = function(w)
-    return ui.VStack {
-      ui.Text { key = "n", tostring(s.n) },
-      ui.Button { key = "boom", title = "Boom", onTap = function() app.agents:list() end },
-      ui.Button { key = "add", title = "Add", onTap = function() s.n = s.n + 1 end },
-    }
-  end,
-})
-app.window("broken", { render = function(w) return app.agents:list() end })
-"#;
-
-async fn windows_app() -> AppVm {
-    let config = VmConfig {
-        roster: Arc::new(PanickingRoster),
-        host_modules: Arc::new(HashMap::from([("ui".to_owned(), vos_lua::UI_MODULE.as_bytes().to_vec())])),
-        ..VmConfig::default()
-    };
-    let src = format!("{MANIFEST}\n{WINDOWS}");
-    AppVm::load(&id("probe"), package(&src, &[]), db(), config).await.unwrap()
+const HANDLERS: &str = r"
+local n = 0
+return {
+  boom = function(ctx) return app.agents:list() end,
+  add = function(ctx) n = n + 1 return n end,
 }
+";
 
-fn path_of(node: &Node, key: &str) -> Option<String> {
-    fn walk(node: &Node, path: &str, key: &str) -> Option<String> {
-        if node.key == key {
-            return Some(path.to_owned());
-        }
-        node.containers().find_map(|(slot, children)| {
-            children.iter().find_map(|child| walk(child, &join_path(path, slot, &child.key), key))
-        })
-    }
-    walk(node, &node.key, key)
-}
-
-fn tap(tree: &Node, key: &str) -> ViewEventCall {
-    let path = path_of(tree, key).unwrap_or_else(|| panic!("no node `{key}`"));
-    ViewEventCall { path, event: "tap".into(), row_key: None, row: None, payload: None }
-}
-
-/// Is `view` still an open instance? (`set_client_values` looks it up without running app code.)
-async fn is_open(vm: &AppVm, view: &str) -> bool {
-    !matches!(vm.set_client_values(view, &Map::new()).await, Err(VmError::NoSuchView(_)))
-}
-
-/// A panic in `onOpen` or in the first render fails the open and leaves no half-opened instance behind; a panic
-/// in an event handler fails that event, and the window answers the next one.
+/// A panic in a handler (the page's call into the backend) fails that call, and the app answers the next one.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_panic_in_a_window_fails_that_open_or_event_and_the_window_answers_on() {
-    let vm = windows_app().await;
-    let explode = Map::from_iter([("explode".to_owned(), json!(true))]);
-    assert!(matches!(vm.open_view("v1", "main", explode, Map::new()).await, Err(VmError::Panicked(_))));
-    assert!(!is_open(&vm, "v1").await, "a failed onOpen leaves no instance");
-    assert!(matches!(vm.open_view("v2", "broken", Map::new(), Map::new()).await, Err(VmError::Panicked(_))));
-    assert!(!is_open(&vm, "v2").await, "a failed first render leaves no instance");
-
-    let opened = vm.open_view("v3", "main", Map::new(), Map::new()).await.unwrap();
-    assert!(matches!(
-        vm.dispatch_view_event("v3", tap(&opened.tree, "boom"), &user_ctx(0)).await,
-        Err(VmError::Panicked(_))
-    ));
-    assert!(vm.dispatch_view_event("v3", tap(&opened.tree, "add"), &user_ctx(0)).await.unwrap());
-    let after = vm.render_view("v3").await.unwrap();
-    let n = after.tree.containers().flat_map(|(_, c)| c).find(|c| c.key == "n").unwrap();
-    assert_eq!(n.props["text"], json!("1"), "the event after the panic ran");
+async fn a_panic_in_a_handler_fails_that_call_and_the_app_answers_the_next() {
+    let config = VmConfig { roster: Arc::new(PanickingRoster), ..VmConfig::default() };
+    let src = format!("{MANIFEST}\n{HANDLERS}");
+    let vm = AppVm::load(&id("probe"), package(&src, &[]), db(), config).await.unwrap();
+    assert_eq!(vm.call_handler("add", json!(null), &user_ctx(0)).await.unwrap(), json!(1));
+    match vm.call_handler("boom", json!(null), &user_ctx(0)).await {
+        Err(VmError::Panicked(message)) => assert_eq!(message, "the roster broke"),
+        other => panic!("expected a panicked call, got {other:?}"),
+    }
+    assert_eq!(
+        vm.call_handler("add", json!(null), &user_ctx(0)).await.unwrap(),
+        json!(2),
+        "the call after the panic ran, on the state the app had"
+    );
 }

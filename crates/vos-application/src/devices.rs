@@ -121,11 +121,7 @@ pub struct DeviceService {
     attempts: Mutex<Attempts>,
     /// Recent wrong guesses per client (at most `burn_failures_per_client` kept each), oldest first.
     failures: Mutex<HashMap<Client, VecDeque<u64>>>,
-    /// Told when a device is revoked, so whatever it has open (sockets, event streams) can be closed.
-    revoked: Mutex<Vec<RevokedListener>>,
 }
-
-type RevokedListener = Arc<dyn Fn(&DeviceId) + Send + Sync>;
 
 impl DeviceService {
     pub fn new(
@@ -134,20 +130,7 @@ impl DeviceService {
         random: Arc<dyn RandomSource>,
         policy: PairingPolicy,
     ) -> Self {
-        Self {
-            registry,
-            clock,
-            random,
-            policy,
-            attempts: Mutex::default(),
-            failures: Mutex::default(),
-            revoked: Mutex::default(),
-        }
-    }
-
-    /// Call `listener` with the device's id every time a device is revoked (by anyone, any way).
-    pub fn on_revoked(&self, listener: impl Fn(&DeviceId) + Send + Sync + 'static) {
-        self.revoked.lock().push(Arc::new(listener));
+        Self { registry, clock, random, policy, attempts: Mutex::default(), failures: Mutex::default() }
     }
 
     /// Issue a new pairing code (shown at the host: terminal or CLI). Older codes stay valid until they
@@ -227,10 +210,6 @@ impl DeviceService {
     /// Revoke a device's session. `NotFound` if it is not paired.
     pub async fn revoke(&self, id: &DeviceId) -> Result<(), PortError> {
         if self.registry.revoke_device(id).await? {
-            let listeners: Vec<RevokedListener> = self.revoked.lock().clone();
-            for listener in listeners {
-                listener(id);
-            }
             Ok(())
         } else {
             Err(PortError::NotFound(format!("device {}", id.0)))
@@ -541,20 +520,6 @@ mod tests {
         assert_eq!(r.svc.authenticate(&paired.token).await, None);
         assert!(r.svc.list().await.unwrap().is_empty());
         assert!(matches!(r.svc.revoke(&paired.device.id).await, Err(PortError::NotFound(_))));
-    }
-
-    #[tokio::test]
-    async fn revoking_tells_the_listeners_which_device_and_a_failed_revoke_tells_nobody() {
-        let r = rig();
-        let told = Arc::new(Mutex::new(Vec::<String>::new()));
-        let sink = told.clone();
-        r.svc.on_revoked(move |id| sink.lock().push(id.0.clone()));
-        let code = r.svc.issue_pairing_code().await.unwrap();
-        let paired = r.svc.pair(None, &code.code, "d").await.unwrap();
-        assert!(r.svc.revoke(&DeviceId("nobody".into())).await.is_err());
-        assert!(told.lock().is_empty());
-        r.svc.revoke(&paired.device.id).await.unwrap();
-        assert_eq!(*told.lock(), std::slice::from_ref(&paired.device.id.0));
     }
 
     #[tokio::test]

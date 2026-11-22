@@ -17,21 +17,20 @@ async fn code_of(ws: &mut common::Ws, id: i64, method: &str, params: Value) -> V
 async fn a_malformed_params_object_is_32602_for_every_agents_method() {
     let r = start(|_| {}).await;
     let mut ws = browser(&r).await;
-    let created = rpc(
-        &mut ws,
-        1,
-        "agents.create",
-        json!({"name": "Claude", "avatar": "sparkles", "runtime": {"command": "x"}}),
-    )
-    .await;
+    let created = rpc(&mut ws, 1, "agents.create", json!({"name": "Claude", "avatar": "sparkles"})).await;
     assert!(created.get("error").is_none(), "{created}");
     let id = created["result"]["agent"]["id"].as_str().unwrap().to_owned();
 
     let bad: Vec<(&str, Value)> = vec![
         ("agents.list", json!({"x": 1})),
         ("agents.list", json!([1])),
-        ("agents.create", json!({"name": "x", "runtime": {"command": "x"}, "bogus": 1})),
-        ("agents.create", json!({"runtime": {"command": "x"}})),
+        ("agents.create", json!({"name": "x", "bogus": 1})),
+        ("agents.create", json!({"role": "no name"})),
+        // the host launches no agents: the launch settings of older versions are unknown fields now
+        ("agents.create", json!({"name": "x", "runtime": {"command": "x"}})),
+        ("agents.create", json!({"name": "x", "approval": "ask"})),
+        ("agents.update", json!({"id": id, "runtime": {"command": "x"}})),
+        ("agents.update", json!({"id": id, "approval": "ask"})),
         // `grants` belongs to agents.grants.set: update used to accept it and change nothing
         ("agents.update", json!({"id": id, "grants": {"all": true}})),
         ("agents.update", json!({"id": id, "avatar": 42})),
@@ -88,6 +87,10 @@ async fn a_malformed_params_object_is_32602_for_the_app_and_device_methods() {
         ("host.devices.list", json!({"x": 1})),
         ("host.devices.revoke", json!({"id": "d", "x": 1})),
         ("host.devices.revoke", json!({})),
+        ("host.files.list", json!({"app": "notes", "path": "", "x": 1})),
+        ("host.files.remove", json!({"app": "notes"})),
+        ("host.files.createDir", json!({})),
+        ("host.files.rename", json!({"app": "notes", "from": "a"})),
     ];
     for (n, (method, params)) in (10_i64..).zip(bad) {
         assert_eq!(code_of(&mut ws, n, method, params.clone()).await, INVALID_PARAMS, "{method} {params}");
@@ -95,34 +98,5 @@ async fn a_malformed_params_object_is_32602_for_the_app_and_device_methods() {
     // methods without params accept an absent or empty one
     assert!(rpc(&mut ws, 50, "app.list", Value::Null).await.get("error").is_none());
     assert!(rpc(&mut ws, 51, "host.devices.list", json!({})).await.get("error").is_none());
-    r.stop().await;
-}
-
-#[tokio::test]
-async fn the_agents_methods_never_return_the_runtime_environment() {
-    let r = start(|_| {}).await;
-    let mut ws = browser(&r).await;
-    let created = rpc(
-        &mut ws,
-        1,
-        "agents.create",
-        json!({"name": "Claude", "runtime": {"command": "x", "args": ["--y"], "env": {"ANTHROPIC_API_KEY": "sk-secret"}}}),
-    )
-    .await;
-    assert!(created.get("error").is_none(), "{created}");
-    let id = created["result"]["agent"]["id"].as_str().unwrap().to_owned();
-    let replies = [
-        created,
-        rpc(&mut ws, 2, "agents.list", json!({})).await,
-        rpc(&mut ws, 3, "agents.update", json!({"id": id, "role": "Pair"})).await,
-        rpc(&mut ws, 4, "agents.grants.set", json!({"id": id, "grants": {"all": true}})).await,
-    ];
-    for reply in &replies {
-        assert!(!reply.to_string().contains("sk-secret"), "{reply}");
-    }
-    let listed = &replies[1]["result"]["agents"][0];
-    assert_eq!(listed["runtime"]["envKeys"], json!(["ANTHROPIC_API_KEY"]));
-    assert_eq!(listed["runtime"]["args"], json!(["--y"]));
-    assert!(listed["runtime"].get("env").is_none());
     r.stop().await;
 }

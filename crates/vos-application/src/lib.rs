@@ -18,7 +18,6 @@ pub mod error;
 pub mod files;
 #[cfg(test)]
 mod files_tests;
-pub mod live;
 pub mod panics;
 pub mod ports;
 pub mod services;
@@ -31,21 +30,14 @@ pub mod testing;
 pub mod tokens;
 #[cfg(test)]
 mod tool_calls_tests;
-pub mod views;
-#[cfg(test)]
-mod views_tests;
-pub mod writeback;
-#[cfg(test)]
-mod writeback_tests;
 
 pub use agents::{mint_agent_token, AgentError, AgentPatch, AgentService, NewAgent};
 pub use devices::{DeviceService, PairError, PairedDevice, PairingCode, PairingPolicy};
 pub use error::{AppError, PortError};
-pub use files::{AppFiles, FileStore, Files, NoFiles};
-pub use live::{LiveSources, SourceDef, SourceId, SourceKind, SourceUpdate, SubscriptionId, Window};
+pub use files::{
+    AppFiles, FileStore, Files, FilesService, HostFiles, Listed, Listing, NoFiles, Place, UserFiles,
+};
 pub use services::{
     AppInfo, AppService, AppStatus, Display, Ports, StaticFile, StaticSite, MAX_CALLS_PER_APP,
 };
 pub use tokens::random_hex;
-pub use views::{ViewError, ViewService, ViewSink};
-pub use writeback::{BindingKind, Resolution, WriteAck, WriteRequest};

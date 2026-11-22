@@ -1,6 +1,6 @@
 /**
  * The backend half of the build: the Luau entry bundled into one file with darklua (relative `require`s inlined, types
- * and comments stripped), and the app ref the host installs: the manifest from `app.json` plus every file with its sha256.
+ * and comments stripped), and the app ref the host installs: the manifest from the app's `openrpc.json` plus every file with its sha256.
  * The output goes next to the client script, so the build's output folder is one installable app.
  */
 import { spawnSync } from 'node:child_process'

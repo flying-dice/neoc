@@ -1,0 +1,85 @@
+{
+  "openrpc": "1.3.2",
+  "info": {
+    "title": "Memos",
+    "version": "0.1.0",
+    "description": "Memos that you and your agents can both write in."
+  },
+  "x-app": {
+    "id": "memos",
+    "icon": "note.text",
+    "tint": "yellow",
+    "description": "Memos that you and your agents can both write in.",
+    "window": {
+      "w": 960,
+      "h": 640,
+      "minW": 480,
+      "minH": 360
+    }
+  },
+  "methods": [
+    {
+      "name": "list",
+      "summary": "Every note, newest first.",
+      "params": [],
+      "result": {
+        "name": "notes",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Note"
+          }
+        }
+      }
+    },
+    {
+      "name": "add",
+      "summary": "Add a note, and answer with the whole list.",
+      "params": [
+        {
+          "name": "body",
+          "description": "What the note says. Blank is refused with a message.",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        }
+      ],
+      "result": {
+        "name": "notes",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Note"
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "A note needs some text."
+        }
+      ]
+    }
+  ],
+  "components": {
+    "schemas": {
+      "Note": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "body": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "body"
+        ]
+      }
+    }
+  }
+}

@@ -1,16 +1,9 @@
 --!strict
 -- A representative file workflow through `app.files` alone, with no `std:fs`: create, list, read, write, move,
 -- copy, inspect and delete. `crates/vos-lua/tests/files.rs` runs it, also in a VM that refuses `std:fs`, and
--- checks what each step returned.
+-- checks what each step returned. The test loads it followed by `return {}` (and, in one case, by one more tool
+-- first): the handlers a backend returns, here none.
 local app = require("vos:app")
-
-app.manifest {
-  id = "files-demo",
-  name = "Files demo",
-  icon = "folder",
-  tint = "blue",
-  window = { w = 320, h = 240, minW = 320, minH = 240 },
-}
 
 local docs = app.files.documents
 

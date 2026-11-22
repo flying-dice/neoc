@@ -1,20 +1,9 @@
 export interface AlertAction {
   label: string
   style?: 'default' | 'cancel' | 'destructive'
-  /** Bold "preferred" action: takes initial focus and runs on Enter from a field. Cancel is bold by default. */
+  /** Bold "preferred" action: takes initial focus. Cancel is bold by default. */
   preferred?: boolean
-  /** Stable id for the test id (default: a slug of the label). */
-  key?: string
-  disabled?: boolean
-  /** Receives the prompt field values (`{}` when the alert has none). */
-  onclick?: (values: Record<string, string>) => void
-}
-
-/** A prompt field of an `Alert`. */
-export interface AlertField {
-  key: string
-  placeholder?: string
-  secure?: boolean
+  onclick?: () => void
 }
 
 export interface DockApp {
@@ -22,48 +11,37 @@ export interface DockApp {
   name: string
   icon: import('./icons').IconName
   background?: string
-  badge?: number
   running?: boolean
 }
 
-/** One row of a choice list (`OptionList`, a Picker). */
-export interface OptionItem {
-  /** Stable id: used in the test id and the callbacks. */
-  key: string
+/** One choice of a context menu. */
+export interface MenuItem {
+  /** Stable within the menu: what `onselect` is called with, and the item's test id suffix. */
+  id: string
   label: string
   icon?: import('./icons').IconName
-  disabled?: boolean
-}
-
-/** A menu row. `submenu` makes it a branch; `checked` draws a checkmark (a toggle or the chosen option). */
-export interface MenuEntry {
-  label: string
-  shortcut?: string
-  disabled?: boolean
-  checked?: boolean
-  icon?: import('./icons').IconName
-  /** Red: the item removes or discards something. */
+  /** Red: an action that removes or deletes. */
   destructive?: boolean
-  /** Stable id for the test id (default: a slug of the label). */
-  key?: string
-  onclick?: () => void
-  submenu?: MenuItem[]
 }
 
-export type MenuItem =
-  | MenuEntry
-  | { separator: true }
-  /** A section heading: a small caption above the items that follow it. */
-  | { heading: string }
+/** A box in viewport coordinates (as `getBoundingClientRect` gives): what a context menu opens beside. */
+export interface AnchorRect {
+  left: number
+  top: number
+  width: number
+  height: number
+}
 
-export interface MenuDefinition {
-  /** Menu bar title. */
+/** One row of Spotlight's results. */
+export interface SpotlightItem {
+  /** Unique among the results shown: the option's id and its test id suffix. */
+  id: string
   title: string
-  /** Render the title bold (the active app's name). */
-  bold?: boolean
-  /** Render an icon instead of text (the system menu). */
-  icon?: import('./icons').IconName
-  items: MenuItem[]
+  /** What kind of thing it is, shown at the row's end ("App", "Settings"). */
+  kind?: string
+  icon: import('./icons').IconName
+  /** The plate behind the glyph (any CSS background): an app's own, or a system colour. */
+  background?: string
 }
 
 export interface Frame {

@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test harness
 //! The editor path of the app declarations (`types/generated/vos.d.luau`): `luau-lsp lsp --stdio`, started as the
-//! editor extension starts it (with `--definitions:@vos=<file>`), types `require("vos:app")` and `require("vos:ui")`,
+//! editor extension starts it (with `--definitions:@vos=<file>`), types `require("vos:app")`,
 //! flags a wrong member and a refused module, and shows the recorded doc on hover. (`bun run lint:luau` runs the
 //! same declarations through `luau-lsp analyze` over the apps and the negative fixtures; this is the other way
 //! luau-lsp is run, which the gate would otherwise never touch.)
@@ -206,17 +206,17 @@ impl Client {
 /// The script the editor has open: a few right uses and the wrong ones the language server must flag.
 const SCRIPT: &str = r#"--!strict
 local app = require("vos:app")
-local ui = require("vos:ui")
+local kv = app.kv
 local test = require("lib:test")
 local json = require("lib:json")
 local _n: number = app.id
 app.nope()
 test.describe("x")
-local node: vos_Node = ui.Text { "hello", style = "title1" }
-local state = app.state { count = 0 }
-state.count += 1
+local handlers: vos_Handlers = {}
+app.emit("changed", { count = 1 })
+kv:set("count", 1)
 json.object():set("k", 1)
-return node
+return handlers
 "#;
 
 #[test]
@@ -279,12 +279,12 @@ fn the_language_server_types_the_vos_modules_as_the_editor_starts_it() {
         "{findings:?}"
     );
 
-    // hover on `state` of `app.state` shows its type and the doc the declarations carry
+    // hover on `emit` of `app.emit` shows its type and the doc the declarations carry
     let hover = client.request(
         "textDocument/hover",
-        &json!({ "textDocument": { "uri": uri }, "position": { "line": 9, "character": 22 } }),
+        &json!({ "textDocument": { "uri": uri }, "position": { "line": 9, "character": 6 } }),
     );
     let text = hover["contents"]["value"].as_str().unwrap_or_default();
-    assert!(text.contains("initial: T"), "{hover}");
-    assert!(text.contains("Shared, in-memory server state"), "{hover}");
+    assert!(text.contains("name: string"), "{hover}");
+    assert!(text.contains("Tell the app's open pages something changed"), "{hover}");
 }

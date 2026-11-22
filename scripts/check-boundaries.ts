@@ -1,17 +1,17 @@
 #!/usr/bin/env bun
 /**
- * Enforces the TypeScript boundaries that are left now that apps are Lua and the host is Rust
- * (CLAUDE.md -> "Boundaries"). The TypeScript here is the client (client/), the UI kit (packages/ui), the
- * shared Storybook setup (packages/storybook) and the specs.
+ * Enforces the TypeScript boundaries that are left now that app backends are Luau and the host is Rust. The
+ * TypeScript here is the client (client/), the shell's UI kit (packages/ui), the app kit (packages/kit), the Vite
+ * plugin (packages/vite-plugin), the shared Storybook setup (packages/storybook) and the specs.
  *
  * Rules
  *  1. No relative import leaves its workspace package (client, packages/<name>, apps/<name>): the client never
  *     reaches host internals (crates/); the one exception is the types generated from the Rust schema
- *     (types/generated), which the renderer's protocol.ts re-exports. Test support may reach the repo's e2e/.
+ *     (types/generated), which the shell's protocol.ts re-exports. Test support may reach the repo's e2e/.
  *  2. The UI kit imports no other @vos package; the client imports only @vos/ui (and, in stories,
  *     @vos/storybook).
  *  3. Browser code (client/src, packages/ui/src) imports no Node or Bun builtins.
- *  4. Client <-> host traffic is JSON-RPC over /rpc: `new WebSocket` only in the renderer's transport.
+ *  4. Client <-> host traffic is JSON-RPC over /rpc: `new WebSocket` only in the shell's transport.
  *  5. No {@html}, innerHTML, outerHTML, insertAdjacentHTML, document.write or Lit's unsafeHTML/unsafeSVG: agent and tool
  *     output is untrusted. HTML_ALLOWED lists the reviewed exceptions.
  *
@@ -29,13 +29,13 @@ const SOURCE_GLOBS = [
 ]
 const SKIP = /(^|\/)(node_modules|storybook-static|dist|out)\/|^packages\/[^/]+\/[^/]+\.config\.\w+$/
 
-/** The renderer's protocol.ts re-exports the types generated from the Rust schema: the one file that reaches types/. */
-const GENERATED_REEXPORT = 'client/src/view/protocol.ts'
+/** The shell's protocol.ts re-exports the types generated from the Rust schema: the one file that reaches types/. */
+const GENERATED_REEXPORT = 'client/src/shell/protocol.ts'
 /** Static, reviewed markup only. Never pass agent, tool or user text to these. */
 const HTML_ALLOWED = ['packages/ui/src/atoms/Icon.svelte', 'packages/kit/src/components/ui-icon.ts'] // SVG strings from the constant icons map
 /** Runs in a browser: no Node or Bun builtins. */
 const BROWSER = ['client/src/', 'packages/ui/src/', 'packages/kit/src/']
-const WEBSOCKET_ALLOWED = ['client/src/view/rpc/websocket.ts'] // the reconnecting JSON-RPC transport
+const WEBSOCKET_ALLOWED = ['client/src/shell/rpc/websocket.ts'] // the reconnecting JSON-RPC transport
 
 const under = (rel: string, prefixes: string[]): boolean => prefixes.some((p) => (p.endsWith('/') ? rel.startsWith(p) : rel === p))
 const matches = (spec: string, patterns: string[]): boolean =>
@@ -188,7 +188,7 @@ function checkCode(rel: string, code: string, markup: string): void {
       report(rel, lineAt(text, m.index ?? 0), message)
   }
   if (!under(rel, WEBSOCKET_ALLOWED) && !isTestSupport(rel))
-    scan(code, /\bnew\s+WebSocket\s*\(/, 'raw WebSocket: talk to the host through the renderer transport (view/rpc/websocket.ts)')
+    scan(code, /\bnew\s+WebSocket\s*\(/, 'raw WebSocket: talk to the host through the shell transport (shell/rpc/websocket.ts)')
   if (!under(rel, HTML_ALLOWED)) {
     const untrusted = 'renders raw HTML; agent, tool and user text is untrusted: build nodes'
     scan(markup, /\{@html\b/, `{@html} ${untrusted}`)

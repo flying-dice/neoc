@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
 /**
- * Checks every Luau app and fixture with `luau-lsp analyze` in strict mode against the generated declarations
- * (types/generated/vos.d.luau: the `app` API, `vos:ui`, the std:/lib:/vnd: modules an app is offered, and the one
- * `declare require`; written by vos-codegen).
+ * Checks every Luau fixture with `luau-lsp analyze` in strict mode against the generated declarations
+ * (types/generated/vos.d.luau: the `app` API, the std:/lib:/vnd: modules an app is offered, and the one
+ * `declare require`; written by vos-codegen). An app is a Vite project and checks its own backend with `vos lint`
+ * and `vos typecheck` (against its generated router), so nothing under `apps/` is checked here.
  *
- *  1. Positive: every `.luau` file of an app or an app fixture (`apps/`, except an app that is a Vite project, which checks
- *     its own with `vos lint`; `crates/<crate>/tests/fixtures/`,
+ *  1. Positive: every `.luau` file of a fixture (`crates/<crate>/tests/fixtures/`,
  *     `scripts/fixtures/` outside `negative/`) starts with `--!strict` and checks clean: no type error, no lint
  *     warning. `scripts/fixtures/usage.luau` also requires every module an app is offered (read from the
  *     declarations), so a module that stops loading is flagged there.
@@ -14,8 +14,8 @@
  *     findings carries two markers), each marker matching a different finding's message up to its `caused by:`
  *     lines, and none on an unmarked line. `NEGATIVE_MARKERS` pins how many markers each file holds, so deleting a
  *     wrong line with its marker is an edit of that table. This is what stops the gate passing silently when the
- *     declarations stop loading (`app` and `ui` would be `any`, and nothing would be flagged).
- *  3. An app's own modules: the first pass sees `require("./calc")` as `any` (luau-lsp resolves a relative `require`
+ *     declarations stop loading (`app` would be `any`, and nothing would be flagged).
+ *  3. A backend's own modules: the first pass sees `require("./calc")` as `any` (luau-lsp resolves a relative `require`
  *     to the module's type only while `require` is its built-in, and the declarations replace it with the one
  *     `declare require` that types `vos:*` and the std:/lib:/vnd: modules). So a second pass runs over the same
  *     files against the declarations with that `declare require` cut out: `require("./calc")` then has the module's
@@ -24,7 +24,7 @@
  *     is an "Unknown require" of anything else: a refused `lib:test`, a typo such as `lib:jsno`, a missing module.
  *     A negative fixture's findings are those of both passes. (The editor still shows `any` for an app's own modules;
  *     this gate is what catches the errors.)
- *  4. Requires: every literal `require` of an app source is a relative path, `vos:app`, `vos:ui` or a module the
+ *  4. Requires: every literal `require` of a source is a relative path, `vos:app` or a module the
  *     declarations offer (the second pass's check, stated as a plain rule with a clearer message).
  *
  * luau-lsp is found on PATH or at ~/.local/bin/luau-lsp and must be the pinned version (its messages change between
@@ -54,14 +54,13 @@ export const DEFINITIONS = 'types/generated/vos.d.luau'
  * in the same change.
  */
 export const NEGATIVE_MARKERS: Record<string, number> = {
-  'scripts/fixtures/negative/wrong_api_use.luau': 20,
+  'scripts/fixtures/negative/wrong_api_use.luau': 25,
   'scripts/fixtures/negative/wrong_module_use.luau': 5,
-  'scripts/fixtures/negative/wrong_requires.luau': 16,
-  'scripts/fixtures/negative/wrong_ui_usage.luau': 14
+  'scripts/fixtures/negative/wrong_requires.luau': 17
 }
 
-/** Where apps and their fixtures live. */
-const SOURCES = ['apps/**/*.luau', 'crates/*/tests/fixtures/**/*.luau', 'scripts/fixtures/**/*.luau']
+/** Where the fixtures live. */
+const SOURCES = ['crates/*/tests/fixtures/**/*.luau', 'scripts/fixtures/**/*.luau']
 const SKIP = /node_modules|\.claude|\/target\//
 
 /** One finding of `luau-lsp analyze`: the 1-based line, the message up to its `caused by:` lines, the whole message. */
@@ -218,28 +217,15 @@ export function mergeFindings(...passes: Finding[][]): Finding[] {
   return merged.sort((a, b) => a.line - b.line)
 }
 
-/** Is `name` a `require` an app may write: a relative path, `vos:app`/`vos:ui`, or an offered module? */
+/** Is `name` a `require` an app may write: a relative path, `vos:app`, or an offered module? */
 export function allowedRequire(name: string, offered: Set<string>): boolean {
   return name.startsWith('./') || name.startsWith('../') || offered.has(name)
 }
 
-/**
- * Is `file` part of an app that is a Vite project (`apps/<dir>/openrpc.json`)? Such a project checks its own Luau with
- * `vos lint` and `vos typecheck` (its scripts, run by the repository's `lint` and `typecheck`), against its generated
- * router: its sources require `../.app/rpc`, which only exists once the project has generated, and its `.app/` and `dist/`
- * hold generated and bundled Luau that is not source.
- */
-export function inViteApp(file: string, isProject: (dir: string) => boolean): boolean {
-  const [top, dir] = file.split('/')
-  return top === 'apps' && dir !== undefined && isProject(`apps/${dir}`)
-}
-
 function listSources(): { positive: string[]; negative: string[] } {
   const all = new Set<string>()
-  const isProject = (dir: string): boolean => existsSync(join(root, dir, 'openrpc.json'))
   for (const pattern of SOURCES) {
-    for (const file of new Glob(pattern).scanSync({ cwd: root }))
-      if (!SKIP.test(`/${file}`) && !inViteApp(file, isProject)) all.add(file)
+    for (const file of new Glob(pattern).scanSync({ cwd: root })) if (!SKIP.test(`/${file}`)) all.add(file)
   }
   const sorted = [...all].sort()
   return {
@@ -283,7 +269,7 @@ function main(): void {
     if (markers !== expected) problems.push(`${file} holds ${markers} markers, NEGATIVE_MARKERS says ${expected}`)
   }
 
-  // the usage fixture requires every module an app is offered, `vos:app` and `vos:ui`
+  // the usage fixture requires every module an app is offered, and `vos:app`
   const usage = 'scripts/fixtures/usage.luau'
   const usageSource = existsSync(join(root, usage)) ? readFileSync(join(root, usage), 'utf8') : ''
   const usageRequires = new Set(requiredNames(usageSource).map((r) => r.name))
@@ -325,7 +311,7 @@ function main(): void {
     for (const { name, line } of requiredNames(source)) {
       if (!allowedRequire(name, offered)) {
         problems.push(
-          `${file}:${line}: require("${name}") is not a module an app may require (a relative path, vos:app, vos:ui or an offered std:/lib:/vnd: module)`
+          `${file}:${line}: require("${name}") is not a module an app may require (a relative path, vos:app or an offered std:/lib:/vnd: module)`
         )
       }
     }

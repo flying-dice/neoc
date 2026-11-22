@@ -1,5 +1,5 @@
 <!--
-  @organism AppFrame — an installed app's window when the app has a client of its own: the app's page runs in an
+  @organism AppFrame — an installed app's window: the app's page runs in an
   `<iframe sandbox="allow-scripts allow-forms">` whose content the host serves at `/apps/<app>/static/` (with a policy that
   allows no network beyond what the app declared). The shell is the frame's host page: the app's calls reach its
   backend through `app.call`, its events, the shell's appearance and the window's display mode reach the app as

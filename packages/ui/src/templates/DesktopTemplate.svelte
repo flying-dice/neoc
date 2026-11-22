@@ -3,17 +3,17 @@
   a free-form workspace (strip, windows, widgets) and a floating dock. Layout
   only — every region is a snippet filled by a page. The dock can auto-hide
   (full screen / split) and reappears while the pointer is at the bottom edge.
+  `overlay` is a layer over all of it (the status bar and the Dock too) for what the system presents: a context
+  menu, system search. It takes no presses itself; what is put in it does.
 -->
 <script lang="ts">
   import type { Snippet } from 'svelte'
 
   interface Props {
-    /** Any CSS background for the wallpaper. */
-    wallpaper?: string
     statusBar: Snippet
     workspace: Snippet
     dock: Snippet
-    /** Above everything: sheets, alerts, overlays. */
+    /** Drawn over everything else, in a box the size of the desktop. */
     overlay?: Snippet
     dockHidden?: boolean
     /** Bound to the workspace size, for layout maths. */
@@ -22,7 +22,6 @@
   }
 
   let {
-    wallpaper = 'var(--wallpaper-default)',
     statusBar,
     workspace,
     dock,
@@ -35,7 +34,7 @@
   let peeking = $state(false)
 </script>
 
-<div class="desktop" style:--wallpaper={wallpaper}>
+<div class="desktop">
   <div class="status-bar">{@render statusBar()}</div>
   <main class="workspace" bind:clientWidth={workspaceWidth} bind:clientHeight={workspaceHeight}>
     {@render workspace()}
@@ -51,7 +50,7 @@
   >
     {@render dock()}
   </div>
-  {#if overlay}{@render overlay()}{/if}
+  {#if overlay}<div class="overlay">{@render overlay()}</div>{/if}
 </div>
 
 <style>
@@ -67,7 +66,7 @@
     /* `clip`, not `hidden`: a hidden box can still be scrolled by script, and focusing or scrolling into view something a
        window left past the edge (an icon of the Dock) would slide the whole desktop sideways under the status bar */
     overflow: clip;
-    background: var(--wallpaper);
+    background: var(--wallpaper-default);
     background-size: cover;
     isolation: isolate;
   }
@@ -100,6 +99,12 @@
   .dock.hidden {
     transform: translate(-50%, 140%);
     opacity: 0;
+    pointer-events: none;
+  }
+  .overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 12000; /* above the Dock */
     pointer-events: none;
   }
   .dock-edge {

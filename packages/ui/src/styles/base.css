@@ -96,12 +96,11 @@ textarea {
  *
  * An animation of 0s has no active time: a one-shot shows the element as it ends, never a first keyframe, and a loop stands
  * still. At 0.01ms a loop ran 100 000 times a second (Discover's floating icons, every spinner) and a one-shot showed its
- * first keyframe until it started. The one exception is an indicator that says the app is busy (ActivityIndicator, an
- * indeterminate ProgressBar or ProgressRing, a pull-to-refresh spinner): it keeps turning, as iOS's do under Reduce
- * Motion, by setting its own duration with !important in its own reduced-motion rule.
+ * first keyframe until it started. The one exception is an indicator that says the app is busy (ActivityIndicator): it
+ * keeps turning, as iOS's does under Reduce Motion, by setting its own duration with !important in its own
+ * reduced-motion rule.
  *
- * Nothing listens for transitionend; NavigationStack, the one component that waits for animationend, turns its
- * animations off under Reduce Motion itself.
+ * Nothing listens for transitionend or animationend.
  */
 @media (prefers-reduced-motion: reduce) {
   *,

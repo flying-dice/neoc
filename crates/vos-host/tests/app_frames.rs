@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration tests
-//! Apps with a client of their own, end to end over the real adapters: the frame route and its policy, a client's
+//! An app's page and its backend, end to end over the real adapters: the frame route and its policy, a client's
 //! `rpc` on `/rpc` reaching the handler of the app it names, a handler's error as a message, and an agent's tool
 //! telling the app's open clients with `app.emit`.
 
@@ -60,13 +60,8 @@ async fn host_with_apps(tmp: &Path, ids: &[&str]) -> Running {
             ("static/assets/app.js", SCRIPT.as_bytes().to_vec()),
             ("static/.secret", b"hidden".to_vec()),
         ];
-        let url = publish_package_with_client(
-            &tmp.join(format!("pkg-{id}")),
-            id,
-            "app.luau",
-            Some("static"),
-            &files,
-        );
+        let url =
+            publish_package_with_client(&tmp.join(format!("pkg-{id}")), id, "app.luau", "static", &files);
         r.host.service.install_from_url(&url).await.unwrap();
     }
     r
@@ -161,14 +156,7 @@ async fn an_apps_static_files_are_public_carry_the_policy_and_only_its_entry_is_
     let bridge = bridge.text().await.unwrap();
     assert!(bridge.contains("ui/initialize") && bridge.contains("parent.postMessage"), "{bridge}");
 
-    // an app with no client has no static files, and neither has one that is not installed
-    let url = common::publish_package(
-        &temp("static-plain"),
-        "plain",
-        "app.luau",
-        &[("app.luau", b"app.manifest { id = 'plain', name = 'Plain', icon = 'gear' }".to_vec())],
-    );
-    r.host.service.install_from_url(&url).await.unwrap();
+    // an app that is not installed has no static files
     assert_eq!(get(&r, "/apps/plain/static/index.html", None).await.status(), 404);
     r.stop().await;
 }
@@ -235,23 +223,15 @@ async fn the_host_route_is_a_wrapper_page_for_a_paired_device_and_says_to_pair_o
     assert!(html.contains(r#"src="/wrapper.js""#), "{html}");
     assert_eq!(html.matches("<iframe").count(), 1, "one iframe and nothing else drawn: {html}");
 
-    // an app that is not installed, or has no client, has no page
+    // an app that is not installed has no page
     assert_eq!(get(&r, "/apps/ghost", Some(&cookie)).await.status(), 404);
-    let url = common::publish_package(
-        &temp("wrapper-plain"),
-        "plain",
-        "app.luau",
-        &[("app.luau", b"app.manifest { id = 'plain', name = 'Plain', icon = 'gear' }".to_vec())],
-    );
-    r.host.service.install_from_url(&url).await.unwrap();
-    assert_eq!(get(&r, "/apps/plain", Some(&cookie)).await.status(), 404);
     r.stop().await;
 }
 
-/// Publish an app with a client whose app ref carries `ui` fields beyond the root (`csp`, `permissions`).
+/// Publish an app whose app ref carries `ui` fields beyond the root (`csp`, `permissions`).
 fn publish_with_ui(root: &Path, id: &str, ui: &serde_json::Value) -> String {
     let files = [("app.luau", backend(id).into_bytes()), ("static/index.html", PAGE.as_bytes().to_vec())];
-    let url = publish_package_with_client(root, id, "app.luau", Some("static"), &files);
+    let url = publish_package_with_client(root, id, "app.luau", "static", &files);
     let path = root.join("app-ref.json");
     let mut app_ref: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     for (key, value) in ui.as_object().unwrap() {
@@ -318,14 +298,14 @@ async fn what_an_app_declares_for_its_page_is_applied_and_what_opens_everything_
 }
 
 #[tokio::test]
-async fn the_summary_tells_the_shell_which_windows_are_frames_and_what_they_ask_for() {
+async fn the_summary_tells_the_shell_the_window_of_an_apps_frame_and_what_it_asks_for() {
     let tmp = temp("summary");
     let r = host_with_apps(&tmp, &["tasks"]).await;
     let (_cookie, mut ws) = paired(&r).await;
     let list = rpc(&mut ws, 1, "app.list", json!({})).await;
     let tasks =
         list["result"]["apps"].as_array().unwrap().iter().find(|a| a["id"] == "tasks").unwrap().clone();
-    assert_eq!(tasks["client"], true);
+    assert!(tasks.get("client").is_none(), "every app has a page: the row has no flag for it ({tasks})");
     assert_eq!(tasks["window"], json!({"w": 420, "h": 480, "minW": 320, "minH": 320}));
     assert_eq!(tasks["permissions"], json!([]), "an app that asks for nothing asks for no feature");
     r.stop().await;

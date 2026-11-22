@@ -1,0 +1,406 @@
+{
+  "openrpc": "1.3.2",
+  "info": {
+    "title": "DNS",
+    "version": "0.1.0",
+    "description": "A DNS server for your network: give the machines at home a name, and choose who answers for the rest. It runs as a container in Docker, which this app makes and keeps."
+  },
+  "x-app": {
+    "id": "dns",
+    "icon": "network",
+    "tint": "indigo",
+    "description": "A DNS server for your network: give the machines at home a name, and choose who answers for the rest. It runs as a container in Docker, which this app makes and keeps.",
+    "window": {
+      "w": 760,
+      "h": 620,
+      "minW": 420,
+      "minH": 440
+    }
+  },
+  "methods": [
+    {
+      "name": "overview",
+      "summary": "Whether Docker can be reached, how the DNS server's container is doing, and the settings and names it is made from. A Docker that cannot be reached is an answer (`engine.reachable` is false and says why), not an error.",
+      "params": [],
+      "result": {
+        "name": "overview",
+        "schema": {
+          "$ref": "#/components/schemas/Overview"
+        }
+      }
+    },
+    {
+      "name": "connect",
+      "summary": "Choose the Docker the server runs in, and answer with what is there. A server left running in the Docker chosen before is not touched.",
+      "params": [
+        {
+          "name": "host",
+          "required": true,
+          "description": "Where Docker listens: `unix:///path/docker.sock`, `tcp://host:2375` or `http://host:2375`. Empty for this machine's own Docker.",
+          "schema": {
+            "type": "string",
+            "maxLength": 300
+          }
+        }
+      ],
+      "result": {
+        "name": "overview",
+        "schema": {
+          "$ref": "#/components/schemas/Overview"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "The address is not one Docker can be reached at."
+        }
+      ]
+    },
+    {
+      "name": "setEnabled",
+      "summary": "Turn the server on (its container is made from the settings and the names, and started) or off (its container is removed; the settings and the names stay). What Docker refused is said by `server.problem` of the answer.",
+      "params": [
+        {
+          "name": "enabled",
+          "required": true,
+          "schema": {
+            "type": "boolean"
+          }
+        }
+      ],
+      "result": {
+        "name": "overview",
+        "schema": {
+          "$ref": "#/components/schemas/Overview"
+        }
+      }
+    },
+    {
+      "name": "apply",
+      "summary": "Make the container again from the settings and the names as they stand, and start it: the way out when it is not running, or was made from older ones. Does nothing while the server is off.",
+      "params": [],
+      "result": {
+        "name": "overview",
+        "schema": {
+          "$ref": "#/components/schemas/Overview"
+        }
+      }
+    },
+    {
+      "name": "saveSettings",
+      "summary": "Change the port the server answers on, who it asks for the names it does not know, and whether it logs each question. A server that is on is made again with them.",
+      "params": [
+        {
+          "name": "port",
+          "required": true,
+          "description": "The port of the machine Docker runs on that the server answers on, UDP and TCP. DNS is 53.",
+          "schema": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          }
+        },
+        {
+          "name": "upstreams",
+          "required": true,
+          "description": "The addresses (IPv4 or IPv6) of the DNS servers asked for every name that is not one of the records. None: only the records are answered.",
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 45
+            }
+          }
+        },
+        {
+          "name": "logQueries",
+          "required": true,
+          "description": "Write every question and its answer to the log.",
+          "schema": {
+            "type": "boolean"
+          }
+        }
+      ],
+      "result": {
+        "name": "overview",
+        "schema": {
+          "$ref": "#/components/schemas/Overview"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "An upstream server is not an IP address: the message says which."
+        }
+      ]
+    },
+    {
+      "name": "addRecord",
+      "summary": "Give a name an address. A server that is on is made again with it.",
+      "params": [
+        {
+          "name": "name",
+          "required": true,
+          "description": "The name, like `nas.home`: letters, digits and hyphens, in parts joined by dots.",
+          "schema": {
+            "type": "string",
+            "maxLength": 253
+          }
+        },
+        {
+          "name": "address",
+          "required": true,
+          "description": "The address the name answers with, IPv4 (`192.168.1.10`) or IPv6 (`fd00::10`). A name may have several.",
+          "schema": {
+            "type": "string",
+            "maxLength": 45
+          }
+        },
+        {
+          "name": "subdomains",
+          "required": true,
+          "description": "Every name under it answers with the address too (`photos.nas.home` for `nas.home`).",
+          "schema": {
+            "type": "boolean"
+          }
+        }
+      ],
+      "result": {
+        "name": "overview",
+        "schema": {
+          "$ref": "#/components/schemas/Overview"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "The name or the address is not one, the name has that address already, or there are too many records: the message says which."
+        }
+      ]
+    },
+    {
+      "name": "removeRecord",
+      "summary": "Take a record away. A server that is on is made again without it.",
+      "params": [
+        {
+          "name": "record",
+          "required": true,
+          "description": "The id of one of the records of `overview`.",
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "result": {
+        "name": "overview",
+        "schema": {
+          "$ref": "#/components/schemas/Overview"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such record."
+        }
+      ]
+    },
+    {
+      "name": "logs",
+      "summary": "The end of what the server has written: how it started, what it could not do, and every question when the settings ask for that.",
+      "params": [
+        {
+          "name": "tail",
+          "required": false,
+          "description": "How many lines from the end; 200 when left out.",
+          "schema": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2000
+          }
+        }
+      ],
+      "result": {
+        "name": "logs",
+        "schema": {
+          "$ref": "#/components/schemas/Logs"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "Docker cannot be reached, or the server has no container: the message says which."
+        }
+      ]
+    }
+  ],
+  "components": {
+    "schemas": {
+      "Engine": {
+        "type": "object",
+        "properties": {
+          "reachable": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "string",
+            "description": "Docker's version, empty when it cannot be reached."
+          },
+          "host": {
+            "type": "string",
+            "description": "Where Docker is looked for, as given to `connect`. Empty for this machine's own Docker."
+          },
+          "problem": {
+            "type": "string",
+            "description": "Why Docker cannot be reached, as a sentence. Empty when it can."
+          }
+        },
+        "required": [
+          "reachable",
+          "version",
+          "host",
+          "problem"
+        ]
+      },
+      "ServerState": {
+        "type": "string",
+        "description": "How the server's container is doing: there is none, it runs, Docker is starting it again, or it is there and not running.",
+        "enum": [
+          "absent",
+          "running",
+          "restarting",
+          "stopped"
+        ]
+      },
+      "Server": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "The server is wanted on. Whether it is running is `state`."
+          },
+          "state": {
+            "$ref": "#/components/schemas/ServerState"
+          },
+          "status": {
+            "type": "string",
+            "description": "Docker's own words for the container: `Up 2 hours`, `Exited (2) 5 seconds ago`. Empty without one."
+          },
+          "current": {
+            "type": "boolean",
+            "description": "The container was made from the settings and the names as they stand. False without one."
+          },
+          "image": {
+            "type": "string",
+            "description": "The image the container is made from."
+          },
+          "problem": {
+            "type": "string",
+            "description": "Why the container could not be made or started the last time it was tried, as a sentence. Empty when it could."
+          }
+        },
+        "required": [
+          "enabled",
+          "state",
+          "status",
+          "current",
+          "image",
+          "problem"
+        ]
+      },
+      "Settings": {
+        "type": "object",
+        "properties": {
+          "port": {
+            "type": "integer",
+            "description": "The port the server answers on, UDP and TCP."
+          },
+          "upstreams": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The DNS servers asked for every name that is not one of the records."
+          },
+          "logQueries": {
+            "type": "boolean",
+            "description": "Every question and its answer is written to the log."
+          }
+        },
+        "required": [
+          "port",
+          "upstreams",
+          "logQueries"
+        ]
+      },
+      "Record": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string",
+            "description": "The name, in lower case and without a dot at its end."
+          },
+          "address": {
+            "type": "string",
+            "description": "The IPv4 or IPv6 address the name answers with."
+          },
+          "subdomains": {
+            "type": "boolean",
+            "description": "Every name under it answers with the address too."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "address",
+          "subdomains"
+        ]
+      },
+      "Overview": {
+        "type": "object",
+        "properties": {
+          "engine": {
+            "$ref": "#/components/schemas/Engine"
+          },
+          "server": {
+            "$ref": "#/components/schemas/Server"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/Settings"
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Record"
+            },
+            "description": "Every record, by name and then by address."
+          }
+        },
+        "required": [
+          "engine",
+          "server",
+          "settings",
+          "records"
+        ]
+      },
+      "Logs": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "The text is the end of something longer."
+          }
+        },
+        "required": [
+          "text",
+          "truncated"
+        ]
+      }
+    }
+  }
+}

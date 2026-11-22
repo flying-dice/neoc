@@ -1,12 +1,7 @@
 //! Agent contacts: the roster, per-agent grants and bearer tokens.
 //!
-//! An agent has an identity (`ctx.actor` for its tool calls), grants (deny by default) and MCP bearer
-//! tokens. Two kinds of token resolve to the same identity:
-//!
-//! - a **persistent token**, shown once when it is minted (`create`, `rotate_token`) and kept only as a
-//!   SHA-256 hash: for agents the host does not launch (a person's own MCP client);
-//! - a **launch token**, minted for each session the host opens for an agent and kept only as a hash in
-//!   memory, scoped to that session so it dies with it.
+//! An agent has an identity (`ctx.actor` for its tool calls), grants (deny by default) and an MCP bearer
+//! token. The token is shown once when it is minted (`rotate_token`) and kept only as a SHA-256 hash.
 //!
 //! The roster is mirrored in memory so [`AgentDirectory::authenticate`] (called on every MCP request) is
 //! synchronous. Grants are read at call time: editing them takes effect on the next `tools/call`, and the
@@ -19,9 +14,7 @@ use crate::{
 };
 use parking_lot::RwLock;
 use std::{collections::BTreeMap, sync::Arc};
-use vos_domain::{
-    hash_token, same_hash, Agent, AgentId, AgentIdentity, AgentRuntime, ApprovalPolicy, DomainError, Grants,
-};
+use vos_domain::{hash_token, same_hash, Agent, AgentId, AgentIdentity, DomainError, Grants};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AgentError {
@@ -42,9 +35,7 @@ pub struct NewAgent {
     pub name: String,
     pub avatar: Option<String>,
     pub role: String,
-    pub runtime: AgentRuntime,
     pub grants: Grants,
-    pub approval: ApprovalPolicy,
 }
 
 /// What `agents.update` may change (`None` leaves a field alone). Grants have their own call.
@@ -54,21 +45,12 @@ pub struct AgentPatch {
     /// `Some(None)` clears the avatar.
     pub avatar: Option<Option<String>>,
     pub role: Option<String>,
-    pub runtime: Option<AgentRuntime>,
-    pub approval: Option<ApprovalPolicy>,
-}
-
-struct LaunchToken {
-    hash: String,
-    agent: AgentId,
-    scope: String,
 }
 
 #[derive(Default)]
 struct Roster {
     agents: BTreeMap<AgentId, Agent>,
     persistent: Vec<(AgentId, String)>,
-    launch: Vec<LaunchToken>,
 }
 
 pub struct AgentService {
@@ -127,15 +109,8 @@ impl AgentService {
         };
         let mut grants = new.grants;
         grants.normalize();
-        let agent = Agent {
-            id,
-            name: new.name.trim().to_owned(),
-            avatar: new.avatar,
-            role: new.role,
-            runtime: new.runtime,
-            grants,
-            approval: new.approval,
-        };
+        let agent =
+            Agent { id, name: new.name.trim().to_owned(), avatar: new.avatar, role: new.role, grants };
         self.insert(agent, None).await
     }
 
@@ -190,12 +165,6 @@ impl AgentService {
         if let Some(role) = patch.role {
             agent.role = role;
         }
-        if let Some(runtime) = patch.runtime {
-            agent.runtime = runtime;
-        }
-        if let Some(approval) = patch.approval {
-            agent.approval = approval;
-        }
         agent.validate()?;
         self.store_update(&agent).await?;
         Ok(agent)
@@ -233,7 +202,6 @@ impl AgentService {
             let mut roster = self.roster.write();
             roster.agents.remove(id);
             roster.persistent.retain(|(a, _)| a != id);
-            roster.launch.retain(|t| &t.agent != id);
         }
         if let Err(e) = self.tools.visibility_changed(id).await {
             tracing::warn!(agent = %id.0, error = %e, "could not tell the agent its tool list changed");
@@ -258,23 +226,6 @@ impl AgentService {
         roster.persistent.push((id.clone(), hash.to_owned()));
         Ok(())
     }
-
-    /// A fresh bearer token for a session the host opens for `agent`. It is valid until
-    /// [`AgentService::revoke_launch_tokens`] is called with the same `scope` (or the agent is deleted).
-    pub fn launch_token(&self, agent: &AgentId, scope: &str) -> Result<String, AgentError> {
-        self.require(agent)?;
-        let token = mint_agent_token(self.random.as_ref());
-        self.roster.write().launch.push(LaunchToken {
-            hash: hash_token(&token),
-            agent: agent.clone(),
-            scope: scope.to_owned(),
-        });
-        Ok(token)
-    }
-
-    pub fn revoke_launch_tokens(&self, scope: &str) {
-        self.roster.write().launch.retain(|t| t.scope != scope);
-    }
 }
 
 impl AgentDirectory for AgentService {
@@ -286,11 +237,6 @@ impl AgentDirectory for AgentService {
         for (agent, stored) in &roster.persistent {
             if same_hash(stored, &hash) {
                 found = Some(agent);
-            }
-        }
-        for token in &roster.launch {
-            if same_hash(&token.hash, &hash) {
-                found = Some(&token.agent);
             }
         }
         found.and_then(|id| roster.agents.get(id)).map(Agent::identity)

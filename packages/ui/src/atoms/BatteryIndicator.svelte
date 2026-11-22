@@ -3,12 +3,11 @@
   interface Props {
     /** 0–1 */
     level?: number
-    charging?: boolean
   }
 
-  let { level = 1, charging = false }: Props = $props()
+  let { level = 1 }: Props = $props()
   const pct = $derived(Math.min(1, Math.max(0, level)))
-  const fill = $derived(charging ? 'var(--ios-green)' : pct <= 0.2 ? 'var(--ios-red)' : 'currentColor')
+  const fill = $derived(pct <= 0.2 ? 'var(--ios-red)' : 'currentColor')
 </script>
 
 <svg
@@ -17,7 +16,7 @@
   height="13"
   viewBox="0 0 27 13"
   role="img"
-  aria-label="Battery {Math.round(pct * 100)}%{charging ? ', charging' : ''}"
+  aria-label="Battery {Math.round(pct * 100)}%"
 >
   <rect x="0.5" y="0.5" width="22" height="12" rx="3.8" fill="none" stroke="currentColor" opacity="0.4" />
   <rect x="2" y="2" width={Math.max(1.5, 19 * pct)} height="9" rx="2.3" fill={fill} />
