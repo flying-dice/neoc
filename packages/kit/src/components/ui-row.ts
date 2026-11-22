@@ -383,7 +383,9 @@ export class UiRow extends LitElement {
     else this.removeAttribute('multi')
     if (option) {
       this.setAttribute('aria-selected', String(this.selected))
-      this.setAttribute('tabindex', this.disabled ? '-1' : this.tabStop ? '0' : '-1')
+      // a disabled option cannot take focus at all (tabindex -1 would still let a script focus it)
+      if (this.disabled) this.removeAttribute('tabindex')
+      else this.setAttribute('tabindex', this.tabStop ? '0' : '-1')
       const name = this.label || this.accessibleText
       if (name) this.setAttribute('aria-label', name)
       else this.removeAttribute('aria-label') // custom content names the option

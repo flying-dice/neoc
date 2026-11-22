@@ -929,7 +929,7 @@ for (const way of ['its own attribute', 'a disabled fieldset'] as const) {
           card.dataset.testid = `${id}-card`
           card.addEventListener('click', () => w.log.push(`${id}:card`))
           if (context === 'card') {
-            card.append(control, label)
+            card.append(control)
           } else {
             const list = mk('ui-list', { label: 'l' })
             const section = mk('ui-section')
@@ -939,9 +939,10 @@ for (const way of ['its own attribute', 'a disabled fieldset'] as const) {
             row.append(control)
             section.append(row)
             list.append(section)
-            card.append(list, label)
+            card.append(list)
           }
-          fieldset.append(card)
+          // the label is outside the card: a click on a label is the label's own, and the card would hear it
+          fieldset.append(card, label)
           form.append(fieldset)
           area.append(form)
           out.push({ id, kind, context, hasLabel: kind !== 'ui-segmented' })
@@ -1067,7 +1068,9 @@ for (const way of ['its own attribute', 'a disabled fieldset'] as const) {
           el.localName === 'ui-row' ? el.shadowRoot!.querySelector<HTMLElement>('.content')! : inner
         return Number(getComputedStyle(target).opacity)
       }, c.id)
-      if (!(dim < 1)) wrong.push(`${c.id} (${c.kind}) does not look disabled (opacity ${dim})`)
+      // (the native button is the control experiment for the clicks; its look is the browser's)
+      if (c.kind !== 'native' && !(dim < 1))
+        wrong.push(`${c.id} (${c.kind}) does not look disabled (opacity ${dim})`)
     }
     expect(wrong).toEqual([])
   })
