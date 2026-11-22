@@ -44,20 +44,25 @@ notification reaches every open page).
 ## Manual verification
 
 Ran the real shell on the real host headless (Chromium; `vos-host` on port 10310 with a fresh data directory and the
-Notifier installed from its app ref, driven by a Playwright script) and looked at the screenshots:
+Notifier installed from its app ref, driven by a Playwright script) after the first review round, and looked at the
+screenshots, and at every new story baseline (light and dark, over a busy window):
 
 - [x] Four notifications raised by the Notifier's background task while Files was in front: three banners stacked under the
       status bar, newest on top ("Message 4", "3", "2"), each with the Notifier's bell icon and pink plate and the name
-      "NOTIFIER" from the shell's list; above the Files window, clear of the status bar. Live region text:
-      "Notifier: Message 4  Notifier: Message 3  Notifier: Message 2".
+      "NOTIFIER" from the shell's list, above the Files window. The live region says "Notifier: Message 4  Notifier:
+      Message 3  Notifier: Message 2".
 - [x] Odd text (a line break, a right-to-left override and a zero-width space in the title, markup in the body), light and
       dark at 1280x800 and 360x640: the title is one line, "Odd title gnp.exe"; the body shows its line break and
-      `<b>not bold</b>` as characters; no bold span exists. The banner fits the 360-point screen with its margins.
-- [x] Keyboard: Alt+Shift+N moves focus to the newest banner's open control with a visible focus ring (also when the last
-      thing done was a click); Escape removes the banner and focus returns to the Dock button it came from.
-- [x] `bun run gate` on the head commit: neoc checks, lint, typecheck, test, test:e2e (the NO1 to NO6 journeys, the story
+      `<b>not bold</b>` as characters. The banner fits the 360-point screen with its margins.
+- [x] Keyboard: Alt+Shift+N moves focus to the newest banner's control with a visible focus ring round the card (also when
+      the last thing done was a click); Escape removes the banner and focus returns to the Dock button it came from.
+- [x] Stories: the focus ring is in the Keyboard baselines (molecule and desktop); the banners are drawn over a busy window
+      in light and dark; a family emoji, the flag of England, a Persian word and an Indic conjunct keep their joiners
+      (the emoji shows as one glyph, the flag as the cross of St George); one app's burst leaves another app's banner.
+- [x] `bun run gate` on the head commit: neoc checks, lint, typecheck, test, test:e2e (the NO1 to NO7 journeys, the story
       renders, axe in light and dark and the snapshots of the new stories).
 
-Not checked: a real screen reader (the roles, labels and live region were checked in the accessibility tree and by axe),
-Split View and Slide Over with a banner (the focus rule has unit tests for both), 125% text size, the ten-second expiry
-in a browser (unit-tested with a driven clock), a frame-based app as the sender (#56/#57 not on `main` yet).
+Not checked: a real screen reader (the roles, names, descriptions and live region were checked in the accessibility tree
+and by axe), Split View and Slide Over with a banner (the focus rule has unit tests for both), the text-size setting
+(nothing in the shell scales with the root font size today: the banner is set in the shell's own type tokens, so it
+follows them when that setting lands), a frame-based app as the sender (#56/#57 are not on `main` yet).
