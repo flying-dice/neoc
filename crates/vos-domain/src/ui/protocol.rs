@@ -531,9 +531,12 @@ wire! {
         pub params: Option<Map<String, Value>>,
     }
 
-    /// `notification.deliver`: an app asked to tell the person something (`app.notify`). Sent to every connected client; one that
-    /// is not connected never gets it (nothing is queued). `app` is the sender's id, set by the host, never by the
-    /// app, so a client can name the sender from its own app list.
+    /// `notification.deliver`: an app asked to tell the person something (`app.notify`). Sent to every connected
+    /// client; one that is not connected never gets it (nothing is queued). `app` is the sender's id, set by the
+    /// host, never by the app, so a client can name the sender from its own app list.
+    ///
+    /// `title` and `body` are plain text written by the app (or an agent through one): show them as text, never as
+    /// markup. The host enforces their limits in `app.notify` before it sends, so a client can rely on them.
     pub struct AppNotification {
         pub app: String,
         /// 1 to 200 characters, not blank.

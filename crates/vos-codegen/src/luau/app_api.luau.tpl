@@ -219,6 +219,10 @@ export type vos_Notification = {
 	title: string,
 	--- up to 2000 characters
 	body: string?,
+	--- removed: a notification is delivered now, there is no scheduling
+	at: nil,
+	--- removed: a notification has no buttons
+	actions: nil,
 }
 
 --- The desktop shell's side of the app: a deep link is accepted and dropped until the shell shows it.
@@ -254,9 +258,11 @@ export type vos_AppApi = {
 	windows: (self: vos_AppApi, name: string) -> { vos_WindowContext },
 	--- `app.notify { title, body }` or `app:notify { ... }`: tell the person something now. It reaches the clients
 	--- connected now; one that is not connected never gets it. The host sends the app's id with it, never text from the app.
-	--- Raises (each message starts `app.notify`): a key other than title and body ("unknown key"), no title
-	--- ("needs"), a title that is blank or over 200 characters, a body over 2000, a value that is not a string,
-	--- a 65th notification in one call ("at most 64 notifications per call"), and a call in render or a readOnly tool.
+	--- Raises (each message starts `app.notify`): no table ("takes a table"), a key other than title and body
+	--- ("unknown key", "unknown positional entry"), no title ("needs"), a title that is blank or over 200
+	--- characters, a body over 2000, a value that is not a string, a call in render or a readOnly tool, and a 65th
+	--- notification while the call's first 64 are still waiting ("already has 64 notifications waiting"). The host
+	--- takes them when the call ends, and when a task or request handler waits, so a task that waits between them is not capped.
 	notify: ((notification: vos_Notification) -> ()) & ((self: vos_AppApi, notification: vos_Notification) -> ()),
 	log: (message: string) -> (),
 }

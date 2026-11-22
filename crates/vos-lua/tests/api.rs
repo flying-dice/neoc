@@ -559,11 +559,19 @@ async fn notify_refuses_a_key_it_does_not_have() {
         ("app.notify { title = 't', at = '2026-01-01T09:00:00Z' }", "unknown key `at`"),
         ("app.notify { title = 't', actions = { 'Open' } }", "unknown key `actions`"),
         ("app.notify { titel = 't' }", "unknown key `titel`"),
-        ("app.notify { 'positional', title = 't' }", "unknown key of type number"),
+        ("app.notify { title = 't', [true] = 1 }", "unknown key of type boolean"),
     ] {
         let e = try_load("probe", &app(call)).await.err().unwrap().to_string();
         assert!(e.contains(needle), "wanted `{needle}` in `{e}`");
         assert!(e.contains("(it takes `title`, `body`)"), "names what it takes: {e}");
+    }
+    // a value written without a name is a positional entry, the likeliest slip: say so, and how to write it
+    for call in ["app.notify { 'Backup done' }", "app.notify { 'positional', title = 't' }"] {
+        let e = try_load("probe", &app(call)).await.err().unwrap().to_string();
+        assert!(
+            e.contains("app.notify: unknown positional entry 1 (it takes `title`, `body` by name)"),
+            "{call}: {e}"
+        );
     }
     // the longest title and body, and an empty body, are fine
     let vm = load(&app("app.notify { title = string.rep('t', 200), body = string.rep('b', 2000) }\napp.notify { title = 't', body = '' }")).await;
@@ -587,22 +595,30 @@ async fn one_call_queues_at_most_64_notifications() {
     vm.emit("burst", json!(64)).await.unwrap();
     assert_eq!(vm.take_effects().len(), 64);
     let e = vm.emit("burst", json!(65)).await.unwrap_err().to_string();
-    assert!(e.contains("app.notify: at most 64 notifications per call"), "{e}");
+    assert!(e.contains("app.notify: this call already has 64 notifications waiting to be delivered"), "{e}");
     assert_eq!(vm.take_effects().len(), 64);
     vm.emit("burst", json!(1)).await.unwrap();
     assert_eq!(vm.take_effects().len(), 1);
 }
 
 /// The cap is each call's own: what another call queued while this one was parked at a wait does not count
-/// against it, so one call cannot make another hit the cap early.
+/// against it, and what it queued itself before the wait still does.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_parked_call_does_not_use_up_another_calls_notifications() {
     let vm = Arc::new(
         load(&app(r#"
             local task = require("std:task")
+            local parked, go = false, false
             local function burst(n) for i = 1, n do app.notify { title = "n" .. i } end end
-            hook("a", function() burst(40) task.wait(0.3) burst(24) end)
+            hook("a", function()
+              burst(40)
+              parked = true
+              while not go do task.wait(0.01) end -- parked until the test says go
+              burst(25)
+            end)
             hook("b", function() burst(64) end)
+            hook("parked", function() return parked end)
+            hook("go", function() go = true end)
         "#))
         .await,
     );
@@ -610,12 +626,18 @@ async fn a_parked_call_does_not_use_up_another_calls_notifications() {
         let vm = vm.clone();
         tokio::spawn(async move { vm.emit("a", json!(null)).await })
     };
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    while vm.emit("parked", json!(null)).await.unwrap() != json!(true) {
+        assert!(tokio::time::Instant::now() < deadline, "`a` never reached its wait");
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
     // `a` has 40 waiting and is parked: `b` still gets its own 64
     vm.emit("b", json!(null)).await.unwrap();
-    // and `a` its remaining 24, though 104 are queued in all
-    a.await.unwrap().unwrap();
-    assert_eq!(vm.take_effects().len(), 128);
+    vm.emit("go", json!(null)).await.unwrap();
+    // `a`'s own 40 survived the wait: its 25th after it is its 65th, and raises
+    let e = a.await.unwrap().unwrap_err().to_string();
+    assert!(e.contains("app.notify: this call already has 64 notifications waiting to be delivered"), "{e}");
+    assert_eq!(vm.take_effects().len(), 64 + 64);
 }
 
 // ---- windows ------------------------------------------------------------------------------------------------

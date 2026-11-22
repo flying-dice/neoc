@@ -77,12 +77,14 @@ fn only_keys(t: &Table, what: &str, allowed: &[&str]) -> mlua::Result<()> {
             _ => false,
         };
         if !known {
-            let named = match &key {
-                LuaValue::String(s) => format!("`{}`", s.to_string_lossy()),
-                other => format!("of type {}", luau_type(other)),
-            };
             let expected = allowed.iter().map(|k| format!("`{k}`")).collect::<Vec<_>>().join(", ");
-            return Err(mlua::Error::runtime(format!("{what}: unknown key {named} (it takes {expected})")));
+            let message = match &key {
+                LuaValue::String(s) => format!("unknown key `{}` (it takes {expected})", s.to_string_lossy()),
+                // `f { "text" }`: a value written without a name lands at index 1
+                LuaValue::Integer(i) => format!("unknown positional entry {i} (it takes {expected} by name)"),
+                other => format!("unknown key of type {} (it takes {expected})", luau_type(other)),
+            };
+            return Err(mlua::Error::runtime(format!("{what}: {message}")));
         }
     }
     Ok(())

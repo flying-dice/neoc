@@ -147,7 +147,7 @@ impl Default for VmConfig {
     }
 }
 
-/// The most notifications one call may queue before the host takes them (`app.notify` raises past it). The
+/// The most notifications one call may have waiting before the host takes them (`app.notify` raises past it). The
 /// number is Apple's (Decision NEOC-287): the system keeps an app's 64 soonest scheduled local notifications
 /// (`UILocalNotification`).
 pub const MAX_QUEUED_NOTIFICATIONS: usize = 64;
@@ -292,7 +292,7 @@ impl Shared {
         let queued = counts.entry(lifecycle::turn_id().unwrap_or(0)).or_default();
         if *queued >= MAX_QUEUED_NOTIFICATIONS {
             return Err(mlua::Error::runtime(format!(
-                "app.notify: at most {MAX_QUEUED_NOTIFICATIONS} notifications per call"
+                "app.notify: this call already has {MAX_QUEUED_NOTIFICATIONS} notifications waiting to be delivered"
             )));
         }
         *queued += 1;

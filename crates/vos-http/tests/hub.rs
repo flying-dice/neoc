@@ -28,13 +28,30 @@ async fn start() -> (Arc<RpcHub>, std::net::SocketAddr, tokio::task::JoinHandle<
     (hub, addr, tokio::spawn(async move { axum::serve(listener, app).await.unwrap() }))
 }
 
-/// A client that the hub has registered: any answer to a request means `connected` has run.
+/// A client that the hub has registered: any answer to a request means `connected` has run. The answer is the
+/// first frame it gets, so nothing was sent to it before it asked (a replayed notification would come first).
 async fn connect(addr: std::net::SocketAddr) -> Ws {
     let (mut ws, _) = connect_async(format!("ws://{addr}/rpc").into_client_request().unwrap()).await.unwrap();
     let probe = RpcMessage::request(1, "view.sync", json!([]));
     ws.send(Message::text(serde_json::to_string(&probe).unwrap())).await.unwrap();
-    assert!(matches!(next(&mut ws).await, RpcMessage::Error { .. }));
+    let first = next(&mut ws).await;
+    assert!(
+        matches!(first, RpcMessage::Error { .. }),
+        "the first frame is the probe's answer, got {first:?}"
+    );
     ws
+}
+
+fn note(title: &str) -> Notification {
+    Notification { app: AppId::parse("notes").unwrap(), title: title.into(), body: None }
+}
+
+async fn delivered_title(ws: &mut Ws) -> String {
+    let RpcMessage::Notification { method, params, .. } = next(ws).await else {
+        panic!("expected a notification")
+    };
+    assert_eq!(method, "notification.deliver");
+    params["title"].as_str().unwrap().to_owned()
 }
 
 async fn next(ws: &mut Ws) -> RpcMessage {
@@ -78,5 +95,23 @@ async fn an_app_notification_reaches_every_client_as_notification_deliver() {
         );
         assert_eq!(got[1].0, json!({ "app": "notes", "title": "Done" }));
     }
+    server.abort();
+}
+
+/// Nothing is queued: a notification sent while no client is connected, or before a client connects, never
+/// reaches it. The client that connects later gets only what is sent after.
+#[tokio::test]
+async fn a_client_that_connects_later_gets_only_what_is_sent_after() {
+    let (hub, addr, server) = start().await;
+    hub.notify(note("nobody is listening")).await.unwrap();
+
+    let mut early = connect(addr).await;
+    hub.notify(note("before")).await.unwrap();
+    assert_eq!(delivered_title(&mut early).await, "before");
+
+    let mut late = connect(addr).await;
+    hub.notify(note("after")).await.unwrap();
+    assert_eq!(delivered_title(&mut late).await, "after");
+    assert_eq!(delivered_title(&mut early).await, "after");
     server.abort();
 }

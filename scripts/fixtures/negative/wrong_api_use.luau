@@ -25,6 +25,8 @@ app.files.cache:createDir(5) -- expect-error: Expected this to be 'string', but 
 app.timer.every(60, function() end) -- expect-error: Key 'timer' not found in table 'vos_AppApi'
 app.shell.badge(3) -- expect-error: Key 'badge' not found in table 'vos_Shell'
 app.on("event", function() end) -- expect-error: Key 'on' not found in table 'vos_AppApi'
+app.notify { title = "later", at = "2026-01-01T09:00:00Z" } -- expect-error: but got '{| at: string, title: string |}'
+app.notify { title = "tap", actions = { "Open" } } -- expect-error: but got '{| actions: {string}, title: string |}'
 app.notify { title = "fine", body = "this line is correct" }
 app.tool {
   name = "fine",
