@@ -11,7 +11,7 @@ pub enum PortError {
     #[error("internal: {0}")]
     Internal(String),
     /// A JSON-RPC error of an app's backend, with its code: the generated router's `-32602` (invalid params), a
-    /// handler's `ctx:fail(message, { code })`, or the host's `-32601` (no such method). Reaches the client as it is.
+    /// handler's `error("RPC-<code> message", 0)`, or the host's `-32601` (no such method). Reaches the client as it is.
     #[error("{message}")]
     Rpc { code: i32, message: String, data: Option<serde_json::Value> },
 }

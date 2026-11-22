@@ -1,7 +1,8 @@
 /**
- * The typed client, from the definition: `generated/rpc.ts` in the app's project. The client's `mount(el, { rpc, host })`
- * gets the host's raw `rpc(method, args)`; `createRpc(raw)` turns it into an object with one typed function per method of
- * the definition (`rpc.add({ title })`), so a call the definition does not allow is a type error before it is a request.
+ * The typed client, from the definition: `.app/rpc.d.ts` (the types) and `.app/rpc.js` (the module behind `import { api, host }
+ * from 'app:rpc'`) in the app's project. `api` has one typed function per method of the definition (`api.add({ title })`), so a
+ * call the definition does not allow is a type error before it is a request; `host` is the host page's side (theme, events).
+ * The generated entry binds the module to the host's raw `rpc(method, args)` before the app's own `mount(el)` runs.
  */
 import type { Definition, Schema } from './definition.ts'
 import { jsDoc, jsString, lineComment } from './escape.ts'

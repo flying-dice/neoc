@@ -134,7 +134,7 @@ A function in the table that the contract does not declare is never called. **Th
 in `~/.local/bin`, or named by `VOS_LUAU_LSP`), as it needs darklua: without it the build stops and says how to install it, because
 it could not say the app will load. `vos({ check: false })` turns the check off, for someone who knows what they are doing (the build then says in one line that nothing
 verifies the handlers, every time; the host still refuses to load an app that does not implement every method). A build that fails at any step leaves `dist/` exactly as the
-last good build made it: the build is made in `.app/build` and moved into `dist/` only when every step has succeeded.
+last good build made it: the build is made in a folder of its own, `.app/build-XXXXXX`, and moved into `dist/` only when every step has succeeded.
 
 ## The client
 

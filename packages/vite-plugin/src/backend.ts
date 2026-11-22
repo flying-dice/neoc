@@ -1,7 +1,7 @@
 /**
  * The backend half of the build: the Luau entry bundled into one file with darklua (relative `require`s inlined, types
- * and comments stripped), and the app ref the host installs: the manifest from `app.json` plus every file with its sha256.
- * The output goes next to the client script, so the build's output folder is one installable app.
+ * and comments stripped), and the app ref the host installs: the manifest from the contract (`info` and `x-app`) plus every file
+ * with its sha256. The output goes next to the client script, so the build's output folder is one installable app.
  */
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -115,7 +115,7 @@ export function writeApp(project: string, outDir: string, definition: Definition
       ...(meta.description ? { description: meta.description } : {}),
       ...(meta.window ? { window: meta.window } : {}),
       ...(meta.requires ? { requires: meta.requires } : {}),
-      // what the app's frame may load and ask for (MCP Apps' `_meta.ui`): the host builds the frame's policy and `allow` from it
+      // what the app's frame may load and ask for (MCP Apps' `_meta.ui`): carried in the app ref; the host does not apply it yet
       ...(meta.csp || meta.permissions ? { ui: { ...(meta.csp ? { csp: meta.csp } : {}), ...(meta.permissions ? { permissions: meta.permissions } : {}) } } : {})
     },
     files
