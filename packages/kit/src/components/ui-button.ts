@@ -254,9 +254,10 @@ export class UiButton extends FormControl {
     if (this.type === 'submit') {
       // like a native submit button, it is part of the data of the submission it starts, and of no other
       this.internals.setFormValue(this.name ? this.value : null)
-      form?.requestSubmit()
+      // through the prototype: an element of the form named `reset` or `submit` shadows the method of the same name
+      if (form) HTMLFormElement.prototype.requestSubmit.call(form)
       this.internals.setFormValue(null)
-    } else if (this.type === 'reset') form?.reset()
+    } else if (this.type === 'reset' && form) HTMLFormElement.prototype.reset.call(form)
   }
 
   /** A click whose first target is the element (`el.click()`, `fireEvent.click`, a label) acts as a click on the button. */

@@ -775,8 +775,8 @@ test('a click on the element itself, from a script, a test or a label, acts as a
     afterReset: 'Ada',
     labelFocusesField: 'who',
     'disabled button.click()': [],
-    'toggle.click()': ['toggle:click', 'toggle:change'],
-    'check.click()': ['check:click', 'check:change'],
+    'toggle.click()': ['toggle:change', 'toggle:click'],
+    'check.click()': ['check:change', 'check:click'],
     'disabled toggle.click()': [],
     'row.click()': ['row:click', 'row:press'],
     'disabled row.click()': [],
@@ -821,7 +821,12 @@ test('Enter and Space press a button, flip a toggle and a check, and press a tap
   })
   const heard = async (id: string, key: string): Promise<string[]> => {
     await page.evaluate(() => ((window as unknown as { log: string[] }).log = []))
-    await page.locator(`#${id}`).focus()
+    // a tappable row's focus target is the button inside it
+    await page.evaluate((id) => {
+      const el = document.getElementById(id) as HTMLElement & { focusRow?: () => void }
+      if (el.focusRow) el.focusRow()
+      else el.focus()
+    }, id)
     await page.keyboard.press(key)
     return page.evaluate(() => [...(window as unknown as { log: string[] }).log].sort())
   }

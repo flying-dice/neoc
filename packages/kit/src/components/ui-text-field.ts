@@ -217,7 +217,9 @@ export class UiTextField extends FormControl {
   }
 
   private onKeydown = (e: KeyboardEvent): void => {
-    if (e.key === 'Enter' && !e.isComposing) this.internals.form?.requestSubmit()
+    const form = this.internals.form
+    if (e.key === 'Enter' && !e.isComposing && form)
+      HTMLFormElement.prototype.requestSubmit.call(form)
   }
 
   render(): TemplateResult {
