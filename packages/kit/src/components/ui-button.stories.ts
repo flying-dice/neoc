@@ -147,7 +147,7 @@ export const HitAreas: Story = {
   parameters: { controls: { disable: true } },
   render: () =>
     html`<div
-      style="display:grid;grid-template-columns:auto auto;gap:40px;padding:20px;justify-items:start"
+      style="display:grid;grid-template-columns:auto auto;gap:40px;padding:20px;justify-items:start;align-items:start"
     >
       <ui-button data-testid="plain-small" size="small">Small</ui-button>
       <ui-button data-testid="hit-small" size="small" hit>Small, hit</ui-button>

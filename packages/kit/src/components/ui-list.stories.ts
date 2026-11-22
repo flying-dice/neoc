@@ -317,10 +317,11 @@ export const ControlsSideBySideInARow: Story = {
     </div>`,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
-    // each row keeps the 44 pt it has with the shell's controls, and neighbouring controls' boxes never overlap
+    // a row is as tall as its content: a 24 pt check (46) or a 28 pt icon button (50) and the 11 pt padding above and below it, as with
+    // any control of that size in the shell's row, and neighbouring controls' boxes never overlap
     const box = (id: string): DOMRect => canvas.getByTestId(id).getBoundingClientRect()
-    await expect(box('side-checks').height).toBe(44)
-    await expect(box('side-icon').height).toBe(44)
+    await expect(box('side-checks').height).toBe(46)
+    await expect(box('side-icon').height).toBe(50) // a 28 pt icon button
     for (const [a, b] of [
       ['side-check-1', 'side-check-2'],
       ['side-icon-button', 'side-check-3']
