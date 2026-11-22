@@ -25,9 +25,8 @@ step "cargo test -p neoc -p neoc-vm"
 cargo test -p neoc -p neoc-vm
 
 # The suites that need a Docker daemon (sqlx_mysql, sqlx_postgres, testcontainers_modules) are left out; with Docker
-# running, `neoc run 'crates/neoc/tests/**/*.test.lua' 'crates/neoc/tests/**/*.spec.lua'` runs every suite. One hyper
-# test fetches https://example.com/ (the platform trust store), so this step needs network access, as `cargo deny
-# check` below does.
+# running, `neoc run 'crates/neoc/tests/**/*.test.lua' 'crates/neoc/tests/**/*.spec.lua'` runs every suite. No test
+# reaches the internet (the hyper ones run against servers in the process); `cargo deny check` below needs network.
 step "Lua suites (neoc run)"
 cargo run -p neoc -- run \
   "crates/neoc/tests/lib/*.test.lua" \

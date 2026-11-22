@@ -375,7 +375,7 @@ fn matcher_refuses_extra_missing_and_unmarked_findings() {
 /// here on purpose, in the same change.
 const NEGATIVE_MARKERS: &[(&str, usize)] = &[
     ("types/fixtures/negative/result_handling.luau", 5),
-    ("types/fixtures/negative/wrong_use.luau", 49),
+    ("types/fixtures/negative/wrong_use.luau", 56),
 ];
 
 #[test]
