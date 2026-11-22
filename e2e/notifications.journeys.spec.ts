@@ -6,7 +6,7 @@
  * remove it again, and run one after another, last, because a notification reaches every open page.
  *
  * Timing: nothing here sleeps to wait for something. Every wait is a poll on what the page shows. The one pause, in
- * NO6, is to show that a page did not draw a banner, which no poll can.
+ * NO7, is to show that a page did not draw a banner, which no poll can.
  */
 import { type Browser, type BrowserContext, type Page } from '@playwright/test'
 import { NOTIFIER_APP_REF } from './host/config'
@@ -180,7 +180,22 @@ test.describe('Notification journeys', () => {
     }
   })
 
-  test('NO6: two clients at once: only the one where the app is not in front draws the banner', async ({ page, browser }) => {
+  test('NO6: dismissing a banner with the mouse leaves the keys somewhere, never on the page', async ({ page }) => {
+    await openNotifier(page)
+    await notifyWhileAway(page)
+    await expect(banners(page)).toHaveCount(1)
+    await bannerParts(page, 'dismiss').first().click()
+    await expect(banners(page)).toHaveCount(0)
+    // the click had put focus on the Dismiss control; with it gone, focus is on the front window or the Dock
+    const where = await page.evaluate(() => {
+      const active = document.activeElement
+      if (!active || active === document.body) return 'the page'
+      return active.closest('[data-testid]')?.getAttribute('data-testid') ?? active.tagName
+    })
+    expect(where).not.toBe('the page')
+  })
+
+  test('NO7: two clients at once: only the one where the app is not in front draws the banner', async ({ page, browser }) => {
     const other = await secondClient(browser, test.info().project.use)
     try {
       const second = await other.newPage()

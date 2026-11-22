@@ -12,8 +12,16 @@ What the person can rely on:
 - The banner shows when the app has no window open and while another app is in front. It does not show on a client where
   one of the app's windows is in front; every other client that is connected shows it.
 - Choosing it (click, Enter) opens the app's main window, or brings it forward; Dismiss (or Escape on the banner) closes
-  it and opens nothing. It also goes by itself after ten seconds, and waits while the pointer or keyboard focus is on it.
-- At most three are on screen, newest on top; a fourth takes the place of the oldest.
+  it and opens nothing. It also goes by itself after ten seconds of the page being on screen (a banner that arrives in a
+  background tab starts its time when the tab is shown), and waits while keyboard focus is on it or the pointer is being
+  moved over it (a pointer resting where the banner appeared holds nothing).
+- A tab that is in the background, or a browser with another application in front, does not count as the app being in
+  front: the banner shows.
+- At most three are on screen, newest on top. A fourth takes the place of the same app's oldest banner, so one app's burst
+  does not push another app's banner off; an app with none on screen displaces the oldest. A banner someone is reading is
+  the last to go.
+- Keyboard focus is never dropped to the page: when the banner that has it goes, it moves to the nearest banner left, else
+  back to where it was, else to the front window or the Dock.
 - A client that is not connected when the app notifies never gets it, and nothing is kept: a banner that has gone is gone
   (there is no notification list in vos yet).
 - Keyboard: Alt+Shift+N moves focus to the newest banner from anywhere, Enter opens the app and Escape dismisses the banner
@@ -30,7 +38,8 @@ notification reaches every open page).
 | NO3 | Do all of it by keyboard.                               | A banner, with another app in front.                 | Alt+Shift+N focused the banner and Escape dismissed it; for the next one the same shortcut and Enter opened the app.                                    |
 | NO4 | Read a burst, long text and odd text.                   | Another app in front; the Notifier's buttons tapped. | Four notifications showed three, newest first; long text stayed small; a title with a line break, an override and a zero-width space showed as one clean line; markup in the body showed as characters. |
 | NO5 | Read a banner in light and dark at a small window.      | A 360-point-wide window, each theme.                 | The banner fitted the screen and axe found no violation, in both themes.                                                                                    |
-| NO6 | Have two clients connected at once.                     | Two paired browsers, the Notifier in front on one.   | Only the browser where the Notifier was not in front showed the banner; once the first moved to another app, both did.                                      |
+| NO6 | Dismiss a banner with the mouse.                        | A banner, with another app in front.                 | The keys were not left on the page: focus was on the front window or the Dock.                                                                              |
+| NO7 | Have two clients connected at once.                     | Two paired browsers, the Notifier in front on one.   | Only the browser where the Notifier was not in front showed the banner; once the first moved to another app, both did.                                      |
 
 ## Manual verification
 

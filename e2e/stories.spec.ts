@@ -9,6 +9,9 @@
  * args) are also checked at the smallest window (320x240, clamped to the
  * app's manifest minimum, as a real window is) and a large one.
  *
+ * Stories tagged `keep-focus` keep the focus their play function left (a focus ring is the state); stories tagged
+ * `play-only` are checked for their behaviour, axe and layout but have no baseline (their end state is another story's).
+ *
  * Stories are discovered from each package's storybook-static/index.json,
  * so a new story or a new app's Storybook is covered with no extra code.
  */
@@ -50,7 +53,8 @@ async function gotoStory(
   book: string,
   id: string,
   theme: (typeof THEMES)[number],
-  size?: { width: number; height: number }
+  size?: { width: number; height: number },
+  keepFocus = false
 ): Promise<void> {
   const args = size ? `&args=width:${size.width};height:${size.height}` : ''
   await page.goto(`/${book}/iframe.html?id=${id}&viewMode=story&globals=theme:${theme}${args}`)
@@ -69,8 +73,9 @@ async function gotoStory(
     const message = await page.locator('#error-message, #error-stack').allInnerTexts()
     throw new Error(`Story ${id} ${phase}: ${message.join('\n') || 'see the trace'}`)
   }
-  // Play functions click programmatically, which leaves a focus ring a pointer wouldn't.
-  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+  // Play functions click programmatically, which leaves a focus ring a pointer wouldn't. A story whose state is the
+  // focus (tag `keep-focus`: a banner the keyboard is on) ends with it where it should be and keeps it.
+  if (!keepFocus) await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
   await page.evaluate(() => document.fonts.ready)
 }
 
@@ -83,11 +88,14 @@ for (const book of books) {
         const root = page.locator('#storybook-root')
         for (const theme of THEMES) {
           await test.step(theme, async () => {
-            await gotoStory(page, book, story.id, theme)
+            await gotoStory(page, book, story.id, theme, undefined, story.tags.includes('keep-focus'))
             // a story that shows a deliberately clipped state (a swiped-open row) tags itself `overflow-ok`
             if (!story.tags.includes('overflow-ok')) await expectNoOverflow(root)
             await expectAccessible(page, testInfo, { include: '#storybook-root' })
-            await expect(page).toHaveScreenshot([book, `${story.id}-${theme.toLowerCase()}.png`], { fullPage: true })
+            // a story that only checks behaviour (tag `play-only`: its end state is another story's) has no baseline
+            if (!story.tags.includes('play-only')) {
+              await expect(page).toHaveScreenshot([book, `${story.id}-${theme.toLowerCase()}.png`], { fullPage: true })
+            }
           })
         }
 

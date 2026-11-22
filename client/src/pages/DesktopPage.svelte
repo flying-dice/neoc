@@ -41,6 +41,14 @@
   $effect(() => host.onAppNotification((params) => notifications.deliver(params)))
   $effect(() => onAppsRemoved((ids) => notifications.forgetApps(ids)))
 
+  /** Where the keys go when a banner that had them leaves and nothing nearer is left: the front window, else the Dock. */
+  function restingFocus(): HTMLElement | null {
+    const front = wm.focused
+      ? document.querySelector<HTMLElement>(`[data-testid="window-${wm.focused.appId}"]`)
+      : null
+    return front ?? document.querySelector<HTMLElement>('[data-testid="dock"] button')
+  }
+
   let workspaceWidth = $state(0)
   let workspaceHeight = $state(0)
 
@@ -126,7 +134,11 @@
   {#snippet workspace()}
     <div class="stage" role="presentation" data-testid="desktop-stage" {ondragover} {ondrop}>
       <!-- first in the page, so Tab reaches a banner before anything else on the desktop -->
-      <NotificationBanners center={notifications} bind:height={bannersHeight} />
+      <NotificationBanners
+        center={notifications}
+        bind:height={bannersHeight}
+        fallback={restingFocus}
+      />
 
       <div
         class="widgets"

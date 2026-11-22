@@ -80,11 +80,15 @@ semantic tokens only.
   is not connected never gets it (nothing is queued). The shell of each client draws it as a banner above its windows,
   with the app's name and icon from the shell's own app list: it is not drawn on a client where one of the app's windows
   is in front, and is drawn on every other client, whether or not the app has a window open. The person can dismiss it
-  or choose it to open the app's main window; it goes by itself after ten seconds, and at most three show at once.
+  or choose it to open the app's main window; it goes by itself after ten seconds of the page being on screen (held while the keyboard is on it or the pointer is
+  being moved over it), and at most three show at once (a fourth replaces the same app's oldest first, so one app's
+  burst does not push another's off; a tab in the background does not count as the app being in front, so it is shown).
   A page with no shell (the app opened on its own at `/apps/<id>`) draws none: the banner is the shell's, and the call is
-  the same either way. The title is shown on one line (line breaks, control characters, direction overrides and
-  zero-width characters are removed) and the body as lines of text, never as markup; a title with nothing visible
-  left shows the app's name. The journeys are in `client/journeys/notifications.md`. Bad input raises, each message
+  the same either way. The title is shown on one line (line breaks and control characters become spaces; direction overrides and
+  characters that draw nothing are removed, except the joiners and variation selectors that make an emoji or a word,
+  such as a family emoji, the flag of England or a Persian word) and the body as lines of text, never as markup; a
+  title with nothing visible left shows the app's name. A screen reader hears the sender, the title and the start of
+  the body. The journeys are in `client/journeys/notifications.md`. Bad input raises, each message
   starting `app.notify`: no table (`takes a table`), a key other than `title` and `body` (`unknown key`, or `unknown positional entry` for `app.notify {
   "text" }`), no title (`needs`), a title that is blank or too long, a body that is too long, a value that is not a
   string, and a call in `render` or a `readOnly` tool. A call may also have at most 64 notifications waiting to be
