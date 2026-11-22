@@ -10,12 +10,14 @@
  *  - `Default_Ignorable_Code_Point` characters (zero-width space, word joiner, soft hyphen, the Hangul and Khmer
  *    fillers, Mongolian free variation selectors, the tag block, ...) draw nothing and are removed, except where they
  *    do their job: a zero-width joiner or non-joiner between two letters or pictographs (a family emoji, Persian
- *    and Indic words), a variation selector after the character it selects (the emoji form, a keycap), and a tag run
- *    that ends a flag of England, Scotland or Wales after its black flag.
+ *    and Indic words), a variation selector after the character it selects (the emoji form, a keycap), and the tag
+ *    sequences of the three subdivision flags (England, Scotland, Wales) after the black flag, exactly those and no
+ *    other tag character: tags can carry a hidden message, as many times as the text allows.
  *  - Characters that are not default-ignorable but draw a blank anyway (the braille blank, the object replacement
  *    character) become spaces.
- *  - A title or body counts as having something to show only if it holds a letter, number, punctuation, symbol or
- *    mark: any other result is `''`, and the caller names the app instead.
+ *  - A title or body counts as having something to show only if it holds a letter, number, punctuation or symbol (a
+ *    combining mark with nothing to sit on shows a stray accent, not a message): any other result is `''`, and the
+ *    caller names the app instead.
  */
 
 const BIDI_CONTROL = /\p{Bidi_Control}/u
@@ -32,10 +34,14 @@ const JOINS_BEFORE = /[\p{L}\p{M}\p{Extended_Pictographic}]/u
 const SELECTS_AFTER = /[\p{Extended_Pictographic}\p{Emoji}\p{Ideographic}]/u
 const VARIATION_SELECTOR = /[\uFE00-\uFE0F\u{E0100}-\u{E01EF}]/u
 const TAG = /[\u{E0020}-\u{E007F}]/u
-const PICTOGRAPH = /\p{Extended_Pictographic}/u
-/** The tag letters and digits of a flag's subdivision code (`gbeng`), then the cancel tag. */
-const SUBDIVISION_FLAG = /^[\u{E0030}-\u{E0039}\u{E0061}-\u{E007A}]{2,8}\u{E007F}$/u
-const SOMETHING_TO_SHOW = /[\p{L}\p{N}\p{P}\p{S}\p{M}]/u
+const BLACK_FLAG = '\u{1F3F4}'
+/** The tag sequences of the flags of England (`gbeng`), Scotland (`gbsct`) and Wales (`gbwls`), each ended by the cancel tag. */
+const SUBDIVISION_FLAGS = new Set([
+  '\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}',
+  '\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}',
+  '\u{E0067}\u{E0062}\u{E0077}\u{E006C}\u{E0073}\u{E007F}'
+])
+const SOMETHING_TO_SHOW = /[\p{L}\p{N}\p{P}\p{S}]/u
 
 /**
  * The characters of `text` that may be drawn, line breaks as `linebreak` (a space for a title, `'\n'` for a body).
@@ -54,11 +60,11 @@ function visibleCharacters(text: string, linebreak: string): string {
     } else if (VARIATION_SELECTOR.test(c)) {
       if (SELECTS_AFTER.test(last())) out.push(c)
     } else if (TAG.test(c)) {
-      // a run of tags is kept whole, after its black flag, or not at all
+      // a run of tags is kept whole when it is one of the three subdivision flags after the black flag, else dropped
       let end = i
       while (TAG.test(chars[end] ?? '')) end++
       const run = chars.slice(i, end).join('')
-      if (PICTOGRAPH.test(last()) && SUBDIVISION_FLAG.test(run)) out.push(run)
+      if (last() === BLACK_FLAG && SUBDIVISION_FLAGS.has(run)) out.push(run)
       i = end - 1
     } else if (!IGNORABLE.test(c)) out.push(c)
   }

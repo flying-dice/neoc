@@ -7,7 +7,7 @@ const RAINBOW_FLAG = '\u{1F3F3}\uFE0F\u200D\u{1F308}'
 const HEART_ON_FIRE = '❤\uFE0F\u200D\u{1F525}'
 const ENGLAND = '\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}'
 const WAVING_HAND_DARK = '\u{1F44B}\u{1F3FF}'
-const KEYCAP = '1\uFE0F⃣'
+const KEYCAP = '1\uFE0F\u20E3'
 // می\u200Cخواهم ("I want"): a zero-width non-joiner between the letters of one word
 const PERSIAN = 'می\u200Cخواهم'
 // क्ष written with an explicit joiner after the virama
@@ -56,6 +56,28 @@ describe('cleanTitle', () => {
     expect(cleanTitle(KEYCAP)).toBe(KEYCAP)
   })
 
+  test('the flags of Scotland and Wales keep their tag sequences too', () => {
+    const scotland = '\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}'
+    const wales = '\u{1F3F4}\u{E0067}\u{E0062}\u{E0077}\u{E006C}\u{E0073}\u{E007F}'
+    expect(cleanTitle(`${scotland} ${wales}`)).toBe(`${scotland} ${wales}`)
+  })
+
+  test('a message hidden in tags is never shown, after a black flag or any other pictograph, however often', () => {
+    const attack = '\u{E0061}\u{E0074}\u{E0074}\u{E0061}\u{E0063}\u{E006B}\u{E007F}'
+    expect(cleanTitle(`\u{1F3F4}${attack}`)).toBe('\u{1F3F4}')
+    expect(cleanTitle(`\u{1F600}${attack}`)).toBe('\u{1F600}')
+    expect(cleanTitle(`\u{1F3F4}${attack}${attack}${attack} done`)).toBe('\u{1F3F4} done')
+    // the real flag with a message tacked on its end, or between two flags
+    const england = '\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}'
+    expect(cleanTitle(`\u{1F3F4}${england}${attack}`)).toBe('\u{1F3F4}')
+    expect(cleanTitle(`\u{1F3F4}${england}\u{1F3F4}${england}`)).toBe(
+      `\u{1F3F4}${england}\u{1F3F4}${england}`
+    )
+    // a real code in the wrong place: after letters, or after another emoji
+    expect(cleanTitle(`ab${england}`)).toBe('ab')
+    expect(cleanTitle(`\u{1F600}${england}`)).toBe('\u{1F600}')
+  })
+
   test('tags that are not a flag are removed: a hidden message after letters, or a run that never ends', () => {
     expect(cleanTitle('hi\u{E0068}\u{E0065}\u{E006C}\u{E0070}\u{E007F}')).toBe('hi')
     expect(cleanTitle('\u{1F3F4}\u{E0067}\u{E0062}')).toBe('\u{1F3F4}')
@@ -90,7 +112,10 @@ describe('cleanTitle', () => {
       '\u200C\u200D\u200C',
       '\u2062\u2063\u3164\uFFA0',
       '\u{E0067}\u{E0062}\u{E007F}', // a tag run with no flag before it
-      '\u2800 \u200B \uFFFC \uFE0F'
+      '\u2800 \u200B \uFFFC \uFE0F',
+      '\u0301\u0301\u0301', // combining acute accents with nothing to sit on
+      '\u20E3', // a lone combining enclosing keycap
+      ' \u0301 \u0308 '
     ]
     for (const blank of blanks) expect(cleanTitle(blank)).toBe('')
   })

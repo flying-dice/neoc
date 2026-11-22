@@ -25,7 +25,10 @@ What the person can rely on:
 - A client that is not connected when the app notifies never gets it, and nothing is kept: a banner that has gone is gone
   (there is no notification list in vos yet).
 - Keyboard: Alt+Shift+N moves focus to the newest banner from anywhere, Enter opens the app and Escape dismisses the banner
-  and gives focus back to where it was (the banners are also first in the page, so Tab from the top reaches them). Screen readers hear "App: title. body" in a polite live region.
+  and gives focus back to where it was. The banners are also first in the page's order (before the widgets, the strip, the
+  windows and the Dock): Tab from the very top of the page, or Shift+Tab back out of a window, reaches them; Tab from
+  inside a window goes on to what follows that window, so from there the shortcut is the way. Screen readers hear the
+  sender, the title and the start of the body in a polite live region.
 - A page with no shell, an app opened on its own at `/apps/<id>`, draws no banner: the notification is the shell's.
 
 Automated twins have the same ids: `e2e/notifications.journeys.spec.ts` (they share one Notifier and run last, because a
@@ -40,6 +43,7 @@ notification reaches every open page).
 | NO5 | Read a banner in light and dark at a small window.      | A 360-point-wide window, each theme.                 | The banner fitted the screen and axe found no violation, in both themes.                                                                                    |
 | NO6 | Dismiss a banner with the mouse.                        | A banner, with another app in front.                 | The keys were not left on the page: focus was on the front window or the Dock.                                                                              |
 | NO7 | Have two clients connected at once.                     | Two paired browsers, the Notifier in front on one.   | Only the browser where the Notifier was not in front showed the banner; once the first moved to another app, both did.                                      |
+| NO8 | Reach a banner by Tab and Shift+Tab.                    | A banner, with another app in front.                 | The banner's control was the first thing in the page that takes Tab, and Shift+Tab from the front window reached it.                                        |
 
 ## Manual verification
 

@@ -4,8 +4,8 @@
   (what is shown, for how long, what choosing one does) is the `Notifications` object it is given.
   The region is always mounted and only its contents change (a region inserted with its text already in it is often not
   announced); the banners are not live regions themselves, and what it says of each is the sender, the title and the
-  start of the body. Alt+Shift+N moves focus to the newest banner (Tab from the top of the page reaches it too, as the
-  stack comes first in it); Escape or the dismiss button closes the focused banner.
+  start of the body. Alt+Shift+N moves focus to the newest banner (the stack also comes first in the page's order, so Tab
+  from the very top, or Shift+Tab back out of a window, reaches it); Escape or the dismiss button closes the focused banner.
   Focus is never dropped to the page: when the banner that has it goes (dismissed, expired, pushed out by newer ones,
   its app removed) it moves to the nearest banner that is left, else back to where the person was before they went to
   the banners, else to `fallback` (the front window, or the Dock). Nothing moves or fades: a banner appears and goes

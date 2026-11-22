@@ -152,6 +152,10 @@ test.describe('Notification journeys', () => {
     await expect(banners(page)).toHaveCount(1)
     const long = (await banners(page).first().boundingBox())!
     expect(long.height, 'a long body is cut, not grown').toBeLessThan(200)
+    // for a screen reader the body is the control's description, once: not in the name, and not as text of its own
+    await expect(bannerParts(page, 'open').first()).toHaveAccessibleName(/^Open Notifier: The nightly backup/)
+    await expect(bannerParts(page, 'open').first()).toHaveAccessibleDescription(/^A file was skipped because it was in use\./)
+    expect(await page.getByTestId('notifications').ariaSnapshot(), 'the body is not read a second time as text').not.toContain('was skipped')
     await bannerParts(page, 'dismiss').first().click()
 
     // odd text: one line for the title (the break, the override and the zero-width space are gone); the body keeps its
@@ -218,6 +222,28 @@ test.describe('Notification journeys', () => {
     } finally {
       await other.close()
     }
+  })
+
+  test('NO8: the banners come first in the page, so Tab from the top and Shift+Tab from a window reach them', async ({ page }) => {
+    await openNotifier(page)
+    await notifyWhileAway(page) // Files is in front, with its own controls
+    await expect(banners(page)).toHaveCount(1)
+    // in the page's order, the first thing that takes Tab is the banner's control, before the widgets, the strip, the windows and the Dock
+    const first = await page.evaluate(() => {
+      const tabbable = [...document.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]')].filter(
+        (el) => el.tabIndex >= 0 && !el.closest('[inert], [hidden]') && el.getClientRects().length > 0
+      )
+      return tabbable[0]?.getAttribute('data-testid')
+    })
+    expect(first).toMatch(/^notification-\d+-open$/)
+    // and by key, from inside the window that is in front: Shift+Tab goes back past the widgets and the strip to the banner
+    await page.getByTestId('window-files').focus()
+    let reached = false
+    for (let i = 0; i < 40 && !reached; i++) {
+      await page.keyboard.press('Shift+Tab')
+      reached = await page.evaluate(() => /^notification-\d+-open$/.test(document.activeElement?.getAttribute('data-testid') ?? ''))
+    }
+    expect(reached, 'Shift+Tab from the window reached the banner').toBe(true)
   })
 })
 
