@@ -10,10 +10,11 @@
  *     (types/generated), which the renderer's protocol.ts re-exports. Test support may reach the repo's e2e/.
  *  2. The UI kit imports no other @vos package; the client imports only @vos/ui (and, in stories,
  *     @vos/storybook).
- *  3. Browser code (client/src, packages/ui/src) imports no Node or Bun builtins.
+ *  3. Browser code (client/src, packages/ui/src, packages/kit/src, an app's client in apps/<name>/src and
+ *     e2e/apps/<name>/src) imports no Node or Bun builtins.
  *  4. Client <-> host traffic is JSON-RPC over /rpc: `new WebSocket` only in the renderer's transport.
  *  5. No {@html}, innerHTML, outerHTML, insertAdjacentHTML, document.write or Lit's unsafeHTML/unsafeSVG: agent and tool
- *     output is untrusted. HTML_ALLOWED lists the reviewed exceptions.
+ *     output is untrusted, in the shell, the kits and an app's own page alike. HTML_ALLOWED lists the reviewed exceptions.
  *
  * Usage: bun scripts/check-boundaries.ts
  */
@@ -24,6 +25,9 @@ import { dirname, join, relative, resolve, sep } from 'node:path'
 const ROOT = resolve(import.meta.dir, '..')
 const SOURCE_GLOBS = [
   'apps/*/e2e/**/*.{ts,svelte,js,mjs}',
+  // an app's own client: rules 1, 3 and 5 hold there too (it imports what its own package depends on, not @vos/ui)
+  'apps/*/src/**/*.{ts,svelte,js,mjs}',
+  'e2e/apps/*/src/**/*.{ts,tsx,svelte,js,mjs}',
   'client/{src,e2e,.storybook}/**/*.{ts,svelte,js,mjs}',
   'packages/*/**/*.{ts,svelte,js,mjs}'
 ]
@@ -37,6 +41,8 @@ const HTML_ALLOWED = ['packages/ui/src/atoms/Icon.svelte', 'packages/kit/src/com
 const BROWSER = ['client/src/', 'packages/ui/src/', 'packages/kit/src/']
 const WEBSOCKET_ALLOWED = ['client/src/view/rpc/websocket.ts'] // the reconnecting JSON-RPC transport
 
+/** An app's own client (apps/<name>/src, e2e/apps/<name>/src): browser code too. */
+const APP_CLIENT = /^(e2e\/)?apps\/[^/]+\/src\//
 const under = (rel: string, prefixes: string[]): boolean => prefixes.some((p) => (p.endsWith('/') ? rel.startsWith(p) : rel === p))
 const matches = (spec: string, patterns: string[]): boolean =>
   patterns.some((p) => (p.endsWith('/*') ? spec === p.slice(0, -2) || spec.startsWith(p.slice(0, -1)) : spec === p))
@@ -154,7 +160,8 @@ function importsOf(code: string): Import[] {
 const errors: string[] = []
 const report = (rel: string, line: number, message: string): void => void errors.push(`${rel}:${line}: ${message}`)
 
-const workspaceOf = (rel: string): string => (rel.startsWith('client/') ? 'client' : rel.split('/').slice(0, 2).join('/'))
+const workspaceOf = (rel: string): string =>
+  rel.startsWith('client/') ? 'client' : rel.split('/').slice(0, rel.startsWith('e2e/apps/') ? 3 : 2).join('/')
 
 function checkRelative(rel: string, imp: Import, abs: string, test: boolean): void {
   const pkg = workspaceOf(rel)
@@ -169,6 +176,8 @@ function checkVosImport(rel: string, imp: Import, test: boolean): void {
   const { spec } = imp
   const kit = matches(spec, ['@vos/ui', '@vos/ui/*'])
   const storybook = test && matches(spec, ['@vos/storybook', '@vos/storybook/*'])
+  if (APP_CLIENT.test(rel))
+    return report(rel, imp.line, `an app's client imports no @vos package ('${spec}'): the host serves the kit at /kit/, and the shell's own UI is not an app's`)
   if (/^packages\/(ui|kit)\/src\//.test(rel) && !test) return report(rel, imp.line, `the UI kit depends on no other @vos package ('${spec}')`)
   if (!kit && !storybook && !rel.startsWith('packages/storybook/'))
     report(rel, imp.line, `'${spec}' is not importable here: the client uses only @vos/ui (stories also @vos/storybook)`)
@@ -179,7 +188,7 @@ function checkImport(rel: string, imp: Import, abs: string): void {
   const test = isTestSupport(rel)
   if (spec.startsWith('.')) return checkRelative(rel, imp, abs, test)
   if (spec.startsWith('@vos/')) checkVosImport(rel, imp, test)
-  if (under(rel, BROWSER) && !test && isBuiltin(spec)) report(rel, imp.line, `'${spec}' is a Node/Bun builtin in code that runs in the browser`)
+  if ((under(rel, BROWSER) || APP_CLIENT.test(rel)) && !test && isBuiltin(spec)) report(rel, imp.line, `'${spec}' is a Node/Bun builtin in code that runs in the browser`)
 }
 
 function checkCode(rel: string, code: string, markup: string): void {
@@ -190,11 +199,11 @@ function checkCode(rel: string, code: string, markup: string): void {
   if (!under(rel, WEBSOCKET_ALLOWED) && !isTestSupport(rel))
     scan(code, /\bnew\s+WebSocket\s*\(/, 'raw WebSocket: talk to the host through the renderer transport (view/rpc/websocket.ts)')
   if (!under(rel, HTML_ALLOWED)) {
-    const untrusted = 'renders raw HTML; agent, tool and user text is untrusted: build nodes (see atoms/RichText.svelte)'
+    const untrusted = 'renders raw HTML; agent, tool and user text is untrusted: build nodes (see apps/agents/src/chat/RichText.svelte)'
     scan(markup, /\{@html\b/, `{@html} ${untrusted}`)
     scan(code, /\.(?:innerHTML|outerHTML)\s*\+?=|\binsertAdjacentHTML\s*\(|\bdocument\s*\.\s*write(?:ln)?\s*\(/, `this ${untrusted}`)
     // Lit's unsafe directives are the {@html} of a web component
-    scan(code, /\bunsafe(?:HTML|SVG|Static)\b/, `this Lit directive ${untrusted.replace('see atoms/RichText.svelte', 'a template renders text')}`)
+    scan(code, /\bunsafe(?:HTML|SVG|Static)\b/, `this Lit directive ${untrusted.replace('see apps/agents/src/chat/RichText.svelte', 'a template renders text')}`)
   }
 }
 
