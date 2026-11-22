@@ -8,7 +8,7 @@ async function burst(
   gate: ReturnType<typeof createCallGate>,
   frame: object,
   count: number,
-  meter: { now: number; peak: number; done: number; frames: Map<object, number> },
+  meter: Meter,
   ms = 1
 ): Promise<(string | null)[]> {
   return Promise.all(
@@ -28,7 +28,13 @@ async function burst(
   )
 }
 
-const newMeter = () => ({ now: 0, peak: 0, done: 0, frames: new Map<object, number>() })
+interface Meter {
+  now: number
+  peak: number
+  done: number
+  frames: Map<object, number>
+}
+const newMeter = (): Meter => ({ now: 0, peak: 0, done: 0, frames: new Map<object, number>() })
 
 describe('the call gate', () => {
   test('a burst of fifty calls from one frame completes, with a few in flight at a time', async () => {
