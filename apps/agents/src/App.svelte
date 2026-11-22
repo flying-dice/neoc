@@ -193,7 +193,7 @@
               {#each chats as chat (chat.id)}
                 <ui-row
                   data-testid="agents-chat-{chat.id}"
-                  icon="bubble.left"
+                  icon="message"
                   heading={chat.title}
                   subheading="{chat.agentName}  {relativeTime(chat.updatedAt, now)}"
                   selected={chat.id === openId}
@@ -205,7 +205,7 @@
         {:else if loaded && roster.length > 0}
           <ui-empty-state
             data-testid="agents-no-chats"
-            icon="bubble.left"
+            icon="message"
             heading="No chats yet"
             message="Pick an agent above."
           ></ui-empty-state>
@@ -243,7 +243,7 @@
       {:else}
         <ui-empty-state
           data-testid="agents-no-chat"
-          icon="bubble.left.and.bubble.right"
+          icon="message"
           heading="No chat open"
           message="Pick an agent in the sidebar to start a chat."
         ></ui-empty-state>

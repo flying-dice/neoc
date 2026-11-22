@@ -25,6 +25,8 @@ const thread = `${chat}-thread`
 const frame = (page: Page): FrameLocator => frameOf(page, ID)
 const agentRow = (page: Page) => frame(page).getByTestId('agents-agent-scripted')
 const chats = (page: Page) => frame(page).getByTestId('agents-chats')
+/** The chats in the list named `title`. */
+const chatTitled = (page: Page, title: string) => chats(page).getByText(title, { exact: true })
 
 async function openAgents(page: Page): Promise<void> {
   await openDesktop(page, { open: [ID] })
@@ -32,10 +34,15 @@ async function openAgents(page: Page): Promise<void> {
   await expect(frame(page).getByTestId('agents-app')).toHaveAttribute('aria-busy', 'false')
 }
 
-async function newChat(page: Page): Promise<void> {
-  // in one column the window may open on the remembered chat: back to the list first
+/** In one column (a small window, a phone) the window may open on the remembered chat: back to the list. */
+async function toList(page: Page): Promise<void> {
+  await expect(frame(page).getByTestId('agents-app')).toHaveAttribute('aria-busy', 'false')
   const back = frame(page).getByTestId('agents-back')
   if (await back.isVisible()) await back.click()
+}
+
+async function newChat(page: Page): Promise<void> {
+  await toList(page)
   await agentRow(page).click()
   // the window reopens on the last chat (it is remembered): wait until the new, empty one has replaced it
   await expect(frame(page).locator(`[data-testid^="${thread}-user-"]`)).toHaveCount(0)
@@ -55,9 +62,11 @@ test.describe('Agents journeys', () => {
     await openDesktop(page)
     await page.getByTestId('dock-agents').click()
     await expect(windowOf(page, ID)).toBeVisible()
+    await toList(page)
     await expect(agentRow(page)).toBeVisible()
-    await expect(agentRow(page)).toHaveAttribute('heading', 'Scripted agent')
-    await expect(agentRow(page)).toHaveAttribute('subheading', 'Answers by script, for tests')
+    // a kit row draws its text in its own shadow root, which getByText reads (a framework may set it as a property)
+    await expect(agentRow(page).getByText('Scripted agent', { exact: true })).toBeVisible()
+    await expect(agentRow(page).getByText('Answers by script, for tests')).toBeVisible()
     // the desktop widget lists the same agents
     await page.getByTestId('dock-discover').click()
     await expect(page.getByTestId('widget-agent-activity-agent-scripted')).toBeVisible()
@@ -70,10 +79,10 @@ test.describe('Agents journeys', () => {
     await newChat(page)
     await say(page, 'hello')
     await expect(frame(page).getByTestId(thread)).toContainText('Hi there')
-    await expect(chats(page).locator('ui-row[heading="hello"]')).toHaveCount(1)
+    await expect(chatTitled(page, 'hello').first()).toBeVisible()
     await say(page, 'echo this back')
     await expect(frame(page).getByTestId(thread)).toContainText('echo this back')
-    await expect(chats(page).locator('ui-row[heading="echo this back"]')).toHaveCount(0) // only the first names it
+    await expect(chatTitled(page, 'echo this back')).toHaveCount(0) // only the first names it
   })
 
   test('AG3: the agent asks permission; the answer resumes the turn', async ({ page }) => {
@@ -111,7 +120,7 @@ test.describe('Agents journeys', () => {
     await say(page, 'state')
     await expect(f.getByTestId(`${chat}-session-usage`)).toBeVisible()
     await expect(f.getByTestId(`${chat}-session-commands`)).toBeAttached()
-    await expect(chats(page).locator('ui-row[heading="state"]')).toHaveCount(1) // the app titles the chat from the first message
+    await expect(chatTitled(page, 'state').first()).toBeVisible() // the app titles the chat from the first message
     // the agent moved itself to Plan mode and the bar followed; the person can change mode and model too
     await expect(f.getByTestId(`${chat}-session-mode-value`)).toHaveText('Plan')
     await f.getByTestId(`${chat}-session-mode`).selectOption('default')
@@ -159,7 +168,7 @@ test.describe('Agents journeys', () => {
     await expect(frame(page).getByTestId(thread)).toContainText('Hi there')
     await expect(frame(page).getByTestId(`${chat}-composer-input`)).toBeInViewport()
     await frame(page).getByTestId('agents-back').click()
-    await expect(chats(page).locator('ui-row[heading="hello"]').first()).toBeVisible()
+    await expect(chatTitled(page, 'hello').first()).toBeVisible()
     await expect(agentRow(page)).toBeVisible()
   })
 })
