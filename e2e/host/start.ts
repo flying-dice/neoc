@@ -2,7 +2,7 @@
 /**
  * Starts the real host for the end-to-end specs (Playwright's webServer runs this):
  *
- *   1. builds the client (client/dist) and the host (cargo), and the apps into a test registry:
+ *   1. builds the app kit (client/public/kit), the client (client/dist) and the host (cargo), and the apps into a test registry:
  *      the repo's apps plus Notes (the codegen fixture), a second app the Discover journeys install and remove
  *      so they never disturb the Calculator the other specs use, and the Ticker (the host's background-work
  *      fixture) outside the registry, which only the background journeys install;
@@ -27,6 +27,7 @@ const versionOf = (id: string): string =>
 rmSync(DIR, { recursive: true, force: true })
 mkdirSync(DIR, { recursive: true })
 
+run('bun', ['run', '--filter', '@vos/kit', 'build']) // /kit/kit.js and /kit/tokens.css: client/public/kit, which the client build copies
 run('bun', ['run', '--filter', '@vos/client', 'build'])
 run('cargo', ['build', '-q', '-p', 'vos-host'])
 run('cargo', ['build', '-q', '-p', 'vos-acp', '--bin', 'fake_agent']) // the scripted agent the Agents journeys talk to

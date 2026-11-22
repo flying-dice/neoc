@@ -8,7 +8,8 @@
   ],
   "scripts": {
     "dev": "bun scripts/dev.ts",
-    "build": "bun run --filter @vos/client build",
+    "build:kit": "bun run --filter @vos/kit build",
+    "build": "bun run build:kit && bun run --filter @vos/client build",
     "start": "cargo run --profile release-host -p vos-host --",
     "build:apps": "bun scripts/build-apps.ts",
     "typecheck": "cargo check --workspace --all-targets --locked && tsc --noEmit -p types/tsconfig.json && bun run --filter '*' typecheck",

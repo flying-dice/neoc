@@ -1,0 +1,389 @@
+import { LitElement, css, html } from 'lit'
+import { ifDefined } from 'lit/directives/if-defined.js'
+import { cssColor } from 'kit:contrast'
+import './ui-icon'
+import { base } from '../styles'
+
+/**
+ * One row of a `ui-list` (UITableViewCell): a title and subtitle, an optional icon tile, a value, a chevron, and
+ * slots for anything else.
+ *
+ * A row is plain text until it is `tappable`. A tappable row has one tab stop and fires `click`; the content in its
+ * `trailing` slot (a `ui-toggle`, a button) stays separately clickable. In a list with `selection`, a row is an
+ * option: it shows `selected`, and Enter or Space fires `click`.
+ *
+ * @tag ui-row
+ * @slot - Custom content in place of `heading` and `subheading`.
+ * @slot leading - Content before the text, in place of `icon`.
+ * @slot trailing - Content after the text, for example a `ui-toggle`.
+ * @csspart face - The row's box.
+ * @fires {MouseEvent} click - The person tapped a `tappable` row, or pressed Enter or Space on an option.
+ */
+export class UiRow extends LitElement {
+  static properties = {
+    /** The row's title. (Not `title`: that attribute is the native tooltip.) */
+    heading: { type: String },
+    /** A second line under the title. */
+        subheading: { type: String },
+    /** A secondary value at the right, for example `On` or a network name. */
+    value: { type: String },
+    /** The icon tile's glyph from the icon set. */
+    icon: { type: String },
+    /** The icon tile's colour: a palette token or `#rrggbb`. Defaults to gray. */
+    iconColor: { type: String, attribute: 'icon-color' },
+    /** Shows a disclosure chevron at the end. */
+        chevron: { type: Boolean, reflect: true },
+    /** The row is a button. */
+    tappable: { type: Boolean, reflect: true },
+    /** Selected (in a list with `selection`). */
+    selected: { type: Boolean, reflect: true },
+    /** Red title, for a row that deletes. */
+    destructive: { type: Boolean, reflect: true },
+    /** An accent-coloured action row (`Add Account…`). */
+    action: { type: Boolean, reflect: true },
+    /** Dims the row and ignores taps. */
+        disabled: { type: Boolean, reflect: true },
+    /** The accessible name when it should differ from the title and subtitle. */
+    label: { type: String }
+  }
+  declare heading: string
+  declare subheading: string
+  declare value: string
+  declare icon: string
+  declare iconColor: string
+  declare chevron: boolean
+  declare tappable: boolean
+  declare selected: boolean
+  declare destructive: boolean
+  declare action: boolean
+  declare disabled: boolean
+  declare label: string
+  /** Set by the owning list: whether this row is its one tab stop. */
+  tabStop = false
+
+  static styles = [
+    base,
+    css`
+      :host {
+        display: block;
+        position: relative;
+      }
+      :host([disabled]) {
+        opacity: 0.4;
+      }
+      :host(:focus-visible) {
+        outline: none;
+      }
+      .face {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-height: var(--row-height);
+        padding-left: var(--row-inset);
+        background: var(--list-row-bg, var(--bg-elevated));
+        border-radius: var(--list-row-radius, 0);
+        color: var(--label);
+        font: var(--type-body);
+        letter-spacing: var(--tracking-body);
+      }
+      :host(:focus-visible) .face,
+      .hit:focus-visible {
+        outline: 3px solid var(--focus-ring);
+        outline-offset: -2px;
+      }
+      .face:has(.hit:active),
+      :host([role='option']:not([selected]):active) .face {
+        background: var(--fill-secondary);
+      }
+      :host([role='option']) {
+        cursor: pointer;
+      }
+      :host([selected]) .face {
+        background: light-dark(var(--tint), color-mix(in oklab, var(--tint) 70%, black));
+        color: #fff;
+      }
+      /* The ring is drawn on the tint fill, where system blue would vanish: --label holds 3:1 on it in both themes. */
+      :host([selected]:not([multi])) .hit:focus-visible,
+      :host([selected]:not([multi]):focus-visible) .face {
+        outline-color: var(--label);
+      }
+      /* Multiple selection marks rows with a check circle and leaves the row alone. */
+      :host([multi][selected]) .face {
+        background: var(--list-row-bg, var(--bg-elevated));
+        color: var(--label);
+      }
+      .check {
+        flex: none;
+        width: 22px;
+        height: 22px;
+        margin-right: -2px;
+        border-radius: 50%;
+        border: 1.5px solid var(--label-tertiary);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+      }
+      .check.on {
+        border-color: transparent;
+        background: var(--tint-fill);
+      }
+      .leading {
+        flex: none;
+        display: flex;
+        align-items: center;
+      }
+      .leading.none {
+        display: none;
+      }
+      .tile {
+        flex: none;
+        display: grid;
+        place-items: center;
+        width: 29px;
+        height: 29px;
+        border-radius: 6px;
+        color: #fff;
+        background: var(--ios-gray);
+      }
+      .content {
+        flex: 1;
+        min-width: 0;
+        align-self: stretch;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 11px var(--row-inset) 11px 0;
+        position: relative;
+      }
+      /* Inset hairline separator: starts at the text, not the icon. */
+      .content::after {
+        content: '';
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: calc(var(--hairline) * -1);
+        height: var(--hairline);
+        background: var(--list-separator, var(--separator));
+      }
+      :host(:last-child) .content::after,
+      :host([selected]:not([multi])) .content::after {
+        display: none;
+      }
+      .text {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+      }
+      .body {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+      }
+      .body ::slotted(*) {
+        position: relative;
+        z-index: 2;
+      }
+      .title,
+      .subtitle {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      :host([destructive]) .title {
+        color: var(--ios-red);
+      }
+      :host([action]) .title {
+        color: var(--tint);
+      }
+      :host([selected]:not([multi])) .title {
+        color: #fff;
+      }
+      .subtitle {
+        font: var(--type-subheadline);
+        letter-spacing: var(--tracking-subheadline);
+        color: var(--label-secondary);
+      }
+      :host([selected]:not([multi])) .subtitle,
+      :host([selected]:not([multi])) .value,
+      :host([selected]:not([multi])) .chevron {
+        color: rgb(255 255 255 / 0.92);
+      }
+      .accessory {
+        flex: none;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        position: relative;
+        z-index: 2; /* above the tap overlay: interactive trailing content stays clickable */
+        pointer-events: none;
+      }
+      ::slotted(*) {
+        pointer-events: auto;
+      }
+      .value {
+        color: var(--label-secondary);
+      }
+      .chevron {
+        display: flex;
+        color: var(--label-tertiary);
+      }
+      .hit {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        appearance: none;
+        border: 0;
+        padding: 0;
+        margin: 0;
+        background: transparent;
+        cursor: pointer;
+        border-radius: inherit;
+      }
+    `
+  ]
+
+  constructor() {
+    super()
+    this.heading = ''
+    this.subheading = ''
+    this.value = ''
+    this.icon = ''
+    this.iconColor = ''
+    this.chevron = false
+    this.tappable = false
+    this.selected = false
+    this.destructive = false
+    this.action = false
+    this.disabled = false
+    this.label = ''
+  }
+
+  private get list(): (HTMLElement & { selection?: string }) | null {
+    return this.closest('ui-list')
+  }
+
+  private get option(): boolean {
+    const s = this.list?.selection
+    return s === 'single' || s === 'multi'
+  }
+
+  /** Whether the row takes keyboard focus: an option, or a tappable row. */
+  get focusable(): boolean {
+    return !this.disabled && (this.option || this.tappable)
+  }
+
+  /** Moves focus to the row's focus target. */
+  focusRow(): void {
+    if (this.option) this.focus()
+    else this.renderRoot.querySelector<HTMLElement>('.hit')?.focus()
+  }
+
+  connectedCallback(): void {
+    super.connectedCallback()
+    this.addEventListener('keydown', this.onKeydown)
+    this.addEventListener('click', this.onHostClick, true)
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback()
+    this.removeEventListener('keydown', this.onKeydown)
+    this.removeEventListener('click', this.onHostClick, true)
+  }
+
+  /** A disabled row does not tap. */
+  private onHostClick = (e: Event): void => {
+    if (this.disabled) {
+      e.stopImmediatePropagation()
+      e.preventDefault()
+    }
+  }
+
+  private onKeydown = (e: KeyboardEvent): void => {
+    if (!this.option || this.disabled || e.target !== this) return
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      this.click()
+    }
+  }
+
+  protected willUpdate(): void {
+    // the role and the focus target follow the list's selection mode
+    const option = this.option
+    this.setAttribute('role', option ? 'option' : 'listitem')
+    if (this.list?.selection === 'multi') this.setAttribute('multi', '')
+    else this.removeAttribute('multi')
+    if (option) {
+      this.setAttribute('aria-selected', String(this.selected))
+      this.setAttribute('tabindex', this.disabled ? '-1' : this.tabStop ? '0' : '-1')
+      const name = this.label || this.accessibleText
+      if (name) this.setAttribute('aria-label', name)
+      else this.removeAttribute('aria-label') // custom content names the option
+    } else {
+      this.removeAttribute('aria-selected')
+      this.removeAttribute('tabindex')
+      this.removeAttribute('aria-label')
+    }
+    if (this.disabled) this.setAttribute('aria-disabled', 'true')
+    else this.removeAttribute('aria-disabled')
+  }
+
+  private get accessibleText(): string {
+    return this.subheading ? `${this.heading}, ${this.subheading}` : this.heading
+  }
+
+  render() {
+    const option = this.option
+    const tile = this.icon ? cssColor(this.iconColor || 'gray') : undefined
+    const hasLeadingSlot = this.querySelector(':scope > [slot="leading"]') !== null
+    return html`<div class="face" part="face">
+      ${this.list?.selection === 'multi'
+        ? html`<span class="check ${this.selected ? 'on' : ''}" aria-hidden="true">
+            ${this.selected ? html`<ui-icon name="checkmark" size="13" weight="3"></ui-icon>` : ''}
+          </span>`
+        : ''}
+      <span class="leading ${hasLeadingSlot || this.icon ? '' : 'none'}"
+        ><slot name="leading" @slotchange=${() => this.requestUpdate()}
+          >${this.icon
+            ? html`<span class="tile" style="background:${ifDefined(tile)}"><ui-icon name=${this.icon} size="18" weight="2.2"></ui-icon></span>`
+            : ''}</slot
+        ></span
+      >
+      <span class="content">
+        <span class="body"
+          ><slot
+            ><span class="text" aria-hidden=${this.tappable && !option ? 'true' : 'false'}>
+              <span class="title">${this.heading}</span>
+              ${this.subheading ? html`<span class="subtitle">${this.subheading}</span>` : ''}
+            </span></slot
+          ></span
+        >
+        <span class="accessory">
+          ${this.value ? html`<span class="value">${this.value}</span>` : ''}
+          <slot name="trailing"></slot>
+          ${this.chevron
+            ? html`<span class="chevron" aria-hidden="true"><ui-icon name="chevron.right" size="14" weight="2.6"></ui-icon></span>`
+            : ''}
+        </span>
+      </span>
+      ${this.tappable && !option && !this.disabled
+        ? html`<button
+            class="hit"
+            type="button"
+            tabindex=${this.tabStop ? '0' : '-1'}
+            aria-label=${this.label || this.accessibleText}
+          ></button>`
+        : ''}
+    </div>`
+  }
+}
+
+customElements.define('ui-row', UiRow)
+declare global {
+  interface HTMLElementTagNameMap {
+    'ui-row': UiRow
+  }
+}
