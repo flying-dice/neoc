@@ -6,20 +6,25 @@
  *     import { vos } from '@vos/vite-plugin'
  *     export default defineConfig({ plugins: [svelte(), vos()] })
  *
- * What it does:
+ * The client is a normal Vite app: an `index.html` at the project root, its scripts, styles and assets, built into
+ * `dist/static/` with relative URLs (code splitting works as in any Vite app). There is no `mount(el)`: the page starts
+ * itself, and `import { api, host } from 'app:rpc'` talks to the host page that holds it.
+ *
+ * What the plugin does:
  *   - generates `.app/` from the contract when the build starts (and whenever the contract changes, in watch mode):
- *     `rpc.d.ts` and `rpc.js` (the `app:rpc` module: `import { api, host } from 'app:rpc'`), `entry.js` (binds `app:rpc` to the
- *     host, then calls the app's `mount(el)`), `rpc.luau` (the types, the `Handlers` interface the developer implements, the
- *     router) and `entry.luau` (the backend's entry: the handlers behind the router);
+ *     `rpc.d.ts` and `rpc.js` (the `app:rpc` module), `rpc.luau` (the types, the `Handlers` interface the developer
+ *     implements, the router) and `entry.luau` (the backend's entry: the handlers behind the router);
  *   - fails the build when `server/main.luau` does not implement the generated `Handlers` interface (a declared method with
  *     no handler, or one of the wrong shape): luau-lsp's strict check of the backend, so valid Luau of any shape passes;
- *   - builds the client into one classic script that defines `vosApp.mount` (`dist/client.js`, CSS folded in);
- *   - bundles the Luau backend into `dist/app.luau` and writes `dist/app-ref.json`, the app ref the host installs.
+ *   - injects the host's bridge script into `index.html` at build time, first in the head (`/apps/bridge.js`: one copy,
+ *     served by the host; the app never bundles it). The UI kit's tags go in the same place when the kit exists (NEOC-252);
+ *   - bundles the Luau backend into `dist/app.luau` and writes `dist/app-ref.json`, the app ref the host installs: the
+ *     manifest, the backend, and every file of `dist/static/` with its sha256.
  *
  * Room for more generated files: everything it writes is a list of `{ path, contents }` (`generate.ts`), so a later step that
  * hands an app other definitions (the UI kit's tags for the editor, say) is one more entry in that list.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { Plugin } from 'vite'
 import { promote, writeApp } from './backend.ts'
@@ -29,7 +34,11 @@ import { analyze, ToolMissing } from './luau-tools.ts'
 export type { Options } from './generate.ts'
 export { DefinitionError, parseDefinition } from './definition.ts'
 
-const CLIENT = 'client.js'
+/** Where the built client goes, under the build's output folder: the app ref lists it as the app's static content. */
+export const STATIC_DIR = 'static'
+
+/** The host's bridge script: the host serves one copy to every app's page. */
+const BRIDGE = '/apps/bridge.js'
 
 /** Every `.luau` file under `dir` (the backend's modules: the build bundles them, so a change to one rebuilds). */
 function luauUnder(dir: string): string[] {
@@ -38,16 +47,6 @@ function luauUnder(dir: string): string[] {
     const path = join(dir, name)
     return statSync(path).isDirectory() ? luauUnder(path) : name.endsWith('.luau') ? [path] : []
   })
-}
-
-/** The app is one script: any CSS the bundle emitted is folded into it, added to the frame's document when the script runs. */
-function foldCss(outDir: string): void {
-  const css = join(outDir, 'style.css')
-  if (!existsSync(css)) return
-  const script = join(outDir, CLIENT)
-  const inject = `(function(){var s=document.createElement('style');s.textContent=${JSON.stringify(readFileSync(css, 'utf8'))};document.head.appendChild(s)})();\n`
-  writeFileSync(script, inject + readFileSync(script, 'utf8'))
-  rmSync(css)
 }
 
 export function vos(options: Partial<Options> = {}): Plugin {
@@ -103,16 +102,21 @@ export function vos(options: Partial<Options> = {}): Plugin {
       // whatever happens to the build, the folder does not outlive the process
       process.once('exit', () => rmSync(staging, { recursive: true, force: true }))
       return {
-        // a classic script, not a module: an app's frame has an opaque origin, where a module script needs CORS
+        // relative URLs: the page is served at `/apps/<id>/static/`, wherever the host mounts it
+        base: './',
         build: {
-          lib: { entry: resolve(root, settings.generated, 'entry.js'), name: 'vosApp', formats: ['iife'], fileName: () => CLIENT },
           // built next to `dist/`, in the generated folder: a build that fails midway leaves `dist/` as it was
-          outDir: staging,
+          outDir: join(staging, STATIC_DIR),
           emptyOutDir: true,
-          cssCodeSplit: false
-        },
-        // a library build leaves `process.env.NODE_ENV` to the page, and a frame has no `process`
-        define: { 'process.env.NODE_ENV': JSON.stringify('production') }
+          // the browsers vos runs on have `modulepreload`: no polyfill to ship in every app
+          modulePreload: { polyfill: false }
+        }
+      }
+    },
+    transformIndexHtml: {
+      order: 'pre',
+      handler() {
+        return [{ tag: 'script', attrs: { src: BRIDGE }, injectTo: 'head-prepend' }]
       }
     },
     resolveId(id) {
@@ -132,10 +136,10 @@ export function vos(options: Partial<Options> = {}): Plugin {
     },
     closeBundle() {
       try {
-        // a build that failed has no client script: its own error is the one to read
-        if (failed || !existsSync(join(staging, CLIENT))) return
-        foldCss(staging)
-        writeApp(root, staging, readDefinition(root, settings), `${settings.generated}/entry.luau`, CLIENT)
+        const staticDir = join(staging, STATIC_DIR)
+        // a build that failed has no page: its own error is the one to read
+        if (failed || !existsSync(join(staticDir, 'index.html'))) return
+        writeApp(root, staging, readDefinition(root, settings), `${settings.generated}/entry.luau`, STATIC_DIR)
         promote(staging, distDir)
       } finally {
         // whatever happened, nothing of this build stays behind in the generated folder

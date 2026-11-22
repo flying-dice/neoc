@@ -66,9 +66,13 @@ wire! {
         pub window: Option<AppWindow>,
         /// Where it was installed from, for people to read ("this computer", "apps.example.org").
         pub source: String,
-        /// The app has a client of its own: its window is a frame that loads `/frame/<id>`. Without one the app
-        /// describes its screens as a view tree (retired by NEOC-298).
+        /// The app has a client of its own: its window is a frame that loads `/apps/<id>/static/`. Without one the
+        /// app describes its screens as a view tree (retired by NEOC-298).
         pub client: bool,
+        /// The browser features the app's frame asks for (`camera`, `microphone`, `geolocation`,
+        /// `clipboard-write`): the shell puts them in the iframe's `allow` attribute.
+        #[serde(default)]
+        pub permissions: Vec<String>,
     }
 
     /// The `app.event` notification: an app's backend sent `name` and `data` to its open clients (`app.emit`).

@@ -9,6 +9,8 @@
   let title = $state('')
   let error = $state<string | null>(null)
   let theme = $state(host.theme)
+  // where the app runs: `host.hosted` is true when the host page draws UI of its own (the shell)
+  let where = $state('connecting')
 
   const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
@@ -34,8 +36,14 @@
     void show(api.list())
     const stops = [
       host.on('tasks.changed', () => void show(api.list())),
-      host.on('host:theme', (t) => (theme = t === 'dark' ? 'dark' : 'light'))
+      // the host connection came back: a change made while it was away reached nobody
+      host.on('host:reconnected', () => void show(api.list())),
+      host.onContext((context) => (theme = context.theme === 'dark' ? 'dark' : 'light'))
     ]
+    void host.ready.then(() => {
+      theme = host.theme
+      where = host.hosted ? 'in the shell' : 'on its own'
+    })
     return () => stops.forEach((stop) => stop())
   })
 </script>
@@ -45,6 +53,7 @@
   <p class="meta">
     <span data-testid="tasks-svelte-framework">Svelte</span> ·
     <span data-testid="tasks-svelte-theme">{theme}</span> ·
+    <span data-testid="tasks-svelte-where">{where}</span> ·
     <span data-testid="tasks-svelte-count">{tasks.filter((t) => !t.done).length} left</span>
   </p>
   <form

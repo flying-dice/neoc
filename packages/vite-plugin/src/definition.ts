@@ -60,17 +60,13 @@ export interface AppMeta {
   requires?: { host?: string }
   migrations?: { version: number; name: string; file: string }[]
   /**
-   * What the app's frame may load, in the shape of MCP Apps' `_meta.ui.csp`. It is read and validated here and carried in the
-   * app ref; **the host does not apply it yet** (the frame's policy allows nothing external whatever is declared; the host
-   * applies it in the pull request that serves an app's static files). `resourceDomains` are origins images, media, fonts and
-   * styles may come from; `connectDomains`, `frameDomains` and `baseUriDomains` are parsed and will not be applied (an app's
-   * calls go through the host). The app's code will still come only from the host.
+   * What the app's page may load, in the shape of MCP Apps' `_meta.ui.csp`: the host builds the page's content security policy
+   * from it (nothing external when it is absent). `resourceDomains` are origins images, media, fonts and styles may come from;
+   * `connectDomains`, `frameDomains` and `baseUriDomains` are parsed but not applied (an app's calls go through the host). The
+   * app's code still comes only from the host.
    */
   csp?: Csp
-  /**
-   * The browser capabilities the frame asks for, in the shape of MCP Apps' `_meta.ui.permissions`. Read, validated and carried
-   * in the app ref; the host does not pass them to the iframe's `allow` yet.
-   */
+  /** The browser capabilities the page asks for, in the shape of MCP Apps' `_meta.ui.permissions`; passed to the iframe's `allow`. */
   permissions?: Partial<Record<(typeof PERMISSIONS)[number], Record<string, never>>>
 }
 

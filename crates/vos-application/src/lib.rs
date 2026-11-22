@@ -48,7 +48,9 @@ pub use error::{AppError, PortError};
 pub use files::{AppFiles, FileStore, Files, NoFiles};
 pub use live::{LiveSources, SourceDef, SourceId, SourceKind, SourceUpdate, SubscriptionId, Window};
 pub use ports::{AgentProcesses, NoAgentProcesses};
-pub use services::{AppInfo, AppService, AppStatus, ClientBundle, Display, Ports};
+pub use services::{
+    AppInfo, AppService, AppStatus, Display, Ports, StaticFile, StaticSite, MAX_CALLS_PER_APP,
+};
 pub use tokens::random_hex;
 pub use views::{ViewError, ViewService, ViewSink};
 pub use writeback::{BindingKind, Resolution, WriteAck, WriteRequest};

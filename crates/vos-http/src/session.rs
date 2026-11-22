@@ -125,6 +125,15 @@ async fn session(State(config): State<SessionConfig>, headers: HeaderMap) -> Res
     })
 }
 
+/// Whether the request carries the session cookie of a paired device (for a route that answers an unpaired
+/// visitor with a page of its own rather than the guard's `401`).
+pub async fn is_paired(config: &SessionConfig, headers: &HeaderMap) -> bool {
+    match session_token(headers, config.cookie_name()) {
+        Some(token) => config.devices.authenticate(&token).await.is_some(),
+        None => false,
+    }
+}
+
 /// Middleware: the request must carry a valid session cookie. On success the [`Device`] is attached as a
 /// request extension (`Extension<Device>`); otherwise `401`.
 pub async fn require_session(State(config): State<SessionConfig>, mut req: Request, next: Next) -> Response {

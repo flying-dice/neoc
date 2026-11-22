@@ -2,7 +2,7 @@
 //! and fans `ServerEvent`s / notifications out to every connected client (driven side: it is the
 //! `EventSink` and `Notifier` adapter).
 
-use crate::rpc::{RpcHandler, RpcPeer};
+use crate::rpc::{PreparedNotification, RpcHandler, RpcPeer};
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use serde::Deserialize;
@@ -30,6 +30,10 @@ use vos_domain::{
 
 /// A client that revokes its own device gets its answer before the socket is closed.
 const SELF_REVOKE_GRACE: Duration = Duration::from_millis(250);
+
+/// An app's event is not queued for a client that already has more than this many bytes waiting (1 MiB, 1/32 of the bound that
+/// closes a connection): an app that emits faster than a client's link can take it costs that client its events, not its connection.
+pub const EVENT_QUEUE_BYTES: usize = 1 << 20;
 
 #[derive(Default)]
 pub struct RpcHub {
@@ -224,8 +228,32 @@ impl RpcHub {
     }
 
     fn broadcast(&self, method: &str, params: &Value) {
-        // drop peers whose socket is gone
-        self.peers.lock().retain(|p| p.notify(method, params.clone()).is_ok());
+        self.deliver(method, params, None);
+    }
+
+    /// Send one notification to every connected client: serialised once, outside the peers lock (a slow serialisation or a
+    /// crowd of clients never holds up a connect or a disconnect). A client that has more than `skip_above` bytes waiting is
+    /// passed over for this one (see [`EVENT_QUEUE_BYTES`]); peers whose socket is gone are forgotten.
+    fn deliver(&self, method: &str, params: &Value, skip_above: Option<usize>) {
+        let Ok(message) = PreparedNotification::new(method, params.clone()) else { return };
+        let peers: Vec<RpcPeer> = self.peers.lock().clone();
+        let mut gone = Vec::new();
+        for peer in &peers {
+            if skip_above.is_some_and(|limit| peer.queued_bytes() > limit) {
+                tracing::debug!(
+                    connection = peer.connection_id(),
+                    method,
+                    "not sent: this client is behind on what it has"
+                );
+                continue;
+            }
+            if peer.send_prepared(&message).is_err() {
+                gone.push(peer.connection_id());
+            }
+        }
+        if !gone.is_empty() {
+            self.peers.lock().retain(|p| !gone.contains(&p.connection_id()));
+        }
     }
 }
 
@@ -253,6 +281,7 @@ fn summary(a: &AppInfo) -> AppSummary {
         }),
         source: source_label(&a.source_url),
         client: a.display.client,
+        permissions: a.display.permissions.iter().map(|p| (*p).to_owned()).collect(),
     }
 }
 
@@ -510,7 +539,9 @@ impl Shell for RpcHub {
         if let Ok(event) =
             serde_json::to_value(AppEvent { app: app.to_string(), name: name.to_owned(), data })
         {
-            self.broadcast("app.event", &event);
+            // an event is a signal ("something changed, fetch again"), not a log: a client that is behind does not get it queued
+            // behind everything else until the byte bound closes its connection
+            self.deliver("app.event", &event, Some(EVENT_QUEUE_BYTES));
         }
     }
 }
@@ -579,4 +610,52 @@ where
     T: Deserialize<'de>,
 {
     Option::<T>::deserialize(d).map(Some)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rpc::test_peer;
+
+    /// What an app's event does to a client that cannot keep up with it: it is skipped for that client (which keeps its
+    /// connection), and a client that is keeping up gets it; any other notification is still queued for both.
+    #[tokio::test]
+    async fn an_app_event_is_not_queued_for_a_client_that_is_behind_on_what_it_has() {
+        let hub = RpcHub::default();
+        let (fast, mut fast_rx) = test_peer(1);
+        let (slow, mut slow_rx) = test_peer(2);
+        // the slow client has more than the event limit waiting (a message nobody has taken off the queue yet)
+        let pad = "x".repeat(EVENT_QUEUE_BYTES + 10);
+        slow.notify("pad", json!({ "pad": pad })).unwrap();
+        assert!(slow.queued_bytes() > EVENT_QUEUE_BYTES);
+        hub.peers.lock().extend([fast.clone(), slow.clone()]);
+
+        hub.deliver(
+            "app.event",
+            &json!({ "app": "a", "name": "tick", "data": null }),
+            Some(EVENT_QUEUE_BYTES),
+        );
+        assert!(fast_rx.recv().await.unwrap().contains("app.event"));
+        let first = slow_rx.recv().await.unwrap();
+        assert!(first.contains("pad") && !first.contains("app.event"), "only what was already waiting");
+        assert!(slow_rx.try_recv().is_err(), "the event was not queued for the slow client");
+        assert_eq!(hub.peers.lock().len(), 2, "and the slow client keeps its connection");
+
+        // everything else (an uninstall, say) is queued for both, serialised once
+        hub.broadcast("app.uninstalled", &json!({ "app": "a" }));
+        assert!(fast_rx.recv().await.unwrap().contains("app.uninstalled"));
+        assert!(slow_rx.recv().await.unwrap().contains("app.uninstalled"));
+    }
+
+    #[tokio::test]
+    async fn a_peer_whose_connection_is_over_is_forgotten_by_the_next_delivery() {
+        let hub = RpcHub::default();
+        let (gone, rx) = test_peer(1);
+        let (alive, mut alive_rx) = test_peer(2);
+        drop(rx);
+        hub.peers.lock().extend([gone, alive]);
+        hub.broadcast("app.installed", &json!({ "app": "a" }));
+        assert!(alive_rx.recv().await.unwrap().contains("app.installed"));
+        assert_eq!(hub.peers.lock().len(), 1);
+    }
 }

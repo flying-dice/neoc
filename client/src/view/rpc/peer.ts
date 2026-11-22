@@ -23,7 +23,9 @@ export const RpcErrorCode = {
   /** Implementation-defined: the request was cancelled because the connection closed (or was never open). */
   ConnectionClosed: -32000,
   /** Implementation-defined: no response within the timeout. */
-  Timeout: -32001
+  Timeout: -32001,
+  /** Implementation-defined: the caller cancelled the request (its signal was aborted). */
+  Cancelled: -32800
 } as const
 
 /** An error that crosses the wire with a JSON-RPC code. */
@@ -67,11 +69,13 @@ export interface RpcPeer {
   /**
    * `timeoutMs` overrides the peer's for this request (0 = wait for the answer or the end of the connection): a caller that
    * counts the request as running on the other side for as long as it is must not give up before the other side does.
+   * `signal` cancels it: the request ends here with `Cancelled`, and the other side is told (`notifications/cancelled`, MCP's
+   * cancellation) so it stops the work and frees what it holds. A request that times out is cancelled the same way.
    */
   request<T = unknown>(
     method: string,
     params?: Params,
-    options?: { timeoutMs?: number }
+    options?: { timeoutMs?: number; signal?: AbortSignal }
   ): Promise<T>
   notify(method: string, params?: Params): void
   /** Feed one raw message received from the other side. */
@@ -137,6 +141,15 @@ export function createRpcPeer(options: RpcPeerOptions): RpcPeer {
     } else entry.resolve(message.result)
   }
 
+  /** Tell the other side a request is no longer wanted (best effort: a closed connection has nothing left to stop). */
+  function cancelRemote(id: JsonRpcId, reason: string): void {
+    try {
+      write({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: id, reason } })
+    } catch {
+      // the connection is gone: whatever it ran is stopped with it
+    }
+  }
+
   function failPending(reason = 'Connection closed'): void {
     for (const [id, entry] of pending) {
       if (entry.timer) clearTimeout(entry.timer)
@@ -149,7 +162,7 @@ export function createRpcPeer(options: RpcPeerOptions): RpcPeer {
     request<T>(
       method: string,
       params: Params = {},
-      requestOptions?: { timeoutMs?: number }
+      requestOptions?: { timeoutMs?: number; signal?: AbortSignal }
     ): Promise<T> {
       if (closed)
         return Promise.reject(new RpcError(RpcErrorCode.ConnectionClosed, 'Connection closed'))
@@ -160,9 +173,26 @@ export function createRpcPeer(options: RpcPeerOptions): RpcPeer {
         if (limit > 0) {
           entry.timer = setTimeout(() => {
             pending.delete(id)
+            cancelRemote(id, 'timed out')
             reject(new RpcError(RpcErrorCode.Timeout, `"${method}" timed out after ${limit}ms`))
           }, limit)
         }
+        const signal = requestOptions?.signal
+        if (signal?.aborted) {
+          if (entry.timer) clearTimeout(entry.timer)
+          reject(new RpcError(RpcErrorCode.Cancelled, `"${method}" was cancelled`))
+          return
+        }
+        signal?.addEventListener(
+          'abort',
+          () => {
+            if (!pending.delete(id)) return // answered already
+            if (entry.timer) clearTimeout(entry.timer)
+            cancelRemote(id, 'cancelled')
+            reject(new RpcError(RpcErrorCode.Cancelled, `"${method}" was cancelled`))
+          },
+          { once: true }
+        )
         pending.set(id, entry)
         try {
           write({ jsonrpc: '2.0', id, method, params })

@@ -13,21 +13,28 @@
   /** The end of a script element, written so it does not end this script. */
   const CLOSE = '<' + '/script>'
 
-  /** What the app's client does in these stories, in place of the host's frame document and bridge: it says it is ready,
-   *  asks its backend for a greeting with `rpc`, and shows the answer, or the error the backend gave. */
+  /** What the app's page does in these stories, in place of the host's static content and bridge: it does the handshake,
+   *  asks its backend for a greeting, and shows the answer, or the error the backend gave, and what the host tells it. */
   const client = (
     method: string
   ): string => `<!doctype html><html lang="en"><title>Calculator</title><body style="font:16px system-ui;margin:16px">
-<p id="out">waiting</p>
+<p id="out">waiting</p><p id="context"></p>
 <script>
-  parent.postMessage({ t: 'hello' }, '*')
-  parent.postMessage({ t: 'ready' }, '*')
+  const send = (m) => parent.postMessage({ jsonrpc: '2.0', ...m }, '*')
+  const out = (text) => (document.getElementById('out').textContent = text)
   window.addEventListener('message', (e) => {
     const m = e.data
-    if (m.t !== 'res') document.getElementById('out').textContent = 'event ' + m.name + ': ' + m.data
-    else document.getElementById('out').textContent = 'error' in m ? 'Error: ' + m.error.message : 'Hello, ' + m.result
+    if (m.id === 1) {
+      document.getElementById('context').textContent = 'theme ' + m.result.hostContext.theme
+      send({ method: 'ui/notifications/initialized', params: {} })
+      send({ id: 2, method: ${JSON.stringify(method)}, params: {} })
+    } else if (m.id === 2 || m.id === 3) out('error' in m ? 'Error: ' + m.error.message : 'Hello, ' + m.result)
+    else if (m.method === 'vos/event' && m.params.name === 'host:reconnected') send({ id: 3, method: ${JSON.stringify(method)}, params: {} })
+    else if (m.method === 'vos/event') out('event ' + m.params.name + ': ' + m.params.data)
+    else if (m.method === 'ui/notifications/host-context-changed')
+      document.getElementById('context').textContent = 'theme ' + m.params.theme
   })
-  parent.postMessage({ t: 'rpc', id: 1, method: ${JSON.stringify(method)}, args: null }, '*')
+  send({ id: 1, method: 'ui/initialize', params: { protocolVersion: '2026-01-26', appCapabilities: {} } })
 ${CLOSE}</body></html>`
 
   /** The shell's host connection, answering `app.call` like the host would and keeping what it was asked. */
@@ -89,14 +96,14 @@ ${CLOSE}</body></html>`
   }}
 />
 
-<!-- The client mounted and called its backend through the bridge: the app is the frame's, the answer comes back. -->
+<!-- The page did the handshake and called its backend through the bridge: the app is the frame's, the answer comes back. -->
 <Story
   name="Ready"
   args={{ srcdoc: client('greet') }}
   beforeEach={withHost((p) => `${String(p.app)} (${String(p.method)})`)}
   play={async ({ canvas }) => {
     await waitFor(() => expect(canvas.getByTestId('calculator-frame')).toBeVisible())
-    await waitFor(() => expect(calls).toEqual([{ app: 'calculator', method: 'greet', args: null }]))
+    await waitFor(() => expect(calls).toEqual([{ app: 'calculator', method: 'greet', args: {} }]))
     await expect(canvas.queryByTestId('calculator-opening')).toBeNull()
     const doc = (canvas.getByTestId('calculator-frame') as HTMLIFrameElement).contentDocument
     // a sandboxed frame has an opaque origin: the shell cannot read into it either
@@ -151,7 +158,7 @@ ${CLOSE}</body></html>`
   }}
 />
 
-<!-- The client never mounts: after its patience the window says so, with a retry. -->
+<!-- The page never says it is up: after its patience the window says so, with a retry. -->
 <Story
   name="Never starts"
   args={{
@@ -169,18 +176,18 @@ ${CLOSE}</body></html>`
   }}
 />
 
-<!-- The client reported that it could not start (a bundle without `vosApp.mount`, a throw in `mount`). -->
+<!-- The page reported that it could not start (it threw before the handshake). -->
 <Story
   name="Reports a failure"
   args={{
     srcdoc:
-      '<!doctype html><html lang="en"><title>Calculator</title><script>parent.postMessage({ t: "failed", message: "the client does not define vosApp.mount" }, "*")' +
+      '<!doctype html><html lang="en"><title>Calculator</title><script>parent.postMessage({ jsonrpc: "2.0", method: "vos/failed", params: { message: "the page threw while it loaded" } }, "*")' +
       CLOSE
   }}
   beforeEach={withHost(() => null)}
   play={async ({ canvas }) => {
     const failed = await canvas.findByTestId('calculator-failed')
-    await expect(failed).toHaveTextContent('the client does not define vosApp.mount')
+    await expect(failed).toHaveTextContent('the page threw while it loaded')
   }}
 />
 
@@ -189,7 +196,7 @@ ${CLOSE}</body></html>`
   name="Leaves its page"
   args={{
     srcdoc:
-      '<!doctype html><html lang="en"><title>Calculator</title><p>about to leave</p><script>parent.postMessage({ t: "hello" }, "*"); parent.postMessage({ t: "ready" }, "*"); setTimeout(() => { location.href = "about:blank" }, 300)' +
+      '<!doctype html><html lang="en"><title>Calculator</title><p>about to leave</p><script>const send = (m) => parent.postMessage({ jsonrpc: "2.0", ...m }, "*"); window.addEventListener("message", (e) => { if (e.data.id === 1) send({ method: "ui/notifications/initialized", params: {} }) }); send({ id: 1, method: "ui/initialize", params: { protocolVersion: "2026-01-26", appCapabilities: {} } }); setTimeout(() => { location.href = "about:blank" }, 600)' +
       CLOSE
   }}
   beforeEach={withHost(() => null)}
@@ -201,5 +208,20 @@ ${CLOSE}</body></html>`
       'Calculator left its page'
     )
     await expect(canvas.getByTestId('calculator-failed-retry')).toBeVisible()
+  }}
+/>
+
+<!-- The host connection dropped and came back: the app is told (`host:reconnected`), and fetches again. -->
+<Story
+  name="Reconnects"
+  args={{ srcdoc: client('greet') }}
+  beforeEach={withHost(() => 'there')}
+  play={async ({ canvas }) => {
+    await waitFor(() => expect(calls.length).toBe(1))
+    await expect(canvas.getByTestId('calculator-frame')).toBeVisible()
+    host.connection = 'offline'
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    host.connection = 'online'
+    await waitFor(() => expect(calls.length).toBe(2))
   }}
 />

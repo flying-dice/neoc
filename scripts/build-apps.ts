@@ -22,7 +22,7 @@
  *
  * An app that is a Vite project (an `openrpc.json`, its contract and only descriptor, and a `vite.config.ts` using the vos plugin:
  * `packages/vite-plugin`) is built by its own project: `bun run build` writes the whole app ref into its `dist/` (backend
- * bundled by the plugin, the client script, `app-ref.json`), and that folder is copied under <out>/<id>/<version>/. Every
+ * bundled by the plugin, the client's static files, `app-ref.json`), and that folder is copied under <out>/<id>/<version>/. Every
  * other app (`app.json` + Luau) is bundled here.
  *
  * `app.json` is the package manifest (id, name, version, main, window, icon, tint, description,
@@ -85,7 +85,7 @@ function viteAppIdentity(dir: string): { id: string; version: string } {
 
 /**
  * Builds an app that is a Vite project (its `openrpc.json` and `vite.config.ts`, with the vos plugin): `bun run build` in the
- * project writes the whole app ref into its `dist/` (the backend bundled, the client script, `app-ref.json` with a sha256
+ * project writes the whole app ref into its `dist/` (the backend bundled, the client's static files, `app-ref.json` with a sha256
  * per file), and that folder is what goes under `<out>/<id>/<version>/`.
  */
 function buildViteApp(dir: string, target: string, id: string): string[] {

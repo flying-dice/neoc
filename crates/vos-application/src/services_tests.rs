@@ -562,13 +562,16 @@ async fn files_over_the_cap_and_packages_over_the_cap_are_refused() {
 #[tokio::test]
 async fn an_app_with_a_client_keeps_the_verified_bundle_for_its_frame() {
     let f = Fakes::new();
-    let url = f.add_client_app("tasks", &[], "window.vosApp = { mount() {} }");
+    let url = f.add_client_app("tasks", &[], "<!doctype html>");
     let svc = f.service();
     let id = svc.install_from_url(&url).await.unwrap();
 
-    let bundle = svc.client_bundle(&id).unwrap();
-    assert_eq!(&*bundle.bytes, b"window.vosApp = { mount() {} }");
-    assert_eq!(bundle.sha256.len(), 64);
+    let site = svc.static_site(&id).unwrap();
+    let page = site.get(site.entry()).unwrap();
+    assert_eq!(&*page.bytes, b"<!doctype html>");
+    assert_eq!(page.sha256.len(), 64);
+    assert!(site.get("nope.js").is_none(), "an exact path or nothing: there is no fallback page");
+    assert!(site.get("static/index.html").is_none(), "paths are under the root");
     let package = f.runtime.package("tasks").unwrap();
     assert!(package.has_client, "the runtime is told the app has a client: it need not declare itself");
     assert_eq!(
@@ -590,7 +593,7 @@ async fn an_app_with_a_client_keeps_the_verified_bundle_for_its_frame() {
 async fn a_tampered_client_is_refused_like_any_file_and_an_app_without_one_has_no_bundle() {
     let f = Fakes::new();
     let url = f.add_client_app("tasks", &[], "good");
-    f.fetcher.0.lock().unwrap().insert("mem://tasks/client.js".into(), b"evil".to_vec());
+    f.fetcher.0.lock().unwrap().insert("mem://tasks/static/index.html".into(), b"evil".to_vec());
     let err = f.service().install_from_url(&url).await.unwrap_err();
     assert!(matches!(err, AppError::Domain(DomainError::ChecksumMismatch { .. })), "{err:?}");
     assert!(f.installed.records().is_empty());
@@ -598,7 +601,7 @@ async fn a_tampered_client_is_refused_like_any_file_and_an_app_without_one_has_n
     let plain = f.add_app("plain", &[("t", "x")]);
     let svc = f.service();
     let id = svc.install_from_url(&plain).await.unwrap();
-    assert!(matches!(svc.client_bundle(&id), Err(AppError::Port(crate::PortError::NotFound(_)))));
+    assert!(matches!(svc.static_site(&id), Err(AppError::Port(crate::PortError::NotFound(_)))));
     assert!(!svc.apps()[0].display.client);
 }
 

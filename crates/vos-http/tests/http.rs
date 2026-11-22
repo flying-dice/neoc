@@ -2,7 +2,13 @@
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{client::IntoClientRequest, Message},
@@ -10,12 +16,41 @@ use tokio_tungstenite::{
 use vos_domain::protocol::{RpcError, RpcMessage};
 use vos_http::{origin_guard, rpc_router, static_router, HostGuard, RpcHandler, RpcPeer};
 
-struct H;
+/// What the handler below records, so a test can see what a connection's end did to the requests it left running.
+#[derive(Default)]
+struct Flags {
+    call_started: AtomicBool,
+    call_dropped: AtomicBool,
+    install_finished: AtomicBool,
+}
+/// Set `call_dropped` when the handler's future is dropped (cancelled) instead of finishing.
+struct DropFlag(Arc<Flags>);
+impl Drop for DropFlag {
+    fn drop(&mut self) {
+        self.0.call_dropped.store(true, Ordering::SeqCst);
+    }
+}
+
+#[derive(Default)]
+struct H(Arc<Flags>);
 #[async_trait]
 impl RpcHandler for H {
     async fn request(&self, peer: &RpcPeer, method: &str, params: Value) -> Result<Value, RpcError> {
         match method {
             "ping" => Ok(json!({"pong": params})),
+            // a call into an app that waits on something outside the host for ever
+            "app.call" => {
+                self.0.call_started.store(true, Ordering::SeqCst);
+                let _dropped = DropFlag(self.0.clone());
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                Ok(json!("late"))
+            }
+            // a host request that changes state in two steps: dropped between them it would leave them out of step
+            "app.install" => {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                self.0.install_finished.store(true, Ordering::SeqCst);
+                Ok(json!("installed"))
+            }
             // a bug in the host's own code, on the ordered path and on the concurrent one
             "view.explode" | "app.explode" => panic!("the handler broke"),
             // the first of a burst is the slowest: unordered handling would answer it last
@@ -44,10 +79,17 @@ impl RpcHandler for H {
 }
 
 async fn start(dir: &std::path::Path) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+    start_with(dir, H::default()).await
+}
+
+async fn start_with(
+    dir: &std::path::Path,
+    handler: H,
+) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let allowed = Arc::new(HostGuard::with_interfaces(addr.port(), Arc::new(Vec::new), None));
-    let app = rpc_router(Arc::new(H))
+    let app = rpc_router(Arc::new(handler))
         .merge(static_router(dir))
         .layer(axum::middleware::from_fn_with_state(allowed, origin_guard));
     (addr, tokio::spawn(async move { axum::serve(listener, app).await.unwrap() }))
@@ -189,6 +231,20 @@ async fn the_kit_is_served_and_a_missing_kit_file_is_a_404_not_the_shells_page()
     assert_eq!(status_of(addr, "/kit/missing.js").await, 404);
     assert!(!reqwest_get(addr, "/kit/missing.js").await.contains("<h1>client</h1>"));
     assert_eq!(status_of(addr, "/kit/").await, 404);
+    // an app's sandboxed page reads it with `crossorigin` (an opaque origin): it may, as it may read its own files
+    let head = raw_get(addr, "/kit/kit.js", "Origin: null\r\n").await;
+    assert!(head.starts_with("HTTP/1.1 200"), "{head}");
+    assert!(head.to_ascii_lowercase().contains("access-control-allow-origin: *"), "{head}");
+    // only reads, only under /kit/: the rest of the host is not opened to an opaque origin
+    for (method, path) in
+        [("POST", "/kit/kit.js"), ("GET", "/assets/app.js"), ("GET", "/session"), ("GET", "/kit/../session")]
+    {
+        let answer = raw(addr, method, path, "Origin: null\r\n").await;
+        assert!(answer.starts_with("HTTP/1.1 403"), "{method} {path}: {answer}");
+    }
+    // the header is the kit's alone, and no credentials are ever allowed
+    assert!(!raw_get(addr, "/", "").await.to_ascii_lowercase().contains("access-control-allow-origin"));
+    assert!(!head.to_ascii_lowercase().contains("access-control-allow-credentials"));
     // the rest of the client still falls back
     assert!(reqwest_get(addr, "/kits").await.contains("<h1>client</h1>"), "only /kit/ is exempt");
     server.abort();
@@ -205,6 +261,24 @@ async fn status_of(addr: std::net::SocketAddr, path: &str) -> u16 {
     let mut out = String::new();
     s.read_to_string(&mut out).await.unwrap();
     out.split(' ').nth(1).and_then(|c| c.parse().ok()).unwrap()
+}
+
+/// the whole response (head and body) of a GET with extra header lines
+async fn raw_get(addr: std::net::SocketAddr, path: &str, headers: &str) -> String {
+    raw(addr, "GET", path, headers).await
+}
+
+/// the whole response (head and body) of a bodiless request with extra header lines
+async fn raw(addr: std::net::SocketAddr, method: &str, path: &str, headers: &str) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let request = format!(
+        "{method} {path} HTTP/1.1\r\nHost: {addr}\r\n{headers}Content-Length: 0\r\nConnection: close\r\n\r\n"
+    );
+    s.write_all(request.as_bytes()).await.unwrap();
+    let mut out = String::new();
+    s.read_to_string(&mut out).await.unwrap();
+    out
 }
 
 /// minimal HTTP/1.1 GET without pulling reqwest into this crate's dev-deps
@@ -272,6 +346,80 @@ async fn view_requests_are_handled_in_the_order_they_were_sent_and_others_are_no
         }
     }
     assert_eq!(order, [2, 1, 0], "app management is not serialised");
+    server.abort();
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+async fn wait_for(what: &str, ok: impl Fn() -> bool) {
+    for _ in 0..200 {
+        if ok() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("never happened: {what}");
+}
+
+#[tokio::test]
+async fn a_connection_that_ends_ends_an_app_call_and_nothing_else() {
+    let dir = std::env::temp_dir().join(format!("static-cancel-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let flags = Arc::new(Flags::default());
+    let (addr, server) = start_with(&dir, H(flags.clone())).await;
+    let origin = format!("http://127.0.0.1:{}", addr.port());
+    let send = |m: RpcMessage| serde_json::to_string(&m).unwrap();
+
+    let (mut ws, _) = connect_async(req(addr, Some(&origin))).await.unwrap();
+    ws.send(Message::text(send(RpcMessage::request(1, "app.install", json!({}))))).await.unwrap();
+    ws.send(Message::text(send(RpcMessage::request(2, "app.call", json!({}))))).await.unwrap();
+    wait_for("the app call started", || flags.call_started.load(Ordering::SeqCst)).await;
+    drop(ws); // the connection goes while an install and an app call are running
+
+    // the app call is ended with it; the install, which changes state, runs to the end whatever the connection does
+    wait_for("the app call was dropped", || flags.call_dropped.load(Ordering::SeqCst)).await;
+    wait_for("the install finished", || flags.install_finished.load(Ordering::SeqCst)).await;
+    server.abort();
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn a_cancellation_ends_an_app_call_but_an_install_runs_on_and_is_answered() {
+    let dir = std::env::temp_dir().join(format!("static-cancel2-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let flags = Arc::new(Flags::default());
+    let (addr, server) = start_with(&dir, H(flags.clone())).await;
+    let origin = format!("http://127.0.0.1:{}", addr.port());
+    let send = |m: RpcMessage| serde_json::to_string(&m).unwrap();
+    let cancel = |id: u64| {
+        send(RpcMessage::notification(
+            "notifications/cancelled",
+            json!({ "requestId": id, "reason": "test" }),
+        ))
+    };
+
+    let (mut ws, _) = connect_async(req(addr, Some(&origin))).await.unwrap();
+    ws.send(Message::text(send(RpcMessage::request(1, "app.install", json!({}))))).await.unwrap();
+    ws.send(Message::text(send(RpcMessage::request(2, "app.call", json!({}))))).await.unwrap();
+    wait_for("the app call started", || flags.call_started.load(Ordering::SeqCst)).await;
+    ws.send(Message::text(cancel(1))).await.unwrap();
+    ws.send(Message::text(cancel(2))).await.unwrap();
+
+    wait_for("the app call was dropped", || flags.call_dropped.load(Ordering::SeqCst)).await;
+    // the install was asked to be cancelled and was not: it finishes, and its answer arrives
+    let answer = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let Some(Ok(Message::Text(t))) = ws.next().await else { panic!("the connection ended") };
+            if let RpcMessage::Response { id: vos_domain::protocol::RpcId::Num(1), result, .. } =
+                serde_json::from_str::<RpcMessage>(&t).unwrap()
+            {
+                return result;
+            }
+        }
+    })
+    .await
+    .expect("the install is answered");
+    assert_eq!(answer, json!("installed"));
+    assert!(flags.install_finished.load(Ordering::SeqCst));
     server.abort();
     let _ = std::fs::remove_dir_all(dir);
 }

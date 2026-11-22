@@ -1055,13 +1055,18 @@ impl Fakes {
     pub fn add_app(&self, id: &str, tools: &[(&str, &str)]) -> String {
         self.add_app_with(id, tools, &[])
     }
-    /// Like `add_app`, for an app with a client of its own: `client.js` is the script `client_source` and the
-    /// manifest names it (and a window), so the service keeps it for the frame.
+    /// Like `add_app`, for an app with a client of its own: `static/index.html` is the page `client_source` and the
+    /// manifest names the directory (and a window), so the service keeps it for the frame.
     pub fn add_client_app(&self, id: &str, tools: &[(&str, &str)], client_source: &str) -> String {
-        let url = self.add_app_with(id, tools, &[("client.js", client_source)]);
+        let url = self.add_app_with(id, tools, &[("static/index.html", client_source)]);
         let mut mem = self.fetcher.0.lock().unwrap();
         let mut app_ref: AppRef = serde_json::from_slice(&mem[&url]).unwrap();
-        app_ref.manifest.client = Some("client.js".into());
+        app_ref.manifest.ui = Some(vos_domain::AppUi {
+            root: "static".into(),
+            entry: "index.html".into(),
+            csp: vos_domain::Csp::default(),
+            permissions: vos_domain::Permissions::default(),
+        });
         app_ref.manifest.window = Some(vos_domain::WindowDecl { w: 420, h: 480, min_w: 320, min_h: 320 });
         mem.insert(url.clone(), serde_json::to_vec(&app_ref).unwrap());
         url
@@ -1103,7 +1108,7 @@ impl Fakes {
                 tint: None,
                 description: None,
                 requires: None,
-                client: None,
+                ui: None,
                 window: None,
             },
             files,

@@ -20,7 +20,8 @@ const app = {
   version: '1.0.0',
   state: 'running',
   source: 'file',
-  client: false
+  client: false,
+  permissions: []
 }
 
 describe('callParsed', () => {

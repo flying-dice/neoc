@@ -62,8 +62,8 @@
       </div>
     {:else}
       <Text style="subheadline" color="secondary" as="p">
-        Enter the pairing code shown where vos is running. It is single use and lasts 10
-        minutes. Need a new one? Run <code>vos pair</code>.
+        Enter the pairing code shown where vos is running. It is single use and lasts 10 minutes.
+        Need a new one? Run <code>vos pair</code>.
       </Text>
 
       <label class="field">

@@ -16,7 +16,7 @@
 
 use axum::{
     extract::{Request, State},
-    http::{header, StatusCode},
+    http::{header, Method, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -209,11 +209,35 @@ pub async fn origin_guard(State(guard): State<Arc<HostGuard>>, req: Request, nex
     if origin.is_none() && h.contains_key(header::ORIGIN) {
         return forbidden(); // an Origin header that is not text is not a browser's
     }
+    // A sandboxed app page has an opaque origin: its module scripts and styles are fetched with `Origin: null`. Those
+    // reads of the app's own static files and of the kit (public, like the shell's) are let through; nothing else is.
+    let origin = if origin == Some("null") && is_public_frame_read(req.method(), req.uri().path()) {
+        None
+    } else {
+        origin
+    };
     if guard.permits(origin, host) {
         next.run(req).await
     } else {
         forbidden()
     }
+}
+
+/// Is this a read (`GET` or `HEAD`) that an app's sandboxed page makes of public files: its own static content,
+/// `/apps/<id>/static/...`, or the kit, `/kit/...` (its stylesheet is loaded `crossorigin`, so that the page, and a
+/// checker such as axe running in it, can read its rules)? Judged on the path as it was sent: an encoded separator or a
+/// segment that merely looks like `static` or `kit` is not one.
+fn is_public_frame_read(method: &Method, path: &str) -> bool {
+    if method != Method::GET && method != Method::HEAD {
+        return false;
+    }
+    if let Some(rest) = path.strip_prefix("/kit/") {
+        // the path as sent: no `..` segment, no escape (an encoded `.` or separator) and no backslash may take it out
+        return !rest.contains(['%', '\\']) && !rest.split('/').any(|segment| segment == "..");
+    }
+    let Some(rest) = path.strip_prefix("/apps/") else { return false };
+    let Some((app, after)) = rest.split_once('/') else { return false };
+    !app.is_empty() && (after == "static" || after.starts_with("static/"))
 }
 
 fn forbidden() -> Response {
@@ -253,6 +277,44 @@ mod tests {
         assert!(g.permits(Some("http://studio-mac.local:7400"), Some("studio-mac.local:7400")));
         assert!(g.permits(None, Some("anything-else.local:7400")), "*.local is mDNS");
         assert!(!g.permits(None, Some(".local:7400")));
+    }
+
+    #[test]
+    fn origin_null_is_let_through_only_for_reads_of_an_apps_static_files() {
+        for (method, path, yes) in [
+            (Method::GET, "/apps/tasks/static/index.html", true),
+            (Method::HEAD, "/apps/tasks/static/assets/a.js", true),
+            (Method::GET, "/apps/tasks/static/", true),
+            (Method::GET, "/apps/tasks/static", true),
+            (Method::POST, "/apps/tasks/static/index.html", false),
+            (Method::PUT, "/apps/tasks/static/x", false),
+            (Method::GET, "/apps/tasks", false),
+            (Method::GET, "/apps/tasks/staticky/x", false),
+            (Method::GET, "/apps/tasks%2Fstatic/x", false),
+            (Method::GET, "/apps//static/x", false),
+            (Method::GET, "/apps/bridge.js", false),
+            (Method::GET, "/rpc", false),
+            (Method::GET, "/session", false),
+            (Method::GET, "/agui/threads", false),
+            (Method::GET, "/mcp", false),
+            (Method::GET, "/", false),
+            (Method::GET, "/kit/tokens.css", true),
+            (Method::HEAD, "/kit/kit.js", true),
+            (Method::POST, "/kit/kit.js", false),
+            (Method::GET, "/kit", false),
+            (Method::GET, "/kits/x", false),
+            (Method::GET, "/assets/index.js", false),
+            (Method::GET, "/kit/../rpc", false),
+            (Method::GET, "/kit/a/../../session", false),
+            (Method::GET, "/kit/%2e%2e/rpc", false),
+            (Method::GET, "/kit/x%2Fy", false),
+            (Method::GET, "/kit/..\\rpc", false),
+            (Method::GET, "/kit/fonts/a..b.woff2", true),
+            (Method::GET, "/agui", false),
+            (Method::GET, "/pair", false),
+        ] {
+            assert_eq!(is_public_frame_read(&method, path), yes, "{method} {path}");
+        }
     }
 
     #[test]
