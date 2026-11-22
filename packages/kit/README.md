@@ -24,7 +24,7 @@ draw. System settings reach the app's document through the host's bridge in both
 `color-scheme`) on `<html>`, kept current; the kit also reads `data-reduce-motion` on `<html>`, which zeroes the motion tokens. Until the host has set a
 theme (and with none at all, for example in Storybook), the tokens follow the browser's `prefers-color-scheme`, and an
 explicit `data-theme` always wins. Components an app uses for its own page (a banner, a list, a field) work the same
-everywhere. Sheets, alerts and toasts are not kit components: only the shell draws them, over an embedded app.
+everywhere. Sheets, alerts, toasts and the notification banner (how the shell shows an app's notification) are not kit components: only the shell draws them, over an embedded app.
 
 The app writes no theme code and imports nothing:
 
