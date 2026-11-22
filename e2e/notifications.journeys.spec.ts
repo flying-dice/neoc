@@ -245,6 +245,33 @@ test.describe('Notification journeys', () => {
     }
     expect(reached, 'Shift+Tab from the window reached the banner').toBe(true)
   })
+
+  test('NO9: the shortcut leaves a text field alone (Option+Shift+N is a character on a Mac keyboard)', async ({ page }) => {
+    await openNotifier(page)
+    await notifyWhileAway(page) // Files is in front, with its search field
+    await expect(banners(page)).toHaveCount(1)
+    await page.getByTestId('files-search').click()
+    await expect(page.getByTestId('files-search')).toBeFocused()
+    // what a Mac sends for Option+Shift+N: the physical key is N, the character is a tilde
+    const cancelled = await page.evaluate(() => {
+      const event = new KeyboardEvent('keydown', {
+        code: 'KeyN',
+        key: String.fromCharCode(0x2dc),
+        altKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true
+      })
+      document.activeElement?.dispatchEvent(event)
+      return event.defaultPrevented
+    })
+    expect(cancelled, 'the key is left to type').toBe(false)
+    await expect(page.getByTestId('files-search')).toBeFocused()
+    // out of the field, the same key takes the keys to the banner
+    await page.keyboard.press('Tab')
+    await page.keyboard.press('Alt+Shift+N')
+    await expect(bannerParts(page, 'open').first()).toBeFocused()
+  })
 })
 
 /** A second browser (a second paired client of the same host), as a person's second device would be. */
