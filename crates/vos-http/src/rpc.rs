@@ -49,7 +49,11 @@ pub const BUSY: i32 = -32000;
 /// is never closed for one. The biggest bursts are opening an app whose view is large (one view tree is at most about
 /// a mebibyte, [`MAX_MESSAGE_BYTES`]) beside a few windows whose live sources refresh at once, or an agent streaming
 /// into several chats: a few mebibytes. 32 MiB is ten times that, and small enough for a host on a home server to hold
-/// for one stalled tablet. A message is always accepted into an empty queue, whatever its size.
+/// for one stalled tablet. A message is always accepted into an empty queue, whatever its size, and it stops counting
+/// when the writer takes it, so a reader is not closed for one message that is big in itself; it is closed for more
+/// than this waiting to be taken (a burst of more than this, sent faster than the writer can take it, is a stall as
+/// far as the host can tell). The host holds at most this much, plus the one message being written, plus a single
+/// message that was accepted into an empty queue and has not been taken yet.
 pub const MAX_QUEUED_BYTES: usize = 32 << 20;
 
 /// How long the socket may go without taking a message before the connection is closed, however small it is.
@@ -92,7 +96,10 @@ type Pending = HashMap<i64, oneshot::Sender<Result<Value, RpcError>>>;
 #[derive(Clone)]
 struct Outbound {
     tx: mpsc::UnboundedSender<String>,
-    /// Bytes of the messages that are queued or being written.
+    /// Bytes of the messages waiting in the queue. The writer takes a message off this count when it takes it from the
+    /// queue, so the one it is writing does not count against what may wait behind it: a message that is big in
+    /// itself (bigger than [`MAX_QUEUED_BYTES`]) is not what closes a client that is reading. What the host holds for
+    /// a client is this count plus that one message.
     queued: Arc<AtomicUsize>,
     closed: CancellationToken,
     /// Set by the first hang-up the host chose (not a revoke or the client leaving): the log line is for that one.
@@ -353,13 +360,14 @@ async fn pump<S: Sink<Message> + Unpin>(
 ) {
     while let Some(text) = rx.recv().await {
         let len = text.len();
-        let outcome = tokio::time::timeout(timeout_for(len), sink.send(Message::text(text))).await;
+        // taken: the message being written is no longer waiting, so it does not count against what follows it
         out.queued.fetch_sub(len, Ordering::SeqCst);
+        let outcome = tokio::time::timeout(timeout_for(len), sink.send(Message::text(text))).await;
         match outcome {
             Ok(Ok(())) => {}
             Ok(Err(_)) => break,
             Err(_) => {
-                out.hang_up("its socket stopped taking messages", out.queued.load(Ordering::SeqCst) + len);
+                out.hang_up("its socket stopped taking messages", out.queued.load(Ordering::SeqCst));
                 break;
             }
         }
@@ -508,6 +516,31 @@ mod tests {
         assert!(matches!(out.send(&note(1)), Err(RpcCallError::Closed)));
         // what was refused is not counted as waiting
         assert_eq!(out.queued.load(Ordering::SeqCst), accepted);
+    }
+
+    /// What the writer takes stops counting at once, so a message bigger than the limit that is being written does not
+    /// close the client that is reading it when the next message comes.
+    #[tokio::test]
+    async fn a_message_bigger_than_the_limit_does_not_close_a_reader_when_others_follow_it() {
+        let (out, rx) = outbound();
+        let writer = tokio::spawn(pump(rx, futures_util::sink::drain::<Message>(), out.clone(), |_| {
+            Duration::from_secs(60)
+        }));
+        for _ in 0..3 {
+            out.send(&note(MAX_QUEUED_BYTES + 1)).unwrap();
+            // the writer takes it (the connection is reading), as it does between a view tree and what follows it
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+            while out.queued.load(Ordering::SeqCst) > 0 {
+                assert!(tokio::time::Instant::now() < deadline, "the writer never took the big message");
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            for _ in 0..50 {
+                out.send(&note(100)).unwrap();
+            }
+        }
+        assert!(!out.closed.is_cancelled());
+        assert!(!out.dropped.load(Ordering::SeqCst));
+        writer.abort();
     }
 
     #[test]

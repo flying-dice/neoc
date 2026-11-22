@@ -234,3 +234,31 @@ async fn a_client_that_keeps_up_gets_a_burst_far_larger_than_any_count_in_order_
         }
     }
 }
+
+/// One message bigger than the byte limit, then others, to a client that reads: it is not closed for it, so a shell that
+/// reopens the same view does not meet it again and reconnect in a loop. The message being written does not count
+/// against what waits behind it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_message_bigger_than_the_byte_limit_does_not_close_a_client_that_reads() {
+    let watch = Arc::new(Watch::default());
+    let addr = start_watch(watch.clone()).await;
+    let (mut ws, _) = connect_async(format!("ws://{addr}/rpc")).await.unwrap();
+    let peer = peer_of(&watch).await;
+
+    let huge = "z".repeat(MAX_QUEUED_BYTES + 1024);
+    peer.notify("huge", json!({ "blob": huge })).unwrap();
+    // the writer has taken it by the time anything else is sent, as it has between a view tree and what follows it
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    for n in 0..100 {
+        peer.notify("n", json!({ "n": n })).unwrap();
+    }
+    let RpcMessage::Notification { method, .. } = next(&mut ws).await else { panic!("a notification") };
+    assert_eq!(method, "huge");
+    for expected in 0..100 {
+        let RpcMessage::Notification { method, params, .. } = next(&mut ws).await else {
+            panic!("a notification")
+        };
+        assert_eq!((method.as_str(), &params["n"]), ("n", &json!(expected)));
+    }
+    assert!(peer.notify("n", json!({ "n": "after" })).is_ok(), "still connected");
+}
