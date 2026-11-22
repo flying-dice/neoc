@@ -907,4 +907,60 @@ mod tests {
             .unwrap();
         assert_eq!(s, "https://example.com/api/v1/items?x=1&y=2#top");
     }
+
+    /// RUSTSEC-2026-0592: `url` 2.5.8 and earlier recursed once per `blob:` prefix in `Url::origin()`, so a script reading
+    /// `.origin` of a deeply nested `blob:` URL overflowed the stack and aborted the host (`catch_unwind` cannot catch
+    /// it). Run on a thread with tokio's default 2 MiB stack, the smallest a host thread polling a VM may have, so the
+    /// old recursion would abort this test binary instead of passing.
+    #[test]
+    fn origin_of_a_deeply_nested_blob_url_is_opaque_and_does_not_overflow() {
+        let nested = format!("{}https://example.com/", "blob:".repeat(10_000));
+        let cases = std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(move || {
+                let lua = engine();
+                lua.globals().set("nested", nested).unwrap();
+                let origins: Vec<String> = lua
+                    .load(
+                        r#"
+                        local out = {}
+                        for _, s in ipairs({
+                            nested,
+                            "blob:https://example.com:8443/uuid",
+                            "blob:blob:https://example.com/uuid",
+                            "blob:ws://example.com/uuid",
+                            "blob:not a url",
+                            "data:text/plain,hi",
+                            "file:///tmp/x",
+                            "ws://example.com/",
+                            "mailto:ada@example.com",
+                        }) do
+                            local u = assert(url.parse(s))
+                            table.insert(out, u.origin)
+                        end
+                        return out
+                        "#,
+                    )
+                    .eval()
+                    .unwrap();
+                origins
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(
+            cases,
+            [
+                "null",
+                "https://example.com:8443",
+                "null",
+                "null",
+                "null",
+                "null",
+                "null",
+                "ws://example.com",
+                "null",
+            ]
+        );
+    }
 }
