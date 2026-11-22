@@ -175,7 +175,7 @@ async fn a_client_that_stops_reading_is_dropped_instead_of_queued_for_without_en
             Err(e) => break e,
         }
         assert!(sent < limit, "{sent} messages queued for a client that reads nothing");
-        if sent % 64 == 0 {
+        if sent.is_multiple_of(64) {
             tokio::task::yield_now().await; // let the writer move what the socket will take
         }
     };
