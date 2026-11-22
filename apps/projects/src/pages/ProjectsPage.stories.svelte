@@ -72,7 +72,7 @@
 <Story
   name="The board"
   play={async ({ canvas, userEvent }) => {
-    await show(canvas, userEvent, 'projects-project-1')
+    await show(canvas, userEvent, 'projects-project-WEB')
     await expect(canvas.getByTestId('projects-title')).toHaveTextContent('Website')
     await expect(canvas.getByTestId('projects-column-todo-count')).toHaveTextContent('3')
     await expect(canvas.getByTestId('projects-column-doing-count')).toHaveTextContent('1')
@@ -85,8 +85,8 @@
   name="Moving an issue"
   tags={['play-only']}
   play={async ({ canvas, userEvent }) => {
-    await show(canvas, userEvent, 'projects-project-1')
-    await userEvent.click(canvas.getByTestId('projects-card-2-advance'))
+    await show(canvas, userEvent, 'projects-project-WEB')
+    await userEvent.click(canvas.getByTestId('projects-card-WEB-2-advance'))
     await waitFor(() => expect(canvas.getByTestId('projects-column-doing-count')).toHaveTextContent('2'))
     await expect(canvas.getByTestId('projects-column-todo-count')).toHaveTextContent('2')
   }}
@@ -97,20 +97,20 @@
   name="Adding an issue"
   tags={['play-only']}
   play={async ({ canvas, userEvent }) => {
-    await show(canvas, userEvent, 'projects-project-1')
+    await show(canvas, userEvent, 'projects-project-WEB')
     await userEvent.type(input(canvas, 'projects-new-issue-input'), 'Add a contact form{Enter}')
     await waitFor(() => expect(canvas.getByTestId('projects-column-todo-count')).toHaveTextContent('4'))
-    await expect(canvas.getByTestId('projects-card-7')).toHaveTextContent('WEB-6')
+    await expect(canvas.getByTestId('projects-card-WEB-6-key')).toHaveTextContent('WEB-6')
   }}
 />
 
 <Story
   name="The issues"
   play={async ({ canvas, userEvent }) => {
-    await show(canvas, userEvent, 'projects-project-1')
+    await show(canvas, userEvent, 'projects-project-WEB')
     await tab(canvas, userEvent, 'issues')
-    await appears(canvas, 'projects-issue-1')
-    await expect(canvas.getByTestId('projects-issue-3')).toHaveProperty('value', 'In Progress')
+    await appears(canvas, 'projects-issue-row-WEB-1')
+    await expect(canvas.getByTestId('projects-issue-row-WEB-3')).toHaveProperty('value', 'In Progress')
   }}
 />
 
@@ -118,8 +118,8 @@
 <Story
   name="An issue"
   play={async ({ canvas, userEvent }) => {
-    await show(canvas, userEvent, 'projects-project-1')
-    await userEvent.click(canvas.getByTestId('projects-card-2-open'))
+    await show(canvas, userEvent, 'projects-project-WEB')
+    await userEvent.click(canvas.getByTestId('projects-card-WEB-2-open'))
     await appears(canvas, 'projects-issue-key')
     await expect(input(canvas, 'projects-issue-title')).toHaveValue('Fix the footer links')
     await expect(canvas.getByTestId('projects-issue-status')).toHaveProperty('value', 'todo')
@@ -130,8 +130,8 @@
   name="Changing an issue"
   tags={['play-only']}
   play={async ({ canvas, userEvent }) => {
-    await show(canvas, userEvent, 'projects-project-1')
-    await userEvent.click(canvas.getByTestId('projects-card-2-open'))
+    await show(canvas, userEvent, 'projects-project-WEB')
+    await userEvent.click(canvas.getByTestId('projects-card-WEB-2-open'))
     await appears(canvas, 'projects-issue-status')
     await userEvent.click(segment(canvas, 'projects-issue-status', 'done'))
     await waitFor(() => expect(canvas.getByTestId('projects-issue-status')).toHaveProperty('value', 'done'))
@@ -143,10 +143,10 @@
 <Story
   name="The pages"
   play={async ({ canvas, userEvent }) => {
-    await show(canvas, userEvent, 'projects-project-1')
+    await show(canvas, userEvent, 'projects-project-WEB')
     await tab(canvas, userEvent, 'pages')
-    await appears(canvas, 'projects-page-1')
-    await expect(canvas.getByTestId('projects-page-2')).toHaveProperty('subheading', 'In Design')
+    await appears(canvas, 'projects-page-row-1')
+    await expect(canvas.getByTestId('projects-page-row-2')).toHaveProperty('subheading', 'In Design')
   }}
 />
 
@@ -154,10 +154,10 @@
 <Story
   name="A page"
   play={async ({ canvas, userEvent }) => {
-    await show(canvas, userEvent, 'projects-project-1')
+    await show(canvas, userEvent, 'projects-project-WEB')
     await tab(canvas, userEvent, 'pages')
-    await appears(canvas, 'projects-page-1')
-    await userEvent.click(canvas.getByTestId('projects-page-1'))
+    await appears(canvas, 'projects-page-row-1')
+    await userEvent.click(canvas.getByTestId('projects-page-row-1'))
     await appears(canvas, 'projects-page-body')
     await expect(canvas.getByTestId('projects-page-title')).toHaveTextContent('Design')
     await expect(canvas.getByTestId('projects-subpage-2')).toBeVisible()
@@ -169,7 +169,7 @@
   name="Writing a new page"
   tags={['play-only']}
   play={async ({ canvas, userEvent }) => {
-    await show(canvas, userEvent, 'projects-project-1')
+    await show(canvas, userEvent, 'projects-project-WEB')
     await tab(canvas, userEvent, 'pages')
     await userEvent.type(input(canvas, 'projects-new-page-input'), 'Glossary{Enter}')
     await appears(canvas, 'projects-page-text')
@@ -232,10 +232,10 @@
   name="Deleting a project"
   tags={['play-only']}
   play={async ({ canvas, userEvent }) => {
-    await show(canvas, userEvent, 'projects-project-2')
+    await show(canvas, userEvent, 'projects-project-APP')
     await userEvent.click(canvas.getByTestId('projects-delete'))
     await userEvent.click(canvas.getByTestId('projects-confirm-delete'))
-    await gone(canvas, 'projects-project-2')
+    await gone(canvas, 'projects-project-APP')
   }}
 />
 

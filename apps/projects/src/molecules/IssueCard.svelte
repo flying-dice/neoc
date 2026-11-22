@@ -16,7 +16,8 @@
 
   let { issue, next, onopen, onadvance, ondrag }: Props = $props()
 
-  const id = $derived(`projects-card-${issue.id}`)
+  // an issue is known by its key (WEB-12), which never changes: its test ids are named after it
+  const id = $derived(`projects-card-${issue.key}`)
   const type = $derived(typeOf(issue.type))
 </script>
 
@@ -32,12 +33,12 @@
   data-testid={id}
 >
   <button class="open" type="button" onclick={onopen} data-testid="{id}-open">
-    <span class="title">{issue.title}</span>
+    <span class="title" data-testid="{id}-title">{issue.title}</span>
     <span class="about">
       <span class="type" style:color="var(--ios-{type.color})"><ui-icon name={type.icon} size={14} weight={2.5} label={type.label}></ui-icon></span>
-      <span class="key">{issue.key}</span>
+      <span class="key" data-testid="{id}-key">{issue.key}</span>
       {#if issue.priority !== 'medium'}
-        <span class="priority" class:high={issue.priority === 'high'}>{priorityOf(issue.priority).label}</span>
+        <span class="priority" class:high={issue.priority === 'high'} data-testid="{id}-priority">{priorityOf(issue.priority).label}</span>
       {/if}
     </span>
   </button>

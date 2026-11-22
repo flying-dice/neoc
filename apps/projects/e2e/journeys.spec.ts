@@ -18,16 +18,26 @@ const field = (page: Page, name: string): Locator => part(page, name).locator('i
 
 let serial = 0
 const unique = (what: string): string => `${what} ${Date.now().toString(36)}-${++serial}`
-/** A key no other run has: a letter, then four of the 36 digits of the clock and the count. */
-const uniqueKey = (): string => `K${((Date.now() + ++serial * 7919) % 36 ** 4).toString(36).toUpperCase().padStart(4, '0')}`
+/** A key no other run has, whichever worker makes it: a letter, then four digits of base 36 drawn at random. */
+const uniqueKey = (): string => `K${Math.floor(Math.random() * 36 ** 4).toString(36).toUpperCase().padStart(4, '0')}`
 
-/** A project in the sidebar, found by its name. */
-const projectRow = (page: Page, name: string): Locator => frame(page).locator('ui-row[data-testid^="projects-project-"]').filter({ hasText: name })
-/** An issue's card on the board, found by its title. */
-const card = (page: Page, title: string): Locator => frame(page).locator('li[data-testid^="projects-card-"]').filter({ hasText: title })
-const column = (page: Page, status: 'todo' | 'doing' | 'done'): Locator => part(page, `column-${status}`)
-/** A page in the list of pages, found by its title. */
-const pageRow = (page: Page, title: string): Locator => frame(page).locator('ui-row[data-testid^="projects-page-"]').filter({ hasText: title })
+// Everything is found by its test id. A project and an issue are named after their keys (`projects-project-WEB`,
+// `projects-card-WEB-1`), which a journey knows: it chose the project's key, and issues are numbered from 1. A page has
+// no such name (its id is the backend's), so its row is the one of that kind with the title the journey gave it.
+type Status = 'todo' | 'doing' | 'done'
+/** A project in the sidebar, by its key. */
+const projectRow = (page: Page, key: string): Locator => part(page, `project-${key}`)
+/** An issue's card on the board, by the issue's key (`WEB-1`); `name` is a part of the card. */
+const card = (page: Page, issue: string, name?: string): Locator => part(page, name ? `card-${issue}-${name}` : `card-${issue}`)
+const column = (page: Page, status: Status): Locator => part(page, `column-${status}`)
+/** An issue's card where it is in a column of the board. */
+const cardIn = (page: Page, status: Status, issue: string): Locator => column(page, status).getByTestId(`${ID}-card-${issue}`)
+/** An issue's row in the list of issues, by the issue's key. */
+const issueRow = (page: Page, issue: string): Locator => part(page, `issue-row-${issue}`)
+/** A page in the list of pages, by its title. */
+const pageRow = (page: Page, title: string): Locator => frame(page).getByTestId(/^projects-page-row-\d+$/).filter({ hasText: title })
+/** A page in the list under the open page, by its title. */
+const subpageRow = (page: Page, title: string): Locator => frame(page).getByTestId(/^projects-subpage-\d+$/).filter({ hasText: title })
 
 async function openProjects(page: Page): Promise<void> {
   await openDesktop(page, { open: [ID] })
@@ -45,10 +55,11 @@ async function addProject(page: Page, name: string, key: string): Promise<void> 
   await expect(part(page, 'key')).toHaveText(key)
 }
 
-async function addIssue(page: Page, title: string): Promise<void> {
+/** Raise an issue; `issue` is the key it is expected to take (`WEB-1`). It starts in the first column. */
+async function addIssue(page: Page, title: string, issue: string): Promise<void> {
   await field(page, 'new-issue-input').fill(title)
   await field(page, 'new-issue-input').press('Enter')
-  await expect(column(page, 'todo').locator('li').filter({ hasText: title })).toBeVisible()
+  await expect(cardIn(page, 'todo', issue).getByTestId(`${ID}-card-${issue}-title`)).toHaveText(title)
 }
 
 test.describe('Projects journeys', () => {
@@ -67,7 +78,7 @@ test.describe('Projects journeys', () => {
     await field(page, 'form-key').fill(key)
     await part(page, 'form-add').click()
     await expect(part(page, 'title')).toHaveText(name)
-    await expect(projectRow(page, name)).toHaveAttribute('selected', '')
+    await expect(projectRow(page, key)).toHaveAttribute('selected', '')
     for (const status of ['todo', 'doing', 'done'] as const) await expect(column(page, status)).toBeVisible()
   })
 
@@ -96,16 +107,17 @@ test.describe('Projects journeys', () => {
     const title = unique('Fix the footer')
     await openProjects(page)
     await addProject(page, unique('Board'), key)
-    await addIssue(page, title)
+    const issue = `${key}-1`
+    await addIssue(page, title, issue)
     await expect(field(page, 'new-issue-input')).toHaveValue('') // ready for the next
-    await expect(card(page, title)).toContainText(`${key}-1`)
+    await expect(card(page, issue, 'key')).toHaveText(issue)
     // the button on the card moves it one column on
-    await card(page, title).locator('ui-button').click()
-    await expect(column(page, 'doing').locator('li').filter({ hasText: title })).toBeVisible()
+    await card(page, issue, 'advance').click()
+    await expect(cardIn(page, 'doing', issue)).toBeVisible()
     await expect(part(page, 'column-todo-count')).toHaveText('0')
     // open it: its column, its kind and its priority are choices; its title is typed over
-    await card(page, title).getByRole('button', { name: title }).click()
-    await expect(part(page, 'issue-key')).toHaveText(`${key}-1`)
+    await card(page, issue, 'open').click()
+    await expect(part(page, 'issue-key')).toHaveText(issue)
     await part(page, 'issue-status-done').click()
     await part(page, 'issue-type-bug').click()
     await part(page, 'issue-priority-high').click()
@@ -114,10 +126,13 @@ test.describe('Projects journeys', () => {
     await part(page, 'issue-description').fill('The links go nowhere.')
     await part(page, 'issue-description').press('Tab')
     await part(page, 'issue-back').click()
-    await expect(column(page, 'done').locator('li').filter({ hasText: `${title}, for good` })).toContainText('High')
+    await expect(cardIn(page, 'done', issue)).toBeVisible()
+    await expect(card(page, issue, 'title')).toHaveText(`${title}, for good`)
+    await expect(card(page, issue, 'priority')).toHaveText('High')
     // the list of issues says the same
     await part(page, 'tab-issues').click()
-    const row = frame(page).locator('ui-row[data-testid^="projects-issue-"]').filter({ hasText: `${title}, for good` })
+    const row = issueRow(page, issue)
+    await expect(row).toHaveJSProperty('heading', `${title}, for good`)
     await expect(row).toHaveJSProperty('subheading', `${key}-1 · Bug · High`)
     await expect(row).toHaveJSProperty('value', 'Done')
     await row.click()
@@ -131,10 +146,11 @@ test.describe('Projects journeys', () => {
   test('PJ4: drag a card to another column', async ({ page }) => {
     const title = unique('Drag me')
     await openProjects(page)
-    await addProject(page, unique('Dragging'), uniqueKey())
-    await addIssue(page, title)
-    await card(page, title).dragTo(column(page, 'done'))
-    await expect(column(page, 'done').locator('li').filter({ hasText: title })).toBeVisible()
+    const key = uniqueKey()
+    await addProject(page, unique('Dragging'), key)
+    await addIssue(page, title, `${key}-1`)
+    await card(page, `${key}-1`).dragTo(column(page, 'done'))
+    await expect(cardIn(page, 'done', `${key}-1`)).toBeVisible()
     await expect(part(page, 'column-done-count')).toHaveText('1')
   })
 
@@ -164,7 +180,7 @@ test.describe('Projects journeys', () => {
     await expect(part(page, 'page-path')).toHaveText(title)
     await part(page, 'page-back').click()
     await expect(part(page, 'page-title')).toHaveText(title)
-    await expect(frame(page).locator('ui-row[data-testid^="projects-subpage-"]').filter({ hasText: under })).toBeVisible()
+    await expect(subpageRow(page, under)).toBeVisible()
     await part(page, 'page-back').click()
     await expect(pageRow(page, under)).toHaveJSProperty('subheading', `In ${title}`)
     // deleting the page takes the page under it
@@ -184,10 +200,11 @@ test.describe('Projects journeys', () => {
     // the agent calls the app's tools over MCP; a tool tells the open window with app.emit: no reload, no click
     const added = JSON.parse(await callTool(`${ID}__add_issue`, { project: key, title, type: 'bug', priority: 'high' })) as { key: string }
     expect(added.key).toBe(`${key}-1`)
-    await expect(column(page, 'todo').locator('li').filter({ hasText: title })).toBeVisible()
+    await expect(cardIn(page, 'todo', added.key)).toBeVisible()
+    await expect(card(page, added.key, 'title')).toHaveText(title)
     expect(await callTool(`${ID}__list_issues`, { project: key })).toContain(title)
     await callTool(`${ID}__move_issue`, { key: added.key, status: 'done' })
-    await expect(column(page, 'done').locator('li').filter({ hasText: title })).toBeVisible()
+    await expect(cardIn(page, 'done', added.key)).toBeVisible()
     await callTool(`${ID}__write_page`, { project: key, title: written, body: 'Said the agent.' })
     await part(page, 'tab-pages').click()
     await pageRow(page, written).click()
@@ -203,24 +220,26 @@ test.describe('Projects journeys', () => {
     const name = unique('Remember me')
     const title = unique('Still here')
     await openProjects(page)
-    await addProject(page, name, uniqueKey())
-    await addIssue(page, title)
+    const key = uniqueKey()
+    await addProject(page, name, key)
+    await addIssue(page, title, `${key}-1`)
     await chooseLayout(page, ID, 'close')
     await expect(windowOf(page, ID)).toHaveCount(0)
     await openFromHome(page, ID)
-    await projectRow(page, name).click()
-    await expect(card(page, title)).toBeVisible()
+    await projectRow(page, key).click()
+    await expect(card(page, `${key}-1`, 'title')).toHaveText(title)
     await part(page, 'delete').click()
     await expect(part(page, 'confirm')).toContainText('Its issues and its pages are deleted with it.')
     await part(page, 'confirm-delete').click()
-    await expect(projectRow(page, name)).toHaveCount(0)
+    await expect(projectRow(page, key)).toHaveCount(0)
   })
 
   test('PJ8: the Projects window at its smallest still works', async ({ page }) => {
     const name = unique('Small')
     const title = unique('In a small window')
     await openProjects(page)
-    await addProject(page, name, uniqueKey())
+    const key = uniqueKey()
+    await addProject(page, name, key)
     await resizeWindow(page, ID, 100, 100)
     const win = (await windowOf(page, ID).boundingBox())!
     expect(Math.round(win.width), 'the minimum width of the contract').toBe(420)
@@ -229,10 +248,10 @@ test.describe('Projects journeys', () => {
     // below 720 wide the projects and the one that is shown are one column each
     await expect(part(page, 'title')).toBeVisible()
     await expect(part(page, 'new')).toBeHidden()
-    await addIssue(page, title)
+    await addIssue(page, title, `${key}-1`)
     await expectNoOverflow(page.getByTestId(`window-${ID}-content`))
     await part(page, 'back').click()
-    await expect(projectRow(page, name)).toBeVisible()
+    await expect(projectRow(page, key)).toBeVisible()
     await expect(part(page, 'title')).toBeHidden()
   })
 })

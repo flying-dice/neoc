@@ -30,7 +30,7 @@
   }
 </script>
 
-<section class="board" aria-label="Board">
+<section class="board" aria-label="Board" data-testid="projects-board">
   <div class="new">
     <Composer {draft} label="New Issue" action="Add the issue" testid="projects-new-issue" {ondraft} {onadd} />
   </div>
@@ -62,7 +62,7 @@
           <p class="count" data-testid="projects-column-{status.value}-count">{issues.length}</p>
         </header>
         {#if issues.length > 0}
-          <ul class="cards">
+          <ul class="cards" data-testid="projects-column-{status.value}-cards">
             {#each issues as issue (issue.id)}
               <IssueCard
                 {issue}
@@ -80,7 +80,7 @@
             {/each}
           </ul>
         {:else}
-          <p class="none">No Issues</p>
+          <p class="none" data-testid="projects-column-{status.value}-empty">No Issues</p>
         {/if}
       </section>
     {/each}

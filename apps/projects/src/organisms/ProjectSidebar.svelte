@@ -40,7 +40,7 @@
               icon-color={project.color}
               selected={selected === project.id}
               onpress={() => onselect(project)}
-              data-testid="projects-project-{project.id}"
+              data-testid="projects-project-{project.key}"
             ></ui-row>
           {/each}
         </ui-section>

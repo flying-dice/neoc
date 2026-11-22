@@ -38,8 +38,8 @@
 <Story
   name="With pages"
   play={async ({ canvas, userEvent }) => {
-    await expect(canvas.getByTestId('projects-page-2')).toHaveProperty('subheading', 'In Design')
-    await userEvent.click(canvas.getByTestId('projects-page-2'))
+    await expect(canvas.getByTestId('projects-page-row-2')).toHaveProperty('subheading', 'In Design')
+    await userEvent.click(canvas.getByTestId('projects-page-row-2'))
     await expect(onopen).toHaveBeenCalledWith(PAGES[1])
   }}
 />

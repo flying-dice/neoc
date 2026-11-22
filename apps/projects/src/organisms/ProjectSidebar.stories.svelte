@@ -36,9 +36,9 @@
 <Story
   name="Projects"
   play={async ({ canvas, userEvent }) => {
-    await expect(canvas.getByTestId('projects-project-1')).toHaveProperty('selected', true)
-    await expect(canvas.getByTestId('projects-project-1')).toHaveProperty('label', 'Website, WEB, 4 open')
-    await userEvent.click(canvas.getByTestId('projects-project-2'))
+    await expect(canvas.getByTestId('projects-project-WEB')).toHaveProperty('selected', true)
+    await expect(canvas.getByTestId('projects-project-WEB')).toHaveProperty('label', 'Website, WEB, 4 open')
+    await userEvent.click(canvas.getByTestId('projects-project-APP'))
     await expect(onselect).toHaveBeenCalledWith(APP)
     await userEvent.click(canvas.getByTestId('projects-new'))
     await expect(onnew).toHaveBeenCalled()

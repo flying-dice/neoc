@@ -37,7 +37,7 @@
               icon={type.icon}
               icon-color={type.color}
               onpress={() => onopen(issue)}
-              data-testid="projects-issue-{issue.id}"
+              data-testid="projects-issue-row-{issue.key}"
             ></ui-row>
           {/each}
         </ui-section>

@@ -40,7 +40,7 @@
     </div>
     <div class="detail">
       {#if projects.form}
-        <section class="starting" aria-label="New Project">
+        <section class="starting" aria-label="New Project" data-testid="projects-starting">
           <h1>New Project</h1>
           <ProjectForm
             draft={projects.form}

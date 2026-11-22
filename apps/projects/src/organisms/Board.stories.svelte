@@ -43,8 +43,8 @@
   play={async ({ canvas, userEvent }) => {
     await expect(canvas.getByTestId('projects-column-todo-count')).toHaveTextContent('3')
     // the most pressing is first
-    await expect(canvas.getByTestId('projects-column-todo').querySelector('li')).toHaveAttribute('data-testid', 'projects-card-2')
-    await userEvent.click(canvas.getByTestId('projects-card-3-advance'))
+    await expect(canvas.getAllByTestId(/^projects-card-WEB-\d+$/)[0]).toHaveAttribute('data-testid', 'projects-card-WEB-2')
+    await userEvent.click(canvas.getByTestId('projects-card-WEB-3-advance'))
     await expect(onmove).toHaveBeenCalledWith(web[2], 'done')
   }}
 />

@@ -40,11 +40,11 @@
 <Story
   name="A task"
   play={async ({ canvas, userEvent }) => {
-    await userEvent.click(canvas.getByTestId('projects-card-1-open'))
+    await userEvent.click(canvas.getByTestId('projects-card-WEB-1-open'))
     await expect(onopen).toHaveBeenCalledTimes(1)
-    await userEvent.click(canvas.getByTestId('projects-card-1-advance'))
+    await userEvent.click(canvas.getByTestId('projects-card-WEB-1-advance'))
     await expect(onadvance).toHaveBeenCalledTimes(1)
-    await expect(canvas.getByTestId('projects-card-1-advance')).toHaveProperty('label', 'Move WEB-1 to In Progress')
+    await expect(canvas.getByTestId('projects-card-WEB-1-advance')).toHaveProperty('label', 'Move WEB-1 to In Progress')
   }}
 />
 
@@ -56,6 +56,6 @@
   name="Done"
   args={{ issue: issue(5, 'Register the domain', { type: 'story', priority: 'low', status: 'done' }), next: undefined }}
   play={async ({ canvas }) => {
-    await expect(canvas.queryByTestId('projects-card-5-advance')).toBeNull()
+    await expect(canvas.queryByTestId('projects-card-WEB-5-advance')).toBeNull()
   }}
 />

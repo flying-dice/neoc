@@ -46,7 +46,7 @@
   name="Asking"
   tags={['keep-focus']}
   play={async ({ canvas }) => {
-    await expect(canvas.getByRole('alertdialog', { name: 'Delete Website?' })).toBeVisible()
+    await expect(canvas.getByTestId('confirm')).toBeVisible()
     await expect(canvas.getByTestId('confirm')).toHaveTextContent('Its issues and its pages are deleted with it.')
     await expect(canvas.getByTestId('confirm-delete')).toHaveTextContent('Delete')
     await expect(canvas.getByTestId('confirm-cancel')).toHaveFocus()

@@ -33,7 +33,7 @@
               icon="doc"
               icon-color={leaf.depth > 0 ? 'gray' : 'orange'}
               onpress={() => onopen(leaf.page)}
-              data-testid="projects-page-{leaf.page.id}"
+              data-testid="projects-page-row-{leaf.page.id}"
             ></ui-row>
           {/each}
         </ui-section>

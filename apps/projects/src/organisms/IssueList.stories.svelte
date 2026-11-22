@@ -37,8 +37,8 @@
 <Story
   name="With issues"
   play={async ({ canvas, userEvent }) => {
-    await expect(canvas.getByTestId('projects-issue-2')).toHaveProperty('subheading', 'WEB-2 · Bug · High')
-    await userEvent.click(canvas.getByTestId('projects-issue-2'))
+    await expect(canvas.getByTestId('projects-issue-row-WEB-2')).toHaveProperty('subheading', 'WEB-2 · Bug · High')
+    await userEvent.click(canvas.getByTestId('projects-issue-row-WEB-2'))
     await expect(onopen).toHaveBeenCalledWith(web[1])
   }}
 />
