@@ -1,15 +1,23 @@
-import { LitElement, css, html } from 'lit'
+import { css, html, type TemplateResult } from 'lit'
 import { ifDefined } from 'lit/directives/if-defined.js'
 import { inkFor, cssColor } from 'kit:contrast'
+import { define } from '../define'
+import { FormControl } from '../form-control'
 import { base } from '../styles'
+import { colourVars } from '../style'
 
+const VARIANTS = ['filled', 'tinted', 'gray', 'plain']
 
 /**
  * A button in the four iOS styles. It is a real `<button>` inside, so Enter and Space press it, and it submits or
- * resets the form it sits in (`type`).
+ * resets the form it sits in (`type`). A form control like the others (see `FormControl`): a disabled fieldset disables
+ * it. A native submit button is the `submitter` of the `submit` event; a kit button cannot be, so `event.submitter` is
+ * null and the form's data carries the button's `name` and `value` instead.
  *
  * `fill` takes a data colour (a palette token such as `orange`, or `#rrggbb`) for a `filled` button; the text colour
  * is picked for 4.5:1 on it. Unlike `tint`, which is the control's accent, a fill is content.
+ *
+ * Drawn 28 or 34 pt high, its hit area is 44 pt high (and 44 wide when it is narrower).
  *
  * @tag ui-button
  * @slot - The label.
@@ -17,9 +25,7 @@ import { base } from '../styles'
  * @csspart button - The inner button.
  * @cssprop --tint - The accent of the button; defaults to the inherited `--tint`.
  */
-export class UiButton extends LitElement {
-  static formAssociated = true
-  static shadowRootOptions = { ...LitElement.shadowRootOptions, delegatesFocus: true }
+export class UiButton extends FormControl {
   static properties = {
     /** `filled` (default), `tinted`, `gray` or `plain`. */
     variant: { type: String, reflect: true },
@@ -35,22 +41,14 @@ export class UiButton extends LitElement {
     fill: { type: String },
     /** Red, for an action that deletes or cannot be undone. */
     destructive: { type: Boolean, reflect: true },
-    /** Dims the button and ignores presses. */
-        disabled: { type: Boolean, reflect: true },
     /** Makes it a toggle button: `aria-pressed` follows `pressed`. */
     toggle: { type: Boolean, reflect: true },
     /** The pressed state of a `toggle` button. */
     pressed: { type: Boolean, reflect: true },
     /** `button` (default), `submit` or `reset`. */
     type: { type: String },
-    /** The accessible name, when the visible text is not enough (WCAG 2.5.3: keep the visible text in it). */
-    label: { type: String },
-    /** Read after the name. */
-    description: { type: String },
-    /** The form value name, for a submit button. */
-    name: { type: String },
     /** The value submitted with `name` by a submit button. */
-        value: { type: String }
+    value: { type: String }
   }
   declare variant: 'filled' | 'tinted' | 'gray' | 'plain'
   declare size: 'small' | 'medium' | 'large' | 'fill'
@@ -59,15 +57,10 @@ export class UiButton extends LitElement {
   declare tint: string | undefined
   declare fill: string | undefined
   declare destructive: boolean
-  declare disabled: boolean
   declare toggle: boolean
   declare pressed: boolean
   declare type: 'button' | 'submit' | 'reset'
-  declare label: string
-  declare description: string
-  declare name: string
   declare value: string
-  private internals = this.attachInternals()
 
   static styles = [
     base,
@@ -86,6 +79,7 @@ export class UiButton extends LitElement {
       }
       button {
         --_tint: var(--btn-tint, var(--tint));
+        position: relative; /* the hit area below */
         appearance: none;
         border: 0;
         margin: 0;
@@ -113,6 +107,16 @@ export class UiButton extends LitElement {
       button:disabled {
         cursor: default;
         opacity: 0.35;
+      }
+      /* a hit area at least 44 pt each way around the drawn button, which keeps its size */
+      button::after {
+        content: '';
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: max(100%, 44px);
+        height: max(100%, 44px);
+        transform: translate(-50%, -50%);
       }
       :host([size='small']) button {
         min-height: 28px;
@@ -147,10 +151,18 @@ export class UiButton extends LitElement {
       :host([square][size='large']) button {
         width: 50px;
       }
+      /* Plain is a text link in the tint: regular weight and 4 pt of padding at every size (declared last, as in the shell). */
+      :host([variant='plain']) button {
+        font-weight: 400;
+        padding-inline: 4px;
+      }
 
       /* White text on the accent: darkened in dark mode to keep 4.5:1. An explicit fill is used as given. */
       .filled {
-        background: var(--btn-fill, light-dark(var(--_tint), color-mix(in oklab, var(--_tint) 70%, black)));
+        background: var(
+          --btn-fill,
+          light-dark(var(--_tint), color-mix(in oklab, var(--_tint) 70%, black))
+        );
         color: var(--btn-ink, #fff);
       }
       /* A pressed data-colour button swaps its fill and its text and gains a ring in the fill colour. */
@@ -163,7 +175,10 @@ export class UiButton extends LitElement {
       /* Tint-coloured text on a tinted or gray fill: darker in light mode, lighter in dark, for 4.5:1. */
       .tinted,
       .gray {
-        --_ink: light-dark(color-mix(in oklab, var(--_tint) 78%, black), color-mix(in oklab, var(--_tint) 78%, white));
+        --_ink: light-dark(
+          color-mix(in oklab, var(--_tint) 78%, black),
+          color-mix(in oklab, var(--_tint) 78%, white)
+        );
       }
       .tinted {
         background: color-mix(in srgb, var(--_tint) 15%, transparent);
@@ -176,8 +191,6 @@ export class UiButton extends LitElement {
       .plain {
         background: transparent;
         color: var(--_tint);
-        font-weight: 400;
-        padding-inline: 4px;
       }
       ::slotted([slot='icon']) {
         flex: none;
@@ -192,18 +205,30 @@ export class UiButton extends LitElement {
     this.shape = 'rounded'
     this.square = false
     this.destructive = false
-    this.disabled = false
     this.toggle = false
     this.pressed = false
     this.type = 'button'
-    this.label = ''
-    this.description = ''
-    this.name = ''
     this.value = ''
   }
 
+  protected get formValue(): string | null {
+    return null // only the submitting button is part of a submission, and only for that one
+  }
+
+  protected captureInitial(): void {
+    // a button has no value of its own to reset or restore
+  }
+
+  protected resetValue(): void {
+    // nothing to reset
+  }
+
+  protected restoreValue(): void {
+    // nothing to restore
+  }
+
   private onClick = (): void => {
-    if (this.disabled) return
+    if (this.isDisabled) return
     const form = this.internals.form
     if (this.type === 'submit') {
       // like a native submit button, it is part of the data of the submission it starts, and of no other
@@ -213,23 +238,21 @@ export class UiButton extends LitElement {
     } else if (this.type === 'reset') form?.reset()
   }
 
-  render() {
-    const fill = this.variant === 'filled' && this.fill ? cssColor(this.fill) : undefined
+  render(): TemplateResult {
+    const variant = VARIANTS.includes(this.variant) ? this.variant : 'filled'
+    const fill = variant === 'filled' && this.fill ? cssColor(this.fill) : undefined
     const ink = fill ? inkFor(this.fill) : undefined
     const tint = this.destructive ? 'var(--ios-red)' : this.tint
-    const vars = [
-      tint ? `--btn-tint:${tint}` : '',
-      fill ? `--btn-fill:${fill}` : tint && !this.destructive ? `--btn-fill:${tint}` : '',
-      ink ? `--btn-ink:${ink}` : ''
-    ]
-      .filter(Boolean)
-      .join(';')
     return html`<button
       part="button"
-      class="${this.variant} ${fill ? 'inverts' : ''}"
+      class="${variant} ${fill ? 'inverts' : ''}"
       type="button"
-      style=${ifDefined(vars || undefined)}
-      ?disabled=${this.disabled}
+      style=${colourVars({
+        '--btn-tint': tint,
+        '--btn-fill': fill ?? (tint && !this.destructive ? tint : undefined),
+        '--btn-ink': ink
+      })}
+      ?disabled=${this.isDisabled}
       aria-pressed=${ifDefined(this.toggle ? String(this.pressed) : undefined)}
       aria-label=${ifDefined(this.label || undefined)}
       aria-description=${ifDefined(this.description || undefined)}
@@ -244,7 +267,7 @@ export type ButtonVariant = UiButton['variant']
 export type ButtonSize = UiButton['size']
 export type ButtonShape = UiButton['shape']
 
-customElements.define('ui-button', UiButton)
+define('ui-button', UiButton)
 declare global {
   interface HTMLElementTagNameMap {
     'ui-button': UiButton

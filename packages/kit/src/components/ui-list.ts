@@ -1,10 +1,11 @@
-import { LitElement, css, html } from 'lit'
+import { LitElement, css, html, type TemplateResult } from 'lit'
 import { ifDefined } from 'lit/directives/if-defined.js'
 import { moveIndex } from 'kit:keys'
 import type { UiRow } from './ui-row'
-import type { ListVariant, UiSection } from './ui-section'
+import type { UiSection } from './ui-section'
 import './ui-row'
 import './ui-section'
+import { define } from '../define'
 import { base } from '../styles'
 
 export type { ListVariant } from './ui-section'
@@ -128,7 +129,7 @@ export class UiList extends LitElement {
     this.refresh()
   }
 
-  render() {
+  render(): TemplateResult {
     const role = this.selectable ? 'listbox' : this.direct ? 'list' : 'group'
     return html`<div
       role=${role}
@@ -142,7 +143,7 @@ export class UiList extends LitElement {
 
 export type ListSelection = UiList['selection']
 
-customElements.define('ui-list', UiList)
+define('ui-list', UiList)
 declare global {
   interface HTMLElementTagNameMap {
     'ui-list': UiList

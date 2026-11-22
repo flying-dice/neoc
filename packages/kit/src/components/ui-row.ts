@@ -1,5 +1,6 @@
-import { LitElement, css, html } from 'lit'
-import { ifDefined } from 'lit/directives/if-defined.js'
+import { LitElement, css, html, type TemplateResult } from 'lit'
+import { styleMap } from 'lit/directives/style-map.js'
+import { define } from '../define'
 import { cssColor } from 'kit:contrast'
 import './ui-icon'
 import { base } from '../styles'
@@ -8,23 +9,25 @@ import { base } from '../styles'
  * One row of a `ui-list` (UITableViewCell): a title and subtitle, an optional icon tile, a value, a chevron, and
  * slots for anything else.
  *
- * A row is plain text until it is `tappable`. A tappable row has one tab stop and fires `click`; the content in its
- * `trailing` slot (a `ui-toggle`, a button) stays separately clickable. In a list with `selection`, a row is an
- * option: it shows `selected`, and Enter or Space fires `click`.
+ * A row is plain text until it is `tappable`. A tappable row has one tab stop and fires `press` when it is tapped; the
+ * content in its `trailing` slot (a `ui-toggle`, a button) stays separately clickable and does not press the row. In a
+ * list with `selection`, a row is an option: it shows `selected`, and a tap, Enter or Space fires `press`.
+ *
+ * Listen for `press`, not `click`: a `click` bubbles from everything inside the row, a flipped trailing toggle included.
  *
  * @tag ui-row
  * @slot - Custom content in place of `heading` and `subheading`.
  * @slot leading - Content before the text, in place of `icon`.
  * @slot trailing - Content after the text, for example a `ui-toggle`.
  * @csspart face - The row's box.
- * @fires {MouseEvent} click - The person tapped a `tappable` row, or pressed Enter or Space on an option.
+ * @fires {CustomEvent<void>} press - The person tapped a `tappable` row, or tapped or pressed Enter or Space on an option.
  */
 export class UiRow extends LitElement {
   static properties = {
     /** The row's title. (Not `title`: that attribute is the native tooltip.) */
     heading: { type: String },
     /** A second line under the title. */
-        subheading: { type: String },
+    subheading: { type: String },
     /** A secondary value at the right, for example `On` or a network name. */
     value: { type: String },
     /** The icon tile's glyph from the icon set. */
@@ -32,7 +35,7 @@ export class UiRow extends LitElement {
     /** The icon tile's colour: a palette token or `#rrggbb`. Defaults to gray. */
     iconColor: { type: String, attribute: 'icon-color' },
     /** Shows a disclosure chevron at the end. */
-        chevron: { type: Boolean, reflect: true },
+    chevron: { type: Boolean, reflect: true },
     /** The row is a button. */
     tappable: { type: Boolean, reflect: true },
     /** Selected (in a list with `selection`). */
@@ -42,7 +45,7 @@ export class UiRow extends LitElement {
     /** An accent-coloured action row (`Add Account…`). */
     action: { type: Boolean, reflect: true },
     /** Dims the row and ignores taps. */
-        disabled: { type: Boolean, reflect: true },
+    disabled: { type: Boolean, reflect: true },
     /** The accessible name when it should differ from the title and subtitle. */
     label: { type: String }
   }
@@ -296,12 +299,16 @@ export class UiRow extends LitElement {
     this.removeEventListener('click', this.onHostClick, true)
   }
 
-  /** A disabled row does not tap. */
+  /** A disabled row does not tap; an option presses on a click that is its own, not on one from slotted content. */
   private onHostClick = (e: Event): void => {
     if (this.disabled) {
       e.stopImmediatePropagation()
       e.preventDefault()
-    }
+    } else if (this.option && e.target === this) this.press()
+  }
+
+  private press(): void {
+    this.dispatchEvent(new CustomEvent('press', { bubbles: true, composed: true }))
   }
 
   private onKeydown = (e: KeyboardEvent): void => {
@@ -337,21 +344,27 @@ export class UiRow extends LitElement {
     return this.subheading ? `${this.heading}, ${this.subheading}` : this.heading
   }
 
-  render() {
+  render(): TemplateResult {
     const option = this.option
     const tile = this.icon ? cssColor(this.iconColor || 'gray') : undefined
     const hasLeadingSlot = this.querySelector(':scope > [slot="leading"]') !== null
     return html`<div class="face" part="face">
-      ${this.list?.selection === 'multi'
-        ? html`<span class="check ${this.selected ? 'on' : ''}" aria-hidden="true">
-            ${this.selected ? html`<ui-icon name="checkmark" size="13" weight="3"></ui-icon>` : ''}
-          </span>`
-        : ''}
+      ${
+        this.list?.selection === 'multi'
+          ? html`<span class="check ${this.selected ? 'on' : ''}" aria-hidden="true">
+              ${this.selected ? html`<ui-icon name="checkmark" size="13" weight="3"></ui-icon>` : ''}
+            </span>`
+          : ''
+      }
       <span class="leading ${hasLeadingSlot || this.icon ? '' : 'none'}"
         ><slot name="leading" @slotchange=${() => this.requestUpdate()}
-          >${this.icon
-            ? html`<span class="tile" style="background:${ifDefined(tile)}"><ui-icon name=${this.icon} size="18" weight="2.2"></ui-icon></span>`
-            : ''}</slot
+          >${
+            this.icon
+              ? html`<span class="tile" style=${styleMap({ background: tile ?? '' })}
+                  ><ui-icon name=${this.icon} size="18" weight="2.2"></ui-icon
+                ></span>`
+              : ''
+          }</slot
         ></span
       >
       <span class="content">
@@ -366,24 +379,31 @@ export class UiRow extends LitElement {
         <span class="accessory">
           ${this.value ? html`<span class="value">${this.value}</span>` : ''}
           <slot name="trailing"></slot>
-          ${this.chevron
-            ? html`<span class="chevron" aria-hidden="true"><ui-icon name="chevron.right" size="14" weight="2.6"></ui-icon></span>`
-            : ''}
+          ${
+            this.chevron
+              ? html`<span class="chevron" aria-hidden="true"
+                  ><ui-icon name="chevron.right" size="14" weight="2.6"></ui-icon
+                ></span>`
+              : ''
+          }
         </span>
       </span>
-      ${this.tappable && !option && !this.disabled
-        ? html`<button
-            class="hit"
-            type="button"
-            tabindex=${this.tabStop ? '0' : '-1'}
-            aria-label=${this.label || this.accessibleText}
-          ></button>`
-        : ''}
+      ${
+        this.tappable && !option && !this.disabled
+          ? html`<button
+              class="hit"
+              type="button"
+              tabindex=${this.tabStop ? '0' : '-1'}
+              aria-label=${this.label || this.accessibleText}
+              @click=${() => this.press()}
+            ></button>`
+          : ''
+      }
     </div>`
   }
 }
 
-customElements.define('ui-row', UiRow)
+define('ui-row', UiRow)
 declare global {
   interface HTMLElementTagNameMap {
     'ui-row': UiRow

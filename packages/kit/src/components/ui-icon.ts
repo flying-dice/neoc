@@ -1,6 +1,7 @@
-import { LitElement, css, svg } from 'lit'
+import { LitElement, css, svg, type TemplateResult } from 'lit'
 import { unsafeSVG } from 'lit/directives/unsafe-svg.js'
 import { icons } from 'kit:icons'
+import { define } from '../define'
 import { base } from '../styles'
 
 /**
@@ -50,7 +51,7 @@ export class UiIcon extends LitElement {
     this.label = ''
   }
 
-  render() {
+  render(): TemplateResult {
     const glyph = Object.hasOwn(icons, this.name) ? icons[this.name] : undefined
     return svg`<svg
       width=${this.size}
@@ -68,7 +69,7 @@ export class UiIcon extends LitElement {
   }
 }
 
-customElements.define('ui-icon', UiIcon)
+define('ui-icon', UiIcon)
 declare global {
   interface HTMLElementTagNameMap {
     'ui-icon': UiIcon

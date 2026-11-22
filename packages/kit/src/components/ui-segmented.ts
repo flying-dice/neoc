@@ -1,50 +1,42 @@
-import { LitElement, css, html } from 'lit'
+import { css, html, type TemplateResult } from 'lit'
 import { ifDefined } from 'lit/directives/if-defined.js'
 import { repeat } from 'lit/directives/repeat.js'
+import { styleMap } from 'lit/directives/style-map.js'
 import { moveIndex, nextEnabled } from 'kit:keys'
+import { define } from '../define'
+import { FormControl, type ValidityResult } from '../form-control'
 import { base } from '../styles'
 
 /**
- * A segmented control (UISegmentedControl): one choice from a few. A radio group: Tab reaches the selected segment,
- * the arrow keys move the selection, Home and End jump.
+ * A segmented control (UISegmented Control): one choice from a few. A radio group: Tab reaches the selected segment,
+ * the arrow keys move the selection, Home and End jump. A form control (see `FormControl`): the selected value is
+ * submitted, and `required` keeps the form invalid until a segment is chosen.
  *
- * Each segment has the test id `<data-testid of the control>-<value>`.
+ * Each segment has the test id `<data-testid of the control>-<value>`. The segments are drawn 28 pt high and have a 44 pt
+ * high hit area.
  *
  * @tag ui-segmented
  * @fires {CustomEvent<{ value: string }>} change - The person chose a segment. `value` is already updated.
  */
-export class UiSegmented extends LitElement {
-  static formAssociated = true
-  static shadowRootOptions = { ...LitElement.shadowRootOptions, delegatesFocus: true }
+export class UiSegmented extends FormControl {
   static properties = {
     /** The segments: `[{ value, label, disabled? }]`. A JSON attribute works too. */
     options: { type: Array },
     /** The selected segment's value. */
     value: { type: String, reflect: true },
-    /** The accessible name of the group. */
-    label: { type: String },
-    /** Read after the name. */
-    description: { type: String },
     /** Fill the width the parent gives it. */
     block: { type: Boolean, reflect: true },
-    /** Disables every segment. */
-        disabled: { type: Boolean, reflect: true },
-    /** The form field name; the selected value is submitted. */
-    name: { type: String },
+    /** The form is invalid until a segment is chosen. */
+    required: { type: Boolean, reflect: true },
     /** The test id; each segment's is this followed by `-<value>`. */
     testid: { type: String, attribute: 'data-testid' }
   }
   declare options: { value: string; label: string; disabled?: boolean }[]
   declare value: string
-  declare label: string
-  declare description: string
   declare block: boolean
-  declare disabled: boolean
-  declare name: string
+  declare required: boolean
   declare testid: string | null
-  private internals = this.attachInternals()
   private initial = ''
-  private formDisabled = false
 
   static styles = [
     base,
@@ -107,6 +99,16 @@ export class UiSegmented extends LitElement {
       .segment.selected {
         font-weight: 600;
       }
+      /* a hit area at least 44 pt high around the drawn segment, which keeps its size */
+      .segment::after {
+        content: '';
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 50%;
+        height: 44px;
+        transform: translateY(-50%);
+      }
       .segment:disabled {
         opacity: 0.4;
         cursor: default;
@@ -139,21 +141,39 @@ export class UiSegmented extends LitElement {
     super()
     this.options = []
     this.value = ''
-    this.label = ''
-    this.description = ''
     this.block = false
-    this.disabled = false
-    this.name = ''
+    this.required = false
     this.testid = null
   }
 
-  connectedCallback(): void {
-    super.connectedCallback()
+  protected get formValue(): string | null {
+    return this.selectedIndex >= 0 ? this.value : null
+  }
+
+  protected captureInitial(): void {
     this.initial = this.value
   }
 
+  protected resetValue(): void {
+    this.value = this.initial
+  }
+
+  protected restoreValue(state: string | File | FormData | null): void {
+    if (typeof state === 'string') this.value = state
+  }
+
+  protected computeValidity(): ValidityResult {
+    return this.required && this.selectedIndex < 0
+      ? { flags: { valueMissing: true }, message: 'Choose one of the options.' }
+      : { flags: {}, message: '' }
+  }
+
+  protected get validationAnchor(): HTMLElement | undefined {
+    return this.renderRoot.querySelector<HTMLElement>('[role="radio"][tabindex="0"]') ?? undefined
+  }
+
   private get off(): boolean {
-    return this.disabled || this.formDisabled
+    return this.isDisabled
   }
 
   private get selectedIndex(): number {
@@ -163,7 +183,9 @@ export class UiSegmented extends LitElement {
   private select(value: string): void {
     if (this.off || value === this.value) return
     this.value = value
-    this.dispatchEvent(new CustomEvent('change', { detail: { value }, bubbles: true, composed: true }))
+    this.dispatchEvent(
+      new CustomEvent('change', { detail: { value }, bubbles: true, composed: true })
+    )
   }
 
   private onKeydown(e: KeyboardEvent): void {
@@ -188,20 +210,7 @@ export class UiSegmented extends LitElement {
     this.renderRoot.querySelector<HTMLElement>(`[data-index="${next}"]`)?.focus()
   }
 
-  protected updated(): void {
-    this.internals.setFormValue(this.name ? this.value : null)
-  }
-
-  formResetCallback(): void {
-    this.value = this.initial
-  }
-
-  formDisabledCallback(disabled: boolean): void {
-    this.formDisabled = disabled
-    this.requestUpdate()
-  }
-
-  render() {
+  render(): TemplateResult {
     const selected = this.selectedIndex
     const index = Math.max(0, selected)
     const stop = selected >= 0 ? selected : 0
@@ -209,29 +218,30 @@ export class UiSegmented extends LitElement {
     return html`<div
       class="group ${selected < 0 ? 'none' : ''}"
       role="radiogroup"
-      aria-label=${ifDefined(this.label || undefined)}
+      aria-label=${ifDefined(this.accessibleName)}
       aria-description=${ifDefined(this.description || undefined)}
       aria-disabled=${ifDefined(this.off ? 'true' : undefined)}
-      style="--count:${Math.max(1, this.options.length)};--index:${index}"
+      style=${styleMap({ '--count': String(Math.max(1, this.options.length)), '--index': String(index) })}
       @keydown=${this.onKeydown}
     >
       <span class="thumb" aria-hidden="true"></span>
       ${repeat(
         this.options,
         (s) => s.value,
-        (s, i) => html`<button
-          type="button"
-          role="radio"
-          class="segment ${s.value === this.value ? 'selected' : ''} ${i === index || i === index + 1 || i === 0 ? 'hide-divider' : ''}"
-          data-testid=${ifDefined(testid ? `${testid}-${s.value}` : undefined)}
-          data-index=${i}
-          aria-checked=${s.value === this.value ? 'true' : 'false'}
-          tabindex=${i === stop ? 0 : -1}
-          ?disabled=${this.off || s.disabled}
-          @click=${() => this.select(s.value)}
-        >
-          ${s.label}
-        </button>`
+        (s, i) =>
+          html`<button
+            type="button"
+            role="radio"
+            class="segment ${s.value === this.value ? 'selected' : ''} ${i === index || i === index + 1 || i === 0 ? 'hide-divider' : ''}"
+            data-testid=${ifDefined(testid ? `${testid}-${s.value}` : undefined)}
+            data-index=${i}
+            aria-checked=${s.value === this.value ? 'true' : 'false'}
+            tabindex=${i === stop ? 0 : -1}
+            ?disabled=${this.off || s.disabled}
+            @click=${() => this.select(s.value)}
+          >
+            ${s.label}
+          </button>`
       )}
     </div>`
   }
@@ -239,7 +249,7 @@ export class UiSegmented extends LitElement {
 
 export type Segment = UiSegmented['options'][number]
 
-customElements.define('ui-segmented', UiSegmented)
+define('ui-segmented', UiSegmented)
 declare global {
   interface HTMLElementTagNameMap {
     'ui-segmented': UiSegmented

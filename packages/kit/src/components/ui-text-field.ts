@@ -1,40 +1,56 @@
-import { LitElement, css, html } from 'lit'
+import { css, html, type TemplateResult } from 'lit'
 import { ifDefined } from 'lit/directives/if-defined.js'
+import { define } from '../define'
+import { FormControl, type ValidityResult } from '../form-control'
 import { base } from '../styles'
 
+const TYPES = ['text', 'email', 'password', 'url', 'search', 'tel', 'number']
+
 /**
- * A single-line text field. A form control: with a `name` it submits its value, Enter submits the form, and
- * `required` takes part in validation.
+ * A single-line text field that takes what an ordinary text input takes: `type` (including `number`), `inputmode`,
+ * `maxlength`, `minlength`, `pattern`, `min`, `max`, `step`, `enterkeyhint`, `autocapitalize`, `autocomplete`. A form
+ * control (see `FormControl`): with a `name` it submits its value, Enter submits the form, and `required`, the length and
+ * pattern limits and `setCustomValidity` take part in validation (`checkValidity`, `validity`, ...).
+ *
+ * The field is drawn 36 pt high and has a 44 pt high hit area (a click on the strip around it focuses it).
  *
  * @tag ui-text-field
  * @fires {InputEvent} input - The person typed. `value` is already updated (the native event, passed through).
- * @fires {Event} change - The person committed the text (blur).
+ * @fires {Event} change - The person committed the text (blur). It has no `detail`: read `value`.
  * @csspart input - The inner input.
  */
-export class UiTextField extends LitElement {
-  static formAssociated = true
-  static shadowRootOptions = { ...LitElement.shadowRootOptions, delegatesFocus: true }
+export class UiTextField extends FormControl {
   static properties = {
     /** The text. */
-        value: { type: String },
+    value: { type: String },
     /** A hint shown while empty. It is not the accessible name. */
-        placeholder: { type: String },
-    /** `text` (default), `email`, `password`, `url`, `search` or `tel`. */
+    placeholder: { type: String },
+    /** `text` (default), `email`, `password`, `url`, `search`, `tel` or `number`. */
     type: { type: String },
-    /** The accessible name; a field needs one (the placeholder is not a name). A `<label for>` names it too. */
-    label: { type: String },
-    /** Read after the name. */
-    description: { type: String },
-    /** The form field name. Nothing is submitted without one. */
-        name: { type: String },
-    /** Dims the field and ignores input. */
-        disabled: { type: Boolean, reflect: true },
     /** The text can be selected and copied, not changed. */
-        readonly: { type: Boolean, reflect: true },
+    readonly: { type: Boolean, reflect: true },
     /** The form is invalid while the field is empty. */
-        required: { type: Boolean, reflect: true },
+    required: { type: Boolean, reflect: true },
     /** The `autocomplete` hint for the browser, for example `email`. */
-        autocomplete: { type: String },
+    autocomplete: { type: String },
+    /** The on-screen keyboard to offer: `numeric`, `decimal`, `email`, `tel`, `url`, `search`, `text` or `none`. */
+    inputMode: { type: String, attribute: 'inputmode' },
+    /** The longest text, in characters. */
+    maxlength: { type: Number },
+    /** The shortest text, in characters, when there is any. */
+    minlength: { type: Number },
+    /** A regular expression the whole text must match. */
+    pattern: { type: String },
+    /** For `type="number"`: the smallest value. */
+    min: { type: String },
+    /** For `type="number"`: the largest value. */
+    max: { type: String },
+    /** For `type="number"`: the step between values, or `any`. */
+    step: { type: String },
+    /** What the keyboard's return key says: `enter`, `done`, `go`, `next`, `previous`, `search` or `send`. */
+    enterKeyHint: { type: String, attribute: 'enterkeyhint' },
+    /** How the keyboard capitalises: `off`, `none`, `on`, `sentences`, `words` or `characters`. */
+    autocapitalize: { type: String },
     /** `field` (default): a rounded filled field. `bare`: no box, for use inside a `ui-row`. */
     variant: { type: String, reflect: true },
     /** Shows the field as invalid (`aria-invalid`) with the message from an error `ui-banner` or the row's footer. */
@@ -42,19 +58,22 @@ export class UiTextField extends LitElement {
   }
   declare value: string
   declare placeholder: string
-  declare type: 'text' | 'email' | 'password' | 'url' | 'search' | 'tel'
-  declare label: string
-  declare description: string
-  declare name: string
-  declare disabled: boolean
+  declare type: 'text' | 'email' | 'password' | 'url' | 'search' | 'tel' | 'number'
   declare readonly: boolean
   declare required: boolean
   declare autocomplete: string
+  declare inputMode: string
+  declare maxlength: number | undefined
+  declare minlength: number | undefined
+  declare pattern: string | undefined
+  declare min: string | undefined
+  declare max: string | undefined
+  declare step: string | undefined
+  declare enterKeyHint: string
+  declare autocapitalize: string
   declare variant: 'field' | 'bare'
   declare invalid: boolean
-  private internals = this.attachInternals()
   private initial = ''
-  private formDisabled = false
 
   static styles = [
     base,
@@ -64,12 +83,14 @@ export class UiTextField extends LitElement {
         vertical-align: middle;
         min-width: 0;
       }
+      /* a 44 pt high hit area: the strip around the 36 pt field is the host's padding, and a click on it focuses the input */
+      :host(:not([variant='bare'])) {
+        padding-block: 4px;
+        margin-block: -4px;
+      }
       :host([variant='bare']) {
         display: block;
         flex: 1;
-      }
-      :host([disabled]) {
-        opacity: 0.4;
       }
       input {
         display: block;
@@ -99,6 +120,9 @@ export class UiTextField extends LitElement {
       :host([invalid]) input:not(:focus-visible) {
         box-shadow: inset 0 0 0 1.5px var(--ios-red);
       }
+      input:disabled {
+        opacity: 0.4;
+      }
       input::placeholder {
         color: var(--placeholder);
       }
@@ -113,45 +137,55 @@ export class UiTextField extends LitElement {
     this.value = ''
     this.placeholder = ''
     this.type = 'text'
-    this.label = ''
-    this.description = ''
-    this.name = ''
-    this.disabled = false
     this.readonly = false
     this.required = false
     this.autocomplete = ''
+    this.inputMode = ''
+    this.enterKeyHint = ''
+    this.autocapitalize = ''
     this.variant = 'field'
     this.invalid = false
-  }
-
-  connectedCallback(): void {
-    super.connectedCallback()
-    this.initial = this.value
   }
 
   private get input(): HTMLInputElement | null {
     return this.renderRoot.querySelector('input')
   }
 
-  protected updated(): void {
-    this.internals.setFormValue(this.name ? this.value : null)
-    const input = this.input
-    if (this.required && this.value === '' && input) {
-      this.internals.setValidity({ valueMissing: true }, 'Fill out this field.', input)
-    } else this.internals.setValidity({})
+  protected get formValue(): string | null {
+    return this.value
   }
 
-  formResetCallback(): void {
+  protected captureInitial(): void {
+    this.initial = this.value
+  }
+
+  protected resetValue(): void {
     this.value = this.initial
   }
 
-  formDisabledCallback(disabled: boolean): void {
-    this.formDisabled = disabled
-    this.requestUpdate()
+  protected restoreValue(state: string | File | FormData | null): void {
+    if (typeof state === 'string') this.value = state
   }
 
-  formStateRestoreCallback(state: string | File | FormData | null): void {
-    if (typeof state === 'string') this.value = state
+  /** The inner input does the checking (required, length, pattern, type, range); the field reports what it finds. */
+  protected computeValidity(): ValidityResult {
+    const input = this.input
+    if (!input || input.validity.valid) return { flags: {}, message: '' }
+    const v = input.validity
+    return {
+      flags: {
+        valueMissing: v.valueMissing,
+        typeMismatch: v.typeMismatch,
+        patternMismatch: v.patternMismatch,
+        tooLong: v.tooLong,
+        tooShort: v.tooShort,
+        rangeUnderflow: v.rangeUnderflow,
+        rangeOverflow: v.rangeOverflow,
+        stepMismatch: v.stepMismatch,
+        badInput: v.badInput
+      },
+      message: input.validationMessage
+    }
   }
 
   /** Selects the text, as the native input does. */
@@ -172,18 +206,27 @@ export class UiTextField extends LitElement {
     if (e.key === 'Enter' && !e.isComposing) this.internals.form?.requestSubmit()
   }
 
-  render() {
-    const name = this.label || this.internals.labels?.[0]?.textContent?.trim() || undefined
+  render(): TemplateResult {
+    const type = TYPES.includes(this.type) ? this.type : 'text'
     return html`<input
       part="input"
       .value=${this.value}
-      type=${this.type}
+      type=${type}
       placeholder=${ifDefined(this.placeholder || undefined)}
       autocomplete=${ifDefined(this.autocomplete || undefined)}
-      aria-label=${ifDefined(name)}
+      inputmode=${ifDefined(this.inputMode || undefined)}
+      enterkeyhint=${ifDefined(this.enterKeyHint || undefined)}
+      autocapitalize=${ifDefined(this.autocapitalize || undefined)}
+      maxlength=${ifDefined(this.maxlength)}
+      minlength=${ifDefined(this.minlength)}
+      pattern=${ifDefined(this.pattern || undefined)}
+      min=${ifDefined(this.min)}
+      max=${ifDefined(this.max)}
+      step=${ifDefined(this.step)}
+      aria-label=${ifDefined(this.accessibleName)}
       aria-description=${ifDefined(this.description || undefined)}
       aria-invalid=${ifDefined(this.invalid ? 'true' : undefined)}
-      ?disabled=${this.disabled || this.formDisabled}
+      ?disabled=${this.isDisabled}
       ?readonly=${this.readonly}
       ?required=${this.required}
       @input=${this.onInput}
@@ -195,7 +238,7 @@ export class UiTextField extends LitElement {
 
 export type TextFieldType = UiTextField['type']
 
-customElements.define('ui-text-field', UiTextField)
+define('ui-text-field', UiTextField)
 declare global {
   interface HTMLElementTagNameMap {
     'ui-text-field': UiTextField

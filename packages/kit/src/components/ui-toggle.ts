@@ -1,5 +1,7 @@
-import { css, html } from 'lit'
+import { css, html, type TemplateResult } from 'lit'
 import { ifDefined } from 'lit/directives/if-defined.js'
+import { define } from '../define'
+import { colourVars } from '../style'
 import { BooleanControl } from '../boolean-control'
 import { base } from '../styles'
 
@@ -27,7 +29,7 @@ export class UiToggle extends BooleanControl {
         appearance: none;
         border: 0;
         padding: 0;
-        position: relative;
+        position: relative; /* the hit area below */
         flex: none;
         width: 51px;
         height: 31px;
@@ -43,6 +45,16 @@ export class UiToggle extends BooleanControl {
         opacity: 0.4;
         cursor: default;
       }
+      /* a 44 x 44 pt hit area around the drawn switch, which keeps its size */
+      button::after {
+        content: '';
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: max(100%, 44px);
+        height: max(100%, 44px);
+        transform: translate(-50%, -50%);
+      }
       .knob {
         position: absolute;
         top: 2px;
@@ -51,7 +63,9 @@ export class UiToggle extends BooleanControl {
         height: 27px;
         border-radius: 999px;
         background: var(--knob);
-        box-shadow: var(--shadow-control), 0 0 0 0.5px rgb(0 0 0 / 0.04);
+        box-shadow:
+          var(--shadow-control),
+          0 0 0 0.5px rgb(0 0 0 / 0.04);
         transition:
           transform var(--duration) var(--ease-ios),
           width var(--duration-fast) var(--ease-ios);
@@ -69,7 +83,7 @@ export class UiToggle extends BooleanControl {
     `
   ]
 
-  render() {
+  render(): TemplateResult {
     return html`<button
       part="switch"
       type="button"
@@ -78,7 +92,7 @@ export class UiToggle extends BooleanControl {
       aria-label=${ifDefined(this.accessibleName)}
       aria-description=${ifDefined(this.description || undefined)}
       ?disabled=${this.isDisabled}
-      style=${ifDefined(this.tint ? `--toggle-tint:${this.tint}` : undefined)}
+      style=${colourVars({ '--toggle-tint': this.tint })}
       @click=${() => this.flip()}
     >
       <span class="knob"></span>
@@ -86,7 +100,7 @@ export class UiToggle extends BooleanControl {
   }
 }
 
-customElements.define('ui-toggle', UiToggle)
+define('ui-toggle', UiToggle)
 declare global {
   interface HTMLElementTagNameMap {
     'ui-toggle': UiToggle

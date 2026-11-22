@@ -1,5 +1,6 @@
-import { LitElement, css, html } from 'lit'
+import { LitElement, css, html, type TemplateResult } from 'lit'
 import './ui-icon'
+import { define } from '../define'
 import { base } from '../styles'
 
 /**
@@ -15,9 +16,9 @@ export class UiEmptyState extends LitElement {
     /** The glyph's name from the icon set. */
     icon: { type: String },
     /** The title. */
-        heading: { type: String },
+    heading: { type: String },
     /** A line of explanation under the title. */
-        message: { type: String }
+    message: { type: String }
   }
   declare icon: string
   declare heading: string
@@ -76,11 +77,15 @@ export class UiEmptyState extends LitElement {
     this.message = ''
   }
 
-  render() {
+  render(): TemplateResult {
     return html`<section aria-label=${this.heading}>
-      ${this.icon
-        ? html`<span class="glyph" aria-hidden="true"><ui-icon name=${this.icon} size="44" weight="1.6"></ui-icon></span>`
-        : ''}
+      ${
+        this.icon
+          ? html`<span class="glyph" aria-hidden="true"
+              ><ui-icon name=${this.icon} size="44" weight="1.6"></ui-icon
+            ></span>`
+          : ''
+      }
       <h2>${this.heading}</h2>
       ${this.message ? html`<p>${this.message}</p>` : ''}
       <slot></slot>
@@ -89,7 +94,7 @@ export class UiEmptyState extends LitElement {
   }
 }
 
-customElements.define('ui-empty-state', UiEmptyState)
+define('ui-empty-state', UiEmptyState)
 declare global {
   interface HTMLElementTagNameMap {
     'ui-empty-state': UiEmptyState

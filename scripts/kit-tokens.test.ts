@@ -8,7 +8,7 @@ const sources = readdirSync(components)
   .filter((f) => f.endsWith('.ts') && !f.endsWith('.stories.ts') && !f.endsWith('.test.ts'))
   .map((f) => ({ file: f, text: readFileSync(join(components, f), 'utf8') }))
 
-const declared = (css: string): Set<string> => new Set([...css.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]!))
+const declared = (css: string): Set<string> => new Set([...css.matchAll(/(--[\w-]+)['"]?\s*:/g)].map((m) => m[1]!))
 
 describe('the token sheet', () => {
   const tokens = buildTokensCss()
@@ -58,6 +58,12 @@ describe('the token sheet', () => {
 })
 
 describe('the components', () => {
+  test('define their tag through the shared guard, so a second load of kit.js throws nothing', () => {
+    for (const { file, text } of sources) {
+      expect({ file, bare: /customElements\.define\(/.test(text) }).toEqual({ file, bare: false })
+    }
+  })
+
   test('use no innerHTML, eval or external URL (the frame allows same-host scripts only)', () => {
     for (const { file, text } of sources) {
       const code = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
@@ -65,9 +71,17 @@ describe('the components', () => {
     }
   })
 
+  test('no component builds a style attribute or a class by concatenating a property', () => {
+    for (const { file, text } of sources) {
+      const code = text.replace(/\/\*[\s\S]*?\*\//g, '')
+      // style="...${...}" and style=${`...${...}`}: a value must go through styleMap/colourVars (the style API)
+      expect({ file, style: /style="[^"]*\$\{/.test(code) || /style=\$\{`/.test(code) }).toEqual({ file, style: false })
+    }
+  })
+
   test('every component defines a ui- tag and says what it is for', () => {
     for (const { file, text } of sources) {
-      const m = text.match(/customElements\.define\('(ui-[\w-]+)'/)
+      const m = text.match(/\bdefine\('(ui-[\w-]+)'/)
       expect({ file, tag: m?.[1] ? true : false }).toEqual({ file, tag: true })
       expect({ file, tagged: text.includes(`@tag ${m?.[1]}`) }).toEqual({ file, tagged: true })
     }

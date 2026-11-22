@@ -1,4 +1,5 @@
-import { LitElement, css, html, svg } from 'lit'
+import { LitElement, css, html, svg, type TemplateResult } from 'lit'
+import { define } from '../define'
 import { base } from '../styles'
 
 /**
@@ -57,19 +58,20 @@ export class UiSpinner extends LitElement {
     this.label = 'Loading'
   }
 
-  render() {
+  render(): TemplateResult {
     const ticks = Array.from({ length: 8 }, (_, i) => i)
     return html`<span role="status" aria-label=${this.label}>
       <svg viewBox="0 0 20 20" aria-hidden="true">
         ${ticks.map(
-          (i) => svg`<rect x="9" y="1.5" width="2" height="5" rx="1" fill="currentColor" opacity=${0.15 + (i / 8) * 0.85} transform="rotate(${i * 45} 10 10)" />`
+          (i) =>
+            svg`<rect x="9" y="1.5" width="2" height="5" rx="1" fill="currentColor" opacity=${0.15 + (i / 8) * 0.85} transform="rotate(${i * 45} 10 10)" />`
         )}
       </svg>
     </span>`
   }
 }
 
-customElements.define('ui-spinner', UiSpinner)
+define('ui-spinner', UiSpinner)
 declare global {
   interface HTMLElementTagNameMap {
     'ui-spinner': UiSpinner

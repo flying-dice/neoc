@@ -1,68 +1,63 @@
-import { LitElement } from 'lit'
+import { FormControl, type ValidityResult } from './form-control'
 
 /**
- * What `ui-toggle` and `ui-check` share: an on/off value that takes part in a form (`name`, `value`, reset, a
- * disabled fieldset), says so with `change`, and is named by `label` or by a `<label>` that points at it.
+ * What `ui-toggle` and `ui-check` share: an on/off value that takes part in a form (see `FormControl`) and says so with
+ * `change`. While on it submits `value`; `required` keeps the form invalid until it is on (the "I agree" check).
  *
  * The control inside is a real `<button role=...>`, so it has focus, Space and Enter for free. A click on a
  * `<label for>` reaches the host, not that button, so the host toggles for a click that did not start inside.
  *
  * @fires {CustomEvent<{ checked: boolean }>} change - The person flipped it. `checked` is already updated.
  */
-export abstract class BooleanControl extends LitElement {
-  static formAssociated = true
-  static shadowRootOptions = { ...LitElement.shadowRootOptions, delegatesFocus: true }
+export abstract class BooleanControl extends FormControl {
   static properties = {
     /** Whether it is on. */
     checked: { type: Boolean, reflect: true },
-    /** Dims the control and ignores input. */
-        disabled: { type: Boolean, reflect: true },
-    /** The accessible name. A `<label for>` pointing at the element names it too. */
-    label: { type: String },
-    /** Read after the name. */
-    description: { type: String },
-    /** The form field name. Nothing is submitted without one. */
-    name: { type: String },
     /** The value submitted while on. */
     value: { type: String },
+    /** The form is invalid until it is on. */
+    required: { type: Boolean, reflect: true },
     /** On-state colour: any CSS colour. */
     tint: { type: String }
   }
   declare checked: boolean
-  declare disabled: boolean
-  declare label: string
-  declare description: string
-  declare name: string
   declare value: string
+  declare required: boolean
   declare tint: string | undefined
-  protected internals = this.attachInternals()
-  private formDisabled = false
   private initial = false
 
   constructor() {
     super()
     this.checked = false
-    this.disabled = false
-    this.label = ''
-    this.description = ''
-    this.name = ''
     this.value = 'on'
+    this.required = false
   }
 
-  protected get isDisabled(): boolean {
-    return this.disabled || this.formDisabled
+  protected get formValue(): string | null {
+    return this.checked ? this.value : null
   }
 
-  /** The accessible name: `label`, else the text of the first `<label>` that names this element. */
-  protected get accessibleName(): string | undefined {
-    if (this.label) return this.label
-    const text = this.internals.labels?.[0]?.textContent?.trim()
-    return text || undefined
+  protected captureInitial(): void {
+    this.initial = this.checked
+  }
+
+  protected resetValue(): void {
+    this.checked = this.initial
+  }
+
+  protected restoreValue(state: string | File | FormData | null): void {
+    // the form kept this control's value while it was on, and nothing while it was off
+    this.checked = state !== null
+  }
+
+  protected computeValidity(): ValidityResult {
+    return this.required && !this.checked
+      ? { flags: { valueMissing: true }, message: 'Check this box to continue.' }
+      : { flags: {}, message: '' }
   }
 
   connectedCallback(): void {
     super.connectedCallback()
-    this.initial = this.checked
     this.addEventListener('click', this.hostClick)
   }
 
@@ -78,23 +73,12 @@ export abstract class BooleanControl extends LitElement {
   protected flip(): void {
     if (this.isDisabled) return
     this.checked = !this.checked
-    this.dispatchEvent(new CustomEvent('change', { detail: { checked: this.checked }, bubbles: true, composed: true }))
-  }
-
-  protected updated(): void {
-    this.internals.setFormValue(this.checked && this.name ? this.value : null)
-  }
-
-  formResetCallback(): void {
-    this.checked = this.initial
-  }
-
-  formDisabledCallback(disabled: boolean): void {
-    this.formDisabled = disabled
-    this.requestUpdate()
-  }
-
-  formStateRestoreCallback(state: string | File | FormData | null): void {
-    this.checked = state === 'on'
+    this.dispatchEvent(
+      new CustomEvent('change', {
+        detail: { checked: this.checked },
+        bubbles: true,
+        composed: true
+      })
+    )
   }
 }

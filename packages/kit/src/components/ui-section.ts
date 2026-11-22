@@ -1,5 +1,6 @@
-import { LitElement, css, html } from 'lit'
+import { LitElement, css, html, type TemplateResult } from 'lit'
 import { ifDefined } from 'lit/directives/if-defined.js'
+import { define } from '../define'
 import { base } from '../styles'
 
 let nextId = 0
@@ -15,9 +16,9 @@ let nextId = 0
 export class UiSection extends LitElement {
   static properties = {
     /** The title above the rows. */
-        header: { type: String },
+    header: { type: String },
     /** A note under the rows. */
-        footer: { type: String },
+    footer: { type: String },
     /** The look; set by the list that holds the section. */
     variant: { type: String, reflect: true }
   }
@@ -120,13 +121,18 @@ export class UiSection extends LitElement {
     if (list?.variant) this.variant = list.variant
   }
 
-  render() {
+  render(): TemplateResult {
     const selection = this.closest<HTMLElement & { selection?: string }>('ui-list')?.selection
     const selectable = selection === 'single' || selection === 'multi'
     // in a listbox only options may be its children: the header and footer are labels, not content
     const presentation = selectable ? 'presentation' : undefined
     return html`${this.header ? html`<h3 class="header" id=${this.uid} role=${ifDefined(presentation)}>${this.header}</h3>` : ''}
-      <div class="rows" part="rows" role=${selectable ? 'group' : 'list'} aria-labelledby=${ifDefined(this.header ? this.uid : undefined)}>
+      <div
+        class="rows"
+        part="rows"
+        role=${selectable ? 'group' : 'list'}
+        aria-labelledby=${ifDefined(this.header ? this.uid : undefined)}
+      >
         <slot></slot>
       </div>
       ${this.footer ? html`<p class="footer" role=${ifDefined(presentation)}>${this.footer}</p>` : ''}`
@@ -135,7 +141,7 @@ export class UiSection extends LitElement {
 
 export type ListVariant = UiSection['variant']
 
-customElements.define('ui-section', UiSection)
+define('ui-section', UiSection)
 declare global {
   interface HTMLElementTagNameMap {
     'ui-section': UiSection

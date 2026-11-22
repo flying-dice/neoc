@@ -46,6 +46,11 @@ export default defineConfig({
     outDir: resolve(here, '../../client/public/kit'),
     emptyOutDir: false,
     cssCodeSplit: false,
-    lib: { entry: resolve(here, 'src/index.ts'), name: 'VosKit', formats: ['iife'], fileName: () => 'kit.js' }
+    lib: {
+      entry: resolve(here, 'src/index.ts'),
+      name: 'VosKit',
+      formats: ['iife'],
+      fileName: () => 'kit.js'
+    }
   }
 })

@@ -1,5 +1,7 @@
-import { LitElement, css, html } from 'lit'
+import { LitElement, css, html, type TemplateResult } from 'lit'
+import { styleMap } from 'lit/directives/style-map.js'
 import './ui-icon'
+import { define } from '../define'
 import { base } from '../styles'
 
 type BannerTone = 'info' | 'success' | 'warning' | 'error'
@@ -33,6 +35,7 @@ export class UiBanner extends LitElement {
     /** A bold first line. */
     heading: { type: String }
   }
+  private hasAction = false
   declare tone: 'info' | 'success' | 'warning' | 'error'
   declare heading: string
 
@@ -44,12 +47,15 @@ export class UiBanner extends LitElement {
       }
       .banner {
         display: flex;
-        align-items: flex-start;
+        align-items: center;
         gap: 10px;
         padding: 10px 12px;
         border-radius: var(--radius-md);
         /* Tinted in light mode; neutral in dark, where a tint under a plain action button costs its 4.5:1. */
-        background: light-dark(color-mix(in srgb, var(--_color) 14%, var(--bg-grouped-elevated-secondary)), var(--bg-grouped-elevated-secondary));
+        background: light-dark(
+          color-mix(in srgb, var(--_color) 14%, var(--bg-grouped-elevated-secondary)),
+          var(--bg-grouped-elevated-secondary)
+        );
         box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--_color) 35%, transparent);
         font: var(--type-subheadline);
         letter-spacing: var(--tracking-subheadline);
@@ -59,7 +65,6 @@ export class UiBanner extends LitElement {
         flex: none;
         display: flex;
         color: var(--_color);
-        padding-top: 1px;
       }
       .text {
         flex: 1;
@@ -72,7 +77,10 @@ export class UiBanner extends LitElement {
       }
       .action {
         flex: none;
-        align-self: center;
+      }
+      /* no action: no gap for it either, so the padding is the same on both sides */
+      .banner:not(.has-action) .action {
+        display: none;
       }
     `
   ]
@@ -83,27 +91,34 @@ export class UiBanner extends LitElement {
     this.heading = ''
   }
 
-  render() {
-    const tone: BannerTone = this.tone in ICONS ? this.tone : 'info'
+  private onActionSlot(e: Event): void {
+    this.hasAction = (e.target as HTMLSlotElement).assignedNodes().length > 0
+    this.requestUpdate()
+  }
+
+  render(): TemplateResult {
+    const tone: BannerTone = Object.hasOwn(ICONS, this.tone) ? this.tone : 'info'
     return html`<div
-      class="banner"
+      class="banner ${this.hasAction ? 'has-action' : ''}"
       part="banner"
       role=${tone === 'error' ? 'alert' : 'status'}
-      style="--_color:${COLORS[tone]}"
+      style=${styleMap({ '--_color': COLORS[tone] })}
     >
       <span class="icon" aria-hidden="true"><ui-icon name=${ICONS[tone]} size="20"></ui-icon></span>
       <span class="text">
         ${this.heading ? html`<span class="heading">${this.heading}</span>` : ''}
         <slot></slot>
       </span>
-      <span class="action"><slot name="action"></slot></span>
+      <span class="action"
+        ><slot name="action" @slotchange=${(e: Event) => this.onActionSlot(e)}></slot
+      ></span>
     </div>`
   }
 }
 
 export type { BannerTone }
 
-customElements.define('ui-banner', UiBanner)
+define('ui-banner', UiBanner)
 declare global {
   interface HTMLElementTagNameMap {
     'ui-banner': UiBanner

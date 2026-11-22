@@ -1,5 +1,7 @@
-import { css, html } from 'lit'
+import { css, html, type TemplateResult } from 'lit'
 import { ifDefined } from 'lit/directives/if-defined.js'
+import { define } from '../define'
+import { colourVars } from '../style'
 import { BooleanControl } from '../boolean-control'
 import { base } from '../styles'
 
@@ -25,6 +27,7 @@ export class UiCheck extends BooleanControl {
         pointer-events: none;
       }
       button {
+        position: relative;
         appearance: none;
         flex: none;
         display: grid;
@@ -50,13 +53,23 @@ export class UiCheck extends BooleanControl {
         opacity: 0.4;
         cursor: default;
       }
+      /* a 44 x 44 pt hit area around the drawn check, which keeps its size */
+      button::after {
+        content: '';
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: max(100%, 44px);
+        height: max(100%, 44px);
+        transform: translate(-50%, -50%);
+      }
       svg {
         display: block;
       }
     `
   ]
 
-  render() {
+  render(): TemplateResult {
     return html`<button
       part="box"
       type="button"
@@ -65,17 +78,27 @@ export class UiCheck extends BooleanControl {
       aria-label=${ifDefined(this.accessibleName)}
       aria-description=${ifDefined(this.description || undefined)}
       ?disabled=${this.isDisabled}
-      style=${ifDefined(this.tint ? `--toggle-tint:${this.tint}` : undefined)}
+      style=${colourVars({ '--toggle-tint': this.tint })}
       @click=${() => this.flip()}
     >
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <svg
+        viewBox="0 0 24 24"
+        width="16"
+        height="16"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="3.2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
         <path d="M5 12.5l4.5 4.5L19 7" />
       </svg>
     </button>`
   }
 }
 
-customElements.define('ui-check', UiCheck)
+define('ui-check', UiCheck)
 declare global {
   interface HTMLElementTagNameMap {
     'ui-check': UiCheck
