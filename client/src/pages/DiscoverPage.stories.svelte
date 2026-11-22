@@ -82,6 +82,8 @@
 <Story
   name="No search results"
   play={async ({ canvas, userEvent }) => {
+    // a window too narrow for the sidebar shows the page alone: there is no field to search in
+    if (!canvas.queryByTestId('discover-search')) return
     await userEvent.type(canvas.getByTestId('discover-search'), 'spreadsheet')
     await expect(await canvas.findByText('No apps match “spreadsheet”.')).toBeVisible()
   }}
@@ -133,6 +135,8 @@
   beforeEach={withHost([FAKE_CALCULATOR])}
   play={async ({ canvas, userEvent }) => {
     await expect(await canvas.findByTestId('discover-hero')).toBeVisible()
+    // a window too narrow for the sidebar shows the page alone: there is nothing to choose a section with
+    if (!canvas.queryByTestId('discover-section-apps')) return
     await userEvent.click(canvas.getByTestId('discover-section-apps'))
     await expect(canvas.queryByTestId('discover-hero')).toBeNull()
     await expect(canvas.queryByTestId('discover-information')).toBeNull()

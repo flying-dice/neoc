@@ -134,7 +134,8 @@
   play={async ({ canvas, userEvent }) => {
     await show(canvas, userEvent, 'containers-scope-all')
     await inspect(canvas, userEvent, 'blog-db-1')
-    await userEvent.click(canvas.getByTestId('containers-inspector-tab-details'))
+    // the kit's segmented control holds its segments in its shadow tree
+    await userEvent.click(canvas.getByTestId('containers-inspector-tab').shadowRoot!.querySelector('[data-testid="containers-inspector-tab-details"]')!)
     await says(canvas, 'containers-details', 'docker-entrypoint.sh postgres')
   }}
 />

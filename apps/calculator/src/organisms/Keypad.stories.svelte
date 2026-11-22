@@ -83,15 +83,16 @@
   }}
 />
 
-<!-- Each key is a button: Tab reaches it, Enter and Space press it. -->
+<!-- Each key is a button: it takes the focus, and Enter and Space press it. The focus is given to a key here, not moved
+     with Tab: the testing library's Tab does not look into the kit's shadow trees, where the buttons are. -->
 <Story
   name="By keyboard"
   tags={['play-only']}
   play={async ({ canvas, userEvent }) => {
-    await userEvent.tab()
+    canvas.getByTestId('calculator-key-clear').focus()
     await expect(canvas.getByTestId('calculator-key-clear')).toHaveFocus()
     await userEvent.keyboard('{Enter}')
-    await userEvent.tab()
+    canvas.getByTestId('calculator-key-negate').focus()
     await expect(canvas.getByTestId('calculator-key-negate')).toHaveFocus()
     await userEvent.keyboard(' ')
     await expect(pressed()).toEqual(['clear', 'negate'])

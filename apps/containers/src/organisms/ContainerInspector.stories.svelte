@@ -143,7 +143,8 @@
     await expect(onact).toHaveBeenLastCalledWith('stop')
     await userEvent.click(canvas.getByTestId('containers-inspector-restart'))
     await expect(onact).toHaveBeenLastCalledWith('restart')
-    await userEvent.click(canvas.getByTestId('containers-inspector-tab-details'))
+    // the kit's segmented control holds its segments in its shadow tree
+    await userEvent.click(canvas.getByTestId('containers-inspector-tab').shadowRoot!.querySelector('[data-testid="containers-inspector-tab-details"]')!)
     await expect(ontab).toHaveBeenLastCalledWith('details')
     await userEvent.click(canvas.getByTestId('containers-inspector-remove'))
     await userEvent.click(canvas.getByTestId('containers-inspector-confirm-cancel'))

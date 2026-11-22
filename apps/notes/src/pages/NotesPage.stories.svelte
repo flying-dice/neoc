@@ -110,7 +110,7 @@
     await expect(canvas.getByTestId('notes-count')).toHaveTextContent('5 Notes')
     await expect(canvas.getByTestId('notes-section-Pinned')).toBeVisible()
     await expect(canvas.getByTestId('notes-section-Today')).toBeVisible()
-    await expect(canvas.getByTestId('notes-section-May')).toBeVisible()
+    await expect(canvas.getByTestId('notes-section-Previous 30 Days')).toBeVisible() // 20 May, from 9 June
     await expect(canvas.queryByTestId('notes-item-4')).toBeNull()
   }}
 />

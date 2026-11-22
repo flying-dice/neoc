@@ -161,13 +161,15 @@
   }}
 />
 
-<!-- A key reached with Tab is pressed by Enter, as any button is; Enter after typing is = again. -->
+<!-- A key reached with Tab is pressed by Enter, as any button is; Enter after typing is = again. The Tab is pressed, and
+     the focus is then given to the key: the testing library's Tab does not look into the kit's shadow trees, where the
+     buttons are, so it cannot move the focus there itself. -->
 <Story
   name="Enter on a focused key"
   tags={['play-only']}
   play={async ({ canvas, userEvent }) => {
-    key(canvas, 'clear').focus()
-    for (let i = 0; i < 4; i++) await userEvent.tab() // ±, %, ÷, 7
+    await userEvent.tab()
+    key(canvas, '7').focus()
     await expect(key(canvas, '7')).toHaveFocus()
     await userEvent.keyboard('{Enter}')
     await shows(canvas, '7', '')
