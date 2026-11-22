@@ -505,6 +505,8 @@ for (const hit of [false, true]) {
   test(`the element is the control: a click in an empty part of a forced-size element does what a click on the drawn part does (hit ${hit ? 'on' : 'off'})`, async ({
     page
   }) => {
+    // tall enough that every control is on screen: the clicks are at page coordinates
+    await page.setViewportSize({ width: 900, height: 3200 })
     await page.goto(`${origin}/standalone`)
     // An app that forces a size onto a control (or a layout that stretches one: a button fills its cell, and with hit the
     // drawn button is centred in a stretched element) makes a larger element. The whole element is the control, as it
@@ -565,12 +567,17 @@ for (const hit of [false, true]) {
         const inner = el
           .shadowRoot!.querySelector<HTMLElement>(
             el.localName === 'ui-segmented'
-              ? '.segment'
+              ? '.group'
               : el.localName === 'ui-text-field'
                 ? 'input'
                 : 'button'
           )!
           .getBoundingClientRect()
+        // the drawn part: a segmented control's first segment, the control itself otherwise
+        const first =
+          el.localName === 'ui-segmented'
+            ? el.shadowRoot!.querySelector('.segment')!.getBoundingClientRect()
+            : inner
         const cx = inner.left + inner.width / 2
         const cy = inner.top + inner.height / 2
         const halfW =
@@ -583,7 +590,7 @@ for (const hit of [false, true]) {
         const empty = candidates.filter(
           ([x, y]) => x > host.left && x < host.right && y > host.top && y < host.bottom
         )
-        out.push({ id, drawn: [cx, cy], empty })
+        out.push({ id, drawn: [first.left + first.width / 2, first.top + first.height / 2], empty })
       }
       return out
     }, hit)
