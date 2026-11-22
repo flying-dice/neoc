@@ -1,6 +1,7 @@
 import type { Frame, StageSummary, WindowLayout } from '@vos/ui'
 import { appOf, MIN_WIDTH, type AppDefinition, type AppId } from './apps.svelte'
 import { sizeClassOf } from '../view/protocol'
+import { randomId } from './randomId'
 
 /**
  * Stage Manager–style window manager.
@@ -65,7 +66,7 @@ const STRIP_WIDTH = 150
 const DOCK_SPACE = 104
 const SLIDE_OVER_WIDTH = 380
 
-const uid = (): string => crypto.randomUUID().slice(0, 8)
+const uid = (): string => randomId().slice(0, 8)
 
 export class WindowManager {
   windows = $state<WindowState[]>([])
