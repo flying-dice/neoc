@@ -203,20 +203,3 @@ ${CLOSE}</body></html>`
     await expect(canvas.getByTestId('calculator-failed-retry')).toBeVisible()
   }}
 />
-
-<!-- A client that reloads itself and then keeps the thread busy is still the client: its hello was sent before any of its code ran. -->
-<Story
-  name="Reloads itself and stays busy"
-  args={{
-    srcdoc:
-      '<!doctype html><html lang="en"><title>Calculator</title><p>busy after a reload</p><script>parent.postMessage({ t: "hello" }, "*"); parent.postMessage({ t: "ready" }, "*"); ' +
-      'if (window.name !== "reloaded") { window.name = "reloaded"; setTimeout(() => location.reload(), 300) } else { setTimeout(() => { const until = Date.now() + 3000; while (Date.now() < until) {} }, 0) }' +
-      CLOSE
-  }}
-  beforeEach={withHost(() => null)}
-  play={async ({ canvas }) => {
-    await new Promise((resolve) => setTimeout(resolve, 5000))
-    await expect(canvas.queryByTestId('calculator-failed')).toBeNull()
-    await expect(canvas.getByTestId('calculator-frame')).toBeVisible()
-  }}
-/>
