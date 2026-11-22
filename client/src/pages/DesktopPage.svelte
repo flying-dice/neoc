@@ -1,7 +1,8 @@
 <!--
   @page DesktopPage — the vos desktop, iPadOS Stage Manager style: status
   bar, recent-apps strip, the current stage (floating / full screen / split
-  windows), Slide Over, widgets and the dock. Window contents are supplied by
+  windows), Slide Over, widgets and the dock. On a compact screen (a phone) every window is shown full screen above
+  the Dock, one app at a time (`WindowManager.compact`). Window contents are supplied by
   the composition root through the `windowContent` snippet.
 
   Test ids: `status-bar`, `desktop-stage`, `widget-clock`, `widget-agent-activity`,
@@ -183,8 +184,8 @@
             height={frame.height}
             minWidth={app.minWidth}
             minHeight={app.minHeight}
-            z={win.layout === 'slideover' ? 10000 : win.z}
-            layout={win.layout}
+            z={wm.layoutOf(win) === 'slideover' ? 10000 : win.z}
+            layout={wm.layoutOf(win)}
             unavailable={wm.unavailableLayouts(win.id)}
             focused={wm.focusedId === win.id}
             onframechange={(f) => wm.setFrame(win.id, f)}

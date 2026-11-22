@@ -19,12 +19,15 @@ the test with the same id in `e2e/desktop.journeys.spec.ts`, driven by test ids 
 | D8  | Put an app in Slide Over, then give it the whole screen.                     | Files open.                                                      | Files fills the screen; it did not vanish into the recent-apps strip.                                                                               |
 | D9  | Try Split View on a screen too narrow for two apps.                          | A 600 px wide screen, Files open.                                | The menu shows Split View dimmed and unavailable (it says why); choosing it does nothing, Files stays a normal window and no empty half is offered. |
 | D10 | Pick an app for the waiting half that is too wide to sit beside the first.   | An 800 px wide screen, Files waiting in Split View.              | The app opens on its own, Files is in the recent apps, and a notice (also read out) says why; dismissing it removes it.                             |
-| D11 | Look for Slide Over with an app wider than the screen.                       | A 480 px wide screen, Agents open (it needs 480).                | Slide Over is shown dimmed and unavailable in the menu; the other layouts are not.                                                                  |
-| D12 | Shrink the screen under an app that is in Slide Over.                        | Agents in Slide Over on a wide screen.                           | Once the app no longer fits it goes back to a window on screen, and the menu does not list its own layout as unavailable.                           |
+| D11 | Look for the other layouts on a narrow screen.                               | A 480 px wide screen, Agents open (it needs 480).                | Agents has the whole screen; Split View, Slide Over and a floating window are shown dimmed and unavailable (they say why); Full Screen is not.      |
+| D12 | Turn a wide screen into a phone under an app that is in Slide Over.          | Agents in Slide Over on a wide screen.                           | On the phone Agents has the whole screen and the menu offers no other layout; on the wide screen again it is back in Slide Over.                    |
+| D13 | On a phone, open an app, use it, go back home and open another.              | A 390 px wide phone screen, Discover open.                       | Each app has the whole screen above the Dock, nothing is cut off or scrolls sideways; ··· → Minimise went home, and the Dock opened the next app.   |
 
 Notes for the people running these:
 
 - The strip hides itself while a window covers it: rest the pointer on the left edge to bring it back.
+- A screen whose desktop (below the status bar) is narrower or shorter than 560 px, such as a phone upright or on its
+  side, shows one app at a time, full screen above the Dock; the window's "···" menu then offers only Full Screen, Minimise and Close.
 - The multitasking menu is the "···" at the top of each window (Full Screen, Split View left or right, Slide Over, Floating,
   Minimise, Close). Dragging the title bar moves a floating window.
 - Nothing here depends on which Lua apps are installed beyond the Calculator and the Agents app the e2e host installs;

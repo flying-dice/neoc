@@ -22,6 +22,21 @@ async function clickStripItem(page: Page, testid: string): Promise<void> {
   await item.click()
 }
 
+/**
+ * A window wholly on a screen `width` wide, stopping above the Dock, on a page that does not scroll sideways: nothing of
+ * it is cut off.
+ */
+async function expectWithin(page: Page, appId: string, width: number): Promise<void> {
+  await settle(page)
+  const box = (await windowOf(page, appId).boundingBox())!
+  const dock = (await page.getByTestId('dock').boundingBox())!
+  expect(box.x, 'not off the left edge').toBeGreaterThanOrEqual(0)
+  expect(box.x + box.width, 'not off the right edge').toBeLessThanOrEqual(width)
+  expect(box.y + box.height, 'clear of the Dock').toBeLessThanOrEqual(dock.y)
+  const scrollWidth = await page.evaluate(() => document.scrollingElement?.scrollWidth ?? 0)
+  expect(scrollWidth, 'the page does not scroll sideways').toBeLessThanOrEqual(width)
+}
+
 test.describe('Desktop journeys', () => {
   test('D1: first launch: see what vos is, then open an app from the Dock', async ({ page }) => {
     await openDesktop(page)
@@ -200,23 +215,51 @@ test.describe('Desktop journeys', () => {
     await expect(page.getByTestId('desktop-notice-live')).toHaveText('') // emptied, ready for the next
   })
 
-  test('D11: Slide Over is shown unavailable for an app wider than the screen', async ({ page }) => {
-    await page.setViewportSize({ width: 480, height: 800 }) // 464 to use: Agents needs 480
+  test('D11: on a narrow screen the app has the whole screen and the other layouts are shown unavailable', async ({ page }) => {
+    await page.setViewportSize({ width: 480, height: 800 }) // a compact screen (under 560): Agents needs 480, it has 464
     await openDesktop(page, { open: ['agents'] })
+    await expect(windowOf(page, 'agents')).toHaveClass(/\bfullscreen\b/)
+    await expectWithin(page, 'agents', 480)
     await page.getByTestId('window-agents-multitasking').click()
-    await expect(page.getByTestId('window-agents-menu-slideover')).toHaveAttribute('aria-disabled', 'true')
+    for (const layout of ['split-left', 'split-right', 'slideover', 'floating'])
+      await expect(page.getByTestId(`window-agents-menu-${layout}`)).toHaveAttribute('aria-disabled', 'true')
     await expect(page.getByTestId('window-agents-menu-fullscreen')).not.toHaveAttribute('aria-disabled')
   })
 
-  test('D12: a Slide Over that no longer fits when the screen shrinks goes back to a window on screen', async ({ page }) => {
+  test('D12: an app in Slide Over has the whole screen on a phone, and is in Slide Over again on a wide screen', async ({ page }) => {
     await openDesktop(page, { open: ['agents'] })
     await chooseLayout(page, 'agents', 'slideover')
     await expect(windowOf(page, 'agents')).toHaveClass(/\bslideover\b/)
-    await page.setViewportSize({ width: 440, height: 800 }) // 424 to use: Agents needs 480
-    await expect(windowOf(page, 'agents')).toHaveClass(/\bfloating\b/)
-    const box = (await windowOf(page, 'agents').boundingBox())!
-    expect(box.x, 'not off the left edge').toBeGreaterThanOrEqual(0)
+    await page.setViewportSize({ width: 390, height: 844 }) // a phone: Agents needs 480, the screen has 374
+    await expect(windowOf(page, 'agents')).toHaveClass(/\bfullscreen\b/)
+    await expectWithin(page, 'agents', 390)
     await page.getByTestId('window-agents-multitasking').click()
-    await expect(page.getByTestId('window-agents-menu-floating')).not.toHaveAttribute('aria-disabled') // the layout it is in is not shown disabled
+    await expect(page.getByTestId('window-agents-menu-slideover')).toHaveAttribute('aria-disabled', 'true')
+    await expect(page.getByTestId('window-agents-menu-floating')).toHaveAttribute('aria-disabled', 'true')
+    await page.keyboard.press('Escape')
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await expect(windowOf(page, 'agents')).toHaveClass(/\bslideover\b/) // remembered, not dropped for the phone
+  })
+
+  test('D13: on a phone, open an app from the Dock, use it, go back home and open another', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await openDesktop(page)
+    // the home screen: Discover, the first window, has the screen to itself above the Dock
+    await expect(windowOf(page, 'discover')).toHaveClass(/\bfullscreen\b/)
+    await expectWithin(page, 'discover', 390)
+    // an app from the Dock takes the screen, and can be used
+    await page.getByTestId('dock-files').click()
+    await expect(windowOf(page, 'files')).toHaveClass(/\bfullscreen\b/)
+    await expectWithin(page, 'files', 390)
+    await page.getByTestId('files-search').fill('report')
+    await expect(page.getByTestId('files-search')).toHaveValue('report')
+    // back to the home screen with the window's ··· menu
+    await chooseLayout(page, 'files', 'minimize')
+    await expect(windowOf(page, 'files')).toHaveCount(0)
+    await expect(page.getByTestId('dock')).toBeVisible()
+    // and another app
+    await page.getByTestId('dock-settings').click()
+    await expect(windowOf(page, 'settings')).toHaveClass(/\bfullscreen\b/)
+    await expectWithin(page, 'settings', 390)
   })
 })
