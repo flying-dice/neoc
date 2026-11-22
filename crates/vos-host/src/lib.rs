@@ -18,6 +18,15 @@
 //! the session guard, and only the routes listed above are mounted outside it. Every route is behind
 //! the Origin/Host guard.
 
+// One app's failure stays that app's: a panic in a module an app calls ends that call with an error (`vos_lua`
+// catches it where the host calls into a VM, `neoc_vm::lua::panics` where a task or a request handler runs). Under
+// `panic = "abort"` every one of those catches is dead and the first panic ends the host and every app with it
+// (NEOC-125, Decision NEOC-258), so no profile may build the host that way.
+#[cfg(panic = "abort")]
+compile_error!(
+    "vos-host must be built with panic = \"unwind\": under panic = \"abort\" a panic in one app's module ends every app"
+);
+
 pub mod config;
 pub mod migrate;
 pub mod net;

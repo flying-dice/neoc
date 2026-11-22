@@ -20,6 +20,7 @@ use neoc_vm::{
     lua::{
         lib::log::set_log_sink,
         lifecycle::{self, set_entry, Baton, BoxFuture, CallEntry, IdleKind, Inherited, Life},
+        panics,
         sandbox::{install_runtime_state, load_source, make_bare_engine, set_worker_engine},
         script_env,
     },
@@ -99,6 +100,10 @@ pub enum VmError {
     /// The package does not contain the file its manifest names as the entry.
     #[error("the package has no entry `{0}`")]
     NoEntry(String),
+    /// A host function the call reached (a module's Rust code, a port behind the `app` API) panicked, and the
+    /// script did not catch the error it raised. The call is over; the app keeps running.
+    #[error("a host function panicked: {0}")]
+    Panicked(String),
 }
 pub type Result<T> = std::result::Result<T, VmError>;
 
@@ -772,9 +777,22 @@ impl AppVm {
     /// Run a top-level call: wait for the previous one, then run `body` holding the VM's gate (see [`Turn`]).
     ///
     /// `read_only`: the call may not change anything (a `readOnly` tool); whatever it starts may not either.
-    pub(crate) async fn in_call<T>(&self, read_only: bool, body: impl Future<Output = T>) -> T {
+    ///
+    /// A panic in a host function the call reached, which the script did not catch, ends the call with
+    /// [`VmError::Panicked`] instead of unwinding into the caller (`neoc_vm::lua::panics`). It stops the call
+    /// where script code called into Rust, where a caller that gives up may drop the call too, so it leaves what a
+    /// dropped call leaves: the turn handed on, a `db:tx` it opened rolled back, tracking and the render scope
+    /// closed (the guards of [`Turn`], `TrackGuard` and `RenderScopeGuard`). The app stays loaded.
+    pub(crate) async fn in_call<T, E: From<VmError>>(
+        &self,
+        read_only: bool,
+        body: impl Future<Output = std::result::Result<T, E>>,
+    ) -> std::result::Result<T, E> {
         let turn = Turn::take(self.shared.clone(), self.gate.clone(), Via::Host { read_only }).await;
-        lifecycle::scoped(Box::new(turn), body).await
+        match panics::caught(lifecycle::scoped(Box::new(turn), body)).await {
+            Ok(out) => out,
+            Err(message) => Err(VmError::Panicked(message).into()),
+        }
     }
 
     // ---- what the app declared ------------------------------------------------------------------------
@@ -1043,6 +1061,9 @@ mod tests {
             tokio::time::timeout(patience, entry.enter(Inherited::new(ReadOnly(false)))).await.is_err(),
             "a task ran after the shutdown"
         );
-        tokio::time::timeout(patience, vm.in_call(false, async {})).await.expect("the gate is free");
+        tokio::time::timeout(patience, vm.in_call(false, async { Ok::<_, VmError>(()) }))
+            .await
+            .expect("the gate is free")
+            .expect("the call ran");
     }
 }

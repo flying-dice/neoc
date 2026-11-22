@@ -22,6 +22,7 @@ pub mod files;
 #[cfg(test)]
 mod files_tests;
 pub mod live;
+pub mod panics;
 pub mod ports;
 pub mod services;
 #[cfg(test)]

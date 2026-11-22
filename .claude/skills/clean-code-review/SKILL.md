@@ -72,8 +72,8 @@ one-line description and a severity from 0 to 1.
    - **Rust:** `unwrap`, `expect`, `panic!`, `unreachable!` (clippy denies the first three in the vos crates; the neoc crates
      do not inherit the lint table, so check them by hand), indexing or slicing that can fail, `as` casts that truncate,
      arithmetic that can overflow, a lock held across `.await`; on input from a script, JSON-RPC params, tool arguments, app
-     output, ACP messages, app-ref contents, SQL rows from an older version, files, the network. A host panic aborts every
-     app under `release-host` (`panic = "abort"`).
+     output, ACP messages, app-ref contents, SQL rows from an older version, files, the network. The host unwinds, so a
+     panic in a call into an app fails that call (CLAUDE.md, "Boundaries"); it is still a finding.
    - **neoc modules:** a function that takes a script value and trusts its type, range or shape (the wrong type raises; a
      recoverable failure returns `(nil, "module.function: message")`); a size, sleep or index that is not bounded; a
      module not covered by `crates/neoc-vm/tests/hostile_inputs.rs` (it sweeps `modules::names()`).

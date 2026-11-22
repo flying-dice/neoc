@@ -219,8 +219,13 @@ async fn serve_socket(socket: WebSocket, handler: Arc<dyn RpcHandler>, device: O
                 }
             }
             Ok(RpcMessage::Notification { method, params, .. }) => {
-                // in order, before the next frame is read: `client.state` is FIFO ahead of a later event
-                handler.notification(&peer, &method, params).await;
+                // in order, before the next frame is read: `client.state` is FIFO ahead of a later event. A panic
+                // in it is logged and the connection reads on (a notification has no reply to carry an error)
+                let outcome =
+                    vos_application::panics::caught(handler.notification(&peer, &method, params)).await;
+                if let Err(message) = outcome {
+                    tracing::error!(%method, %message, "handling a notification panicked");
+                }
             }
             Ok(RpcMessage::Response { id: RpcId::Num(id), result, .. }) => {
                 if let Some(w) = peer.pending.lock().remove(&id) {
@@ -249,9 +254,22 @@ fn is_ordered(method: &str) -> bool {
 /// A request taken off the socket: its id, method and params.
 type Job = (RpcId, String, Value);
 
+/// Answer one request. A panic in the handler answers it with an internal error (`-32603`) instead of ending the
+/// task that runs it: the request gets its reply, and the connection's ordered task goes on serving the next
+/// `view.event` (a window that stopped answering would look alive and not be).
 async fn answer(handler: &dyn RpcHandler, peer: &RpcPeer, (id, method, params): Job) -> RpcMessage {
-    match handler.request(peer, &method, params).await {
-        Ok(v) => RpcMessage::ok(id, v),
-        Err(e) => RpcMessage::Error { jsonrpc: vos_domain::protocol::Version::V2, id: Some(id), error: e },
+    match vos_application::panics::caught(handler.request(peer, &method, params)).await {
+        Ok(Ok(v)) => RpcMessage::ok(id, v),
+        Ok(Err(e)) => {
+            RpcMessage::Error { jsonrpc: vos_domain::protocol::Version::V2, id: Some(id), error: e }
+        }
+        Err(message) => {
+            tracing::error!(%method, %message, "answering a request panicked");
+            RpcMessage::err(
+                Some(id),
+                -32603,
+                &format!("internal error: the host panicked answering `{method}`"),
+            )
+        }
     }
 }
