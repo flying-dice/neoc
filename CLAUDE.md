@@ -26,7 +26,8 @@ two products, and one set of rules for both:
     (atomic layers) through adapters in `client/src/view/`, holds client-managed state, and runs **no app code**.
 
 [README.md](README.md) says what the products are and how to build, run and test them; [CONTRIBUTING.md](CONTRIBUTING.md) has
-the pre-PR checks, how to add a module and how to release. This file is the rest: the rules.
+the pre-PR checks, how to add a module and how to release; [REVIEW-READY.md](REVIEW-READY.md) says what to do while you build
+so that review finds nothing you could have found first. This file is the rest: the rules.
 
 ## Layout
 
@@ -267,13 +268,15 @@ current epic is **NEOC-155**. (Older comments cite AGOS-n keys; they stay valid.
 3. Open a PR into `main` (a draft is fine). One module or one well-scoped change per PR, and small PRs are preferred over
    long-lived branches; say why, not only what. Title and
    commits are Conventional Commits; reference the Jira key in the body or footer (`Refs NEOC-<n>`).
-4. Self-review with the `pr-self-review` skill and post its `Self-review` note on the PR for the head SHA.
+4. Self-review with the `pr-self-review` skill and post its `Self-review` note on the PR for the head SHA. Its checklist is
+   [REVIEW-READY.md](REVIEW-READY.md): read that file when you start a change, not only at the end.
 5. Hand off to an independent `pr-review` pass: a fresh reviewer with no session context, who posts a verdict note for the head
    SHA (`READY TO MERGE`, with or without follow-ups, `CHANGES NEEDED` for blocking findings only, or `HOLD`). Rounds continue
    until `READY TO MERGE` at the exact head; each re-review reads the fix delta as new code, so it also catches regressions
    the fix introduced. Only a real bug, data loss or a security hole, a broken
-   acceptance criterion, a failing gate, or a no-vos-leak or boundary violation holds a merge; everything else becomes a
-   follow-up ticket in Jira NEOC and the PR merges.
+   acceptance criterion, a failing gate, or a no-vos-leak or boundary violation holds a merge; everything else is a follow-up
+   that does not hold the verdict and that the author still fixes in the same PR. There are no follow-up tickets; a bug in
+   unrelated code gets one Bug ticket.
 6. Squash-merge only on `READY TO MERGE` for the current head, then delete the branch and mark the Jira ticket Done. The one
    exception was the merge of vos into neoc (NEOC-113, PR #34), which landed with a merge commit to keep vos's history.
 7. An app that isn't ready for the full gate and the UX research panel stays in its PR: keep pushing to the branch; don't merge
@@ -426,7 +429,7 @@ Each skill covers both products; where the checks differ it has a section per pr
 | Writing or changing code (Rust, Luau, Svelte/TypeScript) | `coding-styleguide` |
 | After implementing, before pushing | `change-review`, `clean-code-review`, then `pre-commit` (loops until clean; `refactor` clears markers) |
 | Hardening tests, finding unhappy paths a suite misses | `chaos-monkey` |
-| Before marking a PR ready, and again after fixes | `pr-self-review` |
+| Before marking a PR ready, and again after fixes | `pr-self-review` (the checklist over [REVIEW-READY.md](REVIEW-READY.md)) |
 | Reviewing a PR (independent; verdict READY TO MERGE, CHANGES NEEDED or HOLD; applies the vos checks when the diff touches vos) | `pr-review` |
 | Any change to what a person sees or does | `verify-change` |
 | Before building a new app (or re-scoping one) | `prebuild-synthetic-ux` (personas, riskiest assumptions, key journeys and stories, to `ux/<app>/discovery.md`) |
