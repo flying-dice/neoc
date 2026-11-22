@@ -190,6 +190,24 @@ impl Queue {
         }
     }
 
+    /// End the queue because the watch ended on its own (its thread died): what waits is still handed out, then
+    /// `item` (the reason), then the end. Refuses what comes after, as a closed queue does. Nothing happens to a
+    /// queue that is already closed (the script closed the watch: the end it asked for is no failure).
+    pub(super) fn fail(&self, item: Item) {
+        {
+            let mut state = self.state.lock();
+            if state.closed {
+                return;
+            }
+            // an overflow still pending is dropped: once the watch has failed the script starts a new one and
+            // rescans, which covers what it would have rescanned for
+            state.overflowed = false;
+            state.items.push_back(item);
+            state.closed = true;
+        }
+        self.ready.notify_waiters();
+    }
+
     /// Close the queue: drop what waits, refuse what comes, and end every wait.
     pub(super) fn close(&self) {
         let dropped = {
@@ -248,19 +266,65 @@ fn classify(event: &notify::Event) -> Option<Change> {
     }
 }
 
-/// The watching thread's callback: classify, relocate and queue.
-fn deliver(queue: &Queue, roots: &Roots, received: notify::Result<notify::Event>) {
-    match received {
-        Ok(event) => match classify(&event) {
-            None => {}
-            Some(Change::Overflow) => queue.push_overflow(),
-            Some(change) => {
-                for path in event.paths {
-                    queue.push(Item::Change(change, roots.relocate(path)));
+/// What the watching thread's callback holds: the queue it fills and the roots it reports under.
+///
+/// A panic in the callback loses that event and nothing else: it is reported as an `overflow` (the script rescans)
+/// and the watch goes on, on every platform. If the thread itself dies (a panic in notify's own code, on a backend
+/// whose thread owns the callback: inotify, kqueue), the callback is dropped as the thread unwinds and the watch
+/// fails: `receive` hands out what was queued, then an error saying the watch stopped, instead of waiting for
+/// changes that will never come.
+struct Sink {
+    queue: Arc<Queue>,
+    roots: Roots,
+}
+
+impl Sink {
+    /// Classify, relocate and queue. A panic doing so is an overflow: the event is lost, so the script must rescan.
+    fn deliver(&self, received: notify::Result<notify::Event>) {
+        if crate::lua::panics::caught_sync(|| self.queue_event(received)).is_err() {
+            self.queue.push_overflow();
+        }
+    }
+
+    fn queue_event(&self, received: notify::Result<notify::Event>) {
+        // a way for the tests to make the callback panic
+        #[cfg(test)]
+        if received.as_ref().is_ok_and(|event| {
+            event
+                .paths
+                .iter()
+                .any(|path| path.ends_with("panic-in-the-callback"))
+        }) {
+            panic!("the callback broke");
+        }
+        match received {
+            Ok(event) => match classify(&event) {
+                None => {}
+                Some(Change::Overflow) => self.queue.push_overflow(),
+                Some(change) => {
+                    for path in event.paths {
+                        self.queue
+                            .push(Item::Change(change, self.roots.relocate(path)));
+                    }
                 }
-            }
-        },
-        Err(e) => queue.push(Item::Failed(watch_error(&e, &roots.given))),
+            },
+            Err(e) => self
+                .queue
+                .push(Item::Failed(watch_error(&e, &self.roots.given))),
+        }
+    }
+}
+
+impl Drop for Sink {
+    fn drop(&mut self) {
+        // dropped without a panic: the watch was closed, and closing it closed the queue
+        if std::thread::panicking() {
+            self.queue.fail(Item::Failed(FsError::at(
+                Kind::Other,
+                &self.roots.given,
+                "the watch stopped: the thread that watched the directory panicked",
+            )));
+        }
     }
 }
 
@@ -297,8 +361,8 @@ impl WatchInner {
     /// The queue is closed first, so every wait ends whatever the drop does. A watcher whose thread has died cannot
     /// hang the drop (notify 9 stops FSEvents without waiting for its run loop, and the other backends only send a
     /// message), but notify unwraps that thread's result there (`join().expect`, `send().unwrap()`): the panic is
-    /// caught here, so a close, a collection or the engine's shutdown cannot unwind out of it. (Under
-    /// `panic = "abort"` the thread's own panic has already ended the process.)
+    /// caught here, so a close, a collection or the engine's shutdown cannot unwind out of it. (The thread's own
+    /// panic has already failed the queue: see [`Sink`]. Under `panic = "abort"` it ended the process instead.)
     fn close(&self) {
         let watcher = self.watcher.lock().take();
         self.queue.close();
@@ -331,8 +395,11 @@ pub(super) fn start(root: PathBuf, recursive: bool) -> FsResult<WatchHandle> {
         resolved: std::fs::canonicalize(&root).ok(),
         given: root.clone(),
     };
-    let sink = Arc::clone(&queue);
-    let mut watcher = notify::recommended_watcher(move |received| deliver(&sink, &roots, received))
+    let sink = Sink {
+        queue: Arc::clone(&queue),
+        roots,
+    };
+    let mut watcher = notify::recommended_watcher(move |received| sink.deliver(received))
         .map_err(|e| watch_error(&e, &root))?;
     let mode = if recursive {
         RecursiveMode::Recursive
@@ -691,19 +758,16 @@ mod tests {
     #[test]
     fn the_callback_queues_changes_overflows_and_errors() {
         use notify::event::{AccessKind, CreateKind, Flag};
-        let queue = Queue::new(8);
-        let roots = Roots {
-            given: PathBuf::from("/given"),
-            resolved: Some(PathBuf::from("/resolved")),
-        };
+        let sink = sink();
+        let queue = &sink.queue;
         let created = notify::Event::new(EventKind::Create(CreateKind::File))
             .add_path(PathBuf::from("/resolved/a"))
             .add_path(PathBuf::from("/resolved/b"));
-        deliver(&queue, &roots, Ok(created));
+        sink.deliver(Ok(created));
         let access =
             notify::Event::new(EventKind::Access(AccessKind::Any)).add_path("/resolved/c".into());
-        deliver(&queue, &roots, Ok(access));
-        deliver(&queue, &roots, Err(notify::Error::generic("boom")));
+        sink.deliver(Ok(access));
+        sink.deliver(Err(notify::Error::generic("boom")));
         assert_eq!(path_of(queue.try_next().unwrap()), "/given/a");
         assert_eq!(path_of(queue.try_next().unwrap()), "/given/b");
         match queue.try_next() {
@@ -715,8 +779,84 @@ mod tests {
         }
         assert!(queue.try_next().is_none(), "the access was dropped");
         let rescan = notify::Event::new(EventKind::Other).set_flag(Flag::Rescan);
-        deliver(&queue, &roots, Ok(rescan));
+        sink.deliver(Ok(rescan));
         assert!(matches!(queue.try_next(), Some(Next::Overflow)));
+    }
+
+    /// The callback of a watch whose roots are `/given`, reported for `/resolved`.
+    fn sink() -> Sink {
+        Sink {
+            queue: Arc::new(Queue::new(8)),
+            roots: Roots {
+                given: PathBuf::from("/given"),
+                resolved: Some(PathBuf::from("/resolved")),
+            },
+        }
+    }
+
+    /// The thread that holds the callback dies: `receive` hands out what was queued, then says the watch stopped,
+    /// then the end, instead of waiting for changes that will never come.
+    #[test]
+    fn a_watch_whose_thread_panics_hands_out_what_was_queued_then_fails() {
+        let sink = sink();
+        let queue = Arc::clone(&sink.queue);
+        let died = std::thread::spawn(move || {
+            let created = notify::Event::new(EventKind::Create(notify::event::CreateKind::File))
+                .add_path(PathBuf::from("/resolved/a"));
+            sink.deliver(Ok(created));
+            panic!("the watching thread broke");
+        })
+        .join();
+        assert!(died.is_err(), "the thread panicked");
+        assert_eq!(path_of(queue.try_next().unwrap()), "/given/a");
+        match queue.try_next() {
+            Some(Next::Item(Item::Failed(e))) => {
+                assert_eq!(e.kind(), Kind::Other);
+                assert!(e.to_string().contains("/given"), "{e}");
+                assert!(e.to_string().contains("the watch stopped"), "{e}");
+            }
+            other => panic!("expected the failure, got {other:?}"),
+        }
+        assert!(matches!(queue.try_next(), Some(Next::Closed)));
+        queue.push(change("/late"));
+        assert!(
+            matches!(queue.try_next(), Some(Next::Closed)),
+            "nothing comes after"
+        );
+    }
+
+    /// A panic in the callback loses that event only: it is an overflow (rescan), and the watch goes on.
+    #[test]
+    fn a_panic_in_the_callback_is_an_overflow_and_the_watch_goes_on() {
+        use notify::event::CreateKind;
+        let sink = sink();
+        let created = |path: &str| {
+            notify::Event::new(EventKind::Create(CreateKind::File)).add_path(path.into())
+        };
+        sink.deliver(Ok(created("/resolved/a")));
+        sink.deliver(Ok(created("/resolved/panic-in-the-callback")));
+        assert_eq!(path_of(sink.queue.try_next().unwrap()), "/given/a");
+        assert!(matches!(sink.queue.try_next(), Some(Next::Overflow)));
+        assert!(sink.queue.try_next().is_none(), "still open");
+        sink.deliver(Ok(created("/resolved/b")));
+        assert_eq!(
+            path_of(sink.queue.try_next().unwrap()),
+            "/given/b",
+            "the watch goes on"
+        );
+    }
+
+    /// A callback dropped without a panic (the watch was closed, which closed the queue) fails nothing, and a queue
+    /// the script closed stays an ordinary end.
+    #[test]
+    fn a_callback_dropped_without_a_panic_or_after_the_close_fails_nothing() {
+        let sink = sink();
+        let queue = Arc::clone(&sink.queue);
+        drop(sink);
+        assert!(queue.try_next().is_none(), "still open, nothing queued");
+        queue.close();
+        queue.fail(change("/reason"));
+        assert!(matches!(queue.try_next(), Some(Next::Closed)));
     }
 
     /// Each `notify` error maps to a stable kind about the path it names, or the watched directory.

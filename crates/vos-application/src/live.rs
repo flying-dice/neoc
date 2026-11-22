@@ -591,17 +591,37 @@ impl LiveSources {
             }
         }
         let n = deliveries.len();
+        // in subscription order (the map has none), so what one delivery does to the next is reproducible
+        deliveries.sort_by_key(|(_, id, _)| *id);
         for (sink, id, update) in deliveries {
-            sink.deliver(id, update).await;
+            // a sink that panics costs only its own update. Its subscription forgets what it believed the client
+            // has, so the next change sends it everything again instead of a delta against state the client never
+            // received (see `crate::panics`)
+            if let Err(message) = crate::panics::caught(sink.deliver(id, update)).await {
+                tracing::error!(
+                    subscription = id.0,
+                    %message,
+                    "delivering a live-source update panicked; the next change sends this subscription all of it"
+                );
+                if let Some(sub) = self.subs.lock().get_mut(&id) {
+                    sub.state = None;
+                }
+            }
         }
         n
     }
 }
 
 /// Drive a [`LiveSources`] from a database's change feed until the feed ends. The host spawns this per app.
+///
+/// A panic in one refresh (a port; a sink's own panic is caught per delivery in [`LiveSources::refresh`]) is logged
+/// and the pump goes on with the next batch: the open windows keep following the app's data instead of freezing for
+/// as long as the app runs (see [`crate::panics`]).
 pub async fn pump_changes(mut feed: Box<dyn ChangeFeed>, live: Arc<LiveSources>) {
     while let Some(batch) = feed.next_batch().await {
-        live.refresh(&batch).await;
+        if let Err(message) = crate::panics::caught(live.refresh(&batch)).await {
+            tracing::error!(%message, "refreshing the live sources panicked; the next change refreshes them again");
+        }
     }
 }
 
@@ -891,5 +911,61 @@ mod tests {
         assert_eq!(sink.take().len(), 1);
         data.close_feed();
         task.await.unwrap();
+    }
+
+    /// A sink whose first delivery panics, then collects.
+    #[derive(Default)]
+    struct PanicsOnce {
+        panicked: std::sync::atomic::AtomicBool,
+        rest: CollectingSink,
+    }
+    #[async_trait]
+    impl LiveSink for PanicsOnce {
+        async fn deliver(&self, subscription: SubscriptionId, update: SourceUpdate) {
+            assert!(self.panicked.swap(true, std::sync::atomic::Ordering::SeqCst), "the sink broke");
+            self.rest.deliver(subscription, update).await;
+        }
+    }
+
+    /// Wait (briefly) until `ready` holds.
+    async fn eventually(ready: impl Fn() -> bool) {
+        for _ in 0..100 {
+            if ready() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+
+    /// One sink that panics costs nobody else their update, the pump lives on, and the subscription whose
+    /// delivery panicked gets everything again on the next change, not a delta against what it never received.
+    #[tokio::test]
+    async fn a_sink_that_panics_costs_only_its_own_update_and_resyncs_on_the_next_change() {
+        let (data, live, _) = setup(None, vec![note(1, "a")]);
+        let live = Arc::new(live);
+        let breaks = Arc::new(PanicsOnce::default());
+        let other = Arc::new(CollectingSink::default());
+        // the panicking subscription is the older one, so it is delivered to first
+        live.subscribe(&SourceId("notes".into()), Params::None, None, breaks.clone()).await.unwrap();
+        live.subscribe(&SourceId("notes".into()), Params::None, None, other.clone()).await.unwrap();
+        let task = tokio::spawn(pump_changes(data.feed(), live));
+
+        data.set_rows("from notes", vec![note(1, "a"), note(2, "b")]);
+        data.commit(["notes"]); // `breaks` panics on this delivery
+        eventually(|| !other.peek().is_empty()).await;
+        assert!(breaks.panicked.load(std::sync::atomic::Ordering::SeqCst));
+        let SourceUpdate::Rows(got) = &other.take()[0].1 else { panic!("rows") };
+        assert_eq!(got.changed.len(), 1, "the other subscription got its update: row 2");
+
+        data.set_rows("from notes", vec![note(1, "a"), note(2, "b"), note(3, "c")]);
+        data.commit(["notes"]);
+        eventually(|| !breaks.rest.peek().is_empty() && !other.peek().is_empty()).await;
+        let SourceUpdate::Rows(resync) = &breaks.rest.take()[0].1 else { panic!("rows") };
+        assert_eq!(resync.changed.len(), 3, "the subscription that panicked got every row again");
+        let SourceUpdate::Rows(delta) = &other.take()[0].1 else { panic!("rows") };
+        assert_eq!(delta.changed.len(), 1, "the other one still gets a delta: row 3");
+
+        data.close_feed();
+        task.await.expect("the pump ended normally, not by a panic");
     }
 }

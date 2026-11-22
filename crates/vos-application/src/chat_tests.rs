@@ -35,6 +35,8 @@ enum Step {
     /// Wait until the turn is cancelled.
     UntilCancelled,
     Fail(&'static str),
+    /// The connector panics (a bug in the host's own code).
+    Panic(&'static str),
 }
 
 #[derive(Default)]
@@ -122,6 +124,7 @@ impl AgentConnector for ScriptedConnector {
                     return Ok(StopReason::Cancelled);
                 }
                 Step::Fail(why) => return Err(PortError::Rejected(why.into())),
+                Step::Panic(why) => panic!("{why}"),
             }
         }
         Ok(StopReason::EndTurn)
@@ -797,6 +800,26 @@ async fn a_client_that_drops_the_stream_cancels_the_run_unless_it_is_waiting_for
     r.chat.client_gone("t1", "r1").await;
     assert_eq!(*r.connector.cancels.lock(), 0, "the interrupted run's stream ending is not an abort");
     assert!(r.chat.snapshot("t1").await.unwrap().running);
+}
+
+#[tokio::test]
+async fn a_turn_that_panics_ends_the_run_with_an_error_and_frees_the_thread() {
+    let r = rig_with(ApprovalPolicy::default()).await;
+    r.connector.script(vec![Step::Panic("the connector broke")]);
+    let events = tokio::time::timeout(
+        Duration::from_secs(5),
+        collect(r.chat.run(input("t1", "r1", "go")).await.unwrap()),
+    )
+    .await
+    .expect("the run ended: a dead turn left it running for ever");
+    let AgUiEvent::RunError { message, code } = events.last().unwrap() else { panic!("{events:?}") };
+    assert!(message.contains("the host panicked: the connector broke"), "{message}");
+    assert_eq!(code.as_deref(), Some("prompt_failed"));
+    assert!(!r.chat.snapshot("t1").await.unwrap().running, "the thread is free");
+
+    r.connector.script(vec![chunk("fine")]);
+    let events = collect(r.chat.run(input("t1", "r2", "again")).await.unwrap()).await;
+    assert!(matches!(events.last(), Some(AgUiEvent::RunFinished { .. })), "{events:?}");
 }
 
 #[tokio::test]
