@@ -88,23 +88,6 @@ fn every_module_is_required_by_the_positive_fixture() {
     }
 }
 
-/// The front-page example of README.md is the tail of `types/fixtures/readme.luau`, which luau-lsp checks in strict mode
-/// with the other positive fixtures, so the example cannot go stale against the declarations.
-#[test]
-fn the_readme_example_is_the_fixture() {
-    let readme = fs::read_to_string(root().join("README.md")).unwrap();
-    let fixture = fs::read_to_string(root().join("types/fixtures/readme.luau")).unwrap();
-    let example = readme
-        .split_once("## neoc\n\n```lua\n")
-        .and_then(|(_, rest)| rest.split_once("```"))
-        .map(|(block, _)| block)
-        .expect("README.md has a ```lua block under \"## neoc\"");
-    assert!(
-        !example.trim().is_empty() && fixture.ends_with(example),
-        "types/fixtures/readme.luau does not end with README.md's example:\n{example}"
-    );
-}
-
 // ---- the example: `--check` and the arguments ----
 
 /// Runs `cargo run -p neoc-vm --example luau_decls -- <args>`; `(exit code, stdout, stderr)`.

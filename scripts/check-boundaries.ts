@@ -213,7 +213,6 @@ for (const pattern of SOURCE_GLOBS) {
 if (errors.length) {
   console.error(`✗ Boundary check failed (${errors.length} problem${errors.length > 1 ? 's' : ''}):\n`)
   for (const e of [...new Set(errors)].sort((a, b) => a.localeCompare(b, 'en', { numeric: true }))) console.error('  ' + e)
-  console.error('\nSee CLAUDE.md -> "Boundaries".')
   process.exit(1)
 }
 console.log(`✓ Boundary check passed (${checked} files)`)

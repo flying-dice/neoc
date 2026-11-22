@@ -109,7 +109,6 @@ for (const pattern of SOURCE_GLOBS) {
 if (errors.length) {
   console.error(`✗ Test id check failed (${errors.length} problem${errors.length > 1 ? 's' : ''}):\n`)
   for (const e of errors) console.error('  ' + e)
-  console.error('\nSee .claude/skills/coding-styleguide/references/typescript-svelte.md, "Test ids".')
   process.exit(1)
 }
 console.log(`✓ Test id check passed (${checked} components)`)

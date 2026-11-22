@@ -257,7 +257,7 @@ function schema(value: Json, path: string, refs: { name: string; path: string }[
 
   for (const key of ['oneOf', 'anyOf', 'allOf', 'not', 'if', 'const', 'format', 'pattern', 'patternProperties', 'definitions', '$defs']) {
     if (has(value, key)) {
-      fail(`${path}.${key}`, `is not supported: a schema here is a type, \`enum\` of strings, or a list of a type and "null" (see apps/README.md, "The contract")`)
+      fail(`${path}.${key}`, `is not supported: a schema here is a type, \`enum\` of strings, or a list of a type and "null"`)
     }
   }
   let types: string[]

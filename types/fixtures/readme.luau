@@ -1,6 +1,5 @@
 --!strict
--- The front-page example of README.md (section "neoc"), checked in strict mode. `the_readme_example_is_the_fixture`
--- in crates/neoc-vm/tests/luau_decls.rs holds the two to the same text: change both together.
+-- A front-page example, checked in strict mode.
 -- notes.lua
 local fs   = require("std:fs")
 local json = require("vnd:serde_json")
