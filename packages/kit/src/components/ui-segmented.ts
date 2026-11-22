@@ -99,15 +99,15 @@ export class UiSegmented extends FormControl {
       .segment.selected {
         font-weight: 600;
       }
-      /* a hit area at least 44 pt high around the drawn segment, which keeps its size */
+      /* a hit area at least 44 x 44 pt around the drawn segment, which keeps its size */
       .segment::after {
         content: '';
         position: absolute;
-        left: 0;
-        right: 0;
+        left: 50%;
         top: 50%;
+        width: max(100%, 44px);
         height: 44px;
-        transform: translateY(-50%);
+        transform: translate(-50%, -50%);
       }
       .segment:disabled {
         opacity: 0.4;
