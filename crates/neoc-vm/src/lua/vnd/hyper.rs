@@ -9,8 +9,30 @@
 //! ```lua
 //! local hyper = require("vnd:hyper")
 //! local resp, err = hyper.get("http://example.com/")
-//! resp.status; resp.headers; resp.body
+//! if not resp then
+//!     if hyper.error_kind(err) == "timed_out" then ... end
+//!     return
+//! end
+//! print(resp.status, resp.headers["content-type"], resp.body, resp.url)
 //! ```
+//!
+//! What a request does when the options say nothing (NEOC-259, after `URLSession` and Swift's async-http-client):
+//!
+//! - **It does not hang.** It gives up after 10 s of connecting (TCP and the TLS handshake) and after 60 s
+//!   without data in either direction, reset whenever data moves (`connect_timeout`, `idle_timeout`). A server
+//!   that answers one byte every 59 s is never idle: `timeout` bounds the whole request, redirects and body
+//!   included, and has no default.
+//! - **It follows redirects**, 16 at most, with the rewriting and cross-origin rules of async-http-client
+//!   (`follow_redirects`; see `client::redirect`). Credentials do not follow a redirect to another origin. Nothing
+//!   else is checked about where a redirect goes: it may lead from `https` to `http`, to a host on the local
+//!   network or to the machine itself, because neoc has no permissions; an app that fetches a URL someone else
+//!   chose and must not reach those checks `resp.url` against its own rule, or sets `follow_redirects = false`
+//!   and follows the `Location` itself.
+//! - **It does not fill the memory.** It reads at most 64 MiB of body (`max_body`) and fails with `too_large`
+//!   past that, a declared length first. It never decompresses: it sends no `Accept-Encoding` and returns the bytes
+//!   as they came, so the cap is on what was read from the socket. A script that decodes a body (`lib:compress`)
+//!   bounds the decoded size itself.
+//! - **It says what failed**: `hyper.<fn>: <kind>: <message>`, and `hyper.error_kind(err)` returns the kind.
 //!
 //! ## Server
 //! `serve(listener, handler)` mirrors hyper's `service_fn` model: the
@@ -83,6 +105,10 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:hyper")?;
 
+    let get_options = options_type("");
+    let post_options = options_type("url: string, body: string | buffer?, ");
+    let request_options = options_type("method: string, url: string, body: string | buffer?, ");
+
     m.set(
         "get",
         async_function(lua, Role::Wait, |lua, args: (String, Option<Table>)| {
@@ -91,9 +117,9 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     )?;
     m.record_fn(
         "get",
-        &[("url", "string"), ("opts", "LuaValue?")],
-        "Result<LuaValue, string>",
-        "Perform an HTTP or HTTPS GET request, returning a response table `{ status, headers, body }`. `opts` may carry `headers` and `ca_pem`; any other option is an error.",
+        &[("url", "string"), ("opts", &format!("{get_options}?"))],
+        RESULT,
+        &client_doc("Perform an HTTP or HTTPS GET request."),
     );
 
     m.set(
@@ -102,9 +128,11 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     )?;
     m.record_fn(
         "post",
-        &[("opts", "LuaValue")],
-        "Result<LuaValue, string>",
-        "Perform an HTTP or HTTPS POST request given `{ url, body?, headers?, ca_pem? }` (any other option is an error); `body` is a string or a buffer.",
+        &[("opts", &post_options)],
+        RESULT,
+        &client_doc(
+            "Perform an HTTP or HTTPS POST request given `{ url, body?, ... }`; `body` is a string or a buffer.",
+        ),
     );
 
     m.set(
@@ -113,10 +141,21 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     )?;
     m.record_fn(
         "request",
-        &[("opts", "LuaValue")],
-        "Result<LuaValue, string>",
-        "Perform an HTTP or HTTPS request with an arbitrary method given `{ method, url, body?, headers?, ca_pem? }` (any other option is an error); `body` is a string or a buffer.",
+        &[("opts", &request_options)],
+        RESULT,
+        &client_doc(
+            "Perform an HTTP or HTTPS request given `{ method, url, body?, ... }`; `body` is a string or a buffer. A standard method in any case is the standard method (`put` is `PUT`); any other is sent as written.",
+        ),
     );
+
+    m.func(
+        "error_kind",
+        &[("err", "string?")],
+        "The stable kind inside an error string returned by a `vnd:hyper` client function, or `nil` when the string is not one of theirs (or is `nil`, so `hyper.error_kind(err)` takes the `err` of any call). Such a string is `hyper.<function>: <kind>: <message>`. Kinds: `invalid_input` (an option, header or body was refused before anything was sent), `invalid_url` (not an `http` or `https` URL with a host, a redirect's `Location` included), `connect` (no connection: the name did not resolve, or the host refused or could not be reached), `tls` (the handshake failed, usually over the certificate), `timed_out` (a time limit passed), `too_many_redirects`, `too_large` (the body is over `max_body`), `connection_lost` (the connection ended or failed before the response was complete), `bad_response` (the server did not send valid HTTP), `other`. The kind means the same on every platform; the message is for a log and may change.",
+        |_, err: Option<mlua::LuaString>| {
+            Ok(err.and_then(|err| client::kind_of(&err.to_string_lossy()).map(str::to_owned)))
+        },
+    )?;
 
     m.set("serve", lua.create_function(serve)?)?;
     m.record_fn(
@@ -158,7 +197,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         r.field("path", "string", "The request path, without the query string.");
         r.field("body", "string", "The raw request body.");
         r.field("is_json", "bool", "Whether the `Content-Type` header is `application/json`.");
-        r.field("headers", "LuaValue", "The request headers as a `{ [name]: value }` table.");
+        r.field("headers", "LuaValue", "The request headers as a `{ [name]: value }` table, names in lower case. A header sent more than once is one value joined with `\", \"` (`cookie` and the rest; `set-cookie` with `\"\\n\"`), and a value that is not UTF-8 has its bad bytes replaced with U+FFFD.");
         r.field(
             "json",
             &format!("{} | nil", crate::lua::lib::json::JSON_VALUE),
@@ -176,6 +215,45 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     });
 
     Ok(m)
+}
+
+/// What a client function returns: the response table, or `(nil, err)`.
+const RESULT: &str =
+    "Result<{ status: number, headers: { [string]: string }, body: string, url: string }, string>";
+
+/// The type of an options table: `lead` is the fields only some functions take, then the ones all of them do.
+fn options_type(lead: &str) -> String {
+    format!(
+        "{{ {lead}headers: {{ [string]: string }}?, ca_pem: string?, connect_timeout: number?, \
+         idle_timeout: number?, timeout: number?, follow_redirects: boolean | number?, max_body: number? }}"
+    )
+}
+
+/// The doc of a client function: `what` it does, then what every one of them shares.
+fn client_doc(what: &str) -> String {
+    format!(
+        "{what} Returns `{{ status, headers, body, url }}` (`url` is the last URL of the redirect chain; `headers` has one \
+         value per lower-case name: a header sent more than once is joined with `\", \"`, `set-cookie` with `\"\\n\"` so \
+         each cookie can be split back out, and bytes that are not UTF-8 become U+FFFD), or `(nil, err)` \
+         with `err` = `hyper.<function>: <kind>: <message>` (see `error_kind`; a 4xx or 5xx status is a response, not an \
+         error). Options, any other key is an `invalid_input` error: `headers` (`{{ [name]: value }}`; a `Content-Length` \
+         that is not the body's length is refused, a `Host` replaces the built-in one, and a name given twice in any \
+         case or a `Transfer-Encoding` is refused: the module frames the body), `ca_pem` (PEM certificates to \
+         trust instead of the platform's, on every hop), `connect_timeout` (seconds, default 10: the TCP connect and the \
+         TLS handshake), `idle_timeout` (seconds, default 60: no data moving in either direction; reset whenever any \
+         does, so a server that trickles never trips it), `timeout` (seconds, default none: the whole request, redirects \
+         and body included, which is what bounds a trickle), `follow_redirects` (default `true`: follow 301, 302, 303, \
+         307 and 308 up to 16 hops; `false` returns the 3xx; a whole number sets the limit; 303 becomes a GET, a POST \
+         becomes a GET on 301 and 302, 307 and 308 keep method and body; a hop to another origin drops `Authorization`, \
+         `Cookie`, `Proxy-Authorization`, `Origin` and a caller-set `Host`, and only those: a credential in a header of \
+         your own (`X-Api-Key`) goes to every hop, so set `follow_redirects = false` to decide yourself; a `Location` \
+         that is not `http` or `https` \
+         is `invalid_url`; more hops than the limit is `too_many_redirects`; nothing refuses a redirect to a host on the \
+         local network or from `https` to `http`: check `url`, or follow redirects yourself), `max_body` (bytes, default \
+         67108864: a longer response fails with `too_large`; the module never decompresses, so this bounds the bytes \
+         on the wire). The time and size options take positive finite numbers; a very large one (`1e9` seconds, \
+         `2^53` bytes) is in effect no limit."
+    )
 }
 
 mod client;
@@ -299,13 +377,28 @@ impl UserData for Request {
     }
 }
 
-/// Convert a request/response `HeaderMap` into the `Vec<(name, value)>` shape
-/// the Lua surface uses; a non-ASCII header value degrades to an empty string.
-/// Shared by the server's `invoke_lua_handler` and the client's `collect_resp`.
+/// Convert a request/response `HeaderMap` into the `Vec<(name, value)>` shape the Lua surface uses: one entry per
+/// name (lower case). A header sent more than once is one value, the values joined with `", "` in the order they
+/// came, as the Fetch standard's `Headers.get` does, except `set-cookie`, whose values are joined with `"\n"`: a
+/// cookie may hold a comma (`Expires`), a field value never holds a line feed, so splitting on `"\n"` gives each cookie
+/// back. A value that is not UTF-8 is decoded with replacement characters. Nothing is dropped. Shared by the
+/// server's `invoke_lua_handler` and the client.
 pub(super) fn collect_headers(headers: &hyper::HeaderMap) -> Vec<(String, String)> {
     headers
-        .iter()
-        .map(|(k, v)| (k.as_str().to_owned(), v.to_str().unwrap_or("").to_owned()))
+        .keys()
+        .map(|name| {
+            let values: Vec<_> = headers
+                .get_all(name)
+                .iter()
+                .map(|v| String::from_utf8_lossy(v.as_bytes()))
+                .collect();
+            let separator = if name == hyper::header::SET_COOKIE {
+                "\n"
+            } else {
+                ", "
+            };
+            (name.as_str().to_owned(), values.join(separator))
+        })
         .collect()
 }
 

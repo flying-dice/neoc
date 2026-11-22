@@ -442,7 +442,7 @@ survives!(
 survives!(
     hyper_request_with_a_poisoned_options_table,
     "hyper_request_with_a_poisoned_options_table",
-    "request: true,nil,hyper.request: runtime error: error in error handling,reads:1"
+    "request: true,nil,hyper.request: invalid_input: runtime error: error in error handling,reads:1"
 );
 survives!(
     hyper_handler_returns_the_poison,
