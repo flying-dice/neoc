@@ -18,15 +18,21 @@ import { STORYBOOKS_PORT } from './scripts/ports'
 /** This checkout. Agent worktrees live under `<root>/.claude/` and carry copies of every spec: skip those. */
 const ROOT = import.meta.dirname
 const STORYBOOKS = `http://localhost:${STORYBOOKS_PORT}`
+/**
+ * Where a run keeps its traces and its report. A run on ports of its own (VOS_PORT_BASE) keeps them in folders of its
+ * own, as it keeps its host (e2e/host/config.ts): Playwright empties the output folder when a run starts, so two runs
+ * that shared one would delete each other's traces.
+ */
+const RUN = process.env.VOS_PORT_BASE ? `-${process.env.VOS_PORT_BASE}` : ''
 
 export default defineConfig({
   testDir: '.',
   testIgnore: ['**/node_modules/**', new RegExp(`^${ROOT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/\\.claude/`)],
   snapshotPathTemplate: '{testFileDir}/__screenshots__/{testFileName}/{arg}-{platform}{ext}',
-  outputDir: 'test-results/output',
+  outputDir: `test-results/output${RUN}`,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
-  reporter: [['list'], ['html', { open: 'never', outputFolder: 'test-results/report' }]],
+  reporter: [['list'], ['html', { open: 'never', outputFolder: `test-results/report${RUN}` }]],
   globalSetup: './e2e/host/global-setup.ts',
   use: {
     viewport: { width: 1280, height: 800 },

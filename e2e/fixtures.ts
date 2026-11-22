@@ -14,7 +14,11 @@ export { expect }
 /** 09:41 on a Tuesday, the way Apple likes it. */
 export const FROZEN_TIME = new Date('2026-06-09T09:41:00+01:00')
 
-/** Console noise that isn't a defect in the app under test. */
+/**
+ * Console noise that isn't a defect in the app under test. A pattern is looked for in the message's first line only: a
+ * failed play function logs the page's markup after its first line, and a story's markup always says `storybook-root`,
+ * so a pattern read against the whole message would hide every "Unable to find an element" a play function throws.
+ */
 const IGNORED_CONSOLE = [
   /Download the Svelte DevTools/,
   /\[vite\]/,
@@ -30,7 +34,8 @@ export const test = base.extend<{ errors: string[] }>({
       const errors: string[] = []
       page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
       page.on('console', (m) => {
-        if (m.type() === 'error' && !IGNORED_CONSOLE.some((re) => re.test(m.text()))) {
+        const [summary = ''] = m.text().split('\n')
+        if (m.type() === 'error' && !IGNORED_CONSOLE.some((re) => re.test(summary))) {
           errors.push(`console.error: ${m.text()}`)
         }
       })
