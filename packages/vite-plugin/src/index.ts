@@ -95,6 +95,8 @@ export function vos(options: Partial<Options> = {}): Plugin {
     },
     closeBundle() {
       const out = resolve(root, outDir)
+      // a build that failed has no client script: its own error is the one to read
+      if (!existsSync(join(out, CLIENT))) return
       foldCss(out)
       writeApp(root, out, readDefinition(root, settings), `${settings.generated}/entry.luau`, CLIENT)
     }
