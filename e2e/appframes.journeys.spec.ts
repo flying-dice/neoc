@@ -147,14 +147,15 @@ for (const id of FIXTURE_APPS) {
               // an assignment that did not throw says nothing: whether the shell moved is checked from outside
               return 'attempted'
             })(),
-            // a form works inside the frame (`allow-forms`: the `submit` event fires), but a submission that nothing prevented
-            // would navigate the frame, and `form-action 'none'` refuses it: the document stays and the event fired
+            // a form works inside the frame (`allow-forms`): the `submit` event fires, and a handler that prevents the default keeps
+            // the document (an unprevented submission is AF11)
             formSubmit: await (async () => {
               const form = document.createElement('form')
               form.action = 'http://127.0.0.1:9/'
               form.method = 'post'
               let fired = false
-              form.addEventListener('submit', () => {
+              form.addEventListener('submit', (event) => {
+                event.preventDefault()
                 fired = true
               })
               document.body.append(form)
@@ -170,8 +171,8 @@ for (const id of FIXTURE_APPS) {
       // every probe reports what happened: `allowed` is a failure (the others throw, or say `blocked`)
       for (const [probe, outcome] of Object.entries(probes)) expect(outcome, probe).not.toBe('allowed')
       expect(probes.popup, 'window.open returns null').toBe('blocked')
-      expect(probes.formSubmit, 'the submit event fired and the navigation was refused').toBe('blocked')
-      // a refused submission is not a page the frame left
+      expect(probes.formSubmit, 'the submit event fired and the prevented submission left the document alone').toBe('blocked')
+      // a prevented submission is not a page the frame left
       await page.waitForTimeout(500)
       await expect(page.getByTestId(`${id}-failed`)).toHaveCount(0)
       // and the shell did not move, and the frame is still the app's
@@ -209,6 +210,28 @@ for (const id of FIXTURE_APPS) {
       await page.waitForTimeout(3000)
       await expect(page.getByTestId(`${id}-failed`)).toHaveCount(0)
       await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()
+    })
+
+    test(`AF11 (${id}): a form nobody prevented sends the frame to another page, which the window notices`, async ({ page, errors }) => {
+      await openDesktop(page, { open: [id] })
+      await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()
+      // the submit event fires (`allow-forms`) and nothing prevents it: the browser starts the navigation. The policy refuses
+      // to send the data (`form-action 'none'`), but the page is gone all the same: the window says the app left its page
+      await frame(page).locator('body').evaluate(() => {
+        const form = document.createElement('form')
+        form.action = 'http://127.0.0.1:9/'
+        form.method = 'post'
+        document.body.append(form)
+        setTimeout(() => form.requestSubmit(), 0)
+      })
+      await expect(page.getByTestId(`${id}-failed`)).toBeVisible({ timeout: 10_000 })
+      await expect(page.getByTestId(`${id}-failed`)).toContainText('left its page')
+      await page.getByTestId(`${id}-failed-retry`).click()
+      await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()
+      // the browser's refusals are expected here: the policy and the shell's own frame policy did it
+      const refused = errors.filter((e) => /Content Security Policy|violates the following|Refused|blocked/i.test(e))
+      expect(refused.length).toBeGreaterThanOrEqual(1)
+      errors.splice(0, errors.length, ...errors.filter((e) => !refused.includes(e)))
     })
 
     test(`AF6 (${id}): the frame follows light and dark live, and its styles stay inside`, async ({ page }) => {

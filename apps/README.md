@@ -88,8 +88,9 @@ knows which app is calling from the frame the message came from, never from anyt
 and scripts stay in its frame. The sandbox also stops it opening windows (`window.open` returns `null`), navigating the
 shell (`window.top.location` throws). **Forms work** (the sandbox has `allow-forms`): Enter in a field, a submit button,
 the `submit` event, validation and `FormData` behave as in any page, and your framework's `onSubmit` runs. A submission
-that nothing prevented would navigate the frame away, and the policy's `form-action 'none'` refuses it, so call
-`preventDefault()` in your submit handler, as a single-page app does anyway. What the policy cannot stop is the frame
+that nothing prevented navigates the frame away: the policy's `form-action 'none'` refuses to send the data, but the page is
+gone and the window says the app left its page, so call `preventDefault()` in your submit handler, as a single-page app does
+anyway. What the policy cannot stop is the frame
 navigating **itself** (`location.href = ...`): the window then shows a page the shell did not load, and says the app left
 its page and offers to open it again (a refused form submission is not that: nothing loads). This is sensible isolation, so apps do not trip over each other
 or over the shell; it is not a security boundary. Lasting data belongs in the backend (the frame has no storage).

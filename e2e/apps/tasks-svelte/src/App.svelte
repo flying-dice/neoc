@@ -25,8 +25,8 @@
     }
   }
 
-  // a real form: the frame is sandboxed with `allow-forms`, so `submit` fires (Enter, the button); the policy's `form-action 'none'`
-  // refuses a submission nothing prevented, so the handler prevents it
+  // a real form: the frame is sandboxed with `allow-forms`, so `submit` fires (Enter, the button); an unprevented submission would send the
+  // frame to another page, so the handler prevents it
   async function add(): Promise<void> {
     await call('add', { title })
     if (!error) title = ''

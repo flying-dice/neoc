@@ -20,6 +20,7 @@ after another).
 | AF7 | Use two apps with clients side by side.                        | Both apps open.                    | A task added in one is not in the other: each client reaches only its own backend.                                                         |
 | AF9 | A client sends its frame to another page (`location.href`).       | The app open.                      | The window notices it is not showing the page it loaded, says the app left its page, and "Try again" brings the app back. |
 | AF10 | A client reloads itself.                                                 | The app open.                      | The window keeps the app: a reloaded client says hello again, and nothing says it left. |
+| AF11 | A client submits a form nobody prevented.                               | The app open.                      | The page is sent away, and the window says the app left its page, with Try again; no data is sent. |
 
 ## Manual verification
 
