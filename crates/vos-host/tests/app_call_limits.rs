@@ -87,7 +87,7 @@ fn is_busy(answer: &Value) -> bool {
 /// Fill an app's places: nine calls of `hang` for eight places, which is deterministic whatever order they are taken in (the one that
 /// loses is refused at once); returns once that refusal has come, so eight are running.
 async fn fill(ws: &mut Ws, app: &str) {
-    for id in 1..=(MAX_CALLS_PER_APP as i64 + 1) {
+    for id in 1..=(i64::try_from(MAX_CALLS_PER_APP).unwrap() + 1) {
         send(ws, id, "app.call", json!({"app": app, "method": "hang"})).await;
     }
     let refused = answer_within(ws, Duration::from_secs(5)).await.expect("the ninth call is refused at once");

@@ -249,7 +249,7 @@ async fn the_host_route_is_a_wrapper_page_for_a_paired_device_and_says_to_pair_o
 }
 
 /// Publish an app with a client whose app ref carries `ui` fields beyond the root (`csp`, `permissions`).
-fn publish_with_ui(root: &Path, id: &str, ui: serde_json::Value) -> String {
+fn publish_with_ui(root: &Path, id: &str, ui: &serde_json::Value) -> String {
     let files = [("app.luau", backend(id).into_bytes()), ("static/index.html", PAGE.as_bytes().to_vec())];
     let url = publish_package_with_client(root, id, "app.luau", Some("static"), &files);
     let path = root.join("app-ref.json");
@@ -273,7 +273,7 @@ async fn what_an_app_declares_for_its_page_is_applied_and_what_opens_everything_
         },
         "permissions": { "camera": {}, "clipboardWrite": {} }
     });
-    r.host.service.install_from_url(&publish_with_ui(&tmp.join("feeds"), "feeds", ui)).await.unwrap();
+    r.host.service.install_from_url(&publish_with_ui(&tmp.join("feeds"), "feeds", &ui)).await.unwrap();
 
     let page = get(&r, "/apps/feeds/static/index.html", None).await;
     let csp = page.headers()["content-security-policy"].to_str().unwrap().to_owned();
@@ -304,14 +304,14 @@ async fn what_an_app_declares_for_its_page_is_applied_and_what_opens_everything_
         json!(["'unsafe-inline'"]),
         json!(["https://a.example.com;script-src *"]),
     ] {
-        let url = publish_with_ui(&tmp.join("bad"), "bad", json!({ "csp": { "resourceDomains": bad } }));
+        let url = publish_with_ui(&tmp.join("bad"), "bad", &json!({ "csp": { "resourceDomains": bad } }));
         let err = r.host.service.install_from_url(&url).await.unwrap_err().to_string();
         assert!(err.contains("csp.resourceDomains"), "{bad}: {err}");
     }
-    let url = publish_with_ui(&tmp.join("bad2"), "bad2", json!({ "permissions": { "nfc": {} } }));
+    let url = publish_with_ui(&tmp.join("bad2"), "bad2", &json!({ "permissions": { "nfc": {} } }));
     assert!(r.host.service.install_from_url(&url).await.is_err());
     // an entry the app ref does not carry is refused too
-    let url = publish_with_ui(&tmp.join("bad3"), "bad3", json!({ "entry": "missing.html" }));
+    let url = publish_with_ui(&tmp.join("bad3"), "bad3", &json!({ "entry": "missing.html" }));
     let err = r.host.service.install_from_url(&url).await.unwrap_err().to_string();
     assert!(err.contains("ui.entry"), "{err}");
     r.stop().await;
