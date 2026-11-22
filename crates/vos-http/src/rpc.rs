@@ -178,6 +178,12 @@ impl RpcPeer {
         self.connection
     }
 
+    /// Bytes of messages waiting to be written to this client (not the one being written). It is how a test, or a
+    /// gauge, tells that the writer has taken what was sent.
+    pub fn queued_bytes(&self) -> usize {
+        self.out.queued.load(Ordering::SeqCst)
+    }
+
     /// Do both handles belong to the same socket?
     pub fn is_same_connection(&self, other: &RpcPeer) -> bool {
         self.connection == other.connection
