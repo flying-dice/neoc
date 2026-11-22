@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, host, type PressParams, type Screen } from 'app:rpc'
+  import { api, type PressParams, type Screen } from 'app:rpc'
 
   type Key = PressParams['key']
   type Face = 'digit' | 'function' | 'operator'
@@ -64,20 +64,6 @@
       screen = await api.press({ key, state: screen?.state })
     })
   }
-
-  // An agent's show_on_calculator leaves its result with the backend: take it when the page starts (the window the tool
-  // opened) and whenever the backend says one arrived (a window already open). It replaces the sum on the screen.
-  function takeShown(): void {
-    enqueue(async () => {
-      const { screen: shown } = await api.takeShown()
-      if (shown) screen = shown
-    })
-  }
-  $effect(() => {
-    takeShown()
-    const stops = [host.on('calculator.shown', takeShown), host.on('host:reconnected', takeShown)]
-    return () => stops.forEach((stop) => stop())
-  })
 
   const display = $derived(screen?.display ?? '0')
   const caption = $derived(failure ?? screen?.caption ?? '')

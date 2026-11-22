@@ -108,26 +108,6 @@ test.describe('Calculator journeys', () => {
     await expect(display(page)).toHaveText('10')
   })
 
-  test('CW7: an agent puts a result on the Calculator, closed and then open', async ({ page }) => {
-    await openDesktop(page, { open: [] })
-    await expect(windowOf(page, ID)).toHaveCount(0)
-    const first = await callTool(`${ID}__show_on_calculator`, { expression: '18 / 100 * 2450' })
-    expect(first).toContain('441')
-    // the shell opened the window by itself, and the page took the waiting result when it started
-    await expect(windowOf(page, ID)).toBeVisible()
-    await expect(display(page)).toHaveText('441')
-    await expect(caption(page)).toHaveText('18 / 100 * 2450')
-    // the second arrives in the open window, with nothing pressed
-    await callTool(`${ID}__show_on_calculator`, { expression: '2 + 3 * 4' })
-    await expect(display(page)).toHaveText('14')
-    await expect(caption(page)).toHaveText('2 + 3 * 4')
-    await expect(windowOf(page, ID)).toHaveCount(1)
-    // and the person carries on from it
-    await tap(page, ['add', '1', 'eq'])
-    await expect(display(page)).toHaveText('15')
-    await expect(caption(page)).toHaveText('14 + 1')
-  })
-
   test('CW8: mixed sums by mouse and keyboard follow precedence, as the calculate tool does', async ({ page }) => {
     await openCalculator(page)
     await tap(page, ['2', 'add', '3', 'mul', '4', 'eq'])
