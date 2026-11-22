@@ -70,7 +70,7 @@ for (const id of FIXTURE_APPS) {
 
       // and the person ticks it off
       const toggle = frame(page).locator('li', { hasText: title }).getByRole('checkbox')
-      await toggle.check()
+      await toggle.click() // (not .check(): a controlled checkbox follows the backend's answer, a moment later)
       await expect(toggle).toBeChecked()
     })
 
