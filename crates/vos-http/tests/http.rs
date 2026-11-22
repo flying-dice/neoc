@@ -193,8 +193,16 @@ async fn the_kit_is_served_and_a_missing_kit_file_is_a_404_not_the_shells_page()
     let head = raw_get(addr, "/kit/kit.js", "Origin: null\r\n").await;
     assert!(head.starts_with("HTTP/1.1 200"), "{head}");
     assert!(head.to_ascii_lowercase().contains("access-control-allow-origin: *"), "{head}");
-    // and the rest of the shell's files are not opened to an opaque origin
-    assert!(raw_get(addr, "/assets/app.js", "Origin: null\r\n").await.starts_with("HTTP/1.1 403"));
+    // only reads, only under /kit/: the rest of the host is not opened to an opaque origin
+    for (method, path) in
+        [("POST", "/kit/kit.js"), ("GET", "/assets/app.js"), ("GET", "/session"), ("GET", "/kit/../session")]
+    {
+        let answer = raw(addr, method, path, "Origin: null\r\n").await;
+        assert!(answer.starts_with("HTTP/1.1 403"), "{method} {path}: {answer}");
+    }
+    // the header is the kit's alone, and no credentials are ever allowed
+    assert!(!raw_get(addr, "/", "").await.to_ascii_lowercase().contains("access-control-allow-origin"));
+    assert!(!head.to_ascii_lowercase().contains("access-control-allow-credentials"));
     // the rest of the client still falls back
     assert!(reqwest_get(addr, "/kits").await.contains("<h1>client</h1>"), "only /kit/ is exempt");
     server.abort();
@@ -215,13 +223,17 @@ async fn status_of(addr: std::net::SocketAddr, path: &str) -> u16 {
 
 /// the whole response (head and body) of a GET with extra header lines
 async fn raw_get(addr: std::net::SocketAddr, path: &str, headers: &str) -> String {
+    raw(addr, "GET", path, headers).await
+}
+
+/// the whole response (head and body) of a bodiless request with extra header lines
+async fn raw(addr: std::net::SocketAddr, method: &str, path: &str, headers: &str) -> String {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
-    s.write_all(
-        format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\n{headers}Connection: close\r\n\r\n").as_bytes(),
-    )
-    .await
-    .unwrap();
+    let request = format!(
+        "{method} {path} HTTP/1.1\r\nHost: {addr}\r\n{headers}Content-Length: 0\r\nConnection: close\r\n\r\n"
+    );
+    s.write_all(request.as_bytes()).await.unwrap();
     let mut out = String::new();
     s.read_to_string(&mut out).await.unwrap();
     out

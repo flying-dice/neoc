@@ -231,8 +231,9 @@ fn is_public_frame_read(method: &Method, path: &str) -> bool {
     if method != Method::GET && method != Method::HEAD {
         return false;
     }
-    if path.starts_with("/kit/") {
-        return true;
+    if let Some(rest) = path.strip_prefix("/kit/") {
+        // the path as sent: no `..` segment, no escape (an encoded `.` or separator) and no backslash may take it out
+        return !rest.contains(['%', '\\']) && !rest.split('/').any(|segment| segment == "..");
     }
     let Some(rest) = path.strip_prefix("/apps/") else { return false };
     let Some((app, after)) = rest.split_once('/') else { return false };
@@ -303,6 +304,14 @@ mod tests {
             (Method::GET, "/kit", false),
             (Method::GET, "/kits/x", false),
             (Method::GET, "/assets/index.js", false),
+            (Method::GET, "/kit/../rpc", false),
+            (Method::GET, "/kit/a/../../session", false),
+            (Method::GET, "/kit/%2e%2e/rpc", false),
+            (Method::GET, "/kit/x%2Fy", false),
+            (Method::GET, "/kit/..\\rpc", false),
+            (Method::GET, "/kit/fonts/a..b.woff2", true),
+            (Method::GET, "/agui", false),
+            (Method::GET, "/pair", false),
         ] {
             assert_eq!(is_public_frame_read(&method, path), yes, "{method} {path}");
         }
