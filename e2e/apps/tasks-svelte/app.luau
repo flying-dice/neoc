@@ -3,6 +3,7 @@
 -- a task list in the app's own database. The entry returns the handlers a client reaches with `rpc(name, args)`;
 -- `add_task` is an agent's tool, which changes the same data and tells the open window with `app.emit`.
 local app = require("vos:app")
+local task = require("std:task")
 local t = app.t
 local db = app.db
 
