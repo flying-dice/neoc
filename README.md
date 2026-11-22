@@ -83,8 +83,8 @@ Luau's base library (not LuaJIT's, which neoc ran before NEOC-137). What a scrip
   Luau's limit of 1 GiB is an error (a numeric string converts and a fraction is truncated, as for any Lua number
   argument). One call can allocate up to 1 GiB, as building a long string can: neoc has no memory budgets. A serializer
   (`vnd:serde_json`, `vnd:toml`, a `std:thread` message, ...) refuses a buffer rather than turn it into an array of
-  numbers: convert it first (`buffer.tostring`). A `vnd:hyper` request body can be a buffer. vos apps do not have `buffer`
-  yet.
+  numbers: convert it first (`buffer.tostring`). A `vnd:hyper` request body can be a buffer, and `hyper.get`, `hyper.post`
+  and `hyper.request` return an error naming any option they do not read. vos apps do not have `buffer` yet.
 
 ### Editor types
 
