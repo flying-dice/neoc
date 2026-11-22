@@ -10,10 +10,10 @@
 
 use std::collections::BTreeMap;
 
-use mlua::{AnyUserData, Lua, Table, Value};
+use mlua::{AnyUserData, IntoLua, Lua, Table, Value};
 
-use crate::lua::facade::Module;
-use crate::lua::lib::json::{JsonValue, lua_value_to_json_value, wrap_root};
+use crate::lua::facade::{DeclType, Module};
+use crate::lua::lib::json::{JSON_VALUE, JsonValue, lua_value_to_json_value, wrap_root};
 use crate::lua::serde_guard::refuse_buffer;
 use crate::lua::std::io::{ReaderHandle, WriterHandle};
 
@@ -92,6 +92,23 @@ pub(crate) fn parse_to_handle(lua: &Lua, bytes: &[u8]) -> mlua::Result<Value> {
     wrap_root(lua, jv_to_json_value(jv))
 }
 
+/// A parsed document as `lib:json` hands it out: an object or an array handle for a container, the
+/// `json.null` sentinel for `null`, and a Lua string, number or boolean for any other scalar (JSON allows a
+/// scalar as the whole document, as `serde_json::from_str` does).
+struct Parsed(Value);
+
+impl IntoLua for Parsed {
+    fn into_lua(self, _: &Lua) -> mlua::Result<Value> {
+        Ok(self.0)
+    }
+}
+
+impl DeclType for Parsed {
+    fn decl_type() -> String {
+        JSON_VALUE.to_owned()
+    }
+}
+
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(declare(lua)?.into_table())
 }
@@ -106,13 +123,17 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.try_func(
         "from_str",
         &[("s", "string")],
-        "Parse a JSON string into a `JsonObject` or `JsonArray` handle.",
+        concat!(
+            "Parse a JSON string: an object or array becomes a `lib:json` handle, `null` the `json.null` sentinel, ",
+            "any other scalar a Lua value. Narrow a container with a cast (`v :: lib_json_Object`): ",
+            "`type(v) == \"userdata\"` narrows the handle types to nothing, and `type(v) == \"table\"` is false at run time."
+        ),
         from_str,
     )?
     .try_func(
         "from_reader",
-        &[("reader", "LuaValue")],
-        "Parse JSON from a reader handle.",
+        &[("reader", "std_io.ReaderHandle")],
+        "Parse JSON from a reader handle, with the same results as `from_str`.",
         from_reader,
     )?
     .try_func_raising(
@@ -129,18 +150,20 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     )?
     .try_func_raising(
         "to_writer",
-        &[("value", "LuaValue"), ("writer", "LuaValue")],
+        &[("value", "LuaValue"), ("writer", "std_io.WriterHandle")],
         "Serialise a Lua value to JSON and write it to a writer handle.",
         to_writer,
     )?;
     Ok(m)
 }
 
-fn from_str(lua: &Lua, s: mlua::LuaString) -> Result<Value, String> {
-    parse_to_handle(lua, &s.as_bytes()).map_err(|e| e.to_string())
+fn from_str(lua: &Lua, s: mlua::LuaString) -> Result<Parsed, String> {
+    parse_to_handle(lua, &s.as_bytes())
+        .map(Parsed)
+        .map_err(|e| e.to_string())
 }
 
-fn from_reader(lua: &Lua, ud: AnyUserData) -> Result<Value, String> {
+fn from_reader(lua: &Lua, ud: AnyUserData) -> Result<Parsed, String> {
     let jv = {
         let rh = ud
             .borrow::<ReaderHandle>()
@@ -148,7 +171,9 @@ fn from_reader(lua: &Lua, ud: AnyUserData) -> Result<Value, String> {
         let mut locked = rh.inner.lock();
         serde_json::from_reader::<_, serde_json::Value>(&mut **locked).map_err(|e| e.to_string())?
     };
-    wrap_root(lua, jv_to_json_value(jv)).map_err(|e| e.to_string())
+    wrap_root(lua, jv_to_json_value(jv))
+        .map(Parsed)
+        .map_err(|e| e.to_string())
 }
 
 fn serialize_with(

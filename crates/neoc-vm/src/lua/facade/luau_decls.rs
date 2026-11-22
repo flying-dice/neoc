@@ -278,7 +278,7 @@ impl Entry {
                 if i + 1 != self.params.len() {
                     return Err(format!("`{}`: `...` is not its last parameter", self.name));
                 }
-                params.push(format!("...{}", luau_type(ty, scope)?));
+                params.push(format!("...{}", grouped(&luau_type(ty, scope)?)));
             } else {
                 check_ident("parameter", name)?;
                 params.push(format!("{}: {}", param_ident(name), luau_type(ty, scope)?));
@@ -559,6 +559,16 @@ fn return_item(value: &str, scope: &str) -> Emit<String> {
             }
         }
     })
+}
+
+/// `ty` as one type after a prefix such as `...`: a function, a union or an intersection is parenthesised,
+/// so `...(string | number)` is a pack of either and not `...string` joined with `number`.
+fn grouped(ty: &str) -> String {
+    if is_function(ty) || top_level(ty).any(|(_, c)| c == '|' || c == '&') {
+        format!("({ty})")
+    } else {
+        ty.to_string()
+    }
 }
 
 /// `ty` made optional. `nil` and `any` already are, an already optional type stays as it is, and a function
@@ -910,7 +920,7 @@ mod tests {
     }
 
     /// A tuple return is a tuple, a `...` in it (or alone) is `...any`, and a trailing variadic parameter is
-    /// `...any` in the parameter list.
+    /// `...any` in the parameter list (`...T` for a typed one, parenthesised when `T` is a union).
     #[test]
     fn tuple_returns_and_variadic_params() {
         let lua = Lua::new();
@@ -929,10 +939,24 @@ mod tests {
         );
         m.record_fn("pass", &[("f", "LuaValue")], "...", "Passes values on.");
         m.record_fn("first", &[], "(LuaValue?, ...)", "First, then the rest.");
+        m.record_fn(
+            "join",
+            &[("first", "string"), ("...", "string")],
+            "string",
+            "Joins.",
+        );
+        m.record_fn(
+            "walk",
+            &[("path", "string | number"), ("...", "string | number")],
+            "LuaValue",
+            "Walks.",
+        );
         let decls = m.luau_decls().expect("decls");
         for line in [
             "\tscan: (pattern: string, opts: any?) -> (any, any?),\n",
             "\tcall: (sql: string, ...any) -> (number?, string?),\n",
+            "\tjoin: (first: string, ...string) -> string,\n",
+            "\twalk: (path: string | number, ...(string | number)) -> any,\n",
             "\tpass: (f: any) -> ...any,\n",
             "\tfirst: () -> (any?, ...any),\n",
         ] {
