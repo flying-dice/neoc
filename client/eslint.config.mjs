@@ -16,6 +16,8 @@ export default defineConfig(
     ignores: [
       '**/node_modules',
       '**/dist',
+      // the app kit's build output (packages/kit: bun run build:kit) is generated, not client source
+      'public/kit',
       '**/storybook-static',
       '**/test-results',
       '**/playwright-report'
