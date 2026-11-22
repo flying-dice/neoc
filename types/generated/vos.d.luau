@@ -1312,11 +1312,11 @@ export type vnd_hyper_Request = {
 }
 
 export type vnd_hyper = {
-	--- Perform an HTTP or HTTPS GET request, returning a response table `{ status, headers, body }`. `opts` may carry `ca_pem`.
+	--- Perform an HTTP or HTTPS GET request, returning a response table `{ status, headers, body }`. `opts` may carry `headers` and `ca_pem`; any other option is an error.
 	get: (url: string, opts: any?) -> (any, string?),
-	--- Perform an HTTP or HTTPS POST request given `{ url, body?, headers?, ca_pem? }`; `body` is a string or a buffer.
+	--- Perform an HTTP or HTTPS POST request given `{ url, body?, headers?, ca_pem? }` (any other option is an error); `body` is a string or a buffer.
 	post: (opts: any) -> (any, string?),
-	--- Perform an HTTP or HTTPS request with an arbitrary method given `{ method, url, body?, headers?, ca_pem? }`; `body` is a string or a buffer.
+	--- Perform an HTTP or HTTPS request with an arbitrary method given `{ method, url, body?, headers?, ca_pem? }` (any other option is an error); `body` is a string or a buffer.
 	request: (opts: any) -> (any, string?),
 	--- Attach `handler` to `listener` and start accepting HTTP connections. The handler returns a body string, `{ status?, body?, headers? }`, or nothing (an empty 200).
 	serve: (listener: std_net_TcpListener, handler: (req: vnd_hyper_Request) -> ...(string | { status: number?, body: string?, headers: { [string]: string }? } | nil)) -> (vnd_hyper_ServerHandle?, string?),

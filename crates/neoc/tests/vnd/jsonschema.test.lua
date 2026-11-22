@@ -143,6 +143,22 @@ describe("jsonschema", function()
     describe("a buffer", function()
         local refused = "a buffer cannot be serialized; convert it explicitly first"
 
+        -- a buffer 100 tables down (the guard walks as deep as a serializer, 128 tables)
+        local function deep()
+            local t = { buffer.create(2) }
+            for _ = 2, 100 do
+                t = { inner = t }
+            end
+            return t
+        end
+
+        test("refuses one 100 tables down", function()
+            local s = assert(jsonschema.compile('{"type":"object"}'))
+            local ok, err = pcall(s.is_valid, s, deep())
+            expect(ok).toBe(false)
+            expect(tostring(err)).toContain("jsonschema.Schema.is_valid: " .. refused)
+        end)
+
         test("is_valid and validate refuse one", function()
             local s = assert(jsonschema.compile('{"type":"object"}'))
             local ok, err = pcall(s.is_valid, s, { data = buffer.create(2) })

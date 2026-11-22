@@ -436,6 +436,16 @@ describe("template with a buffer", function()
         expect(tostring(err)).toContain("Template.render: " .. refused)
     end)
 
+    test("render refuses one 100 tables down in the context", function()
+        local t = { buffer.create(2) }
+        for _ = 2, 100 do
+            t = { inner = t }
+        end
+        local ok, err = pcall(template.render, "{{ b }}", { b = t })
+        expect(ok).toBe(false)
+        expect(tostring(err)).toContain("template.render: " .. refused)
+    end)
+
     test("a filter that returns one fails the render with (nil, err)", function()
         assert(template.add_filter("as_buffer", function()
             return buffer.create(2)

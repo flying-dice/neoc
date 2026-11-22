@@ -93,7 +93,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "get",
         &[("url", "string"), ("opts", "LuaValue?")],
         "Result<LuaValue, string>",
-        "Perform an HTTP or HTTPS GET request, returning a response table `{ status, headers, body }`. `opts` may carry `ca_pem`.",
+        "Perform an HTTP or HTTPS GET request, returning a response table `{ status, headers, body }`. `opts` may carry `headers` and `ca_pem`; any other option is an error.",
     );
 
     m.set(
@@ -104,7 +104,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "post",
         &[("opts", "LuaValue")],
         "Result<LuaValue, string>",
-        "Perform an HTTP or HTTPS POST request given `{ url, body?, headers?, ca_pem? }`; `body` is a string or a buffer.",
+        "Perform an HTTP or HTTPS POST request given `{ url, body?, headers?, ca_pem? }` (any other option is an error); `body` is a string or a buffer.",
     );
 
     m.set(
@@ -115,7 +115,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "request",
         &[("opts", "LuaValue")],
         "Result<LuaValue, string>",
-        "Perform an HTTP or HTTPS request with an arbitrary method given `{ method, url, body?, headers?, ca_pem? }`; `body` is a string or a buffer.",
+        "Perform an HTTP or HTTPS request with an arbitrary method given `{ method, url, body?, headers?, ca_pem? }` (any other option is an error); `body` is a string or a buffer.",
     );
 
     m.set("serve", lua.create_function(serve)?)?;

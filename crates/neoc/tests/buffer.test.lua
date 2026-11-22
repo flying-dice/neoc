@@ -67,6 +67,24 @@ describe("buffer", function()
             expect(buffer.readstring(b, 1, 3)).toBe("ell")
         end)
 
+        test("bytes that are not UTF-8, and NUL, go in and come out unchanged", function()
+            -- 0xFF (never UTF-8), NUL, a lone continuation byte (0x80), a cut-off two-byte lead (0xC3), then ASCII
+            local s = "\xff\x00\x80\xc3A"
+            local b = buffer.fromstring(s)
+            expect(buffer.len(b)).toBe(5)
+            local bytes = {}
+            for i = 0, buffer.len(b) - 1 do
+                bytes[#bytes + 1] = buffer.readu8(b, i)
+            end
+            expect(table.concat(bytes, ",")).toBe("255,0,128,195,65")
+            local out = buffer.tostring(b)
+            expect(#out).toBe(5)
+            expect(out == s).toBe(true)
+            expect(table.concat({ out:byte(1, -1) }, ",")).toBe("255,0,128,195,65")
+            local mid = buffer.readstring(b, 1, 3)
+            expect(table.concat({ mid:byte(1, -1) }, ",")).toBe("0,128,195")
+        end)
+
         test("copy and fill work within one buffer and across two", function()
             local b = buffer.create(6)
             buffer.fill(b, 0, 0x61, 3)

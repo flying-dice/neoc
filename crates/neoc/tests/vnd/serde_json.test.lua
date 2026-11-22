@@ -238,6 +238,21 @@ describe("serde_json", function()
     describe("a buffer", function()
         local refused = "a buffer cannot be serialized; convert it explicitly first"
 
+        -- a buffer 100 tables down (the guard walks as deep as a serializer, 128 tables)
+        local function deep()
+            local t = { buffer.create(2) }
+            for _ = 2, 100 do
+                t = { inner = t }
+            end
+            return t
+        end
+
+        test("refuses one 100 tables down", function()
+            local ok, err = pcall(serde_json.to_string, deep())
+            expect(ok).toBe(false)
+            expect(tostring(err)).toContain("serde_json.to_string: " .. refused)
+        end)
+
         test("to_string and to_string_pretty refuse one anywhere in the value", function()
             local ok, err = pcall(serde_json.to_string, { data = { buffer.fromstring("ab") } })
             expect(ok).toBe(false)

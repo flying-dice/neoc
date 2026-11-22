@@ -29,6 +29,9 @@ local function service(req)
     if req.method == "GET" and req.path == "/headers" then
         return { status = 200, body = req:header("x-echo") or "" }
     end
+    if req.path == "/length" then
+        return { status = 200, body = req:header("content-length") or "none" }
+    end
     if req.method == "POST" and req.path == "/echo" then
         return { status = 200, body = req.body }
     end
@@ -124,6 +127,30 @@ describe("hyper", function()
             expect(err).toContain("ca_pem")
         end)
 
+        test("headers in opts are sent", function()
+            local resp, err = hyper.get(BASE .. "/headers", { headers = { ["x-echo"] = "from get" } })
+            expect(err).toBeNil()
+            expect(resp.body).toBe("from get")
+        end)
+
+        test("headers that are not a table are an error", function()
+            local resp, err = hyper.get(BASE .. "/headers", { headers = "x-echo: ping" })
+            expect(resp).toBeNil()
+            expect(err).toContain("hyper.get: headers must be a table, got string")
+        end)
+
+        test("an unknown option is an error that names it, not dropped", function()
+            local resp, err = hyper.get(BASE .. "/headers", { header = { ["x-echo"] = "typo" } })
+            expect(resp).toBeNil()
+            expect(err).toContain("hyper.get: unknown option `header` (expected one of: headers, ca_pem)")
+        end)
+
+        test("a GET sends no content-length", function()
+            local resp, err = hyper.get(BASE .. "/length")
+            expect(err).toBeNil()
+            expect(resp.body).toBe("none")
+        end)
+
         test("connection failure returns error", function()
             local resp, err = hyper.get("http://127.0.0.1:1/")
             expect(resp).toBeNil()
@@ -170,6 +197,26 @@ describe("hyper", function()
             resp, err = hyper.post({ url = BASE .. "/echo", body = true })
             expect(resp).toBeNil()
             expect(err).toContain("got boolean")
+        end)
+
+        test("an unknown option is an error that names it", function()
+            local resp, err = hyper.post({ url = BASE .. "/echo", body = "x", timeout = 5 })
+            expect(resp).toBeNil()
+            expect(err).toContain("hyper.post: unknown option `timeout` (expected one of: url, body, headers, ca_pem)")
+        end)
+
+        test("no body or an empty one is sent with content-length 0", function()
+            for _, body in ipairs({ "", buffer.create(0) }) do
+                local resp, err = hyper.post({ url = BASE .. "/length", body = body })
+                expect(err).toBeNil()
+                expect(resp.body).toBe("0")
+            end
+            local resp, err = hyper.post({ url = BASE .. "/length" })
+            expect(err).toBeNil()
+            expect(resp.body).toBe("0")
+            resp, err = hyper.post({ url = BASE .. "/length", body = "abcd" })
+            expect(err).toBeNil()
+            expect(resp.body).toBe("4")
         end)
 
         test("a number body is sent as its text", function()
@@ -228,6 +275,21 @@ describe("hyper", function()
             local resp, err = hyper.request({ method = "GET", url = BASE .. "/headers", headers = "x-echo: ping" })
             expect(resp).toBeNil()
             expect(err).toContain("hyper.request: headers must be a table, got string")
+        end)
+
+        test("an unknown option is an error that names it", function()
+            local resp, err = hyper.request({ method = "GET", url = BASE .. "/headers", hedaers = {} })
+            expect(resp).toBeNil()
+            expect(err).toContain("hyper.request: unknown option `hedaers`")
+        end)
+
+        test("a PUT with no body says content-length 0, a DELETE with none sends no length", function()
+            local resp, err = hyper.request({ method = "PUT", url = BASE .. "/length" })
+            expect(err).toBeNil()
+            expect(resp.body).toBe("0")
+            resp, err = hyper.request({ method = "DELETE", url = BASE .. "/length" })
+            expect(err).toBeNil()
+            expect(resp.body).toBe("none")
         end)
 
         test("a buffer body goes through request too", function()
