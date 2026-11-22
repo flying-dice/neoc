@@ -178,7 +178,7 @@ test('loading kit.js a second time, or after the elements are in the page, throw
   expect(await page.evaluate(() => customElements.get('ui-toggle') !== undefined)).toBe(true)
   expect(sameClass).not.toBeNull()
   // the elements already in the page still work
-  await page.getByTestId('toggle').locator('button').click() // the drawn switch: the rest of the stretched element takes no click
+  await page.getByTestId('toggle').click()
   expect(
     await page.evaluate(
       () =>
@@ -526,7 +526,9 @@ for (const hit of [false, true]) {
           'display:grid;grid-template-columns:300px;grid-auto-rows:110px',
           ['right', 'below']
         ],
-        ['row', 'display:flex;align-items:stretch;gap:12px', ['below', 'above']]
+        ['row', 'display:flex;align-items:stretch;gap:12px', ['below', 'above']],
+        // an app that forces a size: the empty part of the element must still do nothing
+        ['forced', 'display:block', ['right', 'below']]
       ]
       const area = document.createElement('div')
       area.style.cssText = 'display:grid;gap:24px;padding:24px'
@@ -539,6 +541,7 @@ for (const hit of [false, true]) {
           for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v)
           if (hit) el.setAttribute('hit', '')
           el.textContent = text
+          if (layout === 'forced') el.style.cssText = 'display:inline-flex;width:260px;height:100px'
           const id = `${layout}-${tag}`
           el.dataset.testid = id
           if (tag === 'ui-segmented')
@@ -595,7 +598,7 @@ for (const hit of [false, true]) {
       }
       return out
     }, hit)
-    expect(points.length, 'the layouts stretch most of the controls').toBeGreaterThan(10)
+    expect(points.length, 'the layouts leave an empty part to click').toBeGreaterThan(8)
     const wrong: string[] = []
     for (const p of points) {
       await page.evaluate(() => {
@@ -609,3 +612,223 @@ for (const hit of [false, true]) {
     expect(wrong).toEqual([])
   })
 }
+
+for (const hit of [false, true]) {
+  test(`locator.click() on the element works in a normal and a stretched layout (hit ${hit ? 'on' : 'off'})`, async ({
+    page
+  }) => {
+    await page.goto(`${origin}/frame`)
+    // What a developer's Playwright test writes: click the element by its test id. The centre of the element is the drawn
+    // control (a toggle, a check, a segmented control are fixed-size, the field does not stretch taller, a button fills
+    // its cell), so it works in a flex column, a grid cell, a tall flex row and inline.
+    const ids = await page.evaluate(async (hit) => {
+      const w = window as unknown as { log: string[] }
+      w.log = []
+      const kinds: [string, string, Record<string, string>, string][] = [
+        ['ui-button', 'click', { variant: 'tinted', size: 'small' }, 'Go'],
+        ['ui-toggle', 'change', { label: 't' }, ''],
+        ['ui-check', 'change', { label: 'c' }, ''],
+        ['ui-segmented', 'change', { label: 's' }, ''],
+        ['ui-text-field', 'focusin', { label: 'f' }, '']
+      ]
+      const layouts: [string, string][] = [
+        ['inline', 'display:block'],
+        ['column', 'display:flex;flex-direction:column;align-items:stretch;width:300px'],
+        ['grid', 'display:grid;grid-template-columns:300px;grid-auto-rows:110px'],
+        ['row', 'display:flex;align-items:stretch;gap:12px']
+      ]
+      const area = document.createElement('div')
+      area.style.cssText = 'display:grid;gap:24px;padding:24px'
+      const made: { id: string; event: string; el: HTMLElement }[] = []
+      for (const [layout, css] of layouts)
+        for (const [tag, event, attrs, text] of kinds) {
+          const box = document.createElement('div')
+          box.style.cssText = css
+          const el = document.createElement(tag)
+          for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v)
+          if (hit) el.setAttribute('hit', '')
+          el.textContent = text
+          const id = `${layout}-${tag}`
+          el.dataset.testid = id
+          if (tag === 'ui-segmented')
+            (el as HTMLElement & { options: unknown }).options = ['A', 'B'].map((v) => ({
+              value: v,
+              label: v
+            }))
+          box.append(el)
+          if (layout === 'row') {
+            const tall = document.createElement('div')
+            tall.style.cssText = 'height:120px;width:40px;background:#ddd'
+            box.append(tall)
+          }
+          area.append(box)
+          el.addEventListener(event, () => w.log.push(`${id}:${event}`))
+          made.push({ id, event, el })
+        }
+      document.body.replaceChildren(area)
+      await Promise.all(
+        made.map((m) => (m.el as unknown as { updateComplete: Promise<unknown> }).updateComplete)
+      )
+      return made.map((m) => ({ id: m.id, event: m.event }))
+    }, hit)
+    const wrong: string[] = []
+    for (const { id, event } of ids) {
+      await page.evaluate(() => {
+        ;(window as unknown as { log: string[] }).log = []
+        ;(document.activeElement as HTMLElement | null)?.blur()
+      })
+      await page.getByTestId(id).click({ timeout: 3000 })
+      const log = await page.evaluate(() => (window as unknown as { log: string[] }).log)
+      if (log.length !== 1 || log[0] !== `${id}:${event}`)
+        wrong.push(`${id}: ${JSON.stringify(log)}`)
+    }
+    expect(wrong).toEqual([])
+  })
+}
+
+test('a click on the element itself, from a script, a test or a label, acts as a click on the control, once; disabled, it does nothing', async ({
+  page
+}) => {
+  await page.goto(`${origin}/standalone`)
+  const result = await page.evaluate(async () => {
+    const w = window as unknown as { log: string[] }
+    w.log = []
+    const mk = (tag: string, attrs: Record<string, string> = {}, text = ''): HTMLElement => {
+      const el = document.createElement(tag)
+      for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v)
+      el.textContent = text
+      return el
+    }
+    const form = document.createElement('form')
+    form.addEventListener('submit', (e) => {
+      e.preventDefault()
+      w.log.push('submit')
+    })
+    const field = mk('ui-text-field', {
+      name: 'who',
+      label: 'who',
+      value: 'Ada',
+      id: 'who'
+    }) as HTMLElement & { value: string }
+    const submit = mk('ui-button', { type: 'submit', id: 'submit' }, 'Go')
+    const reset = mk('ui-button', { type: 'reset', id: 'reset' }, 'Reset')
+    const off = mk('ui-button', { type: 'submit', disabled: '', id: 'off' }, 'Off')
+    const toggle = mk('ui-toggle', { label: 't', id: 'toggle' })
+    const check = mk('ui-check', { label: 'c', id: 'check' })
+    const offToggle = mk('ui-toggle', { label: 'o', disabled: '', id: 'off-toggle' })
+    const label = mk('label', { for: 'submit' }, 'Go label')
+    const fieldLabel = mk('label', { for: 'who' }, 'Who label')
+    form.append(field, fieldLabel, submit, reset, off, toggle, check, offToggle, label)
+    const list = mk('ui-list', { label: 'l' })
+    const section = mk('ui-section')
+    const row = mk('ui-row', { heading: 'Row', tappable: '', id: 'row' })
+    const offRow = mk('ui-row', { heading: 'Off', tappable: '', disabled: '', id: 'off-row' })
+    section.append(row, offRow)
+    list.append(section)
+    document.body.replaceChildren(form, list)
+    for (const el of [submit, reset, off, toggle, check, offToggle, row, offRow]) {
+      el.addEventListener('click', () => w.log.push(`${el.id}:click`))
+      el.addEventListener('change', () => w.log.push(`${el.id}:change`))
+      el.addEventListener('press', () => w.log.push(`${el.id}:press`))
+    }
+    await Promise.all(
+      [...document.querySelectorAll('*')]
+        .filter((e) => 'updateComplete' in e)
+        .map((e) => (e as unknown as { updateComplete: Promise<unknown> }).updateComplete)
+    )
+    const out: Record<string, unknown> = {}
+    const run = async (name: string, act: () => void): Promise<void> => {
+      w.log = []
+      act()
+      await new Promise((r) => setTimeout(r, 30))
+      // the control acts first and the app's own listener on the element hears the click after it: order aside, each once
+      out[name] = [...w.log].sort()
+    }
+    await run('submit.click()', () => submit.click())
+    await run('label click', () => label.click())
+    await run('real click on the drawn button', () =>
+      submit.shadowRoot!.querySelector('button')!.click()
+    )
+    field.value = 'Grace'
+    await (field as unknown as { updateComplete: Promise<unknown> }).updateComplete
+    await run('reset.click()', () => reset.click())
+    out.afterReset = field.value
+    ;(document.activeElement as HTMLElement | null)?.blur()
+    fieldLabel.click()
+    out.labelFocusesField = document.activeElement?.id
+    await run('disabled button.click()', () => off.click())
+    await run('toggle.click()', () => toggle.click())
+    await run('check.click()', () => check.click())
+    await run('disabled toggle.click()', () => offToggle.click())
+    await run('row.click()', () => row.click())
+    await run('disabled row.click()', () => offRow.click())
+    await run('real tap on the row button', () =>
+      row.shadowRoot!.querySelector<HTMLElement>('.hit')!.click()
+    )
+    return out
+  })
+  expect(result).toEqual({
+    'submit.click()': ['submit', 'submit:click'],
+    'label click': ['submit', 'submit:click'],
+    'real click on the drawn button': ['submit', 'submit:click'],
+    'reset.click()': ['reset:click'],
+    afterReset: 'Ada',
+    labelFocusesField: 'who',
+    'disabled button.click()': [],
+    'toggle.click()': ['toggle:click', 'toggle:change'],
+    'check.click()': ['check:click', 'check:change'],
+    'disabled toggle.click()': [],
+    'row.click()': ['row:click', 'row:press'],
+    'disabled row.click()': [],
+    'real tap on the row button': ['row:click', 'row:press']
+  })
+})
+
+test('Enter and Space press a button, flip a toggle and a check, and press a tappable row, once each', async ({
+  page
+}) => {
+  await page.goto(`${origin}/standalone`)
+  await page.evaluate(async () => {
+    const w = window as unknown as { log: string[] }
+    w.log = []
+    const mk = (tag: string, attrs: Record<string, string> = {}, text = ''): HTMLElement => {
+      const el = document.createElement(tag)
+      for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v)
+      el.textContent = text
+      return el
+    }
+    const list = mk('ui-list', { label: 'l' })
+    const section = mk('ui-section')
+    const row = mk('ui-row', { heading: 'Row', tappable: '', id: 'row' })
+    section.append(row)
+    list.append(section)
+    document.body.replaceChildren(
+      mk('ui-button', { id: 'button' }, 'Go'),
+      mk('ui-toggle', { id: 'toggle', label: 't' }),
+      mk('ui-check', { id: 'check', label: 'c' }),
+      list
+    )
+    for (const el of document.querySelectorAll<HTMLElement>('#button, #toggle, #check, #row')) {
+      el.addEventListener('click', () => w.log.push(`${el.id}:click`))
+      el.addEventListener('change', () => w.log.push(`${el.id}:change`))
+      el.addEventListener('press', () => w.log.push(`${el.id}:press`))
+    }
+    await Promise.all(
+      [...document.querySelectorAll('*')]
+        .filter((e) => 'updateComplete' in e)
+        .map((e) => (e as unknown as { updateComplete: Promise<unknown> }).updateComplete)
+    )
+  })
+  const heard = async (id: string, key: string): Promise<string[]> => {
+    await page.evaluate(() => ((window as unknown as { log: string[] }).log = []))
+    await page.locator(`#${id}`).focus()
+    await page.keyboard.press(key)
+    return page.evaluate(() => [...(window as unknown as { log: string[] }).log].sort())
+  }
+  expect(await heard('button', 'Enter')).toEqual(['button:click'])
+  expect(await heard('button', 'Space')).toEqual(['button:click'])
+  expect(await heard('toggle', 'Space')).toEqual(['toggle:change', 'toggle:click'])
+  expect(await heard('check', 'Space')).toEqual(['check:change', 'check:click'])
+  expect(await heard('row', 'Enter')).toEqual(['row:click', 'row:press'])
+  expect(await heard('row', 'Space')).toEqual(['row:click', 'row:press'])
+})

@@ -359,6 +359,8 @@ export class UiRow extends LitElement {
       e.stopImmediatePropagation()
       e.preventDefault()
     } else if (this.option && e.target === this) this.press()
+    // `el.click()` and a click dispatched on the element press a tappable row, as a tap on its button does
+    else if (this.tappable && e.composedPath()[0] === this) this.press()
   }
 
   private press(): void {

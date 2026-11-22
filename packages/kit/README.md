@@ -101,6 +101,12 @@ handler has no role; the element handles its own keys, so silence that warning f
   target.** A `ui-row` and a `ui-banner` do: the kit controls in them get the box and the row or banner takes the extra
   back from its padding (between two controls, at most half of the gap each), so rows and banners keep the height and the
   text position they have with the shell's controls.
+- **Tests.** Click the element by its test id (`page.getByTestId('save').click()`) or by role: it works in a normal and a
+  stretched layout, because a toggle, a check, a segmented control and the field's height are fixed-size and a button fills
+  its cell. `el.click()`, `fireEvent.click` and a click through a `<label for>` act as a click on the control: a submit
+  or reset button runs, a toggle flips, a tappable row presses, once; a disabled control hears nothing. The element itself
+  ignores pointer events (the empty part of a stretched element does nothing), so Testing Library's `userEvent.click(el)`
+  refuses it: click the control by role (`getByRole('switch')`) or use `fireEvent.click(el)`.
 - **Keyboard, focus, motion.** Everything works by keyboard with a visible focus ring, in light and dark, and starts no
   transition under Reduce Motion (busy indicators keep turning).
 - **Untrusted text.** Strings an app passes are rendered as text, never as markup.

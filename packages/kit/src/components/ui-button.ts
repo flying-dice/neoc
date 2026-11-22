@@ -247,7 +247,8 @@ export class UiButton extends FormControl {
     // nothing to restore
   }
 
-  private onClick = (): void => {
+  /** Runs the button's action (a submit, a reset): from the drawn button, and from a click on the element itself. */
+  private activate(): void {
     if (this.isDisabled) return
     const form = this.internals.form
     if (this.type === 'submit') {
@@ -256,6 +257,21 @@ export class UiButton extends FormControl {
       form?.requestSubmit()
       this.internals.setFormValue(null)
     } else if (this.type === 'reset') form?.reset()
+  }
+
+  /** A click whose first target is the element (`el.click()`, `fireEvent.click`, a label) acts as a click on the button. */
+  private onHostClick = (e: Event): void => {
+    if (e.composedPath()[0] === this) this.activate()
+  }
+
+  connectedCallback(): void {
+    super.connectedCallback()
+    this.addEventListener('click', this.onHostClick)
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback()
+    this.removeEventListener('click', this.onHostClick)
   }
 
   render(): TemplateResult {
@@ -276,7 +292,7 @@ export class UiButton extends FormControl {
       aria-pressed=${ifDefined(this.toggle ? String(this.pressed) : undefined)}
       aria-label=${ifDefined(this.label || undefined)}
       aria-description=${ifDefined(this.description || undefined)}
-      @click=${this.onClick}
+      @click=${() => this.activate()}
     >
       <slot name="icon"></slot><slot></slot>
     </button>`

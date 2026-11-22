@@ -90,6 +90,7 @@ export class UiTextField extends FormControl {
       /* Only the box around the input (36 pt, or the 44 pt hit box) takes a click, not an empty part of a stretched element. */
       :host {
         pointer-events: none;
+        height: fit-content; /* as the shell's input: a flex row does not stretch it taller; it fills the width */
       }
       .box {
         pointer-events: auto;

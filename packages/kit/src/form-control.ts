@@ -121,6 +121,24 @@ export abstract class FormControl extends LitElement {
     this.syncForm()
   }
 
+  connectedCallback(): void {
+    super.connectedCallback()
+    this.addEventListener('click', this.swallowWhenDisabled, true)
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback()
+    this.removeEventListener('click', this.swallowWhenDisabled, true)
+  }
+
+  /** A native disabled control hears no click: `el.click()` on a disabled kit control reaches nobody either. */
+  private swallowWhenDisabled = (e: Event): void => {
+    if (this.isDisabled) {
+      e.stopImmediatePropagation()
+      e.preventDefault()
+    }
+  }
+
   protected firstUpdated(): void {
     this.captureInitial()
   }

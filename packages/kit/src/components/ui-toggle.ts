@@ -28,6 +28,8 @@ export class UiToggle extends BooleanControl {
         align-items: center;
         vertical-align: middle;
         flex: none;
+        width: fit-content; /* fixed-size, as in the shell: a flex column or a grid cell does not stretch it */
+        height: fit-content;
         min-height: var(--ui-hit, 0px);
         pointer-events: none;
       }
