@@ -1,0 +1,437 @@
+{
+  "openrpc": "1.3.2",
+  "info": {
+    "title": "Notes",
+    "version": "0.1.0",
+    "description": "Folders of notes, for you and your agents: write one, pin it, search them all, and get a deleted one back."
+  },
+  "x-app": {
+    "id": "notes",
+    "icon": "square.and.pencil",
+    "tint": "yellow",
+    "description": "Folders of notes, for you and your agents: write one, pin it, search them all, and get a deleted one back.",
+    "window": {
+      "w": 960,
+      "h": 640,
+      "minW": 420,
+      "minH": 420
+    }
+  },
+  "methods": [
+    {
+      "name": "board",
+      "summary": "Every folder and every note, the most recently edited first. A note is listed by its title and a line of what follows; `read` gives the whole of one. Notes deleted more than 30 days ago are gone.",
+      "params": [],
+      "result": {
+        "name": "board",
+        "schema": {
+          "$ref": "#/components/schemas/Board"
+        }
+      }
+    },
+    {
+      "name": "addFolder",
+      "summary": "Add a folder, and answer with the board as it now stands.",
+      "params": [
+        {
+          "name": "name",
+          "required": true,
+          "description": "What the folder is called. Blank, or the name of a folder there already is, is refused with a message.",
+          "schema": {
+            "type": "string",
+            "maxLength": 60
+          }
+        }
+      ],
+      "result": {
+        "name": "board",
+        "schema": {
+          "$ref": "#/components/schemas/Board"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "The name is blank, or a folder has it already."
+        }
+      ]
+    },
+    {
+      "name": "removeFolder",
+      "summary": "Delete a folder. Its notes go to Recently Deleted.",
+      "params": [
+        {
+          "name": "folder",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "result": {
+        "name": "board",
+        "schema": {
+          "$ref": "#/components/schemas/Board"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such folder, or it is the first one, which stays."
+        }
+      ]
+    },
+    {
+      "name": "create",
+      "summary": "Start a blank note in a folder.",
+      "params": [
+        {
+          "name": "folder",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "result": {
+        "name": "board",
+        "schema": {
+          "$ref": "#/components/schemas/Board"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such folder."
+        }
+      ]
+    },
+    {
+      "name": "read",
+      "summary": "The whole text of one note.",
+      "params": [
+        {
+          "name": "note",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "result": {
+        "name": "text",
+        "schema": {
+          "$ref": "#/components/schemas/Text"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such note."
+        }
+      ]
+    },
+    {
+      "name": "write",
+      "summary": "Replace the text of a note. Its first line is its title.",
+      "params": [
+        {
+          "name": "note",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "body",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "maxLength": 20000
+          }
+        }
+      ],
+      "result": {
+        "name": "board",
+        "schema": {
+          "$ref": "#/components/schemas/Board"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such note, or it is deleted."
+        }
+      ]
+    },
+    {
+      "name": "pin",
+      "summary": "Pin a note to the top of its list, or unpin it.",
+      "params": [
+        {
+          "name": "note",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "pinned",
+          "required": true,
+          "schema": {
+            "type": "boolean"
+          }
+        }
+      ],
+      "result": {
+        "name": "board",
+        "schema": {
+          "$ref": "#/components/schemas/Board"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such note, or it is deleted."
+        }
+      ]
+    },
+    {
+      "name": "move",
+      "summary": "Move a note to another folder.",
+      "params": [
+        {
+          "name": "note",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "folder",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "result": {
+        "name": "board",
+        "schema": {
+          "$ref": "#/components/schemas/Board"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such note or folder, or the note is deleted."
+        }
+      ]
+    },
+    {
+      "name": "remove",
+      "summary": "Delete a note: it goes to Recently Deleted, where it stays for 30 days. A note with nothing in it is gone at once.",
+      "params": [
+        {
+          "name": "note",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "result": {
+        "name": "board",
+        "schema": {
+          "$ref": "#/components/schemas/Board"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such note."
+        }
+      ]
+    },
+    {
+      "name": "restore",
+      "summary": "Bring a deleted note back to its folder.",
+      "params": [
+        {
+          "name": "note",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "result": {
+        "name": "board",
+        "schema": {
+          "$ref": "#/components/schemas/Board"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such note."
+        }
+      ]
+    },
+    {
+      "name": "purge",
+      "summary": "Delete a deleted note for good.",
+      "params": [
+        {
+          "name": "note",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "result": {
+        "name": "board",
+        "schema": {
+          "$ref": "#/components/schemas/Board"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such note, or it is not deleted."
+        }
+      ]
+    },
+    {
+      "name": "search",
+      "summary": "The notes whose text holds what is asked for, whatever its capitals. Deleted notes are not searched.",
+      "params": [
+        {
+          "name": "query",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "maxLength": 100
+          }
+        }
+      ],
+      "result": {
+        "name": "found",
+        "schema": {
+          "$ref": "#/components/schemas/Found"
+        }
+      }
+    }
+  ],
+  "components": {
+    "schemas": {
+      "Folder": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ]
+      },
+      "Note": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "folder": {
+            "type": "integer",
+            "description": "The id of the folder it is in."
+          },
+          "title": {
+            "type": "string",
+            "description": "Its first line; empty for a note with nothing in it."
+          },
+          "preview": {
+            "type": "string",
+            "description": "The line after the title; empty when there is none."
+          },
+          "pinned": {
+            "type": "boolean"
+          },
+          "edited": {
+            "type": "string",
+            "description": "When its text last changed, as 2026-06-09T08:41:00.000Z."
+          },
+          "deleted": {
+            "type": "boolean",
+            "description": "It is in Recently Deleted."
+          }
+        },
+        "required": [
+          "id",
+          "folder",
+          "title",
+          "preview",
+          "pinned",
+          "edited",
+          "deleted"
+        ]
+      },
+      "Board": {
+        "type": "object",
+        "properties": {
+          "folders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Folder"
+            }
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Note"
+            }
+          }
+        },
+        "required": [
+          "folders",
+          "notes"
+        ]
+      },
+      "Text": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "type": "integer"
+          },
+          "body": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "note",
+          "body"
+        ]
+      },
+      "Found": {
+        "type": "object",
+        "properties": {
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "The ids of the notes found."
+          }
+        },
+        "required": [
+          "notes"
+        ]
+      }
+    }
+  }
+}
