@@ -2,7 +2,7 @@
 //! written when the first app that needs them is designed; until then the validator accepts any prop on them.
 //! Heavy components own a third-party engine (`CodeMirror`, canvas hit-testing) and are built and gated per app.
 
-use crate::ui::spec::{Children, ComponentSpec, EventSpec, Group, NameRule, PropSpec, PropType, Tier};
+use crate::ui::spec::{Children, ComponentSpec, EventSpec, Group, PropSpec, PropType, Tier};
 
 macro_rules! placeholder {
     ($const:ident, $name:literal, $group:expr, $tier:expr, $doc:literal) => {
@@ -77,32 +77,6 @@ placeholder!(
     Tier::Two,
     "Placeholder. Opens a URL through the host, with confirmation."
 );
-pub const CHAT_TRANSCRIPT: ComponentSpec = ComponentSpec::new(
-    "ChatTranscript",
-    Group::Advanced,
-    Tier::Two,
-    "An agent chat bound to a `thread` source: streaming messages, reasoning (collapsed), a one-line summary of \
-     each turn's activity (counts, not tool lists), permission prompts (allow once, always, deny), errors, the \
-     session bar (mode, model and effort, slash commands, context usage) and a composer with a stop button. \
-     The thread's data arrives over `/agui`, not through `data.patch`: the source only names the thread and \
-     the agent.",
-)
-.props(props![
-    prop!("thread", PropType::Source)
-        .req()
-        .doc("A `thread` source: `params` are the thread id (`thread`) and the agent (`agent`)."),
-    prop!("placeholder", PropType::Str).doc("The composer's placeholder."),
-    prop!("composer", PropType::Bool).default("true").doc("`false` shows the transcript without a composer."),
-])
-.events(events![
-    EventSpec::new("send")
-        .payload(&[PropSpec::new("text", PropType::Str).req()])
-        .doc("The person sent a message (informational: the client already sent it to the agent)."),
-    EventSpec::new("stop").doc("The person stopped the running turn."),
-])
-.children(Children::None)
-.interactive()
-.a11y("log", NameRule::None);
 placeholder!(
     CALENDAR_GRID,
     "CalendarGrid",

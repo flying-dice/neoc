@@ -63,9 +63,6 @@ pub enum SourceKind {
         conflict: Conflict,
     },
     Scalar,
-    /// A chat thread (`ChatTranscript`): it only names a thread and its agent. Its data is not a query: it
-    /// arrives over `/agui`, so it is declared to the client and never subscribed.
-    Thread,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -114,7 +111,6 @@ impl SourceDef {
                     return Err("a scalar source selects exactly one column".into());
                 }
             }
-            SourceKind::Thread => {}
         }
         Ok(())
     }
@@ -349,7 +345,6 @@ async fn fetch(
             rows.truncate(1);
             Ok(Fetched::Row(rows.pop()))
         }
-        SourceKind::Thread => Err(PortError::Internal("a thread source has no query to run".into())),
         SourceKind::Scalar => {
             let rows = reader.query(def.sql.clone(), params.clone()).await?;
             let value = rows

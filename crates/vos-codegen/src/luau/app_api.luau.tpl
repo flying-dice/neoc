@@ -145,15 +145,6 @@ export type vos_RowSource = {
 
 export type vos_ScalarSource = { ["$source"]: string }
 
---- A chat thread source for `ChatTranscript`: which thread, and the agent it runs as (literals or Refs). The
---- thread's data is not a query: the client streams it from the host's `/agui`.
-export type vos_ThreadParams = {
-	thread: string | vos_Ref<string>,
-	agent: string | vos_Ref<string>,
-}
-
-export type vos_ThreadSource = { ["$source"]: string }
-
 --- What an app may know of an agent contact.
 export type vos_AgentCard = { id: string, name: string, avatar: string?, role: string }
 
@@ -262,8 +253,6 @@ export type vos_AppApi = {
 	--- Shared, in-memory server state: reads in render are tracked, assignments schedule a re-render.
 	state: <T>(initial: T) -> T,
 	tool: (def: vos_ToolDef) -> (),
-	--- Declare a chat thread source once; `chat { thread = id, agent = id }` makes the handle a `ChatTranscript` takes.
-	thread: () -> ((params: vos_ThreadParams) -> vos_ThreadSource),
 	openWindow: (self: vos_AppApi, name: string, params: { [string]: any }?) -> (),
 	--- The open instances of the declared window `name`, in the order they were opened, each the `w` its `render`
 	--- got. An undeclared name raises `app:windows: no window ... is declared`. Listing is a read, so a `readOnly`
