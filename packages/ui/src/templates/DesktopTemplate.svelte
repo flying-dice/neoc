@@ -64,7 +64,9 @@
     position: relative;
     width: 100%;
     height: 100%;
-    overflow: hidden;
+    /* `clip`, not `hidden`: a hidden box can still be scrolled by script, and focusing or scrolling into view something a
+       window left past the edge (an icon of the Dock) would slide the whole desktop sideways under the status bar */
+    overflow: clip;
     background: var(--wallpaper);
     background-size: cover;
     isolation: isolate;
