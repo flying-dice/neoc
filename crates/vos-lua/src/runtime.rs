@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use neoc_vm::lua::lifecycle::Life;
 use parking_lot::RwLock;
 use serde_json::{Map, Value};
+use std::future::Future;
 use std::{
     collections::HashMap,
     sync::{Arc, OnceLock, Weak},
@@ -79,6 +80,24 @@ impl LuaRuntime {
     }
 }
 
+/// Run a call the host made into the app, and end it with an error when the app is unloaded or replaced while it runs. Stopping
+/// an app aborts what it started (tasks, servers, workers); a call is not one of those, it is whoever asked, so without this a
+/// handler waiting at `task.wait` (a long poll, a LAN service that is down) outlives its uninstall and the client that made the
+/// call, and the host connection it came in on, keep waiting and keep the request's permit. Dropping the call is what a caller
+/// that gives up does everywhere else (`AppVm::in_call`): the turn is handed on, a transaction it opened is rolled back.
+async fn until_unloaded<T>(
+    app: &AppId,
+    vm: &AppVm,
+    call: impl Future<Output = PortResult<T>>,
+) -> PortResult<T> {
+    tokio::select! {
+        out = call => out,
+        () = vm.life().closed() => {
+            Err(PortError::Rejected(format!("`{app}` was unloaded while the call was running")))
+        }
+    }
+}
+
 /// Forward what the app asked for during a call: notifications and shell declarations go to their ports.
 async fn forward_effects(
     notifier: &dyn Notifier,
@@ -109,6 +128,7 @@ async fn deliver_effects(
             match effect {
                 Effect::Notify(n) => notifier.notify(n).await?,
                 Effect::Shell(ShellEffect::DeepLinks(l)) => shell.set_deep_links(app, l).await,
+                Effect::Emit { name, data } => shell.emit_event(app, &name, data).await,
                 Effect::OpenWindow { name, params } => {
                     let params = match params {
                         Value::Object(map) => map,
@@ -170,11 +190,16 @@ impl AppRuntime for LuaRuntime {
             // read-only: stated in the `AppRuntime::load` port doc, accepted in AGOS-64.
             old.stop_background();
         }
+        let has_client = package.has_client;
         let vm = AppVm::load(app, package, data, config).await.map_err(|e| port_error(app, e))?;
-        let decl = vm.decl().ok_or_else(|| {
-            PortError::Rejected(format!("{app}: the app must declare itself with app.manifest {{ ... }}"))
-        })?;
-        let loaded = LoadedApp { decl: Some(decl), tools: vm.tools(), sources: vm.sources() };
+        // an app with a client says who it is in app.json; one without describes its windows, so it must declare
+        let decl = vm.decl();
+        if decl.is_none() && !has_client {
+            return Err(PortError::Rejected(format!(
+                "{app}: the app must declare itself with app.manifest {{ ... }}"
+            )));
+        }
+        let loaded = LoadedApp { decl, tools: vm.tools(), sources: vm.sources() };
         forward_effects(&*self.notifier, &*self.shell, app, &vm).await?;
         // a call that comes from inside the VM (a request to the app's own server, a task) queues effects too:
         // forward them when it ends. The pump is one of the app's own tasks, so it goes with the app.
@@ -250,7 +275,26 @@ impl AppRuntime for LuaRuntime {
         read_only: bool,
     ) -> PortResult<Value> {
         let vm = self.vm(app)?;
-        let out = vm.call_tool(tool, args, &ctx, read_only).await.map_err(|e| port_error(app, e));
+        let out = until_unloaded(app, &vm, async {
+            vm.call_tool(tool, args, &ctx, read_only).await.map_err(|e| port_error(app, e))
+        })
+        .await;
+        forward_effects(&*self.notifier, &*self.shell, app, &vm).await?;
+        out
+    }
+
+    async fn call_handler(
+        &self,
+        app: &AppId,
+        method: &str,
+        args: Value,
+        ctx: CallContext,
+    ) -> PortResult<Value> {
+        let vm = self.vm(app)?;
+        let out = until_unloaded(app, &vm, async {
+            vm.call_handler(method, args, &ctx).await.map_err(|e| port_error(app, e))
+        })
+        .await;
         forward_effects(&*self.notifier, &*self.shell, app, &vm).await?;
         out
     }

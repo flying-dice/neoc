@@ -59,8 +59,8 @@ one-line description and a severity from 0 to 1.
    - **the protocol**: a JSON-RPC method, view message or AG-UI event that changes without the Rust schema,
      `bun run codegen` output and the client's parse step moving together; a side channel (extra route, raw socket) around
      `/rpc`, `/agui` or `/mcp`.
-   - **the client**: app knowledge in the client or the kit (the client runs no app code), executable data crossing the
-     wire, an adapter that writes to the host directly instead of through a Binding or event; atomic layers in the kit and
+   - **the client**: app knowledge in the shell or the kit (an app's client runs only in its own frame and the shell never trusts which app a frame
+     says it is: the bridge decides), executable data crossing the wire for a view-tree app, an adapter that writes to the host directly instead of through a Binding or event; atomic layers in the kit and
      client.
    - **agents and apps**: an app reaching another app other than through tools; an agent reaching a tool its grants don't
      cover; per-agent identity not carried into a call.

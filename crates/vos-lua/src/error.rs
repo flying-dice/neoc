@@ -73,12 +73,27 @@ fn flatten(e: &mlua::Error) -> (String, Option<String>) {
     }
 }
 
+/// What a script raised that is not a message: a table, a function, a userdata or a thread (`error({ code = 7 })`).
+const NOT_A_MESSAGE: &str = "the script raised a value that is not a message";
+
+/// Whether `message` is Lua's own text for such a value (`table: 0x600000a44200`): the address of a host object, which no
+/// client or agent is ever told.
+fn is_value_address(message: &str) -> bool {
+    ["table", "function", "userdata", "thread", "buffer", "vector"].iter().any(|kind| {
+        message
+            .strip_prefix(kind)
+            .and_then(|rest| rest.strip_prefix(": 0x"))
+            .is_some_and(|hex| !hex.is_empty() && hex.bytes().all(|b| b.is_ascii_hexdigit()))
+    })
+}
+
 impl ScriptError {
     /// Describe a Lua error, adding the file and line of the app frame when the message lacks one.
     #[must_use]
     pub fn from_lua(e: &mlua::Error) -> Self {
         let (message, traceback) = flatten(e);
-        let message = message.trim().to_owned();
+        let message = message.trim();
+        let message = if is_value_address(message) { NOT_A_MESSAGE.to_owned() } else { message.to_owned() };
         let summary = if has_location(&message) {
             message
         } else {
@@ -95,6 +110,16 @@ impl ScriptError {
 mod tests {
     use super::*;
     use mlua::Lua;
+
+    #[test]
+    fn a_value_that_is_not_a_message_never_shows_its_address() {
+        for text in ["table: 0x600000a44200", "function: 0x1", "userdata: 0xdeadBEEF", "thread: 0x10"] {
+            assert!(is_value_address(text), "{text}");
+        }
+        for text in ["table: 0x", "table: 0xzz", "a table: 0x1", "boom", "table: nil", "table: 12"] {
+            assert!(!is_value_address(text), "{text}");
+        }
+    }
 
     fn run(src: &str) -> mlua::Error {
         let lua = Lua::new();

@@ -49,6 +49,8 @@ fn publish_app(root: &Path, id: &str) -> String {
             tint: None,
             description: None,
             requires: None,
+            client: None,
+            window: None,
         },
         files: vec![FileRef {
             path: "app.luau".into(),

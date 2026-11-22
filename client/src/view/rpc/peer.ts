@@ -64,7 +64,15 @@ export interface RpcPeerOptions {
 }
 
 export interface RpcPeer {
-  request<T = unknown>(method: string, params?: Params): Promise<T>
+  /**
+   * `timeoutMs` overrides the peer's for this request (0 = wait for the answer or the end of the connection): a caller that
+   * counts the request as running on the other side for as long as it is must not give up before the other side does.
+   */
+  request<T = unknown>(
+    method: string,
+    params?: Params,
+    options?: { timeoutMs?: number }
+  ): Promise<T>
   notify(method: string, params?: Params): void
   /** Feed one raw message received from the other side. */
   receive(raw: string): void
@@ -138,17 +146,22 @@ export function createRpcPeer(options: RpcPeerOptions): RpcPeer {
   }
 
   return {
-    request<T>(method: string, params: Params = {}): Promise<T> {
+    request<T>(
+      method: string,
+      params: Params = {},
+      requestOptions?: { timeoutMs?: number }
+    ): Promise<T> {
       if (closed)
         return Promise.reject(new RpcError(RpcErrorCode.ConnectionClosed, 'Connection closed'))
       const id: JsonRpcId = idPrefix ? `${idPrefix}${nextId++}` : nextId++
       return new Promise<T>((resolve, reject) => {
         const entry: Pending = { resolve: resolve as (v: unknown) => void, reject }
-        if (timeoutMs > 0) {
+        const limit = requestOptions?.timeoutMs ?? timeoutMs
+        if (limit > 0) {
           entry.timer = setTimeout(() => {
             pending.delete(id)
-            reject(new RpcError(RpcErrorCode.Timeout, `"${method}" timed out after ${timeoutMs}ms`))
-          }, timeoutMs)
+            reject(new RpcError(RpcErrorCode.Timeout, `"${method}" timed out after ${limit}ms`))
+          }, limit)
         }
         pending.set(id, entry)
         try {

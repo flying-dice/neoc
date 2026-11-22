@@ -12,7 +12,8 @@ const calculator: AppSummary = {
   name: 'Calculator',
   version: '0.1.0',
   state: 'running',
-  source: 'file'
+  source: 'file',
+  client: false
 }
 const agents: AppSummary = { ...calculator, id: 'agents', name: 'Agents' }
 

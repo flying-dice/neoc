@@ -9,6 +9,7 @@
 //! app.tools.register { ... }      agent tools (alias: app.tool { ... })
 //! app.t.string { ... } ...        input schema builders
 //! app.notify { ... }              notifications
+//! app.emit(name, data)            an event for the app's open clients
 //! app.shell.deepLink(pattern, f)  deep links
 //! ```
 
@@ -110,7 +111,7 @@ pub(crate) fn push_shell(sh: &Shared, effect: ShellEffect) {
     let mut effects = sh.effects.lock();
     effects.retain(|queued| match queued {
         Effect::Shell(old) => std::mem::discriminant(old) != std::mem::discriminant(&effect),
-        Effect::Notify(_) | Effect::OpenWindow { .. } => true,
+        Effect::Notify(_) | Effect::OpenWindow { .. } | Effect::Emit { .. } => true,
     });
     effects.push(Effect::Shell(effect));
 }

@@ -3,6 +3,7 @@
  * the built client, a test registry, a port that is not the default (7400, see scripts/ports.ts), so it never
  * collides with a host a person has running.
  */
+import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { HOST_PORT } from '../../scripts/ports'
 
@@ -19,6 +20,15 @@ export const REGISTRY = join(DIR, 'registry/registry.json')
  * Discover does not offer it; the spec installs it from this app ref.
  */
 export const TICKER_APP_REF = `file://${join(DIR, 'hidden/ticker/0.1.0/app-ref.json')}`
+/** The framework fixtures (e2e/apps): a task list with a Svelte client and one with a React client. */
+export const FIXTURE_APPS = ['tasks-svelte', 'tasks-react'] as const
+export type FixtureApp = (typeof FIXTURE_APPS)[number]
+
+/** The app ref a fixture is installed from: built outside the registry (e2e/host/start.ts), so Discover never offers it. */
+export const fixtureAppRef = (id: FixtureApp): string => {
+  const { version } = JSON.parse(readFileSync(join(ROOT, 'e2e/apps', id, 'app.json'), 'utf8')) as { version: string }
+  return `file://${join(DIR, `fixtures/${id}/${version}/app-ref.json`)}`
+}
 /** The Notifier (`e2e/notifications.journeys.spec.ts`): a sender of notifications, kept out of the registry like the Ticker. */
 export const NOTIFIER_APP_REF = `file://${join(DIR, 'hidden/notifier/0.1.0/app-ref.json')}`
 /** The paired browser the specs share (a Playwright storage state). */

@@ -33,6 +33,7 @@ export default defineConfig({
       '/session': host,
       '/pair': host,
       '/agui': host,
+      '/frame': host,
       '/mcp': host
     }
   },
