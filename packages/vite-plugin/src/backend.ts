@@ -5,15 +5,17 @@
  */
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { Definition } from './definition.ts'
 
 /** The darklua release the bundles are pinned to (the host's own build uses the same one). */
 export const DARKLUA_VERSION = '0.18.0'
 
-const DARKLUA_CONFIG = new URL('../darklua.json', import.meta.url).pathname
+// `fileURLToPath`, not `.pathname`: a folder name with a space or any other character a URL percent-encodes stays itself
+const DARKLUA_CONFIG = fileURLToPath(new URL('../darklua.json', import.meta.url))
 
 function findDarklua(): string | undefined {
   const which = spawnSync('which', ['darklua'], { encoding: 'utf8' })
@@ -63,8 +65,9 @@ const sha256 = (bytes: string | Buffer): string => createHash('sha256').update(b
  */
 export function writeApp(project: string, outDir: string, definition: Definition, entry: string, client: string): void {
   mkdirSync(outDir, { recursive: true })
+  // everything that can fail comes before anything is written, and the two files that make the app ref are each put in place
+  // whole (written aside, then renamed): a build that fails never leaves half an app behind
   const bundle = bundleLuau(join(project, entry))
-  writeFileSync(join(outDir, 'app.luau'), bundle)
   const clientBytes = readFileSync(join(outDir, client))
   const files = [
     { path: 'app.luau', url: 'app.luau', sha256: sha256(bundle) },
@@ -94,5 +97,12 @@ export function writeApp(project: string, outDir: string, definition: Definition
     },
     files
   }
-  writeFileSync(join(outDir, 'app-ref.json'), JSON.stringify(appRef, null, 2) + '\n')
+  putInPlace(join(outDir, 'app.luau'), bundle)
+  putInPlace(join(outDir, 'app-ref.json'), JSON.stringify(appRef, null, 2) + '\n')
+}
+
+function putInPlace(path: string, contents: string): void {
+  const aside = `${path}.${process.pid}.tmp`
+  writeFileSync(aside, contents)
+  renameSync(aside, path)
 }

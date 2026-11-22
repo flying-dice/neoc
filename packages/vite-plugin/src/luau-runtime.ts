@@ -124,11 +124,8 @@ end
 
 local function router(implementation: Handlers): vos_Handlers
   local provided: { [string]: any } = implementation :: any
-  for name in provided do
-    if METHODS[name] == nil then
-      error('the handlers implement "' .. name .. '", which the definition does not declare')
-    end
-  end
+  -- only the declared methods are ever dispatched: a function in the table that the definition does not declare is never
+  -- called (a misspelt handler leaves its method without one, which is the error below)
   local handlers: vos_Handlers = {}
   for name, method in METHODS do
     local handler = provided[name]

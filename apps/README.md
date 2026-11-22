@@ -91,7 +91,18 @@ A deliberate subset, and an error that names where when the document goes beyond
 (they become `api.add({ title })` and `add = function(ctx, args)`); schemas are `type` (`string`, `number`, `integer`,
 `boolean`, `null`, `array`, `object`, or a list of one of these and `"null"`), `enum` of strings, `minLength`, `maxLength`,
 `minimum`, `maximum`, `items`, `properties` with `required`, `description` and `$ref` to `#/components/schemas/<Name>`. An
-object takes no property it does not declare. A JSON `null` and an absent key are the same thing in Luau.
+object takes no property it does not declare (`additionalProperties: false` is accepted and means the same). **Null and absent
+are one value** (a Luau nil is an absent key): a property or a param whose schema allows null is never required to be
+present, so TypeScript types it optional too (`tag?: string | null`), Luau types it `string?`, and the router lets it be
+absent, whether or not the contract lists it under `required`.
+
+Names: a param or property may be any identifier (`type`, `default`, `delete`: the generators quote it where a language needs
+it); a method may not be a Luau reserved word (`end`, `function`, ...), a schema may not be a reserved word of TypeScript or
+Luau, and `__proto__`, `constructor` and `prototype` are never a name. Every type the generated files declare must have a name
+of its own: a schema called `Host`, `Api`, `RpcError`, `Context` or `Handlers`, one named like a method's `<Method>Params` or
+`<Method>Result` (`ListResult` for `list`), or two methods that are one name in PascalCase (`add_task` and `addTask`) are
+refused when the contract is read, with the names that clash. Text from the contract (titles, summaries, enum values) is
+written into the generated code as an escaped string or comment, never as code.
 
 ## What the plugin generates
 
@@ -110,8 +121,12 @@ committed.
 - `.app/entry.luau`: the backend's entry, which the build bundles and the host runs: the handlers of `server/main.luau`
   behind the router.
 
-The build fails when a method of the contract has no handler in `server/main.luau`, and warns about a handler the contract
-does not declare (the app would not load: the router refuses a handler table that does not match the contract).
+The build checks `server/main.luau` against the contract with luau-lsp (strict, the same check as `bun run typecheck`): a
+declared method with no handler, or a handler of the wrong shape, fails the build with the checker's message, and valid Luau
+of any shape passes (a handler assigned from a local function, defined in a module you `require`, added to the table later).
+A function in the table that the contract does not declare is never called. Without luau-lsp installed the build warns that
+the backend was not checked (and the gate fails); the host also refuses to load an app that does not implement every method.
+`vos({ check: false })` turns the check off.
 
 ## The client
 
@@ -206,7 +221,7 @@ return handlers
 
 - **Failing a call.** `error("RPC-32602 Title cannot be empty", 0)` fails it with that JSON-RPC code (`RPC`, a whole number,
   a space, the message: no file or line). `ctx:fail(message)` fails it with the application error `-32010` and a message.
-  Any other error the handler raises is `-32010` with `server/main.luau:12: message`.
+  Any other error the handler raises is `-32010` with `<id>/app.luau:<line>: message`, where the line is a line of the bundled `dist/app.luau` (the host reports where the bundle failed, not the source file); raise with `error(message, 0)` or `ctx:fail(message)` for a message without a position. A handler that raises a table or a function (not a string) is reported as `the script raised a value that is not a message`: nothing of the host's memory is ever sent to a client.
 - **`ctx`** is `{ actor, now, fail }`: `actor.kind` is `"user"` (it is the person's own client calling), `now` an ISO time.
   It holds what is particular to the call. The host's services are not on it: a handler, a tool and background work (which
   has no `ctx`) all reach them the same way, through `vos:app`: `app.db`, `app.kv`, `app.files`, `app.notify`, `app.log`,
@@ -249,7 +264,8 @@ return handlers
 `dev_reload` on, which rebuilds the app's VM (keeping its database) whenever `dist/` changes:
 
 ```sh
-VOS_DEV_RELOAD=1 VOS_INSTALL="file://$PWD/dist/app-ref.json" bun run host   # from the repository root
+APP=$PWD                                       # the app's own folder
+cd <the repository root> && VOS_DEV_RELOAD=1 VOS_INSTALL="file://$APP/dist/app-ref.json" bun run host
 ```
 
 So the backend you test is the real Luau on the real runtime. Reopen the app's window to load a new client script. There is
@@ -376,7 +392,11 @@ if app.files.errorKind(err) == "not_found" then end  -- the kinds of std:fs
 
 An app that is a Vite project:
 
-1. **Project.** Copy `e2e/apps/tasks-svelte` (or `tasks-react`) to `apps/<id>`; edit `openrpc.json` (`x-app`, version `0.1.0`).
+1. **Project.** Copy `e2e/apps/tasks-svelte` (or `tasks-react`) to `apps/<id>` without its `node_modules`, `.app` and `dist`.
+   Rename the package in its `package.json` (`"name": "@vos-apps/<id>"`: two workspace packages with one name make
+   `bun install` fail), then set `x-app` (id, icon, tint, window), the title and version `0.1.0` in `openrpc.json`. Keep the
+   project's `.gitignore` (`.app` and `dist`: the repository's own ignores `dist` but not `.app`). Run `bun install` in the
+   repository root so the new package is linked, and `bun run generate` in the project so the editor sees `.app/`.
 2. **Define the contract first** in `openrpc.json` (with its `x-app`), then `bun run generate`.
 3. **Implement the handlers** in `server/main.luau` (logic in its own module, testable without the client); tools with a described
    schema and a truthful `readOnly`; `app.emit` wherever data changes outside the client.

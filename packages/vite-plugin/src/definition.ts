@@ -92,6 +92,41 @@ export interface Definition {
   components: Record<string, Schema>
 }
 
+/** The names the generated files claim for themselves: a component or a method's types cannot reuse them. */
+const GENERATED_TS = ['Host', 'Api', 'RpcError']
+const GENERATED_LUAU = ['Context', 'Handlers']
+
+/** PascalCase of a method name: `add_task` and `addTask` both become `AddTask`. */
+const pascalName = (name: string): string =>
+  name
+    .split('_')
+    .filter((w) => w !== '')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join('') || name
+
+/**
+ * The generated files declare one type per component and, per method, `<Method>Params` and `<Method>Result`, next to a few
+ * fixed ones. Two of them with one name would fail only inside `.app/`, far from the contract: say which clash here.
+ */
+function checkGeneratedNames(components: Record<string, Schema>, methods: Method[]): void {
+  const owners = new Map<string, string>()
+  const claim = (name: string, owner: string, path: string): void => {
+    const existing = owners.get(name)
+    if (existing !== undefined) {
+      fail(path, `the generated type \`${name}\` would be both ${existing} and ${owner}: rename one of them`)
+    }
+    owners.set(name, owner)
+  }
+  for (const name of [...GENERATED_TS, ...GENERATED_LUAU]) owners.set(name, 'a type the generated files declare themselves')
+  for (const name of Object.keys(components)) claim(name, `the schema \`${name}\``, `components.schemas.${name}`)
+  methods.forEach((method, index) => {
+    const base = pascalName(method.name)
+    const where = `methods[${index}].name`
+    if (method.params.length > 0) claim(`${base}Params`, `the params of method \`${method.name}\``, where)
+    claim(`${base}Result`, `the result of method \`${method.name}\``, where)
+  })
+}
+
 export class DefinitionError extends Error {
   constructor(message: string) {
     super(message)
@@ -100,12 +135,26 @@ export class DefinitionError extends Error {
 }
 
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/
-/** Words neither TypeScript nor Luau lets a name be where the generated code needs one. */
-const RESERVED = new Set([
-  'and', 'break', 'class', 'const', 'continue', 'default', 'delete', 'do', 'else', 'elseif', 'end', 'enum', 'export',
-  'false', 'for', 'function', 'if', 'import', 'in', 'interface', 'let', 'local', 'new', 'nil', 'not', 'null', 'or',
-  'repeat', 'return', 'switch', 'then', 'this', 'true', 'type', 'typeof', 'until', 'var', 'void', 'while', 'with'
+
+/** Names that mean something to a JavaScript object, whatever the language: never a name of the contract. */
+const FORBIDDEN = new Set(['__proto__', 'constructor', 'prototype'])
+
+/** Luau's reserved words: not a method name (a handler is `name = function`) and not the name of a schema (a Luau type). */
+export const LUAU_KEYWORDS = new Set([
+  'and', 'break', 'do', 'else', 'elseif', 'end', 'false', 'for', 'function', 'if', 'in', 'local', 'nil', 'not', 'or',
+  'repeat', 'return', 'then', 'true', 'until', 'while'
 ])
+
+/** Words a TypeScript type cannot be named. */
+const TS_TYPE_RESERVED = new Set([
+  'any', 'boolean', 'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger', 'default', 'delete', 'do', 'else',
+  'enum', 'export', 'extends', 'false', 'finally', 'for', 'function', 'if', 'import', 'in', 'instanceof', 'interface', 'let',
+  'never', 'new', 'null', 'number', 'object', 'package', 'private', 'protected', 'public', 'return', 'static', 'string',
+  'super', 'switch', 'symbol', 'this', 'throw', 'true', 'try', 'typeof', 'undefined', 'unknown', 'var', 'void', 'while', 'with', 'yield'
+])
+
+/** What a name is, for the words it may not be. A property or a param can be any identifier: the generators quote it where a language needs. */
+type NameKind = 'property' | 'method' | 'schema'
 
 type Json = unknown
 const isObject = (v: Json): v is Record<string, Json> => typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -123,12 +172,22 @@ function optionalText(value: Json, path: string): string | undefined {
   return value === undefined ? undefined : text(value, path)
 }
 
-function identifier(value: Json, path: string, what: string): string {
+function identifier(value: Json, path: string, what: string, kind: NameKind): string {
   const name = text(value, path)
   if (!IDENTIFIER.test(name)) fail(path, `${what} \`${name}\` must be an identifier (letters, digits and _, not starting with a digit)`)
-  if (RESERVED.has(name)) fail(path, `\`${name}\` is a reserved word in TypeScript or Luau: pick another ${what}`)
+  if (FORBIDDEN.has(name)) fail(path, `\`${name}\` cannot be a ${what}: it means something to a JavaScript object, so pick another`)
+  if (kind === 'method' && LUAU_KEYWORDS.has(name)) fail(path, `\`${name}\` is a reserved word in Luau, where a method is a function field: pick another ${what}`)
+  if (kind === 'schema' && (LUAU_KEYWORDS.has(name) || TS_TYPE_RESERVED.has(name))) {
+    fail(path, `\`${name}\` is a reserved word in TypeScript or Luau, where a schema is a type: pick another ${what}`)
+  }
   return name
 }
+
+/** An own key of a parsed object (never one inherited from `Object.prototype`). */
+const has = (object: object, key: string): boolean => Object.hasOwn(object, key)
+
+/** A map with no prototype, so no name is ever inherited and `__proto__` is a key like any other. */
+const table = <T>(): Record<string, T> => Object.create(null) as Record<string, T>
 
 function count(value: Json, path: string): number {
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) fail(path, 'must be a whole number, 0 or more')
@@ -159,6 +218,11 @@ function schema(value: Json, path: string, refs: { name: string; path: string }[
     return withDescription({ kind: 'ref' as const, name })
   }
 
+  for (const key of ['oneOf', 'anyOf', 'allOf', 'not', 'if', 'const', 'format', 'pattern', 'patternProperties', 'definitions', '$defs']) {
+    if (has(value, key)) {
+      fail(`${path}.${key}`, `is not supported: a schema here is a type, \`enum\` of strings, or a list of a type and "null" (see apps/README.md, "The contract")`)
+    }
+  }
   let types: string[]
   if (typeof value.type === 'string') types = [value.type]
   else if (Array.isArray(value.type) && value.type.length === 2 && value.type.includes('null') && value.type.every((t) => typeof t === 'string'))
@@ -206,20 +270,23 @@ function schema(value: Json, path: string, refs: { name: string; path: string }[
         if (value.items === undefined) fail(`${path}.items`, 'an array needs `items`')
         return { kind: 'array', items: schema(value.items, `${path}.items`, refs) }
       case 'object': {
-        only(value, ['type', 'description', 'properties', 'required'], path)
-        const properties: Record<string, Schema> = {}
+        only(value, ['type', 'description', 'properties', 'required', 'additionalProperties'], path)
+        if (value.additionalProperties !== undefined && value.additionalProperties !== false) {
+          fail(`${path}.additionalProperties`, 'must be false or left out: an object takes no property it does not declare')
+        }
+        const properties = table<Schema>()
         if (value.properties !== undefined) {
           if (!isObject(value.properties)) fail(`${path}.properties`, 'must be an object of schemas')
-          for (const [name, property] of Object.entries(value.properties)) {
-            identifier(name, `${path}.properties.${name}`, 'property name')
-            properties[name] = schema(property, `${path}.properties.${name}`, refs)
+          for (const name of Object.keys(value.properties)) {
+            identifier(name, `${path}.properties.${name}`, 'property name', 'property')
+            properties[name] = schema(value.properties[name], `${path}.properties.${name}`, refs)
           }
         }
         const required: string[] = []
         if (value.required !== undefined) {
           if (!Array.isArray(value.required)) fail(`${path}.required`, 'must be a list of property names')
           for (const name of value.required) {
-            if (typeof name !== 'string' || !(name in properties)) fail(`${path}.required`, `names \`${String(name)}\`, which is not a property`)
+            if (typeof name !== 'string' || !has(properties, name)) fail(`${path}.required`, `names \`${String(name)}\`, which is not a property`)
             if (!required.includes(name)) required.push(name)
           }
         }
@@ -233,13 +300,106 @@ function schema(value: Json, path: string, refs: { name: string; path: string }[
   return withDescription(node)
 }
 
+const lineOf = (source: string, offset: number): number => source.slice(0, offset).split('\n').length
+const columnOf = (source: string, offset: number): number => offset - (source.lastIndexOf('\n', offset - 1) + 1) + 1
+
+/** Where a JSON text first stops being JSON (the offset of the character that cannot be there, or of the end), else `null`. */
+export function jsonErrorOffset(source: string): number | null {
+  let i = 0
+  const space = (): void => {
+    while (i < source.length && ' \t\n\r'.includes(source[i] as string)) i++
+  }
+  const literal = (word: string): boolean => {
+    if (!source.startsWith(word, i)) return false
+    i += word.length
+    return true
+  }
+  const string = (): boolean => {
+    if (source[i] !== '"') return false
+    i++
+    while (i < source.length) {
+      const c = source[i] as string
+      if (c === '"') {
+        i++
+        return true
+      }
+      if (c < ' ') return false
+      if (c === '\\') {
+        const next = source[i + 1]
+        if (next === 'u') {
+          if (!/^[0-9a-fA-F]{4}$/.test(source.slice(i + 2, i + 6))) return false
+          i += 6
+          continue
+        }
+        if (next === undefined || !'"\\/bfnrt'.includes(next)) return false
+        i += 2
+        continue
+      }
+      i++
+    }
+    return false
+  }
+  const value = (): boolean => {
+    space()
+    const c = source[i]
+    if (c === '{') {
+      i++
+      space()
+      if (source[i] === '}') return ++i > 0
+      for (;;) {
+        space()
+        if (!string()) return false
+        space()
+        if (source[i] !== ':') return false
+        i++
+        if (!value()) return false
+        space()
+        if (source[i] === ',') {
+          i++
+          continue
+        }
+        if (source[i] === '}') return ++i > 0
+        return false
+      }
+    }
+    if (c === '[') {
+      i++
+      space()
+      if (source[i] === ']') return ++i > 0
+      for (;;) {
+        if (!value()) return false
+        space()
+        if (source[i] === ',') {
+          i++
+          continue
+        }
+        if (source[i] === ']') return ++i > 0
+        return false
+      }
+    }
+    if (c === '"') return string()
+    if (literal('true') || literal('false') || literal('null')) return true
+    const number = /^-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?/.exec(source.slice(i))
+    if (number) {
+      i += number[0].length
+      return true
+    }
+    return false
+  }
+  if (!value()) return i
+  space()
+  return i < source.length ? i : null
+}
+
 /** Parse and validate an OpenRPC document. Throws a [`DefinitionError`] naming the path of the first problem. */
 export function parseDefinition(source: string, file = 'openrpc.json'): Definition {
   let document: Json
   try {
     document = JSON.parse(source)
   } catch (e) {
-    throw new DefinitionError(`${file}: not JSON (${(e as Error).message})`)
+    const at = jsonErrorOffset(source)
+    const where = at === null ? '' : ` at line ${lineOf(source, at)}, column ${columnOf(source, at)}`
+    throw new DefinitionError(`${file}: not JSON${where} (${(e as Error).message})`)
   }
   try {
     return definition(document)
@@ -261,15 +421,15 @@ function definition(document: Json): Definition {
   const app = appMeta(document['x-app'])
 
   const refs: { name: string; path: string }[] = []
-  const components: Record<string, Schema> = {}
+  const components = table<Schema>()
   if (document.components !== undefined) {
     if (!isObject(document.components)) fail('components', 'must be an object')
     only(document.components, ['schemas'], 'components')
     const schemas = document.components.schemas ?? {}
     if (!isObject(schemas)) fail('components.schemas', 'must be an object of schemas')
-    for (const [name, value] of Object.entries(schemas)) {
-      identifier(name, `components.schemas.${name}`, 'schema name')
-      components[name] = schema(value, `components.schemas.${name}`, refs)
+    for (const name of Object.keys(schemas)) {
+      identifier(name, `components.schemas.${name}`, 'schema name', 'schema')
+      components[name] = schema(schemas[name], `components.schemas.${name}`, refs)
     }
   }
 
@@ -279,7 +439,7 @@ function definition(document: Json): Definition {
     const path = `methods[${index}]`
     if (!isObject(raw)) fail(path, 'must be an object')
     only(raw, ['name', 'summary', 'description', 'paramStructure', 'params', 'result', 'errors', 'tags'], path)
-    const name = identifier(raw.name, `${path}.name`, 'method name')
+    const name = identifier(raw.name, `${path}.name`, 'method name', 'method')
     if (methods.some((m) => m.name === name)) fail(`${path}.name`, `method \`${name}\` is defined twice`)
     if (raw.paramStructure !== undefined && raw.paramStructure !== 'by-name')
       fail(`${path}.paramStructure`, 'must be "by-name": a client calls `rpc.method({ param })`')
@@ -290,7 +450,7 @@ function definition(document: Json): Definition {
         const where = `${path}.params[${i}]`
         if (!isObject(p)) fail(where, 'must be an object')
         only(p, ['name', 'description', 'required', 'schema', 'summary'], where)
-        const paramName = identifier(p.name, `${where}.name`, 'param name')
+        const paramName = identifier(p.name, `${where}.name`, 'param name', 'property')
         if (params.some((q) => q.name === paramName)) fail(`${where}.name`, `param \`${paramName}\` is given twice`)
         if (p.required !== undefined && typeof p.required !== 'boolean') fail(`${where}.required`, 'must be true or false')
         const description = optionalText(p.description, `${where}.description`)
@@ -327,7 +487,8 @@ function definition(document: Json): Definition {
     })
   })
 
-  for (const { name, path } of refs) if (!(name in components)) fail(path, `refers to \`${name}\`, which components.schemas does not define`)
+  for (const { name, path } of refs) if (!has(components, name)) fail(path, `refers to \`${name}\`, which components.schemas does not define`)
+  checkGeneratedNames(components, methods)
   return { title, version, app, methods, components }
 }
 

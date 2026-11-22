@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { DefinitionError, parseDefinition } from './definition.ts'
+import { DefinitionError, jsonErrorOffset, parseDefinition } from './definition.ts'
 
 const doc = (overrides: Record<string, unknown> = {}): string =>
   JSON.stringify({
@@ -114,7 +114,8 @@ describe('parseDefinition', () => {
     const withSchema = (schema: unknown): string =>
       doc({ methods: [{ name: 'a', params: [{ name: 'p', schema }], result: { name: 'r', schema: { type: 'null' } } }] })
     expect(problem(withSchema({ type: 'string', pattern: '^a' }))).toContain('.pattern: is not supported')
-    expect(problem(withSchema({ anyOf: [{ type: 'string' }] }))).toContain('.type: must be a type name')
+    expect(problem(withSchema({ anyOf: [{ type: 'string' }] }))).toContain('.anyOf: is not supported')
+    expect(problem(withSchema({ oneOf: [{ type: 'string' }, { type: 'integer' }] }))).toContain('.oneOf: is not supported')
     expect(problem(withSchema({ $ref: '#/components/schemas/Missing' }))).toContain('refers to `Missing`')
     expect(problem(withSchema({ $ref: 'http://elsewhere/x' }))).toContain('must be "#/components/schemas/<Name>"')
     expect(problem(withSchema({ type: 'array' }))).toContain('needs `items`')
@@ -123,5 +124,60 @@ describe('parseDefinition', () => {
     )
     expect(problem(withSchema({ type: 'string', enum: [] }))).toContain('non-empty list of strings')
     expect(problem(withSchema({ type: 'integer', minimum: 'one' }))).toContain('.minimum: must be a number')
+  })
+
+  test('a name the language gives to every object is never a name of the contract, and nothing is inherited', () => {
+    const withProps = (properties: string, extra = ''): string =>
+      `{"openrpc":"1.3.2","info":{"title":"N","version":"1.0.0"},"x-app":{"id":"notes"},"methods":[{"name":"a","result":{"name":"r","schema":{"$ref":"#/components/schemas/T"}}}],"components":{"schemas":{"T":{"type":"object","properties":${properties}${extra}}}}}`
+    // `JSON.parse` makes `__proto__` an own key: it is refused, not dropped
+    expect(problem(withProps('{"__proto__":{"type":"string"}}'))).toContain('`__proto__` cannot be a property name')
+    expect(problem(withProps('{"constructor":{"type":"string"}}'))).toContain('cannot be a property name')
+    expect(problem(withProps('{"prototype":{"type":"string"}}'))).toContain('cannot be a property name')
+    expect(problem(withProps('{"a":{"type":"string"}}', ',"required":["toString"]'))).toContain('names `toString`, which is not a property')
+    expect(problem(withProps('{"a":{"$ref":"#/components/schemas/constructor"}}'))).toContain('refers to `constructor`, which components.schemas does not define')
+    expect(problem(withProps('{"a":{"$ref":"#/components/schemas/__proto__"}}'))).toContain('refers to `__proto__`')
+    expect(problem(doc({ methods: [{ name: 'constructor', result: { name: 'r', schema: { type: 'null' } } }] }))).toContain('cannot be a method name')
+    expect(problem(doc({ components: { schemas: JSON.parse('{"__proto__":{"type":"string"}}') } }))).toContain('cannot be a schema name')
+  })
+
+  test('words a language reserves are fine as params and properties, and refused only where they would break the generated code', () => {
+    const ok = parseDefinition(
+      doc({
+        methods: [
+          {
+            name: 'move',
+            params: ['type', 'default', 'class', 'new', 'delete', 'end'].map((name) => ({ name, schema: { type: 'string' } })),
+            result: { name: 'r', schema: { type: 'null' } }
+          }
+        ]
+      })
+    )
+    expect(ok.methods[0]?.params.map((p) => p.name)).toEqual(['type', 'default', 'class', 'new', 'delete', 'end'])
+    // a method is a Luau function field, a schema a type
+    expect(problem(doc({ methods: [{ name: 'end', result: { name: 'r', schema: { type: 'null' } } }] }))).toContain('reserved word in Luau')
+    expect(problem(doc({ components: { schemas: { class: { type: 'string' } } } }))).toContain('reserved word')
+    expect(parseDefinition(doc({ methods: [{ name: 'delete', result: { name: 'r', schema: { type: 'null' } } }] })).methods[0]?.name).toBe('delete')
+  })
+
+  test('two generated types with one name are found when the contract is read, and say which clash', () => {
+    const result = { name: 'r', schema: { type: 'null' } }
+    for (const clash of ['Host', 'Api', 'RpcError', 'Context', 'Handlers']) {
+      expect(problem(doc({ methods: [{ name: 'a', result }], components: { schemas: { [clash]: { type: 'string' } } } })), clash).toContain(`the generated type \`${clash}\``)
+    }
+    expect(
+      problem(doc({ methods: [{ name: 'list', result }], components: { schemas: { ListResult: { type: 'string' } } } }))
+    ).toContain('`ListResult` would be both the schema `ListResult` and the result of method `list`')
+    expect(problem(doc({ methods: [{ name: 'add_task', result }, { name: 'addTask', result }] }))).toContain(
+      '`AddTaskResult` would be both the result of method `add_task` and the result of method `addTask`'
+    )
+  })
+
+  test('a JSON syntax error says where, and an unsupported combinator says it is not supported', () => {
+    expect(problem('{\n  "openrpc": "1.3.2",\n  "info": {\n    "title": "N",,\n  }\n}')).toContain('line 4, column 18')
+    expect(problem('{"a": [1, 2')).toContain('line 1, column 12')
+    expect(problem('')).toContain('line 1, column 1')
+    expect(jsonErrorOffset('{"a": [1, 2, {"b": null}]}')).toBeNull()
+    expect(jsonErrorOffset('{"a": tru}')).toBe(6)
+    expect(jsonErrorOffset('[1] x')).toBe(4)
   })
 })

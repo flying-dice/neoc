@@ -1,12 +1,13 @@
 import { describe, expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import { parseDefinition } from './definition.ts'
 import { emitLuau, emitLuauEntry } from './emit-luau.ts'
 import { emitDeclarations, emitEntry, emitModule } from './emit-client.ts'
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { DEFAULTS, generate, handlerProblems, write } from './generate.ts'
+import { homedir, tmpdir } from 'node:os'
+import { DEFAULTS, generate, write } from './generate.ts'
+import { analyze } from './luau-tools.ts'
 
 const definition = parseDefinition(
   JSON.stringify({
@@ -69,6 +70,106 @@ describe('the typed client', () => {
   test('is the same every time', () => expect(emitDeclarations(definition, 'openrpc.json')).toBe(dts))
 })
 
+describe('null and absent are one value', () => {
+  const contract = parseDefinition(
+    JSON.stringify({
+      openrpc: '1.3.2',
+      info: { title: 'T', version: '1.0.0' },
+      'x-app': { id: 'nulls' },
+      methods: [
+        {
+          name: 'set',
+          params: [{ name: 'tag', required: true, schema: { type: ['string', 'null'] } }],
+          result: { name: 'r', schema: { $ref: '#/components/schemas/Thing' } }
+        }
+      ],
+      components: {
+        schemas: {
+          Maybe: { type: ['string', 'null'] },
+          Thing: {
+            type: 'object',
+            properties: { id: { type: 'integer' }, tag: { type: ['string', 'null'] }, other: { $ref: '#/components/schemas/Maybe' }, name: { type: 'string' } },
+            required: ['id', 'tag', 'other', 'name']
+          }
+        }
+      }
+    })
+  )
+  test('a required property that allows null is optional in TypeScript, so the type matches what arrives', () => {
+    const dts = emitDeclarations(contract, 'openrpc.json')
+    expect(dts).toContain('export type Thing = { id: number; tag?: string | null; other?: Maybe; name: string }')
+    // a required param that allows null may be left out, and so may the whole object when nothing else is required
+    expect(dts).toContain('tag?: string | null')
+    expect(dts).toContain('set(params?: SetParams): Promise<SetResult>')
+  })
+  test('Luau types it as nil-able and the router lets it be absent', () => {
+    const luau = emitLuau(contract, 'openrpc.json')
+    expect(luau).toContain('export type Thing = { id: number, tag: string?, other: Maybe, name: string }')
+    expect(luau).toContain('a required property whose schema allows null may be absent')
+  })
+})
+
+describe('a hostile contract cannot write code into the generated files', () => {
+  const hostile = (title: string, summary: string, enumValue: string): ReturnType<typeof parseDefinition> =>
+    parseDefinition(
+      JSON.stringify({
+        openrpc: '1.3.2',
+        info: { title, version: '1.0.0' },
+        'x-app': { id: 'hostile' },
+        methods: [
+          {
+            name: 'go',
+            summary,
+            description: `${summary}\n*/ export const pwned = 1 /*`,
+            params: [{ name: 'kind', required: true, description: summary, schema: { type: 'string', enum: [enumValue, 'plain'] } }],
+            result: { name: 'r', schema: { type: 'null' } }
+          }
+        ],
+        components: { schemas: { Note: { type: 'string', description: summary } } }
+      })
+    )
+
+  const NASTY = [
+    'x\nconsole.log("pwned")//',
+    'x\rconsole.log("pwned")//',
+    'x\r\nconsole.log("pwned")//',
+    'x\u2028console.log("pwned")//',
+    'x\u2029console.log("pwned")//',
+    'x*/console.log("pwned")/*',
+    'x]]console.log("pwned")--[[',
+    'x"; console.log("pwned"); "',
+    'x\\"; console.log("pwned"); //',
+    'x\u0000\u001fy'
+  ]
+
+  test('title, summary, description and enum values stay comments and string literals in TypeScript and JavaScript', () => {
+    for (const nasty of NASTY) {
+      const contract = hostile(nasty, nasty, nasty)
+      const dts = emitDeclarations(contract, 'openrpc.json')
+      const js = emitModule(contract, 'openrpc.json')
+      // the generated JavaScript is still one module whose only exports are the ones the generator writes
+      const exports = [...new Bun.Transpiler({ loader: 'js' }).scan(js).exports]
+      expect(exports.sort(), JSON.stringify(nasty)).toEqual(['RpcError', 'api', 'bind', 'host'].sort())
+      for (const line of js.split(/\r\n|[\r\n\u2028\u2029]/)) if (line.includes('pwned')) expect(line.trimStart().startsWith('//'), line).toBe(true)
+      for (const line of dts.split(/\r\n|[\r\n\u2028\u2029]/)) {
+        if (line.includes('pwned')) expect(/^\s*(\/\/|\/\*\*|\*)|^\s*kind\??: /.test(line), line).toBe(true)
+      }
+    }
+  })
+
+  test('and in Luau every such line is a comment or inside a string', () => {
+    for (const nasty of NASTY) {
+      const luau = emitLuau(hostile(nasty, nasty, nasty), 'openrpc.json')
+      for (const line of luau.split('\n')) {
+        if (!line.includes('pwned')) continue
+        expect(/^\s*--/.test(line) || /"[^\n]*pwned[^\n]*"/.test(line), line).toBe(true)
+      }
+      // no raw control character or U+2028 line break escapes into a line of code
+      expect(luau.replace(/\n/g, '')).not.toMatch(/[\u0000-\u001f\u007f]/)
+    }
+  })
+})
+
 describe('the Luau side', () => {
   const luau = emitLuau(definition, 'openrpc.json')
   test('has the types, the handler interface the developer implements and the router', () => {
@@ -100,8 +201,6 @@ describe('the fixtures', () => {
       const text = readFileSync(join(project, 'openrpc.json'), 'utf8')
       const contract = parseDefinition(text)
       expect(contract.app.id).toBe(name)
-      const backend = readFileSync(join(project, 'server/main.luau'), 'utf8')
-      expect(handlerProblems(contract, backend)).toEqual({ missing: [], undeclared: [] })
     })
   }
   test('the two fixtures share one contract: the same methods and schemas', () => {
@@ -113,23 +212,77 @@ describe('the fixtures', () => {
   })
 })
 
-describe('handlerProblems', () => {
-  const contract = parseDefinition(
-    JSON.stringify({
-      openrpc: '1.3.2',
-      info: { title: 'T', version: '1.0.0' },
-      'x-app': { id: 'tasks' },
-      methods: ['list', 'add'].map((name) => ({ name, params: [], result: { name: 'r', schema: { type: 'null' } } }))
-    })
-  )
-  test('names a declared method that has no handler, and a handler that is not declared', () => {
-    expect(handlerProblems(contract, 'local handlers = {\n  list = function() end,\n  other = function() end,\n}')).toEqual({
-      missing: ['add'],
-      undeclared: ['other']
-    })
+/** The handler check is the Luau type checker's: it needs luau-lsp, which the gate requires and a developer machine may lack. */
+const luauLsp = Bun.which('luau-lsp') ?? (existsSync(join(homedir(), '.local/bin/luau-lsp')) ? 'installed' : null)
+
+describe.skipIf(luauLsp === null)('the check of the backend against the contract (luau-lsp, strict)', () => {
+  const repository = resolve(import.meta.dir, '../../..')
+  const contract = JSON.stringify({
+    openrpc: '1.3.2',
+    info: { title: 'T', version: '1.0.0' },
+    'x-app': { id: 'tasks' },
+    methods: [
+      { name: 'list', params: [], result: { name: 'r', schema: { type: 'array', items: { type: 'string' } } } },
+      { name: 'add', params: [{ name: 'title', required: true, schema: { type: 'string' } }], result: { name: 'r', schema: { type: 'null' } } }
+    ]
   })
-  test('sees both ways of writing a handler', () => {
-    expect(handlerProblems(contract, 'function app.list() end\nfunction handlers:add() end')).toEqual({ missing: [], undeclared: [] })
+
+  /** A project with this contract and these server files, generated, and what the check says of it. */
+  function check(files: Record<string, string>): string[] {
+    const dir = mkdtempSync(join(tmpdir(), 'vos-check-'))
+    const previous = process.env.VOS_DEFINITIONS
+    process.env.VOS_DEFINITIONS = join(repository, 'types/generated/vos.d.luau')
+    try {
+      writeFileSync(join(dir, 'openrpc.json'), contract)
+      for (const [path, text] of Object.entries(files)) {
+        mkdirSync(dirname(join(dir, path)), { recursive: true })
+        writeFileSync(join(dir, path), text)
+      }
+      write(dir, generate(dir, DEFAULTS))
+      return analyze(dir, 'throw').findings
+    } finally {
+      if (previous === undefined) delete process.env.VOS_DEFINITIONS
+      else process.env.VOS_DEFINITIONS = previous
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+
+  const header = '--!strict\nlocal rpc = require("../.app/rpc")\n'
+
+  test('a missing handler fails, and a function the contract does not declare is never called', () => {
+    const missing = check({ 'server/main.luau': `${header}local handlers: rpc.Handlers = { list = function() return {} end }\nreturn handlers\n` })
+    expect(missing.join('\n')).toContain('add')
+    // a function the contract does not declare is never dispatched (the router calls only declared methods), so it is no error
+    const extra = check({
+      'server/main.luau': `${header}local handlers: rpc.Handlers = {\n  list = function() return {} end,\n  add = function() return nil end,\n  other = function() return nil end,\n}\nreturn handlers\n`
+    })
+    expect(extra).toEqual([])
+  })
+
+  test('a handler of the wrong shape fails', () => {
+    const wrong = check({
+      'server/main.luau': `${header}local handlers: rpc.Handlers = {\n  list = function() return 5 end,\n  add = function() return nil end,\n}\nreturn handlers\n`
+    })
+    expect(wrong.length).toBeGreaterThan(0)
+  })
+
+  test('valid code of any shape passes: a local function, a required module, handlers built piece by piece', () => {
+    expect(
+      check({
+        'server/main.luau': `${header}local function addFn(_ctx: rpc.Context, params: rpc.AddParams): nil\n  local _title: string = params.title\n  return nil\nend\nlocal handlers: rpc.Handlers = { list = function() return {} end, add = addFn }\nreturn handlers\n`
+      })
+    ).toEqual([])
+    expect(
+      check({
+        'server/lists.luau': `--!strict\nlocal rpc = require("../.app/rpc")\nlocal function list(_ctx: rpc.Context): rpc.ListResult\n  return { "a" }\nend\nreturn list\n`,
+        'server/main.luau': `${header}local list = require("./lists")\nlocal handlers: rpc.Handlers = { list = list, add = function() return nil end }\nreturn handlers\n`
+      })
+    ).toEqual([])
+    expect(
+      check({
+        'server/main.luau': `${header}local function list(_ctx: rpc.Context): rpc.ListResult\n  return {}\nend\nlocal function add(_ctx: rpc.Context, _params: rpc.AddParams): rpc.AddResult\n  return nil\nend\nlocal handlers = { list = list }\nhandlers.add = add\nreturn handlers :: rpc.Handlers\n`
+      })
+    ).toEqual([])
   })
 })
 

@@ -11,8 +11,8 @@
  *     `rpc.d.ts` and `rpc.js` (the `app:rpc` module: `import { api, host } from 'app:rpc'`), `entry.js` (binds `app:rpc` to the
  *     host, then calls the app's `mount(el)`), `rpc.luau` (the types, the `Handlers` interface the developer implements, the
  *     router) and `entry.luau` (the backend's entry: the handlers behind the router);
- *   - fails the build when a method of the contract has no handler in `server/main.luau`, and warns about a handler the
- *     contract does not declare;
+ *   - fails the build when `server/main.luau` does not implement the generated `Handlers` interface (a declared method with
+ *     no handler, or one of the wrong shape): luau-lsp's strict check of the backend, so valid Luau of any shape passes;
  *   - builds the client into one classic script that defines `vosApp.mount` (`dist/client.js`, CSS folded in);
  *   - bundles the Luau backend into `dist/app.luau` and writes `dist/app-ref.json`, the app ref the host installs.
  *
@@ -23,7 +23,8 @@ import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync 
 import { join, resolve } from 'node:path'
 import type { Plugin } from 'vite'
 import { writeApp } from './backend.ts'
-import { DEFAULTS, generate, handlerProblems, readDefinition, write, type Options } from './generate.ts'
+import { DEFAULTS, generate, readDefinition, write, type Options } from './generate.ts'
+import { analyze, isGateRun, ToolMissing } from './luau-tools.ts'
 
 export type { Options } from './generate.ts'
 export { DefinitionError, parseDefinition } from './definition.ts'
@@ -53,19 +54,37 @@ export function vos(options: Partial<Options> = {}): Plugin {
   const settings: Options = { ...DEFAULTS, ...options }
   let root = process.cwd()
   let outDir = 'dist'
+  // a build that failed must not write an app ref: the one on disk (if any) is the last build that worked
+  let failed = false
 
-  /** Generate, and check the backend against the contract. */
+  /**
+   * Generate, and check the backend against the contract. The check is the Luau type checker's, not a pattern over the
+   * source: the generated `Handlers` type has one function per declared method, so a missing handler, a handler of the
+   * wrong shape, or one that is not declared is a type error in `server/main.luau`, and valid code of any shape (a handler
+   * defined in a required module, assigned from a local function, added to the table later) never fails.
+   */
   const regenerate = (warn: (message: string) => void): void => {
     write(root, generate(root, settings))
     const backend = resolve(root, settings.backend)
     if (!existsSync(backend)) throw new Error(`${settings.backend} not found: the backend returns one handler per method of ${settings.definition}`)
-    const { missing, undeclared } = handlerProblems(readDefinition(root, settings), readFileSync(backend, 'utf8'))
-    if (missing.length > 0) {
+    if (!settings.check) return
+    let result: ReturnType<typeof analyze>
+    try {
+      result = analyze(root, 'throw')
+    } catch (error) {
+      if (error instanceof ToolMissing && !isGateRun()) {
+        warn(`${error.message}\n  the backend was not checked against ${settings.definition}; the host refuses to load an app whose handlers do not match its contract`)
+        return
+      }
+      throw error
+    }
+    if (result.findings.length > 0) {
+      const shown = result.findings.slice(0, 8).join('\n')
+      const more = result.findings.length > 8 ? `\n... and ${result.findings.length - 8} more` : ''
       throw new Error(
-        `${settings.definition} declares ${missing.map((m) => `\`${m}\``).join(', ')}, but ${settings.backend} has no handler for ${missing.length === 1 ? 'it' : 'them'}`
+        `${settings.backend} does not match ${settings.definition} (luau-lsp, strict): every declared method needs a handler of the shape the contract gives it.\n${shown}${more}\nRun \`bun run typecheck\` for the whole report.`
       )
     }
-    for (const name of undeclared) warn(`${settings.backend} has a handler \`${name}\` that ${settings.definition} does not declare: the app will not load`)
   }
 
   return {
@@ -89,11 +108,16 @@ export function vos(options: Partial<Options> = {}): Plugin {
       return id === 'app:rpc' ? resolve(root, settings.generated, 'rpc.js') : null
     },
     buildStart() {
+      failed = false
       regenerate((message) => this.warn(message))
       this.addWatchFile(resolve(root, settings.definition))
       for (const file of luauUnder(resolve(root, settings.backend, '..'))) this.addWatchFile(file)
     },
+    buildEnd(error) {
+      if (error) failed = true
+    },
     closeBundle() {
+      if (failed) return
       const out = resolve(root, outDir)
       // a build that failed has no client script: its own error is the one to read
       if (!existsSync(join(out, CLIENT))) return

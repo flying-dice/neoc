@@ -12,7 +12,10 @@ import { dirname, join, relative, resolve } from 'node:path'
 /** The luau-lsp release the declarations are written for (its messages change between releases). */
 export const LUAU_LSP_VERSION = '1.70.1'
 
-const isGateRun = (): boolean => {
+/** A tool the check needs is not installed (`analyze` in `throw` mode says so with this, rather than ending the process). */
+export class ToolMissing extends Error {}
+
+export const isGateRun = (): boolean => {
   if (process.env.VOS_GATE === '1') return true
   const ci = process.env.CI
   return ci !== undefined && ci !== '' && ci !== 'false' && ci !== '0'
@@ -91,18 +94,23 @@ function offeredModules(definitions: string): Set<string> {
   return names
 }
 
-/** Check every Luau file of the project in strict mode. Returns the findings (empty: clean). */
-export function analyze(project: string): { files: string[]; findings: string[] } {
+/**
+ * Check every Luau file of the project in strict mode. Returns the findings (empty: clean). A missing tool ends the process
+ * (a skip on a developer machine, a failure in the gate) unless `mode` is `throw`, where it is a [`ToolMissing`] (or an
+ * `Error`, for a version the declarations are not written for) for the caller to decide, as the build does.
+ */
+export function analyze(project: string, mode: 'exit' | 'throw' = 'exit'): { files: string[]; findings: string[] } {
   const luauLsp = onPath('luau-lsp', join(homedir(), '.local/bin/luau-lsp'))
   if (!luauLsp) {
-    missing(
-      'luau check',
-      `luau-lsp not found: install the ${LUAU_LSP_VERSION} release binary from https://github.com/JohnnyMorganz/luau-lsp/releases/tag/${LUAU_LSP_VERSION} (on PATH or in ~/.local/bin)`
-    )
+    const message = `luau-lsp not found: install the ${LUAU_LSP_VERSION} release binary from https://github.com/JohnnyMorganz/luau-lsp/releases/tag/${LUAU_LSP_VERSION} (on PATH or in ~/.local/bin)`
+    if (mode === 'throw') throw new ToolMissing(message)
+    missing('luau check', message)
   }
   const version = spawnSync(luauLsp, ['--version'], { encoding: 'utf8' }).stdout.trim()
   if (version !== LUAU_LSP_VERSION) {
-    console.error(`luau check FAILED: ${luauLsp} is "${version}", the declarations are written for ${LUAU_LSP_VERSION}`)
+    const message = `${luauLsp} is "${version}", the declarations are written for ${LUAU_LSP_VERSION}`
+    if (mode === 'throw') throw new Error(`luau check: ${message}`)
+    console.error(`luau check FAILED: ${message}`)
     process.exit(1)
   }
   const definitionsPath = findDefinitions(project)
