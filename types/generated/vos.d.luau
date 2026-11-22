@@ -1799,6 +1799,8 @@ export type vos_ToolContext = {
 export type vos_HandlerContext = {
 	actor: vos_Actor,
 	now: string,
+	--- Ends the call with an application error (-32010) whose message the client's `rpc` rejects with: no file or line.
+	--- To fail with another JSON-RPC code, raise `error("RPC-32602 Title cannot be empty", 0)`.
 	fail: (self: vos_HandlerContext, message: string) -> any,
 }
 
