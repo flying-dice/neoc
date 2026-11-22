@@ -1,6 +1,6 @@
 ---
 name: pr-review
-description: Use when you are the reviewer on a pull request, neoc or vos — before giving a verdict (READY TO MERGE, with or without follow-ups, CHANGES NEEDED for blocking findings only, or HOLD), requesting changes, or posting review comments. Rounds continue until READY TO MERGE at the head. Runs the 11-gate rubric; G11 applies the vos checks (tests, stories and journeys, accessibility, boundaries, design, app readiness) when the diff touches vos paths.
+description: Use when you are the reviewer on a pull request, neoc or vos — before giving a verdict (READY TO MERGE, with or without items for a ticket, CHANGES NEEDED for blocking findings only, or HOLD), requesting changes, or posting review comments. Rounds continue until READY TO MERGE at the head. Runs the 11-gate rubric; G11 applies the vos checks (tests, stories and journeys, accessibility, boundaries, design, app readiness) when the diff touches vos paths.
 ---
 
 Assigned as reviewer: a fresh reviewer with no session context, independent of the author. Code speaks for itself. Author ran `pr-self-review` (its checklist over `REVIEW-READY.md`) — your job: prove their evidence, then find what they missed.
@@ -11,7 +11,7 @@ Honest and exact, weighed by time. Velocity and iteration speed are a key non-fu
 
 ## Process
 
-Cost-ordered. Phase 0–1 block → pass ends — no deep probing on a build a cheaper phase already failed. Phase 2–3 findings never end the pass — collect every finding, sort it into blocking or follow-up, post once.
+Cost-ordered. Phase 0–1 block → pass ends — no deep probing on a build a cheaper phase already failed. Phase 2–3 findings never end the pass — collect every finding, sort it into blocking or for a ticket, post once.
 
 ### Phase 0 — Dedupe
 - Fetch PR head SHA and unresolved thread count. Compare with your last review note.
@@ -38,17 +38,17 @@ Cost-ordered. Phase 0–1 block → pass ends — no deep probing on a build a c
    `refs/pr-review/` sits outside `refs/remotes/origin/*` — a `fetch --prune origin` from any agent cannot delete it, no remote branch can clobber it. SHA mismatch → head moved; back to Phase 0. Never `origin/<pr-source-branch>` — absent when the source branch is deleted or lives in a fork. Never check the PR branch out by name — the author's agent may own it.
 2. Run the rubric in reviewer mode, independently — do not start from the author's table. Fan-out per the rubric, `model: "opus"`.
 3. Failed scenario → full given/when/then in an inline comment for the author to automate.
-4. **Check gap** — a check you'd expect among the pre-PR checks is missing and you had to run it by hand to trust the change → raise a Jira ticket to add it. Don't let a manual run quietly paper over the gap.
+4. **Check gap** — a check you'd expect among the pre-PR checks is missing and you had to run it by hand to trust the change → add a line to your note's "For a ticket" list proposing the check; the author files it. Don't let a manual run quietly paper over the gap.
 
 ### Phase 4 — Post
 1. **Re-fetch head SHA.** Moved since Phase 0 → re-verify every finding against the new head. Mark each `STANDS` / `WITHDRAWN`; post only `STANDS`.
 2. Every `file:line` from `grep -n` / `sed -n` at head, run in this pass.
-3. Inline review comments. One thread per **blocking** finding, anchored at the head SHA (`commit_id` = head). Read the stored comment back after posting. Each "for a ticket" finding gets one line in the note under "For a ticket", and no thread; the author files it. You file no ticket. A bug you find in code the PR does not touch gets one Bug ticket in Jira NEOC (file, line, how to reproduce), named in the note.
+3. Inline review comments. One thread per **blocking** finding, anchored at the head SHA (`commit_id` = head). Read the stored comment back after posting. Each "for a ticket" finding gets one line in the note under "For a ticket", and no thread; the author files it. You file no ticket. A bug you find in code the PR does not touch is a line in the same list (file, line, how to reproduce); the author files it as a Bug.
 4. Multi-line bodies as JSON payloads (`gh api`). GET the review thread back; confirm it landed.
 5. Post the review comment.
 6. Count unresolved review threads via `gh api graphql` (`reviewThreads { isResolved }`). Never trust the review decision alone.
 7. Blocking findings → threads stay open, verdict CHANGES NEEDED; hand back with a PR comment that **@mentions the PR assignee once**. Reference other comments by link, not `@name`.
-8. No blocking finding (follow-ups or not) → post the review note with verdict **READY TO MERGE** at the head SHA. The author cannot approve their own PR and nothing reads GitHub approvals: the squash-merge requires this note, for the exact head SHA.
+8. No blocking finding (items for a ticket or not) → post the review note with verdict **READY TO MERGE** at the head SHA. The author cannot approve their own PR and nothing reads GitHub approvals: the squash-merge requires this note, for the exact head SHA.
 
 <!-- rubric:begin -->
 ## Rubric
@@ -59,7 +59,7 @@ Blocking: a gate is FAIL, and a merge is held, only for a real bug; data loss or
 
 Stop rules:
 - **Author mode**: `pr-self-review` runs its own checklist (over `REVIEW-READY.md`), which covers G1, G3, G4 and G11 of this rubric; an author may read the rest to see what the reviewer asks.
-- **Reviewer mode** (`pr-review`): G1 FAIL → hand back, stop — no probing a red or stale head. G2–G11 run in full; post every blocking finding in one pass and list the follow-ups beside them. A partial review buys another round.
+- **Reviewer mode** (`pr-review`): G1 FAIL → hand back, stop — no probing a red or stale head. G2–G11 run in full; post every blocking finding in one pass and list the items for a ticket beside them. A partial review buys another round.
 
 Local runs: run the pre-PR checks once at the head SHA (G1), then only what the rubric adds — unhappy-path probes, greps, link checks. A gate needing a check the pre-PR checks lack → run it by command and record the gap. Never mutate code, revert a fix, or loop a test N times to see it fail or to rule out a flake: judge a test by reading it and the code it covers, and run it once, targeted. A new test is fast (it fits the gate) or is `#[ignore = "slow: ..."]` under `bun run slow`.
 
@@ -121,7 +121,7 @@ Scope: PR description, commit messages, every comment and doc line added or edit
   - Playwright `click()` auto-scrolls → native `el.click()` for scroll assertions.
   - Signal races → in-process same-tick `process.kill`; external `kill(2)` never enters the window.
 - Removed or weakened test → justified in the description. Removed to satisfy a done-check = FAIL.
-- New test is fast: it runs in the gate's budget (CLAUDE.md, "The gate"), or it is `#[ignore = "slow: ..."]` and listed under `bun run slow`. A slow test in the gate is a follow-up to move it, unless it adds more than ~10 s to the gate: then FAIL.
+- New test is fast: it runs in the gate's budget (CLAUDE.md, "The gate"), or it is `#[ignore = "slow: ..."]` and listed under `bun run slow`. A slow test in the gate is an item for a ticket to move it, unless it adds more than ~10 s to the gate: then FAIL.
 
 ### G6 — Unhappy paths
 Given / when / then table. Each category run or `N/A — <reason>`:
@@ -293,7 +293,7 @@ Post on the PR. Every gate PASS, FAIL, or `N/A — <reason>`. No blanks.
 Mode: fan-out (4× opus, 5× when vos paths) | single-reader | degraded — <reason>
 Evidence audit: <n> rows re-derived, <m> mismatched
 Prior threads: <r> resolved, <s> stand
-New findings: <k> blocking, <f> follow-ups
+New findings: <k> blocking, <f> for a ticket
 
 - [ ] G1 Head & checks
 - [ ] G2 Claims ↔ evidence
@@ -322,10 +322,10 @@ detail
 
 - `bug` — breaks at runtime, loses data, opens a security hole, breaks an acceptance criterion, or violates the no-vos-leak or a crate boundary. Blocks.
 - `issue` — a failed gate (a pre-PR check that does not pass). Blocks.
-- `follow-up` — everything else, clean-code defects included (SRP/DRY/naming/coupling/dead/KISS, doc wording, extra test coverage, cosmetic issues). A line in the note under "For a ticket"; the author files it as a Bug or Story with the area's label; does not block. An untrue claim or a test that cannot fail is a `bug`, not a follow-up.
+- `ticket` — everything else, clean-code defects included (SRP/DRY/naming/coupling/dead/KISS, doc wording, extra test coverage, cosmetic issues). A line in the note under "For a ticket"; the author files it as a Bug or Story with the area's label; does not block. An untrue claim or a test that cannot fail is a `bug`, not a `ticket`.
 - `question` — an answer you need to decide whether something blocks. Blocks only until answered.
 
-Only `bug` and `issue` block. One unresolved thread per blocking finding. READY TO MERGE is forbidden while any blocking thread is open, and allowed with follow-ups listed. Name the gate in the summary: `**[bug]** G5 — regression test asserts the attribute, not the behaviour, so a host panic goes unnoticed`.
+Only `bug` and `issue` block. One unresolved thread per blocking finding. READY TO MERGE is forbidden while any blocking thread is open, and allowed with items for a ticket listed. Name the gate in the summary: `**[bug]** G5 — regression test asserts the attribute, not the behaviour, so a host panic goes unnoticed`.
 
 ## Focus
 
@@ -335,4 +335,4 @@ Regressions. Edge cases. Error paths. Concurrency. Rollback safety. Interface ch
 
 ## Out of scope
 
-Only what the linter already enforces — don't duplicate the tool. Targeted runs the rubric demands (unhappy-path probes) are in scope; mutation testing (editing code to see a test fail, reverting a fix, looping a test) is not, and neither is re-running checks the fix delta does not touch. Everything else with a clean-code or correctness basis is a finding: it blocks only if it is a `bug` or `issue`, otherwise it is a follow-up.
+Only what the linter already enforces — don't duplicate the tool. Targeted runs the rubric demands (unhappy-path probes) are in scope; mutation testing (editing code to see a test fail, reverting a fix, looping a test) is not, and neither is re-running checks the fix delta does not touch. Everything else with a clean-code or correctness basis is a finding: it blocks only if it is a `bug` or `issue`, otherwise it is for a ticket.

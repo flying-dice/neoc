@@ -298,7 +298,7 @@ current epic is **NEOC-155**. (Older comments cite AGOS-n keys; they stay valid.
 4. Self-review with the `pr-self-review` skill and post its `Self-review` note on the PR for the head SHA. Its checklist is
    [REVIEW-READY.md](REVIEW-READY.md): read that file when you start a change, not only at the end.
 5. Hand off to an independent `pr-review` pass: a fresh reviewer with no session context, who posts a verdict note for the head
-   SHA (`READY TO MERGE`, with or without follow-ups, `CHANGES NEEDED` for blocking findings only, or `HOLD`). Rounds continue
+   SHA (`READY TO MERGE`, with or without items for a ticket, `CHANGES NEEDED` for blocking findings only, or `HOLD`). Rounds continue
    until `READY TO MERGE` at the exact head; each re-review reads the fix delta as new code, so it also catches regressions
    the fix introduced. Only a real bug, data loss or a security hole, a broken
    acceptance criterion, a failing gate, an untrue claim, a test that cannot fail, or a no-vos-leak or boundary violation

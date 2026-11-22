@@ -11,25 +11,26 @@ input, breaks it half way and checks every sentence: do those things first.
 Nothing in this product is novel: a sandboxed frame, form controls, a generated client, a queue for a slow consumer and
 input validation are all solved classes of problem. Don't plug holes one at a time.
 
-**0.1 Before you design, find who has already solved it.** Name the class of problem. Name the established solutions:
-libraries, the protocol or specification, how two or three mature systems do it. Read which edge cases they handle; those
-are the review findings you would otherwise meet one at a time. Then choose adopt, adapt or build, and give the reason.
-Adopting is the default, and building needs the justification. A new dependency needs the owner's sign-off: raise it early
-with your recommendation, and don't build by hand to avoid asking.
+**0.1 Before you design, find who has already solved it.** Name the class of problem and how it is solved elsewhere: the
+established pattern, protocol or standard first, then how two or three mature systems do it. Read which edge cases they
+handle; those are the review findings you would otherwise meet one at a time. Adopt the pattern or standard. Adopt a
+library when it solves the class and stays out of the way; don't take one that dictates how the product must work. A new
+dependency needs the owner's sign-off, and one in the product's core path is asked about before you try it. Build only with
+a stated reason.
 *Evidence:* the class, the solutions you read, and the choice with its reason, in your first report and in the body.
 *Cost:* #58 re-implemented what native form controls and the shell's `Button` already do, and took six rounds over forms,
 disabled states, touch targets and clicks.
 
 **0.2 When the same kind of finding comes back a second time, stop and ask why five times.** Don't patch the case. Go up
 past the implementation: why does this design make the mistake possible, and why are we maintaining this ourselves? Write
-the five whys down and take them to the coordinator and the owner as a question with options, before the next push.
-*Evidence:* the five whys and the options, linked from the reply. *Cost:* one app starved the shell's shared connection
-three times in three forms on #56. Generated names and the output folder came back in each of #57's three rounds.
+the five whys down and take them to the owner, through whoever assigned the work, as a question with options, before the
+next push.
+*Evidence:* the five whys and the options, linked from the reply. *Cost:* #56 starved the shell's connection in three forms.
 
 ## 1. When you design
 
-**1.1 Answer the reviewer's questions before they ask.** If you were given the questions your reviewer will get, answer each
-one in the pull request body. If not, the sections of this file are the questions.
+**1.1 Answer the reviewer's questions before they ask.** If whoever assigned the work gave you the reviewer's questions,
+answer each one in the pull request body. If not, the sections of this file are the questions.
 *Evidence:* one answer per question in the body. *Cost:* #61 answered each note of #59's final review and passed in one round.
 
 **1.2 Put the reference next to your design.** Name what the change must match: the shell's own component, the native

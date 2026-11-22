@@ -38,8 +38,8 @@ Each line is a rule in REVIEW-READY.md. The note carries one row per line.
 
 | # | Rule | Evidence the row must carry |
 |---|---|---|
-| 0.1 | Who has already solved it | the class of problem, the solutions read, adopt/adapt/build and why |
-| 0.2 | Five whys on a repeat (re-request) | the five whys and the options sent to the coordinator, or "no repeat" |
+| 0.1 | Who has already solved it | the class of problem; the pattern, standard and mature systems read; adopt/adapt/build and why; any library in the core path cleared with the owner first |
+| 0.2 | Five whys on a repeat (re-request) | the five whys and the options sent to the owner through whoever assigned the work, or "no repeat" |
 | 1.1 | Reviewer's questions answered | where in the body each one is answered |
 | 1.2 | Reference matched | the reference named; each difference and why |
 | 1.3 | Invariants for shared resources, no timer decides | each queue, limit, cap and timeout: the invariant and its test; any timer and why |
