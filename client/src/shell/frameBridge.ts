@@ -41,6 +41,7 @@ const fromFrame = z.discriminatedUnion('t', [
     args: z.unknown().optional()
   }),
   z.object({ t: z.literal('ready') }),
+  z.object({ t: z.literal('pong'), id: z.number().int().nonnegative() }),
   z.object({ t: z.literal('failed'), message: z.string().max(1000) })
 ])
 
@@ -49,6 +50,7 @@ export type ToFrame =
   | { t: 'res'; id: number; result: unknown }
   | { t: 'res'; id: number; error: string }
   | { t: 'event'; name: string; data: unknown }
+  | { t: 'ping'; id: number }
 
 export interface FrameBridgeOptions {
   /** The app this frame belongs to: fixed when the frame is made. */
@@ -70,6 +72,11 @@ export interface FrameBridge {
   receive(event: { source: unknown; data: unknown }): void
   /** Send the frame an event (`host:theme`, or one the backend emitted). */
   event(name: string, data: unknown): void
+  /**
+   * Ask the frame's document whether it is the client's: the bridge script of the host answers (`pong`), a page the frame
+   * navigated itself to does not. Resolves `true` with the answer, `false` after `ms` without one.
+   */
+  ping(ms: number): Promise<boolean>
   /** The frame is going away: answers still on their way are dropped. */
   dispose(): void
 }
@@ -116,6 +123,8 @@ export function refuseArgs(args: unknown): string | null {
 export function createFrameBridge(options: FrameBridgeOptions): FrameBridge {
   const { appId } = options
   let disposed = false
+  let nextPing = 1
+  const waiting = new Map<number, () => void>()
   const post = (message: ToFrame): void => {
     if (!disposed) options.post(message)
   }
@@ -161,6 +170,9 @@ export function createFrameBridge(options: FrameBridgeOptions): FrameBridge {
             )
           return
         }
+        case 'pong':
+          waiting.get(message.id)?.()
+          return
         case 'ready':
           options.onReady?.()
           return
@@ -172,8 +184,23 @@ export function createFrameBridge(options: FrameBridgeOptions): FrameBridge {
     event(name, data) {
       post({ t: 'event', name, data })
     },
+    ping(ms) {
+      if (disposed) return Promise.resolve(false)
+      const id = nextPing++
+      return new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => settle(false), ms)
+        function settle(answered: boolean): void {
+          clearTimeout(timer)
+          waiting.delete(id)
+          resolve(answered)
+        }
+        waiting.set(id, () => settle(true))
+        post({ t: 'ping', id })
+      })
+    },
     dispose() {
       disposed = true
+      for (const answer of [...waiting.values()]) answer()
     }
   }
 }

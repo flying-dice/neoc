@@ -158,6 +158,23 @@ describe('the frame bridge', () => {
     expect(posted).toEqual([])
   })
 
+  test('a ping is answered by the client’s bridge and not by a page the frame went to', async () => {
+    const { bridge, posted } = rig(async () => null)
+    const answered = bridge.ping(1000)
+    const sent = posted[0] as { t: string; id: number }
+    expect(sent.t).toBe('ping')
+    bridge.receive({ source: FRAME, data: { t: 'pong', id: sent.id } })
+    expect(await answered).toBe(true)
+    expect(await bridge.ping(5)).toBe(false)
+    // a pong from another window, or for another ping, settles nothing
+    const other = bridge.ping(20)
+    bridge.receive({
+      source: { other: true },
+      data: { t: 'pong', id: (posted.at(-1) as { id: number }).id }
+    })
+    expect(await other).toBe(false)
+  })
+
   test('events go into the frame', () => {
     const { bridge, posted } = rig(async () => null)
     bridge.event('host:theme', 'dark')
