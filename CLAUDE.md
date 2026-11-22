@@ -25,9 +25,10 @@ two products, and one set of rules for both:
     the backend in one `neoc-vm` VM per app (the `vos-lua` adapter), loaded from an app ref over `file://`, `http://` or
     `https://`, serves the client's files at `/apps/<id>/static/` and holds it in a frame of the app's window, or of its
     own page at `/apps/<id>`. Examples: `apps/calculator-web` (the Calculator built this way: a Svelte keypad on the
-    kit, its arithmetic in Luau), `e2e/apps/tasks-svelte`, `e2e/apps/tasks-react`; `apps/README.md` is the reference for
-    writing one. The Calculator (`apps/calculator`) and Agents are still **view-tree apps** (no client: their Luau
-    describes the screens) until NEOC-298 retires them; `calculator-web` then takes the id `calculator`.
+    kit, its arithmetic in Luau), `apps/agents` (chats with agents: its page reaches the conversations through the host
+    page's `vos/agui/*` services), `e2e/apps/tasks-svelte`, `e2e/apps/tasks-react`; `apps/README.md` is the reference for
+    writing one. The Calculator (`apps/calculator`) is still a **view-tree app** (no client: its Luau describes the
+    screens) until NEOC-298 retires it; `calculator-web` then takes the id `calculator`.
   - **The client** (`client/`, a Vite + Svelte 5 PWA): the shell. It owns pairing, the desktop, windows, Discover and
     Settings, and runs each app's client in a sandboxed frame of its own (`organisms/AppFrame.svelte`, `shell/hostBridge.ts`);
     the standalone host page of an app is `wrapper/main.svelte.ts`, over the same registry of host services (`shell/hostServices.ts`);
@@ -161,7 +162,7 @@ copy, is in git history at `51f47f4`: `git show 51f47f4:docs/architecture/ui-sys
   second `load` with no hello of its own (the bridge's `ui/initialize`, sent before any app code runs) and says the app left its page. Every call the client makes, to its own backend or to a host API, goes by
   `postMessage` to the **host page** that holds the frame (the shell, or the standalone page `GET /apps/<app>`), never directly
   to a backend; the bridge is JSON-RPC 2.0 in a dialect of MCP Apps, and both host pages serve the same registry of host
-  services from the same code (`client/src/shell/hostServices.ts`), so a host API registered once is in both. **The app is the
+  services from the same code (`client/src/shell/hostServices.ts`; agent chat, `vos/agui/*`, in `hostServices/agui.ts`), so a host API registered once is in both. **The app is the
   frame's, never the message's:** each frame has a bridge made for its own app id and its own `contentWindow`
   (`client/src/shell/hostBridge.ts`), a message is only believed when `event.source` is that window, and nothing a client sends
   names an app (`app.call` is always sent for the bridge's own app). **An app's static files are public** (a sandboxed page
@@ -180,7 +181,7 @@ copy, is in git history at `51f47f4`: `git show 51f47f4:docs/architecture/ui-sys
   codegen output and the tests, in that order. Never a side channel (no extra route, raw socket or global); client and host talk
   only through the protocol: JSON-RPC on `/rpc`, AG-UI on `/agui`, and an app's page (`/apps/<app>`: its static files, the bridge script, the standalone
   host page, and the JSON-RPC messages between a frame and its host page: `ui/initialize`, `ui/notifications/*`, `vos/event`,
-  `vos/failed`, an app's own methods).
+  `vos/failed`, the host services such as `vos/agui/*`, an app's own methods).
 - **Release what you open.** The host registers and unregisters apps at runtime, so an adapter's resources (VMs, DB handles,
   watchers, agent processes) are dropped on unload; a neoc module registers whatever it starts with the engine's `Life`.
 

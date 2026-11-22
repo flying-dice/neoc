@@ -10,8 +10,8 @@
  *    resident window are evicted past a cap;
  *  - the offline rule: a request that cannot be sent is remembered and re-run when the socket is back.
  *
- * `text` and `thread` sources (CodeEditor documents, chat transcripts) are tier 2/3 and not implemented here:
- * their patches are reported and ignored.
+ * `text` sources (CodeEditor documents) are tier 2/3 and not implemented here: their patches are reported and
+ * ignored.
  */
 import type {
   Expr,

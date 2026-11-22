@@ -1,0 +1,29 @@
+{
+  "name": "@vos-apps/agents",
+  "private": true,
+  "type": "module",
+  "version": "0.2.0",
+  "description": "Agents: chat with the agents on this host. A Svelte client on the kit's tokens (the chat reaches the host through the vos/agui host services) and a Luau backend that keeps the list of chats. `bun run build` writes the app ref (dist/app-ref.json, app.luau, static/).",
+  "scripts": {
+    "generate": "vos generate",
+    "build": "vite build",
+    "dev": "vite build --watch",
+    "test": "bun test src",
+    "typecheck": "vos typecheck && svelte-check --tsconfig ./tsconfig.json",
+    "lint": "vos lint",
+    "format": "vos format"
+  },
+  "dependencies": {
+    "@ag-ui/core": "1.0.5",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@types/bun": "1.4.4",
+    "@vos/vite-plugin": "workspace:*",
+    "svelte": "^5.57.2",
+    "svelte-check": "^4.7.6",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.4"
+  }
+}

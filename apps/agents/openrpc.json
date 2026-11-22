@@ -1,0 +1,100 @@
+{
+  "openrpc": "1.3.2",
+  "info": {
+    "title": "Agents",
+    "version": "0.2.0",
+    "description": "Chat with the agents on this host. The backend keeps the list of chats; the conversation itself lives with the host and reaches the page through the vos/agui host services."
+  },
+  "x-app": {
+    "id": "agents",
+    "icon": "sparkles",
+    "tint": "orange",
+    "description": "Chat with the agents on this host: they can use your apps, and you see what they do.",
+    "window": {
+      "w": 960,
+      "h": 640,
+      "minW": 480,
+      "minH": 420
+    }
+  },
+  "methods": [
+    {
+      "name": "agents",
+      "summary": "The agents on this host's roster, to start a chat with.",
+      "params": [],
+      "result": {
+        "name": "agents",
+        "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Agent" } }
+      }
+    },
+    {
+      "name": "chats",
+      "summary": "Every chat, most recently used first (at most 200), and the one that was open when the window last closed.",
+      "params": [],
+      "result": { "name": "chats", "schema": { "$ref": "#/components/schemas/ChatList" } }
+    },
+    {
+      "name": "startChat",
+      "summary": "Start a new, empty chat with an agent on the roster, and make it the open one.",
+      "params": [
+        { "name": "agentId", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 128 } }
+      ],
+      "result": { "name": "chat", "schema": { "$ref": "#/components/schemas/Chat" } },
+      "errors": [{ "code": -32010, "message": "There is no agent with that id on this host." }]
+    },
+    {
+      "name": "openChat",
+      "summary": "Remember which chat is open (null: none), so the window opens on it next time.",
+      "params": [
+        { "name": "id", "required": false, "schema": { "type": ["string", "null"], "maxLength": 64 } }
+      ],
+      "result": { "name": "chats", "schema": { "$ref": "#/components/schemas/ChatList" } },
+      "errors": [{ "code": -32010, "message": "There is no chat with that id." }]
+    },
+    {
+      "name": "noteMessage",
+      "summary": "The person sent a message in a chat: the first one names it, and every one moves it to the top.",
+      "params": [
+        { "name": "id", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 64 } },
+        { "name": "text", "required": true, "schema": { "type": "string", "maxLength": 100000 } }
+      ],
+      "result": { "name": "chat", "schema": { "$ref": "#/components/schemas/Chat" } },
+      "errors": [{ "code": -32010, "message": "There is no chat with that id." }]
+    }
+  ],
+  "components": {
+    "schemas": {
+      "Agent": {
+        "type": "object",
+        "description": "An agent on the roster: only what the person needs to pick one.",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "role": { "type": "string" },
+          "avatar": { "type": ["string", "null"], "description": "An icon name, when the agent has one." }
+        },
+        "required": ["id", "name", "role"]
+      },
+      "Chat": {
+        "type": "object",
+        "description": "One chat as the list shows it. Its conversation is the host's thread `agents:<id>`.",
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "agentId": { "type": "string" },
+          "agentName": { "type": "string" },
+          "updatedAt": { "type": "string", "description": "When it was last used (ISO 8601, UTC)." }
+        },
+        "required": ["id", "title", "agentId", "agentName", "updatedAt"]
+      },
+      "ChatList": {
+        "type": "object",
+        "properties": {
+          "chats": { "type": "array", "items": { "$ref": "#/components/schemas/Chat" } },
+          "open": { "type": ["string", "null"], "description": "The chat that is open, if it still exists." }
+        },
+        "required": ["chats"]
+      }
+    }
+  }
+}

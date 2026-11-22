@@ -65,8 +65,6 @@ export interface FakeApp {
   clientDecls: Record<string, ClientDecl>
   state: Record<string, StateSpec>
   sources: Record<string, SourceSpec>
-  /** Chat threads: declared to the client, but their data comes over `/agui`, never as a source patch. */
-  threads?: Record<string, SourceDecl & { kind: 'thread' }>
   tree(view: FakeView): Node
   /** An event from the client; throw `new Error(msg)` for an `AppError`. */
   onEvent?(view: FakeView, event: ViewEventParams): void | Promise<void>
@@ -304,7 +302,6 @@ export class FakeHost {
       view.sources.set(id, { params: this.paramsFor(view, spec), range, sent: new Map() })
       data[id] = this.patchFor(view, id, true)
     }
-    Object.assign(sources, this.app.threads)
     return {
       viewId: view.id,
       proto: PROTO,

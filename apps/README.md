@@ -10,8 +10,9 @@ the client, and the implementation of the handlers; nothing else on either side 
 `apps/calculator-web` is the reference app to copy: the Calculator, a Svelte keypad drawn with the kit's `ui-button`, on a
 Luau backend with one method (its README says how it is laid out and where its state lives). `e2e/apps/tasks-svelte` and
 `e2e/apps/tasks-react` are the same task list written once in each framework, on the same contract and the same backend
-(test fixtures, not in Discover). The older view-tree apps, `apps/calculator` and `apps/agents`, have no client: their Luau describes the screens instead (see "View-tree apps" below;
-NEOC-298 ports them and retires that model). The backend API is typed in `types/generated/vos.d.luau` (generated from the
+(test fixtures, not in Discover). `apps/agents` is a larger one: chats with agents, its page on the kit's tokens, the
+conversations reached through the host page's agent chat services (below). The older view-tree app, `apps/calculator`, has no
+client: its Luau describes the screens instead (see "View-tree apps" below; NEOC-298 ports it and retires that model). The backend API is typed in `types/generated/vos.d.luau` (generated from the
 Rust schema by `bun run codegen`; never edit it): every `app.*` call and every `std:`/`lib:`/`vnd:` module an app may
 `require`. It is the reference; hover docs show in an editor running luau-lsp with
 `luau-lsp.types.definitionFiles = { "@vos": "types/generated/vos.d.luau" }` and `luau-lsp.platform.type = "standard"`.
@@ -169,6 +170,12 @@ host.on('tasks.changed', () => reload())
 
 Set `data-testid` on every interactive element yourself (`<appId>-<thing>`).
 
+**The repository checks your client's `src/`** (`bun run lint:boundaries`, part of `bun run lint`): no `{@html}`,
+`innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write` or Lit's `unsafeHTML`/`unsafeSVG` (text from an agent, a tool
+or a person is shown as text: build nodes), no Node or Bun builtin (the page runs in a browser), no `@vos/*` import (the host
+serves the kit at `/kit/`; the shell's own UI is not an app's), and no relative import out of the project. The same holds for
+`e2e/apps/*/src`.
+
 **In a shell window the window's grabber (its three dots) is drawn over the top of the frame**: keep the top 28 px clear of
 text and controls (the Calculator pads its top by that much).
 
@@ -180,6 +187,30 @@ text and controls (the Calculator pads its top by that much).
 | `host.ready`, `host.capabilities`, `host.hosted` | the handshake is done; what the host offers (MCP Apps' `hostCapabilities`); and whether the host page draws UI of its own (true in the shell, false on the app's own page) |
 | `host.openLink(url)`, `host.requestDisplayMode(mode)` | `ui/open-link` (http and https only) and `ui/request-display-mode` (answers with the mode the host ended in) |
 | `host.onTeardown(fn)` | `fn` runs when the host is about to remove the page (`ui/resource-teardown`), for an app that must wrap up; an app that ignores it simply has its frame removed |
+
+**Chatting with an agent from a page** (`vos/agui/*`, through `host.call`). The host keeps agent conversations as AG-UI
+threads (`/agui`: the messages, tool calls, permission prompts, the agent's session settings) and talks to the agents over
+ACP. A page cannot reach `/agui` itself, so both host pages offer it as services, making each request with their own session.
+A chat id is the page's own (1 to 64 letters, digits, `-` or `_`); the host page puts the frame's app in front of it
+(`<app>:<id>`), so a page reaches only its own app's chats, whatever id it sends. `apps/agents/src/agui` is a complete client
+(`ChatSession` and its transport); `client/src/shell/hostServices/agui.ts` is the reference.
+
+| | |
+|---|---|
+| `vos/agui/thread {threadId, agentId}` | ensure the chat (and start its agent session): its snapshot `{threadId, agentId, running, state, messages, interrupts}` |
+| `vos/agui/run {threadId, runId, agentId, messages}` or `{..., resume}` | start a turn (a user message, or the answers to the open permission prompts); answers `{}` once the host is streaming it, or an error with the host's reason (the agent could not start, the chat is already answering) |
+| `vos/agui/events {threadId, runId, after}` | the run's AG-UI events after event number `after`, as `{events, last, done}`: pull again with `after: last` until `done`. A pull waits for the next event but answers within 25 s (an empty batch, `done: false`); asking again with the same `after` gives the same events, so a lost answer loses nothing |
+| `vos/agui/cancel {threadId}` | stop the turn (and resolve its open permission prompts) |
+| `vos/agui/detach {threadId}` | stop receiving the run: the host treats it as a client gone, as when the window closes |
+| `vos/agui/settings {threadId, change}` | `change` is `{mode}` or `{config: {id, value}}`; answers the chat's state |
+
+What holds: a call's params are checked (an unknown key, a bad id, a message over 1,000,000 bytes is `-32602` and nothing is
+sent); a window may have 4 runs streaming at once (the fifth is refused with `-32000` and a message to show the person); the
+host page keeps at most 1 MiB of a run's events that the page has not pulled, and then stops reading until it does. Closing
+the window (uninstalling or disabling the app closes it too) or reloading the page ends its streams; reloading the app's
+backend does not touch them: the host cancels a turn that is not waiting on
+a permission prompt and keeps one that is, so opening the chat again (`vos/agui/thread`) shows the prompt. What an agent or a
+tool says is untrusted: render it as text (`bun run lint:boundaries` refuses `{@html}` and `innerHTML` in an app's `src/`).
 | `host.call(method, params?)` | a service of the host page by name (`vos/...`; the services are listed here as they are added, and none is offered yet), params by name; resolves with the host's answer as `unknown` (check what you read), rejects with an `RpcError`: `-32601` `This host does not offer <method>` when this host page does not have it, `-32602` before anything is sent when the name does not start with `vos/` (your own methods are on `api`) or the params are not an object |
 
 **What the frame is.** An app is served as static files at `/apps/<id>/static/` and runs in an `<iframe sandbox="allow-scripts allow-forms">`
@@ -401,7 +432,7 @@ local calc = require("./calc")   -- a module of this package, inlined at build t
 | `app.files.documents`, `.cache`, `.temp` | the app's managed files: `read`, `write`, `list`, `info`, `createDir`, `remove`, `move`, `copy` (see "Files") |
 | `app.tool { name, title, description, readOnly, input, run }` | an agent tool (MCP name `<id>__<name>`, local name `[a-z][a-z0-9_]*`) |
 | `app.notify { title, body }`, `w:toast { ... }` | a notification (see "Notifications" below), an in-window message |
-| `app:openWindow(name, params)`, `app.thread()`, `app.agents:list()` | bring a window forward, a chat source for `ChatTranscript`, the roster (`{ id, name, avatar, role }` only) |
+| `app:openWindow(name, params)`, `app.agents:list()` | bring a window forward, the roster (`{ id, name, avatar, role }` only) |
 
 Constructors are table calls, StyLua-formatted: positional entries are children (or the text), named keys are props, slots
 and handlers: `ui.Button { key = "key-7", title = "7", onTap = function() press("7") end }`. Apps never style: props take
