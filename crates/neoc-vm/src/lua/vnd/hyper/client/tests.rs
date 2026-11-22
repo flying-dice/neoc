@@ -494,8 +494,6 @@ async fn error_kind_reads_our_strings_only() {
     assert_eq!(out, "ok");
 }
 
-/// The server drops the connection with part of the body sent.
-
 // ---------------------------------------------------------------------------
 // timeouts
 // ---------------------------------------------------------------------------
