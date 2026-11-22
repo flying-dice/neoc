@@ -45,18 +45,23 @@ and `NEOC_VERSION` choose where and which). While the repository is private the 
 -- notes.lua
 local fs   = require("std:fs")
 local json = require("vnd:serde_json")
+local null = require("lib:json").null -- the JSON null sentinel is lib:json's; vnd:serde_json has none
 
--- a parse result is a handle, `json.null` or a scalar: cast a container to the handle you expect
-local doc = assert(json.from_str('{"name": "neoc", "tags": ["lua", "rust"]}')) :: lib_json_Object
+-- a parse result is a handle, `null` or a scalar: cast a container to the handle you expect
+local doc = assert(json.from_str('{"name": "neoc", "tags": ["lua", "rust"], "owner": null}')) :: lib_json_Object
 
 local text = assert(json.to_string_pretty(doc))
 assert(fs.write("notes.json", text))
 print("saved " .. tostring(doc:get("name")))
+if doc:get("owner") == null then
+  print("no owner yet")
+end
 ```
 
 A container in a parse result (or a `get` result) is narrowed with a cast, as above: luau-lsp narrows the handle types to
-nothing on `type(v) == "userdata"`, and `type(v) == "table"` is false at run time. Test for a JSON `null` with `v ==
-json.null`: its type, `lib_json_JsonNull`, is structurally empty, so any table satisfies it. `types/fixtures/readme.luau`
+nothing on `type(v) == "userdata"`, and `type(v) == "table"` is false at run time. A JSON `null` is the sentinel
+`require("lib:json").null` (`vnd:serde_json` has no `null` of its own): test for it with `==`, as above, not by type,
+because its type, `lib_json_JsonNull`, is structurally empty and any table satisfies it. `types/fixtures/readme.luau`
 holds this example, checked in strict mode.
 
 `require("namespace:name")` is the only way in: no ambient globals, no path search; an unknown name errors with the catalogue.
