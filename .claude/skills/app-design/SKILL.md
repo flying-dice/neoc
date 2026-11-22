@@ -103,7 +103,7 @@ An app's design is done for now when **one round** shows all of these:
 
 - every journey succeeded for **all three** participants;
 - mean ease ≥ **6.0** out of 7;
-- **no blocker or major** findings open (minor and polish items may become follow-ups);
+- **no blocker or major** findings open (minor and polish items are filed by the author as Bug or Story tickets with the area's label);
 - conformance ≥ **90**, with **no category below 70**;
 - automated checks green.
 
