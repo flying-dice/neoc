@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { createHostChannel, HostError } from './channel'
+import { callWhenConnected, createHostChannel, HostError } from './channel'
 
 type Status = 'connecting' | 'open' | 'closed'
 
@@ -111,5 +111,48 @@ describe('the shell channel', () => {
     wire.receive({ jsonrpc: '2.0', id: 's9', method: 'ui.ask', params: {} })
     expect(seenBySession).toHaveLength(1)
     expect(wire.sent).toEqual([]) // the shell did not answer "method not found" on the session's behalf
+  })
+
+  test('the standalone page’s call waits for the connection and hands the options on, open or not', async () => {
+    const seen: { method: string; options: unknown }[] = []
+    const listeners = new Set<(s: 'connecting' | 'open' | 'closed') => void>()
+    const fake = {
+      transport: {
+        status: 'connecting' as 'connecting' | 'open' | 'closed',
+        onStatus: (l: (s: 'connecting' | 'open' | 'closed') => void) => (
+          listeners.add(l),
+          () => void listeners.delete(l)
+        )
+      },
+      call: async (method: string, _params?: object, options?: object) => (
+        seen.push({ method, options }),
+        'done'
+      )
+    }
+    const options = { timeoutMs: 0, signal: new AbortController().signal }
+    const waiting = callWhenConnected(fake as never, 'app.call', {}, options)
+    expect(seen).toEqual([]) // not yet: the socket is not open
+    fake.transport.status = 'open'
+    listeners.forEach((l) => l('open'))
+    expect(await waiting).toBe('done')
+    expect(await callWhenConnected(fake as never, 'app.call', {}, options)).toBe('done')
+    // both ways the bridge's `{ timeoutMs: 0, signal }` arrived, so a call over 30 s is not cut off and can be cancelled
+    expect(seen).toEqual([
+      { method: 'app.call', options },
+      { method: 'app.call', options }
+    ])
+  })
+
+  test('the standalone page gives up on a connection that never opens, with the host’s message', async () => {
+    const fake = {
+      transport: { status: 'connecting' as const, onStatus: () => () => undefined },
+      call: async () => 'never'
+    }
+    await expect(
+      callWhenConnected(fake as never, 'app.call', {}, undefined, 5)
+    ).rejects.toMatchObject({
+      code: -32000,
+      message: 'Not connected to vos'
+    })
   })
 })

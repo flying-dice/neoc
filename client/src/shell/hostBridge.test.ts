@@ -10,7 +10,7 @@ import {
   type HostBridge,
   type ToFrame
 } from './hostBridge'
-import { MAX_IN_FLIGHT_PER_FRAME } from './callGate'
+import { createCallGate, MAX_IN_FLIGHT_PER_FRAME } from './callGate'
 import { contextChange, hostContextOf, type HostContext } from './hostContext'
 import { baseServices, ServiceRegistry } from './hostServices'
 
@@ -529,5 +529,32 @@ describe('eventFor', () => {
     ).toBeNull()
     expect(eventFor('notes', 'window.open', { app: 'notes', name: 'x', data: null })).toBeNull()
     expect(eventFor('notes', 'app.event', { app: 'notes' })).toBeNull()
+  })
+
+  test('a call refused because too many wait for the frame carries the host’s busy code (-32000), not the client’s timeout code', async () => {
+    const posted: ToFrame[] = []
+    const context = hostContextOf({
+      appearance: 'light',
+      displayMode: 'inline',
+      availableDisplayModes: ['inline']
+    })
+    const bridge = createHostBridge({
+      appId: 'notes',
+      frame: () => FRAME,
+      post: (m) => posted.push(m),
+      call: () => new Promise(() => undefined), // the host never answers
+      services: baseServices({
+        context: () => context,
+        openLink: () => undefined,
+        setDisplayMode: (m) => m
+      }),
+      context: () => context,
+      gate: createCallGate({ total: 1, perFrame: 1, maxWaiting: 1 })
+    })
+    for (const id of [1, 2, 3]) bridge.receive({ source: FRAME, data: request(id, 'list', {}) })
+    await new Promise((r) => setTimeout(r, 0))
+    const refused = posted.filter((m) => 'error' in m)
+    expect(refused).toHaveLength(1) // the first runs, the second waits, the third is refused
+    expect(refused[0]).toMatchObject({ id: 3, error: { code: -32000 } })
   })
 })

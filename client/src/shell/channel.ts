@@ -122,3 +122,30 @@ export function createHostChannel(base: Transport, timeoutMs = 30_000): HostChan
     }
   }
 }
+
+/**
+ * A host call that waits for the connection, for a little while: a page whose frame may ask before its socket is open (the
+ * standalone page) calls through this. The options (`timeoutMs`, `signal`) are the caller's and reach `channel.call` whichever way the
+ * call goes, so an `app.call` has the same lifetime on the standalone page as in a window.
+ */
+export function callWhenConnected(
+  channel: Pick<HostChannel, 'transport' | 'call'>,
+  method: string,
+  params: Params,
+  options?: CallOptions,
+  waitMs = 10_000
+): Promise<unknown> {
+  if (channel.transport.status === 'open') return channel.call(method, params, options)
+  return new Promise<unknown>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      stop()
+      reject(new HostError(-32000, 'Not connected to vos'))
+    }, waitMs)
+    const stop = channel.transport.onStatus((status) => {
+      if (status !== 'open') return
+      stop()
+      clearTimeout(timer)
+      channel.call(method, params, options).then(resolve, reject)
+    })
+  })
+}

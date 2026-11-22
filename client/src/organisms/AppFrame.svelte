@@ -14,6 +14,7 @@
   import { host } from '../lib/host.svelte'
   import { settings } from '../lib/settings.svelte'
   import { windowManager } from '../lib/windowManager.svelte'
+  import { focusFrame } from '../shell/frameFocus'
   import { createHostBridge, eventFor, type HostBridge } from '../shell/hostBridge'
   import { contextChange, hostContextOf, type HostContext } from '../shell/hostContext'
   import { baseServices } from '../shell/hostServices'
@@ -184,9 +185,7 @@
   $effect(() => {
     if (phase !== 'ready' || windowManager.focusedId !== windowId) return
     void tick().then(() => {
-      const active = document.activeElement
-      if (active && active !== document.body && !active.closest('[data-launcher]')) return
-      iframe?.contentWindow?.focus()
+      if (iframe) focusFrame(iframe)
     })
   })
 

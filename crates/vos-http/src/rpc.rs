@@ -350,7 +350,7 @@ async fn serve_socket(socket: WebSocket, handler: Arc<dyn RpcHandler>, device: O
                 if is_ordered(&job.1) {
                     let _ = ordered_tx.send((job, permit)); // one at a time, in the order sent
                 } else {
-                    spawn_request(&handler, &peer, &running, job, permit);
+                    spawn_concurrent(&handler, &peer, &running, job, permit);
                 }
             }
             Ok(RpcMessage::Notification { method, params, .. }) if method == CANCELLED => {
@@ -414,7 +414,34 @@ async fn pump<S: Sink<Message> + Unpin>(
     out.closed.cancel();
 }
 
-/// Run one concurrent request on its own task, registered in `running` so that `notifications/cancelled` (or the connection ending)
+/// Run one concurrent request on its own task: an `app.call` can be ended ([`spawn_request`]); everything else runs to completion
+/// whatever the connection does or says, because an install, an uninstall or any other host request that is dropped half way could
+/// leave memory and the database out of step.
+fn spawn_concurrent(
+    handler: &Arc<dyn RpcHandler>,
+    peer: &RpcPeer,
+    running: &Arc<Mutex<HashMap<String, CancellationToken>>>,
+    job: Job,
+    permit: OwnedSemaphorePermit,
+) {
+    if job.1 == CANCELLABLE {
+        spawn_request(handler, peer, running, job, permit);
+        return;
+    }
+    let (handler, peer) = (handler.clone(), peer.clone());
+    tokio::spawn(async move {
+        let reply = answer(&*handler, &peer, job).await;
+        drop(permit);
+        peer.out.send(&reply).ok();
+    });
+}
+
+/// The one request that is cancellable: a call into an app's handler, which may wait for ever on something outside the host and
+/// holds nothing of the host's that dropping it would leave half done (the runtime hands the app's turn on, rolls back a
+/// transaction it opened). `notifications/cancelled`, a client that gives up and a connection that ends end it; they end nothing else.
+pub const CANCELLABLE: &str = "app.call";
+
+/// Run one `app.call` on its own task, registered in `running` so that `notifications/cancelled` (or the connection ending)
 /// can end it. Dropping the answer drops the handler's call with it, and what it holds (the permit here, an app's place in
 /// `AppService`): a cancelled request frees them, and gets no reply (the specification's rule).
 fn spawn_request(
@@ -446,7 +473,7 @@ fn spawn_request(
 pub const CANCELLED: &str = "notifications/cancelled";
 
 /// MCP's cancellation: `{ requestId, reason? }`. Unknown, finished or malformed ones are ignored (it is a notification: there is
-/// nobody to tell), and a request that is ordered (the view protocol) is not cancellable.
+/// nobody to tell), and a request other than [`CANCELLABLE`] (the view protocol, an install, ...) is not cancellable.
 fn cancel_running(running: &Mutex<HashMap<String, CancellationToken>>, params: &Value) {
     let id = params.get("requestId").and_then(|v| serde_json::from_value::<RpcId>(v.clone()).ok());
     if let Some(token) = id.and_then(|id| running.lock().get(&id_key(&id)).cloned()) {

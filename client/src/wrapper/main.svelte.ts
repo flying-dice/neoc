@@ -11,8 +11,9 @@
  */
 import { settings } from '../lib/settings.svelte'
 import { createHostBridge, eventFor, type HostBridge } from '../shell/hostBridge'
-import { createHostChannel, HostError } from '../shell/channel'
+import { callWhenConnected, createHostChannel, type CallOptions } from '../shell/channel'
 import { contextChange, hostContextOf, type HostContext } from '../shell/hostContext'
+import { focusFrame } from '../shell/frameFocus'
 import { baseServices } from '../shell/hostServices'
 import { createWebSocketTransport, defaultRpcUrl } from '../view/rpc/websocket'
 
@@ -41,22 +42,12 @@ export function start(root: Document = document): void {
 
   const channel = createHostChannel(createWebSocketTransport({ url: defaultRpcUrl(location) }))
   channel.transport.connect()
-  /** A call waits for the connection, for a little while: the frame may ask before the socket is open. */
-  const call = (method: string, params: Record<string, unknown>): Promise<unknown> =>
-    channel.transport.status === 'open'
-      ? channel.call(method, params)
-      : new Promise<unknown>((resolve, reject) => {
-          const timer = setTimeout(() => {
-            stop()
-            reject(new HostError(-32000, 'Not connected to vos'))
-          }, 10_000)
-          const stop = channel.transport.onStatus((status) => {
-            if (status !== 'open') return
-            stop()
-            clearTimeout(timer)
-            channel.call(method, params).then(resolve, reject)
-          })
-        })
+  /** The same call the shell makes (`AppFrame`), waiting for the connection first: the options of the bridge's calls pass through. */
+  const call = (
+    method: string,
+    params: Record<string, unknown>,
+    options?: CallOptions
+  ): Promise<unknown> => callWhenConnected(channel, method, params, options)
 
   const services = baseServices({
     context: currentContext,
@@ -71,6 +62,8 @@ export function start(root: Document = document): void {
     call,
     services,
     context: () => (told = currentContext()),
+    // opened on its own, the page has nothing else to hold the keys: the app takes them as soon as it is ready, as in a window
+    onReady: () => void focusFrame(iframe),
     onFailed: (message) => console.error(`vos: ${appId} could not start: ${message}`)
   })
   window.addEventListener('message', (e) => bridge.receive(e))
