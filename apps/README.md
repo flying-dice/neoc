@@ -197,7 +197,9 @@ rest wait their turn (apps take turns); an app with 1,000 calls waiting gets an 
 as long as the host is running the call: a call has no time limit on the client, and its place comes back when the handler
 answers or the connection to the host goes, so a handler that never returns takes up to eight places of its own app and no
 one else's (closing its window does not stop the handler, so the places stay taken; uninstalling or replacing the app
-ends its calls, with the reason). The shell's own calls and the other apps keep working.
+ends its calls, with the reason). The shell's own calls always keep working, and so do the other apps while fewer than four
+apps have hung handlers: the 32 places are shared by all apps, so when four apps hold eight each, a fifth app's calls wait until a
+place comes back.
 
 **When a client fails to start**, the window shows the reason as text with a "Try again" button: the error the page raised
 while it loaded (a top-level throw, a missing import, a syntax error: the script comes from another origin than the
@@ -395,7 +397,9 @@ rest wait their turn (apps take turns); an app with 1,000 calls waiting gets an 
 as long as the host is running the call: a call has no time limit on the client, and its place comes back when the handler
 answers or the connection to the host goes, so a handler that never returns takes up to eight places of its own app and no
 one else's (closing its window does not stop the handler, so the places stay taken; uninstalling or replacing the app
-ends its calls, with the reason). The shell's own calls and the other apps keep working.
+ends its calls, with the reason). The shell's own calls always keep working, and so do the other apps while fewer than four
+apps have hung handlers: the 32 places are shared by all apps, so when four apps hold eight each, a fifth app's calls wait until a
+place comes back.
 A call has no time limit on the client, so a handler that waits on something unreliable (a long poll, a service on the LAN that
 may be down) should bound the wait itself: calls to an app whose handlers never return queue behind its hung ones, up to eight
 at a time, and every call after them waits too.
