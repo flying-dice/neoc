@@ -1,5 +1,5 @@
 /**
- * Notification journeys (client/journeys/notifications.md): an app's backend raises a notification and the shell
+ * Notification journeys: an app's backend raises a notification and the shell
  * draws it as a banner, on the real host. The sender is the Notifier (e2e/apps/notifier): each
  * button starts background work that notifies two seconds later, so the window can be closed, or another app brought
  * forward, by the time it arrives. It is built outside the registry (e2e/host/start.ts); these specs install it and

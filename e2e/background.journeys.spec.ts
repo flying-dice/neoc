@@ -1,5 +1,5 @@
 /**
- * Background work journeys (client/journeys/background.md): an app that works on its own, on the real host. The
+ * Background work journeys: an app that works on its own, on the real host. The
  * Ticker (e2e/apps/ticker) counts up from a task its backend starts at load; the window follows
  * it with no input, the count goes on while the window is closed, and a dropped connection comes back to a
  * current window. The Ticker is built outside the registry (e2e/host/start.ts), so Discover never

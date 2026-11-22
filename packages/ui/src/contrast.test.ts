@@ -204,7 +204,8 @@ describe('window chrome', () => {
 
   test('the grip at a limit is focus-ring blue, never the accent, and holds 3:1 on every body', () => {
     const window = readFileSync(new URL('./organisms/Window.svelte', import.meta.url), 'utf8')
-    const rule = /\.resize\.limit::after\s*{[^}]*}/.exec(window)![0]
+    // every rule for the grip at a limit (it shares one with the pressed and focused grip, for its opacity)
+    const rule = [...window.matchAll(/\.resize\.limit::after\s*{[^}]*}/g)].map((m) => m[0]).join('\n')
     expect(rule).toContain('border-color: var(--focus-ring)')
     expect(rule).not.toMatch(/var\(--tint/)
     const ring = colourToken('--focus-ring')

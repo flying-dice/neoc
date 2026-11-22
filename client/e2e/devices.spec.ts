@@ -1,5 +1,5 @@
 /**
- * Devices journeys (client/journeys/settings.md): Settings > Devices lists the browsers paired with the host,
+ * Devices journeys: Settings > Devices lists the browsers paired with the host,
  * marks the one in use, and revokes the others, which then land on the pairing screen.
  */
 import { expect, openDesktop, test } from '../../e2e/fixtures'

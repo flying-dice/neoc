@@ -3,12 +3,12 @@
 # cargo-nextest, cargo-deny and luau-lsp (the pinned version, on PATH), and neither bun nor darklua. `bun run gate` runs
 # it first, then the vos checks. Every step must pass exactly as written; the first failure stops the run.
 #
-# It is fast on purpose (iteration speed is a requirement, CLAUDE.md, "The gate"): what takes minutes is not here but in
+# It is fast on purpose (iteration speed is a requirement): what takes minutes is not here but in
 # scripts/check-slow.sh (`bun run slow`): the full hostile-input sweep, the release-build abort regressions, the bench
 # bodies and the full generated-case counts.
 #
 # NEOC_REQUIRE_LUAU_LSP=1 is set here: a missing or other-version luau-lsp fails the Luau declaration tests instead of
-# skipping them (see CONTRIBUTING.md, "Pre-PR checks").
+# skipping them.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export NEOC_REQUIRE_LUAU_LSP=1

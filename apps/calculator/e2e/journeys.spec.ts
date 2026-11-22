@@ -1,5 +1,5 @@
 /**
- * Calculator key user journeys (../JOURNEYS.md), end to end: the real shell, the real Rust host, the app's own
+ * Calculator key user journeys, end to end: the real shell, the real Rust host, the app's own
  * client in a frame of its window (or alone at /apps/calculator), its keys reaching `press` in its Luau backend.
  *
  * Each window holds its own calculator (the backend keeps nothing), so a journey starts from a fresh window.

@@ -18,7 +18,7 @@
 
 <div class="keys">
   {#each KEYS as k (k.id)}
-    <!-- ui-button is a button (its own role and keys); Svelte cannot see inside it (packages/kit/README.md) -->
+    <!-- ui-button is a button (its own role and keys); Svelte cannot see inside it -->
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <ui-button
       class:zero={k.id === '0'}

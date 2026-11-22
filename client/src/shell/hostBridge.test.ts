@@ -29,7 +29,11 @@ interface Rig {
   bridge: HostBridge
   posted: ToFrame[]
   calls: { method: string; params: Record<string, unknown> }[]
-  events: { ready: number; failed: string[] }
+  events: {
+    ready: number
+    failed: string[]
+    chords: { key: string; metaKey: boolean; ctrlKey: boolean }[]
+  }
   opened: string[]
   flush(): Promise<unknown>
 }
@@ -40,7 +44,11 @@ function rig(
 ): Rig {
   const posted: ToFrame[] = []
   const calls: { method: string; params: Record<string, unknown> }[] = []
-  const events = { ready: 0, failed: [] as string[] }
+  const events = {
+    ready: 0,
+    failed: [] as string[],
+    chords: [] as { key: string; metaKey: boolean; ctrlKey: boolean }[]
+  }
   const opened: string[] = []
   let current = context()
   const base = baseServices({
@@ -62,7 +70,8 @@ function rig(
     services: services ? services(base) : base,
     context: () => current,
     onReady: () => events.ready++,
-    onFailed: (m) => events.failed.push(m)
+    onFailed: (m) => events.failed.push(m),
+    onShortcut: (chord) => events.chords.push(chord)
   })
   const flush = (): Promise<unknown> => new Promise((r) => setTimeout(r, 0))
   return { bridge, posted, calls, events, opened, flush }
@@ -312,7 +321,7 @@ describe('what comes from the page and what goes into the frame', () => {
     await flush()
     expect(calls).toEqual([])
     expect(posted).toEqual([])
-    expect(events).toEqual({ ready: 0, failed: [] })
+    expect(events).toEqual({ ready: 0, failed: [], chords: [] })
   })
 
   test('a call that cannot be read is answered, so the page’s promise settles', async () => {
@@ -556,5 +565,21 @@ describe('eventFor', () => {
     const refused = posted.filter((m) => 'error' in m)
     expect(refused).toHaveLength(1) // the first runs, the second waits, the third is refused
     expect(refused[0]).toMatchObject({ id: 3, error: { code: -32000 } })
+  })
+})
+
+describe("the shell's shortcut pressed in the frame", () => {
+  test('the search chord is passed on, and nothing else a page says is a key', () => {
+    const { bridge, events } = rig()
+    const say = (params: unknown): void =>
+      bridge.receive({ source: FRAME, data: { jsonrpc: '2.0', method: 'vos/shortcut', params } })
+    say({ key: 'k', metaKey: true, ctrlKey: false })
+    say({ key: 'k', ctrlKey: 'yes' }) // not a boolean: not held
+    say({ key: 'Enter', metaKey: true }) // any other key is not the shell's
+    say(undefined)
+    expect(events.chords).toEqual([
+      { key: 'k', metaKey: true, ctrlKey: false },
+      { key: 'k', metaKey: false, ctrlKey: false }
+    ])
   })
 })

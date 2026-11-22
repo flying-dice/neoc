@@ -28,11 +28,9 @@ const run = (cmd: string, args: string[]): void => {
   if (r.status !== 0) process.exit(r.status ?? 1)
 }
 
-/** The version a repo app ships (its app.json, or for a Vite project its contract's `info.version`), so a bump needs no change here. */
+/** The version a repo app ships (its contract's `info.version`), so a bump needs no change here. */
 const versionOf = (id: string): string =>
-  existsSync(join(ROOT, 'apps', id, 'openrpc.json'))
-    ? (JSON.parse(readFileSync(join(ROOT, 'apps', id, 'openrpc.json'), 'utf8')) as { info: { version: string } }).info.version
-    : (JSON.parse(readFileSync(join(ROOT, 'apps', id, 'app.json'), 'utf8')) as { version: string }).version
+  (JSON.parse(readFileSync(join(ROOT, 'apps', id, 'openrpc.json'), 'utf8')) as { info: { version: string } }).info.version
 
 rmSync(DIR, { recursive: true, force: true })
 mkdirSync(DIR, { recursive: true })

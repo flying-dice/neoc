@@ -1,7 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration tests
 //! The Calculator (`apps/calculator`, a Vite project) under the real runtime: its keypad through the generated router
-//! (`press`: each call carries the keypad's state and answers with the next one; the tables are the view-tree
-//! Calculator's, which this app replaced), and its agent tool (`calculate`).
+//! (`press`: each call carries the keypad's state and answers with the next one), and its agent tool (`calculate`).
 
 mod common;
 

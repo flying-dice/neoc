@@ -1,5 +1,5 @@
 /**
- * Discover journeys (client/journeys/discover.md): finding, installing, opening, disabling and removing apps on
+ * Discover journeys: finding, installing, opening, disabling and removing apps on
  * the real host, from the test registry (e2e/host/start.ts). They use Memos (e2e/apps/memos), which the registry offers and
  * nothing else installs, so they never disturb the Calculator the other specs share.
  */

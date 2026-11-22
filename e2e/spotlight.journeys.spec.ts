@@ -134,6 +134,15 @@ test.describe('Spotlight journeys', () => {
     await expect(row).toBeFocused()
   })
 
+  test('S3b: the shortcut works while the keys are in an app', async ({ page }) => {
+    await openDesktop(page, { open: ['calculator'] })
+    await frameOf(page, 'calculator').getByTestId('calculator-key-7').click() // the keys are in the app's frame now
+    await page.keyboard.press('ControlOrMeta+K')
+    await expect(field(page)).toBeFocused()
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('spotlight')).toHaveCount(0)
+  })
+
   test('S4: nothing found, and what a screen reader is given', async ({ page }, testInfo) => {
     await openDesktop(page)
     await page.keyboard.press('ControlOrMeta+K')

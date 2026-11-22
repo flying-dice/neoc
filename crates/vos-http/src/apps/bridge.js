@@ -210,6 +210,18 @@
   // a page that throws before the handshake has not started: say so rather than sit there. The app's scripts are loaded with
   // `crossorigin` from the host, which answers with the header that lets the browser report the real message and place; a script
   // loaded without it is reported as `Script error.`, which says nothing, so say where to look instead.
+  // The host's shortcut for search (Cmd+K, Ctrl+K) pressed while the keys are in this page: a key pressed in a frame
+  // never reaches the page that holds it, so the host is told it was pressed. Whether it is the host's shortcut on this
+  // platform is the host's to say; the key is the page's as well, as any key is.
+  window.addEventListener('keydown', function (e) {
+    if (String(e.key).toLowerCase() !== 'k' || !(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey || e.repeat || e.isComposing) return
+    try {
+      post({ method: 'vos/shortcut', params: { key: 'k', metaKey: !!e.metaKey, ctrlKey: !!e.ctrlKey } })
+    } catch (error) {
+      // the host is gone: nothing to tell
+    }
+  }, true)
+
   window.addEventListener('error', function (e) {
     if (started || failed) return
     var hidden = !e.message || e.message === 'Script error.'

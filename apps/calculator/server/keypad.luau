@@ -1,9 +1,7 @@
 --!strict
--- The keypad: one key at a time, as the iPadOS Calculator does it (apps/calculator/JOURNEYS.md, "How a sum is worked out").
+-- The keypad: one key at a time, as the iPadOS Calculator does it.
 -- Pure: `press(state, key)` takes where a sum has got to and gives the next state; nothing is kept here. The client holds
--- the state and sends it with each key, so every window has a calculator of its own. The arithmetic is calc.luau, the
--- view-tree Calculator's evaluator unchanged (a copy of it stays in the view tests' fixture, crates/vos-codegen/tests/fixtures/
--- calculator, until NEOC-346 retires that kind).
+-- the state and sends it with each key, so every window has a calculator of its own. The arithmetic is calc.luau.
 local calc = require("./calc")
 
 export type Op = "+" | "-" | "*" | "/"

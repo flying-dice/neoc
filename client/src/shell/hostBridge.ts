@@ -10,6 +10,7 @@
  *   `ui/...`, `vos/...`             a host service of the registry, if the host offers it; else "method not found"
  *   any other method                the app's own backend call: forwarded as `app.call` for the frame's own app
  *   `vos/failed`                    the page could not start
+ *   `vos/shortcut`                  the shell's search chord was pressed in the frame
  *
  * and to the frame: `ui/notifications/host-context-changed` (a change of the host context), `vos/event` (what the
  * app's backend sent with `app.emit`) and the request `ui/resource-teardown` (the frame is about to go).
@@ -108,6 +109,8 @@ export interface HostBridgeOptions {
   onReady?(): void
   /** The page could not start. */
   onFailed?(message: string): void
+  /** A chord of the shell's own was pressed while the keys were in the frame (`vos/shortcut`). */
+  onShortcut?(chord: { key: string; metaKey: boolean; ctrlKey: boolean }): void
 }
 
 export interface HostBridge {
@@ -267,30 +270,36 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
       post({ jsonrpc: '2.0', id: callId, error: { code: INVALID_PARAMS, message: refusal } })
       return
     }
-    void gate.enter(frameKey, () => disposed).then((release) => {
-      if (release === null) {
-        post({
-          jsonrpc: '2.0',
-          id: callId,
-          error: {
-            code: BUSY,
-            message: `Too many calls are waiting (at most ${MAX_WAITING_PER_FRAME}): let some finish first`
-          }
-        })
-        return
-      }
-      if (disposed) {
-        release()
-        return
-      }
-      options
-        .call('app.call', { app: appId, method: name, args: params ?? null }, { timeoutMs: 0, signal: running.signal })
-        .then(
-          (result) => post({ jsonrpc: '2.0', id: callId, result: result ?? null }),
-          (error: unknown) => post({ jsonrpc: '2.0', id: callId, error: rpcErrorOf(error) })
-        )
-        .finally(release)
-    })
+    void gate
+      .enter(frameKey, () => disposed)
+      .then((release) => {
+        if (release === null) {
+          post({
+            jsonrpc: '2.0',
+            id: callId,
+            error: {
+              code: BUSY,
+              message: `Too many calls are waiting (at most ${MAX_WAITING_PER_FRAME}): let some finish first`
+            }
+          })
+          return
+        }
+        if (disposed) {
+          release()
+          return
+        }
+        options
+          .call(
+            'app.call',
+            { app: appId, method: name, args: params ?? null },
+            { timeoutMs: 0, signal: running.signal }
+          )
+          .then(
+            (result) => post({ jsonrpc: '2.0', id: callId, result: result ?? null }),
+            (error: unknown) => post({ jsonrpc: '2.0', id: callId, error: rpcErrorOf(error) })
+          )
+          .finally(release)
+      })
   }
 
   const notification = (name: string, params: unknown): void => {
@@ -303,6 +312,16 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
       options.onFailed?.(
         typeof text === 'string' ? text.slice(0, 1000) : 'The app could not start.'
       )
+    } else if (name === 'vos/shortcut') {
+      const chord =
+        typeof params === 'object' && params !== null ? (params as Record<string, unknown>) : {}
+      // only the one chord, whatever the page says: a page cannot type into the shell through this
+      if (chord.key === 'k')
+        options.onShortcut?.({
+          key: 'k',
+          metaKey: chord.metaKey === true,
+          ctrlKey: chord.ctrlKey === true
+        })
     }
     // `ui/notifications/size-changed`, `notifications/message`, and anything else: nothing to do for a window the person sizes
   }

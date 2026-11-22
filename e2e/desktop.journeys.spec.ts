@@ -1,5 +1,5 @@
 /**
- * Desktop shell journeys (client/journeys/desktop.md): the Home Screen, the Dock and what is pinned to it, windows,
+ * Desktop shell journeys: the Home Screen, the Dock and what is pinned to it, windows,
  * the recent-apps strip, Split View and full screen, on the real host. (System search has its own:
  * spotlight.journeys.spec.ts.) Nothing here presses a Calculator key or installs anything, so these can run
  * beside the specs that do (see the `verify-change` skill, "The end-to-end host").

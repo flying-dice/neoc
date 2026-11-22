@@ -30,7 +30,7 @@
   /*
    * Blue and red are the "Increase Contrast" variants so text meets WCAG AA
    * (4.5:1) on every background: #0066cc is 5.6:1 on white; #409cff is
-   * 4.9:1 on gray5. See `.claude/skills/app-design/STYLEGUIDE.md` section 2.
+   * 4.9:1 on gray5.
    */
   --ios-blue: light-dark(#0066cc, #409cff);
   --ios-green: light-dark(#34c759, #30d158);

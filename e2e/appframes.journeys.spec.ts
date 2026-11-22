@@ -1,5 +1,5 @@
 /**
- * App frame journeys (client/journeys/app-frames.md): an app whose screens are a web client of its own, in a frame of
+ * App frame journeys: an app whose screens are a web client of its own, in a frame of
  * its window (or alone, on its own page at `/apps/<id>`), on a Luau backend, on the real host. The two framework fixtures (`e2e/apps/tasks-svelte` and
  * `tasks-react`: the same task list, written once in each framework) are installed at start from a folder no registry
  * lists (`e2e/host/start.ts`); every journey runs against both.

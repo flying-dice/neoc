@@ -118,6 +118,12 @@
         if (phase === 'failed') return
         phase = 'ready'
       },
+      // the shell hears its own shortcut as it would have had the keys been in the shell's page
+      onShortcut: (chord) => {
+        window.dispatchEvent(
+          new KeyboardEvent('keydown', { ...chord, bubbles: true, cancelable: true })
+        )
+      },
       onFailed: (message) => {
         failure = message
         phase = 'failed'

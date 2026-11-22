@@ -1,5 +1,5 @@
 /**
- * Pairing journeys (client/journeys/pairing.md): a browser the host does not know yet sees the pairing screen,
+ * Pairing journeys: a browser the host does not know yet sees the pairing screen,
  * says plainly when the code is wrong, and gets the desktop when the code is right. These start unpaired.
  * (Rate limiting is covered by the host's pairing tests and the "Too many attempts" story: exhausting the
  * attempt budget here would lock out every other spec's pairing for a minute.)
