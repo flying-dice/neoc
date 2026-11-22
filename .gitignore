@@ -29,3 +29,9 @@ playwright-report
 # Per-developer Claude Code settings (project skills/workflows are committed)
 .claude/settings.local.json
 .claude/worktrees/
+
+# The app kit build output (packages/kit: bun run build:kit); Vite copies it into client/dist/kit
+/client/public/kit
+
+# Generated editor types for the kit's type fixtures (scripts/kit-types.test.ts)
+/packages/kit/fixtures/**/generated
