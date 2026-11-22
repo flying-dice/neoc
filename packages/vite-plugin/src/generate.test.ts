@@ -6,7 +6,8 @@ import { emitLuau, emitLuauEntry } from './emit-luau.ts'
 import { emitDeclarations, emitModule } from './emit-client.ts'
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { DEFAULTS, generate, write } from './generate.ts'
+import { DEFAULTS, generate, kitDeclarations, write } from './generate.ts'
+import { frameworksOf } from './kit-types.ts'
 import { analyze } from './luau-tools.ts'
 
 const definition = parseDefinition(
@@ -200,7 +201,8 @@ describe('the fixtures', () => {
     test(`${name}'s contract parses and its backend has a handler for every method`, () => {
       const project = join(apps, name)
       const files = generate(project, DEFAULTS)
-      expect(files.map((f) => f.path)).toEqual(['.app/rpc.d.ts', '.app/rpc.js', '.app/rpc.luau', '.app/entry.luau'])
+      const kit = name === 'tasks-svelte' ? '.app/kit-svelte.d.ts' : '.app/kit-react.d.ts'
+      expect(files.map((f) => f.path)).toEqual(['.app/rpc.d.ts', '.app/rpc.js', '.app/rpc.luau', '.app/entry.luau', kit])
       const text = readFileSync(join(project, 'openrpc.json'), 'utf8')
       const contract = parseDefinition(text)
       expect(contract.app.id).toBe(name)
@@ -310,5 +312,53 @@ describe('the darklua configuration', () => {
     const own = readFileSync(resolve(import.meta.dir, '../darklua.json'), 'utf8')
     const repository = readFileSync(resolve(import.meta.dir, '../../../.darklua.json'), 'utf8')
     expect(own).toBe(repository)
+  })
+})
+
+describe("the kit's editor types", () => {
+  const withPackage = (pkg: object | null): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'vos-kit-types-'))
+    if (pkg) writeFileSync(join(dir, 'package.json'), JSON.stringify(pkg))
+    return dir
+  }
+
+  test('are made for the framework the project depends on, Svelte and React alike, from either kind of dependency', () => {
+    expect(frameworksOf({ devDependencies: { svelte: '^5' } })).toEqual(['svelte'])
+    expect(frameworksOf({ dependencies: { react: '^19' } })).toEqual(['react'])
+    expect(frameworksOf({ dependencies: { react: '^19' }, devDependencies: { svelte: '^5' } })).toEqual(['svelte', 'react'])
+    expect(frameworksOf({ devDependencies: { typescript: '^5' } })).toEqual([])
+    expect(frameworksOf({})).toEqual([])
+  })
+
+  test('a Svelte project gets kit-svelte.d.ts, a React one kit-react.d.ts, both gets both, a plain one none', () => {
+    const cases: [object | null, string[]][] = [
+      [{ devDependencies: { svelte: '^5' } }, ['.app/kit-svelte.d.ts']],
+      [{ dependencies: { react: '^19' } }, ['.app/kit-react.d.ts']],
+      [{ dependencies: { react: '^19', svelte: '^5' } }, ['.app/kit-svelte.d.ts', '.app/kit-react.d.ts']],
+      [{ devDependencies: { typescript: '^5' } }, []],
+      [null, []]
+    ]
+    for (const [pkg, expected] of cases) {
+      const dir = withPackage(pkg)
+      try {
+        const files = kitDeclarations(dir, '.app')
+        expect(files.map((f) => f.path), JSON.stringify(pkg)).toEqual(expected)
+        for (const f of files) expect(f.contents).toContain('"ui-button"')
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    }
+  })
+
+  test('the Svelte file augments svelte/elements and the React file React\'s JSX, from the kit\'s committed manifest', () => {
+    const dir = withPackage({ dependencies: { react: '^19', svelte: '^5' } })
+    try {
+      const [svelte, react] = kitDeclarations(dir, '.app')
+      expect(svelte!.contents).toContain("declare module 'svelte/elements'")
+      expect(react!.contents).toContain("declare module 'react'")
+      expect(react!.contents).not.toContain('onChange?:')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { elementsOf, kitTypes, type Manifest } from './kit-types.ts'
+import { elementsOf, kitTypes, type Manifest } from '../packages/vite-plugin/src/kit-types.ts'
 
 const KIT = resolve(import.meta.dirname, '../packages/kit')
 const FIXTURES = join(KIT, 'fixtures')
@@ -21,6 +21,11 @@ const manifest = JSON.parse(readFileSync(join(generated, 'custom-elements.json')
 describe('the Custom Elements Manifest', () => {
   test('is made by the analyzer', () => {
     expect(analyze.code, analyze.out).toBe(0)
+  })
+
+  test('the committed copy the vos Vite plugin reads (packages/kit/custom-elements.json) is the one the kit makes', () => {
+    const committed = readFileSync(join(KIT, 'custom-elements.json'), 'utf8')
+    expect(committed === readFileSync(join(generated, 'custom-elements.json'), 'utf8'), 'stale: run `bun run build:kit` and commit packages/kit/custom-elements.json').toBe(true)
   })
 
   test('describes every tag the kit defines, with its attributes, events and slots', () => {

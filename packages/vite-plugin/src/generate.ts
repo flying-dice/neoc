@@ -4,10 +4,32 @@
  * `bun run generate` does it on its own for the editor.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { parseDefinition, type Definition } from './definition.ts'
 import { emitDeclarations, emitModule } from './emit-client.ts'
 import { emitLuau, emitLuauEntry } from './emit-luau.ts'
+import { frameworksOf, kitTypes, type Manifest } from './kit-types.ts'
+
+/**
+ * The kit's Custom Elements Manifest, committed in `packages/kit` (the plugin depends on `@vos/kit` for it alone: an app
+ * never bundles the kit). Read once per process.
+ */
+let kitManifest: Manifest | undefined
+function readKitManifest(): Manifest {
+  kitManifest ??= JSON.parse(readFileSync(createRequire(import.meta.url).resolve('@vos/kit/custom-elements.json'), 'utf8')) as Manifest
+  return kitManifest
+}
+
+/**
+ * The kit's editor types for the frameworks the project depends on (`kit-svelte.d.ts`, `kit-react.d.ts`): the project's
+ * tsconfig includes `.app/*.d.ts`. A project with neither gets none.
+ */
+export function kitDeclarations(project: string, dir: string): GeneratedFile[] {
+  const pkg = join(project, 'package.json')
+  const frameworks = existsSync(pkg) ? frameworksOf(JSON.parse(readFileSync(pkg, 'utf8')) as Parameters<typeof frameworksOf>[0]) : []
+  return frameworks.map((framework) => ({ path: `${dir}/kit-${framework}.d.ts`, contents: kitTypes(readKitManifest(), framework) }))
+}
 
 export interface Options {
   /** The contract, relative to the project (default `openrpc.json`). */
@@ -39,7 +61,7 @@ export function readDefinition(project: string, options: Options): Definition {
   return parseDefinition(readFileSync(file, 'utf8'), options.definition)
 }
 
-/** The files the contract generates. */
+/** The files the contract generates, and the kit's editor types for the project's framework. */
 export function generate(project: string, options: Options): GeneratedFile[] {
   const definition = readDefinition(project, options)
   const dir = options.generated
@@ -47,7 +69,8 @@ export function generate(project: string, options: Options): GeneratedFile[] {
     { path: `${dir}/rpc.d.ts`, contents: emitDeclarations(definition, options.definition) },
     { path: `${dir}/rpc.js`, contents: emitModule(definition, options.definition) },
     { path: `${dir}/rpc.luau`, contents: emitLuau(definition, options.definition) },
-    { path: `${dir}/entry.luau`, contents: emitLuauEntry() }
+    { path: `${dir}/entry.luau`, contents: emitLuauEntry() },
+    ...kitDeclarations(project, dir)
   ]
 }
 

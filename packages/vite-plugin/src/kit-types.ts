@@ -1,13 +1,13 @@
 /**
- * Editor types for the kit's tags, generated from its Custom Elements Manifest (`client/public/kit/custom-elements.json`,
- * written by `bun run build:kit`). An app that writes `<ui-button varient="x">` or `onchange={...}` with the wrong
+ * Editor types for the kit's tags, generated from its Custom Elements Manifest (`packages/kit/custom-elements.json`,
+ * written by `bun run build:kit` and committed; the plugin writes them into an app's `.app/` on every generate). An app that writes `<ui-button varient="x">` or `onchange={...}` with the wrong
  * payload is flagged by its editor and its type check, in Svelte (svelte-check) and in React (tsc).
  *
  * Types only: nothing here is shipped to a frame, and the app's bundle never contains a second copy of the kit
  * (`/kit/kit.js` is the one that runs).
  *
  * The output is a module that augments the framework's own JSX typing, so it is two files, one per framework, and an app
- * takes the one for the framework it uses:
+ * gets the one for the framework its `package.json` depends on (`frameworksOf`):
  *   svelte  -> `svelte/elements`' `SvelteHTMLElements`
  *   react   -> React's `JSX.IntrinsicElements` (React 19 types)
  */
@@ -60,7 +60,7 @@ function propsOf(el: Declaration, events: Event[], indent: string): string {
   return `{\n${lines.join('\n')}\n${indent}}`
 }
 
-const HEADER = '// Generated from the kit\'s custom-elements.json by scripts/kit-types.ts. Do not edit.\n'
+const HEADER = '// Generated from the kit\'s custom-elements.json by the vos Vite plugin (packages/vite-plugin/src/kit-types.ts). Do not edit.\n'
 
 /** The declaration file for one framework. */
 export function kitTypes(manifest: Manifest, framework: Framework): string {
@@ -108,4 +108,14 @@ ${entries.join('\n')}
 
 export {}
 `
+}
+
+/**
+ * The frameworks a project's editor types are made for: those its `package.json` depends on (`dependencies` or
+ * `devDependencies`), Svelte and React in that order. Both is both files; neither (a plain TypeScript or JavaScript app)
+ * is none: the kit's elements still work there, typed as `HTMLElement` through `document.querySelector`.
+ */
+export function frameworksOf(packageJson: { dependencies?: Record<string, string>; devDependencies?: Record<string, string> }): Framework[] {
+  const deps = { ...packageJson.dependencies, ...packageJson.devDependencies }
+  return (['svelte', 'react'] as const).filter((framework) => framework in deps)
 }

@@ -11,21 +11,21 @@ copy of it to every app's frame, so a change here reaches every installed app wi
 | `/kit/kit.js`               | Lit and every component in one classic script (an IIFE: no modules, no external URL, no `eval`, so it loads under the frame's `script-src 'self'`).                                                                                                           |
 | `/kit/custom-elements.json` | The Custom Elements Manifest: every tag's attributes, properties, events, slots and CSS parts. The editor types come from it.                                                                                                                                 |
 
-`bun run build:kit` writes the three into `client/public/kit/` (generated, not committed). Vite copies that folder into
+`bun run build:kit` writes the three into `client/public/kit/` (generated, not committed), and the manifest also to
+`packages/kit/custom-elements.json` (committed, for the plugin's editor types). Vite copies that folder into
 `client/dist/kit/`, and the host serves the client's folder, so a frame loads them from the same host.
 
 ## Using it from an app
 
 An app is its own Vite build, served by the host at `/apps/<id>/static/` and run in a sandboxed frame, embedded in a
 shell window or on its own page at `/apps/<id>` (`apps/README.md`). The host serves the kit's files at `/kit/tokens.css` and
-`/kit/kit.js`. **The vos plugin does not put their tags into the app's page yet**, so until it does the app adds them to its
-own `index.html` at build time, at the top of the head, before its own styles and script:
-`<link rel="stylesheet" href="/kit/tokens.css" crossorigin>` and `<script src="/kit/kit.js"></script>`. `apps/calculator-web/vite.config.ts`
-does this with a ten-line Vite plugin; writing the tags into `index.html` by hand would make Vite try to bundle them. The
-stylesheet is loaded `crossorigin`, as Vite loads the app's own: the frame has an opaque origin, so the host lets `Origin: null`
-read `/kit/` (GET and HEAD only) and answers with `Access-Control-Allow-Origin: *`, and the page, and a checker such as axe
-running in it, can read the stylesheet's rules. If the stylesheet fails to load, the kit's buttons draw with no fill, which
-leaves a keypad invisible (NEOC-341). The app never bundles the kit, and the host serves one copy. The kit needs no host to draw. The host's bridge sets `data-theme="light|dark"` and `color-scheme` on the frame's
+`/kit/kit.js`, and **the vos Vite plugin puts their tags into every app's page** at build time, first in the head:
+`<link rel="stylesheet" href="/kit/tokens.css" crossorigin>`, then `<script src="/kit/kit.js"></script>` (before the bridge and
+the app's own module, so the elements are defined and styled when the app first renders). An app writes nothing for it; a page
+that names them itself has them taken out, with a message. The stylesheet is loaded `crossorigin`, as Vite loads the app's
+own: the frame has an opaque origin, so the host lets `Origin: null` read `/kit/` (GET and HEAD only) and answers with
+`Access-Control-Allow-Origin: *`, and the page, and a checker such as axe running in it, can read the stylesheet's rules. If
+the stylesheet fails to load, the kit's buttons draw with no fill, which leaves a keypad invisible (NEOC-341). The app never bundles the kit, and the host serves one copy. The kit needs no host to draw. The host's bridge sets `data-theme="light|dark"` and `color-scheme` on the frame's
 `<html>` from the appearance (the shell's, or on the app's own page the system setting) and keeps them current, in both modes. The kit also reads `data-reduce-motion` on `<html>`, which
 zeroes the motion tokens; the host does not set that one yet. With no `data-theme` (a kit loaded outside any vos page, for
 example in Storybook), the tokens follow the browser's `prefers-color-scheme`, and an explicit `data-theme` always wins.
@@ -65,9 +65,13 @@ content in **slots**. Vue needs `compilerOptions.isCustomElement: (tag) => tag.s
 
 ### Editor types
 
-The build writes the Custom Elements Manifest (`/kit/custom-elements.json`), and `scripts/kit-types.ts` turns it into a
-declaration file per framework that augments the framework's own typing, so a wrong attribute, a wrong value
-(`variant="tinteed"`) or a wrong event payload is flagged in the editor and the build:
+The build writes the Custom Elements Manifest, committed as `packages/kit/custom-elements.json` (and copied to
+`/kit/custom-elements.json`); `scripts/kit-types.test.ts` fails when the committed copy is stale, so a change to a component
+is followed by `bun run build:kit`. The vos Vite plugin (`packages/vite-plugin/src/kit-types.ts`) turns it into a declaration
+file per framework, `.app/kit-svelte.d.ts` or `.app/kit-react.d.ts`, for the framework the app's `package.json` depends on
+(both when it has both, none for a plain TypeScript app), and the app's `tsconfig.json` includes `.app/*.d.ts`. It augments the
+framework's own typing, so a wrong attribute, a wrong value (`variant="tinteed"`) or a wrong event payload is flagged in the
+editor and the build:
 
 - **Svelte** (`svelte-check`): `SvelteHTMLElements` gets every `ui-*` tag. Handlers are `onchange`, `oninput`.
 - **React 19** (`tsc`): `JSX.IntrinsicElements` gets every `ui-*` tag. Listen with the **lower-case** `onchange` and
@@ -75,8 +79,8 @@ declaration file per framework that augments the framework's own typing, so a wr
   out and it is an error rather than a handler that silently never runs. `onClick` is fine.
 
 `packages/kit/fixtures/` holds a React and a Svelte file that must type-check and a Svelte file whose every element must be
-an error; `scripts/kit-types.test.ts` runs them. (Svelte's accessibility lint warns that a `ui-*` element with a click
-handler has no role; the element handles its own keys, so silence that warning for `ui-` tags.)
+an error; `scripts/kit-types.test.ts` runs them. (Svelte's accessibility lint still warns that a `ui-*` element with a click
+handler has no role; the element handles its own keys, so silence that warning for `ui-` tags: NEOC-331.)
 
 ### Rules every component follows
 
