@@ -77,8 +77,8 @@ pub(crate) fn refuse_buffer(value: &Value, prefix: &str) -> mlua::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    //! The walk itself, then every call site through the script surface. Scripts cannot make a buffer yet (the
-    //! sandbox strips `buffer`), so each engine gets one as the global `buf`, made with `create_buffer`.
+    //! The walk itself, then every call site through the script surface. Each engine gets a buffer as the global
+    //! `buf`, made with `create_buffer`; the Lua suites (`crates/neoc/tests`, "a buffer") make theirs from a script.
     use std::sync::Arc;
 
     use mlua::{Lua, Value};

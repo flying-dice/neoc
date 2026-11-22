@@ -21,7 +21,7 @@ use neoc_vm::{
         lib::log::set_log_sink,
         lifecycle::{self, set_entry, Baton, BoxFuture, CallEntry, IdleKind, Inherited, Life},
         panics,
-        sandbox::{install_runtime_state, load_source, make_bare_engine, set_worker_engine},
+        sandbox::{install_runtime_state, load_source, make_bare_engine, set_worker_engine, WorkerEngineFn},
         script_env,
     },
     mlua::{Function, Lua, Table, Value as LuaValue},
@@ -606,6 +606,22 @@ impl Drop for AppVm {
     }
 }
 
+/// How the engine of a `std:thread` worker an app starts, and of every worker below it, is built: offered the app's
+/// modules (`offered`), and without Luau's `buffer`. The engine opens `buffer` and the app's environment does not copy
+/// it in (`GLOBALS_NOT_FOR_APPS`), but a worker runs on the engine's own globals, so it is removed here, until apps are
+/// offered `buffer` (NEOC-44), workers alike (Decision NEOC-292). The worker's own workers are built here too, not by
+/// the `install_allowed` default, which would hand `buffer` back.
+fn app_worker_engine(offered: Arc<Vec<&'static str>>) -> WorkerEngineFn {
+    Arc::new(move |life| {
+        let lua = make_bare_engine()?;
+        lua.globals().raw_remove("buffer")?;
+        install_runtime_state(&lua, life);
+        neoc_vm::lua::modules::install_allowed(&lua, &offered)?;
+        set_worker_engine(&lua, app_worker_engine(offered.clone()));
+        Ok(lua)
+    })
+}
+
 /// A script's error as the VM reports it: `ctx:fail` is a failed tool call, anything else a script error.
 pub(crate) fn script(e: &mlua::Error) -> VmError {
     match e.downcast_ref::<ToolFailure>() {
@@ -633,16 +649,7 @@ impl AppVm {
         install_runtime_state(&lua, life.clone());
         // a `std:thread` worker an app starts is offered what the app is offered: the library's module list
         // without the ones an app is not given (`require::NOT_FOR_APPS`)
-        let worker_offered = offered.clone();
-        set_worker_engine(
-            &lua,
-            Arc::new(move |life| {
-                let lua = make_bare_engine()?;
-                install_runtime_state(&lua, life);
-                neoc_vm::lua::modules::install_allowed(&lua, &worker_offered)?;
-                Ok(lua)
-            }),
-        );
+        set_worker_engine(&lua, app_worker_engine(offered.clone()));
         let log_app = app.clone();
         set_log_sink(
             &lua,
