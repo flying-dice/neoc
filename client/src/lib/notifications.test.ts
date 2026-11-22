@@ -17,6 +17,7 @@ const summary = (id: string, extra: Partial<AppSummary> = {}): AppSummary => ({
   version: '1.0.0',
   state: 'running',
   source: 'file',
+  client: false,
   icon: 'clock',
   tint: 'teal',
   ...extra
