@@ -18,10 +18,15 @@ export class UiCheck extends BooleanControl {
   static styles = [
     base,
     css`
+      /* 44 x 44 pt: the hit area is layout space the check owns, so it never covers another control's drawn box */
       :host {
         display: inline-flex;
+        align-items: center;
+        justify-content: center;
         vertical-align: middle;
         flex: none;
+        min-width: 44px;
+        min-height: 44px;
       }
       :host([disabled]) {
         pointer-events: none;
@@ -53,7 +58,7 @@ export class UiCheck extends BooleanControl {
         opacity: 0.4;
         cursor: default;
       }
-      /* a 44 x 44 pt hit area around the drawn check, which keeps its size */
+      /* the hit area: the check's own box and the empty space the element reserves around it */
       button::after {
         content: '';
         position: absolute;

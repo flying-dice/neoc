@@ -65,14 +65,22 @@ export class UiButton extends FormControl {
   static styles = [
     base,
     css`
+      /* The element is at least 44 x 44 pt, with the drawn button centred in it: the hit area is layout space the button
+         owns, as the shell's hit treatment is, so it never covers another control's drawn box. */
       :host {
         display: inline-flex;
+        align-items: center;
+        justify-content: center;
         vertical-align: middle;
+        min-width: 44px;
+        min-height: 44px;
       }
       :host([size='fill']) {
         display: flex;
         width: 100%;
         height: 100%;
+        min-width: 0;
+        min-height: 0;
       }
       :host([disabled]) {
         pointer-events: none;
@@ -83,8 +91,6 @@ export class UiButton extends FormControl {
         appearance: none;
         border: 0;
         margin: 0;
-        width: 100%;
-        height: 100%;
         display: inline-flex;
         align-items: center;
         justify-content: center;
@@ -108,7 +114,7 @@ export class UiButton extends FormControl {
         cursor: default;
         opacity: 0.35;
       }
-      /* a hit area at least 44 pt each way around the drawn button, which keeps its size */
+      /* the hit area: the drawn button's own box, and the empty space the element reserves around it */
       button::after {
         content: '';
         position: absolute;
@@ -133,6 +139,8 @@ export class UiButton extends FormControl {
         border-radius: 12px;
       }
       :host([size='fill']) button {
+        width: 100%;
+        height: 100%;
         min-height: 44px;
       }
       :host([shape='capsule']) button {

@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/web-components-vite'
 import { html, type TemplateResult } from 'lit'
 import { expect, fn, userEvent, within } from 'storybook/test'
+import './ui-icon'
 import './ui-list'
 import './ui-toggle'
 import './ui-check'
@@ -230,5 +231,63 @@ export const TrailingControlInATappableRow: Story = {
     row.shadowRoot!.querySelector<HTMLElement>('.hit')!.click()
     await expect(onPress).toHaveBeenCalledTimes(1)
     await expect(toggle.checked).toBe(true)
+  }
+}
+
+export const LeadingControlInATappableRow: Story = {
+  render: () =>
+    html`<div style="width:420px">
+      <ui-list data-testid="leading" label="Tasks">
+        <ui-section header="Today">
+          <ui-row
+            data-testid="leading-row"
+            heading="Buy milk"
+            subheading="Two litres"
+            tappable
+            chevron
+            ><ui-check slot="leading" data-testid="leading-check" label="Buy milk done"></ui-check
+          ></ui-row>
+          <ui-row data-testid="leading-button-row" heading="Archive" tappable
+            ><ui-button
+              slot="leading"
+              data-testid="leading-button"
+              variant="tinted"
+              size="small"
+              square
+              label="Archive now"
+              ><ui-icon name="folder" size="15"></ui-icon></ui-button
+          ></ui-row>
+        </ui-section>
+      </ui-list>
+    </div>`,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const row = canvas.getByTestId('leading-row')
+    const check = canvas.getByTestId('leading-check') as HTMLElement & { checked: boolean }
+    const onPress = fn()
+    row.addEventListener('press', onPress)
+    // a leading control is above the row's tap overlay, as a trailing one is (a simulated click would not notice)
+    const topAt = (el: HTMLElement): Element | null => {
+      const r = el.getBoundingClientRect()
+      return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+    }
+    await expect(topAt(check)).toBe(check)
+    // a leading control is clickable and does not press the row
+    await userEvent.click(check)
+    await expect(check.checked).toBe(true)
+    await expect(onPress).not.toHaveBeenCalled()
+    const onClick = fn()
+    const button = canvas.getByTestId('leading-button')
+    button.addEventListener('click', onClick)
+    await expect(topAt(button)).toBe(button)
+    const buttonRow = canvas.getByTestId('leading-button-row')
+    const onButtonRowPress = fn()
+    buttonRow.addEventListener('press', onButtonRowPress)
+    await userEvent.click(button)
+    await expect(onClick).toHaveBeenCalledTimes(1)
+    await expect(onButtonRowPress).not.toHaveBeenCalled()
+    // and a row's own tap is still a press
+    row.shadowRoot!.querySelector<HTMLElement>('.hit')!.click()
+    await expect(onPress).toHaveBeenCalledTimes(1)
   }
 }

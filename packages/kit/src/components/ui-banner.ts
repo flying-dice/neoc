@@ -82,6 +82,10 @@ export class UiBanner extends LitElement {
       .banner:not(.has-action) .action {
         display: none;
       }
+      /* a button is 44 pt high (the hit area is layout space it owns): the banner's padding takes the extra */
+      .action ::slotted(ui-button) {
+        margin-block: -8px;
+      }
     `
   ]
 

@@ -138,6 +138,9 @@ export class UiRow extends LitElement {
         flex: none;
         display: flex;
         align-items: center;
+        position: relative;
+        z-index: 2; /* above the tap overlay, as the trailing content is: a leading check or icon button stays clickable */
+        pointer-events: none;
       }
       .leading.none {
         display: none;
@@ -228,6 +231,15 @@ export class UiRow extends LitElement {
       }
       ::slotted(*) {
         pointer-events: auto;
+      }
+      /* A kit control is at least 44 pt each way (the hit area is layout space it owns). In a row, which is 44 pt high
+         and has padding around its content, the extra is taken from that empty space, so a row keeps its height and
+         its text where they were. */
+      ::slotted(:is(ui-button, ui-toggle, ui-check, ui-segmented, ui-text-field)) {
+        margin-block: -11px;
+      }
+      ::slotted(ui-check) {
+        margin-inline: -10px;
       }
       .value {
         color: var(--label-secondary);

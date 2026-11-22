@@ -82,15 +82,19 @@ handler has no role; the element handles its own keys, so silence that warning f
   `form`, `labels`, `validity`, `validationMessage`, `willValidate`, `checkValidity()`, `reportValidity()` and
   `setCustomValidity(message)` (the way an app shows its own error). A `ui-button type="submit"` submits the form with its
   own `name` and `value` in the data, but a native submit button is the only thing that can be `event.submitter`: for a
-  kit button it is `null`. (A sandboxed frame without `allow-forms` has every form submission blocked by the browser, so
-  there `submit` never fires: read the controls on your own button's click.)
+  kit button it is `null`. In an app frame the host's sandbox allows forms, so `submit` fires and Enter and validation work;
+  call `preventDefault()` in your handler (a submission nobody prevents sends nothing and leaves the frame on an error page).
 - **Events** are the platform's names. `change` (the person committed a value) carries a `detail` on `ui-toggle`,
   `ui-check` (`{ checked }`) and `ui-segmented` (`{ value }`); on `ui-text-field` it is the plain event (read `value`).
   `input` is each keystroke of a field. `press` is a `ui-row` tapped (see below). `click` is the ordinary click: it bubbles
   from everything inside an element, so on a row listen for `press`. The properties are already updated when an event
   fires. Events bubble and cross the shadow boundary.
-- **Touch targets.** Each control keeps its drawn size and has a hit area of at least 44 x 44 pt (the button, switch, check,
-  each segment, the field), as the shell's controls do.
+- **Touch targets.** Each control keeps its drawn size and is at least 44 x 44 pt (the button, switch, check, the field,
+  and each segment of a segmented control, vertically: segments already sit side by side). The extra is empty space the
+  control reserves around its drawn box, as the shell's `hit` treatment does, so a hit area never covers a neighbour's
+  drawn box and a tap inside a control's drawn box is always that control's. It does take layout room: small buttons, a
+  check or a field are 44 pt boxes in a flex or grid row. Inside a `ui-row` and a `ui-banner` the kit takes the extra
+  back from the padding there, so rows and banners keep their height.
 - **Keyboard, focus, motion.** Everything works by keyboard with a visible focus ring, in light and dark, and starts no
   transition under Reduce Motion (busy indicators keep turning).
 - **Untrusted text.** Strings an app passes are rendered as text, never as markup.
@@ -111,7 +115,7 @@ Events: `click`.
 `multi`, which makes the rows options of a `listbox`), `label`. It owns one tab stop and Up, Down, Home and End.
 `ui-section`: `header`, `footer`. `ui-row`: `heading`, `subheading`, `value`, `icon`, `icon-color`, `chevron`,
 `tappable` (the row is a button), `selected`, `destructive`, `action`, `disabled`, `label`. Slots: default (custom
-content in place of the heading), `leading`, `trailing` (a `ui-toggle`, say). Event: `press`, fired when the row is tapped
+content in place of the heading), `leading` (a `ui-check`, say), `trailing` (a `ui-toggle`, say); a control in either is clickable. Event: `press`, fired when the row is tapped
 (or, in a list with `selection`, tapped or Enter or Space on the option), not when a control in its slots is: flipping a
 trailing toggle does not press the row. Selection is controlled: set `selected`, listen for `press`.
 

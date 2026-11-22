@@ -109,7 +109,8 @@ export const HitAreas: Story = {
     const seg = within(canvasElement).getByTestId('hit-seg')
     await expectHitArea(
       seg.shadowRoot!.querySelector<HTMLElement>('[data-testid="hit-seg-all"]')!,
-      seg
+      seg,
+      'vertical'
     )
   }
 }

@@ -41,12 +41,15 @@ export class UiSegmented extends FormControl {
   static styles = [
     base,
     css`
+      /* 44 pt high: the hit area is layout space the control owns. Segments already tile it horizontally. */
       :host {
-        display: inline-block;
+        display: inline-flex;
+        align-items: center;
         vertical-align: middle;
+        min-height: 44px;
       }
       :host([block]) {
-        display: block;
+        display: flex;
       }
       .group {
         position: relative;
@@ -99,15 +102,15 @@ export class UiSegmented extends FormControl {
       .segment.selected {
         font-weight: 600;
       }
-      /* a hit area at least 44 x 44 pt around the drawn segment, which keeps its size */
+      /* a hit area 44 pt high around the drawn segment: vertical only, segments sit side by side with no gap */
       .segment::after {
         content: '';
         position: absolute;
-        left: 50%;
+        left: 0;
+        right: 0;
         top: 50%;
-        width: max(100%, 44px);
         height: 44px;
-        transform: translate(-50%, -50%);
+        transform: translateY(-50%);
       }
       .segment:disabled {
         opacity: 0.4;

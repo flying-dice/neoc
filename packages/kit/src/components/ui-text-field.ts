@@ -83,10 +83,11 @@ export class UiTextField extends FormControl {
         vertical-align: middle;
         min-width: 0;
       }
-      /* a 44 pt high hit area: the strip around the 36 pt field is the host's padding, and a click on it focuses the input */
+      /* 44 pt high: the strip around the 36 pt field is layout space the field owns (a click on it focuses the input) */
       :host(:not([variant='bare'])) {
-        padding-block: 4px;
-        margin-block: -4px;
+        display: inline-flex;
+        align-items: center;
+        min-height: 44px;
       }
       :host([variant='bare']) {
         display: block;

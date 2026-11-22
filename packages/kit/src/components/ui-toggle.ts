@@ -17,10 +17,13 @@ export class UiToggle extends BooleanControl {
   static styles = [
     base,
     css`
+      /* 44 pt high: the hit area is layout space the switch owns, so it never covers another control's drawn box */
       :host {
         display: inline-flex;
+        align-items: center;
         vertical-align: middle;
         flex: none;
+        min-height: 44px;
       }
       :host([disabled]) {
         pointer-events: none;
@@ -45,7 +48,7 @@ export class UiToggle extends BooleanControl {
         opacity: 0.4;
         cursor: default;
       }
-      /* a 44 x 44 pt hit area around the drawn switch, which keeps its size */
+      /* the hit area: the switch's own box and the empty space the element reserves around it */
       button::after {
         content: '';
         position: absolute;
