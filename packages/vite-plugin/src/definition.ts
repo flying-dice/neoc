@@ -1,6 +1,6 @@
 /**
  * The app's RPC definition: an OpenRPC document (https://spec.open-rpc.org/), the standard description format for
- * JSON-RPC 2.0 services, kept as a file in the app's project (`rpc.openrpc.json`). It is the contract between the
+ * JSON-RPC 2.0 services, kept as a file in the app's project (`openrpc.json`). It is the contract between the
  * app's client and its Luau backend, and everything the plugin generates comes from it.
  *
  * What a definition may say (a deliberate subset: the basic version of the contract):
@@ -8,7 +8,7 @@
  *   - `info.title` and `info.version`: the app's name and version.
  *   - `x-app`: the app's metadata (`id`, `icon`, `tint`, `description`, `window`, `requires`, `migrations`), so the contract is
  *     the only descriptor an app needs.
- *   - `methods`: each has a `name` (an identifier: it becomes `rpc.<name>(...)` in the client and a function in the Luau
+ *   - `methods`: each has a `name` (an identifier: it becomes `api.<name>(...)` in the client and a function in the Luau
  *     handlers), `params` (by name only: `paramStructure` is `"by-name"` or absent), a `result`, and optional `errors`
  *     (documentation of the application errors a handler may fail with).
  *   - `components.schemas`: named schemas other schemas refer to with `{ "$ref": "#/components/schemas/Name" }`.
@@ -60,13 +60,17 @@ export interface AppMeta {
   requires?: { host?: string }
   migrations?: { version: number; name: string; file: string }[]
   /**
-   * What the app's frame may load, in the shape of MCP Apps' `_meta.ui.csp`: the host builds the frame's content security
-   * policy from it (nothing external when it is absent). `resourceDomains` are origins images, media, fonts and styles may
-   * come from; `connectDomains`, `frameDomains` and `baseUriDomains` are parsed but not applied (an app's calls go through
-   * the host). The app's code still comes only from the host.
+   * What the app's frame may load, in the shape of MCP Apps' `_meta.ui.csp`. It is read and validated here and carried in the
+   * app ref; **the host does not apply it yet** (the frame's policy allows nothing external whatever is declared; the host
+   * applies it in the pull request that serves an app's static files). `resourceDomains` are origins images, media, fonts and
+   * styles may come from; `connectDomains`, `frameDomains` and `baseUriDomains` are parsed and will not be applied (an app's
+   * calls go through the host). The app's code will still come only from the host.
    */
   csp?: Csp
-  /** The browser capabilities the frame asks for, in the shape of MCP Apps' `_meta.ui.permissions`; passed to the iframe's `allow`. */
+  /**
+   * The browser capabilities the frame asks for, in the shape of MCP Apps' `_meta.ui.permissions`. Read, validated and carried
+   * in the app ref; the host does not pass them to the iframe's `allow` yet.
+   */
   permissions?: Partial<Record<(typeof PERMISSIONS)[number], Record<string, never>>>
 }
 
