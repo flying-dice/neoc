@@ -16,17 +16,17 @@ copy of it to every app's frame, so a change here reaches every installed app wi
 
 ## Using it from an app
 
-An installed app's document runs in two ways: **embedded** in a shell window's iframe, and **standalone** as a full-screen
-page of its own (`/apps/<id>`), where the host writes a minimal page around the same sandboxed frame. The kit is loaded by the
-app's own document either way and needs no host to draw. Settings arrive on the document the same way in both: the host sets
-`data-theme="light|dark"` (and `color-scheme`) on `<html>` and keeps it current; `data-reduce-motion` on `<html>` zeroes the
-motion tokens. With no `data-theme` at all (the kit loaded outside any vos page, such as Storybook), the tokens follow the
-system setting (`prefers-color-scheme`); an explicit `data-theme` always wins. Components an app uses for its own page (a
-banner, a list, a field) work the same everywhere. Sheets, alerts and toasts are not kit components: only the shell draws
-them, over an embedded app.
+An installed app is its own Vite build output, served by the host as static files, and runs in two ways: **embedded** in a
+shell window's iframe, and **standalone** as a full-screen page at `/apps/<id>` (the host's minimal page loads the same
+sandboxed app). The vos Vite plugin puts the `<link>` and `<script>` tags for `/kit/tokens.css` and `/kit/kit.js` into the
+app's `index.html` at build time; the app never bundles the kit, and the host serves one copy. The kit needs no host to
+draw. System settings reach the app's document through the host's bridge in both modes: `data-theme="light|dark"` (and
+`color-scheme`) on `<html>`, kept current; the kit also reads `data-reduce-motion` on `<html>`, which zeroes the motion tokens. Until the host has set a
+theme (and with none at all, for example in Storybook), the tokens follow the browser's `prefers-color-scheme`, and an
+explicit `data-theme` always wins. Components an app uses for its own page (a banner, a list, a field) work the same
+everywhere. Sheets, alerts and toasts are not kit components: only the shell draws them, over an embedded app.
 
-The document the host serves for an app loads the two files, and (embedded) keeps `<html data-theme="light|dark">` and `color-scheme` in step with
-the shell. The app writes no theme code and imports nothing:
+The app writes no theme code and imports nothing:
 
 ```html
 <ui-list label="Tasks">
