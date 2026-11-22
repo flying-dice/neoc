@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/web-components-vite'
 import { html } from 'lit'
 import { expect, fn, userEvent, within } from 'storybook/test'
-import { drawn } from '../story-support'
+
 import './ui-banner'
 import './ui-button'
 import './ui-empty-state'
@@ -57,7 +57,7 @@ export const BannerAction: Story = {
     const onClick = fn()
     const action = within(canvasElement).getByTestId('banner-action')
     action.addEventListener('click', onClick)
-    await userEvent.click(drawn(action))
+    await userEvent.click(action)
     await expect(onClick).toHaveBeenCalledTimes(1)
   }
 }

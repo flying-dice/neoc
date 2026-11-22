@@ -52,7 +52,6 @@ export class UiSegmented extends FormControl {
         width: fit-content;
         height: fit-content; /* fixed-size, as in the shell: a flex column or a grid cell does not stretch it */
         min-height: var(--ui-hit, 0px);
-        pointer-events: none; /* only the segments take a click, not an empty part of a stretched element */
       }
       :host([block]) {
         display: flex;
@@ -92,7 +91,6 @@ export class UiSegmented extends FormControl {
         display: none;
       }
       .segment {
-        pointer-events: auto;
         appearance: none;
         border: 0;
         background: none;

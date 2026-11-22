@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/web-components-vite'
 import { html } from 'lit'
 import { expect, fn, userEvent, within } from 'storybook/test'
-import { expectHitArea, drawn } from '../story-support'
+import { expectHitArea } from '../story-support'
 import './ui-button'
 import './ui-icon'
 
@@ -129,7 +129,7 @@ export const Pressing: Story = {
     const onClick = fn()
     const button = within(canvasElement).getByTestId('press')
     button.addEventListener('click', onClick)
-    await userEvent.click(drawn(button))
+    await userEvent.click(button)
     await expect(onClick).toHaveBeenCalledTimes(1)
     // the keyboard presses it too: focus it, then Space and Enter
     button.focus()

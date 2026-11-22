@@ -502,38 +502,37 @@ for (const hit of [false, true]) {
 }
 
 for (const hit of [false, true]) {
-  test(`a click on the empty part of a stretched element does nothing (hit ${hit ? 'on' : 'off'})`, async ({
+  test(`the element is the control: a click in an empty part of a forced-size element does what a click on the drawn part does (hit ${hit ? 'on' : 'off'})`, async ({
     page
   }) => {
-    await page.goto(`${origin}/frame`)
-    // A control activates only when the click lands on the drawn control (or its 44 pt box with hit), or comes through a
-    // label, never because its element is larger (a flex column or a grid cell stretches it, and so does a taller neighbour
-    // in a flex row). Click just outside the drawn box (hit off) or the 44 pt box (hit on), inside the element.
-    const points = await page.evaluate(async (hit) => {
+    await page.goto(`${origin}/standalone`)
+    // An app that forces a size onto a control (or a layout that stretches one: a button fills its cell, and with hit the
+    // drawn button is centred in a stretched element) makes a larger element. The whole element is the control, as it
+    // is for a native control with a forced size: a click anywhere on it does everything a click on the drawn part does,
+    // not onclick without the change, or the change without the click, or a press without its submit.
+    const plan = await page.evaluate(async (hit) => {
       const w = window as unknown as { log: string[] }
       w.log = []
       const kinds: [string, Record<string, string>, string][] = [
-        ['ui-button', { variant: 'tinted', size: 'small', type: 'button' }, 'Go'],
+        ['ui-button', { variant: 'tinted', size: 'small', type: 'submit' }, 'Go'],
         ['ui-toggle', { label: 't' }, ''],
         ['ui-check', { label: 'c' }, ''],
-        ['ui-segmented', { label: 's', value: 'a' }, ''],
+        ['ui-segmented', { label: 's' }, ''],
         ['ui-text-field', { label: 'f' }, '']
       ]
-      const layouts: [string, string, string[]][] = [
-        ['column', 'display:flex;flex-direction:column;align-items:stretch;width:300px', ['right']],
-        [
-          'grid',
-          'display:grid;grid-template-columns:300px;grid-auto-rows:110px',
-          ['right', 'below']
-        ],
-        ['row', 'display:flex;align-items:stretch;gap:12px', ['below', 'above']],
-        // an app that forces a size: the empty part of the element must still do nothing
-        ['forced', 'display:block', ['right', 'below']]
+      const layouts: [string, string][] = [
+        ['column', 'display:flex;flex-direction:column;align-items:stretch;width:300px'],
+        ['grid', 'display:grid;grid-template-columns:300px;grid-auto-rows:110px'],
+        ['forced', 'display:block']
       ]
-      const area = document.createElement('div')
-      area.style.cssText = 'display:grid;gap:24px;padding:24px'
-      const items: { id: string; el: HTMLElement; sides: string[] }[] = []
-      for (const [layout, css, sides] of layouts)
+      const form = document.createElement('form')
+      form.addEventListener('submit', (e) => {
+        e.preventDefault()
+        w.log.push('submit')
+      })
+      form.style.cssText = 'display:grid;gap:24px;padding:24px'
+      const items: { id: string; el: HTMLElement; forced: boolean }[] = []
+      for (const [layout, css] of layouts)
         for (const [tag, attrs, text] of kinds) {
           const box = document.createElement('div')
           box.style.cssText = css
@@ -541,6 +540,7 @@ for (const hit of [false, true]) {
           for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v)
           if (hit) el.setAttribute('hit', '')
           el.textContent = text
+          // an app that forces a size onto the control
           if (layout === 'forced') el.style.cssText = 'display:inline-flex;width:260px;height:100px'
           const id = `${layout}-${tag}`
           el.dataset.testid = id
@@ -550,27 +550,22 @@ for (const hit of [false, true]) {
               label: v
             }))
           box.append(el)
-          if (layout === 'row') {
-            const tall = document.createElement('div')
-            tall.style.cssText = 'height:120px;width:40px;background:#ddd'
-            box.append(tall)
-          }
-          area.append(box)
+          form.append(box)
           for (const type of ['click', 'change', 'focusin'])
-            el.addEventListener(type, () => w.log.push(`${id}:${type}`))
-          items.push({ id, el, sides })
+            el.addEventListener(type, () => w.log.push(`${type}`))
+          items.push({ id, el, forced: layout === 'forced' })
         }
-      document.body.replaceChildren(area)
+      document.body.replaceChildren(form)
       await Promise.all(
         items.map((i) => (i.el as unknown as { updateComplete: Promise<unknown> }).updateComplete)
       )
-      const out: { id: string; side: string; x: number; y: number }[] = []
-      for (const { id, el, sides } of items) {
+      const out: { id: string; drawn: [number, number]; empty: [number, number][] }[] = []
+      for (const { id, el } of items) {
         const host = el.getBoundingClientRect()
         const inner = el
           .shadowRoot!.querySelector<HTMLElement>(
             el.localName === 'ui-segmented'
-              ? '.group'
+              ? '.segment'
               : el.localName === 'ui-text-field'
                 ? 'input'
                 : 'button'
@@ -578,37 +573,60 @@ for (const hit of [false, true]) {
           .getBoundingClientRect()
         const cx = inner.left + inner.width / 2
         const cy = inner.top + inner.height / 2
-        // the area that may take a click: the drawn box, or the 44 pt box centred on it (a segmented control is only taller)
         const halfW =
-          hit && el.localName !== 'ui-segmented' && el.localName !== 'ui-text-field'
-            ? Math.max(inner.width, 44) / 2
-            : inner.width / 2
+          hit && el.localName !== 'ui-text-field' ? Math.max(inner.width, 44) / 2 : inner.width / 2
         const halfH = hit ? Math.max(inner.height, 44) / 2 : inner.height / 2
-        const spots: Record<string, [number, number]> = {
-          right: [cx + halfW + 8, cy],
-          below: [cx, cy + halfH + 6],
-          above: [cx, cy - halfH - 6]
-        }
-        for (const side of sides) {
-          const [x, y] = spots[side]!
-          // only where the point is inside the (stretched) element, so that the element is what is being clicked
-          if (x > host.left && x < host.right && y > host.top && y < host.bottom)
-            out.push({ id, side, x, y })
-        }
+        const candidates: [number, number][] = [
+          [cx + halfW + 8, cy],
+          [cx, cy + halfH + 6]
+        ]
+        const empty = candidates.filter(
+          ([x, y]) => x > host.left && x < host.right && y > host.top && y < host.bottom
+        )
+        out.push({ id, drawn: [cx, cy], empty })
       }
       return out
     }, hit)
-    expect(points.length, 'the layouts leave an empty part to click').toBeGreaterThan(8)
-    const wrong: string[] = []
-    for (const p of points) {
-      await page.evaluate(() => {
+    const reset = (): Promise<void> =>
+      page.evaluate(() => {
         ;(window as unknown as { log: string[] }).log = []
+        for (const el of document.querySelectorAll<
+          HTMLElement & { checked?: boolean; value?: string }
+        >('ui-toggle, ui-check'))
+          el.checked = false
+        for (const el of document.querySelectorAll<HTMLElement & { value?: string }>(
+          'ui-segmented'
+        ))
+          el.value = ''
         ;(document.activeElement as HTMLElement | null)?.blur()
       })
-      await page.mouse.click(p.x, p.y)
-      const log = await page.evaluate(() => (window as unknown as { log: string[] }).log)
-      if (log.length) wrong.push(`${p.id} ${p.side}: ${JSON.stringify(log)}`)
+    const heard = async (x: number, y: number): Promise<string[]> => {
+      await reset()
+      await page.mouse.click(x, y)
+      return page.evaluate(() => [...(window as unknown as { log: string[] }).log].sort())
     }
+    let compared = 0
+    const wrong: string[] = []
+    for (const { id, drawn, empty } of plan) {
+      const onDrawn = await heard(drawn[0], drawn[1])
+      if (!onDrawn.length) wrong.push(`${id}: the drawn part heard nothing`)
+      for (const [x, y] of empty) {
+        const onEmpty = await heard(x, y)
+        compared++
+        // a segmented control chooses a segment: outside the segments it chooses nothing (no change)
+        const expected = id.endsWith('ui-segmented')
+          ? onEmpty.filter((e) => e !== 'change')
+          : onDrawn
+        if (
+          JSON.stringify(onEmpty) !== JSON.stringify(expected) ||
+          (id.endsWith('ui-segmented') && onEmpty.includes('change'))
+        )
+          wrong.push(
+            `${id} at ${Math.round(x)},${Math.round(y)}: drawn ${JSON.stringify(onDrawn)}, empty ${JSON.stringify(onEmpty)}`
+          )
+      }
+    }
+    expect(compared, 'the layouts leave an empty part to click').toBeGreaterThan(6)
     expect(wrong).toEqual([])
   })
 }
