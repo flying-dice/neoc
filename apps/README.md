@@ -96,9 +96,13 @@ are one value** (a Luau nil is an absent key): a property or a param whose schem
 present, so TypeScript types it optional too (`tag?: string | null`), Luau types it `string?`, and the router lets it be
 absent, whether or not the contract lists it under `required`.
 
-Names: a param or property may be any identifier (`type`, `default`, `delete`: the generators quote it where a language needs
-it); a method may not be a Luau reserved word (`end`, `function`, ...), a schema may not be a reserved word of TypeScript or
-Luau, and `__proto__`, `constructor` and `prototype` are never a name. Every type the generated files declare must have a name
+Names: a param or property may be any identifier (`type`, `default`, `delete`, `new`: the generators quote it where a language
+reads it as syntax); a method may not be a Luau reserved word (`end`, `function`, ...); a schema may not be a reserved word or a
+builtin type of TypeScript or Luau (`string`, `buffer`, `class`, `await`, ...) but may be called `Record`, `Array` or `Promise`
+(the generated types reach those through names a schema cannot shadow); `__proto__`, `constructor` and `prototype` are never a
+name, and a schema never starts with `__vos`. A `$ref` cycle that does not pass through an array or an object property
+(`A` is `B` is `A`) is refused with the cycle named. A migration's `file` is a plain relative name inside the project (no `..`,
+no absolute path, no hidden segment): the build reads it from the project and writes it into `dist/`, and nothing else. Every type the generated files declare must have a name
 of its own: a schema called `Host`, `Api`, `RpcError`, `Context` or `Handlers`, one named like a method's `<Method>Params` or
 `<Method>Result` (`ListResult` for `list`), or two methods that are one name in PascalCase (`add_task` and `addTask`) are
 refused when the contract is read, with the names that clash. Text from the contract (titles, summaries, enum values) is
@@ -124,9 +128,11 @@ committed.
 The build checks `server/main.luau` against the contract with luau-lsp (strict, the same check as `bun run typecheck`): a
 declared method with no handler, or a handler of the wrong shape, fails the build with the checker's message, and valid Luau
 of any shape passes (a handler assigned from a local function, defined in a module you `require`, added to the table later).
-A function in the table that the contract does not declare is never called. Without luau-lsp installed the build warns that
-the backend was not checked (and the gate fails); the host also refuses to load an app that does not implement every method.
-`vos({ check: false })` turns the check off.
+A function in the table that the contract does not declare is never called. **The build needs luau-lsp** (1.70.1, on the PATH or
+in `~/.local/bin`, or named by `VOS_LUAU_LSP`), as it needs darklua: without it the build stops and says how to install it, because
+it could not say the app will load. `vos({ check: false })` turns the check off, for someone who knows what they are doing (the host
+still refuses to load an app that does not implement every method). A build that fails at any step leaves `dist/` exactly as the
+last good build made it: the build is made in `.app/build` and moved into `dist/` only when every step has succeeded.
 
 ## The client
 
@@ -272,7 +278,8 @@ So the backend you test is the real Luau on the real runtime. Reopen the app's w
 no stand-alone dev page: the shell is the dev host.
 
 The repository's `bun run lint`, `typecheck` and `test` run every project's scripts. luau-lsp 1.70.1, StyLua and darklua
-0.18.0 must be installed; a missing one skips on a developer machine and fails in the gate (`VOS_GATE=1`).
+0.18.0 must be installed: `bun run lint` and `typecheck` skip the Luau check of a missing luau-lsp or StyLua on a developer machine and
+fail in the gate (`VOS_GATE=1`), but **`bun run build` needs luau-lsp and darklua and stops without them**.
 `bun run build:apps` builds every app under `apps/`, a Vite project by running its `build` and copying `dist/`, and writes the
 registry. The host installs an app from an app ref URL (`file://`, `http://`, `https://`), verifies every sha256 (the
 client's too) and runs the migrations.

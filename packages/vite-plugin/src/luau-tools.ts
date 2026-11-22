@@ -43,6 +43,8 @@ export function luauFiles(project: string): string[] {
   const walk = (dir: string): void => {
     for (const name of readdirSync(dir)) {
       if ((name.startsWith('.') && name !== '.app') || name === 'node_modules' || name === 'dist') continue
+      // the build's staging folder holds the bundle it is making, not the project's Luau
+      if (name === 'build' && relative(project, dir) === '.app') continue
       const path = join(dir, name)
       if (statSync(path).isDirectory()) walk(path)
       else if (name.endsWith('.luau')) found.push(relative(project, path))
@@ -100,7 +102,9 @@ function offeredModules(definitions: string): Set<string> {
  * `Error`, for a version the declarations are not written for) for the caller to decide, as the build does.
  */
 export function analyze(project: string, mode: 'exit' | 'throw' = 'exit'): { files: string[]; findings: string[] } {
-  const luauLsp = onPath('luau-lsp', join(homedir(), '.local/bin/luau-lsp'))
+  // `VOS_LUAU_LSP` names the binary to use (a path that does not exist is a missing tool), else it is found on the PATH
+  const named = process.env.VOS_LUAU_LSP
+  const luauLsp = named ? (existsSync(named) ? named : undefined) : onPath('luau-lsp', join(homedir(), '.local/bin/luau-lsp'))
   if (!luauLsp) {
     const message = `luau-lsp not found: install the ${LUAU_LSP_VERSION} release binary from https://github.com/JohnnyMorganz/luau-lsp/releases/tag/${LUAU_LSP_VERSION} (on PATH or in ~/.local/bin)`
     if (mode === 'throw') throw new ToolMissing(message)

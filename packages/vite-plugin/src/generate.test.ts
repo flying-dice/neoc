@@ -45,21 +45,21 @@ describe('the typed client', () => {
   test('declares the app:rpc module with one typed function per method', () => {
     expect(dts).toContain("declare module 'app:rpc' {")
     expect(dts).toContain('export type Note = { id: number; title: string; tag?: string | null }')
-    expect(dts).toContain('list(): Promise<ListResult>')
-    expect(dts).toContain('add_note(params: AddNoteParams): Promise<AddNoteResult>')
+    expect(dts).toContain('list(): __vos_Reply<ListResult>')
+    expect(dts).toContain('add_note(params: AddNoteParams): __vos_Reply<AddNoteResult>')
     expect(dts).toContain('export interface AddNoteParams {')
     expect(dts).toContain('title: "a" | "b"')
     expect(dts).toContain('pinned?: boolean')
     // every param optional: the params may be left out
-    expect(dts).toContain('ping(params?: PingParams): Promise<PingResult>')
+    expect(dts).toContain('ping(params?: PingParams): __vos_Reply<PingResult>')
     expect(dts).toContain('export const api: Api')
     expect(dts).toContain('export const host: Host')
     expect(dts).toContain('export class RpcError extends Error')
   })
   test('the module calls the host through what the entry bound', () => {
     expect(js).toContain('export function bind(props)')
-    expect(js).toContain("add_note: (params) => call('add_note', params),")
-    expect(js).toContain("list: () => call('list', undefined),")
+    expect(js).toContain('"add_note": (params) => call("add_note", params),')
+    expect(js).toContain('"list": () => call("list", undefined),')
     expect(js).toContain('throw new RpcError(')
   })
   test('the entry binds app:rpc to the host, then mounts the app', () => {
@@ -100,7 +100,7 @@ describe('null and absent are one value', () => {
     expect(dts).toContain('export type Thing = { id: number; tag?: string | null; other?: Maybe; name: string }')
     // a required param that allows null may be left out, and so may the whole object when nothing else is required
     expect(dts).toContain('tag?: string | null')
-    expect(dts).toContain('set(params?: SetParams): Promise<SetResult>')
+    expect(dts).toContain('"set"(params?: SetParams): __vos_Reply<SetResult>')
   })
   test('Luau types it as nil-able and the router lets it be absent', () => {
     const luau = emitLuau(contract, 'openrpc.json')

@@ -5,10 +5,11 @@
  */
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { inside } from './paths.ts'
 import type { Definition } from './definition.ts'
 
 /** The darklua release the bundles are pinned to (the host's own build uses the same one). */
@@ -58,15 +59,25 @@ export function bundleLuau(entry: string): string {
 
 const sha256 = (bytes: string | Buffer): string => createHash('sha256').update(bytes).digest('hex')
 
+/** Every file under `dir`, as paths relative to it with `/`, in a stable order. */
+export function filesUnder(dir: string, prefix = ''): string[] {
+  if (!existsSync(join(dir, prefix))) return []
+  return readdirSync(join(dir, prefix), { withFileTypes: true })
+    .sort((a, b) => (a.name < b.name ? -1 : 1))
+    .flatMap((entry) => {
+      const path = prefix === '' ? entry.name : `${prefix}/${entry.name}`
+      return entry.isDirectory() ? filesUnder(dir, path) : [path]
+    })
+}
+
 /**
- * Write `app.luau` and `app-ref.json` into `outDir`, which already holds the client script. The manifest is the contract's
- * (`info.title` and `info.version`, and `x-app`); every file the app ref lists is next to it, with a relative URL, so the
- * folder installs from `file://`, `http://` or `https://` as it is.
+ * Write `app.luau` and `app-ref.json` into `outDir`, which already holds the client script: the build's staging folder, not yet
+ * `dist/`. The manifest is the contract's (`info.title` and `info.version`, and `x-app`); every file the app ref lists is next to
+ * it, with a relative URL, so the folder installs from `file://`, `http://` or `https://` as it is. Every file a migration names
+ * is read from inside the project and written to inside `outDir`, whatever the contract says.
  */
 export function writeApp(project: string, outDir: string, definition: Definition, entry: string, client: string): void {
   mkdirSync(outDir, { recursive: true })
-  // everything that can fail comes before anything is written, and the two files that make the app ref are each put in place
-  // whole (written aside, then renamed): a build that fails never leaves half an app behind
   const bundle = bundleLuau(join(project, entry))
   const clientBytes = readFileSync(join(outDir, client))
   const files = [
@@ -74,10 +85,15 @@ export function writeApp(project: string, outDir: string, definition: Definition
     { path: client, url: client, sha256: sha256(clientBytes) }
   ]
   const meta = definition.app
-  for (const { file } of meta.migrations ?? []) {
-    mkdirSync(dirname(join(outDir, file)), { recursive: true })
-    cpSync(join(project, file), join(outDir, file))
-    files.push({ path: file, url: file, sha256: sha256(readFileSync(join(project, file))) })
+  for (const [index, { file }] of (meta.migrations ?? []).entries()) {
+    const from = inside(project, file)
+    if (!existsSync(from) || !statSync(from).isFile()) {
+      throw new Error(`x-app.migrations[${index}].file \`${file}\` is not a file of the project`)
+    }
+    const to = inside(outDir, file)
+    mkdirSync(dirname(to), { recursive: true })
+    cpSync(from, to)
+    files.push({ path: file, url: file, sha256: sha256(readFileSync(from)) })
   }
   const appRef = {
     manifest: {
@@ -97,12 +113,35 @@ export function writeApp(project: string, outDir: string, definition: Definition
     },
     files
   }
-  putInPlace(join(outDir, 'app.luau'), bundle)
-  putInPlace(join(outDir, 'app-ref.json'), JSON.stringify(appRef, null, 2) + '\n')
+  writeFileSync(join(outDir, 'app.luau'), bundle)
+  writeFileSync(join(outDir, 'app-ref.json'), JSON.stringify(appRef, null, 2) + '\n')
 }
 
-function putInPlace(path: string, contents: string): void {
-  const aside = `${path}.${process.pid}.tmp`
-  writeFileSync(aside, contents)
-  renameSync(aside, path)
+/**
+ * Put a finished build in place: every file of `staging` moves into `dist` (the files of the app ref last, `app-ref.json` the very
+ * last, so a reader that follows it finds everything it lists), then what the new build no longer has is removed. `dist/` is
+ * only touched after every step of the build has succeeded, and its folder stays the same folder (a watcher on it keeps watching).
+ */
+export function promote(staging: string, dist: string): void {
+  const fresh = filesUnder(staging)
+  const last = ['app.luau', 'app-ref.json']
+  const order = [...fresh.filter((f) => !last.includes(f)), ...last.filter((f) => fresh.includes(f))]
+  mkdirSync(dist, { recursive: true })
+  for (const file of order) {
+    const to = inside(dist, file)
+    mkdirSync(dirname(to), { recursive: true })
+    renameSync(inside(staging, file), to)
+  }
+  const keep = new Set(fresh)
+  for (const stale of filesUnder(dist)) if (!keep.has(stale)) rmSync(inside(dist, stale), { force: true })
+  removeEmptyDirs(dist)
+}
+
+function removeEmptyDirs(dir: string): void {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    const path = join(dir, entry.name)
+    removeEmptyDirs(path)
+    if (readdirSync(path).length === 0) rmSync(path, { recursive: true })
+  }
 }

@@ -30,6 +30,7 @@
  * against the `app.manifest { ... }` the app declares in Luau, so
  * the two cannot disagree about the id, icon or tint.
  */
+import { DefinitionError, parseDefinition } from '../packages/vite-plugin/src/definition.ts'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -67,19 +68,19 @@ function declared(source: string, field: string): string | undefined {
 /** An app that is a Vite project has its contract, `openrpc.json`, as its only descriptor (no `app.json`). */
 const isViteApp = (dir: string): boolean => existsSync(join(dir, 'openrpc.json'))
 
-/** The id and version of a Vite project: `x-app.id` and `info.version` of its contract. */
+/**
+ * The id and version of a Vite project: `x-app.id` and `info.version` of its contract, read with the plugin's own parser so that
+ * they are the validated ones (an id and a version become directory names under the output folder).
+ */
 function viteAppIdentity(dir: string): { id: string; version: string } {
-  const contract = JSON.parse(readFileSync(join(dir, 'openrpc.json'), 'utf8')) as {
-    info?: { version?: string }
-    'x-app'?: { id?: string }
-  }
-  const id = contract['x-app']?.id
-  const version = contract.info?.version
-  if (!id || !version) {
-    console.error(`✗ ${relative(root, dir)}/openrpc.json needs x-app.id and info.version`)
+  try {
+    const definition = parseDefinition(readFileSync(join(dir, 'openrpc.json'), 'utf8'), `${relative(root, dir)}/openrpc.json`)
+    return { id: definition.app.id, version: definition.version }
+  } catch (error) {
+    if (!(error instanceof DefinitionError)) throw error
+    console.error(`✗ ${error.message}`)
     process.exit(1)
   }
-  return { id, version }
 }
 
 /**

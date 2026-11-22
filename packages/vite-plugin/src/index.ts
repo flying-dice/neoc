@@ -22,9 +22,9 @@
 import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { Plugin } from 'vite'
-import { writeApp } from './backend.ts'
+import { promote, writeApp } from './backend.ts'
 import { DEFAULTS, generate, readDefinition, write, type Options } from './generate.ts'
-import { analyze, isGateRun, ToolMissing } from './luau-tools.ts'
+import { analyze, ToolMissing } from './luau-tools.ts'
 
 export type { Options } from './generate.ts'
 export { DefinitionError, parseDefinition } from './definition.ts'
@@ -53,7 +53,9 @@ function foldCss(outDir: string): void {
 export function vos(options: Partial<Options> = {}): Plugin {
   const settings: Options = { ...DEFAULTS, ...options }
   let root = process.cwd()
-  let outDir = 'dist'
+  let distDir = resolve(process.cwd(), 'dist')
+  /** Where a build is made: `dist/` is only touched once every step has succeeded (`.app/` is not committed). */
+  let staging = resolve(process.cwd(), settings.generated, 'build')
   // a build that failed must not write an app ref: the one on disk (if any) is the last build that worked
   let failed = false
 
@@ -63,7 +65,7 @@ export function vos(options: Partial<Options> = {}): Plugin {
    * wrong shape, or one that is not declared is a type error in `server/main.luau`, and valid code of any shape (a handler
    * defined in a required module, assigned from a local function, added to the table later) never fails.
    */
-  const regenerate = (warn: (message: string) => void): void => {
+  const regenerate = (): void => {
     write(root, generate(root, settings))
     const backend = resolve(root, settings.backend)
     if (!existsSync(backend)) throw new Error(`${settings.backend} not found: the backend returns one handler per method of ${settings.definition}`)
@@ -72,9 +74,9 @@ export function vos(options: Partial<Options> = {}): Plugin {
     try {
       result = analyze(root, 'throw')
     } catch (error) {
-      if (error instanceof ToolMissing && !isGateRun()) {
-        warn(`${error.message}\n  the backend was not checked against ${settings.definition}; the host refuses to load an app whose handlers do not match its contract`)
-        return
+      // a build that cannot check the backend cannot say the app will load, so it stops, as it does without darklua
+      if (error instanceof ToolMissing) {
+        throw new Error(`${error.message}\n  (to build without the check: vos({ check: false }), and the host refuses an app whose handlers do not match its contract when it loads it)`)
       }
       throw error
     }
@@ -91,12 +93,14 @@ export function vos(options: Partial<Options> = {}): Plugin {
     name: 'vos',
     config(config) {
       root = resolve(config.root ?? process.cwd())
-      outDir = config.build?.outDir ?? 'dist'
+      distDir = resolve(root, config.build?.outDir ?? 'dist')
+      staging = resolve(root, settings.generated, 'build')
       return {
         // a classic script, not a module: an app's frame has an opaque origin, where a module script needs CORS
         build: {
           lib: { entry: resolve(root, settings.generated, 'entry.js'), name: 'vosApp', formats: ['iife'], fileName: () => CLIENT },
-          outDir,
+          // built next to `dist/`, in the generated folder: a build that fails midway leaves `dist/` as it was
+          outDir: staging,
           emptyOutDir: true,
           cssCodeSplit: false
         },
@@ -109,7 +113,8 @@ export function vos(options: Partial<Options> = {}): Plugin {
     },
     buildStart() {
       failed = false
-      regenerate((message) => this.warn(message))
+      rmSync(staging, { recursive: true, force: true })
+      regenerate()
       this.addWatchFile(resolve(root, settings.definition))
       for (const file of luauUnder(resolve(root, settings.backend, '..'))) this.addWatchFile(file)
     },
@@ -117,12 +122,16 @@ export function vos(options: Partial<Options> = {}): Plugin {
       if (error) failed = true
     },
     closeBundle() {
-      if (failed) return
-      const out = resolve(root, outDir)
-      // a build that failed has no client script: its own error is the one to read
-      if (!existsSync(join(out, CLIENT))) return
-      foldCss(out)
-      writeApp(root, out, readDefinition(root, settings), `${settings.generated}/entry.luau`, CLIENT)
+      try {
+        // a build that failed has no client script: its own error is the one to read
+        if (failed || !existsSync(join(staging, CLIENT))) return
+        foldCss(staging)
+        writeApp(root, staging, readDefinition(root, settings), `${settings.generated}/entry.luau`, CLIENT)
+        promote(staging, distDir)
+      } finally {
+        // whatever happened, nothing of this build stays behind in the generated folder
+        rmSync(staging, { recursive: true, force: true })
+      }
     }
   }
 }

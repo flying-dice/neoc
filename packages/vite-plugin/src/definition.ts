@@ -18,6 +18,8 @@
  *
  * Anything else is an error that names where it is, so a definition never means something a reader did not expect.
  */
+import { JS_WORDS } from './names.ts'
+import { refuseRelativeFile } from './paths.ts'
 
 export type Schema = { description?: string } & (
   | { kind: 'string'; enum?: string[]; minLength?: number; maxLength?: number }
@@ -92,6 +94,35 @@ export interface Definition {
   components: Record<string, Schema>
 }
 
+/** The components a schema is directly: itself a `$ref`, or a nullable of one (not through an array or an object). */
+function directRefs(schema: Schema): string[] {
+  if (schema.kind === 'ref') return [schema.name]
+  if (schema.kind === 'nullable') return directRefs(schema.inner)
+  return []
+}
+
+/**
+ * A component that is, directly, another one that is, directly, the first (`A = $ref B`, `B = $ref A`, or `A = A | null`) has no
+ * value: TypeScript refuses the alias and the router would loop. Through an array or an object a cycle is fine (a tree).
+ */
+function checkRefCycles(components: Record<string, Schema>): void {
+  const state = new Map<string, 'visiting' | 'done'>()
+  const path: string[] = []
+  const visit = (name: string): void => {
+    if (state.get(name) === 'done') return
+    if (state.get(name) === 'visiting') {
+      const cycle = [...path.slice(path.indexOf(name)), name].join(' -> ')
+      fail(`components.schemas.${name}`, `is defined in terms of itself (${cycle}): a cycle must pass through an array or an object property`)
+    }
+    state.set(name, 'visiting')
+    path.push(name)
+    for (const next of directRefs(components[name] as Schema)) visit(next)
+    path.pop()
+    state.set(name, 'done')
+  }
+  for (const name of Object.keys(components)) visit(name)
+}
+
 /** The names the generated files claim for themselves: a component or a method's types cannot reuse them. */
 const GENERATED_TS = ['Host', 'Api', 'RpcError']
 const GENERATED_LUAU = ['Context', 'Handlers']
@@ -145,9 +176,14 @@ export const LUAU_KEYWORDS = new Set([
   'repeat', 'return', 'then', 'true', 'until', 'while'
 ])
 
+/** The builtin types of Luau (and `true`/`false`/`typeof`): a schema becomes a Luau `export type`, which cannot be named like one. */
+const LUAU_TYPES = new Set([
+  'nil', 'boolean', 'number', 'string', 'thread', 'buffer', 'vector', 'any', 'unknown', 'never', 'table', 'function', 'userdata', 'typeof', 'true', 'false'
+])
+
 /** Words a TypeScript type cannot be named. */
 const TS_TYPE_RESERVED = new Set([
-  'any', 'boolean', 'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger', 'default', 'delete', 'do', 'else',
+  'any', 'bigint', 'boolean', 'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger', 'default', 'delete', 'do', 'else',
   'enum', 'export', 'extends', 'false', 'finally', 'for', 'function', 'if', 'import', 'in', 'instanceof', 'interface', 'let',
   'never', 'new', 'null', 'number', 'object', 'package', 'private', 'protected', 'public', 'return', 'static', 'string',
   'super', 'switch', 'symbol', 'this', 'throw', 'true', 'try', 'typeof', 'undefined', 'unknown', 'var', 'void', 'while', 'with', 'yield'
@@ -177,9 +213,10 @@ function identifier(value: Json, path: string, what: string, kind: NameKind): st
   if (!IDENTIFIER.test(name)) fail(path, `${what} \`${name}\` must be an identifier (letters, digits and _, not starting with a digit)`)
   if (FORBIDDEN.has(name)) fail(path, `\`${name}\` cannot be a ${what}: it means something to a JavaScript object, so pick another`)
   if (kind === 'method' && LUAU_KEYWORDS.has(name)) fail(path, `\`${name}\` is a reserved word in Luau, where a method is a function field: pick another ${what}`)
-  if (kind === 'schema' && (LUAU_KEYWORDS.has(name) || TS_TYPE_RESERVED.has(name))) {
-    fail(path, `\`${name}\` is a reserved word in TypeScript or Luau, where a schema is a type: pick another ${what}`)
+  if (kind === 'schema' && (LUAU_KEYWORDS.has(name) || TS_TYPE_RESERVED.has(name) || JS_WORDS.has(name) || LUAU_TYPES.has(name))) {
+    fail(path, `\`${name}\` is a reserved word or a builtin type of TypeScript or Luau, where a schema is a type: pick another ${what}`)
   }
+  if (kind === 'schema' && name.startsWith('__vos')) fail(path, `a ${what} cannot start with \`__vos\`: the generated files use that prefix for their own names`)
   return name
 }
 
@@ -488,6 +525,7 @@ function definition(document: Json): Definition {
   })
 
   for (const { name, path } of refs) if (!has(components, name)) fail(path, `refers to \`${name}\`, which components.schemas does not define`)
+  checkRefCycles(components)
   checkGeneratedNames(components, methods)
   return { title, version, app, methods, components }
 }
@@ -501,11 +539,20 @@ function appMeta(value: Json): AppMeta {
   if (!/^[a-z0-9][a-z0-9-]{2,39}$/.test(id)) fail(`${path}.id`, 'must be 3 to 40 characters: lowercase letters, digits and dashes')
   const meta: AppMeta = { id }
   const icon = optionalText(value.icon, `${path}.icon`)
-  if (icon !== undefined) meta.icon = icon
+  if (icon !== undefined) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(icon)) fail(`${path}.icon`, 'must be a symbol name: letters, digits, `.`, `_` and `-`, up to 64 characters')
+    meta.icon = icon
+  }
   const tint = optionalText(value.tint, `${path}.tint`)
-  if (tint !== undefined) meta.tint = tint
+  if (tint !== undefined) {
+    if (!/^[a-z][a-z0-9-]{0,31}$/.test(tint)) fail(`${path}.tint`, 'must be a palette role such as `blue` or `orange`')
+    meta.tint = tint
+  }
   const description = optionalText(value.description, `${path}.description`)
-  if (description !== undefined) meta.description = description
+  if (description !== undefined) {
+    if (description.length > 500) fail(`${path}.description`, 'must be at most 500 characters')
+    meta.description = description
+  }
   if (value.window !== undefined) {
     const window = value.window
     if (!isObject(window)) fail(`${path}.window`, 'must be { w, h, minW, minH }')
@@ -521,6 +568,7 @@ function appMeta(value: Json): AppMeta {
     if (!isObject(value.requires)) fail(`${path}.requires`, 'must be { host }')
     only(value.requires, ['host'], `${path}.requires`)
     const host = optionalText(value.requires.host, `${path}.requires.host`)
+    if (host !== undefined && !/^[<>=~^0-9. ]{1,32}$/.test(host)) fail(`${path}.requires.host`, 'must be a version requirement such as ">=1.0"')
     meta.requires = host === undefined ? {} : { host }
   }
   if (value.migrations !== undefined) {
@@ -529,7 +577,12 @@ function appMeta(value: Json): AppMeta {
       const where = `${path}.migrations[${i}]`
       if (!isObject(m)) fail(where, 'must be { version, name, file }')
       only(m, ['version', 'name', 'file'], where)
-      return { version: count(m.version, `${where}.version`), name: text(m.name, `${where}.name`), file: text(m.file, `${where}.file`) }
+      const file = text(m.file, `${where}.file`)
+      const refused = refuseRelativeFile(file)
+      if (refused !== null) fail(`${where}.file`, `\`${file}\` ${refused}`)
+      const name = text(m.name, `${where}.name`)
+      if (!/^[A-Za-z0-9_][A-Za-z0-9_ -]{0,63}$/.test(name)) fail(`${where}.name`, 'must be a short name: letters, digits, spaces, `_` and `-`, up to 64 characters')
+      return { version: count(m.version, `${where}.version`), name, file }
     })
   }
   if (value.csp !== undefined) {
