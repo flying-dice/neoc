@@ -71,6 +71,55 @@ describe('the typed client', () => {
     expect(js).toContain("request('ui/request-display-mode', { mode })")
   })
   test('is the same every time', () => expect(emitDeclarations(definition, 'openrpc.json')).toBe(dts))
+  test('host.call reaches only the host’s vos/ services, with params by name, and says why it refuses', async () => {
+    expect(dts).toContain('call(method: `vos/${string}`, params?: { readonly [key: string]: unknown }): __vos_Reply<unknown>')
+    const dir = mkdtempSync(join(tmpdir(), 'vos-host-call-'))
+    const sent: [string, unknown][] = []
+    ;(globalThis as { vos?: unknown }).vos = {
+      call: async (method: string, params: unknown) => {
+        sent.push([method, params])
+        if (method === 'vos/nothing') throw Object.assign(new Error('This host does not offer vos/nothing'), { code: -32601 })
+        return { apps: [] }
+      },
+      context: {},
+      capabilities: {}
+    }
+    try {
+      const file = join(dir, 'rpc.js')
+      writeFileSync(file, js)
+      const { host, RpcError } = (await import(`${file}?${Date.now()}`)) as {
+        host: { call(method: string, params?: unknown): Promise<unknown> }
+        RpcError: new (...args: unknown[]) => Error & { code: number }
+      }
+      expect(await host.call('vos/apps/list')).toEqual({ apps: [] })
+      await host.call('vos/apps/enable', { app: 'notes' })
+      expect(sent).toEqual([
+        ['vos/apps/list', {}],
+        ['vos/apps/enable', { app: 'notes' }]
+      ])
+      // the host's answer for a method it does not offer comes back as an RpcError with its code
+      const unknown = await host.call('vos/nothing').catch((e: unknown) => e)
+      expect(unknown).toBeInstanceOf(RpcError)
+      expect(unknown).toMatchObject({ code: -32601, message: 'This host does not offer vos/nothing' })
+      // refused before anything is posted: not a vos/ name (the backend is api's), or params that are not named
+      for (const [method, params, message] of [
+        ['add_note', undefined, 'host.call reaches the host\'s vos/ services; "add_note" is not one'],
+        ['ui/open-link', { url: 'https://example.org' }, 'host.call reaches the host\'s vos/ services'],
+        ['vos/apps/enable', ['notes'], 'The params of vos/apps/enable are an object of named values'],
+        ['vos/apps/enable', 'notes', 'The params of vos/apps/enable are an object of named values'],
+        ['vos/' + 'x'.repeat(200), undefined, 'is not one']
+      ] as const) {
+        const refused = await host.call(method, params).catch((e: unknown) => e)
+        expect(refused).toBeInstanceOf(RpcError)
+        expect((refused as { code: number }).code).toBe(-32602)
+        expect((refused as Error).message).toContain(message)
+      }
+      expect(sent).toHaveLength(3)
+    } finally {
+      delete (globalThis as { vos?: unknown }).vos
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('null and absent are one value', () => {

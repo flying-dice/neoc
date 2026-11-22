@@ -180,6 +180,7 @@ text and controls (the Calculator pads its top by that much).
 | `host.ready`, `host.capabilities`, `host.hosted` | the handshake is done; what the host offers (MCP Apps' `hostCapabilities`); and whether the host page draws UI of its own (true in the shell, false on the app's own page) |
 | `host.openLink(url)`, `host.requestDisplayMode(mode)` | `ui/open-link` (http and https only) and `ui/request-display-mode` (answers with the mode the host ended in) |
 | `host.onTeardown(fn)` | `fn` runs when the host is about to remove the page (`ui/resource-teardown`), for an app that must wrap up; an app that ignores it simply has its frame removed |
+| `host.call(method, params?)` | a service of the host page by name (`vos/...`; the services are listed here as they are added, and none is offered yet), params by name; resolves with the host's answer as `unknown` (check what you read), rejects with an `RpcError`: `-32601` `This host does not offer <method>` when this host page does not have it, `-32602` before anything is sent when the name does not start with `vos/` (your own methods are on `api`) or the params are not an object |
 
 **What the frame is.** An app is served as static files at `/apps/<id>/static/` and runs in an `<iframe sandbox="allow-scripts allow-forms">`
 of a host page. Every file is sent with the host's headers: a content security policy under which the page makes no request of

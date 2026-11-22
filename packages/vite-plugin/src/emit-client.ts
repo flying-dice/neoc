@@ -124,6 +124,13 @@ export interface Host {
   openLink(url: string): __vos_Reply<void>
   /** Ask for a display mode (\`ui/request-display-mode\`); resolves with the mode the host ended in. */
   requestDisplayMode(mode: 'inline' | 'fullscreen' | 'pip'): __vos_Reply<'inline' | 'fullscreen' | 'pip'>
+  /**
+   * Call one of the host's own services by name (\`vos/apps/list\`, \`vos/devices/revoke\`, ...: apps/README.md lists them), with
+   * params by name. Resolves with the host's answer, unchecked (\`unknown\`: the shapes are in the README); rejects with an
+   * {@link RpcError}: -32601 when the host does not offer the method, -32602 when the name is not a \`vos/\` name or the params
+   * are not an object. The app's own backend is {@link api}, never this.
+   */
+  call(method: \`vos/\${string}\`, params?: { readonly [key: string]: unknown }): __vos_Reply<unknown>
 }
 
 /** A JSON-RPC 2.0 error: the router refused the call (-32602 invalid params, -32601 method not found) or the handler failed it. */
@@ -200,6 +207,14 @@ export const host = {
   },
   async requestDisplayMode(mode) {
     return (await request('ui/request-display-mode', { mode })).mode
+  },
+  async call(method, params) {
+    // only the host's own services: a name without the prefix would reach the app's backend, which is \`api\`'s job
+    if (typeof method !== 'string' || !method.startsWith('vos/') || method.length > 128)
+      throw new RpcError(-32602, \`host.call reaches the host's vos/ services; \${JSON.stringify(String(method)).slice(0, 80)} is not one (the app's own methods are on api)\`)
+    if (params !== undefined && (typeof params !== 'object' || params === null || Array.isArray(params)))
+      throw new RpcError(-32602, \`The params of \${method} are an object of named values\`)
+    return request(method, params)
   }
 }
 
