@@ -29,7 +29,7 @@ import type {
   ViewSnapshot,
   WindowSize
 } from '../protocol'
-import { AppErrorCode } from '../protocol'
+import { AppErrorCode, sizeClassOf } from '../protocol'
 import { messageOf } from '../errors'
 import { isConnectionError, RpcError } from '../rpc/peer'
 import {
@@ -356,9 +356,9 @@ export class ViewCore {
 
   /** The window was resized: `Adaptive` / size classes switch locally; the host is told debounced. */
   resize(size: WindowSize): void {
-    const sizeClass = size.w < 560 ? 'compact' : 'regular'
+    const sizeClass = sizeClassOf(size.w)
     this.store.env.sizeClass = sizeClass
-    this.store.env.heightClass = size.h < 560 ? 'compact' : 'regular'
+    this.store.env.heightClass = sizeClassOf(size.h)
     this.timers.clearTimeout(this.resizeTimer)
     this.resizeTimer = this.timers.setTimeout(() => {
       if (this.link.online && this.viewId)
