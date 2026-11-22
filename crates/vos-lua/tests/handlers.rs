@@ -65,7 +65,7 @@ return {
   fail = function(ctx) return ctx:fail("A task needs a title.") end,
   explode = function() error("boom") end,
   coded = function() error("RPC-32001 not today", 0) end,
-  notcoded = function() error("RPC32001 not today", 0) end,
+  notcoded = function() error("RPC-32001: not today", 0) end,
   zero = function() error("RPC0 nothing", 0) end,
   loop = function() local t = {} t.t = t return t end,
 }
