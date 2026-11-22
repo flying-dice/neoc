@@ -9,5 +9,5 @@
     "noEmit": true,
     "types": []
   },
-  "include": ["src", ".app/rpc.d.ts"]
+  "include": ["src", ".app/*.d.ts"]
 }

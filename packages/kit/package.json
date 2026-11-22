@@ -6,7 +6,7 @@
   "type": "module",
   "types": "./src/index.ts",
   "scripts": {
-    "build": "vite build && cem analyze --config custom-elements-manifest.config.mjs",
+    "build": "vite build && cem analyze --config custom-elements-manifest.config.mjs && cp custom-elements.json ../../client/public/kit/custom-elements.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "storybook": "storybook dev -p 6007 --no-open",
     "build-storybook": "storybook build -o storybook-static",
@@ -36,5 +36,9 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "8.72.1",
     "vite": "^8.3.4"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./custom-elements.json": "./custom-elements.json"
   }
 }

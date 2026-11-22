@@ -115,13 +115,18 @@ afterAll(() => {
 describe.skipIf(luauLsp === null)('a build through the plugin', () => {
   test('a good build is complete in dist and leaves nothing behind in the generated folder', async () => {
     const dir = project(files())
+    const warnings: string[] = []
     try {
-      expect(await run(dir)).toBeNull()
+      expect(await run(dir, {}, warnings)).toBeNull()
+      // Vite has nothing to say about the host's classic scripts, which the plugin adds after its pass (NEOC-332)
+      expect(warnings.filter((w) => w.includes("can't be bundled"))).toEqual([])
       const built = Object.keys(snapshot(join(dir, 'dist'))).sort()
       expect(built.filter((f) => !f.startsWith('static/assets/'))).toEqual(['app-ref.json', 'app.luau', 'static/index.html'])
       expect(built.some((f) => /^static\/assets\/.*\.js$/.test(f))).toBe(true)
-      // the bridge's tag was injected into the page, first in the head
-      expect(readFileSync(join(dir, 'dist/static/index.html'), 'utf8')).toMatch(/<head>\s*<script src="\/apps\/bridge\.js"><\/script>/)
+      // the host's tags were injected first in the head: the kit's stylesheet (crossorigin), its script, then the bridge
+      expect(readFileSync(join(dir, 'dist/static/index.html'), 'utf8')).toMatch(
+        /<head>\s*<link rel="stylesheet" href="\/kit\/tokens\.css" crossorigin(="")?>\s*<script src="\/kit\/kit\.js"><\/script>\s*<script src="\/apps\/bridge\.js"><\/script>/
+      )
       const ref = JSON.parse(readFileSync(join(dir, 'dist/app-ref.json'), 'utf8')) as { files: { path: string; sha256: string }[] }
       for (const file of ref.files) {
         expect(createHash('sha256').update(readFileSync(join(dir, 'dist', file.path))).digest('hex'), file.path).toBe(file.sha256)
@@ -188,6 +193,24 @@ describe.skipIf(luauLsp === null)('a build through the plugin', () => {
       }
     } finally {
       rmSync(parent, { recursive: true, force: true })
+    }
+  })
+})
+
+describe.skipIf(luauLsp === null)('the host tags', () => {
+  test('a page that names them itself gets each once, and the author is told to remove theirs', async () => {
+    const page =
+      '<!doctype html>\n<html lang="en"><head><title>Probe</title>\n  <link rel="stylesheet" href="/kit/tokens.css">\n  <script src="/kit/kit.js"></script>\n  <script src="/apps/bridge.js"></script>\n</head><body><div id="root"></div><script type="module" src="/src/main.ts"></script></body></html>\n'
+    const dir = project(files({ 'index.html': page }))
+    const warnings: string[] = []
+    try {
+      expect(await run(dir, {}, warnings)).toBeNull()
+      const built = readFileSync(join(dir, 'dist/static/index.html'), 'utf8')
+      for (const url of ['/kit/tokens.css', '/kit/kit.js', '/apps/bridge.js']) expect(built.split(url).length - 1, url).toBe(1)
+      expect(built).toContain('href="/kit/tokens.css" crossorigin')
+      expect(warnings.filter((w) => w.includes('remove yours'))).toHaveLength(1)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
     }
   })
 })

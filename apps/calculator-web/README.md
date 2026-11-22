@@ -7,7 +7,7 @@ everything that one does (its agent tools are next); then this one takes the id 
 ```
 openrpc.json        the contract: one method, press(key, state?) -> Screen, and x-app (id, icon, tint, window)
 index.html          the page (a root element and the module script)
-vite.config.ts      svelte() + vos(), and a stand-in that adds the kit's two tags until the plugin does (NEOC-252)
+vite.config.ts      svelte() + vos(): the plugin puts the kit's tags into the page and its editor types into .app/
 src/App.svelte      the keypad: the kit's ui-button, the keyboard, the screen
 server/main.luau    the handler: press(ctx, args) -> keypad.press(state, key)
 server/keypad.luau  the keypad's rules, one key at a time (pure)

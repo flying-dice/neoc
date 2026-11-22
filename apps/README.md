@@ -27,7 +27,7 @@ apps/<id>/                    (or e2e/apps/<id> for a test fixture)
   src/main.ts             the client: starts itself, in the page's root element
   server/main.luau        the backend: one handler per method of the contract; tools, data, background work
   server/*.luau           modules the backend loads with require("./thing")
-  .app/                   GENERATED (not committed): rpc.d.ts, rpc.js, rpc.luau, entry.luau
+  .app/                   GENERATED (not committed): rpc.d.ts, rpc.js, rpc.luau, entry.luau, kit-svelte.d.ts / kit-react.d.ts
   dist/                   BUILT (not committed): static/ (the client), app.luau, app-ref.json
   JOURNEYS.md, e2e/       journeys and their specs, one test per journey id
 ```
@@ -50,8 +50,8 @@ import { defineConfig } from 'vite'
 export default defineConfig({ plugins: [svelte({ configFile: false }), vos()] })
 ```
 
-The project's `tsconfig.json` includes `".app/rpc.d.ts"` (the types of `app:rpc`; TypeScript does not pick up a dot folder
-by itself).
+The project's `tsconfig.json` includes `".app/*.d.ts"` (the types of `app:rpc` and of the kit's tags; TypeScript does not pick
+up a dot folder by itself).
 
 `vos()` takes optional `{ definition, generated, backend }` (defaults `openrpc.json`, `.app`, `server/main.luau`). Vue needs `isCustomElement: (tag) => tag.startsWith('ui-')` in its plugin options and Angular
 `CUSTOM_ELEMENTS_SCHEMA` for the kit's tags (NEOC-252); React and Svelte need nothing.
@@ -119,6 +119,10 @@ committed.
 
 - `.app/rpc.d.ts` and `.app/rpc.js`: the `app:rpc` module. `import { api, host, type Task } from 'app:rpc'`: a type for every
   schema, `api` (one typed function per method), `host`, and `RpcError`.
+- `.app/kit-svelte.d.ts`, `.app/kit-react.d.ts`: the kit's editor types (every `ui-*` tag's attributes, events and their
+  payloads, from the kit's Custom Elements Manifest), for the framework the project's `package.json` depends on: Svelte,
+  React, both (both files) or neither (none: a plain TypeScript app uses the kit's elements untyped, as `HTMLElement`). A
+  misspelt attribute (`varient`), a value the attribute does not take or React's `onChange` on a kit control is a type error.
 - `.app/rpc.luau`: the same types in Luau, **`Handlers`** (the interface the backend implements), the schemas and
   **`router(handlers)`**. The router receives a call, holds its params to the definition (a refused call is the JSON-RPC
   error `-32602 Invalid params: params.title is required`, and the handler never runs; a param the contract does not
@@ -140,8 +144,11 @@ last good build made it: the build is made in a folder of its own, `.app/build-X
 
 The client is **a normal Vite app**: an `index.html` at the project root (a root element and a module script), your framework,
 your styles and assets, code splitting as usual. There is no `mount` function and no generated entry: the page starts itself.
-`vite build` writes it to `dist/static/` with relative URLs, and the plugin injects one tag into `index.html` at build time, the
-host's bridge script (`/apps/bridge.js`, first in the head: the host serves one copy, the app never bundles it). Everything in
+`vite build` writes it to `dist/static/` with relative URLs, and the plugin puts three tags first in `index.html`'s head at build
+time: the kit's stylesheet (`/kit/tokens.css`, loaded `crossorigin`) and script (`/kit/kit.js`), so the kit's elements are
+defined and styled before the app's own code runs, then the host's bridge (`/apps/bridge.js`). The host serves one copy of
+each; the app never bundles them, and every app gets them whether it uses the kit or not. A page that names one of them
+itself has it taken out (the build says so), so nothing loads twice. Everything in
 `dist/static/` is listed in the app ref with its sha256.
 
 ```html

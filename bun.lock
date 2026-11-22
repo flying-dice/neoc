@@ -163,6 +163,9 @@
       "bin": {
         "vos": "./bin/vos.ts",
       },
+      "dependencies": {
+        "@vos/kit": "workspace:*",
+      },
       "devDependencies": {
         "@types/bun": "1.4.4",
         "typescript": "^5.9.3",

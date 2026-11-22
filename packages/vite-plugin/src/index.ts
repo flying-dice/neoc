@@ -16,17 +16,17 @@
  *     implements, the router) and `entry.luau` (the backend's entry: the handlers behind the router);
  *   - fails the build when `server/main.luau` does not implement the generated `Handlers` interface (a declared method with
  *     no handler, or one of the wrong shape): luau-lsp's strict check of the backend, so valid Luau of any shape passes;
- *   - injects the host's bridge script into `index.html` at build time, first in the head (`/apps/bridge.js`: one copy,
- *     served by the host; the app never bundles it). The UI kit's tags go in the same place when the kit exists (NEOC-252);
+ *   - puts the host's tags first in `index.html`'s head at build time: the kit's stylesheet and script (`/kit/tokens.css`,
+ *     `/kit/kit.js`) and the bridge (`/apps/bridge.js`), one copy each served by the host, never bundled (`hostTags`);
+ *   - writes the kit's editor types for the framework the project depends on (`.app/kit-svelte.d.ts`, `.app/kit-react.d.ts`);
  *   - bundles the Luau backend into `dist/app.luau` and writes `dist/app-ref.json`, the app ref the host installs: the
  *     manifest, the backend, and every file of `dist/static/` with its sha256.
  *
- * Room for more generated files: everything it writes is a list of `{ path, contents }` (`generate.ts`), so a later step that
- * hands an app other definitions (the UI kit's tags for the editor, say) is one more entry in that list.
+ * Everything it generates is a list of `{ path, contents }` (`generate.ts`).
  */
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import type { Plugin } from 'vite'
+import type { HtmlTagDescriptor, Logger, Plugin } from 'vite'
 import { promote, writeApp } from './backend.ts'
 import { DEFAULTS, generate, readDefinition, write, type Options } from './generate.ts'
 import { analyze, ToolMissing } from './luau-tools.ts'
@@ -39,6 +39,42 @@ export const STATIC_DIR = 'static'
 
 /** The host's bridge script: the host serves one copy to every app's page. */
 const BRIDGE = '/apps/bridge.js'
+/** The kit (NEOC-252): its tokens and base styles, and its web components. The host serves one copy of each to every app. */
+const KIT_CSS = '/kit/tokens.css'
+const KIT_JS = '/kit/kit.js'
+
+/**
+ * The tags the plugin puts first in every app's head, in this order: the kit's stylesheet (before first paint, and before the
+ * app's own styles, which then win over the kit's base), the kit's script (a classic script, so it runs before the app's
+ * module and the kit's elements are defined when the app first renders), then the host's bridge. The stylesheet is
+ * loaded `crossorigin`, as Vite loads the app's own: the page has an opaque origin, and the host lets it read `/kit/` so
+ * the page (and a checker such as axe running in it) can read the rules. Every app gets them, whether it uses the kit or not.
+ */
+export function hostTags(): HtmlTagDescriptor[] {
+  return [
+    { tag: 'link', attrs: { rel: 'stylesheet', href: KIT_CSS, crossorigin: '' }, injectTo: 'head-prepend' },
+    { tag: 'script', attrs: { src: KIT_JS }, injectTo: 'head-prepend' },
+    { tag: 'script', attrs: { src: BRIDGE }, injectTo: 'head-prepend' }
+  ]
+}
+
+/**
+ * The page without any tag of its own that loads what the plugin injects (the kit's two files, the bridge): an app that
+ * added them by hand gets them once. `removed` names what was taken out, for the build's message.
+ */
+export function withoutHostTags(html: string): { page: string; removed: string[] } {
+  const removed: string[] = []
+  let page = html
+  for (const url of [KIT_CSS, KIT_JS, BRIDGE]) {
+    const escaped = url.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')
+    const tag = new RegExp(`[ \\t]*<(?:link|script)\\b[^>]*\\b(?:href|src)=["']${escaped}["'][^>]*>(?:\\s*</script>)?[ \\t]*\\r?\\n?`, 'gi')
+    if (tag.test(page)) {
+      removed.push(url)
+      page = page.replace(tag, '')
+    }
+  }
+  return { page, removed }
+}
 
 /** Every `.luau` file under `dir` (the backend's modules: the build bundles them, so a change to one rebuilds). */
 function luauUnder(dir: string): string[] {
@@ -61,6 +97,7 @@ export function vos(options: Partial<Options> = {}): Plugin {
   let staging = resolve(process.cwd(), settings.generated)
   // a build that failed must not write an app ref: the one on disk (if any) is the last build that worked
   let failed = false
+  let logger: Logger | undefined
 
   /**
    * Generate, and check the backend against the contract. The check is the Luau type checker's, not a pattern over the
@@ -94,6 +131,9 @@ export function vos(options: Partial<Options> = {}): Plugin {
 
   return {
     name: 'vos',
+    configResolved(config) {
+      logger = config.logger
+    },
     config(config) {
       root = resolve(config.root ?? process.cwd())
       distDir = resolve(root, config.build?.outDir ?? 'dist')
@@ -114,9 +154,13 @@ export function vos(options: Partial<Options> = {}): Plugin {
       }
     },
     transformIndexHtml: {
-      order: 'pre',
-      handler() {
-        return [{ tag: 'script', attrs: { src: BRIDGE }, injectTo: 'head-prepend' }]
+      // after Vite's own pass over the page, so it does not try to bundle (and warn about) the host's classic scripts
+      order: 'post',
+      handler(html) {
+        const { page, removed } = withoutHostTags(html)
+        if (removed.length > 0)
+          logger?.warn(`vos: index.html names ${removed.join(' and ')} itself; the plugin puts the host's tags into every page, so remove yours (it was left out, not loaded twice)`)
+        return { html: page, tags: hostTags() }
       }
     },
     resolveId(id) {
