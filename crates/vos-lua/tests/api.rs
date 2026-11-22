@@ -641,6 +641,60 @@ async fn a_parked_call_does_not_use_up_another_calls_notifications() {
     assert_eq!(vm.take_effects().len(), 64 + 64);
 }
 
+/// A tool that notifies and then works for a while does not hold the notification back until it returns: the
+/// VM wakes the runtime at the wait (`effects_signal`), which takes what is queued. A call that waits and has
+/// notified nothing says nothing: a tool is over when it returns.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_call_that_notifies_and_then_waits_has_its_notification_taken_at_the_wait() {
+    let vm = Arc::new(
+        load(&app(r#"
+            local task = require("std:task")
+            local go = false
+            hook("quiet", function() task.wait(0.05) end)
+            hook("slow", function()
+              app.notify { title = "half way", body = "still working" }
+              while not go do task.wait(0.01) end
+              app.notify { title = "done" }
+            end)
+            hook("go", function() go = true end)
+        "#))
+        .await,
+    );
+    let signal = vm.effects_signal();
+    let quiet = std::time::Duration::from_millis(300);
+    // what loading left behind
+    let _ = tokio::time::timeout(quiet, signal.notified()).await;
+    let _ = vm.take_effects();
+
+    // waiting without having notified is silent
+    vm.emit("quiet", json!(null)).await.unwrap();
+    assert!(
+        tokio::time::timeout(quiet, signal.notified()).await.is_err(),
+        "a wait with nothing to say woke the host"
+    );
+
+    // notifying and then waiting is heard while the call is still running
+    let slow = {
+        let vm = vm.clone();
+        tokio::spawn(async move { vm.emit("slow", json!(null)).await })
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(10), signal.notified())
+        .await
+        .expect("the host was never woken at the wait");
+    assert!(!slow.is_finished(), "the call is still waiting");
+    let taken = vm.take_effects();
+    assert_eq!(taken.len(), 1);
+    assert!(
+        matches!(&taken[0], Effect::Notify(n) if n.title == "half way" && n.body.as_deref() == Some("still working"))
+    );
+
+    // the rest goes when the call ends, as before
+    vm.emit("go", json!(null)).await.unwrap();
+    slow.await.unwrap().unwrap();
+    let rest = vm.take_effects();
+    assert!(matches!(rest.as_slice(), [Effect::Notify(n)] if n.title == "done"), "{rest:?}");
+}
+
 // ---- windows ------------------------------------------------------------------------------------------------
 
 #[tokio::test]
