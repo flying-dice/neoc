@@ -18,6 +18,12 @@ JOURNEYS.md, e2e/   the journeys and their spec
 **Where the state lives.** The client holds the keypad's state (a plain object it never looks inside) and sends it with each key;
 `press` answers with the next state and what to draw. The backend keeps nothing, so each window has a calculator of its own,
 and the arithmetic stays the tested Luau of the old Calculator. Keys are sent one after another, so fast typing keeps its order.
+Because the state is the page's, **a sum is lost when the window closes or the page reloads** (the old Calculator kept it in
+the backend, so it survived both). The shell opens one window per app, so "each window" means today the Calculator's window
+in the shell and its own page at `/apps/calculator-web`, which do not share a sum. A state the client sends that cannot be
+worked out (a hand-made one) shows "Error" with a plain reason; one that only claims an operator is waiting when none is reads
+as the calculator it otherwise is (`+` then makes it `0 +`). `server/calc.luau` is a copy of the old Calculator's; it goes
+when this app takes over the id `calculator`.
 
 **Window.** `minW` 320, `minH` 500: below 500 tall the five rows of round keys, the display and the caption no longer fit.
 

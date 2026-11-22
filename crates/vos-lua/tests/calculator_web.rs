@@ -59,6 +59,29 @@ async fn call(rt: &LuaRuntime, args: Value) -> PortResult<Value> {
     rt.call_handler(&id(APP), "press", args, user_ctx(0)).await
 }
 
+/// Press `keys` (names as for `Keypad::press`) on `rt`, starting from `screen` (`Null` for a calculator that has just
+/// opened), each with the state the one before answered with, as the client does; returns the last screen.
+async fn press_keys(rt: &LuaRuntime, mut screen: Value, keys: &str) -> Value {
+    for name in keys.split_whitespace() {
+        let key = match name {
+            "dot" => ".",
+            "add" => "+",
+            "sub" => "-",
+            "mul" => "*",
+            "div" => "/",
+            "eq" => "=",
+            "back" => "backspace",
+            other => other,
+        };
+        let mut args = json!({ "key": key });
+        if let Some(state) = screen.get("state") {
+            args["state"] = state.clone();
+        }
+        screen = call(rt, args).await.unwrap_or_else(|e| panic!("{name}: {e:?}"));
+    }
+    screen
+}
+
 /// A keypad as the client drives it: it keeps the last screen and sends its state with the next key.
 struct Keypad {
     rt: LuaRuntime,
@@ -72,23 +95,7 @@ impl Keypad {
 
     /// Press keys by name: `7`, `dot`, `add`, `sub`, `mul`, `div`, `eq`, `clear`, `negate`, `percent`, `back`.
     async fn press(&mut self, keys: &str) -> &mut Self {
-        for name in keys.split_whitespace() {
-            let key = match name {
-                "dot" => ".",
-                "add" => "+",
-                "sub" => "-",
-                "mul" => "*",
-                "div" => "/",
-                "eq" => "=",
-                "back" => "backspace",
-                other => other,
-            };
-            let mut args = json!({ "key": key });
-            if let Some(state) = self.screen.get("state") {
-                args["state"] = state.clone();
-            }
-            self.screen = call(&self.rt, args).await.unwrap_or_else(|e| panic!("{name}: {e:?}"));
-        }
+        self.screen = press_keys(&self.rt, std::mem::take(&mut self.screen), keys).await;
         self
     }
 
@@ -456,15 +463,15 @@ async fn clear_clears_the_entry_first_and_everything_the_second_time() {
 
 #[tokio::test]
 async fn each_window_has_a_calculator_of_its_own() {
-    // the backend keeps nothing: two clients pressing keys in turn do not see each other's sums
-    let mut one = Keypad::open().await;
-    let rt = std::mem::replace(&mut one.rt, calculator().await);
-    let mut two = Keypad { rt, screen: Value::Null };
-    one.press("2 add").await;
-    two.press("9 mul").await;
-    one.press("3 eq").await;
-    two.press("2 eq").await;
-    assert_eq!((one.display(), two.display()), ("5".into(), "18".into()));
+    // the backend keeps nothing: two clients pressing keys in turn on ONE app (one VM) do not see each other's sums. A
+    // backend that kept the sum in a module variable would mix them: 2 + 9 × 3 = 29 and then 29 × 2 = 58, not 5 and 18
+    let rt = calculator().await;
+    let one = press_keys(&rt, Value::Null, "2 add").await;
+    let two = press_keys(&rt, Value::Null, "9 mul").await;
+    let one = press_keys(&rt, one, "3 eq").await;
+    let two = press_keys(&rt, two, "2 eq").await;
+    assert_eq!((one["display"].as_str(), two["display"].as_str()), (Some("5"), Some("18")));
+    assert_eq!((one["caption"].as_str(), two["caption"].as_str()), (Some("2 + 3"), Some("9 × 2")));
 }
 
 #[tokio::test]
@@ -492,31 +499,42 @@ async fn a_key_or_a_state_the_contract_does_not_allow_is_refused_before_the_hand
 
 #[tokio::test]
 async fn a_state_that_makes_no_sense_is_an_error_on_the_display_never_a_failed_call() {
-    // a client may send any state the contract allows; what makes no sense is the calculator's "Error", with a plain
-    // sentence and no source position, and AC gets out of it
+    // a client may send any state the contract allows. One that cannot be worked out is the calculator's "Error" with a
+    // plain sentence (never a failed call, never a source position), and AC gets out of it; one that only claims an
+    // operator is waiting when none is, is read as the calculator it otherwise is (0, and `+` makes it `0 +`)
     let rt = calculator().await;
     let base = json!({ "entry": "0", "value": 0, "numbers": [], "ops": [], "waiting": false, "fresh": true, "caption": "", "err": false });
     let mut garbage_entry = base.clone();
     garbage_entry["entry"] = json!("abc");
     garbage_entry["fresh"] = json!(false);
+    let mut dotted_entry = garbage_entry.clone();
+    dotted_entry["entry"] = json!("1.2.3");
+    dotted_entry["numbers"] = json!([1]);
+    dotted_entry["ops"] = json!(["+"]);
     let mut uneven = base.clone();
     uneven["numbers"] = json!([1, 2, 3]);
     uneven["ops"] = json!(["+"]);
+    for (state, key, caption) in [
+        (garbage_entry, "+", "Something went wrong"),
+        (dotted_entry, "=", "Something went wrong"),
+        (uneven, "=", "Malformed expression"),
+    ] {
+        let screen = call(&rt, json!({ "key": key, "state": state })).await.unwrap();
+        assert_eq!(
+            (screen["display"].as_str(), screen["caption"].as_str(), screen["error"].as_str()),
+            (Some("Error"), Some(caption), Some(caption)),
+            "{state} {key}"
+        );
+        let cleared = call(&rt, json!({ "key": "clear", "state": screen["state"] })).await.unwrap();
+        assert_eq!(
+            (cleared["display"].as_str(), cleared["caption"].as_str()),
+            (Some("0"), Some("")),
+            "{state}: AC"
+        );
+    }
     let mut waiting_with_nothing = base.clone();
     waiting_with_nothing["waiting"] = json!(true);
-    for (state, key) in
-        [(garbage_entry, "+"), (garbage_entry_eq(), "="), (uneven, "="), (waiting_with_nothing, "+")]
-    {
-        let screen = call(&rt, json!({ "key": key, "state": state })).await.unwrap();
-        let caption = screen["caption"].as_str().unwrap();
-        assert!(!caption.contains(".luau") && !caption.contains("0x"), "{state}: {caption}");
-        if screen["display"] == "Error" {
-            let cleared = call(&rt, json!({ "key": "clear", "state": screen["state"] })).await.unwrap();
-            assert_eq!(cleared["display"], "0");
-        }
-    }
-}
-
-fn garbage_entry_eq() -> Value {
-    json!({ "entry": "1.2.3", "value": 0, "numbers": [1], "ops": ["+"], "waiting": false, "fresh": false, "caption": "", "err": false })
+    let screen = call(&rt, json!({ "key": "+", "state": waiting_with_nothing })).await.unwrap();
+    assert_eq!((screen["display"].as_str(), screen["caption"].as_str()), (Some("0"), Some("0 +")));
+    assert_eq!(screen["pending"], "+");
 }
