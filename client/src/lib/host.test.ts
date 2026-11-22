@@ -13,7 +13,8 @@ const calculator: AppSummary = {
   version: '0.1.0',
   state: 'running',
   source: 'file',
-  client: false
+  client: false,
+  permissions: []
 }
 const agents: AppSummary = { ...calculator, id: 'agents', name: 'Agents' }
 

@@ -694,6 +694,9 @@ wire! {
 
 /// JSON-RPC error codes the protocol uses.
 pub mod codes {
+    /// The server will not take another request now (too many on the connection, too many calls of one app running): nothing was
+    /// started, and asking again later is allowed.
+    pub const BUSY: i32 = -32000;
     /// An app handler failed; the message is safe to show.
     pub const APP_ERROR: i32 = -32010;
     /// The view does not exist (closed, or the host restarted).

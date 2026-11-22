@@ -205,21 +205,20 @@ describe('awkward names, at every position', () => {
       const file = join(dir, 'rpc.js')
       writeFileSync(file, emitModule(definition, 'openrpc.json'))
       const calls: string[] = []
-      const module = (await import(`${file}?${Date.now()}`)) as {
-        api: Record<string, (params?: unknown) => Promise<unknown>>
-        bind(props: unknown): void
-      }
-      module.bind({
-        rpc: async (method: string) => {
+      ;(globalThis as { vos?: unknown }).vos = {
+        call: async (method: string) => {
           calls.push(method)
           return null
         },
-        host: { on: () => () => {}, theme: 'light' }
-      })
+        context: {},
+        capabilities: {}
+      }
+      const module = (await import(`${file}?${Date.now()}`)) as { api: Record<string, (params?: unknown) => Promise<unknown>> }
       expect(Object.keys(module.api).sort()).toEqual([...methods.used].sort())
       for (const name of methods.used) await module.api[name]?.({ p: 'x' })
       expect(calls).toEqual(methods.used)
     } finally {
+      delete (globalThis as { vos?: unknown }).vos
       rmSync(dir, { recursive: true, force: true })
     }
   })

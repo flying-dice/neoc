@@ -234,13 +234,13 @@ pub fn publish_package(root: &std::path::Path, id: &str, main: &str, files: &[(&
     publish_package_with_client(root, id, main, None, files)
 }
 
-/// Like [`publish_package`], for an app with a client: `client` names the script among `files`, and the manifest
-/// carries a window like an `app.json` does.
+/// Like [`publish_package`], for an app with a client: `ui_root` names the directory among `files` that holds its
+/// built page (with an `index.html`), and the manifest carries a window like an `app.json` does.
 pub fn publish_package_with_client(
     root: &std::path::Path,
     id: &str,
     main: &str,
-    client: Option<&str>,
+    ui_root: Option<&str>,
     files: &[(&str, Vec<u8>)],
 ) -> String {
     use sha2::{Digest, Sha256};
@@ -248,7 +248,9 @@ pub fn publish_package_with_client(
     std::fs::create_dir_all(root).unwrap();
     let mut refs = vec![];
     for (path, bytes) in files {
-        std::fs::write(root.join(path), bytes).unwrap();
+        let on_disk = root.join(path);
+        std::fs::create_dir_all(on_disk.parent().unwrap()).unwrap();
+        std::fs::write(on_disk, bytes).unwrap();
         refs.push(FileRef {
             path: (*path).into(),
             url: format!("file://{}/{path}", root.display()),
@@ -266,8 +268,13 @@ pub fn publish_package_with_client(
             tint: None,
             description: None,
             requires: None,
-            client: client.map(str::to_owned),
-            window: client.map(|_| vos_domain::WindowDecl { w: 420, h: 480, min_w: 320, min_h: 320 }),
+            ui: ui_root.map(|root| vos_domain::AppUi {
+                root: root.to_owned(),
+                entry: "index.html".to_owned(),
+                csp: vos_domain::Csp::default(),
+                permissions: vos_domain::Permissions::default(),
+            }),
+            window: ui_root.map(|_| vos_domain::WindowDecl { w: 420, h: 480, min_w: 320, min_h: 320 }),
         },
         files: refs,
     };

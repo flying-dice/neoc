@@ -15,6 +15,12 @@
       "h": 480,
       "minW": 320,
       "minH": 320
+    },
+    "csp": {
+      "resourceDomains": ["https://cdn.example.com", "https://*.images.example.org"]
+    },
+    "permissions": {
+      "camera": {}
     }
   },
   "methods": [

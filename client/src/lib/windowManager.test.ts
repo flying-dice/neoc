@@ -11,6 +11,7 @@ const summary = (id: string, extra: Partial<AppSummary> = {}): AppSummary => ({
   state: 'running',
   source: 'file',
   client: false,
+  permissions: [],
   ...extra
 })
 

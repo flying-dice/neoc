@@ -23,7 +23,18 @@ export default defineConfig({
     target: 'esnext',
     outDir: resolve(here, 'dist'),
     emptyOutDir: true,
-    rollupOptions: { input: { index: resolve(here, 'index.html') } }
+    rollupOptions: {
+      // `wrapper.js` is the script of the host page of a standalone app (`GET /apps/<id>`): the host writes that page
+      // and names the script, so it has a fixed name
+      input: {
+        index: resolve(here, 'index.html'),
+        wrapper: resolve(here, 'src/wrapper/main.svelte.ts')
+      },
+      output: {
+        entryFileNames: (chunk) =>
+          chunk.name === 'wrapper' ? 'wrapper.js' : 'assets/[name]-[hash].js'
+      }
+    }
   },
   server: {
     port: 5173,
@@ -33,7 +44,8 @@ export default defineConfig({
       '/session': host,
       '/pair': host,
       '/agui': host,
-      '/frame': host,
+      '/apps': host,
+      '/wrapper.js': host,
       '/mcp': host
     }
   },

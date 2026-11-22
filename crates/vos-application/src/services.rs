@@ -20,11 +20,17 @@ use async_trait::async_trait;
 use parking_lot::Mutex;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
 use vos_domain::{
     api::{AppPreview, Catalog, InstalledInfo},
-    resolve_url, source_label, Actor, AgentIdentity, AppDecl, AppId, AppRef, DomainError, Manifest,
-    PackageBudget, QualifiedToolName, Registry, Revision, StoredRevision, ToolSpec, WindowDecl,
+    resolve_url, source_label, Actor, AgentIdentity, AppDecl, AppId, AppRef, Csp, DomainError, Manifest,
+    PackageBudget, Permissions, QualifiedToolName, Registry, Revision, StoredRevision, ToolSpec, WindowDecl,
 };
 
 /// Every collaborator of [`AppService`].
@@ -82,6 +88,8 @@ pub struct Display {
     pub window: Option<WindowDecl>,
     /// The app has a client of its own, so its window is a frame.
     pub client: bool,
+    /// The browser features its frame asks for (`allow` of the iframe): `camera`, `clipboard-write`, ...
+    pub permissions: Vec<&'static str>,
 }
 
 impl Display {
@@ -91,17 +99,45 @@ impl Display {
             tint: decl.and_then(|d| d.tint.clone()).or_else(|| manifest.tint.clone()),
             description: manifest.description.clone(),
             window: decl.and_then(|d| d.window.clone()).or_else(|| manifest.window.clone()),
-            client: manifest.client.is_some(),
+            client: manifest.ui.is_some(),
+            permissions: manifest.ui.as_ref().map_or_else(Vec::new, |u| u.permissions.features()),
         }
     }
 }
 
-/// An app's client, as fetched and verified at install: the one script the host puts in the app's frame.
+/// An app's client, as fetched and verified at install: the static files of its built page, kept in memory by their
+/// path under the app's `ui.root` (`assets/a.js`). The host serves them at `/apps/<id>/static/...`; whether they
+/// are kept in memory or in a directory is this type's business, not the route's.
 #[derive(Clone, Debug)]
-pub struct ClientBundle {
+pub struct StaticSite {
+    files: HashMap<String, StaticFile>,
+    entry: String,
+    /// What the page may load from other origins, as the app declared it.
+    pub csp: Csp,
+    /// The browser features the app's frame asks for.
+    pub permissions: Permissions,
+}
+
+/// One verified static file.
+#[derive(Clone, Debug)]
+pub struct StaticFile {
     pub bytes: Arc<[u8]>,
-    /// SHA-256 (hex, lowercase) of `bytes`: it names this version of the bundle in the frame's URL.
+    /// SHA-256 (hex, lowercase) of `bytes`: the file's validator.
     pub sha256: String,
+}
+
+impl StaticSite {
+    /// The file at `path` (relative to the root), when the app has it. An exact match: there is no fallback page.
+    #[must_use]
+    pub fn get(&self, path: &str) -> Option<&StaticFile> {
+        self.files.get(path)
+    }
+
+    /// The path of the page the frame loads.
+    #[must_use]
+    pub fn entry(&self) -> &str {
+        &self.entry
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -115,13 +151,42 @@ pub struct AppInfo {
 }
 
 /// A loaded app: its database, live sources and the tasks that serve them.
+/// The calls of one app's handlers that may run at once, whoever makes them and over however many connections: more are refused
+/// at once (`-32000`, "busy") instead of queuing behind handlers that may never return. The shell's own queue per app is a courtesy
+/// that stays under it; this is what holds against a client that ignores the courtesy.
+pub const MAX_CALLS_PER_APP: usize = 8;
+
+/// The places of one load of an app. A reload or an uninstall drops it and the next load starts with all of them: what the old load
+/// still runs ends with it (the runtime ends a call whose app is unloaded) and gives back to a counter nobody asks any more.
+#[derive(Default)]
+struct CallSlots(Arc<AtomicUsize>);
+
+/// One place held by a call that is running; given back when the call ends or is dropped (a cancelled request's task is aborted).
+struct CallSlot(Arc<AtomicUsize>);
+
+impl CallSlots {
+    fn take(&self) -> Option<CallSlot> {
+        self.0
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| (n < MAX_CALLS_PER_APP).then_some(n + 1))
+            .ok()
+            .map(|_| CallSlot(self.0.clone()))
+    }
+}
+
+impl Drop for CallSlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 struct Active {
+    calls: CallSlots,
     data: Arc<dyn AppData>,
     live: Arc<LiveSources>,
     name: String,
     display: Display,
     tools: Vec<ToolSpec>,
-    client: Option<ClientBundle>,
+    site: Option<Arc<StaticSite>>,
     _pump: Box<dyn TaskHandle>,
 }
 
@@ -530,13 +595,22 @@ impl AppService {
     /// write; an app that is not running answers with an error.
     pub async fn call_handler(&self, app: &AppId, method: &str, args: Value) -> Result<Value, AppError> {
         self.require_running(app)?;
+        let _slot = self.with_active(app, |a| a.calls.take())?.ok_or_else(|| {
+            PortError::Rpc {
+                code: vos_domain::ui::protocol::codes::BUSY,
+                message: format!(
+                    "`{app}` already has {MAX_CALLS_PER_APP} calls running: let one finish, or end one, before sending another"
+                ),
+                data: None,
+            }
+        })?;
         let ctx = CallContext { actor: Actor::user("You"), now_ms: self.p.clock.now_unix_ms() };
         Ok(self.p.runtime.call_handler(app, method, args, ctx).await?)
     }
 
-    /// The client bundle of a running app, for its frame. An app without a client has none.
-    pub fn client_bundle(&self, app: &AppId) -> Result<ClientBundle, AppError> {
-        self.with_active(app, |a| a.client.clone())?
+    /// The static files of a running app's client, for its frame. An app without a client has none.
+    pub fn static_site(&self, app: &AppId) -> Result<Arc<StaticSite>, AppError> {
+        self.with_active(app, |a| a.site.clone())?
             .ok_or_else(|| PortError::NotFound(format!("app `{app}` has no client")).into())
     }
 
@@ -826,15 +900,32 @@ impl AppService {
         m.validate()?;
         let mut budget = PackageBudget::default();
         let mut package =
-            AppPackage { entry: m.main.clone(), has_client: m.client.is_some(), ..AppPackage::default() };
+            AppPackage { entry: m.main.clone(), has_client: m.ui.is_some(), ..AppPackage::default() };
         // an app is built into ONE Luau file: the entry is the only source the runtime is handed
         package.files.insert(m.main.clone(), self.fetch_verified(app_ref, &m.main, &mut budget).await?);
-        // an app's client is one script too, verified like the rest and kept for the frame to load
-        let client = match &m.client {
-            Some(path) => {
-                let bytes = self.fetch_verified(app_ref, path, &mut budget).await?;
-                let sha256 = format!("{:x}", Sha256::digest(&bytes));
-                Some(ClientBundle { bytes: bytes.into(), sha256 })
+        // an app's client is its built static files, verified like the rest and kept for the frame to load
+        let site = match &m.ui {
+            Some(ui) => {
+                let mut files = HashMap::new();
+                for file in &app_ref.files {
+                    let Some(inside) = ui.under_root(&file.path) else { continue };
+                    let bytes = self.fetch_verified(app_ref, &file.path, &mut budget).await?;
+                    let sha256 = format!("{:x}", Sha256::digest(&bytes));
+                    files.insert(inside.to_owned(), StaticFile { bytes: bytes.into(), sha256 });
+                }
+                if !files.contains_key(&ui.entry) {
+                    return Err(DomainError::InvalidManifest(format!(
+                        "ui.entry `{}` is not among the app ref's files under `{}`",
+                        ui.entry, ui.root
+                    ))
+                    .into());
+                }
+                Some(Arc::new(StaticSite {
+                    files,
+                    entry: ui.entry.clone(),
+                    csp: ui.csp.clone(),
+                    permissions: ui.permissions.clone(),
+                }))
             }
             None => None,
         };
@@ -861,7 +952,16 @@ impl AppService {
         }
         let display = Display::of(m, loaded.decl.as_ref());
         let name = loaded.decl.map_or_else(|| m.name.clone(), |d| d.name);
-        Ok(Active { data, live, name, display, tools: loaded.tools, client, _pump: pump })
+        Ok(Active {
+            calls: CallSlots::default(),
+            data,
+            live,
+            name,
+            display,
+            tools: loaded.tools,
+            site,
+            _pump: pump,
+        })
     }
 
     /// Retract tools, stop serving and unload the VM. Failures are logged, not raised: teardown must finish.

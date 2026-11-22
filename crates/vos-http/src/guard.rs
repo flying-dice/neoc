@@ -16,7 +16,7 @@
 
 use axum::{
     extract::{Request, State},
-    http::{header, StatusCode},
+    http::{header, Method, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -209,11 +209,29 @@ pub async fn origin_guard(State(guard): State<Arc<HostGuard>>, req: Request, nex
     if origin.is_none() && h.contains_key(header::ORIGIN) {
         return forbidden(); // an Origin header that is not text is not a browser's
     }
+    // A sandboxed app page has an opaque origin: its module scripts and styles are fetched with `Origin: null`. Those
+    // reads of the app's own static files (public, like the shell's) are let through; nothing else is.
+    let origin = if origin == Some("null") && is_app_static_read(req.method(), req.uri().path()) {
+        None
+    } else {
+        origin
+    };
     if guard.permits(origin, host) {
         next.run(req).await
     } else {
         forbidden()
     }
+}
+
+/// Is this a read (`GET` or `HEAD`) of an app's static content, `/apps/<id>/static/...`? Judged on the path as it was
+/// sent: an encoded separator or a segment that merely looks like `static` is not one.
+fn is_app_static_read(method: &Method, path: &str) -> bool {
+    if method != Method::GET && method != Method::HEAD {
+        return false;
+    }
+    let Some(rest) = path.strip_prefix("/apps/") else { return false };
+    let Some((app, after)) = rest.split_once('/') else { return false };
+    !app.is_empty() && (after == "static" || after.starts_with("static/"))
 }
 
 fn forbidden() -> Response {
@@ -253,6 +271,30 @@ mod tests {
         assert!(g.permits(Some("http://studio-mac.local:7400"), Some("studio-mac.local:7400")));
         assert!(g.permits(None, Some("anything-else.local:7400")), "*.local is mDNS");
         assert!(!g.permits(None, Some(".local:7400")));
+    }
+
+    #[test]
+    fn origin_null_is_let_through_only_for_reads_of_an_apps_static_files() {
+        for (method, path, yes) in [
+            (Method::GET, "/apps/tasks/static/index.html", true),
+            (Method::HEAD, "/apps/tasks/static/assets/a.js", true),
+            (Method::GET, "/apps/tasks/static/", true),
+            (Method::GET, "/apps/tasks/static", true),
+            (Method::POST, "/apps/tasks/static/index.html", false),
+            (Method::PUT, "/apps/tasks/static/x", false),
+            (Method::GET, "/apps/tasks", false),
+            (Method::GET, "/apps/tasks/staticky/x", false),
+            (Method::GET, "/apps/tasks%2Fstatic/x", false),
+            (Method::GET, "/apps//static/x", false),
+            (Method::GET, "/apps/bridge.js", false),
+            (Method::GET, "/rpc", false),
+            (Method::GET, "/session", false),
+            (Method::GET, "/agui/threads", false),
+            (Method::GET, "/mcp", false),
+            (Method::GET, "/", false),
+        ] {
+            assert_eq!(is_app_static_read(&method, path), yes, "{method} {path}");
+        }
     }
 
     #[test]

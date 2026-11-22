@@ -10,8 +10,9 @@
 //! |------------------------------|-----------------------------------------------------------------------|
 //! | static client files          | none (the shell shows its pairing screen when the session is missing) |
 //! | `POST /pair`, `GET /session` | none: a pairing code is the credential for `/pair`                    |
-//! | `/rpc`, `/agui`, `GET /frame/{app}` | a paired device's session cookie, **including from loopback**   |
-//! | `/frame/bridge.js`, `/frame/{app}/{sha}/client.js` | none (a sandboxed frame sends no cookie; the client's URL names its digest) |
+//! | `/rpc`, `/agui`              | a paired device's session cookie, **including from loopback**         |
+//! | `GET /apps/{app}`            | a paired device's session cookie (an unpaired visitor gets a page that says to pair) |
+//! | `/apps/bridge.js`, `/apps/{app}/static/...` | none (a sandboxed frame sends no cookie, its module scripts send `Origin: null`: the origin guard lets those reads through, GET and HEAD under this prefix only). An app's static content is public like the shell's own files: nothing secret or personal belongs in it |
 //! | `/mcp`                       | a per-agent bearer token; a session cookie is not accepted here       |
 //!
 //! Protected is the default: `/rpc`, `/agui` and any client route added later sit in one router behind
@@ -55,8 +56,8 @@ use vos_application::{
 use vos_domain::{limits, Agent};
 use vos_fetch::UrlFetcher;
 use vos_http::{
-    frame_routes, origin_guard, require_session, rpc_router, session_router, static_router, HostGuard,
-    RpcHub, SessionConfig,
+    app_routes, origin_guard, require_session, rpc_router, session_router, static_router, HostGuard, RpcHub,
+    SessionConfig,
 };
 use vos_lua::{DiskFiles, LuaRuntime};
 use vos_mcp::{mcp_router, McpState};
@@ -247,13 +248,13 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     let to_end = streams.clone();
     devices.on_revoked(move |device| to_end.revoke(device));
     let session = SessionConfig { devices: devices.clone(), secure_cookies: cfg.secure_cookies };
-    let frames = frame_routes(service.clone());
+    let apps = app_routes(service.clone(), session.clone());
     let protected = rpc_router(hub)
         .merge(agui_router_with(chat.clone(), streams))
-        .merge(frames.document)
         .layer(from_fn_with_state(session.clone(), require_session));
-    // the frame's scripts are public: a sandboxed frame sends no cookie (its digest-named bundle URL is the capability)
-    let public = session_router(session).merge(frames.scripts);
+    // an app's static files are public: a sandboxed frame sends no cookie. The wrapper checks the session itself, to
+    // answer an unpaired visitor with a page rather than the guard's JSON.
+    let public = session_router(session).merge(apps.files).merge(apps.wrapper);
     let directory: Arc<dyn AgentDirectory> = contacts.clone();
     let mcp = mcp_router(mcp_state, service.clone(), directory, shutdown.child_token());
 

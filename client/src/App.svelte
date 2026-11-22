@@ -62,6 +62,7 @@
       appId={win.appId}
       name={installedApp(win.appId)?.name ?? win.appId}
       windowId={win.id}
+      permissions={installedApp(win.appId)?.permissions ?? []}
     />
   {:else}
     <ViewWindow

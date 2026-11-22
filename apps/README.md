@@ -20,13 +20,14 @@ Rust schema by `bun run codegen`; never edit it): every `app.*` call and every `
 ```
 apps/<id>/                    (or e2e/apps/<id> for a test fixture)
   openrpc.json            the contract (OpenRPC): the methods, and `x-app`: the app's id, icon, tint, window
+  index.html              the client's page (a normal Vite app: <div id="root"> and a module script)
   vite.config.ts          plugins: [<your framework>(), vos()]
   package.json            scripts: generate, build, dev, typecheck, lint, format (a Bun workspace package)
-  src/main.ts             the client: exports mount(el), returns an unmount function
+  src/main.ts             the client: starts itself, in the page's root element
   server/main.luau        the backend: one handler per method of the contract; tools, data, background work
   server/*.luau           modules the backend loads with require("./thing")
-  .app/                   GENERATED (not committed): rpc.d.ts, rpc.js, entry.js, rpc.luau, entry.luau
-  dist/                   BUILT (not committed): client.js, app.luau, app-ref.json
+  .app/                   GENERATED (not committed): rpc.d.ts, rpc.js, rpc.luau, entry.luau
+  dist/                   BUILT (not committed): static/ (the client), app.luau, app-ref.json
   JOURNEYS.md, e2e/       journeys and their specs, one test per journey id
 ```
 
@@ -45,14 +46,13 @@ are ordinary dependencies, installed by the root `bun install`.
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 import { vos } from '@vos/vite-plugin'
 import { defineConfig } from 'vite'
-export default defineConfig({ plugins: [svelte({ configFile: false, compilerOptions: { css: 'injected' } }), vos()] })
+export default defineConfig({ plugins: [svelte({ configFile: false }), vos()] })
 ```
 
 The project's `tsconfig.json` includes `".app/rpc.d.ts"` (the types of `app:rpc`; TypeScript does not pick up a dot folder
 by itself).
 
-`vos()` takes optional `{ definition, generated, client, backend }` (defaults `openrpc.json`, `.app`, `src/main.ts`,
-`server/main.luau`). Vue needs `isCustomElement: (tag) => tag.startsWith('ui-')` in its plugin options and Angular
+`vos()` takes optional `{ definition, generated, backend }` (defaults `openrpc.json`, `.app`, `server/main.luau`). Vue needs `isCustomElement: (tag) => tag.startsWith('ui-')` in its plugin options and Angular
 `CUSTOM_ELEMENTS_SCHEMA` for the kit's tags (NEOC-252); React and Svelte need nothing.
 
 ## The contract
@@ -118,7 +118,6 @@ committed.
 
 - `.app/rpc.d.ts` and `.app/rpc.js`: the `app:rpc` module. `import { api, host, type Task } from 'app:rpc'`: a type for every
   schema, `api` (one typed function per method), `host`, and `RpcError`.
-- `.app/entry.js`: what the build bundles. It binds `app:rpc` to the host and then calls the app's `mount(el)`.
 - `.app/rpc.luau`: the same types in Luau, **`Handlers`** (the interface the backend implements), the schemas and
   **`router(handlers)`**. The router receives a call, holds its params to the definition (a refused call is the JSON-RPC
   error `-32602 Invalid params: params.title is required`, and the handler never runs; a param the contract does not
@@ -138,18 +137,24 @@ last good build made it: the build is made in `.app/build` and moved into `dist/
 
 ## The client
 
-`src/main.ts` exports `mount(el)`, draws into `el` and returns a function that unmounts it. The plugin builds it, behind its
-generated entry, into **one classic script** (`dist/client.js`, an IIFE that defines the global `vosApp`, any CSS folded in;
-a module script would need CORS in the app's frame):
+The client is **a normal Vite app**: an `index.html` at the project root (a root element and a module script), your framework,
+your styles and assets, code splitting as usual. There is no `mount` function and no generated entry: the page starts itself.
+`vite build` writes it to `dist/static/` with relative URLs, and the plugin injects one tag into `index.html` at build time, the
+host's bridge script (`/apps/bridge.js`, first in the head: the host serves one copy, the app never bundles it). Everything in
+`dist/static/` is listed in the app ref with its sha256.
+
+```html
+<!-- index.html -->
+<div id="root"></div>
+<script type="module" src="/src/main.ts"></script>
+```
 
 ```ts
-import { mount as mountApp, unmount } from 'svelte'
+// src/main.ts: a normal Vite entry
+import { mount } from 'svelte'
 import App from './App.svelte'
 
-export function mount(el: HTMLElement): () => void {
-  const app = mountApp(App, { target: el })
-  return () => void unmount(app)
-}
+mount(App, { target: document.getElementById('root')! })
 ```
 
 ```ts
@@ -166,40 +171,44 @@ Set `data-testid` on every interactive element yourself (`<appId>-<thing>`).
 | | |
 |---|---|
 | `api.add({ title })` | the typed call: resolves with the result, or rejects with an `RpcError` (`code`, `message`, `data`) |
-| `host.on(name, fn)` | hears an event, returns a function that stops listening: one the backend sent with `app.emit(name, data)`, or the host's own, whose names start with `host:` |
-| `host.theme` | `"light"` or `"dark"`: the shell's appearance now. `host:theme` is the event when it changes, and `<html data-theme>` and `color-scheme` follow it, so style dark as `html[data-theme="dark"]` |
+| `host.on(name, fn)` | hears an event the backend sent with `app.emit(name, data)`, or one of the host's own, whose names start with `host:` (`host:reconnected`: the connection to the host dropped and came back, so fetch again: a change made meanwhile reached nobody); returns a function that stops listening |
+| `host.theme`, `host.context` | the appearance (`"light"` or `"dark"`) and the host context (MCP Apps' `hostContext`: `theme`, `displayMode`, `availableDisplayModes`, `locale`, `timeZone`, ...). `host.onContext(fn)` hears a change. The bridge sets `<html data-theme>` and `color-scheme` before first paint and keeps them in step, so style dark as `html[data-theme="dark"]` |
+| `host.ready`, `host.capabilities`, `host.hosted` | the handshake is done; what the host offers (MCP Apps' `hostCapabilities`); and whether the host page draws UI of its own (true in the shell, false on the app's own page) |
+| `host.openLink(url)`, `host.requestDisplayMode(mode)` | `ui/open-link` (http and https only) and `ui/request-display-mode` (answers with the mode the host ended in) |
+| `host.onTeardown(fn)` | `fn` runs when the host is about to remove the page (`ui/resource-teardown`), for an app that must wrap up; an app that ignores it simply has its frame removed |
 
-**What the frame is.** The app's window is an `<iframe sandbox="allow-scripts allow-forms">` that loads `/frame/<id>` from the host. The
-frame makes no request of its own (its content security policy allows none: `fetch`, WebSocket, scripts, images and
-fonts from anywhere but the host fail), has no access to the shell's page, cookie or storage (`localStorage`,
-`document.cookie` and `parent.document` throw), and has one way out: `api` reaches **this app's** backend, and the host
-knows which app is calling from the frame the message came from, never from anything the client says. The client's styles
-and scripts stay in its frame. The sandbox also stops it opening windows (`window.open` returns `null`), navigating the
-shell (`window.top.location` throws). **Forms work** (the sandbox has `allow-forms`): Enter in a field, a submit button,
-the `submit` event, validation and `FormData` behave as in any page, and your framework's `onSubmit` runs. A submission
-that nothing prevented is prevented for you, after your handlers have run, so a form whose handler forgot `preventDefault()` stays on
-its page (a `<form method="dialog">` still closes its dialog). Two things still navigate the frame, which the policy's
-`form-action 'none'` refuses to send data for but cannot keep on the page: `form.submit()` from script (it fires no event) and a form
-inside a shadow root of your own (`submit` does not cross it); the window then says the app left its page. What the policy cannot stop is the frame
-navigating **itself** (`location.href = ...`): the window then shows a page the shell did not load, and says the app left
-its page and offers to open it again (a refused form submission is not that: nothing loads). **A client cannot reload its own
-document in this version:** `location.reload()` asks the host for the frame's document again from an opaque origin, which
-carries no session cookie, so the host refuses it, the window says the app left its page and Try again brings the app back;
-this changes with the next pull request, where the app's own files are public. This is sensible isolation, so apps do not trip over each other
-or over the shell; it is not a security boundary. Lasting data belongs in the backend (the frame has no storage).
+**What the frame is.** An app is served as static files at `/apps/<id>/static/` and runs in an `<iframe sandbox="allow-scripts allow-forms">`
+of a host page. Every file is sent with the host's headers: a content security policy under which the page makes no request of
+its own (`fetch`, WebSocket, and scripts, images and fonts from anywhere but the host fail, unless the app declared an origin
+for images, media, fonts or styles: see below), `nosniff`, and a content type from a fixed table by extension (only the entry
+page is ever a document). The page has no access to the host page, its cookie or storage (`localStorage`, `document.cookie`
+and `parent.document` throw), and one way out: `api` reaches **this app's** backend through the host page, and the host knows
+which app is calling from the frame the message came from, never from anything the client says. The sandbox also stops it
+opening windows (`window.open` returns `null`) and navigating the host page (`window.top.location` throws). **Forms work**
+(the sandbox has `allow-forms`): Enter in a field, a submit button, the `submit` event, validation and `FormData` behave as in
+any page, and your framework's `onSubmit` runs. A submission that nothing prevented is prevented for you, after your handlers
+have run, so a form whose handler forgot `preventDefault()` stays on its page (a `<form method="dialog">` still closes its
+dialog). Two things still navigate the frame, which the policy's `form-action 'none'` refuses to send data for but cannot keep
+on the page: `form.submit()` from script (it fires no event) and a form inside a shadow root of your own (`submit` does not
+cross it). What the policy cannot stop is the frame navigating **itself** (`location.href = ...`): the window then shows a page
+the shell did not load, says the app left its page and offers to open it again. This is sensible isolation, so apps do not trip
+over each other or over the host; it is not a security boundary. Lasting data belongs in the backend (the frame has no
+storage). **An app's static files are public** (a sandboxed page sends no cookie, so the host cannot ask for a session): don't
+put secrets or a person's data in them. They are kept in the host's memory while the app is installed.
 
 **Limits of a call.** An `api` call's arguments may be at most 1,000,000 bytes of JSON and 100 levels deep, and a method name is 1 to
 128 characters: a call over a limit rejects at once with a message that says which. A result may be at most 4 MiB, and a
-larger one comes back as an error. A call the shell cannot read is rejected too, so a promise never hangs. Calls in
+larger one comes back as an error. A call the host page cannot read is rejected too, so a promise never hangs. Calls in
 flight are limited so that one window can neither be refused by the host's own connection limit for an ordinary burst (a
 call per item of a list) nor crowd out the shell or another app: 8 at a time per app and 32 across all apps, the
 rest wait their turn (apps take turns); an app with 1,000 calls waiting gets an error for the next one. A place is taken for
 as long as the host is running the call: a call has no time limit on the client, and its place comes back when the handler
 answers or the connection to the host goes, so a handler that never returns takes up to eight places of its own app and no
-one else's (closing its window does not stop the handler, so the places stay taken; uninstalling or replacing the app
-ends its calls, with the reason). The shell's own calls always keep working, and so do the other apps while fewer than four
-apps have hung handlers: the 32 places are shared by all apps, so when four apps hold eight each, a fifth app's calls wait until a
-place comes back.
+one else's. Closing the window, uninstalling the app or replacing it ends the calls the host is running for it (the host is told
+to cancel them, with MCP's `notifications/cancelled`), and gives their places back. The shell's queue is a courtesy; the limit
+itself is the host's: an app runs at most 8 handler calls at once, whoever sends them over however many connections, and the
+ninth is answered at once with `-32000` (busy) and the reason. The shell's own calls always keep working, and so do the other apps while fewer than four apps have hung handlers: the shell's
+32 places are shared by all apps, so when four apps hold eight each, a fifth app's calls wait until a place comes back.
 
 A call has no time limit on the client, so a handler that waits on something unreliable (a long poll, a service on the LAN that
 may be down) should bound the wait itself: calls to an app whose handlers never return queue behind its hung ones, up to eight
@@ -211,16 +220,40 @@ is hidden, not removed, and takes no focus, pointer events or screen reader atte
 ends it. It is not told when it is hidden or shown, and nothing suspends or reclaims it while hidden (with many windows open every
 app's page stays alive). Anything that must outlive the window belongs in the backend.
 
-**When a client fails to start**, the window shows the reason as text with a "Try again" button: the error the page raised
-while it loaded (a top-level throw, a missing import, a syntax error: the script comes from another origin than the
-frame's document, so the browser hides the message, and the window says that the script failed and that the browser console
-has the error), a client that does not define
-`vosApp.mount`, or an error thrown by `mount`.
+**When a page fails to start**, the window shows the reason as text with a "Try again" button: the error the page raised while
+it loaded (a top-level throw, a missing import, a syntax error: its message and where, as the browser reports it for a script
+loaded with `crossorigin` from the host; a script it reports as `Script error.` is named as failing, with the console as the
+place to look), or one the host did not accept.
 
-The policy lets a classic same-host script define custom elements and a shadow root carry `<style>`, so the shell's UI kit (Lit web components, NEOC-252) renders in it.
+**What the page may load.** Nothing but its own files, unless it says so in `x-app`, in the shape of MCP Apps' `_meta.ui`:
 
-The shell draws sheets, alerts and toasts above the frame (NEOC-252; `host` has no `toast` yet); the kit will be served at
-`/kit/tokens.css` and `/kit/kit.js`.
+```json
+"x-app": {
+  "id": "feeds",
+  "csp": { "resourceDomains": ["https://cdn.example.com", "https://*.images.example.org"] },
+  "permissions": { "camera": {} }
+}
+```
+
+`csp.resourceDomains` lets images, media, fonts and styles come from those origins (real hosts such as `https://cdn.example.com`
+or one domain's subdomains such as `https://*.example.com`; a bare scheme, a `*` or a wildcard over a top-level domain is refused
+at install). **Scripts never come from elsewhere**: an app's code comes only from the host. `connectDomains`, `frameDomains`
+and `baseUriDomains` are accepted and **not applied**: every call an app makes goes through the host to its own backend, which
+can make web requests itself. `permissions` (`camera`, `microphone`, `geolocation`, `clipboardWrite`) go into the iframe's
+`allow` attribute; a browser may still ask the person. This is a declaration the host applies, readable here; it is not a consent
+prompt or a permission system.
+
+**Two ways to run, one bridge.** The same page runs **in the shell** (a window of the shell holds the frame) and **on its own**:
+`GET /apps/<id>` is a host page with one full-viewport iframe holding the same app, and nothing else drawn (it is not the shell).
+Either host page speaks one protocol to the frame: JSON-RPC 2.0 over `postMessage`, a dialect of
+[MCP Apps](https://modelcontextprotocol.io/extensions/apps) (`ui/initialize`, `ui/notifications/host-context-changed`,
+`ui/request-display-mode`, `ui/open-link`, `ui/resource-teardown`; vos's own names are under `vos/`; your own methods travel as
+plain JSON-RPC and the host forwards them to your backend). Every call a page makes goes through the host page, never directly to
+a backend, and both host pages offer the same host services, from the same code: your backend calls and events, the host context
+(drawn from the system settings), links and display modes. What only the shell draws or arranges (window chrome, sheets, alerts,
+toasts: NEOC-252) is absent on the app's own page, and the handshake says so: check `host.hosted` before showing a control that
+needs it, and a call the host does not offer fails with `This host does not offer <method>`. A path or query after `/apps/<id>`
+is not passed to the app yet.
 
 ## The backend
 
@@ -290,7 +323,7 @@ return handlers
 | Script | What it does |
 |---|---|
 | `bun run generate` | `vos generate`: write `.app/` from the contract |
-| `bun run build` | `vite build`: generate, the client script, the backend bundled by darklua, and the app ref the host installs, all in `dist/` (`app-ref.json`, `app.luau`, `client.js`, each with a sha256) |
+| `bun run build` | `vite build`: generate, the client (a normal Vite build into `dist/static/`), the backend bundled by darklua, and the app ref the host installs, all in `dist/` (`app-ref.json` lists `app.luau` and every static file, each with a sha256) |
 | `bun run dev` | `vite build --watch`: rebuilds `dist/` when the contract, a Luau file or the client changes |
 | `bun run typecheck` | `vos typecheck` (generate, then luau-lsp strict over the Luau against `types/generated/vos.d.luau`) and the client's own type check (`svelte-check` or `tsc`) |
 | `bun run lint` | `vos lint`: the same Luau check, and StyLua |
@@ -304,8 +337,9 @@ APP=$PWD                                       # the app's own folder
 cd <the repository root> && VOS_DEV_RELOAD=1 VOS_INSTALL="file://$APP/dist/app-ref.json" bun run host
 ```
 
-So the backend you test is the real Luau on the real runtime. Reopen the app's window to load a new client script. There is
-no stand-alone dev page: the shell is the dev host.
+So the backend you test is the real Luau on the real runtime. Open the app on its own page, `/apps/<id>` on the host (paired
+device), to work on it without the shell, and reload the page to load a new client; in the shell, reopen the app's window.
+There is no `vite dev` server: the host is the dev host, so what you run is what is installed.
 
 The repository's `bun run lint`, `typecheck` and `test` run every project's scripts. luau-lsp 1.70.1, StyLua and darklua
 0.18.0 must be installed: `bun run lint` and `typecheck` skip the Luau check of a missing luau-lsp or StyLua on a developer machine and

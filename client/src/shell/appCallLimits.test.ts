@@ -7,7 +7,9 @@
 import { describe, expect, test } from 'bun:test'
 import { createHostChannel } from './channel'
 import { createCallGate, MAX_IN_FLIGHT_PER_FRAME, MAX_IN_FLIGHT_TOTAL } from './callGate'
-import { createFrameBridge, type FrameBridge, type ToFrame } from './frameBridge'
+import { createHostBridge, type HostBridge, type ToFrame } from './hostBridge'
+import { hostContextOf } from './hostContext'
+import { baseServices } from './hostServices'
 
 const HOST_LIMIT = 64
 const SHELL_TIMEOUT_MS = 20
@@ -25,6 +27,7 @@ function standInHost(): {
   /** The most requests the host ever had running at once, and the most for one app. */
   peak: { total: number; byApp: Map<string, number> }
   refused: string[]
+  cancelled: string[]
   release(app?: string): void
   disconnect(): void
 } {
@@ -32,6 +35,7 @@ function standInHost(): {
   const statuses = new Set<(s: 'connecting' | 'open' | 'closed') => void>()
   const held: Held[] = []
   const refused: string[] = []
+  const cancelled: string[] = []
   const peak = { total: 0, byApp: new Map<string, number>() }
   let running = 0
   const running_by = new Map<string, number>()
@@ -45,6 +49,7 @@ function standInHost(): {
     held,
     peak,
     refused,
+    cancelled,
     transport: {
       status: 'open',
       connect: () => undefined,
@@ -53,6 +58,17 @@ function standInHost(): {
       onMessage: (l) => (messages.add(l), () => void messages.delete(l)),
       onStatus: (l) => (statuses.add(l), () => void statuses.delete(l)),
       send: (raw) => {
+        const msg = JSON.parse(raw) as { method: string; params: { requestId?: string } }
+        if (msg.method === 'notifications/cancelled') {
+          // the host stops the running request and frees its place; no reply (the specification's rule)
+          const i = held.findIndex((h) => h.id === msg.params.requestId)
+          if (i >= 0) {
+            finish(held[i] as Held)
+            held.splice(i, 1)
+            cancelled.push(msg.params.requestId as string)
+          }
+          return
+        }
         const req = JSON.parse(raw) as {
           id: string
           method: string
@@ -110,11 +126,14 @@ function frameOf(
   gate = sharedGate
 ) {
   const posted: ToFrame[] = []
-  const bridge: FrameBridge = createFrameBridge({
+  const context = hostContextOf({ appearance: 'light', displayMode: 'inline', availableDisplayModes: ['inline'] })
+  const bridge: HostBridge = createHostBridge({
     appId: app,
     frame: () => FRAME,
     post: (m) => posted.push(m),
     call: (method, params, options) => channel.call(method, params, options),
+    services: baseServices({ context: () => context, openLink: () => undefined, setDisplayMode: (m) => m }),
+    context: () => context,
     gate
   })
   let id = 0
@@ -123,10 +142,10 @@ function frameOf(
     bridge,
     rpc: (method: string): number => {
       const n = ++id
-      bridge.receive({ source: FRAME, data: { t: 'rpc', id: n, method, args: null } })
+      bridge.receive({ source: FRAME, data: { jsonrpc: '2.0', id: n, method, params: {} } })
       return n
     },
-    answered: (n: number): ToFrame | undefined => posted.find((m) => m.t === 'res' && m.id === n),
+    answered: (n: number): ToFrame | undefined => posted.find((m) => 'id' in m && m.id === n),
     host
   }
 }
@@ -155,7 +174,7 @@ describe('an app whose handlers hang', () => {
     await expect(channel.call('app.list')).resolves.toEqual({ ok: true })
     const n = other.rpc('list')
     await sleep(5)
-    expect(other.answered(n)).toEqual({ t: 'res', id: n, result: { ok: true } })
+    expect(other.answered(n)).toEqual({ jsonrpc: '2.0', id: n, result: { ok: true } })
     expect(host.refused).toEqual([])
 
     // a hung app's call is not lost: it waits, and goes when a handler answers
@@ -165,7 +184,7 @@ describe('an app whose handlers hang', () => {
     expect(host.peak.byApp.get('hung')).toBeLessThanOrEqual(MAX_IN_FLIGHT_PER_FRAME)
   })
 
-  test('a frame closed and made again finds the places still taken, and its waiting calls are not counted against it', async () => {
+  test('closing a frame ends the calls the host is running for it and frees their places; the calls it had waiting never start', async () => {
     sharedGate = createCallGate()
     const host = standInHost()
     const channel = createHostChannel(host.transport, SHELL_TIMEOUT_MS)
@@ -173,14 +192,15 @@ describe('an app whose handlers hang', () => {
     for (let i = 0; i < 20; i++) first.rpc('hang')
     await sleep(5)
     expect(host.held.length).toBe(MAX_IN_FLIGHT_PER_FRAME)
-    first.bridge.dispose() // the window closed: 12 calls were waiting
+    first.bridge.dispose() // the window closed: 8 running on the host, 12 waiting in the gate
+    await sleep(5)
+    // the host was told to stop the eight (nothing of the app is left running), and none of the 12 ever started
+    expect(host.cancelled.length).toBe(MAX_IN_FLIGHT_PER_FRAME)
+    expect(host.held.length).toBe(0)
+    // a window opened again starts with every place free
     const second = frameOf('hung', host, channel)
     for (let i = 0; i < 3; i++) second.rpc('hang')
     await sleep(5)
-    expect(host.held.length).toBe(MAX_IN_FLIGHT_PER_FRAME) // not 16: the host is still running the first eight
-    host.release('hung')
-    await sleep(5)
-    // what the closed window had waiting never started; the new window's three did
     expect(host.held.length).toBe(3)
     expect(host.peak.byApp.get('hung')).toBe(MAX_IN_FLIGHT_PER_FRAME)
   })
@@ -195,7 +215,7 @@ describe('an app whose handlers hang', () => {
     host.disconnect()
     await sleep(5)
     for (const n of ids)
-      expect(hung.answered(n)).toMatchObject({ t: 'res', error: { message: 'The connection to vos closed' } })
+      expect(hung.answered(n)).toMatchObject({ jsonrpc: '2.0', error: { message: 'The connection to vos closed' } })
     // a place is free again: the next call starts
     hung.rpc('list')
     await sleep(5)

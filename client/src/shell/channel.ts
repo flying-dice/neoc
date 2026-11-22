@@ -19,6 +19,8 @@ type Params = Record<string, unknown>
 export interface CallOptions {
   /** Give up after this long (default: the channel's); 0 waits for the host's answer or the end of the connection. */
   timeoutMs?: number
+  /** Cancel the call: it ends here, and the host is told so it stops the handler and frees its place. */
+  signal?: AbortSignal
 }
 
 export interface HostChannel {

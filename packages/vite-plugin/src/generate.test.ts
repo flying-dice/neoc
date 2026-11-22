@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { parseDefinition } from './definition.ts'
 import { emitLuau, emitLuauEntry } from './emit-luau.ts'
-import { emitDeclarations, emitEntry, emitModule } from './emit-client.ts'
+import { emitDeclarations, emitModule } from './emit-client.ts'
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { DEFAULTS, generate, write } from './generate.ts'
@@ -56,16 +56,19 @@ describe('the typed client', () => {
     expect(dts).toContain('export const host: Host')
     expect(dts).toContain('export class RpcError extends Error')
   })
-  test('the module calls the host through what the entry bound', () => {
-    expect(js).toContain('export function bind(props)')
-    expect(js).toContain('"add_note": (params) => call("add_note", params),')
-    expect(js).toContain('"list": () => call("list", undefined),')
-    expect(js).toContain('throw new RpcError(')
+  test('the module reads the host’s bridge, which the page loads before it, and fails in words without one', () => {
+    expect(js).toContain('globalThis.vos')
+    expect(js).toContain('"add_note": (params) => request("add_note", params),')
+    expect(js).toContain('"list": () => request("list", undefined),')
+    expect(js).toContain('new RpcError(')
+    expect(js).toContain('This page has no host: open the app through vos')
+    expect(js).not.toContain('mount')
   })
-  test('the entry binds app:rpc to the host, then mounts the app', () => {
-    const entry = emitEntry('../src/main.ts')
-    expect(entry).toContain("import { mount as mountApp } from '../src/main.ts'")
-    expect(entry).toContain('bind(props)\n  return mountApp(el)')
+  test('the host object offers the dialect’s services and the honest capability checks', () => {
+    for (const name of ['onContext', 'onTeardown', 'openLink', 'requestDisplayMode', 'hosted', 'capabilities', 'ready'])
+      expect(dts).toContain(name)
+    expect(js).toContain("request('ui/open-link', { url })")
+    expect(js).toContain("request('ui/request-display-mode', { mode })")
   })
   test('is the same every time', () => expect(emitDeclarations(definition, 'openrpc.json')).toBe(dts))
 })
@@ -149,7 +152,7 @@ describe('a hostile contract cannot write code into the generated files', () => 
       const js = emitModule(contract, 'openrpc.json')
       // the generated JavaScript is still one module whose only exports are the ones the generator writes
       const exports = [...new Bun.Transpiler({ loader: 'js' }).scan(js).exports]
-      expect(exports.sort(), JSON.stringify(nasty)).toEqual(['RpcError', 'api', 'bind', 'host'].sort())
+      expect(exports.sort(), JSON.stringify(nasty)).toEqual(['RpcError', 'api', 'host'].sort())
       for (const line of js.split(/\r\n|[\r\n\u2028\u2029]/)) if (line.includes('pwned')) expect(line.trimStart().startsWith('//'), line).toBe(true)
       for (const line of dts.split(/\r\n|[\r\n\u2028\u2029]/)) {
         if (line.includes('pwned')) expect(/^\s*(\/\/|\/\*\*|\*)|^\s*kind\??: /.test(line), line).toBe(true)
@@ -197,7 +200,7 @@ describe('the fixtures', () => {
     test(`${name}'s contract parses and its backend has a handler for every method`, () => {
       const project = join(apps, name)
       const files = generate(project, DEFAULTS)
-      expect(files.map((f) => f.path)).toEqual(['.app/rpc.d.ts', '.app/rpc.js', '.app/entry.js', '.app/rpc.luau', '.app/entry.luau'])
+      expect(files.map((f) => f.path)).toEqual(['.app/rpc.d.ts', '.app/rpc.js', '.app/rpc.luau', '.app/entry.luau'])
       const text = readFileSync(join(project, 'openrpc.json'), 'utf8')
       const contract = parseDefinition(text)
       expect(contract.app.id).toBe(name)

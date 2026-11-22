@@ -269,10 +269,15 @@ window?: AppWindow,
  */
 source: string, 
 /**
- * The app has a client of its own: its window is a frame that loads `/frame/<id>`. Without one the app
- * describes its screens as a view tree (retired by NEOC-298).
+ * The app has a client of its own: its window is a frame that loads `/apps/<id>/static/`. Without one the
+ * app describes its screens as a view tree (retired by NEOC-298).
  */
-client: boolean, };
+client: boolean, 
+/**
+ * The browser features the app's frame asks for (`camera`, `microphone`, `geolocation`,
+ * `clipboard-write`): the shell puts them in the iframe's `allow` attribute.
+ */
+permissions: Array<string>, };
 export type AppList = { apps: Array<AppSummary>, };
 export type AppEvent = { app: string, name: string, data: JsonValue, };
 export type InstalledInfo = { version: string, state: AppState, };

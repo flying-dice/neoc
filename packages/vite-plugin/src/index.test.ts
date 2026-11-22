@@ -40,7 +40,8 @@ return handlers
 const files = (extra: Record<string, string> = {}): Record<string, string> => ({
   'openrpc.json': JSON.stringify(CONTRACT),
   'server/main.luau': MAIN,
-  'src/main.ts': 'export function mount(el: HTMLElement): () => void {\n  el.textContent = "probe"\n  return () => {}\n}\n',
+  'index.html': '<!doctype html>\n<html lang="en"><head><title>Probe</title></head><body><div id="root"></div><script type="module" src="/src/main.ts"></script></body></html>\n',
+  'src/main.ts': 'document.getElementById("root")!.textContent = "probe"\n',
   ...extra
 })
 
@@ -116,7 +117,11 @@ describe.skipIf(luauLsp === null)('a build through the plugin', () => {
     const dir = project(files())
     try {
       expect(await run(dir)).toBeNull()
-      expect(Object.keys(snapshot(join(dir, 'dist'))).sort()).toEqual(['app-ref.json', 'app.luau', 'client.js'])
+      const built = Object.keys(snapshot(join(dir, 'dist'))).sort()
+      expect(built.filter((f) => !f.startsWith('static/assets/'))).toEqual(['app-ref.json', 'app.luau', 'static/index.html'])
+      expect(built.some((f) => /^static\/assets\/.*\.js$/.test(f))).toBe(true)
+      // the bridge's tag was injected into the page, first in the head
+      expect(readFileSync(join(dir, 'dist/static/index.html'), 'utf8')).toMatch(/<head>\s*<script src="\/apps\/bridge\.js"><\/script>/)
       const ref = JSON.parse(readFileSync(join(dir, 'dist/app-ref.json'), 'utf8')) as { files: { path: string; sha256: string }[] }
       for (const file of ref.files) {
         expect(createHash('sha256').update(readFileSync(join(dir, 'dist', file.path))).digest('hex'), file.path).toBe(file.sha256)
@@ -135,7 +140,7 @@ describe.skipIf(luauLsp === null)('a build through the plugin', () => {
       const failures: [string, Record<string, string>, Partial<Options>, RegExp][] = [
         ['the contract is not JSON', { 'openrpc.json': '{ "openrpc": ' }, {}, /not JSON at line 1/],
         ['the contract declares a method with no handler', { 'openrpc.json': JSON.stringify({ ...CONTRACT, methods: [...CONTRACT.methods, { name: 'extra', result: { name: 'r', schema: { type: 'null' } } }] }) }, {}, /does not match openrpc\.json/],
-        ['the client does not build', { 'src/main.ts': 'export function mount( {' }, {}, /./],
+        ['the client does not build', { 'src/main.ts': 'const x = = 1' }, {}, /./],
         ['darklua cannot bundle the backend (after the client was built)', { 'server/main.luau': 'local x = = 1\n' }, { check: false }, /darklua|bundle/i],
         [
           'a migration file is missing (after the client was built)',
@@ -160,7 +165,7 @@ describe.skipIf(luauLsp === null)('a build through the plugin', () => {
       })
       expect(await run(dir)).toBeNull()
       const next = snapshot(join(dir, 'dist'))
-      expect(Object.keys(next).sort()).toEqual(['app-ref.json', 'app.luau', 'client.js', 'migrations/001_init.sql'])
+      expect(Object.keys(next).filter((f) => !f.startsWith('static/assets/')).sort()).toEqual(['app-ref.json', 'app.luau', 'migrations/001_init.sql', 'static/index.html'])
       expect((JSON.parse(readFileSync(join(dir, 'dist/app-ref.json'), 'utf8')) as { manifest: { version: string } }).manifest.version).toBe('1.1.0')
     } finally {
       rmSync(dir, { recursive: true, force: true })
@@ -196,11 +201,11 @@ describe.skipIf(luauLsp === null)('migrations and the output', () => {
     const dir = project(
       files({
         ...withMigrations([
-          { version: 1, name: 'client', file: 'client.js' },
+          { version: 1, name: 'page', file: 'static/index.html' },
           { version: 2, name: 'app', file: 'db/app.luau' },
           { version: 3, name: 'ref', file: 'app-ref.json' }
         ]),
-        'client.js': 'select 1;',
+        'static/index.html': 'select 1;',
         'db/app.luau': '--!strict\nreturn {}\n',
         'app-ref.json': 'select 3;'
       })
@@ -208,13 +213,13 @@ describe.skipIf(luauLsp === null)('migrations and the output', () => {
     try {
       expect(await run(dir)).toBeNull()
       const built = snapshot(join(dir, 'dist'))
-      expect(Object.keys(built).sort()).toEqual(['app-ref.json', 'app.luau', 'client.js', 'migrations/app-ref.json', 'migrations/app.luau', 'migrations/client.js'])
+      expect(Object.keys(built).filter((f) => !f.startsWith('static/assets/')).sort()).toEqual(['app-ref.json', 'app.luau', 'migrations/app-ref.json', 'migrations/app.luau', 'migrations/index.html', 'static/index.html'])
       const ref = JSON.parse(readFileSync(join(dir, 'dist/app-ref.json'), 'utf8')) as { manifest: { migrations: { file: string }[] }; files: { path: string; sha256: string }[] }
-      expect(ref.manifest.migrations.map((m) => m.file)).toEqual(['migrations/client.js', 'migrations/app.luau', 'migrations/app-ref.json'])
+      expect(ref.manifest.migrations.map((m) => m.file)).toEqual(['migrations/index.html', 'migrations/app.luau', 'migrations/app-ref.json'])
       // every path of the app ref once, with the hash of what is there
       expect(new Set(ref.files.map((f) => f.path)).size).toBe(ref.files.length)
       for (const f of ref.files) expect(built[f.path], f.path).toBe(f.sha256)
-      expect(readFileSync(join(dir, 'dist/client.js'), 'utf8')).not.toContain('select 1')
+      expect(readFileSync(join(dir, 'dist/static/index.html'), 'utf8')).not.toContain('select 1')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -265,7 +270,7 @@ describe.skipIf(luauLsp === null)('builds at the same time', () => {
     try {
       const results = await Promise.all([run(dir), run(dir), run(dir)])
       expect(results.map((r) => r?.message ?? null)).toEqual([null, null, null])
-      expect(Object.keys(snapshot(join(dir, 'dist'))).sort()).toEqual(['app-ref.json', 'app.luau', 'client.js'])
+      expect(Object.keys(snapshot(join(dir, 'dist'))).filter((f) => !f.startsWith('static/assets/')).sort()).toEqual(['app-ref.json', 'app.luau', 'static/index.html'])
       expect(stagingLeft(dir)).toBe(false)
     } finally {
       rmSync(dir, { recursive: true, force: true })

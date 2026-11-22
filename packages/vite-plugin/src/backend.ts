@@ -71,19 +71,20 @@ export function filesUnder(dir: string, prefix = ''): string[] {
 }
 
 /**
- * Write `app.luau` and `app-ref.json` into `outDir`, which already holds the client script: the build's staging folder, not yet
- * `dist/`. The manifest is the contract's (`info.title` and `info.version`, and `x-app`); every file the app ref lists is next to
+ * Write `app.luau` and `app-ref.json` into `outDir`, which already holds the client's `staticDir`: the build's staging folder,
+ * not yet `dist/`. The manifest is the contract's (`info.title` and `info.version`, and `x-app`); every file the app ref lists is next to
  * it, with a relative URL, so the folder installs from `file://`, `http://` or `https://` as it is. Every file a migration names
  * is read from inside the project and written to inside `outDir`, whatever the contract says.
  */
-export function writeApp(project: string, outDir: string, definition: Definition, entry: string, client: string): void {
+export function writeApp(project: string, outDir: string, definition: Definition, entry: string, staticDir: string): void {
   mkdirSync(outDir, { recursive: true })
   const bundle = bundleLuau(join(project, entry))
-  const clientBytes = readFileSync(join(outDir, client))
-  const files = [
-    { path: 'app.luau', url: 'app.luau', sha256: sha256(bundle) },
-    { path: client, url: client, sha256: sha256(clientBytes) }
-  ]
+  // the client is its built static files: every one is listed with its hash and served by the host as the app's own page
+  const files = [{ path: 'app.luau', url: 'app.luau', sha256: sha256(bundle) }]
+  for (const path of filesUnder(join(outDir, staticDir))) {
+    const listed = `${staticDir}/${path}`
+    files.push({ path: listed, url: listed, sha256: sha256(readFileSync(join(outDir, listed))) })
+  }
   const meta = definition.app
   const outputs: { version: number; name: string; file: string }[] = []
   for (const [index, migration] of (meta.migrations ?? []).entries()) {
@@ -108,15 +109,20 @@ export function writeApp(project: string, outDir: string, definition: Definition
       name: definition.title,
       version: definition.version,
       main: 'app.luau',
-      client,
+      // the client: its built static files, and what its page needs (MCP Apps' `_meta.ui`: `csp`, `permissions`), which
+      // the host turns into the page's content security policy and the frame's `allow`
+      ui: {
+        root: staticDir,
+        entry: 'index.html',
+        ...(meta.csp ? { csp: meta.csp } : {}),
+        ...(meta.permissions ? { permissions: meta.permissions } : {})
+      },
       migrations: outputs,
       ...(meta.icon ? { icon: meta.icon } : {}),
       ...(meta.tint ? { tint: meta.tint } : {}),
       ...(meta.description ? { description: meta.description } : {}),
       ...(meta.window ? { window: meta.window } : {}),
-      ...(meta.requires ? { requires: meta.requires } : {}),
-      // what the app's frame may load and ask for (MCP Apps' `_meta.ui`): the host builds the frame's policy and `allow` from it
-      ...(meta.csp || meta.permissions ? { ui: { ...(meta.csp ? { csp: meta.csp } : {}), ...(meta.permissions ? { permissions: meta.permissions } : {}) } } : {})
+      ...(meta.requires ? { requires: meta.requires } : {})
     },
     files
   }

@@ -13,7 +13,8 @@ use serde_json::json;
 use std::path::Path;
 use vos_host::startup::prepare_data_dir;
 
-const CLIENT: &str = "window.vosApp = { mount: function () {} }";
+const PAGE: &str = "<!doctype html><title>tasks</title><script src=\"/apps/bridge.js\"></script>";
+const SCRIPT: &str = "console.log('tasks')";
 
 /// A backend whose handlers say which app answered; `add_task` is an agent tool that also tells the clients.
 fn backend(name: &str) -> String {
@@ -52,12 +53,18 @@ async fn host_with_apps(tmp: &Path, ids: &[&str]) -> Running {
     })
     .await;
     for id in ids {
-        let files = [("app.luau", backend(id).into_bytes()), ("client.js", CLIENT.as_bytes().to_vec())];
+        let files = [
+            ("app.luau", backend(id).into_bytes()),
+            ("static/index.html", PAGE.as_bytes().to_vec()),
+            ("static/other.html", b"<p>not the entry</p>".to_vec()),
+            ("static/assets/app.js", SCRIPT.as_bytes().to_vec()),
+            ("static/.secret", b"hidden".to_vec()),
+        ];
         let url = publish_package_with_client(
             &tmp.join(format!("pkg-{id}")),
             id,
             "app.luau",
-            Some("client.js"),
+            Some("static"),
             &files,
         );
         r.host.service.install_from_url(&url).await.unwrap();
@@ -73,6 +80,20 @@ async fn get(r: &Running, path: &str, cookie: Option<&str>) -> reqwest::Response
     req.send().await.unwrap()
 }
 
+/// The status of a GET sent exactly as written: an HTTP client normalises `%2e%2e` and `..` out of a URL before it sends it (the URL
+/// standard says so, and `url` 2.5.9 does it where 2.5.8 did not), which would test the client and not the host's route.
+async fn raw_status(r: &Running, path: &str) -> u16 {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut stream = tokio::net::TcpStream::connect(r.addr).await.unwrap();
+    let request =
+        format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n", r.addr.port());
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).await.unwrap();
+    let head = String::from_utf8_lossy(&response);
+    head.split_whitespace().nth(1).and_then(|code| code.parse().ok()).unwrap_or(0)
+}
+
 async fn paired(r: &Running) -> (String, Ws) {
     // a second pairing for the HTTP side: the cookie of the browser the socket belongs to
     let cookie = common::pair(r, "Safari on iPad").await;
@@ -80,84 +101,233 @@ async fn paired(r: &Running) -> (String, Ws) {
 }
 
 #[tokio::test]
-async fn the_frame_document_needs_a_session_and_carries_a_policy_with_no_network() {
-    let tmp = temp("frame-doc");
+async fn an_apps_static_files_are_public_carry_the_policy_and_only_its_entry_is_a_document() {
+    let tmp = temp("static-files");
     let r = host_with_apps(&tmp, &["tasks"]).await;
-    let (cookie, _ws) = paired(&r).await;
 
-    assert_eq!(
-        get(&r, "/frame/tasks", None).await.status(),
-        401,
-        "the document names the app: it needs a session"
-    );
-
-    let res = get(&r, "/frame/tasks?theme=dark", Some(&cookie)).await;
-    assert_eq!(res.status(), 200);
-    let csp = res.headers()["content-security-policy"].to_str().unwrap().to_owned();
+    // a sandboxed frame sends no cookie, and its module scripts send `Origin: null`
+    let page = get(&r, "/apps/tasks/static/index.html", None).await;
+    assert_eq!(page.status(), 200);
+    let csp = page.headers()["content-security-policy"].to_str().unwrap().to_owned();
     for part in ["default-src 'none'", "script-src 'self'", "sandbox allow-scripts", "frame-ancestors 'self'"]
     {
         assert!(csp.contains(part), "{part} in {csp}");
     }
     assert!(!csp.contains("connect-src"), "no network for the client: {csp}");
     assert!(!csp.contains("allow-same-origin"), "an opaque origin: {csp}");
-    assert_eq!(res.headers()["cache-control"], "no-store");
-    let html = res.text().await.unwrap();
-    assert!(html.contains(r#"<html lang="en" data-theme="dark" style="color-scheme:dark">"#), "{html}");
-    assert!(html.contains(r#"<script src="/frame/bridge.js">"#), "{html}");
-    assert!(html.contains("NEOC-252"), "the marked spot for the kit's two tags: {html}");
+    assert_eq!(page.headers()["content-type"], "text/html; charset=utf-8");
+    assert_eq!(page.headers()["x-content-type-options"], "nosniff");
+    assert_eq!(page.headers()["access-control-allow-origin"], "*");
+    let etag = page.headers()["etag"].to_str().unwrap().to_owned();
+    assert_eq!(page.text().await.unwrap(), PAGE);
 
-    // anything but `dark` is light
-    let light = get(&r, "/frame/tasks?theme=%3Cscript%3E", Some(&cookie)).await.text().await.unwrap();
-    assert!(light.contains(r#"data-theme="light""#) && !light.contains("<script>alert"), "{light}");
-    r.stop().await;
-}
+    // `/static/` is the entry too, and the validator answers 304
+    assert_eq!(get(&r, "/apps/tasks/static/", None).await.text().await.unwrap(), PAGE);
+    let again = reqwest::Client::new()
+        .get(r.url("/apps/tasks/static/index.html"))
+        .header("if-none-match", &etag)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(again.status(), 304);
 
-#[tokio::test]
-async fn the_clients_script_is_public_named_by_its_digest_and_only_for_an_app_that_has_one() {
-    let tmp = temp("frame-scripts");
-    let r = host_with_apps(&tmp, &["tasks"]).await;
-    let (cookie, mut ws) = paired(&r).await;
-    let html = get(&r, "/frame/tasks", Some(&cookie)).await.text().await.unwrap();
-    let src = html
-        .split('"')
-        .find(|part| part.starts_with("/frame/tasks/") && part.ends_with("/client.js"))
-        .unwrap_or_else(|| panic!("the client script in {html}"))
-        .to_owned();
-
-    // a sandboxed frame sends no cookie
-    let script = get(&r, &src, None).await;
+    // a script of the app: from the table, with the same policy on it
+    let script = get(&r, "/apps/tasks/static/assets/app.js", None).await;
     assert_eq!(script.status(), 200);
     assert!(script.headers()["content-type"].to_str().unwrap().starts_with("text/javascript"));
-    assert!(script.headers()["cache-control"].to_str().unwrap().contains("immutable"));
-    assert_eq!(script.text().await.unwrap(), CLIENT);
+    assert!(script.headers()["content-security-policy"].to_str().unwrap().contains("sandbox allow-scripts"));
+    assert_eq!(script.text().await.unwrap(), SCRIPT);
 
-    assert_eq!(get(&r, &format!("/frame/tasks/{}/client.js", "0".repeat(64)), None).await.status(), 404);
-    assert_eq!(get(&r, "/frame/ghost/abc/client.js", None).await.status(), 404);
-    assert_eq!(get(&r, "/frame/Not%20An%20Id/abc/client.js", None).await.status(), 404);
+    // only the entry is a document; no file is guessed at; hidden and climbing paths are not files
+    let other = get(&r, "/apps/tasks/static/other.html", None).await;
+    assert_eq!(other.headers()["content-type"], "text/plain; charset=utf-8");
+    for missing in [
+        "/apps/tasks/static/missing.js",
+        "/apps/tasks/static/assets/",
+        "/apps/tasks/static/.secret",
+        "/apps/tasks/static/%2e%2e/app.luau",
+        "/apps/tasks/static/assets/%2e%2e/%2e%2e/app.luau",
+        "/apps/tasks/static/assets%2f..%2fapp.luau",
+        "/apps/tasks/static/app.luau",
+        "/apps/ghost/static/index.html",
+        "/apps/Not%20An%20Id/static/index.html",
+    ] {
+        assert_eq!(raw_status(&r, missing).await, 404, "{missing}");
+    }
 
-    let bridge = get(&r, "/frame/bridge.js", None).await;
+    // the bridge is one public copy
+    let bridge = get(&r, "/apps/bridge.js", None).await;
     assert_eq!(bridge.status(), 200);
     let bridge = bridge.text().await.unwrap();
-    assert!(bridge.contains("vosApp") && bridge.contains("parent.postMessage"), "{bridge}");
+    assert!(bridge.contains("ui/initialize") && bridge.contains("parent.postMessage"), "{bridge}");
 
-    // an app with no client has no frame, and neither has one that is not installed
+    // an app with no client has no static files, and neither has one that is not installed
     let url = common::publish_package(
-        &temp("frame-plain"),
+        &temp("static-plain"),
         "plain",
         "app.luau",
         &[("app.luau", b"app.manifest { id = 'plain', name = 'Plain', icon = 'gear' }".to_vec())],
     );
     r.host.service.install_from_url(&url).await.unwrap();
-    assert_eq!(get(&r, "/frame/plain", Some(&cookie)).await.status(), 404);
-    assert_eq!(get(&r, "/frame/ghost", Some(&cookie)).await.status(), 404);
+    assert_eq!(get(&r, "/apps/plain/static/index.html", None).await.status(), 404);
+    r.stop().await;
+}
 
-    // the summary tells the shell which windows are frames, and gives it the window from app.json
+#[tokio::test]
+async fn origin_null_gets_through_the_guard_for_static_reads_and_nowhere_else() {
+    let tmp = temp("static-origin");
+    let r = host_with_apps(&tmp, &["tasks"]).await;
+    let (cookie, _ws) = paired(&r).await;
+    let with_null = |method: reqwest::Method, path: &str| {
+        reqwest::Client::new().request(method, r.url(path)).header("origin", "null").header("cookie", &cookie)
+    };
+
+    assert_eq!(
+        with_null(reqwest::Method::GET, "/apps/tasks/static/assets/app.js").send().await.unwrap().status(),
+        200
+    );
+    assert_eq!(
+        with_null(reqwest::Method::HEAD, "/apps/tasks/static/index.html").send().await.unwrap().status(),
+        200
+    );
+    // not a write, not another route, even with a paired device's cookie in the request
+    assert_eq!(
+        with_null(reqwest::Method::POST, "/apps/tasks/static/index.html").send().await.unwrap().status(),
+        403
+    );
+    for path in ["/apps/tasks", "/apps/bridge.js", "/session", "/rpc", "/agui/threads", "/mcp", "/"] {
+        assert_eq!(with_null(reqwest::Method::GET, path).send().await.unwrap().status(), 403, "{path}");
+    }
+    // another origin is still refused on the static route
+    let foreign = reqwest::Client::new()
+        .get(r.url("/apps/tasks/static/index.html"))
+        .header("origin", "https://evil.example")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(foreign.status(), 403);
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn the_host_route_is_a_wrapper_page_for_a_paired_device_and_says_to_pair_otherwise() {
+    let tmp = temp("wrapper");
+    let r = host_with_apps(&tmp, &["tasks"]).await;
+    let (cookie, _ws) = paired(&r).await;
+
+    let unpaired = get(&r, "/apps/tasks", None).await;
+    assert_eq!(unpaired.status(), 401);
+    let body = unpaired.text().await.unwrap();
+    assert!(body.contains("Pair this device first") && body.contains(r#"href="/""#), "{body}");
+
+    let res = get(&r, "/apps/tasks", Some(&cookie)).await;
+    assert_eq!(res.status(), 200);
+    assert_eq!(res.headers()["cache-control"], "no-store");
+    let csp = res.headers()["content-security-policy"].to_str().unwrap().to_owned();
+    assert!(csp.contains("frame-src 'self'") && csp.contains("script-src 'self'"), "{csp}");
+    let html = res.text().await.unwrap();
+    assert!(html.contains("<title>tasks</title>"), "{html}");
+    assert!(
+        html.contains(r#"sandbox="allow-scripts allow-forms""#) && !html.contains("allow-same-origin"),
+        "{html}"
+    );
+    assert!(html.contains(r#"data-entry="/apps/tasks/static/index.html""#), "{html}");
+    assert!(html.contains(r#"src="/wrapper.js""#), "{html}");
+    assert_eq!(html.matches("<iframe").count(), 1, "one iframe and nothing else drawn: {html}");
+
+    // an app that is not installed, or has no client, has no page
+    assert_eq!(get(&r, "/apps/ghost", Some(&cookie)).await.status(), 404);
+    let url = common::publish_package(
+        &temp("wrapper-plain"),
+        "plain",
+        "app.luau",
+        &[("app.luau", b"app.manifest { id = 'plain', name = 'Plain', icon = 'gear' }".to_vec())],
+    );
+    r.host.service.install_from_url(&url).await.unwrap();
+    assert_eq!(get(&r, "/apps/plain", Some(&cookie)).await.status(), 404);
+    r.stop().await;
+}
+
+/// Publish an app with a client whose app ref carries `ui` fields beyond the root (`csp`, `permissions`).
+fn publish_with_ui(root: &Path, id: &str, ui: serde_json::Value) -> String {
+    let files = [("app.luau", backend(id).into_bytes()), ("static/index.html", PAGE.as_bytes().to_vec())];
+    let url = publish_package_with_client(root, id, "app.luau", Some("static"), &files);
+    let path = root.join("app-ref.json");
+    let mut app_ref: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    for (key, value) in ui.as_object().unwrap() {
+        app_ref["manifest"]["ui"][key] = value.clone();
+    }
+    std::fs::write(path, serde_json::to_vec(&app_ref).unwrap()).unwrap();
+    url
+}
+
+#[tokio::test]
+async fn what_an_app_declares_for_its_page_is_applied_and_what_opens_everything_is_refused_at_install() {
+    let tmp = temp("static-declared");
+    let r = host_with_apps(&tmp, &[]).await;
+    let (cookie, mut ws) = paired(&r).await;
+    let ui = json!({
+        "csp": {
+            "resourceDomains": ["https://cdn.example.com", "https://*.images.example.org"],
+            "connectDomains": ["https://api.example.com"]
+        },
+        "permissions": { "camera": {}, "clipboardWrite": {} }
+    });
+    r.host.service.install_from_url(&publish_with_ui(&tmp.join("feeds"), "feeds", ui)).await.unwrap();
+
+    let page = get(&r, "/apps/feeds/static/index.html", None).await;
+    let csp = page.headers()["content-security-policy"].to_str().unwrap().to_owned();
+    assert!(
+        csp.contains("img-src 'self' data: blob: https://cdn.example.com https://*.images.example.org"),
+        "{csp}"
+    );
+    assert!(csp.contains("script-src 'self';"), "an app's code comes only from the host: {csp}");
+    assert!(
+        !csp.contains("connect-src") && !csp.contains("api.example.com"),
+        "connectDomains are not applied: {csp}"
+    );
+    assert!(csp.contains("sandbox allow-scripts"), "{csp}");
+
+    // the shell is told what the frame asks for, and the wrapper puts it in the iframe's `allow`
     let list = rpc(&mut ws, 1, "app.list", json!({})).await;
-    let apps = list["result"]["apps"].as_array().unwrap();
-    let tasks = apps.iter().find(|a| a["id"] == "tasks").unwrap();
+    let feeds =
+        list["result"]["apps"].as_array().unwrap().iter().find(|a| a["id"] == "feeds").unwrap().clone();
+    assert_eq!(feeds["permissions"], json!(["camera", "clipboard-write"]));
+    let wrapper = get(&r, "/apps/feeds", Some(&cookie)).await.text().await.unwrap();
+    assert!(wrapper.contains(r#"allow="camera; clipboard-write""#), "{wrapper}");
+
+    // what opens everything, or weakens the host's own scripts, never installs
+    for bad in [
+        json!(["*"]),
+        json!(["https:"]),
+        json!(["https://*.com"]),
+        json!(["'unsafe-inline'"]),
+        json!(["https://a.example.com;script-src *"]),
+    ] {
+        let url = publish_with_ui(&tmp.join("bad"), "bad", json!({ "csp": { "resourceDomains": bad } }));
+        let err = r.host.service.install_from_url(&url).await.unwrap_err().to_string();
+        assert!(err.contains("csp.resourceDomains"), "{bad}: {err}");
+    }
+    let url = publish_with_ui(&tmp.join("bad2"), "bad2", json!({ "permissions": { "nfc": {} } }));
+    assert!(r.host.service.install_from_url(&url).await.is_err());
+    // an entry the app ref does not carry is refused too
+    let url = publish_with_ui(&tmp.join("bad3"), "bad3", json!({ "entry": "missing.html" }));
+    let err = r.host.service.install_from_url(&url).await.unwrap_err().to_string();
+    assert!(err.contains("ui.entry"), "{err}");
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn the_summary_tells_the_shell_which_windows_are_frames_and_what_they_ask_for() {
+    let tmp = temp("summary");
+    let r = host_with_apps(&tmp, &["tasks"]).await;
+    let (_cookie, mut ws) = paired(&r).await;
+    let list = rpc(&mut ws, 1, "app.list", json!({})).await;
+    let tasks =
+        list["result"]["apps"].as_array().unwrap().iter().find(|a| a["id"] == "tasks").unwrap().clone();
     assert_eq!(tasks["client"], true);
     assert_eq!(tasks["window"], json!({"w": 420, "h": 480, "minW": 320, "minH": 320}));
-    assert_eq!(apps.iter().find(|a| a["id"] == "plain").unwrap()["client"], false);
+    assert_eq!(tasks["permissions"], json!([]), "an app that asks for nothing asks for no feature");
     r.stop().await;
 }
 

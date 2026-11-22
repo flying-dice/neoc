@@ -1,4 +1,4 @@
-use crate::{error::DomainError, limits::MAX_PACKAGE_FILES, KitRequirement, WindowDecl};
+use crate::{app_ui::AppUi, error::DomainError, limits::MAX_PACKAGE_FILES, KitRequirement, WindowDecl};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
@@ -76,12 +76,12 @@ pub struct Manifest {
     /// What the host must provide for the app to run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requires: Option<Requires>,
-    /// The app's client: the one prebuilt script (a path in the app ref, ending in `.js`) that the host loads into
-    /// a frame of its own and that defines `vosApp.mount(el, { rpc, host })`. An app with a client opens in a frame
-    /// and its Luau entry is its backend (it returns a table of handlers); an app without one describes its
-    /// screens as a view tree with `app.window` (retired by NEOC-298).
+    /// The app's client: its built static files (a directory of the app ref) and what its page needs. An app with
+    /// one opens in a frame that loads the files' entry page and its Luau entry is its backend (it returns a table
+    /// of handlers); an app without one describes its screens as a view tree with `app.window` (retired by
+    /// NEOC-298).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub client: Option<String>,
+    pub ui: Option<AppUi>,
     /// The default window and its minimum size, for the shell to open the app with before anything runs. A view-tree
     /// app may still declare it in `app.manifest`, which takes precedence.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -139,14 +139,8 @@ impl Manifest {
                 self.main
             )));
         }
-        if let Some(client) = &self.client {
-            let is_script =
-                std::path::Path::new(client).extension().is_some_and(|e| e.eq_ignore_ascii_case("js"));
-            if !is_script || client == &self.main {
-                return Err(DomainError::InvalidManifest(format!(
-                    "client must be the built script of the app's client (a path ending in `.js`), not `{client}`"
-                )));
-            }
+        if let Some(ui) = &self.ui {
+            ui.validate()?;
         }
         if let Some(window) = &self.window {
             window.validate()?;
@@ -311,7 +305,7 @@ mod tests {
                 tint: None,
                 description: None,
                 requires: None,
-                client: None,
+                ui: None,
                 window: None,
             },
             files: vec![FileRef {
@@ -338,7 +332,7 @@ mod tests {
             tint: None,
             description: None,
             requires: None,
-            client: None,
+            ui: None,
             window: None,
         };
         assert!(manifest("app.luau").validate().is_ok());
@@ -364,7 +358,7 @@ mod tests {
             tint: None,
             description: None,
             requires: Some(Requires { host: Some(">=1.0".into()) }),
-            client: None,
+            ui: None,
             window: None,
         };
         assert!(m.validate().is_ok());
@@ -399,7 +393,7 @@ mod tests {
             tint: None,
             description: None,
             requires: None,
-            client: None,
+            ui: None,
             window: None,
         };
         AppRef { manifest, files }
@@ -478,16 +472,21 @@ mod tests {
             tint: None,
             description: None,
             requires: None,
-            client: Some("client.js".into()),
+            ui: Some(crate::AppUi {
+                root: "static".into(),
+                entry: "index.html".into(),
+                csp: crate::Csp::default(),
+                permissions: crate::Permissions::default(),
+            }),
             window: Some(WindowDecl { w: 420, h: 480, min_w: 320, min_h: 320 }),
         };
         assert!(m.validate().is_ok());
-        for bad in ["client", "client.css", "client.js.map", "app.luau"] {
-            m.client = Some(bad.into());
+        for bad in ["", "../x", "/static"] {
+            m.ui.as_mut().unwrap().root = bad.into();
             let err = m.validate().unwrap_err().to_string();
-            assert!(err.contains("client must be the built script"), "{bad}: {err}");
+            assert!(err.contains("ui.root must be a directory"), "{bad}: {err}");
         }
-        m.client = None;
+        m.ui = None;
         assert!(m.validate().is_ok(), "an app without a client may state its window too");
         m.window = Some(WindowDecl { w: 300, h: 300, min_w: 300, min_h: 300 });
         assert!(m.validate().is_err(), "below the shell's 320x240");
@@ -501,13 +500,13 @@ mod tests {
             r#"{"id":"notes","name":"Notes","version":"1.0.0","main":"app.luau","permissions":["x"]}"#,
         )
         .unwrap();
-        assert_eq!((m.client, m.window), (None, None));
+        assert_eq!((m.ui, m.window), (None, None));
         let with: Manifest = serde_json::from_str(
-            r#"{"id":"tasks","name":"T","version":"1.0.0","main":"app.luau","client":"client.js",
+            r#"{"id":"tasks","name":"T","version":"1.0.0","main":"app.luau","ui":{"root":"static"},
                 "window":{"w":420,"h":480,"minW":320,"minH":320}}"#,
         )
         .unwrap();
-        assert_eq!(with.client.as_deref(), Some("client.js"));
+        assert_eq!(with.ui.map(|u| (u.root, u.entry)), Some(("static".to_owned(), "index.html".to_owned())));
         assert_eq!(with.window.map(|w| w.min_h), Some(320));
     }
 
@@ -523,7 +522,7 @@ mod tests {
             tint: None,
             description: None,
             requires: None,
-            client: None,
+            ui: None,
             window: None,
         };
         assert_eq!(m.validate(), Err(DomainError::MigrationOrder));
