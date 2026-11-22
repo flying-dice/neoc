@@ -126,6 +126,19 @@
     }
   }
 
+  // A form's navigation is never useful in an app's frame (it would send the frame to another page), so a submission the app's own
+  // handlers did not prevent is prevented here, in the bubble phase on `window`, after theirs: an app that forgets `preventDefault`
+  // stays on its page. A `<form method="dialog">` closes its dialog and is no navigation: it is left alone. (`submit` does not cross
+  // a shadow root, and `form.submit()` fires no event: those still navigate, and the shell notices a page the frame left.)
+  window.addEventListener('submit', function (e) {
+    if (e.defaultPrevented) return
+    var form = e.target
+    var submitter = e.submitter
+    var method = (submitter && submitter.getAttribute && submitter.getAttribute('formmethod')) || (form && form.getAttribute && form.getAttribute('method')) || ''
+    if (String(method).toLowerCase() === 'dialog') return
+    e.preventDefault()
+  })
+
   // The shell's way of knowing this document is its client and not a page the frame navigated itself to: said the moment the
   // script starts, before anything of the client runs.
   post({ t: 'hello' })

@@ -148,7 +148,7 @@ copy, is in git history at `51f47f4`: `git show 51f47f4:docs/architecture/ui-sys
   opener, a self-revoke's grace timer). A panic is still a bug: a module must not panic on app input.
 - **An app's client runs only in a frame of its own and reaches only its own backend** (sensible isolation, not sandboxing:
   its purpose is that apps do not trip over each other or over the shell, not to contain hostile code, and it is not a
-  security boundary). The frame is an `<iframe sandbox="allow-scripts allow-forms">` (an opaque origin, no `allow-same-origin`; `allow-forms` so a form's `submit` event fires; a submission nothing prevented sends no data (`form-action 'none'`) but navigates the frame away, which the window notices) whose
+  security boundary). The frame is an `<iframe sandbox="allow-scripts allow-forms">` (an opaque origin, no `allow-same-origin`; `allow-forms` so a form's `submit` event fires; the bridge prevents a submission the app's handlers did not; `form.submit()` and a form in a shadow root still navigate, sending no data (`form-action 'none'`), which the window notices) whose
   document the host serves at `/frame/<app>` with a `Content-Security-Policy` header that allows no request of its own (no
   `connect-src`, nothing external: `crates/vos-http/src/frame.rs`); the policy cannot stop the frame navigating itself
   (`location.href`), so the window notices a second `load` and says the app left its page; the client's one way out is `postMessage` to the shell, which forwards `rpc(method, args)`

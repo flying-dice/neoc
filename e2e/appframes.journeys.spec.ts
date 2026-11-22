@@ -212,17 +212,46 @@ for (const id of FIXTURE_APPS) {
       await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()
     })
 
-    test(`AF11 (${id}): a form nobody prevented sends the frame to another page, which the window notices`, async ({ page, errors }) => {
+    test(`AF11 (${id}): a form nobody prevented stays on the page; one submitted by script, with no event, sends the frame away and the window notices`, async ({ page, errors }) => {
       await openDesktop(page, { open: [id] })
       await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()
-      // the submit event fires (`allow-forms`) and nothing prevents it: the browser starts the navigation. The policy refuses
-      // to send the data (`form-action 'none'`), but the page is gone all the same: the window says the app left its page
+      // the bridge prevents a submission the app's handlers did not: the handlers run and the page stays (a dialog form still closes its dialog)
+      const outcome = await frame(page)
+        .locator('body')
+        .evaluate(async () => {
+          const form = document.createElement('form')
+          form.action = 'http://127.0.0.1:9/'
+          form.method = 'post'
+          let fired = false
+          form.addEventListener('submit', () => {
+            fired = true
+          })
+          document.body.append(form)
+          form.requestSubmit()
+          await new Promise((r) => setTimeout(r, 300))
+          const stayed = document.body.contains(form)
+          form.remove()
+          const dialog = document.createElement('dialog')
+          const inner = document.createElement('form')
+          inner.method = 'dialog'
+          dialog.append(inner)
+          document.body.append(dialog)
+          dialog.showModal()
+          inner.requestSubmit()
+          const closed = !dialog.open
+          dialog.remove()
+          return { fired, stayed, closed }
+        })
+      expect(outcome).toEqual({ fired: true, stayed: true, closed: true })
+      await expect(page.getByTestId(`${id}-failed`)).toHaveCount(0)
+      // `form.submit()` fires no event, so nothing can prevent it: the browser starts the navigation. The policy refuses to send the
+      // data (`form-action 'none'`), but the page is gone all the same: the window says the app left its page
       await frame(page).locator('body').evaluate(() => {
         const form = document.createElement('form')
         form.action = 'http://127.0.0.1:9/'
         form.method = 'post'
         document.body.append(form)
-        setTimeout(() => form.requestSubmit(), 0)
+        setTimeout(() => form.submit(), 0)
       })
       await expect(page.getByTestId(`${id}-failed`)).toBeVisible({ timeout: 10_000 })
       await expect(page.getByTestId(`${id}-failed`)).toContainText('left its page')
