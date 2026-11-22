@@ -86,9 +86,6 @@ export class UiButton extends FormControl {
         min-width: 0;
         min-height: 0;
       }
-      :host([disabled]) {
-        pointer-events: none;
-      }
       button {
         --_tint: var(--btn-tint, var(--tint));
         position: relative; /* the hit area below */

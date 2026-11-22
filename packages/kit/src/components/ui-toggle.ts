@@ -30,9 +30,6 @@ export class UiToggle extends BooleanControl {
         height: fit-content;
         min-height: var(--ui-hit, 0px);
       }
-      :host([disabled]) {
-        pointer-events: none;
-      }
       button {
         appearance: none;
         border: 0;

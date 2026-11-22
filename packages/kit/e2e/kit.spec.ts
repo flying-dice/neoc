@@ -862,3 +862,213 @@ test('Enter and Space press a button, flip a toggle and a check, and press a tap
   expect(await heard('row', 'Enter')).toEqual(['row:click', 'row:press'])
   expect(await heard('row', 'Space')).toEqual(['row:click', 'row:press'])
 })
+
+// "Disabled" means one thing for every control, in every place: a disabled control, however it is disabled, hears nothing,
+// activates nothing, submits nothing, cannot be focused, swallows the click so that the parent hears nothing either, and
+// looks disabled. The native disabled button is the control experiment for the click cases.
+for (const way of ['its own attribute', 'a disabled fieldset'] as const) {
+  test(`a control disabled by ${way} does nothing and lets nothing through, however it is activated`, async ({
+    page
+  }) => {
+    await page.setViewportSize({ width: 900, height: 2600 })
+    await page.goto(`${origin}/standalone`)
+    const cases = await page.evaluate(async (way) => {
+      const w = window as unknown as { log: string[] }
+      w.log = []
+      const kinds = [
+        'native',
+        'ui-button',
+        'ui-toggle',
+        'ui-check',
+        'ui-segmented',
+        'ui-text-field'
+      ] as const
+      const mk = (tag: string, attrs: Record<string, string> = {}, text = ''): HTMLElement => {
+        const el = document.createElement(tag)
+        for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v)
+        el.textContent = text
+        return el
+      }
+      const area = document.createElement('div')
+      area.style.cssText = 'display:grid;gap:16px;padding:16px;width:600px'
+      const out: { id: string; kind: string; context: string; hasLabel: boolean }[] = []
+      const listen = (el: HTMLElement, id: string): void => {
+        for (const type of ['click', 'change', 'focusin', 'press'])
+          el.addEventListener(type, () => w.log.push(`${id}:${type}`))
+      }
+      // context 1: a control inside a clickable card inside a form; context 2: a trailing control of a tappable row
+      for (const context of ['card', 'row'] as const) {
+        for (const kind of kinds) {
+          const id = `${context}-${kind}`
+          const form = document.createElement('form')
+          form.addEventListener('submit', (e) => {
+            e.preventDefault()
+            w.log.push(`${id}:submit`)
+          })
+          const fieldset = document.createElement('fieldset')
+          fieldset.style.cssText = 'border:0;margin:0;padding:0;min-width:0'
+          if (way === 'a disabled fieldset') fieldset.disabled = true
+          const off = way === 'its own attribute' ? { disabled: '' } : {}
+          let control: HTMLElement
+          if (kind === 'native') control = mk('button', { type: 'submit', ...off }, 'Go')
+          else if (kind === 'ui-button') control = mk('ui-button', { type: 'submit', ...off }, 'Go')
+          else if (kind === 'ui-segmented') {
+            control = mk('ui-segmented', { label: 's', ...off })
+            ;(control as HTMLElement & { options: unknown }).options = ['A', 'B'].map((v) => ({
+              value: v,
+              label: v
+            }))
+          } else control = mk(kind, { label: kind, ...off })
+          control.dataset.testid = id
+          control.id = id
+          listen(control, id)
+          const label = mk('label', { for: id }, 'label')
+          label.addEventListener('click', () => undefined)
+          const card = mk('div')
+          card.style.cssText = 'padding:12px;background:#eee'
+          card.dataset.testid = `${id}-card`
+          card.addEventListener('click', () => w.log.push(`${id}:card`))
+          if (context === 'card') {
+            card.append(control, label)
+          } else {
+            const list = mk('ui-list', { label: 'l' })
+            const section = mk('ui-section')
+            const row = mk('ui-row', { heading: 'Row', tappable: '', id: `${id}-row` })
+            row.addEventListener('press', () => w.log.push(`${id}:row-press`))
+            control.setAttribute('slot', 'trailing')
+            row.append(control)
+            section.append(row)
+            list.append(section)
+            card.append(list, label)
+          }
+          fieldset.append(card)
+          form.append(fieldset)
+          area.append(form)
+          out.push({ id, kind, context, hasLabel: kind !== 'ui-segmented' })
+        }
+      }
+      // a disabled tappable row and a disabled option row, in a clickable card
+      for (const kind of ['row', 'option-row'] as const) {
+        const id = `row-${kind}`
+        const card = mk('div')
+        card.style.cssText = 'padding:12px;background:#eee'
+        card.addEventListener('click', () => w.log.push(`${id}:card`))
+        const list = mk(
+          'ui-list',
+          kind === 'option-row' ? { label: 'l', selection: 'single' } : { label: 'l' }
+        )
+        const section = mk('ui-section')
+        const row = mk('ui-row', {
+          heading: 'Row',
+          tappable: '',
+          id,
+          'data-testid': id,
+          ...(way === 'its own attribute' ? { disabled: '' } : { disabled: '' })
+        })
+        row.addEventListener('press', () => w.log.push(`${id}:press`))
+        row.addEventListener('click', () => w.log.push(`${id}:click`))
+        section.append(row)
+        list.append(section)
+        card.append(list)
+        area.append(card)
+        out.push({ id, kind, context: 'card', hasLabel: false })
+      }
+      document.body.replaceChildren(area)
+      await Promise.all(
+        [...document.querySelectorAll('*')]
+          .filter((e) => 'updateComplete' in e)
+          .map((e) => (e as unknown as { updateComplete: Promise<unknown> }).updateComplete)
+      )
+      return out
+    }, way)
+    const centre = (id: string): Promise<{ x: number; y: number }> =>
+      page.evaluate((id) => {
+        const el = document.getElementById(id)!
+        const inner = el.shadowRoot?.querySelector('button, input, .group, .face') ?? el
+        const r = inner.getBoundingClientRect()
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+      }, id)
+    const reset = (): Promise<void> =>
+      page.evaluate(() => {
+        ;(window as unknown as { log: string[] }).log = []
+        ;(document.activeElement as HTMLElement | null)?.blur()
+      })
+    const heard = (): Promise<string[]> =>
+      page.evaluate(() => [...(window as unknown as { log: string[] }).log])
+    const wrong: string[] = []
+    const ways: [string, (id: string, label: boolean) => Promise<void>][] = [
+      [
+        'a real click',
+        async (id) => {
+          const { x, y } = await centre(id)
+          await page.mouse.click(x, y)
+        }
+      ],
+      [
+        'locator.click()',
+        async (id) => {
+          await page.locator(`#${id}`).click({ force: true, timeout: 2000 })
+        }
+      ],
+      [
+        'el.click()',
+        async (id) => {
+          await page.evaluate((id) => document.getElementById(id)!.click(), id)
+        }
+      ],
+      [
+        'a label click',
+        async (id, label) => {
+          if (label)
+            await page.evaluate(
+              (id) => (document.querySelector(`label[for="${id}"]`) as HTMLElement).click(),
+              id
+            )
+        }
+      ],
+      [
+        'Enter and Space',
+        async (id) => {
+          await page.evaluate((id) => {
+            const el = document.getElementById(id) as HTMLElement & { focusRow?: () => void }
+            if (el.focusRow) el.focusRow()
+            else el.focus()
+          }, id)
+          await page.keyboard.press('Enter')
+          await page.keyboard.press('Space')
+        }
+      ]
+    ]
+    for (const c of cases) {
+      for (const [name, act] of ways) {
+        await reset()
+        await act(c.id, c.hasLabel)
+        const log = await heard()
+        if (log.length)
+          wrong.push(`${c.id} (${c.kind}, ${c.context}) by ${way}, ${name}: ${JSON.stringify(log)}`)
+      }
+      // it cannot be focused, whatever the call
+      await reset()
+      const focused = await page.evaluate((id) => {
+        const el = document.getElementById(id) as HTMLElement & { focusRow?: () => void }
+        if (el.focusRow) el.focusRow()
+        else el.focus()
+        return (
+          document.activeElement === el ||
+          (document.activeElement !== document.body && !!el.contains(document.activeElement))
+        )
+      }, c.id)
+      if (focused) wrong.push(`${c.id} (${c.kind}) took focus`)
+      // and it looks disabled
+      const dim = await page.evaluate((id) => {
+        const el = document.getElementById(id)!
+        const inner = el.shadowRoot?.querySelector<HTMLElement>('button, input, .segment') ?? el
+        const target =
+          el.localName === 'ui-row' ? el.shadowRoot!.querySelector<HTMLElement>('.content')! : inner
+        return Number(getComputedStyle(target).opacity)
+      }, c.id)
+      if (!(dim < 1)) wrong.push(`${c.id} (${c.kind}) does not look disabled (opacity ${dim})`)
+    }
+    expect(wrong).toEqual([])
+  })
+}

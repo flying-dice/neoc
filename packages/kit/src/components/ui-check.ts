@@ -33,9 +33,6 @@ export class UiCheck extends BooleanControl {
         min-width: var(--ui-hit, 0px);
         min-height: var(--ui-hit, 0px);
       }
-      :host([disabled]) {
-        pointer-events: none;
-      }
       button {
         position: relative;
         appearance: none;
