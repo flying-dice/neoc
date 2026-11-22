@@ -9,7 +9,7 @@ use std::{sync::Arc, time::Duration};
 use tokio::sync::{Notify, Semaphore};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use vos_domain::protocol::{RpcError, RpcId, RpcMessage};
-use vos_http::{rpc_router, RpcCallError, RpcHandler, RpcPeer, BUSY, MAX_IN_FLIGHT, MAX_OUTBOUND};
+use vos_http::{rpc_router, RpcCallError, RpcHandler, RpcPeer, BUSY, MAX_IN_FLIGHT, MAX_QUEUED_BYTES};
 
 /// `block` waits for the test to open the gate; `ping` answers at once.
 struct Gate {
@@ -157,9 +157,10 @@ async fn peer_of(watch: &Watch) -> RpcPeer {
 }
 
 /// A client whose connection stalls without closing (it is connected and never reads) must not make the host's
-/// memory grow with every broadcast: past the bound the host hangs up on it, and the next send says so.
-#[tokio::test]
-async fn a_client_that_stops_reading_is_dropped_instead_of_queued_for_without_end() {
+/// memory grow with every broadcast: once the host holds the byte limit for it, it hangs up, and the next send says so.
+/// The operating system's own buffers take some first, and the host's queue is the limit plus one message.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_client_that_stops_reading_is_dropped_at_the_byte_limit_instead_of_queued_for_without_end() {
     let watch = Arc::new(Watch::default());
     let addr = start_watch(watch.clone()).await;
     let (_silent, _) = connect_async(format!("ws://{addr}/rpc")).await.unwrap(); // never polled: it reads nothing
@@ -167,40 +168,61 @@ async fn a_client_that_stops_reading_is_dropped_instead_of_queued_for_without_en
 
     let payload = "x".repeat(64 * 1024);
     let mut sent = 0_usize;
-    // the operating system's buffers take a few megabytes first; the bound is on what the host itself holds
-    let limit = MAX_OUTBOUND + 256 * 1024 * 1024 / payload.len();
+    let kernel_buffers = 64 << 20; // far more than a loopback socket takes before it pushes back
     let outcome = loop {
         match peer.notify("big", json!({ "payload": payload })) {
             Ok(()) => sent += 1,
             Err(e) => break e,
         }
-        assert!(sent < limit, "{sent} messages queued for a client that reads nothing");
-        if sent.is_multiple_of(64) {
+        assert!(
+            sent * payload.len() < MAX_QUEUED_BYTES + kernel_buffers,
+            "{sent} messages queued for a client that reads nothing"
+        );
+        if sent.is_multiple_of(16) {
             tokio::task::yield_now().await; // let the writer move what the socket will take
         }
     };
     assert!(matches!(outcome, RpcCallError::Closed));
-    assert!(sent >= MAX_OUTBOUND, "a stalled client is given room first: {sent}");
+    assert!(
+        sent * payload.len() + payload.len() >= MAX_QUEUED_BYTES,
+        "closed before the byte limit: {sent} messages of {} bytes",
+        payload.len()
+    );
     tokio::time::timeout(Duration::from_secs(5), watch.ended.notified()).await.expect("the connection ended");
     assert!(matches!(peer.notify("late", json!({})), Err(RpcCallError::Closed)));
 }
 
-/// The bound is on a stalled connection, not on a burst: a client that reads everything gets every message, in
-/// order, however fast they are sent.
-#[tokio::test]
-async fn a_client_that_keeps_up_gets_a_burst_in_order_and_stays_connected() {
+/// The bound is on a stalled connection, not on a burst: a client that reads everything gets every message, in order,
+/// however fast and however many they are sent (here far more than any count the host could keep).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_client_that_keeps_up_gets_a_burst_far_larger_than_any_count_in_order_and_stays_connected() {
     let watch = Arc::new(Watch::default());
     let addr = start_watch(watch.clone()).await;
     let (mut ws, _) = connect_async(format!("ws://{addr}/rpc")).await.unwrap();
     let peer = peer_of(&watch).await;
 
-    let burst = MAX_OUTBOUND / 2;
-    for n in 0..burst {
-        peer.notify("n", json!({ "n": n })).unwrap();
+    // 20 000 small messages sent with no pause at all, and 300 of 64 KiB (about 19 MiB: under the byte limit, over
+    // any count that would have been picked): the producer does not wait for the writer, which is slower
+    let small = 20_000;
+    let big = 300;
+    for n in 0..small {
+        peer.notify("n", json!({ "n": n, "pad": "x".repeat(100) })).unwrap();
     }
-    for expected in 0..burst {
-        let RpcMessage::Notification { params, .. } = next(&mut ws).await else { panic!("a notification") };
-        assert_eq!(params["n"], json!(expected));
+    let blob = "y".repeat(64 * 1024);
+    for n in 0..big {
+        peer.notify("big", json!({ "n": n, "blob": blob })).unwrap();
+    }
+    for expected in 0..small {
+        let RpcMessage::Notification { method, params, .. } = next(&mut ws).await else {
+            panic!("a notification")
+        };
+        assert_eq!((method.as_str(), &params["n"]), ("n", &json!(expected)));
+    }
+    for expected in 0..big {
+        let RpcMessage::Notification { method, params, .. } = next(&mut ws).await else {
+            panic!("a notification")
+        };
+        assert_eq!((method.as_str(), &params["n"]), ("big", &json!(expected)));
     }
     // still connected: it can be sent to, and it can ask
     peer.notify("n", json!({ "n": "after" })).unwrap();
