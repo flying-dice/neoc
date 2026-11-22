@@ -877,7 +877,7 @@ export type lib_ini = {
 -- ===== lib:json =====
 
 export type lib_json_Object = {
-	--- Walk a path of segments (a string is an object key, a number a 1-based array index) and return the leaf node.
+	--- Walk a path of segments (a string is an object key, a number a 1-based array index) and return the node there, or nil when the path leads nowhere. An index of 0 or a fraction raises. Narrow a container with a cast (`v :: lib_json_Object`): `type(v) == "userdata"` narrows the handle types to nothing, and `type(v) == "table"` is false at run time.
 	get: (self: lib_json_Object, path: string | number, ...(string | number)) -> lib_json_Object | lib_json_Array | lib_json_JsonNull | string | number | boolean | nil,
 	--- Insert or replace `key` with `value`.
 	set: (self: lib_json_Object, key: string, value: any) -> (),
@@ -892,7 +892,7 @@ export type lib_json_Object = {
 }
 
 export type lib_json_Array = {
-	--- Walk a path of segments (a number is a 1-based array index, a string an object key) and return the leaf node.
+	--- Walk a path of segments (a number is a 1-based array index, a string an object key) and return the node there, or nil when the path leads nowhere. An index of 0 or a fraction raises. Narrow a container with a cast (`v :: lib_json_Array`): `type(v) == "userdata"` narrows the handle types to nothing, and `type(v) == "table"` is false at run time.
 	get: (self: lib_json_Array, path: string | number, ...(string | number)) -> lib_json_Object | lib_json_Array | lib_json_JsonNull | string | number | boolean | nil,
 	--- Replace the element at a 1-based index.
 	set: (self: lib_json_Array, index: number, value: any) -> (),
@@ -907,7 +907,7 @@ export type lib_json_Array = {
 export type lib_json_JsonNull = {}
 
 export type lib_json = {
-	--- Sentinel userdata for explicit JSON `null`, distinct from Lua `nil`.
+	--- Sentinel userdata for explicit JSON `null`, distinct from Lua `nil`. Test for it with `v == json.null`: its type, `lib_json_JsonNull`, is structurally empty, so any table satisfies it.
 	null: lib_json_JsonNull,
 	--- Construct an empty mutable JSON object handle on a fresh root.
 	object: () -> lib_json_Object,
@@ -1397,13 +1397,13 @@ export type vnd_jsonschema = {
 
 export type vnd_quick_xml = {
 	--- Read a reader handle to completion and parse it as XML.
-	decode: (reader: any) -> (any, string?),
+	decode: (reader: std_io_ReaderHandle) -> (any, string?),
 	--- Parse an XML string into a Lua value.
 	decode_string: (s: string) -> (any, string?),
 	--- Serialise a Lua value to an XML string rooted at `<root>`.
 	encode: (value: any) -> (string?, string?),
 	--- Serialise a Lua value to XML and write it to a writer handle.
-	encode_to: (value: any, writer: any) -> (boolean?, string?),
+	encode_to: (value: any, writer: std_io_WriterHandle) -> (boolean?, string?),
 }
 
 -- ===== vnd:rusqlite =====
@@ -1438,7 +1438,7 @@ export type vnd_rusqlite = {
 -- ===== vnd:serde_json =====
 
 export type vnd_serde_json = {
-	--- Parse a JSON string: an object or array becomes a `lib:json` handle, `null` the `json.null` sentinel, any other scalar a Lua value.
+	--- Parse a JSON string: an object or array becomes a `lib:json` handle, `null` the `json.null` sentinel, any other scalar a Lua value. Narrow a container with a cast (`v :: lib_json_Object`): `type(v) == "userdata"` narrows the handle types to nothing, and `type(v) == "table"` is false at run time.
 	from_str: (s: string) -> ((lib_json_Object | lib_json_Array | lib_json_JsonNull | string | number | boolean)?, string?),
 	--- Parse JSON from a reader handle, with the same results as `from_str`.
 	from_reader: (reader: std_io_ReaderHandle) -> ((lib_json_Object | lib_json_Array | lib_json_JsonNull | string | number | boolean)?, string?),
@@ -1454,13 +1454,13 @@ export type vnd_serde_json = {
 
 export type vnd_serde_yaml = {
 	--- Read a reader handle to completion and parse it as YAML.
-	decode: (reader: any) -> (any, string?),
+	decode: (reader: std_io_ReaderHandle) -> (any, string?),
 	--- Parse a YAML string into a Lua value.
 	decode_string: (s: string) -> (any, string?),
 	--- Serialise a Lua value to a YAML string.
 	encode: (value: any) -> (string?, string?),
 	--- Serialise a Lua value to YAML and write it to a writer handle.
-	encode_to: (value: any, writer: any) -> (boolean?, string?),
+	encode_to: (value: any, writer: std_io_WriterHandle) -> (boolean?, string?),
 }
 
 -- ===== vnd:sqlx_mysql =====
@@ -1556,7 +1556,7 @@ export type vnd_testcontainers_modules = {
 
 export type vnd_toml = {
 	--- Read a reader handle to completion and parse it as TOML.
-	decode: (reader: any) -> (any, string?),
+	decode: (reader: std_io_ReaderHandle) -> (any, string?),
 	--- Parse a TOML string into a Lua value.
 	decode_string: (s: string) -> (any, string?),
 	--- Serialise a Lua value to a compact TOML string.
@@ -1564,7 +1564,7 @@ export type vnd_toml = {
 	--- Serialise a Lua value to a pretty-printed TOML string.
 	encode_pretty: (value: any) -> (string?, string?),
 	--- Serialise a Lua value to TOML and write it to a writer handle.
-	encode_to: (value: any, writer: any) -> (boolean?, string?),
+	encode_to: (value: any, writer: std_io_WriterHandle) -> (boolean?, string?),
 }
 
 -- ===== require =====

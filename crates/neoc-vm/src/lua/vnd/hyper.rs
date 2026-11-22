@@ -277,8 +277,8 @@ impl UserData for Request {
             }
             Ok(Value::Table(t))
         });
-        // vnd:hyper calls vnd:serde_json's `parse_to_handle` directly: it has two callers (this and `from_str`),
-        // short of the three a shared helper module needs (CLAUDE.md, "No speculative abstractions").
+        // vnd:hyper calls vnd:serde_json's `parse_to_handle` directly. It is one short call into a function that
+        // already exists (its other caller is `from_str`), so a shared bridge module would add a file for nothing.
         fields.add_field_method_get("json", |lua, this| {
             if this.inner.body.is_empty() {
                 return Ok(Value::Nil);

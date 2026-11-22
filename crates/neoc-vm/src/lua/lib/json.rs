@@ -972,7 +972,12 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             "get",
             &[("path", "string | number"), ("...", "string | number")],
             &node,
-            "Walk a path of segments (a string is an object key, a number a 1-based array index) and return the leaf node.",
+            concat!(
+                "Walk a path of segments (a string is an object key, a number a 1-based array index) and return the ",
+                "node there, or nil when the path leads nowhere. An index of 0 or a fraction raises. Narrow a container ",
+                "with a cast (`v :: lib_json_Object`): `type(v) == \"userdata\"` narrows the handle types to nothing, ",
+                "and `type(v) == \"table\"` is false at run time."
+            ),
         )
         .method(
             "set",
@@ -1001,7 +1006,12 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             "get",
             &[("path", "string | number"), ("...", "string | number")],
             &node,
-            "Walk a path of segments (a number is a 1-based array index, a string an object key) and return the leaf node.",
+            concat!(
+                "Walk a path of segments (a number is a 1-based array index, a string an object key) and return the ",
+                "node there, or nil when the path leads nowhere. An index of 0 or a fraction raises. Narrow a container ",
+                "with a cast (`v :: lib_json_Array`): `type(v) == \"userdata\"` narrows the handle types to nothing, ",
+                "and `type(v) == \"table\"` is false at run time."
+            ),
         )
         .method(
             "set",
@@ -1025,12 +1035,18 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     });
 
     // `JsonNull` has no methods (only `__eq` and `__tostring`); it is recorded so `json.null` and the parse
-    // results of `vnd:serde_json` can name its type.
+    // results of `vnd:serde_json` can name its type. With no members it is emitted as `{}`, which every table
+    // satisfies: luau-lsp 1.70 parses no nominal (`declare class`) type in the definitions file, and a branding
+    // member would be one the live value does not have. So the type tells a null apart from a scalar but not
+    // from a handle or a table; the doc says to test with `== json.null`.
     m.userdata("JsonNull", |_| {});
     m.const_(
         "null",
         "JsonNull",
-        "Sentinel userdata for explicit JSON `null`, distinct from Lua `nil`.",
+        concat!(
+            "Sentinel userdata for explicit JSON `null`, distinct from Lua `nil`. Test for it with `v == json.null`: ",
+            "its type, `lib_json_JsonNull`, is structurally empty, so any table satisfies it."
+        ),
     );
 
     Ok(m)

@@ -46,11 +46,18 @@ and `NEOC_VERSION` choose where and which). While the repository is private the 
 local fs   = require("std:fs")
 local json = require("vnd:serde_json")
 
-local doc = assert(json.from_str('{"name": "neoc", "tags": ["lua", "rust"]}'))
+-- a parse result is a handle, `json.null` or a scalar: cast a container to the handle you expect
+local doc = assert(json.from_str('{"name": "neoc", "tags": ["lua", "rust"]}')) :: lib_json_Object
 
-fs.write("notes.json", json.to_string_pretty(doc))
-print("saved " .. doc:get("name"))
+local text = assert(json.to_string_pretty(doc))
+assert(fs.write("notes.json", text))
+print("saved " .. tostring(doc:get("name")))
 ```
+
+A container in a parse result (or a `get` result) is narrowed with a cast, as above: luau-lsp narrows the handle types to
+nothing on `type(v) == "userdata"`, and `type(v) == "table"` is false at run time. Test for a JSON `null` with `v ==
+json.null`: its type, `lib_json_JsonNull`, is structurally empty, so any table satisfies it. `types/fixtures/readme.luau`
+holds this example, checked in strict mode.
 
 `require("namespace:name")` is the only way in: no ambient globals, no path search; an unknown name errors with the catalogue.
 

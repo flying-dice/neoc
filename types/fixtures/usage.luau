@@ -151,9 +151,16 @@ if type(scalar) == "number" then
 	print(scalar + 1)
 end
 print(serde_json.from_str("null") == json.null)
--- a reader in, a writer out
+-- a reader in, a writer out (`fs.open` is `any`; the cast names the handle a writer is)
 print(serde_json.from_reader(io.from_string("[1]")))
+local out = assert(fs.open({ path = "out.json", mode = "w" })) :: std_io_WriterHandle
+print(serde_json.to_writer({ a = 1 }, out))
+print(serde_yaml.decode(io.from_string("a: 1")), serde_yaml.encode_to({ a = 1 }, out))
+print(toml.decode(io.from_string("a = 1")), toml.encode_to({ a = 1 }, out))
+print(quick_xml.decode(io.from_string("<a>1</a>")), quick_xml.encode_to({ a = 1 }, out))
+-- the null sentinel is tested by value
 local _null: lib_json_JsonNull = json.null
+print(document:get("missing") == json.null)
 
 -- constructors live on a sub-table of the module, fields read as plain values
 local parsed = assert(url.Url.parse("https://example.com/a?b=1"))

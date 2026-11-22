@@ -11,12 +11,15 @@ local fs = require("std:fs")
 local hyper = require("vnd:hyper")
 local json = require("lib:json")
 local net = require("std:net")
+local quick_xml = require("vnd:quick_xml")
 local rusqlite = require("vnd:rusqlite")
 local semver = require("lib:semver")
 local serde_json = require("vnd:serde_json")
+local serde_yaml = require("vnd:serde_yaml")
 local task = require("std:task")
 local test = require("lib:test")
 local time = require("std:time")
+local toml = require("vnd:toml")
 local url = require("lib:url")
 
 -- an unknown function, a missing argument, an argument of the wrong type, one argument too many
@@ -94,6 +97,9 @@ local _key: number = json.object():keys()[1] -- expect-error: Expected this to b
 -- a parser reads a reader handle, a serialiser writes a writer handle
 serde_json.from_reader("[1]") -- expect-error: Expected this to be 'std_io_ReaderHandle', but got 'string'
 serde_json.to_writer({}, "out.json") -- expect-error: Expected this to be 'std_io_WriterHandle', but got 'string'
+serde_yaml.decode("a: 1") -- expect-error: Expected this to be 'std_io_ReaderHandle', but got 'string'
+toml.encode_to({}, "out.toml") -- expect-error: Expected this to be 'std_io_WriterHandle', but got 'string'
+quick_xml.decode("<a/>") -- expect-error: Expected this to be 'std_io_ReaderHandle', but got 'string'
 
 -- a request body parsed as JSON may be absent
 hyper.serve(_listener, function(req) return req.json:get("id") end) -- expect-error: Value of type -- expect-error: Key 'get' is missing from

@@ -123,7 +123,11 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.try_func(
         "from_str",
         &[("s", "string")],
-        "Parse a JSON string: an object or array becomes a `lib:json` handle, `null` the `json.null` sentinel, any other scalar a Lua value.",
+        concat!(
+            "Parse a JSON string: an object or array becomes a `lib:json` handle, `null` the `json.null` sentinel, ",
+            "any other scalar a Lua value. Narrow a container with a cast (`v :: lib_json_Object`): ",
+            "`type(v) == \"userdata\"` narrows the handle types to nothing, and `type(v) == \"table\"` is false at run time."
+        ),
         from_str,
     )?
     .try_func(
