@@ -235,6 +235,15 @@ window: string,
  * The deep link `onOpen(w, params)` receives.
  */
 params?: { [key in string]: JsonValue }, };
+export type AppNotification = { app: string, 
+/**
+ * 1 to 200 characters, not blank.
+ */
+title: string, 
+/**
+ * Up to 2000 characters.
+ */
+body?: string, };
 export type Empty = Record<symbol, never>;
 export type AppState = "running" | "disabled" | "failed";
 export type AppWindow = { w: number, h: number, minW: number, minH: number, };
@@ -1658,10 +1667,11 @@ export interface Methods {
   'view.closed': { kind: 'notification'; direction: 'hostToClient'; params: ViewClosed; result: never }
   'theme.set': { kind: 'notification'; direction: 'hostToClient'; params: ThemeSet; result: never }
   'window.open': { kind: 'notification'; direction: 'hostToClient'; params: WindowOpen; result: never }
+  'notification.deliver': { kind: 'notification'; direction: 'hostToClient'; params: AppNotification; result: never }
 }
 
 export type MethodName = keyof Methods
 
 /** Method names by direction, for dispatch tables. */
 export const CLIENT_METHODS = ['session.hello', 'view.open', 'view.sync', 'view.event', 'state.set', 'row.set', 'row.restore', 'source.set', 'view.close', 'client.state', 'view.resize', 'view.visibility', 'session.bye'] as const
-export const HOST_METHODS = ['view.tree', 'view.ops', 'data.patch', 'client.set', 'view.command', 'view.error', 'view.closed', 'theme.set', 'window.open'] as const
+export const HOST_METHODS = ['view.tree', 'view.ops', 'data.patch', 'client.set', 'view.command', 'view.error', 'view.closed', 'theme.set', 'window.open', 'notification.deliver'] as const
