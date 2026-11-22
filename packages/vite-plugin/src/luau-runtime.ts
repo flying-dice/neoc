@@ -142,15 +142,12 @@ local function router(implementation: Handlers): vos_Handlers
       end
       local problem = check(params, method.params, "params")
       if problem ~= nil then
-        return ctx:fail("Invalid params: " .. problem, { code = -32602 })
+        error("RPC-32602 Invalid params: " .. problem, 0)
       end
       local result = handler(ctx, params)
       local wrong = check(result, method.result, "result")
       if wrong ~= nil then
-        return ctx:fail(
-          "Internal error: the result of " .. name .. " does not match the definition (" .. wrong .. ")",
-          { code = -32603 }
-        )
+        error("RPC-32603 Internal error: the result of " .. name .. " does not match the definition (" .. wrong .. ")", 0)
       end
       return result
     end

@@ -1,33 +1,72 @@
 /**
  * The vos Vite plugin. An app is one Vite project: its client in any framework, its Luau backend beside it, and one
- * RPC definition (`rpc.openrpc.json`, OpenRPC / JSON-RPC 2.0) that both sides are generated from.
+ * contract (`openrpc.json`: OpenRPC, JSON-RPC 2.0) that both sides are generated from.
  *
  *     // vite.config.ts
  *     import { vos } from '@vos/vite-plugin'
  *     export default defineConfig({ plugins: [svelte(), vos()] })
  *
  * What it does:
- *   - generates `generated/rpc.ts` (the typed client) and `generated/rpc.luau` (the types, the handler interface the
- *     developer implements, and the router) from the definition, when the build or the dev server starts and whenever the
- *     definition changes;
- *   - builds the client into one classic script that defines `vosApp.mount` (`dist/client.js`);
+ *   - generates `.app/` from the contract when the build starts (and whenever the contract changes, in watch mode):
+ *     `rpc.d.ts` and `rpc.js` (the `app:rpc` module: `import { api, host } from 'app:rpc'`), `entry.js` (binds `app:rpc` to the
+ *     host, then calls the app's `mount(el)`), `rpc.luau` (the types, the `Handlers` interface the developer implements, the
+ *     router) and `entry.luau` (the backend's entry: the handlers behind the router);
+ *   - fails the build when a method of the contract has no handler in `server/main.luau`, and warns about a handler the
+ *     contract does not declare;
+ *   - builds the client into one classic script that defines `vosApp.mount` (`dist/client.js`, CSS folded in);
  *   - bundles the Luau backend into `dist/app.luau` and writes `dist/app-ref.json`, the app ref the host installs.
+ *
+ * Room for more generated files: everything it writes is a list of `{ path, contents }` (`generate.ts`), so a later step that
+ * hands an app other definitions (the UI kit's tags for the editor, say) is one more entry in that list.
  */
-import { resolve } from 'node:path'
+import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import type { Plugin } from 'vite'
 import { writeApp } from './backend.ts'
-import { DEFAULTS, generate, stale, write, type Options } from './generate.ts'
+import { DEFAULTS, generate, handlerProblems, readDefinition, write, type Options } from './generate.ts'
 
 export type { Options } from './generate.ts'
 export { DefinitionError, parseDefinition } from './definition.ts'
+
+const CLIENT = 'client.js'
+
+/** Every `.luau` file under `dir` (the backend's modules: the build bundles them, so a change to one rebuilds). */
+function luauUnder(dir: string): string[] {
+  if (!existsSync(dir)) return []
+  return readdirSync(dir).flatMap((name) => {
+    const path = join(dir, name)
+    return statSync(path).isDirectory() ? luauUnder(path) : name.endsWith('.luau') ? [path] : []
+  })
+}
+
+/** The app is one script: any CSS the bundle emitted is folded into it, added to the frame's document when the script runs. */
+function foldCss(outDir: string): void {
+  const css = join(outDir, 'style.css')
+  if (!existsSync(css)) return
+  const script = join(outDir, CLIENT)
+  const inject = `(function(){var s=document.createElement('style');s.textContent=${JSON.stringify(readFileSync(css, 'utf8'))};document.head.appendChild(s)})();\n`
+  writeFileSync(script, inject + readFileSync(script, 'utf8'))
+  rmSync(css)
+}
 
 export function vos(options: Partial<Options> = {}): Plugin {
   const settings: Options = { ...DEFAULTS, ...options }
   let root = process.cwd()
   let outDir = 'dist'
-  const client = 'client.js'
 
-  const regenerate = (): string[] => write(root, generate(root, settings))
+  /** Generate, and check the backend against the contract. */
+  const regenerate = (warn: (message: string) => void): void => {
+    write(root, generate(root, settings))
+    const backend = resolve(root, settings.backend)
+    if (!existsSync(backend)) throw new Error(`${settings.backend} not found: the backend returns one handler per method of ${settings.definition}`)
+    const { missing, undeclared } = handlerProblems(readDefinition(root, settings), readFileSync(backend, 'utf8'))
+    if (missing.length > 0) {
+      throw new Error(
+        `${settings.definition} declares ${missing.map((m) => `\`${m}\``).join(', ')}, but ${settings.backend} has no handler for ${missing.length === 1 ? 'it' : 'them'}`
+      )
+    }
+    for (const name of undeclared) warn(`${settings.backend} has a handler \`${name}\` that ${settings.definition} does not declare: the app will not load`)
+  }
 
   return {
     name: 'vos',
@@ -37,7 +76,7 @@ export function vos(options: Partial<Options> = {}): Plugin {
       return {
         // a classic script, not a module: an app's frame has an opaque origin, where a module script needs CORS
         build: {
-          lib: { entry: resolve(root, settings.client), name: 'vosApp', formats: ['iife'], fileName: () => client },
+          lib: { entry: resolve(root, settings.generated, 'entry.js'), name: 'vosApp', formats: ['iife'], fileName: () => CLIENT },
           outDir,
           emptyOutDir: true,
           cssCodeSplit: false
@@ -46,26 +85,18 @@ export function vos(options: Partial<Options> = {}): Plugin {
         define: { 'process.env.NODE_ENV': JSON.stringify('production') }
       }
     },
-    buildStart() {
-      regenerate()
-      this.addWatchFile(resolve(root, settings.definition))
+    resolveId(id) {
+      return id === 'app:rpc' ? resolve(root, settings.generated, 'rpc.js') : null
     },
-    configureServer(server) {
-      const definition = resolve(root, settings.definition)
-      regenerate()
-      server.watcher.add(definition)
-      server.watcher.on('change', (file) => {
-        if (file === definition) regenerate()
-      })
+    buildStart() {
+      regenerate((message) => this.warn(message))
+      this.addWatchFile(resolve(root, settings.definition))
+      for (const file of luauUnder(resolve(root, settings.backend, '..'))) this.addWatchFile(file)
     },
     closeBundle() {
-      writeApp(root, resolve(root, outDir), settings.backend, client)
+      const out = resolve(root, outDir)
+      foldCss(out)
+      writeApp(root, out, readDefinition(root, settings), `${settings.generated}/entry.luau`, CLIENT)
     }
   }
-}
-
-/** The generated files that are out of date (for `vos generate --check`). */
-export function staleFiles(project: string, options: Partial<Options> = {}): string[] {
-  const settings: Options = { ...DEFAULTS, ...options }
-  return stale(project, generate(project, settings))
 }

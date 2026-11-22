@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import type { Definition } from './definition.ts'
 
 /** The darklua release the bundles are pinned to (the host's own build uses the same one). */
 export const DARKLUA_VERSION = '0.18.0'
@@ -53,62 +54,41 @@ export function bundleLuau(entry: string): string {
   }
 }
 
-export interface AppJson {
-  id: string
-  name: string
-  version: string
-  description?: string
-  icon?: string
-  tint?: string
-  window?: { w: number; h: number; minW: number; minH: number }
-  requires?: { host?: string }
-  migrations?: { version: number; name: string; file: string }[]
-}
-
-export function readAppJson(project: string): AppJson {
-  const file = join(project, 'app.json')
-  if (!existsSync(file)) throw new Error(`app.json not found in ${project}: it is the app's manifest (id, name, version, window)`)
-  const json = JSON.parse(readFileSync(file, 'utf8')) as Partial<AppJson>
-  for (const key of ['id', 'name', 'version'] as const) {
-    if (typeof json[key] !== 'string') throw new Error(`app.json: \`${key}\` is required`)
-  }
-  return json as AppJson
-}
-
 const sha256 = (bytes: string | Buffer): string => createHash('sha256').update(bytes).digest('hex')
 
 /**
- * Write `app.luau` and `app-ref.json` into `outDir`, which already holds the client script. Everything the app ref lists
- * is a file next to it, with a relative URL, so the folder installs from `file://`, `http://` or `https://` as it is.
+ * Write `app.luau` and `app-ref.json` into `outDir`, which already holds the client script. The manifest is the contract's
+ * (`info.title` and `info.version`, and `x-app`); every file the app ref lists is next to it, with a relative URL, so the
+ * folder installs from `file://`, `http://` or `https://` as it is.
  */
-export function writeApp(project: string, outDir: string, backend: string, client: string): void {
-  const manifest = readAppJson(project)
+export function writeApp(project: string, outDir: string, definition: Definition, entry: string, client: string): void {
   mkdirSync(outDir, { recursive: true })
-  const bundle = bundleLuau(join(project, backend))
+  const bundle = bundleLuau(join(project, entry))
   writeFileSync(join(outDir, 'app.luau'), bundle)
   const clientBytes = readFileSync(join(outDir, client))
   const files = [
     { path: 'app.luau', url: 'app.luau', sha256: sha256(bundle) },
     { path: client, url: client, sha256: sha256(clientBytes) }
   ]
-  for (const { file } of manifest.migrations ?? []) {
+  const meta = definition.app
+  for (const { file } of meta.migrations ?? []) {
     mkdirSync(dirname(join(outDir, file)), { recursive: true })
     cpSync(join(project, file), join(outDir, file))
     files.push({ path: file, url: file, sha256: sha256(readFileSync(join(project, file))) })
   }
   const appRef = {
     manifest: {
-      id: manifest.id,
-      name: manifest.name,
-      version: manifest.version,
+      id: meta.id,
+      name: definition.title,
+      version: definition.version,
       main: 'app.luau',
       client,
-      migrations: manifest.migrations ?? [],
-      ...(manifest.icon ? { icon: manifest.icon } : {}),
-      ...(manifest.tint ? { tint: manifest.tint } : {}),
-      ...(manifest.description ? { description: manifest.description } : {}),
-      ...(manifest.window ? { window: manifest.window } : {}),
-      ...(manifest.requires ? { requires: manifest.requires } : {})
+      migrations: meta.migrations ?? [],
+      ...(meta.icon ? { icon: meta.icon } : {}),
+      ...(meta.tint ? { tint: meta.tint } : {}),
+      ...(meta.description ? { description: meta.description } : {}),
+      ...(meta.window ? { window: meta.window } : {}),
+      ...(meta.requires ? { requires: meta.requires } : {})
     },
     files
   }

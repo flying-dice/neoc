@@ -2,9 +2,9 @@
 
 An app can draw its own screens in the web framework its developer knows (Svelte, React, plain JavaScript), on a
 backend written in Luau. Its window is a frame of the shell that loads the app's client; the client calls its
-backend (`rpc`, typed from the app's one RPC definition), hears what the backend sends (`host.on`), and reaches nothing else. The journeys use the two
+backend (`rpc`, typed from the app's one contract), hears what the backend sends (`host.on`), and reaches nothing else. The journeys use the two
 framework fixtures, `tasks-svelte` and `tasks-react`: the same task list written once in each framework, Vite
-projects on one RPC definition (`e2e/apps`; they are built for the tests and are not in Discover). Every journey runs against both.
+projects on one OpenRPC contract (`e2e/apps`; they are built for the tests and are not in Discover). Every journey runs against both.
 
 Automated twins have the same ids: `e2e/appframes.journeys.spec.ts` (the two apps share their data, so they run one
 after another).

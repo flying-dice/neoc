@@ -21,7 +21,7 @@ mod view;
 mod vm;
 
 pub use convert::{json_to_lua, lua_to_json};
-pub use error::{RpcFailure, ScriptError, ToolFailure};
+pub use error::{ScriptError, ToolFailure};
 pub use files::DiskFiles;
 /// The stack every thread that polls an app's VM needs (neoc-vm's constant, re-exported so that the host, which may not
 /// depend on neoc-vm, can build its runtime with it).

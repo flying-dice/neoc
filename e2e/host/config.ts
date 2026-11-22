@@ -26,7 +26,8 @@ export type FixtureApp = (typeof FIXTURE_APPS)[number]
 
 /** The app ref a fixture is installed from: built outside the registry (e2e/host/start.ts), so Discover never offers it. */
 export const fixtureAppRef = (id: FixtureApp): string => {
-  const { version } = JSON.parse(readFileSync(join(ROOT, 'e2e/apps', id, 'app.json'), 'utf8')) as { version: string }
+  const { info } = JSON.parse(readFileSync(join(ROOT, 'e2e/apps', id, 'openrpc.json'), 'utf8')) as { info: { version: string } }
+  const version = info.version
   return `file://${join(DIR, `fixtures/${id}/${version}/app-ref.json`)}`
 }
 /** The paired browser the specs share (a Playwright storage state). */

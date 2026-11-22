@@ -1,10 +1,10 @@
 --!strict
--- The backend of a fixture app whose client is written in Svelte (`e2e/apps/tasks-react` is the same app in React): a task list in
--- the app's own database. The RPC is defined once, in rpc.openrpc.json; the plugin generates `generated/rpc.luau` from it,
--- with the `Handlers` interface this file implements and the router the entry returns. `add_task` is an agent's tool, which
+-- The backend of a fixture app whose client is written in React (`e2e/apps/tasks-svelte` is the same app in Svelte): a task list in
+-- the app's own database. The RPC is defined once, in openrpc.json; the plugin generates `.app/rpc.luau` from it, with the
+-- `Handlers` interface this file implements; it returns the handlers, and the generated entry puts the router in front. `add_task` is an agent's tool, which
 -- changes the same data and tells the open window with `app.emit`.
 local app = require("vos:app")
-local rpc = require("./generated/rpc")
+local rpc = require("../.app/rpc")
 local t = app.t
 local db = app.db
 
@@ -27,7 +27,7 @@ local function list(): { rpc.Task }
 end
 
 local function trim(text: string): string
-  return (string.match(text, "^%s*(.-)%s*$") :: string)
+  return string.match(text, "^%s*(.-)%s*$") :: string
 end
 
 local handlers: rpc.Handlers = {
@@ -74,4 +74,4 @@ app.tool {
   end,
 }
 
-return rpc.router(handlers)
+return handlers

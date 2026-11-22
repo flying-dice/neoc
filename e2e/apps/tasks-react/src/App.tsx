@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { Host, Rpc, Task } from '../generated/rpc'
+import { api, host, type Task } from 'app:rpc'
 
 const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
-export default function App({ rpc, host }: { rpc: Rpc; host: Host }) {
+export default function App() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [title, setTitle] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -23,17 +23,17 @@ export default function App({ rpc, host }: { rpc: Rpc; host: Host }) {
 
   // load once, then again whenever the backend says the list changed outside this window (an agent added a task)
   useEffect(() => {
-    void show(rpc.list())
+    void show(api.list())
     const stops = [
-      host.on('tasks.changed', () => void show(rpc.list())),
+      host.on('tasks.changed', () => void show(api.list())),
       host.on('host:theme', (t) => setTheme(t === 'dark' ? 'dark' : 'light'))
     ]
     return () => stops.forEach((stop) => stop())
-  }, [show, rpc, host])
+  }, [show])
 
   // not a <form>: the frame is sandboxed without allow-forms, so a form cannot submit; Enter is handled here
   async function add(): Promise<void> {
-    if (await show(rpc.add({ title }))) setTitle('')
+    if (await show(api.add({ title }))) setTitle('')
   }
 
   return (
@@ -69,7 +69,7 @@ export default function App({ rpc, host }: { rpc: Rpc; host: Host }) {
               <input
                 type="checkbox"
                 checked={task.done}
-                onChange={() => show(rpc.toggle({ id: task.id }))}
+                onChange={() => show(api.toggle({ id: task.id }))}
                 data-testid={`tasks-react-toggle-${task.id}`}
               />
               <span>{task.title}</span>

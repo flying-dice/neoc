@@ -25,9 +25,7 @@ two products, and one set of rules for both:
     the backend in one `neoc-vm` VM per app (the `vos-lua` adapter), loaded from an app ref over `file://`, `http://` or
     `https://`, and serves the client into a frame of the app's window. The Calculator and Agents are still **view-tree
     apps** (no client: their Luau describes the screens), until NEOC-298 ports them. Examples: `e2e/apps/tasks-svelte`,
-    `e2e/apps/tasks-react`; `apps/README.md` is the reference for writing one. (The transport described here is what the
-    contract-first Vite toolchain of NEOC-300 generates onto: one RPC definition, a Vite plugin, a typed client, a Luau
-    router; until it lands the fixtures are built by hand.)
+    `e2e/apps/tasks-react`; `apps/README.md` is the reference for writing one.
   - **The client** (`client/`, a Vite + Svelte 5 PWA): the shell. It owns pairing, the desktop, windows, Discover and
     Settings, and runs each app's client in a sandboxed frame of its own (`organisms/AppFrame.svelte`, `shell/frameBridge.ts`);
     a view-tree app is still drawn by the managed renderer with the kit in `packages/ui` (atomic layers) through adapters in
@@ -59,9 +57,9 @@ crates/vos-{lua,sqlite,fetch,acp,agui,http,mcp}/   # vos: adapters, one port or 
 crates/vos-codegen/          # vos: dev-time generator, Rust schema -> types/generated/*
 crates/vos-host/             # vos: composition root and the `vos` binary
 apps/<id>/                   # vos apps (app.json, *.luau, a client package, JOURNEYS.md, e2e/); apps/README.md
-e2e/apps/<id>/               # the framework fixtures: Vite projects, a task list with a Svelte client and one with a React client, on one RPC definition and a Luau backend
+e2e/apps/<id>/               # the framework fixtures: Vite projects, a task list with a Svelte client and one with a React client, on one contract and a Luau backend
 client/                      # the shell, its app frames and the managed renderer of view-tree apps (client/src/view); client/journeys/*.md for built-in pages and app frames
-packages/vite-plugin/        # @vos/vite-plugin: the RPC definition (OpenRPC) -> the typed client, the Luau router and Handlers; builds the app ref; the `vos` CLI (generate, lint, typecheck, format)
+packages/vite-plugin/        # @vos/vite-plugin: the contract (OpenRPC) -> the typed client, the Luau router and Handlers; builds the app ref; the `vos` CLI (generate, lint, typecheck, format)
 packages/ui/, packages/storybook/   # the UI kit (atoms, molecules, organisms, templates, tokens, stories); the shared Storybook config
 e2e/                         # Playwright: stories, desktop, journeys against the real host; e2e/tools (session.mjs, contact-sheet.mjs)
 scripts/                     # lint and build scripts (check-*.ts, build-apps.ts, lint-luau.ts, ...), pre-pr.ts (the gate), check-neoc.sh
@@ -413,14 +411,14 @@ A change is done when all of these hold:
 
 - **A neoc module:** [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-new-module).
 - **A vos app:** `apps/README.md`, "Adding an app". An app is a Vite project (copy `e2e/apps/tasks-svelte`): from its first
-  commit it has an `app.json` (with a `window` min size, and a comment when the layout needs more than 320x240), the RPC
-  definition `rpc.openrpc.json` and the files `vos generate` makes from it, a backend that implements `Handlers` and returns
-  the router, a client with the plugin in its `vite.config.ts`, `lint` and `typecheck` scripts that cover the Luau, a
-  `JOURNEYS.md` plus `e2e/journeys.spec.ts` (driven through the app's frame), and a Rust test of its handlers and tools next
-  to the others in `crates/vos-lua/tests`. The generic `desktop` project opens every installed app in the real shell with no
-  extra code; each state beyond the landing view is reached by a journey. Then design it with `app-design` until the exit
-  criteria hold; until then it stays in its PR. (A view-tree app keeps an `app.manifest` with a `window` min size and shows a
-  state no journey reaches as a JSON-tree story in the client Storybook, until NEOC-298.)
+  commit it has the contract `openrpc.json` (with `x-app`, a `window` min size, and a comment in the README of the app when the
+  layout needs more than 320x240; no `app.json`), a backend `server/main.luau` that implements `Handlers`, a client with the
+  plugin in its `vite.config.ts`, `lint` and `typecheck` scripts that cover the Luau, a `JOURNEYS.md` plus
+  `e2e/journeys.spec.ts` (driven through the app's frame), and a Rust test of its handlers and tools next to the others in
+  `crates/vos-lua/tests`. The generic `desktop` project opens every installed app in the real shell with no extra code; each
+  state beyond the landing view is reached by a journey. Then design it with `app-design` until the exit criteria hold; until
+  then it stays in its PR. (A view-tree app keeps an `app.manifest` with a `window` min size and shows a state no journey
+  reaches as a JSON-tree story in the client Storybook, until NEOC-298.)
 - **A web component of the shared kit** (NEOC-252): the kit's own story says how. **A renderer adapter** (view-tree apps, until NEOC-298): a component in the right atomic layer of `packages/ui` with a required `testid` prop
   and a story; an adapter under `client/src/view/<layer>/` that takes `AdapterProps`, reads props through `useView().view`
   inside `$derived`, renders children with `<Children>`, and is registered in `client/src/view/kit.ts`; the component's schema

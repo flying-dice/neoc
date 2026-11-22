@@ -46,9 +46,9 @@ function installedAppIds(): string[] {
 /** The framework fixtures (e2e/apps) are installed at start too: apps whose client runs in a frame of its own. */
 function clientAppIds(): string[] {
   return readdirSync(join(ROOT, 'e2e/apps'))
-    .map((dir) => join(ROOT, 'e2e/apps', dir, 'app.json'))
+    .map((dir) => join(ROOT, 'e2e/apps', dir, 'openrpc.json'))
     .filter((file) => existsSync(file))
-    .map((file) => (JSON.parse(readFileSync(file, 'utf8')) as { id: string }).id)
+    .map((file) => (JSON.parse(readFileSync(file, 'utf8')) as { 'x-app': { id: string } })['x-app'].id)
 }
 
 /** Layout is checked inside the window's content: the resize corner deliberately overhangs the frame. */

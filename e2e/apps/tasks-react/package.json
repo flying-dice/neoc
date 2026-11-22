@@ -3,10 +3,11 @@
   "private": true,
   "type": "module",
   "version": "0.1.0",
-  "description": "A fixture app: a task list whose client is written in React. `bun run build` writes the app ref (dist/app-ref.json, app.luau, client.js).",
+  "description": "A fixture app: a task list whose client is written in React. `bun run build` writes the app ref (dist/app-ref.json, app.luau, client.js); `bun run dev` rebuilds on a change.",
   "scripts": {
     "generate": "vos generate",
     "build": "vite build",
+    "dev": "vite build --watch",
     "typecheck": "vos typecheck && tsc --noEmit -p tsconfig.json",
     "lint": "vos lint",
     "format": "vos format"

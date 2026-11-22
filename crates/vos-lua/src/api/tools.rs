@@ -2,7 +2,7 @@
 
 use crate::{
     convert::lua_to_json,
-    error::{RpcFailure, ToolFailure},
+    error::ToolFailure,
     vm::{Shared, ToolDecl},
 };
 use neoc_vm::mlua;
@@ -19,16 +19,6 @@ fn text(t: &Table, key: &str) -> mlua::Result<Option<String>> {
             Err(mlua::Error::runtime(format!("tool `{key}` must be a string, got {}", other.type_name())))
         }
     }
-}
-
-/// A whole number that fits an `i32`.
-fn whole(n: f64) -> Option<i32> {
-    #[allow(clippy::cast_possible_truncation)] // a whole number inside the i32 range, checked here
-    (n.fract() == 0.0 && n >= f64::from(i32::MIN) && n <= f64::from(i32::MAX)).then_some(n as i32)
-}
-
-fn code_error() -> mlua::Error {
-    mlua::Error::runtime("ctx:fail: `code` must be a whole number (a JSON-RPC error code)")
 }
 
 fn register(sh: &Shared, def: &Table) -> mlua::Result<()> {
@@ -103,31 +93,16 @@ pub(super) fn install(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<
     app.set("tools", tools)?;
     app.set("tool", make(sh)?)?;
 
-    // ctx:fail(message, { code, data }?): the tool or handler reports a problem to its caller; with a `code` it is a
-    // JSON-RPC error of that code
+    // ctx:fail(message): the tool or handler reports a problem to its caller
     let fail = lua.create_function(|_, args: mlua::Variadic<LuaValue>| -> mlua::Result<()> {
-        let mut message = None;
-        let mut options = None;
-        for value in args {
-            match value {
-                LuaValue::String(s) if message.is_none() => message = Some(s.to_string_lossy()),
-                LuaValue::Table(t) if options.is_none() => options = Some(t),
-                _ => {}
-            }
-        }
-        let message = message.unwrap_or_else(|| "the tool failed".to_owned());
-        let Some(options) = options else { return Err(mlua::Error::external(ToolFailure(message))) };
-        let code: i32 = match options.get::<LuaValue>("code")? {
-            LuaValue::Nil => return Err(mlua::Error::external(ToolFailure(message))),
-            LuaValue::Integer(i) => i32::try_from(i).map_err(|_| code_error())?,
-            LuaValue::Number(n) => whole(n).ok_or_else(code_error)?,
-            _ => return Err(code_error()),
-        };
-        let data = match options.get::<LuaValue>("data")? {
-            LuaValue::Nil => None,
-            other => Some(lua_to_json(&other)?),
-        };
-        Err(mlua::Error::external(RpcFailure { code, message, data }))
+        let message = args
+            .into_iter()
+            .find_map(|v| match v {
+                LuaValue::String(s) => Some(s.to_string_lossy()),
+                _ => None,
+            })
+            .unwrap_or_else(|| "the tool failed".to_owned());
+        Err(mlua::Error::external(ToolFailure(message)))
     })?;
     *sh.fail.lock() = Some(fail);
     Ok(())

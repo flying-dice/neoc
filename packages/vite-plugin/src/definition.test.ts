@@ -5,6 +5,7 @@ const doc = (overrides: Record<string, unknown> = {}): string =>
   JSON.stringify({
     openrpc: '1.3.2',
     info: { title: 'Notes', version: '1.0.0' },
+    'x-app': { id: 'notes', icon: 'doc', window: { w: 480, h: 640, minW: 320, minH: 320 } },
     methods: [
       {
         name: 'add',
@@ -38,6 +39,7 @@ describe('parseDefinition', () => {
   test('reads methods, params, results and the components they refer to', () => {
     const d = parseDefinition(doc())
     expect(d.title).toBe('Notes')
+    expect(d.app).toEqual({ id: 'notes', icon: 'doc', window: { w: 480, h: 640, minW: 320, minH: 320 } })
     expect(d.methods.map((m) => m.name)).toEqual(['add'])
     expect(d.methods[0]?.params[0]).toEqual({
       name: 'title',
@@ -59,6 +61,14 @@ describe('parseDefinition', () => {
     expect(problem(doc({ methods: [{ name: 'add', params: [], result: { name: 'r', schema: { type: 'strng' } } }] }))).toContain(
       'methods[0].result.schema.type: `strng` is not supported'
     )
+  })
+
+  test('the app\'s metadata is part of the contract: x-app names it, and a version is major.minor.patch', () => {
+    expect(problem(doc({ 'x-app': undefined }))).toContain('x-app: is required')
+    expect(problem(doc({ 'x-app': { id: 'No' } }))).toContain('x-app.id: must be 3 to 40 characters')
+    expect(problem(doc({ 'x-app': { id: 'notes', colour: 'red' } }))).toContain('x-app.colour: is not supported')
+    expect(problem(doc({ 'x-app': { id: 'notes', window: { w: 1, h: 1, minW: 0, minH: 1 } } }))).toContain('x-app.window.minW')
+    expect(problem(doc({ info: { title: 'Notes', version: '1' } }))).toContain('info.version: must be major.minor.patch')
   })
 
   test('a method is an identifier, defined once, with its params by name and a result', () => {

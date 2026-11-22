@@ -20,9 +20,10 @@
  * The host's default registry is dist/apps/registry.json over file://;
  * with `dev_reload` it rebuilds an app's VM when its files change, so `bun run build:apps` is the dev loop.
  *
- * An app that is a Vite project (a `vite.config.ts` beside its `app.json`, using the vos plugin: `packages/vite-plugin`) is
- * built by its own project: `bun run build` writes the whole app ref into its `dist/` (backend bundled by the plugin, the
- * client script, `app-ref.json`), and that folder is copied under <out>/<id>/<version>/. Every other app is bundled here.
+ * An app that is a Vite project (an `openrpc.json`, its contract and only descriptor, and a `vite.config.ts` using the vos plugin:
+ * `packages/vite-plugin`) is built by its own project: `bun run build` writes the whole app ref into its `dist/` (backend
+ * bundled by the plugin, the client script, `app-ref.json`), and that folder is copied under <out>/<id>/<version>/. Every
+ * other app (`app.json` + Luau) is bundled here.
  *
  * `app.json` is the package manifest (id, name, version, main, window, icon, tint, description,
  * requires, migrations; a `permissions` key from before apps lost their permissions is ignored); the build checks it
@@ -63,10 +64,28 @@ function declared(source: string, field: string): string | undefined {
   return block.match(new RegExp(`\\b${field}\\s*=\\s*"([^"]*)"`))?.[1]
 }
 
+/** An app that is a Vite project has its contract, `openrpc.json`, as its only descriptor (no `app.json`). */
+const isViteApp = (dir: string): boolean => existsSync(join(dir, 'openrpc.json'))
+
+/** The id and version of a Vite project: `x-app.id` and `info.version` of its contract. */
+function viteAppIdentity(dir: string): { id: string; version: string } {
+  const contract = JSON.parse(readFileSync(join(dir, 'openrpc.json'), 'utf8')) as {
+    info?: { version?: string }
+    'x-app'?: { id?: string }
+  }
+  const id = contract['x-app']?.id
+  const version = contract.info?.version
+  if (!id || !version) {
+    console.error(`✗ ${relative(root, dir)}/openrpc.json needs x-app.id and info.version`)
+    process.exit(1)
+  }
+  return { id, version }
+}
+
 /**
- * Builds an app that is a Vite project (a `vite.config.ts` beside its `app.json`, with the vos plugin): `bun run build` in
- * the project writes the whole app ref into its `dist/` (the backend bundled, the client script, `app-ref.json` with a
- * sha256 per file), and that folder is what goes under `<out>/<id>/<version>/`.
+ * Builds an app that is a Vite project (its `openrpc.json` and `vite.config.ts`, with the vos plugin): `bun run build` in the
+ * project writes the whole app ref into its `dist/` (the backend bundled, the client script, `app-ref.json` with a sha256
+ * per file), and that folder is what goes under `<out>/<id>/<version>/`.
  */
 function buildViteApp(dir: string, target: string, id: string): string[] {
   const result = spawnSync('bun', ['run', 'build'], { cwd: dir, encoding: 'utf8' })
@@ -81,7 +100,7 @@ function buildViteApp(dir: string, target: string, id: string): string[] {
 
 const appDirs = [join(root, 'apps'), ...extraRoots]
   .flatMap((parent) => readdirSync(parent).map((d) => join(parent, d)))
-  .filter((d) => existsSync(join(d, 'app.json')))
+  .filter((d) => existsSync(join(d, 'app.json')) || isViteApp(d))
   .filter((d) => only.length === 0 || only.some((id) => d.endsWith(`/${id}`)))
 
 if (appDirs.length === 0) {
@@ -94,16 +113,17 @@ const started = performance.now()
 const registry: string[] = []
 // TODO: clean-code - 0.4 - SRP: this loop parses the manifest, checks it against the Luau source, bundles, copies and hashes migrations, writes the app ref and registers it; extract `checkManifestAgainstLua`, `buildApp` and `writeAppRef`.
 for (const dir of appDirs) {
-  const manifest = PackageManifest.parse(JSON.parse(readFileSync(join(dir, 'app.json'), 'utf8')))
-  if (existsSync(join(dir, 'vite.config.ts'))) {
-    const target = join(outDir, manifest.id, manifest.version)
+  if (isViteApp(dir)) {
+    const { id, version } = viteAppIdentity(dir)
+    const target = join(outDir, id, version)
     rmSync(target, { recursive: true, force: true })
     mkdirSync(target, { recursive: true })
-    const files = buildViteApp(dir, target, manifest.id)
-    registry.push(`${manifest.id}/${manifest.version}/app-ref.json`)
-    console.log(`✓ ${manifest.id} ${manifest.version}  ${files.length} files (vite)`)
+    const files = buildViteApp(dir, target, id)
+    registry.push(`${id}/${version}/app-ref.json`)
+    console.log(`✓ ${id} ${version}  ${files.length} files (vite)`)
     continue
   }
+  const manifest = PackageManifest.parse(JSON.parse(readFileSync(join(dir, 'app.json'), 'utf8')))
   const source = readFileSync(join(dir, manifest.main), 'utf8')
   for (const field of ['id', 'icon', 'tint'] as const) {
     const inLua = declared(source, field)

@@ -1,29 +1,30 @@
 /**
- * Generation: the definition in, the typed client and the Luau router out. The output is committed with the app (the
- * editor and the linters see it without a build), and `vos generate --check` fails when it is stale.
+ * Generation: the contract in, the typed client and the Luau router out, into the project's `.app/` folder. The output
+ * is not committed (`.app/` is ignored): every script of the project (`build`, `typecheck`, `lint`) generates first, and
+ * `bun run generate` does it on its own for the editor.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { parseDefinition, type Definition } from './definition.ts'
-import { emitLuau } from './emit-luau.ts'
-import { emitTs } from './emit-ts.ts'
+import { emitDeclarations, emitEntry, emitModule } from './emit-client.ts'
+import { emitLuau, emitLuauEntry } from './emit-luau.ts'
 
 export interface Options {
-  /** The definition, relative to the project (default `rpc.openrpc.json`). */
+  /** The contract, relative to the project (default `openrpc.json`). */
   definition: string
-  /** Where the generated files go, relative to the project (default `generated`). */
+  /** Where the generated files go, relative to the project (default `.app`). */
   generated: string
-  /** The client's entry module (default `src/main.ts`). */
+  /** The client's module: exports `mount(el)` (default `src/main.ts`). */
   client: string
-  /** The backend's entry (default `app.luau`). */
+  /** The backend's module: returns the handlers (default `server/main.luau`). */
   backend: string
 }
 
 export const DEFAULTS: Options = {
-  definition: 'rpc.openrpc.json',
-  generated: 'generated',
+  definition: 'openrpc.json',
+  generated: '.app',
   client: 'src/main.ts',
-  backend: 'app.luau'
+  backend: 'server/main.luau'
 }
 
 export interface GeneratedFile {
@@ -38,12 +39,34 @@ export function readDefinition(project: string, options: Options): Definition {
   return parseDefinition(readFileSync(file, 'utf8'), options.definition)
 }
 
-/** The files the definition generates. */
+/**
+ * What the build checks of the backend, without running it: a declared method with no handler in `server/main.luau` is
+ * an error (the app would not load), and a handler the contract does not declare is a warning (the router refuses to
+ * load it too, so it is an error at load; the warning says so first).
+ */
+export function handlerProblems(definition: Definition, backendSource: string): { missing: string[]; undeclared: string[] } {
+  const found = new Set<string>()
+  for (const m of backendSource.matchAll(/^\s*([A-Za-z_]\w*)\s*=\s*function\b/gm)) found.add(m[1] as string)
+  for (const m of backendSource.matchAll(/\bfunction\s+[A-Za-z_][\w]*[.:]([A-Za-z_]\w*)\s*\(/g)) found.add(m[1] as string)
+  const declared = new Set(definition.methods.map((m) => m.name))
+  return {
+    missing: [...declared].filter((name) => !found.has(name)),
+    // `run` is the function field of an `app.tool { ... }`, not a handler
+    undeclared: [...found].filter((name) => !declared.has(name) && name !== 'run')
+  }
+}
+
+/** The files the contract generates. */
 export function generate(project: string, options: Options): GeneratedFile[] {
   const definition = readDefinition(project, options)
+  const dir = options.generated
+  const clientFromGenerated = relative(join(project, dir), join(project, options.client)).split('\\').join('/')
   return [
-    { path: `${options.generated}/rpc.ts`, contents: emitTs(definition, options.definition) },
-    { path: `${options.generated}/rpc.luau`, contents: emitLuau(definition, options.definition) }
+    { path: `${dir}/rpc.d.ts`, contents: emitDeclarations(definition, options.definition) },
+    { path: `${dir}/rpc.js`, contents: emitModule(definition, options.definition) },
+    { path: `${dir}/entry.js`, contents: emitEntry(clientFromGenerated) },
+    { path: `${dir}/rpc.luau`, contents: emitLuau(definition, options.definition) },
+    { path: `${dir}/entry.luau`, contents: emitLuauEntry() }
   ]
 }
 
@@ -58,11 +81,4 @@ export function write(project: string, files: GeneratedFile[]): string[] {
     written.push(file.path)
   }
   return written
-}
-
-/** The generated files that are missing or differ from what the definition generates now. */
-export function stale(project: string, files: GeneratedFile[]): string[] {
-  return files
-    .filter((f) => !existsSync(join(project, f.path)) || readFileSync(join(project, f.path), 'utf8') !== f.contents)
-    .map((f) => f.path)
 }

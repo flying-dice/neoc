@@ -1,7 +1,5 @@
 <script lang="ts">
-  import type { Host, Rpc, Task } from '../generated/rpc'
-
-  let { rpc, host }: { rpc: Rpc; host: Host } = $props()
+  import { api, host, type Task } from 'app:rpc'
 
   let tasks = $state<Task[]>([])
   let title = $state('')
@@ -22,15 +20,15 @@
 
   // not a `<form>`: the frame is sandboxed without `allow-forms`, so a form cannot submit; Enter is handled here
   async function add(): Promise<void> {
-    await show(rpc.add({ title }))
+    await show(api.add({ title }))
     if (!error) title = ''
   }
 
   // load once, then again whenever the backend says the list changed outside this window (an agent added a task)
   $effect(() => {
-    void show(rpc.list())
+    void show(api.list())
     const stops = [
-      host.on('tasks.changed', () => void show(rpc.list())),
+      host.on('tasks.changed', () => void show(api.list())),
       host.on('host:theme', (t) => (theme = t === 'dark' ? 'dark' : 'light'))
     ]
     return () => stops.forEach((stop) => stop())
@@ -64,7 +62,7 @@
           <input
             type="checkbox"
             checked={task.done}
-            onchange={() => show(rpc.toggle({ id: task.id }))}
+            onchange={() => show(api.toggle({ id: task.id }))}
             data-testid="tasks-svelte-toggle-{task.id}"
           />
           <span>{task.title}</span>

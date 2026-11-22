@@ -10,7 +10,7 @@
 use crate::{
     api,
     convert::{json_to_lua, lua_to_json},
-    error::{RpcFailure, ScriptError, ToolFailure},
+    error::{rpc_failure, ScriptError, ToolFailure},
     state::{DepKey, SharedTracker, TrackGuard, Tracker, TrackerScope},
     tx::OpenTx,
     view::{RenderScope, ViewInstance},
@@ -606,8 +606,8 @@ impl Drop for AppVm {
 
 /// A script's error as the VM reports it: `ctx:fail` is a failed tool call, anything else a script error.
 pub(crate) fn script(e: &mlua::Error) -> VmError {
-    if let Some(f) = e.downcast_ref::<RpcFailure>() {
-        return VmError::Rpc { code: f.code, message: f.message.clone(), data: f.data.clone() };
+    if let Some((code, message)) = rpc_failure(e) {
+        return VmError::Rpc { code, message, data: None };
     }
     match e.downcast_ref::<ToolFailure>() {
         Some(f) => VmError::ToolFailed(f.0.clone()),

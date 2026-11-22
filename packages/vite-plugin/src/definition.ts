@@ -5,6 +5,9 @@
  *
  * What a definition may say (a deliberate subset: the basic version of the contract):
  *
+ *   - `info.title` and `info.version`: the app's name and version.
+ *   - `x-app`: the app's metadata (`id`, `icon`, `tint`, `description`, `window`, `requires`, `migrations`), so the contract is
+ *     the only descriptor an app needs.
  *   - `methods`: each has a `name` (an identifier: it becomes `rpc.<name>(...)` in the client and a function in the Luau
  *     handlers), `params` (by name only: `paramStructure` is `"by-name"` or absent), a `result`, and optional `errors`
  *     (documentation of the application errors a handler may fail with).
@@ -43,9 +46,25 @@ export interface Method {
   errors: { code: number; message: string }[]
 }
 
+/** What the shell needs to know about the app before any code runs: the `x-app` extension of the contract. */
+export interface AppMeta {
+  /** 3 to 40 characters: lowercase letters, digits, dashes; namespaces the app's data and tools. */
+  id: string
+  icon?: string
+  tint?: string
+  description?: string
+  /** The default window and its minimum size. */
+  window?: { w: number; h: number; minW: number; minH: number }
+  requires?: { host?: string }
+  migrations?: { version: number; name: string; file: string }[]
+}
+
 export interface Definition {
+  /** The app's name (`info.title`). */
   title: string
+  /** The app's version (`info.version`, `major.minor.patch`). */
   version: string
+  app: AppMeta
   methods: Method[]
   /** Named schemas, in the order the document lists them. */
   components: Record<string, Schema>
@@ -193,7 +212,7 @@ function schema(value: Json, path: string, refs: { name: string; path: string }[
 }
 
 /** Parse and validate an OpenRPC document. Throws a [`DefinitionError`] naming the path of the first problem. */
-export function parseDefinition(source: string, file = 'rpc.openrpc.json'): Definition {
+export function parseDefinition(source: string, file = 'openrpc.json'): Definition {
   let document: Json
   try {
     document = JSON.parse(source)
@@ -215,6 +234,9 @@ function definition(document: Json): Definition {
   if (!isObject(document.info)) fail('info', 'must be an object with a title and a version')
   const title = text(document.info.title, 'info.title')
   const version = text(document.info.version, 'info.version')
+  if (!/^\d+\.\d+\.\d+$/.test(version)) fail('info.version', 'must be major.minor.patch')
+  if (title.length > 60) fail('info.title', 'must be at most 60 characters: it is the name of the app')
+  const app = appMeta(document['x-app'])
 
   const refs: { name: string; path: string }[] = []
   const components: Record<string, Schema> = {}
@@ -284,5 +306,48 @@ function definition(document: Json): Definition {
   })
 
   for (const { name, path } of refs) if (!(name in components)) fail(path, `refers to \`${name}\`, which components.schemas does not define`)
-  return { title, version, methods, components }
+  return { title, version, app, methods, components }
+}
+
+/** The `x-app` extension: what the shell needs before the app runs. */
+function appMeta(value: Json): AppMeta {
+  const path = 'x-app'
+  if (!isObject(value)) fail(path, 'is required: the app\'s metadata ({ "id": ..., "icon": ... })')
+  only(value, ['id', 'icon', 'tint', 'description', 'window', 'requires', 'migrations'], path)
+  const id = text(value.id, `${path}.id`)
+  if (!/^[a-z0-9][a-z0-9-]{2,39}$/.test(id)) fail(`${path}.id`, 'must be 3 to 40 characters: lowercase letters, digits and dashes')
+  const meta: AppMeta = { id }
+  const icon = optionalText(value.icon, `${path}.icon`)
+  if (icon !== undefined) meta.icon = icon
+  const tint = optionalText(value.tint, `${path}.tint`)
+  if (tint !== undefined) meta.tint = tint
+  const description = optionalText(value.description, `${path}.description`)
+  if (description !== undefined) meta.description = description
+  if (value.window !== undefined) {
+    const window = value.window
+    if (!isObject(window)) fail(`${path}.window`, 'must be { w, h, minW, minH }')
+    only(window, ['w', 'h', 'minW', 'minH'], `${path}.window`)
+    const size = (key: 'w' | 'h' | 'minW' | 'minH'): number => {
+      const n = window[key]
+      if (typeof n !== 'number' || !Number.isInteger(n) || n <= 0) fail(`${path}.window.${key}`, 'must be a whole number of points')
+      return n
+    }
+    meta.window = { w: size('w'), h: size('h'), minW: size('minW'), minH: size('minH') }
+  }
+  if (value.requires !== undefined) {
+    if (!isObject(value.requires)) fail(`${path}.requires`, 'must be { host }')
+    only(value.requires, ['host'], `${path}.requires`)
+    const host = optionalText(value.requires.host, `${path}.requires.host`)
+    meta.requires = host === undefined ? {} : { host }
+  }
+  if (value.migrations !== undefined) {
+    if (!Array.isArray(value.migrations)) fail(`${path}.migrations`, 'must be a list of { version, name, file }')
+    meta.migrations = value.migrations.map((m, i) => {
+      const where = `${path}.migrations[${i}]`
+      if (!isObject(m)) fail(where, 'must be { version, name, file }')
+      only(m, ['version', 'name', 'file'], where)
+      return { version: count(m.version, `${where}.version`), name: text(m.name, `${where}.name`), file: text(m.file, `${where}.file`) }
+    })
+  }
+  return meta
 }

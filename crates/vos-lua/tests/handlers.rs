@@ -64,9 +64,9 @@ return {
   nothing = function() end,
   fail = function(ctx) return ctx:fail("A task needs a title.") end,
   explode = function() error("boom") end,
-  coded = function(ctx) return ctx:fail("not today", { code = -32001, data = { why = "closed" } }) end,
-  badcode = function(ctx) return ctx:fail("x", { code = "no" }) end,
-  plain = function(ctx) return ctx:fail("just a message", {}) end,
+  coded = function() error("RPC-32001 not today", 0) end,
+  notcoded = function() error("RPC32001 not today", 0) end,
+  zero = function() error("RPC0 nothing", 0) end,
   loop = function() local t = {} t.t = t return t end,
 }
 "#;
@@ -119,22 +119,20 @@ async fn a_handler_that_fails_answers_with_its_message() {
 }
 
 #[tokio::test]
-async fn a_failure_with_a_code_reaches_the_caller_as_that_json_rpc_error() {
+async fn an_error_that_starts_with_rpc_and_a_code_reaches_the_caller_as_that_json_rpc_error() {
     let rig = rig();
     load(&rig, "tasks", TASKS).await.unwrap();
     assert_eq!(
         call(&rig, "tasks", "coded", Value::Null).await.unwrap_err(),
-        PortError::Rpc { code: -32001, message: "not today".into(), data: Some(json!({ "why": "closed" })) }
+        PortError::Rpc { code: -32001, message: "not today".into(), data: None }
     );
-    // options without a code are a plain failure; a code that is not a whole number is a mistake in the app
-    assert_eq!(
-        call(&rig, "tasks", "plain", Value::Null).await.unwrap_err(),
-        PortError::Rejected("just a message".into())
-    );
-    let PortError::Rejected(mistake) = call(&rig, "tasks", "badcode", Value::Null).await.unwrap_err() else {
-        panic!("rejected");
-    };
-    assert!(mistake.contains("`code` must be a whole number"), "{mistake}");
+    // not a code (no space after the number, or a zero): an ordinary error of the app, with its location
+    for handler in ["notcoded", "zero"] {
+        let PortError::Rejected(message) = call(&rig, "tasks", handler, Value::Null).await.unwrap_err() else {
+            panic!("{handler}: rejected");
+        };
+        assert!(message.contains("RPC"), "{handler}: {message}");
+    }
 }
 
 #[tokio::test]

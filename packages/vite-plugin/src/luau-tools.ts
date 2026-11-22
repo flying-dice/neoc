@@ -39,7 +39,7 @@ export function luauFiles(project: string): string[] {
   const found: string[] = []
   const walk = (dir: string): void => {
     for (const name of readdirSync(dir)) {
-      if (name.startsWith('.') || name === 'node_modules' || name === 'dist') continue
+      if ((name.startsWith('.') && name !== '.app') || name === 'node_modules' || name === 'dist') continue
       const path = join(dir, name)
       if (statSync(path).isDirectory()) walk(path)
       else if (name.endsWith('.luau')) found.push(relative(project, path))
@@ -115,7 +115,7 @@ export function analyze(project: string): { files: string[]; findings: string[] 
   }
 
   // two passes, as the repository's `lint:luau`: against the declarations, then without their `declare require`, where
-  // an app's own modules (`require("./generated/rpc")`) get their real types; there `vos:*` and the offered modules
+  // an app's own modules (`require("../.app/rpc")`) get their real types; there `vos:*` and the offered modules
   // resolve to no file, which says nothing about the app
   const scratch = mkdtempSync(join(tmpdir(), 'vos-luau-'))
   try {
@@ -147,13 +147,13 @@ export function analyze(project: string): { files: string[]; findings: string[] 
   return { files, findings: problems }
 }
 
-/** StyLua over the project's own Luau (not the generated files: `.styluaignore`). `write` formats, else it checks. */
+/** StyLua over the project's own Luau (not the generated files in `.app/`). `write` formats, else it checks. */
 export function stylua(project: string, write: boolean): boolean {
   const tool = onPath('stylua', join(homedir(), '.cargo/bin/stylua'))
   if (!tool) missing('stylua', 'stylua not found (cargo install stylua --features luau)')
-  const files = luauFiles(project).filter((f) => !f.startsWith('generated/'))
+  const files = luauFiles(project).filter((f) => !f.startsWith('.app/'))
   if (files.length === 0) return true
-  const run = spawnSync(tool, [...(write ? [] : ['--check']), ...files], { cwd: project, encoding: 'utf8' })
+  const run = spawnSync(tool, ['--search-parent-directories', ...(write ? [] : ['--check']), ...files], { cwd: project, encoding: 'utf8' })
   if (run.status !== 0) console.error(`${run.stdout}${run.stderr}`.trim())
   return run.status === 0
 }

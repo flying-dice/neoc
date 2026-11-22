@@ -2,28 +2,22 @@
 /**
  * `vos`: what an app project's scripts call.
  *
- *   vos generate          write generated/rpc.ts and generated/rpc.luau from the definition
- *   vos generate --check  fail when they are stale (part of `lint`)
- *   vos typecheck         the generated files are current, and luau-lsp finds nothing in the Luau (strict, against the host's declarations)
- *   vos lint              the same, and StyLua is satisfied
- *   vos format            StyLua over the Luau
+ *   vos generate    write .app/ (the typed client and the Luau router) from openrpc.json
+ *   vos typecheck   generate, then luau-lsp over the Luau (strict, against the host's declarations)
+ *   vos lint        the same, and StyLua is satisfied
+ *   vos format      StyLua over the Luau
  */
 import { resolve } from 'node:path'
 import { DefinitionError } from '../src/definition.ts'
-import { DEFAULTS, generate, stale, write } from '../src/generate.ts'
+import { DEFAULTS, generate, write } from '../src/generate.ts'
 import { analyze, stylua } from '../src/luau-tools.ts'
 
-const [command, ...flags] = process.argv.slice(2)
+const [command] = process.argv.slice(2)
 const project = resolve(process.cwd())
 
-function current(): boolean {
-  const files = generate(project, DEFAULTS)
-  const out = stale(project, files)
-  if (out.length > 0) {
-    console.error(`generated files are stale: ${out.join(', ')}\nrun \`bun run generate\` and commit the result`)
-    return false
-  }
-  return true
+function generated(): void {
+  const written = write(project, generate(project, DEFAULTS))
+  if (command === 'generate') console.log(written.length > 0 ? `wrote ${written.join(', ')}` : 'the generated files are up to date')
 }
 
 function typecheck(): boolean {
@@ -38,23 +32,22 @@ function typecheck(): boolean {
 
 try {
   switch (command) {
-    case 'generate': {
-      if (flags.includes('--check')) process.exit(current() ? 0 : 1)
-      const written = write(project, generate(project, DEFAULTS))
-      console.log(written.length > 0 ? `wrote ${written.join(', ')}` : 'generated files are up to date')
+    case 'generate':
+      generated()
       break
-    }
     case 'typecheck':
-      process.exit(current() && typecheck() ? 0 : 1)
+      generated()
+      process.exit(typecheck() ? 0 : 1)
       break
     case 'lint':
-      process.exit([current(), typecheck(), stylua(project, false)].every(Boolean) ? 0 : 1)
+      generated()
+      process.exit([typecheck(), stylua(project, false)].every(Boolean) ? 0 : 1)
       break
     case 'format':
       process.exit(stylua(project, true) ? 0 : 1)
       break
     default:
-      console.error('usage: vos generate [--check] | typecheck | lint | format')
+      console.error('usage: vos generate | typecheck | lint | format')
       process.exit(2)
   }
 } catch (e) {

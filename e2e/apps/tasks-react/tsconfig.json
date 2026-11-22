@@ -11,5 +11,5 @@
     "noEmit": true,
     "types": []
   },
-  "include": ["src", "generated", "vite.config.ts"]
+  "include": ["src", ".app/rpc.d.ts"]
 }
