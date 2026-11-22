@@ -1,7 +1,7 @@
 --!strict
 -- Luau syntax and types with the module declarations: type annotations, `local x: T`, type aliases that
 -- name a module's resource type (the declarations export them), `continue`, compound assignment, string interpolation, if-expressions and
--- generic functions. Checked clean like usage.luau, and RUN by `neoc run` in crates/neoc/tests/cli.rs
+-- generic functions, and Luau's `buffer` library. Checked clean like usage.luau, and RUN by `neoc run` in crates/neoc/tests/cli.rs
 -- (`run_a_typed_luau_script_with_annotations_interpolation_and_continue`), which asserts its output: edit the
 -- two together.
 local json = require("lib:json")
@@ -53,3 +53,13 @@ if parsed == nil then
 end
 local release = assert(semver.Version.parse("1.2.3"))
 print(host_of(parsed), describe(release), budget(nil))
+
+-- Luau's `buffer`: luau-lsp's own types, and the engine `neoc run` scripts get
+local function header(magic: string, size: number): buffer
+	local b = buffer.create(4 + #magic)
+	buffer.writeu32(b, 0, size)
+	buffer.writestring(b, 4, magic)
+	return b
+end
+local packet = header("neoc", 258)
+print(buffer.len(packet), buffer.readu8(packet, 1), buffer.readstring(packet, 4, 4))

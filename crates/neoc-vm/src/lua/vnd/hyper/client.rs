@@ -41,20 +41,23 @@ type Request = (
     Option<String>,
 );
 
+/// The option names each entry point reads; any other key is an error, so a misspelt option is never dropped.
+const GET_OPTIONS: &[&str] = &["headers", "ca_pem"];
+const POST_OPTIONS: &[&str] = &["url", "body", "headers", "ca_pem"];
+const REQUEST_OPTIONS: &[&str] = &["method", "url", "body", "headers", "ca_pem"];
+
 pub(super) fn get(
     lua: Lua,
     (url, opts): (String, Option<Table>),
 ) -> impl Future<Output = mlua::Result<(Value, Value)>> + Send + 'static {
-    let prepared: Result<Request, String> = opts.as_ref().map(ca_from_opts).transpose().map(|ca| {
-        (
-            "hyper.get",
-            "GET".into(),
-            url,
-            None,
-            Vec::new(),
-            ca.flatten(),
-        )
-    });
+    let prepared: Result<Request, String> = match opts {
+        None => Ok(("hyper.get", "GET".into(), url, None, Vec::new(), None)),
+        Some(opts) => check_options(&opts, GET_OPTIONS).and_then(|()| {
+            let headers = headers_from_opts(&opts)?;
+            let ca_pem = ca_from_opts(&opts)?;
+            Ok(("hyper.get", "GET".into(), url, None, headers, ca_pem))
+        }),
+    };
     send(lua, "hyper.get", prepared)
 }
 
@@ -62,9 +65,11 @@ pub(super) fn post(
     lua: Lua,
     opts: Table,
 ) -> impl Future<Output = mlua::Result<(Value, Value)>> + Send + 'static {
-    let prepared = extract_opts(&opts).map(|(url, body, headers, ca_pem)| {
-        ("hyper.post", "POST".into(), url, body, headers, ca_pem)
-    });
+    let prepared = check_options(&opts, POST_OPTIONS)
+        .and_then(|()| extract_opts(&opts))
+        .map(|(url, body, headers, ca_pem)| {
+            ("hyper.post", "POST".into(), url, body, headers, ca_pem)
+        });
     send(lua, "hyper.post", prepared)
 }
 
@@ -72,9 +77,8 @@ pub(super) fn request(
     lua: Lua,
     opts: Table,
 ) -> impl Future<Output = mlua::Result<(Value, Value)>> + Send + 'static {
-    let prepared = opts
-        .get::<String>("method")
-        .map_err(|e| e.to_string())
+    let prepared = check_options(&opts, REQUEST_OPTIONS)
+        .and_then(|()| opts.get::<String>("method").map_err(|e| e.to_string()))
         .and_then(|method| {
             extract_opts(&opts).map(|(url, body, headers, ca_pem)| {
                 ("hyper.request", method, url, body, headers, ca_pem)
@@ -122,10 +126,33 @@ type Opts = (
 
 fn extract_opts(opts: &Table) -> Result<Opts, String> {
     let url: String = opts.get("url").map_err(|e| e.to_string())?;
-    let body = body_from_opts(opts);
-    let headers = headers_from_opts(opts).map_err(|e| e.to_string())?;
+    let body = body_from_opts(opts)?;
+    let headers = headers_from_opts(opts)?;
     let ca_pem = ca_from_opts(opts)?;
     Ok((url, body, headers, ca_pem))
+}
+
+/// An error naming the first key of `opts` that is not one of `known` (read raw: no metamethod runs).
+fn check_options(opts: &Table, known: &[&str]) -> Result<(), String> {
+    for pair in opts.pairs::<Value, Value>() {
+        let (key, _) = pair.map_err(|e| e.to_string())?;
+        let name = match &key {
+            Value::String(s) => s.to_string_lossy(),
+            other => {
+                return Err(format!(
+                    "option names must be strings, got {}",
+                    other.type_name()
+                ));
+            }
+        };
+        if !known.contains(&name.as_str()) {
+            return Err(format!(
+                "unknown option `{name}` (expected one of: {})",
+                known.join(", ")
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The optional `ca_pem` string: the PEM certificates to trust instead of the platform's.
@@ -134,16 +161,37 @@ fn ca_from_opts(opts: &Table) -> Result<Option<String>, String> {
         .map_err(|e| format!("ca_pem must be a string: {e}"))
 }
 
-fn body_from_opts(opts: &Table) -> Option<Vec<u8>> {
-    let s: Option<mlua::LuaString> = opts.get("body").ok();
-    s.map(|v| v.as_bytes().to_vec())
+/// The optional `body`: a string's bytes or a buffer's (a number is sent as its text, as Lua converts it). Anything
+/// else is an error, never an empty body.
+fn body_from_opts(opts: &Table) -> Result<Option<Vec<u8>>, String> {
+    match opts.get::<Value>("body").map_err(|e| e.to_string())? {
+        Value::Nil => Ok(None),
+        Value::String(s) => Ok(Some(s.as_bytes().to_vec())),
+        Value::Buffer(b) => Ok(Some(b.to_vec())),
+        // Lua's own number-to-string conversion, as the body was read before
+        Value::Integer(_) | Value::Number(_) => opts
+            .get::<mlua::LuaString>("body")
+            .map(|s| Some(s.as_bytes().to_vec()))
+            .map_err(|e| e.to_string()),
+        other => Err(format!(
+            "body must be a string or a buffer, got {}",
+            other.type_name()
+        )),
+    }
 }
 
-fn headers_from_opts(opts: &Table) -> mlua::Result<Vec<(String, String)>> {
-    let h: Option<Table> = opts.get("headers").ok();
-    match h {
-        None => Ok(Vec::new()),
-        Some(t) => t.pairs::<String, String>().collect(),
+/// The optional `headers` table of name to value strings. Anything else is an error, never no headers.
+fn headers_from_opts(opts: &Table) -> Result<Vec<(String, String)>, String> {
+    match opts.get::<Value>("headers").map_err(|e| e.to_string())? {
+        Value::Nil => Ok(Vec::new()),
+        Value::Table(t) => t
+            .pairs::<String, String>()
+            .collect::<mlua::Result<_>>()
+            .map_err(|e| format!("headers must map strings to strings: {e}")),
+        other => Err(format!(
+            "headers must be a table, got {}",
+            other.type_name()
+        )),
     }
 }
 
@@ -323,7 +371,17 @@ fn build_req(
     for (k, v) in headers {
         builder = builder.header(k.as_str(), v.as_str());
     }
+    // hyper writes `content-length` for a non-empty body only. A request that carries content (a body was given, or
+    // the method defines content: POST, PUT, PATCH) says `0` when it is empty, as RFC 9110 section 8.6 asks: a strict
+    // server answers 411 without it. A length the caller set is left alone.
+    let carries_content = body.is_some() || matches!(method, "POST" | "PUT" | "PATCH");
     let bytes = body.map(Bytes::from).unwrap_or_default();
+    let caller_set_length = headers
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("content-length"));
+    if bytes.is_empty() && carries_content && !caller_set_length {
+        builder = builder.header("content-length", "0");
+    }
     builder.body(Full::new(bytes)).map_err(|e| e.to_string())
 }
 

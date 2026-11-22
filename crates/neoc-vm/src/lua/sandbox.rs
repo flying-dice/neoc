@@ -12,7 +12,7 @@ use crate::lua::modules;
 /// tampering (`getfenv`, `setfenv`, `newproxy`), GC control and introspection (`collectgarbage`, which mlua
 /// adds, `gcinfo`) and mlua's file-system `require` (the engine's own is installed by `modules::install`).
 /// Luau has no `load`, `dofile`, `loadfile`, `module` or `string.dump`; the `io`, `os`, `package`, `debug`,
-/// `utf8`, `buffer`, `vector` and `integer` names are not opened either and stay on the list so a library a future
+/// `utf8`, `vector` and `integer` names are not opened either and stay on the list so a library a future
 /// mlua opens by default is removed (`jit` and `ffi` went with LuaJIT). Paths are dotted; the last segment is the key removed from its parent table.
 const STRIPPED_GLOBALS: &[&str] = &[
     "load",
@@ -36,18 +36,17 @@ const STRIPPED_GLOBALS: &[&str] = &[
     "package",
     "debug",
     "utf8",
-    "buffer",
     "vector",
     "integer",
 ];
 
 /// Build a fresh Luau engine with our curated stdlib in place.
 ///
-/// Only the language-semantics libraries load: COROUTINE/TABLE/STRING/MATH/BIT (Luau's `bit32`), plus BASE
-/// which `mlua` always opens (`pairs`, `ipairs`, `tostring`, `pcall`, ...). OS/DEBUG/UTF8/BUFFER/VECTOR never
-/// load: `os` and `debug` are sandbox hazards that our `std:` modules cover, and the others are Luau
-/// extensions neoc does not offer (`INTEGER` is not opened either). The unsafe parts of BASE are then stripped (see `STRIPPED_GLOBALS`)
-/// and the custom `require` is installed.
+/// Only the language-semantics libraries load: COROUTINE/TABLE/STRING/MATH/BIT (Luau's `bit32`) and BUFFER (Luau's
+/// fixed-size byte buffer), plus BASE which `mlua` always opens (`pairs`, `ipairs`, `tostring`, `pcall`, ...).
+/// OS/DEBUG/UTF8/VECTOR never load: `os` and `debug` are sandbox hazards that our `std:` modules cover, and the
+/// others are Luau extensions neoc does not offer (`INTEGER` is not opened either). The unsafe parts of BASE are
+/// then stripped (see `STRIPPED_GLOBALS`) and the custom `require` is installed.
 ///
 /// # Errors
 /// Fails when the engine, a library or a module cannot be set up.
@@ -125,6 +124,11 @@ pub fn install_runtime_state(lua: &Lua, life: Life) {
 /// The one shared string metatable is locked (`__metatable`), so `getmetatable("").__index` cannot be used
 /// to reach, and mutate, the shared `string` table.
 ///
+/// Its globals hold every library [`make_engine`] opens, `buffer` included. A
+/// [script environment](crate::lua::script_env) copies only some of them, but a `std:thread` worker (built by
+/// [`modules::install_allowed`]'s worker engine, or the embedder's own) runs on its engine's globals: an embedder
+/// that keeps a library from its scripts removes it there too, in every worker engine it builds.
+///
 /// To offer a script some of the modules, build them with [`modules::build`] or install a subset with
 /// [`modules::install_allowed`]: this function deliberately exposes none. For the same reason a script on it
 /// cannot start a `std:thread` worker until the embedder says how to build one ([`set_worker_engine`], which
@@ -141,7 +145,12 @@ pub fn make_bare_engine() -> mlua::Result<Lua> {
 /// The libraries and the stripped globals shared by both engines.
 fn base_engine() -> mlua::Result<Lua> {
     let lua = Lua::new_with(
-        StdLib::COROUTINE | StdLib::TABLE | StdLib::STRING | StdLib::MATH | StdLib::BIT,
+        StdLib::COROUTINE
+            | StdLib::TABLE
+            | StdLib::STRING
+            | StdLib::MATH
+            | StdLib::BIT
+            | StdLib::BUFFER,
         mlua::LuaOptions::new(),
     )?;
     stash_coroutine_close(&lua)?;
@@ -327,6 +336,7 @@ mod tests {
                 // Libraries.
                 ("_G", "table"),
                 ("bit32", "table"),
+                ("buffer", "table"),
                 ("coroutine", "table"),
                 ("math", "table"),
                 ("string", "table"),
@@ -386,13 +396,51 @@ mod tests {
         );
     }
 
+    // Luau's byte buffer: fixed size, read and written at offsets, little-endian. Nothing in it reaches outside
+    // the buffer, and a function a Luau bump adds fails here until someone looks at it.
+    #[test]
+    fn given_fresh_engine_when_enumerating_buffer_library_then_exactly_the_allowlist_remains() {
+        let lua = engine();
+        assert_eq!(
+            surface(&lua, "buffer"),
+            expected(&[
+                ("copy", "function"),
+                ("create", "function"),
+                ("fill", "function"),
+                ("fromstring", "function"),
+                ("len", "function"),
+                ("readbits", "function"),
+                ("readf32", "function"),
+                ("readf64", "function"),
+                ("readi16", "function"),
+                ("readi32", "function"),
+                ("readi8", "function"),
+                ("readstring", "function"),
+                ("readu16", "function"),
+                ("readu32", "function"),
+                ("readu8", "function"),
+                ("tostring", "function"),
+                ("writebits", "function"),
+                ("writef32", "function"),
+                ("writef64", "function"),
+                ("writei16", "function"),
+                ("writei32", "function"),
+                ("writei8", "function"),
+                ("writestring", "function"),
+                ("writeu16", "function"),
+                ("writeu32", "function"),
+                ("writeu8", "function"),
+            ])
+        );
+    }
+
     // `STRIPPED_GLOBALS` seen from a script: the engine of `neoc run` has its own `require` and nothing else on the
     // list; a bare engine has none of them (mlua installs a file-system `require`, `loadstring` and
-    // `collectgarbage`, which are stripped; `utf8`, `buffer`, `vector` and `integer` are not opened)
+    // `collectgarbage`, which are stripped; `utf8`, `vector` and `integer` are not opened)
     #[test]
     fn given_either_engine_when_probing_the_stripped_names_then_none_is_reachable() {
         let names = "{ 'load', 'loadstring', 'dofile', 'loadfile', 'getfenv', 'setfenv', 'newproxy', 'module', \
-             'collectgarbage', 'gcinfo', 'io', 'os', 'package', 'debug', 'utf8', 'buffer', 'vector', 'integer' }";
+             'collectgarbage', 'gcinfo', 'io', 'os', 'package', 'debug', 'utf8', 'vector', 'integer' }";
         let probe = format!(
             "local found = {{}} for _, n in ipairs({names}) do if _G[n] ~= nil then found[#found + 1] = n end end \
              if string.dump then found[#found + 1] = 'string.dump' end if coroutine.close then found[#found + 1] = 'coroutine.close' end return table.concat(found, ',') .. '|' .. type(require)"
@@ -407,6 +455,11 @@ mod tests {
             bare, "|nil",
             "a bare engine has no require, not even mlua's file-system one"
         );
+        // and both open `buffer` (an embedder that keeps it from its scripts relies on knowing where it is)
+        for lua in [make_engine().unwrap(), make_bare_engine().unwrap()] {
+            let ty: String = lua.load("return type(buffer)").eval().unwrap();
+            assert_eq!(ty, "table");
+        }
     }
 
     #[test]
