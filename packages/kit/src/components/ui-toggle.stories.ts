@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/web-components-vite'
 import { html } from 'lit'
 import { expect, fn, userEvent, within } from 'storybook/test'
-import { expectHitArea } from '../story-support'
+import { expectHitArea, drawn } from '../story-support'
 import './ui-toggle'
 import './ui-check'
 
@@ -47,7 +47,7 @@ export const Flipping: Story = {
       const el = canvas.getByTestId(id) as HTMLElement & { checked: boolean }
       const onChange = fn()
       el.addEventListener('change', onChange)
-      await userEvent.click(el)
+      await userEvent.click(drawn(el))
       await expect(el.checked).toBe(true)
       await expect(onChange).toHaveBeenLastCalledWith(
         expect.objectContaining({ detail: { checked: true } })
@@ -81,7 +81,7 @@ export const InAForm: Story = {
     // a click on the <label> flips the toggle it names
     canvas.getByText('Sync').click()
     await expect(toggle.checked).toBe(true)
-    await userEvent.click(canvas.getByTestId('form-check'))
+    await userEvent.click(drawn(canvas.getByTestId('form-check')))
     const data = new FormData(form)
     await expect(data.get('sync')).toBe('on')
     await expect(data.get('done')).toBe('yes')

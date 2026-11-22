@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/web-components-vite'
 import { html, type TemplateResult } from 'lit'
 import { expect, fn, userEvent, within } from 'storybook/test'
+import { drawn } from '../story-support'
 import './ui-icon'
 import './ui-list'
 import './ui-toggle'
@@ -224,7 +225,7 @@ export const TrailingControlInATappableRow: Story = {
     const onPress = fn()
     row.addEventListener('press', onPress)
     // flipping the toggle is the toggle's business: the row is not pressed
-    await userEvent.click(toggle)
+    await userEvent.click(drawn(toggle))
     await expect(toggle.checked).toBe(true)
     await expect(onPress).not.toHaveBeenCalled()
     // tapping the row is a press
@@ -273,7 +274,7 @@ export const LeadingControlInATappableRow: Story = {
     }
     await expect(topAt(check)).toBe(check)
     // a leading control is clickable and does not press the row
-    await userEvent.click(check)
+    await userEvent.click(drawn(check))
     await expect(check.checked).toBe(true)
     await expect(onPress).not.toHaveBeenCalled()
     const onClick = fn()
@@ -283,7 +284,7 @@ export const LeadingControlInATappableRow: Story = {
     const buttonRow = canvas.getByTestId('leading-button-row')
     const onButtonRowPress = fn()
     buttonRow.addEventListener('press', onButtonRowPress)
-    await userEvent.click(button)
+    await userEvent.click(drawn(button))
     await expect(onClick).toHaveBeenCalledTimes(1)
     await expect(onButtonRowPress).not.toHaveBeenCalled()
     // and a row's own tap is still a press

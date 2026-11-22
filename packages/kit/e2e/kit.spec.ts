@@ -294,12 +294,20 @@ test('with hit, every control has a hit area of at least 44 x 44 pt around the d
       const cy = r.top + r.height / 2
       const owner = id === 'h-seg-segment' ? document.querySelector('ui-segmented')! : el
       // the four corners of a 44 x 44 box around the centre (1 px inside) all land on the control
-      for (const [dx, dy] of [
-        [-21, -21],
-        [21, -21],
-        [-21, 21],
-        [21, 21]
-      ] as const) {
+      // a segment grows vertically only: segments sit side by side
+      const corners =
+        id === 'h-seg-segment'
+          ? ([
+              [0, -21],
+              [0, 21]
+            ] as const)
+          : ([
+              [-21, -21],
+              [21, -21],
+              [-21, 21],
+              [21, 21]
+            ] as const)
+      for (const [dx, dy] of corners) {
         const at = document.elementFromPoint(cx + dx, cy + dy)
         if (at !== owner) missed.push(`${id} at ${dx},${dy} hit ${at?.tagName ?? 'nothing'}`)
       }
