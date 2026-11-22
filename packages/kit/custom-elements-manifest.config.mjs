@@ -3,5 +3,7 @@ export default {
   globs: ['src/components/ui-*.ts', 'src/boolean-control.ts'],
   exclude: ['src/**/*.stories.ts', 'src/**/*.test.ts'],
   outdir: '../../client/public/kit',
-  litelement: true
+  litelement: true,
+  // do not write a `customElements` field into package.json: the manifest is a build output
+  packagejson: false
 }

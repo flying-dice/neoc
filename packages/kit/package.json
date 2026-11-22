@@ -26,6 +26,5 @@
     "svelte-check": "^4.7.6",
     "typescript": "^5.9.3",
     "vite": "^8.3.4"
-  },
-  "customElements": "fixtures/generated/custom-elements.json"
+  }
 }

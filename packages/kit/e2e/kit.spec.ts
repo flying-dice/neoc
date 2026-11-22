@@ -69,7 +69,7 @@ test.afterAll(() => server.close())
 
 test('the kit runs in a sandboxed frame under the frame policy and answers the keyboard', async ({ page }) => {
   await page.goto(`${origin}/frame`)
-  expect(await page.evaluate(() => location.origin)).toBe('null') // the frame has an opaque origin
+  expect(await page.evaluate(() => window.origin)).toBe('null') // the frame has an opaque origin
   const tags = await page.evaluate(() =>
     ['ui-banner', 'ui-button', 'ui-check', 'ui-empty-state', 'ui-icon', 'ui-list', 'ui-row', 'ui-section', 'ui-segmented', 'ui-spinner', 'ui-text-field', 'ui-toggle'].filter(
       (tag) => !customElements.get(tag)
