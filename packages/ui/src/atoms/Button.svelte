@@ -153,24 +153,39 @@
     width: 50px;
   }
 
-  /* The hit area: min 44 pt, the drawn size (28 / 34) kept inside it. */
+  /*
+   * The hit area: min 44 pt, the drawn size (28 / 34) kept inside it. The fill is painted by a pseudo-element of the
+   * drawn size with the button's own radius, so the corners are the same as on a button without a hit area.
+   */
   .hit {
     --_h: 28px;
+    position: relative;
+    isolation: isolate;
     box-sizing: border-box;
     min-height: 44px;
-    border-block: calc((44px - var(--_h)) / 2) solid transparent;
-    background-clip: padding-box;
+    background-color: transparent;
+  }
+  .hit::before {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    inset-block: calc((100% - var(--_h)) / 2);
+    inset-inline: 0;
+    border-radius: inherit;
+    background-color: var(--_bg, transparent);
   }
   .hit.medium {
     --_h: 34px;
   }
   .hit.large {
     --_h: 50px;
-    border-block-width: 0;
+    min-height: 50px;
   }
   .hit.square {
     min-width: 44px;
-    border-inline: calc((44px - var(--_w, 28px)) / 2) solid transparent;
+  }
+  .hit.square::before {
+    inset-inline: calc((100% - var(--_w, 28px)) / 2);
   }
   .hit.square.medium {
     --_w: 34px;
@@ -180,8 +195,8 @@
     width: 44px;
   }
   .hit.square.large {
+    --_w: 50px;
     width: 50px;
-    border-inline-width: 0;
   }
 
   .filled {
@@ -189,7 +204,7 @@
      * White text on the system tint: darkened in dark mode to keep 4.5:1 (see
      * --tint-fill). An explicit `tint` is used exactly as given.
      */
-    background: var(--btn-fill, light-dark(var(--_tint), color-mix(in oklab, var(--_tint) 70%, black)));
+    --_bg: var(--btn-fill, light-dark(var(--_tint), color-mix(in oklab, var(--_tint) 70%, black)));
     color: var(--btn-ink, #fff);
   }
   /*
@@ -198,7 +213,7 @@
    * so the swap keeps that contrast both ways, and the ring keeps the key visible on a canvas the ink matches.
    */
   .inverts[aria-pressed='true'] {
-    background: var(--btn-ink);
+    --_bg: var(--btn-ink);
     color: var(--btn-fill);
     outline: 2px solid var(--btn-fill);
     outline-offset: -2px;
@@ -212,15 +227,17 @@
     --_ink: light-dark(color-mix(in oklab, var(--_tint) 78%, black), color-mix(in oklab, var(--_tint) 78%, white));
   }
   .tinted {
-    background: color-mix(in srgb, var(--_tint) 15%, transparent);
+    --_bg: color-mix(in srgb, var(--_tint) 15%, transparent);
     color: var(--_ink);
   }
   .gray {
-    background: var(--fill-tertiary);
+    --_bg: var(--fill-tertiary);
     color: var(--_ink);
   }
+  .ios-button:not(.hit) {
+    background-color: var(--_bg, transparent);
+  }
   .plain {
-    background: transparent;
     color: var(--_tint);
     font-weight: 400;
     padding-inline: 4px;

@@ -130,18 +130,22 @@
     align-items: center;
     flex-wrap: wrap;
     gap: 4px;
-    margin-top: 6px;
-    min-height: 24px;
+    /* the buttons' 44 pt hit area adds 8 pt of clear space above the drawn capsule: pulled back so it sits 6 pt
+       below the text */
+    margin-top: -2px;
+    min-height: 44px;
   }
   .cta :global(.ios-button) {
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 700;
-    min-height: 24px;
     padding: 0 16px;
   }
-  /* the drawn capsule stays 24 pt; the kit's hit border pads it to a 44 pt target */
+  .cta :global(.ios-button.plain) {
+    padding: 0 8px;
+  }
+  /* the drawn capsule is 28 pt, as the App Store's; the kit's hit border pads it to a 44 pt target */
   .cta :global(.ios-button.hit) {
-    --_h: 24px;
+    --_h: 28px;
     min-height: 44px;
   }
 </style>

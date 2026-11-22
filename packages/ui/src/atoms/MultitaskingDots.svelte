@@ -40,13 +40,21 @@
     width: 44px;
     height: 24px;
     padding: 6px 0 0; /* the dots sit 6 px from the top edge of the window */
-    border-radius: var(--radius-pill);
+    position: relative;
     cursor: pointer;
   }
-  .ios-mt-dots:hover {
+  /* The hover pill is drawn around the dots (6 px above and below them), not around the taller hit area, so the dots
+     sit in its middle. */
+  .ios-mt-dots:hover::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto;
+    height: 17px;
+    border-radius: var(--radius-pill);
     background: var(--fill-tertiary);
   }
   span {
+    position: relative;
     width: 5px;
     height: 5px;
     border-radius: 50%;

@@ -423,7 +423,8 @@
       transform: translateX(-50%) scale(0.92);
     }
   }
-  /* iPadOS corner grip: a short, bold arc that follows the window's corner, always visible, a button for the keyboard.
+  /* iPadOS corner grip: a short, bold arc that follows the window's corner, a button for the keyboard. The arc shows
+     only while the grip is hovered, pressed (a drag), focused from the keyboard or at a limit.
      The button is the 44 pt touch target, mostly outside the window (22 px inside it), so it never covers a corner key's
      circle; the arc is 24 px, 5 px thick, and sits 4 px inside the window's corner. */
   .resize {
@@ -450,11 +451,20 @@
     border-right: 5px solid var(--window-grip);
     border-bottom: 5px solid var(--window-grip);
     border-bottom-right-radius: calc(var(--radius-xl) - 4px);
-    transition: border-color var(--duration) var(--ease-ios);
+    opacity: 0;
+    transition:
+      border-color var(--duration) var(--ease-ios),
+      opacity var(--duration-fast) var(--ease-ios);
     pointer-events: none; /* the 44 px button is the target: the drawn arc reaches further into the corner than it */
   }
   /* A limit (the minimum size or the screen's edge): the arc turns focus-ring blue (not the accent: orange or green fail 3:1) and pushes
      back once. --focus-ring holds 3:1 on the light, dark and black bodies like the grip does. */
+  .resize:hover::after,
+  .resize:active::after,
+  .resize:focus-visible::after,
+  .resize.limit::after {
+    opacity: 1;
+  }
   .resize.limit::after {
     border-color: var(--focus-ring);
   }
