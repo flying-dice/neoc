@@ -195,7 +195,7 @@ async fn origin_null_gets_through_the_guard_for_static_reads_and_nowhere_else() 
         with_null(reqwest::Method::POST, "/apps/tasks/static/index.html").send().await.unwrap().status(),
         403
     );
-    for path in ["/apps/tasks", "/apps/bridge.js", "/session", "/rpc", "/agui/threads", "/mcp", "/"] {
+    for path in ["/apps/tasks", "/apps/bridge.js", "/session", "/rpc", "/mcp", "/"] {
         assert_eq!(with_null(reqwest::Method::GET, path).send().await.unwrap().status(), 403, "{path}");
     }
     // another origin is still refused on the static route

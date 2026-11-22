@@ -64,15 +64,6 @@ test.describe('Settings journeys', () => {
       await expect(page.getByTestId(id)).toBeDisabled()
   })
 
-  test('S5: see which agents are on this host', async ({ page }) => {
-    await openDesktop(page, { open: ['settings'] })
-    await page.getByTestId('settings-pane-agents').click()
-    const row = page.getByTestId('settings-agent-scripted')
-    await expect(row).toBeVisible()
-    await expect(row).toContainText('Scripted agent')
-    await expect(row).toContainText('Answers by script, for tests')
-  })
-
   test('S6: find out which version of vos and the host this is', async ({ page }) => {
     await openDesktop(page, { open: ['settings'] })
     await page.getByTestId('settings-pane-general').click()
@@ -92,7 +83,7 @@ test.describe('Settings journeys', () => {
     await page.getByTestId('settings-pane-devices').click()
     await expect(page.getByTestId('settings-devices')).toBeVisible()
     await page.getByTestId('settings-search-clear').click()
-    for (const id of ['general', 'appearance', 'devices', 'agents', 'notifications', 'privacy'])
+    for (const id of ['general', 'appearance', 'devices', 'notifications', 'privacy'])
       await expect(page.getByTestId(`settings-pane-${id}`)).toBeVisible()
   })
 })

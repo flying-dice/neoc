@@ -48,7 +48,8 @@ Read only the references matching the code being changed:
 | Language | Reference |
 | --- | --- |
 | Rust | [Rust](references/rust.md) |
-| TypeScript (and Svelte) | [TypeScript](references/typescript.md) |
+| TypeScript | [TypeScript](references/typescript.md) |
+| Svelte | [Svelte](references/svelte.md), plus TypeScript for its scripts |
 | Luau | [Luau](references/luau.md) |
 
 For other languages, apply the common principles through their native idioms.

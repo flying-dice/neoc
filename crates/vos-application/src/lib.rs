@@ -1,7 +1,7 @@
 //! The application ring of the hexagon: ports and use cases.
 //!
 //! Owns the PORTS (what the core needs from the outside world: app runtime, data store, tool registry,
-//! fetcher, agent connector, device registry ...) and the USE CASES that orchestrate domain objects
+//! fetcher, device registry ...) and the USE CASES that orchestrate domain objects
 //! through those ports. Adapter crates implement the ports; driving adapters (`http`, `mcp`) call the
 //! use cases.
 //!
@@ -12,9 +12,6 @@
 pub mod agents;
 #[cfg(test)]
 mod agents_tests;
-pub mod chat;
-#[cfg(test)]
-mod chat_tests;
 pub mod data;
 pub mod devices;
 pub mod error;
@@ -42,12 +39,10 @@ pub mod writeback;
 mod writeback_tests;
 
 pub use agents::{mint_agent_token, AgentError, AgentPatch, AgentService, NewAgent};
-pub use chat::{ChatError, ChatPorts, ChatService, RunEvents, PERMISSION_TTL_MS};
 pub use devices::{DeviceService, PairError, PairedDevice, PairingCode, PairingPolicy};
 pub use error::{AppError, PortError};
 pub use files::{AppFiles, FileStore, Files, NoFiles};
 pub use live::{LiveSources, SourceDef, SourceId, SourceKind, SourceUpdate, SubscriptionId, Window};
-pub use ports::{AgentProcesses, NoAgentProcesses};
 pub use services::{
     AppInfo, AppService, AppStatus, Display, Ports, StaticFile, StaticSite, MAX_CALLS_PER_APP,
 };

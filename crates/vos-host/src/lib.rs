@@ -10,12 +10,12 @@
 //! |------------------------------|-----------------------------------------------------------------------|
 //! | static client files          | none (the shell shows its pairing screen when the session is missing) |
 //! | `POST /pair`, `GET /session` | none: a pairing code is the credential for `/pair`                    |
-//! | `/rpc`, `/agui`              | a paired device's session cookie, **including from loopback**         |
+//! | `/rpc`                       | a paired device's session cookie, **including from loopback**         |
 //! | `GET /apps/{app}`            | a paired device's session cookie (an unpaired visitor gets a page that says to pair) |
 //! | `/apps/bridge.js`, `/apps/{app}/static/...` | none (a sandboxed frame sends no cookie, its module scripts send `Origin: null`: the origin guard lets those reads through, GET and HEAD under this prefix only). An app's static content is public like the shell's own files: nothing secret or personal belongs in it |
 //! | `/mcp`                       | a per-agent bearer token; a session cookie is not accepted here       |
 //!
-//! Protected is the default: `/rpc`, `/agui` and any client route added later sit in one router behind
+//! Protected is the default: `/rpc` and any client route added later sit in one router behind
 //! the session guard, and only the routes listed above are mounted outside it. Every route is behind
 //! the Origin/Host guard.
 
@@ -43,15 +43,12 @@ use std::{
     sync::{Arc, Weak},
 };
 use tokio_util::sync::CancellationToken;
-use vos_acp::AcpConnector;
-use vos_agui::{agui_router_with, DeviceStreams};
 use vos_application::{
     ports::{
-        AgentConnector, AgentDirectory, AppActivity, AppRuntime, Clock, DataStore, DeviceRegistry, EventSink,
-        Fetcher, InstalledAppStore, RandomSource, ThreadStore, ToolRegistry,
+        AgentDirectory, AppActivity, AppRuntime, Clock, DataStore, DeviceRegistry, EventSink, Fetcher,
+        InstalledAppStore, RandomSource, ToolRegistry,
     },
-    AgentProcesses, AgentService, AppService, ChatPorts, ChatService, DeviceService, FileStore,
-    NoAgentProcesses, PairingPolicy, Ports, ViewService,
+    AgentService, AppService, DeviceService, FileStore, PairingPolicy, Ports, ViewService,
 };
 use vos_domain::{limits, Agent};
 use vos_fetch::UrlFetcher;
@@ -82,12 +79,6 @@ pub struct HostConfig {
     /// Agents to add to the roster at start if they are not there yet, each with a fixed persistent MCP
     /// bearer token (tests; the binary seeds from `vos.toml` and mints tokens at runtime).
     pub agents: Vec<(String, Agent)>,
-    /// The `/mcp` URL as agents reach it (handed to every agent session); `None` starts sessions without tools.
-    pub mcp_url: Option<String>,
-    /// The working directory handed to agent sessions.
-    pub agent_cwd: PathBuf,
-    /// Replace the ACP connector (tests that script an agent in-process); `None` launches real processes.
-    pub connector: Option<Arc<dyn AgentConnector>>,
     pub pairing: PairingPolicy,
     pub clock: Arc<dyn Clock>,
     pub random: Arc<dyn RandomSource>,
@@ -114,9 +105,6 @@ impl HostConfig {
             interfaces: None,
             registries: vec![],
             agents: vec![],
-            mcp_url: Some(format!("http://127.0.0.1:{port}/mcp")),
-            agent_cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-            connector: None,
             pairing: PairingPolicy::default(),
             clock: Arc::new(platform::SystemClock),
             random: Arc::new(platform::OsRandom),
@@ -131,8 +119,6 @@ pub struct Host {
     pub devices: Arc<DeviceService>,
     /// The agent roster (contacts, grants, tokens).
     pub agents: Arc<AgentService>,
-    /// Agent chats: what `/agui` serves.
-    pub chat: Arc<ChatService>,
     pub shutdown: CancellationToken,
 }
 
@@ -154,18 +140,6 @@ pub fn open_system(data_dir: Option<&std::path::Path>) -> anyhow::Result<Arc<Sql
     Ok(Arc::new(SqliteSystemDb::open(data_dir.map(|d| d.join("system.db")).as_deref())?))
 }
 
-/// The connector the chats use, and (for the real ACP one) the handle that stops an agent's process.
-fn agent_processes(
-    scripted: Option<Arc<dyn AgentConnector>>,
-    cwd: PathBuf,
-) -> (Arc<dyn AgentConnector>, Arc<dyn AgentProcesses>) {
-    if let Some(connector) = scripted {
-        return (connector, Arc::new(NoAgentProcesses));
-    }
-    let acp = Arc::new(AcpConnector::new(cwd));
-    (acp.clone(), acp)
-}
-
 pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     let shutdown = CancellationToken::new();
 
@@ -179,12 +153,9 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     let files: Arc<dyn FileStore> = Arc::new(DiskFiles::new(cfg.data_dir.as_ref().map(|d| d.join("apps"))));
     let system = open_system(cfg.data_dir.as_deref())?;
     let random = cfg.random;
-    // the agent processes: real ACP ones unless a test scripts the connector. The roster stops a process when
-    // its agent is deleted or relaunched with other settings.
-    let (connector, processes) = agent_processes(cfg.connector, cfg.agent_cwd);
     // the roster is also the MCP adapter's directory, tells it when an agent's tool list changes, and is what
     // apps list
-    let contacts = Arc::new(AgentService::new(system.clone(), mcp_state.clone(), random.clone(), processes));
+    let contacts = Arc::new(AgentService::new(system.clone(), mcp_state.clone(), random.clone()));
     contacts.load().await?;
     let lua = Arc::new(
         LuaRuntime::new(hub.clone(), hub.clone()).with_roster(contacts.clone()).with_files(files.clone()),
@@ -193,7 +164,6 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     let tools: Arc<dyn ToolRegistry> = mcp_state.clone();
     let events: Arc<dyn EventSink> = hub.clone();
     let installed: Arc<dyn InstalledAppStore> = system.clone();
-    let thread_store: Arc<dyn ThreadStore> = system.clone();
     let registry: Arc<dyn DeviceRegistry> = system;
     let devices = Arc::new(DeviceService::new(registry, cfg.clock.clone(), random.clone(), cfg.pairing));
 
@@ -215,16 +185,6 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     for (token, agent) in cfg.agents {
         contacts.ensure(agent, Some(&token)).await?;
     }
-    let chat = ChatService::new(ChatPorts {
-        connector,
-        threads: thread_store,
-        background: Arc::new(platform::TokioBackground),
-        clock: cfg.clock,
-        random,
-        agents: contacts.clone(),
-        apps: service.clone(),
-        mcp_url: cfg.mcp_url,
-    });
     hub.bind(service.clone(), devices.clone());
     hub.bind_agents(contacts.clone());
     let views = Arc::new(ViewService::new(service.clone()));
@@ -243,15 +203,9 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
 
     // driving adapters. Everything a client may call is in `protected`; the few public routes are
     // listed below it, and /mcp has its own per-agent bearer authentication.
-    // revoking a device ends its open /agui streams (its /rpc sockets are closed by the hub)
-    let streams = Arc::new(DeviceStreams::default());
-    let to_end = streams.clone();
-    devices.on_revoked(move |device| to_end.revoke(device));
     let session = SessionConfig { devices: devices.clone(), secure_cookies: cfg.secure_cookies };
     let apps = app_routes(service.clone(), session.clone());
-    let protected = rpc_router(hub)
-        .merge(agui_router_with(chat.clone(), streams))
-        .layer(from_fn_with_state(session.clone(), require_session));
+    let protected = rpc_router(hub).layer(from_fn_with_state(session.clone(), require_session));
     // an app's static files are public: a sandboxed frame sends no cookie. The wrapper checks the session itself, to
     // answer an unpaired visitor with a page rather than the guard's JSON.
     let public = session_router(session).merge(apps.files).merge(apps.wrapper);
@@ -264,5 +218,5 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     }
     let router = router.layer(from_fn_with_state(Arc::new(guard), origin_guard));
 
-    Ok(Host { router, service, views, devices, agents: contacts, chat, shutdown })
+    Ok(Host { router, service, views, devices, agents: contacts, shutdown })
 }

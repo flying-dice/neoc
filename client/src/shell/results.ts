@@ -1,16 +1,15 @@
 /**
  * What the host answers to the shell's own calls, parsed with zod at the edge. A host of another version (or a bug in
- * one) can answer `{ "agents": null }`; a cast would carry that into the desktop and crash it on the first read. A
+ * one) can answer `{ "apps": null }`; a cast would carry that into the desktop and crash it on the first read. A
  * failed parse is an error the caller shows, never a throw out of a render.
  *
  * The shapes mirror `crates/vos-domain/src/api.rs`; the `satisfies` clauses make a drift from `hostApi.ts`
  * (and so from the generated types) a type error. Unknown fields are dropped, so a field the shell never reads
- * (an agent's runtime `env`) does not travel further than this module.
+ * does not travel further than this module.
  */
 import { uniqueBy } from '@vos/ui'
 import { z } from 'zod'
 import type {
-  AgentSummary,
   AppNotification,
   AppPreview,
   AppSummary,
@@ -70,17 +69,6 @@ export const catalogSchema = z.object({
   // registry problems are keyed by their text in the page: the same problem twice must show once
   errors: z.array(text).transform(uniqueBy((error) => error))
 }) satisfies z.ZodType<Catalog>
-
-export const agentListSchema = z.object({
-  agents: z.array(
-    z.object({
-      id: text,
-      name: text,
-      avatar: text.optional(),
-      role: text
-    }) satisfies z.ZodType<AgentSummary>
-  )
-})
 
 export const deviceListSchema = z.object({
   devices: z.array(

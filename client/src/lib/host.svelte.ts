@@ -6,9 +6,9 @@ import { createWebSocketTransport, defaultRpcUrl } from '../view/rpc/websocket'
 import { messageOf } from '../view/errors'
 import { reactiveStore } from '../view/store.svelte'
 import { createHostChannel, HostError, type CallOptions, type HostChannel } from '../shell/channel'
-import type { AgentSummary, AppSummary, Catalog, HostApi } from '../shell/hostApi'
+import type { AppSummary, Catalog, HostApi } from '../shell/hostApi'
 import { isPaired, pairDevice, type PairResult } from '../shell/pairing'
-import { agentListSchema, appListSchema, callParsed, catalogSchema } from '../shell/results'
+import { appListSchema, callParsed, catalogSchema } from '../shell/results'
 import { setInstalledApps } from './apps.svelte'
 
 /**
@@ -73,11 +73,8 @@ export class Host {
   connection = $state<'connecting' | 'online' | 'offline' | 'incompatible'>('connecting')
   /** Every installed app, whatever its state (the Dock shows the running ones). */
   apps = $state<AppSummary[]>([])
-  /** The agents on the host's roster (the desktop widget). */
-  agents = $state<AgentSummary[]>([])
-  /** The last `app.list` / `agents.list` failure (a host that is down, or answers in a shape the shell does not know). */
+  /** The last `app.list` failure (a host that is down, or answers in a shape the shell does not know). */
   appsError = $state<string | null>(null)
-  agentsError = $state<string | null>(null)
   session: Session | null = null
   private channel: HostChannel | null = null
   private fake: HostApi | null = null
@@ -151,7 +148,6 @@ export class Host {
       if (state === 'online') {
         this.phase = 'ready'
         void this.refresh()
-        void this.refreshAgents()
       } else if (state === 'offline') void this.verifyPairing()
     })
     channel.onNotification((method, params) => this.onNotification(method, params))
@@ -192,7 +188,7 @@ export class Host {
         for (const l of [...this.uninstalledListeners]) l(params.app)
       }
       void this.refresh()
-    } else if (method === 'agents.changed') void this.refreshAgents()
+    }
   }
 
   /** The host delivers an app's notification (`notification.deliver`); the shell decides whether to show it. */
@@ -235,16 +231,6 @@ export class Host {
     return this.refreshing
   }
 
-  private async refreshAgents(): Promise<void> {
-    try {
-      this.agents = (await callParsed(this.api, 'agents.list', {}, agentListSchema)).agents
-      this.agentsError = null
-    } catch (e) {
-      this.agentsError = messageOf(e)
-      console.warn('[vos] agents.list:', e)
-    }
-  }
-
   private setApps(apps: AppSummary[]): void {
     this.apps = apps
     setInstalledApps(apps)
@@ -279,7 +265,6 @@ export class Host {
     this.phase = 'ready'
     this.connection = 'online'
     this.setApps(apps)
-    void this.refreshAgents()
   }
 }
 

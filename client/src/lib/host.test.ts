@@ -94,7 +94,6 @@ function setup(deps: Partial<HostDeps> = {}) {
     ...deps
   })
   wire.answers.set('app.list', { apps: [calculator] })
-  wire.answers.set('agents.list', { agents: [{ id: 'a1', name: 'A', role: '' }] })
   return { host, wire, paired, pairing, scheduled }
 }
 
@@ -119,7 +118,7 @@ describe('connection phases', () => {
     expect(s.wire.calls).toEqual([])
   })
 
-  test('a paired browser is connecting until the host answers the handshake, then ready with its apps and agents', async () => {
+  test('a paired browser is connecting until the host answers the handshake, then ready with its apps', async () => {
     const s = setup()
     expect(s.host.phase).toBe('checking')
     await s.host.start()
@@ -129,7 +128,6 @@ describe('connection phases', () => {
     expect(s.host.phase).toBe('ready')
     expect(s.host.connection).toBe('online')
     expect(s.host.apps.map((a) => a.id)).toEqual(['calculator'])
-    expect(s.host.agents.map((a) => a.id)).toEqual(['a1'])
     expect(appOf('calculator')?.name).toBe('Calculator')
   })
 
@@ -278,14 +276,6 @@ describe('refresh coalescing', () => {
       expect(s.wire.calls.filter((m) => m === 'app.list').length - before).toBe(1)
     }
   })
-
-  test('agents.changed re-reads the roster', async () => {
-    const s = await online()
-    s.wire.answers.set('agents.list', { agents: [] })
-    s.wire.notify('agents.changed', { id: 'a1' })
-    await settle()
-    expect(s.host.agents).toEqual([])
-  })
 })
 
 describe('answers of another shape are an error state, not a crash', () => {
@@ -299,15 +289,6 @@ describe('answers of another shape are an error state, not a crash', () => {
     await s.host.refresh()
     expect(s.host.appsError).toBeNull()
     expect(s.host.apps.map((a) => a.id)).toEqual(['calculator', 'agents'])
-  })
-
-  test('{ agents: null } leaves the roster alone and sets agentsError', async () => {
-    const s = await online()
-    s.wire.answers.set('agents.list', { agents: null })
-    s.wire.notify('agents.changed', {})
-    await settle()
-    expect(s.host.agents.map((a) => a.id)).toEqual(['a1'])
-    expect(s.host.agentsError).toContain('agents.list')
   })
 
   test('a malformed catalog rejects with a message the page can show', async () => {

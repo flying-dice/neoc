@@ -1,6 +1,6 @@
 <!--
   @page DiscoverPage — the landing window: a store-style "Discover" app in an
-  iPadOS split view, introducing vos, the apps you can install and the agents on this host.
+  iPadOS split view, introducing vos and the apps you can install.
 -->
 <script lang="ts">
   import type { IconName } from '@vos/ui'
@@ -8,12 +8,10 @@
   import { IconButton, ListRow, SearchField } from '@vos/ui/molecules'
   import { ListSection, NavigationBar } from '@vos/ui/organisms'
   import { ScreenTemplate, SplitViewTemplate } from '@vos/ui/templates'
-  import AgentListing from '../molecules/AgentListing.svelte'
   import AppListing from '../molecules/AppListing.svelte'
   import { Alert } from '@vos/ui/molecules'
   import { TextInput } from '@vos/ui/atoms'
   import { windowManager as wm } from '../lib/windowManager.svelte'
-  import { AGENTS_APP_ID, appOf } from '../lib/apps.svelte'
   import { host } from '../lib/host.svelte'
   import { messageOf } from '../view/errors'
   import { appPreviewSchema, callParsed } from '../shell/results'
@@ -41,10 +39,6 @@
     /** Its digest as the catalog listed it, so the install is exactly the ref that was shown. */
     sha256?: string
   }
-
-  // The Agents app is an ordinary installed app: its entry points show only while it is running.
-  const agentsRunning = $derived(!!appOf(AGENTS_APP_ID))
-  const openAgents = (): void => wm.open(AGENTS_APP_ID)
 
   let catalog = $state<Catalog>({ apps: [], errors: [] })
   let busy = $state<Record<string, boolean>>({})
@@ -164,19 +158,18 @@
     }
   }
 
-  /** What the sidebar shows: everything, or only the apps, or only the agents of this host. */
-  type Section = 'discover' | 'apps' | 'agents'
+  /** The sidebar's rows. */
+  type Section = 'discover' | 'apps'
 
   const sections: { id: Section; label: string; icon: IconName }[] = [
     { id: 'discover', label: 'Discover', icon: 'star' },
-    { id: 'apps', label: 'Apps', icon: 'square.grid' },
-    { id: 'agents', label: 'Agents', icon: 'sparkles' }
+    { id: 'apps', label: 'Apps', icon: 'square.grid' }
   ]
 
   let section = $state<Section>('discover')
   let query = $state('')
 
-  /** The tiles floating in the hero: decoration only (they stand for no app or agent). */
+  /** The tiles floating in the hero: decoration only (they stand for no app). */
   const heroTiles = [
     { icon: 'globe', background: 'linear-gradient(180deg,#5ac8fa,#007aff)' },
     { icon: 'terminal', background: 'linear-gradient(180deg,#7d7aff,#4b45d6)' },
@@ -184,20 +177,11 @@
     { icon: 'cpu', background: 'linear-gradient(180deg,#ffb340,#ff7a00)' }
   ] satisfies { icon: IconName; background: string }[]
 
-  /** The agents on this host's roster (`agents.list`), narrowed by the search. */
-  const roster = $derived(
-    host.agents.filter((a) => `${a.name} ${a.role}`.toLowerCase().includes(query.toLowerCase()))
-  )
-  const showApps = $derived(section !== 'agents')
-  const showAgents = $derived(section !== 'apps')
-
-  const plural = (n: number, noun: string): string => `${n} ${noun}${n === 1 ? '' : 's'}`
   const information = $derived<[string, string][]>([
     [
       'Apps Running',
       `${host.apps.filter((a) => a.state === 'running').length} of ${host.apps.length}`
     ],
-    ['Agents on this Host', String(host.agents.length)],
     ['Apps Offered', String(catalog.apps.filter((a) => !a.installed).length)]
   ])
 </script>
@@ -222,11 +206,7 @@
       {/each}
     </ListSection>
     <ListSection sidebar>
-      <ListRow
-        testid="discover-account"
-        title="vos User"
-        subtitle={plural(host.agents.length, 'agent')}
-      >
+      <ListRow testid="discover-account" title="vos User">
         {#snippet leading()}
           <IconTile size={34} background="linear-gradient(180deg,#c7c7cc,#8e8e93)">
             <Icon name="person" size={20} color="#fff" />
@@ -241,9 +221,6 @@
       {#snippet navigationBar()}
         <NavigationBar testid="discover-nav" title="vos">
           {#snippet trailing()}
-            {#if agentsRunning}
-              <Button testid="discover-open" size="small" capsule onclick={openAgents}>OPEN</Button>
-            {/if}
             <IconButton testid="discover-share" icon="square.and.arrow.up" label="Share" />
           {/snippet}
         </NavigationBar>
@@ -259,25 +236,6 @@
                 Run research, code, inbox and ops agents side by side. Watch them work, step in when
                 they need you, and keep everything on your machine.
               </p>
-              <div class="hero-actions">
-                {#if agentsRunning}
-                  <Button
-                    testid="discover-hero-open-agents"
-                    size="large"
-                    capsule
-                    tint="#fff"
-                    onclick={openAgents}
-                  >
-                    <span class="hero-cta">Open Agents</span>
-                  </Button>
-                {/if}
-                <Button
-                  testid="discover-hero-ui-kit"
-                  variant="plain"
-                  tint="#fff"
-                  onclick={() => wm.open('gallery')}>Explore the UI Kit ›</Button
-                >
-              </div>
             </div>
             <div class="hero-art" aria-hidden="true">
               {#each heroTiles as tile, i (tile.icon)}
@@ -290,172 +248,136 @@
             </div>
           </section>
 
-          {#if showApps}
-            <section data-testid="discover-apps">
-              <header class="section-head">
-                <Text style="title3" weight="bold" as="h2">Apps</Text>
-              </header>
-              {#if storeError}
-                <p class="store-error" role="alert" data-testid="discover-apps-error">
-                  {storeError}
-                </p>
-              {/if}
-              <div class="listings">
-                {#each listings as l (l.id)}
-                  <AppListing
-                    testid="discover-app-{l.id}"
-                    name={l.name}
-                    detail={l.detail}
-                    description={l.description}
-                    icon={iconOf(l.icon)}
-                    background={tintBackground(l.tint)}
-                    state={l.state}
-                    message={l.message}
-                    busy={!!busy[l.id]}
-                    onget={() => void primary(l)}
-                    ontoggle={() => void toggle(l)}
-                    onremove={() => void remove(l)}
-                  />
-                {:else}
-                  <Text style="subheadline" color="secondary">
-                    {query
-                      ? `No apps match “${query}”.`
-                      : 'No apps are available yet. Add one by URL below, or build the bundled apps with `bun run build:apps`.'}
-                  </Text>
-                {/each}
-              </div>
-              {#if listings.some((l) => l.url)}
-                <p class="access-note" data-testid="discover-apps-access-note">
-                  <Text style="footnote" color="secondary"
-                    >{accessNote} Only install apps you trust.</Text
-                  >
-                </p>
-              {/if}
-              {#if host.appsError}
-                <p class="store-error" role="alert" data-testid="discover-apps-list-error">
-                  {host.appsError}
-                </p>
-              {/if}
-              {#each catalog.errors as problem (problem)}
-                <p class="store-error" role="status" data-testid="discover-registry-error">
-                  {problem}
-                </p>
+          <section data-testid="discover-apps">
+            <header class="section-head">
+              <Text style="title3" weight="bold" as="h2">Apps</Text>
+            </header>
+            {#if storeError}
+              <p class="store-error" role="alert" data-testid="discover-apps-error">
+                {storeError}
+              </p>
+            {/if}
+            <div class="listings">
+              {#each listings as l (l.id)}
+                <AppListing
+                  testid="discover-app-{l.id}"
+                  name={l.name}
+                  detail={l.detail}
+                  description={l.description}
+                  icon={iconOf(l.icon)}
+                  background={tintBackground(l.tint)}
+                  state={l.state}
+                  message={l.message}
+                  busy={!!busy[l.id]}
+                  onget={() => void primary(l)}
+                  ontoggle={() => void toggle(l)}
+                  onremove={() => void remove(l)}
+                />
+              {:else}
+                <Text style="subheadline" color="secondary">
+                  {query
+                    ? `No apps match “${query}”.`
+                    : 'No apps are available yet. Add one by URL below, or build the bundled apps with `bun run build:apps`.'}
+                </Text>
               {/each}
-
-              <form
-                class="add"
-                data-testid="discover-add"
-                onsubmit={(e) => {
-                  e.preventDefault()
-                  void showPreview()
-                }}
-              >
-                <Text style="subheadline" weight="semibold" as="h3">Add an app by URL</Text>
-                <Text style="footnote" color="secondary" as="p"
-                  >Paste the address of an app ref (https:// or file://). You will see what it is
-                  before anything is installed.</Text
+            </div>
+            {#if listings.some((l) => l.url)}
+              <p class="access-note" data-testid="discover-apps-access-note">
+                <Text style="footnote" color="secondary"
+                  >{accessNote} Only install apps you trust.</Text
                 >
-                <div class="add-row">
-                  <span class="url-box">
-                    <TextInput
-                      testid="discover-add-url"
-                      bind:value={addUrl}
-                      placeholder="https://example.org/apps/notes/app-ref.json"
-                      aria-label="App URL"
-                      autocomplete="off"
-                      spellcheck={false}
-                    />
-                  </span>
-                  <Button
-                    testid="discover-add-preview"
-                    type="submit"
-                    size="small"
-                    capsule
-                    hit
-                    disabled={!addUrl.trim() || previewing}
-                    >{previewing ? 'Looking…' : 'Preview'}</Button
-                  >
-                </div>
-                {#if previewError}
-                  <p class="store-error" role="alert" data-testid="discover-add-error">
-                    {previewError}
-                  </p>
-                {/if}
-                {#if preview}
-                  <div class="preview" data-testid="discover-add-preview-card">
-                    <IconTile size={56} background={tintBackground(preview.tint)} shadow>
-                      <Icon name={iconOf(preview.icon)} size={30} weight={1.8} color="#fff" />
-                    </IconTile>
-                    <div class="preview-meta">
-                      <Text style="headline">{preview.name}</Text>
-                      <Text style="caption1" color="secondary"
-                        >Version {preview.version} · from {preview.source}</Text
-                      >
-                      {#if preview.description}
-                        <Text style="footnote">{preview.description}</Text>
-                      {/if}
-                      {#if preview.installed}
-                        <Text style="caption1" color="secondary"
-                          >Already installed (version {preview.installed.version}).</Text
-                        >
-                      {/if}
-                      <span class="preview-actions">
-                        <Button
-                          testid="discover-add-install"
-                          size="small"
-                          capsule
-                          hit
-                          disabled={!!preview.installed || !!busy[preview.url]}
-                          onclick={() => (confirming = true)}>Install…</Button
-                        >
-                        <Button
-                          testid="discover-add-cancel"
-                          variant="plain"
-                          size="small"
-                          hit
-                          onclick={() => (preview = null)}>Cancel</Button
-                        >
-                      </span>
-                    </div>
-                  </div>
-                {/if}
-              </form>
-            </section>
-          {/if}
+              </p>
+            {/if}
+            {#if host.appsError}
+              <p class="store-error" role="alert" data-testid="discover-apps-list-error">
+                {host.appsError}
+              </p>
+            {/if}
+            {#each catalog.errors as problem (problem)}
+              <p class="store-error" role="status" data-testid="discover-registry-error">
+                {problem}
+              </p>
+            {/each}
 
-          {#if showAgents}
-            <hr />
-
-            <section data-testid="discover-agents">
-              <header class="section-head">
-                <Text style="title3" weight="bold" as="h2">Agents on this Host</Text>
-              </header>
-              <div class="listings">
-                {#each roster as agent (agent.id)}
-                  <AgentListing
-                    testid="discover-agent-{agent.id}"
-                    name={agent.name}
-                    blurb={agent.role || 'Chat with it in the Agents app.'}
-                    icon={iconOf(agent.avatar ?? 'sparkles')}
-                    background={tintBackground('purple')}
-                    action={agentsRunning ? 'open' : 'none'}
-                    onget={openAgents}
+            <form
+              class="add"
+              data-testid="discover-add"
+              onsubmit={(e) => {
+                e.preventDefault()
+                void showPreview()
+              }}
+            >
+              <Text style="subheadline" weight="semibold" as="h3">Add an app by URL</Text>
+              <Text style="footnote" color="secondary" as="p"
+                >Paste the address of an app ref (https:// or file://). You will see what it is
+                before anything is installed.</Text
+              >
+              <div class="add-row">
+                <span class="url-box">
+                  <TextInput
+                    testid="discover-add-url"
+                    bind:value={addUrl}
+                    placeholder="https://example.org/apps/notes/app-ref.json"
+                    aria-label="App URL"
+                    autocomplete="off"
+                    spellcheck={false}
                   />
-                {:else}
-                  <Text style="subheadline" color="secondary">
-                    {query
-                      ? `No agents match “${query}”.`
-                      : 'No agents on this host yet. Add one to vos.toml.'}
-                  </Text>
-                {/each}
+                </span>
+                <Button
+                  testid="discover-add-preview"
+                  type="submit"
+                  size="small"
+                  capsule
+                  hit
+                  disabled={!addUrl.trim() || previewing}
+                  >{previewing ? 'Looking…' : 'Preview'}</Button
+                >
               </div>
-              {#if host.agentsError}
-                <p class="store-error" role="alert" data-testid="discover-agents-error">
-                  {host.agentsError}
+              {#if previewError}
+                <p class="store-error" role="alert" data-testid="discover-add-error">
+                  {previewError}
                 </p>
               {/if}
-            </section>
-          {/if}
+              {#if preview}
+                <div class="preview" data-testid="discover-add-preview-card">
+                  <IconTile size={56} background={tintBackground(preview.tint)} shadow>
+                    <Icon name={iconOf(preview.icon)} size={30} weight={1.8} color="#fff" />
+                  </IconTile>
+                  <div class="preview-meta">
+                    <Text style="headline">{preview.name}</Text>
+                    <Text style="caption1" color="secondary"
+                      >Version {preview.version} · from {preview.source}</Text
+                    >
+                    {#if preview.description}
+                      <Text style="footnote">{preview.description}</Text>
+                    {/if}
+                    {#if preview.installed}
+                      <Text style="caption1" color="secondary"
+                        >Already installed (version {preview.installed.version}).</Text
+                      >
+                    {/if}
+                    <span class="preview-actions">
+                      <Button
+                        testid="discover-add-install"
+                        size="small"
+                        capsule
+                        hit
+                        disabled={!!preview.installed || !!busy[preview.url]}
+                        onclick={() => (confirming = true)}>Install…</Button
+                      >
+                      <Button
+                        testid="discover-add-cancel"
+                        variant="plain"
+                        size="small"
+                        hit
+                        onclick={() => (preview = null)}>Cancel</Button
+                      >
+                    </span>
+                  </div>
+                </div>
+              {/if}
+            </form>
+          </section>
 
           <hr />
 
@@ -528,15 +450,6 @@
     margin: 0;
     font: var(--type-callout);
     opacity: 0.9;
-  }
-  .hero-actions {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    margin-top: 12px;
-  }
-  .hero-cta {
-    color: #4b2bd6;
   }
   .hero-art {
     position: absolute;
@@ -653,7 +566,7 @@
   }
   .info {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(2, 1fr);
     gap: 14px 24px;
     margin: 12px 0 0;
   }
@@ -677,12 +590,6 @@
     .hero h1 {
       font: var(--type-title2);
       font-weight: 700;
-    }
-    .hero-actions {
-      flex-wrap: wrap;
-    }
-    .info {
-      grid-template-columns: repeat(2, 1fr);
     }
   }
 </style>

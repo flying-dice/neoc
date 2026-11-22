@@ -1,12 +1,9 @@
 // @organisms barrel — generated listing; keep alphabetical.
-export { default as ChatThread } from './ChatThread.svelte'
-export { default as Composer } from './Composer.svelte'
 export { default as Dock } from './Dock.svelte'
 export { default as List } from './List.svelte'
 export { default as ListSection } from './ListSection.svelte'
 export { default as NavigationBar } from './NavigationBar.svelte'
 export { default as NavigationStack } from './NavigationStack.svelte'
-export { default as SessionBar } from './SessionBar.svelte'
 export { default as StageStrip } from './StageStrip.svelte'
 export { default as StatusBar } from './StatusBar.svelte'
 export { default as TabBar } from './TabBar.svelte'

@@ -1,12 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import {
-  agentListSchema,
-  appListSchema,
-  callParsed,
-  catalogSchema,
-  deviceListSchema,
-  ResultError
-} from './results'
+import { appListSchema, callParsed, catalogSchema, deviceListSchema, ResultError } from './results'
 import type { HostApi } from './hostApi'
 
 const apiAnswering = (result: unknown): HostApi => ({
@@ -32,14 +25,14 @@ describe('callParsed', () => {
 
   test('a result of another shape rejects with a ResultError naming the method and the field', async () => {
     const error = await callParsed(
-      apiAnswering({ agents: null }),
-      'agents.list',
+      apiAnswering({ apps: null }),
+      'app.list',
       {},
-      agentListSchema
+      appListSchema
     ).catch((e: unknown) => e)
     expect(error).toBeInstanceOf(ResultError)
-    expect((error as ResultError).message).toContain('agents.list')
-    expect((error as ResultError).message).toContain('agents')
+    expect((error as ResultError).message).toContain('app.list')
+    expect((error as ResultError).message).toContain('apps')
   })
 
   test.each([null, 'ok', 7, [], { devices: [{ id: 1 }] }])(
@@ -65,16 +58,14 @@ describe('callParsed', () => {
     expect(error).toBeInstanceOf(ResultError)
   })
 
-  test('fields the shell does not read are dropped (an agent’s runtime env never travels further)', async () => {
-    const { agents } = await callParsed(
-      apiAnswering({
-        agents: [{ id: 'a', name: 'A', role: '', runtime: { env: { TOKEN: 'secret' } } }]
-      }),
-      'agents.list',
+  test('fields the shell does not read are dropped', async () => {
+    const { apps } = await callParsed(
+      apiAnswering({ apps: [{ ...app, secret: { TOKEN: 'secret' } }] }),
+      'app.list',
       {},
-      agentListSchema
+      appListSchema
     )
-    expect(agents[0]).toEqual({ id: 'a', name: 'A', role: '' })
+    expect(apps[0] as unknown).toEqual(app)
   })
 })
 

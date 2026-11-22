@@ -5,8 +5,8 @@
 mod common;
 
 use common::{
-    agents::{install_ledger, launchable, run_body, sse_events},
-    call, connect_agent, connect_rpc, pair, rpc, start, text_of, tool_names, wait_until, Ws,
+    agents::install_ledger, call, connect_agent, connect_rpc, pair, rpc, start, text_of, tool_names,
+    wait_until, Ws,
 };
 use serde_json::{json, Value};
 use std::sync::atomic::Ordering;
@@ -64,61 +64,6 @@ async fn an_agent_with_its_own_token_calls_a_granted_tool_attributed_and_is_deni
         "{report}"
     );
     assert_eq!(who(&r).await, json!(["agent:fake:Fake"]), "the readOnly tool wrote nothing");
-    r.stop().await;
-}
-
-#[tokio::test]
-async fn a_host_launched_agent_reaches_the_tools_with_its_own_session_token_not_anyone_elses() {
-    let r =
-        start(|c| c.agents = vec![("tok-fake".into(), launchable("fake", "Fake", grants_ledger()))]).await;
-    install_ledger(&r).await;
-    let cookie = pair(&r, "Mac").await;
-    let http = reqwest::Client::new();
-    let ensure = http
-        .post(r.url("/agui/threads"))
-        .header("cookie", &cookie)
-        .json(&json!({"threadId": "t1", "agentId": "fake"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(ensure.status(), 200);
-    // the scripted agent reports the MCP server it was given in session/new: our URL and a bearer token
-    let body = run_body("t1", "r1", "mcp", "fake");
-    let events = sse_events(
-        &http
-            .post(r.url("/agui"))
-            .header("cookie", &cookie)
-            .json(&body)
-            .send()
-            .await
-            .unwrap()
-            .text()
-            .await
-            .unwrap(),
-    );
-    let said: String = events
-        .iter()
-        .filter(|e| e["type"] == "TEXT_MESSAGE_CONTENT")
-        .map(|e| e["delta"].as_str().unwrap())
-        .collect();
-    let token = said.split("auth=Bearer ").nth(1).expect("the agent got a token").trim().to_owned();
-    assert!(said.contains(&format!("http://127.0.0.1:{}/mcp", r.addr.port())), "{said}");
-    assert_ne!(token, "tok-fake", "not the persistent token: a launch token minted for this session");
-
-    // that token is a real credential for this agent: tools filtered by its grants, calls attributed to it
-    let (agent, _) = connect_agent(r.addr, &token).await;
-    assert_eq!(tool_names(&agent).await, ["ledger__add", "ledger__peek", "ledger__sneaky"]);
-    call(&agent, "ledger__add", json!({})).await;
-    assert_eq!(who(&r).await, json!(["agent:fake:Fake"]));
-    // and it is not a device session
-    let as_session = http
-        .post(r.url("/agui"))
-        .header("cookie", format!("vos_session={token}"))
-        .json(&json!({}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(as_session.status(), 401);
     r.stop().await;
 }
 

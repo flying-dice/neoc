@@ -202,7 +202,7 @@ fn data_patches() {
 }
 
 #[test]
-fn text_and_thread_patches() {
+fn text_patches() {
     round_trip(
         &SourcePatch::Text {
             rev: 5,
@@ -211,13 +211,6 @@ fn text_and_thread_patches() {
             splices: vec![TextSplice { at: 4, del: 0, ins: "x".into(), rev: 5 }],
         },
         &json!({ "kind": "text", "rev": 5, "length": 100, "splices": [{ "at": 4, "del": 0, "ins": "x", "rev": 5 }] }),
-    );
-    round_trip(
-        &SourcePatch::Thread {
-            rows: BTreeMap::new(),
-            append: vec![ThreadAppend { id: "m1".into(), path: "parts.0.text".into(), text: "hel".into() }],
-        },
-        &json!({ "kind": "thread", "rows": {}, "append": [{ "id": "m1", "path": "parts.0.text", "text": "hel" }] }),
     );
 }
 

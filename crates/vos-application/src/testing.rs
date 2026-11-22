@@ -7,8 +7,7 @@ use crate::{
         AgentDirectory, AgentStore, AppData, AppPackage, AppRuntime, Background, CallContext, ChangeBatch,
         ChangeFeed, Clock, DataStore, DataTx, DeviceRegistry, EventSink, ExecOutcome, Fetcher, InstalledApp,
         InstalledAppStore, LoadedApp, Params, PortResult, QueryInfo, RandomSource, RenderOutput, ServerEvent,
-        Shell, SourceBinding, SqlMigration, StoredThread, TaskHandle, ThreadStore, ToolRegistry, ViewEffect,
-        ViewEventCall,
+        Shell, SourceBinding, SqlMigration, TaskHandle, ToolRegistry, ViewEffect, ViewEventCall,
     },
     services::{AppService, Ports},
     PortError,
@@ -1179,28 +1178,5 @@ impl AgentStore for MemAgentStore {
     }
     async fn token_hashes(&self) -> PortResult<Vec<(AgentId, String)>> {
         Ok(self.agents.lock().unwrap().iter().filter_map(|(a, h)| Some((a.id.clone(), h.clone()?))).collect())
-    }
-}
-
-/// In-memory transcripts.
-#[derive(Default)]
-pub struct MemThreadStore(Mutex<HashMap<String, StoredThread>>);
-impl MemThreadStore {
-    pub fn get(&self, id: &str) -> Option<StoredThread> {
-        self.0.lock().unwrap().get(id).cloned()
-    }
-}
-#[async_trait]
-impl ThreadStore for MemThreadStore {
-    async fn load(&self, thread_id: &str) -> PortResult<Option<StoredThread>> {
-        Ok(self.get(thread_id))
-    }
-    async fn save(&self, thread_id: &str, thread: &StoredThread, _now_ms: u64) -> PortResult<()> {
-        self.0.lock().unwrap().insert(thread_id.to_owned(), thread.clone());
-        Ok(())
-    }
-    async fn delete(&self, thread_id: &str) -> PortResult<()> {
-        self.0.lock().unwrap().remove(thread_id);
-        Ok(())
     }
 }

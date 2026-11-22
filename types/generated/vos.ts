@@ -61,13 +61,8 @@ v: JsonValue,
  * The revision.
  */
 r: number, };
-export type SourcePatch = { "kind": "rows", total: number, from: number, keys: Array<JsonValue>, rows: { [key in string]: JsonValue }, drop?: Array<JsonValue>, } | { "kind": "row", rev: number, row: JsonValue | null, } | { "kind": "value", value: JsonValue, } | { "kind": "text", rev: number, length: number, value?: string, splices?: Array<TextSplice>, } | { "kind": "thread", rows: { [key in string]: JsonValue }, append?: Array<ThreadAppend>, };
+export type SourcePatch = { "kind": "rows", total: number, from: number, keys: Array<JsonValue>, rows: { [key in string]: JsonValue }, drop?: Array<JsonValue>, } | { "kind": "row", rev: number, row: JsonValue | null, } | { "kind": "value", value: JsonValue, } | { "kind": "text", rev: number, length: number, value?: string, splices?: Array<TextSplice>, };
 export type TextSplice = { at: number, del: number, ins: string, rev: number, };
-export type ThreadAppend = { id: string, 
-/**
- * `parts.0.text`
- */
-path: string, text: string, };
 export type TotalMode = "exact" | "estimate" | "none";
 export type ConflictPolicy = "merge" | "reject";
 export type SourceDecl = { "kind": "rows", 
@@ -90,7 +85,7 @@ writable?: Array<string>,
 /**
  * The revision column used for conflict detection.
  */
-rev?: string, conflict?: ConflictPolicy, params: { [key: string]: JsonValue }, } | { "kind": "value", params: { [key: string]: JsonValue }, } | { "kind": "text", params: { [key: string]: JsonValue }, } | { "kind": "thread", params: { [key: string]: JsonValue }, };
+rev?: string, conflict?: ConflictPolicy, params: { [key: string]: JsonValue }, } | { "kind": "value", params: { [key: string]: JsonValue }, } | { "kind": "text", params: { [key: string]: JsonValue }, };
 export type Persist = "none" | "session" | "app";
 export type SyncMode = "none" | "change" | "commit";
 export type ClientDecl = { 
@@ -392,7 +387,7 @@ export type CommonEvents = {
   drop?: Handler
 }
 
-export type ComponentName = 'Stack' | 'ZStack' | 'Grid' | 'ScrollView' | 'Spacer' | 'Divider' | 'Group' | 'Adaptive' | 'Scope' | 'Show' | 'ForEach' | 'Card' | 'Screen' | 'NavigationStack' | 'NavigationLink' | 'SplitView' | 'TabView' | 'List' | 'Section' | 'Row' | 'Form' | 'LabeledContent' | 'DisclosureGroup' | 'Shortcut' | 'Button' | 'Toggle' | 'Slider' | 'Stepper' | 'Picker' | 'DatePicker' | 'ColorPicker' | 'TextField' | 'SecureField' | 'TextEditor' | 'SearchField' | 'Sheet' | 'Popover' | 'Alert' | 'ConfirmationDialog' | 'Menu' | 'Text' | 'Label' | 'Icon' | 'Image' | 'Badge' | 'ProgressView' | 'Markdown' | 'Avatar' | 'EmptyState' | 'Table' | 'LazyGrid' | 'Outline' | 'Skeleton' | 'Gauge' | 'Chip' | 'TokenField' | 'Banner' | 'Link' | 'ChatTranscript' | 'CalendarGrid' | 'Preview' | 'Canvas' | 'CodeEditor' | 'DiffView' | 'TerminalView' | 'Rating' | 'Chart' | 'Sparkline' | 'Breadcrumb' | 'Inspector'
+export type ComponentName = 'Stack' | 'ZStack' | 'Grid' | 'ScrollView' | 'Spacer' | 'Divider' | 'Group' | 'Adaptive' | 'Scope' | 'Show' | 'ForEach' | 'Card' | 'Screen' | 'NavigationStack' | 'NavigationLink' | 'SplitView' | 'TabView' | 'List' | 'Section' | 'Row' | 'Form' | 'LabeledContent' | 'DisclosureGroup' | 'Shortcut' | 'Button' | 'Toggle' | 'Slider' | 'Stepper' | 'Picker' | 'DatePicker' | 'ColorPicker' | 'TextField' | 'SecureField' | 'TextEditor' | 'SearchField' | 'Sheet' | 'Popover' | 'Alert' | 'ConfirmationDialog' | 'Menu' | 'Text' | 'Label' | 'Icon' | 'Image' | 'Badge' | 'ProgressView' | 'Markdown' | 'Avatar' | 'EmptyState' | 'Table' | 'LazyGrid' | 'Outline' | 'Skeleton' | 'Gauge' | 'Chip' | 'TokenField' | 'Banner' | 'Link' | 'CalendarGrid' | 'Preview' | 'Canvas' | 'CodeEditor' | 'DiffView' | 'TerminalView' | 'Rating' | 'Chart' | 'Sparkline' | 'Breadcrumb' | 'Inspector'
 
 export type ComponentMeta = {
   tier: 1 | 2 | 3
@@ -471,7 +466,6 @@ export const COMPONENTS = {
   TokenField: { tier: 2, since: '1.0', group: 'Controls', interactive: false, positional: null, role: '', name: null, bindings: {  }, events: ['appear', 'disappear', 'drop'], slots: ['contextMenu', 'fallback', 'tabItem'], children: 'any', openProps: true },
   Banner: { tier: 2, since: '1.0', group: 'Presentation', interactive: false, positional: null, role: '', name: null, bindings: {  }, events: ['appear', 'disappear', 'drop'], slots: ['contextMenu', 'fallback', 'tabItem'], children: 'any', openProps: true },
   Link: { tier: 2, since: '1.0', group: 'Navigation', interactive: false, positional: null, role: '', name: null, bindings: {  }, events: ['appear', 'disappear', 'drop'], slots: ['contextMenu', 'fallback', 'tabItem'], children: 'any', openProps: true },
-  ChatTranscript: { tier: 2, since: '1.0', group: 'Advanced', interactive: true, positional: null, role: 'log', name: null, bindings: {  }, events: ['send', 'stop', 'appear', 'disappear', 'drop'], slots: ['contextMenu', 'fallback', 'tabItem'], children: 'none', openProps: false },
   CalendarGrid: { tier: 2, since: '1.0', group: 'Advanced', interactive: false, positional: null, role: '', name: null, bindings: {  }, events: ['appear', 'disappear', 'drop'], slots: ['contextMenu', 'fallback', 'tabItem'], children: 'any', openProps: true },
   Preview: { tier: 2, since: '1.0', group: 'Advanced', interactive: false, positional: null, role: '', name: null, bindings: {  }, events: ['appear', 'disappear', 'drop'], slots: ['contextMenu', 'fallback', 'tabItem'], children: 'any', openProps: true },
   Canvas: { tier: 3, since: '1.0', group: 'Advanced', interactive: false, positional: null, role: '', name: null, bindings: {  }, events: ['appear', 'disappear', 'drop'], slots: ['contextMenu', 'fallback', 'tabItem'], children: 'any', openProps: true },
@@ -1367,23 +1361,6 @@ export type LinkNode = {
   on?: CommonEvents
 }
 
-/** An agent chat bound to a `thread` source: streaming messages, reasoning (collapsed), a one-line summary of each turn's activity (counts, not tool lists), permission prompts (allow once, always, deny), errors, the session bar (mode, model and effort, slash commands, context usage) and a composer with a stop button. The thread's data arrives over `/agui`, not through `data.patch`: the source only names the thread and the agent. (Tier 2, since 1.0) */
-export type ChatTranscriptProps = CommonProps & {
-  /** A `thread` source: `params` are the thread id (`thread`) and the agent (`agent`). */
-  thread: string
-  /** The composer's placeholder. */
-  placeholder?: Expr<string>
-  /** `false` shows the transcript without a composer. */
-  composer?: Expr<boolean>
-}
-export type ChatTranscriptNode = {
-  type: 'ChatTranscript'
-  key: string
-  props: ChatTranscriptProps
-  slots?: { contextMenu?: Array<TypedNode>; fallback?: Array<TypedNode>; tabItem?: Array<TypedNode> }
-  on?: CommonEvents & { send?: Handler; stop?: Handler }
-}
-
 /** Placeholder. Month, week and day views over event sources. (Tier 2, since 1.0) */
 export type CalendarGridProps = CommonProps & { [prop: string]: Expr }
 export type CalendarGridNode = {
@@ -1565,7 +1542,6 @@ export type TypedNode =
   | TokenFieldNode
   | BannerNode
   | LinkNode
-  | ChatTranscriptNode
   | CalendarGridNode
   | PreviewNode
   | CanvasNode
@@ -1618,8 +1594,6 @@ export interface EventPayloads {
   'EmptyState.action': {  }
   'Table.sort': {  }
   'Table.tap': {  }
-  'ChatTranscript.send': { text: string }
-  'ChatTranscript.stop': {  }
 }
 
 /** The closed, pure, presentation-only function set. */

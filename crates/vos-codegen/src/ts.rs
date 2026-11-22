@@ -15,9 +15,9 @@ use vos_domain::ui::{
     protocol::{
         AppNotification, ClientSet, ClientState, Command, DataPatch, Draft, Empty, EventAck, Op, Range,
         ResumeView, RowRestore, RowSet, SessionHello, SessionResume, SessionWelcome, Size, SourcePatch,
-        SourceSet, StateSet, StateValue, TextSplice, ThemeSet, ThreadAppend, Toast, ToastAction, Undo,
-        ViewClosed, ViewCommand, ViewError, ViewEvent, ViewOpen, ViewOps, ViewRef, ViewResize, ViewResume,
-        ViewSnapshot, ViewTree, ViewVisibility, WindowOpen, WriteAck, WriteResolution, METHODS,
+        SourceSet, StateSet, StateValue, TextSplice, ThemeSet, Toast, ToastAction, Undo, ViewClosed,
+        ViewCommand, ViewError, ViewEvent, ViewOpen, ViewOps, ViewRef, ViewResize, ViewResume, ViewSnapshot,
+        ViewTree, ViewVisibility, WindowOpen, WriteAck, WriteResolution, METHODS,
     },
     source::{ClientDecl, ConflictPolicy, Persist, SourceDecl, SyncMode, TotalMode},
     spec::{
@@ -91,7 +91,6 @@ fn protocol() -> String {
     add(StateValue::decl(&cfg));
     add(SourcePatch::decl(&cfg));
     add(TextSplice::decl(&cfg));
-    add(ThreadAppend::decl(&cfg));
     add(TotalMode::decl(&cfg));
     add(ConflictPolicy::decl(&cfg));
     add(SourceDecl::decl(&cfg));

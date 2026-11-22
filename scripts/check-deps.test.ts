@@ -15,12 +15,6 @@ function workspace(
     "vos-sqlite": ["vos-domain", "vos-application", "rusqlite"],
     "vos-fetch": ["vos-application"],
     "vos-mcp": ["vos-domain", "vos-application", "rmcp", "axum"],
-    "vos-acp": [
-      "vos-domain",
-      "vos-application",
-      "agent-client-protocol",
-    ],
-    "vos-agui": ["vos-domain", "vos-application", "axum"],
     "vos-http": ["vos-domain", "vos-application", "axum"],
     "vos-codegen": ["vos-domain"],
     "vos-host": [
@@ -30,8 +24,6 @@ function workspace(
       "vos-sqlite",
       "vos-fetch",
       "vos-mcp",
-      "vos-acp",
-      "vos-agui",
       "vos-http",
       "axum",
       "axum-server",
@@ -91,10 +83,10 @@ describe("the crate-direction gate", () => {
     const fetchAxum = (kind: string | null) =>
       workspace({ "vos-fetch": [{ name: "axum", kind }] });
     expect(findProblems(fetchAxum(null)).problems).toEqual([
-      "vos-fetch -> axum: framework crate is not allowed here as a normal dependency (allowed in: vos-http, vos-mcp, vos-agui, vos-host)",
+      "vos-fetch -> axum: framework crate is not allowed here as a normal dependency (allowed in: vos-http, vos-mcp, vos-host)",
     ]);
     expect(findProblems(fetchAxum("build")).problems).toEqual([
-      "vos-fetch -> axum: framework crate is not allowed here as a build dependency (allowed in: vos-http, vos-mcp, vos-agui, vos-host)",
+      "vos-fetch -> axum: framework crate is not allowed here as a build dependency (allowed in: vos-http, vos-mcp, vos-host)",
     ]);
     expect(findProblems(fetchAxum("dev")).problems).toEqual([]);
     expect(

@@ -1,58 +1,7 @@
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
-//! Agents over AG-UI and MCP: the scripted ACP agent, SSE helpers and a small app with a readOnly tool that
-//! tries to write.
+//! Agents over MCP: a small app with a readOnly tool that tries to write.
 
-use super::{agent_with, publish_package, temp, Running};
-use serde_json::{json, Value};
-use std::path::PathBuf;
-use vos_domain::{Agent, AgentRuntime, Grants};
-
-/// The scripted ACP agent of `vos-acp` (a workspace binary): built on demand when this test run did not
-/// already build it, so `cargo nextest run -p vos-host` works on its own.
-pub fn fake_agent_path() -> PathBuf {
-    static BUILT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-    BUILT
-        .get_or_init(|| {
-            let exe = std::env::current_exe().unwrap();
-            // target/<profile>/deps/<test> -> target/<profile> (with cargo's newer build-dir layout the test sits in
-            // target/<profile>/build/<package>/<hash>/out: the profile directory is the nearest `debug`/`release`)
-            let profile_dir = exe
-                .ancestors()
-                .find(|p| p.file_name().is_some_and(|n| n == "debug" || n == "release"))
-                .unwrap();
-            let path = profile_dir.join(if cfg!(windows) { "fake_agent.exe" } else { "fake_agent" });
-            if !path.exists() {
-                let status = std::process::Command::new(env!("CARGO"))
-                    .args(["build", "-q", "-p", "vos-acp", "--bin", "fake_agent"])
-                    .status()
-                    .unwrap();
-                assert!(status.success(), "building the fake agent");
-            }
-            assert!(path.exists(), "no fake agent at {}", path.display());
-            path
-        })
-        .clone()
-}
-
-/// An agent the host can launch: the scripted fake.
-pub fn launchable(id: &str, name: &str, grants: Grants) -> Agent {
-    let mut agent = agent_with(id, name, grants);
-    agent.runtime =
-        AgentRuntime { command: fake_agent_path().to_string_lossy().into_owned(), ..AgentRuntime::default() };
-    agent
-}
-
-/// The events of an SSE body, in order.
-pub fn sse_events(body: &str) -> Vec<Value> {
-    body.split("\n\n")
-        .filter_map(|frame| frame.lines().find_map(|l| l.strip_prefix("data:")))
-        .map(|d| serde_json::from_str(d.trim()).unwrap())
-        .collect()
-}
-
-pub fn event_types(events: &[Value]) -> Vec<String> {
-    events.iter().map(|e| e["type"].as_str().unwrap().to_owned()).collect()
-}
+use super::{publish_package, temp, Running};
 
 const LEDGER: &str = r#"
 app.manifest { id = "ledger", name = "Ledger", icon = "gear" }
@@ -106,24 +55,4 @@ pub async fn install_ledger(r: &Running) {
         &[("app.luau", LEDGER.as_bytes().to_vec())],
     );
     r.host.service.install_from_url(&url).await.unwrap();
-}
-
-/// `{"threadId", "runId", "messages": [user text], "forwardedProps": {"agentId"}}`
-pub fn run_body(thread: &str, run: &str, text: &str, agent: &str) -> Value {
-    json!({
-        "threadId": thread, "runId": run,
-        "messages": [{"id": format!("u-{run}"), "role": "user", "content": text}],
-        "forwardedProps": {"agentId": agent},
-    })
-}
-
-pub fn resume_body(thread: &str, run: &str, interrupt: &str, option: Option<&str>) -> Value {
-    json!({
-        "threadId": thread, "runId": run,
-        "resume": [{
-            "interruptId": interrupt,
-            "status": if option.is_some() { "resolved" } else { "cancelled" },
-            "payload": option.map(|o| json!({"optionId": o})),
-        }],
-    })
 }

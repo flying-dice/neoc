@@ -366,7 +366,6 @@ fn source_decl(def: &SourceDef, params: &Value, writable: &BTreeSet<String>) -> 
             params,
         },
         SourceKind::Scalar => SourceDecl::Value { params },
-        SourceKind::Thread => SourceDecl::Thread { params },
     }
 }
 

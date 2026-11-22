@@ -32,7 +32,6 @@ const BUILTIN_PAGES: Record<string, string> = {
   discover: 'DiscoverPage.svelte',
   settings: 'SettingsPage.svelte',
   files: 'FilesPage.svelte',
-  gallery: 'GalleryPage.svelte',
   terminal: 'TerminalPage.svelte'
 }
 

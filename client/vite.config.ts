@@ -9,16 +9,31 @@
  *   bun run build      → dist/ (the host serves it)
  */
 import { resolve } from 'node:path'
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 
 const here = import.meta.dirname
 const host = process.env.VOS_HOST ?? 'http://127.0.0.1:7400'
 
+/**
+ * The kit (`/kit/kit.js`, `/kit/tokens.css`) is read by app pages in a sandboxed frame, an opaque origin (`Origin: null`),
+ * and its stylesheet is loaded `crossorigin`. The host answers `/kit/` with `Access-Control-Allow-Origin: *`; Vite's own
+ * CORS allows only localhost origins, so the dev server says the same here, or an app's page loses the kit's styles.
+ */
+const kitCors = (): Plugin => ({
+  name: 'vos-kit-cors',
+  configureServer(server) {
+    server.middlewares.use((req, res, next) => {
+      if (req.url?.startsWith('/kit/')) res.setHeader('Access-Control-Allow-Origin', '*')
+      next()
+    })
+  }
+})
+
 export default defineConfig({
   root: here,
   publicDir: resolve(here, 'public'),
-  plugins: [svelte({ configFile: resolve(here, 'svelte.config.mjs') })],
+  plugins: [svelte({ configFile: resolve(here, 'svelte.config.mjs') }), kitCors()],
   build: {
     target: 'esnext',
     outDir: resolve(here, 'dist'),
@@ -43,7 +58,6 @@ export default defineConfig({
       '/rpc': { target: host.replace(/^http/, 'ws'), ws: true },
       '/session': host,
       '/pair': host,
-      '/agui': host,
       '/apps': host,
       '/wrapper.js': host,
       '/mcp': host

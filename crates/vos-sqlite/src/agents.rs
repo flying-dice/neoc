@@ -1,14 +1,14 @@
-//! The system database's agent contacts (`agents`) and chat transcripts (`threads`), behind the `AgentStore`
-//! and `ThreadStore` ports. A bearer token is stored only as its SHA-256 hash.
+//! The system database's agent contacts (`agents`), behind the `AgentStore` port. A bearer token is stored only
+//! as its SHA-256 hash.
 
-use crate::devices::{sql_ms, SqliteSystemDb};
+use crate::devices::SqliteSystemDb;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use vos_application::{
-    ports::{AgentStore, PortResult, StoredThread, ThreadStore},
+    ports::{AgentStore, PortResult},
     PortError,
 };
-use vos_domain::{thread::ThreadMessage, Agent, AgentId, AgentRuntime, ApprovalPolicy, Grants};
+use vos_domain::{Agent, AgentId, AgentRuntime, ApprovalPolicy, Grants};
 
 /// Contacts. `args`, `env` and `grants` are JSON text; `token_hash` is NULL until a token is minted.
 pub(crate) const AGENTS: &str = "
@@ -26,7 +26,9 @@ CREATE TABLE agents(
     created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
 );";
 
-/// A chat transcript per thread: the whole AG-UI message list as JSON, rewritten when a turn ends.
+/// The chat transcripts the host kept when it ran chat itself. Nothing reads or writes the table any more: the
+/// migration stays in the list so that the numbering of the system database's migrations does not change, and a
+/// database that already has the table is left as it is.
 pub(crate) const THREADS: &str = "
 CREATE TABLE threads(
     id         TEXT PRIMARY KEY,
@@ -135,39 +137,5 @@ impl AgentStore for SqliteSystemDb {
                 Some((AgentId(r["id"].as_str()?.to_owned()), r["token_hash"].as_str()?.to_owned()))
             })
             .collect())
-    }
-}
-
-#[async_trait]
-impl ThreadStore for SqliteSystemDb {
-    async fn load(&self, thread_id: &str) -> PortResult<Option<StoredThread>> {
-        let rows = self
-            .db
-            .query("SELECT agent_id, messages FROM threads WHERE id = ?1".into(), vec![json!(thread_id)])
-            .await?;
-        let Some(row) = rows.first() else { return Ok(None) };
-        let (Some(agent), Some(text)) = (row["agent_id"].as_str(), row["messages"].as_str()) else {
-            return Ok(None);
-        };
-        // an unreadable transcript is dropped rather than blocking the thread
-        let messages: Vec<ThreadMessage> = serde_json::from_str(text).unwrap_or_default();
-        Ok(Some(StoredThread { agent_id: AgentId(agent.to_owned()), messages }))
-    }
-
-    async fn save(&self, thread_id: &str, thread: &StoredThread, now_ms: u64) -> PortResult<()> {
-        self.db
-            .exec(
-                "INSERT INTO threads(id, agent_id, messages, updated_at) VALUES(?1, ?2, ?3, ?4) \
-                 ON CONFLICT(id) DO UPDATE SET messages = excluded.messages, updated_at = excluded.updated_at"
-                    .into(),
-                vec![json!(thread_id), json!(thread.agent_id.0), json_text(&thread.messages)?, sql_ms(now_ms)],
-            )
-            .await?;
-        Ok(())
-    }
-
-    async fn delete(&self, thread_id: &str) -> PortResult<()> {
-        self.db.exec("DELETE FROM threads WHERE id = ?1".into(), vec![json!(thread_id)]).await?;
-        Ok(())
     }
 }

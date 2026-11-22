@@ -177,7 +177,7 @@ describe('which apps the repository check leaves to their own project', () => {
       expect(inViteApp(file, isProject)).toBe(true)
   })
   test('a view-tree app, a fixture and a file named like a project elsewhere are still checked', () => {
-    for (const file of ['apps/agents/app.luau', 'crates/vos-codegen/tests/fixtures/calculator/app.luau', 'scripts/fixtures/usage.luau', 'apps'])
+    for (const file of ['apps/notes/app.luau', 'crates/vos-codegen/tests/fixtures/calculator/app.luau', 'scripts/fixtures/usage.luau', 'apps'])
       expect(inViteApp(file, isProject)).toBe(false)
   })
 })

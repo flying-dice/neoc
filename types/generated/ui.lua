@@ -975,19 +975,6 @@ local COMPONENTS = {
 		groups = {},
 		prefixes = {},
 	},
-	ChatTranscript = {
-		name = "ChatTranscript",
-		label = "ChatTranscript",
-		positional = nil,
-		props = { thread = true, placeholder = true, composer = true, testid = true, label = true, hint = true, hidden = true, disabled = true, padding = true, frame = true, grow = true, align = true, background = true, foreground = true, tint = true, corner = true, help = true, shortcut = true, drag = true, drop = true, animation = true, tag = true, span = true, rowStart = true, colStart = true },
-		bindings = {},
-		sources = { thread = true },
-		events = { onSend = "send", onStop = "stop", onAppear = "appear", onDisappear = "disappear", onDrop = "drop" },
-		slots = { contextMenu = true, fallback = true, tabItem = true },
-		rows = {},
-		groups = {},
-		prefixes = {},
-	},
 	CalendarGrid = {
 		name = "CalendarGrid",
 		label = "CalendarGrid",
@@ -1425,11 +1412,6 @@ end
 -- Placeholder. Opens a URL through the host, with confirmation. (Tier 2, since 1.0)
 function ui.Link(props)
 	return build(COMPONENTS.Link, props)
-end
-
--- An agent chat bound to a `thread` source: streaming messages, reasoning (collapsed), a one-line summary of each turn's activity (counts, not tool lists), permission prompts (allow once, always, deny), errors, the session bar (mode, model and effort, slash commands, context usage) and a composer with a stop button. The thread's data arrives over `/agui`, not through `data.patch`: the source only names the thread and the agent. (Tier 2, since 1.0)
-function ui.ChatTranscript(props)
-	return build(COMPONENTS.ChatTranscript, props)
 end
 
 -- Placeholder. Month, week and day views over event sources. (Tier 2, since 1.0)

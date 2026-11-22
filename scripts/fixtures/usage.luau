@@ -153,7 +153,6 @@ app.db:migrate { [1] = "create table items (id integer primary key, name text no
 local items = app.db:query("select id, name from items order by id", { key = "id", page = 50 })
 local item = app.db:row("select id, name from items where id = :id", { key = "id" })
 local itemCount = app.db:scalar("select count(*) from items")
-local chat = app.thread()
 local _written: number = app.db:exec("insert into items(name) values (:n)", { n = "a" }).changes
 local _rows: { { [string]: any } } = app.db:all("select * from items")
 local _first: { [string]: any }? = app.db:one("select * from items limit 1")
@@ -249,7 +248,7 @@ local function screen(w: Window): Node
     },
     ui.Show {
       when = ui.eq(c.noteId, 0),
-      ui.ChatTranscript { key = "chat", thread = chat { thread = c.noteId, agent = "claude" } },
+      ui.Text { key = "none-selected", "Nothing selected" },
     },
     ui.each({ 1, 2, 3 }, function(n: number): Node?
       if n == 2 then

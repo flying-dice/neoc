@@ -2,11 +2,9 @@
 //! and the refusal to start while an old-named environment variable is set.
 //!
 //! The one-time move from the data directory this program used before it was renamed (`~/.agentos`, with an
-//! `agentos.toml` in it) to `~/.vos`, so that paired devices, app data, the agent roster and the chat history
-//! survive the rename.
+//! `agentos.toml` in it) to `~/.vos`, so that paired devices, app data and the agent roster survive the rename.
 //!
-//! This module is, with the `agentos` alias that reads chat threads saved before the rename (`ThreadMessage` in
-//! `vos-domain`'s `thread.rs`), the only place in the program that still spells the old name.
+//! This module is the only place in the program that still spells the old name.
 //!
 //! The rules, in order:
 //!

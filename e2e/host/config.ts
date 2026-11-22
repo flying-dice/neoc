@@ -35,5 +35,3 @@ export const NOTIFIER_APP_REF = `file://${join(DIR, 'hidden/notifier/0.1.0/app-r
 /** The paired browser the specs share (a Playwright storage state). */
 export const STATE = join(DIR, 'paired.json')
 export const HOST_BIN = join(ROOT, 'target/debug/vos')
-/** The scripted ACP agent (no model): the prompt text picks what it does. */
-export const FAKE_AGENT = join(ROOT, 'target/debug/fake_agent')

@@ -7,7 +7,7 @@
  * Rules
  *  1. Every .svelte component lives in exactly one layer folder
  *     (atoms/ molecules/ organisms/ templates/ pages/). The only exceptions
- *     are composition roots listed in COMPOSITION_ROOTS.
+ *     are the composition roots (`isCompositionRoot`).
  *  2. A component may import components only from STRICTLY LOWER layers —
  *     never from its own layer or above. Atoms import no components at all.
  *  3. Each component starts with a `<!-- @<layer> Name — … -->` header that
@@ -25,10 +25,10 @@ const LAYERS = ['atoms', 'molecules', 'organisms', 'templates', 'pages'] as cons
 type Layer = (typeof LAYERS)[number]
 const rank = (l: Layer): number => LAYERS.indexOf(l)
 
-const SOURCE_GLOBS = ['packages/*/src/**/*.{svelte,ts}', 'client/src/**/*.{svelte,ts}']
+const SOURCE_GLOBS = ['packages/*/src/**/*.{svelte,ts}', 'apps/*/src/**/*.{svelte,ts}', 'client/src/**/*.{svelte,ts}']
 
-/** Files allowed outside the layer folders: app entry points that wire pages together. */
-const COMPOSITION_ROOTS = new Set(['client/src/App.svelte'])
+/** Files allowed outside the layer folders: the entry point that wires pages together, the client's and each app's. */
+const isCompositionRoot = (rel: string): boolean => rel === 'client/src/App.svelte' || /^apps\/[^/]+\/src\/App\.svelte$/.test(rel)
 
 function layerOfPath(path: string): Layer | null {
   const parts = path.split(sep)
@@ -72,7 +72,7 @@ for (const pattern of SOURCE_GLOBS) {
     const isBarrel = /\/(atoms|molecules|organisms|templates|pages)\/index\.ts$/.test(rel)
     const layer = layerOfPath(rel)
 
-    if (isSvelte && !layer && !COMPOSITION_ROOTS.has(rel)) {
+    if (isSvelte && !layer && !isCompositionRoot(rel)) {
       errors.push(`${rel}: component is not inside an atomic layer folder (${LAYERS.join(', ')})`)
       continue
     }

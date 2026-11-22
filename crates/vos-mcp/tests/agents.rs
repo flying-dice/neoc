@@ -18,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 use vos_application::{
     ports::AgentDirectory,
     testing::{Fakes, MemAgentStore, SeededRandom},
-    AgentService, NewAgent, NoAgentProcesses,
+    AgentService, NewAgent,
 };
 use vos_domain::{AgentRuntime, AppId, Grants};
 use vos_mcp::{mcp_router, McpState};
@@ -40,7 +40,6 @@ async fn harness() -> Harness {
         Arc::new(MemAgentStore::default()),
         state.clone(),
         Arc::new(SeededRandom::default()),
-        Arc::new(NoAgentProcesses),
     ));
     let dir: Arc<dyn AgentDirectory> = agents.clone();
     let cancel = CancellationToken::new();

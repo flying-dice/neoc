@@ -9,13 +9,13 @@
  *      (e2e/apps: a task list with a Svelte client and one with a React client, each on a Luau backend), built
  *      into a folder no registry lists and installed at start like the Calculator;
  *   2. writes vos.toml (port 7410 or VOS_PORT_BASE + 10, loopback, a fresh data directory, the test registry; the Calculator and
- *      Agents are installed at start, Notes is only offered; one scripted ACP agent is on the roster);
+ *      Agents are installed at start, Notes is only offered);
  *   3. runs vos-host in the foreground, forwarding SIGTERM so the host shuts down gracefully.
  */
 import { spawn, spawnSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { CONFIG, DATA, DIR, FAKE_AGENT, FIXTURE_APPS, HOST_BIN, PORT, REGISTRY, ROOT, fixtureAppRef } from './config'
+import { CONFIG, DATA, DIR, FIXTURE_APPS, HOST_BIN, PORT, REGISTRY, ROOT, fixtureAppRef } from './config'
 
 const run = (cmd: string, args: string[]): void => {
   const r = spawnSync(cmd, args, { cwd: ROOT, stdio: 'inherit' })
@@ -34,7 +34,6 @@ mkdirSync(DIR, { recursive: true })
 run('bun', ['run', '--filter', '@vos/kit', 'build']) // /kit/kit.js and /kit/tokens.css: client/public/kit, which the client build copies
 run('bun', ['run', '--filter', '@vos/client', 'build'])
 run('cargo', ['build', '-q', '-p', 'vos-host'])
-run('cargo', ['build', '-q', '-p', 'vos-acp', '--bin', 'fake_agent']) // the scripted agent the Agents journeys talk to
 
 // Notes: the codegen fixture, packaged for the registry like any app
 const extra = join(DIR, 'extra-apps/notes')
@@ -106,17 +105,6 @@ writeFileSync(
     ]
       .map((url) => `"${url}"`)
       .join(', ')}]`,
-    // one agent, no model: the scripted ACP agent (crates/vos-acp/src/bin/fake_agent.rs) answers by prompt
-    '[[agents]]',
-    'id = "scripted"',
-    'name = "Scripted agent"',
-    'role = "Answers by script, for tests"',
-    'avatar = "bolt"',
-    'approval = "ask"',
-    '[agents.runtime]',
-    `command = "${FAKE_AGENT}"`,
-    '[agents.grants]',
-    'apps = ["calculator"]',
     ''
   ].join('\n')
 )

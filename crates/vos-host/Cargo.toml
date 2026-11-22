@@ -18,8 +18,6 @@ vos-lua = { workspace = true }
 vos-sqlite = { workspace = true }
 vos-fetch = { workspace = true }
 vos-mcp = { workspace = true }
-vos-acp = { workspace = true }
-vos-agui = { workspace = true }
 vos-http = { workspace = true }
 anyhow = { workspace = true }          # anyhow is allowed ONLY here (binary)
 async-trait = { workspace = true }

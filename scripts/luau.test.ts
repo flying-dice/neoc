@@ -63,10 +63,13 @@ describe("the embedded prelude stays plain Lua", () => {
 
 describe("the apps are Luau", () => {
   test("every app's entry is a .luau file that opts in to strict mode", () => {
-    // the view-tree apps (an app.json): Agents, until NEOC-350 ports it
-    expect(apps.length).toBeGreaterThan(0);
-    for (const manifest of apps) {
-      const entry = entryOf(manifest);
+    // a Vite project's backend (server/main.luau), and any view-tree app left (an app.json)
+    const entries = [
+      ...[...new Glob("apps/*/server/main.luau").scanSync({ cwd: root })].map((file) => join(root, file)),
+      ...apps.map(entryOf),
+    ].sort();
+    expect(entries.length).toBeGreaterThan(0);
+    for (const entry of entries) {
       expect(entry).toEndWith(".luau");
       expect(readFileSync(entry, "utf8").startsWith("--!strict\n")).toBe(true);
     }

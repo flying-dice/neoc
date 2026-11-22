@@ -5,8 +5,7 @@
   import DiscoverPage from './DiscoverPage.svelte'
   import { apps } from '../lib/apps.svelte'
   import { host } from '../lib/host.svelte'
-  import { windowManager } from '../lib/windowManager.svelte'
-  import { createFakeHost, FAKE_AGENTS_APP, FAKE_CALCULATOR } from '../shell/fakeHost'
+  import { createFakeHost, FAKE_CALCULATOR } from '../shell/fakeHost'
   import type { AppSummary, HostApi } from '../shell/hostApi'
 
   const app = apps.discover
@@ -31,10 +30,6 @@
     }
     host.useFake(api, [FAKE_CALCULATOR])
     await host.refresh()
-  }
-
-  const closeWindows = (): void => {
-    for (const win of [...windowManager.windows]) windowManager.close(win.id)
   }
 
   const notesDisabled: AppSummary = {
@@ -85,25 +80,11 @@
 
 <Story name="Narrow window" args={{ width: 380, height: 640 }} />
 
-<!-- The agents of this host come from its roster (agents.list): nothing to install, so no GET. -->
-<Story
-  name="Agents on this host"
-  play={async ({ canvas, userEvent }) => {
-    await userEvent.click(await canvas.findByTestId('discover-section-agents'))
-    const agent = await canvas.findByTestId('discover-agent-scripted')
-    await expect(agent).toHaveTextContent('Scripted agent')
-    await expect(agent).toHaveTextContent('Answers by script, for tests')
-    await expect(canvas.queryByTestId('discover-agent-scripted-get')).toBeNull()
-    await expect(canvas.queryByTestId('discover-listing-coder')).toBeNull() // the old sample listings are gone
-  }}
-/>
-
 <Story
   name="No search results"
   play={async ({ canvas, userEvent }) => {
     await userEvent.type(canvas.getByTestId('discover-search'), 'spreadsheet')
     await expect(await canvas.findByText('No apps match “spreadsheet”.')).toBeVisible()
-    await expect(canvas.getByText('No agents match “spreadsheet”.')).toBeVisible()
   }}
 />
 
@@ -192,58 +173,11 @@
   }}
 />
 
-<!-- A host without the Agents app: nothing offers to open it (no OPEN, no "Open Agents"), and nothing throws. -->
-<Story
-  name="Agents app not installed"
-  play={async ({ canvas }) => {
-    await canvas.findByTestId('discover-app-calculator')
-    await expect(canvas.queryByTestId('discover-open')).toBeNull()
-    await expect(canvas.queryByTestId('discover-hero-open-agents')).toBeNull()
-    await expect(canvas.getByTestId('discover-hero-ui-kit')).toBeVisible()
-    await expect(canvas.queryByTestId('discover-agent-scripted-get')).toBeNull() // listed, with nothing to open
-  }}
-/>
-
-<!-- With the Agents app running, both entry points show and OPEN brings its window forward. -->
-<Story
-  name="Agents app installed"
-  beforeEach={() => {
-    withHost([FAKE_CALCULATOR, FAKE_AGENTS_APP])()
-    return closeWindows
-  }}
-  play={async ({ canvas, userEvent }) => {
-    await expect(await canvas.findByTestId('discover-open')).toBeVisible()
-    await expect(canvas.getByTestId('discover-hero-open-agents')).toBeVisible()
-    await userEvent.click(canvas.getByTestId('discover-open'))
-    await expect(windowManager.isOpen('agents')).toBe(true)
-  }}
-/>
-
-<!-- With the Agents app running, each agent offers OPEN (the Agents app); the sidebar narrows the page to the agents. -->
-<Story
-  name="Agents on this host, Agents app installed"
-  beforeEach={() => {
-    withHost([FAKE_CALCULATOR, FAKE_AGENTS_APP])()
-    return closeWindows
-  }}
-  play={async ({ canvas, userEvent }) => {
-    await userEvent.click(await canvas.findByTestId('discover-section-apps'))
-    await expect(await canvas.findByTestId('discover-apps')).toBeVisible()
-    await expect(canvas.queryByTestId('discover-agents')).toBeNull()
-    await userEvent.click(canvas.getByTestId('discover-section-agents'))
-    await expect(canvas.queryByTestId('discover-apps')).toBeNull()
-    await userEvent.click(await canvas.findByTestId('discover-agent-scripted-get'))
-    await expect(windowManager.isOpen('agents')).toBe(true)
-  }}
-/>
-
-<!-- The numbers are the host's: agents on the roster, apps running. No made-up badge on Updates. -->
+<!-- The numbers are the host's: apps running. No made-up badge on Updates. -->
 <Story
   name="Counts come from the host"
   beforeEach={withHost([FAKE_CALCULATOR, notesDisabled])}
   play={async ({ canvas }) => {
-    await expect(await canvas.findByTestId('discover-account')).toHaveTextContent('1 agent')
-    await expect(canvas.getByTestId('discover-account')).not.toHaveTextContent('4 agents')
     await expect(await canvas.findByText('1 of 2')).toBeVisible()
     await expect(canvas.queryByTestId('discover-section-updates')).toBeNull() // no made-up badge or section
   }}

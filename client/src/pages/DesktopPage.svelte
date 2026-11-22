@@ -5,7 +5,7 @@
   the Dock, one app at a time (`WindowManager.compact`). Window contents are supplied by
   the composition root through the `windowContent` snippet.
 
-  Test ids: `status-bar`, `desktop-stage`, `widget-clock`, `widget-agent-activity`,
+  Test ids: `status-bar`, `desktop-stage`, `widget-clock`,
   `stage-strip` (+ `stage-strip-<appIds>`), `window-${appId}` (+ parts, see Window),
   `split-divider`, `split-placeholder`, `slideover-tab`, `dock` (+ `dock-${appId}`), `desktop-notice` (+ `-dismiss`), and the system alerts (see NotificationBanners).
 -->
@@ -16,17 +16,8 @@
   import { DesktopTemplate } from '@vos/ui/templates'
   import { StatusBar, Dock, Window, StageStrip } from '@vos/ui/organisms'
   import ClockWidget from '../organisms/ClockWidget.svelte'
-  import AgentActivityWidget from '../organisms/AgentActivityWidget.svelte'
   import NotificationBanners from '../organisms/NotificationBanners.svelte'
-  import {
-    AGENTS_APP_ID,
-    appOf,
-    dockOrder,
-    dockRecents,
-    installedApp,
-    onAppsRemoved,
-    type AppId
-  } from '../lib/apps.svelte'
+  import { appOf, dockOrder, installedApp, onAppsRemoved, type AppId } from '../lib/apps.svelte'
   import { windowManager as wm, type WindowState } from '../lib/windowManager.svelte'
   import { host } from '../lib/host.svelte'
   import { listenToHost, notifications } from '../lib/notifications.svelte'
@@ -70,9 +61,6 @@
   }
 
   const dockApps = $derived(dockOrder().flatMap(toDock))
-  const recentApps = $derived(dockRecents.flatMap(toDock))
-  // The Agents app is an ordinary installed app: the widget offers to open it only while it is running.
-  const agentsRunning = $derived(!!appOf(AGENTS_APP_ID))
   const awaitingSplit = $derived(wm.activeStage?.awaitingSplit ?? null)
 
   // Dragging a strip group onto the stage merges it into the current group.
@@ -151,11 +139,6 @@
         bind:clientHeight={widgetsHeight}
       >
         <ClockWidget testid="widget-clock" />
-        <AgentActivityWidget
-          testid="widget-agent-activity"
-          agents={host.agents}
-          onopen={agentsRunning ? () => wm.open(AGENTS_APP_ID) : undefined}
-        />
       </div>
 
       <StageStrip
@@ -175,27 +158,27 @@
         {#if app && (onStage || installedApp(win.appId)?.client)}
           {@const frame = wm.frameOf(win)}
           <div class="slot" class:away={!onStage} inert={!onStage} aria-hidden={!onStage}>
-          <Window
-            testid="window-{win.appId}"
-            title={app.name}
-            x={frame.x}
-            y={frame.y}
-            width={frame.width}
-            height={frame.height}
-            minWidth={app.minWidth}
-            minHeight={app.minHeight}
-            z={wm.layoutOf(win) === 'slideover' ? 10000 : win.z}
-            layout={wm.layoutOf(win)}
-            unavailable={wm.unavailableLayouts(win.id)}
-            focused={wm.focusedId === win.id}
-            onframechange={(f) => wm.setFrame(win.id, f)}
-            onfocus={() => wm.focus(win.id)}
-            onlayout={(l) => wm.setLayout(win.id, l)}
-            onminimize={() => wm.minimize(win.id)}
-            onclose={() => wm.close(win.id)}
-          >
-            {@render windowContent(win)}
-          </Window>
+            <Window
+              testid="window-{win.appId}"
+              title={app.name}
+              x={frame.x}
+              y={frame.y}
+              width={frame.width}
+              height={frame.height}
+              minWidth={app.minWidth}
+              minHeight={app.minHeight}
+              z={wm.layoutOf(win) === 'slideover' ? 10000 : win.z}
+              layout={wm.layoutOf(win)}
+              unavailable={wm.unavailableLayouts(win.id)}
+              focused={wm.focusedId === win.id}
+              onframechange={(f) => wm.setFrame(win.id, f)}
+              onfocus={() => wm.focus(win.id)}
+              onlayout={(l) => wm.setLayout(win.id, l)}
+              onminimize={() => wm.minimize(win.id)}
+              onclose={() => wm.close(win.id)}
+            >
+              {@render windowContent(win)}
+            </Window>
           </div>
         {/if}
       {/each}
@@ -259,7 +242,6 @@
       available={workspaceWidth > 0 ? workspaceWidth - 24 : undefined}
       testid="dock"
       apps={dockApps}
-      recents={recentApps}
       onselect={(id) => wm.open(id as AppId)}
     />
   {/snippet}

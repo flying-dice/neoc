@@ -1,8 +1,7 @@
 //! Driving adapter: axum. Owns `/rpc` (WebSocket), the Origin/Host guard, device pairing and sessions
 //! (`/pair`, `/session`, the session guard), an installed app as a sub-resource (`/apps/<id>`) and static serving of
-//! the built client. `/mcp` and `/agui`
-//! routers come from their own adapter crates; the composition root merges them and decides which routes
-//! sit behind the session guard.
+//! the built client. The `/mcp` router comes from its own adapter crate; the composition root merges them and
+//! decides which routes sit behind the session guard.
 
 mod apps;
 mod guard;

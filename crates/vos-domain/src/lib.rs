@@ -7,7 +7,6 @@
 
 pub mod actor;
 pub mod agent;
-pub mod agui;
 pub mod api;
 pub mod app;
 pub mod app_ui;
@@ -21,7 +20,6 @@ pub mod merge;
 pub mod notification;
 pub mod protocol;
 pub mod revision;
-pub mod thread;
 pub mod time;
 pub mod tool;
 pub mod tool_schema;

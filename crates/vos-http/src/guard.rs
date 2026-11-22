@@ -295,7 +295,6 @@ mod tests {
             (Method::GET, "/apps/bridge.js", false),
             (Method::GET, "/rpc", false),
             (Method::GET, "/session", false),
-            (Method::GET, "/agui/threads", false),
             (Method::GET, "/mcp", false),
             (Method::GET, "/", false),
             (Method::GET, "/kit/tokens.css", true),
@@ -310,7 +309,6 @@ mod tests {
             (Method::GET, "/kit/x%2Fy", false),
             (Method::GET, "/kit/..\\rpc", false),
             (Method::GET, "/kit/fonts/a..b.woff2", true),
-            (Method::GET, "/agui", false),
             (Method::GET, "/pair", false),
         ] {
             assert_eq!(is_public_frame_read(&method, path), yes, "{method} {path}");

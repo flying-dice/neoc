@@ -1741,15 +1741,6 @@ export type vos_RowSource = {
 
 export type vos_ScalarSource = { ["$source"]: string }
 
---- A chat thread source for `ChatTranscript`: which thread, and the agent it runs as (literals or Refs). The
---- thread's data is not a query: the client streams it from the host's `/agui`.
-export type vos_ThreadParams = {
-	thread: string | vos_Ref<string>,
-	agent: string | vos_Ref<string>,
-}
-
-export type vos_ThreadSource = { ["$source"]: string }
-
 --- What an app may know of an agent contact.
 export type vos_AgentCard = { id: string, name: string, avatar: string?, role: string }
 
@@ -1858,8 +1849,6 @@ export type vos_AppApi = {
 	--- Shared, in-memory server state: reads in render are tracked, assignments schedule a re-render.
 	state: <T>(initial: T) -> T,
 	tool: (def: vos_ToolDef) -> (),
-	--- Declare a chat thread source once; `chat { thread = id, agent = id }` makes the handle a `ChatTranscript` takes.
-	thread: () -> ((params: vos_ThreadParams) -> vos_ThreadSource),
 	--- Open the app's window on the person's screen, or bring it forward if it is open (every connected shell is asked;
 	--- with none connected nothing happens). An app with a client has one window: leave `name` out (or pass `"main"`).
 	--- An app without one names a window it declared with `app.window`.
@@ -5102,64 +5091,6 @@ export type vos_LinkProps = {
 	[number]: vos_Child,
 }
 
---- An agent chat bound to a `thread` source: streaming messages, reasoning (collapsed), a one-line summary of each turn's activity (counts, not tool lists), permission prompts (allow once, always, deny), errors, the session bar (mode, model and effort, slash commands, context usage) and a composer with a stop button. The thread's data arrives over `/agui`, not through `data.patch`: the source only names the thread and the agent.
-export type vos_ChatTranscriptProps = {
-	key: string,
-	--- A `thread` source: `params` are the thread id (`thread`) and the agent (`agent`).
-	thread: vos_Source,
-	--- The composer's placeholder.
-	placeholder: vos_Expr<string>?,
-	--- `false` shows the transcript without a composer.
-	composer: vos_Expr<boolean>?,
-	--- Overrides the derived test id.
-	testid: vos_Expr<string>?,
-	--- Accessible name.
-	label: vos_Expr<string>?,
-	--- Accessible description.
-	hint: vos_Expr<string>?,
-	--- Removed from layout and the accessibility tree.
-	hidden: vos_Expr<boolean>?,
-	disabled: vos_Expr<boolean>?,
-	--- Spacing units of 4 pt: `0..=8` or per edge.
-	padding: (vos_Expr<number | vos_Insets>)?,
-	--- Layout, not styling: `"fill"` or min/ideal/max in pt, clamped to the window.
-	frame: (vos_Expr<"fill" | vos_Frame>)?,
-	--- Flex grow factor.
-	grow: vos_Expr<number>?,
-	--- Alignment in the parent stack.
-	align: (vos_Expr<"start" | "center" | "end" | "stretch">)?,
-	background: vos_Expr<vos_SurfaceToken>?,
-	foreground: vos_Expr<vos_LabelToken>?,
-	--- Re-points the accent for the subtree.
-	tint: vos_Expr<vos_PaletteToken>?,
-	corner: vos_Expr<vos_RadiusToken>?,
-	--- Tooltip.
-	help: vos_Expr<string>?,
-	--- `"cmd+n"`: shown in menus, active while the window is focused.
-	shortcut: vos_Expr<string>?,
-	--- Makes the node draggable. Always give it a non-drag path (`contextMenu`).
-	drag: vos_Expr<vos_Drag>?,
-	--- Makes the node a drop target.
-	drop: vos_Expr<vos_Drop>?,
-	animation: (vos_Expr<"default" | "none">)?,
-	--- The selection value of a row, tab or picker item.
-	tag: vos_Expr<any>?,
-	--- Grid child: columns spanned.
-	span: vos_Expr<number>?,
-	--- Grid child: start row.
-	rowStart: vos_Expr<number>?,
-	--- Grid child: start column.
-	colStart: vos_Expr<number>?,
-	onSend: vos_Handler<{ text: string }>?,
-	onStop: vos_Handler<{}>?,
-	onAppear: vos_Handler<{}>?,
-	onDisappear: vos_Handler<{}>?,
-	onDrop: vos_Handler<{ type: string, payload: any?, target: any }>?,
-	contextMenu: vos_Child?,
-	fallback: vos_Child?,
-	tabItem: vos_Child?,
-}
-
 --- Placeholder. Month, week and day views over event sources.
 export type vos_CalendarGridProps = {
 	key: string?,
@@ -5885,8 +5816,6 @@ export type vos_ui = {
 	Banner: (props: vos_BannerProps) -> vos_Node,
 	--- Placeholder. Opens a URL through the host, with confirmation. (Tier 2, since 1.0)
 	Link: (props: vos_LinkProps) -> vos_Node,
-	--- An agent chat bound to a `thread` source: streaming messages, reasoning (collapsed), a one-line summary of each turn's activity (counts, not tool lists), permission prompts (allow once, always, deny), errors, the session bar (mode, model and effort, slash commands, context usage) and a composer with a stop button. The thread's data arrives over `/agui`, not through `data.patch`: the source only names the thread and the agent. (Tier 2, since 1.0)
-	ChatTranscript: (props: vos_ChatTranscriptProps) -> vos_Node,
 	--- Placeholder. Month, week and day views over event sources. (Tier 2, since 1.0)
 	CalendarGrid: (props: vos_CalendarGridProps) -> vos_Node,
 	--- Placeholder. A host-rendered preview of a file by mime type. (Tier 2, since 1.0)

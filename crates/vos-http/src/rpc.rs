@@ -47,8 +47,7 @@ pub const BUSY: i32 = vos_domain::ui::protocol::codes::BUSY;
 ///
 /// The bound is bytes, not a count, and is far above any burst a client that reads will see, so a client that keeps up
 /// is never closed for one. The biggest bursts are opening an app whose view is large (one view tree is at most about
-/// a mebibyte, [`MAX_MESSAGE_BYTES`]) beside a few windows whose live sources refresh at once, or an agent streaming
-/// into several chats: a few mebibytes. 32 MiB is ten times that, and small enough for a host on a home server to hold
+/// a mebibyte, [`MAX_MESSAGE_BYTES`]) beside a few windows whose live sources refresh at once: a few mebibytes. 32 MiB is ten times that, and small enough for a host on a home server to hold
 /// for one stalled tablet. A message is taken unless more than this is already waiting, whatever its own size, and it
 /// stops counting when the writer takes it, so a reader is not closed for one message that is big in itself; it is
 /// closed for more than this waiting to be taken (a burst of more than this, sent faster than the writer can take it,

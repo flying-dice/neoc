@@ -111,13 +111,6 @@ wire! {
             #[cfg_attr(feature = "codegen", ts(as = "Option<Vec<TextSplice>>", optional))]
             splices: Vec<TextSplice>,
         },
-        /// Chat rows plus streaming appends.
-        Thread {
-            rows: BTreeMap<String, Value>,
-            #[serde(default, skip_serializing_if = "Vec::is_empty")]
-            #[cfg_attr(feature = "codegen", ts(as = "Option<Vec<ThreadAppend>>", optional))]
-            append: Vec<ThreadAppend>,
-        },
     }
 
     /// Replace `del` characters at `at` with `ins`.
@@ -126,14 +119,6 @@ wire! {
         pub del: u32,
         pub ins: String,
         pub rev: u32,
-    }
-
-    /// Append streamed text to a part of a message.
-    pub struct ThreadAppend {
-        pub id: String,
-        /// `parts.0.text`
-        pub path: String,
-        pub text: String,
     }
 }
 

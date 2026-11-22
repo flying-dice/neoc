@@ -8,7 +8,6 @@
   import DiscoverPage from './pages/DiscoverPage.svelte'
   import SettingsPage from './pages/SettingsPage.svelte'
   import FilesPage from './pages/FilesPage.svelte'
-  import GalleryPage from './pages/GalleryPage.svelte'
   import TerminalPage from './pages/TerminalPage.svelte'
   import PairingPage from './pages/PairingPage.svelte'
   import AppFrame from './organisms/AppFrame.svelte'
@@ -53,8 +52,6 @@
     <SettingsPage />
   {:else if win.appId === 'files'}
     <FilesPage />
-  {:else if win.appId === 'gallery'}
-    <GalleryPage />
   {:else if win.appId === 'terminal'}
     <TerminalPage />
   {:else if installedApp(win.appId)?.client}

@@ -2,7 +2,7 @@ import type { IconName } from '@vos/ui'
 import { iconOf, tintBackground, type AppSummary } from '../shell/hostApi'
 
 /** Apps whose pages still ship with the shell. */
-export type BuiltinAppId = 'discover' | 'settings' | 'files' | 'gallery' | 'terminal'
+export type BuiltinAppId = 'discover' | 'settings' | 'files' | 'terminal'
 
 /** Built-in ids plus the ids of the Lua apps installed on the host. */
 export type AppId = string
@@ -58,16 +58,6 @@ const builtinApps: Record<BuiltinAppId, AppDefinition> = {
     minWidth: MIN_WIDTH,
     minHeight: MIN_HEIGHT
   },
-  gallery: {
-    id: 'gallery',
-    name: 'UI Kit',
-    icon: 'paintbrush',
-    background: 'linear-gradient(180deg, #ffb340 0%, #ff6a00 100%)',
-    width: 880,
-    height: 640,
-    minWidth: MIN_WIDTH,
-    minHeight: MIN_HEIGHT
-  },
   terminal: {
     id: 'terminal',
     name: 'Terminal',
@@ -113,12 +103,6 @@ export function appOf(id: AppId): AppDefinition | undefined {
   return definition?.id === id ? definition : undefined
 }
 
-/**
- * The Lua app that the desktop's Agents widget and Discover's "Open Agents" bring forward. It is an ordinary
- * installed app (a host may not have it, or it may be disabled), so every entry point checks `appOf` first.
- */
-export const AGENTS_APP_ID: AppId = 'agents'
-
 /** An installed app by id, in any state. */
 export const installedApp = (id: AppId): AppSummary | undefined =>
   installed.list.find((a) => a.id === id)
@@ -150,7 +134,7 @@ export function setInstalledApps(list: AppSummary[]): void {
 }
 
 /**
- * Dock: the built-ins, then the running installed apps (the Agents app among them), then Settings.
+ * Dock: the built-ins, then the running installed apps, then Settings.
  */
 export function dockOrder(): AppId[] {
   return [
@@ -161,4 +145,3 @@ export function dockOrder(): AppId[] {
     'settings'
   ]
 }
-export const dockRecents: AppId[] = ['gallery']

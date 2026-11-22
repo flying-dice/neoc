@@ -130,16 +130,7 @@ async fn the_host_prints_a_code_writes_mcp_json_pairs_a_device_and_stops_on_sigt
 
     // the printed code pairs a device over HTTP; `/rpc` is refused to anyone who has not paired
     let client = reqwest::Client::new();
-    assert_eq!(
-        client
-            .post(format!("{base}/agui"))
-            .json(&json!({"threadId":"t","runId":"r"}))
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        401
-    );
+    assert_eq!(client.get(format!("{base}/rpc")).send().await.unwrap().status(), 401);
     let res = client
         .post(format!("{base}/pair"))
         .json(&json!({"code": code, "deviceName": "test"}))

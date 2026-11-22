@@ -42,10 +42,6 @@ async fn rpc(ws: &mut common::Socket, id: i64, method: &str, params: Value) -> V
     }
 }
 
-fn agui_body() -> Value {
-    json!({"threadId":"t","runId":"r"})
-}
-
 fn local_agent() -> (String, vos_domain::Agent) {
     ("agent-token".into(), common::agent_with("local", "Local", Grants::allow_all()))
 }
@@ -135,23 +131,21 @@ async fn malformed_pair_requests_are_refused() {
 }
 
 #[tokio::test]
-async fn unpaired_requests_are_refused_on_rpc_and_agui_even_from_loopback() {
+async fn unpaired_requests_are_refused_on_rpc_even_from_loopback() {
     let r = start(|_| {}).await; // the test client IS on loopback
     let err = connect_rpc(r.addr, None, None).await.unwrap_err();
     assert!(err.to_string().contains("401"), "{err}");
     let err = connect_rpc(r.addr, Some("vos_session=made-up"), None).await.unwrap_err();
     assert!(err.to_string().contains("401"), "a forged cookie is not a session: {err}");
 
-    let agui = http().post(r.url("/agui")).json(&agui_body()).send().await.unwrap();
-    assert_eq!(agui.status(), 401);
-    assert_eq!(agui.json::<Value>().await.unwrap()["error"], "pairing required");
+    // the guard answers before the WebSocket upgrade is looked at: a plain request is told why
+    let plain = http().get(r.url("/rpc")).send().await.unwrap();
+    assert_eq!(plain.status(), 401);
+    assert_eq!(plain.json::<Value>().await.unwrap()["error"], "pairing required");
 
-    // once paired, the same requests work
+    // once paired, the same request works
     let cookie = pair(&r, "Mac").await;
     assert!(connect_rpc(r.addr, Some(&cookie), None).await.is_ok());
-    let agui = http().post(r.url("/agui")).header("cookie", &cookie).json(&agui_body()).send().await.unwrap();
-    assert_eq!(agui.status(), 404, "past the guard: the thread does not exist");
-    assert!(agui.json::<Value>().await.unwrap()["error"].as_str().unwrap().contains("no thread"));
     r.stop().await;
 }
 
@@ -202,8 +196,6 @@ async fn devices_are_listed_and_revoking_one_ends_its_session_and_its_socket() {
     assert_eq!(session(&r, Some(&ipad)).await["paired"], false);
     let err = connect_rpc(r.addr, Some(&ipad), None).await.unwrap_err();
     assert!(err.to_string().contains("401"), "{err}");
-    let agui = http().post(r.url("/agui")).header("cookie", &ipad).json(&agui_body()).send().await.unwrap();
-    assert_eq!(agui.status(), 401);
     // ... and the Mac is untouched
     assert_eq!(session(&r, Some(&mac)).await["paired"], true);
     let again = rpc(&mut mac_ws, 3, "host.devices.revoke", json!({"id": ipad_row["id"]})).await;
@@ -294,20 +286,12 @@ async fn the_mcp_token_and_the_session_are_different_credentials() {
     assert_eq!(mcp_initialize(&r, &[("authorization", &format!("Bearer {session_token}"))]).await, 401);
     assert_eq!(mcp_initialize(&r, &[("authorization", "Bearer agent-token")]).await, 200);
 
-    // /rpc and /agui: the MCP token is not a session, as a cookie or as a bearer
+    // /rpc: the MCP token is not a session, as a cookie or as a bearer
     let as_cookie = "vos_session=agent-token";
     assert!(connect_rpc(r.addr, Some(as_cookie), None).await.is_err());
-    let agui =
-        http().post(r.url("/agui")).header("cookie", as_cookie).json(&agui_body()).send().await.unwrap();
-    assert_eq!(agui.status(), 401);
-    let agui = http()
-        .post(r.url("/agui"))
-        .header("authorization", "Bearer agent-token")
-        .json(&agui_body())
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(agui.status(), 401, "a bearer header never authenticates a client route");
+    let as_bearer =
+        http().get(r.url("/rpc")).header("authorization", "Bearer agent-token").send().await.unwrap();
+    assert_eq!(as_bearer.status(), 401, "a bearer header never authenticates a client route");
     assert_eq!(session(&r, None).await["paired"], false);
     r.stop().await;
 }

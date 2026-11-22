@@ -1,0 +1,274 @@
+{
+  "openrpc": "1.3.2",
+  "info": {
+    "title": "Agents",
+    "version": "0.2.0",
+    "description": "Chat with agents: pick one, write to it, and read its answer as it comes."
+  },
+  "x-app": {
+    "id": "agents",
+    "icon": "sparkles",
+    "tint": "orange",
+    "description": "Chat with agents: pick one, write to it, and read its answer as it comes.",
+    "window": {
+      "w": 960,
+      "h": 640,
+      "minW": 480,
+      "minH": 420
+    }
+  },
+  "methods": [
+    {
+      "name": "agents",
+      "summary": "The agents a chat can be started with.",
+      "params": [],
+      "result": {
+        "name": "agents",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Agent"
+          }
+        }
+      }
+    },
+    {
+      "name": "chats",
+      "summary": "Every chat, the most recently used first.",
+      "params": [],
+      "result": {
+        "name": "chats",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Chat"
+          }
+        }
+      }
+    },
+    {
+      "name": "start",
+      "summary": "Start a chat with an agent, and answer with it (empty).",
+      "params": [
+        {
+          "name": "agent",
+          "required": true,
+          "description": "The id of one of `agents`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 64
+          }
+        }
+      ],
+      "result": {
+        "name": "conversation",
+        "schema": {
+          "$ref": "#/components/schemas/Conversation"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such agent."
+        }
+      ]
+    },
+    {
+      "name": "open",
+      "summary": "A chat and everything said in it so far.",
+      "params": [
+        {
+          "name": "chat",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "maxLength": 64
+          }
+        }
+      ],
+      "result": {
+        "name": "conversation",
+        "schema": {
+          "$ref": "#/components/schemas/Conversation"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such chat."
+        }
+      ]
+    },
+    {
+      "name": "send",
+      "summary": "Say something in a chat. Answers at once with the chat as it now stands; the agent's answer follows as `message` events and ends with a `turn` event.",
+      "params": [
+        {
+          "name": "chat",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        {
+          "name": "text",
+          "required": true,
+          "description": "What to say. Blank is refused with a message.",
+          "schema": {
+            "type": "string",
+            "maxLength": 20000
+          }
+        }
+      ],
+      "result": {
+        "name": "conversation",
+        "schema": {
+          "$ref": "#/components/schemas/Conversation"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such chat, the message is blank, or the agent is still answering."
+        }
+      ]
+    },
+    {
+      "name": "stop",
+      "summary": "Stop the agent's answer in a chat; what it said so far stays.",
+      "params": [
+        {
+          "name": "chat",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "maxLength": 64
+          }
+        }
+      ],
+      "result": {
+        "name": "conversation",
+        "schema": {
+          "$ref": "#/components/schemas/Conversation"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such chat."
+        }
+      ]
+    }
+  ],
+  "components": {
+    "schemas": {
+      "Agent": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "description": "One line on what the agent does."
+          },
+          "icon": {
+            "type": "string",
+            "description": "A glyph from the icon set."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "role",
+          "icon"
+        ]
+      },
+      "Chat": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string",
+            "description": "The first thing said in it, shortened; `New chat` until then."
+          },
+          "agent": {
+            "type": "string",
+            "description": "The name of the agent it is with."
+          },
+          "updated": {
+            "type": "string",
+            "description": "When it was last used, ISO 8601 in UTC."
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "agent",
+          "updated"
+        ]
+      },
+      "Message": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "chat": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "agent"
+            ]
+          },
+          "text": {
+            "type": "string"
+          },
+          "done": {
+            "type": "boolean",
+            "description": "False while an agent's answer is still coming."
+          }
+        },
+        "required": [
+          "id",
+          "chat",
+          "role",
+          "text",
+          "done"
+        ]
+      },
+      "Conversation": {
+        "type": "object",
+        "properties": {
+          "chat": {
+            "$ref": "#/components/schemas/Chat"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Message"
+            }
+          },
+          "busy": {
+            "type": "boolean",
+            "description": "The agent is answering."
+          }
+        },
+        "required": [
+          "chat",
+          "messages",
+          "busy"
+        ]
+      }
+    }
+  }
+}

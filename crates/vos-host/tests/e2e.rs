@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
-//! End-to-end: the REAL adapters (lua, sqlite, fetch, mcp, agui, http) wired by the composition root,
-//! driven from the outside like the real clients: a paired browser (`/rpc`, `/agui`) and an agent
+//! End-to-end: the REAL adapters (lua, sqlite, fetch, mcp, http) wired by the composition root,
+//! driven from the outside like the real clients: a paired browser (`/rpc`) and an agent
 //! with its own bearer token (`/mcp`).
 
 mod common;
@@ -195,17 +195,6 @@ async fn install_over_rpc_then_use_from_mcp_and_ui_and_uninstall() {
     wait_until("tools/list_changed", || counter.0.load(Ordering::SeqCst) > before).await;
     assert!(agent.peer().list_tools(None).await.unwrap().tools.is_empty());
     assert!(r.host.service.apps().is_empty());
-
-    // --- /agui is reachable for a paired device (the chat behaviour is tested in `agui.rs`)
-    let res = reqwest::Client::new()
-        .post(format!("http://{addr}/agui"))
-        .header("cookie", &cookie)
-        .json(&json!({"threadId":"t","runId":"r"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(res.status(), 404, "no such thread");
-    assert!(res.json::<serde_json::Value>().await.unwrap()["error"].as_str().unwrap().contains("no thread"));
 
     agent.cancel().await.unwrap();
     agent2.cancel().await.unwrap();

@@ -1,0 +1,156 @@
+<script module lang="ts">
+  import { defineMeta } from '@storybook/addon-svelte-csf'
+  import { expect, waitFor } from 'storybook/test'
+  import AppWindow from '@vos/storybook/AppWindow.svelte'
+  import definition from '../../openrpc.json'
+  import AgentsPage from './AgentsPage.svelte'
+  import { Agents } from '../lib/agents.svelte'
+  import { conversation, createFailingBackend, createFakeBackend, type FakeBackend } from '../lib/fakeApi'
+
+  // the window the contract asks for, and the smallest it allows
+  const app = definition['x-app']
+
+  interface Args {
+    width: number
+    height: number
+    /** The backend the story's window talks to: a fake in the page, never a host. A function, so each story has its own. */
+    backend: () => FakeBackend
+  }
+
+  const TALK = conversation('a', 'What is 12 times 7?', [
+    ['user', 'What is 12 times 7?'],
+    ['agent', '12 times 7 is 84.']
+  ])
+  const withChats = (): FakeBackend => createFakeBackend({ chats: [TALK, conversation('b', 'Plan the week', [['user', 'Plan the week']])] })
+
+  /** The Agents app in its window, on a fake backend: every state a person can bring it to. */
+  const { Story } = defineMeta({
+    title: 'Pages/Agents',
+    component: AgentsPage,
+    tags: ['app'],
+    args: { width: app.window.w, height: app.window.h, backend: () => createFakeBackend() },
+    argTypes: { backend: { control: false } },
+    render: template
+  })
+
+  type Canvas = { getByTestId(id: string): HTMLElement; queryByTestId(id: string): HTMLElement | null }
+  type User = {
+    click(element: Element): Promise<void>
+    type(element: Element, text: string, options?: { initialSelectionStart: number; initialSelectionEnd: number }): Promise<void>
+  }
+  /** The kit's text field holds the real input in its shadow tree. */
+  const input = (canvas: Canvas): HTMLInputElement =>
+    canvas.getByTestId('agents-composer-input').shadowRoot!.querySelector('input')!
+  const appears = (canvas: Canvas, id: string): Promise<void> => waitFor(() => expect(canvas.getByTestId(id)).toBeVisible())
+  const said = (canvas: Canvas, text: string): Promise<void> =>
+    waitFor(() => expect(canvas.getByTestId('agents-thread')).toHaveTextContent(text))
+
+  async function startChat(canvas: Canvas, user: User): Promise<void> {
+    await appears(canvas, 'agents-agent-scripted')
+    await user.click(canvas.getByTestId('agents-agent-scripted'))
+    await appears(canvas, 'agents-composer-input')
+  }
+  async function say(canvas: Canvas, user: User, text: string): Promise<void> {
+    // the testing library keeps its own idea of what the field holds, and misses the app emptying it after a send: type
+    // over whatever it thinks is there
+    await user.type(input(canvas), `${text}{Enter}`, { initialSelectionStart: 0, initialSelectionEnd: 1000 })
+  }
+</script>
+
+{#snippet template(args: Args)}
+  <!-- one state per story, as each window has one -->
+  {@const backend = args.backend()}
+  {@const agents = new Agents(backend.rpc, backend.events)}
+  <AppWindow
+    title={definition.info.title}
+    width={args.width}
+    height={args.height}
+    minWidth={app.window.minW}
+    minHeight={app.window.minH}
+  >
+    <AgentsPage {agents} />
+  </AppWindow>
+{/snippet}
+
+<!-- Nothing yet: who can be chatted with, and what to do. -->
+<Story
+  name="Just opened"
+  play={async ({ canvas }) => {
+    await appears(canvas, 'agents-agent-scripted')
+    await expect(canvas.getByTestId('agents-no-chats')).toBeInTheDocument()
+    await expect(canvas.getByTestId('agents-no-chat')).toBeInTheDocument()
+  }}
+/>
+
+<!-- Chats from before are listed; none is open until one is picked. -->
+<Story
+  name="Chats from before"
+  args={{ backend: withChats }}
+  play={async ({ canvas }) => {
+    await appears(canvas, 'agents-chat-a')
+    await expect(canvas.getByTestId('agents-chat-b')).toHaveProperty('heading', 'Plan the week')
+  }}
+/>
+
+<Story
+  name="A chat open"
+  args={{ backend: withChats }}
+  play={async ({ canvas, userEvent }) => {
+    await appears(canvas, 'agents-chat-a')
+    await userEvent.click(canvas.getByTestId('agents-chat-a'))
+    await said(canvas, '12 times 7 is 84.')
+    await expect(canvas.getByTestId('agents-chat-a')).toHaveAttribute('selected', '')
+    await expect(canvas.getByTestId('agents-title')).toHaveTextContent('What is 12 times 7?')
+  }}
+/>
+
+<!-- A new chat, a message, the agent's answer: the first message names the chat. -->
+<Story
+  name="A first message answered"
+  play={async ({ canvas, userEvent }) => {
+    await startChat(canvas, userEvent)
+    await say(canvas, userEvent, 'hello')
+    await said(canvas, 'Hi there')
+    await appears(canvas, 'agents-composer-send')
+    await expect(canvas.getByTestId('agents-title')).toHaveTextContent('hello')
+    await waitFor(() => expect(canvas.getByTestId('agents-chat-chat-1')).toHaveProperty('heading', 'hello'))
+    await expect(input(canvas)).toHaveValue('')
+  }}
+/>
+
+<!-- The agent is answering: what it has said so far, and the button stops it. -->
+<Story
+  name="An answer on its way"
+  play={async ({ canvas, userEvent }) => {
+    await startChat(canvas, userEvent)
+    await say(canvas, userEvent, 'slow')
+    await said(canvas, 'Thinking')
+    await expect(canvas.getByTestId('agents-composer-stop')).toBeVisible()
+  }}
+/>
+
+<!-- Stopped: what the agent said stays, and the chat takes the next message. -->
+<Story
+  name="Stopping an answer"
+  tags={['play-only']}
+  play={async ({ canvas, userEvent }) => {
+    await startChat(canvas, userEvent)
+    await say(canvas, userEvent, 'slow')
+    await said(canvas, 'Thinking')
+    await userEvent.click(canvas.getByTestId('agents-composer-stop'))
+    await appears(canvas, 'agents-composer-send')
+    await said(canvas, 'Thinking')
+    await say(canvas, userEvent, 'hello')
+    await said(canvas, 'Hi there')
+  }}
+/>
+
+<!-- The backend did not answer (the host, the connection): the reason, and no agents to pick. -->
+<Story
+  name="The backend cannot be reached"
+  args={{ backend: () => createFailingBackend('The host is not answering') }}
+  play={async ({ canvas }) => {
+    await waitFor(() => expect(canvas.getByTestId('agents-failure')).toHaveTextContent('The host is not answering'))
+    await expect(canvas.queryByTestId('agents-agent-scripted')).toBeNull()
+  }}
+/>

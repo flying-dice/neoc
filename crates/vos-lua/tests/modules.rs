@@ -746,7 +746,6 @@ async fn a_read_only_tool_cannot_register_or_change_the_apps_wiring() {
           return try(function() app.window("late", { render = function() return { type = "Stack", key = "n" } end }) end) end }
         app.tool { name = "register", readOnly = true, run = function()
           return try(function() app.tools.register { name = "late", run = function() end } end) end }
-        app.tool { name = "thread", readOnly = true, run = function() return try(function() app.thread() end) end }
         app.tool { name = "manifest", readOnly = true, run = function()
           return try(function() app.manifest { id = "probe", name = "Probe", icon = "gear" } end) end }
         app.tool { name = "reads", readOnly = true, run = function()
@@ -757,7 +756,7 @@ async fn a_read_only_tool_cannot_register_or_change_the_apps_wiring() {
         end }
     "#;
     r.load("probe", &format!("{MANIFEST}\n{src}")).await;
-    for tool in ["window", "register", "thread", "manifest"] {
+    for tool in ["window", "register", "manifest"] {
         let out = r.tool("probe", tool).await;
         assert_eq!(out["ok"], false, "{tool} must be refused: {out}");
         assert!(out["err"].as_str().unwrap().contains("readOnly"), "{tool}: {out}");

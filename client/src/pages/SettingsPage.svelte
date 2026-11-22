@@ -10,15 +10,13 @@
   import { settings, accents, type Theme } from '../lib/settings.svelte'
   import { host } from '../lib/host.svelte'
   import { devices } from '../lib/devices.svelte'
-  import { iconOf } from '../shell/hostApi'
 
-  type Pane = 'general' | 'appearance' | 'devices' | 'agents' | 'notifications' | 'privacy'
+  type Pane = 'general' | 'appearance' | 'devices' | 'notifications' | 'privacy'
 
   const panes: { id: Pane; title: string; icon: IconName; color: string }[] = [
     { id: 'general', title: 'General', icon: 'gear', color: 'var(--ios-gray)' },
     { id: 'appearance', title: 'Display & Appearance', icon: 'sun', color: 'var(--ios-blue)' },
     { id: 'devices', title: 'Devices', icon: 'globe', color: 'var(--ios-green)' },
-    { id: 'agents', title: 'Agents', icon: 'sparkles', color: 'var(--ios-purple)' },
     { id: 'notifications', title: 'Notifications', icon: 'bell', color: 'var(--ios-red)' },
     { id: 'privacy', title: 'Privacy & Security', icon: 'lock', color: 'var(--ios-blue)' }
   ]
@@ -161,23 +159,6 @@
             </ListSection>
           {:else if pane === 'devices'}
             <DevicesPane />
-          {:else if pane === 'agents'}
-            <ListSection
-              header="Agents on this host"
-              footer="An agent can use only the apps it is granted. Add or change agents in vos.toml, or with agents.create; chat with them in the Agents app."
-            >
-              {#each host.agents as agent (agent.id)}
-                <ListRow
-                  testid="settings-agent-{agent.id}"
-                  title={agent.name}
-                  subtitle={agent.role || undefined}
-                  icon={iconOf(agent.avatar ?? 'sparkles')}
-                  iconColor="var(--ios-purple)"
-                />
-              {:else}
-                <ListRow testid="settings-agents-empty" title="No agents yet" />
-              {/each}
-            </ListSection>
           {:else if pane === 'notifications'}
             <ListSection>
               <ListRow testid="settings-allow-notifications-row" title="Allow Notifications">

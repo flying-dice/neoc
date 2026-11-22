@@ -1,13 +1,11 @@
 /**
  * What the shell asks the host besides the view protocol: the app lifecycle (`app.*`), the catalog Discover
- * browses, the agent roster (`agents.*`) and the paired devices (`host.devices.*`). The shapes are generated from
+ * browses and the paired devices (`host.devices.*`). The shapes are generated from
  * `crates/vos-domain/src/api.rs` into `types/generated/vos.ts`.
  */
 import { icons, type IconName } from '@vos/ui'
 import type { CallOptions } from './channel'
 import type {
-  HostAgentList,
-  HostAgentRow,
   HostAppPreview,
   HostAppState,
   HostAppSummary,
@@ -25,11 +23,6 @@ export type AppSummary = HostAppSummary
 export type InstalledInfo = HostInstalledInfo
 export type AppPreview = HostAppPreview
 export type Catalog = HostCatalog
-/** One agent on the host's roster (`agents.list`): no tokens, and only the names of its environment variables. */
-export type AgentRow = HostAgentRow
-export type AgentList = HostAgentList
-/** What the shell shows of an agent (the roster row also carries its launch command and grants, which the shell never reads). */
-export type AgentSummary = Pick<HostAgentRow, 'id' | 'name' | 'avatar' | 'role'>
 export type DeviceRow = HostDeviceRow
 /** What an app's backend asked to tell the person (`notification.deliver`): the sender's id, which the host sets, a title and a body. */
 export type AppNotification = HostNotifications['notification.deliver']

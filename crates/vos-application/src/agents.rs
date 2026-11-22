@@ -14,7 +14,7 @@
 
 use crate::{
     error::PortError,
-    ports::{AgentCard, AgentDirectory, AgentProcesses, AgentRoster, AgentStore, RandomSource, ToolRegistry},
+    ports::{AgentCard, AgentDirectory, AgentRoster, AgentStore, RandomSource, ToolRegistry},
     tokens::random_hex,
 };
 use parking_lot::RwLock;
@@ -76,7 +76,6 @@ pub struct AgentService {
     tools: Arc<dyn ToolRegistry>,
     random: Arc<dyn RandomSource>,
     roster: RwLock<Roster>,
-    processes: Arc<dyn AgentProcesses>,
 }
 
 /// A bearer token: 192 bits of randomness as hex, prefixed so a leaked token is recognisable. Every agent token
@@ -88,20 +87,12 @@ pub fn mint_agent_token(random: &dyn RandomSource) -> String {
 
 impl AgentService {
     #[must_use]
-    /// `processes` stops an agent's process when the agent is deleted or its runtime (command, arguments,
-    /// environment) changes; it is required, so a wiring mistake cannot skip the stop silently
-    /// ([`crate::NoAgentProcesses`] for a connector that launches nothing).
     pub fn new(
         store: Arc<dyn AgentStore>,
         tools: Arc<dyn ToolRegistry>,
         random: Arc<dyn RandomSource>,
-        processes: Arc<dyn AgentProcesses>,
     ) -> Self {
-        Self { store, tools, random, roster: RwLock::default(), processes }
-    }
-
-    async fn stop_process(&self, id: &AgentId) {
-        self.processes.stop_agent(id).await;
+        Self { store, tools, random, roster: RwLock::default() }
     }
 
     /// Read the roster from the store (at start, and in tests that share a store).
@@ -190,7 +181,6 @@ impl AgentService {
 
     pub async fn update(&self, id: &AgentId, patch: AgentPatch) -> Result<Agent, AgentError> {
         let mut agent = self.require(id)?;
-        let launch_before = agent.runtime.clone();
         if let Some(name) = patch.name {
             name.trim().clone_into(&mut agent.name);
         }
@@ -208,9 +198,6 @@ impl AgentService {
         }
         agent.validate()?;
         self.store_update(&agent).await?;
-        if agent.runtime != launch_before {
-            self.stop_process(id).await;
-        }
         Ok(agent)
     }
 
@@ -248,7 +235,6 @@ impl AgentService {
             roster.persistent.retain(|(a, _)| a != id);
             roster.launch.retain(|t| &t.agent != id);
         }
-        self.stop_process(id).await;
         if let Err(e) = self.tools.visibility_changed(id).await {
             tracing::warn!(agent = %id.0, error = %e, "could not tell the agent its tool list changed");
         }

@@ -190,11 +190,11 @@ function checkCode(rel: string, code: string, markup: string): void {
   if (!under(rel, WEBSOCKET_ALLOWED) && !isTestSupport(rel))
     scan(code, /\bnew\s+WebSocket\s*\(/, 'raw WebSocket: talk to the host through the renderer transport (view/rpc/websocket.ts)')
   if (!under(rel, HTML_ALLOWED)) {
-    const untrusted = 'renders raw HTML; agent, tool and user text is untrusted: build nodes (see atoms/RichText.svelte)'
+    const untrusted = 'renders raw HTML; agent, tool and user text is untrusted: build nodes'
     scan(markup, /\{@html\b/, `{@html} ${untrusted}`)
     scan(code, /\.(?:innerHTML|outerHTML)\s*\+?=|\binsertAdjacentHTML\s*\(|\bdocument\s*\.\s*write(?:ln)?\s*\(/, `this ${untrusted}`)
     // Lit's unsafe directives are the {@html} of a web component
-    scan(code, /\bunsafe(?:HTML|SVG|Static)\b/, `this Lit directive ${untrusted.replace('see atoms/RichText.svelte', 'a template renders text')}`)
+    scan(code, /\bunsafe(?:HTML|SVG|Static)\b/, `this Lit directive ${untrusted.replace('build nodes', 'a template renders text')}`)
   }
 }
 

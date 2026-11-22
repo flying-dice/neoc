@@ -38,8 +38,6 @@ const INTERNAL: Record<string, string[]> = {
   'vos-sqlite': ['vos-domain', 'vos-application'],
   'vos-fetch': ['vos-application'],
   'vos-mcp': ['vos-domain', 'vos-application'],
-  'vos-acp': ['vos-domain', 'vos-application'],
-  'vos-agui': ['vos-domain', 'vos-application'],
   'vos-http': ['vos-domain', 'vos-application'],
   'vos-codegen': ['vos-domain'],
   'vos-host': [
@@ -49,8 +47,6 @@ const INTERNAL: Record<string, string[]> = {
     'vos-sqlite',
     'vos-fetch',
     'vos-mcp',
-    'vos-acp',
-    'vos-agui',
     'vos-http'
   ]
 }
@@ -71,8 +67,7 @@ const FRAMEWORK_HOMES: Record<string, string[]> = {
   mlua: ['neoc-vm', 'neoc'],
   rusqlite: ['vos-sqlite', 'neoc-vm'],
   rmcp: ['vos-mcp'],
-  'agent-client-protocol': ['vos-acp'],
-  axum: ['vos-http', 'vos-mcp', 'vos-agui', 'vos-host'],
+  axum: ['vos-http', 'vos-mcp', 'vos-host'],
   'axum-server': ['vos-host'],
   // reached only through neoc-vm's dependencies (deny.toml lets tonic use axum); no workspace crate names it
   tonic: []
@@ -87,7 +82,6 @@ const FRAMEWORKS = new Set([
   'rusqlite',
   'reqwest',
   'rmcp',
-  'agent-client-protocol',
   'tower-http',
   'notify',
   'getrandom'

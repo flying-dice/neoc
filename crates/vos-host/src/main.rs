@@ -1,4 +1,4 @@
-//! `vos`: serve the desktop, `/rpc`, `/agui` and `/mcp`, or print a fresh pairing code.
+//! `vos`: serve the desktop, `/rpc` and `/mcp`, or print a fresh pairing code.
 //!
 //! ```text
 //! vos                       serve (config: vos.toml, environment, see --help)
@@ -33,7 +33,7 @@ const HELP: &str = "\
 vos: the host
 
 USAGE:
-    vos [--config <file>]       serve the desktop, /rpc, /agui and /mcp
+    vos [--config <file>]       serve the desktop, /rpc and /mcp
     vos pair [--config <file>]  print a fresh pairing code (alias: --new-pairing-code)
 
 Every client must be paired: open the desktop, enter the pairing code the host prints at start.
@@ -170,9 +170,8 @@ async fn run(settings: Settings, cwd: &Path) -> anyhow::Result<()> {
     config.registries = settings.catalog(cwd);
     config.secure_cookies = settings.secure_cookies;
     config.agents = vec![(mcp_token.clone(), local_agent)];
-    // the one URL for host-launched agents and for mcp.json: reachable for whatever `bind` is
+    // the URL in mcp.json: reachable for whatever `bind` is
     let mcp_url = local_url(settings.scheme(), settings.bind, port, "/mcp");
-    config.mcp_url = Some(mcp_url.clone());
 
     let host = build(config).await?;
     for agent in settings.agents.clone() {
@@ -208,7 +207,6 @@ async fn run(settings: Settings, cwd: &Path) -> anyhow::Result<()> {
     serve(listener, host.router, settings.tls.as_ref(), host.shutdown.clone()).await?;
 
     host.service.shutdown().await;
-    host.chat.shutdown().await;
     tracing::info!("stopped");
     Ok(())
 }

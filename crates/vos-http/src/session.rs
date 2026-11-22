@@ -5,8 +5,8 @@
 //!   session cookie. Unauthenticated by design; rate limited by the `DeviceService`.
 //! - `GET /session` says whether this browser is paired (`{"paired":false}` or `{"paired":true,"device":..}`),
 //!   so the shell knows to show its pairing screen. Unauthenticated: it reveals nothing to an unpaired client.
-//! - [`require_session`] is the middleware for everything else a client may call (`/rpc`, `/agui`, any
-//!   future data endpoint). **Protected is the default**: public routes are the exception, listed in
+//! - [`require_session`] is the middleware for everything else a client may call (`/rpc`, any future
+//!   data endpoint). **Protected is the default**: public routes are the exception, listed in
 //!   one place (the host's router).
 //!
 //! The cookie is `HttpOnly; SameSite=Strict`, and with TLS `Secure` and named `__Host-vos_session`: the

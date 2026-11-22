@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
 import {
-  AGENTS_APP_ID,
   appOf,
   apps,
   dockOrder,
@@ -30,12 +29,12 @@ describe('appOf', () => {
     expect(appOf('notes')?.name).toBe('Notes')
   })
 
-  test('an app that is not installed is not there (the Agents app on a host without it)', () => {
-    expect(appOf(AGENTS_APP_ID)).toBeUndefined()
-    setInstalledApps([summary(AGENTS_APP_ID)])
-    expect(appOf(AGENTS_APP_ID)?.id).toBe('agents')
-    setInstalledApps([summary(AGENTS_APP_ID, { state: 'disabled' })])
-    expect(appOf(AGENTS_APP_ID)).toBeUndefined()
+  test('an app that is not installed, or is disabled, is not there', () => {
+    expect(appOf('notes')).toBeUndefined()
+    setInstalledApps([summary('notes')])
+    expect(appOf('notes')?.id).toBe('notes')
+    setInstalledApps([summary('notes', { state: 'disabled' })])
+    expect(appOf('notes')).toBeUndefined()
   })
 
   test.each(['constructor', '__proto__', 'toString', 'hasOwnProperty', '', 'nope'])(
@@ -54,9 +53,7 @@ describe('setInstalledApps', () => {
       summary('broken', { state: 'failed', message: 'bad lua' })
     ])
     expect(
-      Object.keys(apps).filter(
-        (id) => !['discover', 'settings', 'files', 'gallery', 'terminal'].includes(id)
-      )
+      Object.keys(apps).filter((id) => !['discover', 'settings', 'files', 'terminal'].includes(id))
     ).toEqual(['calculator'])
     expect(appOf('calculator')).toMatchObject({
       width: 340,

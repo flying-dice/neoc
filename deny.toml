@@ -24,8 +24,7 @@ deny = [
   # end-to-end tests use rmcp as the MCP client, and the fetch tests run an axum server. That makes these two bans
   # blind to a move from dev to normal dependency, so scripts/check-deps.ts (FRAMEWORK_HOMES) holds the normal edges.
   { crate = "rmcp", wrappers = ["vos-mcp", "vos-host"], reason = "MCP lives in the mcp adapter (vos-host: dev-dependency, the test client)" },
-  { crate = "agent-client-protocol", wrappers = ["vos-acp"], reason = "ACP lives in the acp adapter" },
-  { crate = "axum", wrappers = ["vos-http", "vos-mcp", "vos-agui", "vos-host", "vos-fetch", "tonic"], reason = "HTTP stack in driving adapters and the host (vos-fetch: dev-dependency, a test server; tonic: gRPC under neoc-vm's vnd:testcontainers_modules)" },
+  { crate = "axum", wrappers = ["vos-http", "vos-mcp", "vos-host", "vos-fetch", "tonic"], reason = "HTTP stack in driving adapters and the host (vos-fetch: dev-dependency, a test server; tonic: gRPC under neoc-vm's vnd:testcontainers_modules)" },
   { crate = "axum-server", wrappers = ["vos-host"], reason = "TLS termination is wiring: the host owns the listener" },
   # rustls only: no system OpenSSL, so every binary stays self-contained
   { crate = "openssl" },

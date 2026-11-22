@@ -96,12 +96,6 @@ pub enum SourceDecl {
         #[cfg_attr(feature = "codegen", ts(type = "{ [key: string]: JsonValue }"))]
         params: Map<String, Value>,
     },
-    /// A chat thread (`ChatTranscript`), maintained by the AG-UI bridge.
-    Thread {
-        #[serde(default)]
-        #[cfg_attr(feature = "codegen", ts(type = "{ [key: string]: JsonValue }"))]
-        params: Map<String, Value>,
-    },
 }
 
 impl SourceDecl {
@@ -112,8 +106,7 @@ impl SourceDecl {
             Self::Rows { params, .. }
             | Self::Row { params, .. }
             | Self::Value { params }
-            | Self::Text { params }
-            | Self::Thread { params } => params,
+            | Self::Text { params } => params,
         }
     }
 
@@ -125,7 +118,6 @@ impl SourceDecl {
             Self::Row { .. } => "row",
             Self::Value { .. } => "value",
             Self::Text { .. } => "text",
-            Self::Thread { .. } => "thread",
         }
     }
 }
