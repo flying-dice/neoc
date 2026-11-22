@@ -5,7 +5,7 @@ import type { Transport } from '../view/rpc/transport'
 import { createWebSocketTransport, defaultRpcUrl } from '../view/rpc/websocket'
 import { messageOf } from '../view/errors'
 import { reactiveStore } from '../view/store.svelte'
-import { createHostChannel, HostError, type HostChannel } from '../shell/channel'
+import { createHostChannel, HostError, type CallOptions, type HostChannel } from '../shell/channel'
 import type { AgentSummary, AppSummary, Catalog, HostApi } from '../shell/hostApi'
 import { isPaired, pairDevice, type PairResult } from '../shell/pairing'
 import { agentListSchema, appListSchema, callParsed, catalogSchema } from '../shell/results'
@@ -91,10 +91,14 @@ export class Host {
 
   /** The host-management calls (`app.*`, `host.*`): the session's connection, or a fake in stories. */
   readonly api: HostApi = {
-    call: (method: string, params: Record<string, unknown> = {}): Promise<unknown> => {
+    call: (
+      method: string,
+      params: Record<string, unknown> = {},
+      options?: CallOptions
+    ): Promise<unknown> => {
       if (this.fake) return this.fake.call(method, params)
       if (!this.channel) return Promise.reject(new HostError(-32000, 'Not connected to vos'))
-      return this.channel.call(method, params)
+      return this.channel.call(method, params, options)
     },
     onNotification: (listener) =>
       this.fake

@@ -253,4 +253,29 @@ describe('eventFor', () => {
     expect(eventFor('notes', 'window.open', { app: 'notes', name: 'x', data: null })).toBeNull()
     expect(eventFor('notes', 'app.event', { app: 'notes' })).toBeNull()
   })
+
+  test('a frame the window has given up on is not listened to: no calls, no hello, no ready', async () => {
+    let muted = false
+    const hello: number[] = []
+    const calls: string[] = []
+    const posted: ToFrame[] = []
+    const bridge = createFrameBridge({
+      appId: 'notes',
+      frame: () => FRAME,
+      post: (m) => posted.push(m),
+      call: async (method) => void calls.push(method),
+      onHello: () => hello.push(1),
+      onReady: () => hello.push(2),
+      muted: () => muted
+    })
+    muted = true
+    bridge.receive({ source: FRAME, data: { t: 'hello' } })
+    bridge.receive({ source: FRAME, data: { t: 'ready' } })
+    bridge.receive({ source: FRAME, data: { t: 'rpc', id: 1, method: 'list', args: null } })
+    await new Promise((r) => setTimeout(r, 0))
+    expect({ hello, calls, posted }).toEqual({ hello: [], calls: [], posted: [] })
+    muted = false // a new window of the same bridge would listen again (Try again makes a new one)
+    bridge.receive({ source: FRAME, data: { t: 'hello' } })
+    expect(hello).toEqual([1])
+  })
 })

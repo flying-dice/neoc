@@ -20,6 +20,8 @@ after another).
 | AF7 | Use two apps with clients side by side.                        | Both apps open.                    | A task added in one is not in the other: each client reaches only its own backend.                                                         |
 | AF8 | A client sends its frame to another page (`location.href`).       | The app open.                      | The window notices it is not showing the page it loaded, says the app left its page, and "Try again" brings the app back. |
 | AF9 | A client submits a form nobody prevented, and one by script with `form.submit()`. | The app open.            | The first stays on its page (a dialog form still closes its dialog); the second sends the frame away and the window says the app left its page, with Try again; no data is sent. |
+| AF10 | An app's handlers never answer: use the shell and another app meanwhile, close and reopen the hung app's window, then let the handlers go. | An app with a handler that waits for ever. | The shell's own calls and the other app work throughout; the hung app's calls wait their turn (at most eight run at a time) and go again when the handlers answer. |
+| AF11 | Uninstall an app while calls to its handlers are running. | An app with handlers that wait. | The calls are answered at once with the reason; the host keeps nothing running for them. |
 
 ## Manual verification
 

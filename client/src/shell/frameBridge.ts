@@ -59,13 +59,25 @@ export interface FrameBridgeOptions {
   frame(): unknown
   /** Send a message into the frame. */
   post(message: ToFrame): void
-  /** A host call (`/rpc`): the shell's own connection. */
-  call(method: string, params: Record<string, unknown>): Promise<unknown>
+  /**
+   * A host call (`/rpc`): the shell's own connection. `options.timeoutMs` is 0 for `app.call`: the host keeps running a call
+   * until its handler answers, and the gate counts it for as long, so the client must not give up before the host does.
+   */
+  call(
+    method: string,
+    params: Record<string, unknown>,
+    options?: { timeoutMs?: number }
+  ): Promise<unknown>
   /**
    * The frame's document is the host's own bridge script running: it says so (`hello`) the moment it starts, before the
    * client does anything, so a document that never does is a page the frame navigated itself to.
    */
   onHello?(): void
+  /**
+   * The window has given the frame up (the app left its page, or never started): nothing the frame posts is acted on while this is
+   * true, so a page the app navigated to has no say over its window. Trying again makes a new frame and a new bridge.
+   */
+  muted?(): boolean
   /** Who may have a call in flight: the gate the frames of the shell share (default). */
   gate?: CallGate
   /** The client mounted. */
@@ -126,8 +138,8 @@ export function createFrameBridge(options: FrameBridgeOptions): FrameBridge {
   const { appId } = options
   let disposed = false
   const gate = options.gate ?? callGate
-  /** What identifies this frame to the gate. */
-  const frameKey = {}
+  /** What identifies this frame to the gate: its app, so a window closed and opened again meets the places still taken. */
+  const frameKey = appId
   const post = (message: ToFrame): void => {
     if (!disposed) options.post(message)
   }
@@ -135,7 +147,7 @@ export function createFrameBridge(options: FrameBridgeOptions): FrameBridge {
   return {
     receive({ source, data }) {
       const frame = options.frame()
-      if (disposed || frame === null || source !== frame) return
+      if (disposed || frame === null || source !== frame || options.muted?.()) return
       const parsed = fromFrame.safeParse(data)
       if (!parsed.success) {
         // a call that cannot be read still has an id to answer, so the client's promise settles
@@ -165,27 +177,33 @@ export function createFrameBridge(options: FrameBridgeOptions): FrameBridge {
             post({ t: 'res', id: message.id, error: refusal })
             return
           }
-          void gate.enter(frameKey).then((release) => {
-            if (release === null) {
-              post({
-                t: 'res',
-                id: message.id,
-                error: `Too many calls are waiting (at most ${MAX_WAITING_PER_FRAME}): let some finish first`
-              })
-              return
-            }
-            if (disposed) {
-              release()
-              return
-            }
-            options
-              .call('app.call', { app: appId, method: message.method, args: message.args ?? null })
-              .then(
-                (result) => post({ t: 'res', id: message.id, result: result ?? null }),
-                (error: unknown) => post({ t: 'res', id: message.id, error: messageOf(error) })
-              )
-              .finally(release)
-          })
+          void gate
+            .enter(frameKey, () => disposed)
+            .then((release) => {
+              if (release === null) {
+                post({
+                  t: 'res',
+                  id: message.id,
+                  error: `Too many calls are waiting (at most ${MAX_WAITING_PER_FRAME}): let some finish first`
+                })
+                return
+              }
+              if (disposed) {
+                release()
+                return
+              }
+              options
+                .call(
+                  'app.call',
+                  { app: appId, method: message.method, args: message.args ?? null },
+                  { timeoutMs: 0 }
+                )
+                .then(
+                  (result) => post({ t: 'res', id: message.id, result: result ?? null }),
+                  (error: unknown) => post({ t: 'res', id: message.id, error: messageOf(error) })
+                )
+                .finally(release)
+            })
           return
         }
         case 'hello':

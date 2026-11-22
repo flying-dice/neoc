@@ -9,6 +9,9 @@
 
   let { rpc, host }: { rpc: Rpc; host: Host } = $props()
 
+  // the journeys reach the backend with calls the screen has no control for (`hang`, `release`)
+  ;(window as unknown as { __rpc: Rpc }).__rpc = rpc
+
   let tasks = $state<Task[]>([])
   let title = $state('')
   let error = $state<string | null>(null)

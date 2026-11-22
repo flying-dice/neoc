@@ -103,8 +103,12 @@ or over the shell; it is not a security boundary. Lasting data belongs in the ba
 128 characters: a call over a limit rejects at once with a message that says which. A result may be at most 4 MiB, and a
 larger one comes back as an error. A call the shell cannot read is rejected too, so a promise never hangs. Calls in
 flight are limited so that one window can neither be refused by the host's own connection limit for an ordinary burst (a
-call per item of a list) nor crowd out the shell or another window: 8 at a time per window and 32 across all windows, the
-rest wait their turn (windows take turns); a window with 1,000 calls waiting gets an error for the next one.
+call per item of a list) nor crowd out the shell or another app: 8 at a time per app and 32 across all apps, the
+rest wait their turn (apps take turns); an app with 1,000 calls waiting gets an error for the next one. A place is taken for
+as long as the host is running the call: a call has no time limit on the client, and its place comes back when the handler
+answers or the connection to the host goes, so a handler that never returns takes up to eight places of its own app and no
+one else's (closing its window does not stop the handler, so the places stay taken; uninstalling or replacing the app
+ends its calls, with the reason). The shell's own calls and the other apps keep working.
 
 **When a client fails to start**, the window shows the reason as text with a "Try again" button: the error the page raised
 while it loaded (a top-level throw, a missing import, a syntax error: the script comes from another origin than the
@@ -147,7 +151,8 @@ return handlers
   the client as `app.luau:12: message`.
 - **Services.** A handler, a tool and background work all reach the host the same way, through the `app` global:
   `app.db`, `app.kv`, `app.files`, `app.notify`, `app.log`, `app.agents:list()`, `app.emit`. There is nothing special about
-  `ctx`. A handler may write: the person's client is calling. The entry may also return nothing (an app with only tools).
+  `ctx`. A handler may write: the person's client is calling. The entry may also return nothing (an app with only tools); anything else (a number, a string, a table with a value that
+  is not a function) stops the app from loading, with the reason.
 - **Events.** `app.emit(name, data)` tells the app's open clients something changed (they hear it with `host.on`): after
   an agent's tool changed data, or from a background task. `name` is 1 to 64 letters, digits and `. _ : -` (not `host:...`),
   `data` JSON of at most 64 KiB, at most 256 events waiting; a `readOnly` tool may not emit.

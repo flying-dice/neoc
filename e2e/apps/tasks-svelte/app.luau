@@ -31,6 +31,9 @@ local function titleOf(args: any): string
   return ""
 end
 
+-- `hang` waits until `release` is called (the journeys' stand-in for a handler that waits on something that never answers)
+local generation = 0
+
 local handlers: vos_Handlers = {
   list = function(_ctx, _args)
     return list()
@@ -50,6 +53,17 @@ local handlers: vos_Handlers = {
     db:exec("update tasks set done = 1 - done where id = :id", { id = args.id })
     return list()
   end,
+  hang = function(_ctx, _args)
+    local mine = generation
+    while generation == mine do
+      task.wait(0.05)
+    end
+    return "released"
+  end,
+  release = function(_ctx, _args)
+    generation += 1
+    return "ok"
+  end,
   whoami = function(ctx, _args)
     return { kind = ctx.actor.kind, app = app.id }
   end,
@@ -64,6 +78,18 @@ app.tool {
     db:exec("insert into tasks (title) values (:title)", { title = input.title })
     app.emit("tasks.changed")
     return { tasks = #list() }
+  end,
+}
+
+-- the way out of a hung app for the journeys: a tool is not a call of the client, so it does not wait behind the eight that hang
+app.tool {
+  name = "release_all",
+  title = "Release the hung calls",
+  description = "Let every call of `hang` that is waiting return.",
+  input = {},
+  run = function(_input, _ctx)
+    generation += 1
+    return { released = true }
   end,
 }
 
