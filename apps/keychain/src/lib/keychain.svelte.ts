@@ -169,7 +169,8 @@ export class Keychain {
    */
   async add(): Promise<boolean> {
     if (!this.ready || this.#adding) return false
-    const { service, account, password } = this.#draft
+    const sent = this.#draft
+    const { service, account, password } = sent
     this.#refused = null
     this.#adding = true
     try {
@@ -177,7 +178,8 @@ export class Keychain {
         () => this.#rpc.add({ service: service.trim(), account: account.trim(), ...(password === '' ? {} : { password }) }),
         (message) => (this.#refused = message)
       )
-      if (added) this.#draft = NO_ITEM
+      // what was typed while the keychain was asked is the next item: it stays
+      if (added && this.#draft === sent) this.#draft = NO_ITEM
       return added
     } finally {
       this.#adding = false

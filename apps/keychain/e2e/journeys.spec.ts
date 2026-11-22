@@ -26,6 +26,8 @@ async function add(page: Page, service: string, account: string, password: strin
   await field(page, 'new-account').fill(account)
   await field(page, 'new-password').fill(password)
   await part(page, 'new-add').click()
+  // answered, one way or the other: the keychain is no longer being asked
+  await expect(part(page, 'new-busy')).toHaveCount(0)
 }
 
 /** Delete the first item, answering the question. */

@@ -62,6 +62,16 @@ describe('adding an item', () => {
     expect(keychain.draft).toEqual({ service: '', account: '', password: '' })
   })
 
+  test('keeps what is typed while the keychain is asked: it is the next item', async () => {
+    const keychain = await opened(createFakeBackend({ pace: 20 }))
+    keychain.edit({ service: 'nas.home', account: 'ada', password: 'first' })
+    const adding = keychain.add()
+    keychain.edit({ service: 'tv.home', account: 'ada', password: 'second' })
+    expect(await adding).toBe(true)
+    expect(names(keychain)).toContain('nas.home ada')
+    expect(keychain.draft).toEqual({ service: 'tv.home', account: 'ada', password: 'second' })
+  })
+
   test('is not sent without a service or an account', async () => {
     const keychain = await opened()
     keychain.edit({ service: 'nas.home', account: '  ', password: 'secret' })
