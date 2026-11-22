@@ -95,6 +95,7 @@ export class UiButton extends FormControl {
         appearance: none;
         border: 0;
         margin: 0;
+        flex: 1 1 auto; /* fills the element, as the shell's button fills its grid cell or column */
         display: inline-flex;
         align-items: center;
         justify-content: center;
@@ -154,8 +155,13 @@ export class UiButton extends FormControl {
         border-radius: 50%;
       }
       :host([square]) button {
+        flex: none;
         padding: 0;
         width: 34px;
+      }
+      /* with hit the box is at least 44 wide, but the drawn button keeps its own width */
+      :host([hit]) button {
+        flex: none;
       }
       :host([square][size='small']) button {
         width: 28px;
