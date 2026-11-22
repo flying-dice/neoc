@@ -271,7 +271,7 @@ directly. Code and pull requests are on GitHub at `flying-dice/neoc`.
 this repository, not a nicety. Every process step (a check, a review pass, a research round, a fan-out of sub-agents) is
 weighed by the time it adds, and a step earns its place only if what it catches is worth that time. That is why the gate is
 fast and the slow suites are opt-in (see "The gate"), why audits scale with the size of the change, why a review holds a
-merge only for what must not ship (the `pr-review` skill), and why small PRs are preferred over long-lived branches. Velocity
+merge only for what must not ship ("What holds a merge"), and why small PRs are preferred over long-lived branches. Velocity
 comes from fast checks and small PRs. It does not come from fewer review rounds: rounds continue until the independent
 reviewer returns READY TO MERGE at the exact head, every fix round is re-reviewed, and nobody shortcuts a check or merges over
 an open blocking finding. A skill, a script or a doc that adds a slow step needs a reason that outweighs the time, written
@@ -298,16 +298,32 @@ current epic is **NEOC-155**. (Older comments cite AGOS-n keys; they stay valid.
 4. Self-review with the `pr-self-review` skill and post its `Self-review` note on the PR for the head SHA. Its checklist is
    [REVIEW-READY.md](REVIEW-READY.md): read that file when you start a change, not only at the end.
 5. Hand off to an independent `pr-review` pass: a fresh reviewer with no session context, who posts a verdict note for the head
-   SHA (`READY TO MERGE`, with or without items for a ticket, `CHANGES NEEDED` for blocking findings only, or `HOLD`). Rounds continue
-   until `READY TO MERGE` at the exact head; each re-review reads the fix delta as new code, so it also catches regressions
-   the fix introduced. Only a real bug, data loss or a security hole, a broken
-   acceptance criterion, a failing gate, an untrue claim, a test that cannot fail, or a no-vos-leak or boundary violation
-   holds a merge. Everything else is filed by the author in Jira NEOC (a Bug or a Story with the area's label) and does not
-   hold it (REVIEW-READY.md, rule 4.3).
+   SHA (`READY TO MERGE`, with or without items for a ticket, `CHANGES NEEDED` for blocking findings, or `HOLD`). Rounds
+   continue until `READY TO MERGE` at the exact head; each re-review reads the fix delta as new code, so it also catches
+   regressions the fix introduced. What blocks is stated once, in "What holds a merge" below.
 6. Squash-merge only on `READY TO MERGE` for the current head, then delete the branch and mark the Jira ticket Done. The one
    exception was the merge of vos into neoc (NEOC-113, PR #34), which landed with a merge commit to keep vos's history.
 7. An app that isn't ready for the full gate and the UX research panel stays in its PR: keep pushing to the branch; don't merge
    a partial app behind a flag or with "tests later".
+
+### What holds a merge
+
+This is the one statement of it; every skill and doc points here. A pull request does not merge while any of these is open:
+
+- the feature it says it delivers does not work in ordinary use, including an acceptance criterion it claims and does not
+  meet;
+- something unsafe: a host crash or hang, data lost or leaked, one app or client able to harm another, unsafe handling of
+  outside input, a security hole;
+- a boundary violation: crate direction, a vos concept in `neoc-vm`, or another boundary under "Boundaries";
+- the gate not green at the head;
+- a claim in the docs, comments or the pull request that is not true;
+- a test that cannot fail.
+
+Scope a pull request openly defers (its body says it does not deliver it, with a Story ticket) is not an unmet acceptance
+criterion and does not hold the merge. Everything else (an unlikely edge case, an unverified platform, acceptable but not
+ideal behaviour, a better mechanism for something that works) the author files in Jira NEOC: a Bug for what behaves wrongly,
+a Story for what is missing or could be better, with the area's label, grouped, in the backlog, keys in the pull request
+body. A reviewer sorts each finding into one kind or the other and files nothing.
 
 Releases are cut by pushing a `vX.Y.Z` tag on `main` (see CONTRIBUTING.md). Don't push release tags unless asked.
 

@@ -15,10 +15,8 @@ is the checklist that proves you followed them.
 - **Evidence or FAIL.** Every line carries a test name, a command and its result at the head SHA, or what you saw on the real
   host. "Checked", "covered", "should work" and "PASS" alone are not evidence.
 - **N/A needs a reason.** Write `N/A — <reason>` ("no queue or limit in this change", "nothing a person sees").
-- **Fix what must not ship, record the rest.** Fix before the merge what stops the feature working in ordinary use, what is
-  unsafe (crash, hang, data lost or leaked, one app or client harming another, outside input handled unsafely), any untrue
-  claim and any test that cannot fail. Everything else goes to Jira NEOC as a Bug or a Story with the area's label, grouped,
-  in the backlog, filed when the pull request goes to review, with the keys in its body (REVIEW-READY.md, rule 4.3).
+- **Fix what holds a merge, ticket the rest.** The list is in CLAUDE.md, "What holds a merge"; the rest you file as that
+  section says, when the pull request goes to review, with the keys in its body (REVIEW-READY.md, rule 4.3).
 - **No mutation testing.** Judge a test by reading it and the code it covers (CLAUDE.md, "The gate").
 - A note is valid only for the SHA it names. Push after posting, and you post a new note.
 
@@ -39,7 +37,7 @@ Each line is a rule in REVIEW-READY.md. The note carries one row per line.
 | # | Rule | Evidence the row must carry |
 |---|---|---|
 | 0.1 | Who has already solved it | the class of problem; the pattern, standard and mature systems read; adopt/adapt/build and why; any library in the core path cleared with the owner first |
-| 0.2 | Five whys on a repeat (re-request) | the five whys and the options sent to the owner through whoever assigned the work, or "no repeat" |
+| 0.2 | Five whys on a repeat (re-request) | the earlier findings on this pull request and area you compared against; on a repeat, the five whys and the options sent to the owner through whoever assigned the work |
 | 1.1 | Reviewer's questions answered | where in the body each one is answered |
 | 1.2 | Reference matched | the reference named; each difference and why |
 | 1.3 | Invariants for shared resources, no timer decides | each queue, limit, cap and timeout: the invariant and its test; any timer and why |
@@ -55,7 +53,7 @@ Each line is a rule in REVIEW-READY.md. The note carries one row per line.
 | 3.5 | Gate green at this head | the command and its summary line, and the head SHA |
 | 4.1 | Class fixed, not case (re-request) | per finding: the class, the invariant, the members, the test over them |
 | 4.2 | Fix treated as new code (re-request) | section 3 run again on the delta |
-| 4.3 | Must-not-ship fixed, the rest ticketed | per finding: the commit, or the Bug/Story key with its area label |
+| 4.3 | What holds a merge fixed, the rest ticketed | per finding: the commit, or the Bug/Story key with its area label |
 
 Also, from the reviewer's rubric (`pr-review`, G3, G4 and G11):
 

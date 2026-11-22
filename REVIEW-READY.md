@@ -14,9 +14,9 @@ input validation are all solved classes of problem. Don't plug holes one at a ti
 **0.1 Before you design, find who has already solved it.** Name the class of problem and how it is solved elsewhere: the
 established pattern, protocol or standard first, then how two or three mature systems do it. Read which edge cases they
 handle; those are the review findings you would otherwise meet one at a time. Adopt the pattern or standard. Adopt a
-library when it solves the class and stays out of the way; don't take one that dictates how the product must work. A new
-dependency needs the owner's sign-off, and one in the product's core path is asked about before you try it. Build only with
-a stated reason.
+library when it solves the class and stays out of the way; don't take one that dictates how the product must work. A
+non-blessed crate needs the owner's sign-off (CLAUDE.md, "Modules"), and a library in the product's core path is asked
+about before you try it. Build only with a stated reason.
 *Evidence:* the class, the solutions you read, and the choice with its reason, in your first report and in the body.
 *Cost:* #58 re-implemented what native form controls and the shell's `Button` already do, and took six rounds over forms,
 disabled states, touch targets and clicks.
@@ -131,16 +131,10 @@ sentences the fix changed. The reviewer will.
 *Evidence:* the self-review note for the new head. *Cost:* #58, rounds 5 and 6: `pointer-events: none`, added to fix round
 4, broke `locator.click()` and then `userEvent.click()`.
 
-**4.3 Fix what must not ship; ticket the rest.** Before the merge, fix what stops the feature working in ordinary use.
-Fix what is unsafe: the host crashed or hung, data lost or leaked, one app or client able to harm another, outside input
-handled unsafely. Fix any claim that is not true and any test that cannot fail. Everything else (an unlikely edge case, an
-unverified platform, acceptable-but-not-ideal behaviour, a better mechanism for something that works) goes to Jira NEOC and
-does not hold the merge. File a **Bug** for what behaves wrongly, and a **Story** for what is missing or could be better,
-written as what a person or developer will be able to do. Give each the area's label (today: `ui-kit`, `app-host`,
-`web-requests`, `notifications`, `input-safety`, `shell`), group related items into one ticket, and leave them in the
-backlog. File them when the pull request goes to review, and put the keys in its body. A reviewer sorts each finding into
-"must fix" or "for a ticket" and files nothing. This does not replace 0.2: a five whys may end in a design change, or in a
-ticket.
+**4.3 Fix what holds a merge; ticket the rest.** The list is in CLAUDE.md, "What holds a merge"; fix every finding on it
+before the merge. File the rest as that section says: a Bug or a Story with the area's label (today: `ui-kit`, `app-host`,
+`web-requests`, `notifications`, `input-safety`, `shell`), grouped, keys in the body. A five whys (0.2) may end in a design
+change or in a ticket.
 *Evidence:* one reply per thread (the commit or the ticket key), and the prior-threads table in the note. *Cost:* the notes
 left open on #59 at its merge needed a pull request of their own (#61).
 

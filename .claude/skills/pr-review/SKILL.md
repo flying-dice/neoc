@@ -7,7 +7,7 @@ Assigned as reviewer: a fresh reviewer with no session context, independent of t
 
 ## Standard
 
-Honest and exact, weighed by time. Velocity and iteration speed are a key non-functional requirement (CLAUDE.md, "Non-functional requirements"). Name every defect you find, with file, line and failure mode, and don't soften it, but **hold a merge only for** a real bug; data loss or a security hole; a broken acceptance criterion; a failing gate; a no-vos-leak or boundary violation. Everything else (doc wording, extra test coverage, cosmetic issues, naming) is sorted into one of two kinds, and you say which. **Fix before merge**: it stops the feature working in ordinary use, it is unsafe (the host crashed or hung, data lost or leaked, one app or client able to harm another, outside input handled unsafely), a claim is untrue, or a test cannot fail. **For a ticket**: an unlikely edge case, an unverified platform, acceptable-but-not-ideal behaviour, a better mechanism for something that works; the author files it in Jira NEOC (a Bug or a Story with the area's label) and it does not hold the merge. You file nothing yourself. Review rounds continue until you can return READY TO MERGE at the exact head: every fix round is re-reviewed, and you do not pass a head with a blocking finding open. A re-review reads the fix delta as new code under the full blocking rules, so it catches regressions the fix introduced. The author's table is a claim, not evidence.
+Honest and exact, weighed by time. Velocity and iteration speed are a key non-functional requirement (CLAUDE.md, "Non-functional requirements"). Name every defect you find, with file, line and failure mode, and don't soften it, and sort each into one of two kinds, saying which: **blocking**, when it is on the list in CLAUDE.md, "What holds a merge"; otherwise **for a ticket**, which the author files as that section says and which does not hold the merge. You file nothing yourself. Review rounds continue until you can return READY TO MERGE at the exact head: every fix round is re-reviewed, and you do not pass a head with a blocking finding open. A re-review reads the fix delta as new code under the full blocking rules, so it catches regressions the fix introduced. The author's table is a claim, not evidence.
 
 ## Process
 
@@ -55,10 +55,10 @@ Cost-ordered. Phase 0–1 block → pass ends — no deep probing on a build a c
 
 11 gates. Cost-ordered. Each gate: PASS / FAIL / `N/A — <reason>`. No blanks. Evidence = command + measured output at head SHA. Assertion without evidence = FAIL.
 
-Blocking: a gate is FAIL, and a merge is held, only for a real bug; data loss or a security hole; a broken acceptance criterion; a failing gate (a pre-PR check that does not pass); a no-vos-leak or boundary violation. Every other defect a gate turns up (doc wording, extra test coverage, cosmetic issues, naming, clean-code nits) is "for a ticket": listed in the note for the author to file in Jira NEOC (a Bug or a Story with the area's label); it does not hold the merge, and that gate is PASS with the item listed beside it. An untrue claim or a test that cannot fail is fixed before the merge (G2, G5). Iteration speed is a requirement (CLAUDE.md, "Non-functional requirements"), and it comes from fast checks and small PRs, never from fewer review rounds or a shortcut that lets a bug through.
+Blocking: a gate is FAIL, and a merge is held, for what CLAUDE.md, "What holds a merge", lists. Every other defect a gate turns up is "for a ticket": listed in the note for the author to file; that gate is PASS with the item listed beside it. Iteration speed is a requirement (CLAUDE.md, "Non-functional requirements"), and it comes from fast checks and small PRs, never from fewer review rounds or a shortcut that lets a bug through.
 
 Stop rules:
-- **Author mode**: `pr-self-review` runs its own checklist (over `REVIEW-READY.md`), which covers G1, G3, G4 and G11 of this rubric; an author may read the rest to see what the reviewer asks.
+- **Author mode**: `pr-self-review` runs its own checklist over `REVIEW-READY.md`, not this rubric. Its rows carry the evidence for G1 (the gate at the head), G2 (claims), G3 (acceptance criteria), G4 (hygiene), G5 (each new test can fail), G6 (failure paths and outside input) and G11; G7 to G10 are the reviewer's. An author may read them to see what the reviewer asks.
 - **Reviewer mode** (`pr-review`): G1 FAIL → hand back, stop — no probing a red or stale head. G2–G11 run in full; post every blocking finding in one pass and list the items for a ticket beside them. A partial review buys another round.
 
 Local runs: run the pre-PR checks once at the head SHA (G1), then only what the rubric adds — unhappy-path probes, greps, link checks. A gate needing a check the pre-PR checks lack → run it by command and record the gap. Never mutate code, revert a fix, or loop a test N times to see it fail or to rule out a flake: judge a test by reading it and the code it covers, and run it once, targeted. A new test is fast (it fits the gate) or is `#[ignore = "slow: ..."]` under `bun run slow`.
@@ -277,11 +277,11 @@ change, identical snapshots, no new or changed journey) needs a usability review
 
 For an app whose earlier research rounds predate NEOC-115 (the Calculator's reports were dropped with `docs/`; they are in git at `51f47f4`), the next change to what a person sees or does starts a fresh round under `ux/<app>/`.
 
-Severity: a bug, data loss, a security hole, a host panic or stack overflow reachable from app input, a boundary violation,
-a broken acceptance criterion, or an accessibility failure that stops a journey is a `bug` and blocks; a failed check (a
-missing or red gate) blocks as an `issue`. Everything else is "for a ticket" (the author files it; it does not hold the merge): new behaviour with only part of
-its checks, an accessibility or design defect that does not stop a journey, a missing or stale readiness row on an app
-change that is not a new app or a change to screens or flows, a cosmetic or wording defect.
+Severity follows CLAUDE.md, "What holds a merge". For vos, a host panic or stack overflow reachable from app input is
+unsafe, and an accessibility failure that stops a journey means the feature does not work in ordinary use. A red or
+missing gate is an `issue`. Everything else is "for a ticket": new behaviour with only part of its checks, an
+accessibility or design defect that does not stop a journey, a missing or stale readiness row on an app change that is not
+a new app or a change to screens or flows, a cosmetic defect.
 
 ## Review note
 
@@ -320,9 +320,9 @@ For a ticket (the author files these): <one line each> | none
 detail
 ```
 
-- `bug` — breaks at runtime, loses data, opens a security hole, breaks an acceptance criterion, or violates the no-vos-leak or a crate boundary. Blocks.
+- `bug` — an item on CLAUDE.md's "What holds a merge" list other than the gate. Blocks.
 - `issue` — a failed gate (a pre-PR check that does not pass). Blocks.
-- `ticket` — everything else, clean-code defects included (SRP/DRY/naming/coupling/dead/KISS, doc wording, extra test coverage, cosmetic issues). A line in the note under "For a ticket"; the author files it as a Bug or Story with the area's label; does not block. An untrue claim or a test that cannot fail is a `bug`, not a `ticket`.
+- `ticket` — everything else, clean-code defects included (SRP/DRY/naming/coupling/dead/KISS, doc wording, extra test coverage, cosmetic issues). A line in the note under "For a ticket"; the author files it as CLAUDE.md, "What holds a merge", says; does not block.
 - `question` — an answer you need to decide whether something blocks. Blocks only until answered.
 
 Only `bug` and `issue` block. One unresolved thread per blocking finding. READY TO MERGE is forbidden while any blocking thread is open, and allowed with items for a ticket listed. Name the gate in the summary: `**[bug]** G5 — regression test asserts the attribute, not the behaviour, so a host panic goes unnoticed`.
