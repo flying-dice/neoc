@@ -92,6 +92,8 @@ export const Choosing: Story = {
     await userEvent.keyboard('{End}')
     await expect(seg.value).toBe('done')
     await expect(segment('done')).toHaveAttribute('aria-checked', 'true')
+    // the keys left focus (and its ring) inside the shadow root; the baseline is the control at rest
+    ;(seg.shadowRoot!.activeElement as HTMLElement | null)?.blur()
   }
 }
 
