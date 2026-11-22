@@ -324,8 +324,9 @@ bun run slow            # = scripts/check-slow.sh: the slow suites, opt-in (belo
   - `lua/prelude.lua` (built into every app VM through `types/generated/prelude.lua`);
   - `playwright.config.ts` and the scripts that build the apps, the generated types or the Storybooks it runs
     (`scripts/build-apps.ts`, `luau.ts`, `codegen-lua.ts`, `storybooks.ts`, `ports.ts`);
-  - the vos test fixtures e2e copies into its registry: `crates/vos-codegen/tests/fixtures/notes/app.luau` (Notes) and
-    `crates/vos-host/tests/fixtures/ticker/app.luau` (the Ticker the Background journeys drive).
+  - the vos test fixtures e2e copies into its registry: `crates/vos-codegen/tests/fixtures/notes/app.luau` (Notes),
+    `crates/vos-host/tests/fixtures/ticker/app.luau` (the Ticker the Background journeys drive) and
+    `crates/vos-host/tests/fixtures/notifier/app.luau` (the Notifier the Notification journeys drive).
 
   The list goes stale; the reads do not. `git grep crates/vos- -- e2e` finds the fixtures e2e copies, and
   `git grep -n -e ROOT -e "scripts/" -- e2e playwright.config.ts` what else it reads;
