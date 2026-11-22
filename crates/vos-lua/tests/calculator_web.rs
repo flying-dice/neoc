@@ -195,7 +195,11 @@ async fn operators_of_equal_precedence_chain_left_to_right_and_show_each_interme
     pad.press("sub").await;
     assert_eq!((pad.display(), pad.caption()), ("27".into(), "9 × 3 −".into()));
     pad.press("7").await;
-    assert_eq!((pad.display(), pad.caption()), ("7".into(), "9 × 3 −".into()), "the caption stays while typing");
+    assert_eq!(
+        (pad.display(), pad.caption()),
+        ("7".into(), "9 × 3 −".into()),
+        "the caption stays while typing"
+    );
     pad.press("eq").await;
     assert_eq!((pad.display(), pad.caption()), ("20".into(), "9 × 3 − 7".into()));
 
@@ -380,7 +384,11 @@ async fn division_by_zero_is_an_error_until_cleared_and_says_why() {
         assert_eq!(pad.display(), "Error", "{keys}: ignored");
         assert_eq!(pad.clear_title(), "AC", "{keys}");
         pad.press("clear").await;
-        assert_eq!((pad.display(), pad.caption(), pad.pending()), ("0".into(), String::new(), vec![]), "{keys}");
+        assert_eq!(
+            (pad.display(), pad.caption(), pad.pending()),
+            ("0".into(), String::new(), vec![]),
+            "{keys}"
+        );
         assert_eq!(pad.announced(), "", "{keys}: the announcer is emptied, so the same error is read again");
         pad.press("4 add 4 eq").await;
         assert_eq!(pad.display(), "8", "{keys}: carry on");
@@ -496,7 +504,9 @@ async fn a_state_that_makes_no_sense_is_an_error_on_the_display_never_a_failed_c
     uneven["ops"] = json!(["+"]);
     let mut waiting_with_nothing = base.clone();
     waiting_with_nothing["waiting"] = json!(true);
-    for (state, key) in [(garbage_entry, "+"), (garbage_entry_eq(), "="), (uneven, "="), (waiting_with_nothing, "+")] {
+    for (state, key) in
+        [(garbage_entry, "+"), (garbage_entry_eq(), "="), (uneven, "="), (waiting_with_nothing, "+")]
+    {
         let screen = call(&rt, json!({ "key": key, "state": state })).await.unwrap();
         let caption = screen["caption"].as_str().unwrap();
         assert!(!caption.contains(".luau") && !caption.contains("0x"), "{state}: {caption}");
