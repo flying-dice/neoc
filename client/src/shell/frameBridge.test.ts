@@ -1,6 +1,14 @@
 import { describe, expect, test } from 'bun:test'
 import { HostError } from './channel'
-import { createFrameBridge, eventFor, type FrameBridge, type ToFrame } from './frameBridge'
+import {
+  createFrameBridge,
+  eventFor,
+  jsonDepth,
+  MAX_ARGS_BYTES,
+  refuseArgs,
+  type FrameBridge,
+  type ToFrame
+} from './frameBridge'
 
 const FRAME = { name: 'the frame window' }
 
@@ -85,20 +93,67 @@ describe('the frame bridge', () => {
     expect(posted).toEqual([{ t: 'res', id: 4, error: { code: -32603, message: 'socket closed' } }])
   })
 
-  test('malformed messages are dropped', async () => {
-    const { bridge, calls, flush } = rig(async () => null)
+  test('a call that cannot be read is answered, so the client’s promise settles', async () => {
+    const { bridge, posted, calls, flush } = rig(async () => null)
+    bridge.receive({ source: FRAME, data: { t: 'rpc', id: 1, method: '' } })
+    bridge.receive({ source: FRAME, data: { t: 'rpc', id: 2, method: 'x'.repeat(129) } })
+    bridge.receive({ source: FRAME, data: { t: 'rpc', id: 3, method: 7 } })
+    bridge.receive({ source: FRAME, data: { t: 'rpc', id: 4 } })
+    await flush()
+    expect(calls).toEqual([])
+    expect(posted).toEqual([
+      { t: 'res', id: 1, error: { code: -32600, message: 'A method name is 1 to 128 characters' } },
+      { t: 'res', id: 2, error: { code: -32600, message: 'A method name is 1 to 128 characters' } },
+      { t: 'res', id: 3, error: { code: -32600, message: 'That is not a call: it needs a method name' } },
+      { t: 'res', id: 4, error: { code: -32600, message: 'That is not a call: it needs a method name' } }
+    ])
+  })
+
+  test('messages that are not calls at all are dropped', async () => {
+    const { bridge, calls, posted, flush } = rig(async () => null)
     for (const data of [
       null,
       'rpc',
       { t: 'rpc' },
       { t: 'rpc', id: 'x', method: 'list' },
-      { t: 'rpc', id: 1, method: '' },
-      { t: 'rpc', id: 1, method: 'x'.repeat(129) },
+      { t: 'rpc', id: -1, method: 'a' },
       { t: 'nope' }
     ])
       bridge.receive({ source: FRAME, data })
     await flush()
     expect(calls).toEqual([])
+    expect(posted).toEqual([])
+  })
+
+  test('a call whose arguments are too big or too deep is refused before it reaches the socket', async () => {
+    const { bridge, posted, calls, flush } = rig(async () => null)
+    bridge.receive({
+      source: FRAME,
+      data: { t: 'rpc', id: 1, method: 'add', args: { title: 'x'.repeat(2 * 1024 * 1024) } }
+    })
+    let deep: unknown = 1
+    for (let i = 0; i < 150; i++) deep = [deep]
+    bridge.receive({ source: FRAME, data: { t: 'rpc', id: 2, method: 'add', args: deep } })
+    const cyclic: Record<string, unknown> = {}
+    cyclic.self = cyclic
+    bridge.receive({ source: FRAME, data: { t: 'rpc', id: 3, method: 'add', args: cyclic } })
+    await flush()
+    expect(calls, 'nothing reached the host connection').toEqual([])
+    expect(posted.map((m) => (m as { error: { code: number; message: string } }).error)).toEqual([
+      { code: -32602, message: expect.stringContaining('a call may carry at most 1,000,000') },
+      { code: -32602, message: 'The arguments are nested more than 100 levels deep' },
+      { code: -32602, message: expect.stringContaining('The arguments cannot be sent') }
+    ])
+  })
+
+  test('arguments just under the limit go through', async () => {
+    const { bridge, calls, flush } = rig(async () => null)
+    bridge.receive({
+      source: FRAME,
+      data: { t: 'rpc', id: 1, method: 'add', args: { title: 'x'.repeat(MAX_ARGS_BYTES - 100) } }
+    })
+    await flush()
+    expect(calls.length).toBe(1)
   })
 
   test('ready and failed reach the shell', () => {
@@ -123,6 +178,20 @@ describe('the frame bridge', () => {
     const { bridge, posted } = rig(async () => null)
     bridge.event('host:theme', 'dark')
     expect(posted).toEqual([{ t: 'event', name: 'host:theme', data: 'dark' }])
+  })
+})
+
+describe('the arguments of a call', () => {
+  test('are measured in bytes, not characters', () => {
+    expect(refuseArgs({ t: 'é'.repeat(MAX_ARGS_BYTES / 2 + 10) })).toContain('bytes')
+    expect(refuseArgs({ t: 'a'.repeat(1000) })).toBeNull()
+    expect(refuseArgs(undefined)).toBeNull()
+    expect(refuseArgs(null)).toBeNull()
+  })
+  test('depth counts open arrays and objects outside strings', () => {
+    expect(jsonDepth('[[{"a":[1]}]]')).toBe(4)
+    expect(jsonDepth('{"a":"[[[[ \\" ]]]]"}')).toBe(1)
+    expect(jsonDepth('1')).toBe(0)
   })
 })
 

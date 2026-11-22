@@ -24,11 +24,21 @@ import type { HostAppEvent } from '../view/protocol'
 /** The longest method name a client may call (the backend's own limit, `MAX_HANDLER_NAME`). */
 const MAX_METHOD = 128
 
+/**
+ * The most a call's arguments may weigh as JSON, in bytes. The host closes a connection that sends one WebSocket
+ * message over 1 MiB, and the shell's connection is every window's, so one client's call must never get that far: the
+ * bridge refuses it with an error first. (A result may be 4 MiB; it comes back as an error when it is more.)
+ */
+export const MAX_ARGS_BYTES = 1_000_000
+
+/** The deepest nesting of arrays and objects in a call's arguments (the host's JSON parser stops at 128). */
+export const MAX_ARGS_DEPTH = 100
+
 const fromFrame = z.discriminatedUnion('t', [
   z.object({
     t: z.literal('rpc'),
     id: z.number().int().nonnegative(),
-    method: z.string().min(1).max(MAX_METHOD),
+    method: z.string(),
     args: z.unknown().optional()
   }),
   z.object({ t: z.literal('ready') }),
@@ -65,6 +75,10 @@ export interface FrameBridge {
   dispose(): void
 }
 
+/** JSON-RPC's invalid request and invalid params: what a call the bridge refuses is answered with. */
+const INVALID_REQUEST = -32600
+const INVALID_PARAMS = -32602
+
 /** JSON-RPC's internal error: what a failure that is not the host's own answer is reported as. */
 const INTERNAL_ERROR = -32603
 
@@ -74,6 +88,45 @@ function rpcErrorOf(error: unknown): { code: number; message: string; data?: unk
     return { code: error.code, message: error.message, ...(error.data === undefined ? {} : { data: error.data }) }
   }
   return { code: INTERNAL_ERROR, message: messageOf(error) }
+}
+
+/** The nesting depth of a JSON text: arrays and objects opened and not yet closed, outside strings. */
+export function jsonDepth(text: string): number {
+  let depth = 0
+  let deepest = 0
+  let inString = false
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+    if (inString) {
+      if (c === '\\') i++
+      else if (c === '"') inString = false
+    } else if (c === '"') inString = true
+    else if (c === '[' || c === '{') deepest = Math.max(deepest, ++depth)
+    else if (c === ']' || c === '}') depth--
+  }
+  return deepest
+}
+
+/** Why a call's arguments cannot be sent, or `null` when they can. */
+export function refuseArgs(args: unknown): string | null {
+  if (args === undefined || args === null) return null
+  let json: string | undefined
+  try {
+    json = JSON.stringify(args)
+  } catch (error) {
+    return `The arguments cannot be sent: ${messageOf(error)}`
+  }
+  if (json === undefined) return 'The arguments cannot be sent'
+  // up to three bytes a character: measure exactly only when it could matter
+  const bytes =
+    json.length * 3 > MAX_ARGS_BYTES ? new TextEncoder().encode(json).length : json.length
+  if (bytes > MAX_ARGS_BYTES) {
+    return `The arguments are ${bytes.toLocaleString('en')} bytes; a call may carry at most ${MAX_ARGS_BYTES.toLocaleString('en')}`
+  }
+  if (jsonDepth(json) > MAX_ARGS_DEPTH) {
+    return `The arguments are nested more than ${MAX_ARGS_DEPTH} levels deep`
+  }
+  return null
 }
 
 export function createFrameBridge(options: FrameBridgeOptions): FrameBridge {
@@ -88,10 +141,34 @@ export function createFrameBridge(options: FrameBridgeOptions): FrameBridge {
       const frame = options.frame()
       if (disposed || frame === null || source !== frame) return
       const parsed = fromFrame.safeParse(data)
-      if (!parsed.success) return
+      if (!parsed.success) {
+        // a call that cannot be read still has an id to answer, so the client's promise settles
+        const sent = data as { t?: unknown; id?: unknown } | null
+        if (sent?.t === 'rpc' && Number.isInteger(sent.id) && (sent.id as number) >= 0) {
+          post({
+            t: 'res',
+            id: sent.id as number,
+            error: { code: INVALID_REQUEST, message: 'That is not a call: it needs a method name' }
+          })
+        }
+        return
+      }
       const message = parsed.data
       switch (message.t) {
-        case 'rpc':
+        case 'rpc': {
+          if (message.method.length < 1 || message.method.length > MAX_METHOD) {
+            post({
+              t: 'res',
+              id: message.id,
+              error: { code: INVALID_REQUEST, message: `A method name is 1 to ${MAX_METHOD} characters` }
+            })
+            return
+          }
+          const refusal = refuseArgs(message.args)
+          if (refusal) {
+            post({ t: 'res', id: message.id, error: { code: INVALID_PARAMS, message: refusal } })
+            return
+          }
           options
             .call('app.call', { app: appId, method: message.method, args: message.args ?? null })
             .then(
@@ -99,6 +176,7 @@ export function createFrameBridge(options: FrameBridgeOptions): FrameBridge {
               (error: unknown) => post({ t: 'res', id: message.id, error: rpcErrorOf(error) })
             )
           return
+        }
         case 'ready':
           options.onReady?.()
           return

@@ -148,8 +148,9 @@ copy, is in git history at `51f47f4`: `git show 51f47f4:docs/architecture/ui-sys
 - **An app's client runs only in a frame of its own and reaches only its own backend** (sensible isolation, not sandboxing:
   its purpose is that apps do not trip over each other or over the shell, not to contain hostile code, and it is not a
   security boundary). The frame is an `<iframe sandbox="allow-scripts">` (an opaque origin, no `allow-same-origin`) whose
-  document the host serves at `/frame/<app>` with a `Content-Security-Policy` header that allows no network
-  (`crates/vos-http/src/frame.rs`); the client's one way out is `postMessage` to the shell, which forwards `rpc(method, args)`
+  document the host serves at `/frame/<app>` with a `Content-Security-Policy` header that allows no request of its own (no
+  `connect-src`, nothing external: `crates/vos-http/src/frame.rs`); the policy cannot stop the frame navigating itself
+  (`location.href`), so the window notices a second `load` and says the app left its page; the client's one way out is `postMessage` to the shell, which forwards `rpc(method, args)`
   as `app.call { app, method, args }` on `/rpc`. **The app is the frame's, never the message's:** each frame has a bridge made
   for its own app id and its own `contentWindow` (`client/src/shell/frameBridge.ts`), a message is only believed when
   `event.source` is that window, and nothing a client sends names an app. The shell's own code and the kit know nothing of any
@@ -169,7 +170,7 @@ copy, is in git history at `51f47f4`: `git show 51f47f4:docs/architecture/ui-sys
 `bun run lint:boundaries` (`scripts/check-boundaries.ts`) enforces on the client and the kit: no relative import leaves its
 package (the client never reaches into `crates/`), the client and kit import only `@vos/ui` (stories also `@vos/storybook`), no
 Node or Bun builtins in browser code, `new WebSocket` only in `client/src/view/rpc/websocket.ts` (the shell's connection; an
-app's client has no socket: its frame has no network), and no `{@html}`, `innerHTML`,
+app's client has no socket: its policy allows no connection), and no `{@html}`, `innerHTML`,
 `outerHTML`, `insertAdjacentHTML` or `document.write`. Also atomic layers (`lint:atomic`, in `packages/ui` and `client/src`:
 atoms, molecules, organisms, templates, pages, each importing only strictly lower layers through the layer entry points) and
 test ids from the first commit (`lint:testids`). An app is its own Bun workspace package (`apps/*`, `e2e/apps/*`)

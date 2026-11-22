@@ -90,6 +90,16 @@
     }
   })
 
+  // A client that throws while it loads (a top-level error, a missing import, a syntax error) has not started: the first
+  // error the page raised before then is the reason, with where it came from, not a guess.
+  var loadError = null
+  var started = false
+  window.addEventListener('error', function (e) {
+    if (loadError || started) return
+    var where = e.filename ? ' (' + e.filename.split('/').slice(-2).join('/') + (e.lineno ? ':' + e.lineno : '') + ')' : ''
+    loadError = (e.message || 'the client failed to load') + where
+  })
+
   function fail(message) {
     console.error('vos: ' + message)
     var root = document.getElementById('root')
@@ -100,7 +110,9 @@
   function start() {
     var app = window.vosApp
     var root = document.getElementById('root')
+    if (loadError) return fail('the client failed to load: ' + loadError)
     if (!app || typeof app.mount !== 'function') return fail('the client does not define vosApp.mount')
+    started = true
     try {
       var result = app.mount(root, { rpc: rpc, host: host })
       Promise.resolve(result).then(

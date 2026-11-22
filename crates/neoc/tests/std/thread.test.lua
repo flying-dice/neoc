@@ -319,4 +319,55 @@ describe("thread", function()
         end)
     end)
 
+    -- a buffer (refused, never sent as an array of numbers) --------------------
+
+    describe("a buffer", function()
+        local refused = "a buffer cannot be serialized; convert it explicitly first"
+
+        -- a buffer 100 tables down (the guard walks as deep as a serializer, 128 tables)
+        local function deep()
+            local t = { buffer.create(2) }
+            for _ = 2, 100 do
+                t = { inner = t }
+            end
+            return t
+        end
+
+        test("spawn and send refuse one 100 tables down", function()
+            local ok, err = pcall(thread.spawn, { source = "return 1", args = { deep() } })
+            expect(ok).toBe(false)
+            expect(tostring(err)).toContain("thread.spawn: " .. refused)
+            local worker = assert(thread.spawn({ source = "return 1" }))
+            ok, err = pcall(worker.send, worker, deep())
+            expect(ok).toBe(false)
+            expect(tostring(err)).toContain("thread.send: " .. refused)
+            worker:await()
+        end)
+
+        test("spawn refuses one in its args", function()
+            local ok, err = pcall(thread.spawn, { source = "return 1", args = { buffer.create(2) } })
+            expect(ok).toBe(false)
+            expect(tostring(err)).toContain("thread.spawn: " .. refused)
+        end)
+
+        test("send refuses one to a worker, and a worker's send refuses one to its parent", function()
+            local echo = assert(thread.spawn({ source = [[
+                local parent = require("std:thread").parent
+                local ok, err = pcall(parent.send, parent, { buffer.create(2) })
+                parent:send(tostring(err))
+            ]] }))
+            local ok, err = pcall(echo.send, echo, buffer.create(2))
+            expect(ok).toBe(false)
+            expect(tostring(err)).toContain("thread.send: " .. refused)
+            expect(echo:receive()).toContain("channel.send: " .. refused)
+            echo:await()
+        end)
+
+        test("await gives (nil, err) for a worker that returns one", function()
+            local returner = assert(thread.spawn({ source = "return { buffer.create(2) }" }))
+            local value, err = returner:await()
+            expect(value).toBeNil()
+            expect(err).toContain("thread.await: " .. refused)
+        end)
+    end)
 end)

@@ -43,10 +43,11 @@ fn run_a_typed_luau_script_with_annotations_interpolation_and_continue() {
         String::from_utf8_lossy(&out.stderr)
     );
     // `continue` skips "a"; `total += #word * index` is 2 * 2 + 3 * 3; the string is interpolated; the version,
-    // the host and the 30 second budget come from typed module values
+    // the host and the 30 second budget come from typed module values; the buffer holds 258 little-endian (its
+    // second byte is 1) and then "neoc"
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "total 13 is big\nexample.com\tv1.2.3\t30\n"
+        "total 13 is big\nexample.com\tv1.2.3\t30\n8\t1\tneoc\n"
     );
 }
 

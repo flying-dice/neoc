@@ -624,10 +624,13 @@ fn run_in(lua: &Lua, env: &Table, source: &str) -> mlua::Result<Value> {
 /// Luau's runtime reaches beyond Lua 5.1's: `os`, `debug`, `utf8`, `buffer`, `vector`, `loadstring` and the bytecode
 /// loaders. None of them, nor any way to read or change a function's environment, is in a script's environment,
 /// and the sealed (read-only) libraries and the shared string metatable hold. (The engine runs Luau's interpreter:
-/// native code generation is not enabled.)
+/// native code generation is not enabled.) `buffer` is open in the engine (`neoc run` scripts have it) but is not
+/// one of the libraries a script environment copies, so an embedder's scripts do not get it from `new_env`.
 #[test]
 fn the_sealed_environment_holds_on_luau() {
     let (lua, env) = sealed();
+    let in_engine: String = lua.load("return type(buffer)").eval().unwrap();
+    assert_eq!(in_engine, "table", "the engine opens `buffer`");
     let escapes: String = run_in(
         &lua,
         &env,
