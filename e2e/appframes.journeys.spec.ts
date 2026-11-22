@@ -163,8 +163,18 @@ for (const id of FIXTURE_APPS) {
 }
 
 test('AF7: two apps with clients each reach only their own backend', async ({ page }) => {
-  await openDesktop(page, { open: ['tasks-svelte', 'tasks-react'] })
   const [a, b] = ['tasks-svelte', 'tasks-react'] as const
+  await openDesktop(page, { open: [a] })
+  // the second beside the first, on the same stage: both are on screen
+  await page.evaluate(
+    (id) =>
+      (window as unknown as { __vos: { wm: { open(app: string, options: { alongside: boolean }): void } } }).__vos.wm.open(
+        id,
+        { alongside: true }
+      ),
+    b
+  )
+  await expect(windowOf(page, b)).toBeVisible()
   const title = unique('Only in one')
   await frameOf(page, a).getByTestId(`${a}-title`).fill(title)
   await frameOf(page, a).getByTestId(`${a}-add`).click()
