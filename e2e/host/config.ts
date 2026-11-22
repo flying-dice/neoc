@@ -19,6 +19,8 @@ export const REGISTRY = join(DIR, 'registry/registry.json')
  * Discover does not offer it; the spec installs it from this app ref.
  */
 export const TICKER_APP_REF = `file://${join(DIR, 'hidden/ticker/0.1.0/app-ref.json')}`
+/** The Notifier (`e2e/notifications.journeys.spec.ts`): a sender of notifications, kept out of the registry like the Ticker. */
+export const NOTIFIER_APP_REF = `file://${join(DIR, 'hidden/notifier/0.1.0/app-ref.json')}`
 /** The paired browser the specs share (a Playwright storage state). */
 export const STATE = join(DIR, 'paired.json')
 export const HOST_BIN = join(ROOT, 'target/debug/vos')
