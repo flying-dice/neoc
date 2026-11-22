@@ -310,6 +310,179 @@ client renders them. Everything below, up to "Files", is that model; it keeps wo
 ### The package
 
 ```
+apps/<id>/                    (or e2e/apps/<id> for a test fixture)
+  app.json             the package manifest
+  app.luau             the backend: the entry (`main`), returns the handlers
+  *.luau               modules the entry loads with require("./calc")
+  package.json         the client's package: `bun run build` writes dist/client.js
+  src/                 the client's source, in whatever framework
+  JOURNEYS.md          4 to 8 key user journeys (goal, start state, observable "Done when"; never steps)
+  e2e/journeys.spec.ts their automated twins, one test per journey id
+  tests/, negative/, e2e/   never shipped
+```
+
+`app.json`: `id` (3 to 40 characters: lowercase letters, digits, dashes; namespaces the app's data and tools), `name`,
+`version` (`major.minor.patch`; bump it to ship a change), `main` (the backend), `client` (the client script's name in the
+app ref, ending in `.js`), `window` (`{ w, h, minW, minH }`: the default size and the **minimum**), `icon`, `tint`,
+`description`, `requires.host` and optional `migrations`. The shell needs the window and the client's name before any code
+runs, so they are in `app.json` and the backend declares nothing about itself (no `app.manifest`).
+
+**An app with a client is a Bun workspace package** (`apps/*` and `e2e/apps/*` are in the root `workspaces`): its
+framework is an ordinary dependency, installed by the root `bun install`.
+
+`bun run build:apps` builds each app. For the backend it bundles the entry with darklua into one `app.luau` (relative
+`require`s inlined, types and comments stripped, statements kept on their source lines). For the client it runs `bun run
+build` in the app's folder and takes `dist/client.js`. Both go into an **app ref** (`app-ref.json` with a sha256 per
+file) under `dist/apps/<id>/<version>/`, plus `dist/apps/registry.json`. The host installs an app from an app ref URL
+(`file://`, `http://`, `https://`), verifies every sha256 (the client's too) and runs the migrations. `bun run dev`
+rebuilds on save and the host reloads the app's VM, keeping its database; reopen the window to load a new client.
+`darklua` 0.18.0 must be installed; the build fails without it.
+
+## The client
+
+The client is **one classic script** that defines the global `vosApp` with `mount(el, { rpc, host })`, which draws into
+`el` and returns a function that unmounts it. With Vite, in each framework:
+
+```js
+// the entry (Svelte shown; React is createRoot(el).render(...) and root.unmount())
+import { mount as mountApp, unmount } from 'svelte'
+import App from './App.svelte'
+export function mount(el, props) {
+  const app = mountApp(App, { target: el, props })
+  return () => unmount(app)
+}
+
+// vite.config: a library build to one IIFE named vosApp
+build: { lib: { entry: 'src/main.ts', name: 'vosApp', formats: ['iife'], fileName: () => 'client.js' } }
+```
+
+Keep the **styles inside the script** (Svelte: `compilerOptions: { css: 'injected' }`; React: a `<style>` you add when
+`mount` runs) and set `data-testid` on every interactive element yourself (`<appId>-<thing>`).
+
+What `mount` gets:
+
+| | |
+|---|---|
+| `rpc(method, args)` | calls the backend handler `method` with `args` (any JSON); resolves with its result, rejects with an `Error` whose message is the handler's (`ctx:fail(...)`, or the error it raised) |
+| `host.on(name, fn)` | hears an event, returns a function that stops listening: one the backend sent with `app.emit(name, data)`, or the host's own, whose names start with `host:` |
+| `host.theme` | `"light"` or `"dark"`: the shell's appearance now. `host:theme` is the event when it changes, and `<html data-theme>` and `color-scheme` follow it, so style dark as `html[data-theme="dark"]` |
+
+**What the frame is.** The app's window is an `<iframe sandbox="allow-scripts allow-forms">` that loads `/frame/<id>` from the host. The
+frame makes no request of its own (its content security policy allows none: `fetch`, WebSocket, scripts, images and
+fonts from anywhere but the host fail), has no access to the shell's page, cookie or storage (`localStorage`,
+`document.cookie` and `parent.document` throw), and has one way out: `rpc` reaches **this app's** backend, and the host
+knows which app is calling from the frame the message came from, never from anything the client says. The client's styles
+and scripts stay in its frame. The sandbox also stops it opening windows (`window.open` returns `null`), navigating the
+shell (`window.top.location` throws). **Forms work** (the sandbox has `allow-forms`): Enter in a field, a submit button,
+the `submit` event, validation and `FormData` behave as in any page, and your framework's `onSubmit` runs. A submission
+that nothing prevented is prevented for you, after your handlers have run, so a form whose handler forgot `preventDefault()` stays on
+its page (a `<form method="dialog">` still closes its dialog). Two things still navigate the frame, which the policy's
+`form-action 'none'` refuses to send data for but cannot keep on the page: `form.submit()` from script (it fires no event) and a form
+inside a shadow root of your own (`submit` does not cross it); the window then says the app left its page. What the policy cannot stop is the frame
+navigating **itself** (`location.href = ...`): the window then shows a page the shell did not load, and says the app left
+its page and offers to open it again (a refused form submission is not that: nothing loads). **A client cannot reload its own
+document in this version:** `location.reload()` asks the host for the frame's document again from an opaque origin, which
+carries no session cookie, so the host refuses it, the window says the app left its page and Try again brings the app back;
+this changes with the next pull request, where the app's own files are public. This is sensible isolation, so apps do not trip over each other
+or over the shell; it is not a security boundary. Lasting data belongs in the backend (the frame has no storage).
+
+**Limits of a call.** `rpc`'s arguments may be at most 1,000,000 bytes of JSON and 100 levels deep, and a method name is 1 to
+128 characters: a call over a limit rejects at once with a message that says which. A result may be at most 4 MiB, and a
+larger one comes back as an error. A call the shell cannot read is rejected too, so a promise never hangs. Calls in
+flight are limited so that one window can neither be refused by the host's own connection limit for an ordinary burst (a
+call per item of a list) nor crowd out the shell or another app: 8 at a time per app and 32 across all apps, the
+rest wait their turn (apps take turns); an app with 1,000 calls waiting gets an error for the next one. A place is taken for
+as long as the host is running the call: a call has no time limit on the client, and its place comes back when the handler
+answers or the connection to the host goes, so a handler that never returns takes up to eight places of its own app and no
+one else's (closing its window does not stop the handler, so the places stay taken; uninstalling or replacing the app
+ends its calls, with the reason). The shell's own calls and the other apps keep working.
+A call has no time limit on the client, so a handler that waits on something unreliable (a long poll, a service on the LAN that
+may be down) should bound the wait itself: calls to an app whose handlers never return queue behind its hung ones, up to eight
+at a time, and every call after them waits too.
+
+**What a client can rely on about its page.** Its page, and everything it holds in it (fields, scroll positions, in-memory
+state), lives as long as its window does: opening another app, switching stages or minimising does not reload it (the window
+is hidden, not removed, and takes no focus, pointer events or screen reader attention while it is), and closing the window
+ends it. It is not told when it is hidden or shown, and nothing suspends or reclaims it while hidden (with many windows open every
+app's page stays alive). Anything that must outlive the window belongs in the backend.
+
+**When a client fails to start**, the window shows the reason as text with a "Try again" button: the error the page raised
+while it loaded (a top-level throw, a missing import, a syntax error: the script comes from another origin than the
+frame's document, so the browser hides the message, and the window says that the script failed and that the browser console
+has the error), a client that does not define
+`vosApp.mount`, or an error thrown by `mount`.
+
+The shell draws sheets, alerts and toasts above the frame (the shared UI kit and its tokens are NEOC-252; the kit will be
+served at `/kit/tokens.css` and `/kit/kit.js`).
+
+## The backend
+
+The entry runs once when the app loads and **returns a table of handlers**, the functions a client reaches with
+`rpc(name, args)`. A handler is called as `handler(ctx, args)` and returns any JSON value (`nil` is `null`):
+
+```lua
+--!strict
+local app = require("vos:app")
+local db = app.db
+
+db:migrate { [1] = "create table tasks(id integer primary key, title text not null)" }
+
+local handlers: vos_Handlers = {
+  list = function(_ctx, _args)
+    return db:all("select id, title from tasks order by id")
+  end,
+  add = function(ctx, args)
+    if type(args) ~= "table" or type(args.title) ~= "string" then
+      return ctx:fail("A task needs a title.") -- the client's rpc rejects with exactly this
+    end
+    db:exec("insert into tasks(title) values (:title)", { title = args.title })
+    return db:all("select id, title from tasks order by id")
+  end,
+}
+return handlers
+```
+
+- **`ctx`** is `{ actor, now, fail }`: `actor.kind` is `"user"` (it is the person's own client calling), `now` an ISO time,
+  `ctx:fail(message)` ends the call with a message that has no file or line. Any other error the handler raises reaches
+  the client as `app.luau:12: message`.
+- **Services.** A handler, a tool and background work all reach the host the same way, through the `app` global:
+  `app.db`, `app.kv`, `app.files`, `app.notify`, `app.log`, `app.agents:list()`, `app.emit`. There is nothing special about
+  `ctx`. A handler may write: the person's client is calling. The entry may also return nothing (an app with only tools); anything else (a number, a string, a table with a value that
+  is not a function) stops the app from loading, with the reason.
+- **Events.** `app.emit(name, data)` tells the app's open clients something changed (they hear it with `host.on`): after
+  an agent's tool changed data, or from a background task. `name` is 1 to 64 letters, digits and `. _ : -` (not `host:...`),
+  `data` JSON of at most 64 KiB, at most 256 events waiting; a `readOnly` tool may not emit.
+- **Calls** from a client, a tool and a task all queue behind one another: one runs at a time in an app's VM. A call to a
+  handler that does not exist, or to an app that is not running, rejects with a message.
+- **Tools** are separate from handlers (agents call tools over MCP, the client calls handlers), and unchanged:
+  `app.tool { name, title, description, readOnly, input, run }` (MCP name `<id>__<name>`, local name `[a-z][a-z0-9_]*`);
+  describe every input field with `app.t` builders (agents read them); the host validates input before `run`.
+  `readOnly = true` is enforced for the `app.*` API (no db, kv, files, notify, emit or shell writes, no registering
+  anything; tasks and requests the call starts inherit it) and lets an agent with the default `auto_read_only` policy
+  call the tool without a prompt. It does not cover the `std:`/`vnd:` modules. A tool that writes is not `readOnly`.
+  Handlers have no `readOnly`.
+- **Background work:** start loops with `task.spawn` from `std:task` and let the entry return (the app is not loaded until
+  it does). Closing a window leaves the work running, `app.emit` from a task reaches the open windows, and unloading aborts
+  tasks and closes servers (`crates/vos-host/tests/fixtures/ticker` is an example).
+- **Luau limits:** a host call (`app.db:*`, `app.kv:*`) cannot wait inside a `string.gsub` callback, a `table.sort`
+  comparator, a metamethod other than `__call`, or an `xpcall` handler. No `print`, `os`, `debug`, `load*`; `bit` is
+  `bit32`; `string.format("%s", v)` takes strings and numbers only. The root README lists the language differences.
+- **Modules:** `lib:test`, `lib:compile` and `std:workers` are not offered (`vos_domain::NOT_FOR_APPS`); naming one is a
+  type error. Everything else in `neoc-vm` is, with no permission to ask for. An app is the person's own code on their
+  own host: `CLAUDE.md` ("Boundaries") says what the VM does and does not keep apart.
+- **Your own modules are `any` in the editor.** luau-lsp resolves a relative `require` only while `require` is its
+  built-in; `bun run lint:luau` checks them in a second pass. A wrong call into one is an error there, not in the editor.
+- **Data:** `db:migrate` steps are numbered and run once each (a changed old step is an error). SQL `ATTACH` is denied
+  through `app.db`.
+
+## View-tree apps (retired by NEOC-298)
+
+The Calculator and Agents are **view-tree apps**: they have no client; their Luau describes the screens and the managed
+client renders them. Everything below, up to "Files", is that model; it keeps working beside the new one and is not extended.
+
+### The package
+
+```
 apps/<id>/
   app.json             the package manifest
   app.luau             the entry (`main`): app.manifest, windows, tools, data

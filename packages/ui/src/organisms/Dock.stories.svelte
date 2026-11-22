@@ -1,6 +1,6 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
-  import { expect, waitFor } from 'storybook/test'
+  import { expect, userEvent, waitFor } from 'storybook/test'
   import Dock from './Dock.svelte'
   import type { DockApp } from '../types'
 
