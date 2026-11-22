@@ -128,7 +128,8 @@ async fn an_error_that_starts_with_rpc_and_a_code_reaches_the_caller_as_that_jso
     );
     // not a code (no space after the number, or a zero): an ordinary error of the app, with its location
     for handler in ["notcoded", "zero"] {
-        let PortError::Rejected(message) = call(&rig, "tasks", handler, Value::Null).await.unwrap_err() else {
+        let PortError::Rejected(message) = call(&rig, "tasks", handler, Value::Null).await.unwrap_err()
+        else {
             panic!("{handler}: rejected");
         };
         assert!(message.contains("RPC"), "{handler}: {message}");

@@ -1,13 +1,17 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration tests
-//! The router the Vite plugin generates from an app's RPC definition (`e2e/apps/tasks-svelte`: `rpc.openrpc.json` and
-//! the `generated/rpc.luau` made from it), built with the product's own pipeline and run under the real runtime: every
-//! call is held to the definition before it reaches the developer's handler, and so is what the handler returns.
+//! The router the Vite plugin generates from an app's contract (`e2e/apps/tasks-svelte`: `openrpc.json`, and the `.app/`
+//! folder `vos generate` makes from it), bundled with the product's own pipeline and run under the real runtime: every call
+//! is held to the contract before it reaches the developer's handler, and so is what the handler returns.
 
 mod common;
 
 use common::{built_package, db, id, user_ctx};
 use serde_json::{json, Value};
-use std::{path::Path, sync::Arc};
+use std::{
+    path::Path,
+    process::Command,
+    sync::{Arc, Once},
+};
 use vos_application::{
     ports::{AppData, AppRuntime, Notifier, PortResult},
     PortError,
@@ -23,10 +27,26 @@ impl Notifier for Quiet {
     }
 }
 
+/// The fixture's generated files are not committed: generate them once, as the project's own scripts do.
+fn generate() {
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        let project = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../e2e/apps/tasks-svelte");
+        let run = Command::new("bun")
+            .args(["run", "generate"])
+            .current_dir(&project)
+            .output()
+            .expect("bun is needed to generate the fixture's router (https://bun.sh)");
+        assert!(run.status.success(), "bun run generate failed:\n{}", String::from_utf8_lossy(&run.stderr));
+    });
+}
+
 async fn tasks() -> LuaRuntime {
-    let entry = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../e2e/apps/tasks-svelte/app.luau");
+    generate();
+    let entry = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../e2e/apps/tasks-svelte/.app/entry.luau");
     let package = vos_application::ports::AppPackage { has_client: true, ..built_package(&entry) };
-    let runtime = LuaRuntime::new(Arc::new(Quiet), Arc::new(vos_application::testing::RecordingShell::default()));
+    let runtime =
+        LuaRuntime::new(Arc::new(Quiet), Arc::new(vos_application::testing::RecordingShell::default()));
     let data: Arc<dyn AppData> = db();
     runtime.load(&id("tasks-svelte"), package, data).await.unwrap();
     runtime
