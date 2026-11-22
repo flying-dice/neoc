@@ -114,9 +114,13 @@ test.describe('Calculator (web) journeys', () => {
       await expect(page).toHaveTitle('Calculator (web)')
       await expect(page.getByTestId('dock')).toHaveCount(0)
       await expect(frame(page).locator('html')).toHaveAttribute('data-theme', scheme)
-      await tap(page, ['6', 'mul', '7', 'eq'])
+      // the page gives the app the keyboard once it is ready: a sum typed straight after load, no click first
+      await expect(display(page)).toHaveText('0')
+      await page.keyboard.type('6*7=')
       await expect(display(page)).toHaveText('42')
       await expect(caption(page)).toHaveText('6 × 7')
+      await tap(page, ['clear', '8', 'div', '2', 'eq'])
+      await expect(display(page)).toHaveText('4')
     })
   }
 })
