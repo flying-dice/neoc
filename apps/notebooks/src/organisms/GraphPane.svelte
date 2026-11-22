@@ -29,6 +29,7 @@
     const cut = [...name].slice(0, LABEL_MAX).join('')
     return cut.includes(' ') ? cut.slice(0, cut.lastIndexOf(' ')) : cut
   }
+  const counted = (count: number, what: string): string => `${count} ${what}${count === 1 ? '' : 's'}`
   const radiusOf = (degree: number): number => Math.min(6 + degree * 1.5, 14)
 
   function keyed(event: KeyboardEvent, id: number): void {
@@ -49,11 +50,7 @@
       </ui-button>
     {/if}
     <h1 data-testid="notebooks-graph-title">Graph</h1>
-    <p class="count" data-testid="notebooks-graph-count">
-      {nodes.length}
-      {nodes.length === 1 ? 'note' : 'notes'}, {graph.edges.length}
-      {graph.edges.length === 1 ? 'link' : 'links'}
-    </p>
+    <p class="count" data-testid="notebooks-graph-count">{counted(nodes.length, 'note')}, {counted(graph.edges.length, 'link')}</p>
   </header>
   <div class="canvas" bind:clientWidth={width} bind:clientHeight={height}>
     {#if nodes.length === 0}

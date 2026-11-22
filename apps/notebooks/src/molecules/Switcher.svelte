@@ -19,6 +19,7 @@
   const SHOWN = 8
 
   let dialog = $state<HTMLDialogElement>()
+  let field = $state<HTMLInputElement>()
   let typed = $state('')
   // which row is marked, counted through the notes and then the row that makes one
   let marked = $state(0)
@@ -30,6 +31,7 @@
 
   $effect(() => {
     dialog?.showModal()
+    field?.focus()
     return () => dialog?.close()
   })
 
@@ -69,8 +71,9 @@
   data-testid={testid}
 >
   <div class="box">
-    <!-- svelte-ignore a11y_autofocus -->
+    <!-- the dialog gives its first field the focus as it opens: `autofocus` is refused in an app's frame -->
     <input
+      bind:this={field}
       type="text"
       role="combobox"
       aria-label="Note name"
@@ -79,7 +82,6 @@
       aria-activedescendant={rows > 0 ? `${testid}-row-${marked}` : undefined}
       placeholder="Find or make a note…"
       autocomplete="off"
-      autofocus
       maxlength={120}
       value={typed}
       oninput={(e) => {

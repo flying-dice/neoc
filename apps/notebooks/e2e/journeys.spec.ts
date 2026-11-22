@@ -20,8 +20,12 @@ const editor = (page: Page): Locator => part(page, 'editor')
 let serial = 0
 const unique = (what: string): string => `${what} ${Date.now().toString(36)}-${++serial}`
 
-/** A note's row in the list, found by its title. */
-const row = (page: Page, name: string): Locator => frame(page).locator('ui-row[data-testid^="notebooks-note-"]').filter({ hasText: name })
+const escaped = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+/** A note's row in the list, found by its title: a row is named with its title first, then its first line and when it changed. */
+const row = (page: Page, name: string): Locator =>
+  frame(page)
+    .locator('ui-row[data-testid^="notebooks-note-"]')
+    .and(frame(page).getByRole('option', { name: new RegExp(`^${escaped(name)}(,|$)`) }))
 /** A link to a note in the reading view, found by the title it names. */
 const link = (page: Page, name: string): Locator => part(page, `reading-link-${name}`)
 /** A note that links to the open one, found by its title. */
@@ -68,7 +72,7 @@ test.describe('Notebooks journeys', () => {
     await expect(row(page, name)).toBeVisible()
     await editor(page).fill('# The beds\n\nSow in **March**.\n\n- [ ] Order the seeds\n- [x] Clear the bed')
     await expect(part(page, 'status')).toHaveText('Saved')
-    await expect(row(page, name)).toHaveAttribute('subheading', 'Sow in March.') // the list shows its first line, without its marks
+    await expect(row(page, name)).toHaveJSProperty('subheading', 'Sow in March.') // the list shows its first line, without its marks
     await read(page)
     await expect(part(page, 'reading').getByRole('heading', { name: 'The beds' })).toBeVisible()
     await expect(part(page, 'reading-task-4')).not.toBeChecked()
@@ -138,8 +142,8 @@ test.describe('Notebooks journeys', () => {
     await search(page).fill(word.toUpperCase())
     const hit = frame(page).locator('ui-row[data-testid^="notebooks-hit-"]')
     await expect(hit).toHaveCount(1)
-    await expect(hit).toHaveAttribute('heading', other)
-    await expect(hit).toHaveAttribute('subheading', `Nothing of the sort, but ${word} is here.`)
+    await expect(hit).toHaveJSProperty('heading', other)
+    await expect(hit).toHaveJSProperty('subheading', `Nothing of the sort, but ${word} is here.`)
     await hit.click()
     await expect(title(page)).toHaveValue(other)
     await search(page).fill('')
@@ -183,7 +187,7 @@ test.describe('Notebooks journeys', () => {
     await write(page, name, 'Soon gone.')
     await part(page, 'pin').click()
     await expect(part(page, 'pin')).toHaveAttribute('pressed', '')
-    await expect(row(page, name)).toHaveAttribute('icon', 'star')
+    await expect(row(page, name)).toHaveJSProperty('icon', 'star')
     await part(page, 'delete').click()
     await expect(part(page, 'confirm')).toContainText(`Delete ${name}?`)
     await part(page, 'confirm-cancel').click()
