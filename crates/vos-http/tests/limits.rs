@@ -242,7 +242,14 @@ async fn a_client_that_keeps_up_gets_a_burst_far_larger_than_any_count_in_order_
 async fn a_message_bigger_than_the_byte_limit_does_not_close_a_client_that_reads() {
     let watch = Arc::new(Watch::default());
     let addr = start_watch(watch.clone()).await;
-    let (mut ws, _) = connect_async(format!("ws://{addr}/rpc")).await.unwrap();
+    // the test's own client must be able to take a message this size (the default allows 16 MiB)
+    let config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
+        .max_message_size(Some(128 << 20))
+        .max_frame_size(Some(128 << 20));
+    let (mut ws, _) =
+        tokio_tungstenite::connect_async_with_config(format!("ws://{addr}/rpc"), Some(config), false)
+            .await
+            .unwrap();
     let peer = peer_of(&watch).await;
 
     let huge = "z".repeat(MAX_QUEUED_BYTES + 1024);

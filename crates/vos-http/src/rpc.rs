@@ -49,11 +49,11 @@ pub const BUSY: i32 = -32000;
 /// is never closed for one. The biggest bursts are opening an app whose view is large (one view tree is at most about
 /// a mebibyte, [`MAX_MESSAGE_BYTES`]) beside a few windows whose live sources refresh at once, or an agent streaming
 /// into several chats: a few mebibytes. 32 MiB is ten times that, and small enough for a host on a home server to hold
-/// for one stalled tablet. A message is always accepted into an empty queue, whatever its size, and it stops counting
-/// when the writer takes it, so a reader is not closed for one message that is big in itself; it is closed for more
-/// than this waiting to be taken (a burst of more than this, sent faster than the writer can take it, is a stall as
-/// far as the host can tell). The host holds at most this much, plus the one message being written, plus a single
-/// message that was accepted into an empty queue and has not been taken yet.
+/// for one stalled tablet. A message is taken unless more than this is already waiting, whatever its own size, and it
+/// stops counting when the writer takes it, so a reader is not closed for one message that is big in itself; it is
+/// closed for more than this waiting to be taken (a burst of more than this, sent faster than the writer can take it,
+/// is a stall as far as the host can tell). The host holds at most this much, plus the last message that was taken
+/// while it was under the limit (any size), plus the one being written.
 pub const MAX_QUEUED_BYTES: usize = 32 << 20;
 
 /// How long the socket may go without taking a message before the connection is closed, however small it is.
@@ -110,8 +110,10 @@ struct Outbound {
 }
 
 impl Outbound {
-    /// Queue a message. `Closed` when the connection is over, or when this very message found the queue over its
-    /// byte limit and ended it; `Unserialisable` when it cannot be written as JSON (it is then not sent).
+    /// Queue a message. `Closed` when the connection is over, or when this very message found more than the byte limit
+    /// already waiting and ended it (the message's own size is not what is judged: a big one is taken, and counts
+    /// against what follows only until the writer takes it); `Unserialisable` when it cannot be written as JSON (it is
+    /// then not sent).
     fn send(&self, message: &RpcMessage) -> Result<(), RpcCallError> {
         if self.closed.is_cancelled() {
             return Err(RpcCallError::Closed);
@@ -122,7 +124,7 @@ impl Outbound {
         })?;
         let len = text.len();
         let before = self.queued.fetch_add(len, Ordering::SeqCst);
-        if before > 0 && before + len > MAX_QUEUED_BYTES {
+        if before > MAX_QUEUED_BYTES {
             self.queued.fetch_sub(len, Ordering::SeqCst);
             self.hang_up("too much is waiting to be sent to it", before);
             return Err(RpcCallError::Closed);
@@ -506,12 +508,14 @@ mod tests {
                 Ok(()) => accepted = out.queued.load(Ordering::SeqCst),
                 Err(e) => break e,
             }
-            assert!(accepted <= MAX_QUEUED_BYTES + size, "the bound did not hold: {accepted} bytes queued");
+            assert!(
+                accepted <= MAX_QUEUED_BYTES + size + 64,
+                "the bound did not hold: {accepted} bytes queued"
+            );
         };
         assert!(matches!(refused, RpcCallError::Closed));
-        // it was refused as soon as the next message would not fit, so the queue was within one message of full
-        assert!(accepted <= MAX_QUEUED_BYTES);
-        assert!(accepted + 2 * size > MAX_QUEUED_BYTES, "closed early, at {accepted} bytes");
+        // it was refused once more than the limit was waiting, so the queue was just over it, by less than a message
+        assert!(accepted > MAX_QUEUED_BYTES, "closed early, at {accepted} bytes");
         assert!(out.closed.is_cancelled());
         assert!(matches!(out.send(&note(1)), Err(RpcCallError::Closed)));
         // what was refused is not counted as waiting
@@ -544,8 +548,9 @@ mod tests {
     }
 
     #[test]
-    fn a_message_is_accepted_into_an_empty_queue_whatever_its_size() {
+    fn a_message_is_taken_whatever_its_size_unless_more_than_the_limit_is_already_waiting() {
         let (out, _rx) = outbound();
+        out.send(&note(100)).unwrap(); // a little is waiting: a big message is still taken
         assert!(out.send(&note(MAX_QUEUED_BYTES + 1)).is_ok());
         assert!(!out.closed.is_cancelled());
         // but not on top of that
