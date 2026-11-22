@@ -7,11 +7,11 @@ that says which methods the client may call, with which params and what they ret
 the typed `api` client, the Luau router, and the Luau interface the backend implements. The developer writes
 the client, and the implementation of the handlers; nothing else on either side of the RPC.
 
-`apps/calculator-web` is the reference app to copy: the Calculator, a Svelte keypad drawn with the kit's `ui-button`, on a
-Luau backend with one method (its README says how it is laid out and where its state lives). `e2e/apps/tasks-svelte` and
-`e2e/apps/tasks-react` are the same task list written once in each framework, on the same contract and the same backend
-(test fixtures, not in Discover). The older view-tree apps, `apps/calculator` and `apps/agents`, have no client: their Luau describes the screens instead (see "View-tree apps" below;
-NEOC-298 ports them and retires that model). The backend API is typed in `types/generated/vos.d.luau` (generated from the
+`apps/calculator` is the reference app to copy: a Svelte keypad drawn with the kit's `ui-button`, on a Luau backend with its
+keypad, its agent tools and an agent's result that waits for the page (its README says how it is laid out and where its
+state lives). `e2e/apps/tasks-svelte` and `e2e/apps/tasks-react` are the same task list written once in each framework, on the
+same contract and the same backend (test fixtures, not in Discover). The older view-tree app, `apps/agents`, has no client:
+its Luau describes the screens instead (see "View-tree apps" below; NEOC-350 ports it and NEOC-346 retires that model). The backend API is typed in `types/generated/vos.d.luau` (generated from the
 Rust schema by `bun run codegen`; never edit it): every `app.*` call and every `std:`/`lib:`/`vnd:` module an app may
 `require`. It is the reference; hover docs show in an editor running luau-lsp with
 `luau-lsp.types.definitionFiles = { "@vos": "types/generated/vos.d.luau" }` and `luau-lsp.platform.type = "standard"`.
@@ -310,6 +310,11 @@ return handlers
 - **Events.** `app.emit(name, data)` tells the app's open clients something changed (they hear it with `host.on`): after
   an agent's tool changed data, or from a background task. `name` is 1 to 64 letters, digits and `. _ : -` (not `host:...`),
   `data` JSON of at most 64 KiB, at most 256 events waiting; a `readOnly` tool may not emit.
+- **Opening its window.** `app:openWindow()` asks every connected shell to open the app's window, or bring it forward if it
+  is open (an agent's tool putting something in front of the person). It takes effect when the call ends. An app with a client
+  has one window, so it takes no name (`"main"` is the only one accepted). With no shell connected nothing opens and nothing
+  fails: an event sent with it reaches nobody, so keep what the page must show with the backend (`app.kv`) and let the page
+  ask for it when it starts, as the Calculator's `show_on_calculator` and `takeShown` do. Not inside a `readOnly` tool.
 - **Calls** from a client, a tool and a task all queue behind one another: one runs at a time in an app's VM.
 - **Tools** are separate from handlers (agents call tools over MCP, the client calls handlers):
   `app.tool { name, title, description, readOnly, input, run }` (MCP name `<id>__<name>`, local name `[a-z][a-z0-9_]*`);
@@ -360,10 +365,9 @@ fail in the gate (`VOS_GATE=1`), but **`bun run build` needs luau-lsp and darklu
 registry. The host installs an app from an app ref URL (`file://`, `http://`, `https://`), verifies every sha256 (the
 client's too) and runs the migrations.
 
-## View-tree apps (retired by NEOC-298)
+## View-tree apps (retired by NEOC-346)
 
-The Calculator and Agents are **view-tree apps**: they have no client; their Luau describes the screens and the managed
-client renders them. Everything below, up to "Files", is that model; it keeps working beside the new one and is not extended.
+Agents is a **view-tree app**: it has no client; its Luau describes the screens and the managed client renders them. Everything below, up to "Files", is that model; it keeps working beside the new one and is not extended.
 
 ### The package
 
@@ -566,7 +570,7 @@ stops without it unless you set `check: false`) and StyLua (`cargo install stylu
 
 An app that is a Vite project:
 
-1. **Project.** Copy `apps/calculator-web` (or `e2e/apps/tasks-svelte`, `tasks-react`) to `apps/<id>` without its `node_modules`, `.app` and `dist`.
+1. **Project.** Copy `apps/calculator` (or `e2e/apps/tasks-svelte`, `tasks-react`) to `apps/<id>` without its `node_modules`, `.app` and `dist`.
    Rename the package in its `package.json` (`"name": "@vos-apps/<id>"`: two workspace packages with one name make
    `bun install` fail), then set `x-app` (id, icon, tint, window), the title and version `0.1.0` in `openrpc.json`. Keep the
    project's `.gitignore` (`.app` and `dist`: the repository's own ignores `dist` but not `.app`). Run `bun install` in the
@@ -587,16 +591,16 @@ An app that is a Vite project:
 
 A view-tree app:
 
-1. **Package.** Copy `apps/calculator` to `apps/<id>`; edit `app.json` (version `0.1.0`) and `app.luau` (it starts with
+1. **Package.** Copy `apps/agents` to `apps/<id>`; edit `app.json` (version `0.1.0`) and `app.luau` (it starts with
    `--!strict`, the two `require`s and `app.manifest { ... }`).
 2. **Window.** `window = { w, h, minW, minH }`: the minimum is the smallest size where every control is fully visible and at
    least 44 pt (add a comment saying why when it is more than 320x240). The host clamps the window to it.
-3. **Logic** as typed functions in their own module (the Calculator's `calc.luau`), so it is testable without a window;
+3. **Logic** as typed functions in their own module, so it is testable without a window;
    the view as `render`; the tools with a described schema and a truthful `readOnly`.
 4. **Clean.** `bun run lint:luau` (luau-lsp strict against the declarations) and `bun run lint:stylua` pass, not skipped;
    `bun run format` fixes formatting. Fix what the checker reports; do not silence it.
-5. **Rust test** of the logic and tools next to `crates/vos-lua/tests/calculator_app.rs` (it loads the shipped package,
-   calls tools with `call_tool`, asserts results and `readOnly`); a host test in `crates/vos-host/tests` for what needs the
+5. **Rust test** of the logic and tools next to `crates/vos-lua/tests/agents.rs` (it loads the shipped package and
+   asserts what it does); a host test in `crates/vos-host/tests` for what needs the
    data layer, views or agents.
 6. **`JOURNEYS.md` and `e2e/journeys.spec.ts`** with a test of the same id per journey, driven by test ids on the real host
    (include an error case, a minimum-window case, a keyboard-only case and, where it applies, an agent driving the app).

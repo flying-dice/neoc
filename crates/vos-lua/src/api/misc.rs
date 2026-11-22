@@ -176,20 +176,22 @@ pub(super) fn install(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<
     )?;
 
     // TODO: clean-code - 0.45 - DRY: same body as `w:openWindow` in view.rs (writable, declared_window, params to JSON, OpenWindow effect), and the `check_effects_allowed` + `writable` pair here repeats data.rs's `require_write`; one `Shared` method for each.
-    // app:openWindow(name, params?)
+    // app:openWindow(name?, params?): an app with a client has one window and may leave the name out
     let s = sh.clone();
     app.set(
         "openWindow",
-        lua.create_function(move |_, (_this, name, params): (LuaValue, String, Option<LuaValue>)| {
-            check_effects_allowed(&s, "app:openWindow")?;
-            s.writable("app:openWindow")?;
-            s.declared_window("openWindow", &name)?;
-            let params = match params {
-                Some(p) => lua_to_json(&p)?,
-                None => Value::Null,
-            };
-            s.push_effect(Effect::OpenWindow { name, params })
-        })?,
+        lua.create_function(
+            move |_, (_this, name, params): (LuaValue, Option<String>, Option<LuaValue>)| {
+                check_effects_allowed(&s, "app:openWindow")?;
+                s.writable("app:openWindow")?;
+                let name = s.window_to_open(name)?;
+                let params = match params {
+                    Some(p) => lua_to_json(&p)?,
+                    None => Value::Null,
+                };
+                s.push_effect(Effect::OpenWindow { name, params })
+            },
+        )?,
     )?;
 
     install_windows(lua, sh, app)?;

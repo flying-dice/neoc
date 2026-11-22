@@ -440,3 +440,64 @@ async fn a_panic_on_one_emit_of_a_batch_leaves_the_others_delivered_once_each() 
     assert!(shell.panicked.load(std::sync::atomic::Ordering::SeqCst), "the first event panicked");
     assert_eq!(*shell.names.lock(), ["second", "third"], "the rest of the batch went out, once each");
 }
+
+const OPENER: &str = r#"
+local app = require("vos:app")
+app.tool { name = "open", description = "open", input = {}, run = function() app:openWindow() return {} end }
+app.tool { name = "open_main", description = "open main", input = {}, run = function() app:openWindow("main") return {} end }
+app.tool { name = "open_other", description = "open another", input = {}, run = function() app:openWindow("settings") return {} end }
+app.tool { name = "peek", description = "read only", readOnly = true, input = {}, run = function() app:openWindow() return {} end }
+return {
+  show = function() app:openWindow() return "ok" end,
+  later = function() app:openWindow() error("changed my mind", 0) end,
+}
+"#;
+
+fn windows(rig: &Rig) -> Vec<(String, String)> {
+    rig.shell.windows.lock().unwrap().iter().map(|(app, window, _)| (app.clone(), window.clone())).collect()
+}
+
+#[tokio::test]
+async fn an_app_with_a_client_opens_its_one_window_without_naming_it() {
+    let rig = rig();
+    load(&rig, "calc", OPENER).await.unwrap();
+    let agent = common::agent_ctx(1);
+    rig.runtime.call_tool(&id("calc"), "open", json!({}), agent.clone(), false).await.unwrap();
+    rig.runtime.call_tool(&id("calc"), "open_main", json!({}), agent.clone(), false).await.unwrap();
+    // a handler may ask too (the person's own page calling its backend)
+    call(&rig, "calc", "show", Value::Null).await.unwrap();
+    // the shell is asked for the app's window, `main`, each time: opening it, or bringing it forward when it is open
+    assert_eq!(windows(&rig), [("calc".into(), "main".into()), ("calc".into(), "main".into()), ("calc".into(), "main".into())]);
+
+    // any other name is not a window this app has
+    let PortError::Rejected(message) =
+        rig.runtime.call_tool(&id("calc"), "open_other", json!({}), agent.clone(), false).await.unwrap_err()
+    else {
+        panic!("rejected");
+    };
+    assert!(message.contains("an app with a client has one window, `main`"), "{message}");
+    // nor may a read-only tool ask, and a call that fails asks for nothing
+    assert!(rig.runtime.call_tool(&id("calc"), "peek", json!({}), agent, false).await.is_err());
+    assert!(call(&rig, "calc", "later", Value::Null).await.is_err());
+    assert_eq!(windows(&rig).len(), 3, "nothing more was asked");
+}
+
+#[tokio::test]
+async fn an_app_without_a_client_still_names_a_window_it_declared() {
+    let rig = rig();
+    let package = common::package(
+        r#"local app = require("vos:app")
+app.manifest { id = "old", name = "Old" }
+app.tool { name = "open", description = "open", input = {}, run = function() app:openWindow() return {} end }"#,
+        &[],
+    );
+    let data: Arc<dyn AppData> = db();
+    rig.runtime.load(&id("old"), package, data).await.unwrap();
+    let PortError::Rejected(message) =
+        rig.runtime.call_tool(&id("old"), "open", json!({}), common::agent_ctx(1), false).await.unwrap_err()
+    else {
+        panic!("rejected");
+    };
+    assert!(message.contains("name the window to open"), "{message}");
+    assert!(windows(&rig).is_empty());
+}

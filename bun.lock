@@ -12,8 +12,8 @@
         "zod": "4.6.7",
       },
     },
-    "apps/calculator-web": {
-      "name": "@vos-apps/calculator-web",
+    "apps/calculator": {
+      "name": "@vos-apps/calculator",
       "version": "0.1.0",
       "devDependencies": {
         "@sveltejs/vite-plugin-svelte": "^7.3.1",
@@ -530,7 +530,7 @@
 
     "@vitest/utils": ["@vitest/utils@3.2.4", "", { "dependencies": { "@vitest/pretty-format": "3.2.4", "loupe": "^3.1.4", "tinyrainbow": "^2.0.0" } }, "sha512-fB2V0JFrQSMsCo9HiSq3Ezpdv4iYaXRG1Sx8edX3MwxfyNn83mKiGzOcH+Fkxt4MHxr3y42fQi1oeAInqgX2QA=="],
 
-    "@vos-apps/calculator-web": ["@vos-apps/calculator-web@workspace:apps/calculator-web"],
+    "@vos-apps/calculator": ["@vos-apps/calculator@workspace:apps/calculator"],
 
     "@vos-fixtures/tasks-react": ["@vos-fixtures/tasks-react@workspace:e2e/apps/tasks-react"],
 

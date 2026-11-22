@@ -361,6 +361,26 @@ impl Shared {
         )))
     }
 
+    /// The window `app:openWindow(name?)` asks the shell for. An app with a client has one window, its frame: the name
+    /// may be left out, and if given must be `main` (a window of another name is a view-tree app's, declared with
+    /// `app.window`). An app without a client names one of the windows it declared.
+    pub fn window_to_open(&self, name: Option<String>) -> mlua::Result<String> {
+        if self.package.has_client {
+            return match name {
+                None => Ok("main".to_owned()),
+                Some(name) if name == "main" => Ok(name),
+                Some(name) => Err(mlua::Error::runtime(format!(
+                    "openWindow: an app with a client has one window, `main`; leave the name out (got `{name}`)"
+                ))),
+            };
+        }
+        let Some(name) = name else {
+            return Err(mlua::Error::runtime("openWindow: name the window to open (an app without a client declares its windows with app.window)"));
+        };
+        self.declared_window("openWindow", &name)?;
+        Ok(name)
+    }
+
     pub fn chunk_name(&self, path: &str) -> String {
         format!("={}/{path}", self.app)
     }

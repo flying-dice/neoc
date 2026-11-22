@@ -9,7 +9,7 @@
  *      (e2e/apps: a task list with a Svelte client and one with a React client, each on a Luau backend), built
  *      into a folder no registry lists and installed at start like the Calculator;
  *   2. writes vos.toml (port 7410 or VOS_PORT_BASE + 10, loopback, a fresh data directory, the test registry; the Calculator and
- *      Agents (and the Calculator built as a Vite project, calculator-web) are installed at start, Notes is only offered; one scripted ACP agent is on the roster);
+ *      Agents are installed at start, Notes is only offered; one scripted ACP agent is on the roster);
  *   3. runs vos-host in the foreground, forwarding SIGTERM so the host shuts down gracefully.
  */
 import { spawn, spawnSync } from 'node:child_process'
@@ -101,7 +101,7 @@ writeFileSync(
     `client_dir = "${join(ROOT, 'client/dist')}"`,
     `registries = ["file://${REGISTRY}"]`,
     `install = [${[
-      ...['calculator', 'calculator-web', 'agents'].map((id) => `file://${join(DIR, `registry/${id}/${versionOf(id)}/app-ref.json`)}`),
+      ...['calculator', 'agents'].map((id) => `file://${join(DIR, `registry/${id}/${versionOf(id)}/app-ref.json`)}`),
       ...FIXTURE_APPS.map(fixtureAppRef)
     ]
       .map((url) => `"${url}"`)

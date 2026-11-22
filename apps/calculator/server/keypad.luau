@@ -1,8 +1,9 @@
 --!strict
 -- The keypad: one key at a time, as the iPadOS Calculator does it (apps/calculator/JOURNEYS.md, "How a sum is worked out").
 -- Pure: `press(state, key)` takes where a sum has got to and gives the next state; nothing is kept here. The client holds
--- the state and sends it with each key, so every window has a calculator of its own. The arithmetic is calc.luau: a second,
--- identical copy of the old Calculator's (apps/calculator/calc.luau), which goes when this app takes over the id `calculator`.
+-- the state and sends it with each key, so every window has a calculator of its own. The arithmetic is calc.luau, the
+-- view-tree Calculator's evaluator unchanged (a copy of it stays in the view tests' fixture, crates/vos-codegen/tests/fixtures/
+-- calculator, until NEOC-346 retires that kind).
 local calc = require("./calc")
 
 export type Op = "+" | "-" | "*" | "/"
@@ -176,6 +177,15 @@ local function apply(s: State, key: string)
   else
     error("unknown key " .. key)
   end
+end
+
+-- A result put on the calculator from outside (an agent's `show_on_calculator`): the display shows it and the caption
+-- says what it is, as after `=`; the sum the person was in the middle of is replaced, and the next key carries on from
+-- the result.
+function keypad.shown(value: number, expression: string): Screen
+  local s = keypad.initial()
+  s.value, s.caption = value, string.sub(expression, 1, 200)
+  return keypad.screen(s)
 end
 
 -- What to draw for a state. While the display shows Error, the caption is the reason, and `error` repeats it for the

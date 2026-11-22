@@ -1,25 +1,29 @@
 # Calculator: key user journeys
 
-Each journey is a goal, not a script: research participants must work out *how* themselves. Automated versions
-live in `e2e/journeys.spec.ts` with the same ids (each test checks its row's "Done when"). They run against the real Rust host (`bun run host`, with the
-registry from `bun run build:apps`, so the Calculator is offered in Discover; the e2e host installs it at start),
-in a paired browser. The Calculator is a Luau app: it runs on the host, its window is a view the client renders, and
-there is one calculator however many windows are open.
+The Calculator is a Vite project (NEOC-298): its client, a Svelte keypad on the kit's `ui-button`, runs in a frame of its window
+or alone on its own page at `/apps/calculator`, and its arithmetic and its agent tools are Luau. The client holds the keypad's
+state, so each window and the standalone page have a calculator of their own and a sum is lost when the page closes or
+reloads; what the backend keeps is what an agent did: the history, and a result an agent put on the Calculator that no page
+has shown yet (it appears the next time the Calculator is opened, and a second one replaces it). `crates/vos-lua/tests/calculator.rs`
+holds the keypad to the tables below and tests the tools.
+
+Each journey is a goal, not a script. Automated versions live in `e2e/journeys.spec.ts` with the same ids, against the real
+host (the e2e host installs the app at start), through the app's frame (`calculator-frame`) or its own page.
 
 | Id | Who / goal | Starts at | Done when |
 |---|---|---|---|
-| J1 | Someone splitting a restaurant bill: work out 12 + 7 with the mouse. | The desktop with Discover open. The Calculator isn't open. | The display shows 19, and they found the Calculator without help. |
-| J2 | A keyboard user: calculate 250 × 0.18 without touching the mouse, clear it, then do 12 + 7 and fix a slipped digit. | The Calculator open. | The display shows 45, then 0, then 19, with keyboard only (digits, operators, `=` or Enter, Backspace, Escape). Enter is `=` after keys were clicked or typed, and presses the focused key only when it was reached with Tab and nothing was typed since. |
-| J3 | Chain operations: (9 × 3) − 7. | The Calculator open. | The display shows 20, and they could tell which operator was pending and what had been entered so far (the caption `9 × 3 −`). |
-| J4 | Make a mistake and recover: divide by zero, then carry on with a new sum. | The Calculator open. | They saw "Error" and its reason ("Can't divide by zero") under it, understood it (a screen reader announces it), cleared it and finished a new sum. |
-| J5 | An agent (Claude, over MCP) works out 18% of 2,450 and puts it on the Calculator; later it puts another result there. | The desktop with Discover open. The Calculator isn't open. | The Calculator opens by itself and shows 441 with the expression above it; the second result appears in the open window without anything being pressed, and the person can carry on from it. |
-| J6 | Keep the Calculator handy while working in Files: put it in Slide Over and do 6 × 7. | Files and the Calculator open. | The Calculator is in Slide Over and shows 42, and still takes typed keys after the multitasking menu; Files, waiting in the recent-apps strip, comes back beside it and still works (its search narrows the list) while the Calculator keeps its 42. |
-| J7 | Use the Calculator in a small window: shrink it as far as it goes and do 5 + 5. | The Calculator open. | The window stopped at its minimum (320x500); every key is still fully visible and at least 44 pt, and the display shows 10. |
-| J8 | Someone working out a mixed sum, the way they would on a phone: 2 + 3 × 4, then 2 × 3 + 4, then a longer chain, mouse and keyboard. | The Calculator open. | The display shows 14 (not 20), then 10; after `2 + 3 ×` it still shows 3 and the caption reads `2 + 3 ×`; after `2 × 3 +` it shows 6. A result carries on into the next sum, and a divide by zero inside a chain is the same error. An agent that calls `calculate` with the same sums gets the same answers. |
+| CW1 | Someone splitting a bill: work out 12 + 7 with the mouse. | The desktop. The Calculator isn't open. | They opened it from the home screen, and the display shows 19 with the caption `12 + 7`. |
+| CW2 | A keyboard user: 250 × 0.18 without the mouse, clear it, then 12 + 7 with a slipped digit fixed. | The Calculator open. | The display shows 45, then 0, then 19, by keyboard only (digits, operators, `=` or Enter, Backspace, Escape). |
+| CW3 | Chain and precedence: 2 + 3 × 4, the way a phone does it. | The Calculator open. | After `2 + 3 ×` the display still shows 3, the caption reads `2 + 3 ×` and the × key is drawn pressed; `=` shows 14. |
+| CW4 | Make a mistake and recover: divide by zero, then a new sum. | The Calculator open. | They saw "Error" with "Can't divide by zero" under it (announced to a screen reader), cleared it and finished a new sum. |
+| CW5 | Use it in a small window: shrink it as far as it goes and do 5 + 5. | The Calculator open. | The window stopped at its minimum (320x500); every key is fully visible, and the display shows 10. |
+| CW6 | Open it on its own: go to `/apps/calculator`, type 6 × 7 straight away, then tap 8 ÷ 2. | A paired browser. | The page is the Calculator full screen (no shell), titled with its name; the keyboard works without a click and shows 42, the keys then show 4; in dark and in light it is the same dark instrument. |
+| CW7 | An agent (over MCP) works out 18% of 2,450 and puts it on the Calculator; later it puts another result there. | The desktop. The Calculator isn't open. | The Calculator opens by itself and shows 441 with the expression above it; the second result appears in the open window without anything being pressed, and the person carries on from it. |
+| CW8 | A mixed sum the way a phone does it: 2 + 3 × 4, then 2 × 3 + 4, by mouse and by keyboard, and the same sums from an agent. | The Calculator open. | The display shows 14 (not 20), then 10, and the `calculate` tool gives the same answers. |
 
-## How a sum is worked out (AGOS-57)
+## How a sum is worked out
 
-The keypad and the `calculate` tool run one evaluator (`calc.luau`), so a sum gives the same answer from both: `×` and
+The keypad (`keypad.luau`) and the `calculate` tool run one evaluator (`calc.luau`), so a sum gives the same answer from both: `×` and
 `÷` bind tighter than `+` and `−`, and operators of equal precedence go left to right (`8 − 2 − 1` is 5, `8 ÷ 4 ÷ 2` is
 1). The keypad shows the sum the way the iPadOS Calculator does:
 
