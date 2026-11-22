@@ -36,7 +36,11 @@
     e.preventDefault()
     if (!focusedHere())
       returnTo = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    stack?.querySelector<HTMLElement>(`[data-testid="notification-${newest.id}-open"]`)?.focus()
+    // a key was pressed, so the ring shows even when the last thing the person did was a click
+    const options: FocusOptions & { focusVisible: boolean } = { focusVisible: true }
+    stack
+      ?.querySelector<HTMLElement>(`[data-testid="notification-${newest.id}-open"]`)
+      ?.focus(options)
   }
 
   $effect(() => {
