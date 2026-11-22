@@ -37,11 +37,12 @@ Each line is a rule in REVIEW-READY.md. The note carries one row per line.
 
 | # | Rule | Evidence the row must carry |
 |---|---|---|
+| 0.1 | Who has already solved it | the class of problem, the solutions read, adopt/adapt/build and why |
+| 0.2 | Five whys on a repeat (re-request) | the five whys and the options sent to the coordinator, or "no repeat" |
 | 1.1 | Reviewer's questions answered | where in the body each one is answered |
 | 1.2 | Reference matched | the reference named; each difference and why |
-| 1.3 | Invariants for shared resources | each queue, limit, cap and timeout: the invariant and its test name |
-| 1.4 | No timer decides an outcome | none, or each one and why it must be a timer |
-| 1.5 | Outside input mapped to every sink | the input-to-place table, the routine per target, and the table-driven test |
+| 1.3 | Invariants for shared resources, no timer decides | each queue, limit, cap and timeout: the invariant and its test; any timer and why |
+| 1.4 | Outside input mapped to every sink | the input-to-place table, the routine per target, and the table-driven test |
 | 2.1 | Every input gets an answer | a test name per refusal or skip path |
 | 2.2 | Errors say what to write instead | the asserted message texts |
 | 2.3 | Failure, teardown, twice at once | a test name per failing stage, and the concurrent run |
