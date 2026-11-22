@@ -213,7 +213,17 @@ export type vos_ToolDef = {
 	run: (input: any, ctx: vos_ToolContext) -> any,
 }
 
-export type vos_Notification = { title: string, body: string?, at: string?, actions: { any }? }
+--- A notification: a title and an optional body, and no other key. The host adds which app sent it.
+export type vos_Notification = {
+	--- 1 to 200 characters, not blank
+	title: string,
+	--- up to 2000 characters
+	body: string?,
+	--- removed: a notification is delivered now, there is no scheduling
+	at: nil,
+	--- removed: a notification has no buttons
+	actions: nil,
+}
 
 --- The desktop shell's side of the app: a deep link is accepted and dropped until the shell shows it.
 export type vos_Shell = {
@@ -246,7 +256,14 @@ export type vos_AppApi = {
 	--- got. An undeclared name raises `app:windows: no window ... is declared`. Listing is a read, so a `readOnly`
 	--- tool may do it; changing a window through its `w` is not.
 	windows: (self: vos_AppApi, name: string) -> { vos_WindowContext },
-	--- `app.notify { ... }` or `app:notify { ... }`.
+	--- `app.notify { title, body }` or `app:notify { ... }`: tell the person something now. It reaches the clients
+	--- connected now; one that is not connected never gets it. The host sends the app's id with it, never text from the app.
+	--- Raises (each message starts `app.notify`): no table ("takes a table"), a key other than title and body
+	--- ("unknown key", "unknown positional entry"), no title ("needs"), a title that is blank or over 200
+	--- characters, a body over 2000, a value that is not a string, a call in render or a readOnly tool, and a 65th
+	--- while 64 from the same call are still waiting ("already has 64 notifications waiting"). The host delivers
+	--- waiting notifications whenever a call of the app ends or a task or request handler waits, so the limit
+	--- guards against a runaway loop; it is not a quota to plan around.
 	notify: ((notification: vos_Notification) -> ()) & ((self: vos_AppApi, notification: vos_Notification) -> ()),
 	log: (message: string) -> (),
 }

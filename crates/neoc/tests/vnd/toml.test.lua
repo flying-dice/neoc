@@ -166,4 +166,42 @@ describe("toml", function()
         end)
     end)
 
+    -- a buffer (refused, never turned into an array of numbers) ----------------
+
+    describe("a buffer", function()
+        local refused = "a buffer cannot be serialized; convert it explicitly first"
+
+        -- a buffer 100 tables down (the guard walks as deep as a serializer, 128 tables)
+        local function deep()
+            local t = { buffer.create(2) }
+            for _ = 2, 100 do
+                t = { inner = t }
+            end
+            return t
+        end
+
+        test("refuses one 100 tables down", function()
+            local ok, err = pcall(toml.encode, { data = deep() })
+            expect(ok).toBe(false)
+            expect(tostring(err)).toContain("toml.encode: " .. refused)
+        end)
+
+        test("encode and encode_pretty refuse one", function()
+            local ok, err = pcall(toml.encode, { data = buffer.create(2) })
+            expect(ok).toBe(false)
+            expect(tostring(err)).toContain("toml.encode: " .. refused)
+            ok, err = pcall(toml.encode_pretty, { nested = { data = buffer.create(2) } })
+            expect(ok).toBe(false)
+            expect(tostring(err)).toContain("toml.encode_pretty: " .. refused)
+        end)
+
+        test("encode_to refuses one and writes nothing", function()
+            local writer, _ = fs.open({ path = ".tmp/toml_buffer.toml", mode = "w" })
+            local ok, err = pcall(toml.encode_to, { data = buffer.create(2) }, writer)
+            expect(ok).toBe(false)
+            expect(tostring(err)).toContain("toml.encode_to: " .. refused)
+            writer:flush()
+            expect(fs.read(".tmp/toml_buffer.toml")).toBe("")
+        end)
+    end)
 end)

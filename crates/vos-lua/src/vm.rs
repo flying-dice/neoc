@@ -21,7 +21,7 @@ use neoc_vm::{
         lib::log::set_log_sink,
         lifecycle::{self, set_entry, Baton, BoxFuture, CallEntry, IdleKind, Inherited, Life},
         panics,
-        sandbox::{install_runtime_state, load_source, make_bare_engine, set_worker_engine},
+        sandbox::{install_runtime_state, load_source, make_bare_engine, set_worker_engine, WorkerEngineFn},
         script_env,
     },
     mlua::{Function, Lua, Table, Value as LuaValue},
@@ -152,6 +152,11 @@ impl Default for VmConfig {
     }
 }
 
+/// The most notifications one call may have waiting before the host takes them (`app.notify` raises past it). The
+/// number is Apple's (Decision NEOC-287): the system keeps an app's 64 soonest scheduled local notifications
+/// (`UILocalNotification`).
+pub const MAX_QUEUED_NOTIFICATIONS: usize = 64;
+
 /// Something the app asked the host to do, collected during a call and taken afterwards.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Effect {
@@ -196,6 +201,9 @@ pub(crate) struct Shared {
     pub deep_links: Mutex<Vec<(String, Function)>>,
     pub decl: Mutex<Option<AppDecl>>,
     pub effects: Mutex<Vec<Effect>>,
+    /// How many of the notifications in `effects` each call queued, by its turn id ([`lifecycle::turn_id`]).
+    /// Emptied with `effects`, so it counts what a call has waiting for the host, not what it ever sent.
+    pub queued_notifications: Mutex<HashMap<u64, usize>>,
     /// The table the app's chunks (and the host modules it requires) run in as their globals.
     pub env: Mutex<Option<Table>>,
     pub modules: Mutex<HashMap<String, LuaValue>>,
@@ -276,6 +284,25 @@ impl Shared {
     #[allow(clippy::unnecessary_wraps)] // the same shape as the other effect pushes
     pub fn push_effect(&self, effect: Effect) -> mlua::Result<()> {
         self.effects.lock().push(effect);
+        Ok(())
+    }
+
+    /// Queue a notification. Each call may have at most [`MAX_QUEUED_NOTIFICATIONS`] waiting for the host (the
+    /// runtime takes the whole queue when any call of the app ends, and when a task or request handler pauses at a
+    /// wait), so a call that loops on `app.notify` raises instead of growing the queue without bound. The count is the calling turn's own: what
+    /// another call queued while this one was parked does not count against it.
+    pub fn push_notification(&self, notification: Notification) -> mlua::Result<()> {
+        let mut effects = self.effects.lock();
+        let mut counts = self.queued_notifications.lock();
+        let queued = counts.entry(lifecycle::turn_id().unwrap_or(0)).or_default();
+        if *queued >= MAX_QUEUED_NOTIFICATIONS {
+            return Err(mlua::Error::runtime(format!(
+                "app.notify: this call already has {MAX_QUEUED_NOTIFICATIONS} notifications waiting to be delivered; \
+                 combine them into one notification"
+            )));
+        }
+        *queued += 1;
+        effects.push(Effect::Notify(notification));
         Ok(())
     }
 
@@ -580,6 +607,22 @@ impl Drop for AppVm {
     }
 }
 
+/// How the engine of a `std:thread` worker an app starts, and of every worker below it, is built: offered the app's
+/// modules (`offered`), and without Luau's `buffer`. The engine opens `buffer` and the app's environment does not copy
+/// it in (`GLOBALS_NOT_FOR_APPS`), but a worker runs on the engine's own globals, so it is removed here, until apps are
+/// offered `buffer` (NEOC-44), workers alike (Decision NEOC-292). The worker's own workers are built here too, not by
+/// the `install_allowed` default, which would hand `buffer` back.
+fn app_worker_engine(offered: Arc<Vec<&'static str>>) -> WorkerEngineFn {
+    Arc::new(move |life| {
+        let lua = make_bare_engine()?;
+        lua.globals().raw_remove("buffer")?;
+        install_runtime_state(&lua, life);
+        neoc_vm::lua::modules::install_allowed(&lua, &offered)?;
+        set_worker_engine(&lua, app_worker_engine(offered.clone()));
+        Ok(lua)
+    })
+}
+
 /// A script's error as the VM reports it: `ctx:fail` is a failed tool call, anything else a script error.
 pub(crate) fn script(e: &mlua::Error) -> VmError {
     match e.downcast_ref::<ToolFailure>() {
@@ -607,16 +650,7 @@ impl AppVm {
         install_runtime_state(&lua, life.clone());
         // a `std:thread` worker an app starts is offered what the app is offered: the library's module list
         // without the ones an app is not given (`require::NOT_FOR_APPS`)
-        let worker_offered = offered.clone();
-        set_worker_engine(
-            &lua,
-            Arc::new(move |life| {
-                let lua = make_bare_engine()?;
-                install_runtime_state(&lua, life);
-                neoc_vm::lua::modules::install_allowed(&lua, &worker_offered)?;
-                Ok(lua)
-            }),
-        );
+        set_worker_engine(&lua, app_worker_engine(offered.clone()));
         let log_app = app.clone();
         set_log_sink(
             &lua,
@@ -647,6 +681,7 @@ impl AppVm {
             deep_links: Mutex::default(),
             decl: Mutex::default(),
             effects: Mutex::default(),
+            queued_notifications: Mutex::default(),
             env: Mutex::new(None),
             modules: Mutex::default(),
             loading: Mutex::default(),
@@ -759,7 +794,9 @@ impl AppVm {
 
     /// Everything the app asked the host to do since the last call to this.
     pub fn take_effects(&self) -> Vec<Effect> {
-        std::mem::take(&mut *self.shared.effects.lock())
+        let mut effects = self.shared.effects.lock();
+        self.shared.queued_notifications.lock().clear();
+        std::mem::take(&mut *effects)
     }
 
     // ---- calls into the app -----------------------------------------------------------------------------

@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use vos_application::live::SourceKind;
 use vos_domain::Notification;
-use vos_lua::{AppVm, Effect, ShellEffect, VmConfig, VmError};
+use vos_lua::{AppVm, Effect, ShellEffect, VmConfig, VmError, MAX_QUEUED_NOTIFICATIONS};
 
 const MANIFEST: &str = r#"app.manifest { id = "probe", name = "Probe", icon = "gear" }"#;
 
@@ -533,15 +533,112 @@ async fn notify_and_shell_calls_become_effects_for_the_host() {
 #[tokio::test]
 async fn notify_and_deep_links_are_validated() {
     for (call, needle) in [
-        ("app.notify { body = 'no title' }", "needs `title`"),
-        ("app.notify { title = '' }", "1 to 200"),
-        ("app.notify { title = 5 }", "must be a string"),
+        ("app.notify { body = 'no title' }", "app.notify needs `title`"),
+        ("app.notify { title = '' }", "app.notify: `title` must be 1 to 200 characters, not blank"),
+        ("app.notify { title = '   ' }", "not blank"),
+        ("app.notify { title = string.rep('t', 201) }", "1 to 200"),
+        ("app.notify { title = 5 }", "app.notify: `title` must be a string, got number"),
+        ("app.notify { title = 't', body = false }", "`body` must be a string, got boolean"),
+        (
+            "app.notify { title = 't', body = string.rep('b', 2001) }",
+            "app.notify: `body` must be at most 2000 characters",
+        ),
         ("app.shell.deepLink('', function() end)", "1 to 128"),
     ] {
         let src = format!("app.manifest {{ id = 'probe', name = 'P', icon = 'gear' }}\n{call}");
         let e = try_load("probe", &src).await.err().unwrap().to_string();
         assert!(e.contains(needle), "wanted `{needle}` in `{e}`");
     }
+}
+
+/// A notification has a title and a body and nothing else: scheduling (`at`) and buttons (`actions`) are not
+/// part of it, and a key it does not have raises rather than being dropped.
+#[tokio::test]
+async fn notify_refuses_a_key_it_does_not_have() {
+    for (call, needle) in [
+        ("app.notify { title = 't', at = '2026-01-01T09:00:00Z' }", "unknown key `at`"),
+        ("app.notify { title = 't', actions = { 'Open' } }", "unknown key `actions`"),
+        ("app.notify { titel = 't' }", "unknown key `titel`"),
+        ("app.notify { title = 't', [true] = 1 }", "unknown key of type boolean"),
+    ] {
+        let e = try_load("probe", &app(call)).await.err().unwrap().to_string();
+        assert!(e.contains(needle), "wanted `{needle}` in `{e}`");
+        assert!(e.contains("(it takes `title`, `body`)"), "names what it takes: {e}");
+    }
+    // a value written without a name is a positional entry, the likeliest slip: say so, and how to write it
+    for call in ["app.notify { 'Backup done' }", "app.notify { 'positional', title = 't' }"] {
+        let e = try_load("probe", &app(call)).await.err().unwrap().to_string();
+        assert!(
+            e.contains("app.notify: unknown positional entry 1 (it takes `title`, `body` by name)"),
+            "{call}: {e}"
+        );
+    }
+    // the longest title and body, and an empty body, are fine
+    let vm = load(&app("app.notify { title = string.rep('t', 200), body = string.rep('b', 2000) }\napp.notify { title = 't', body = '' }")).await;
+    assert_eq!(vm.take_effects().len(), 2);
+    // a colon call with no table is told it needs one; `app`'s own keys are not read as a notification's
+    for call in ["app:notify()", "app.notify(app)", "app.notify()"] {
+        let e = try_load("probe", &app(call)).await.err().unwrap().to_string();
+        assert!(e.contains("app.notify takes a table"), "{call}: {e}");
+    }
+}
+
+/// A call can queue only so many notifications before the host takes them: the next one raises, so a loop
+/// cannot grow the queue without bound. What was queued before the refusal is still delivered, and the next
+/// call starts from an empty queue.
+#[tokio::test]
+async fn one_call_queues_at_most_64_notifications() {
+    assert_eq!(MAX_QUEUED_NOTIFICATIONS, 64);
+    let vm =
+        load(&app(r#"hook("burst", function(n) for i = 1, n do app.notify { title = "n" .. i } end end)"#))
+            .await;
+    vm.emit("burst", json!(64)).await.unwrap();
+    assert_eq!(vm.take_effects().len(), 64);
+    let e = vm.emit("burst", json!(65)).await.unwrap_err().to_string();
+    assert!(e.contains("app.notify: this call already has 64 notifications waiting to be delivered; combine them into one notification"), "{e}");
+    assert_eq!(vm.take_effects().len(), 64);
+    vm.emit("burst", json!(1)).await.unwrap();
+    assert_eq!(vm.take_effects().len(), 1);
+}
+
+/// The cap is each call's own: what another call queued while this one was parked at a wait does not count
+/// against it. Here, at the VM level, nothing takes the queue (the runtime would, when `b` ends), so this also
+/// shows that a call's own count survives its wait while its notifications are still waiting.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_parked_call_does_not_use_up_another_calls_notifications() {
+    let vm = Arc::new(
+        load(&app(r#"
+            local task = require("std:task")
+            local parked, go = false, false
+            local function burst(n) for i = 1, n do app.notify { title = "n" .. i } end end
+            hook("a", function()
+              burst(40)
+              parked = true
+              while not go do task.wait(0.01) end -- parked until the test says go
+              burst(25)
+            end)
+            hook("b", function() burst(64) end)
+            hook("parked", function() return parked end)
+            hook("go", function() go = true end)
+        "#))
+        .await,
+    );
+    let a = {
+        let vm = vm.clone();
+        tokio::spawn(async move { vm.emit("a", json!(null)).await })
+    };
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    while vm.emit("parked", json!(null)).await.unwrap() != json!(true) {
+        assert!(tokio::time::Instant::now() < deadline, "`a` never reached its wait");
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    // `a` has 40 waiting and is parked: `b` still gets its own 64
+    vm.emit("b", json!(null)).await.unwrap();
+    vm.emit("go", json!(null)).await.unwrap();
+    // nothing took the queue, so `a`'s own 40 are still waiting: its 25th after the wait is its 65th, and raises
+    let e = a.await.unwrap().unwrap_err().to_string();
+    assert!(e.contains("app.notify: this call already has 64 notifications waiting to be delivered; combine them into one notification"), "{e}");
+    assert_eq!(vm.take_effects().len(), 64 + 64);
 }
 
 // ---- windows ------------------------------------------------------------------------------------------------

@@ -89,6 +89,14 @@ Luau's base library (not LuaJIT's, which neoc ran before NEOC-137). What a scrip
 - A wait (`task.wait`, I/O) suspends inside `pcall`, `xpcall`, `__call` and `for ... in` iterator functions, and is refused with
   "attempt to yield across metamethod/C-call boundary" in other metamethods, in `tostring`, and in `string.gsub` and
   `table.sort` callbacks.
+- [`buffer`](https://luau.org/library#buffer-library) is Luau's mutable block of bytes, for binary formats and protocols. Its limits are
+  accepted: a buffer has a fixed size (it cannot grow), reads and writes are little-endian only, and there are no
+  pack/unpack format strings (`string.pack` and `string.unpack` have those). A size that is negative, not a number or over
+  Luau's limit of 1 GiB is an error (a numeric string converts and a fraction is truncated, as for any Lua number
+  argument). One call can allocate up to 1 GiB, as building a long string can: neoc has no memory budgets. A serializer
+  (`vnd:serde_json`, `vnd:toml`, a `std:thread` message, ...) refuses a buffer rather than turn it into an array of
+  numbers: convert it first (`buffer.tostring`). A `vnd:hyper` request body can be a buffer, and `hyper.get`, `hyper.post`
+  and `hyper.request` return an error naming any option they do not read. vos apps do not have `buffer` yet.
 
 ### Editor types
 
