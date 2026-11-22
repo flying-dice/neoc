@@ -77,8 +77,15 @@ semantic tokens only.
 - **Notifications:** `app.notify { title = "Backup done", body = "12 files" }` tells the person something now. It takes
   a `title` (1 to 200 characters, not blank) and an optional `body` (up to 2000) and no other key; the host sends the
   app's id with it, so the sender is never text the app wrote. It goes to the clients connected at that moment: one that
-  is not connected never gets it (nothing is queued). Bad input raises, each message starting `app.notify`: no table
-  (`takes a table`), a key other than `title` and `body` (`unknown key`, or `unknown positional entry` for `app.notify {
+  is not connected never gets it (nothing is queued). The shell of each client draws it as a banner above its windows,
+  with the app's name and icon from the shell's own app list: it is not drawn on a client where one of the app's windows
+  is in front, and is drawn on every other client, whether or not the app has a window open. The person can dismiss it
+  or choose it to open the app's main window; it goes by itself after ten seconds, and at most three show at once.
+  A page with no shell (the app opened on its own at `/apps/<id>`) draws none: the banner is the shell's, and the call is
+  the same either way. The title is shown on one line (line breaks, control characters, direction overrides and
+  zero-width characters are removed) and the body as lines of text, never as markup; a title with nothing visible
+  left shows the app's name. The journeys are in `client/journeys/notifications.md`. Bad input raises, each message
+  starting `app.notify`: no table (`takes a table`), a key other than `title` and `body` (`unknown key`, or `unknown positional entry` for `app.notify {
   "text" }`), no title (`needs`), a title that is blank or too long, a body that is too long, a value that is not a
   string, and a call in `render` or a `readOnly` tool. A call may also have at most 64 notifications waiting to be
   delivered at once (`already has 64 notifications waiting`). The host delivers waiting notifications whenever a call of

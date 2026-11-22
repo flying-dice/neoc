@@ -1851,7 +1851,12 @@ export type vos_AppApi = {
 	--- tool may do it; changing a window through its `w` is not.
 	windows: (self: vos_AppApi, name: string) -> { vos_WindowContext },
 	--- `app.notify { title, body }` or `app:notify { ... }`: tell the person something now. It reaches the clients
-	--- connected now; one that is not connected never gets it. The host sends the app's id with it, never text from the app.
+	--- connected now; one that is not connected never gets it (nothing is kept for later). The host sends the app's id
+	--- with it, never text from the app, and each shell client draws it as a banner above its windows with the app's name
+	--- and icon from its own app list: not on a client where one of the app's windows is in front, on every other client,
+	--- with or without a window open. A page with no shell (the app opened on its own) draws none. The title is shown on
+	--- one line (line breaks, control characters, direction overrides and zero-width characters are removed) and both are
+	--- text, never markup.
 	--- Raises (each message starts `app.notify`): no table ("takes a table"), a key other than title and body
 	--- ("unknown key", "unknown positional entry"), no title ("needs"), a title that is blank or over 200
 	--- characters, a body over 2000, a value that is not a string, a call in render or a readOnly tool, and a 65th

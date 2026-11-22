@@ -6,7 +6,7 @@
 
   Test ids: `status-bar`, `desktop-stage`, `widget-clock`, `widget-agent-activity`,
   `stage-strip` (+ `stage-strip-<appIds>`), `window-${appId}` (+ parts, see Window),
-  `split-divider`, `split-placeholder`, `slideover-tab`, `dock` (+ `dock-${appId}`), `desktop-notice` (+ `-dismiss`).
+  `split-divider`, `split-placeholder`, `slideover-tab`, `dock` (+ `dock-${appId}`), `desktop-notice` (+ `-dismiss`), and the system alerts (see NotificationBanners).
 -->
 <script lang="ts">
   import type { Snippet } from 'svelte'
@@ -16,15 +16,30 @@
   import { StatusBar, Dock, Window, StageStrip } from '@vos/ui/organisms'
   import ClockWidget from '../organisms/ClockWidget.svelte'
   import AgentActivityWidget from '../organisms/AgentActivityWidget.svelte'
-  import { AGENTS_APP_ID, appOf, dockOrder, dockRecents, type AppId } from '../lib/apps.svelte'
+  import NotificationBanners from '../organisms/NotificationBanners.svelte'
+  import {
+    AGENTS_APP_ID,
+    appOf,
+    dockOrder,
+    dockRecents,
+    onAppsRemoved,
+    type AppId
+  } from '../lib/apps.svelte'
   import { windowManager as wm, type WindowState } from '../lib/windowManager.svelte'
   import { host } from '../lib/host.svelte'
+  import { notifications } from '../lib/notifications.svelte'
 
   interface Props {
     windowContent: Snippet<[WindowState]>
   }
 
   let { windowContent }: Props = $props()
+
+  // What an app's backend tells the person (`notification.deliver`) is drawn here, above every window; an app that
+  // stops running takes its alerts with it.
+  let bannersHeight = $state(0)
+  $effect(() => host.onAppNotification((params) => notifications.deliver(params)))
+  $effect(() => onAppsRemoved((ids) => notifications.forgetApps(ids)))
 
   let workspaceWidth = $state(0)
   let workspaceHeight = $state(0)
@@ -110,6 +125,9 @@
 
   {#snippet workspace()}
     <div class="stage" role="presentation" data-testid="desktop-stage" {ondragover} {ondrop}>
+      <!-- first in the page, so Tab reaches a banner before anything else on the desktop -->
+      <NotificationBanners center={notifications} bind:height={bannersHeight} />
+
       <div
         class="widgets"
         class:obscured={widgetsObscured}
@@ -191,7 +209,7 @@
         {wm.notice ?? ''}
       </div>
       {#if wm.notice}
-        <div class="notice">
+        <div class="notice" style:top="{8 + (bannersHeight ? bannersHeight + 8 : 0)}px">
           <Toast
             testid="desktop-notice"
             live={false}
@@ -289,7 +307,7 @@
   }
   .notice {
     position: absolute;
-    top: 8px;
+    top: 8px; /* moved down under the notification banners while there are any */
     left: 50%;
     transform: translateX(-50%);
     width: min(440px, calc(100% - 32px));
