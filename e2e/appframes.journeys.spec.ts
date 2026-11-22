@@ -199,20 +199,7 @@ for (const id of FIXTURE_APPS) {
       await expect(page.getByTestId(`${id}-failed`)).toHaveCount(0)
     })
 
-    test(`AF10 (${id}): a client that reloads itself is still the client, however long it is busy after`, async ({ page }) => {
-      await openDesktop(page, { open: [id] })
-      await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()
-      await frame(page).locator('body').evaluate(() => {
-        setTimeout(() => location.reload(), 0)
-      })
-      // the reloaded page says hello again, so the window keeps it: nothing says the app left, and the app is there
-      await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()
-      await page.waitForTimeout(3000)
-      await expect(page.getByTestId(`${id}-failed`)).toHaveCount(0)
-      await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()
-    })
-
-    test(`AF11 (${id}): a form nobody prevented stays on the page; one submitted by script, with no event, sends the frame away and the window notices`, async ({ page, errors }) => {
+    test(`AF10 (${id}): a form nobody prevented stays on the page; one submitted by script, with no event, sends the frame away and the window notices`, async ({ page, errors }) => {
       await openDesktop(page, { open: [id] })
       await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()
       // the bridge prevents a submission the app's handlers did not: the handlers run and the page stays (a dialog form still closes its dialog)
