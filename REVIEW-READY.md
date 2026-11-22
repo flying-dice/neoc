@@ -11,9 +11,8 @@ you wrote: do those things first.
 
 ## 0. Before anything else
 
-Nothing in this product is novel. A sandboxed frame talking to its host, a kit of form controls, a generated API client, a
-queue for a slow consumer, validating input: each is a solved class of problem, with libraries, specifications and written
-patterns behind it. Don't plug holes one at a time.
+Nothing in this product is novel: a sandboxed frame, form controls, a generated client, a queue for a slow consumer and
+input validation are all solved classes of problem. Don't plug holes one at a time.
 
 **0.1 Before you design, find who has already solved it.** Name the class of problem. Name the established solutions:
 libraries, the protocol or specification, how two or three mature systems do it. Read which edge cases they handle; those
@@ -61,11 +60,10 @@ must not shadow a reserved word, a built-in or a name the generator uses.
 (below). *Cost:* #57: a contract title injected code into the generated client, a migration path read outside the project,
 and generated names (`new`, `Record`, `buffer`) broke the output in two rounds. #58: a colour string injected CSS.
 
-What the repository uses today: on the host, `serde` types with `deny_unknown_fields` for wire and declaration shapes, and
-newtypes with one checking constructor (`AppId::parse`). For a Luau option table, the adapter or module has its own
-unknown-key check. In the client, `zod` parses what arrives. Shell text from an app is cleaned in
-`client/src/shell/notificationText.ts`. Extend the one that fits, and don't write another. A standard approach to guarding
-input by default is being introduced under its own story. Until it lands on `main`, this paragraph describes what exists.
+What the repository uses today: on the host, `serde` types with `deny_unknown_fields` and newtypes with one checking
+constructor (`AppId::parse`); per-module unknown-key checks for Luau option tables; `zod` in the client; app text for the
+shell cleaned in `client/src/shell/notificationText.ts`. Extend what fits. A standard approach to guarding input by default
+is coming under its own story; until it is on `main`, this is what exists.
 
 ## 2. While you build
 
@@ -90,8 +88,8 @@ good output, a later failure still did, then two builds collided. #59: focus dro
 tools click the centre of an element, and `locator.click()`, `userEvent.click()`, `fireEvent.click()` and `el.click()` are
 four different calls. To test a limit, hit the limit and one past it, not half of it. To test a cap per caller, end on a
 count that would differ if the cap were shared.
-*Evidence:* the test names. *Cost:* #58: forms submitted nothing from React and Svelte, because the tests set `name` as an
-attribute only. #60: a burst test sent half the bound. #52: a test landed exactly on 64.
+*Evidence:* the test names. *Cost:* #58: forms submitted nothing from React and Svelte; the tests set `name` only as an
+attribute. #60: a burst test sent half the bound.
 
 ## 3. Before you open the pull request
 
@@ -106,10 +104,9 @@ image: a baseline that matches another, or is blank, proves nothing.
 *Evidence:* the "Manual verification" record and the images you looked at. *Cost:* #59: banners timed out in a hidden tab
 and never expired under a resting pointer, and seven new stories had the same picture as another.
 
-**3.3 Say why each new test can fail.** By reading, name the assertion that would fail without your change, and the reason.
-No mutation testing: don't edit the code or revert the fix to watch the test fail (see "The gate" in CLAUDE.md).
-*Evidence:* one line per new test. *Cost:* #53: a test passed even with the leak it guarded. #56: the sandbox probes threw
-in both cases, so they could not fail, and that took two rounds.
+**3.3 Say why each new test can fail.** By reading, name the assertion that would fail without your change, and why (no
+mutation testing: CLAUDE.md, "The gate"). *Evidence:* one line per new test. *Cost:* #53: a test passed with the leak it
+guarded. #56: the sandbox probes threw either way, for two rounds.
 
 **3.4 Make every sentence true at the final head.** That covers docs, comments, error text, test names, the body and the
 breaking note. Check each claim against the code as it now is. Search for every other place the same claim is made, and for
@@ -119,9 +116,8 @@ checks ran at which commit.
 finding in four. #56 said "the frame has no network" and "nothing for existing apps", and left a stale journey id. #52
 corrected the cap wording in one place and left it in two.
 
-**3.5 Leave the reviewer nothing mechanical.** Merge `main`, then run the gate that "The gate" in CLAUDE.md requires, at the
-exact head you push. A new package is covered by lint and format. Push once per round, and never while a reviewer is reading.
-*Evidence:* the gate command and its result at the head SHA. *Cost:* #58: the new kit was outside eslint and prettier.
+**3.5 Leave nothing mechanical.** Merge `main`, then run the gate CLAUDE.md requires at the exact head you push (a new
+package under lint and format). Push once per round. *Evidence:* the gate's result at the head. *Cost:* #58: kit unlinted.
 
 ## 4. When you answer a review
 
@@ -138,13 +134,19 @@ sentences the fix changed. The reviewer will.
 *Evidence:* the self-review note for the new head. *Cost:* #58, rounds 5 and 6: `pointer-events: none`, added to fix round
 4, broke `locator.click()` and then `userEvent.click()`.
 
-**4.3 Fix everything raised, in this pull request.** That includes non-blocking notes, docs and wording: there are no
-follow-up tickets. A bug in unrelated code gets one Bug ticket, with file, line and how to reproduce it. Reply on each thread
-with the commit that fixes it.
-*Evidence:* one reply per thread, and the prior-threads table in the note. *Cost:* the notes left open on #59 at its merge
-needed a pull request of their own (#61) and another review.
+**4.3 Fix what must not ship; ticket the rest.** Before the merge, fix what stops the feature working in ordinary use.
+Fix what is unsafe: the host crashed or hung, data lost or leaked, one app or client able to harm another, outside input
+handled unsafely. Fix any claim that is not true and any test that cannot fail. Everything else (an unlikely edge case, an
+unverified platform, acceptable-but-not-ideal behaviour, a better mechanism for something that works) goes to Jira NEOC and
+does not hold the merge. File a **Bug** for what behaves wrongly, and a **Story** for what is missing or could be better,
+written as what a person or developer will be able to do. Give each the area's label (today: `ui-kit`, `app-host`,
+`web-requests`, `notifications`, `input-safety`, `shell`), group related items into one ticket, and leave them in the
+backlog. File them when the pull request goes to review, and put the keys in its body. A reviewer sorts each finding into
+"must fix" or "for a ticket" and files nothing. This does not replace 0.2: a five whys may end in a design change, or in a
+ticket.
+*Evidence:* one reply per thread (the commit or the ticket key), and the prior-threads table in the note. *Cost:* the notes
+left open on #59 at its merge needed a pull request of their own (#61).
 
-## What this does not replace
-
-A reviewer who drives the real host will still find things nobody thought of, and make design calls differently. This file
-removes the findings you could have made yourself; the gate, the skills and CLAUDE.md still apply.
+---
+A reviewer who drives the real host will still find things nobody thought of. This file removes the findings you could have
+made yourself; the gate, the skills and CLAUDE.md still apply.

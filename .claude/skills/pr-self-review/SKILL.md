@@ -15,9 +15,10 @@ is the checklist that proves you followed them.
 - **Evidence or FAIL.** Every line carries a test name, a command and its result at the head SHA, or what you saw on the real
   host. "Checked", "covered", "should work" and "PASS" alone are not evidence.
 - **N/A needs a reason.** Write `N/A — <reason>` ("no queue or limit in this change", "nothing a person sees").
-- **Fix what you find, now.** Every defect you or a reviewer find in or near the change is fixed in this pull request,
-  docs and wording included. There are no follow-up tickets. A bug in unrelated code gets one Bug ticket in Jira NEOC,
-  with file, line and how to reproduce it, and you name it in the note.
+- **Fix what must not ship, record the rest.** Fix before the merge what stops the feature working in ordinary use, what is
+  unsafe (crash, hang, data lost or leaked, one app or client harming another, outside input handled unsafely), any untrue
+  claim and any test that cannot fail. Everything else goes to Jira NEOC as a Bug or a Story with the area's label, grouped,
+  in the backlog, filed when the pull request goes to review, with the keys in its body (REVIEW-READY.md, rule 4.3).
 - **No mutation testing.** Judge a test by reading it and the code it covers (CLAUDE.md, "The gate").
 - A note is valid only for the SHA it names. Push after posting, and you post a new note.
 
@@ -54,7 +55,7 @@ Each line is a rule in REVIEW-READY.md. The note carries one row per line.
 | 3.5 | Gate green at this head | the command and its summary line, and the head SHA |
 | 4.1 | Class fixed, not case (re-request) | per finding: the class, the invariant, the members, the test over them |
 | 4.2 | Fix treated as new code (re-request) | section 3 run again on the delta |
-| 4.3 | Everything raised fixed (re-request) | one reply per thread with its commit |
+| 4.3 | Must-not-ship fixed, the rest ticketed | per finding: the commit, or the Bug/Story key with its area label |
 
 Also, from the reviewer's rubric (`pr-review`, G3, G4 and G11):
 
@@ -85,7 +86,7 @@ Diff: <files> files, +<add> / -<del>
 | Thread | Class and invariant | Fix SHA | Test |
 |---|---|---|---|
 
-Bug tickets for unrelated code: <NEOC-n — one line> | none
+Tickets filed (Bug or Story, area label): <NEOC-n — one line each> | none
 ```
 
 ## Don't

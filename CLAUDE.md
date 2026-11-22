@@ -274,9 +274,9 @@ current epic is **NEOC-155**. (Older comments cite AGOS-n keys; they stay valid.
    SHA (`READY TO MERGE`, with or without follow-ups, `CHANGES NEEDED` for blocking findings only, or `HOLD`). Rounds continue
    until `READY TO MERGE` at the exact head; each re-review reads the fix delta as new code, so it also catches regressions
    the fix introduced. Only a real bug, data loss or a security hole, a broken
-   acceptance criterion, a failing gate, or a no-vos-leak or boundary violation holds a merge; everything else is a follow-up
-   that does not hold the verdict and that the author still fixes in the same PR. There are no follow-up tickets; a bug in
-   unrelated code gets one Bug ticket.
+   acceptance criterion, a failing gate, an untrue claim, a test that cannot fail, or a no-vos-leak or boundary violation
+   holds a merge. Everything else is filed by the author in Jira NEOC (a Bug or a Story with the area's label) and does not
+   hold it (REVIEW-READY.md, rule 4.3).
 6. Squash-merge only on `READY TO MERGE` for the current head, then delete the branch and mark the Jira ticket Done. The one
    exception was the merge of vos into neoc (NEOC-113, PR #34), which landed with a merge commit to keep vos's history.
 7. An app that isn't ready for the full gate and the UX research panel stays in its PR: keep pushing to the branch; don't merge

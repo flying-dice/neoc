@@ -7,7 +7,7 @@ Assigned as reviewer: a fresh reviewer with no session context, independent of t
 
 ## Standard
 
-Honest and exact, weighed by time. Velocity and iteration speed are a key non-functional requirement (CLAUDE.md, "Non-functional requirements"). Name every defect you find, with file, line and failure mode, and don't soften it, but **hold a merge only for** a real bug; data loss or a security hole; a broken acceptance criterion; a failing gate; a no-vos-leak or boundary violation. Everything else (doc wording, comment accuracy, extra test coverage, cosmetic issues, naming) is a follow-up: it does not hold the verdict, and the author fixes it in this PR (there are no follow-up tickets). Review rounds continue until you can return READY TO MERGE at the exact head: every fix round is re-reviewed, and you do not pass a head with a blocking finding open. A re-review reads the fix delta as new code under the full blocking rules, so it catches regressions the fix introduced. The author's table is a claim, not evidence.
+Honest and exact, weighed by time. Velocity and iteration speed are a key non-functional requirement (CLAUDE.md, "Non-functional requirements"). Name every defect you find, with file, line and failure mode, and don't soften it, but **hold a merge only for** a real bug; data loss or a security hole; a broken acceptance criterion; a failing gate; a no-vos-leak or boundary violation. Everything else (doc wording, extra test coverage, cosmetic issues, naming) is sorted into one of two kinds, and you say which. **Fix before merge**: it stops the feature working in ordinary use, it is unsafe (the host crashed or hung, data lost or leaked, one app or client able to harm another, outside input handled unsafely), a claim is untrue, or a test cannot fail. **For a ticket**: an unlikely edge case, an unverified platform, acceptable-but-not-ideal behaviour, a better mechanism for something that works; the author files it in Jira NEOC (a Bug or a Story with the area's label) and it does not hold the merge. You file nothing yourself. Review rounds continue until you can return READY TO MERGE at the exact head: every fix round is re-reviewed, and you do not pass a head with a blocking finding open. A re-review reads the fix delta as new code under the full blocking rules, so it catches regressions the fix introduced. The author's table is a claim, not evidence.
 
 ## Process
 
@@ -43,7 +43,7 @@ Cost-ordered. Phase 0–1 block → pass ends — no deep probing on a build a c
 ### Phase 4 — Post
 1. **Re-fetch head SHA.** Moved since Phase 0 → re-verify every finding against the new head. Mark each `STANDS` / `WITHDRAWN`; post only `STANDS`.
 2. Every `file:line` from `grep -n` / `sed -n` at head, run in this pass.
-3. Inline review comments. One thread per **blocking** finding, anchored at the head SHA (`commit_id` = head). Read the stored comment back after posting. Each follow-up gets one line in the note under "Follow-ups (not blocking)", and no thread; the author fixes it in this PR. No ticket is filed for it. A bug you find in code the PR does not touch gets one Bug ticket in Jira NEOC (file, line, how to reproduce), named in the note.
+3. Inline review comments. One thread per **blocking** finding, anchored at the head SHA (`commit_id` = head). Read the stored comment back after posting. Each "for a ticket" finding gets one line in the note under "For a ticket", and no thread; the author files it. You file no ticket. A bug you find in code the PR does not touch gets one Bug ticket in Jira NEOC (file, line, how to reproduce), named in the note.
 4. Multi-line bodies as JSON payloads (`gh api`). GET the review thread back; confirm it landed.
 5. Post the review comment.
 6. Count unresolved review threads via `gh api graphql` (`reviewThreads { isResolved }`). Never trust the review decision alone.
@@ -55,7 +55,7 @@ Cost-ordered. Phase 0–1 block → pass ends — no deep probing on a build a c
 
 11 gates. Cost-ordered. Each gate: PASS / FAIL / `N/A — <reason>`. No blanks. Evidence = command + measured output at head SHA. Assertion without evidence = FAIL.
 
-Blocking: a gate is FAIL, and a merge is held, only for a real bug; data loss or a security hole; a broken acceptance criterion; a failing gate (a pre-PR check that does not pass); a no-vos-leak or boundary violation. Every other defect a gate turns up (doc wording, comment accuracy, extra test coverage, cosmetic issues, naming, clean-code nits) is a follow-up: listed in the note and fixed by the author in this PR (no follow-up tickets); it does not hold the verdict, and that gate is PASS with the follow-up listed beside it. Iteration speed is a requirement (CLAUDE.md, "Non-functional requirements"), and it comes from fast checks and small PRs, never from fewer review rounds or a shortcut that lets a bug through.
+Blocking: a gate is FAIL, and a merge is held, only for a real bug; data loss or a security hole; a broken acceptance criterion; a failing gate (a pre-PR check that does not pass); a no-vos-leak or boundary violation. Every other defect a gate turns up (doc wording, extra test coverage, cosmetic issues, naming, clean-code nits) is "for a ticket": listed in the note for the author to file in Jira NEOC (a Bug or a Story with the area's label); it does not hold the merge, and that gate is PASS with the item listed beside it. An untrue claim or a test that cannot fail is fixed before the merge (G2, G5). Iteration speed is a requirement (CLAUDE.md, "Non-functional requirements"), and it comes from fast checks and small PRs, never from fewer review rounds or a shortcut that lets a bug through.
 
 Stop rules:
 - **Author mode**: `pr-self-review` runs its own checklist (over `REVIEW-READY.md`), which covers G1, G3, G4 and G11 of this rubric; an author may read the rest to see what the reviewer asks.
@@ -277,7 +277,7 @@ For an app whose earlier research rounds predate NEOC-115 (the Calculator's repo
 
 Severity: a bug, data loss, a security hole, a host panic or stack overflow reachable from app input, a boundary violation,
 a broken acceptance criterion, or an accessibility failure that stops a journey is a `bug` and blocks; a failed check (a
-missing or red gate) blocks as an `issue`. Everything else is a follow-up (the author fixes it in this PR; it does not hold the verdict): new behaviour with only part of
+missing or red gate) blocks as an `issue`. Everything else is "for a ticket" (the author files it; it does not hold the merge): new behaviour with only part of
 its checks, an accessibility or design defect that does not stop a journey, a missing or stale readiness row on an app
 change that is not a new app or a change to screens or flows, a cosmetic or wording defect.
 
@@ -307,7 +307,7 @@ New findings: <k> blocking, <f> follow-ups
 
 Readiness (an app changed): <app>: window ✓ · package ✓ · types ✓ · tests ✓ · states ✓ · journeys ✓ · verified ✗ · researched ✗ (no ux/<app>/)
 
-Follow-ups (not blocking; the author fixes them in this PR): <one line each> | none
+For a ticket (the author files these): <one line each> | none
 ```
 
 ## Comment format
@@ -320,7 +320,7 @@ detail
 
 - `bug` — breaks at runtime, loses data, opens a security hole, breaks an acceptance criterion, or violates the no-vos-leak or a crate boundary. Blocks.
 - `issue` — a failed gate (a pre-PR check that does not pass). Blocks.
-- `follow-up` — everything else, clean-code defects included (SRP/DRY/naming/coupling/dead/KISS, doc wording, comment accuracy, extra test coverage, cosmetic issues). A line in the note, fixed by the author in this PR (no ticket); does not block the verdict.
+- `follow-up` — everything else, clean-code defects included (SRP/DRY/naming/coupling/dead/KISS, doc wording, extra test coverage, cosmetic issues). A line in the note under "For a ticket"; the author files it as a Bug or Story with the area's label; does not block. An untrue claim or a test that cannot fail is a `bug`, not a follow-up.
 - `question` — an answer you need to decide whether something blocks. Blocks only until answered.
 
 Only `bug` and `issue` block. One unresolved thread per blocking finding. READY TO MERGE is forbidden while any blocking thread is open, and allowed with follow-ups listed. Name the gate in the summary: `**[bug]** G5 — regression test asserts the attribute, not the behaviour, so a host panic goes unnoticed`.
