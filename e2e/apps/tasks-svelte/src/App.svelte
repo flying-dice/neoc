@@ -25,7 +25,8 @@
     }
   }
 
-  // not a `<form>`: the frame is sandboxed without `allow-forms`, so a form cannot submit; Enter is handled here
+  // a real form: the frame is sandboxed with `allow-forms`, so `submit` fires (Enter, the button); the policy's `form-action 'none'`
+  // refuses a submission nothing prevented, so the handler prevents it
   async function add(): Promise<void> {
     await call('add', { title })
     if (!error) title = ''
@@ -49,16 +50,21 @@
     <span data-testid="tasks-svelte-theme">{theme}</span> ·
     <span data-testid="tasks-svelte-count">{tasks.filter((t) => !t.done).length} left</span>
   </p>
-  <div class="row">
+  <form
+    class="row"
+    onsubmit={(e) => {
+      e.preventDefault()
+      void add()
+    }}
+  >
     <input
       bind:value={title}
-      onkeydown={(e) => e.key === 'Enter' && void add()}
       aria-label="New task"
       placeholder="What has to be done?"
       data-testid="tasks-svelte-title"
     />
-    <button type="button" onclick={add} data-testid="tasks-svelte-add">Add</button>
-  </div>
+    <button type="submit" data-testid="tasks-svelte-add">Add</button>
+  </form>
   {#if error}
     <p class="error" role="alert" data-testid="tasks-svelte-error">{error}</p>
   {/if}

@@ -147,24 +147,33 @@ for (const id of FIXTURE_APPS) {
               // an assignment that did not throw says nothing: whether the shell moved is checked from outside
               return 'attempted'
             })(),
+            // a form works inside the frame (`allow-forms`: the `submit` event fires), but a submission that nothing prevented
+            // would navigate the frame, and `form-action 'none'` refuses it: the document stays and the event fired
             formSubmit: await (async () => {
               const form = document.createElement('form')
               form.action = 'http://127.0.0.1:9/'
               form.method = 'post'
+              let fired = false
+              form.addEventListener('submit', () => {
+                fired = true
+              })
               document.body.append(form)
               form.requestSubmit()
               await new Promise((r) => setTimeout(r, 300))
               // a submission that went through replaces this document (and this call with it)
               const stayed = document.body.contains(form)
               form.remove()
-              return stayed ? 'blocked' : 'allowed'
+              return !stayed ? 'allowed' : fired ? 'blocked' : 'no submit event'
             })()
           }
         })
       // every probe reports what happened: `allowed` is a failure (the others throw, or say `blocked`)
       for (const [probe, outcome] of Object.entries(probes)) expect(outcome, probe).not.toBe('allowed')
       expect(probes.popup, 'window.open returns null').toBe('blocked')
-      expect(probes.formSubmit, 'the form did not submit').toBe('blocked')
+      expect(probes.formSubmit, 'the submit event fired and the navigation was refused').toBe('blocked')
+      // a refused submission is not a page the frame left
+      await page.waitForTimeout(500)
+      await expect(page.getByTestId(`${id}-failed`)).toHaveCount(0)
       // and the shell did not move, and the frame is still the app's
       expect(new URL(page.url()).pathname).toBe('/')
       await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()

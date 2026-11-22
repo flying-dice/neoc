@@ -33,7 +33,8 @@ export default function App({ rpc, host }) {
     return () => stops.forEach((stop) => stop())
   }, [call, host])
 
-  // not a <form>: the frame is sandboxed without allow-forms, so a form cannot submit; Enter is handled here
+  // a real form: the frame is sandboxed with allow-forms, so submit fires (Enter, the button); the policy's form-action 'none'
+  // refuses a submission nothing prevented, so the handler prevents it
   async function add() {
     if (await call('add', { title })) setTitle('')
   }
@@ -46,19 +47,24 @@ export default function App({ rpc, host }) {
         <span data-testid="tasks-react-theme">{theme}</span> ·{' '}
         <span data-testid="tasks-react-count">{tasks.filter((t) => !t.done).length} left</span>
       </p>
-      <div className="row">
+      <form
+        className="row"
+        onSubmit={(e) => {
+          e.preventDefault()
+          add()
+        }}
+      >
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && add()}
           aria-label="New task"
           placeholder="What has to be done?"
           data-testid="tasks-react-title"
         />
-        <button type="button" onClick={add} data-testid="tasks-react-add">
+        <button type="submit" data-testid="tasks-react-add">
           Add
         </button>
-      </div>
+      </form>
       {error && (
         <p className="error" role="alert" data-testid="tasks-react-error">
           {error}

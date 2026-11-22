@@ -1,6 +1,6 @@
 <!--
   @organism AppFrame — an installed app's window when the app has a client of its own: the client runs in an
-  `<iframe sandbox="allow-scripts">` whose document the host serves at `/frame/<app>` (with a policy that allows no
+  `<iframe sandbox="allow-scripts allow-forms">` whose document the host serves at `/frame/<app>` (with a policy that allows no
   network). The shell is the frame's only neighbour: the frame's `rpc` calls reach this app's backend through
   `app.call`, the backend's events and the shell's light or dark appearance come back as messages, and a message is
   the frame's only when it comes from this iframe's own window (`shell/frameBridge.ts`). Atoms: ActivityIndicator,
@@ -169,7 +169,7 @@
       src={srcdoc === undefined ? src : undefined}
       {srcdoc}
       title={name}
-      sandbox="allow-scripts"
+      sandbox="allow-scripts allow-forms"
       referrerpolicy="no-referrer"
       data-testid="{appId}-frame"
       onload={onframeload}

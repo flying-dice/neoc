@@ -80,16 +80,18 @@ What `mount` gets:
 | `host.on(name, fn)` | hears an event, returns a function that stops listening: one the backend sent with `app.emit(name, data)`, or the host's own, whose names start with `host:` |
 | `host.theme` | `"light"` or `"dark"`: the shell's appearance now. `host:theme` is the event when it changes, and `<html data-theme>` and `color-scheme` follow it, so style dark as `html[data-theme="dark"]` |
 
-**What the frame is.** The app's window is an `<iframe sandbox="allow-scripts">` that loads `/frame/<id>` from the host. The
+**What the frame is.** The app's window is an `<iframe sandbox="allow-scripts allow-forms">` that loads `/frame/<id>` from the host. The
 frame makes no request of its own (its content security policy allows none: `fetch`, WebSocket, scripts, images and
 fonts from anywhere but the host fail), has no access to the shell's page, cookie or storage (`localStorage`,
 `document.cookie` and `parent.document` throw), and has one way out: `rpc` reaches **this app's** backend, and the host
 knows which app is calling from the frame the message came from, never from anything the client says. The client's styles
 and scripts stay in its frame. The sandbox also stops it opening windows (`window.open` returns `null`), navigating the
-shell (`window.top.location` throws), and submitting a form: the frame has no `allow-forms`, so **a `<form>` cannot
-submit** (not even to `preventDefault` it): handle clicks and the Enter key yourself. What the policy cannot stop is the
-frame navigating **itself** (`location.href = ...`): the window then shows a page the shell did not load, so after a moment
-it says the app left its page and offers to open it again. This is sensible isolation, so apps do not trip over each other
+shell (`window.top.location` throws). **Forms work** (the sandbox has `allow-forms`): Enter in a field, a submit button,
+the `submit` event, validation and `FormData` behave as in any page, and your framework's `onSubmit` runs. A submission
+that nothing prevented would navigate the frame away, and the policy's `form-action 'none'` refuses it, so call
+`preventDefault()` in your submit handler, as a single-page app does anyway. What the policy cannot stop is the frame
+navigating **itself** (`location.href = ...`): the window then shows a page the shell did not load, and says the app left
+its page and offers to open it again (a refused form submission is not that: nothing loads). This is sensible isolation, so apps do not trip over each other
 or over the shell; it is not a security boundary. Lasting data belongs in the backend (the frame has no storage).
 
 **Limits of a call.** `rpc`'s arguments may be at most 1,000,000 bytes of JSON and 100 levels deep, and a method name is 1 to
