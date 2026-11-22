@@ -48,7 +48,7 @@ about two minutes, the vos half without e2e about two, and e2e about five. Whate
    - `cargo fmt --check`
    - `cargo clippy --workspace --all-targets -- -D warnings`
    - `cargo test -p neoc -p neoc-vm` (the `hostile_inputs` sweep runs in its quick size; ignored tests do not run)
-   - the Lua suites with `neoc run` (`crates/neoc/tests/lib`, `std`, `std/task.spec.lua`, `app.test.lua` and the `vnd` suites that
+   - the Lua suites with `neoc run` (`crates/neoc/tests/lib`, `std`, `std/task.spec.lua`, `app.test.lua`, `buffer.test.lua` and the `vnd` suites that
      need no Docker; `sqlx_mysql`, `sqlx_postgres` and `testcontainers_modules` need a daemon: with Docker running, run every
      suite with `neoc run 'crates/neoc/tests/**/*.test.lua' 'crates/neoc/tests/**/*.spec.lua'`; one `vnd:hyper` test needs network)
    - `cargo nextest run -p vos-lua --test modules` (what apps do with the modules, so a module change reaches them here too;

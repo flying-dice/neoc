@@ -22,7 +22,10 @@ use vos_application::{
     testing::CollectingSink,
     AppStatus, BindingKind, Resolution, WriteRequest,
 };
-use vos_domain::{Actor, AppId, AppRef, FileRef, Manifest};
+use vos_domain::{
+    ui::protocol::{AppNotification, HostNotification},
+    Actor, AppId, AppRef, FileRef, Manifest,
+};
 use vos_host::startup::{prepare_data_dir, start_apps};
 
 /// Publish the fixture app under `root` as an app ref with the id `id`; returns the `file://` URL of the ref.
@@ -110,10 +113,15 @@ async fn install_over_rpc_then_use_from_mcp_and_ui_and_uninstall() {
     //     live sources push their deltas with no UI code anywhere
     let out = call(&agent, "notes__add_note", json!({"body": "from the agent"})).await;
     assert_ne!(out.is_error, Some(true), "{out:?}");
-    let n = next_notification(&mut ws, "notify").await;
+    // the typed `notification.deliver` message: the sender is the host's id for the app, not anything the app wrote
+    let n = next_notification(&mut ws, "notification.deliver").await;
     assert_eq!(
-        (n["app"].as_str(), n["title"].as_str(), n["body"].as_str()),
-        (Some("notes"), Some("Note added"), Some("from the agent"))
+        HostNotification::from_rpc("notification.deliver", n).unwrap(),
+        HostNotification::Notify(AppNotification {
+            app: "notes".into(),
+            title: "Note added".into(),
+            body: Some("from the agent".into()),
+        })
     );
     wait_until("the list and count deltas", || sink.peek().len() >= 2).await;
     let updates = sink.take();
