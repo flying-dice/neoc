@@ -42,11 +42,12 @@ export const NothingSelected: Story = {
 export const Choosing: Story = {
   render: () => html`<ui-segmented data-testid="choose" label="Filter" value="all" .options=${filters}></ui-segmented>`,
   play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement)
-    const seg = canvas.getByTestId('choose') as HTMLElement & { value: string }
+    const seg = within(canvasElement).getByTestId('choose') as HTMLElement & { value: string }
+    // the segments are inside the control's shadow root, where a test id still names them
+    const segment = (value: string): HTMLElement => seg.shadowRoot!.querySelector<HTMLElement>(`[data-testid="choose-${value}"]`)!
     const onChange = fn()
     seg.addEventListener('change', onChange)
-    await userEvent.click(canvas.getByTestId('choose-active'))
+    await userEvent.click(segment('active'))
     await expect(seg.value).toBe('active')
     await expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ detail: { value: 'active' } }))
     // the arrow keys move the selection and focus together
@@ -56,6 +57,6 @@ export const Choosing: Story = {
     await expect(seg.value).toBe('all')
     await userEvent.keyboard('{End}')
     await expect(seg.value).toBe('done')
-    await expect(canvas.getByTestId('choose-done')).toHaveAttribute('aria-checked', 'true')
+    await expect(segment('done')).toHaveAttribute('aria-checked', 'true')
   }
 }

@@ -48,7 +48,8 @@ export class UiBanner extends LitElement {
         gap: 10px;
         padding: 10px 12px;
         border-radius: var(--radius-md);
-        background: color-mix(in srgb, var(--_color) 14%, var(--bg-grouped-elevated-secondary));
+        /* Tinted in light mode; neutral in dark, where a tint under a plain action button costs its 4.5:1. */
+        background: light-dark(color-mix(in srgb, var(--_color) 14%, var(--bg-grouped-elevated-secondary)), var(--bg-grouped-elevated-secondary));
         box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--_color) 35%, transparent);
         font: var(--type-subheadline);
         letter-spacing: var(--tracking-subheadline);

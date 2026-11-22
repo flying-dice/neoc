@@ -62,7 +62,7 @@ export const InAForm: Story = {
     const toggle = canvas.getByTestId('form-toggle') as HTMLElement & { checked: boolean }
     await expect(new FormData(form).get('sync')).toBeNull()
     // a click on the <label> flips the toggle it names
-    await userEvent.click(canvas.getByText('Sync'))
+    canvas.getByText('Sync').click()
     await expect(toggle.checked).toBe(true)
     await userEvent.click(canvas.getByTestId('form-check'))
     const data = new FormData(form)

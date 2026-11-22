@@ -12,9 +12,14 @@ const STYLES = resolve(import.meta.dirname, '../packages/ui/src/styles')
  * Settings the host puts on the frame's document drive the tokens, so a component (inside its shadow root, where the
  * page's own rules do not reach) follows them through custom properties. Reduce Motion: `data-reduce-motion` on `<html>`
  * zeroes the motion tokens, which every component's transitions read, so none starts (the system setting, the media query,
- * is handled in each component's own styles).
+ * is handled in each component's own styles). A subtree marked `data-theme="system"` follows `prefers-color-scheme`.
  */
-const HOOKS = `/* Reduce Motion set on the document (the host's setting): no transition starts. */
+const HOOKS = `/* A subtree that says "follow the system setting" (the document itself does so when it has no data-theme). */
+[data-theme='system'] {
+  color-scheme: light dark;
+}
+
+/* Reduce Motion set on the document (the host's setting): no transition starts. */
 :root[data-reduce-motion] {
   --duration-fast: 0s;
   --duration: 0s;

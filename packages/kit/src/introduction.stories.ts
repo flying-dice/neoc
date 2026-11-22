@@ -30,14 +30,15 @@ export const Type: StoryObj = {
 
 /**
  * Inside a vos page the host sets `data-theme` on the app's document. With none (the kit loaded outside any vos page, such
- * as here or on a developer's own test page) the same tokens follow the person's system setting. This box sets no theme (`color-scheme: light dark`), so it shows what such a page
+ * as here or on a developer's own test page) the same tokens follow the person's system setting. This box is marked `data-theme="system"` (the document does the same on its own when it has no `data-theme`), so it shows what such a page
  * looks like under the system setting the browser runs with, whatever the theme switch above says. An explicit
  * `data-theme` always wins, which the frame-conditions spec (packages/kit/e2e) checks on whole documents.
  */
 export const FollowsTheSystemWithNoDataTheme: StoryObj = {
   render: () => html`<div
     data-testid="system-theme"
-    style="color-scheme: light dark;background:var(--bg-grouped);color:var(--label);padding:16px;border-radius:var(--radius-lg);display:grid;gap:12px;width:320px"
+    data-theme="system"
+    style="background:var(--bg-grouped);color:var(--label);padding:16px;border-radius:var(--radius-lg);display:grid;gap:12px;width:320px"
   >
     <span style="font:var(--type-footnote);color:var(--label-secondary)">No data-theme: the system setting decides</span>
     <ui-button data-testid="system-button">Continue</ui-button>

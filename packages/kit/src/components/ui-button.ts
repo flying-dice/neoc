@@ -75,7 +75,6 @@ export class UiButton extends LitElement {
       :host {
         display: inline-flex;
         vertical-align: middle;
-        --_tint: var(--btn-tint, var(--tint));
       }
       :host([size='fill']) {
         display: flex;
@@ -86,6 +85,7 @@ export class UiButton extends LitElement {
         pointer-events: none;
       }
       button {
+        --_tint: var(--btn-tint, var(--tint));
         appearance: none;
         border: 0;
         margin: 0;

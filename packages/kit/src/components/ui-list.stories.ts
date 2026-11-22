@@ -93,10 +93,12 @@ export const Navigating: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     const a = canvas.getByTestId('nav-a')
+    const stop = (id: string): string | null | undefined => canvas.getByTestId(id).shadowRoot?.querySelector('.hit')?.getAttribute('tabindex')
     const onTap = fn()
     canvasElement.addEventListener('click', (e) => onTap((e.target as HTMLElement).dataset.testid))
-    // one tab stop: Tab lands on the first row, the arrow keys walk the others, Tab leaves the list
-    await userEvent.tab()
+    // one tab stop: only the first row is in the tab order; the arrow keys walk the others
+    await expect([stop('nav-a'), stop('nav-b'), stop('nav-c')]).toEqual(['0', '-1', '-1'])
+    ;(a as HTMLElement & { focusRow(): void }).focusRow()
     await expect(document.activeElement).toBe(a)
     await userEvent.keyboard('{ArrowDown}')
     await expect(document.activeElement).toBe(canvas.getByTestId('nav-b'))
@@ -106,10 +108,9 @@ export const Navigating: Story = {
     await expect(document.activeElement).toBe(a)
     await userEvent.keyboard('{Enter}')
     await expect(onTap).toHaveBeenLastCalledWith('nav-a')
-    // the row you left is the one you come back to
+    // the row you moved to is the one you come back to
     await userEvent.keyboard('{ArrowDown}')
-    await userEvent.tab()
-    await expect(canvas.getByTestId('nav-a').shadowRoot?.querySelector('.hit')).toHaveAttribute('tabindex', '-1')
+    await expect([stop('nav-a'), stop('nav-b'), stop('nav-c')]).toEqual(['-1', '0', '-1'])
   }
 }
 
@@ -127,8 +128,10 @@ export const SelectingByKeyboard: Story = {
     const onTap = fn()
     const b = canvas.getByTestId('pick-b')
     b.addEventListener('click', onTap)
-    await userEvent.tab()
-    await expect(document.activeElement).toBe(canvas.getByTestId('pick-a')) // the selected row is the tab stop
+    await expect(canvas.getByTestId('pick-a')).toHaveAttribute('tabindex', '0') // the selected row is the tab stop
+    await expect(b).toHaveAttribute('tabindex', '-1')
+    canvas.getByTestId('pick-a').focus()
+    await expect(document.activeElement).toBe(canvas.getByTestId('pick-a'))
     await userEvent.keyboard('{ArrowDown}')
     await expect(document.activeElement).toBe(b)
     await userEvent.keyboard(' ')

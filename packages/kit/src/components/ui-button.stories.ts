@@ -59,7 +59,7 @@ export const DataColourFill: Story = {
 
 export const PressedAndRound: Story = {
   parameters: { controls: { disable: true } },
-  render: () => html`<div style="display:flex;gap:10px;width:260px;height:64px">
+  render: () => html`<div style="display:grid;grid-template-columns:repeat(3,64px);grid-auto-rows:64px;gap:10px">
     <ui-button data-testid="key-7" shape="circle" size="fill" fill="gray4">7</ui-button>
     <ui-button data-testid="key-add" shape="circle" size="fill" fill="orange">+</ui-button>
     <ui-button data-testid="key-sub" shape="circle" size="fill" fill="orange" toggle pressed label="Minus">−</ui-button>
@@ -75,8 +75,8 @@ export const Pressing: Story = {
     button.addEventListener('click', onClick)
     await userEvent.click(button)
     await expect(onClick).toHaveBeenCalledTimes(1)
-    // the keyboard presses it too: Tab to it, then Space and Enter
-    await userEvent.tab()
+    // the keyboard presses it too: focus it, then Space and Enter
+    button.focus()
     await userEvent.keyboard(' ')
     await userEvent.keyboard('{Enter}')
     await expect(onClick).toHaveBeenCalledTimes(3)

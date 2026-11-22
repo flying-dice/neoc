@@ -94,11 +94,12 @@ test('the kit runs in a sandboxed frame under the frame policy and answers the k
   await page.keyboard.press('ArrowRight')
   await page.keyboard.press('Tab')
   await page.keyboard.type('Ada')
+  await page.keyboard.press('Tab') // leaving the field commits the text: change
   expect(await page.evaluate(() => (document.querySelector('[data-testid=toggle]') as HTMLElement & { checked: boolean }).checked)).toBe(true)
   expect(await page.evaluate(() => (document.querySelector('[data-testid=segmented]') as HTMLElement & { value: string }).value)).toBe('b')
   expect(await page.evaluate(() => (document.querySelector('[data-testid=field]') as HTMLElement & { value: string }).value)).toBe('Ada')
   expect(await page.evaluate(() => (window as unknown as { log: string[] }).log)).toEqual(
-    expect.arrayContaining(['button:click', 'toggle:change', 'segmented:change'])
+    expect.arrayContaining(['button:click', 'toggle:change', 'segmented:change', 'field:change'])
   )
   expect(await page.evaluate(() => (window as unknown as { violations: string[] }).violations)).toEqual([])
 })

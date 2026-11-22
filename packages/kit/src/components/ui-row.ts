@@ -68,7 +68,9 @@ export class UiRow extends LitElement {
         display: block;
         position: relative;
       }
-      :host([disabled]) {
+      /* dim the content, not the row's own background */
+      :host([disabled]) .leading,
+      :host([disabled]) .content {
         opacity: 0.4;
       }
       :host(:focus-visible) {
