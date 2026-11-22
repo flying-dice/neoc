@@ -321,9 +321,9 @@ This is the one statement of it; every skill and doc points here. A pull request
 
 Scope a pull request openly defers (its body says it does not deliver it, with a Story ticket) is not an unmet acceptance
 criterion and does not hold the merge. Everything else (an unlikely edge case, an unverified platform, acceptable but not
-ideal behaviour, a better mechanism for something that works) the author files in Jira NEOC: a Bug for what behaves wrongly,
-a Story for what is missing or could be better, with the area's label, grouped, in the backlog, keys in the pull request
-body. A reviewer sorts each finding into one kind or the other and files nothing.
+ideal behaviour, a better mechanism for something that works) the author files in Jira NEOC, with the area's label, grouped,
+in the backlog, keys in the pull request body. A Bug says what behaves wrongly; a Story says what a person or developer will
+be able to do, not a task. A reviewer sorts each finding into one kind or the other and files nothing.
 
 Releases are cut by pushing a `vX.Y.Z` tag on `main` (see CONTRIBUTING.md). Don't push release tags unless asked.
 

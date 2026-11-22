@@ -11,8 +11,8 @@ Review the change on its own merits. No session context assumed — the diff has
 2. Read the diff in context — what changed, why. Open the surrounding code the hunks touch; a hunk that reads fine alone can still break its caller.
 3. **Run the checks the change touches** — build, lint, typecheck, and the relevant tests for the affected area. Scope to what the diff affects; don't rebuild the world (the full gate is `pre-commit`'s job, once, on the final head; on a re-review after fixes, re-run only what the delta touches). Run them locally: the local run is the evidence.
 4. Devise unhappy-path scenarios (given/when/then) and run the ones the tests don't cover, as targeted tests or probes at the head. Judge whether a test would catch a defect by reading it and the code; never by mutating the code, reverting a fix, or looping a test. A failed scenario → a full given/when/then in the finding so the author can turn it into a test.
-5. **Test gap** — behaviour added with no test is a finding (`issue`), not a pass.
-6. Report findings (format below). `bug`/`issue` **block**; `nit`/`question` don't.
+5. **Test gap** — behaviour added with no test is a finding, not a pass; it holds the push (`CLAUDE.md`, "Definition of done", item 2).
+6. Report findings (format below). A push is held for the same things that hold a merge, the list in `CLAUDE.md`, "What holds a merge", and for a test gap (step 5); everything else is for a ticket, filed as that section says.
 
 ## Checklist
 
@@ -33,9 +33,10 @@ Pass, fail, or `N/A — <reason>`. No blanks.
 detail
 ```
 
-- `bug` — breaks at runtime. Blocks.
-- `issue` — wrong but won't crash (missing test, edge case, leak). Blocks.
-- `nit` — non-blocking.
+- `bug` — an item on `CLAUDE.md`'s "What holds a merge" list other than the gate. Blocks the push.
+- `issue` — a check that does not pass, or new behaviour with no test. Blocks the push.
+- `ticket` — everything else (an unlikely edge case, a nit). Filed as `CLAUDE.md`, "What holds a merge", says; does not
+  block.
 - `question` — answer before proceeding.
 
 ## Focus
