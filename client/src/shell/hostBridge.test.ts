@@ -558,3 +558,35 @@ describe('eventFor', () => {
     expect(refused[0]).toMatchObject({ id: 3, error: { code: -32000 } })
   })
 })
+
+describe('what a service keeps going belongs to the document that asked', () => {
+  const hello = (id: number): ReturnType<typeof request> =>
+    request(id, 'ui/initialize', { protocolVersion: PROTOCOL_VERSION, appCapabilities: {} })
+
+  test('a reload of the page (a second hello) and the frame going each end the signal its services were given', async () => {
+    const signals: AbortSignal[] = []
+    const { bridge, flush } = rig(undefined, (base) =>
+      base.register('vos/test/hold', (_params, context) => {
+        signals.push(context.signal)
+        return {}
+      })
+    )
+    bridge.receive({ source: FRAME, data: hello(1) })
+    bridge.receive({ source: FRAME, data: request(2, 'vos/test/hold') })
+    await flush()
+    expect(signals[0].aborted).toBe(false)
+    bridge.receive({ source: FRAME, data: hello(3) }) // the page reloaded
+    bridge.receive({ source: FRAME, data: request(4, 'vos/test/hold') })
+    await flush()
+    expect(signals[0].aborted).toBe(true)
+    expect(signals[1].aborted).toBe(false)
+    bridge.dispose()
+    expect(signals[1].aborted).toBe(true)
+  })
+
+  test('both host pages offer agent chat', () => {
+    const services = baseServices({ context: () => context(), openLink: () => {} })
+    for (const method of ['thread', 'run', 'events', 'cancel', 'detach', 'settings'])
+      expect(services.has(`vos/agui/${method}`)).toBe(true)
+  })
+})

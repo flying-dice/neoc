@@ -12,6 +12,7 @@
  */
 import { HostError } from './channel'
 import type { DisplayMode, HostContext } from './hostContext'
+import { registerAgui } from './hostServices/agui'
 
 /** MCP Apps' `HostCapabilities`, with vos's own under `experimental.vos`. */
 export interface HostCapabilities {
@@ -30,6 +31,11 @@ export interface VosCapabilities {
 export interface ServiceContext {
   /** The app the calling frame belongs to: fixed by the page, never by the message. */
   appId: string
+  /**
+   * Aborted when the document that made the call goes: its window closes, the frame is replaced, or the page reloads
+   * (a second `ui/initialize`). Work a service keeps going for the page (a stream) ends with it.
+   */
+  signal: AbortSignal
 }
 
 export type Service = (params: unknown, context: ServiceContext) => unknown
@@ -87,7 +93,9 @@ export interface ServiceEnvironment {
 
 /** The services both host pages offer. */
 export function baseServices(environment: ServiceEnvironment): ServiceRegistry {
-  return new ServiceRegistry()
+  const registry = new ServiceRegistry()
+  registerAgui(registry)
+  return registry
     .register(
       'ui/open-link',
       (params) => {

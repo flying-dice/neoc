@@ -192,6 +192,9 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
   let disposed = false
   /** What the calls this frame has running on the host share: aborted when the frame goes, so the host stops them. */
   const running = new AbortController()
+  /** What the host services do for the page's current document: aborted when it reloads (a second hello) or the frame goes. */
+  let pageWork = new AbortController()
+  let helloed = false
   const gate = options.gate ?? callGate
   /** What identifies this frame to the gate: its app, so a window closed and opened again meets the places still taken. */
   const frameKey = appId
@@ -220,6 +223,12 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
     }
     if (name === 'ui/initialize') {
       options.onHello?.()
+      if (helloed) {
+        // the page reloaded: what the services kept going for the document before it ends with it
+        pageWork.abort()
+        pageWork = new AbortController()
+      }
+      helloed = true
       const parsed = initializeParams.safeParse(params)
       if (!parsed.success) {
         post({
@@ -250,7 +259,7 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
     }
     const service = services.get(name)
     if (service) {
-      answer(callId, () => service(params, { appId }))
+      answer(callId, () => service(params, { appId, signal: pageWork.signal }))
       return
     }
     if (name.includes('/')) {
@@ -363,6 +372,7 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
       disposed = true
       // closing the window ends the calls the host is still running for it, and frees their places
       running.abort()
+      pageWork.abort()
       for (const done of [...waiting.values()]) done()
     }
   }
