@@ -1,13 +1,10 @@
 # Review-ready
 
-What to do while you build a change so that the independent review finds nothing you could have found first. It is short on
-purpose: read it when you start a change, and again before you open the pull request and before every push that answers a
-review. The `pr-self-review` skill turns it into the note you post; each rule below says what that note must show.
-
-Every rule comes from a finding that cost a review round on pull requests #52 to #61; its **Cost** line names one.
-"Evidence" is a test name, a command and its result, or what you saw on the real host. "Checked" is not evidence. A
-reviewer uses your change the way its consumer will, gives it hostile input, breaks it half way and checks every sentence
-you wrote: do those things first.
+What to do so that review finds nothing you could have found first. Read it when you start a change, before you open the
+pull request and before every push that answers a review; `pr-self-review` turns it into your note. Each rule comes from a
+finding that cost a round on #52 to #61 (its **Cost** line). "Evidence" is a test name, a command and its result, or what
+you saw on the real host; "checked" is not evidence. A reviewer uses your change as its consumer will, gives it hostile
+input, breaks it half way and checks every sentence: do those things first.
 
 ## 0. Before anything else
 
@@ -25,8 +22,7 @@ disabled states, touch targets and clicks.
 
 **0.2 When the same kind of finding comes back a second time, stop and ask why five times.** Don't patch the case. Go up
 past the implementation: why does this design make the mistake possible, and why are we maintaining this ourselves? Write
-the five whys down. Take them to the coordinator and the owner as a question with options, before the next push. A repeat
-means something is missing a layer above your implementation choices.
+the five whys down and take them to the coordinator and the owner as a question with options, before the next push.
 *Evidence:* the five whys and the options, linked from the reply. *Cost:* one app starved the shell's shared connection
 three times in three forms on #56. Generated names and the output folder came back in each of #57's three rounds.
 
