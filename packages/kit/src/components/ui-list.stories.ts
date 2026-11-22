@@ -74,6 +74,7 @@ export const Rows: Story = {
         <ui-row data-testid="task-2" heading="A very long title that does not fit on one line of the row and so is cut short" subheading="And a subtitle that also runs on for far too long to fit"></ui-row>
         <ui-row data-testid="task-3" heading="Disabled" disabled tappable></ui-row>
         <ui-row data-testid="task-4"><ui-button data-testid="task-4-button" variant="tinted" size="small">Custom content</ui-button></ui-row>
+        <ui-row data-testid="task-5"><span style="min-width:90px">Name</span><ui-text-field data-testid="task-5-field" variant="bare" label="Name" placeholder="Required"></ui-text-field></ui-row>
       </ui-section>
     </ui-list>
   </div>`

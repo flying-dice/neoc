@@ -97,10 +97,11 @@ export class UiList extends LitElement {
   }
 
   private onKeydown = (e: KeyboardEvent): void => {
-    const target = e.target as HTMLElement
-    if (target.matches('input, textarea, select, [contenteditable]')) return
+    // a field inside a row (a ui-text-field's input is in its shadow root) keeps its own arrow keys
+    const path = e.composedPath().filter((n): n is HTMLElement => n instanceof HTMLElement)
+    if (path.some((n) => n.matches('input, textarea, select, [contenteditable]'))) return
     const stops = this.stops
-    const here = stops.findIndex((r) => r === target.closest('ui-row'))
+    const here = stops.findIndex((r) => r === (e.target as HTMLElement).closest('ui-row'))
     if (here < 0) return
     const to = moveIndex(stops.length, here, e.key, 'vertical', false)
     if (to === null) return

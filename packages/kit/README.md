@@ -16,7 +16,14 @@ copy of it to every app's frame, so a change here reaches every installed app wi
 
 ## Using it from an app
 
-The frame document already loads the two files, and keeps `<html data-theme="light|dark">` and `color-scheme` in step with
+An installed app's document runs in two ways: **embedded** in a shell window's iframe, and **standalone** as a full-screen
+page of its own (`/apps/<id>`), with no shell and no host. The kit is loaded by the app's own document either way and needs
+no host. For the theme: embedded, the host sets `data-theme="light|dark"` on `<html>` (and `color-scheme`); standalone,
+nothing does, and the tokens follow the system setting (`prefers-color-scheme`). An explicit `data-theme` always wins.
+Components an app uses for its own page (a banner, a list, a field) work the same in both. Sheets, alerts and toasts are not
+kit components: the host draws them over an app, so they exist only when embedded.
+
+The document the host serves for an app loads the two files, and (embedded) keeps `<html data-theme="light|dark">` and `color-scheme` in step with
 the shell. The app writes no theme code and imports nothing:
 
 ```html

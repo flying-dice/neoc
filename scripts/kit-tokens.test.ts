@@ -25,6 +25,12 @@ describe('the token sheet', () => {
     expect(tokens).toContain('light-dark(')
   })
 
+  test('follows the system setting when nothing sets data-theme (a standalone app), and data-theme wins when it is set', () => {
+    expect(tokens).toMatch(/:root\s*\{\s*color-scheme:\s*light dark;/)
+    expect(tokens).toMatch(/\[data-theme='light'\]\s*\{\s*color-scheme:\s*light;/)
+    expect(tokens).toMatch(/\[data-theme='dark'\]\s*\{\s*color-scheme:\s*dark;/)
+  })
+
   test('carries the base reset', () => {
     expect(tokens).toContain(':focus-visible')
     expect(tokens).toContain('prefers-reduced-motion')

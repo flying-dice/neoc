@@ -14,9 +14,10 @@ const KIT = join(import.meta.dirname, '../../../client/public/kit')
 /** The frame's policy, as the host sends it (NEOC-300). */
 const CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; sandbox allow-scripts"
 
-const PAGE = `<!doctype html>
-<html data-theme="light" style="color-scheme: light">
-<head>
+/** The same without the sandbox: a standalone app is an ordinary full-screen page. */
+const CSP_STANDALONE = CSP.replace('; sandbox allow-scripts', '')
+
+const BODY = `<head>
 <meta charset="utf-8"><title>Kit frame</title>
 <link rel="stylesheet" href="/kit/tokens.css">
 <script src="/kit/kit.js"></script>
@@ -32,6 +33,11 @@ const PAGE = `<!doctype html>
 </body>
 </html>`
 
+/** Embedded in a shell window: the host sets data-theme and color-scheme on the document. */
+const PAGE = `<!doctype html>\n<html data-theme="light" style="color-scheme: light">\n${BODY}`
+/** Standalone (`/apps/<id>` opened on its own): no shell, so nothing sets data-theme. */
+const STANDALONE = `<!doctype html>\n<html>\n${BODY}`
+
 const PAGE_JS = `
 document.querySelector('ui-segmented').options = [{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }]
 window.violations = []
@@ -44,8 +50,11 @@ let origin: string
 test.beforeAll(async () => {
   server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://x')
-    if (url.pathname === '/frame') {
-      res.writeHead(200, { 'content-type': 'text/html', 'content-security-policy': CSP }).end(PAGE)
+    if (url.pathname === '/frame' || url.pathname === '/standalone') {
+      const framed = url.pathname === '/frame'
+      res
+        .writeHead(200, { 'content-type': 'text/html', 'content-security-policy': framed ? CSP : CSP_STANDALONE })
+        .end(framed ? PAGE : STANDALONE)
     } else if (url.pathname === '/page.js') {
       res.writeHead(200, { 'content-type': 'text/javascript' }).end(PAGE_JS)
     } else if (url.pathname === '/kit/kit.js' || url.pathname === '/kit/tokens.css') {
@@ -107,4 +116,30 @@ test('the kit follows data-theme: the same elements read dark on a dark document
   expect(light).not.toBe(dark)
   const text = await page.evaluate(() => getComputedStyle(document.body).color)
   expect(text).toBe('rgb(255, 255, 255)')
+})
+
+test('standalone, with no host to set data-theme, the kit follows the system setting; an explicit data-theme wins', async ({ page }) => {
+  const read = (): Promise<{ body: string; button: string }> =>
+    page.evaluate(() => ({
+      body: getComputedStyle(document.body).color,
+      button: getComputedStyle(document.querySelector('ui-segmented')!.shadowRoot!.querySelector('.group')!).backgroundColor
+    }))
+  await page.emulateMedia({ colorScheme: 'light' })
+  await page.goto(`${origin}/standalone`)
+  expect(await page.evaluate(() => document.documentElement.hasAttribute('data-theme'))).toBe(false)
+  const light = await read()
+  expect(light.body).toBe('rgb(0, 0, 0)')
+
+  await page.emulateMedia({ colorScheme: 'dark' })
+  const dark = await read()
+  expect(dark.body).toBe('rgb(255, 255, 255)')
+  expect(dark.button).not.toBe(light.button)
+
+  // the host (when there is one) says light on a dark system: that wins
+  await page.evaluate(() => (document.documentElement.dataset.theme = 'light'))
+  expect((await read()).body).toBe('rgb(0, 0, 0)')
+  // and dark on a light system
+  await page.emulateMedia({ colorScheme: 'light' })
+  await page.evaluate(() => (document.documentElement.dataset.theme = 'dark'))
+  expect((await read()).body).toBe('rgb(255, 255, 255)')
 })

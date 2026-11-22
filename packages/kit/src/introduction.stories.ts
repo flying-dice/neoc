@@ -1,6 +1,8 @@
 import type { Meta, StoryObj } from '@storybook/web-components-vite'
 import { html } from 'lit'
 import 'virtual:kit-tokens.css'
+import './components/ui-banner'
+import './components/ui-button'
 
 const meta: Meta = { title: 'Introduction/Tokens', parameters: { controls: { disable: true }, layout: 'padded' } }
 export default meta
@@ -23,5 +25,22 @@ export const Type: StoryObj = {
     <div style="font:var(--type-body)">Body</div>
     <div style="font:var(--type-subheadline);color:var(--label-secondary)">Subheadline</div>
     <div style="font:var(--type-footnote);color:var(--label-secondary)">Footnote</div>
+  </div>`
+}
+
+/**
+ * An app opened on its own (`/apps/<id>` full screen) has no shell to set `data-theme`: the same tokens then follow the
+ * person's system setting. This box sets no theme of its own (`color-scheme: light dark`), so it shows what such a page
+ * looks like under the system setting the browser runs with, whatever the theme switch above says. An explicit
+ * `data-theme` always wins, which the frame-conditions spec (packages/kit/e2e) checks on whole documents.
+ */
+export const FollowsTheSystemWithNoDataTheme: StoryObj = {
+  render: () => html`<div
+    data-testid="system-theme"
+    style="color-scheme: light dark;background:var(--bg-grouped);color:var(--label);padding:16px;border-radius:var(--radius-lg);display:grid;gap:12px;width:320px"
+  >
+    <span style="font:var(--type-footnote);color:var(--label-secondary)">No data-theme: the system setting decides</span>
+    <ui-button data-testid="system-button">Continue</ui-button>
+    <ui-banner data-testid="system-banner">Standalone and embedded look alike.</ui-banner>
   </div>`
 }
