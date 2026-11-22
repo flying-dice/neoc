@@ -84,6 +84,9 @@ export class Host {
   private fakeViews: FakeViews | null = null
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a list of callbacks, not state
   private windowRequests = new Set<(request: WindowRequest) => void>()
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a list of callbacks, not state
+  private appNotificationListeners = new Set<(params: unknown) => void>()
+  private fakeNotifications: (() => void) | null = null
   private refreshing: Promise<void> | null = null
   private stale = false
 
@@ -178,8 +181,16 @@ export class Host {
         ...(isRecord(params.params) ? { params: params.params } : {})
       }
       for (const l of [...this.windowRequests]) l(request)
+    } else if (method === 'notification.deliver') {
+      for (const l of [...this.appNotificationListeners]) l(params)
     } else if (LIST_CHANGED.has(method)) void this.refresh()
     else if (method === 'agents.changed') void this.refreshAgents()
+  }
+
+  /** The host delivers an app's notification (`notification.deliver`); the shell decides whether to show it. */
+  onAppNotification(listener: (params: unknown) => void): () => void {
+    this.appNotificationListeners.add(listener)
+    return () => void this.appNotificationListeners.delete(listener)
   }
 
   /** The shell opens a window when an app asks (an agent's tool bringing it forward). */
@@ -245,6 +256,11 @@ export class Host {
   useFake(api: HostApi, apps: AppSummary[] = [], views: FakeViews | null = null): void {
     this.fake = api
     this.fakeViews = views
+    this.fakeNotifications?.()
+    // a story's fake can deliver an app's notification (the other messages are for the pages that listen to the fake)
+    this.fakeNotifications = api.onNotification((method, params) => {
+      if (method === 'notification.deliver') this.onNotification(method, params)
+    })
     this.phase = 'ready'
     this.connection = 'online'
     this.setApps(apps)

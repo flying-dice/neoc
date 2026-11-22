@@ -4,6 +4,7 @@
  *   stories   every story of every Storybook: renders, axe, snapshots, resize
  *   desktop   the real shell on the real host: every app from the Dock, resize, every layout, axe, snapshots
  *   journeys  each app's and the shell's key user journeys (apps/<app>/e2e, client/e2e, e2e/*.journeys.spec.ts)
+ *   notifications  the notification journeys (e2e/notifications.journeys.spec.ts): one app raises banners on every open page, so they run alone, last
  *   background  the background-work journeys (e2e/background.journeys.spec.ts): they install an app that every open page hears about, so they run alone, after the journeys
  *
  * The desktop and the journeys run against the real Rust host (`e2e/host/start.ts`: a cargo build, a fresh data
@@ -57,7 +58,7 @@ export default defineConfig({
     },
     {
       name: 'journeys',
-      testMatch: ['{apps,packages}/*/e2e/**/*.spec.ts', 'client/e2e/**/*.spec.ts', 'e2e/!(background).journeys.spec.ts'],
+      testMatch: ['{apps,packages}/*/e2e/**/*.spec.ts', 'client/e2e/**/*.spec.ts', 'e2e/!(background|notifications).journeys.spec.ts'],
       dependencies: ['desktop'],
       fullyParallel: false,
       use: { baseURL: ORIGIN, storageState: STATE }
@@ -68,6 +69,14 @@ export default defineConfig({
       name: 'background',
       testMatch: 'e2e/background.journeys.spec.ts',
       dependencies: ['journeys'],
+      fullyParallel: false,
+      use: { baseURL: ORIGIN, storageState: STATE }
+    },
+    {
+      // A notification reaches every open page, and its sender is installed for the run: this runs alone, last.
+      name: 'notifications',
+      testMatch: 'e2e/notifications.journeys.spec.ts',
+      dependencies: ['background'],
       fullyParallel: false,
       use: { baseURL: ORIGIN, storageState: STATE }
     }

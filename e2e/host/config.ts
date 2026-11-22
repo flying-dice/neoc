@@ -29,6 +29,8 @@ export const fixtureAppRef = (id: FixtureApp): string => {
   const { version } = JSON.parse(readFileSync(join(ROOT, 'e2e/apps', id, 'app.json'), 'utf8')) as { version: string }
   return `file://${join(DIR, `fixtures/${id}/${version}/app-ref.json`)}`
 }
+/** The Notifier (`e2e/notifications.journeys.spec.ts`): a sender of notifications, kept out of the registry like the Ticker. */
+export const NOTIFIER_APP_REF = `file://${join(DIR, 'hidden/notifier/0.1.0/app-ref.json')}`
 /** The paired browser the specs share (a Playwright storage state). */
 export const STATE = join(DIR, 'paired.json')
 export const HOST_BIN = join(ROOT, 'target/debug/vos')
