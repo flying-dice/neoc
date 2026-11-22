@@ -37,7 +37,7 @@
     if (!focusedHere())
       returnTo = document.activeElement instanceof HTMLElement ? document.activeElement : null
     // a key was pressed, so the ring shows even when the last thing the person did was a click
-    const options: FocusOptions & { focusVisible: boolean } = { focusVisible: true }
+    const options = { focusVisible: true } as unknown as Parameters<HTMLElement['focus']>[0]
     stack
       ?.querySelector<HTMLElement>(`[data-testid="notification-${newest.id}-open"]`)
       ?.focus(options)
