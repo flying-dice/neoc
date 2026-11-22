@@ -169,10 +169,6 @@ host.on('tasks.changed', () => reload())
 
 Set `data-testid` on every interactive element yourself (`<appId>-<thing>`).
 
-**Arguments are copied to the host page with `postMessage`**, so they must be plain data: a framework's reactive proxy is not
-(`Failed to execute 'postMessage' on 'Window': #<Object> could not be cloned`). In Svelte 5 keep a value you send back in
-`$state.raw` (as the Calculator keeps its screen) or send `$state.snapshot(value)`; in Vue, `toRaw(value)`.
-
 **In a shell window the window's grabber (its three dots) is drawn over the top of the frame**: keep the top 28 px clear of
 text and controls (the Calculator pads its top by that much).
 

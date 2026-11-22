@@ -41,8 +41,7 @@
   const FILL: Record<Face, string> = { digit: 'gray4', function: 'gray2', operator: 'orange' }
 
   // The keypad's state is this window's own: the backend keeps nothing, it answers each key with the next screen.
-  // `raw`: the screen is replaced whole, never edited, and its state goes back over postMessage, which cannot clone
-  // Svelte's reactive proxy of a deep `$state`
+  // `raw`: the screen is replaced whole by each answer, never edited in place
   let screen = $state.raw<Screen | null>(null)
   let failure = $state<string | null>(null)
 
