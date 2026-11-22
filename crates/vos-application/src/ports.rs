@@ -28,6 +28,9 @@ pub use crate::data::{
 pub struct AppPackage {
     pub entry: String,
     pub files: BTreeMap<String, Vec<u8>>,
+    /// The app has a client of its own (a frame in the shell): its entry is a backend that returns handlers, and
+    /// it need not declare itself with `app.manifest`, which an app without a client must.
+    pub has_client: bool,
 }
 
 /// Who is calling and when: `ctx.actor` and `ctx.now` in Lua.
@@ -116,6 +119,15 @@ pub trait AppRuntime: Send + Sync {
         args: Value,
         ctx: CallContext,
         read_only: bool,
+    ) -> PortResult<Value>;
+    /// A client's `rpc(method, args)`: run the handler the app's entry returned under that name as
+    /// `handler(ctx, args)`. The person's own client is calling, so unlike an agent's tool the call may write.
+    async fn call_handler(
+        &self,
+        app: &AppId,
+        method: &str,
+        args: Value,
+        ctx: CallContext,
     ) -> PortResult<Value>;
     /// Run a row source's `write(key, field, value, ctx)` callback.
     async fn write_row(
@@ -374,13 +386,16 @@ pub trait InstalledAppStore: Send + Sync {
 
 // ---- shell -------------------------------------------------------------------------------------
 
-/// What an app asks of the desktop shell: `app:openWindow` (an agent's tool bringing an app forward) is
-/// delivered to the clients; the deep links of `app.shell` are accepted and dropped until the shell shows them.
+/// What an app asks of the desktop shell: `app:openWindow` (an agent's tool bringing an app forward) and
+/// `app.emit` (an event for the app's open clients) are delivered to the clients; the deep links of `app.shell` are accepted and dropped until the shell shows them.
 #[async_trait]
 pub trait Shell: Send + Sync {
     /// `app:openWindow(name, params)`: the connected shells open the window or bring the app's forward.
     async fn open_window(&self, app: &AppId, window: &str, params: Map<String, Value>);
     async fn set_deep_links(&self, app: &AppId, patterns: Vec<String>);
+    /// `app.emit(name, data)`: the app's backend tells its open clients something changed. The connected shells
+    /// hand it to the frames of that app.
+    async fn emit_event(&self, app: &AppId, name: &str, data: Value);
 }
 
 // ---- background tasks ---------------------------------------------------------------------------

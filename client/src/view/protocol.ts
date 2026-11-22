@@ -106,6 +106,7 @@ export type RequestMethod = keyof RequestMethods
 
 export type HostAppState = G.AppState
 export type HostAppSummary = G.AppSummary
+export type HostAppEvent = G.AppEvent
 export type HostInstalledInfo = G.InstalledInfo
 export type HostAppPreview = G.AppPreview
 export type HostCatalog = G.Catalog

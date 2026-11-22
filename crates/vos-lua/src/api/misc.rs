@@ -219,8 +219,59 @@ pub(super) fn install(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<
         })?,
     )?;
 
+    install_emit(lua, sh, app)?;
     install_agents(lua, sh, app)?;
     install_shell(lua, sh, app)
+}
+
+/// The longest event name `app.emit` takes.
+const MAX_EVENT_NAME: usize = 64;
+/// The most JSON bytes of data one event carries: it travels to every open client of the app.
+pub const MAX_EVENT_BYTES: usize = 64 * 1024;
+/// The most events that may wait to be sent: a loop that emits faster than the host sends gets an error, not an
+/// unbounded queue.
+const MAX_QUEUED_EVENTS: usize = 256;
+
+/// `app.emit(name, data?)`: tell the app's open clients something changed outside them (`host.on(name, fn)` in the
+/// client). It is a change to the world like `app.notify`, so a `readOnly` tool may not.
+fn install_emit(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<()> {
+    let s = sh.clone();
+    app.set(
+        "emit",
+        lua.create_function(move |_, (name, data): (String, Option<LuaValue>)| {
+            check_effects_allowed(&s, "app.emit")?;
+            s.writable("app.emit")?;
+            let valid = !name.is_empty()
+                && name.len() <= MAX_EVENT_NAME
+                && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'-'));
+            if !valid {
+                return Err(mlua::Error::runtime(format!(
+                    "app.emit: an event name is 1 to {MAX_EVENT_NAME} letters, digits, . _ : or -"
+                )));
+            }
+            if name.starts_with("host:") {
+                return Err(mlua::Error::runtime("app.emit: names starting with `host:` are the host's own"));
+            }
+            let data = match data {
+                Some(d) => lua_to_json(&d)?,
+                None => Value::Null,
+            };
+            if data.to_string().len() > MAX_EVENT_BYTES {
+                return Err(mlua::Error::runtime(format!(
+                    "app.emit: the data of an event is at most {MAX_EVENT_BYTES} bytes of JSON"
+                )));
+            }
+            let mut effects = s.effects.lock();
+            let waiting = effects.iter().filter(|e| matches!(e, Effect::Emit { .. })).count();
+            if waiting >= MAX_QUEUED_EVENTS {
+                return Err(mlua::Error::runtime(format!(
+                    "app.emit: {MAX_QUEUED_EVENTS} events are already waiting to be sent"
+                )));
+            }
+            effects.push(Effect::Emit { name, data });
+            Ok(())
+        })?,
+    )
 }
 
 /// `app.agents:list()`: the agent contacts as `{ id, name, avatar?, role }`. Never grants, tokens or launch

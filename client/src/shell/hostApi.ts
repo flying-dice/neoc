@@ -4,6 +4,7 @@
  * `crates/vos-domain/src/api.rs` into `types/generated/vos.ts`.
  */
 import { icons, type IconName } from '@vos/ui'
+import type { CallOptions } from './channel'
 import type {
   HostAgentList,
   HostAgentRow,
@@ -35,7 +36,7 @@ export type AppNotification = HostNotifications['notification.deliver']
 
 /** The calls the shell makes. The real one is the session's `call`; stories and tests pass a fake. */
 export interface HostApi {
-  call(method: string, params?: Record<string, unknown>): Promise<unknown>
+  call(method: string, params?: Record<string, unknown>, options?: CallOptions): Promise<unknown>
   /** Host notifications that no window owns (`window.open`, `app.installed`, ...). */
   onNotification(listener: (method: string, params: Record<string, unknown>) => void): () => void
 }

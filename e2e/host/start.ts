@@ -5,7 +5,9 @@
  *   1. builds the client (client/dist) and the host (cargo), and the apps into a test registry:
  *      the repo's apps plus Notes (the codegen fixture), a second app the Discover journeys install and remove
  *      so they never disturb the Calculator the other specs use, and the Ticker (the host's background-work
- *      fixture) and the Notifier (the notification journeys' sender) outside the registry, which only their journeys install;
+ *      fixture) and the Notifier (the notification journeys' sender) outside the registry, which only their journeys install; and the two framework fixtures
+ *      (e2e/apps: a task list with a Svelte client and one with a React client, each on a Luau backend), built
+ *      into a folder no registry lists and installed at start like the Calculator;
  *   2. writes vos.toml (port 7410 or VOS_PORT_BASE + 10, loopback, a fresh data directory, the test registry; the Calculator and
  *      Agents are installed at start, Notes is only offered; one scripted ACP agent is on the roster);
  *   3. runs vos-host in the foreground, forwarding SIGTERM so the host shuts down gracefully.
@@ -13,7 +15,7 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { CONFIG, DATA, DIR, FAKE_AGENT, HOST_BIN, PORT, REGISTRY, ROOT } from './config'
+import { CONFIG, DATA, DIR, FAKE_AGENT, FIXTURE_APPS, HOST_BIN, PORT, REGISTRY, ROOT, fixtureAppRef } from './config'
 
 const run = (cmd: string, args: string[]): void => {
   const r = spawnSync(cmd, args, { cwd: ROOT, stdio: 'inherit' })
@@ -65,6 +67,10 @@ writeFileSync(
 )
 run('bun', ['scripts/build-apps.ts', 'ticker', '--out', join(DIR, 'hidden'), '--root', join(DIR, 'hidden-apps')])
 
+// The framework fixtures: each is built with its own package (its client is a Vite build), into a folder of its own that
+// no registry lists, so Discover does not offer them
+run('bun', ['scripts/build-apps.ts', ...FIXTURE_APPS, '--out', join(DIR, 'fixtures'), '--root', join(ROOT, 'e2e/apps')])
+
 // Notifier (the notification journeys' sender): the same way, also kept out of the registry
 const notifier = join(DIR, 'hidden-apps/notifier')
 mkdirSync(notifier, { recursive: true })
@@ -91,7 +97,12 @@ writeFileSync(
     `port = ${PORT}`,
     `client_dir = "${join(ROOT, 'client/dist')}"`,
     `registries = ["file://${REGISTRY}"]`,
-    `install = [${['calculator', 'agents'].map((id) => `"file://${join(DIR, `registry/${id}/${versionOf(id)}/app-ref.json`)}"`).join(', ')}]`,
+    `install = [${[
+      ...['calculator', 'agents'].map((id) => `file://${join(DIR, `registry/${id}/${versionOf(id)}/app-ref.json`)}`),
+      ...FIXTURE_APPS.map(fixtureAppRef)
+    ]
+      .map((url) => `"${url}"`)
+      .join(', ')}]`,
     // one agent, no model: the scripted ACP agent (crates/vos-acp/src/bin/fake_agent.rs) answers by prompt
     '[[agents]]',
     'id = "scripted"',

@@ -16,7 +16,8 @@ export const FAKE_CALCULATOR: AppSummary = {
   tint: 'orange',
   description: 'Arithmetic for you and your agents.',
   window: { w: 340, h: 560, minW: 320, minH: 500 },
-  source: 'this computer'
+  source: 'this computer',
+  client: false
 }
 
 /** The Agents app: an ordinary installed app, which a host may or may not have (stories show both). */
@@ -29,7 +30,8 @@ export const FAKE_AGENTS_APP: AppSummary = {
   tint: 'purple',
   description: 'Chat with the agents on this host.',
   window: { w: 520, h: 640, minW: 480, minH: 420 },
-  source: 'this computer'
+  source: 'this computer',
+  client: false
 }
 
 const NOTES: AppPreview = {
@@ -158,7 +160,8 @@ export function createFakeHost(
           fake.apps.push({
             ...NOTES,
             state: 'running',
-            window: { w: 960, h: 640, minW: 480, minH: 360 }
+            window: { w: 960, h: 640, minW: 480, minH: 360 },
+            client: false
           } as AppSummary)
           fake.emit('app.installed', { app: NOTES.id })
           return { app: NOTES.id }

@@ -407,6 +407,8 @@ type WriteHook = Box<dyn Fn(&str, &Value, &str, &Value) + Send>;
 pub struct FakeRuntime {
     apps: Mutex<HashMap<String, Vec<ToolSpec>>>,
     calls: Mutex<Vec<(String, String, CallContext)>>,
+    /// `(app, handler, args)` of every client `rpc` call, in order.
+    handler_calls: Mutex<Vec<(String, String, Value)>>,
     /// The `read_only` requirement each tool call arrived with, in call order.
     read_only_calls: Mutex<Vec<bool>>,
     loads: Mutex<HashMap<String, usize>>,
@@ -531,6 +533,10 @@ impl FakeRuntime {
             seq: v.seq,
         })
     }
+    /// `(app, handler, args)` of every client `rpc` call so far.
+    pub fn handler_calls(&self) -> Vec<(String, String, Value)> {
+        self.handler_calls.lock().unwrap().clone()
+    }
     pub fn writes(&self) -> Vec<WriteRecord> {
         self.writes.lock().unwrap().clone()
     }
@@ -580,6 +586,16 @@ impl AppRuntime for FakeRuntime {
         self.calls.lock().unwrap().push((app.to_string(), tool.to_owned(), ctx));
         self.read_only_calls.lock().unwrap().push(read_only);
         Ok(json!({ "echo": args }))
+    }
+    async fn call_handler(
+        &self,
+        app: &AppId,
+        method: &str,
+        args: Value,
+        _: CallContext,
+    ) -> PortResult<Value> {
+        self.handler_calls.lock().unwrap().push((app.to_string(), method.to_owned(), args.clone()));
+        Ok(json!({ "app": app.as_str(), "method": method, "args": args }))
     }
     async fn write_row(
         &self,
@@ -764,6 +780,8 @@ pub struct RecordingShell {
     pub links: Mutex<Vec<(String, Vec<String>)>>,
     /// `(app, window, params)` of every `app:openWindow`.
     pub windows: Mutex<Vec<OpenedWindow>>,
+    /// `(app, name, data)` of every `app.emit`.
+    pub events: Mutex<Vec<(String, String, Value)>>,
 }
 #[async_trait]
 impl Shell for RecordingShell {
@@ -772,6 +790,9 @@ impl Shell for RecordingShell {
     }
     async fn set_deep_links(&self, app: &AppId, patterns: Vec<String>) {
         self.links.lock().unwrap().push((app.to_string(), patterns));
+    }
+    async fn emit_event(&self, app: &AppId, name: &str, data: Value) {
+        self.events.lock().unwrap().push((app.to_string(), name.to_owned(), data));
     }
 }
 
@@ -1034,6 +1055,17 @@ impl Fakes {
     pub fn add_app(&self, id: &str, tools: &[(&str, &str)]) -> String {
         self.add_app_with(id, tools, &[])
     }
+    /// Like `add_app`, for an app with a client of its own: `client.js` is the script `client_source` and the
+    /// manifest names it (and a window), so the service keeps it for the frame.
+    pub fn add_client_app(&self, id: &str, tools: &[(&str, &str)], client_source: &str) -> String {
+        let url = self.add_app_with(id, tools, &[("client.js", client_source)]);
+        let mut mem = self.fetcher.0.lock().unwrap();
+        let mut app_ref: AppRef = serde_json::from_slice(&mem[&url]).unwrap();
+        app_ref.manifest.client = Some("client.js".into());
+        app_ref.manifest.window = Some(vos_domain::WindowDecl { w: 420, h: 480, min_w: 320, min_h: 320 });
+        mem.insert(url.clone(), serde_json::to_vec(&app_ref).unwrap());
+        url
+    }
     /// Like `add_app`, with extra `.lua` modules (path, source).
     pub fn add_app_with(&self, id: &str, tools: &[(&str, &str)], modules: &[(&str, &str)]) -> String {
         let main = tools.iter().map(|t| t.0).collect::<Vec<_>>().join(",").into_bytes();
@@ -1071,6 +1103,8 @@ impl Fakes {
                 tint: None,
                 description: None,
                 requires: None,
+                client: None,
+                window: None,
             },
             files,
         };

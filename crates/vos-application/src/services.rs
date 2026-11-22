@@ -78,8 +78,10 @@ pub struct Display {
     pub icon: Option<String>,
     pub tint: Option<String>,
     pub description: Option<String>,
-    /// The default window and its minimum size; only a running app has declared one.
+    /// The default window and its minimum size: what `app.manifest` declared while the app runs, else `app.json`'s.
     pub window: Option<WindowDecl>,
+    /// The app has a client of its own, so its window is a frame.
+    pub client: bool,
 }
 
 impl Display {
@@ -88,9 +90,18 @@ impl Display {
             icon: decl.map(|d| d.icon.clone()).or_else(|| manifest.icon.clone()),
             tint: decl.and_then(|d| d.tint.clone()).or_else(|| manifest.tint.clone()),
             description: manifest.description.clone(),
-            window: decl.and_then(|d| d.window.clone()),
+            window: decl.and_then(|d| d.window.clone()).or_else(|| manifest.window.clone()),
+            client: manifest.client.is_some(),
         }
     }
+}
+
+/// An app's client, as fetched and verified at install: the one script the host puts in the app's frame.
+#[derive(Clone, Debug)]
+pub struct ClientBundle {
+    pub bytes: Arc<[u8]>,
+    /// SHA-256 (hex, lowercase) of `bytes`: it names this version of the bundle in the frame's URL.
+    pub sha256: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -110,6 +121,7 @@ struct Active {
     name: String,
     display: Display,
     tools: Vec<ToolSpec>,
+    client: Option<ClientBundle>,
     _pump: Box<dyn TaskHandle>,
 }
 
@@ -513,6 +525,21 @@ impl AppService {
         Ok(out?)
     }
 
+    /// A client's `rpc(method, args)`: run the app's handler of that name in the app's VM. The call is the
+    /// person's own (the shell sends it from the app's frame, naming the app that frame belongs to), so it may
+    /// write; an app that is not running answers with an error.
+    pub async fn call_handler(&self, app: &AppId, method: &str, args: Value) -> Result<Value, AppError> {
+        self.require_running(app)?;
+        let ctx = CallContext { actor: Actor::user("You"), now_ms: self.p.clock.now_unix_ms() };
+        Ok(self.p.runtime.call_handler(app, method, args, ctx).await?)
+    }
+
+    /// The client bundle of a running app, for its frame. An app without a client has none.
+    pub fn client_bundle(&self, app: &AppId) -> Result<ClientBundle, AppError> {
+        self.with_active(app, |a| a.client.clone())?
+            .ok_or_else(|| PortError::NotFound(format!("app `{app}` has no client")).into())
+    }
+
     /// The app's live sources (views subscribe through this).
     pub fn live(&self, app: &AppId) -> Result<Arc<LiveSources>, AppError> {
         self.with_active(app, |a| a.live.clone())
@@ -798,9 +825,19 @@ impl AppService {
         let m = &app_ref.manifest;
         m.validate()?;
         let mut budget = PackageBudget::default();
-        let mut package = AppPackage { entry: m.main.clone(), ..AppPackage::default() };
+        let mut package =
+            AppPackage { entry: m.main.clone(), has_client: m.client.is_some(), ..AppPackage::default() };
         // an app is built into ONE Luau file: the entry is the only source the runtime is handed
         package.files.insert(m.main.clone(), self.fetch_verified(app_ref, &m.main, &mut budget).await?);
+        // an app's client is one script too, verified like the rest and kept for the frame to load
+        let client = match &m.client {
+            Some(path) => {
+                let bytes = self.fetch_verified(app_ref, path, &mut budget).await?;
+                let sha256 = format!("{:x}", Sha256::digest(&bytes));
+                Some(ClientBundle { bytes: bytes.into(), sha256 })
+            }
+            None => None,
+        };
         let mut migrations = Vec::new();
         for spec in &m.migrations {
             let sql = String::from_utf8(self.fetch_verified(app_ref, &spec.file, &mut budget).await?)
@@ -824,7 +861,7 @@ impl AppService {
         }
         let display = Display::of(m, loaded.decl.as_ref());
         let name = loaded.decl.map_or_else(|| m.name.clone(), |d| d.name);
-        Ok(Active { data, live, name, display, tools: loaded.tools, _pump: pump })
+        Ok(Active { data, live, name, display, tools: loaded.tools, client, _pump: pump })
     }
 
     /// Retract tools, stop serving and unload the VM. Failures are logged, not raised: teardown must finish.

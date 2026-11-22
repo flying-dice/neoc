@@ -231,6 +231,18 @@ pub fn temp(name: &str) -> PathBuf {
 
 /// Publish an app package (`files` by path) under `root` as an app ref; returns the `file://` URL of the ref.
 pub fn publish_package(root: &std::path::Path, id: &str, main: &str, files: &[(&str, Vec<u8>)]) -> String {
+    publish_package_with_client(root, id, main, None, files)
+}
+
+/// Like [`publish_package`], for an app with a client: `client` names the script among `files`, and the manifest
+/// carries a window like an `app.json` does.
+pub fn publish_package_with_client(
+    root: &std::path::Path,
+    id: &str,
+    main: &str,
+    client: Option<&str>,
+    files: &[(&str, Vec<u8>)],
+) -> String {
     use sha2::{Digest, Sha256};
     use vos_domain::{AppId, AppRef, FileRef, Manifest};
     std::fs::create_dir_all(root).unwrap();
@@ -254,6 +266,8 @@ pub fn publish_package(root: &std::path::Path, id: &str, main: &str, files: &[(&
             tint: None,
             description: None,
             requires: None,
+            client: client.map(str::to_owned),
+            window: client.map(|_| vos_domain::WindowDecl { w: 420, h: 480, min_w: 320, min_h: 320 }),
         },
         files: refs,
     };

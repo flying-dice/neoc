@@ -7,7 +7,7 @@
  * uncaught exceptions. Locate things with `getByTestId` only.
  */
 import AxeBuilder from '@axe-core/playwright'
-import { test as base, expect, type Locator, type Page, type TestInfo } from '@playwright/test'
+import { test as base, expect, type FrameLocator, type Locator, type Page, type TestInfo } from '@playwright/test'
 
 export { expect }
 
@@ -98,6 +98,9 @@ export async function settle(page: Page): Promise<void> {
   )
 }
 
+/** The frame of an app that has a client of its own (`<appId>-frame`): locate what the client draws inside it. */
+export const frameOf = (page: Page, appId: string): FrameLocator => page.frameLocator(`[data-testid="${appId}-frame"]`)
+
 /** The window for an app (`window-<appId>`). */
 export const windowOf = (page: Page, appId: string): Locator => page.getByTestId(`window-${appId}`)
 
@@ -180,8 +183,9 @@ export async function expectNoOverflow(container: Locator): Promise<void> {
     for (const el of [root, ...root.querySelectorAll('*')]) {
       const style = getComputedStyle(el)
       if (style.display === 'none' || style.visibility === 'hidden') continue
-      // A pager (scroll-snap on x: TabView pages, carousels) is meant to scroll sideways.
-      const pager = style.scrollSnapType.startsWith('x')
+      // A pager (scroll-snap on x: TabView pages, carousels) is meant to scroll sideways, and so is a tray that says it
+      // (`data-scrolls-x`: the Dock when more apps than fit are installed).
+      const pager = style.scrollSnapType.startsWith('x') || el.hasAttribute('data-scrolls-x')
       if (!pager && ['auto', 'scroll'].includes(style.overflowX) && el.scrollWidth > el.clientWidth + 1) {
         out.push(`${label(el)} scrolls horizontally (${el.scrollWidth} > ${el.clientWidth})`)
       }
