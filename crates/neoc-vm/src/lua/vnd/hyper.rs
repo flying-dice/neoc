@@ -197,7 +197,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         r.field("path", "string", "The request path, without the query string.");
         r.field("body", "string", "The raw request body.");
         r.field("is_json", "bool", "Whether the `Content-Type` header is `application/json`.");
-        r.field("headers", "LuaValue", "The request headers as a `{ [name]: value }` table.");
+        r.field("headers", "LuaValue", "The request headers as a `{ [name]: value }` table, names in lower case. A header sent more than once is one value joined with `\", \"` (`cookie` and the rest; `set-cookie` with `\"\\n\"`), and a value that is not UTF-8 has its bad bytes replaced with U+FFFD.");
         r.field(
             "json",
             &format!("{} | nil", crate::lua::lib::json::JSON_VALUE),
@@ -232,7 +232,9 @@ fn options_type(lead: &str) -> String {
 /// The doc of a client function: `what` it does, then what every one of them shares.
 fn client_doc(what: &str) -> String {
     format!(
-        "{what} Returns `{{ status, headers, body, url }}` (`url` is the last URL of the redirect chain), or `(nil, err)` \
+        "{what} Returns `{{ status, headers, body, url }}` (`url` is the last URL of the redirect chain; `headers` has one \
+         value per lower-case name: a header sent more than once is joined with `\", \"`, `set-cookie` with `\"\\n\"` so \
+         each cookie can be split back out, and bytes that are not UTF-8 become U+FFFD), or `(nil, err)` \
          with `err` = `hyper.<function>: <kind>: <message>` (see `error_kind`; a 4xx or 5xx status is a response, not an \
          error). Options, any other key is an `invalid_input` error: `headers` (`{{ [name]: value }}`; a `Content-Length` \
          that is not the body's length is refused, a `Host` replaces the built-in one, and a name given twice in any \
@@ -243,7 +245,9 @@ fn client_doc(what: &str) -> String {
          and body included, which is what bounds a trickle), `follow_redirects` (default `true`: follow 301, 302, 303, \
          307 and 308 up to 16 hops; `false` returns the 3xx; a whole number sets the limit; 303 becomes a GET, a POST \
          becomes a GET on 301 and 302, 307 and 308 keep method and body; a hop to another origin drops `Authorization`, \
-         `Cookie`, `Proxy-Authorization`, `Origin` and a caller-set `Host`; a `Location` that is not `http` or `https` \
+         `Cookie`, `Proxy-Authorization`, `Origin` and a caller-set `Host`, and only those: a credential in a header of \
+         your own (`X-Api-Key`) goes to every hop, so set `follow_redirects = false` to decide yourself; a `Location` \
+         that is not `http` or `https` \
          is `invalid_url`; more hops than the limit is `too_many_redirects`; nothing refuses a redirect to a host on the \
          local network or from `https` to `http`: check `url`, or follow redirects yourself), `max_body` (bytes, default \
          67108864: a longer response fails with `too_large`; the module never decompresses, so this bounds the bytes \
@@ -375,8 +379,10 @@ impl UserData for Request {
 
 /// Convert a request/response `HeaderMap` into the `Vec<(name, value)>` shape the Lua surface uses: one entry per
 /// name (lower case). A header sent more than once is one value, the values joined with `", "` in the order they
-/// came, as the Fetch standard's `Headers.get` does (`set-cookie` included); a value that is not UTF-8 is decoded
-/// with replacement characters. Nothing is dropped. Shared by the server's `invoke_lua_handler` and the client.
+/// came, as the Fetch standard's `Headers.get` does, except `set-cookie`, whose values are joined with `"\n"`: a
+/// cookie may hold a comma (`Expires`), a field value never holds a line feed, so splitting on `"\n"` gives each cookie
+/// back. A value that is not UTF-8 is decoded with replacement characters. Nothing is dropped. Shared by the
+/// server's `invoke_lua_handler` and the client.
 pub(super) fn collect_headers(headers: &hyper::HeaderMap) -> Vec<(String, String)> {
     headers
         .keys()
@@ -386,7 +392,12 @@ pub(super) fn collect_headers(headers: &hyper::HeaderMap) -> Vec<(String, String
                 .iter()
                 .map(|v| String::from_utf8_lossy(v.as_bytes()))
                 .collect();
-            (name.as_str().to_owned(), values.join(", "))
+            let separator = if name == hyper::header::SET_COOKIE {
+                "\n"
+            } else {
+                ", "
+            };
+            (name.as_str().to_owned(), values.join(separator))
         })
         .collect()
 }

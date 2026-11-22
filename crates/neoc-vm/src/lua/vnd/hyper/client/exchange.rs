@@ -13,6 +13,11 @@
 //! The module never decodes `Content-Encoding` and sends no `Accept-Encoding`: the body is the bytes on the wire,
 //! so the cap is a cap on what is read from the socket and a small response cannot expand past it.
 
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -102,7 +107,7 @@ async fn exchange(prepared: Prepared, life: Life) -> Result<Response, HyperError
             continue;
         }
         let status_headers = super::super::collect_headers(resp.headers());
-        let body = read_body(resp, limits.max_body, &conn.fired).await?;
+        let body = read_body(resp, limits.max_body, &conn).await?;
         return Ok(Response {
             status,
             headers: status_headers,
@@ -137,7 +142,7 @@ fn next_url(current: &Url, status: u16, location: &HeaderValue) -> Result<Url, H
 async fn read_body(
     resp: HyperResponse<Incoming>,
     max: u64,
-    fired: &Fired,
+    conn: &Connection,
 ) -> Result<Vec<u8>, HyperError> {
     let too_large = || {
         HyperError::new(
@@ -155,7 +160,7 @@ async fn read_body(
     let mut buf =
         Vec::with_capacity(usize::try_from(declared.unwrap_or(0).min(1 << 20)).unwrap_or(0));
     while let Some(frame) = body.frame().await {
-        let frame = frame.map_err(|e| HyperError::from_hyper(&e, fired.after()))?;
+        let frame = frame.map_err(|e| HyperError::from_hyper(&e, conn.fired.after()))?;
         if let Ok(data) = frame.into_data() {
             if (buf.len() as u64).saturating_add(data.len() as u64) > max {
                 return Err(too_large());
@@ -163,6 +168,9 @@ async fn read_body(
             buf.extend_from_slice(&data);
         }
     }
+    // hyper ends a body the same way whether it arrived in full or its connection's driver was aborted (the engine
+    // shut down, or stopped its background work): only the driver knows, and a cut body is never a whole one
+    conn.ended_early()?;
     Ok(buf)
 }
 
@@ -254,6 +262,9 @@ struct Connection {
     sender: hyper::client::conn::http1::SendRequest<Full<Bytes>>,
     driver: AbortHandle,
     fired: Fired,
+    /// Set when the driver ended without finishing (aborted with the engine's `Life`, or panicked), before the
+    /// response body it was feeding learns of it.
+    lost: Arc<AtomicBool>,
 }
 
 impl Drop for Connection {
@@ -308,6 +319,17 @@ impl Connection {
             })
     }
 
+    /// `connection_lost` when the driver ended without finishing: a body that "ended" then was cut off.
+    fn ended_early(&self) -> Result<(), HyperError> {
+        if self.lost.load(Ordering::SeqCst) {
+            return Err(HyperError::new(
+                Kind::ConnectionLost,
+                "the connection was closed before the response body ended",
+            ));
+        }
+        Ok(())
+    }
+
     async fn send(
         &mut self,
         req: HyperRequest<Full<Bytes>>,
@@ -357,16 +379,54 @@ where
         .map_err(|e| HyperError::from_hyper(&e, fired.after()))?;
     // the driver is registered with the engine's `Life`, so shutting the engine down closes the connection; a panic
     // in it ends this connection only
-    let driver = life.spawn(async move {
-        if let Err(message) = crate::lua::panics::caught(conn).await {
-            tracing::error!(target: "lua::lib::hyper", "connection driver panicked: {message}");
-        }
+    let lost = Arc::new(AtomicBool::new(false));
+    let panicked = Arc::clone(&lost);
+    let driver = life.spawn(Driver {
+        conn: Box::pin(async move {
+            if let Err(message) = crate::lua::panics::caught(conn).await {
+                panicked.store(true, Ordering::SeqCst);
+                tracing::error!(target: "lua::lib::hyper", "connection driver panicked: {message}");
+            }
+        }),
+        finished: false,
+        lost: Arc::clone(&lost),
     });
     Ok(Connection {
         sender,
         driver: driver.abort_handle(),
         fired: fired.clone(),
+        lost,
     })
+}
+
+/// The task that drives a connection. Dropped before it finished (aborted), it sets `lost` first, and only then drops
+/// the connection and with it the sender of the response body: whoever reads the body sees `lost` when the body
+/// ends.
+struct Driver<F> {
+    conn: Pin<Box<F>>,
+    finished: bool,
+    lost: Arc<AtomicBool>,
+}
+
+impl<F: Future<Output = ()>> Future for Driver<F> {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        let done = self.conn.as_mut().poll(cx);
+        if done.is_ready() {
+            self.finished = true;
+        }
+        done
+    }
+}
+
+impl<F> Drop for Driver<F> {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.lost.store(true, Ordering::SeqCst);
+        }
+        // `conn` (and the body's sender in it) drops after this
+    }
 }
 
 fn secs(d: Duration) -> f64 {

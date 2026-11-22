@@ -80,8 +80,10 @@ named `*.test.lua` or `*.spec.lua` runs under it); `lib:compile` bundles a scrip
 `vnd:hyper`'s `get`, `post` and `request` are safe with no options (NEOC-259, after `URLSession` and Swift's async-http-client): a
 request gives up after 10 s of connecting and after 60 s with no data moving (`connect_timeout`, `idle_timeout`; `timeout`
 bounds the whole request and has no default), follows up to 16 redirects without handing `Authorization`, `Cookie`,
-`Proxy-Authorization` or `Origin` to another origin (`follow_redirects`), and reads at most 64 MiB of body (`max_body`). It never
-decompresses. A failure is `nil, "hyper.<fn>: <kind>: <message>"` and `hyper.error_kind(err)` returns the kind (`timed_out`,
+`Proxy-Authorization` or `Origin` to another origin (`follow_redirects`; a credential header of your own, such as `X-Api-Key`,
+does go to every hop), and reads at most 64 MiB of body (`max_body`). It never decompresses. A header sent twice is one value
+joined with `", "` (`set-cookie` with `"\n"`, so cookies can be split), and non-UTF-8 header bytes become U+FFFD, for a
+`hyper.serve` handler's request too. A failure is `nil, "hyper.<fn>: <kind>: <message>"` and `hyper.error_kind(err)` returns the kind (`timed_out`,
 `connect`, `tls`, `invalid_url`, `too_large`, `too_many_redirects`, ...). Where a redirect leads is not checked (a public URL can send
 the request to the local network): `follow_redirects = false` returns the 3xx. The options and kinds are documented in
 [`types/neoc.d.luau`](types/neoc.d.luau); vos apps have the same module, described in [`apps/README.md`](apps/README.md#web-requests).

@@ -495,24 +495,6 @@ async fn error_kind_reads_our_strings_only() {
 }
 
 /// The server drops the connection with part of the body sent.
-#[tokio::test]
-async fn a_connection_dropped_mid_body_is_connection_lost() {
-    let port = listen(|mut stream| async move {
-        let _ = read_request(&mut stream).await;
-        let _ = stream
-            .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 100\r\n\r\nonly ten b")
-            .await;
-        // dropped here: the body is 10 bytes of 100
-    })
-    .await;
-    let lua = engine().await;
-    let out = run(
-        &lua,
-        &format!(r#"return (failed(hyper.get("http://127.0.0.1:{port}/")))"#),
-    )
-    .await;
-    assert_eq!(out, "connection_lost");
-}
 
 // ---------------------------------------------------------------------------
 // timeouts
@@ -1307,13 +1289,14 @@ async fn a_caller_set_host_replaces_the_built_in_one_and_the_default_port_is_lef
     assert_eq!(log[1].header("host"), [format!("127.0.0.1:{port}")]);
 }
 
-/// A header the server sends twice is one value joined with ", " (as the Fetch standard's `Headers.get`), and a value
-/// that is not UTF-8 is decoded with replacement characters: neither is dropped.
+/// A header the server sends twice is one value joined with ", " (as the Fetch standard's `Headers.get`), `set-cookie`
+/// with "\n" so cookies holding a comma split back apart, and a value that is not UTF-8 is decoded with replacement
+/// characters: nothing is dropped.
 #[tokio::test]
 async fn response_headers_sent_twice_or_not_utf8_are_kept() {
     let port = listen(|mut stream| async move {
         let _ = read_request(&mut stream).await;
-        let out = b"HTTP/1.1 200 OK\r\nset-cookie: a=1\r\nSet-Cookie: b=2\r\nx-name: caf\xe9\r\nx-utf8: caf\xc3\xa9\r\ncontent-length: 2\r\n\r\nok".to_vec();
+        let out = b"HTTP/1.1 200 OK\r\nset-cookie: a=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT\r\nSet-Cookie: b=2\r\nx-list: one\r\nx-list: two\r\nx-name: caf\xe9\r\nx-utf8: caf\xc3\xa9\r\ncontent-length: 2\r\n\r\nok".to_vec();
         let _ = stream.write_all(&out).await;
     })
     .await;
@@ -1323,11 +1306,16 @@ async fn response_headers_sent_twice_or_not_utf8_are_kept() {
         &format!(
             r#"local r, e = hyper.get("http://127.0.0.1:{port}/")
                assert(r, e)
-               return r.headers["set-cookie"] .. "|" .. r.headers["x-name"] .. "|" .. r.headers["x-utf8"]"#
+               local cookies = {{}}
+               for cookie in r.headers["set-cookie"]:gmatch("[^\n]+") do cookies[#cookies + 1] = cookie end
+               return #cookies .. "|" .. cookies[1] .. "|" .. r.headers["x-list"] .. "|" .. r.headers["x-name"] .. "|" .. r.headers["x-utf8"]"#
         ),
     )
     .await;
-    assert_eq!(out, "a=1, b=2|caf\u{fffd}|café");
+    assert_eq!(
+        out,
+        "2|a=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT|one, two|caf\u{fffd}|café"
+    );
 }
 
 #[tokio::test]
@@ -1512,6 +1500,183 @@ async fn shutting_the_engine_down_closes_the_connection_of_a_waiting_request() {
         .expect("the call ended")
         .expect("task");
     assert_eq!(kind, "connection_lost");
+}
+
+/// What the server does after it has written the start of a response.
+#[derive(Clone, Copy)]
+enum Then {
+    /// Closes the connection.
+    Close,
+    /// Keeps it open and silent.
+    Hold,
+    /// Sends one more byte of a chunked body every 30 ms, for ever.
+    Trickle,
+}
+
+/// What the test does to the engine once the start of the body has been written.
+#[derive(Clone, Copy)]
+enum Engine {
+    Nothing,
+    StopBackground,
+    Shutdown,
+}
+
+/// Invariant: a response body reaches the script whole, or the call fails with a kind that says why; a body that
+/// ended early is never returned as if it were complete. One row per way a body ends early: the server closing
+/// before its `Content-Length`, a chunked body cut mid-chunk or between chunks (before the terminating chunk), the
+/// idle timeout or the whole-request timeout firing mid-body, the cap reached, and the engine aborting the
+/// connection's driver (hyper ends a body the same way then as when it is complete). A call the caller abandons
+/// returns nothing to anyone (`dropping_a_waiting_request_closes_its_connection`), and a redirect's body is never
+/// read at all (`a_redirect_with_a_body_over_the_cap_is_followed_without_reading_it`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_body_that_ends_early_is_an_error_never_a_short_body() {
+    const CHUNKED: &[u8] = b"HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n";
+    // (name, the head written, the start of the body, then, options, what the engine does, the kind)
+    type Row = (
+        &'static str,
+        &'static [u8],
+        &'static [u8],
+        Then,
+        &'static str,
+        Engine,
+        &'static str,
+    );
+    let cases: [Row; 9] = [
+        (
+            "closed before its length",
+            b"HTTP/1.1 200 OK\r\ncontent-length: 100\r\n\r\n",
+            b"only ten b",
+            Then::Close,
+            "{}",
+            Engine::Nothing,
+            "connection_lost",
+        ),
+        (
+            "chunked, closed mid-chunk",
+            CHUNKED,
+            b"8\r\npart",
+            Then::Close,
+            "{}",
+            Engine::Nothing,
+            "connection_lost",
+        ),
+        (
+            "chunked, closed between chunks",
+            CHUNKED,
+            b"4\r\npart\r\n",
+            Then::Close,
+            "{}",
+            Engine::Nothing,
+            "connection_lost",
+        ),
+        (
+            "idle timeout mid-body",
+            b"HTTP/1.1 200 OK\r\ncontent-length: 100\r\n\r\n",
+            b"part",
+            Then::Hold,
+            "{ idle_timeout = 0.3 }",
+            Engine::Nothing,
+            "timed_out",
+        ),
+        (
+            "whole-request timeout mid-body",
+            CHUNKED,
+            b"4\r\npart\r\n",
+            Then::Trickle,
+            "{ timeout = 0.4 }",
+            Engine::Nothing,
+            "timed_out",
+        ),
+        (
+            "the cap",
+            CHUNKED,
+            b"4\r\npart\r\n",
+            Then::Trickle,
+            "{ max_body = 6 }",
+            Engine::Nothing,
+            "too_large",
+        ),
+        (
+            "engine stops its background work, chunked",
+            CHUNKED,
+            b"4\r\npart\r\n",
+            Then::Hold,
+            "{}",
+            Engine::StopBackground,
+            "connection_lost",
+        ),
+        (
+            "engine shuts down, with a length",
+            b"HTTP/1.1 200 OK\r\ncontent-length: 100\r\n\r\n",
+            b"part",
+            Then::Hold,
+            "{}",
+            Engine::Shutdown,
+            "connection_lost",
+        ),
+        (
+            "engine shuts down, chunked",
+            CHUNKED,
+            b"4\r\npart\r\n",
+            Then::Hold,
+            "{}",
+            Engine::Shutdown,
+            "connection_lost",
+        ),
+    ];
+    for (name, head, part, then, opts, action, want) in cases {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let port = listen(move |mut stream| {
+            let tx = tx.clone();
+            async move {
+                let _ = read_request(&mut stream).await;
+                let _ = stream.write_all(head).await;
+                let _ = stream.write_all(part).await;
+                let _ = tx.send(());
+                match then {
+                    Then::Close => {}
+                    Then::Hold => {
+                        let mut sink = [0_u8; 64];
+                        while matches!(stream.read(&mut sink).await, Ok(n) if n > 0) {}
+                    }
+                    Then::Trickle => {
+                        while stream.write_all(b"1\r\nx\r\n").await.is_ok() {
+                            tokio::time::sleep(Duration::from_millis(30)).await;
+                        }
+                    }
+                }
+            }
+        })
+        .await;
+        let lua = engine().await;
+        let call = {
+            let lua = lua.clone();
+            tokio::spawn(async move {
+                run(
+                    &lua,
+                    &format!(
+                        r#"local kind, e = failed(hyper.get("http://127.0.0.1:{port}/", {opts}))
+                                return kind"#
+                    ),
+                )
+                .await
+            })
+        };
+        // the start of the body was written; whether the client has read it yet or not, the body is cut
+        rx.recv()
+            .await
+            .expect("the server wrote the start of the body");
+        match action {
+            Engine::Nothing => {}
+            Engine::StopBackground => Life::of(&lua).stop_background(),
+            Engine::Shutdown => Life::of(&lua).shutdown(),
+        }
+        let kind = tokio::time::timeout(Duration::from_secs(10), call)
+            .await
+            .unwrap_or_else(|_| panic!("{name}: the call did not end"))
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(kind, want, "{name}");
+    }
 }
 
 /// A call that is dropped (its caller gave up) closes its connection.
