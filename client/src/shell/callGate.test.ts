@@ -53,7 +53,8 @@ describe('the call gate', () => {
     expect(answers.filter((a) => a === 'refused').length).toBe(0)
     expect(meter.done).toBe(5000)
     expect(meter.peak).toBeLessThanOrEqual(8)
-  })
+    // 625 rounds of timers: Windows fires a timer on its 15.6 ms clock tick, so the run takes about ten seconds there
+  }, 30_000)
 
   test('all frames together never exceed the total, so the shell’s own calls keep their slots', async () => {
     const gate = createCallGate({ total: 12, perFrame: 8, maxWaiting: 1000 })

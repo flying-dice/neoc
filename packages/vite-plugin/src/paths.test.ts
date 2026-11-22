@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { inside, refuseRelativeFile } from './paths.ts'
+import { canLink } from './test-support.ts'
 
 describe('a file name from the contract', () => {
   test('plain relative names are fine', () => {
@@ -18,7 +19,7 @@ describe('a file name from the contract', () => {
 })
 
 describe('resolving inside a root', () => {
-  test('stays inside, whatever the name, and follows no symbolic link out', () => {
+  test.skipIf(!canLink)('stays inside, whatever the name, and follows no symbolic link out', () => {
     const root = mkdtempSync(join(tmpdir(), 'vos-paths-'))
     const outside = mkdtempSync(join(tmpdir(), 'vos-outside-'))
     try {

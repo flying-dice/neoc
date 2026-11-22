@@ -44,15 +44,22 @@ async fn a_file_must_be_a_regular_file_within_the_cap() {
     let dir = temp_dir("files");
     std::fs::write(dir.join("small.lua"), "return 1").unwrap();
     std::fs::write(dir.join("big.lua"), vec![b'x'; 5000]).unwrap();
-    let fifo = dir.join("pipe");
-    assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+    // a FIFO and the devices are Unix's; on Windows the directory is the one thing here that is not a file
+    #[cfg(unix)]
+    let not_files = {
+        let fifo = dir.join("pipe");
+        assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+        [fifo, "/dev/zero".into(), "/dev/null".into(), dir.clone()]
+    };
+    #[cfg(not(unix))]
+    let not_files = [dir.clone()];
     let f = UrlFetcher::new(1024).unwrap();
     let url = |p: &std::path::Path| format!("file://{}", p.display());
 
     assert_eq!(quickly(f.fetch(&url(&dir.join("small.lua")))).await.unwrap(), b"return 1");
     assert!(rejected(quickly(f.fetch(&url(&dir.join("big.lua")))).await).contains("larger than"));
     // a FIFO would block the host forever on open; a device would never end; a directory is not a file
-    for not_a_file in [fifo, "/dev/zero".into(), "/dev/null".into(), dir.clone()] {
+    for not_a_file in not_files {
         let why = rejected(quickly(f.fetch(&url(&not_a_file))).await);
         assert!(why.contains("not a regular file"), "{not_a_file:?}: {why}");
     }

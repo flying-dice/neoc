@@ -9,6 +9,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFile
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { findTool } from './find-tool.ts'
 import { contained, inside, migrationOutput } from './paths.ts'
 import type { Definition } from './definition.ts'
 
@@ -19,10 +20,7 @@ export const DARKLUA_VERSION = '0.18.0'
 const DARKLUA_CONFIG = fileURLToPath(new URL('../darklua.json', import.meta.url))
 
 function findDarklua(): string | undefined {
-  const which = spawnSync('which', ['darklua'], { encoding: 'utf8' })
-  if (which.status === 0 && which.stdout.trim()) return which.stdout.trim()
-  const cargo = join(homedir(), '.cargo/bin/darklua')
-  return existsSync(cargo) ? cargo : undefined
+  return findTool('darklua', join(homedir(), '.cargo/bin/darklua'))
 }
 
 /** The pinned darklua, or an error that says how to install it. */

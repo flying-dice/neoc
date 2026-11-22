@@ -89,13 +89,21 @@ fn flatten(e: &mlua::Error) -> (String, Option<String>) {
 const NOT_A_MESSAGE: &str = "the script raised a value that is not a message";
 
 /// Whether `message` is Lua's own text for such a value (`table: 0x600000a44200`): the address of a host object, which no
-/// client or agent is ever told.
+/// client or agent is ever told. The address is C's `%p`: `0x` and hex digits on Linux and macOS, and on Windows the
+/// whole pointer in hex with no prefix (`table: 0000025328FAFCF0`).
 fn is_value_address(message: &str) -> bool {
+    /// The hex digits of a pointer printed whole: 8 on a 32-bit host, 16 on a 64-bit one.
+    const WHOLE_POINTER: [usize; 2] = [8, 16];
     ["table", "function", "userdata", "thread", "buffer", "vector"].iter().any(|kind| {
-        message
-            .strip_prefix(kind)
-            .and_then(|rest| rest.strip_prefix(": 0x"))
-            .is_some_and(|hex| !hex.is_empty() && hex.bytes().all(|b| b.is_ascii_hexdigit()))
+        message.strip_prefix(kind).and_then(|rest| rest.strip_prefix(": ")).is_some_and(|address| {
+            let (hex, bare) = match address.strip_prefix("0x") {
+                Some(hex) => (hex, false),
+                None => (address, true),
+            };
+            !hex.is_empty()
+                && hex.bytes().all(|b| b.is_ascii_hexdigit())
+                && (!bare || WHOLE_POINTER.contains(&hex.len()))
+        })
     })
 }
 
@@ -125,10 +133,25 @@ mod tests {
 
     #[test]
     fn a_value_that_is_not_a_message_never_shows_its_address() {
-        for text in ["table: 0x600000a44200", "function: 0x1", "userdata: 0xdeadBEEF", "thread: 0x10"] {
+        for text in [
+            "table: 0x600000a44200",
+            "function: 0x1",
+            "userdata: 0xdeadBEEF",
+            "thread: 0x10",
+            "table: 0000025328FAFCF0",
+            "function: 00A1B2C3",
+        ] {
             assert!(is_value_address(text), "{text}");
         }
-        for text in ["table: 0x", "table: 0xzz", "a table: 0x1", "boom", "table: nil", "table: 12"] {
+        for text in [
+            "table: 0x",
+            "table: 0xzz",
+            "a table: 0x1",
+            "boom",
+            "table: nil",
+            "table: 12",
+            "table: 12345678 rows",
+        ] {
             assert!(!is_value_address(text), "{text}");
         }
     }

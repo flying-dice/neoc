@@ -277,8 +277,7 @@ async fn a_handler_that_raises_a_value_that_is_not_a_message_never_sends_its_add
         else {
             panic!("{handler}: rejected");
         };
-        assert!(!message.contains("0x"), "{handler}: {message}");
-        assert!(message.contains("not a message"), "{handler}: {message}");
+        assert!(message.ends_with("the script raised a value that is not a message"), "{handler}: {message}");
     }
 }
 

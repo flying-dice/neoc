@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
+import { findTool } from './find-tool.ts'
 
 /** The luau-lsp release the declarations are written for (its messages change between releases). */
 export const LUAU_LSP_VERSION = '1.70.1'
@@ -31,12 +32,6 @@ function missing(check: string, message: string): never {
   process.exit(0)
 }
 
-function onPath(name: string, ...extra: string[]): string | undefined {
-  const which = spawnSync('which', [name], { encoding: 'utf8' })
-  if (which.status === 0 && which.stdout.trim()) return which.stdout.trim()
-  return extra.find((candidate) => existsSync(candidate))
-}
-
 /** The Luau files of a project: every `.luau` outside `node_modules`, `dist` and hidden folders. */
 export function luauFiles(project: string): string[] {
   const found: string[] = []
@@ -47,7 +42,8 @@ export function luauFiles(project: string): string[] {
       if (name.startsWith('build-') && relative(project, dir) === '.app') continue
       const path = join(dir, name)
       if (statSync(path).isDirectory()) walk(path)
-      else if (name.endsWith('.luau')) found.push(relative(project, path))
+      // `/` between folders on every platform, as the callers and luau-lsp's findings name a file
+      else if (name.endsWith('.luau')) found.push(relative(project, path).replaceAll('\\', '/'))
     }
   }
   walk(project)
@@ -69,7 +65,8 @@ export function findDefinitions(project: string): string {
 /** The findings of luau-lsp's plain output: `path:line:col: (W0) Kind: message`, a message continuing on the lines after. */
 export function parseFindings(output: string): string[] {
   const findings: string[] = []
-  for (const line of output.split('\n')) {
+  // `\r?\n`: on Windows luau-lsp ends its lines with `\r\n`
+  for (const line of output.split(/\r?\n/)) {
     if (line === '' || line.startsWith('[INFO]')) continue
     if (/^\S.*:\d+:\d+(-\d+)?: \(\w+\) /.test(line)) findings.push(line)
     else if (findings.length > 0) findings[findings.length - 1] += `\n${line}`
@@ -104,7 +101,7 @@ function offeredModules(definitions: string): Set<string> {
 export function analyze(project: string, mode: 'exit' | 'throw' = 'exit'): { files: string[]; findings: string[] } {
   // `VOS_LUAU_LSP` names the binary to use (a path that does not exist is a missing tool), else it is found on the PATH
   const named = process.env.VOS_LUAU_LSP
-  const luauLsp = named ? (existsSync(named) ? named : undefined) : onPath('luau-lsp', join(homedir(), '.local/bin/luau-lsp'))
+  const luauLsp = named ? (existsSync(named) ? named : undefined) : findTool('luau-lsp',join(homedir(), '.local/bin/luau-lsp'))
   if (!luauLsp) {
     const message = `luau-lsp not found: install the ${LUAU_LSP_VERSION} release binary from https://github.com/JohnnyMorganz/luau-lsp/releases/tag/${LUAU_LSP_VERSION} (on PATH or in ~/.local/bin)`
     if (mode === 'throw') throw new ToolMissing(message)
@@ -144,7 +141,8 @@ export function analyze(project: string, mode: 'exit' | 'throw' = 'exit'): { fil
     writeFileSync(bare, withoutRequire(definitions))
     const second = run(bare).filter((finding) => {
       const m = /TypeError: Unknown require: (.*)$/m.exec(finding)
-      return !m || !offered.has(((m[1] ?? '').split('/').pop() ?? '').replace(/\.luau?$/, ''))
+      // the path luau-lsp names is the platform's own: `\` between folders on Windows
+      return !m || !offered.has(((m[1] ?? '').split(/[\\/]/).pop() ?? '').replace(/\.luau?$/, ''))
     })
     const seen = new Set<string>()
     for (const finding of [...first, ...second]) {
@@ -161,7 +159,7 @@ export function analyze(project: string, mode: 'exit' | 'throw' = 'exit'): { fil
 
 /** StyLua over the project's own Luau (not the generated files in `.app/`). `write` formats, else it checks. */
 export function stylua(project: string, write: boolean): boolean {
-  const tool = onPath('stylua', join(homedir(), '.cargo/bin/stylua'))
+  const tool = findTool('stylua',join(homedir(), '.cargo/bin/stylua'))
   if (!tool) missing('stylua', 'stylua not found (cargo install stylua --features luau)')
   const files = luauFiles(project).filter((f) => !f.startsWith('.app/'))
   if (files.length === 0) return true

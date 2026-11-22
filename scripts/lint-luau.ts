@@ -38,6 +38,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { findTool } from '../packages/vite-plugin/src/find-tool.ts'
 import { skipTool } from './gate'
 
 const root = resolve(import.meta.dir, '..')
@@ -138,7 +139,8 @@ export function markerCount(name: string, source: string): number {
 export function parseAnalysis(output: string, files: string[]): Map<string, Finding[]> {
   const raw = new Map<string, { line: number; message: string }[]>()
   let last: { line: number; message: string } | undefined
-  for (const line of output.split('\n')) {
+  // `\r?\n`: on Windows luau-lsp ends its lines with `\r\n`
+  for (const line of output.split(/\r?\n/)) {
     if (line === '' || line.startsWith('[INFO]')) continue
     if (line.startsWith('[ERROR]') || line.includes('vos.d.luau')) {
       throw new Error(`luau-lsp could not use ${DEFINITIONS}: ${line}`)
@@ -198,7 +200,8 @@ export function dropKnownUnknownRequires(findings: Finding[], offered: Set<strin
   return findings.filter((f) => {
     const m = /^TypeError: Unknown require: (.*)$/.exec(f.primary)
     if (!m) return true
-    const name = (m[1] ?? '').split('/').pop()?.replace(/\.luau?$/, '') ?? ''
+    // the path luau-lsp names is the platform's own: `\` between folders on Windows
+    const name = (m[1] ?? '').split(/[\\/]/).pop()?.replace(/\.luau?$/, '') ?? ''
     return !offered.has(name)
   })
 }
@@ -225,7 +228,11 @@ export function allowedRequire(name: string, offered: Set<string>): boolean {
 function listSources(): { positive: string[]; negative: string[] } {
   const all = new Set<string>()
   for (const pattern of SOURCES) {
-    for (const file of new Glob(pattern).scanSync({ cwd: root })) if (!SKIP.test(`/${file}`)) all.add(file)
+    // `/` between folders on every platform (a scan on Windows gives `\`), as luau-lsp's findings name a file
+    for (const found of new Glob(pattern).scanSync({ cwd: root })) {
+      const file = found.replaceAll('\\', '/')
+      if (!SKIP.test(`/${file}`)) all.add(file)
+    }
   }
   const sorted = [...all].sort()
   return {
@@ -235,10 +242,7 @@ function listSources(): { positive: string[]; negative: string[] } {
 }
 
 function findLuauLsp(): string | undefined {
-  const which = spawnSync('which', ['luau-lsp'], { encoding: 'utf8' })
-  if (which.status === 0 && which.stdout.trim()) return which.stdout.trim()
-  const local = join(homedir(), '.local/bin/luau-lsp')
-  return existsSync(local) ? local : undefined
+  return findTool('luau-lsp', join(homedir(), '.local/bin/luau-lsp'))
 }
 
 function main(): void {

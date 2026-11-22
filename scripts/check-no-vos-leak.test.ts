@@ -21,7 +21,8 @@ afterAll(() => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true })
 })
 
-describe('the no-vos-leak check', () => {
+// the script is bash and its stub `cargo` a shell script first on a `:` PATH: Unix only (on Windows `bash` is WSL's)
+describe.skipIf(process.platform === 'win32')('the no-vos-leak check', () => {
   test('passes on a tree without a vos crate', () => {
     expect(run('neoc v0.1.0\nneoc-vm v0.1.0\nmlua v0.12.2', 0).status).toBe(0)
   })

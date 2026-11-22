@@ -385,7 +385,9 @@ mod tests {
         std::fs::write(root.join("dist/apps/registry.json"), r#"{"apps":[]}"#).unwrap();
         let found = s.catalog(&root);
         assert_eq!(found.len(), 1, "{found:?}");
-        assert!(found[0].starts_with("file://") && found[0].ends_with("dist/apps/registry.json"));
+        // the path is the platform's own (`\` between folders on Windows), so it is compared as a path
+        let path = found[0].strip_prefix("file://").map(Path::new);
+        assert!(path.is_some_and(|p| p.ends_with("dist/apps/registry.json")), "{found:?}");
         let configured = Settings { registries: vec!["https://apps.example.org/registry.json".into()], ..s };
         assert_eq!(configured.catalog(&root), ["https://apps.example.org/registry.json"]);
         let _ = std::fs::remove_dir_all(root);

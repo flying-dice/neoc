@@ -19,9 +19,10 @@
  * Unlike the lint tools, building cannot skip when darklua is missing: the output is what the host runs.
  */
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { findTool } from '../packages/vite-plugin/src/find-tool.ts'
 
 export const root = resolve(import.meta.dir, '..')
 
@@ -32,10 +33,7 @@ const CONFIG = join(root, '.darklua.json')
 
 /** `darklua` on PATH or at ~/.cargo/bin/darklua. */
 export function findDarklua(): string | undefined {
-  const which = spawnSync('which', ['darklua'], { encoding: 'utf8' })
-  if (which.status === 0 && which.stdout.trim()) return which.stdout.trim()
-  const cargo = join(homedir(), '.cargo/bin/darklua')
-  return existsSync(cargo) ? cargo : undefined
+  return findTool('darklua', join(homedir(), '.cargo/bin/darklua'))
 }
 
 /** The pinned darklua, or a clear failure (message and exit code 1) when it is missing or another version. */

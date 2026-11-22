@@ -67,6 +67,20 @@ impl HostProcess {
         panic!("no line containing {needle:?} within 20s");
     }
 
+    /// Ask the host to stop with the signal `name` and hold it to a clean exit. Windows has no signals to send a
+    /// process: there the host is only ended (by `Drop`), and the clean shutdown is checked on Unix.
+    #[cfg(unix)]
+    fn stops_cleanly_on(mut self, name: &str) {
+        self.signal(name);
+        assert!(self.wait_for_exit().success(), "SIG{name} is a clean shutdown");
+    }
+
+    #[cfg(not(unix))]
+    fn stops_cleanly_on(self, _name: &str) {
+        drop(self);
+    }
+
+    #[cfg(unix)]
     fn wait_for_exit(&mut self) -> std::process::ExitStatus {
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
@@ -78,6 +92,7 @@ impl HostProcess {
         }
     }
 
+    #[cfg(unix)]
     fn signal(&self, name: &str) {
         let status =
             Command::new("kill").arg(format!("-{name}")).arg(self.child.id().to_string()).status().unwrap();
@@ -111,7 +126,7 @@ fn base_url(host: &HostProcess) -> String {
 #[tokio::test]
 async fn the_host_prints_a_code_writes_mcp_json_pairs_a_device_and_stops_on_sigterm() {
     let data = temp_dir("serve");
-    let mut host = spawn_host(&data);
+    let host = spawn_host(&data);
     let base = base_url(&host);
     let code = code_in(&host.line_with("Pairing code:"));
 
@@ -153,18 +168,17 @@ async fn the_host_prints_a_code_writes_mcp_json_pairs_a_device_and_stops_on_sigt
         .unwrap();
     assert_eq!(res.status(), 200);
 
-    host.signal("TERM");
-    assert!(host.wait_for_exit().success(), "SIGTERM is a clean shutdown");
+    host.stops_cleanly_on("TERM");
     let _ = std::fs::remove_dir_all(data);
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn sigint_stops_the_host_cleanly_too() {
     let data = temp_dir("sigint");
-    let mut host = spawn_host(&data);
+    let host = spawn_host(&data);
     host.line_with("Pairing code:");
-    host.signal("INT");
-    assert!(host.wait_for_exit().success());
+    host.stops_cleanly_on("INT");
     let _ = std::fs::remove_dir_all(data);
 }
 
@@ -268,9 +282,7 @@ async fn the_first_start_after_the_rename_moves_the_old_data_directory_and_its_p
         .unwrap();
     assert_eq!(res.status(), 200, "the pairing state moved with the directory");
 
-    host.signal("TERM");
-    let mut host = host;
-    assert!(host.wait_for_exit().success());
+    host.stops_cleanly_on("TERM");
     let _ = std::fs::remove_dir_all(home);
 }
 

@@ -10,6 +10,7 @@ import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { build } from 'vite'
 import { vos, type Options } from './index.ts'
+import { canLink } from './test-support.ts'
 
 const repository = resolve(import.meta.dir, '../../..')
 const luauLsp = Bun.which('luau-lsp') ?? (existsSync(join(homedir(), '.local/bin/luau-lsp')) ? 'installed' : null)
@@ -266,7 +267,7 @@ describe.skipIf(luauLsp === null)('migrations and the output', () => {
     }
   })
 
-  test('a link to another file of the project is that file, and one that leads out is refused naming where it leads', async () => {
+  test.skipIf(!canLink)('a link to another file of the project is that file, and one that leads out is refused naming where it leads', async () => {
     const parent = mkdtempSync(join(tmpdir(), 'vos-plugin-link-'))
     try {
       const dir = join(parent, 'app')

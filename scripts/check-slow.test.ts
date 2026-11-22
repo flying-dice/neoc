@@ -85,7 +85,8 @@ afterAll(() => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true })
 })
 
-describe('the slow-suite selection', () => {
+// the script is bash and its stub `cargo` a shell script first on a `:` PATH: Unix only (on Windows `bash` is WSL's)
+describe.skipIf(process.platform === 'win32')('the slow-suite selection', () => {
   test('selects every slow: test and leaves out the baseline measurement', () => {
     const r = list(IGNORED)
     expect(r.status).toBe(0)
