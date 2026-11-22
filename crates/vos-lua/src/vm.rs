@@ -283,8 +283,8 @@ impl Shared {
     }
 
     /// Queue a notification. Each call may have at most [`MAX_QUEUED_NOTIFICATIONS`] waiting for the host (the
-    /// runtime takes them when a call ends, and when a background call pauses at a wait), so a call that loops on
-    /// `app.notify` raises instead of growing the queue without bound. The count is the calling turn's own: what
+    /// runtime takes the whole queue when any call of the app ends, and when a task or request handler pauses at a
+    /// wait), so a call that loops on `app.notify` raises instead of growing the queue without bound. The count is the calling turn's own: what
     /// another call queued while this one was parked does not count against it.
     pub fn push_notification(&self, notification: Notification) -> mlua::Result<()> {
         let mut effects = self.effects.lock();
@@ -292,7 +292,8 @@ impl Shared {
         let queued = counts.entry(lifecycle::turn_id().unwrap_or(0)).or_default();
         if *queued >= MAX_QUEUED_NOTIFICATIONS {
             return Err(mlua::Error::runtime(format!(
-                "app.notify: this call already has {MAX_QUEUED_NOTIFICATIONS} notifications waiting to be delivered"
+                "app.notify: this call already has {MAX_QUEUED_NOTIFICATIONS} notifications waiting to be delivered; \
+                 combine them into one notification"
             )));
         }
         *queued += 1;

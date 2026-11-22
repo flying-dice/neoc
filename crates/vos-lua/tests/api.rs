@@ -595,14 +595,15 @@ async fn one_call_queues_at_most_64_notifications() {
     vm.emit("burst", json!(64)).await.unwrap();
     assert_eq!(vm.take_effects().len(), 64);
     let e = vm.emit("burst", json!(65)).await.unwrap_err().to_string();
-    assert!(e.contains("app.notify: this call already has 64 notifications waiting to be delivered"), "{e}");
+    assert!(e.contains("app.notify: this call already has 64 notifications waiting to be delivered; combine them into one notification"), "{e}");
     assert_eq!(vm.take_effects().len(), 64);
     vm.emit("burst", json!(1)).await.unwrap();
     assert_eq!(vm.take_effects().len(), 1);
 }
 
 /// The cap is each call's own: what another call queued while this one was parked at a wait does not count
-/// against it, and what it queued itself before the wait still does.
+/// against it. Here, at the VM level, nothing takes the queue (the runtime would, when `b` ends), so this also
+/// shows that a call's own count survives its wait while its notifications are still waiting.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_parked_call_does_not_use_up_another_calls_notifications() {
     let vm = Arc::new(
@@ -634,9 +635,9 @@ async fn a_parked_call_does_not_use_up_another_calls_notifications() {
     // `a` has 40 waiting and is parked: `b` still gets its own 64
     vm.emit("b", json!(null)).await.unwrap();
     vm.emit("go", json!(null)).await.unwrap();
-    // `a`'s own 40 survived the wait: its 25th after it is its 65th, and raises
+    // nothing took the queue, so `a`'s own 40 are still waiting: its 25th after the wait is its 65th, and raises
     let e = a.await.unwrap().unwrap_err().to_string();
-    assert!(e.contains("app.notify: this call already has 64 notifications waiting to be delivered"), "{e}");
+    assert!(e.contains("app.notify: this call already has 64 notifications waiting to be delivered; combine them into one notification"), "{e}");
     assert_eq!(vm.take_effects().len(), 64 + 64);
 }
 

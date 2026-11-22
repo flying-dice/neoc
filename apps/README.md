@@ -74,15 +74,16 @@ semantic tokens only.
   `readOnly = true` is enforced for the `app.*` API (no db, kv, files, state, notify, shell or window writes, no registering
   anything; tasks and requests the call starts inherit it) and lets an agent with the default `auto_read_only` policy call
   the tool without a prompt. It does not cover the `std:`/`vnd:` modules. A tool that writes is not `readOnly`.
-- **Notifications:** `app.notify { title = "Backup done", body = "12 files" }` tells the person something now. It takes a
-  `title` (1 to 200 characters, not blank) and an optional `body` (up to 2000) and no other key; the host sends the app's id
-  with it, so the sender is never text the app wrote. It goes to the clients connected at that moment: one that is not
-  connected never gets it (nothing is queued). Bad input raises, each message starting `app.notify`: no table (`takes a table`), a key other
-  than `title` and `body` (`unknown key`, or `unknown positional entry` for `app.notify { "text" }`), no title (`needs`), a
-  title that is blank or too long, a body that is too long, a value that is not a string, and a call in `render` or a
-  `readOnly` tool. A call may also have at most 64 notifications waiting to be delivered: the host takes them when the
-  call ends, and when a task or request handler waits, so a 65th before then raises (`already has 64 notifications
-  waiting`) and a task that waits between notifications is not capped. `at` and `actions` are type errors too.
+- **Notifications:** `app.notify { title = "Backup done", body = "12 files" }` tells the person something now. It takes
+  a `title` (1 to 200 characters, not blank) and an optional `body` (up to 2000) and no other key; the host sends the
+  app's id with it, so the sender is never text the app wrote. It goes to the clients connected at that moment: one that
+  is not connected never gets it (nothing is queued). Bad input raises, each message starting `app.notify`: no table
+  (`takes a table`), a key other than `title` and `body` (`unknown key`, or `unknown positional entry` for `app.notify {
+  "text" }`), no title (`needs`), a title that is blank or too long, a body that is too long, a value that is not a
+  string, and a call in `render` or a `readOnly` tool. A call may also have at most 64 notifications waiting to be
+  delivered at once (`already has 64 notifications waiting`). The host delivers waiting notifications whenever a call of
+  the app ends or a task or request handler waits, so the limit guards against a runaway loop; it is not a quota to plan
+  around. `at` and `actions` are type errors too.
 - **Background work:** start loops with `task.spawn` from `std:task` and let the entry return (the app is not loaded until
   it does). Closing a window leaves the work running; assigning `app.state` from a task re-renders open windows; unloading
   aborts tasks and closes servers (`crates/vos-host/tests/fixtures/ticker` is an example).

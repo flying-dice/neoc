@@ -1853,8 +1853,9 @@ export type vos_AppApi = {
 	--- Raises (each message starts `app.notify`): no table ("takes a table"), a key other than title and body
 	--- ("unknown key", "unknown positional entry"), no title ("needs"), a title that is blank or over 200
 	--- characters, a body over 2000, a value that is not a string, a call in render or a readOnly tool, and a 65th
-	--- notification while the call's first 64 are still waiting ("already has 64 notifications waiting"). The host
-	--- takes them when the call ends, and when a task or request handler waits, so a task that waits between them is not capped.
+	--- while 64 from the same call are still waiting ("already has 64 notifications waiting"). The host delivers
+	--- waiting notifications whenever a call of the app ends or a task or request handler waits, so the limit
+	--- guards against a runaway loop; it is not a quota to plan around.
 	notify: ((notification: vos_Notification) -> ()) & ((self: vos_AppApi, notification: vos_Notification) -> ()),
 	log: (message: string) -> (),
 }
