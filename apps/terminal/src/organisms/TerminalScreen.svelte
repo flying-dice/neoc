@@ -48,8 +48,9 @@
   let term: Xterm | undefined
 
   /** Give the emulator the keyboard. */
+  /** Take the keyboard, when the page has it: a frame may not focus itself before the person has acted in it. */
   export function focus(): void {
-    term?.focus()
+    if (document.hasFocus()) term?.focus()
   }
 
   // the emulator lives as long as the element; the callbacks are read when they are called, so a new one is used at once
@@ -79,7 +80,7 @@
     observer.observe(element)
 
     onready({ write: (bytes, drawn) => xterm.write(bytes, drawn), reset: () => xterm.reset() }, xterm.rows, xterm.cols)
-    xterm.focus()
+    if (document.hasFocus()) xterm.focus()
 
     return () => {
       observer.disconnect()

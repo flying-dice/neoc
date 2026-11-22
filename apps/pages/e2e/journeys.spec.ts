@@ -10,7 +10,7 @@
  * and the last thing done is to choose this machine's own Docker again.
  */
 import type { FrameLocator, Locator, Page } from '@playwright/test'
-import { expect, expectNoOverflow, frameOf, openDesktop, resizeWindow, test, windowOf } from '../../../e2e/fixtures'
+import { expect, expectNoOverflow, frameOf, openDesktop, openFromHome, resizeWindow, test, windowOf } from '../../../e2e/fixtures'
 import { callTool } from '../../../e2e/host/pair'
 import { startFakeDocker, type FakeDocker } from './fakeDocker'
 
@@ -93,7 +93,7 @@ test.afterAll(async ({ browser }) => {
 test.describe('Pages journeys', () => {
   test('PG1: open Pages from the Dock, choose a Docker, and host a folder on a port of its own', async ({ page }) => {
     await openDesktop(page)
-    await page.getByTestId(`dock-${ID}`).click()
+    await openFromHome(page, ID)
     await expect(windowOf(page, ID)).toBeVisible()
     await openPages(page)
     await expect(part(page, 'empty')).toBeVisible()

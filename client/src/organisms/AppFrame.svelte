@@ -198,10 +198,13 @@
   })
 
   // the frame is going away: the app may wrap up first (`ui/resource-teardown`); the window does not wait for long
+  // Closing the window waits for that (a moment at most): once the frame is out of the page, nothing reaches it.
+  $effect(() =>
+    windowManager.beforeClose(windowId, () => bridge?.teardown('closed', 1000) ?? Promise.resolve())
+  )
   onDestroy(() => {
     clearTimeout(waiting)
-    const going = bridge
-    void going?.teardown('closed', 300).finally(() => going.dispose())
+    bridge?.dispose()
   })
 </script>
 

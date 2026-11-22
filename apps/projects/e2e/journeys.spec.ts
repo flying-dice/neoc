@@ -7,7 +7,7 @@
  * it made by name.
  */
 import type { FrameLocator, Locator, Page } from '@playwright/test'
-import { chooseLayout, expect, expectNoOverflow, frameOf, openDesktop, resizeWindow, test, windowOf } from '../../../e2e/fixtures'
+import { chooseLayout, expect, expectNoOverflow, frameOf, openDesktop, openFromHome, resizeWindow, test, windowOf } from '../../../e2e/fixtures'
 import { callTool } from '../../../e2e/host/pair'
 
 const ID = 'projects'
@@ -56,7 +56,7 @@ test.describe('Projects journeys', () => {
     const name = unique('Website')
     const key = uniqueKey()
     await openDesktop(page)
-    await page.getByTestId(`dock-${ID}`).click()
+    await openFromHome(page, ID)
     await expect(windowOf(page, ID)).toBeVisible()
     await part(page, 'new').click()
     // nothing to add yet: the button cannot be pressed, and that is not an error
@@ -207,7 +207,7 @@ test.describe('Projects journeys', () => {
     await addIssue(page, title)
     await chooseLayout(page, ID, 'close')
     await expect(windowOf(page, ID)).toHaveCount(0)
-    await page.getByTestId(`dock-${ID}`).click()
+    await openFromHome(page, ID)
     await projectRow(page, name).click()
     await expect(card(page, title)).toBeVisible()
     await part(page, 'delete').click()

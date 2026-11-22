@@ -5,7 +5,7 @@
  * Each window holds its own calculator (the backend keeps nothing), so a journey starts from a fresh window.
  */
 import type { FrameLocator, Page } from '@playwright/test'
-import { expect, expectNoOverflow, frameOf, openDesktop, resizeWindow, test, windowOf } from '../../../e2e/fixtures'
+import { expect, expectNoOverflow, frameOf, openDesktop, openFromHome, resizeWindow, test, windowOf } from '../../../e2e/fixtures'
 import { callTool } from '../../../e2e/host/pair'
 
 const ID = 'calculator'
@@ -29,7 +29,7 @@ async function openCalculator(page: Page): Promise<void> {
 test.describe('Calculator journeys', () => {
   test('CW1: open the Calculator from the home screen and do a sum with the mouse', async ({ page }) => {
     await openDesktop(page)
-    await page.getByTestId(`dock-${ID}`).click()
+    await openFromHome(page, ID)
     await expect(windowOf(page, ID)).toBeVisible()
     await expect(display(page)).toHaveText('0')
     await tap(page, ['1', '2', 'add', '7'])

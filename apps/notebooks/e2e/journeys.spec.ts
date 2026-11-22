@@ -6,7 +6,7 @@
  * The notes live on the shared host, so each test names its own (a title no other run has) and finds them by that name.
  */
 import type { FrameLocator, Locator, Page } from '@playwright/test'
-import { chooseLayout, expect, expectNoOverflow, frameOf, openDesktop, resizeWindow, test, windowOf } from '../../../e2e/fixtures'
+import { chooseLayout, expect, expectNoOverflow, frameOf, openDesktop, openFromHome, resizeWindow, test, windowOf } from '../../../e2e/fixtures'
 import { callTool } from '../../../e2e/host/pair'
 
 const ID = 'notebooks'
@@ -51,7 +51,7 @@ async function read(page: Page): Promise<void> {
 test.describe('Notebooks journeys', () => {
   test('NB1: open Notebooks from the Dock and see the notebook', async ({ page }) => {
     await openDesktop(page)
-    await page.getByTestId(`dock-${ID}`).click()
+    await openFromHome(page, ID)
     await expect(windowOf(page, ID)).toBeVisible()
     await expect(part(page, 'notebook')).toContainText('Notebook')
     for (const name of ['new', 'daily', 'switch', 'graph-toggle', 'search']) await expect(part(page, name)).toBeVisible()
@@ -246,7 +246,7 @@ test.describe('Notebooks journeys', () => {
     await write(page, name, 'Still here.')
     await chooseLayout(page, ID, 'close')
     await expect(windowOf(page, ID)).toHaveCount(0)
-    await page.getByTestId(`dock-${ID}`).click()
+    await openFromHome(page, ID)
     await row(page, name).click()
     await expect(editor(page)).toHaveValue('Still here.')
   })

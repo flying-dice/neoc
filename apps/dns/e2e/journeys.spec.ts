@@ -9,7 +9,7 @@
  * that is off with no names, and the last thing done is to choose this machine's own Docker again.
  */
 import type { FrameLocator, Locator, Page } from '@playwright/test'
-import { expect, expectNoOverflow, frameOf, openDesktop, resizeWindow, test, windowOf } from '../../../e2e/fixtures'
+import { expect, expectNoOverflow, frameOf, openDesktop, openFromHome, resizeWindow, test, windowOf } from '../../../e2e/fixtures'
 import { callTool } from '../../../e2e/host/pair'
 import { startFakeDocker, type FakeDocker } from './fakeDocker'
 
@@ -88,7 +88,7 @@ test.afterAll(async ({ browser }) => {
 test.describe('DNS journeys', () => {
   test('DN1: open DNS from the Dock, choose a Docker, and turn the server on', async ({ page }) => {
     await openDesktop(page)
-    await page.getByTestId(`dock-${ID}`).click()
+    await openFromHome(page, ID)
     await expect(windowOf(page, ID)).toBeVisible()
     await openDns(page)
     await expect(part(page, 'empty')).toBeVisible()

@@ -486,7 +486,31 @@ export class WindowManager {
     this.focusedId = null
   }
 
+  // what each window has to finish before it goes (an app's frame telling its page to wrap up)
+  #closing = new Map<string, () => Promise<void>>()
+
+  /**
+   * Register work a window finishes before it is closed: `close` runs it, and the window goes when it settles. The
+   * work must bound itself (the window waits for it). Returns a function that takes the registration back.
+   */
+  beforeClose(id: string, work: () => Promise<void>): () => void {
+    this.#closing.set(id, work)
+    return () => {
+      if (this.#closing.get(id) === work) this.#closing.delete(id)
+    }
+  }
+
   close(id: string): void {
+    const work = this.#closing.get(id)
+    if (work) {
+      // once: a second close while it wraps up, or the close this leads to, removes the window at once
+      this.#closing.delete(id)
+      void work().then(
+        () => this.close(id),
+        () => this.close(id)
+      )
+      return
+    }
     const win = this.windows.find((w) => w.id === id)
     if (!win) return
     this.#detach(win)

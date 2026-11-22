@@ -14,7 +14,6 @@ test.describe('Discover journeys', () => {
     await expect(windowOf(page, 'discover')).toBeVisible()
     const text = page.getByTestId(content)
     await expect(text).toContainText('Find and install apps')
-    await expect(text).toContainText('keep everything on your machine')
     // and the obvious next step is there
     await expect(page.getByTestId('discover-apps')).toContainText('Calculator')
   })

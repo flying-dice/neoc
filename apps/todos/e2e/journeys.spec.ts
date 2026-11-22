@@ -5,7 +5,7 @@
  * The todos live on the shared host, so each test names its own (a title no other run has) and finds them by that name.
  */
 import type { FrameLocator, Locator, Page } from '@playwright/test'
-import { chooseLayout, expect, expectNoOverflow, frameOf, openDesktop, resizeWindow, test, windowOf } from '../../../e2e/fixtures'
+import { chooseLayout, expect, expectNoOverflow, frameOf, openDesktop, openFromHome, resizeWindow, test, windowOf } from '../../../e2e/fixtures'
 import { callTool } from '../../../e2e/host/pair'
 
 const ID = 'todos'
@@ -67,7 +67,7 @@ const today = (page: Page): Promise<string> =>
 test.describe('Todos journeys', () => {
   test('TD1: open Todos from the Dock and see the lists', async ({ page }) => {
     await openDesktop(page)
-    await page.getByTestId(`dock-${ID}`).click()
+    await openFromHome(page, ID)
     await expect(windowOf(page, ID)).toBeVisible()
     for (const smart of Object.keys(SMART)) await expect(part(page, `smart-${smart}`)).toBeVisible()
     await expect(listRow(page, 'Reminders')).toBeVisible()
@@ -170,7 +170,7 @@ test.describe('Todos journeys', () => {
     await add(page, title)
     await chooseLayout(page, ID, 'close')
     await expect(windowOf(page, ID)).toHaveCount(0)
-    await page.getByTestId(`dock-${ID}`).click()
+    await openFromHome(page, ID)
     await show(page, 'all')
     await expect(row(page, title)).toBeVisible()
   })

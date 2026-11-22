@@ -5,7 +5,7 @@
  * The notes live on the shared host, so each test names its own (a title no other run has) and finds them by that name.
  */
 import type { FrameLocator, Locator, Page } from '@playwright/test'
-import { chooseLayout, expect, expectNoOverflow, frameOf, openDesktop, resizeWindow, test, windowOf } from '../../../e2e/fixtures'
+import { chooseLayout, expect, expectNoOverflow, frameOf, openDesktop, openFromHome, resizeWindow, test, windowOf } from '../../../e2e/fixtures'
 import { callTool } from '../../../e2e/host/pair'
 
 const ID = 'notes'
@@ -46,7 +46,7 @@ async function show(page: Page, name: 'all' | 'deleted', title: string): Promise
 test.describe('Notes journeys', () => {
   test('NT1: open Notes from the Dock and see the folders', async ({ page }) => {
     await openDesktop(page)
-    await page.getByTestId(`dock-${ID}`).click()
+    await openFromHome(page, ID)
     await expect(windowOf(page, ID)).toBeVisible()
     await expect(part(page, 'all')).toBeVisible()
     await expect(folderRow(page, 'Notes')).toBeVisible()
@@ -188,7 +188,7 @@ test.describe('Notes journeys', () => {
     await write(page, `${title}\nEvery word of it`)
     await chooseLayout(page, ID, 'close')
     await expect(windowOf(page, ID)).toHaveCount(0)
-    await page.getByTestId(`dock-${ID}`).click()
+    await openFromHome(page, ID)
     await row(page, title).click()
     await expect(text(page)).toHaveValue(`${title}\nEvery word of it`)
   })

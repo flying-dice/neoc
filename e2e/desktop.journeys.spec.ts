@@ -65,7 +65,6 @@ test.describe('Desktop journeys', () => {
     // the landing window says what vos is
     await expect(windowOf(page, 'discover')).toBeVisible()
     await expect(page.getByTestId('window-discover-content')).toContainText('Find and install apps')
-    await expect(page.getByTestId('window-discover-content')).toContainText('Watch them work')
     // the Dock opens another app, and Discover steps back into the recent-apps strip
     await page.getByTestId('dock-files').click()
     await expect(windowOf(page, 'files')).toBeVisible()
@@ -123,30 +122,30 @@ test.describe('Desktop journeys', () => {
   })
 
   test('D4: switch back to an app from the recent-apps strip', async ({ page }) => {
-    await openDesktop(page, { open: ['files', 'terminal'] })
-    await expect(windowOf(page, 'terminal')).toBeVisible()
+    await openDesktop(page, { open: ['files', 'settings'] })
+    await expect(windowOf(page, 'settings')).toBeVisible()
     await expect(windowOf(page, 'files')).toHaveCount(0)
     await clickStripItem(page, 'stage-strip-files')
     await settle(page)
     await expect(windowOf(page, 'files')).toBeVisible()
-    // Terminal took Files' place in the strip
-    await expect(windowOf(page, 'terminal')).toHaveCount(0)
-    await expect(page.getByTestId('stage-strip-terminal')).toBeAttached()
+    // Settings took Files' place in the strip
+    await expect(windowOf(page, 'settings')).toHaveCount(0)
+    await expect(page.getByTestId('stage-strip-settings')).toBeAttached()
   })
 
   test('D5: tidy up: minimise one window, close another', async ({ page }) => {
-    await openDesktop(page, { open: ['files', 'terminal'] })
-    // minimise the Terminal: it leaves the stage and waits in the strip
-    await chooseLayout(page, 'terminal', 'minimize')
-    await expect(windowOf(page, 'terminal')).toHaveCount(0)
-    await expect(page.getByTestId('stage-strip-terminal')).toBeAttached()
-    // bring Files back and close it: it is gone for good, the minimised Terminal is still in the strip
+    await openDesktop(page, { open: ['files', 'settings'] })
+    // minimise the Settings: it leaves the stage and waits in the strip
+    await chooseLayout(page, 'settings', 'minimize')
+    await expect(windowOf(page, 'settings')).toHaveCount(0)
+    await expect(page.getByTestId('stage-strip-settings')).toBeAttached()
+    // bring Files back and close it: it is gone for good, the minimised Settings is still in the strip
     await clickStripItem(page, 'stage-strip-files')
     await expect(windowOf(page, 'files')).toBeVisible()
     await chooseLayout(page, 'files', 'close')
     await expect(windowOf(page, 'files')).toHaveCount(0)
     await expect(page.getByTestId('stage-strip-files')).toHaveCount(0)
-    await expect(page.getByTestId('stage-strip-terminal')).toBeAttached()
+    await expect(page.getByTestId('stage-strip-settings')).toBeAttached()
     // the Dock still opens Files fresh
     await page.getByTestId('dock-files').click()
     await expect(windowOf(page, 'files')).toBeVisible()

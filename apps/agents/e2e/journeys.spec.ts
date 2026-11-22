@@ -6,7 +6,7 @@
  * The chats live on the shared host, so each test starts its own chat and finds it by what it said.
  */
 import type { FrameLocator, Locator, Page } from '@playwright/test'
-import { chooseLayout, expect, expectNoOverflow, frameOf, openDesktop, resizeWindow, test, windowOf } from '../../../e2e/fixtures'
+import { chooseLayout, expect, expectNoOverflow, frameOf, openDesktop, openFromHome, resizeWindow, test, windowOf } from '../../../e2e/fixtures'
 
 const ID = 'agents'
 const frame = (page: Page): FrameLocator => frameOf(page, ID)
@@ -34,9 +34,9 @@ async function say(page: Page, text: string): Promise<void> {
 }
 
 test.describe('Agents journeys', () => {
-  test('AG1: open Agents from the Dock and see who is there', async ({ page }) => {
+  test('AG1: open Agents from the Home Screen and see who is there', async ({ page }) => {
     await openDesktop(page)
-    await page.getByTestId(`dock-${ID}`).click()
+    await openFromHome(page, ID)
     await expect(windowOf(page, ID)).toBeVisible()
     await expect(agentRow(page)).toContainText('Scripted agent')
     await expect(part(page, 'no-chat')).toBeVisible()
@@ -78,7 +78,7 @@ test.describe('Agents journeys', () => {
     await expect(thread(page)).toContainText(`echo: ${said}`)
     await chooseLayout(page, ID, 'close')
     await expect(windowOf(page, ID)).toHaveCount(0)
-    await page.getByTestId(`dock-${ID}`).click()
+    await openFromHome(page, ID)
     await frame(page).getByTestId(/^agents-chat-/).filter({ hasText: said }).click()
     await expect(thread(page)).toContainText(`echo: ${said}`)
   })

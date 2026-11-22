@@ -7,7 +7,7 @@
  * host runs on, so a test can ask the operating system whether a shell's process is still there.
  */
 import type { FrameLocator, Locator, Page } from '@playwright/test'
-import { chooseLayout, expect, frameOf, openDesktop, resizeWindow, test, windowOf } from '../../../e2e/fixtures'
+import { chooseLayout, expect, frameOf, openDesktop, openFromHome, resizeWindow, test, windowOf } from '../../../e2e/fixtures'
 
 const ID = 'terminal'
 const frame = (page: Page): FrameLocator => frameOf(page, ID)
@@ -50,9 +50,9 @@ const alive = (pid: number): boolean => {
 }
 
 test.describe('Terminal journeys', () => {
-  test('TM1: open Terminal from the Dock, type a command and see its output', async ({ page }) => {
+  test('TM1: open Terminal from the Home Screen, type a command and see its output', async ({ page }) => {
     await openDesktop(page)
-    await page.getByTestId(`dock-${ID}`).click()
+    await openFromHome(page, ID)
     await expect(windowOf(page, ID)).toBeVisible()
     await prompted(page)
     await screen(page).click()

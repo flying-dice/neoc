@@ -76,6 +76,7 @@ test.describe('Spotlight journeys', () => {
 
     // Settings is open already: another pane is found and shown in the same window
     await page.getByTestId('status-bar-search').click()
+    await expect(field(page)).toBeFocused()
     await page.keyboard.type('DEVI') // case does not matter
     expect(await results(page)).toEqual(['settings-devices'])
     await result(page, 'settings-devices').click() // a click opens a result too
@@ -178,6 +179,7 @@ test.describe('Spotlight journeys', () => {
     expect(await page.evaluate(() => !!document.activeElement?.closest('[data-testid="home"]'))).toBe(true)
     // on the Home Screen the action is not offered
     await page.getByTestId('home-search').click()
+    await expect(field(page)).toBeFocused()
     await page.keyboard.type('show home')
     await expect(page.getByTestId('spotlight-status')).toHaveText(/results$/i)
     expect(await results(page)).not.toContain('action-home')
