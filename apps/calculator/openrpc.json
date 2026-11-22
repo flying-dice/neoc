@@ -67,17 +67,6 @@
           "$ref": "#/components/schemas/Screen"
         }
       }
-    },
-    {
-      "name": "takeShown",
-      "summary": "The result an agent put on the Calculator (show_on_calculator) that no page has shown yet, as a screen to show, and forget it; nothing when there is none. The page asks on start and when the backend says one arrived.",
-      "params": [],
-      "result": {
-        "name": "shown",
-        "schema": {
-          "$ref": "#/components/schemas/Shown"
-        }
-      }
     }
   ],
   "components": {
@@ -188,15 +177,6 @@
           "caption",
           "clear"
         ]
-      },
-      "Shown": {
-        "type": "object",
-        "description": "What takeShown answers: the screen to show, absent when no agent put anything on the Calculator.",
-        "properties": {
-          "screen": {
-            "$ref": "#/components/schemas/Screen"
-          }
-        }
       }
     }
   }

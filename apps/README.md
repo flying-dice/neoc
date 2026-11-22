@@ -314,7 +314,7 @@ return handlers
   is open (an agent's tool putting something in front of the person). It takes effect when the call ends. An app with a client
   has one window, so it takes no name (`"main"` is the only one accepted). With no shell connected nothing opens and nothing
   fails: an event sent with it reaches nobody, so keep what the page must show with the backend (`app.kv`) and let the page
-  ask for it when it starts, as the Calculator's `show_on_calculator` and `takeShown` do. Not inside a `readOnly` tool.
+  ask for it when it starts. Not inside a `readOnly` tool.
 - **Calls** from a client, a tool and a task all queue behind one another: one runs at a time in an app's VM.
 - **Tools** are separate from handlers (agents call tools over MCP, the client calls handlers):
   `app.tool { name, title, description, readOnly, input, run }` (MCP name `<id>__<name>`, local name `[a-z][a-z0-9_]*`);

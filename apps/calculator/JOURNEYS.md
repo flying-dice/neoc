@@ -1,11 +1,11 @@
 # Calculator: key user journeys
 
 The Calculator is a Vite project (NEOC-298): its client, a Svelte keypad on the kit's `ui-button`, runs in a frame of its window
-or alone on its own page at `/apps/calculator`, and its arithmetic and its agent tools are Luau. The client holds the keypad's
+or alone on its own page at `/apps/calculator`, and its arithmetic and its agent tool are Luau. The client holds the keypad's
 state, so each window and the standalone page have a calculator of their own and a sum is lost when the page closes or
-reloads; what the backend keeps is what an agent did: the history, and a result an agent put on the Calculator that no page
-has shown yet (it appears the next time the Calculator is opened, and a second one replaces it). `crates/vos-lua/tests/calculator.rs`
-holds the keypad to the tables below and tests the tools.
+reloads; the backend keeps
+nothing. `crates/vos-lua/tests/calculator.rs`
+holds the keypad to the tables below and tests the tool.
 
 Each journey is a goal, not a script. Automated versions live in `e2e/journeys.spec.ts` with the same ids, against the real
 host (the e2e host installs the app at start), through the app's frame (`calculator-frame`) or its own page.
@@ -18,7 +18,6 @@ host (the e2e host installs the app at start), through the app's frame (`calcula
 | CW4 | Make a mistake and recover: divide by zero, then a new sum. | The Calculator open. | They saw "Error" with "Can't divide by zero" under it (announced to a screen reader), cleared it and finished a new sum. |
 | CW5 | Use it in a small window: shrink it as far as it goes and do 5 + 5. | The Calculator open. | The window stopped at its minimum (320x500); every key is fully visible, and the display shows 10. |
 | CW6 | Open it on its own: go to `/apps/calculator`, type 6 × 7 straight away, then tap 8 ÷ 2. | A paired browser. | The page is the Calculator full screen (no shell), titled with its name; the keyboard works without a click and shows 42, the keys then show 4; in dark and in light it is the same dark instrument. |
-| CW7 | An agent (over MCP) works out 18% of 2,450 and puts it on the Calculator; later it puts another result there. | The desktop. The Calculator isn't open. | The Calculator opens by itself and shows 441 with the expression above it; the second result appears in the open window without anything being pressed, and the person carries on from it. |
 | CW8 | A mixed sum the way a phone does it: 2 + 3 × 4, then 2 × 3 + 4, by mouse and by keyboard, and the same sums from an agent. | The Calculator open. | The display shows 14 (not 20), then 10, and the `calculate` tool gives the same answers. |
 
 ## How a sum is worked out
@@ -32,7 +31,7 @@ The keypad (`keypad.luau`) and the `calculate` tool run one evaluator (`calc.lua
   typed, the display shows it.
 - **The caption** is the sum so far, in words: `2 + 3 ×` while an operator waits, the whole sum (`2 + 3 × 4`) once `=` is
   pressed. Typing the next number leaves it alone. It is one line: a long chain keeps its last terms behind an ellipsis
-  (`… 3 + 4 + 5`). After an agent's `show_on_calculator` it is the agent's expression.
+  (`… 3 + 4 + 5`).
 - **The operator key** of the waiting operator is `selected` (and `aria-pressed`) until a number is started, or `±` or
   `%` turns the display into one.
 - **`=`** evaluates the whole sum. With an operator waiting, the displayed number is the operand: `5 + =` is 10,
@@ -46,5 +45,4 @@ The keypad (`keypad.luau`) and the `calculate` tool run one evaluator (`calc.lua
   with the same sentence as the tool ("Can't divide by zero"); a divisor still being typed does not fail yet.
 - **`C`** clears the number being typed and leaves the sum going (the display is 0 and the operator stays selected: a
   number or `=` carries on, another operator replaces the waiting one); **`AC`** (nothing typed) drops the whole sum.
-- **A result** is the first number of the next sum (`2 + 3 × 4 =` then `+ 1 × 2 =` is 16), and so is one an agent put
-  there.
+- **A result** is the first number of the next sum (`2 + 3 × 4 =` then `+ 1 × 2 =` is 16).

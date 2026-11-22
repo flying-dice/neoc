@@ -179,15 +179,6 @@ local function apply(s: State, key: string)
   end
 end
 
--- A result put on the calculator from outside (an agent's `show_on_calculator`): the display shows it and the caption
--- says what it is, as after `=`; the sum the person was in the middle of is replaced, and the next key carries on from
--- the result.
-function keypad.shown(value: number, expression: string): Screen
-  local s = keypad.initial()
-  s.value, s.caption = value, string.sub(expression, 1, 200)
-  return keypad.screen(s)
-end
-
 -- What to draw for a state. While the display shows Error, the caption is the reason, and `error` repeats it for the
 -- client to announce.
 function keypad.screen(s: State): Screen
