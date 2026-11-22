@@ -198,18 +198,17 @@ describe.skipIf(luauLsp === null)('a build through the plugin', () => {
 })
 
 describe.skipIf(luauLsp === null)('the host tags', () => {
-  test('a page that names them itself is left as it is, and the author is told to remove theirs', async () => {
+  test('a page that names them itself gets each once, and the author is told to remove theirs', async () => {
     const page =
-      '<!doctype html>\n<html lang="en"><head><title>Probe</title>\n  <link rel="stylesheet" href="/kit/tokens.css">\n  <script src="/kit/kit.js"></script>\n</head><body><div id="root"></div><script type="module" src="/src/main.ts"></script></body></html>\n'
+      '<!doctype html>\n<html lang="en"><head><title>Probe</title>\n  <link rel="stylesheet" href="/kit/tokens.css">\n  <script src="/kit/kit.js"></script>\n  <script src="/apps/bridge.js"></script>\n</head><body><div id="root"></div><script type="module" src="/src/main.ts"></script></body></html>\n'
     const dir = project(files({ 'index.html': page }))
     const warnings: string[] = []
     try {
       expect(await run(dir, {}, warnings)).toBeNull()
       const built = readFileSync(join(dir, 'dist/static/index.html'), 'utf8')
-      // the author's tags are still there, beside the plugin's: the page is never rewritten
-      expect(built).toContain('<link rel="stylesheet" href="/kit/tokens.css">')
-      expect(built.split('/kit/kit.js').length - 1).toBe(2)
-      expect(warnings.filter((w) => w.includes('remove yours') && w.includes('/kit/tokens.css') && w.includes('/kit/kit.js'))).toHaveLength(1)
+      for (const url of ['/kit/tokens.css', '/kit/kit.js', '/apps/bridge.js']) expect(built.split(url).length - 1, url).toBe(1)
+      expect(built).toContain('href="/kit/tokens.css" crossorigin')
+      expect(warnings.filter((w) => w.includes('remove yours'))).toHaveLength(1)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

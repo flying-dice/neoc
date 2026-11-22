@@ -59,12 +59,21 @@ export function hostTags(): HtmlTagDescriptor[] {
 }
 
 /**
- * The host files a page loads by itself (`src="/kit/kit.js"`, `href="/kit/tokens.css"`, `src="/apps/bridge.js"`), which the
- * plugin also injects: they would load twice, so the build tells the author to remove them. The author's page is never
- * rewritten (a pattern cannot safely take a tag out of HTML).
+ * The page without any tag of its own that loads what the plugin injects (the kit's two files, the bridge): an app that
+ * added them by hand gets them once. `removed` names what was taken out, for the build's message.
  */
-export function handWrittenHostTags(html: string): string[] {
-  return [KIT_CSS, KIT_JS, BRIDGE].filter((url) => html.includes(`"${url}"`) || html.includes(`'${url}'`))
+export function withoutHostTags(html: string): { page: string; removed: string[] } {
+  const removed: string[] = []
+  let page = html
+  for (const url of [KIT_CSS, KIT_JS, BRIDGE]) {
+    const escaped = url.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')
+    const tag = new RegExp(`[ \\t]*<(?:link|script)\\b[^>]*\\b(?:href|src)=["']${escaped}["'][^>]*>(?:\\s*</script>)?[ \\t]*\\r?\\n?`, 'gi')
+    if (tag.test(page)) {
+      removed.push(url)
+      page = page.replace(tag, '')
+    }
+  }
+  return { page, removed }
 }
 
 /** Every `.luau` file under `dir` (the backend's modules: the build bundles them, so a change to one rebuilds). */
@@ -148,10 +157,10 @@ export function vos(options: Partial<Options> = {}): Plugin {
       // after Vite's own pass over the page, so it does not try to bundle (and warn about) the host's classic scripts
       order: 'post',
       handler(html) {
-        const named = handWrittenHostTags(html)
-        if (named.length > 0)
-          logger?.warn(`vos: index.html names ${named.join(' and ')} itself; the plugin puts the host's tags into every page, so remove yours (it loads twice until you do)`)
-        return hostTags()
+        const { page, removed } = withoutHostTags(html)
+        if (removed.length > 0)
+          logger?.warn(`vos: index.html names ${removed.join(' and ')} itself; the plugin puts the host's tags into every page, so remove yours (it was left out, not loaded twice)`)
+        return { html: page, tags: hostTags() }
       }
     },
     resolveId(id) {
