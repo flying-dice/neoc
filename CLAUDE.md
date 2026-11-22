@@ -151,7 +151,9 @@ copy, is in git history at `51f47f4`: `git show 51f47f4:docs/architecture/ui-sys
   security boundary). The frame is an `<iframe sandbox="allow-scripts allow-forms">` (an opaque origin, no `allow-same-origin`; `allow-forms` so a form's `submit` event fires; the bridge prevents a submission the app's handlers did not; `form.submit()` and a form in a shadow root still navigate, sending no data (`form-action 'none'`), which the window notices) whose
   document the host serves at `/frame/<app>` with a `Content-Security-Policy` header that allows no request of its own (no
   `connect-src`, nothing external: `crates/vos-http/src/frame.rs`); the policy cannot stop the frame navigating itself
-  (`location.href`), so the window notices a second `load` and says the app left its page; the client's one way out is `postMessage` to the shell, which forwards `rpc(method, args)`
+  (`location.href`), so the window notices a second `load` and says the app left its page (this includes `location.reload()`: the
+  frame's document is session-gated and an opaque origin sends no cookie, so a reload is refused; it changes with the app's files
+  becoming public); the client's one way out is `postMessage` to the shell, which forwards `rpc(method, args)`
   as `app.call { app, method, args }` on `/rpc`. **The app is the frame's, never the message's:** each frame has a bridge made
   for its own app id and its own `contentWindow` (`client/src/shell/frameBridge.ts`), a message is only believed when
   `event.source` is that window, and nothing a client sends names an app. The shell's own code and the kit know nothing of any

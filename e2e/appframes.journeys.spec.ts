@@ -148,7 +148,7 @@ for (const id of FIXTURE_APPS) {
               return 'attempted'
             })(),
             // a form works inside the frame (`allow-forms`): the `submit` event fires, and a handler that prevents the default keeps
-            // the document (an unprevented submission is AF11)
+            // the document (an unprevented submission is AF9)
             formSubmit: await (async () => {
               const form = document.createElement('form')
               form.action = 'http://127.0.0.1:9/'
@@ -185,7 +185,7 @@ for (const id of FIXTURE_APPS) {
       errors.splice(0, errors.length, ...errors.filter((e) => !refused.includes(e)))
     })
 
-    test(`AF9 (${id}): a client that navigates its own frame away is noticed, and the window offers the way back`, async ({ page }) => {
+    test(`AF8 (${id}): a client that navigates its own frame away is noticed, and the window offers the way back`, async ({ page }) => {
       await openDesktop(page, { open: [id] })
       await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()
       // no policy stops a frame navigating itself: the shell sees a document it did not load
@@ -199,7 +199,7 @@ for (const id of FIXTURE_APPS) {
       await expect(page.getByTestId(`${id}-failed`)).toHaveCount(0)
     })
 
-    test(`AF10 (${id}): a form nobody prevented stays on the page; one submitted by script, with no event, sends the frame away and the window notices`, async ({ page, errors }) => {
+    test(`AF9 (${id}): a form nobody prevented stays on the page; one submitted by script, with no event, sends the frame away and the window notices`, async ({ page, errors }) => {
       await openDesktop(page, { open: [id] })
       await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()
       // the bridge prevents a submission the app's handlers did not: the handlers run and the page stays (a dialog form still closes its dialog)
