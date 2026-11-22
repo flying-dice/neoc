@@ -5,6 +5,8 @@
  *
  *   value in FormData, disabled by itself and by a fieldset, required and validity (and the app's own message), reset,
  *   restore, labels, submit by Enter and by a kit button.
+ *
+ * It runs in the embedded frame: sandboxed, opaque origin, the frame's policy, with `allow-forms` as the host sets it.
  */
 import { startFrameServer, type FrameServer } from './frame-server'
 import type { Page } from '@playwright/test'
@@ -99,7 +101,7 @@ const entries = (page: Page): Promise<[string, string][]> =>
 for (const way of WAYS) {
   test.describe(`controls set as ${way}`, () => {
     test.beforeEach(async ({ page }) => {
-      await page.goto(`${server.origin}/standalone`)
+      await page.goto(`${server.origin}/frame`)
       await build(page, way)
     })
 
@@ -306,7 +308,7 @@ for (const way of WAYS) {
 test('a text field takes the attributes of an ordinary input, including a number', async ({
   page
 }) => {
-  await page.goto(`${server.origin}/standalone`)
+  await page.goto(`${server.origin}/frame`)
   const result = await page.evaluate(async () => {
     const field = document.createElement('ui-text-field') as HTMLElement &
       Record<string, unknown> & {

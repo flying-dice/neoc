@@ -9,12 +9,12 @@ import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
 
 const KIT = join(import.meta.dirname, '../../../client/public/kit')
-/** The frame's policy, as the host sends it (NEOC-300). */
+/** The frame's policy, as the host sends it (NEOC-300; `allow-forms` so a native form works in an app, PR #56). */
 export const CSP =
-  "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; sandbox allow-scripts"
+  "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; sandbox allow-scripts allow-forms"
 
 /** The same without the sandbox: a standalone app is an ordinary full-screen page. */
-const CSP_STANDALONE = CSP.replace('; sandbox allow-scripts', '')
+const CSP_STANDALONE = CSP.replace('; sandbox allow-scripts allow-forms', '')
 
 const BODY = `<head>
 <meta charset="utf-8"><title>Kit frame</title>
