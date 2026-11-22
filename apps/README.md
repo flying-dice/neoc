@@ -180,7 +180,10 @@ its page (a `<form method="dialog">` still closes its dialog). Two things still 
 `form-action 'none'` refuses to send data for but cannot keep on the page: `form.submit()` from script (it fires no event) and a form
 inside a shadow root of your own (`submit` does not cross it); the window then says the app left its page. What the policy cannot stop is the frame
 navigating **itself** (`location.href = ...`): the window then shows a page the shell did not load, and says the app left
-its page and offers to open it again (a refused form submission is not that: nothing loads). This is sensible isolation, so apps do not trip over each other
+its page and offers to open it again (a refused form submission is not that: nothing loads). **A client cannot reload its own
+document in this version:** `location.reload()` asks the host for the frame's document again from an opaque origin, which
+carries no session cookie, so the host refuses it, the window says the app left its page and Try again brings the app back;
+this changes with the next pull request, where the app's own files are public. This is sensible isolation, so apps do not trip over each other
 or over the shell; it is not a security boundary. Lasting data belongs in the backend (the frame has no storage).
 
 **Limits of a call.** An `api` call's arguments may be at most 1,000,000 bytes of JSON and 100 levels deep, and a method name is 1 to
