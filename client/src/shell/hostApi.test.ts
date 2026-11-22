@@ -29,8 +29,10 @@ describe('the generated wire types hostApi re-exports', () => {
       'tint',
       'description',
       'window',
-      'source'
+      'source',
+      'client'
     ],
+    AppEvent: ['app', 'name', 'data'],
     AppWindow: ['w', 'h', 'minW', 'minH'],
     AppPreview: [
       'url',

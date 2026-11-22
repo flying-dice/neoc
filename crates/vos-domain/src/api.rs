@@ -1,4 +1,5 @@
-//! The host-management methods on `/rpc`: `app.list`, `app.available`, `app.preview`, `host.devices.list`.
+//! The host-management methods on `/rpc`: `app.list`, `app.available`, `app.preview`, `host.devices.list`, and the
+//! `app.event` notification.
 //!
 //! Next to the view protocol (`ui::protocol`) these are what the shell, not an app window, talks to the host
 //! about. They are plain serde types, so the generated TypeScript (`types/generated/vos.ts`) cannot drift
@@ -65,6 +66,17 @@ wire! {
         pub window: Option<AppWindow>,
         /// Where it was installed from, for people to read ("this computer", "apps.example.org").
         pub source: String,
+        /// The app has a client of its own: its window is a frame that loads `/frame/<id>`. Without one the app
+        /// describes its screens as a view tree (retired by NEOC-298).
+        pub client: bool,
+    }
+
+    /// The `app.event` notification: an app's backend sent `name` and `data` to its open clients (`app.emit`).
+    pub struct AppEvent {
+        pub app: String,
+        pub name: String,
+        #[cfg_attr(feature = "codegen", ts(type = "JsonValue"))]
+        pub data: serde_json::Value,
     }
 
     /// `app.list` result.

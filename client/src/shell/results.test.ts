@@ -14,7 +14,14 @@ const apiAnswering = (result: unknown): HostApi => ({
   onNotification: () => () => undefined
 })
 
-const app = { id: 'notes', name: 'Notes', version: '1.0.0', state: 'running', source: 'file' }
+const app = {
+  id: 'notes',
+  name: 'Notes',
+  version: '1.0.0',
+  state: 'running',
+  source: 'file',
+  client: false
+}
 
 describe('callParsed', () => {
   test('returns the parsed result', async () => {

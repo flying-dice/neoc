@@ -20,11 +20,16 @@
  * The host's default registry is dist/apps/registry.json over file://;
  * with `dev_reload` it rebuilds an app's VM when its files change, so `bun run build:apps` is the dev loop.
  *
- * `app.json` is the package manifest (id, name, version, main, icon, tint, description,
+ * An app with a client (`client` in app.json, the script's name in the app ref) is built with its own package: the
+ * build runs `bun run build` in the app's folder, which writes `dist/client.js`, one classic script that defines
+ * `vosApp.mount(el, { rpc, host })` (see apps/README.md), and that file goes into the app ref with its sha256.
+ *
+ * `app.json` is the package manifest (id, name, version, main, client, window, icon, tint, description,
  * requires, migrations; a `permissions` key from before apps lost their permissions is ignored); the build checks it
  * against the `app.manifest { ... }` the app declares in Luau, so
  * the two cannot disagree about the id, icon or tint.
  */
+import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
@@ -48,6 +53,9 @@ const PackageManifest = z.object({
   icon: z.string().optional(),
   tint: z.string().optional(),
   requires: z.object({ host: z.string().optional() }).optional(),
+  /** The app's client: the one script the host loads into the app's frame (defines `vosApp.mount`). */
+  client: z.string().endsWith('.js').optional(),
+  window: z.object({ w: z.number().int(), h: z.number().int(), minW: z.number().int(), minH: z.number().int() }).optional(),
   migrations: z.array(z.object({ version: z.number().int(), name: z.string(), file: z.string() })).default([])
 })
 
@@ -55,6 +63,21 @@ const PackageManifest = z.object({
 function declared(source: string, field: string): string | undefined {
   const block = source.match(/app\.manifest\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
   return block.match(new RegExp(`\\b${field}\\s*=\\s*"([^"]*)"`))?.[1]
+}
+
+/** Builds an app's client with its own package's `build` script and returns the script it wrote (`dist/client.js`). */
+function buildClient(dir: string, id: string): Buffer {
+  if (!existsSync(join(dir, 'package.json'))) {
+    console.error(`✗ ${id}: app.json names a client, but ${relative(root, dir)} has no package.json with a build script`)
+    process.exit(1)
+  }
+  const result = spawnSync('bun', ['run', 'build'], { cwd: dir, encoding: 'utf8' })
+  const output = join(dir, 'dist/client.js')
+  if (result.status !== 0 || !existsSync(output)) {
+    console.error(`✗ ${id}: the client build failed (bun run build in ${relative(root, dir)}, expecting dist/client.js):\n${result.stdout}${result.stderr}`)
+    process.exit(1)
+  }
+  return readFileSync(output)
 }
 
 const appDirs = [join(root, 'apps'), ...extraRoots]
@@ -96,6 +119,14 @@ for (const dir of appDirs) {
   mkdirSync(dirname(join(target, entry)), { recursive: true })
   writeFileSync(join(target, entry), bundle)
   const refs = [{ path: entry, url: entry, sha256: sha256(bundle) }]
+  if (manifest.client) {
+    // the client is built by the app's own package (`bun run build` in its folder writes dist/client.js): any
+    // framework, one classic script that defines `vosApp.mount(el, { rpc, host })`
+    const built = buildClient(dir, manifest.id)
+    mkdirSync(dirname(join(target, manifest.client)), { recursive: true })
+    writeFileSync(join(target, manifest.client), built)
+    refs.push({ path: manifest.client, url: manifest.client, sha256: sha256(built) })
+  }
   for (const { file } of manifest.migrations) {
     mkdirSync(dirname(join(target, file)), { recursive: true })
     cpSync(join(dir, file), join(target, file))
@@ -111,7 +142,9 @@ for (const dir of appDirs) {
       ...(manifest.icon ? { icon: manifest.icon } : {}),
       ...(manifest.tint ? { tint: manifest.tint } : {}),
       ...(manifest.description ? { description: manifest.description } : {}),
-      ...(manifest.requires ? { requires: manifest.requires } : {})
+      ...(manifest.requires ? { requires: manifest.requires } : {}),
+      ...(manifest.client ? { client: manifest.client } : {}),
+      ...(manifest.window ? { window: manifest.window } : {})
     },
     files: refs
   }

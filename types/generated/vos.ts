@@ -267,8 +267,14 @@ window?: AppWindow,
 /**
  * Where it was installed from, for people to read ("this computer", "apps.example.org").
  */
-source: string, };
+source: string, 
+/**
+ * The app has a client of its own: its window is a frame that loads `/frame/<id>`. Without one the app
+ * describes its screens as a view tree (retired by NEOC-298).
+ */
+client: boolean, };
 export type AppList = { apps: Array<AppSummary>, };
+export type AppEvent = { app: string, name: string, data: JsonValue, };
 export type InstalledInfo = { version: string, state: AppState, };
 export type AppPreview = { 
 /**

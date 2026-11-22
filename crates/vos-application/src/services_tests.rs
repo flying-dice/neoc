@@ -558,3 +558,79 @@ async fn files_over_the_cap_and_packages_over_the_cap_are_refused() {
     let err = f.service().preview(&url).await.unwrap_err();
     assert!(matches!(err, AppError::Domain(DomainError::PackageTooLarge(_))), "{err:?}");
 }
+
+#[tokio::test]
+async fn an_app_with_a_client_keeps_the_verified_bundle_for_its_frame() {
+    let f = Fakes::new();
+    let url = f.add_client_app("tasks", &[], "window.vosApp = { mount() {} }");
+    let svc = f.service();
+    let id = svc.install_from_url(&url).await.unwrap();
+
+    let bundle = svc.client_bundle(&id).unwrap();
+    assert_eq!(&*bundle.bytes, b"window.vosApp = { mount() {} }");
+    assert_eq!(bundle.sha256.len(), 64);
+    let package = f.runtime.package("tasks").unwrap();
+    assert!(package.has_client, "the runtime is told the app has a client: it need not declare itself");
+    assert_eq!(
+        package.files.keys().collect::<Vec<_>>(),
+        vec!["main.lua"],
+        "the client is not a runtime source"
+    );
+
+    let info = svc.apps().remove(0);
+    assert!(info.display.client);
+    assert_eq!(
+        info.display.window.map(|w| (w.w, w.min_w)),
+        Some((420, 320)),
+        "the window comes from app.json"
+    );
+}
+
+#[tokio::test]
+async fn a_tampered_client_is_refused_like_any_file_and_an_app_without_one_has_no_bundle() {
+    let f = Fakes::new();
+    let url = f.add_client_app("tasks", &[], "good");
+    f.fetcher.0.lock().unwrap().insert("mem://tasks/client.js".into(), b"evil".to_vec());
+    let err = f.service().install_from_url(&url).await.unwrap_err();
+    assert!(matches!(err, AppError::Domain(DomainError::ChecksumMismatch { .. })), "{err:?}");
+    assert!(f.installed.records().is_empty());
+
+    let plain = f.add_app("plain", &[("t", "x")]);
+    let svc = f.service();
+    let id = svc.install_from_url(&plain).await.unwrap();
+    assert!(matches!(svc.client_bundle(&id), Err(AppError::Port(crate::PortError::NotFound(_)))));
+    assert!(!svc.apps()[0].display.client);
+}
+
+#[tokio::test]
+async fn a_client_call_reaches_the_named_apps_handler_as_the_person() {
+    let f = Fakes::new();
+    let svc = f.service();
+    let tasks = svc.install_from_url(&f.add_client_app("tasks", &[], "x")).await.unwrap();
+    let notes = svc.install_from_url(&f.add_client_app("notes", &[], "x")).await.unwrap();
+
+    let out = svc.call_handler(&tasks, "add", json!({ "title": "milk" })).await.unwrap();
+    assert_eq!(out, json!({ "app": "tasks", "method": "add", "args": { "title": "milk" } }));
+    svc.call_handler(&notes, "list", json!(null)).await.unwrap();
+    assert_eq!(
+        f.runtime
+            .handler_calls()
+            .iter()
+            .map(|(app, method, _)| (app.as_str(), method.as_str()))
+            .collect::<Vec<_>>(),
+        vec![("tasks", "add"), ("notes", "list")],
+        "each call went to the app it named"
+    );
+}
+
+#[tokio::test]
+async fn a_client_call_to_an_app_that_is_not_running_is_an_error() {
+    let f = Fakes::new();
+    let svc = f.service();
+    let id = svc.install_from_url(&f.add_client_app("tasks", &[], "x")).await.unwrap();
+    svc.disable(&id).await.unwrap();
+    assert!(matches!(svc.call_handler(&id, "add", json!({})).await, Err(AppError::NotRunning { .. })));
+    let ghost = AppId::parse("ghost").unwrap();
+    assert!(matches!(svc.call_handler(&ghost, "add", json!({})).await, Err(AppError::NotInstalled(_))));
+    assert!(f.runtime.handler_calls().is_empty());
+}
