@@ -232,14 +232,35 @@ export class UiRow extends LitElement {
       ::slotted(*) {
         pointer-events: auto;
       }
-      /* A kit control is at least 44 pt each way (the hit area is layout space it owns). In a row, which is 44 pt high
-         and has padding around its content, the extra is taken from that empty space, so a row keeps its height and
-         its text where they were. */
-      ::slotted(:is(ui-button, ui-toggle, ui-check, ui-segmented, ui-text-field)) {
-        margin-block: -11px;
+      /* A kit control is at least 44 pt each way (the hit area is layout space it owns). In a row, which is 44 pt high and
+         has padding around its content, the extra is taken from that empty space, so each control sits in the row at the
+         size it is drawn and the row keeps the height and the text position it has with the shell's controls. */
+      ::slotted(ui-toggle) {
+        margin-block: -6.5px;
       }
       ::slotted(ui-check) {
-        margin-inline: -10px;
+        margin: -10px;
+      }
+      ::slotted(ui-segmented) {
+        margin-block: -6px;
+      }
+      ::slotted(ui-text-field) {
+        margin-block: -4px;
+      }
+      ::slotted(ui-button) {
+        margin-block: -5px; /* drawn 34 pt high */
+      }
+      ::slotted(ui-button[size='small']) {
+        margin-block: -8px;
+      }
+      ::slotted(ui-button[size='large']) {
+        margin-block: 0;
+      }
+      ::slotted(ui-button[square]) {
+        margin-inline: -5px;
+      }
+      ::slotted(ui-button[square][size='small']) {
+        margin-inline: -8px;
       }
       .value {
         color: var(--label-secondary);
