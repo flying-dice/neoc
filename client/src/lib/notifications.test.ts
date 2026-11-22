@@ -96,7 +96,11 @@ describe('what is shown', () => {
   })
 
   test('the title is one cleaned line and the body keeps its lines; text of the app is never the sender', () => {
-    center.deliver({ app: 'ticker', title: '‮Backup\nfinished​', body: 'a\n\n\n\nb‮' })
+    center.deliver({
+      app: 'ticker',
+      title: '\u202EBackup\nfinished\u200B',
+      body: 'a\n\n\n\nb\u202E'
+    })
     expect(center.banners[0]).toMatchObject({
       appName: 'Ticker',
       title: 'Backup finished',
@@ -105,7 +109,7 @@ describe('what is shown', () => {
   })
 
   test('a title with nothing visible shows the app name, and an empty body is left out', () => {
-    center.deliver({ app: 'ticker', title: '​​', body: '​' })
+    center.deliver({ app: 'ticker', title: '\u200B\u200B', body: '\u200B' })
     expect(center.banners[0]?.title).toBe('Ticker')
     expect(center.banners[0]).not.toHaveProperty('body')
   })

@@ -102,7 +102,7 @@
 <Story
   name="Untrusted text"
   play={async ({ canvasElement }) => {
-    calc('Odd\ntitle ‮gnp.exe​', 'first line\nsecond line <b>not bold</b>')
+    calc(`Odd\ntitle ${RLO}gnp.exe${ZWSP}`, 'first line\nsecond line <b>not bold</b>')
     const canvas = within(canvasElement)
     const banner = await canvas.findByTestId(/^notification-\d+$/)
     await expect(banner).toHaveTextContent('Odd title gnp.exe')
@@ -114,7 +114,7 @@
 <Story
   name="Title with nothing visible shows the app"
   play={async ({ canvasElement }) => {
-    calc('​​​')
+    calc(ZWSP.repeat(3))
     const banner = await within(canvasElement).findByTestId(/^notification-\d+$/)
     await expect(banner.querySelector('.title')).toHaveTextContent('Calculator')
   }}
