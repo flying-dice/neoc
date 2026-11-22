@@ -637,6 +637,7 @@ mod tests {
         ),
         ("lib:json", "Object", r#"require("lib:json").object()"#),
         ("lib:json", "Array", r#"require("lib:json").array()"#),
+        ("lib:json", "JsonNull", r#"require("lib:json").null"#),
         ("lib:log", "Logger", r#"require("lib:log").new()"#),
         (
             "lib:pkey",

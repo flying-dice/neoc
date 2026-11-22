@@ -84,6 +84,8 @@
         failure.data = m.error.data
         call.reject(failure)
       } else call.resolve(m.result)
+    } else if (m.t === 'ping') {
+      post({ t: 'pong', id: m.id })
     } else if (m.t === 'event' && typeof m.name === 'string') {
       if (m.name === 'host:theme') setTheme(m.data)
       dispatch(m.name, m.data)

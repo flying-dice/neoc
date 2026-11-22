@@ -857,14 +857,14 @@ export type lib_ini = {
 -- ===== lib:json =====
 
 export type lib_json_Object = {
-	--- Walk a path of segments and return the leaf node.
-	get: (self: lib_json_Object, path: any, ...any) -> any,
+	--- Walk a path of segments (a string is an object key, a number a 1-based array index) and return the node there, or nil when the path leads nowhere. An index of 0 or a fraction raises. Narrow a container with a cast (`v :: lib_json_Object`): `type(v) == "userdata"` narrows the handle types to nothing, and `type(v) == "table"` is false at run time.
+	get: (self: lib_json_Object, path: string | number, ...(string | number)) -> lib_json_Object | lib_json_Array | lib_json_JsonNull | string | number | boolean | nil,
 	--- Insert or replace `key` with `value`.
 	set: (self: lib_json_Object, key: string, value: any) -> (),
 	--- Whether the object contains an entry for `key`.
 	has: (self: lib_json_Object, key: string) -> boolean,
 	--- The object's keys as a table.
-	keys: (self: lib_json_Object) -> any,
+	keys: (self: lib_json_Object) -> { string },
 	--- Number of top-level keys.
 	len: (self: lib_json_Object) -> number,
 	--- Materialise the subtree as a Lua table.
@@ -872,8 +872,8 @@ export type lib_json_Object = {
 }
 
 export type lib_json_Array = {
-	--- Walk a path starting from a 1-based index.
-	get: (self: lib_json_Array, path: any, ...any) -> any,
+	--- Walk a path of segments (a number is a 1-based array index, a string an object key) and return the node there, or nil when the path leads nowhere. An index of 0 or a fraction raises. Narrow a container with a cast (`v :: lib_json_Array`): `type(v) == "userdata"` narrows the handle types to nothing, and `type(v) == "table"` is false at run time.
+	get: (self: lib_json_Array, path: string | number, ...(string | number)) -> lib_json_Object | lib_json_Array | lib_json_JsonNull | string | number | boolean | nil,
 	--- Replace the element at a 1-based index.
 	set: (self: lib_json_Array, index: number, value: any) -> (),
 	--- Append `value` to the end of the array.
@@ -884,9 +884,11 @@ export type lib_json_Array = {
 	to_table: (self: lib_json_Array) -> any,
 }
 
+export type lib_json_JsonNull = {}
+
 export type lib_json = {
-	--- Sentinel userdata for explicit JSON `null`, distinct from Lua `nil`.
-	null: any,
+	--- Sentinel userdata for explicit JSON `null`, distinct from Lua `nil`. Test for it with `v == json.null`: its type, `lib_json_JsonNull`, is structurally empty, so any table satisfies it.
+	null: lib_json_JsonNull,
 	--- Construct an empty mutable JSON object handle on a fresh root.
 	object: () -> lib_json_Object,
 	--- Construct an empty mutable JSON array handle on a fresh root.
@@ -1306,7 +1308,7 @@ export type vnd_hyper_Request = {
 	--- The request headers as a `{ [name]: value }` table.
 	headers: any,
 	--- The body parsed as JSON (a JSON handle or scalar), or nil when it is empty or invalid.
-	json: any,
+	json: lib_json_Object | lib_json_Array | lib_json_JsonNull | string | number | boolean | nil,
 	--- Look up a request header by name (case-insensitive); returns the value string or nil when absent.
 	header: (self: vnd_hyper_Request, name: string) -> string?,
 }
@@ -1347,13 +1349,13 @@ export type vnd_jsonschema = {
 
 export type vnd_quick_xml = {
 	--- Read a reader handle to completion and parse it as XML.
-	decode: (reader: any) -> (any, string?),
+	decode: (reader: std_io_ReaderHandle) -> (any, string?),
 	--- Parse an XML string into a Lua value.
 	decode_string: (s: string) -> (any, string?),
 	--- Serialise a Lua value to an XML string rooted at `<root>`.
 	encode: (value: any) -> (string?, string?),
 	--- Serialise a Lua value to XML and write it to a writer handle.
-	encode_to: (value: any, writer: any) -> (boolean?, string?),
+	encode_to: (value: any, writer: std_io_WriterHandle) -> (boolean?, string?),
 }
 
 -- ===== vnd:rusqlite =====
@@ -1388,29 +1390,29 @@ export type vnd_rusqlite = {
 -- ===== vnd:serde_json =====
 
 export type vnd_serde_json = {
-	--- Parse a JSON string into a `JsonObject` or `JsonArray` handle.
-	from_str: (s: string) -> (any, string?),
-	--- Parse JSON from a reader handle.
-	from_reader: (reader: any) -> (any, string?),
+	--- Parse a JSON string: an object or array becomes a `lib:json` handle, `null` the `json.null` sentinel, any other scalar a Lua value. Narrow a container with a cast (`v :: lib_json_Object`): `type(v) == "userdata"` narrows the handle types to nothing, and `type(v) == "table"` is false at run time.
+	from_str: (s: string) -> ((lib_json_Object | lib_json_Array | lib_json_JsonNull | string | number | boolean)?, string?),
+	--- Parse JSON from a reader handle, with the same results as `from_str`.
+	from_reader: (reader: std_io_ReaderHandle) -> ((lib_json_Object | lib_json_Array | lib_json_JsonNull | string | number | boolean)?, string?),
 	--- Serialise a Lua value to a compact JSON string.
 	to_string: (value: any) -> (string?, string?),
 	--- Serialise a Lua value to an indented, human-readable JSON string.
 	to_string_pretty: (value: any) -> (string?, string?),
 	--- Serialise a Lua value to JSON and write it to a writer handle.
-	to_writer: (value: any, writer: any) -> (boolean?, string?),
+	to_writer: (value: any, writer: std_io_WriterHandle) -> (boolean?, string?),
 }
 
 -- ===== vnd:serde_yaml =====
 
 export type vnd_serde_yaml = {
 	--- Read a reader handle to completion and parse it as YAML.
-	decode: (reader: any) -> (any, string?),
+	decode: (reader: std_io_ReaderHandle) -> (any, string?),
 	--- Parse a YAML string into a Lua value.
 	decode_string: (s: string) -> (any, string?),
 	--- Serialise a Lua value to a YAML string.
 	encode: (value: any) -> (string?, string?),
 	--- Serialise a Lua value to YAML and write it to a writer handle.
-	encode_to: (value: any, writer: any) -> (boolean?, string?),
+	encode_to: (value: any, writer: std_io_WriterHandle) -> (boolean?, string?),
 }
 
 -- ===== vnd:sqlx_mysql =====
@@ -1506,7 +1508,7 @@ export type vnd_testcontainers_modules = {
 
 export type vnd_toml = {
 	--- Read a reader handle to completion and parse it as TOML.
-	decode: (reader: any) -> (any, string?),
+	decode: (reader: std_io_ReaderHandle) -> (any, string?),
 	--- Parse a TOML string into a Lua value.
 	decode_string: (s: string) -> (any, string?),
 	--- Serialise a Lua value to a compact TOML string.
@@ -1514,7 +1516,7 @@ export type vnd_toml = {
 	--- Serialise a Lua value to a pretty-printed TOML string.
 	encode_pretty: (value: any) -> (string?, string?),
 	--- Serialise a Lua value to TOML and write it to a writer handle.
-	encode_to: (value: any, writer: any) -> (boolean?, string?),
+	encode_to: (value: any, writer: std_io_WriterHandle) -> (boolean?, string?),
 }
 
 -- ===== vos =====
@@ -1818,7 +1820,17 @@ export type vos_ToolDef = {
 	run: (input: any, ctx: vos_ToolContext) -> any,
 }
 
-export type vos_Notification = { title: string, body: string?, at: string?, actions: { any }? }
+--- A notification: a title and an optional body, and no other key. The host adds which app sent it.
+export type vos_Notification = {
+	--- 1 to 200 characters, not blank
+	title: string,
+	--- up to 2000 characters
+	body: string?,
+	--- removed: a notification is delivered now, there is no scheduling
+	at: nil,
+	--- removed: a notification has no buttons
+	actions: nil,
+}
 
 --- The desktop shell's side of the app: a deep link is accepted and dropped until the shell shows it.
 export type vos_Shell = {
@@ -1851,7 +1863,14 @@ export type vos_AppApi = {
 	--- got. An undeclared name raises `app:windows: no window ... is declared`. Listing is a read, so a `readOnly`
 	--- tool may do it; changing a window through its `w` is not.
 	windows: (self: vos_AppApi, name: string) -> { vos_WindowContext },
-	--- `app.notify { ... }` or `app:notify { ... }`.
+	--- `app.notify { title, body }` or `app:notify { ... }`: tell the person something now. It reaches the clients
+	--- connected now; one that is not connected never gets it. The host sends the app's id with it, never text from the app.
+	--- Raises (each message starts `app.notify`): no table ("takes a table"), a key other than title and body
+	--- ("unknown key", "unknown positional entry"), no title ("needs"), a title that is blank or over 200
+	--- characters, a body over 2000, a value that is not a string, a call in render or a readOnly tool, and a 65th
+	--- while 64 from the same call are still waiting ("already has 64 notifications waiting"). The host delivers
+	--- waiting notifications whenever a call of the app ends or a task or request handler waits, so the limit
+	--- guards against a runaway loop; it is not a quota to plan around.
 	notify: ((notification: vos_Notification) -> ()) & ((self: vos_AppApi, notification: vos_Notification) -> ()),
 	log: (message: string) -> (),
 	--- Tell the app's open clients something changed outside them (`host.on(name, fn)` in the client): after an

@@ -13,11 +13,11 @@ use vos_domain::ui::{
     expr::Func,
     node::{Action, Handler, Node},
     protocol::{
-        ClientSet, ClientState, Command, DataPatch, Draft, Empty, EventAck, Op, Range, ResumeView,
-        RowRestore, RowSet, SessionHello, SessionResume, SessionWelcome, Size, SourcePatch, SourceSet,
-        StateSet, StateValue, TextSplice, ThemeSet, ThreadAppend, Toast, ToastAction, Undo, ViewClosed,
-        ViewCommand, ViewError, ViewEvent, ViewOpen, ViewOps, ViewRef, ViewResize, ViewResume, ViewSnapshot,
-        ViewTree, ViewVisibility, WindowOpen, WriteAck, WriteResolution, METHODS,
+        AppNotification, ClientSet, ClientState, Command, DataPatch, Draft, Empty, EventAck, Op, Range,
+        ResumeView, RowRestore, RowSet, SessionHello, SessionResume, SessionWelcome, Size, SourcePatch,
+        SourceSet, StateSet, StateValue, TextSplice, ThemeSet, ThreadAppend, Toast, ToastAction, Undo,
+        ViewClosed, ViewCommand, ViewError, ViewEvent, ViewOpen, ViewOps, ViewRef, ViewResize, ViewResume,
+        ViewSnapshot, ViewTree, ViewVisibility, WindowOpen, WriteAck, WriteResolution, METHODS,
     },
     source::{ClientDecl, ConflictPolicy, Persist, SourceDecl, SyncMode, TotalMode},
     spec::{
@@ -133,6 +133,7 @@ fn protocol() -> String {
     add(ViewClosed::decl(&cfg));
     add(ThemeSet::decl(&cfg));
     add(WindowOpen::decl(&cfg));
+    add(AppNotification::decl(&cfg));
     add(Empty::decl(&cfg));
     add(AppState::decl(&cfg));
     add(AppWindow::decl(&cfg));

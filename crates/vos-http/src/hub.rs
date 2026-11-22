@@ -21,7 +21,8 @@ use vos_domain::{
     protocol::RpcError,
     source_label,
     ui::protocol::{
-        codes, ClientNotification, ClientRequest, HostNotification, ParseError, SessionWelcome, WindowOpen,
+        codes, AppNotification, ClientNotification, ClientRequest, HostNotification, ParseError,
+        SessionWelcome, WindowOpen,
     },
     ui::{KIT_VERSION, PROTO_VERSION},
     AgentId, AgentRuntime, AppId, ApprovalPolicy, DeviceId, Grants, Notification,
@@ -475,9 +476,13 @@ impl EventSink for RpcHub {
                 self.broadcast("app.failed", &json!({ "app": app, "message": message }));
             }
             ServerEvent::Notification(n) => {
-                if let Ok(v) = serde_json::to_value(n) {
-                    self.broadcast("notify", &v);
-                }
+                let note = HostNotification::Notify(AppNotification {
+                    app: n.app.to_string(),
+                    title: n.title,
+                    body: n.body,
+                });
+                let (method, params) = note.to_rpc();
+                self.broadcast(method, &params);
             }
         }
     }

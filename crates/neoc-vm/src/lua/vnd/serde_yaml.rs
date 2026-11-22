@@ -30,7 +30,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:serde_yaml")?;
     m.try_func(
         "decode",
-        &[("reader", "LuaValue")],
+        &[("reader", "std_io.ReaderHandle")],
         "Read a reader handle to completion and parse it as YAML.",
         decode,
     )?
@@ -48,7 +48,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     )?
     .try_func_raising(
         "encode_to",
-        &[("value", "LuaValue"), ("writer", "LuaValue")],
+        &[("value", "LuaValue"), ("writer", "std_io.WriterHandle")],
         "Serialise a Lua value to YAML and write it to a writer handle.",
         encode_to,
     )?;
