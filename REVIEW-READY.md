@@ -106,11 +106,11 @@ guarded. #56: the sandbox probes threw either way, for two rounds.
 
 **3.4 Make every sentence true at the final head.** That covers docs, comments, error text, test names, the body and the
 breaking note. Check each claim against the code as it now is. Search for every other place the same claim is made, and for
-stale ids. The body lists everything that changed, including each changed screenshot and each fix made on the way, and which
-checks ran at which commit.
+stale ids. A negative ("no caller", "nothing else uses it") names the exact search and where it ran, and a search that
+printed nothing is checked against one known hit. The body lists everything that changed, and which checks ran at which commit.
 *Evidence:* the claims you checked and the searches you ran. *Cost:* untrue sentences were the largest class, about one
-finding in four. #56 said "the frame has no network" and "nothing for existing apps", and left a stale journey id. #52
-corrected the cap wording in one place and left it in two.
+finding in four: #56 said "the frame has no network"; #63 said no dependency calls `Url::origin()` (`rmcp` does) after a
+search that had silently failed.
 
 **3.5 Leave nothing mechanical.** Merge `main`, then run the gate CLAUDE.md requires at the exact head you push (a new
 package under lint and format). Push once per round. *Evidence:* the gate's result at the head. *Cost:* #58: kit unlinted.

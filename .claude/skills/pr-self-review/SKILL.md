@@ -51,7 +51,7 @@ Each line is a rule in REVIEW-READY.md. The note carries one row per line.
 | 3.1 | Used as its consumer, from the docs | what you built, the commands, which doc lines you fixed |
 | 3.2 | Driven on the real host | the `verify-change` record, the states seen, and the baselines opened |
 | 3.3 | Each new test can fail | per new test: the assertion that fails without the change, and why |
-| 3.4 | Every sentence true at this head | the claims checked and the searches run (`git grep` for the term and stale ids) |
+| 3.4 | Every sentence true at this head | the claims checked and the searches run (`git grep` for the term and stale ids); each negative claim with its search and one known hit it finds |
 | 3.5 | Gate green at this head | the command and its summary line, and the head SHA |
 | 4.1 | Class fixed, not case (re-request) | per finding: the class, the invariant, the members, the test over them |
 | 4.2 | Fix treated as new code (re-request) | section 3 run again on the delta |
