@@ -32,6 +32,28 @@ local function service(req)
     if req.path == "/length" then
         return { status = 200, body = req:header("content-length") or "none" }
     end
+    if req.path == "/host" then
+        return { status = 200, body = req:header("host") or "none" }
+    end
+    if req.path == "/method" then
+        return { status = 200, body = req.method .. ":" .. (req:header("content-length") or "none") }
+    end
+    if req.path == "/moved" then
+        return { status = 302, headers = { location = "/hello" }, body = "moved" }
+    end
+    if req.path == "/loop" then
+        return { status = 307, headers = { location = "/loop" }, body = "again" }
+    end
+    if req.path == "/to-get" then
+        return { status = 303, headers = { location = "/method" }, body = "see other" }
+    end
+    if req.path == "/big" then
+        return { status = 200, body = string.rep("x", 2000) }
+    end
+    if req.path == "/slow" then
+        require("std:task").wait(0.6)
+        return { status = 200, body = "late" }
+    end
     if req.method == "POST" and req.path == "/echo" then
         return { status = 200, body = req.body }
     end
@@ -113,18 +135,11 @@ describe("hyper", function()
             expect(err).toContain("only http:// and https://")
         end)
 
-        -- needs network access: the certificate is checked against the platform trust store
-        test("https request to a public host succeeds", function()
-            local resp, err = hyper.get("https://example.com/")
-            expect(err).toBeNil()
-            expect(resp.status).toBe(200)
-            expect(resp.body).toContain("Example Domain")
-        end)
-
+        -- https itself, the certificate checks and ca_pem are tested in Rust against a local TLS server
         test("a ca_pem that is not PEM is an error", function()
-            local resp, err = hyper.get("https://example.com/", { ca_pem = "nonsense" })
+            local resp, err = hyper.get("https://localhost:1/", { ca_pem = "nonsense" })
             expect(resp).toBeNil()
-            expect(err).toContain("ca_pem")
+            expect(err).toContain("hyper.get: invalid_input: ca_pem")
         end)
 
         test("headers in opts are sent", function()
@@ -136,13 +151,15 @@ describe("hyper", function()
         test("headers that are not a table are an error", function()
             local resp, err = hyper.get(BASE .. "/headers", { headers = "x-echo: ping" })
             expect(resp).toBeNil()
-            expect(err).toContain("hyper.get: headers must be a table, got string")
+            expect(err).toContain("hyper.get: invalid_input: headers must be a table, got string")
         end)
 
         test("an unknown option is an error that names it, not dropped", function()
             local resp, err = hyper.get(BASE .. "/headers", { header = { ["x-echo"] = "typo" } })
             expect(resp).toBeNil()
-            expect(err).toContain("hyper.get: unknown option `header` (expected one of: headers, ca_pem)")
+            expect(err).toContain(
+                "hyper.get: invalid_input: unknown option `header` (expected one of: headers, ca_pem, connect_timeout, idle_timeout, timeout, follow_redirects, max_body)"
+            )
         end)
 
         test("a GET sends no content-length", function()
@@ -193,16 +210,16 @@ describe("hyper", function()
         test("a body that is neither a string nor a buffer is an error, not an empty body", function()
             local resp, err = hyper.post({ url = BASE .. "/echo", body = { "ping" } })
             expect(resp).toBeNil()
-            expect(err).toContain("hyper.post: body must be a string or a buffer, got table")
+            expect(err).toContain("hyper.post: invalid_input: body must be a string or a buffer, got table")
             resp, err = hyper.post({ url = BASE .. "/echo", body = true })
             expect(resp).toBeNil()
             expect(err).toContain("got boolean")
         end)
 
         test("an unknown option is an error that names it", function()
-            local resp, err = hyper.post({ url = BASE .. "/echo", body = "x", timeout = 5 })
+            local resp, err = hyper.post({ url = BASE .. "/echo", body = "x", timeuot = 5 })
             expect(resp).toBeNil()
-            expect(err).toContain("hyper.post: unknown option `timeout` (expected one of: url, body, headers, ca_pem)")
+            expect(err).toContain("hyper.post: invalid_input: unknown option `timeuot` (expected one of: url, body, headers, ca_pem, ")
         end)
 
         test("no body or an empty one is sent with content-length 0", function()
@@ -274,13 +291,13 @@ describe("hyper", function()
         test("headers that are not a table are an error, not no headers", function()
             local resp, err = hyper.request({ method = "GET", url = BASE .. "/headers", headers = "x-echo: ping" })
             expect(resp).toBeNil()
-            expect(err).toContain("hyper.request: headers must be a table, got string")
+            expect(err).toContain("hyper.request: invalid_input: headers must be a table, got string")
         end)
 
         test("an unknown option is an error that names it", function()
             local resp, err = hyper.request({ method = "GET", url = BASE .. "/headers", hedaers = {} })
             expect(resp).toBeNil()
-            expect(err).toContain("hyper.request: unknown option `hedaers`")
+            expect(err).toContain("hyper.request: invalid_input: unknown option `hedaers`")
         end)
 
         test("a PUT with no body says content-length 0, a DELETE with none sends no length", function()
@@ -301,11 +318,141 @@ describe("hyper", function()
         test("a ca_pem that is not a string is an error", function()
             local resp, err = hyper.request({
                 method = "GET",
-                url    = "https://example.com/",
+                url    = "https://localhost:1/",
                 ca_pem = {},
             })
             expect(resp).toBeNil()
             expect(err).toContain("ca_pem must be a string")
+        end)
+    end)
+
+    -- error kinds -------------------------------------------------------------
+
+    describe("error_kind", function()
+        test("every failure carries a stable kind", function()
+            local cases = {
+                { "invalid_url", hyper.get("not a url") },
+                { "invalid_url", hyper.get("ftp://example.com/") },
+                { "connect", hyper.get("http://127.0.0.1:1/") },
+                { "invalid_input", hyper.get(BASE .. "/hello", { nope = true }) },
+            }
+            for _, case in ipairs(cases) do
+                local resp, err = case[2], case[3]
+                expect(resp).toBeNil()
+                expect(hyper.error_kind(err)).toBe(case[1])
+            end
+        end)
+
+        test("a string that is not ours has no kind", function()
+            expect(hyper.error_kind("hyper.get: timed_out: x")).toBe("timed_out")
+            expect(hyper.error_kind("fs.read: not_found: x")).toBeNil()
+            expect(hyper.error_kind("nonsense")).toBeNil()
+            expect(hyper.error_kind("hyper.get: not_a_kind: x")).toBeNil()
+        end)
+    end)
+
+    -- redirects ---------------------------------------------------------------
+
+    describe("redirects", function()
+        test("a moved URL is followed and the final URL is in the response", function()
+            local resp, err = hyper.get(BASE .. "/moved")
+            expect(err).toBeNil()
+            expect(resp.status).toBe(200)
+            expect(resp.body).toBe("hello")
+            expect(resp.url).toBe(BASE .. "/hello")
+        end)
+
+        test("follow_redirects = false returns the 3xx", function()
+            local resp, err = hyper.get(BASE .. "/moved", { follow_redirects = false })
+            expect(err).toBeNil()
+            expect(resp.status).toBe(302)
+            expect(resp.headers.location).toBe("/hello")
+            expect(resp.url).toBe(BASE .. "/moved")
+        end)
+
+        test("a loop ends at the hop limit with too_many_redirects", function()
+            local resp, err = hyper.get(BASE .. "/loop", { follow_redirects = 3 })
+            expect(resp).toBeNil()
+            expect(hyper.error_kind(err)).toBe("too_many_redirects")
+            expect(err).toContain("more than 3 redirects")
+        end)
+
+        test("a 303 becomes a GET without a body", function()
+            local resp, err = hyper.request({ method = "POST", url = BASE .. "/to-get", body = "payload" })
+            expect(err).toBeNil()
+            expect(resp.body).toBe("GET:none")
+        end)
+
+        test("follow_redirects must be a boolean or a positive whole number", function()
+            for _, bad in ipairs({ 0, -1, 1.5, "yes" }) do
+                local resp, err = hyper.get(BASE .. "/moved", { follow_redirects = bad })
+                expect(resp).toBeNil()
+                expect(hyper.error_kind(err)).toBe("invalid_input")
+            end
+        end)
+    end)
+
+    -- limits ------------------------------------------------------------------
+
+    describe("limits", function()
+        test("a body over max_body is too_large", function()
+            local resp, err = hyper.get(BASE .. "/big", { max_body = 1000 })
+            expect(resp).toBeNil()
+            expect(hyper.error_kind(err)).toBe("too_large")
+            resp, err = hyper.get(BASE .. "/big", { max_body = 2000 })
+            expect(err).toBeNil()
+            expect(#resp.body).toBe(2000)
+        end)
+
+        test("a server that stays silent ends at idle_timeout", function()
+            local resp, err = hyper.get(BASE .. "/slow", { idle_timeout = 0.15 })
+            expect(resp).toBeNil()
+            expect(hyper.error_kind(err)).toBe("timed_out")
+        end)
+
+        test("timeout bounds the whole request", function()
+            local resp, err = hyper.get(BASE .. "/slow", { timeout = 0.15 })
+            expect(resp).toBeNil()
+            expect(hyper.error_kind(err)).toBe("timed_out")
+            expect(err).toContain("the request took longer than")
+        end)
+
+        test("a limit that is not positive and finite is an error", function()
+            for _, name in ipairs({ "timeout", "idle_timeout", "connect_timeout", "max_body" }) do
+                for _, bad in ipairs({ 0, -1, "5", math.huge }) do
+                    local resp, err = hyper.get(BASE .. "/hello", { [name] = bad })
+                    expect(resp).toBeNil()
+                    expect(hyper.error_kind(err)).toBe("invalid_input")
+                    expect(err).toContain(name .. " must be")
+                end
+            end
+        end)
+    end)
+
+    -- the request sent --------------------------------------------------------
+
+    describe("request shape", function()
+        test("a lower-case standard method is the standard method", function()
+            local resp, err = hyper.request({ method = "put", url = BASE .. "/method" })
+            expect(err).toBeNil()
+            expect(resp.body).toBe("PUT:0")
+        end)
+
+        test("a Content-Length that is not the body's length is refused", function()
+            local resp, err = hyper.post({
+                url = BASE .. "/echo",
+                body = "abc",
+                headers = { ["Content-Length"] = "1" },
+            })
+            expect(resp).toBeNil()
+            expect(hyper.error_kind(err)).toBe("invalid_input")
+            expect(err).toContain("Content-Length")
+        end)
+
+        test("a caller-set Host replaces the built-in one", function()
+            local resp, err = hyper.get(BASE .. "/host", { headers = { Host = "virtual.example" } })
+            expect(err).toBeNil()
+            expect(resp.body).toBe("virtual.example")
         end)
     end)
 

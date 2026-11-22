@@ -42,8 +42,8 @@ const LUAU_KEYWORDS: &[&str] = &[
     "nil", "not", "or", "repeat", "return", "then", "true", "until", "while",
 ];
 
-/// The types Luau has that the recorded vocabulary uses as they are.
-const PRIMITIVES: &[&str] = &["string", "number", "boolean", "any", "nil"];
+/// The types Luau has that the recorded vocabulary uses as they are (`buffer` is Luau's byte block).
+const PRIMITIVES: &[&str] = &["string", "number", "boolean", "any", "nil", "buffer"];
 
 /// The prefix of every type name a registry key's module declares: `lib:json` becomes `lib_json`.
 #[must_use]

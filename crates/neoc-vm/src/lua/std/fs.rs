@@ -346,9 +346,11 @@ fn declare_links_and_errors(m: &mut Module<'_>) -> mlua::Result<()> {
     )?;
     m.func(
         "error_kind",
-        &[("err", "string")],
-        "The stable kind inside an error string returned by a `std:fs` function, or `nil` when the string is not one of theirs. Such a string is `fs.<function>: <kind>: <path>: <message>`; for a call on two paths (`copy`, `rename`, ...) the path part may be `<from> -> <to>`, and an error about no one path (a bad option, say) has none: `fs.<function>: <kind>: <message>`. Kinds: `not_found`, `permission_denied`, `already_exists`, `not_empty`, `is_directory`, `not_a_directory`, `cross_device`, `invalid_input`, `read_only_filesystem`, `storage_full`, `unsupported`, `too_large`, `timed_out`, `other`. They mean the same on every platform; the rest of the message is the operating system's wording and differs.",
-        |_, err: mlua::LuaString| Ok(error::kind_of(&err.to_string_lossy()).map(str::to_owned)),
+        &[("err", "string?")],
+        "The stable kind inside an error string returned by a `std:fs` function, or `nil` when the string is not one of theirs (or is `nil`, so `fs.error_kind(err)` takes the `err` of any call). Such a string is `fs.<function>: <kind>: <path>: <message>`; for a call on two paths (`copy`, `rename`, ...) the path part may be `<from> -> <to>`, and an error about no one path (a bad option, say) has none: `fs.<function>: <kind>: <message>`. Kinds: `not_found`, `permission_denied`, `already_exists`, `not_empty`, `is_directory`, `not_a_directory`, `cross_device`, `invalid_input`, `read_only_filesystem`, `storage_full`, `unsupported`, `too_large`, `timed_out`, `other`. They mean the same on every platform; the rest of the message is the operating system's wording and differs.",
+        |_, err: Option<mlua::LuaString>| {
+            Ok(err.and_then(|err| error::kind_of(&err.to_string_lossy()).map(str::to_owned)))
+        },
     )?;
     Ok(())
 }
