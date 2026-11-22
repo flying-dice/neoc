@@ -170,14 +170,14 @@ describe('the pinned negative fixtures', () => {
 })
 
 describe('which apps the repository check leaves to their own project', () => {
-  const projects = new Set(['apps/calculator-web'])
+  const projects = new Set(['apps/calculator'])
   const isProject = (dir: string): boolean => projects.has(dir)
   test('every file of a Vite project, its sources and its generated and built Luau', () => {
-    for (const file of ['apps/calculator-web/server/main.luau', 'apps/calculator-web/.app/rpc.luau', 'apps/calculator-web/dist/app.luau'])
+    for (const file of ['apps/calculator/server/main.luau', 'apps/calculator/.app/rpc.luau', 'apps/calculator/dist/app.luau'])
       expect(inViteApp(file, isProject)).toBe(true)
   })
   test('a view-tree app, a fixture and a file named like a project elsewhere are still checked', () => {
-    for (const file of ['apps/calculator/app.luau', 'crates/vos-host/tests/fixtures/calculator-web/app.luau', 'scripts/fixtures/usage.luau', 'apps'])
+    for (const file of ['apps/agents/app.luau', 'crates/vos-codegen/tests/fixtures/calculator/app.luau', 'scripts/fixtures/usage.luau', 'apps'])
       expect(inViteApp(file, isProject)).toBe(false)
   })
 })

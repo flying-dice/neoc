@@ -264,7 +264,10 @@ export type vos_AppApi = {
 	tool: (def: vos_ToolDef) -> (),
 	--- Declare a chat thread source once; `chat { thread = id, agent = id }` makes the handle a `ChatTranscript` takes.
 	thread: () -> ((params: vos_ThreadParams) -> vos_ThreadSource),
-	openWindow: (self: vos_AppApi, name: string, params: { [string]: any }?) -> (),
+	--- Open the app's window on the person's screen, or bring it forward if it is open (every connected shell is asked;
+	--- with none connected nothing happens). An app with a client has one window: leave `name` out (or pass `"main"`).
+	--- An app without one names a window it declared with `app.window`.
+	openWindow: (self: vos_AppApi, name: string?, params: { [string]: any }?) -> (),
 	--- The open instances of the declared window `name`, in the order they were opened, each the `w` its `render`
 	--- got. An undeclared name raises `app:windows: no window ... is declared`. Listing is a read, so a `readOnly`
 	--- tool may do it; changing a window through its `w` is not.

@@ -63,7 +63,8 @@ describe("the embedded prelude stays plain Lua", () => {
 
 describe("the apps are Luau", () => {
   test("every app's entry is a .luau file that opts in to strict mode", () => {
-    expect(apps.length).toBeGreaterThan(1);
+    // the view-tree apps (an app.json): Agents, until NEOC-350 ports it
+    expect(apps.length).toBeGreaterThan(0);
     for (const manifest of apps) {
       const entry = entryOf(manifest);
       expect(entry).toEndWith(".luau");
@@ -167,7 +168,7 @@ describe("darklua", () => {
   });
 
   test("keeps non-ASCII text as it is written (the VM reads raw UTF-8 bytes in a string)", () => {
-    const out = toLuau(darklua, join(root, "apps/calculator/app.luau"));
+    const out = toLuau(darklua, join(root, "crates/vos-codegen/tests/fixtures/calculator/app.luau"));
     expect(out).toContain('"×"');
     expect(out).not.toMatch(/\\u\{/);
   });

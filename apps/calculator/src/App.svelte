@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, type PressParams, type Screen } from 'app:rpc'
+  import { api, host, type PressParams, type Screen } from 'app:rpc'
 
   type Key = PressParams['key']
   type Face = 'digit' | 'function' | 'operator'
@@ -45,12 +45,13 @@
   let screen = $state.raw<Screen | null>(null)
   let failure = $state<string | null>(null)
 
-  // Keys are sent one after another, each with the state the one before answered with, so fast typing keeps its order.
+  // Keys are sent one after another, each with the state the one before answered with, so fast typing keeps its order;
+  // a result an agent put on the Calculator takes its turn in the same line.
   let queue: Promise<void> = Promise.resolve()
-  function press(key: Key): void {
+  function enqueue(step: () => Promise<void>): void {
     queue = queue.then(async () => {
       try {
-        screen = await api.press({ key, state: screen?.state })
+        await step()
         failure = null
       } catch (e) {
         // the host or the connection, not the sum (a sum's own failure is the screen's `error`)
@@ -58,6 +59,25 @@
       }
     })
   }
+  function press(key: Key): void {
+    enqueue(async () => {
+      screen = await api.press({ key, state: screen?.state })
+    })
+  }
+
+  // An agent's show_on_calculator leaves its result with the backend: take it when the page starts (the window the tool
+  // opened) and whenever the backend says one arrived (a window already open). It replaces the sum on the screen.
+  function takeShown(): void {
+    enqueue(async () => {
+      const { screen: shown } = await api.takeShown()
+      if (shown) screen = shown
+    })
+  }
+  $effect(() => {
+    takeShown()
+    const stops = [host.on('calculator.shown', takeShown), host.on('host:reconnected', takeShown)]
+    return () => stops.forEach((stop) => stop())
+  })
 
   const display = $derived(screen?.display ?? '0')
   const caption = $derived(failure ?? screen?.caption ?? '')
@@ -102,15 +122,15 @@
 
 <svelte:document {onkeydown} onpointerdown={() => (tabbed = false)} />
 
-<main class="calculator" data-theme="dark" data-testid="calculator-web-app">
+<main class="calculator" data-theme="dark" data-testid="calculator-app">
   <div class="column">
-    <p class="caption" data-testid="calculator-web-caption">{caption}</p>
+    <p class="caption" data-testid="calculator-caption">{caption}</p>
     <p
       class="display"
       style:font-size="{displaySize}px"
       aria-label="Result {display}"
       aria-live="polite"
-      data-testid="calculator-web-display"
+      data-testid="calculator-display"
     >
       {display}
     </p>
@@ -127,7 +147,7 @@
           pressed={screen?.pending === k.key}
           label={nameOf(k)}
           onclick={() => press(k.key)}
-          data-testid="calculator-web-key-{k.id}"
+          data-testid="calculator-key-{k.id}"
         >
           {k.key === 'clear' ? clearLabel : k.label}
         </ui-button>
@@ -135,7 +155,7 @@
     </div>
   </div>
   <!-- always on the page, so a screen reader hears the reason when it appears (a live region added with its text is often missed) -->
-  <p class="announcer" aria-live="assertive" data-testid="calculator-web-announcer">{screen?.error ?? ''}</p>
+  <p class="announcer" aria-live="assertive" data-testid="calculator-announcer">{screen?.error ?? ''}</p>
 </main>
 
 <style>

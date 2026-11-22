@@ -1,15 +1,15 @@
 {
   "openrpc": "1.3.2",
   "info": {
-    "title": "Calculator (web)",
-    "version": "0.1.0",
-    "description": "The Calculator built the new way: a Svelte client on the kit's buttons, and the arithmetic in Luau."
+    "title": "Calculator",
+    "version": "1.0.0",
+    "description": "Arithmetic for you and your agents: type or tap a sum, or let an agent put a result on it."
   },
   "x-app": {
-    "id": "calculator-web",
+    "id": "calculator",
     "icon": "calculator",
     "tint": "orange",
-    "description": "Arithmetic: type or tap a sum. The Calculator as a web client on a Luau backend.",
+    "description": "Arithmetic for you and your agents: type or tap a sum, or let an agent put a result on it.",
     "window": {
       "w": 340,
       "h": 560,
@@ -65,6 +65,17 @@
         "name": "screen",
         "schema": {
           "$ref": "#/components/schemas/Screen"
+        }
+      }
+    },
+    {
+      "name": "takeShown",
+      "summary": "The result an agent put on the Calculator (show_on_calculator) that no page has shown yet, as a screen to show, and forget it; nothing when there is none. The page asks on start and when the backend says one arrived.",
+      "params": [],
+      "result": {
+        "name": "shown",
+        "schema": {
+          "$ref": "#/components/schemas/Shown"
         }
       }
     }
@@ -177,6 +188,15 @@
           "caption",
           "clear"
         ]
+      },
+      "Shown": {
+        "type": "object",
+        "description": "What takeShown answers: the screen to show, absent when no agent put anything on the Calculator.",
+        "properties": {
+          "screen": {
+            "$ref": "#/components/schemas/Screen"
+          }
+        }
       }
     }
   }

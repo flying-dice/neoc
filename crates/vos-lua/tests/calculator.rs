@@ -1,12 +1,12 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration tests
-//! The Calculator built as a Vite project (`apps/calculator-web`): its contract's one method, `press`, through the
-//! generated router, under the real runtime. The backend keeps nothing: each call carries the keypad's state and answers
-//! with the next one. The tables are the old Calculator's (`calculator_app.rs`), so the two keypads are held to the same
-//! behaviour while both exist.
+//! The Calculator (`apps/calculator`, a Vite project) under the real runtime: its keypad through the generated router
+//! (`press`: each call carries the keypad's state and answers with the next one; the tables are the view-tree
+//! Calculator's, which this app replaced), its agent tools (`calculate`, `history`, `show_on_calculator`), a result an
+//! agent put on it (`takeShown`), and a history written by the earlier Calculator.
 
 mod common;
 
-use common::{built_package, db, id, user_ctx};
+use common::{agent_ctx, built_package, db, id, package as lua_package, user_ctx};
 use serde_json::{json, Value};
 use std::{
     path::Path,
@@ -14,13 +14,14 @@ use std::{
     sync::{Arc, Once},
 };
 use vos_application::{
-    ports::{AppData, AppPackage, AppRuntime, Notifier, PortResult},
+    ports::{AppData, AppPackage, AppRuntime, LoadedApp, Notifier, PortResult},
+    testing::RecordingShell,
     PortError,
 };
 use vos_domain::Notification;
 use vos_lua::LuaRuntime;
 
-const APP: &str = "calculator-web";
+const APP: &str = "calculator";
 
 struct Quiet;
 #[async_trait::async_trait]
@@ -44,15 +45,29 @@ fn generate() {
     });
 }
 
-async fn calculator() -> LuaRuntime {
+fn package() -> AppPackage {
     generate();
     let entry = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps").join(APP).join(".app/entry.luau");
-    let package = AppPackage { has_client: true, ..built_package(&entry) };
-    let runtime =
-        LuaRuntime::new(Arc::new(Quiet), Arc::new(vos_application::testing::RecordingShell::default()));
-    let data: Arc<dyn AppData> = db();
-    runtime.load(&id(APP), package, data).await.unwrap();
-    runtime
+    AppPackage { has_client: true, ..built_package(&entry) }
+}
+
+async fn calculator() -> LuaRuntime {
+    calculator_on(db(), Arc::new(RecordingShell::default())).await.0
+}
+
+/// The Calculator on a given database and shell, with what the load said about it (its tools).
+async fn calculator_on(data: Arc<dyn AppData>, shell: Arc<RecordingShell>) -> (LuaRuntime, LoadedApp) {
+    let runtime = LuaRuntime::new(Arc::new(Quiet), shell);
+    let loaded = runtime.load(&id(APP), package(), data).await.unwrap();
+    (runtime, loaded)
+}
+
+async fn tool(rt: &LuaRuntime, name: &str, args: Value) -> PortResult<Value> {
+    rt.call_tool(&id(APP), name, args, agent_ctx(0), false).await
+}
+
+async fn take_shown(rt: &LuaRuntime) -> Value {
+    rt.call_handler(&id(APP), "takeShown", json!({}), user_ctx(0)).await.unwrap()
 }
 
 async fn call(rt: &LuaRuntime, args: Value) -> PortResult<Value> {
@@ -537,4 +552,153 @@ async fn a_state_that_makes_no_sense_is_an_error_on_the_display_never_a_failed_c
     let screen = call(&rt, json!({ "key": "+", "state": waiting_with_nothing })).await.unwrap();
     assert_eq!((screen["display"].as_str(), screen["caption"].as_str()), (Some("0"), Some("0 +")));
     assert_eq!(screen["pending"], "+");
+}
+
+// ---- the agent tools -------------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn calculate_follows_precedence_and_rejects_what_is_not_arithmetic() {
+    let rt = calculator().await;
+    for (expression, result) in [
+        ("1 + 2 * 3", 7.0),
+        ("(1 + 2) * 3", 9.0),
+        ("2 ^ 3 ^ 2", 512.0),
+        ("-(2 + 3)", -5.0),
+        ("7 ÷ 2", 3.5),
+        ("3 × −2", -6.0),
+        ("0.1 + 0.2", 0.3),
+    ] {
+        let out = tool(&rt, "calculate", json!({ "expression": expression })).await.unwrap();
+        assert_eq!(out["result"].as_f64(), Some(result), "{expression}");
+    }
+    for (expression, shown) in
+        [("1234567", "1,234,567"), ("1000000 * 1000000", "1e12"), ("0.00005", "0.00005")]
+    {
+        let out = tool(&rt, "calculate", json!({ "expression": expression })).await.unwrap();
+        assert_eq!(out["display"], shown, "{expression}");
+    }
+    for bad in ["", "1 +", "(1 + 2", "1 / 0", "2 $ 3", "1..2"] {
+        assert!(tool(&rt, "calculate", json!({ "expression": bad })).await.is_err(), "{bad:?}");
+    }
+}
+
+#[tokio::test]
+async fn the_keypad_and_the_calculate_tool_give_the_same_answer() {
+    // one evaluator (calc.luau) behind both: a sum typed on the keypad and the same text given to the tool agree
+    let rt = calculator().await;
+    for (keys, expression) in [
+        ("2 add 3 mul 4 eq", "2 + 3 * 4"),
+        ("2 mul 3 add 4 eq", "2 * 3 + 4"),
+        ("8 sub 2 sub 1 eq", "8 - 2 - 1"),
+        ("1 div 3 eq", "1 / 3"),
+        ("2 sub 3 mul 4 sub 5 eq", "2 - 3 * 4 - 5"),
+    ] {
+        let screen = press_keys(&rt, Value::Null, keys).await;
+        let out = tool(&rt, "calculate", json!({ "expression": expression })).await.unwrap();
+        assert_eq!(screen["display"], out["display"], "{keys} / {expression}");
+    }
+}
+
+#[tokio::test]
+async fn only_history_is_read_only_and_it_lists_newest_first_capped_and_limited() {
+    let (rt, loaded) = calculator_on(db(), Arc::new(RecordingShell::default())).await;
+    let mut read_only: Vec<(String, bool)> =
+        loaded.tools.iter().map(|t| (t.name.clone(), t.read_only)).collect();
+    read_only.sort();
+    assert_eq!(
+        read_only,
+        [
+            ("calculate".to_owned(), false),
+            ("history".to_owned(), true),
+            ("show_on_calculator".to_owned(), false)
+        ]
+    );
+    for n in 1..=55 {
+        tool(&rt, "calculate", json!({ "expression": format!("{n} + 0") })).await.unwrap();
+    }
+    let ten = tool(&rt, "history", json!({})).await.unwrap();
+    assert_eq!(ten["entries"].as_array().unwrap().len(), 10, "the default limit");
+    assert_eq!(ten["entries"][0], json!({ "expression": "55 + 0", "result": 55 }));
+    let all = tool(&rt, "history", json!({ "limit": 50 })).await.unwrap();
+    assert_eq!(all["entries"].as_array().unwrap().len(), 50, "the app keeps the newest 50");
+    assert_eq!(all["entries"][49]["result"], 6);
+    assert!(tool(&rt, "history", json!({ "limit": 0 })).await.is_err(), "bounds are enforced");
+    assert!(tool(&rt, "history", json!({ "limit": 51 })).await.is_err());
+}
+
+#[tokio::test]
+async fn show_on_calculator_opens_the_window_tells_the_page_and_leaves_the_result_until_one_takes_it() {
+    let shell = Arc::new(RecordingShell::default());
+    let (rt, _) = calculator_on(db(), shell.clone()).await;
+    assert!(take_shown(&rt).await.get("screen").is_none(), "nothing waiting yet");
+
+    let out = tool(&rt, "show_on_calculator", json!({ "expression": "18 / 100 * 2450" })).await.unwrap();
+    assert_eq!(out["shown"], "441");
+    assert!(out["outcome"].as_str().unwrap().contains("next time the Calculator is opened"), "{out}");
+    // the shell is asked for the app's one window, and the open page is told
+    assert_eq!(
+        shell.windows.lock().unwrap().clone(),
+        [(APP.to_owned(), "main".to_owned(), serde_json::Map::new())]
+    );
+    assert_eq!(
+        shell.events.lock().unwrap().clone(),
+        [(APP.to_owned(), "calculator.shown".to_owned(), Value::Null)]
+    );
+    // it went into the history like any calculation
+    let history = tool(&rt, "history", json!({ "limit": 1 })).await.unwrap();
+    assert_eq!(history["entries"][0], json!({ "expression": "18 / 100 * 2450", "result": 441 }));
+
+    // the page takes it once: the display shows it, the caption is the expression, and the next key carries on from it
+    let shown = take_shown(&rt).await;
+    assert_eq!(
+        (shown["screen"]["display"].as_str(), shown["screen"]["caption"].as_str()),
+        (Some("441"), Some("18 / 100 * 2450"))
+    );
+    assert!(take_shown(&rt).await.get("screen").is_none(), "taken once: a later open does not show it again");
+    let carried = press_keys(&rt, shown["screen"].clone(), "add 9 eq").await;
+    assert_eq!((carried["display"].as_str(), carried["caption"].as_str()), (Some("450"), Some("441 + 9")));
+}
+
+#[tokio::test]
+async fn a_second_show_before_anyone_looks_replaces_the_first_and_a_failed_one_changes_nothing() {
+    let rt = calculator().await;
+    tool(&rt, "show_on_calculator", json!({ "expression": "1 + 1" })).await.unwrap();
+    tool(&rt, "show_on_calculator", json!({ "expression": "6 * 7" })).await.unwrap();
+    assert!(
+        tool(&rt, "show_on_calculator", json!({ "expression": "1 / 0" })).await.is_err(),
+        "a sum that fails is refused"
+    );
+    let shown = take_shown(&rt).await;
+    assert_eq!(
+        shown["screen"]["display"], "42",
+        "the second replaced the first; the failed one left it alone"
+    );
+    assert!(take_shown(&rt).await.get("screen").is_none(), "nothing queued behind it");
+}
+
+#[tokio::test]
+async fn a_history_the_earlier_calculator_wrote_is_still_there() {
+    // the view-tree Calculator kept its history in app.kv under "history" as { expression, result }, newest first, in the
+    // database of the app `calculator`; this one reads the same key from the same database (installing it over the earlier
+    // one is an update, which keeps the app's data)
+    let data: Arc<dyn AppData> = db();
+    let earlier = LuaRuntime::new(Arc::new(Quiet), Arc::new(RecordingShell::default()));
+    let writer = lua_package(
+        r#"local app = require("vos:app")
+app.manifest { id = "calculator", name = "Calculator", icon = "calculator" }
+app.kv:set("history", { { expression = "250 * 0.18", result = 45 }, { expression = "12 + 7", result = 19 } })"#,
+        &[],
+    );
+    earlier.load(&id(APP), writer, data.clone()).await.unwrap();
+    earlier.unload(&id(APP)).await.unwrap();
+
+    let (rt, _) = calculator_on(data, Arc::new(RecordingShell::default())).await;
+    let history = tool(&rt, "history", json!({})).await.unwrap();
+    assert_eq!(
+        history["entries"],
+        json!([{ "expression": "250 * 0.18", "result": 45 }, { "expression": "12 + 7", "result": 19 }])
+    );
+    tool(&rt, "calculate", json!({ "expression": "2 + 2" })).await.unwrap();
+    let history = tool(&rt, "history", json!({})).await.unwrap();
+    assert_eq!(history["entries"].as_array().unwrap().len(), 3, "new calculations go on top of the old ones");
 }
