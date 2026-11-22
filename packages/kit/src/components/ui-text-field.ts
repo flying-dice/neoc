@@ -221,8 +221,8 @@ export class UiTextField extends FormControl {
 
   render(): TemplateResult {
     const type = TYPES.includes(this.type) ? this.type : 'text'
-    return html`<label class="box"
-      ><input
+    return html`<div class="box">
+      <input
         part="input"
         .value=${this.value}
         type=${type}
@@ -246,7 +246,8 @@ export class UiTextField extends FormControl {
         @input=${this.onInput}
         @change=${this.onChange}
         @keydown=${this.onKeydown}
-    /></label>`
+      />
+    </div>`
   }
 }
 
