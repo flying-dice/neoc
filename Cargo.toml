@@ -79,14 +79,15 @@ codegen-units = 1
 strip = "symbols"
 
 # The vos host: one small self-contained binary. `bun start` builds and runs it with
-# `cargo run --profile release-host -p vos-host`.
+# `cargo run --profile release-host -p vos-host`. It unwinds on panic (Rust's default, inherited from `release`),
+# so a panic in one app's module fails that call, not the host: `vos-host` refuses to build with `panic = "abort"`
+# (NEOC-125, Decision NEOC-258).
 [profile.release-host]
 inherits = "release"
 opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
-panic = "abort"
 
 # mlua-sys builds Luau's C++ in its build script, with this package's opt level. At `opt-level = 0` a dev build runs
 # the VM about 3 times slower (a 5e7-iteration numeric loop: 0.83 s against 0.28 s), where the LuaJIT it replaced was
