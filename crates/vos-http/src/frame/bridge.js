@@ -84,22 +84,21 @@
         failure.data = m.error.data
         call.reject(failure)
       } else call.resolve(m.result)
-    } else if (m.t === 'ping') {
-      post({ t: 'pong', id: m.id })
     } else if (m.t === 'event' && typeof m.name === 'string') {
       if (m.name === 'host:theme') setTheme(m.data)
       dispatch(m.name, m.data)
     }
   })
 
-  // A client that throws while it loads (a top-level error, a missing import, a syntax error) has not started: the first
-  // error the page raised before then is the reason, with where it came from, not a guess.
+  // A client that throws while it loads (a top-level error, a missing import, a syntax error) has not started. The client's
+  // script is cross-origin to this opaque-origin document, so the browser hides what went wrong (`Script error.`, no file or
+  // line): say that the script failed and where the real error is, and keep any real message the browser did give.
   var loadError = null
   var started = false
   window.addEventListener('error', function (e) {
     if (loadError || started) return
-    var where = e.filename ? ' (' + e.filename.split('/').slice(-2).join('/') + (e.lineno ? ':' + e.lineno : '') + ')' : ''
-    loadError = (e.message || 'the client failed to load') + where
+    var detail = e.message && e.message !== 'Script error.' ? ': ' + e.message : ''
+    loadError = 'the client script failed while it loaded' + detail + ' (the browser console has the error)'
   })
 
   function fail(message) {
@@ -112,7 +111,7 @@
   function start() {
     var app = window.vosApp
     var root = document.getElementById('root')
-    if (loadError) return fail('the client failed to load: ' + loadError)
+    if (loadError) return fail(loadError)
     if (!app || typeof app.mount !== 'function') return fail('the client does not define vosApp.mount')
     started = true
     try {
@@ -130,6 +129,23 @@
       fail(error instanceof Error ? error.message : String(error))
     }
   }
+
+  // A form's navigation is never useful in an app's frame (it would send the frame to another page), so a submission the app's own
+  // handlers did not prevent is prevented here, in the bubble phase on `window`, after theirs: an app that forgets `preventDefault`
+  // stays on its page. A `<form method="dialog">` closes its dialog and is no navigation: it is left alone. (`submit` does not cross
+  // a shadow root, and `form.submit()` fires no event: those still navigate, and the shell notices a page the frame left.)
+  window.addEventListener('submit', function (e) {
+    if (e.defaultPrevented) return
+    var form = e.target
+    var submitter = e.submitter
+    var method = (submitter && submitter.getAttribute && submitter.getAttribute('formmethod')) || (form && form.getAttribute && form.getAttribute('method')) || ''
+    if (String(method).toLowerCase() === 'dialog') return
+    e.preventDefault()
+  })
+
+  // The shell's way of knowing this document is its client and not a page the frame navigated itself to: said the moment the
+  // script starts, before anything of the client runs.
+  post({ t: 'hello' })
 
   window.addEventListener('pagehide', function () {
     if (unmount) unmount()

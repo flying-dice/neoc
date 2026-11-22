@@ -31,7 +31,8 @@ export default function App() {
     return () => stops.forEach((stop) => stop())
   }, [show])
 
-  // not a <form>: the frame is sandboxed without allow-forms, so a form cannot submit; Enter is handled here
+  // a real form: the frame is sandboxed with allow-forms, so submit fires (Enter, the button); an unprevented submission would send the
+  // frame to another page, so the handler prevents it
   async function add(): Promise<void> {
     if (await show(api.add({ title }))) setTitle('')
   }
@@ -44,19 +45,24 @@ export default function App() {
         <span data-testid="tasks-react-theme">{theme}</span> ·{' '}
         <span data-testid="tasks-react-count">{tasks.filter((t) => !t.done).length} left</span>
       </p>
-      <div className="row">
+      <form
+        className="row"
+        onSubmit={(e) => {
+          e.preventDefault()
+          void add()
+        }}
+      >
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && void add()}
           aria-label="New task"
           placeholder="What has to be done?"
           data-testid="tasks-react-title"
         />
-        <button type="button" onClick={() => void add()} data-testid="tasks-react-add">
+        <button type="submit" data-testid="tasks-react-add">
           Add
         </button>
-      </div>
+      </form>
       {error && (
         <p className="error" role="alert" data-testid="tasks-react-error">
           {error}

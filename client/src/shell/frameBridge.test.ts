@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { HostError } from './channel'
+import { MAX_IN_FLIGHT_PER_FRAME, MAX_IN_FLIGHT_TOTAL } from './callGate'
 import {
   createFrameBridge,
   eventFor,
@@ -164,31 +165,71 @@ describe('the frame bridge', () => {
   })
 
   test('a disposed bridge neither acts nor answers', async () => {
-    const { bridge, posted, calls, flush } = rig(async () => 'late')
+    const { bridge, posted, calls, flush } = rig(
+      () => new Promise((r) => setTimeout(() => r('late'), 20))
+    )
     bridge.receive({ source: FRAME, data: { t: 'rpc', id: 1, method: 'list' } })
+    await flush()
     bridge.dispose()
     bridge.receive({ source: FRAME, data: { t: 'rpc', id: 2, method: 'list' } })
     bridge.event('changed', null)
-    await flush()
+    await new Promise((r) => setTimeout(r, 40))
     expect(calls.length).toBe(1)
     expect(posted).toEqual([])
   })
 
-  test('a ping is answered by the client’s bridge and not by a page the frame went to', async () => {
-    const { bridge, posted } = rig(async () => null)
-    const answered = bridge.ping(1000)
-    const sent = posted[0] as { t: string; id: number }
-    expect(sent.t).toBe('ping')
-    bridge.receive({ source: FRAME, data: { t: 'pong', id: sent.id } })
-    expect(await answered).toBe(true)
-    expect(await bridge.ping(5)).toBe(false)
-    // a pong from another window, or for another ping, settles nothing
-    const other = bridge.ping(20)
-    bridge.receive({
-      source: { other: true },
-      data: { t: 'pong', id: (posted.at(-1) as { id: number }).id }
+  test('hello reaches the shell, from the frame only', () => {
+    let hellos = 0
+    const bridge = createFrameBridge({
+      appId: 'notes',
+      frame: () => FRAME,
+      post: () => {},
+      call: async () => null,
+      onHello: () => hellos++
     })
-    expect(await other).toBe(false)
+    bridge.receive({ source: FRAME, data: { t: 'hello' } })
+    bridge.receive({ source: { other: true }, data: { t: 'hello' } })
+    expect(hellos).toBe(1)
+  })
+
+  test('a burst of calls completes through the gate and never has more than the gate allows in flight', async () => {
+    let now = 0
+    let peak = 0
+    const { bridge, posted } = rig(async () => {
+      now += 1
+      peak = Math.max(peak, now)
+      await new Promise((r) => setTimeout(r, 1))
+      now -= 1
+      return 'ok'
+    })
+    for (let id = 0; id < 200; id++)
+      bridge.receive({ source: FRAME, data: { t: 'rpc', id, method: 'echo' } })
+    for (let i = 0; i < 200 && posted.length < 200; i++) await new Promise((r) => setTimeout(r, 5))
+    expect(posted.length).toBe(200)
+    expect(posted.every((m) => 'result' in m)).toBe(true)
+    expect(peak).toBeLessThanOrEqual(MAX_IN_FLIGHT_PER_FRAME)
+  })
+
+  test('two frames and their calls together stay within the total, so the shell’s own calls keep their slots', async () => {
+    let now = 0
+    let peak = 0
+    const slow = async (): Promise<string> => {
+      now += 1
+      peak = Math.max(peak, now)
+      await new Promise((r) => setTimeout(r, 2))
+      now -= 1
+      return 'ok'
+    }
+    const a = rig(slow)
+    const b = rig(slow)
+    for (let id = 0; id < 100; id++) {
+      a.bridge.receive({ source: FRAME, data: { t: 'rpc', id, method: 'echo' } })
+      b.bridge.receive({ source: FRAME, data: { t: 'rpc', id, method: 'echo' } })
+    }
+    for (let i = 0; i < 400 && a.posted.length + b.posted.length < 200; i++)
+      await new Promise((r) => setTimeout(r, 5))
+    expect(a.posted.length + b.posted.length).toBe(200)
+    expect(peak).toBeLessThanOrEqual(MAX_IN_FLIGHT_TOTAL)
   })
 
   test('events go into the frame', () => {

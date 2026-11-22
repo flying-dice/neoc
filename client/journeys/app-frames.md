@@ -20,6 +20,7 @@ after another).
 | AF7 | Use two apps with clients side by side.                        | Both apps open.                    | A task added in one is not in the other: each client reaches only its own backend.                                                         |
 | AF9 | A client sends its frame to another page (`location.href`).       | The app open.                      | The window notices it is not showing the page it loaded, says the app left its page, and "Try again" brings the app back. |
 | AF8 | Send the backend a call its definition does not allow.         | The app open.                      | The router refuses it with a JSON-RPC error that says what is wrong (invalid params, method not found); the window is unharmed.           |
+| AF10 | A client submits a form nobody prevented, and one by script with `form.submit()`. | The app open.            | The first stays on its page (a dialog form still closes its dialog); the second sends the frame away and the window says the app left its page, with Try again; no data is sent. |
 
 ## Manual verification
 

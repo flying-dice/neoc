@@ -1,6 +1,6 @@
 //! The frame route: what an app's client runs in.
 //!
-//! An app with a client opens in an `<iframe sandbox="allow-scripts">` of the shell. The frame's document comes
+//! An app with a client opens in an `<iframe sandbox="allow-scripts allow-forms">` of the shell. The frame's document comes
 //! from here, not from the shell's page, so it can carry a `Content-Security-Policy` header of its own: the
 //! shell's `<meta>` policy would otherwise be inherited by an inline document, and a `<meta>` policy cannot carry
 //! `sandbox`. The policy allows no request of the client's own (`default-src 'none'`, no `connect-src`), so the only thing a
@@ -37,7 +37,7 @@ const BRIDGE: &str = include_str!("frame/bridge.js");
 /// origin, so it has no access to the shell's page, its storage or its cookie.
 pub const FRAME_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
 img-src 'self' data: blob:; font-src 'self' data:; base-uri 'none'; form-action 'none'; \
-frame-ancestors 'self'; sandbox allow-scripts";
+frame-ancestors 'self'; sandbox allow-scripts allow-forms";
 
 #[derive(Deserialize)]
 struct FrameQuery {

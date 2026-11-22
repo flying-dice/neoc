@@ -1,6 +1,6 @@
 <!--
   @organism AppFrame — an installed app's window when the app has a client of its own: the client runs in an
-  `<iframe sandbox="allow-scripts">` whose document the host serves at `/frame/<app>` (with a policy that allows no
+  `<iframe sandbox="allow-scripts allow-forms">` whose document the host serves at `/frame/<app>` (with a policy that allows no
   network). The shell is the frame's only neighbour: the frame's `rpc` calls reach this app's backend through
   `app.call`, the backend's events and the shell's light or dark appearance come back as messages, and a message is
   the frame's only when it comes from this iframe's own window (`shell/frameBridge.ts`). Atoms: ActivityIndicator,
@@ -49,22 +49,27 @@
   let bridge: FrameBridge | undefined
 
   // A frame can navigate itself away (`location.href = ...`), which no policy stops, and then the iframe is not what the
-  // shell loaded: its document was replaced. The shell loaded one document per frame, so a second `load` of the same
-  // iframe means the page left (or reloaded itself). Ask the document whether it is the client's: the host's bridge
-  // script answers a ping, a foreign page does not. If nothing answers, the window says the app left its page, with the
-  // way back, rather than keep saying ready over a page the shell did not load.
-  const LEFT_GRACE_MS = 1500
+  // shell loaded: its document was replaced. The host's bridge script says `hello` the moment it starts, before the client
+  // does anything, so a document of the client says hello once per load. A second load of the same iframe that has not
+  // been followed by a hello of its own is a page the frame went to: the window says the app left its page, with the way
+  // back, rather than keep saying ready over a page the shell did not load. The hello was sent before any client code ran, so
+  // how busy the client is cannot delay it; the short wait is only for the messages of an out-of-process frame, which may
+  // arrive a moment after its load event.
+  const HELLO_WAIT_MS = 1000
+  let waiting: ReturnType<typeof setTimeout> | undefined
   function onframeload(event: Event): void {
     const element = event.currentTarget as HTMLIFrameElement
     // counted on the element itself: a frame is made again for every attempt, so every frame starts at 0
     const loads = Number(element.dataset.loads ?? 0) + 1
     element.dataset.loads = String(loads)
     if (loads < 2 || phase === 'failed') return
-    void (bridge?.ping(LEFT_GRACE_MS) ?? Promise.resolve(false)).then((answered) => {
-      if (answered || phase === 'failed' || element !== iframe) return
+    clearTimeout(waiting)
+    waiting = setTimeout(() => {
+      if (phase === 'failed' || element !== iframe || Number(element.dataset.hellos ?? 0) >= loads)
+        return
       failure = `${name} left its page, so the window cannot show it.`
       phase = 'failed'
-    })
+    }, HELLO_WAIT_MS)
   }
 
   // One bridge per frame, made for this app and this iframe's window.
@@ -76,6 +81,9 @@
       frame: () => frame.contentWindow,
       post: (message) => frame.contentWindow?.postMessage(message, '*'),
       call: (method, params) => host.api.call(method, params),
+      onHello: () => {
+        frame.dataset.hellos = String(Number(frame.dataset.hellos ?? 0) + 1)
+      },
       onReady: () => {
         if (phase === 'failed') return
         phase = 'ready'
@@ -147,6 +155,7 @@
   })
 
   onDestroy(() => {
+    clearTimeout(waiting)
     bridge?.dispose()
   })
 </script>
@@ -168,7 +177,7 @@
       src={srcdoc === undefined ? src : undefined}
       {srcdoc}
       title={name}
-      sandbox="allow-scripts"
+      sandbox="allow-scripts allow-forms"
       referrerpolicy="no-referrer"
       data-testid="{appId}-frame"
       onload={onframeload}

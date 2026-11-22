@@ -20,6 +20,7 @@
   ): string => `<!doctype html><html lang="en"><title>Calculator</title><body style="font:16px system-ui;margin:16px">
 <p id="out">waiting</p>
 <script>
+  parent.postMessage({ t: 'hello' }, '*')
   parent.postMessage({ t: 'ready' }, '*')
   window.addEventListener('message', (e) => {
     const m = e.data
@@ -188,7 +189,7 @@ ${CLOSE}</body></html>`
   name="Leaves its page"
   args={{
     srcdoc:
-      '<!doctype html><html lang="en"><title>Calculator</title><p>about to leave</p><script>parent.postMessage({ t: "ready" }, "*"); setTimeout(() => { location.href = "about:blank" }, 300)' +
+      '<!doctype html><html lang="en"><title>Calculator</title><p>about to leave</p><script>parent.postMessage({ t: "hello" }, "*"); parent.postMessage({ t: "ready" }, "*"); setTimeout(() => { location.href = "about:blank" }, 300)' +
       CLOSE
   }}
   beforeEach={withHost(() => null)}

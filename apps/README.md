@@ -167,24 +167,33 @@ Set `data-testid` on every interactive element yourself (`<appId>-<thing>`).
 | `host.on(name, fn)` | hears an event, returns a function that stops listening: one the backend sent with `app.emit(name, data)`, or the host's own, whose names start with `host:` |
 | `host.theme` | `"light"` or `"dark"`: the shell's appearance now. `host:theme` is the event when it changes, and `<html data-theme>` and `color-scheme` follow it, so style dark as `html[data-theme="dark"]` |
 
-**What the frame is.** The app's window is an `<iframe sandbox="allow-scripts">` that loads `/frame/<id>` from the host. The
+**What the frame is.** The app's window is an `<iframe sandbox="allow-scripts allow-forms">` that loads `/frame/<id>` from the host. The
 frame makes no request of its own (its content security policy allows none: `fetch`, WebSocket, scripts, images and
 fonts from anywhere but the host fail), has no access to the shell's page, cookie or storage (`localStorage`,
 `document.cookie` and `parent.document` throw), and has one way out: `api` reaches **this app's** backend, and the host
 knows which app is calling from the frame the message came from, never from anything the client says. The client's styles
 and scripts stay in its frame. The sandbox also stops it opening windows (`window.open` returns `null`), navigating the
-shell (`window.top.location` throws), and submitting a form: the frame has no `allow-forms`, so **a `<form>` cannot
-submit** (not even to `preventDefault` it): handle clicks and the Enter key yourself. What the policy cannot stop is the
-frame navigating **itself** (`location.href = ...`): the window then shows a page the shell did not load, so after a moment
-it says the app left its page and offers to open it again. This is sensible isolation, so apps do not trip over each other
+shell (`window.top.location` throws). **Forms work** (the sandbox has `allow-forms`): Enter in a field, a submit button,
+the `submit` event, validation and `FormData` behave as in any page, and your framework's `onSubmit` runs. A submission
+that nothing prevented is prevented for you, after your handlers have run, so a form whose handler forgot `preventDefault()` stays on
+its page (a `<form method="dialog">` still closes its dialog). Two things still navigate the frame, which the policy's
+`form-action 'none'` refuses to send data for but cannot keep on the page: `form.submit()` from script (it fires no event) and a form
+inside a shadow root of your own (`submit` does not cross it); the window then says the app left its page. What the policy cannot stop is the frame
+navigating **itself** (`location.href = ...`): the window then shows a page the shell did not load, and says the app left
+its page and offers to open it again (a refused form submission is not that: nothing loads). This is sensible isolation, so apps do not trip over each other
 or over the shell; it is not a security boundary. Lasting data belongs in the backend (the frame has no storage).
 
 **Limits of a call.** An `api` call's arguments may be at most 1,000,000 bytes of JSON and 100 levels deep, and a method name is 1 to
 128 characters: a call over a limit rejects at once with a message that says which. A result may be at most 4 MiB, and a
-larger one comes back as an error. A call the shell cannot read is rejected too, so a promise never hangs.
+larger one comes back as an error. A call the shell cannot read is rejected too, so a promise never hangs. Calls in
+flight are limited so that one window can neither be refused by the host's own connection limit for an ordinary burst (a
+call per item of a list) nor crowd out the shell or another window: 8 at a time per window and 32 across all windows, the
+rest wait their turn (windows take turns); a window with 1,000 calls waiting gets an error for the next one.
 
 **When a client fails to start**, the window shows the reason as text with a "Try again" button: the error the page raised
-while it loaded (a top-level throw, a missing import, a syntax error: its message and where), a client that does not define
+while it loaded (a top-level throw, a missing import, a syntax error: the script comes from another origin than the
+frame's document, so the browser hides the message, and the window says that the script failed and that the browser console
+has the error), a client that does not define
 `vosApp.mount`, or an error thrown by `mount`.
 
 The policy lets a classic same-host script define custom elements and a shadow root carry `<style>`, so the shell's UI kit (Lit web components, NEOC-252) renders in it.
