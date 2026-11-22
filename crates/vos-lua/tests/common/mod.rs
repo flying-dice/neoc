@@ -24,7 +24,7 @@ pub fn package(entry: &str, modules: &[(&str, &str)]) -> AppPackage {
     for (path, src) in modules {
         files.insert((*path).to_owned(), src.as_bytes().to_vec());
     }
-    AppPackage { entry: "app.lua".into(), files }
+    AppPackage { entry: "app.lua".into(), files, ..AppPackage::default() }
 }
 
 /// The config of these tests: the host's, plus the `hook(name, fn)` global `AppVm::emit` calls.
@@ -103,7 +103,7 @@ fn nonce() -> u64 {
 /// An app package of the one built file: `entry` is a Luau file (`apps/calculator/app.luau`, a fixture), bundled.
 pub fn built_package(entry: &Path) -> AppPackage {
     let files = BTreeMap::from([("app.luau".to_owned(), build_luau(entry))]);
-    AppPackage { entry: "app.luau".into(), files }
+    AppPackage { entry: "app.luau".into(), files, ..AppPackage::default() }
 }
 
 /// The shipped app `apps/<id>` (or, when the repo has none, the codegen example of that name), built.

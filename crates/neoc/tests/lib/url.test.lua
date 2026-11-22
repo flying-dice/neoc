@@ -62,6 +62,17 @@ describe("url", function()
             expect((url.parse("https://example.com:8443/a")).origin).toBe("https://example.com:8443")
             expect((url.parse("https://example.com/a")).origin).toBe("https://example.com")
         end)
+
+        -- RUSTSEC-2026-0592: url 2.5.8 recursed once per `blob:` prefix and overflowed the stack (an abort, not an error).
+        test("origin of blob and other schemes follows the URL Standard and survives deep nesting", function()
+            local nested = string.rep("blob:", 10000) .. "https://example.com/"
+            expect((url.parse(nested)).origin).toBe("null")
+            expect((url.parse("blob:https://example.com:8443/uuid")).origin).toBe("https://example.com:8443")
+            expect((url.parse("blob:blob:https://example.com/uuid")).origin).toBe("null")
+            expect((url.parse("blob:ws://example.com/uuid")).origin).toBe("null")
+            expect((url.parse("data:text/plain,hi")).origin).toBe("null")
+            expect((url.parse("ws://example.com/")).origin).toBe("ws://example.com")
+        end)
     end)
 
     -- ── Mutation via with_* (immutable — returns new Url) ────────────────────

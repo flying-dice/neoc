@@ -1,8 +1,8 @@
 # TypeScript and Svelte 5 (client, kit, scripts)
 
 Applies to `client/` (the shell and the managed renderer), `packages/ui` (the kit), `packages/storybook`, `types/` tests and
-`scripts/`. App code is Luau (`luau.md`), the host is Rust (`rust.md`). The client **renders view trees and runs no app
-code**: nothing in it knows what the Calculator is.
+`scripts/`. App code is Luau (`luau.md`), the host is Rust (`rust.md`). The shell knows nothing of any app: a view-tree
+app is drawn by the renderer from a tree, an app with a client runs in its own frame (`shell/frameBridge.ts`).
 
 ## TypeScript
 

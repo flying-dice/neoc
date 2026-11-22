@@ -314,6 +314,7 @@ async fn a_render_that_fails_or_is_invalid_is_an_error_and_the_view_survives() {
     let package = AppPackage {
         entry: "app.lua".into(),
         files: [("app.lua".to_owned(), BROKEN.as_bytes().to_vec())].into(),
+        ..AppPackage::default()
     };
     let (rig, _) = load("broken", package).await;
     let first = open(&rig, "broken", "v1").await;
@@ -365,6 +366,7 @@ app.window("main", { render = function(w) s.n = s.n + 1 return ui.Text { "x", ke
     let package = AppPackage {
         entry: "app.lua".into(),
         files: [("app.lua".to_owned(), src.as_bytes().to_vec())].into(),
+        ..AppPackage::default()
     };
     let (rig, _) = load("impure", package).await;
     let err = rig.runtime.open_view(&id("impure"), "v1", "main", Map::new(), Map::new()).await.unwrap_err();

@@ -5,8 +5,8 @@ use std::fmt::Write as _;
 
 use ts_rs::TS;
 use vos_domain::api::{
-    AgentGrantsRow, AgentList, AgentRow, AgentRuntimeRow, AppList, AppPreview, AppState, AppSummary,
-    AppWindow, Catalog, DeviceList, DeviceRow, InstalledInfo,
+    AgentGrantsRow, AgentList, AgentRow, AgentRuntimeRow, AppEvent, AppList, AppPreview, AppState,
+    AppSummary, AppWindow, Catalog, DeviceList, DeviceRow, InstalledInfo,
 };
 use vos_domain::ui::{
     components::{CATALOGUE, COMMON_EVENTS, COMMON_PROPS, COMMON_SLOTS},
@@ -139,6 +139,7 @@ fn protocol() -> String {
     add(AppWindow::decl(&cfg));
     add(AppSummary::decl(&cfg));
     add(AppList::decl(&cfg));
+    add(AppEvent::decl(&cfg));
     add(InstalledInfo::decl(&cfg));
     add(AppPreview::decl(&cfg));
     add(Catalog::decl(&cfg));

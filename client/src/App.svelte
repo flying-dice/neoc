@@ -1,7 +1,7 @@
 <!--
   Composition root — the only component allowed outside an atomic layer.
-  It gates the shell on pairing, applies system settings, and maps app ids to built-in pages or to the windows
-  of the Lua apps installed on the host.
+  It gates the shell on pairing, applies system settings, and maps app ids to built-in pages, to the frame of an
+  installed app that has a client of its own, or to the view window of one that describes its screens in Luau.
 -->
 <script lang="ts">
   import DesktopPage from './pages/DesktopPage.svelte'
@@ -11,11 +11,12 @@
   import GalleryPage from './pages/GalleryPage.svelte'
   import TerminalPage from './pages/TerminalPage.svelte'
   import PairingPage from './pages/PairingPage.svelte'
+  import AppFrame from './organisms/AppFrame.svelte'
   import ViewWindow from './organisms/ViewWindow.svelte'
   import { settings } from './lib/settings.svelte'
   import { host } from './lib/host.svelte'
   import { windowManager, type WindowState } from './lib/windowManager.svelte'
-  import { onAppsRemoved } from './lib/apps.svelte'
+  import { installedApp, onAppsRemoved } from './lib/apps.svelte'
 
   $effect(() => settings.apply(document.documentElement))
 
@@ -56,6 +57,12 @@
     <GalleryPage />
   {:else if win.appId === 'terminal'}
     <TerminalPage />
+  {:else if installedApp(win.appId)?.client}
+    <AppFrame
+      appId={win.appId}
+      name={installedApp(win.appId)?.name ?? win.appId}
+      windowId={win.id}
+    />
   {:else}
     <ViewWindow
       appId={win.appId}

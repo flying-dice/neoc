@@ -70,6 +70,7 @@ async fn run_case(case: &str) -> String {
     let package = AppPackage {
         entry: "app.luau".into(),
         files: BTreeMap::from([("app.luau".to_owned(), APP.as_bytes().to_vec())]),
+        ..AppPackage::default()
     };
     let data = Arc::new(AppDb::open(None, &[]).unwrap());
     let vm = AppVm::load(&AppId::parse("stack").unwrap(), package, data, VmConfig::default()).await.unwrap();
