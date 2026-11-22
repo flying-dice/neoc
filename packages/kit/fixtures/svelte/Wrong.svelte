@@ -6,3 +6,4 @@
 <ui-button variant="tinteed" />
 <ui-toggle onchange={(e) => e.detail.value} />
 <ui-toggle checked="yes" />
+<ui-row heading="Buy milk" onpress={(e) => e.detail.nope} />

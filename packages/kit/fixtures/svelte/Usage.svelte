@@ -6,7 +6,7 @@
 
 <ui-list label="Tasks" selection="single" variant="sidebar" data-testid="tasks">
   <ui-section header="Today">
-    <ui-row heading="Buy milk" subheading="Two litres" icon="bell" icon-color="red" tappable selected onclick={() => {}} />
+    <ui-row heading="Buy milk" subheading="Two litres" icon="bell" icon-color="red" tappable selected onpress={(e) => e.type} />
   </ui-section>
   <ui-button variant="tinted" size="small" shape="capsule" fill="orange" onclick={() => {}} data-testid="add">Add</ui-button>
   <ui-toggle {checked} label="Sync" onchange={(e) => (checked = e.detail.checked)} />

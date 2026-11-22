@@ -3,7 +3,7 @@
 export const valid = (
   <ui-list label="Tasks" selection="single" variant="sidebar" data-testid="tasks">
     <ui-section header="Today">
-      <ui-row heading="Buy milk" subheading="Two litres" icon="bell" icon-color="red" tappable selected onClick={() => {}} />
+      <ui-row heading="Buy milk" subheading="Two litres" icon="bell" icon-color="red" tappable selected onpress={(e) => e.type satisfies string} />
     </ui-section>
     <ui-button variant="tinted" size="small" shape="capsule" fill="orange" onClick={() => {}} data-testid="add">
       Add
