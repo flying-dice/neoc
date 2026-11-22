@@ -354,13 +354,7 @@ async fn serve_socket(socket: WebSocket, handler: Arc<dyn RpcHandler>, device: O
                 }
             }
             Ok(RpcMessage::Notification { method, params, .. }) if method == CANCELLED => {
-                // MCP's cancellation: `{ requestId, reason? }`. Unknown, finished or malformed ones are ignored (it is a notification:
-                // there is nobody to tell), and a request that is ordered (the view protocol) is not cancellable.
-                let id =
-                    params.get("requestId").and_then(|v| serde_json::from_value::<RpcId>(v.clone()).ok());
-                if let Some(token) = id.and_then(|id| running.lock().get(&id_key(&id)).cloned()) {
-                    token.cancel();
-                }
+                cancel_running(&running, &params);
             }
             Ok(RpcMessage::Notification { method, params, .. }) => {
                 // in order, before the next frame is read: `client.state` is FIFO ahead of a later event. A panic
@@ -450,6 +444,15 @@ fn spawn_request(
 /// MCP's cancellation notification (basic/utilities/cancellation): a client that no longer wants a running request says so, and
 /// the receiver stops it, frees what it holds and sends no response.
 pub const CANCELLED: &str = "notifications/cancelled";
+
+/// MCP's cancellation: `{ requestId, reason? }`. Unknown, finished or malformed ones are ignored (it is a notification: there is
+/// nobody to tell), and a request that is ordered (the view protocol) is not cancellable.
+fn cancel_running(running: &Mutex<HashMap<String, CancellationToken>>, params: &Value) {
+    let id = params.get("requestId").and_then(|v| serde_json::from_value::<RpcId>(v.clone()).ok());
+    if let Some(token) = id.and_then(|id| running.lock().get(&id_key(&id)).cloned()) {
+        token.cancel();
+    }
+}
 
 /// A request id as a map key: a number and a string of the same digits are different ids.
 fn id_key(id: &RpcId) -> String {
