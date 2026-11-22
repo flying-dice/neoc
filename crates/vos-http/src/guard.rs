@@ -210,8 +210,8 @@ pub async fn origin_guard(State(guard): State<Arc<HostGuard>>, req: Request, nex
         return forbidden(); // an Origin header that is not text is not a browser's
     }
     // A sandboxed app page has an opaque origin: its module scripts and styles are fetched with `Origin: null`. Those
-    // reads of the app's own static files (public, like the shell's) are let through; nothing else is.
-    let origin = if origin == Some("null") && is_app_static_read(req.method(), req.uri().path()) {
+    // reads of the app's own static files and of the kit (public, like the shell's) are let through; nothing else is.
+    let origin = if origin == Some("null") && is_public_frame_read(req.method(), req.uri().path()) {
         None
     } else {
         origin
@@ -223,11 +223,16 @@ pub async fn origin_guard(State(guard): State<Arc<HostGuard>>, req: Request, nex
     }
 }
 
-/// Is this a read (`GET` or `HEAD`) of an app's static content, `/apps/<id>/static/...`? Judged on the path as it was
-/// sent: an encoded separator or a segment that merely looks like `static` is not one.
-fn is_app_static_read(method: &Method, path: &str) -> bool {
+/// Is this a read (`GET` or `HEAD`) that an app's sandboxed page makes of public files: its own static content,
+/// `/apps/<id>/static/...`, or the kit, `/kit/...` (its stylesheet is loaded `crossorigin`, so that the page, and a
+/// checker such as axe running in it, can read its rules)? Judged on the path as it was sent: an encoded separator or a
+/// segment that merely looks like `static` or `kit` is not one.
+fn is_public_frame_read(method: &Method, path: &str) -> bool {
     if method != Method::GET && method != Method::HEAD {
         return false;
+    }
+    if path.starts_with("/kit/") {
+        return true;
     }
     let Some(rest) = path.strip_prefix("/apps/") else { return false };
     let Some((app, after)) = rest.split_once('/') else { return false };
@@ -292,8 +297,14 @@ mod tests {
             (Method::GET, "/agui/threads", false),
             (Method::GET, "/mcp", false),
             (Method::GET, "/", false),
+            (Method::GET, "/kit/tokens.css", true),
+            (Method::HEAD, "/kit/kit.js", true),
+            (Method::POST, "/kit/kit.js", false),
+            (Method::GET, "/kit", false),
+            (Method::GET, "/kits/x", false),
+            (Method::GET, "/assets/index.js", false),
         ] {
-            assert_eq!(is_app_static_read(&method, path), yes, "{method} {path}");
+            assert_eq!(is_public_frame_read(&method, path), yes, "{method} {path}");
         }
     }
 

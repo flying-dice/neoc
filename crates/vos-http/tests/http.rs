@@ -189,6 +189,12 @@ async fn the_kit_is_served_and_a_missing_kit_file_is_a_404_not_the_shells_page()
     assert_eq!(status_of(addr, "/kit/missing.js").await, 404);
     assert!(!reqwest_get(addr, "/kit/missing.js").await.contains("<h1>client</h1>"));
     assert_eq!(status_of(addr, "/kit/").await, 404);
+    // an app's sandboxed page reads it with `crossorigin` (an opaque origin): it may, as it may read its own files
+    let head = raw_get(addr, "/kit/kit.js", "Origin: null\r\n").await;
+    assert!(head.starts_with("HTTP/1.1 200"), "{head}");
+    assert!(head.to_ascii_lowercase().contains("access-control-allow-origin: *"), "{head}");
+    // and the rest of the shell's files are not opened to an opaque origin
+    assert!(raw_get(addr, "/assets/app.js", "Origin: null\r\n").await.starts_with("HTTP/1.1 403"));
     // the rest of the client still falls back
     assert!(reqwest_get(addr, "/kits").await.contains("<h1>client</h1>"), "only /kit/ is exempt");
     server.abort();
@@ -205,6 +211,20 @@ async fn status_of(addr: std::net::SocketAddr, path: &str) -> u16 {
     let mut out = String::new();
     s.read_to_string(&mut out).await.unwrap();
     out.split(' ').nth(1).and_then(|c| c.parse().ok()).unwrap()
+}
+
+/// the whole response (head and body) of a GET with extra header lines
+async fn raw_get(addr: std::net::SocketAddr, path: &str, headers: &str) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
+    s.write_all(
+        format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\n{headers}Connection: close\r\n\r\n").as_bytes(),
+    )
+    .await
+    .unwrap();
+    let mut out = String::new();
+    s.read_to_string(&mut out).await.unwrap();
+    out
 }
 
 /// minimal HTTP/1.1 GET without pulling reqwest into this crate's dev-deps
