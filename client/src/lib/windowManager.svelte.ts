@@ -1,5 +1,6 @@
 import type { Frame, StageSummary, WindowLayout } from '@vos/ui'
 import { appOf, MIN_WIDTH, type AppDefinition, type AppId } from './apps.svelte'
+import { sizeClassOf } from '../view/protocol'
 
 /**
  * Stage Manager–style window manager.
@@ -20,6 +21,17 @@ import { appOf, MIN_WIDTH, type AppDefinition, type AppId } from './apps.svelte'
  * Slide Over is the same: not offered where the app's minimum width does not fit the screen.
  * Where the screen is shorter than an app's minimum height (a waiting split and Slide Over stop above the Dock) the
  * minimum wins, as it does for a floating window.
+ *
+ * Compact screens (a phone): floating windows, Split View and Slide Over are what iPadOS does on a regular-size screen;
+ * on a compact one iOS shows one app at a time, full screen. A workspace narrower or shorter than the size-class
+ * breakpoint (`COMPACT_BELOW`, the one a window's own content switches at) is `compact`, and there every window is
+ * presented full screen above the Dock (`layoutOf`, `frameOf`), whatever layout it has; the Dock stays up (a touch
+ * screen has no pointer to bring it back) and the recent-apps strip steps back to the screen's edge (`stripObscured`).
+ * An app's minimum size is a regular-size window's: on a compact screen the window is the screen's size. Nothing a
+ * window remembers is used or changed while the screen is compact: its layout, its floating frame, a split and its
+ * divider wait, untouched, and come back when the screen has room again (`setLayout` and `setFrame` do nothing, and a
+ * change of size fits nothing until the screen is regular again). The multitasking menu offers no other layout
+ * (`unavailableLayouts`): Full Screen, the one shown, and Minimise and Close, which go back to the home screen.
  */
 
 export interface WindowState {
@@ -77,6 +89,7 @@ export class WindowManager {
   set bounds(next: { width: number; height: number }) {
     if (next.width === this.#bounds.width && next.height === this.#bounds.height) return
     this.#bounds = next
+    if (this.compact) return // nothing is laid out by what it remembers: fitting it now would change what it comes back to
     for (const stage of this.stages) this.#fitSplit(stage)
     // a Slide Over whose app no longer fits the screen goes back to a floating window (never off the right edge)
     const slideOver = this.slideOver
@@ -85,6 +98,19 @@ export class WindowManager {
   }
 
   // ── Queries ────────────────────────────────────────────────────────────
+
+  /** A screen too small for windows (narrower or shorter than the size-class breakpoint): one app at a time, full screen. */
+  get compact(): boolean {
+    return (
+      sizeClassOf(this.#bounds.width) === 'compact' ||
+      sizeClassOf(this.#bounds.height) === 'compact'
+    )
+  }
+
+  /** The layout a window is shown in: its own, or full screen on a compact screen (its own is kept for a regular one). */
+  layoutOf(win: WindowState): WindowLayout {
+    return this.compact ? 'fullscreen' : win.layout
+  }
 
   get activeStage(): Stage | undefined {
     return this.stages.find((s) => s.id === this.activeStageId)
@@ -126,17 +152,17 @@ export class WindowManager {
 
   /** Full screen or split windows take the whole stage: hide strip and dock. */
   get immersive(): boolean {
-    return this.onStage.some((w) => w.layout !== 'floating')
+    return this.onStage.some((w) => this.layoutOf(w) !== 'floating')
   }
 
-  /** The dock hides when immersive — except while a split waits for its second app. */
+  /** The dock hides when immersive — except while a split waits for its second app, and on a compact screen. */
   get dockHidden(): boolean {
-    return this.immersive && !this.activeStage?.awaitingSplit
+    return this.immersive && !this.activeStage?.awaitingSplit && !this.compact
   }
 
-  /** Strip auto-hides when immersive or a floating window overlaps it. */
+  /** Strip auto-hides when immersive, on a compact screen (iOS has no Stage Manager), or a floating window overlaps it. */
   get stripObscured(): boolean {
-    return this.immersive || this.onStage.some((w) => w.frame.x < STRIP_WIDTH - 10)
+    return this.compact || this.immersive || this.onStage.some((w) => w.frame.x < STRIP_WIDTH - 10)
   }
 
   isOpen(appId: AppId): boolean {
@@ -148,6 +174,7 @@ export class WindowManager {
    * (a short screen's Dock edge or a narrow Slide Over does not cut the app off, as a floating window never is).
    */
   frameOf(win: WindowState): Frame {
+    if (this.compact) return this.#compactFrame(win)
     const frame = this.#layoutFrame(win)
     if (win.layout === 'floating') return frame
     const { minWidth, minHeight } = this.#minOf(win)
@@ -184,6 +211,14 @@ export class WindowManager {
     }
   }
 
+  /** Full screen above the Dock, at the screen's size whatever the app's minimum (a hidden Slide Over stays off screen). */
+  #compactFrame(win: WindowState): Frame {
+    const { width: W } = this.bounds
+    const width = Math.max(0, W - INSET * 2)
+    const x = win.layout === 'slideover' && this.slideOverHidden ? W + 20 : INSET
+    return { x, y: INSET, width, height: Math.max(0, this.#heightAboveDock) }
+  }
+
   /** One side of a split at the divider's position. */
   #splitPane(side: 'split-left' | 'split-right', ratio: number, height: number): Frame {
     const usable = this.#splitWidth
@@ -206,7 +241,7 @@ export class WindowManager {
   /** The empty side of a split that waits for its second app: the pane the first one left, down to the same edge. */
   get splitPlaceholderFrame(): Frame | null {
     const stage = this.activeStage
-    if (!stage?.awaitingSplit) return null
+    if (!stage?.awaitingSplit || this.compact) return null
     const first = this.onStage.find((w) => w.layout.startsWith('split'))
     return this.#splitPane(
       stage.awaitingSplit,
@@ -217,6 +252,7 @@ export class WindowManager {
 
   /** x position of the split divider, when the active stage is split. */
   get splitDividerX(): number | null {
+    if (this.compact) return null
     const left = this.onStage.find((w) => w.layout === 'split-left')
     const right = this.onStage.find((w) => w.layout === 'split-right')
     if (!left && !right) return null
@@ -252,8 +288,9 @@ export class WindowManager {
     const win = this.#createWindow(app, options.kind ?? 'main', options.params)
     const stage = this.activeStage
 
-    // Filling the empty side of a pending Split View, when the two apps fit side by side at their minimums.
-    if (stage?.awaitingSplit) {
+    // Filling the empty side of a pending Split View, when the two apps fit side by side at their minimums. On a compact
+    // screen the split waits, untouched, for a screen with room for it, and this app opens as a stage of its own.
+    if (stage?.awaitingSplit && !this.compact) {
       const waiting = this.onStage.find((w) => w.layout.startsWith('split'))
       if (waiting && this.#fits([this.#minOf(waiting).minWidth, app.minWidth])) {
         win.layout = stage.awaitingSplit
@@ -277,7 +314,7 @@ export class WindowManager {
     // Joining the current group, placed beside the existing windows.
     if (options.alongside && stage && stage.windowIds.length) {
       win.stageId = stage.id
-      win.frame = this.#besideStage(win.frame)
+      if (!this.compact) win.frame = this.#besideStage(win.frame) // which moves the others' floating frames
       stage.windowIds.push(win.id)
       this.windows.push(win)
       return this.focus(win.id)
@@ -337,7 +374,7 @@ export class WindowManager {
   /** Floating windows stay on screen and clear of the Dock (never smaller than the app allows). */
   setFrame(id: string, frame: Frame): void {
     const win = this.windows.find((w) => w.id === id)
-    if (!win || win.layout !== 'floating') return
+    if (!win || win.layout !== 'floating' || this.compact) return
     win.frame = this.#fitFrame(win, frame)
   }
 
@@ -345,6 +382,8 @@ export class WindowManager {
   unavailableLayouts(id: string): WindowLayout[] {
     const win = this.windows.find((w) => w.id === id)
     if (!win) return []
+    // a compact screen shows every window full screen: the menu's other layouts have no room
+    if (this.compact) return ['split-left', 'split-right', 'slideover', 'floating']
     return [
       ...(this.#canSplit(win) ? [] : (['split-left', 'split-right'] as const)),
       ...(this.#canSlideOver(win) ? [] : (['slideover'] as const))
@@ -353,7 +392,7 @@ export class WindowManager {
 
   setLayout(id: string, layout: WindowLayout): void {
     const win = this.windows.find((w) => w.id === id)
-    if (!win || win.layout === layout) return
+    if (!win || win.layout === layout || this.compact) return // compact: the layout it has is kept for a regular screen
     if (this.unavailableLayouts(id).includes(layout)) return // no room for it: the layout stays as it is
 
     if (layout === 'slideover') {
@@ -448,6 +487,13 @@ export class WindowManager {
   /** Only called for an app `open` has checked. */
   #createWindow(app: AppDefinition, kind: string, params?: Record<string, unknown>): WindowState {
     const frame = this.#cascade(this.onStage.length)
+    const size = {
+      width: Math.max(app.minWidth, Math.min(app.width, this.bounds.width - frame.x - INSET * 3)),
+      height: Math.max(
+        app.minHeight,
+        Math.min(app.height, this.bounds.height - frame.y - DOCK_SPACE)
+      )
+    }
     return {
       id: `${app.id}-${uid()}`,
       appId: app.id,
@@ -455,14 +501,8 @@ export class WindowManager {
       params,
       stageId: null,
       layout: 'floating',
-      frame: {
-        ...frame,
-        width: Math.max(app.minWidth, Math.min(app.width, this.bounds.width - frame.x - INSET * 3)),
-        height: Math.max(
-          app.minHeight,
-          Math.min(app.height, this.bounds.height - frame.y - DOCK_SPACE)
-        )
-      },
+      // an app's minimum can be wider than the room right of the strip: the window moves left rather than past the edge
+      frame: this.#onScreen({ ...frame, ...size }),
       z: ++this.#topZ
     }
   }

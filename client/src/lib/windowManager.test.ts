@@ -332,10 +332,10 @@ describe('Split View sizing', () => {
 
   test('Slide Over is not offered where the app’s minimum width does not fit the screen, and fits the screen otherwise', () => {
     setInstalledApps([
-      summary('wide', { window: { w: 900, h: 600, minW: 480, minH: 300 } }),
+      summary('wide', { window: { w: 900, h: 600, minW: 600, minH: 300 } }),
       summary('notes')
     ])
-    wm.bounds = { width: 360, height: 800 } // 344 to use: 480 does not fit, 320 does
+    wm.bounds = { width: 600, height: 800 } // regular, 584 to use: 600 does not fit, 320 does
     wm.open('wide')
     expect(wm.unavailableLayouts(win('wide').id)).toContain('slideover')
     wm.setLayout(win('wide').id, 'slideover')
@@ -345,16 +345,16 @@ describe('Split View sizing', () => {
     wm.setLayout(win('notes').id, 'slideover')
     const f = wm.frameOf(win('notes'))
     expect(f.x).toBeGreaterThanOrEqual(8) // never off the left
-    expect(f.x + f.width).toBeLessThanOrEqual(360 - 8) // nor the right
-    expect(f.width).toBe(344)
+    expect(f.x + f.width).toBeLessThanOrEqual(600 - 8) // nor the right
+    expect(f.width).toBe(380)
   })
 
   test('a Slide Over whose app no longer fits when the screen shrinks goes back to a floating window on screen', () => {
-    setInstalledApps([summary('wide', { window: { w: 900, h: 600, minW: 480, minH: 300 } })])
+    setInstalledApps([summary('wide', { window: { w: 900, h: 600, minW: 600, minH: 300 } })])
     wm.open('wide')
     wm.setLayout(win('wide').id, 'slideover')
     expect(wm.slideOver?.appId).toBe('wide')
-    wm.bounds = { width: 400, height: 800 } // 384 to use: 480 no longer fits
+    wm.bounds = { width: 600, height: 800 } // regular, 584 to use: 600 no longer fits
     expect(wm.slideOver).toBeUndefined()
     expect(win('wide').layout).toBe('floating')
     expect(wm.onStage.map((w) => w.appId)).toEqual(['wide'])
@@ -434,11 +434,11 @@ describe('Split View sizing', () => {
     wm.open('notes')
     wm.setFrame(win('notes').id, { x: 300, y: 40, width: 800, height: 500 })
     wm.setLayout(win('notes').id, 'fullscreen') // its floating frame is kept for later
-    wm.bounds = { width: 390, height: 800 }
+    wm.bounds = { width: 600, height: 800 } // the narrowest regular screen
     wm.setLayout(win('notes').id, 'floating')
     const f = wm.frameOf(win('notes'))
     expect(f.x).toBeGreaterThanOrEqual(8)
-    expect(f.x + f.width).toBeLessThanOrEqual(390 - 8)
+    expect(f.x + f.width).toBeLessThanOrEqual(600 - 8)
     expect(f.width).toBeGreaterThanOrEqual(320)
   })
 
@@ -446,9 +446,9 @@ describe('Split View sizing', () => {
     wm.open('notes')
     wm.setFrame(win('notes').id, { x: 300, y: 40, width: 800, height: 500 })
     wm.open('calculator') // notes goes to the strip
-    wm.bounds = { width: 390, height: 800 }
+    wm.bounds = { width: 600, height: 800 }
     const f = win('notes').frame
-    expect(f.x + f.width).toBeLessThanOrEqual(390 - 8)
+    expect(f.x + f.width).toBeLessThanOrEqual(600 - 8)
     expect(f.x).toBeGreaterThanOrEqual(8)
   })
 
@@ -522,5 +522,148 @@ describe('an app that disappears', () => {
     setInstalledApps([summary('notes')]) // the calculator was uninstalled; its window was not closed yet
     expect(wm.recentStages.flatMap((s) => s.apps)).toEqual([])
     wm.setFrame(win('calculator').id, { x: 10, y: 10, width: 400, height: 400 })
+  })
+})
+
+describe('a compact screen (a phone): one app at a time, full screen', () => {
+  // The workspace is the screen less the 34 px status bar: an iPhone 15 is 390x810 upright and 844x356 on its side.
+  test.each([
+    { screen: 'phone, upright', width: 390, height: 810, compact: true },
+    { screen: 'phone, on its side', width: 844, height: 356, compact: true },
+    { screen: 'one px narrower than the breakpoint', width: 559, height: 800, compact: true },
+    { screen: 'at the breakpoint', width: 560, height: 800, compact: false },
+    { screen: 'one px shorter than the breakpoint', width: 1280, height: 559, compact: true },
+    { screen: 'at the breakpoint, by height', width: 1280, height: 560, compact: false },
+    { screen: 'iPad', width: 1024, height: 734, compact: false },
+    { screen: 'desktop', width: 1280, height: 766, compact: false }
+  ])('$screen ($width x $height): compact $compact', ({ width, height, compact }) => {
+    wm.bounds = { width, height }
+    wm.open('notes')
+    const w = win('notes')
+    expect(wm.compact).toBe(compact)
+    expect(wm.layoutOf(w)).toBe(compact ? 'fullscreen' : 'floating')
+    const f = wm.frameOf(w)
+    if (compact) expect(f).toEqual({ x: 8, y: 8, width: width - 16, height: height - 8 - 104 })
+    else expect(f).toEqual(w.frame) // floating, where it was placed
+    expect(f.x).toBeGreaterThanOrEqual(8)
+    expect(f.x + f.width).toBeLessThanOrEqual(width - 8) // never past the right edge
+    expect(wm.dockHidden).toBe(false) // the Dock is up: on a compact screen to open the next app, on a regular one beside a window
+  })
+
+  test('the window is the screen’s width even for an app whose minimum is wider, and stops above the Dock', () => {
+    setInstalledApps([summary('wide', { window: { w: 960, h: 640, minW: 480, minH: 420 } })])
+    wm.bounds = { width: 844, height: 356 }
+    wm.open('wide')
+    expect(wm.frameOf(win('wide'))).toEqual({ x: 8, y: 8, width: 828, height: 244 })
+    wm.bounds = { width: 390, height: 810 }
+    expect(wm.frameOf(win('wide'))).toEqual({ x: 8, y: 8, width: 374, height: 698 })
+  })
+
+  test('open one app, go back home, open another: each in turn has the screen to itself', () => {
+    wm.bounds = { width: 390, height: 810 }
+    wm.open('calculator')
+    expect(wm.onStage.map((w) => w.appId)).toEqual(['calculator'])
+    expect(wm.stripObscured).toBe(true) // the recent-apps strip steps back while an app has the screen
+    wm.minimize(win('calculator').id) // the ··· menu's Minimise: back to the home screen
+    expect(wm.onStage).toEqual([])
+    expect(wm.stripObscured).toBe(true) // the home screen too: iOS has no Stage Manager strip, the Dock is the way back
+    expect(wm.recentStages.map((s) => s.apps.map((a) => a.id))).toEqual([['calculator']])
+    wm.open('notes')
+    expect(wm.onStage.map((w) => w.appId)).toEqual(['notes'])
+    expect(wm.focused?.appId).toBe('notes')
+    wm.close(win('notes').id) // Close goes home too
+    expect(wm.onStage).toEqual([])
+  })
+
+  test('the menu offers no other layout, and nothing the window remembers is changed while compact', () => {
+    wm.open('notes')
+    const id = win('notes').id
+    wm.setFrame(id, { x: 300, y: 40, width: 700, height: 500 })
+    const remembered = { ...win('notes').frame }
+    wm.bounds = { width: 390, height: 810 }
+    expect(wm.unavailableLayouts(id)).toEqual([
+      'split-left',
+      'split-right',
+      'slideover',
+      'floating'
+    ])
+    expect(win('notes').frame).toEqual(remembered) // not pulled inside the phone's screen
+    for (const layout of ['fullscreen', 'split-left', 'slideover', 'floating'] as const)
+      wm.setLayout(id, layout)
+    wm.setFrame(id, { x: 0, y: 0, width: 330, height: 300 })
+    expect(win('notes').layout).toBe('floating')
+    expect(win('notes').frame).toEqual(remembered)
+    wm.bounds = { width: 1280, height: 766 } // a wide screen again: the window is where it was, at the size it was
+    expect(wm.layoutOf(win('notes'))).toBe('floating')
+    expect(wm.frameOf(win('notes'))).toEqual(remembered)
+    expect(wm.unavailableLayouts(id)).toEqual([])
+  })
+
+  test('turning from upright to on its side and back keeps a split and its divider for the wide screen', () => {
+    wm.open('calculator')
+    wm.setLayout(win('calculator').id, 'split-left')
+    wm.open('notes')
+    wm.setSplitRatio(0.6)
+    wm.bounds = { width: 390, height: 810 }
+    expect(wm.splitDividerX).toBeNull()
+    expect(wm.layoutOf(win('calculator'))).toBe('fullscreen')
+    wm.bounds = { width: 844, height: 356 }
+    expect(win('calculator').layout).toBe('split-left') // remembered, not dissolved for a screen it is not shown on
+    expect(win('notes').layout).toBe('split-right')
+    wm.bounds = { width: 1280, height: 800 }
+    expect(wm.layoutOf(win('calculator'))).toBe('split-left')
+    expect(wm.activeStage?.splitRatio).toBe(0.6)
+    expect(wm.splitDividerX).not.toBeNull()
+  })
+
+  test('a split waiting for its second app waits: on a compact screen the next app opens on its own', () => {
+    wm.open('calculator')
+    wm.setLayout(win('calculator').id, 'split-left')
+    wm.bounds = { width: 390, height: 810 }
+    expect(wm.splitPlaceholderFrame).toBeNull()
+    wm.open('notes')
+    expect(win('notes').layout).toBe('floating')
+    expect(wm.onStage.map((w) => w.appId)).toEqual(['notes'])
+    expect(win('calculator').layout).toBe('split-left') // its split comes back with it on a wide screen
+  })
+
+  test('an app opened alongside on a compact screen leaves the others’ remembered frames where they were', () => {
+    wm.open('calculator')
+    const before = { ...win('calculator').frame }
+    wm.bounds = { width: 390, height: 810 }
+    wm.open('notes', { alongside: true })
+    expect(win('calculator').frame).toEqual(before)
+    expect(wm.focused?.appId).toBe('notes')
+  })
+
+  test('a window opened on a compact screen is on screen when the screen grows', () => {
+    wm.bounds = { width: 390, height: 810 }
+    wm.open('notes')
+    wm.bounds = { width: 800, height: 600 }
+    const f = wm.frameOf(win('notes'))
+    expect(f.x).toBeGreaterThanOrEqual(8)
+    expect(f.x + f.width).toBeLessThanOrEqual(800 - 8)
+  })
+
+  test('a hidden Slide Over stays off screen; brought back, it has the screen like any other app', () => {
+    wm.open('notes')
+    wm.setLayout(win('notes').id, 'slideover')
+    wm.minimize(win('notes').id) // hides it
+    wm.bounds = { width: 390, height: 810 }
+    expect(wm.frameOf(win('notes')).x).toBeGreaterThanOrEqual(390)
+    wm.open('notes')
+    expect(wm.frameOf(win('notes'))).toEqual({ x: 8, y: 8, width: 374, height: 698 })
+  })
+})
+
+describe('a regular screen with little room', () => {
+  test('an app whose minimum is wider than the room right of the strip opens on screen, not past the right edge', () => {
+    setInstalledApps([summary('wide', { window: { w: 960, h: 640, minW: 480, minH: 420 } })])
+    wm.bounds = { width: 600, height: 766 }
+    wm.open('wide')
+    const f = wm.frameOf(win('wide'))
+    expect(f.width).toBe(480)
+    expect(f.x).toBeGreaterThanOrEqual(8)
+    expect(f.x + f.width).toBeLessThanOrEqual(600 - 8)
   })
 })

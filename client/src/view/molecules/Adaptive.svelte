@@ -1,6 +1,6 @@
 <!--
-  @molecule Adaptive — chooses the `compact` or `regular` slot by its container width (`breakpoint`, default 560
-  px), on the client, so resizing a window never round-trips. Atoms: Adaptive, Children.
+  @molecule Adaptive — chooses the `compact` or `regular` slot by its container width (`breakpoint`, default
+  `COMPACT_BELOW`, 560 px), on the client, so resizing a window never round-trips. Atoms: Adaptive, Children.
 -->
 <script lang="ts">
   import { Adaptive } from '@vos/ui/atoms'
@@ -8,6 +8,7 @@
   import { useView } from '../context'
   import { commonOf } from '../props'
   import type { AdapterProps } from '../registry'
+  import { COMPACT_BELOW } from '../protocol'
 
   let { node, path, scope }: AdapterProps = $props()
   const ctx = useView()
@@ -24,7 +25,7 @@
 
 <Adaptive
   testid={common.testid}
-  breakpoint={Number.isFinite(breakpoint) && breakpoint > 0 ? breakpoint : 560}
+  breakpoint={Number.isFinite(breakpoint) && breakpoint > 0 ? breakpoint : COMPACT_BELOW}
   {compact}
   {regular}
   style={common.style}
