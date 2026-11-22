@@ -233,7 +233,7 @@ async fn serve(
 ) {
     let notify_sessions = sessions.clone();
     let request_sessions = sessions.clone();
-    let result = Client
+    let connection = Client
         .v1()
         .name("vos")
         .on_receive_notification(
@@ -303,11 +303,13 @@ async fn serve(
                 run_command(&cx, command)?;
             }
             Ok(())
-        })
-        .await;
-    let reason = match result {
-        Ok(()) => "the agent process stopped".to_owned(),
-        Err(e) => format!("the agent process ended: {}", err(&e)),
+        });
+    // a panic in the connection (in a handler, or in what it calls on the agent's data) ends it like the process
+    // ending: every session is told, so its chat starts a fresh one, and the connector starts the agent again
+    let reason = match vos_application::panics::caught(connection).await {
+        Ok(Ok(())) => "the agent process stopped".to_owned(),
+        Ok(Err(e)) => format!("the agent process ended: {}", err(&e)),
+        Err(message) => format!("the agent connection failed: the host panicked: {message}"),
     };
     sessions.exit_all(&reason);
 }

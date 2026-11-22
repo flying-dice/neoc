@@ -321,14 +321,18 @@ async fn invoke_lua_handler(
         Err(_) => return Ok(error_response(500, "body read failed")),
     };
 
-    let result: mlua::Result<HandlerResponse> = async {
+    let handled = crate::lua::panics::caught(async {
         let req_ud = self::Request::from_parts(method, path, req_headers, body);
         let handler: Function = lua.registry_value(handler_key)?;
         // the handler is a call into the VM like any other: it waits for its turn (see `lifecycle`)
         let raw: Value = crate::lua::lifecycle::request(lua, handler.call_async(req_ud)).await?;
         decode_handler_response(raw)
-    }
+    })
     .await;
+    // a host function the handler reached panicked: that request fails like a handler error, and the connection
+    // and the server live on
+    let result: mlua::Result<HandlerResponse> =
+        handled.unwrap_or_else(|message| Err(crate::lua::panics::error(&message)));
 
     match result {
         Ok(resp) => {
@@ -689,5 +693,45 @@ mod bench_helpers {
             .header("x-bench", "ping")
             .body(Full::new(Bytes::from_static(body)))
             .expect("build POST")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::lua::sandbox::make_engine;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_handler_that_reaches_a_panicking_host_function_answers_500_and_the_server_serves_on()
+    {
+        let lua = make_engine().expect("engine");
+        let explode = lua
+            .create_function(|_, ()| -> mlua::Result<()> { panic!("the module broke") })
+            .expect("function");
+        lua.globals().set("explode", explode).expect("global");
+        let (status, body, next): (u16, String, String) = lua
+            .load(
+                r#"
+                local net = require("std:net")
+                local hyper = require("vnd:hyper")
+                local listener = assert(net.TcpListener.bind("127.0.0.1:0"))
+                local server = assert(hyper.serve(listener, function(req)
+                    if req.path == "/explode" then explode() end
+                    return "fine"
+                end))
+                local base = "http://" .. server:addr()
+                -- before the fix the panic ended the connection's task, so this request got no response at all
+                local failed = assert(hyper.get(base .. "/explode"))
+                local served = assert(hyper.get(base .. "/next"))
+                server:close()
+                return failed.status, failed.body, served.body
+            "#,
+            )
+            .eval_async()
+            .await
+            .expect("script");
+        assert_eq!(
+            (status, body.as_str(), next.as_str()),
+            (500, "handler error", "fine")
+        );
     }
 }

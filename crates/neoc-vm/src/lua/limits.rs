@@ -1,8 +1,9 @@
 //! Conversions from Lua numbers to Rust sizes and durations that cannot panic or abort the host.
 //!
 //! The VM has no CPU, memory or time budget, but a host panic or an allocation failure from script input is
-//! still a bug: either one takes down the whole process, and with it every other script. These helpers are
-//! for the places where one Lua number directly sizes an allocation, a loop index or a sleep:
+//! still a bug: an allocation failure takes down the whole process, and with it every other script, and a panic
+//! fails the call (`crate::lua::panics`) or, in a program built with `panic = "abort"`, the process. These helpers
+//! are for the places where one Lua number directly sizes an allocation, a loop index or a sleep:
 //!
 //! - [`size`] and [`zeroed`] turn a Lua integer into a buffer length no larger than [`MAX_BUFFER`], and
 //!   allocate it fallibly. A bigger request is a Lua error, not an abort. The bound is not a budget on what
