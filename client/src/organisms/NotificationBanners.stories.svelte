@@ -269,6 +269,61 @@
   }}
 />
 
+<!-- Typing is not intercepted: Option+Shift+N is a character on a Mac keyboard, so the shortcut leaves a field that takes
+     typing alone (its event is not cancelled and the keys stay where they were), and works from anywhere else. -->
+<Story
+  name="The shortcut leaves typing alone"
+  tags={['play-only']}
+  play={async ({ canvasElement }) => {
+    calc('Reminder', 'Stand up')
+    const canvas = within(canvasElement)
+    await canvas.findByTestId(/^notification-\d+$/)
+    // what a Mac sends for Option+Shift+N: the physical key is N, the character is a tilde
+    const macKey = (target: Element): KeyboardEvent => {
+      const event = new KeyboardEvent('keydown', {
+        code: 'KeyN',
+        key: String.fromCharCode(0x2dc),
+        altKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true
+      })
+      target.dispatchEvent(event)
+      return event
+    }
+    const field = (tag: string, attributes: Record<string, string> = {}): HTMLElement => {
+      const el = document.createElement(tag)
+      for (const [name, value] of Object.entries(attributes)) el.setAttribute(name, value)
+      canvasElement.append(el)
+      return el
+    }
+    const editable = field('div', { contenteditable: 'true', tabindex: '0' })
+    const inside = document.createElement('span')
+    editable.append(inside)
+    const typed: [string, HTMLElement][] = [
+      ['a text input', field('input', { type: 'text' })],
+      ['a search field', field('input', { type: 'search' })],
+      ['a text area', field('textarea')],
+      ['a select', field('select')],
+      ['editable content', editable],
+      ['inside editable content', inside]
+    ]
+    for (const [name, el] of typed) {
+      el.focus()
+      const event = macKey(el)
+      await expect(event.defaultPrevented, `${name}: the key is left to type`).toBe(false)
+      await expect(canvas.queryByTestId(/-open$/)).not.toHaveFocus()
+    }
+    // a control that takes no typing, and the page: the shortcut works
+    const box = field('input', { type: 'checkbox' })
+    box.focus()
+    await expect(macKey(box).defaultPrevented).toBe(true)
+    await waitFor(() => expect(canvas.getByTestId(/-open$/)).toHaveFocus())
+    for (const [, el] of typed) el.remove()
+    box.remove()
+  }}
+/>
+
 <!-- By keyboard: Alt+Shift+N goes to the newest banner, Escape dismisses it and gives focus back. It ends with the keys
      on a banner, over a busy window: the focus ring is the state. -->
 <Story

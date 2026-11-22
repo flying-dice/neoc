@@ -4,7 +4,8 @@
   (what is shown, for how long, what choosing one does) is the `Notifications` object it is given.
   The region is always mounted and only its contents change (a region inserted with its text already in it is often not
   announced); the banners are not live regions themselves, and what it says of each is the sender, the title and the
-  start of the body. Alt+Shift+N moves focus to the newest banner (the stack also comes first in the page's order, so Tab
+  start of the body. Alt+Shift+N (not while focus is in a field that takes typing: it is a character on a Mac keyboard)
+  moves focus to the newest banner (the stack also comes first in the page's order, so Tab
   from the very top, or Shift+Tab back out of a window, reaches it); Escape or the dismiss button closes the focused banner.
   Focus is never dropped to the page: when the banner that has it goes (dismissed, expired, pushed out by newer ones,
   its app removed) it moves to the nearest banner that is left, else back to where the person was before they went to
@@ -52,9 +53,27 @@
     el.focus(options)
   }
 
-  /** Alt+Shift+N: not a letter on its own and not a browser or screen reader command; `code`, because Option+N is a dead key on a Mac. */
+  /** A field that takes typed text (or something inside one): a text input, a text area, a select, editable content. */
+  const EDITABLE = [
+    'input:not([type="button" i]):not([type="checkbox" i]):not([type="radio" i]):not([type="range" i])',
+    ':not([type="submit" i]):not([type="reset" i]):not([type="file" i]):not([type="color" i]):not([type="image" i])',
+    ', textarea, select, [contenteditable]:not([contenteditable="false" i])'
+  ].join('')
+  const typing = (e: KeyboardEvent): boolean => {
+    const el = e.target instanceof Element ? e.target : document.activeElement
+    return (
+      !!el && (el.closest(EDITABLE) !== null || (el instanceof HTMLElement && el.isContentEditable))
+    )
+  }
+
+  /**
+   * Alt+Shift+N: not a letter on its own and not a browser or screen reader command; `code`, because Option+N is a
+   * dead key on a Mac. Not while typing: Option+Shift+N is a character on a Mac keyboard ("˜"), and a shortcut must not
+   * eat what a person types. From a text field, Tab out first.
+   */
   function onkeydown(e: KeyboardEvent): void {
     if (e.code !== 'KeyN' || !e.altKey || !e.shiftKey || e.ctrlKey || e.metaKey) return
+    if (typing(e)) return
     const newest = center.banners[0]
     const control = newest ? openControl(newest.id) : null
     if (!control) return
