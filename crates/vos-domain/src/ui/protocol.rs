@@ -531,6 +531,22 @@ wire! {
         pub params: Option<Map<String, Value>>,
     }
 
+    /// `notification.deliver`: an app asked to tell the person something (`app.notify`). Sent to every connected
+    /// client; one that is not connected never gets it (nothing is queued). `app` is the sender's id, set by the
+    /// host, never by the app, so a client can name the sender from its own app list.
+    ///
+    /// `title` and `body` are plain text written by the app (or an agent through one): show them as text, never as
+    /// markup. The host enforces their limits in `app.notify` before it sends, so a client can rely on them.
+    pub struct AppNotification {
+        pub app: String,
+        /// 1 to 200 characters, not blank.
+        pub title: String,
+        /// Up to 2000 characters.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "codegen", ts(optional))]
+        pub body: Option<String>,
+    }
+
     /// `theme.set`: session-wide, not per view.
     #[serde(rename_all = "camelCase")]
     pub struct ThemeSet {
@@ -656,6 +672,11 @@ pub const METHODS: &[MethodSpec] = &[
         "window.open",
         "WindowOpen",
         "An app asked for a window (`app:openWindow`): open it, or bring it forward.",
+    ),
+    from_host(
+        "notification.deliver",
+        "AppNotification",
+        "An app's notification (`app.notify`): the sender, a title and an optional body.",
     ),
 ];
 
@@ -809,6 +830,7 @@ pub enum HostNotification {
     Closed(ViewClosed),
     Theme(ThemeSet),
     WindowOpen(WindowOpen),
+    Notify(AppNotification),
 }
 
 impl HostNotification {
@@ -828,6 +850,7 @@ impl HostNotification {
             Self::Closed(p) => ("view.closed", value(p)),
             Self::Theme(p) => ("theme.set", value(p)),
             Self::WindowOpen(p) => ("window.open", value(p)),
+            Self::Notify(p) => ("notification.deliver", value(p)),
         }
     }
 
@@ -853,6 +876,7 @@ impl HostNotification {
             "view.closed" => Self::Closed(parse(method, params)?),
             "theme.set" => Self::Theme(parse(method, params)?),
             "window.open" => Self::WindowOpen(parse(method, params)?),
+            "notification.deliver" => Self::Notify(parse(method, params)?),
             other => return Err(ParseError::UnknownMethod(other.to_owned())),
         })
     }

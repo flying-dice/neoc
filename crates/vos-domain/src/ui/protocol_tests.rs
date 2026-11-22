@@ -330,6 +330,30 @@ fn window_open_carries_the_app_the_window_kind_and_optional_params() {
 }
 
 #[test]
+fn an_app_notification_is_the_sender_a_title_and_an_optional_body() {
+    round_trip(
+        &AppNotification { app: "notes".into(), title: "Note added".into(), body: None },
+        &json!({ "app": "notes", "title": "Note added" }),
+    );
+    let note = HostNotification::Notify(AppNotification {
+        app: "notes".into(),
+        title: "Reminder".into(),
+        body: Some("Call mum".into()),
+    });
+    let frame = serde_json::to_value(note.to_message()).unwrap();
+    assert_eq!(
+        frame,
+        json!({ "jsonrpc": "2.0", "method": "notification.deliver", "params": { "app": "notes", "title": "Reminder", "body": "Call mum" } })
+    );
+    assert_eq!(HostNotification::from_rpc("notification.deliver", frame["params"].clone()).unwrap(), note);
+    // a client cannot read a notification without its sender or its title
+    for params in [json!({ "title": "x" }), json!({ "app": "notes" })] {
+        let e = HostNotification::from_rpc("notification.deliver", params).unwrap_err();
+        assert_eq!(e.to_rpc_error().code, codes::INVALID_PARAMS);
+    }
+}
+
+#[test]
 fn the_client_notifications() {
     round_trip(
         &ClientState { view_id: "v1".into(), set: json!({ "folder": 3 }).as_object().cloned().unwrap() },
@@ -403,6 +427,7 @@ fn sample(method: &str) -> Value {
         "view.error" => json!({ "viewId": "v1", "message": "m" }),
         "view.closed" => json!({ "viewId": "v1", "reason": "r" }),
         "window.open" => json!({ "app": "calculator", "window": "main" }),
+        "notification.deliver" => json!({ "app": "notes", "title": "Note added" }),
         "theme.set" => {
             json!({ "scheme": "light", "tint": "blue", "textScale": 1.0, "reduceMotion": false, "reduceTransparency": false, "increaseContrast": false })
         }

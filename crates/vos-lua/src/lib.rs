@@ -29,4 +29,4 @@ pub use neoc_vm::VM_THREAD_STACK;
 pub use require::NOT_FOR_APPS;
 pub use runtime::{LuaRuntime, UI_MODULE};
 pub use state::DepKey;
-pub use vm::{AppVm, Effect, Result, ShellEffect, VmConfig, VmError};
+pub use vm::{AppVm, Effect, Result, ShellEffect, VmConfig, VmError, MAX_QUEUED_NOTIFICATIONS};

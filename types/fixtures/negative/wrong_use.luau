@@ -11,11 +11,15 @@ local fs = require("std:fs")
 local hyper = require("vnd:hyper")
 local json = require("lib:json")
 local net = require("std:net")
+local quick_xml = require("vnd:quick_xml")
 local rusqlite = require("vnd:rusqlite")
 local semver = require("lib:semver")
+local serde_json = require("vnd:serde_json")
+local serde_yaml = require("vnd:serde_yaml")
 local task = require("std:task")
 local test = require("lib:test")
 local time = require("std:time")
+local toml = require("vnd:toml")
 local url = require("lib:url")
 
 -- an unknown function, a missing argument, an argument of the wrong type, one argument too many
@@ -78,3 +82,24 @@ fs.copy_dir("a") -- expect-error: Function 'fs.copy_dir' expects 2 arguments, bu
 fs.remove_file("a", { missing_ok = "yes" }) -- expect-error: Expected this to be '{ missing_ok: boolean? }?' but got '{| missing_ok: string |}'
 assert(fs.metadata("a")):size() -- expect-error: Key 'size' not found in table 'std_fs_Metadata'
 assert(fs.watch("a")):recv() -- expect-error: Key 'recv' not found in table 'std_fs_Watcher'
+
+-- a `lib:json` path is keys and indexes, and needs at least one
+json.object():get() -- expect-error: Function expects at least 2 arguments, but only 1 is specified
+json.object():get(true) -- expect-error: Expected this to be 'number | string', but got 'boolean'
+json.array():get(1, {}) -- expect-error: Expected this to be 'number | string', but got '{|  |}'
+
+-- a parsed document may be a scalar or the null sentinel, so it is not a handle until it is narrowed
+assert(serde_json.from_str("{}")):get("a") -- expect-error: Key 'get' is missing from
+local _document: lib_json_Object = assert(serde_json.from_str("{}")) -- expect-error: Expected this to be 'lib_json_Object'
+local _name: string = json.object():get("name") -- expect-error: Expected this to be 'string'
+local _key: number = json.object():keys()[1] -- expect-error: Expected this to be 'number', but got 'string'
+
+-- a parser reads a reader handle, a serialiser writes a writer handle
+serde_json.from_reader("[1]") -- expect-error: Expected this to be 'std_io_ReaderHandle', but got 'string'
+serde_json.to_writer({}, "out.json") -- expect-error: Expected this to be 'std_io_WriterHandle', but got 'string'
+serde_yaml.decode("a: 1") -- expect-error: Expected this to be 'std_io_ReaderHandle', but got 'string'
+toml.encode_to({}, "out.toml") -- expect-error: Expected this to be 'std_io_WriterHandle', but got 'string'
+quick_xml.decode("<a/>") -- expect-error: Expected this to be 'std_io_ReaderHandle', but got 'string'
+
+-- a request body parsed as JSON may be absent
+hyper.serve(_listener, function(req) return req.json:get("id") end) -- expect-error: Value of type -- expect-error: Key 'get' is missing from
