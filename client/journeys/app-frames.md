@@ -15,9 +15,10 @@ after another).
 | AF2 | Add a task and see it in the list.                             | The app open.                      | The task is listed and the field is empty; after a reload of the page the task is still there (it is the backend's data); it ticks off.   |
 | AF3 | Add a task with no title.                                      | The app open.                      | A message from the backend says what is wrong; the window stays live, and the next add works and clears the message.                       |
 | AF4 | Let an agent add a task while the window is open.              | The app open, an agent connected.  | The task appears in the open window with no reload and no click.                                                                           |
-| AF5 | Try to make the client reach out (network, the shell, storage). | The app open.                      | Every attempt fails: no fetch, no socket, no access to the shell's page, its cookie or its storage.                                        |
+| AF5 | Try to make the client reach out (network, the shell, storage). | The app open.                      | Every attempt fails: no fetch, no socket, no access to the shell's page, its cookie, its storage or its location, no popup, no form submission.                                        |
 | AF6 | Switch the shell between light and dark.                       | The app open.                      | The app follows at once, without reloading; the app's styles did not change the shell.                                                     |
 | AF7 | Use two apps with clients side by side.                        | Both apps open.                    | A task added in one is not in the other: each client reaches only its own backend.                                                         |
+| AF9 | A client sends its frame to another page (`location.href`).       | The app open.                      | The window notices it is not showing the page it loaded, says the app left its page, and "Try again" brings the app back. |
 
 ## Manual verification
 

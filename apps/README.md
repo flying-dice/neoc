@@ -81,13 +81,24 @@ What `mount` gets:
 | `host.theme` | `"light"` or `"dark"`: the shell's appearance now. `host:theme` is the event when it changes, and `<html data-theme>` and `color-scheme` follow it, so style dark as `html[data-theme="dark"]` |
 
 **What the frame is.** The app's window is an `<iframe sandbox="allow-scripts">` that loads `/frame/<id>` from the host. The
-frame has no network (its content security policy allows none: `fetch`, WebSocket and the rest fail), no access to the
-shell's page, cookie or storage (`localStorage`, `document.cookie` and `parent.document` throw), and one way out: `rpc`
-reaches **this app's** backend, and the host knows which app is calling from the frame the message came from, never from
-anything the client says. The client's styles and scripts stay in its frame. The frame is sandboxed without
-`allow-forms`, so **a `<form>` cannot submit** (not even to `preventDefault` it): handle clicks and the Enter key yourself. This is sensible isolation, so apps do not
-trip over each other or over the shell; it is not a security boundary. Lasting data belongs in the backend (the frame has
-no storage).
+frame makes no request of its own (its content security policy allows none: `fetch`, WebSocket, scripts, images and
+fonts from anywhere but the host fail), has no access to the shell's page, cookie or storage (`localStorage`,
+`document.cookie` and `parent.document` throw), and has one way out: `rpc` reaches **this app's** backend, and the host
+knows which app is calling from the frame the message came from, never from anything the client says. The client's styles
+and scripts stay in its frame. The sandbox also stops it opening windows (`window.open` returns `null`), navigating the
+shell (`window.top.location` throws), and submitting a form: the frame has no `allow-forms`, so **a `<form>` cannot
+submit** (not even to `preventDefault` it): handle clicks and the Enter key yourself. What the policy cannot stop is the
+frame navigating **itself** (`location.href = ...`): the window then shows a page the shell did not load, so after a moment
+it says the app left its page and offers to open it again. This is sensible isolation, so apps do not trip over each other
+or over the shell; it is not a security boundary. Lasting data belongs in the backend (the frame has no storage).
+
+**Limits of a call.** `rpc`'s arguments may be at most 1,000,000 bytes of JSON and 100 levels deep, and a method name is 1 to
+128 characters: a call over a limit rejects at once with a message that says which. A result may be at most 4 MiB, and a
+larger one comes back as an error. A call the shell cannot read is rejected too, so a promise never hangs.
+
+**When a client fails to start**, the window shows the reason as text with a "Try again" button: the error the page raised
+while it loaded (a top-level throw, a missing import, a syntax error: its message and where), a client that does not define
+`vosApp.mount`, or an error thrown by `mount`.
 
 The shell draws sheets, alerts and toasts above the frame (the shared UI kit and its tokens are NEOC-252; the kit will be
 served at `/kit/tokens.css` and `/kit/kit.js`).

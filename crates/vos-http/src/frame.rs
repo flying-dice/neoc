@@ -3,8 +3,9 @@
 //! An app with a client opens in an `<iframe sandbox="allow-scripts">` of the shell. The frame's document comes
 //! from here, not from the shell's page, so it can carry a `Content-Security-Policy` header of its own: the
 //! shell's `<meta>` policy would otherwise be inherited by an inline document, and a `<meta>` policy cannot carry
-//! `sandbox`. The policy allows no network (`default-src 'none'`, no `connect-src`), so the only thing a client can
-//! reach is the shell it is embedded in, through `postMessage` (see `bridge.js`).
+//! `sandbox`. The policy allows no request of the client's own (`default-src 'none'`, no `connect-src`), so the only thing a
+//! client can call is the shell it is embedded in, through `postMessage` (see `bridge.js`). It cannot stop the frame
+//! navigating itself; the shell notices a document it did not load (`AppFrame.svelte`).
 //!
 //! | route                              | what                                                              |
 //! |------------------------------------|-------------------------------------------------------------------|
@@ -31,7 +32,7 @@ use vos_domain::AppId;
 /// The host's side of the mount contract, served to every frame.
 const BRIDGE: &str = include_str!("frame/bridge.js");
 
-/// The frame document's policy: no network at all, scripts and styles only from the host and inline styles (a
+/// The frame document's policy: no request of the client's own, scripts and styles only from the host and inline styles (a
 /// framework injects its CSS), images and fonts from the host or `data:`. `sandbox` gives the frame an opaque
 /// origin, so it has no access to the shell's page, its storage or its cookie.
 pub const FRAME_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; \

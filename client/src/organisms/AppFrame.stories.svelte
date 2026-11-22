@@ -182,3 +182,23 @@ ${CLOSE}</body></html>`
     await expect(failed).toHaveTextContent('the client does not define vosApp.mount')
   }}
 />
+
+<!-- The page navigates itself away (no policy stops that): the shell notices the document is not the one it loaded. -->
+<Story
+  name="Leaves its page"
+  args={{
+    srcdoc:
+      '<!doctype html><html lang="en"><title>Calculator</title><p>about to leave</p><script>parent.postMessage({ t: "ready" }, "*"); setTimeout(() => { location.href = "about:blank" }, 300)' +
+      CLOSE
+  }}
+  beforeEach={withHost(() => null)}
+  play={async ({ canvas }) => {
+    await waitFor(() => expect(canvas.getByTestId('calculator-failed')).toBeVisible(), {
+      timeout: 8000
+    })
+    await expect(canvas.getByTestId('calculator-failed')).toHaveTextContent(
+      'Calculator left its page'
+    )
+    await expect(canvas.getByTestId('calculator-failed-retry')).toBeVisible()
+  }}
+/>

@@ -127,15 +127,56 @@ for (const id of FIXTURE_APPS) {
             // no way into the shell's page, its cookie or its storage
             parentDocument: await attempt(() => window.parent.document.title),
             cookie: await attempt(() => document.cookie),
-            storage: await attempt(() => localStorage.length)
+            storage: await attempt(() => localStorage.length),
+            // what `sandbox` is there for: no popup, no way to reach the shell's location, no form submission
+            popup: await attempt(() => {
+              if (window.open('https://example.com/', '_blank') !== null) throw new Error('a window opened')
+              throw new Error('blocked')
+            }),
+            topLocation: await attempt(() => window.top?.location.href),
+            topNavigation: await attempt(() => {
+              window.top!.location.href = 'http://127.0.0.1:9/'
+              // not an error to try; whether the shell moved is checked from outside
+              throw new Error('not navigated')
+            }),
+            formSubmit: await attempt(async () => {
+              const form = document.createElement('form')
+              form.action = 'http://127.0.0.1:9/'
+              form.method = 'post'
+              document.body.append(form)
+              form.requestSubmit()
+              await new Promise((r) => setTimeout(r, 300))
+              // a submission that went through would have replaced this document
+              if (!document.body.contains(form)) throw new Error('the document was replaced')
+              form.remove()
+              throw new Error('stayed')
+            })
           }
         })
+      // the probes that throw on purpose report their message; only `allowed` (no error at all) is a failure
       for (const [probe, outcome] of Object.entries(probes)) expect(outcome, probe).not.toBe('allowed')
+      // and the shell did not move, and the frame is still the app's
+      expect(new URL(page.url()).pathname).toBe('/')
+      await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()
       // the browser reports each refused request as a console error: those are the expected ones (the policy did it),
       // and anything else the page logged still fails the test
-      const refused = errors.filter((e) => /Content Security Policy/.test(e))
+      const refused = errors.filter((e) => /Content Security Policy|sandbox/i.test(e))
       expect(refused.length, 'the policy refused the fetches and the socket').toBeGreaterThanOrEqual(3)
       errors.splice(0, errors.length, ...errors.filter((e) => !refused.includes(e)))
+    })
+
+    test(`AF9 (${id}): a client that navigates its own frame away is noticed, and the window offers the way back`, async ({ page }) => {
+      await openDesktop(page, { open: [id] })
+      await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()
+      // no policy stops a frame navigating itself: the shell sees a document it did not load
+      await frame(page).locator('body').evaluate(() => {
+        location.href = '/session'
+      })
+      await expect(page.getByTestId(`${id}-failed`)).toBeVisible({ timeout: 10_000 })
+      await expect(page.getByTestId(`${id}-failed`)).toContainText('left its page')
+      await page.getByTestId(`${id}-failed-retry`).click()
+      await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()
+      await expect(page.getByTestId(`${id}-failed`)).toHaveCount(0)
     })
 
     test(`AF6 (${id}): the frame follows light and dark live, and its styles stay inside`, async ({ page }) => {

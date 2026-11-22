@@ -9,7 +9,7 @@ use common::{db, id, user_ctx};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use vos_application::{
-    ports::{AppData, AppPackage, AppRuntime, Notifier, PortResult},
+    ports::{AgentCard, AgentRoster, AppData, AppPackage, AppRuntime, Notifier, PortResult, Shell},
     testing::RecordingShell,
     PortError,
 };
@@ -271,4 +271,87 @@ async fn handlers_stop_with_the_app() {
     load(&rig, "tasks", TASKS).await.unwrap();
     rig.runtime.unload(&id("tasks")).await.unwrap();
     assert!(matches!(call(&rig, "tasks", "nothing", Value::Null).await, Err(PortError::NotFound(_))));
+}
+
+// ---- a panic in the host ------------------------------------------------------------------------------------
+
+/// The agent roster behind `app.agents:list()`: a port the app API calls, here one that panics.
+struct PanickingRoster;
+impl AgentRoster for PanickingRoster {
+    fn cards(&self) -> Vec<AgentCard> {
+        panic!("the roster broke")
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_panic_in_a_handler_fails_that_call_and_the_app_answers_the_next() {
+    let shell = Arc::new(RecordingShell::default());
+    let runtime = LuaRuntime::new(Arc::new(Quiet), shell).with_roster(Arc::new(PanickingRoster));
+    let data: Arc<dyn AppData> = db();
+    let src = r#"
+        return {
+          boom = function() return app.agents:list() end,
+          fine = function() return "still here" end,
+        }
+    "#;
+    runtime.load(&id("tasks"), backend(src), data).await.unwrap();
+    let call =
+        |method: &'static str| runtime.call_handler(&id("tasks"), method, Value::Null, user_ctx(1_000));
+
+    match call("boom").await {
+        Err(PortError::Internal(message)) => {
+            assert_eq!(message, "a host function panicked: the roster broke")
+        }
+        other => panic!("expected an internal error, got {other:?}"),
+    }
+    assert_eq!(
+        call("fine").await.unwrap(),
+        json!("still here"),
+        "the app stays loaded and answers the next call"
+    );
+    assert!(matches!(call("boom").await, Err(PortError::Internal(_))), "and it fails the same way again");
+}
+
+/// A shell whose first `emit_event` panics, then records what it is given.
+#[derive(Default)]
+struct PanicsOnFirstEmit {
+    panicked: std::sync::atomic::AtomicBool,
+    names: parking_lot::Mutex<Vec<String>>,
+}
+#[async_trait::async_trait]
+impl Shell for PanicsOnFirstEmit {
+    async fn open_window(&self, _: &vos_domain::AppId, _: &str, _: serde_json::Map<String, Value>) {}
+    async fn set_deep_links(&self, _: &vos_domain::AppId, _: Vec<String>) {}
+    async fn emit_event(&self, _: &vos_domain::AppId, name: &str, _: Value) {
+        assert!(self.panicked.swap(true, std::sync::atomic::Ordering::SeqCst), "the shell broke");
+        self.names.lock().push(name.to_owned());
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_panic_on_one_emit_of_a_batch_leaves_the_others_delivered_once_each() {
+    let shell = Arc::new(PanicsOnFirstEmit::default());
+    let runtime = LuaRuntime::new(Arc::new(Quiet), shell.clone());
+    let data: Arc<dyn AppData> = db();
+    let src = r#"
+        return {
+          batch = function()
+            app.emit("first")
+            app.emit("second")
+            app.emit("third")
+            return "sent"
+          end,
+        }
+    "#;
+    runtime.load(&id("tasks"), backend(src), data).await.unwrap();
+    let answer = runtime.call_handler(&id("tasks"), "batch", Value::Null, user_ctx(1_000)).await.unwrap();
+    assert_eq!(answer, json!("sent"), "the call itself is not failed by a shell that broke on an event");
+    for _ in 0..200 {
+        if shell.names.lock().len() >= 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(shell.panicked.load(std::sync::atomic::Ordering::SeqCst), "the first event panicked");
+    assert_eq!(*shell.names.lock(), ["second", "third"], "the rest of the batch went out, once each");
 }

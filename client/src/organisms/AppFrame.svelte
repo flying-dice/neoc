@@ -48,6 +48,27 @@
 
   let bridge: FrameBridge | undefined
 
+  // A frame can navigate itself away (`location.href = ...`), which no policy stops, and then the iframe is not what the
+  // shell loaded: its document was replaced. The shell loaded one document per attempt, so a second `load` means the
+  // page left (or reloaded itself, and then says it is ready again). Give it a moment to say so; if it does not, the
+  // window says the app stopped, with the way back, rather than keep saying ready over a page the shell did not load.
+  const LEFT_GRACE_MS = 1500
+  let loads = 0
+  let lastReadyAt = 0
+  let leftTimer: ReturnType<typeof setTimeout> | undefined
+  function onframeload(): void {
+    loads += 1
+    if (loads < 2 || phase === 'failed') return
+    const loadedAt = performance.now()
+    clearTimeout(leftTimer)
+    leftTimer = setTimeout(() => {
+      // a `ready` just before the load or since it is the app's own page again (a reload)
+      if (phase === 'failed' || lastReadyAt >= loadedAt - 500) return
+      failure = `${name} left its page, so the window cannot show it.`
+      phase = 'failed'
+    }, LEFT_GRACE_MS)
+  }
+
   // One bridge per frame, made for this app and this iframe's window.
   $effect(() => {
     if (!iframe) return
@@ -58,6 +79,7 @@
       post: (message) => frame.contentWindow?.postMessage(message, '*'),
       call: (method, params) => host.api.call(method, params),
       onReady: () => {
+        lastReadyAt = performance.now()
         if (phase === 'failed') return
         phase = 'ready'
       },
@@ -92,6 +114,9 @@
     void attempt
     phase = 'opening'
     failure = null
+    loads = 0
+    lastReadyAt = 0
+    clearTimeout(leftTimer)
     const timer = setTimeout(() => {
       if (phase === 'opening') {
         failure = `${name} did not start.`
@@ -127,7 +152,10 @@
     )
   })
 
-  onDestroy(() => bridge?.dispose())
+  onDestroy(() => {
+    clearTimeout(leftTimer)
+    bridge?.dispose()
+  })
 </script>
 
 <svelte:window
@@ -150,6 +178,7 @@
       sandbox="allow-scripts"
       referrerpolicy="no-referrer"
       data-testid="{appId}-frame"
+      onload={onframeload}
       class:hidden={phase !== 'ready'}
     ></iframe>
   {/key}
