@@ -23,7 +23,7 @@ const WAYS: Way[] = ['attributes', 'properties before connecting', 'properties a
 /** Builds the same form three ways (in the page: the browser's own custom element machinery is the thing under test). */
 const build = (page: Page, way: Way): Promise<void> =>
   page.evaluate(async (way) => {
-    document.body.innerHTML = ''
+    document.body.replaceChildren()
     const form = document.createElement('form')
     form.id = 'f'
     form.addEventListener('submit', (e) => {

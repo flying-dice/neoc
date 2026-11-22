@@ -249,15 +249,25 @@ test('every control has a hit area of at least 44 x 44 pt around the drawn contr
 }) => {
   await page.goto(`${origin}/frame`)
   await page.evaluate(async () => {
-    document.body.innerHTML = `<div id="t" style="display:grid;gap:40px;padding:40px;justify-items:start">
-      <ui-button data-testid="h-small" size="small">Small</ui-button>
-      <ui-button data-testid="h-medium">Medium</ui-button>
-      <ui-button data-testid="h-plain" variant="plain" size="small">Plain</ui-button>
-      <ui-button data-testid="h-square" square size="small" label="x">+</ui-button>
-      <ui-toggle data-testid="h-toggle" label="t"></ui-toggle>
-      <ui-check data-testid="h-check" label="c"></ui-check>
-      <ui-segmented data-testid="h-seg" label="s" value="a"></ui-segmented>
-      <ui-text-field data-testid="h-field" label="f"></ui-text-field></div>`
+    const grid = document.createElement('div')
+    grid.id = 't'
+    grid.style.cssText = 'display:grid;gap:40px;padding:40px;justify-items:start'
+    const make = (tag: string, id: string, attrs: Record<string, string>, text = ''): void => {
+      const el = document.createElement(tag)
+      el.dataset.testid = id
+      for (const [name, value] of Object.entries(attrs)) el.setAttribute(name, value)
+      el.textContent = text
+      grid.append(el)
+    }
+    make('ui-button', 'h-small', { size: 'small' }, 'Small')
+    make('ui-button', 'h-medium', {}, 'Medium')
+    make('ui-button', 'h-plain', { variant: 'plain', size: 'small' }, 'Plain')
+    make('ui-button', 'h-square', { square: '', size: 'small', label: 'x' }, '+')
+    make('ui-toggle', 'h-toggle', { label: 't' })
+    make('ui-check', 'h-check', { label: 'c' })
+    make('ui-segmented', 'h-seg', { label: 's', value: 'a' })
+    make('ui-text-field', 'h-field', { label: 'f' })
+    document.body.replaceChildren(grid)
     ;(document.querySelector('ui-segmented') as unknown as { options: unknown }).options = [
       { value: 'a', label: 'A' },
       { value: 'b', label: 'B' }
