@@ -6,7 +6,7 @@
 
   Width: with `available` (the room the screen leaves it) the Dock stays one row, like iPadOS: when the icons do not fit it
   tightens the gaps, then shrinks the icons down to the 44 px the design language allows for a target, and only then
-  scrolls sideways inside itself (every icon stays reachable by pointer and by keyboard: focus scrolls it into view).
+  scrolls sideways inside itself (every icon stays reachable by pointer and by keyboard: focus scrolls it fully into view).
 
   The tray is a `data-launcher`: focus on one of its icons yields to the window it opens (see Window, Focus).
 
@@ -35,6 +35,20 @@
   const TIGHT_GAP = 8
   const MIN_ICON = 44 // the smallest target the design language allows
   const PADDING = 16 // the tray's inset at each side
+
+  /**
+   * Focus brings an icon into view by the browser's own rule, which can leave it half hidden at an edge of a tray that scrolls:
+   * the focused icon is scrolled all the way in, with the tray's inset beside it.
+   */
+  function keepFocusedIconInView(event: FocusEvent): void {
+    const tray = event.currentTarget as HTMLElement
+    const icon = (event.target as HTMLElement).closest<HTMLElement>('.item')
+    if (!icon || tray.scrollWidth <= tray.clientWidth) return
+    const t = tray.getBoundingClientRect()
+    const i = icon.getBoundingClientRect()
+    if (i.left < t.left + PADDING) tray.scrollLeft -= t.left + PADDING - i.left
+    else if (i.right > t.right - PADDING) tray.scrollLeft += i.right - (t.right - PADDING)
+  }
 
   /** The icon size and gap that make the tray fit `available`, and whether it still has to scroll at the smallest. */
   const fit = $derived.by(() => {
@@ -77,6 +91,8 @@
     class:scrolls={fit.scrolls}
     style:gap="{fit.gap}px"
     style:max-width={fit.scrolls && available !== undefined ? `${available}px` : undefined}
+    data-scrolls-x={fit.scrolls ? '' : undefined}
+    onfocusin={keepFocusedIconInView}
     data-testid={testid}
     data-launcher
   >
@@ -107,11 +123,7 @@
   .tray.scrolls {
     box-sizing: border-box;
     overflow-x: auto;
-    scroll-snap-type: x proximity; /* a carousel of icons: icons rest where they can be tapped (and it is what the layout check takes for a pager) */
     scrollbar-width: none;
-  }
-  .tray.scrolls .item {
-    scroll-snap-align: center;
   }
   .item {
     position: relative;

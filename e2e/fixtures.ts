@@ -183,8 +183,9 @@ export async function expectNoOverflow(container: Locator): Promise<void> {
     for (const el of [root, ...root.querySelectorAll('*')]) {
       const style = getComputedStyle(el)
       if (style.display === 'none' || style.visibility === 'hidden') continue
-      // A pager (scroll-snap on x: TabView pages, carousels) is meant to scroll sideways.
-      const pager = style.scrollSnapType.startsWith('x')
+      // A pager (scroll-snap on x: TabView pages, carousels) is meant to scroll sideways, and so is a tray that says it
+      // (`data-scrolls-x`: the Dock when more apps than fit are installed).
+      const pager = style.scrollSnapType.startsWith('x') || el.hasAttribute('data-scrolls-x')
       if (!pager && ['auto', 'scroll'].includes(style.overflowX) && el.scrollWidth > el.clientWidth + 1) {
         out.push(`${label(el)} scrolls horizontally (${el.scrollWidth} > ${el.clientWidth})`)
       }

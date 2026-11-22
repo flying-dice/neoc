@@ -109,6 +109,15 @@ as long as the host is running the call: a call has no time limit on the client,
 answers or the connection to the host goes, so a handler that never returns takes up to eight places of its own app and no
 one else's (closing its window does not stop the handler, so the places stay taken; uninstalling or replacing the app
 ends its calls, with the reason). The shell's own calls and the other apps keep working.
+A call has no time limit on the client, so a handler that waits on something unreliable (a long poll, a service on the LAN that
+may be down) should bound the wait itself: calls to an app whose handlers never return queue behind its hung ones, up to eight
+at a time, and every call after them waits too.
+
+**What a client can rely on about its page.** Its page, and everything it holds in it (fields, scroll positions, in-memory
+state), lives as long as its window does: opening another app, switching stages or minimising does not reload it (the window
+is hidden, not removed, and takes no focus, pointer events or screen reader attention while it is), and closing the window
+ends it. It is not told when it is hidden or shown, and nothing suspends or reclaims it while hidden (with many windows open every
+app's page stays alive). Anything that must outlive the window belongs in the backend.
 
 **When a client fails to start**, the window shows the reason as text with a "Try again" button: the error the page raised
 while it loaded (a top-level throw, a missing import, a syntax error: the script comes from another origin than the

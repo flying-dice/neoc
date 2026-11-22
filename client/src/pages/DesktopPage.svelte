@@ -22,6 +22,7 @@
     appOf,
     dockOrder,
     dockRecents,
+    installedApp,
     onAppsRemoved,
     type AppId
   } from '../lib/apps.svelte'
@@ -165,8 +166,14 @@
 
       {#each wm.windows as win (win.id)}
         {@const app = appOf(win.appId)}
-        {#if app && (win.stageId === wm.activeStageId || win.layout === 'slideover')}
+        {@const onStage = win.stageId === wm.activeStageId || win.layout === 'slideover'}
+        <!-- An app with a client of its own keeps its page for as long as its window exists: off the active stage the window is
+             kept in the page, hidden (`display: none` keeps the frame's document: it is not reloaded when shown again, takes
+             no focus or pointer events and is not read by a screen reader), so what the client holds in its page survives
+             switching apps. The windows of the other apps are drawn again from the host's state when their stage returns. -->
+        {#if app && (onStage || installedApp(win.appId)?.client)}
           {@const frame = wm.frameOf(win)}
+          <div class="slot" class:away={!onStage} inert={!onStage} aria-hidden={!onStage}>
           <Window
             testid="window-{win.appId}"
             title={app.name}
@@ -188,6 +195,7 @@
           >
             {@render windowContent(win)}
           </Window>
+          </div>
         {/if}
       {/each}
 
@@ -275,6 +283,13 @@
   .stage {
     position: absolute;
     inset: 0;
+  }
+  /* a window's own box is positioned against the stage: the slot around it takes no part in the layout */
+  .slot {
+    display: contents;
+  }
+  .slot.away {
+    display: none;
   }
   .widgets {
     position: absolute;

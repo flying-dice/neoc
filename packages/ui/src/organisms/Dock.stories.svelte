@@ -1,6 +1,6 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
-  import { expect, waitFor } from 'storybook/test'
+  import { expect, userEvent, waitFor } from 'storybook/test'
   import Dock from './Dock.svelte'
   import type { DockApp } from '../types'
 
@@ -124,12 +124,20 @@
   play={async ({ canvas }) => {
     const tray = await canvas.findByTestId('dock')
     await expect(tray.scrollWidth).toBeGreaterThan(tray.clientWidth)
-    const last = await canvas.findByTestId('dock-a9')
-    last.focus()
-    const frame = canvas.getByTestId('dock-narrow').getBoundingClientRect()
-    const r = last.getBoundingClientRect()
-    await expect(r.right).toBeLessThanOrEqual(frame.right)
-    await expect(r.width).toBeGreaterThanOrEqual(44)
+    // Tab through every icon: each one that has focus is wholly inside the tray (real key presses: the browser scrolls a focused
+    // icon into view by its own rule, which can leave it half hidden at an edge)
+    const icons = ['a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7', 'a8', 'a9', 'notes']
+    await userEvent.tab()
+    for (const id of icons) {
+      const icon = await canvas.findByTestId(`dock-${id}`)
+      await expect(icon).toHaveFocus()
+      const t = tray.getBoundingClientRect()
+      const r = icon.getBoundingClientRect()
+      await expect(r.left).toBeGreaterThanOrEqual(t.left - 0.5)
+      await expect(r.right).toBeLessThanOrEqual(t.right + 0.5)
+      await expect(r.width).toBeGreaterThanOrEqual(44)
+      await userEvent.tab()
+    }
   }}
 >
   {@render narrow(9, true)}
