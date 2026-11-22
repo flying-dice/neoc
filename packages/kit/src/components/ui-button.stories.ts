@@ -139,21 +139,44 @@ export const Pressing: Story = {
   }
 }
 
-/** The drawn buttons are 28 and 34 pt high; each has a hit area of at least 44 pt, which keeps its look. */
+/**
+ * `hit` is the shell's: a 44 x 44 pt box around the drawn button, off by default (the button is drawn at its own size, so
+ * dense layouts such as the shell's All Variants grid are reproduced). The drawn size is the same either way.
+ */
 export const HitAreas: Story = {
   parameters: { controls: { disable: true } },
   render: () =>
-    html`<div style="display:grid;gap:40px;padding:20px;justify-items:start">
-      <ui-button data-testid="hit-small" size="small">Small</ui-button>
-      <ui-button data-testid="hit-medium">Medium</ui-button>
-      <ui-button data-testid="hit-plain" variant="plain" size="small">Plain</ui-button>
-      <ui-button data-testid="hit-square" square size="small" label="Add"
+    html`<div
+      style="display:grid;grid-template-columns:auto auto;gap:40px;padding:20px;justify-items:start"
+    >
+      <ui-button data-testid="plain-small" size="small">Small</ui-button>
+      <ui-button data-testid="hit-small" size="small" hit>Small, hit</ui-button>
+      <ui-button data-testid="plain-medium">Medium</ui-button>
+      <ui-button data-testid="hit-medium" hit>Medium, hit</ui-button>
+      <ui-button data-testid="plain-square" square size="small" label="Add"
         ><ui-icon name="plus" size="15"></ui-icon
       ></ui-button>
+      <ui-button data-testid="hit-square" square size="small" hit label="Add"
+        ><ui-icon name="plus" size="15"></ui-icon
+      ></ui-button>
+      <ui-button data-testid="hit-plain" variant="plain" size="small" hit>Plain, hit</ui-button>
     </div>`,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
-    for (const id of ['hit-small', 'hit-medium', 'hit-plain', 'hit-square'])
+    const box = (id: string): DOMRect => canvas.getByTestId(id).getBoundingClientRect()
+    // off: the element is the drawn button (28 and 34 pt high, 28 wide for a small square one)
+    await expect(box('plain-small').height).toBe(28)
+    await expect(box('plain-medium').height).toBe(34)
+    await expect(box('plain-square').width).toBe(28)
+    // on: a 44 pt box, and the same drawn button inside it
+    for (const id of ['hit-small', 'hit-medium', 'hit-square', 'hit-plain']) {
+      await expect(box(id).height).toBe(44)
       await expectHitArea(canvas.getByTestId(id))
+    }
+    await expect(box('hit-square').width).toBe(44)
+    const drawn = (id: string): DOMRect =>
+      canvas.getByTestId(id).shadowRoot!.querySelector('button')!.getBoundingClientRect()
+    await expect(drawn('hit-small').height).toBe(28)
+    await expect(drawn('hit-medium').height).toBe(34)
   }
 }

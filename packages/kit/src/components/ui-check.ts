@@ -18,15 +18,18 @@ export class UiCheck extends BooleanControl {
   static styles = [
     base,
     css`
-      /* 44 x 44 pt: the hit area is layout space the check owns, so it never covers another control's drawn box */
+      /* with hit, a 44 x 44 pt box the check is centred in (layout space it owns, so it never covers another control) */
+      :host([hit]) {
+        --ui-hit: 44px;
+      }
       :host {
         display: inline-flex;
         align-items: center;
         justify-content: center;
         vertical-align: middle;
         flex: none;
-        min-width: 44px;
-        min-height: 44px;
+        min-width: var(--ui-hit, 0px);
+        min-height: var(--ui-hit, 0px);
       }
       :host([disabled]) {
         pointer-events: none;
@@ -64,8 +67,8 @@ export class UiCheck extends BooleanControl {
         position: absolute;
         left: 50%;
         top: 50%;
-        width: max(100%, 44px);
-        height: max(100%, 44px);
+        width: max(100%, var(--ui-hit, 0px));
+        height: max(100%, var(--ui-hit, 0px));
         transform: translate(-50%, -50%);
       }
       svg {

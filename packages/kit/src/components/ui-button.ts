@@ -17,7 +17,7 @@ const VARIANTS = ['filled', 'tinted', 'gray', 'plain']
  * `fill` takes a data colour (a palette token such as `orange`, or `#rrggbb`) for a `filled` button; the text colour
  * is picked for 4.5:1 on it. Unlike `tint`, which is the control's accent, a fill is content.
  *
- * Drawn 28 or 34 pt high, its hit area is 44 pt high (and 44 wide when it is narrower).
+ * Drawn 28 or 34 pt high. With `hit` it has a 44 x 44 pt hit area, as the shell's `hit` does (see `FormControl`).
  *
  * @tag ui-button
  * @slot - The label.
@@ -65,15 +65,19 @@ export class UiButton extends FormControl {
   static styles = [
     base,
     css`
-      /* The element is at least 44 x 44 pt, with the drawn button centred in it: the hit area is layout space the button
-         owns, as the shell's hit treatment is, so it never covers another control's drawn box. */
+      /* With hit the element is a 44 x 44 pt box with the drawn button centred in it: the hit area is layout space the
+         button owns, as the shell's hit is, so it never covers another control's drawn box. Without it the button is
+         drawn at its own size. A row or a banner sets --ui-hit on the controls in it. */
+      :host([hit]) {
+        --ui-hit: 44px;
+      }
       :host {
         display: inline-flex;
         align-items: center;
         justify-content: center;
         vertical-align: middle;
-        min-width: 44px;
-        min-height: 44px;
+        min-width: var(--ui-hit, 0px);
+        min-height: var(--ui-hit, 0px);
       }
       :host([size='fill']) {
         display: flex;
@@ -120,8 +124,8 @@ export class UiButton extends FormControl {
         position: absolute;
         left: 50%;
         top: 50%;
-        width: max(100%, 44px);
-        height: max(100%, 44px);
+        width: max(100%, var(--ui-hit, 0px));
+        height: max(100%, var(--ui-hit, 0px));
         transform: translate(-50%, -50%);
       }
       :host([size='small']) button {

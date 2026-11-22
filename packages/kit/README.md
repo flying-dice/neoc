@@ -89,12 +89,15 @@ handler has no role; the element handles its own keys, so silence that warning f
   `input` is each keystroke of a field. `press` is a `ui-row` tapped (see below). `click` is the ordinary click: it bubbles
   from everything inside an element, so on a row listen for `press`. The properties are already updated when an event
   fires. Events bubble and cross the shadow boundary.
-- **Touch targets.** Each control keeps its drawn size and is at least 44 x 44 pt (the button, switch, check, the field,
-  and each segment of a segmented control, vertically: segments already sit side by side). The extra is empty space the
-  control reserves around its drawn box, as the shell's `hit` treatment does, so a hit area never covers a neighbour's
-  drawn box and a tap inside a control's drawn box is always that control's. It does take layout room: small buttons, a
-  check or a field are 44 pt boxes in a flex or grid row. Inside a `ui-row` and a `ui-banner` the kit takes the extra
-  back from the padding there, so rows and banners keep their height.
+- **Touch targets (`hit`).** `ui-button`, `ui-check`, `ui-toggle`, `ui-segmented` and `ui-text-field` take the shell's `hit`
+  attribute (`packages/ui`'s `hit` prop of `Button`: same name, same default, off). Off, the control is drawn at its own
+  size and the element is that size, so the shell's dense layouts (a small button in a card, a grid of buttons 12 px apart)
+  are reproduced pixel for pixel. On, the element is a 44 x 44 pt box with the drawn control centred in it (a segment
+  grows vertically only). The extra is empty layout space the control owns, so a hit area never covers a neighbour's drawn
+  box and a tap inside a drawn box is always that control's. **Set `hit` wherever nothing else gives the control a 44 pt
+  target.** A `ui-row` and a `ui-banner` do: the kit controls in them get the box and the row or banner takes the extra
+  back from its padding (between two controls, at most half of the gap each), so rows and banners keep the height and the
+  text position they have with the shell's controls.
 - **Keyboard, focus, motion.** Everything works by keyboard with a visible focus ring, in light and dark, and starts no
   transition under Reduce Motion (busy indicators keep turning).
 - **Untrusted text.** Strings an app passes are rendered as text, never as markup.
@@ -106,7 +109,7 @@ handler has no role; the element handles its own keys, so silence that warning f
 Attributes: `variant` (`filled` | `tinted` | `gray` | `plain`), `size` (`small` | `medium` | `large` | `fill`), `shape`
 (`rounded` | `capsule` | `circle`), `square`, `tint` (CSS colour), `fill` (a data colour, a palette token such as `orange`
 or `#rrggbb`: the text colour is picked for 4.5:1), `destructive`, `disabled`, `toggle` and `pressed` (a toggle button:
-`aria-pressed`), `type`, `label`, `description`, `name`, `value`. Slots: default (the label), `icon`. Part: `button`.
+`aria-pressed`), `type`, `label`, `description`, `name`, `value`, `hit`. Slots: default (the label), `icon`. Part: `button`.
 Events: `click`.
 
 ### `ui-list`, `ui-section`, `ui-row`
@@ -122,12 +125,12 @@ trailing toggle does not press the row. Selection is controlled: set `selected`,
 ### `ui-toggle`, `ui-check`
 
 A switch and a round check. `checked`, `disabled`, `required`, `label`, `description`, `name`, `value` (what is submitted
-while on, `on` by default), `tint`. Event: `change` (`detail.checked`).
+while on, `on` by default), `tint`, `hit`. Event: `change` (`detail.checked`).
 
 ### `ui-segmented`
 
 `options` (`[{ value, label, disabled? }]`: set the property; a JSON attribute works in plain HTML, but the generated types
-accept an array only), `value`, `label`, `block`, `disabled`, `required`, `name`. A radio group: arrows, Home and End move
+accept an array only), `value`, `label`, `block`, `disabled`, `required`, `name`, `hit`. A radio group: arrows, Home and End move
 the selection. Event: `change` (`detail.value`).
 
 ### `ui-text-field`
@@ -135,7 +138,7 @@ the selection. Event: `change` (`detail.value`).
 `value`, `placeholder`, `type` (`text` | `email` | `password` | `url` | `search` | `tel` | `number`), `label`,
 `description`, `name`, `disabled`, `readonly`, `required`, `autocomplete`, `inputmode`, `enterkeyhint`, `autocapitalize`,
 `maxlength`, `minlength`, `pattern`, `min`, `max`, `step` (passed to the input inside, which checks them), `invalid`,
-`variant` (`field` | `bare`, for inside a `ui-row`). Events: `input`, `change` (no `detail`).
+`variant` (`field` | `bare`, for inside a `ui-row`), `hit`. Events: `input`, `change` (no `detail`).
 
 ### `ui-banner`
 

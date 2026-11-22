@@ -84,6 +84,7 @@ export class UiBanner extends LitElement {
       }
       /* a button is 44 pt high (the hit area is layout space it owns): the banner's padding takes the extra */
       .action ::slotted(ui-button) {
+        --ui-hit: 44px;
         margin-block: -5px; /* drawn 34 pt high */
       }
       .action ::slotted(ui-button[size='small']) {

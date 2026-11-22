@@ -65,7 +65,7 @@ export const Typing: Story = {
 export const HitArea: Story = {
   render: () =>
     html`<div style="width:320px;padding:20px">
-      <ui-text-field data-testid="hit-field" label="Name" placeholder="Name"></ui-text-field>
+      <ui-text-field data-testid="hit-field" label="Name" placeholder="Name" hit></ui-text-field>
     </div>`,
   play: async ({ canvasElement }) => {
     await expectHitArea(within(canvasElement).getByTestId('hit-field'))

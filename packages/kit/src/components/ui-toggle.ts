@@ -17,13 +17,16 @@ export class UiToggle extends BooleanControl {
   static styles = [
     base,
     css`
-      /* 44 pt high: the hit area is layout space the switch owns, so it never covers another control's drawn box */
+      /* with hit, 44 pt high: layout space the switch owns, so it never covers another control's drawn box */
+      :host([hit]) {
+        --ui-hit: 44px;
+      }
       :host {
         display: inline-flex;
         align-items: center;
         vertical-align: middle;
         flex: none;
-        min-height: 44px;
+        min-height: var(--ui-hit, 0px);
       }
       :host([disabled]) {
         pointer-events: none;
@@ -54,8 +57,8 @@ export class UiToggle extends BooleanControl {
         position: absolute;
         left: 50%;
         top: 50%;
-        width: max(100%, 44px);
-        height: max(100%, 44px);
+        width: max(100%, var(--ui-hit, 0px));
+        height: max(100%, var(--ui-hit, 0px));
         transform: translate(-50%, -50%);
       }
       .knob {

@@ -12,8 +12,8 @@ import { base } from '../styles'
  * the arrow keys move the selection, Home and End jump. A form control (see `FormControl`): the selected value is
  * submitted, and `required` keeps the form invalid until a segment is chosen.
  *
- * Each segment has the test id `<data-testid of the control>-<value>`. The segments are drawn 28 pt high and have a 44 pt
- * high hit area.
+ * Each segment has the test id `<data-testid of the control>-<value>`. The segments are drawn 28 pt high; with `hit` they have a
+ * 44 pt high hit area.
  *
  * @tag ui-segmented
  * @fires {CustomEvent<{ value: string }>} change - The person chose a segment. `value` is already updated.
@@ -41,12 +41,15 @@ export class UiSegmented extends FormControl {
   static styles = [
     base,
     css`
-      /* 44 pt high: the hit area is layout space the control owns. Segments already tile it horizontally. */
+      /* with hit, 44 pt high: layout space the control owns. Segments already tile it horizontally. */
+      :host([hit]) {
+        --ui-hit: 44px;
+      }
       :host {
         display: inline-flex;
         align-items: center;
         vertical-align: middle;
-        min-height: 44px;
+        min-height: var(--ui-hit, 0px);
       }
       :host([block]) {
         display: flex;
@@ -109,7 +112,7 @@ export class UiSegmented extends FormControl {
         left: 0;
         right: 0;
         top: 50%;
-        height: 44px;
+        height: max(100%, var(--ui-hit, 0px));
         transform: translateY(-50%);
       }
       .segment:disabled {

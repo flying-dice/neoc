@@ -100,6 +100,7 @@ export const HitAreas: Story = {
     html`<div style="padding:20px">
       <ui-segmented
         data-testid="hit-seg"
+        hit
         label="Filter"
         value="all"
         .options=${filters}

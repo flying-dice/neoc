@@ -12,7 +12,7 @@ const TYPES = ['text', 'email', 'password', 'url', 'search', 'tel', 'number']
  * control (see `FormControl`): with a `name` it submits its value, Enter submits the form, and `required`, the length and
  * pattern limits and `setCustomValidity` take part in validation (`checkValidity`, `validity`, ...).
  *
- * The field is drawn 36 pt high and has a 44 pt high hit area (a click on the strip around it focuses it).
+ * The field is drawn 36 pt high; with `hit` it has a 44 pt high hit area (a click on the strip around it focuses it).
  *
  * @tag ui-text-field
  * @fires {InputEvent} input - The person typed. `value` is already updated (the native event, passed through).
@@ -83,11 +83,14 @@ export class UiTextField extends FormControl {
         vertical-align: middle;
         min-width: 0;
       }
-      /* 44 pt high: the strip around the 36 pt field is layout space the field owns (a click on it focuses the input) */
+      /* with hit, 44 pt high: the strip around the 36 pt field is layout space the field owns (a click on it focuses it) */
+      :host([hit]) {
+        --ui-hit: 44px;
+      }
       :host(:not([variant='bare'])) {
         display: inline-flex;
         align-items: center;
-        min-height: 44px;
+        min-height: var(--ui-hit, 0px);
       }
       :host([variant='bare']) {
         display: block;

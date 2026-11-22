@@ -244,7 +244,7 @@ test('a colour or a variant from an app or an agent is data: it cannot add a dec
   expect(result.valid.trim()).toBe('rebeccapurple')
 })
 
-test('every control has a hit area of at least 44 x 44 pt around the drawn control', async ({
+test('with hit, every control has a hit area of at least 44 x 44 pt around the drawn control', async ({
   page
 }) => {
   await page.goto(`${origin}/frame`)
@@ -259,14 +259,14 @@ test('every control has a hit area of at least 44 x 44 pt around the drawn contr
       el.textContent = text
       grid.append(el)
     }
-    make('ui-button', 'h-small', { size: 'small' }, 'Small')
-    make('ui-button', 'h-medium', {}, 'Medium')
-    make('ui-button', 'h-plain', { variant: 'plain', size: 'small' }, 'Plain')
-    make('ui-button', 'h-square', { square: '', size: 'small', label: 'x' }, '+')
-    make('ui-toggle', 'h-toggle', { label: 't' })
-    make('ui-check', 'h-check', { label: 'c' })
-    make('ui-segmented', 'h-seg', { label: 's', value: 'a' })
-    make('ui-text-field', 'h-field', { label: 'f' })
+    make('ui-button', 'h-small', { size: 'small', hit: '' }, 'Small')
+    make('ui-button', 'h-medium', { hit: '' }, 'Medium')
+    make('ui-button', 'h-plain', { variant: 'plain', size: 'small', hit: '' }, 'Plain')
+    make('ui-button', 'h-square', { square: '', size: 'small', label: 'x', hit: '' }, '+')
+    make('ui-toggle', 'h-toggle', { label: 't', hit: '' })
+    make('ui-check', 'h-check', { label: 'c', hit: '' })
+    make('ui-segmented', 'h-seg', { label: 's', value: 'a', hit: '' })
+    make('ui-text-field', 'h-field', { label: 'f', hit: '' })
     document.body.replaceChildren(grid)
     ;(document.querySelector('ui-segmented') as unknown as { options: unknown }).options = [
       { value: 'a', label: 'A' },
@@ -309,127 +309,186 @@ test('every control has a hit area of at least 44 x 44 pt around the drawn contr
   expect(misses).toEqual([])
 })
 
-test("a tap inside a control's drawn box always activates that control, never a neighbour", async ({
-  page
-}) => {
-  await page.goto(`${origin}/frame`)
-  // The enlarged hit area of a control is layout space it owns, so it can never cover another control's drawn box.
-  // Layouts where controls sit close: one-letter segments (no gap), two checks 8 px apart, a toggle and a check 6 px
-  // apart, two small buttons 4 px apart, and a tappable row with a leading check and a trailing toggle.
-  const points = await page.evaluate(async () => {
-    const w = window as unknown as { log: string[] }
-    w.log = []
-    const log = (id: string) => () => w.log.push(id)
-    const area = document.createElement('div')
-    area.style.cssText = 'display:grid;gap:40px;padding:40px;justify-items:start;width:420px'
-    const strip = (gap: number): HTMLDivElement => {
-      const d = document.createElement('div')
-      d.style.cssText = `display:flex;align-items:center;gap:${gap}px`
-      area.append(d)
-      return d
-    }
-    const make = (
-      tag: string,
-      id: string,
-      attrs: Record<string, string> = {},
-      text = ''
-    ): HTMLElement => {
-      const el = document.createElement(tag)
-      el.dataset.testid = id
-      for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v)
-      el.textContent = text
-      return el
-    }
-    const seg = make('ui-segmented', 'seg', { label: 's' }) as HTMLElement & { options: unknown }
-    seg.options = ['A', 'B', 'C'].map((v) => ({ value: v, label: v }))
-    area.append(seg)
-    const checks = strip(8)
-    checks.append(
-      make('ui-check', 'check-1', { label: '1' }),
-      make('ui-check', 'check-2', { label: '2' })
-    )
-    const mixed = strip(6)
-    mixed.append(
-      make('ui-toggle', 'toggle', { label: 't' }),
-      make('ui-check', 'check-3', { label: '3' })
-    )
-    const buttons = strip(4)
-    buttons.append(
-      make('ui-button', 'button-1', { size: 'small', variant: 'tinted' }, 'A'),
-      make('ui-button', 'button-2', { size: 'small', variant: 'tinted' }, 'B')
-    )
-    const list = make('ui-list', 'list', { label: 'l' })
-    const section = make('ui-section', 'section')
-    const row = make('ui-row', 'row', { heading: 'Row', tappable: '' })
-    row.append(
-      make('ui-check', 'row-check', { label: 'lead' }),
-      make('ui-toggle', 'row-toggle', { label: 'trail' })
-    )
-    row.firstElementChild!.setAttribute('slot', 'leading')
-    row.lastElementChild!.setAttribute('slot', 'trailing')
-    section.append(row)
-    list.append(section)
-    list.style.cssText = 'width:380px'
-    area.append(list)
-    document.body.replaceChildren(area)
-    for (const el of area.querySelectorAll<HTMLElement>('[data-testid]')) {
-      const id = el.dataset.testid!
-      if (id === 'row') el.addEventListener('press', log('row-press'))
-      else if (id === 'seg')
-        el.addEventListener('change', (e) => w.log.push(`seg:${(e as CustomEvent).detail.value}`))
-      else if (id.startsWith('button')) el.addEventListener('click', log(id))
-      else if (id !== 'list' && id !== 'section') el.addEventListener('change', log(id))
-    }
-    await Promise.all(
-      [...area.querySelectorAll('*')]
-        .filter((e) => 'updateComplete' in e)
-        .map((e) => (e as unknown as { updateComplete: Promise<unknown> }).updateComplete)
-    )
-    // the drawn box of each control, by id; a segment is `seg-A` ...
-    const drawn = (el: Element): DOMRect => el.getBoundingClientRect()
-    const out: { id: string; expect: string; x: number; y: number }[] = []
-    const edges = (id: string, expectLog: string, r: DOMRect): void => {
-      const y = r.top + r.height / 2
-      out.push({ id: `${id} left`, expect: expectLog, x: r.left + 1.5, y })
-      out.push({ id: `${id} right`, expect: expectLog, x: r.right - 1.5, y })
-    }
-    for (const v of ['A', 'B', 'C']) {
-      const button = seg.shadowRoot!.querySelector(`[data-testid="seg-${v}"]`)!
-      edges(`seg-${v}`, `seg:${v}`, drawn(button))
-    }
-    for (const id of ['check-1', 'check-2', 'check-3', 'row-check', 'row-toggle', 'toggle'])
-      edges(
-        id,
-        id,
-        drawn(area.querySelector(`[data-testid=${id}]`)!.shadowRoot!.querySelector('button')!)
+for (const hit of [false, true]) {
+  test(`a tap inside a control's drawn box always activates that control, never a neighbour (hit ${hit ? 'on' : 'off'})`, async ({
+    page
+  }) => {
+    await page.goto(`${origin}/frame`)
+    // A control's enlarged hit area is layout space it owns, so it can never cover another control's drawn box, with
+    // hit on or off. Layouts where controls sit close: one-letter segments (no gap), two checks 8 px apart, a toggle and
+    // a check 6 px apart, two small buttons 4 px apart, and rows: a leading check with a trailing toggle, two trailing
+    // checks, a trailing icon button then a check, and two leading checks (a row gives its controls the 44 pt box).
+    const points = await page.evaluate(async (hit) => {
+      const w = window as unknown as { log: string[] }
+      w.log = []
+      const log = (id: string) => () => w.log.push(id)
+      const area = document.createElement('div')
+      area.style.cssText = 'display:grid;gap:40px;padding:40px;justify-items:start;width:420px'
+      const strip = (gap: number): HTMLDivElement => {
+        const d = document.createElement('div')
+        d.style.cssText = `display:flex;align-items:center;gap:${gap}px`
+        area.append(d)
+        return d
+      }
+      const make = (
+        tag: string,
+        id: string,
+        attrs: Record<string, string> = {},
+        text = ''
+      ): HTMLElement => {
+        const el = document.createElement(tag)
+        el.dataset.testid = id
+        for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v)
+        if (hit && tag !== 'ui-row' && tag !== 'ui-list' && tag !== 'ui-section')
+          el.setAttribute('hit', '')
+        el.textContent = text
+        return el
+      }
+      const seg = make('ui-segmented', 'seg', { label: 's' }) as HTMLElement & { options: unknown }
+      seg.options = ['A', 'B', 'C'].map((v) => ({ value: v, label: v }))
+      area.append(seg)
+      strip(8).append(
+        make('ui-check', 'check-1', { label: '1' }),
+        make('ui-check', 'check-2', { label: '2' })
       )
-    for (const id of ['button-1', 'button-2'])
-      edges(
-        id,
-        id,
-        drawn(area.querySelector(`[data-testid=${id}]`)!.shadowRoot!.querySelector('button')!)
+      strip(6).append(
+        make('ui-toggle', 'toggle', { label: 't' }),
+        make('ui-check', 'check-3', { label: '3' })
       )
-    // the row's own text area presses the row
-    const text = row.shadowRoot!.querySelector('.text')!.getBoundingClientRect()
-    out.push({
-      id: 'row text',
-      expect: 'row-press',
-      x: text.left + 4,
-      y: text.top + text.height / 2
-    })
-    return out
+      strip(4).append(
+        make('ui-button', 'button-1', { size: 'small', variant: 'tinted' }, 'A'),
+        make('ui-button', 'button-2', { size: 'small', variant: 'tinted' }, 'B')
+      )
+      // rows: [row id, tappable, [slot, control]...]
+      const rows: [string, boolean, [string, HTMLElement][]][] = [
+        [
+          'row',
+          true,
+          [
+            ['leading', make('ui-check', 'row-check', { label: 'lead' })],
+            ['trailing', make('ui-toggle', 'row-toggle', { label: 'trail' })]
+          ]
+        ],
+        [
+          'row-checks',
+          true,
+          [
+            ['trailing', make('ui-check', 'trail-1', { label: 'a' })],
+            ['trailing', make('ui-check', 'trail-2', { label: 'b' })]
+          ]
+        ],
+        [
+          'row-icon',
+          true,
+          [
+            [
+              'trailing',
+              make(
+                'ui-button',
+                'icon-1',
+                { square: '', size: 'small', variant: 'plain', label: 'i' },
+                '+'
+              )
+            ],
+            ['trailing', make('ui-check', 'trail-3', { label: 'c' })]
+          ]
+        ],
+        [
+          'row-leads',
+          true,
+          [
+            ['leading', make('ui-check', 'lead-1', { label: 'a' })],
+            ['leading', make('ui-check', 'lead-2', { label: 'b' })]
+          ]
+        ]
+      ]
+      const list = make('ui-list', 'list', { label: 'l' })
+      list.style.cssText = 'width:380px'
+      const section = make('ui-section', 'section')
+      for (const [id, tappable, controls] of rows) {
+        const row = make('ui-row', id, { heading: id, ...(tappable ? { tappable: '' } : {}) })
+        for (const [slot, control] of controls) {
+          control.setAttribute('slot', slot)
+          row.append(control)
+        }
+        section.append(row)
+      }
+      list.append(section)
+      area.append(list)
+      document.body.replaceChildren(area)
+      for (const el of area.querySelectorAll<HTMLElement>('[data-testid]')) {
+        const id = el.dataset.testid!
+        if (id.startsWith('row') && el.localName === 'ui-row')
+          el.addEventListener('press', log(`${id}-press`))
+        else if (id === 'seg')
+          el.addEventListener('change', (e) => w.log.push(`seg:${(e as CustomEvent).detail.value}`))
+        else if (id.startsWith('button') || id.startsWith('icon'))
+          el.addEventListener('click', log(id))
+        else if (id !== 'list' && id !== 'section') el.addEventListener('change', log(id))
+      }
+      await Promise.all(
+        [...area.querySelectorAll('*')]
+          .filter((e) => 'updateComplete' in e)
+          .map((e) => (e as unknown as { updateComplete: Promise<unknown> }).updateComplete)
+      )
+      const out: { id: string; expect: string; x: number; y: number }[] = []
+      const edges = (id: string, expectLog: string, r: DOMRect): void => {
+        const y = r.top + r.height / 2
+        out.push({ id: `${id} left`, expect: expectLog, x: r.left + 1.5, y })
+        out.push({ id: `${id} right`, expect: expectLog, x: r.right - 1.5, y })
+      }
+      // the drawn box of each control (the inner button), by id; a segment is `seg-A` ...
+      const drawn = (id: string): DOMRect =>
+        area
+          .querySelector(`[data-testid=${id}]`)!
+          .shadowRoot!.querySelector('button')!
+          .getBoundingClientRect()
+      for (const v of ['A', 'B', 'C']) {
+        const button = seg.shadowRoot!.querySelector(`[data-testid="seg-${v}"]`)!
+        edges(`seg-${v}`, `seg:${v}`, button.getBoundingClientRect())
+      }
+      for (const id of [
+        'check-1',
+        'check-2',
+        'check-3',
+        'toggle',
+        'button-1',
+        'button-2',
+        'row-check',
+        'row-toggle',
+        'trail-1',
+        'trail-2',
+        'icon-1',
+        'trail-3',
+        'lead-1',
+        'lead-2'
+      ])
+        edges(id, id, drawn(id))
+      // the row's own text area presses the row
+      const text = area
+        .querySelector('[data-testid=row]')!
+        .shadowRoot!.querySelector('.text')!
+        .getBoundingClientRect()
+      out.push({
+        id: 'row text',
+        expect: 'row-press',
+        x: text.left + 4,
+        y: text.top + text.height / 2
+      })
+      return out
+    }, hit)
+    const wrong: string[] = []
+    for (const p of points) {
+      await page.evaluate(() => {
+        ;(window as unknown as { log: string[] }).log = []
+        const seg = document.querySelector('[data-testid=seg]') as HTMLElement & { value: string }
+        seg.value = ''
+      })
+      await page.mouse.click(p.x, p.y)
+      const log = await page.evaluate(() => (window as unknown as { log: string[] }).log)
+      if (log.length !== 1 || log[0] !== p.expect)
+        wrong.push(`${p.id}: expected ${p.expect}, got ${JSON.stringify(log)}`)
+    }
+    expect(wrong).toEqual([])
   })
-  const wrong: string[] = []
-  for (const p of points) {
-    await page.evaluate(() => {
-      ;(window as unknown as { log: string[] }).log = []
-      const seg = document.querySelector('[data-testid=seg]') as HTMLElement & { value: string }
-      seg.value = ''
-    })
-    await page.mouse.click(p.x, p.y)
-    const log = await page.evaluate(() => (window as unknown as { log: string[] }).log)
-    if (log.length !== 1 || log[0] !== p.expect)
-      wrong.push(`${p.id}: expected ${p.expect}, got ${JSON.stringify(log)}`)
-  }
-  expect(wrong).toEqual([])
-})
+}

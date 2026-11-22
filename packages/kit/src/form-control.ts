@@ -26,6 +26,11 @@ export abstract class FormControl extends LitElement {
   static properties: PropertyDeclarations = {
     /** The form field name. Nothing is submitted without one. */
     name: { type: String, reflect: true },
+    /**
+     * A 44 x 44 pt hit area around the drawn control, as the shell's `hit` is (off by default: the control is drawn at its
+     * own size). Set it wherever nothing else gives the control a 44 pt target; a row, a banner and a toolbar item do.
+     */
+    hit: { type: Boolean, reflect: true },
     /** Dims the control and ignores input; also set by a disabled `<fieldset>` around it. */
     disabled: { type: Boolean, reflect: true },
     /** The accessible name. A `<label for>` pointing at the element names it too. */
@@ -35,6 +40,7 @@ export abstract class FormControl extends LitElement {
   }
   declare name: string
   declare disabled: boolean
+  declare hit: boolean
   declare label: string
   declare description: string
   protected internals = this.attachInternals()
@@ -45,6 +51,7 @@ export abstract class FormControl extends LitElement {
     super()
     this.name = ''
     this.disabled = false
+    this.hit = false
     this.label = ''
     this.description = ''
   }

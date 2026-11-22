@@ -138,6 +138,7 @@ export class UiRow extends LitElement {
         flex: none;
         display: flex;
         align-items: center;
+        gap: 8px;
         position: relative;
         z-index: 2; /* above the tap overlay, as the trailing content is: a leading check or icon button stays clickable */
         pointer-events: none;
@@ -232,14 +233,16 @@ export class UiRow extends LitElement {
       ::slotted(*) {
         pointer-events: auto;
       }
-      /* A kit control is at least 44 pt each way (the hit area is layout space it owns). In a row, which is 44 pt high and
-         has padding around its content, the extra is taken from that empty space, so each control sits in the row at the
-         size it is drawn and the row keeps the height and the text position it has with the shell's controls. */
+      /* A row gives the kit controls in it the 44 pt box (--ui-hit, the shell's hit), and takes the extra back from the
+         empty space it has so that each control sits at the size it is drawn and the row keeps the height and the text
+         position it has with the shell's controls. Vertically that is the row's padding. Horizontally, between two
+         controls, at most half of the 8 px gap each (so their boxes meet and never overlap); the whole extra only on an
+         outer edge, where the neighbour is the row's padding or its text, not a control. */
+      ::slotted(:is(ui-button, ui-toggle, ui-check, ui-segmented, ui-text-field)) {
+        --ui-hit: 44px;
+      }
       ::slotted(ui-toggle) {
         margin-block: -6.5px;
-      }
-      ::slotted(ui-check) {
-        margin: -10px;
       }
       ::slotted(ui-segmented) {
         margin-block: -6px;
@@ -256,11 +259,29 @@ export class UiRow extends LitElement {
       ::slotted(ui-button[size='large']) {
         margin-block: 0;
       }
-      ::slotted(ui-button[square]) {
-        margin-inline: -5px;
+      ::slotted(ui-check) {
+        margin: -10px -4px;
       }
-      ::slotted(ui-button[square][size='small']) {
-        margin-inline: -8px;
+      ::slotted(ui-check:first-child) {
+        margin-inline-start: -10px;
+      }
+      ::slotted(ui-check:last-child) {
+        margin-inline-end: -10px;
+      }
+      ::slotted(ui-button[square]) {
+        margin-inline: -4px;
+      }
+      ::slotted(ui-button[square]:first-child) {
+        margin-inline-start: -5px;
+      }
+      ::slotted(ui-button[square]:last-child) {
+        margin-inline-end: -5px;
+      }
+      ::slotted(ui-button[square][size='small']:first-child) {
+        margin-inline-start: -8px;
+      }
+      ::slotted(ui-button[square][size='small']:last-child) {
+        margin-inline-end: -8px;
       }
       .value {
         color: var(--label-secondary);

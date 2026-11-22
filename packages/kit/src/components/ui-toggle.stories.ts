@@ -93,8 +93,8 @@ export const InAForm: Story = {
 export const HitAreas: Story = {
   render: () =>
     html`<div style="display:grid;gap:40px;padding:20px;justify-items:start">
-      <ui-toggle data-testid="hit-toggle" label="Wi-Fi"></ui-toggle>
-      <ui-check data-testid="hit-check" label="Done"></ui-check>
+      <ui-toggle data-testid="hit-toggle" label="Wi-Fi" hit></ui-toggle>
+      <ui-check data-testid="hit-check" label="Done" hit></ui-check>
     </div>`,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)

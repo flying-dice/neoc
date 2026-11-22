@@ -291,3 +291,40 @@ export const LeadingControlInATappableRow: Story = {
     await expect(onPress).toHaveBeenCalledTimes(1)
   }
 }
+
+export const ControlsSideBySideInARow: Story = {
+  render: () =>
+    html`<div style="width:420px">
+      <ui-list data-testid="side-by-side" label="Controls">
+        <ui-section header="Side by side">
+          <ui-row data-testid="side-checks" heading="Two checks" tappable
+            ><ui-check slot="trailing" data-testid="side-check-1" label="First"></ui-check
+            ><ui-check slot="trailing" data-testid="side-check-2" label="Second"></ui-check
+          ></ui-row>
+          <ui-row data-testid="side-icon" heading="An icon button and a check" tappable
+            ><ui-button
+              slot="trailing"
+              data-testid="side-icon-button"
+              variant="plain"
+              size="small"
+              square
+              label="Info"
+              ><ui-icon name="info.circle" size="18"></ui-icon></ui-button
+            ><ui-check slot="trailing" data-testid="side-check-3" label="Third"></ui-check
+          ></ui-row>
+        </ui-section>
+      </ui-list>
+    </div>`,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    // each row keeps the 44 pt it has with the shell's controls, and neighbouring controls' boxes never overlap
+    const box = (id: string): DOMRect => canvas.getByTestId(id).getBoundingClientRect()
+    await expect(box('side-checks').height).toBe(44)
+    await expect(box('side-icon').height).toBe(44)
+    for (const [a, b] of [
+      ['side-check-1', 'side-check-2'],
+      ['side-icon-button', 'side-check-3']
+    ] as const)
+      await expect(box(a).right).toBeLessThanOrEqual(box(b).left + 0.01)
+  }
+}
