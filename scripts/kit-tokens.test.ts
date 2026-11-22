@@ -31,6 +31,12 @@ describe('the token sheet', () => {
     expect(tokens).toMatch(/\[data-theme='dark'\]\s*\{\s*color-scheme:\s*dark;/)
   })
 
+  test('a Reduce Motion setting on the document zeroes the motion tokens the components read', () => {
+    expect(tokens).toMatch(/:root\[data-reduce-motion\]\s*\{[^}]*--duration-fast:\s*0s;[^}]*--duration:\s*0s;/)
+    const used = new Set(sources.flatMap(({ text }) => [...text.matchAll(/transition:[^;]*;/g)].flatMap((m) => [...m[0].matchAll(/var\((--duration[\w-]*)\)/g)].map((d) => d[1]))))
+    expect([...used].sort()).toEqual(['--duration', '--duration-fast'])
+  })
+
   test('carries the base reset', () => {
     expect(tokens).toContain(':focus-visible')
     expect(tokens).toContain('prefers-reduced-motion')

@@ -17,11 +17,13 @@ copy of it to every app's frame, so a change here reaches every installed app wi
 ## Using it from an app
 
 An installed app's document runs in two ways: **embedded** in a shell window's iframe, and **standalone** as a full-screen
-page of its own (`/apps/<id>`), with no shell and no host. The kit is loaded by the app's own document either way and needs
-no host. For the theme: embedded, the host sets `data-theme="light|dark"` on `<html>` (and `color-scheme`); standalone,
-nothing does, and the tokens follow the system setting (`prefers-color-scheme`). An explicit `data-theme` always wins.
-Components an app uses for its own page (a banner, a list, a field) work the same in both. Sheets, alerts and toasts are not
-kit components: the host draws them over an app, so they exist only when embedded.
+page of its own (`/apps/<id>`), where the host writes a minimal page around the same sandboxed frame. The kit is loaded by the
+app's own document either way and needs no host to draw. Settings arrive on the document the same way in both: the host sets
+`data-theme="light|dark"` (and `color-scheme`) on `<html>` and keeps it current; `data-reduce-motion` on `<html>` zeroes the
+motion tokens. With no `data-theme` at all (the kit loaded outside any vos page, such as Storybook), the tokens follow the
+system setting (`prefers-color-scheme`); an explicit `data-theme` always wins. Components an app uses for its own page (a
+banner, a list, a field) work the same everywhere. Sheets, alerts and toasts are not kit components: only the shell draws
+them, over an embedded app.
 
 The document the host serves for an app loads the two files, and (embedded) keeps `<html data-theme="light|dark">` and `color-scheme` in step with
 the shell. The app writes no theme code and imports nothing:

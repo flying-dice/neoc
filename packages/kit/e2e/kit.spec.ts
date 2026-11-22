@@ -35,7 +35,7 @@ const BODY = `<head>
 
 /** Embedded in a shell window: the host sets data-theme and color-scheme on the document. */
 const PAGE = `<!doctype html>\n<html data-theme="light" style="color-scheme: light">\n${BODY}`
-/** Standalone (`/apps/<id>` opened on its own): no shell, so nothing sets data-theme. */
+/** A document no vos page set up (Storybook, a developer's own test page): nothing sets data-theme. */
 const STANDALONE = `<!doctype html>\n<html>\n${BODY}`
 
 const PAGE_JS = `
@@ -118,7 +118,7 @@ test('the kit follows data-theme: the same elements read dark on a dark document
   expect(text).toBe('rgb(255, 255, 255)')
 })
 
-test('standalone, with no host to set data-theme, the kit follows the system setting; an explicit data-theme wins', async ({ page }) => {
+test('with no data-theme set (outside any vos page) the kit follows the system setting; an explicit data-theme wins', async ({ page }) => {
   const read = (): Promise<{ body: string; button: string }> =>
     page.evaluate(() => ({
       body: getComputedStyle(document.body).color,
@@ -142,4 +142,17 @@ test('standalone, with no host to set data-theme, the kit follows the system set
   await page.emulateMedia({ colorScheme: 'light' })
   await page.evaluate(() => (document.documentElement.dataset.theme = 'dark'))
   expect((await read()).body).toBe('rgb(255, 255, 255)')
+})
+
+test('a Reduce Motion setting on the document stops every transition, without the system setting', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.goto(`${origin}/frame`)
+  const durations = (): Promise<string[]> =>
+    page.evaluate(() => {
+      const inside = (tag: string, sel: string): string => getComputedStyle(document.querySelector(tag)!.shadowRoot!.querySelector(sel)!).transitionDuration
+      return [inside('ui-button', 'button'), inside('ui-toggle', '.knob'), inside('ui-segmented', '.thumb')]
+    })
+  expect(await durations()).toEqual(['0.18s, 0.18s', '0.3s, 0.18s', '0.3s'])
+  await page.evaluate(() => document.documentElement.setAttribute('data-reduce-motion', ''))
+  expect(await durations()).toEqual(['0s, 0s', '0s, 0s', '0s'])
 })

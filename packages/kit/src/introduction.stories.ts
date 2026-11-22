@@ -29,8 +29,8 @@ export const Type: StoryObj = {
 }
 
 /**
- * An app opened on its own (`/apps/<id>` full screen) has no shell to set `data-theme`: the same tokens then follow the
- * person's system setting. This box sets no theme of its own (`color-scheme: light dark`), so it shows what such a page
+ * Inside a vos page the host sets `data-theme` on the app's document. With none (the kit loaded outside any vos page, such
+ * as here or on a developer's own test page) the same tokens follow the person's system setting. This box sets no theme (`color-scheme: light dark`), so it shows what such a page
  * looks like under the system setting the browser runs with, whatever the theme switch above says. An explicit
  * `data-theme` always wins, which the frame-conditions spec (packages/kit/e2e) checks on whole documents.
  */

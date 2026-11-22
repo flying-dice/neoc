@@ -18,7 +18,12 @@ use std::path::Path;
 use tower_http::services::{ServeDir, ServeFile};
 
 /// Serve a built Vite app: files from `dir`, unknown paths fall back to `index.html` (SPA routing).
+///
+/// `/kit/` is the app kit (`/kit/kit.js`, `/kit/tokens.css`, `/kit/custom-elements.json`): there a missing file is a
+/// 404, never the shell's page, which a `<script>` would otherwise be handed in place of the kit.
 pub fn static_router(dir: &Path) -> Router {
     let index = ServeFile::new(dir.join("index.html"));
-    Router::new().fallback_service(ServeDir::new(dir).precompressed_gzip().fallback(index))
+    Router::new()
+        .nest_service("/kit", ServeDir::new(dir.join("kit")).precompressed_gzip())
+        .fallback_service(ServeDir::new(dir).precompressed_gzip().fallback(index))
 }
