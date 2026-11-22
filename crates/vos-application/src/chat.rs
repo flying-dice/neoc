@@ -795,7 +795,14 @@ fn refused(input: &RunAgentInput, message: &str, code: &str) -> RunEvents {
 
 /// The background task of one turn: prompt, wait, and end the run.
 async fn turn(chat: Arc<ChatService>, thread: Arc<Thread>, session_id: String, prompt: String) {
-    let result = chat.p.connector.prompt(&thread.agent_id, &session_id, &prompt).await;
+    // a connector that panics ends the turn like one that fails: the run reports an error and the thread is
+    // free for the next prompt, instead of staying "running" for ever (see `crate::panics`)
+    let result = crate::panics::caught(chat.p.connector.prompt(&thread.agent_id, &session_id, &prompt))
+        .await
+        .unwrap_or_else(|message| {
+            tracing::error!(thread = %thread.id, %message, "the agent turn panicked");
+            Err(PortError::Internal(format!("the agent turn failed: the host panicked: {message}")))
+        });
     let (messages, agent_id) = {
         let mut inner = thread.inner.lock();
         // a turn that ended after the agent went away already reported it (`on_exit`)
