@@ -167,7 +167,7 @@ struct CallSlot(Arc<AtomicUsize>);
 impl CallSlots {
     fn take(&self) -> Option<CallSlot> {
         self.0
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| (n < MAX_CALLS_PER_APP).then_some(n + 1))
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |n| (n < MAX_CALLS_PER_APP).then_some(n + 1))
             .ok()
             .map(|_| CallSlot(self.0.clone()))
     }
