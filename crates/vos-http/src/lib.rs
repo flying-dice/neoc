@@ -43,5 +43,7 @@ pub fn static_router(dir: &Path) -> Router {
             HeaderValue::from_static("*"),
         ),
     );
-    Router::new().nest("/kit", kit).fallback_service(ServeDir::new(dir).precompressed_gzip().fallback(index))
+    Router::new()
+        .nest_service("/kit", kit)
+        .fallback_service(ServeDir::new(dir).precompressed_gzip().fallback(index))
 }
