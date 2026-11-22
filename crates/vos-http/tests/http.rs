@@ -175,6 +175,38 @@ async fn origin_check_blocks_foreign_pages_and_static_serves_the_client() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+#[tokio::test]
+async fn the_kit_is_served_and_a_missing_kit_file_is_a_404_not_the_shells_page() {
+    let dir = std::env::temp_dir().join(format!("static-kit-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("kit")).unwrap();
+    std::fs::write(dir.join("index.html"), "<h1>client</h1>").unwrap();
+    std::fs::write(dir.join("kit/kit.js"), "customElements.define").unwrap();
+    let (addr, server) = start(&dir).await;
+
+    assert_eq!(reqwest_get(addr, "/kit/kit.js").await, "customElements.define");
+    assert_eq!(status_of(addr, "/kit/kit.js").await, 200);
+    // a script tag that points at a file the kit lacks must fail, not run the client's HTML
+    assert_eq!(status_of(addr, "/kit/missing.js").await, 404);
+    assert!(!reqwest_get(addr, "/kit/missing.js").await.contains("<h1>client</h1>"));
+    assert_eq!(status_of(addr, "/kit/").await, 404);
+    // the rest of the client still falls back
+    assert!(reqwest_get(addr, "/kits").await.contains("<h1>client</h1>"), "only /kit/ is exempt");
+    server.abort();
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// the status code of a GET
+async fn status_of(addr: std::net::SocketAddr, path: &str) -> u16 {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
+    s.write_all(format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n").as_bytes())
+        .await
+        .unwrap();
+    let mut out = String::new();
+    s.read_to_string(&mut out).await.unwrap();
+    out.split(' ').nth(1).and_then(|c| c.parse().ok()).unwrap()
+}
+
 /// minimal HTTP/1.1 GET without pulling reqwest into this crate's dev-deps
 async fn reqwest_get(addr: std::net::SocketAddr, path: &str) -> String {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};

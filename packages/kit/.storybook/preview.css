@@ -1,0 +1,6 @@
+/* The canvas uses the grouped background, like an iPad screen (the same as packages/ui's Storybook). */
+body.sb-show-main {
+  background: var(--bg-grouped);
+  -webkit-user-select: auto;
+  user-select: auto;
+}

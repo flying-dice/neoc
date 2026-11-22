@@ -17,6 +17,10 @@ const root = resolve(import.meta.dir, '..')
 const built = spawnSync('bun', ['scripts/build-apps.ts'], { cwd: root, stdio: 'inherit' })
 if (built.status !== 0) process.exit(built.status ?? 1)
 
+// the app kit (/kit/kit.js, /kit/tokens.css) goes into client/public/kit, which Vite serves; rebuild it after a kit change
+const kit = spawnSync('bun', ['run', 'build:kit'], { cwd: root, stdio: 'inherit' })
+if (kit.status !== 0) process.exit(kit.status ?? 1)
+
 /** What an app is built from: its Luau, its manifest and its SQL migrations. */
 const SOURCE = /\.(luau|lua|sql)$|(^|\/)app\.json$/
 let timer: ReturnType<typeof setTimeout> | undefined

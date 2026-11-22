@@ -12,7 +12,7 @@
  *     @vos/storybook).
  *  3. Browser code (client/src, packages/ui/src) imports no Node or Bun builtins.
  *  4. Client <-> host traffic is JSON-RPC over /rpc: `new WebSocket` only in the renderer's transport.
- *  5. No {@html}, innerHTML, outerHTML, insertAdjacentHTML or document.write: agent and tool
+ *  5. No {@html}, innerHTML, outerHTML, insertAdjacentHTML, document.write or Lit's unsafeHTML/unsafeSVG: agent and tool
  *     output is untrusted. HTML_ALLOWED lists the reviewed exceptions.
  *
  * Usage: bun scripts/check-boundaries.ts
@@ -32,9 +32,9 @@ const SKIP = /(^|\/)(node_modules|storybook-static|dist|out)\/|^packages\/[^/]+\
 /** The renderer's protocol.ts re-exports the types generated from the Rust schema: the one file that reaches types/. */
 const GENERATED_REEXPORT = 'client/src/view/protocol.ts'
 /** Static, reviewed markup only. Never pass agent, tool or user text to these. */
-const HTML_ALLOWED = ['packages/ui/src/atoms/Icon.svelte'] // SVG strings from the constant icons map
+const HTML_ALLOWED = ['packages/ui/src/atoms/Icon.svelte', 'packages/kit/src/components/ui-icon.ts'] // SVG strings from the constant icons map
 /** Runs in a browser: no Node or Bun builtins. */
-const BROWSER = ['client/src/', 'packages/ui/src/']
+const BROWSER = ['client/src/', 'packages/ui/src/', 'packages/kit/src/']
 const WEBSOCKET_ALLOWED = ['client/src/view/rpc/websocket.ts'] // the reconnecting JSON-RPC transport
 
 const under = (rel: string, prefixes: string[]): boolean => prefixes.some((p) => (p.endsWith('/') ? rel.startsWith(p) : rel === p))
@@ -169,7 +169,7 @@ function checkVosImport(rel: string, imp: Import, test: boolean): void {
   const { spec } = imp
   const kit = matches(spec, ['@vos/ui', '@vos/ui/*'])
   const storybook = test && matches(spec, ['@vos/storybook', '@vos/storybook/*'])
-  if (rel.startsWith('packages/ui/src/') && !test) return report(rel, imp.line, `the UI kit depends on no other @vos package ('${spec}')`)
+  if (/^packages\/(ui|kit)\/src\//.test(rel) && !test) return report(rel, imp.line, `the UI kit depends on no other @vos package ('${spec}')`)
   if (!kit && !storybook && !rel.startsWith('packages/storybook/'))
     report(rel, imp.line, `'${spec}' is not importable here: the client uses only @vos/ui (stories also @vos/storybook)`)
 }
@@ -193,6 +193,8 @@ function checkCode(rel: string, code: string, markup: string): void {
     const untrusted = 'renders raw HTML; agent, tool and user text is untrusted: build nodes (see atoms/RichText.svelte)'
     scan(markup, /\{@html\b/, `{@html} ${untrusted}`)
     scan(code, /\.(?:innerHTML|outerHTML)\s*\+?=|\binsertAdjacentHTML\s*\(|\bdocument\s*\.\s*write(?:ln)?\s*\(/, `this ${untrusted}`)
+    // Lit's unsafe directives are the {@html} of a web component
+    scan(code, /\bunsafe(?:HTML|SVG|Static)\b/, `this Lit directive ${untrusted.replace('see atoms/RichText.svelte', 'a template renders text')}`)
   }
 }
 
