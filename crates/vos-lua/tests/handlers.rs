@@ -316,7 +316,7 @@ async fn a_panic_in_a_handler_fails_that_call_and_the_app_answers_the_next() {
 
     match call("boom").await {
         Err(PortError::Internal(message)) => {
-            assert_eq!(message, "a host function panicked: the roster broke")
+            assert_eq!(message, "a host function panicked: the roster broke");
         }
         other => panic!("expected an internal error, got {other:?}"),
     }
