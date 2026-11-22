@@ -128,33 +128,43 @@ for (const id of FIXTURE_APPS) {
             parentDocument: await attempt(() => window.parent.document.title),
             cookie: await attempt(() => document.cookie),
             storage: await attempt(() => localStorage.length),
-            // what `sandbox` is there for: no popup, no way to reach the shell's location, no form submission
-            popup: await attempt(() => {
-              if (window.open('https://example.com/', '_blank') !== null) throw new Error('a window opened')
-              throw new Error('blocked')
-            }),
+            // what `sandbox` is there for. Each of these says `blocked` or `allowed` itself, so a sandbox that is missing
+            // makes it say `allowed`: no popup, no way to read the shell's location, no form submission
+            popup: (() => {
+              try {
+                return window.open('https://example.com/', '_blank') === null ? 'blocked' : 'allowed'
+              } catch {
+                return 'blocked'
+              }
+            })(),
             topLocation: await attempt(() => window.top?.location.href),
-            topNavigation: await attempt(() => {
-              window.top!.location.href = 'http://127.0.0.1:9/'
-              // not an error to try; whether the shell moved is checked from outside
-              throw new Error('not navigated')
-            }),
-            formSubmit: await attempt(async () => {
+            topNavigation: (() => {
+              try {
+                window.top!.location.href = 'http://127.0.0.1:9/'
+              } catch {
+                return 'blocked'
+              }
+              // an assignment that did not throw says nothing: whether the shell moved is checked from outside
+              return 'attempted'
+            })(),
+            formSubmit: await (async () => {
               const form = document.createElement('form')
               form.action = 'http://127.0.0.1:9/'
               form.method = 'post'
               document.body.append(form)
               form.requestSubmit()
               await new Promise((r) => setTimeout(r, 300))
-              // a submission that went through would have replaced this document
-              if (!document.body.contains(form)) throw new Error('the document was replaced')
+              // a submission that went through replaces this document (and this call with it)
+              const stayed = document.body.contains(form)
               form.remove()
-              throw new Error('stayed')
-            })
+              return stayed ? 'blocked' : 'allowed'
+            })()
           }
         })
-      // the probes that throw on purpose report their message; only `allowed` (no error at all) is a failure
+      // every probe reports what happened: `allowed` is a failure (the others throw, or say `blocked`)
       for (const [probe, outcome] of Object.entries(probes)) expect(outcome, probe).not.toBe('allowed')
+      expect(probes.popup, 'window.open returns null').toBe('blocked')
+      expect(probes.formSubmit, 'the form did not submit').toBe('blocked')
       // and the shell did not move, and the frame is still the app's
       expect(new URL(page.url()).pathname).toBe('/')
       await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()
@@ -177,6 +187,19 @@ for (const id of FIXTURE_APPS) {
       await page.getByTestId(`${id}-failed-retry`).click()
       await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()
       await expect(page.getByTestId(`${id}-failed`)).toHaveCount(0)
+    })
+
+    test(`AF10 (${id}): a client that reloads itself is still the client, however long it is busy after`, async ({ page }) => {
+      await openDesktop(page, { open: [id] })
+      await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()
+      await frame(page).locator('body').evaluate(() => {
+        setTimeout(() => location.reload(), 0)
+      })
+      // the reloaded page says hello again, so the window keeps it: nothing says the app left, and the app is there
+      await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()
+      await page.waitForTimeout(3000)
+      await expect(page.getByTestId(`${id}-failed`)).toHaveCount(0)
+      await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()
     })
 
     test(`AF6 (${id}): the frame follows light and dark live, and its styles stay inside`, async ({ page }) => {

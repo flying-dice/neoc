@@ -49,22 +49,20 @@
   let bridge: FrameBridge | undefined
 
   // A frame can navigate itself away (`location.href = ...`), which no policy stops, and then the iframe is not what the
-  // shell loaded: its document was replaced. The shell loaded one document per frame, so a second `load` of the same
-  // iframe means the page left (or reloaded itself). Ask the document whether it is the client's: the host's bridge
-  // script answers a ping, a foreign page does not. If nothing answers, the window says the app left its page, with the
-  // way back, rather than keep saying ready over a page the shell did not load.
-  const LEFT_GRACE_MS = 1500
+  // shell loaded: its document was replaced. The host's bridge script says `hello` the moment it starts, before the client
+  // does anything, so a document of the client says hello once per load. A second load of the same iframe that has not
+  // been preceded by a hello of its own is a page the frame went to: the window says the app left its page, with the way
+  // back, rather than keep saying ready over a page the shell did not load. (No timer: a client that reloads itself and
+  // then keeps the thread busy is still the client.)
   function onframeload(event: Event): void {
     const element = event.currentTarget as HTMLIFrameElement
     // counted on the element itself: a frame is made again for every attempt, so every frame starts at 0
     const loads = Number(element.dataset.loads ?? 0) + 1
     element.dataset.loads = String(loads)
-    if (loads < 2 || phase === 'failed') return
-    void (bridge?.ping(LEFT_GRACE_MS) ?? Promise.resolve(false)).then((answered) => {
-      if (answered || phase === 'failed' || element !== iframe) return
-      failure = `${name} left its page, so the window cannot show it.`
-      phase = 'failed'
-    })
+    const hellos = Number(element.dataset.hellos ?? 0)
+    if (loads < 2 || hellos >= loads || phase === 'failed') return
+    failure = `${name} left its page, so the window cannot show it.`
+    phase = 'failed'
   }
 
   // One bridge per frame, made for this app and this iframe's window.
@@ -76,6 +74,9 @@
       frame: () => frame.contentWindow,
       post: (message) => frame.contentWindow?.postMessage(message, '*'),
       call: (method, params) => host.api.call(method, params),
+      onHello: () => {
+        frame.dataset.hellos = String(Number(frame.dataset.hellos ?? 0) + 1)
+      },
       onReady: () => {
         if (phase === 'failed') return
         phase = 'ready'

@@ -19,6 +19,7 @@ after another).
 | AF6 | Switch the shell between light and dark.                       | The app open.                      | The app follows at once, without reloading; the app's styles did not change the shell.                                                     |
 | AF7 | Use two apps with clients side by side.                        | Both apps open.                    | A task added in one is not in the other: each client reaches only its own backend.                                                         |
 | AF9 | A client sends its frame to another page (`location.href`).       | The app open.                      | The window notices it is not showing the page it loaded, says the app left its page, and "Try again" brings the app back. |
+| AF10 | A client reloads itself.                                                 | The app open.                      | The window keeps the app: a reloaded client says hello again, and nothing says it left. |
 
 ## Manual verification
 

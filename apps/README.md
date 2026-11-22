@@ -94,10 +94,15 @@ or over the shell; it is not a security boundary. Lasting data belongs in the ba
 
 **Limits of a call.** `rpc`'s arguments may be at most 1,000,000 bytes of JSON and 100 levels deep, and a method name is 1 to
 128 characters: a call over a limit rejects at once with a message that says which. A result may be at most 4 MiB, and a
-larger one comes back as an error. A call the shell cannot read is rejected too, so a promise never hangs.
+larger one comes back as an error. A call the shell cannot read is rejected too, so a promise never hangs. Calls in
+flight are limited so that one window can neither be refused by the host's own connection limit for an ordinary burst (a
+call per item of a list) nor crowd out the shell or another window: 8 at a time per window and 32 across all windows, the
+rest wait their turn (windows take turns); a window with 1,000 calls waiting gets an error for the next one.
 
 **When a client fails to start**, the window shows the reason as text with a "Try again" button: the error the page raised
-while it loaded (a top-level throw, a missing import, a syntax error: its message and where), a client that does not define
+while it loaded (a top-level throw, a missing import, a syntax error: the script comes from another origin than the
+frame's document, so the browser hides the message, and the window says that the script failed and that the browser console
+has the error), a client that does not define
 `vosApp.mount`, or an error thrown by `mount`.
 
 The shell draws sheets, alerts and toasts above the frame (the shared UI kit and its tokens are NEOC-252; the kit will be
