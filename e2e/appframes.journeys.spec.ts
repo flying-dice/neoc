@@ -1,11 +1,15 @@
 /**
  * App frame journeys (client/journeys/app-frames.md): an app whose screens are a web client of its own, in a frame of
- * its window, on a Luau backend, on the real host. The two framework fixtures (`e2e/apps/tasks-svelte` and
+ * its window (or alone, on its own page at `/apps/<id>`), on a Luau backend, on the real host. The two framework fixtures (`e2e/apps/tasks-svelte` and
  * `tasks-react`: the same task list, written once in each framework) are installed at start from a folder no registry
  * lists (`e2e/host/start.ts`); every journey runs against both.
  *
  * They share the fixtures' data, so they run one after another, and each journey adds tasks with its own titles.
  */
+import { createHash } from 'node:crypto'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { type Page } from '@playwright/test'
 import { FIXTURE_APPS, fixtureAppRef, type FixtureApp } from './host/config'
 import { callTool } from './host/pair'
@@ -52,6 +56,8 @@ for (const id of FIXTURE_APPS) {
       await expect(windowOf(page, id)).toBeVisible()
       await expect(frame(page).getByTestId(`${id}-framework`)).toHaveText(FRAMEWORK[id])
       await expect(page.getByTestId(`${id}-opening`)).toHaveCount(0)
+      // the handshake told the app it is in the shell, which draws UI of its own
+      await expect(frame(page).getByTestId(`${id}-where`)).toHaveText('in the shell')
     })
 
     test(`AF2 (${id}): add a task and see it in the list`, async ({ page }) => {
@@ -220,6 +226,84 @@ for (const id of FIXTURE_APPS) {
       await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()
     })
 
+    test(`AF14 (${id}): the app declares what its page needs and the host applies it`, async ({ page }) => {
+      const declared = id === 'tasks-react'
+      // the page's policy is the host's, built from `x-app`: nothing external unless the app named it, and never scripts
+      const response = await page.request.get(`/apps/${id}/static/`)
+      const csp = response.headers()['content-security-policy'] ?? ''
+      expect(csp).toContain('sandbox allow-scripts')
+      expect(csp).not.toContain('connect-src')
+      expect(csp.includes('https://cdn.example.com')).toBe(declared)
+      expect(csp).toMatch(/script-src 'self';/)
+      expect(response.headers()['x-content-type-options']).toBe('nosniff')
+      // and the frame's `allow` carries what it asked for, which works under the sandbox
+      await openDesktop(page, { open: [id] })
+      await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()
+      await expect(page.getByTestId(`${id}-frame`)).toHaveAttribute('allow', declared ? 'camera' : '')
+      const allowed = await frame(page)
+        .locator('body')
+        .evaluate(() => (document as unknown as { featurePolicy: { allowsFeature(f: string): boolean } }).featurePolicy.allowsFeature('camera'))
+      expect(allowed, 'the camera is allowed in the frame only when the app asked').toBe(declared)
+    })
+
+    test(`AS1 (${id}): opened on its own page, the app works with no shell`, async ({ page }) => {
+      await page.goto(`/apps/${id}`)
+      // the page's title is the app's name
+      await expect(page).toHaveTitle(FRAMEWORK[id] === 'Svelte' ? 'Tasks (Svelte)' : 'Tasks (React)')
+      // the page is the app and nothing else: one frame, no chrome, no shell
+      await expect(page.locator('iframe')).toHaveCount(1)
+      await expect(page.getByTestId('dock')).toHaveCount(0)
+      await expect(frame(page).getByTestId(`${id}-where`)).toHaveText('on its own')
+      const title = unique('On its own')
+      await frame(page).getByTestId(`${id}-title`).fill(title)
+      await frame(page).getByTestId(`${id}-add`).click()
+      await expect(frame(page).locator('li', { hasText: title })).toBeVisible()
+      // the same data the shell's window shows
+      await openDesktop(page, { open: [id] })
+      await expect(frame(page).locator('li', { hasText: title })).toBeVisible()
+    })
+
+    test(`AS2 (${id}): on its own page the app hears the backend's events and follows the browser's appearance`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme: 'light' })
+      await page.goto(`/apps/${id}`)
+      await expect(frame(page).getByTestId(`${id}-theme`)).toHaveText('light')
+      await frame(page).locator('body').evaluate(() => ((window as unknown as { marked: boolean }).marked = true))
+      const title = unique('From the agent, on its own')
+      await callTool(`${id}__add_task`, { title })
+      await expect(frame(page).locator('li', { hasText: title })).toBeVisible()
+      await page.emulateMedia({ colorScheme: 'dark' })
+      await expect(frame(page).getByTestId(`${id}-theme`)).toHaveText('dark')
+      await expect(frame(page).locator('html')).toHaveAttribute('data-theme', 'dark')
+      expect(
+        await frame(page).locator('body').evaluate(() => (window as unknown as { marked?: boolean }).marked),
+        'the frame was not reloaded'
+      ).toBe(true)
+    })
+
+    test(`AS3 (${id}): on its own page the app still reaches nothing but its backend`, async ({ page, errors }) => {
+      await page.goto(`/apps/${id}`)
+      await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()
+      const probes = await frame(page)
+        .locator('body')
+        .evaluate(async () => {
+          const attempt = async (what: () => unknown): Promise<string> => {
+            try {
+              await what()
+              return 'allowed'
+            } catch (e) {
+              return e instanceof Error ? e.name : String(e)
+            }
+          }
+          return {
+            fetchSession: await attempt(() => fetch('/session')),
+            parentDocument: await attempt(() => window.parent.document.title),
+            cookie: await attempt(() => document.cookie)
+          }
+        })
+      for (const [probe, outcome] of Object.entries(probes)) expect(outcome, probe).not.toBe('allowed')
+      const refused = errors.filter((e) => /Content Security Policy/.test(e))
+      errors.splice(0, errors.length, ...errors.filter((e) => !refused.includes(e)))
+    })
 
     test(`AF8 (${id}): a client that navigates its own frame away is noticed, and the window offers the way back`, async ({
       page
@@ -371,6 +455,71 @@ test('AF7: two apps with clients each reach only their own backend', async ({ pa
   await expect(frameOf(page, b).getByTestId(`${b}-app`)).toBeVisible()
 })
 
+test('AS4: an unpaired visitor to an app’s own page is told to pair first', async ({ page }) => {
+  await page.context().clearCookies()
+  await page.goto('/apps/tasks-svelte')
+  await expect(page.getByRole('heading', { name: 'Pair this device first' })).toBeVisible()
+  await expect(page.locator('iframe')).toHaveCount(0)
+  await page.getByRole('link', { name: 'Open vos to pair' }).click()
+  await expect(page).toHaveURL(/\/$/)
+})
+
+test('AS5: an app’s page opened straight from its static address is contained, and says it needs its host page', async ({ page, errors }) => {
+  // the policy has `sandbox`: opened in a tab the page has an opaque origin, so no cookie of the host reaches it
+  await page.goto('/apps/tasks-svelte/static/')
+  expect(await page.evaluate(() => window.origin)).toBe('null')
+  await expect(page.locator('body')).toContainText('This app could not start: This page needs its host page: open the app at /apps/tasks-svelte/')
+  errors.splice(0, errors.length, ...errors.filter((e) => !/This page needs its host page/.test(e)))
+})
+
+test('AF15: a page whose script throws while it loads is reported with its own message', async ({ page, errors }) => {
+  // a hand-built app package (not one of the fixtures, so no other journey or baseline meets it): its page throws at load
+  const id = 'brokenapp'
+  const dir = mkdtempSync(join(tmpdir(), 'vos-broken-'))
+  try {
+    const files: Record<string, string> = {
+      'app.luau': 'return { ping = function() return "pong" end }\n',
+      'static/index.html':
+        '<!doctype html>\n<html lang="en"><head><title>Broken</title><script src="/apps/bridge.js"></script></head>' +
+        '<body><div id="root"></div><script type="module" src="./boom.js"></script></body></html>\n',
+      'static/boom.js': "throw new Error('the broken app threw on purpose')\n"
+    }
+    for (const [path, text] of Object.entries(files)) {
+      mkdirSync(dirname(join(dir, path)), { recursive: true })
+      writeFileSync(join(dir, path), text)
+    }
+    const listed = Object.entries(files).map(([path, text]) => ({
+      path,
+      url: path,
+      sha256: createHash('sha256').update(text).digest('hex')
+    }))
+    writeFileSync(
+      join(dir, 'app-ref.json'),
+      JSON.stringify({
+        manifest: { id, name: 'Broken', version: '1.0.0', main: 'app.luau', ui: { root: 'static' }, window: { w: 420, h: 480, minW: 320, minH: 320 } },
+        files: listed
+      })
+    )
+    await openDesktop(page)
+    const url = `file://${join(dir, 'app-ref.json')}`
+    const preview = await hostCall<{ sha256: string }>(page, 'app.preview', { url })
+    await hostCall(page, 'app.install', { url, sha256: preview.sha256 })
+    try {
+      await page.getByTestId(`dock-${id}`).click()
+      const failed = page.getByTestId(`${id}-failed`)
+      await expect(failed).toBeVisible({ timeout: 15_000 })
+      // the script is loaded from the host as a module, which the host answers with the header that lets the browser say what went wrong
+      await expect(failed).toContainText('the broken app threw on purpose')
+    } finally {
+      await hostCall(page, 'app.uninstall', { app: id, purge: true })
+    }
+    // the frame's own report of the throw is a console error of the page: expected here
+    errors.splice(0, errors.length, ...errors.filter((e) => !/the broken app threw on purpose/.test(e)))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('AF10: an app whose handlers never answer is stuck alone: the shell, another app and the host carry on', async ({
   page
 }) => {
@@ -413,8 +562,8 @@ test('AF10: an app whose handlers never answer is stuck alone: the shell, anothe
   await frameOf(page, other).getByTestId(`${other}-add`).click()
   await expect(frameOf(page, other).locator('li', { hasText: title })).toBeVisible()
 
-  // closing the window of the hung app and opening it again finds the same places taken (the host is still running the handlers):
-  // the app's own calls wait, nothing else does
+  // while the handlers hang, the app's own calls wait behind them: nothing else does. Closing the window tells the host to stop the
+  // handlers it was running for it, so opening it again finds the app whole at once
   await chooseLayout(page, hung, 'close')
   await expect(windowOf(page, hung)).toHaveCount(0)
   await page.getByTestId(`dock-${hung}`).click()
@@ -423,9 +572,7 @@ test('AF10: an app whose handlers never answer is stuck alone: the shell, anothe
     .poll(() => hostCall<{ apps: unknown[] }>(page, 'app.list', {}).then((r) => Array.isArray(r.apps)))
     .toBe(true)
 
-  // an agent's tool is not one of the client's calls: it lets the handlers go, and the app is whole again
-  await callTool(`${hung}__release_all`, {})
-  const title2 = unique('After the release')
+  const title2 = unique('After the window was closed and opened again')
   await frameOf(page, hung).getByTestId(`${hung}-title`).fill(title2)
   await frameOf(page, hung).getByTestId(`${hung}-add`).click()
   await expect(frameOf(page, hung).locator('li', { hasText: title2 })).toBeVisible()

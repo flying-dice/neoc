@@ -2,7 +2,7 @@
  * vos service worker: makes the shell installable and opens it offline.
  *  • Navigations: network first, falling back to the cached shell.
  *  • Hashed build assets (immutable URLs): cache first.
- *  • Never touches /rpc (WebSocket), /mcp or /frame (an app's frame: always live, never the shell in its place).
+ *  • Never touches /rpc (WebSocket), /mcp or /apps (an app's page and its files: always live, never the shell in its place).
  */
 const CACHE = 'vos-shell-v1'
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon-512.png']
@@ -28,7 +28,7 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url)
   if (event.request.method !== 'GET' || url.origin !== location.origin) return
-  if (url.pathname === '/rpc' || url.pathname === '/mcp' || url.pathname.startsWith('/frame/'))
+  if (url.pathname === '/rpc' || url.pathname === '/mcp' || url.pathname.startsWith('/apps/'))
     return
 
   if (event.request.mode === 'navigate') {

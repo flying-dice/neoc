@@ -4,7 +4,8 @@
  * (types/generated/vos.d.luau: the `app` API, `vos:ui`, the std:/lib:/vnd: modules an app is offered, and the one
  * `declare require`; written by vos-codegen).
  *
- *  1. Positive: every `.luau` file of an app or an app fixture (`apps/`, `crates/<crate>/tests/fixtures/`,
+ *  1. Positive: every `.luau` file of an app or an app fixture (`apps/`, except an app that is a Vite project, which checks
+ *     its own with `vos lint`; `crates/<crate>/tests/fixtures/`,
  *     `scripts/fixtures/` outside `negative/`) starts with `--!strict` and checks clean: no type error, no lint
  *     warning. `scripts/fixtures/usage.luau` also requires every module an app is offered (read from the
  *     declarations), so a module that stops loading is flagged there.
@@ -222,10 +223,23 @@ export function allowedRequire(name: string, offered: Set<string>): boolean {
   return name.startsWith('./') || name.startsWith('../') || offered.has(name)
 }
 
+/**
+ * Is `file` part of an app that is a Vite project (`apps/<dir>/openrpc.json`)? Such a project checks its own Luau with
+ * `vos lint` and `vos typecheck` (its scripts, run by the repository's `lint` and `typecheck`), against its generated
+ * router: its sources require `../.app/rpc`, which only exists once the project has generated, and its `.app/` and `dist/`
+ * hold generated and bundled Luau that is not source.
+ */
+export function inViteApp(file: string, isProject: (dir: string) => boolean): boolean {
+  const [top, dir] = file.split('/')
+  return top === 'apps' && dir !== undefined && isProject(`apps/${dir}`)
+}
+
 function listSources(): { positive: string[]; negative: string[] } {
   const all = new Set<string>()
+  const isProject = (dir: string): boolean => existsSync(join(root, dir, 'openrpc.json'))
   for (const pattern of SOURCES) {
-    for (const file of new Glob(pattern).scanSync({ cwd: root })) if (!SKIP.test(`/${file}`)) all.add(file)
+    for (const file of new Glob(pattern).scanSync({ cwd: root }))
+      if (!SKIP.test(`/${file}`) && !inViteApp(file, isProject)) all.add(file)
   }
   const sorted = [...all].sort()
   return {

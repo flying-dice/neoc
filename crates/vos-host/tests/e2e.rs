@@ -49,7 +49,7 @@ fn publish_app(root: &Path, id: &str) -> String {
             tint: None,
             description: None,
             requires: None,
-            client: None,
+            ui: None,
             window: None,
         },
         files: vec![FileRef {

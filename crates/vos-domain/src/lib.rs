@@ -10,6 +10,7 @@ pub mod agent;
 pub mod agui;
 pub mod api;
 pub mod app;
+pub mod app_ui;
 pub mod contact;
 pub mod decl;
 pub mod device;
@@ -32,6 +33,7 @@ pub use app::{
     resolve_package_url, resolve_url, source_label, AppId, AppRef, FileRef, Manifest, MigrationSpec,
     Registry, Requires, GLOBALS_NOT_FOR_APPS, HOST_API, NOT_FOR_APPS,
 };
+pub use app_ui::{AppUi, Csp, Permissions};
 pub use contact::{hash_token, hex_of, same_hash, Agent, AgentRuntime, ApprovalPolicy, Grants};
 pub use decl::{AppDecl, KitRequirement, WindowDecl};
 pub use device::{Device, DeviceId};

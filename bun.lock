@@ -12,6 +12,18 @@
         "zod": "4.6.7",
       },
     },
+    "apps/calculator-web": {
+      "name": "@vos-apps/calculator-web",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@sveltejs/vite-plugin-svelte": "^7.3.1",
+        "@vos/vite-plugin": "workspace:*",
+        "svelte": "^5.57.2",
+        "svelte-check": "^4.7.6",
+        "typescript": "^5.9.3",
+        "vite": "^8.3.4",
+      },
+    },
     "client": {
       "name": "@vos/client",
       "version": "1.0.0",
@@ -514,6 +526,8 @@
     "@vitest/spy": ["@vitest/spy@3.2.4", "", { "dependencies": { "tinyspy": "^4.0.3" } }, "sha512-vAfasCOe6AIK70iP5UD11Ac4siNUNJ9i/9PZ3NKx07sG6sUxeag1LWdNrMWeKKYBLlzuK+Gn65Yd5nyL6ds+nw=="],
 
     "@vitest/utils": ["@vitest/utils@3.2.4", "", { "dependencies": { "@vitest/pretty-format": "3.2.4", "loupe": "^3.1.4", "tinyrainbow": "^2.0.0" } }, "sha512-fB2V0JFrQSMsCo9HiSq3Ezpdv4iYaXRG1Sx8edX3MwxfyNn83mKiGzOcH+Fkxt4MHxr3y42fQi1oeAInqgX2QA=="],
+
+    "@vos-apps/calculator-web": ["@vos-apps/calculator-web@workspace:apps/calculator-web"],
 
     "@vos-fixtures/tasks-react": ["@vos-fixtures/tasks-react@workspace:e2e/apps/tasks-react"],
 

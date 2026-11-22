@@ -1,5 +1,3 @@
-// The client's styles are part of its one script: they are added to the frame's document when the app mounts.
-export const css = `
 html { --bg: #ffffff; --fg: #1c1c1e; --muted: #5c5c61; --line: #c7c7cc; --accent: #0a60d6; --danger: #b3261e; }
 html[data-theme='dark'] { --bg: #1c1c1e; --fg: #f2f2f7; --muted: #aeaeb2; --line: #48484a; --accent: #64a8ff; --danger: #ff8a80; }
 body { background: var(--bg); color: var(--fg); font: 16px/1.4 system-ui, sans-serif; }
@@ -14,4 +12,3 @@ li label { display: flex; align-items: center; gap: 10px; min-height: 44px; bord
 li input[type='checkbox'] { width: 22px; height: 22px; }
 .done span { color: var(--muted); text-decoration: line-through; }
 .error { margin: 8px 0 0; color: var(--danger); }
-`

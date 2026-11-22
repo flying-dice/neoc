@@ -16,14 +16,17 @@ copy of it to every app's frame, so a change here reaches every installed app wi
 
 ## Using it from an app
 
-An app's client is one classic script that the host loads into a frame of the app's window (`apps/README.md`). The host
-serves the kit's files at `/kit/tokens.css` and `/kit/kit.js`, but **the frame's page does not load them yet**: the host
-writes that page (`crates/vos-http/src/frame.rs`) and the wiring is not in place. Until it is, the app adds the two files to
-the frame's page itself, before it draws: a `<link rel="stylesheet" href="/kit/tokens.css">` and a
-`<script src="/kit/kit.js"></script>` appended to `document.head` (both load under the frame's policy, `style-src 'self'` and
-`script-src 'self'`; the tags upgrade when the script has loaded). The app never bundles the kit, and the host serves one
-copy. The kit needs no host to draw. The host's bridge sets `data-theme="light|dark"` and `color-scheme` on the frame's
-`<html>` from the shell's appearance and keeps them current (#56). The kit also reads `data-reduce-motion` on `<html>`, which
+An app is its own Vite build, served by the host at `/apps/<id>/static/` and run in a sandboxed frame, embedded in a
+shell window or on its own page at `/apps/<id>` (`apps/README.md`). The host serves the kit's files at `/kit/tokens.css` and
+`/kit/kit.js`. **The vos plugin does not put their tags into the app's page yet**, so until it does the app adds them to its
+own `index.html` at build time, at the top of the head, before its own styles and script:
+`<link rel="stylesheet" href="/kit/tokens.css" crossorigin>` and `<script src="/kit/kit.js"></script>`. `apps/calculator-web/vite.config.ts`
+does this with a ten-line Vite plugin; writing the tags into `index.html` by hand would make Vite try to bundle them. The
+stylesheet is loaded `crossorigin`, as Vite loads the app's own: the frame has an opaque origin, so the host lets `Origin: null`
+read `/kit/` (GET and HEAD only) and answers with `Access-Control-Allow-Origin: *`, and the page, and a checker such as axe
+running in it, can read the stylesheet's rules. If the stylesheet fails to load, the kit's buttons draw with no fill, which
+leaves a keypad invisible (NEOC-341). The app never bundles the kit, and the host serves one copy. The kit needs no host to draw. The host's bridge sets `data-theme="light|dark"` and `color-scheme` on the frame's
+`<html>` from the appearance (the shell's, or on the app's own page the system setting) and keeps them current, in both modes. The kit also reads `data-reduce-motion` on `<html>`, which
 zeroes the motion tokens; the host does not set that one yet. With no `data-theme` (a kit loaded outside any vos page, for
 example in Storybook), the tokens follow the browser's `prefers-color-scheme`, and an explicit `data-theme` always wins.
 Components an app uses for its own page (a banner, a list, a field) work the same everywhere. Sheets, alerts, toasts and the

@@ -4,9 +4,9 @@
  * `bun run generate` does it on its own for the editor.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { join } from 'node:path'
 import { parseDefinition, type Definition } from './definition.ts'
-import { emitDeclarations, emitEntry, emitModule } from './emit-client.ts'
+import { emitDeclarations, emitModule } from './emit-client.ts'
 import { emitLuau, emitLuauEntry } from './emit-luau.ts'
 
 export interface Options {
@@ -14,8 +14,6 @@ export interface Options {
   definition: string
   /** Where the generated files go, relative to the project (default `.app`). */
   generated: string
-  /** The client's module: exports `mount(el)` (default `src/main.ts`). */
-  client: string
   /** The backend's module: returns the handlers (default `server/main.luau`). */
   backend: string
   /** Run the Luau type check of the backend against the contract as part of the build (default true). */
@@ -25,7 +23,6 @@ export interface Options {
 export const DEFAULTS: Options = {
   definition: 'openrpc.json',
   generated: '.app',
-  client: 'src/main.ts',
   backend: 'server/main.luau',
   check: true
 }
@@ -46,11 +43,9 @@ export function readDefinition(project: string, options: Options): Definition {
 export function generate(project: string, options: Options): GeneratedFile[] {
   const definition = readDefinition(project, options)
   const dir = options.generated
-  const clientFromGenerated = relative(join(project, dir), join(project, options.client)).split('\\').join('/')
   return [
     { path: `${dir}/rpc.d.ts`, contents: emitDeclarations(definition, options.definition) },
     { path: `${dir}/rpc.js`, contents: emitModule(definition, options.definition) },
-    { path: `${dir}/entry.js`, contents: emitEntry(clientFromGenerated) },
     { path: `${dir}/rpc.luau`, contents: emitLuau(definition, options.definition) },
     { path: `${dir}/entry.luau`, contents: emitLuauEntry() }
   ]

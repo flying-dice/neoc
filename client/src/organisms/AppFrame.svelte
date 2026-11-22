@@ -1,10 +1,10 @@
 <!--
-  @organism AppFrame — an installed app's window when the app has a client of its own: the client runs in an
-  `<iframe sandbox="allow-scripts allow-forms">` whose document the host serves at `/frame/<app>` (with a policy that allows no
-  network). The shell is the frame's only neighbour: the frame's `rpc` calls reach this app's backend through
-  `app.call`, the backend's events and the shell's light or dark appearance come back as messages, and a message is
-  the frame's only when it comes from this iframe's own window (`shell/frameBridge.ts`). Atoms: ActivityIndicator,
-  Button, Text.
+  @organism AppFrame — an installed app's window when the app has a client of its own: the app's page runs in an
+  `<iframe sandbox="allow-scripts allow-forms">` whose content the host serves at `/apps/<app>/static/` (with a policy that
+  allows no network beyond what the app declared). The shell is the frame's host page: the app's calls reach its
+  backend through `app.call`, its events, the shell's appearance and the window's display mode reach the app as
+  messages in a dialect of MCP Apps, and a message is the frame's only when it comes from this iframe's own window
+  (`shell/hostBridge.ts`). Atoms: ActivityIndicator, Button, Text.
   Test ids: `${appId}-opening` while the client mounts, `${appId}-failed` (+ `-retry`) when it cannot,
   `${appId}-frame` on the iframe itself and `${appId}-shield` on the cover while a press or a drag is going on.
 -->
@@ -14,7 +14,10 @@
   import { host } from '../lib/host.svelte'
   import { settings } from '../lib/settings.svelte'
   import { windowManager } from '../lib/windowManager.svelte'
-  import { createFrameBridge, eventFor, type FrameBridge } from '../shell/frameBridge'
+  import { focusFrame } from '../shell/frameFocus'
+  import { createHostBridge, eventFor, type HostBridge } from '../shell/hostBridge'
+  import { contextChange, hostContextOf, type HostContext } from '../shell/hostContext'
+  import { baseServices } from '../shell/hostServices'
 
   interface Props {
     appId: string
@@ -22,13 +25,15 @@
     name: string
     /** The shell's id for the window: the frame takes the keyboard when its window is the focused one. */
     windowId: string
+    /** The browser features the app's frame asks for (`camera`, `clipboard-write`, ...): the iframe's `allow`. */
+    permissions?: string[]
     /** How long the client has to mount before the window says it cannot (milliseconds). */
     patience?: number
     /** A stand-in document for the host's frame route (stories, where there is no host to serve it). */
     srcdoc?: string
   }
 
-  let { appId, name, windowId, patience = 10_000, srcdoc }: Props = $props()
+  let { appId, name, windowId, permissions = [], patience = 10_000, srcdoc }: Props = $props()
 
   let iframe: HTMLIFrameElement | undefined = $state()
   let phase = $state<'opening' | 'ready' | 'failed'>('opening')
@@ -43,10 +48,23 @@
   // The appearance the frame opens in. It is read once per attempt: the live appearance reaches the open frame as an
   // event, and reloading the app because the theme changed would lose what the person was doing.
   const src = $derived(
-    `/frame/${appId}?theme=${untrack(() => settings.appearance)}&attempt=${attempt}`
+    `/apps/${appId}/static/?theme=${untrack(() => settings.appearance)}&attempt=${attempt}`
   )
 
-  let bridge: FrameBridge | undefined
+  let bridge: HostBridge | undefined
+
+  /** The window's display mode, from its layout: full screen is `fullscreen`, every other layout is `inline`. */
+  const displayMode = (): 'inline' | 'fullscreen' =>
+    windowManager.windows.find((w) => w.id === windowId)?.layout === 'fullscreen'
+      ? 'fullscreen'
+      : 'inline'
+  const currentContext = (): HostContext =>
+    hostContextOf({
+      appearance: settings.appearance,
+      displayMode: displayMode(),
+      availableDisplayModes: ['inline', 'fullscreen']
+    })
+  let told: HostContext = untrack(currentContext)
 
   // A frame can navigate itself away (`location.href = ...`), which no policy stops, and then the iframe is not what the
   // shell loaded: its document was replaced. The host's bridge script says `hello` the moment it starts, before the client
@@ -76,11 +94,21 @@
   $effect(() => {
     if (!iframe) return
     const frame = iframe
-    const made = createFrameBridge({
+    const services = baseServices({
+      context: currentContext,
+      openLink: (url) => void window.open(url, '_blank', 'noopener,noreferrer'),
+      setDisplayMode: (mode) => {
+        windowManager.setLayout(windowId, mode === 'fullscreen' ? 'fullscreen' : 'floating')
+        return displayMode()
+      }
+    })
+    const made = createHostBridge({
       appId,
       frame: () => frame.contentWindow,
       post: (message) => frame.contentWindow?.postMessage(message, '*'),
       call: (method, params, options) => host.api.call(method, params, options),
+      services,
+      context: () => (told = currentContext()),
       // once the window says the app failed (it left its page, or never started) the frame is not listened to until Try again
       muted: () => phase === 'failed',
       onHello: () => {
@@ -110,10 +138,25 @@
     }
   })
 
-  // The shell's appearance, live.
+  // The host context, live: the shell's appearance and the window's display mode, as what changed.
   $effect(() => {
-    const appearance = settings.appearance
-    if (phase === 'ready') bridge?.event('host:theme', appearance)
+    const now = currentContext()
+    if (phase !== 'ready') return
+    const change = contextChange(told, now)
+    told = now
+    bridge?.contextChanged(change)
+  })
+
+  // The connection to the host dropped and came back (a restart, the network): a change made while it was away reached
+  // nobody, so the app is told it can fetch again (`host:reconnected`, a `vos/event` that the app hears with `host.on`).
+  let wasOffline = false
+  $effect(() => {
+    const connection = host.connection
+    if (connection === 'offline') wasOffline = true
+    else if (connection === 'online' && wasOffline) {
+      wasOffline = false
+      if (phase === 'ready') bridge?.event('host:reconnected', null)
+    }
   })
 
   // A client that never mounts is a failure the person can retry.
@@ -142,9 +185,7 @@
   $effect(() => {
     if (phase !== 'ready' || windowManager.focusedId !== windowId) return
     void tick().then(() => {
-      const active = document.activeElement
-      if (active && active !== document.body && !active.closest('[data-launcher]')) return
-      iframe?.contentWindow?.focus()
+      if (iframe) focusFrame(iframe)
     })
   })
 
@@ -156,9 +197,11 @@
     )
   })
 
+  // the frame is going away: the app may wrap up first (`ui/resource-teardown`); the window does not wait for long
   onDestroy(() => {
     clearTimeout(waiting)
-    bridge?.dispose()
+    const going = bridge
+    void going?.teardown('closed', 300).finally(() => going.dispose())
   })
 </script>
 
@@ -180,6 +223,7 @@
       {srcdoc}
       title={name}
       sandbox="allow-scripts allow-forms"
+      allow={permissions.join('; ')}
       referrerpolicy="no-referrer"
       data-testid="{appId}-frame"
       onload={onframeload}

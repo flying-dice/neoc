@@ -45,7 +45,8 @@ export const appSummarySchema = z.object({
   description: text.optional(),
   window: z.object({ w: z.number(), h: z.number(), minW: z.number(), minH: z.number() }).optional(),
   source: text,
-  client: z.boolean()
+  client: z.boolean(),
+  permissions: z.array(text)
 }) satisfies z.ZodType<AppSummary>
 
 export const appListSchema = z.object({ apps: z.array(appSummarySchema) })

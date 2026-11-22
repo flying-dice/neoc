@@ -36,7 +36,7 @@ use vos_domain::{
 pub const MAX_IN_FLIGHT: usize = 64;
 
 /// The JSON-RPC server error for a connection over [`MAX_IN_FLIGHT`].
-pub const BUSY: i32 = -32000;
+pub const BUSY: i32 = vos_domain::ui::protocol::codes::BUSY;
 
 /// How many bytes may wait to be written to one client. A client whose connection has stalled without closing (a
 /// sleeping tablet, a dead Wi-Fi link) stops taking messages, and everything the host sends it queues here: past this
@@ -118,10 +118,14 @@ impl Outbound {
         if self.closed.is_cancelled() {
             return Err(RpcCallError::Closed);
         }
-        let text = serde_json::to_string(message).map_err(|e| {
-            tracing::error!(connection = self.connection, error = %e, "a message for a client could not be serialised: not sent");
-            RpcCallError::Unserialisable(e.to_string())
-        })?;
+        self.send_text(serialise(message)?)
+    }
+
+    /// Queue a message that is already serialised (one message for many clients is serialised once).
+    fn send_text(&self, text: String) -> Result<(), RpcCallError> {
+        if self.closed.is_cancelled() {
+            return Err(RpcCallError::Closed);
+        }
         let len = text.len();
         let before = self.queued.fetch_add(len, Ordering::SeqCst);
         if before > MAX_QUEUED_BYTES {
@@ -155,6 +159,24 @@ impl Outbound {
     }
 }
 
+fn serialise(message: &RpcMessage) -> Result<String, RpcCallError> {
+    serde_json::to_string(message).map_err(|e| {
+        tracing::error!(error = %e, "a message for a client could not be serialised: not sent");
+        RpcCallError::Unserialisable(e.to_string())
+    })
+}
+
+/// A notification serialised once, to be sent to many clients ([`RpcPeer::send_prepared`]).
+#[derive(Clone)]
+pub struct PreparedNotification(Arc<str>);
+
+impl PreparedNotification {
+    /// `Unserialisable` when it cannot be written as JSON (logged; nothing is sent to anyone).
+    pub fn new(method: &str, params: Value) -> Result<Self, RpcCallError> {
+        serialise(&RpcMessage::notification(method, params)).map(|text| Self(text.into()))
+    }
+}
+
 /// The sending half, cloneable; handed to the handler so it can push notifications / call the client.
 #[derive(Clone)]
 pub struct RpcPeer {
@@ -182,6 +204,11 @@ impl RpcPeer {
     /// gauge, tells that the writer has taken what was sent.
     pub fn queued_bytes(&self) -> usize {
         self.out.queued.load(Ordering::SeqCst)
+    }
+
+    /// Queue a notification that was serialised once for many clients, through the same bounded queue as every other message.
+    pub fn send_prepared(&self, message: &PreparedNotification) -> Result<(), RpcCallError> {
+        self.out.send_text(message.0.to_string())
     }
 
     /// Do both handles belong to the same socket?
@@ -277,6 +304,9 @@ async fn serve_socket(socket: WebSocket, handler: Arc<dyn RpcHandler>, device: O
     // drops one that arrives after a later one as a replay. Those requests run one at a time, in arrival
     // order; everything else (app management, anything that may call back into the client) runs concurrently.
     let in_flight = Arc::new(Semaphore::new(MAX_IN_FLIGHT));
+    // The concurrent requests that are running, by id: `notifications/cancelled` ends one (see [`CANCELLED`]), and the connection
+    // closing ends them all, because each holds a child of the connection's own token.
+    let running: Arc<Mutex<HashMap<String, CancellationToken>>> = Arc::default();
     let (ordered_tx, mut ordered_rx) = mpsc::unbounded_channel::<(Job, OwnedSemaphorePermit)>();
     let ordered = {
         let (h, p) = (handler.clone(), peer.clone());
@@ -320,13 +350,11 @@ async fn serve_socket(socket: WebSocket, handler: Arc<dyn RpcHandler>, device: O
                 if is_ordered(&job.1) {
                     let _ = ordered_tx.send((job, permit)); // one at a time, in the order sent
                 } else {
-                    let (h, p) = (handler.clone(), peer.clone());
-                    tokio::spawn(async move {
-                        let reply = answer(&*h, &p, job).await;
-                        drop(permit);
-                        p.out.send(&reply).ok()
-                    });
+                    spawn_concurrent(&handler, &peer, &running, job, permit);
                 }
+            }
+            Ok(RpcMessage::Notification { method, params, .. }) if method == CANCELLED => {
+                cancel_running(&running, &params);
             }
             Ok(RpcMessage::Notification { method, params, .. }) => {
                 // in order, before the next frame is read: `client.state` is FIFO ahead of a later event. A panic
@@ -350,6 +378,9 @@ async fn serve_socket(socket: WebSocket, handler: Arc<dyn RpcHandler>, device: O
             Ok(_) => {}
         }
     }
+    // the connection is over, however it ended: what its requests still run (handlers waiting on something) is ended with it, and
+    // gives back what it holds (the pump's own end does this when it is the writer that stops; a reader that stops first must too)
+    peer.out.closed.cancel();
     peer.pending.lock().clear(); // wakes every in-flight server->client request with Closed
     handler.disconnected(&peer).await;
     ordered.abort();
@@ -383,6 +414,81 @@ async fn pump<S: Sink<Message> + Unpin>(
     out.closed.cancel();
 }
 
+/// Run one concurrent request on its own task: an `app.call` can be ended ([`spawn_request`]); everything else runs to completion
+/// whatever the connection does or says, because an install, an uninstall or any other host request that is dropped half way could
+/// leave memory and the database out of step.
+fn spawn_concurrent(
+    handler: &Arc<dyn RpcHandler>,
+    peer: &RpcPeer,
+    running: &Arc<Mutex<HashMap<String, CancellationToken>>>,
+    job: Job,
+    permit: OwnedSemaphorePermit,
+) {
+    if job.1 == CANCELLABLE {
+        spawn_request(handler, peer, running, job, permit);
+        return;
+    }
+    let (handler, peer) = (handler.clone(), peer.clone());
+    tokio::spawn(async move {
+        let reply = answer(&*handler, &peer, job).await;
+        drop(permit);
+        peer.out.send(&reply).ok();
+    });
+}
+
+/// The one request that is cancellable: a call into an app's handler, which may wait for ever on something outside the host and
+/// holds nothing of the host's that dropping it would leave half done (the runtime hands the app's turn on, rolls back a
+/// transaction it opened). `notifications/cancelled`, a client that gives up and a connection that ends end it; they end nothing else.
+pub const CANCELLABLE: &str = "app.call";
+
+/// Run one `app.call` on its own task, registered in `running` so that `notifications/cancelled` (or the connection ending)
+/// can end it. Dropping the answer drops the handler's call with it, and what it holds (the permit here, an app's place in
+/// `AppService`): a cancelled request frees them, and gets no reply (the specification's rule).
+fn spawn_request(
+    handler: &Arc<dyn RpcHandler>,
+    peer: &RpcPeer,
+    running: &Arc<Mutex<HashMap<String, CancellationToken>>>,
+    job: Job,
+    permit: OwnedSemaphorePermit,
+) {
+    let (handler, peer, running) = (handler.clone(), peer.clone(), running.clone());
+    let token = peer.out.closed.child_token();
+    let key = id_key(&job.0);
+    running.lock().insert(key.clone(), token.clone());
+    tokio::spawn(async move {
+        let reply = tokio::select! {
+            () = token.cancelled() => None,
+            reply = answer(&*handler, &peer, job) => Some(reply),
+        };
+        running.lock().remove(&key);
+        drop(permit);
+        if let Some(reply) = reply {
+            peer.out.send(&reply).ok();
+        }
+    });
+}
+
+/// MCP's cancellation notification (basic/utilities/cancellation): a client that no longer wants a running request says so, and
+/// the receiver stops it, frees what it holds and sends no response.
+pub const CANCELLED: &str = "notifications/cancelled";
+
+/// MCP's cancellation: `{ requestId, reason? }`. Unknown, finished or malformed ones are ignored (it is a notification: there is
+/// nobody to tell), and a request other than [`CANCELLABLE`] (the view protocol, an install, ...) is not cancellable.
+fn cancel_running(running: &Mutex<HashMap<String, CancellationToken>>, params: &Value) {
+    let id = params.get("requestId").and_then(|v| serde_json::from_value::<RpcId>(v.clone()).ok());
+    if let Some(token) = id.and_then(|id| running.lock().get(&id_key(&id)).cloned()) {
+        token.cancel();
+    }
+}
+
+/// A request id as a map key: a number and a string of the same digits are different ids.
+fn id_key(id: &RpcId) -> String {
+    match id {
+        RpcId::Num(n) => format!("n{n}"),
+        RpcId::Str(s) => format!("s{s}"),
+    }
+}
+
 /// Requests that must be handled in the order the client sent them (the view protocol).
 fn is_ordered(method: &str) -> bool {
     ["view.", "row.", "state.", "source."].iter().any(|p| method.starts_with(p))
@@ -409,6 +515,28 @@ async fn answer(handler: &dyn RpcHandler, peer: &RpcPeer, (id, method, params): 
             )
         }
     }
+}
+
+/// A peer with nothing behind it but its queue, for the tests of what sends to peers (the hub).
+#[cfg(test)]
+pub(crate) fn test_peer(connection: u64) -> (RpcPeer, mpsc::UnboundedReceiver<String>) {
+    let (tx, rx) = mpsc::unbounded_channel();
+    let out = Outbound {
+        tx,
+        queued: Arc::default(),
+        closed: CancellationToken::new(),
+        dropped: Arc::default(),
+        connection,
+        device: None,
+    };
+    let peer = RpcPeer {
+        out,
+        pending: Arc::default(),
+        next_id: Arc::new(AtomicI64::new(1)),
+        connection,
+        device: None,
+    };
+    (peer, rx)
 }
 
 #[cfg(test)]
@@ -595,5 +723,25 @@ mod tests {
         assert_eq!(text.matches("closing a client's connection").count(), 1, "{text}");
         assert!(text.contains("connection=7"), "{text}");
         assert!(text.contains(r#"device="device-1""#), "{text}");
+    }
+
+    #[tokio::test]
+    async fn a_notification_serialised_once_goes_through_the_same_bounded_queue() {
+        let (out, mut rx) = outbound();
+        let once = PreparedNotification::new("n", serde_json::json!({ "pad": "x".repeat(10) })).unwrap();
+        let (a, b) = (out.clone(), out.clone());
+        a.send_text(once.0.to_string()).unwrap();
+        b.send_text(once.0.to_string()).unwrap();
+        assert_eq!(rx.recv().await.unwrap(), serde_json::to_string(&note(10)).unwrap());
+        assert_eq!(rx.recv().await.unwrap(), rx_text_of(&once));
+        // and the bound holds for it: one more message than the queue may hold ends the connection
+        out.send(&note(MAX_QUEUED_BYTES + 1)).unwrap();
+        let big = PreparedNotification::new("n", serde_json::json!({ "pad": "y" })).unwrap();
+        assert!(matches!(out.send_text(big.0.to_string()), Err(RpcCallError::Closed)));
+        assert!(out.closed.is_cancelled());
+    }
+
+    fn rx_text_of(n: &PreparedNotification) -> String {
+        n.0.to_string()
     }
 }

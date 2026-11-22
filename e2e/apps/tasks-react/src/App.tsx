@@ -8,6 +8,8 @@ export default function App() {
   const [title, setTitle] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [theme, setTheme] = useState(host.theme)
+  // where the app runs: `host.hosted` is true when the host page draws UI of its own (the shell)
+  const [where, setWhere] = useState('connecting')
 
   // run a method that answers with the whole list; a failure is the backend's own message
   const show = useCallback(async (call: Promise<Task[]>): Promise<boolean> => {
@@ -26,8 +28,14 @@ export default function App() {
     void show(api.list())
     const stops = [
       host.on('tasks.changed', () => void show(api.list())),
-      host.on('host:theme', (t) => setTheme(t === 'dark' ? 'dark' : 'light'))
+      // the host connection came back: a change made while it was away reached nobody
+      host.on('host:reconnected', () => void show(api.list())),
+      host.onContext((context) => setTheme(context.theme === 'dark' ? 'dark' : 'light'))
     ]
+    void host.ready.then(() => {
+      setTheme(host.theme)
+      setWhere(host.hosted ? 'in the shell' : 'on its own')
+    })
     return () => stops.forEach((stop) => stop())
   }, [show])
 
@@ -43,6 +51,7 @@ export default function App() {
       <p className="meta">
         <span data-testid="tasks-react-framework">React</span> ·{' '}
         <span data-testid="tasks-react-theme">{theme}</span> ·{' '}
+        <span data-testid="tasks-react-where">{where}</span> ·{' '}
         <span data-testid="tasks-react-count">{tasks.filter((t) => !t.done).length} left</span>
       </p>
       <form

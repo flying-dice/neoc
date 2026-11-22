@@ -1,0 +1,183 @@
+{
+  "openrpc": "1.3.2",
+  "info": {
+    "title": "Calculator (web)",
+    "version": "0.1.0",
+    "description": "The Calculator built the new way: a Svelte client on the kit's buttons, and the arithmetic in Luau."
+  },
+  "x-app": {
+    "id": "calculator-web",
+    "icon": "calculator",
+    "tint": "orange",
+    "description": "Arithmetic: type or tap a sum. The Calculator as a web client on a Luau backend.",
+    "window": {
+      "w": 340,
+      "h": 560,
+      "minW": 320,
+      "minH": 500
+    }
+  },
+  "methods": [
+    {
+      "name": "press",
+      "summary": "Press one key: answers with the keypad's next state and what to show. The backend keeps nothing; the client holds the state and sends it with each key.",
+      "params": [
+        {
+          "name": "key",
+          "required": true,
+          "description": "The key pressed.",
+          "schema": {
+            "type": "string",
+            "enum": [
+              "0",
+              "1",
+              "2",
+              "3",
+              "4",
+              "5",
+              "6",
+              "7",
+              "8",
+              "9",
+              ".",
+              "+",
+              "-",
+              "*",
+              "/",
+              "=",
+              "clear",
+              "negate",
+              "percent",
+              "backspace"
+            ]
+          }
+        },
+        {
+          "name": "state",
+          "required": false,
+          "description": "The state the previous press answered with; absent for a calculator that has just opened.",
+          "schema": {
+            "$ref": "#/components/schemas/Keypad"
+          }
+        }
+      ],
+      "result": {
+        "name": "screen",
+        "schema": {
+          "$ref": "#/components/schemas/Screen"
+        }
+      }
+    }
+  ],
+  "components": {
+    "schemas": {
+      "Keypad": {
+        "type": "object",
+        "description": "Where a sum has got to. Opaque to the client: it keeps the last one and sends it back.",
+        "properties": {
+          "entry": {
+            "type": "string",
+            "maxLength": 32,
+            "description": "The number being typed, as typed."
+          },
+          "value": {
+            "type": "number",
+            "description": "The number shown once a result is in (fresh)."
+          },
+          "numbers": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "description": "The sum so far: its numbers ..."
+          },
+          "ops": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "+",
+                "-",
+                "*",
+                "/"
+              ]
+            },
+            "description": "... and the operator after each of them."
+          },
+          "waiting": {
+            "type": "boolean",
+            "description": "An operator was just pressed and waits for its operand."
+          },
+          "fresh": {
+            "type": "boolean",
+            "description": "The display holds a result; the next digit starts a new number."
+          },
+          "caption": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "The line above the display."
+          },
+          "err": {
+            "type": "boolean",
+            "description": "The display shows Error."
+          }
+        },
+        "required": [
+          "entry",
+          "value",
+          "numbers",
+          "ops",
+          "waiting",
+          "fresh",
+          "caption",
+          "err"
+        ]
+      },
+      "Screen": {
+        "type": "object",
+        "description": "What a press leads to: the next state, and what to draw.",
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/Keypad"
+          },
+          "display": {
+            "type": "string",
+            "description": "The big number, formatted, or Error."
+          },
+          "caption": {
+            "type": "string",
+            "description": "The sum so far in words, or the reason for an error."
+          },
+          "clear": {
+            "type": "string",
+            "enum": [
+              "AC",
+              "C"
+            ],
+            "description": "The clear key's label: C while a number is being typed, else AC."
+          },
+          "pending": {
+            "type": "string",
+            "enum": [
+              "+",
+              "-",
+              "*",
+              "/"
+            ],
+            "description": "The operator waiting for its operand (drawn pressed); absent when none is."
+          },
+          "error": {
+            "type": "string",
+            "description": "Why the sum failed (Can't divide by zero); absent when it did not. The client announces it."
+          }
+        },
+        "required": [
+          "state",
+          "display",
+          "caption",
+          "clear"
+        ]
+      }
+    }
+  }
+}

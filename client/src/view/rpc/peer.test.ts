@@ -119,6 +119,47 @@ describe('json-rpc peer (by-name params)', () => {
     expect(isConnectionError(e)).toBe(true)
   })
 
+  test('an aborted request ends with Cancelled and tells the other side (MCP cancellation), and an answer after it is ignored', async () => {
+    const sent: string[] = []
+    const peer = createRpcPeer({ send: (m) => void sent.push(m), timeoutMs: 0 })
+    const controller = new AbortController()
+    const call = peer.request('slow', {}, { signal: controller.signal }).catch((e: RpcError) => e)
+    const id = JSON.parse(sent[0]).id
+    controller.abort()
+    expect(await call).toMatchObject({ code: RpcErrorCode.Cancelled })
+    expect(JSON.parse(sent[1])).toMatchObject({
+      method: 'notifications/cancelled',
+      params: { requestId: id }
+    })
+    expect(sent[1]).not.toContain('"id"') // a notification
+    // a late answer finds nothing waiting and is reported, not thrown
+    expect(() => peer.receive(JSON.stringify({ jsonrpc: '2.0', id, result: 1 }))).not.toThrow()
+  })
+
+  test('a signal already aborted sends nothing and rejects at once; one that fires after the answer does nothing', async () => {
+    const sent: string[] = []
+    const peer = createRpcPeer({ send: (m) => void sent.push(m), timeoutMs: 0 })
+    const done = new AbortController()
+    done.abort()
+    expect(await peer.request('x', {}, { signal: done.signal }).catch((e: RpcError) => e)).toMatchObject({
+      code: RpcErrorCode.Cancelled
+    })
+    expect(sent).toEqual([])
+    const later = new AbortController()
+    const reply = peer.request('y', {}, { signal: later.signal })
+    peer.receive(JSON.stringify({ jsonrpc: '2.0', id: JSON.parse(sent[0]).id, result: 'ok' }))
+    expect(await reply).toBe('ok')
+    later.abort()
+    expect(sent.length).toBe(1) // no cancellation of a finished request
+  })
+
+  test('a request that times out is cancelled on the other side too', async () => {
+    const sent: string[] = []
+    const peer = createRpcPeer({ send: (m) => void sent.push(m), timeoutMs: 5 })
+    await peer.request('hang').catch(() => undefined)
+    expect(sent.map((m) => JSON.parse(m).method)).toEqual(['hang', 'notifications/cancelled'])
+  })
+
   test('application errors are not connection errors', () => {
     expect(isConnectionError(new RpcError(-32010, 'nope'))).toBe(false)
     expect(isConnectionError(new Error('x'))).toBe(false)
