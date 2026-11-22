@@ -178,7 +178,7 @@ test('loading kit.js a second time, or after the elements are in the page, throw
   expect(await page.evaluate(() => customElements.get('ui-toggle') !== undefined)).toBe(true)
   expect(sameClass).not.toBeNull()
   // the elements already in the page still work
-  await page.getByTestId('toggle').click()
+  await page.getByTestId('toggle').locator('button').click() // the drawn switch: the rest of the stretched element takes no click
   expect(
     await page.evaluate(
       () =>
