@@ -187,7 +187,7 @@ for (const id of FIXTURE_APPS) {
       errors.splice(0, errors.length, ...errors.filter((e) => !refused.includes(e)))
     })
 
-    test(`AF12 (${id}): the router refuses a call the definition does not allow`, async ({ page }) => {
+    test(`AF13 (${id}): the router refuses a call the definition does not allow`, async ({ page }) => {
       await openDesktop(page)
       // what a client could send if it ignored its generated types: the shell forwards it, the router answers
       const answer = (method: string, args: unknown): Promise<{ code?: number; message: string }> =>
@@ -293,6 +293,32 @@ for (const id of FIXTURE_APPS) {
       const refused = errors.filter((e) => /Content Security Policy|violates the following|Refused|blocked/i.test(e))
       expect(refused.length).toBeGreaterThanOrEqual(1)
       errors.splice(0, errors.length, ...errors.filter((e) => !refused.includes(e)))
+    })
+
+    test(`AF12 (${id}): what the client holds in its page survives opening another app and coming back`, async ({ page }) => {
+      const other = FIXTURE_APPS.find((a) => a !== id)!
+      await openDesktop(page, { open: [id] })
+      const typed = unique('Unsent')
+      await frame(page).getByTestId(`${id}-title`).fill(typed)
+      // a marker only this document has: a page that was reloaded would not have it
+      await frame(page).locator('body').evaluate((_el, m) => ((window as unknown as { __kept: string }).__kept = m), typed)
+
+      // another app takes the stage; this one's window is off it, and is hidden, not gone
+      await page.getByTestId(`dock-${other}`).click()
+      await expect(windowOf(page, other)).toBeVisible()
+      await expect(windowOf(page, id)).toBeHidden()
+      await expect(page.getByTestId(`${id}-frame`)).toBeAttached()
+      // a hidden frame takes no focus and is not in the accessibility tree
+      expect(await page.getByTestId(`${id}-frame`).evaluate((el) => !!el.closest('[inert]') && !!el.closest('[aria-hidden="true"]'))).toBe(true)
+
+      // back: the same document, with what was typed in it
+      await page.getByTestId(`dock-${id}`).click()
+      await expect(windowOf(page, id)).toBeVisible()
+      await expect(frame(page).getByTestId(`${id}-title`)).toHaveValue(typed)
+      expect(await frame(page).locator('body').evaluate(() => (window as unknown as { __kept?: string }).__kept)).toBe(typed)
+      // it still works: the call gate and the bridge are unaffected
+      await frame(page).getByTestId(`${id}-add`).click()
+      await expect(frame(page).locator('li', { hasText: typed })).toBeVisible()
     })
 
     test(`AF6 (${id}): the frame follows light and dark live, and its styles stay inside`, async ({ page }) => {

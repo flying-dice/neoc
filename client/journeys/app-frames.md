@@ -22,7 +22,8 @@ after another).
 | AF9 | A client submits a form nobody prevented, and one by script with `form.submit()`. | The app open.            | The first stays on its page (a dialog form still closes its dialog); the second sends the frame away and the window says the app left its page, with Try again; no data is sent. |
 | AF10 | An app's handlers never answer: use the shell and another app meanwhile, close and reopen the hung app's window, then let the handlers go. | An app with a handler that waits for ever. | The shell's own calls and the other app work throughout; the hung app's calls wait their turn (at most eight run at a time) and go again when the handlers answer. |
 | AF11 | Uninstall an app while calls to its handlers are running. | An app with handlers that wait. | The calls are answered at once with the reason; the host keeps nothing running for them. |
-| AF12 | Send the backend a call its definition does not allow.         | The app open.                      | The router refuses it with a JSON-RPC error that says what is wrong (invalid params, method not found); the window is unharmed.           |
+| AF12 | Type something in an app's page, open another app, and come back. | Each fixture, opened with the other available in the Dock. | The window is hidden, not gone, while the other app is in front; coming back shows the same document with what was typed in it still there, and the app still works. |
+| AF13 | Send the backend a call its definition does not allow.         | The app open.                      | The router refuses it with a JSON-RPC error that says what is wrong (invalid params, method not found); the window is unharmed.           |
 
 ## Manual verification
 

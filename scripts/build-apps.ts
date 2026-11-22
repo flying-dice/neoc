@@ -148,14 +148,6 @@ for (const dir of appDirs) {
   mkdirSync(dirname(join(target, entry)), { recursive: true })
   writeFileSync(join(target, entry), bundle)
   const refs = [{ path: entry, url: entry, sha256: sha256(bundle) }]
-  if (manifest.client) {
-    // the client is built by the app's own package (`bun run build` in its folder writes dist/client.js): any
-    // framework, one classic script that defines `vosApp.mount(el, { rpc, host })`
-    const built = buildClient(dir, manifest.id)
-    mkdirSync(dirname(join(target, manifest.client)), { recursive: true })
-    writeFileSync(join(target, manifest.client), built)
-    refs.push({ path: manifest.client, url: manifest.client, sha256: sha256(built) })
-  }
   for (const { file } of manifest.migrations) {
     mkdirSync(dirname(join(target, file)), { recursive: true })
     cpSync(join(dir, file), join(target, file))
