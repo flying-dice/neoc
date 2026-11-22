@@ -84,16 +84,14 @@ fn is_busy(answer: &Value) -> bool {
     answer["error"]["code"] == -32000
 }
 
-/// A `ping` of `app` until the app refuses it as busy (the calls sent before it are taken concurrently, so the places fill a moment
-/// after they are sent).
-async fn wait_until_busy(ws: &mut Ws, app: &str, first_id: i64) {
-    for n in 0..200 {
-        if is_busy(&rpc(ws, first_id + n, "app.call", json!({"app": app, "method": "ping"})).await) {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
+/// Fill an app's places: nine calls of `hang` for eight places, which is deterministic whatever order they are taken in (the one that
+/// loses is refused at once); returns once that refusal has come, so eight are running.
+async fn fill(ws: &mut Ws, app: &str) {
+    for id in 1..=(i64::try_from(MAX_CALLS_PER_APP).unwrap() + 1) {
+        send(ws, id, "app.call", json!({"app": app, "method": "hang"})).await;
     }
-    panic!("the app never became busy");
+    let refused = answer_within(ws, Duration::from_secs(5)).await.expect("the ninth call is refused at once");
+    assert!(is_busy(&refused), "{refused}");
 }
 
 /// A `ping` of `app` until it is not refused as busy (a freed place comes back a moment after the request that held it ended).
@@ -174,12 +172,11 @@ async fn a_connection_closing_frees_every_place_its_calls_held() {
     let tmp = temp("call-limits-close");
     let r = host_with_apps(&tmp, &["hung"]).await;
     let mut first = browser(&r).await;
-    for id in 1..=MAX_CALLS_PER_APP as i64 {
-        send(&mut first, id, "app.call", json!({"app": "hung", "method": "hang"})).await;
-    }
+    fill(&mut first, "hung").await;
     let mut second = browser(&r).await;
     // while the first connection holds them all, a second connection is refused too: the limit is the app's, not the connection's
-    wait_until_busy(&mut second, "hung", 1).await;
+    let refused = rpc(&mut second, 1, "app.call", json!({"app": "hung", "method": "ping"})).await;
+    assert!(is_busy(&refused), "{refused}");
     drop(first); // the socket goes
     let pong = ping_until_taken(&mut second, "hung", 10).await;
     assert_eq!(pong["result"], "pong");
@@ -190,10 +187,7 @@ async fn uninstalling_a_hung_app_answers_its_calls_and_a_reinstall_starts_clean(
     let tmp = temp("call-limits-uninstall");
     let r = host_with_apps(&tmp, &["hung"]).await;
     let mut ws = browser(&r).await;
-    for id in 1..=MAX_CALLS_PER_APP as i64 {
-        send(&mut ws, id, "app.call", json!({"app": "hung", "method": "hang"})).await;
-    }
-    wait_until_busy(&mut ws, "hung", 50).await;
+    fill(&mut ws, "hung").await;
     let gone = rpc(&mut ws, 400, "app.uninstall", json!({"app": "hung", "purge": true})).await;
     assert!(gone.get("error").is_none(), "{gone}");
     // every held call is answered (an error saying the app was unloaded), none is left running on the host

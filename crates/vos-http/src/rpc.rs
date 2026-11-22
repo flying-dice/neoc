@@ -350,34 +350,11 @@ async fn serve_socket(socket: WebSocket, handler: Arc<dyn RpcHandler>, device: O
                 if is_ordered(&job.1) {
                     let _ = ordered_tx.send((job, permit)); // one at a time, in the order sent
                 } else {
-                    let (h, p) = (handler.clone(), peer.clone());
-                    let token = peer.out.closed.child_token();
-                    let key = id_key(&job.0);
-                    running.lock().insert(key.clone(), token.clone());
-                    let running = running.clone();
-                    tokio::spawn(async move {
-                        // dropping the answer drops the handler's call with it, and what it holds (the permit here, an app's place
-                        // in `AppService`): a cancelled request frees them, and gets no reply (the specification's rule)
-                        let reply = tokio::select! {
-                            () = token.cancelled() => None,
-                            reply = answer(&*h, &p, job) => Some(reply),
-                        };
-                        running.lock().remove(&key);
-                        drop(permit);
-                        if let Some(reply) = reply {
-                            p.out.send(&reply).ok();
-                        }
-                    });
+                    spawn_request(&handler, &peer, &running, job, permit);
                 }
             }
             Ok(RpcMessage::Notification { method, params, .. }) if method == CANCELLED => {
-                // MCP's cancellation: `{ requestId, reason? }`. Unknown, finished or malformed ones are ignored (it is a notification:
-                // there is nobody to tell), and a request that is ordered (the view protocol) is not cancellable.
-                let id =
-                    params.get("requestId").and_then(|v| serde_json::from_value::<RpcId>(v.clone()).ok());
-                if let Some(token) = id.and_then(|id| running.lock().get(&id_key(&id)).cloned()) {
-                    token.cancel();
-                }
+                cancel_running(&running, &params);
             }
             Ok(RpcMessage::Notification { method, params, .. }) => {
                 // in order, before the next frame is read: `client.state` is FIFO ahead of a later event. A panic
@@ -437,9 +414,45 @@ async fn pump<S: Sink<Message> + Unpin>(
     out.closed.cancel();
 }
 
+/// Run one concurrent request on its own task, registered in `running` so that `notifications/cancelled` (or the connection ending)
+/// can end it. Dropping the answer drops the handler's call with it, and what it holds (the permit here, an app's place in
+/// `AppService`): a cancelled request frees them, and gets no reply (the specification's rule).
+fn spawn_request(
+    handler: &Arc<dyn RpcHandler>,
+    peer: &RpcPeer,
+    running: &Arc<Mutex<HashMap<String, CancellationToken>>>,
+    job: Job,
+    permit: OwnedSemaphorePermit,
+) {
+    let (handler, peer, running) = (handler.clone(), peer.clone(), running.clone());
+    let token = peer.out.closed.child_token();
+    let key = id_key(&job.0);
+    running.lock().insert(key.clone(), token.clone());
+    tokio::spawn(async move {
+        let reply = tokio::select! {
+            () = token.cancelled() => None,
+            reply = answer(&*handler, &peer, job) => Some(reply),
+        };
+        running.lock().remove(&key);
+        drop(permit);
+        if let Some(reply) = reply {
+            peer.out.send(&reply).ok();
+        }
+    });
+}
+
 /// MCP's cancellation notification (basic/utilities/cancellation): a client that no longer wants a running request says so, and
 /// the receiver stops it, frees what it holds and sends no response.
 pub const CANCELLED: &str = "notifications/cancelled";
+
+/// MCP's cancellation: `{ requestId, reason? }`. Unknown, finished or malformed ones are ignored (it is a notification: there is
+/// nobody to tell), and a request that is ordered (the view protocol) is not cancellable.
+fn cancel_running(running: &Mutex<HashMap<String, CancellationToken>>, params: &Value) {
+    let id = params.get("requestId").and_then(|v| serde_json::from_value::<RpcId>(v.clone()).ok());
+    if let Some(token) = id.and_then(|id| running.lock().get(&id_key(&id)).cloned()) {
+        token.cancel();
+    }
+}
 
 /// A request id as a map key: a number and a string of the same digits are different ids.
 fn id_key(id: &RpcId) -> String {

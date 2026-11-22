@@ -73,7 +73,7 @@ pub enum VmError {
     ToolFailed(String),
     #[error("no such tool `{0}`")]
     NoSuchTool(String),
-    /// The handler (or the generated router) failed with a JSON-RPC error code: `ctx:fail(message, { code })`.
+    /// The handler (or the generated router) failed with a JSON-RPC error code: `error("RPC-<code> message", 0)`.
     #[error("{message}")]
     Rpc { code: i32, message: String, data: Option<Value> },
     /// A client called a handler the backend does not have.
