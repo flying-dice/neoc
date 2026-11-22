@@ -2,9 +2,9 @@
 
 An app can draw its own screens in the web framework its developer knows (Svelte, React, plain JavaScript), on a
 backend written in Luau. Its window is a frame of the shell that loads the app's client; the client calls its
-backend by name (`rpc`), hears what the backend sends (`host.on`), and reaches nothing else. The journeys use the two
-framework fixtures, `tasks-svelte` and `tasks-react`: the same task list written once in each framework
-(`e2e/apps`; they are built for the tests and are not in Discover). Every journey runs against both.
+backend (`rpc`, typed from the app's one contract), hears what the backend sends (`host.on`), and reaches nothing else. The journeys use the two
+framework fixtures, `tasks-svelte` and `tasks-react`: the same task list written once in each framework, Vite
+projects on one OpenRPC contract (`e2e/apps`; they are built for the tests and are not in Discover). Every journey runs against both.
 
 Automated twins have the same ids: `e2e/appframes.journeys.spec.ts` (the two apps share their data, so they run one
 after another).
@@ -23,6 +23,7 @@ after another).
 | AF10 | An app's handlers never answer: use the shell and another app meanwhile, close and reopen the hung app's window, then let the handlers go. | An app with a handler that waits for ever. | The shell's own calls and the other app work throughout; the hung app's calls wait their turn (at most eight run at a time) and go again when the handlers answer. |
 | AF11 | Uninstall an app while calls to its handlers are running. | An app with handlers that wait. | The calls are answered at once with the reason; the host keeps nothing running for them. |
 | AF12 | Type something in an app's page, open another app, and come back. | Each fixture, opened with the other available in the Dock. | The window is hidden, not gone, while the other app is in front; coming back shows the same document with what was typed in it still there, and the app still works. |
+| AF13 | Send the backend a call its definition does not allow.         | The app open.                      | The router refuses it with a JSON-RPC error that says what is wrong (invalid params, method not found); the window is unharmed.           |
 
 ## Manual verification
 

@@ -25,7 +25,7 @@
   window.addEventListener('message', (e) => {
     const m = e.data
     if (m.t !== 'res') document.getElementById('out').textContent = 'event ' + m.name + ': ' + m.data
-    else document.getElementById('out').textContent = 'error' in m ? 'Error: ' + m.error : 'Hello, ' + m.result
+    else document.getElementById('out').textContent = 'error' in m ? 'Error: ' + m.error.message : 'Hello, ' + m.result
   })
   parent.postMessage({ t: 'rpc', id: 1, method: ${JSON.stringify(method)}, args: null }, '*')
 ${CLOSE}</body></html>`

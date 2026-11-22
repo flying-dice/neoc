@@ -34,7 +34,8 @@ export interface HostChannel {
 export class HostError extends Error {
   constructor(
     readonly code: number,
-    message: string
+    message: string,
+    readonly data?: unknown
   ) {
     super(message)
     this.name = 'HostError'
@@ -61,7 +62,7 @@ const ownerOf = (raw: string): Owner => {
 
 /** A request that failed on the wire is a host error with the same code and message. */
 const asHostError = (e: unknown): unknown =>
-  e instanceof RpcError ? new HostError(e.code, e.message) : e
+  e instanceof RpcError ? new HostError(e.code, e.message, e.data) : e
 
 export function createHostChannel(base: Transport, timeoutMs = 30_000): HostChannel {
   const notifications = new Set<(method: string, params: Params) => void>()

@@ -86,7 +86,9 @@ impl ViewError {
     fn from_port(e: PortError) -> Self {
         match e {
             PortError::Rejected(m) if m.contains("the rendered tree is invalid") => Self::InvalidTree(m),
-            PortError::Rejected(m) | PortError::Internal(m) => Self::App(m),
+            PortError::Rejected(m) | PortError::Internal(m) | PortError::Rpc { message: m, .. } => {
+                Self::App(m)
+            }
             PortError::NotFound(m) => Self::Invalid(format!("not found: {m}")),
         }
     }

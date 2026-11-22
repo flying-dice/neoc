@@ -4,7 +4,7 @@
 // that unmounts it. This script mounts it once the page has loaded and gives it the only two things it may use:
 //
 //   rpc(method, args)   calls the handler `method` of the app's own backend; resolves with its result, or rejects
-//                       with an Error whose message is the handler's
+//                       with an Error that carries the JSON-RPC error: its message, `code` and `data`
 //   host.on(name, fn)   hears an event: one the backend sent with `app.emit(name, data)`, or the host's own
 //                       (`host:theme`, "light" or "dark"); returns a function that stops listening
 //   host.theme          "light" or "dark", the shell's appearance now
@@ -78,8 +78,12 @@
       var call = pending.get(m.id)
       if (!call) return
       pending.delete(m.id)
-      if (typeof m.error === 'string') call.reject(new Error(m.error))
-      else call.resolve(m.result)
+      if (typeof m.error === 'object' && m.error !== null) {
+        var failure = new Error(typeof m.error.message === 'string' ? m.error.message : 'the call failed')
+        failure.code = typeof m.error.code === 'number' ? m.error.code : -32603
+        failure.data = m.error.data
+        call.reject(failure)
+      } else call.resolve(m.result)
     } else if (m.t === 'event' && typeof m.name === 'string') {
       if (m.name === 'host:theme') setTheme(m.data)
       dispatch(m.name, m.data)

@@ -1,0 +1,30 @@
+{
+  "name": "@vos/vite-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The vos Vite plugin: an app is a Vite project whose RPC is defined once (OpenRPC, JSON-RPC 2.0); the plugin generates the typed client, the Luau router and the handler interface, and builds the app ref the host installs",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "vos": "./bin/vos.ts"
+  },
+  "files": [
+    "src",
+    "bin",
+    "darklua.json"
+  ],
+  "scripts": {
+    "test": "bun test ./src",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "vite": "^8.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.4",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.4"
+  }
+}

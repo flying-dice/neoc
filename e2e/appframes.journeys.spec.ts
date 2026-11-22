@@ -187,6 +187,40 @@ for (const id of FIXTURE_APPS) {
       errors.splice(0, errors.length, ...errors.filter((e) => !refused.includes(e)))
     })
 
+    test(`AF13 (${id}): the router refuses a call the definition does not allow`, async ({ page }) => {
+      await openDesktop(page)
+      // what a client could send if it ignored its generated types: the shell forwards it, the router answers
+      const answer = (method: string, args: unknown): Promise<{ code?: number; message: string }> =>
+        page.evaluate(
+          async ([app, m, a]) => {
+            try {
+              await (
+                window as unknown as { __vos: { host: { api: HostApi } } }
+              ).__vos.host.api.call('app.call', { app, method: m, args: a })
+              return { message: 'allowed' }
+            } catch (e) {
+              const { code, message } = e as { code?: number; message: string }
+              return { code, message }
+            }
+          },
+          [id, method, args] as const
+        )
+      expect(await answer('add', { title: 5 })).toEqual({
+        code: -32602,
+        message: 'Invalid params: params.title must be a string, not a number'
+      })
+      expect(await answer('add', {})).toEqual({ code: -32602, message: 'Invalid params: params.title is required' })
+      expect(await answer('toggle', { id: 0 })).toEqual({
+        code: -32602,
+        message: 'Invalid params: params.id must be at least 1'
+      })
+      expect(await answer('delete', {})).toEqual({ code: -32601, message: 'Method not found: delete' })
+      // and the window is unharmed: it still lists what is there
+      await openDesktop(page, { open: [id] })
+      await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()
+    })
+
+
     test(`AF8 (${id}): a client that navigates its own frame away is noticed, and the window offers the way back`, async ({
       page
     }) => {

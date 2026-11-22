@@ -1,16 +1,9 @@
 <script lang="ts">
-  import type { Host, Rpc } from './vos'
-
-  interface Task {
-    id: number
-    title: string
-    done: boolean
-  }
-
-  let { rpc, host }: { rpc: Rpc; host: Host } = $props()
+  import { api, host, type Task } from 'app:rpc'
 
   // the journeys reach the backend with calls the screen has no control for (`hang`, `release`)
-  ;(window as unknown as { __rpc: Rpc }).__rpc = rpc
+  ;(window as unknown as { __rpc: (method: string, args?: unknown) => Promise<unknown> }).__rpc = (method, args) =>
+    (api as unknown as Record<string, (args?: unknown) => Promise<unknown>>)[method](args)
 
   let tasks = $state<Task[]>([])
   let title = $state('')
@@ -19,10 +12,11 @@
 
   const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
-  async function call(method: string, args?: unknown): Promise<void> {
+  // run a method that answers with the whole list; a failure is the backend's own message
+  async function show(call: Promise<Task[]>): Promise<void> {
     error = null
     try {
-      tasks = (await rpc(method, args)) as Task[]
+      tasks = await call
     } catch (e) {
       error = messageOf(e)
     }
@@ -31,15 +25,15 @@
   // a real form: the frame is sandboxed with `allow-forms`, so `submit` fires (Enter, the button); an unprevented submission would send the
   // frame to another page, so the handler prevents it
   async function add(): Promise<void> {
-    await call('add', { title })
+    await show(api.add({ title }))
     if (!error) title = ''
   }
 
   // load once, then again whenever the backend says the list changed outside this window (an agent added a task)
   $effect(() => {
-    void call('list')
+    void show(api.list())
     const stops = [
-      host.on('tasks.changed', () => void call('list')),
+      host.on('tasks.changed', () => void show(api.list())),
       host.on('host:theme', (t) => (theme = t === 'dark' ? 'dark' : 'light'))
     ]
     return () => stops.forEach((stop) => stop())
@@ -78,7 +72,7 @@
           <input
             type="checkbox"
             checked={task.done}
-            onchange={() => call('toggle', { id: task.id })}
+            onchange={() => show(api.toggle({ id: task.id }))}
             data-testid="tasks-svelte-toggle-{task.id}"
           />
           <span>{task.title}</span>

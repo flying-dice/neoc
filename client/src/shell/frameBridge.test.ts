@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { HostError } from './channel'
 import { MAX_IN_FLIGHT_PER_FRAME, MAX_IN_FLIGHT_TOTAL } from './callGate'
 import {
   createFrameBridge,
@@ -71,11 +72,26 @@ describe('the frame bridge', () => {
     expect(events).toEqual({ ready: 0, failed: [] })
   })
 
-  test('a handler error comes back as its message', async () => {
-    const { bridge, posted, flush } = rig(() => Promise.reject(new Error('title is required')))
+  test('a JSON-RPC error of the host comes back with its code, message and data', async () => {
+    const { bridge, posted, flush } = rig(() =>
+      Promise.reject(new HostError(-32602, 'Invalid params: params.title is required', { field: 'title' }))
+    )
     bridge.receive({ source: FRAME, data: { t: 'rpc', id: 3, method: 'add', args: {} } })
     await flush()
-    expect(posted).toEqual([{ t: 'res', id: 3, error: 'title is required' }])
+    expect(posted).toEqual([
+      {
+        t: 'res',
+        id: 3,
+        error: { code: -32602, message: 'Invalid params: params.title is required', data: { field: 'title' } }
+      }
+    ])
+  })
+
+  test('any other failure is an internal error with its message', async () => {
+    const { bridge, posted, flush } = rig(() => Promise.reject(new Error('socket closed')))
+    bridge.receive({ source: FRAME, data: { t: 'rpc', id: 4, method: 'add', args: {} } })
+    await flush()
+    expect(posted).toEqual([{ t: 'res', id: 4, error: { code: -32603, message: 'socket closed' } }])
   })
 
   test('a call that cannot be read is answered, so the client’s promise settles', async () => {
@@ -87,10 +103,10 @@ describe('the frame bridge', () => {
     await flush()
     expect(calls).toEqual([])
     expect(posted).toEqual([
-      { t: 'res', id: 1, error: 'A method name is 1 to 128 characters' },
-      { t: 'res', id: 2, error: 'A method name is 1 to 128 characters' },
-      { t: 'res', id: 3, error: 'That is not a call: it needs a method name' },
-      { t: 'res', id: 4, error: 'That is not a call: it needs a method name' }
+      { t: 'res', id: 1, error: { code: -32600, message: 'A method name is 1 to 128 characters' } },
+      { t: 'res', id: 2, error: { code: -32600, message: 'A method name is 1 to 128 characters' } },
+      { t: 'res', id: 3, error: { code: -32600, message: 'That is not a call: it needs a method name' } },
+      { t: 'res', id: 4, error: { code: -32600, message: 'That is not a call: it needs a method name' } }
     ])
   })
 
@@ -124,10 +140,10 @@ describe('the frame bridge', () => {
     bridge.receive({ source: FRAME, data: { t: 'rpc', id: 3, method: 'add', args: cyclic } })
     await flush()
     expect(calls, 'nothing reached the host connection').toEqual([])
-    expect(posted.map((m) => (m as { id: number; error: string }).error)).toEqual([
-      expect.stringContaining('a call may carry at most 1,000,000'),
-      'The arguments are nested more than 100 levels deep',
-      expect.stringContaining('The arguments cannot be sent')
+    expect(posted.map((m) => (m as { error: { code: number; message: string } }).error)).toEqual([
+      { code: -32602, message: expect.stringContaining('a call may carry at most 1,000,000') },
+      { code: -32602, message: 'The arguments are nested more than 100 levels deep' },
+      { code: -32602, message: expect.stringContaining('The arguments cannot be sent') }
     ])
   })
 
