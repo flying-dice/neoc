@@ -24,7 +24,8 @@ What the person can rely on:
   back to where it was, else to the front window or the Dock.
 - A client that is not connected when the app notifies never gets it, and nothing is kept: a banner that has gone is gone
   (there is no notification list in vos yet).
-- Keyboard: Alt+Shift+N moves focus to the newest banner from anywhere, Enter opens the app and Escape dismisses the banner
+- Keyboard: Alt+Shift+N moves focus to the newest banner from anywhere except a field that takes typing (on a Mac
+  keyboard it types "˜", so the shortcut leaves it alone there: Tab out of the field first), Enter opens the app and Escape dismisses the banner
   and gives focus back to where it was. The banners are also first in the page's order (before the widgets, the strip, the
   windows and the Dock): Tab from the very top of the page, or Shift+Tab back out of a window, reaches them; Tab from
   inside a window goes on to what follows that window, so from there the shortcut is the way. Screen readers hear the
@@ -44,6 +45,7 @@ notification reaches every open page).
 | NO6 | Dismiss a banner with the mouse.                        | A banner, with another app in front.                 | The keys were not left on the page: focus was on the front window or the Dock.                                                                              |
 | NO7 | Have two clients connected at once.                     | Two paired browsers, the Notifier in front on one.   | Only the browser where the Notifier was not in front showed the banner; once the first moved to another app, both did.                                      |
 | NO8 | Reach a banner by Tab and Shift+Tab.                    | A banner, with another app in front.                 | The banner's control was the first thing in the page that takes Tab, and Shift+Tab from the front window reached it.                                        |
+| NO9 | Type in a field while a banner shows.                   | A banner, with Files in front.                       | The shortcut left the keys in the search field (Option+Shift+N as a Mac sends it was not cancelled); after Tab out of it, the shortcut took the keys to the banner. |
 
 ## Manual verification
 

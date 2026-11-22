@@ -27,7 +27,7 @@
   } from '../lib/apps.svelte'
   import { windowManager as wm, type WindowState } from '../lib/windowManager.svelte'
   import { host } from '../lib/host.svelte'
-  import { notifications } from '../lib/notifications.svelte'
+  import { listenToHost, notifications } from '../lib/notifications.svelte'
 
   interface Props {
     windowContent: Snippet<[WindowState]>
@@ -38,7 +38,7 @@
   // What an app's backend tells the person (`notification.deliver`) is drawn here, above every window; an app that
   // stops running takes its alerts with it.
   let bannersHeight = $state(0)
-  $effect(() => host.onAppNotification((params) => notifications.deliver(params)))
+  $effect(() => listenToHost(host))
   $effect(() => onAppsRemoved((ids) => notifications.forgetApps(ids)))
 
   /** Where the keys go when a banner that had them leaves and nothing nearer is left: the front window, else the Dock. */
