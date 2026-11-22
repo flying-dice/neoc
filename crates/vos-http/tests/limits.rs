@@ -6,10 +6,10 @@ use futures_util::{SinkExt, StreamExt};
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
-use tokio::sync::Semaphore;
+use tokio::sync::{Notify, Semaphore};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use vos_domain::protocol::{RpcError, RpcId, RpcMessage};
-use vos_http::{rpc_router, RpcHandler, RpcPeer, BUSY, MAX_IN_FLIGHT};
+use vos_http::{rpc_router, RpcCallError, RpcHandler, RpcPeer, BUSY, MAX_IN_FLIGHT, MAX_OUTBOUND};
 
 /// `block` waits for the test to open the gate; `ping` answers at once.
 struct Gate {
@@ -115,4 +115,100 @@ async fn connection_ids_are_never_reused_even_after_earlier_connections_closed()
     let ids = gate.connections.lock().clone();
     assert_eq!(ids.len(), 20);
     assert!(ids.windows(2).all(|w| w[0] < w[1]), "strictly increasing, so never reused: {ids:?}");
+}
+
+/// Keeps each peer, and tells the test when a connection has ended.
+#[derive(Default)]
+struct Watch {
+    peers: Mutex<Vec<RpcPeer>>,
+    ended: Notify,
+}
+
+#[async_trait]
+impl RpcHandler for Watch {
+    async fn request(&self, _peer: &RpcPeer, _method: &str, _params: Value) -> Result<Value, RpcError> {
+        Ok(json!("pong"))
+    }
+    async fn connected(&self, peer: RpcPeer) {
+        self.peers.lock().push(peer);
+    }
+    async fn disconnected(&self, _peer: &RpcPeer) {
+        self.ended.notify_one();
+    }
+}
+
+async fn start_watch(watch: Arc<Watch>) -> std::net::SocketAddr {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = rpc_router(watch);
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    addr
+}
+
+async fn peer_of(watch: &Watch) -> RpcPeer {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(peer) = watch.peers.lock().last().cloned() {
+            return peer;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "the connection was never announced");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
+/// A client whose connection stalls without closing (it is connected and never reads) must not make the host's
+/// memory grow with every broadcast: past the bound the host hangs up on it, and the next send says so.
+#[tokio::test]
+async fn a_client_that_stops_reading_is_dropped_instead_of_queued_for_without_end() {
+    let watch = Arc::new(Watch::default());
+    let addr = start_watch(watch.clone()).await;
+    let (_silent, _) = connect_async(format!("ws://{addr}/rpc")).await.unwrap(); // never polled: it reads nothing
+    let peer = peer_of(&watch).await;
+
+    let payload = "x".repeat(64 * 1024);
+    let mut sent = 0_usize;
+    // the operating system's buffers take a few megabytes first; the bound is on what the host itself holds
+    let limit = MAX_OUTBOUND + 256 * 1024 * 1024 / payload.len();
+    let outcome = loop {
+        match peer.notify("big", json!({ "payload": payload })) {
+            Ok(()) => sent += 1,
+            Err(e) => break e,
+        }
+        assert!(sent < limit, "{sent} messages queued for a client that reads nothing");
+        if sent % 64 == 0 {
+            tokio::task::yield_now().await; // let the writer move what the socket will take
+        }
+    };
+    assert!(matches!(outcome, RpcCallError::Closed));
+    assert!(sent >= MAX_OUTBOUND, "a stalled client is given room first: {sent}");
+    tokio::time::timeout(Duration::from_secs(5), watch.ended.notified()).await.expect("the connection ended");
+    assert!(matches!(peer.notify("late", json!({})), Err(RpcCallError::Closed)));
+}
+
+/// The bound is on a stalled connection, not on a burst: a client that reads everything gets every message, in
+/// order, however fast they are sent.
+#[tokio::test]
+async fn a_client_that_keeps_up_gets_a_burst_in_order_and_stays_connected() {
+    let watch = Arc::new(Watch::default());
+    let addr = start_watch(watch.clone()).await;
+    let (mut ws, _) = connect_async(format!("ws://{addr}/rpc")).await.unwrap();
+    let peer = peer_of(&watch).await;
+
+    let burst = MAX_OUTBOUND / 2;
+    for n in 0..burst {
+        peer.notify("n", json!({ "n": n })).unwrap();
+    }
+    for expected in 0..burst {
+        let RpcMessage::Notification { params, .. } = next(&mut ws).await else { panic!("a notification") };
+        assert_eq!(params["n"], json!(expected));
+    }
+    // still connected: it can be sent to, and it can ask
+    peer.notify("n", json!({ "n": "after" })).unwrap();
+    ws.send(send(&RpcMessage::request(1, "ping", json!({})))).await.unwrap();
+    loop {
+        if let RpcMessage::Response { result, .. } = next(&mut ws).await {
+            assert_eq!(result, json!("pong"));
+            break;
+        }
+    }
 }

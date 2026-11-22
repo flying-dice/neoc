@@ -12,7 +12,7 @@ use axum::{
     routing::get,
     Router,
 };
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{Sink, SinkExt, StreamExt};
 use parking_lot::Mutex;
 use serde_json::Value;
 use std::{
@@ -23,7 +23,10 @@ use std::{
     },
     time::Duration,
 };
-use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{
+    mpsc::{self, error::TrySendError},
+    oneshot, OwnedSemaphorePermit, Semaphore,
+};
 use tokio_util::sync::CancellationToken;
 use vos_domain::{
     protocol::{RpcError, RpcId, RpcMessage},
@@ -37,6 +40,19 @@ pub const MAX_IN_FLIGHT: usize = 64;
 
 /// The JSON-RPC server error for a connection over [`MAX_IN_FLIGHT`].
 pub const BUSY: i32 = -32000;
+
+/// How many messages may wait to be written to one client. A client whose connection has stalled without closing (a
+/// sleeping tablet, a dead Wi-Fi link) stops taking messages, and everything the host sends it queues here: past this
+/// many the host closes the connection instead of growing its memory with every broadcast. The client reconnects (its
+/// shell re-reads what it shows), so what is lost is what was queued and what the host sends while it is away:
+/// notifications are not kept for a client that is not connected. A client that is merely slow never gets near it: it
+/// is a bound on a stalled connection, not on a burst (a full list of app windows is a few dozen messages).
+pub const MAX_OUTBOUND: usize = 512;
+
+/// How long the socket may take to accept one message before the connection is closed. A write that has made no
+/// progress for this long is a stalled connection (the operating system's own send buffer is full and nothing is
+/// reading), not a slow one.
+pub const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The last connection id handed out.
 static LAST_CONNECTION: AtomicU64 = AtomicU64::new(0);
@@ -53,16 +69,43 @@ pub enum RpcCallError {
 
 type Pending = HashMap<i64, oneshot::Sender<Result<Value, RpcError>>>;
 
+/// The queue of what is to be written to one client, and the way to hang up on it. Bounded by [`MAX_OUTBOUND`]: a
+/// message that does not fit means the client cannot keep up, and the connection is closed (never grown, never
+/// silently dropped: a client that lost a message and carried on would show stale state with nothing to tell it).
+#[derive(Clone)]
+struct Outbound {
+    tx: mpsc::Sender<RpcMessage>,
+    closed: CancellationToken,
+}
+
+impl Outbound {
+    /// Queue a message. `Closed` when the connection is over, or when this very message found the queue full and
+    /// ended it.
+    fn send(&self, message: RpcMessage) -> Result<(), RpcCallError> {
+        match self.tx.try_send(message) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => {
+                tracing::warn!(
+                    limit = MAX_OUTBOUND,
+                    "a client cannot keep up with what the host sends it: closing its connection so it reconnects"
+                );
+                self.closed.cancel();
+                Err(RpcCallError::Closed)
+            }
+            Err(TrySendError::Closed(_)) => Err(RpcCallError::Closed),
+        }
+    }
+}
+
 /// The sending half, cloneable; handed to the handler so it can push notifications / call the client.
 #[derive(Clone)]
 pub struct RpcPeer {
-    tx: mpsc::UnboundedSender<RpcMessage>,
+    out: Outbound,
     pending: Arc<Mutex<Pending>>,
     next_id: Arc<AtomicI64>,
     /// This connection's id: from a counter, so it is never reused while the host runs.
     connection: u64,
     device: Option<Device>,
-    closed: CancellationToken,
 }
 
 impl RpcPeer {
@@ -84,11 +127,13 @@ impl RpcPeer {
 
     /// Hang up on this client (its device was revoked). In-flight requests end with `Closed`.
     pub fn close(&self) {
-        self.closed.cancel();
+        self.out.closed.cancel();
     }
 
+    /// Queue a notification for this client. `Closed` when the connection is over, which includes a client that could
+    /// not keep up (see [`MAX_OUTBOUND`]): the connection is closed and the client reconnects.
     pub fn notify(&self, method: &str, params: Value) -> Result<(), RpcCallError> {
-        self.tx.send(RpcMessage::notification(method, params)).map_err(|_| RpcCallError::Closed)
+        self.out.send(RpcMessage::notification(method, params))
     }
 
     /// Server -> client request; resolves when the client answers (or times out / disconnects).
@@ -101,7 +146,7 @@ impl RpcPeer {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
         self.pending.lock().insert(id, tx);
-        if self.tx.send(RpcMessage::request(id, method, params)).is_err() {
+        if self.out.send(RpcMessage::request(id, method, params)).is_err() {
             self.pending.lock().remove(&id);
             return Err(RpcCallError::Closed);
         }
@@ -141,25 +186,19 @@ async fn upgrade(
 }
 
 async fn serve_socket(socket: WebSocket, handler: Arc<dyn RpcHandler>, device: Option<Device>) {
-    let (mut sink, mut stream) = socket.split();
-    let (tx, mut rx) = mpsc::unbounded_channel::<RpcMessage>();
+    let (sink, mut stream) = socket.split();
+    let (tx, rx) = mpsc::channel::<RpcMessage>(MAX_OUTBOUND);
+    let closed = CancellationToken::new();
+    let out = Outbound { tx, closed: closed.clone() };
     let peer = RpcPeer {
-        tx: tx.clone(),
+        out: out.clone(),
         pending: Arc::default(),
         next_id: Arc::new(AtomicI64::new(1)),
         connection: LAST_CONNECTION.fetch_add(1, Ordering::Relaxed) + 1,
         device,
-        closed: CancellationToken::new(),
     };
     // single writer task: everything outbound goes through the channel
-    let writer = tokio::spawn(async move {
-        while let Some(m) = rx.recv().await {
-            let Ok(text) = serde_json::to_string(&m) else { continue };
-            if sink.send(Message::text(text)).await.is_err() {
-                break;
-            }
-        }
-    });
+    let writer = tokio::spawn(pump(rx, sink, WRITE_TIMEOUT, closed));
 
     handler.connected(peer.clone()).await;
 
@@ -169,12 +208,12 @@ async fn serve_socket(socket: WebSocket, handler: Arc<dyn RpcHandler>, device: O
     let in_flight = Arc::new(Semaphore::new(MAX_IN_FLIGHT));
     let (ordered_tx, mut ordered_rx) = mpsc::unbounded_channel::<(Job, OwnedSemaphorePermit)>();
     let ordered = {
-        let (h, p, tx) = (handler.clone(), peer.clone(), tx.clone());
+        let (h, p) = (handler.clone(), peer.clone());
         tokio::spawn(async move {
             while let Some((job, permit)) = ordered_rx.recv().await {
                 let reply = answer(&*h, &p, job).await;
                 drop(permit);
-                if tx.send(reply).is_err() {
+                if p.out.send(reply).is_err() {
                     break;
                 }
             }
@@ -183,7 +222,7 @@ async fn serve_socket(socket: WebSocket, handler: Arc<dyn RpcHandler>, device: O
 
     loop {
         let frame = tokio::select! {
-            () = peer.closed.cancelled() => break,
+            () = peer.out.closed.cancelled() => break,
             next = stream.next() => match next {
                 Some(Ok(frame)) => frame,
                 _ => break,
@@ -197,24 +236,24 @@ async fn serve_socket(socket: WebSocket, handler: Arc<dyn RpcHandler>, device: O
         };
         match serde_json::from_str::<RpcMessage>(&text) {
             Err(_) => {
-                let _ = tx.send(RpcMessage::err(None, -32700, "parse error"));
+                let _ = out.send(RpcMessage::err(None, -32700, "parse error"));
             }
             Ok(RpcMessage::Request { id, method, params, .. }) => {
                 let Ok(permit) = in_flight.clone().try_acquire_owned() else {
                     let busy =
                         format!("too many requests in flight on this connection (at most {MAX_IN_FLIGHT})");
-                    let _ = tx.send(RpcMessage::err(Some(id), BUSY, &busy));
+                    let _ = out.send(RpcMessage::err(Some(id), BUSY, &busy));
                     continue;
                 };
                 let job = (id, method, params);
                 if is_ordered(&job.1) {
                     let _ = ordered_tx.send((job, permit)); // one at a time, in the order sent
                 } else {
-                    let (h, p, tx) = (handler.clone(), peer.clone(), tx.clone());
+                    let (h, p) = (handler.clone(), peer.clone());
                     tokio::spawn(async move {
                         let reply = answer(&*h, &p, job).await;
                         drop(permit);
-                        tx.send(reply).ok()
+                        p.out.send(reply).ok()
                     });
                 }
             }
@@ -246,6 +285,29 @@ async fn serve_socket(socket: WebSocket, handler: Arc<dyn RpcHandler>, device: O
     writer.abort();
 }
 
+/// The single writer of one connection: everything outbound goes through its queue, one message at a time. It ends the
+/// connection (`closed`) when the socket fails or stops taking messages for `timeout`, however it ended, so the read
+/// side stops too: a connection that stalls without closing would otherwise be read from forever.
+async fn pump<S: Sink<Message> + Unpin>(
+    mut rx: mpsc::Receiver<RpcMessage>,
+    mut sink: S,
+    timeout: Duration,
+    closed: CancellationToken,
+) {
+    while let Some(message) = rx.recv().await {
+        let Ok(text) = serde_json::to_string(&message) else { continue };
+        match tokio::time::timeout(timeout, sink.send(Message::text(text))).await {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => break,
+            Err(_) => {
+                tracing::warn!(?timeout, "a client's socket stopped taking messages: closing its connection");
+                break;
+            }
+        }
+    }
+    closed.cancel();
+}
+
 /// Requests that must be handled in the order the client sent them (the view protocol).
 fn is_ordered(method: &str) -> bool {
     ["view.", "row.", "state.", "source."].iter().any(|p| method.starts_with(p))
@@ -271,5 +333,68 @@ async fn answer(handler: &dyn RpcHandler, peer: &RpcPeer, (id, method, params): 
                 &format!("internal error: the host panicked answering `{method}`"),
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        pin::Pin,
+        task::{Context, Poll},
+    };
+
+    /// A sink that never accepts a message: the connection of a client that stopped reading.
+    struct Stalled;
+    impl Sink<Message> for Stalled {
+        type Error = axum::Error;
+        fn poll_ready(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Pending
+        }
+        fn start_send(self: Pin<&mut Self>, _: Message) -> Result<(), Self::Error> {
+            Ok(())
+        }
+        fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Pending
+        }
+        fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Pending
+        }
+    }
+
+    fn note() -> RpcMessage {
+        RpcMessage::notification("n", Value::Null)
+    }
+
+    #[tokio::test]
+    async fn the_writer_closes_a_connection_whose_socket_stops_taking_messages() {
+        let (tx, rx) = mpsc::channel(4);
+        let closed = CancellationToken::new();
+        tx.try_send(note()).unwrap();
+        let writer = tokio::spawn(pump(rx, Stalled, Duration::from_millis(50), closed.clone()));
+        tokio::time::timeout(Duration::from_secs(5), closed.cancelled())
+            .await
+            .expect("closed after the timeout");
+        writer.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_full_queue_closes_the_connection_and_every_later_send_says_closed() {
+        let (tx, _rx) = mpsc::channel(2);
+        let out = Outbound { tx, closed: CancellationToken::new() };
+        assert!(out.send(note()).is_ok());
+        assert!(out.send(note()).is_ok());
+        assert!(!out.closed.is_cancelled());
+        assert!(matches!(out.send(note()), Err(RpcCallError::Closed)));
+        assert!(out.closed.is_cancelled(), "the message that did not fit hung up on the client");
+        assert!(matches!(out.send(note()), Err(RpcCallError::Closed)));
+    }
+
+    #[tokio::test]
+    async fn a_connection_that_has_ended_says_closed_without_hanging_up_again() {
+        let (tx, rx) = mpsc::channel(2);
+        drop(rx);
+        let out = Outbound { tx, closed: CancellationToken::new() };
+        assert!(matches!(out.send(note()), Err(RpcCallError::Closed)));
     }
 }

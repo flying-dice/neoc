@@ -82,8 +82,11 @@ semantic tokens only.
   "text" }`), no title (`needs`), a title that is blank or too long, a body that is too long, a value that is not a
   string, and a call in `render` or a `readOnly` tool. A call may also have at most 64 notifications waiting to be
   delivered at once (`already has 64 notifications waiting`). The host delivers waiting notifications whenever a call of
-  the app ends or a task or request handler waits, so the limit guards against a runaway loop; it is not a quota to plan
-  around. `at` and `actions` are type errors too.
+  the app ends, and when a call waits (at `task.wait` or a request; a task or request handler pausing; a tool that has
+  notified and then works on), so a tool that notifies half way is heard then, not when it returns. The limit guards
+  against a runaway loop; it is not a quota to plan around. A client whose connection stalls without closing (a sleeping
+  tablet) is dropped by the host once too much is waiting to be sent to it, and reconnects; it does not get what was
+  raised while it was away, like any client that was not connected. `at` and `actions` are type errors too.
 - **Background work:** start loops with `task.spawn` from `std:task` and let the entry return (the app is not loaded until
   it does). Closing a window leaves the work running; assigning `app.state` from a task re-renders open windows; unloading
   aborts tasks and closes servers (`crates/vos-host/tests/fixtures/ticker` is an example).
