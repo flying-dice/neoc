@@ -247,6 +247,7 @@
 
   {#snippet dock()}
     <Dock
+      available={workspaceWidth > 0 ? workspaceWidth - 24 : undefined}
       testid="dock"
       apps={dockApps}
       recents={recentApps}
