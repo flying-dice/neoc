@@ -209,7 +209,8 @@ rest wait their turn (apps take turns); an app with 1,000 calls waiting gets an 
 as long as the host is running the call: a call has no time limit on the client, and its place comes back when the handler
 answers or the connection to the host goes, so a handler that never returns takes up to eight places of its own app and no
 one else's. Closing the window, uninstalling the app or replacing it ends the calls the host is running for it (the host is told
-to cancel them, with MCP's `notifications/cancelled`), and gives their places back. The shell's queue is a courtesy; the limit
+to cancel them, with MCP's `notifications/cancelled`; only an `app.call` is cancellable, every other host request, an install
+or an uninstall included, runs to completion whatever the connection does), and gives their places back. The shell's queue is a courtesy; the limit
 itself is the host's: an app runs at most 8 handler calls at once, whoever sends them over however many connections, and the
 ninth is answered at once with `-32000` (busy) and the reason. The shell's own calls always keep working, and so do the other apps while fewer than four apps have hung handlers: the shell's
 32 places are shared by all apps, so when four apps hold eight each, a fifth app's calls wait until a place comes back.

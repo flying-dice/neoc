@@ -125,8 +125,8 @@ export interface HostBridge {
 
 /** JSON-RPC's codes. */
 const INVALID_REQUEST = -32600
-/** A call the bridge refuses because the frame already has too many waiting (the host's own limit is -32001 too). */
-const BUSY = -32001
+/** A call the bridge refuses because the frame already has too many waiting: the host's own busy code (`codes::BUSY`, -32000). */
+const BUSY = -32000
 const METHOD_NOT_FOUND = -32601
 const INVALID_PARAMS = -32602
 const INTERNAL_ERROR = -32603
