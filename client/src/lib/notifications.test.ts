@@ -3,12 +3,15 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
 import { appOf, setInstalledApps } from './apps.svelte'
 import {
   BANNER_MS,
+  listenToHost,
   MAX_BANNERS,
   Notifications,
   type NotificationDeps
 } from './notifications.svelte'
 import { SPOKEN_BODY_MAX } from '../shell/notificationText'
+import { Host } from './host.svelte'
 import { WindowManager } from './windowManager.svelte'
+import { createFakeHost } from '../shell/fakeHost'
 import type { AppSummary } from '../shell/hostApi'
 
 const summary = (id: string, extra: Partial<AppSummary> = {}): AppSummary => ({
@@ -355,5 +358,46 @@ describe('what is told to a screen reader', () => {
     expect(center.banners[0]?.title).toBe(
       '\u{1F468}\u200D\u{1F469}\u200D\u{1F467} \u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}'
     )
+  })
+})
+
+describe('an app that is uninstalled', () => {
+  test('takes its banners with it, and the app installed again under the same id starts clean', async () => {
+    const apps = [summary('ticker'), summary('notes')]
+    const host = new Host()
+    const fake = createFakeHost({ apps })
+    host.useFake(fake, apps)
+    const stop = listenToHost(host, center)
+
+    center.deliver({ app: 'ticker', title: 'from the old ticker' })
+    center.deliver({ app: 'notes', title: 'from notes' })
+    fake.emit('app.uninstalled', { app: 'ticker' })
+    expect(titles()).toEqual(['from notes'])
+
+    // installed again under the same id: the new instance may notify while it loads, before `app.installed` arrives,
+    // and that one stays
+    center.deliver({ app: 'ticker', title: 'from the new ticker' })
+    fake.emit('app.installed', { app: 'ticker' })
+    expect(titles()).toEqual(['from the new ticker', 'from notes'])
+    // choosing it opens the app that is there now, not a stale one: the old banner is gone, so nothing can
+    center.select(center.banners[0]!.id)
+    expect(wm.windows.map((w) => w.appId)).toEqual(['ticker'])
+
+    stop()
+    fake.emit('app.uninstalled', { app: 'notes' })
+    expect(titles()).toEqual(['from notes']) // no longer listening
+    await host.refresh()
+  })
+
+  test('a message that names no app forgets nothing', () => {
+    const host = new Host()
+    const fake = createFakeHost({ apps: [summary('ticker')] })
+    host.useFake(fake, [summary('ticker')])
+    const stop = listenToHost(host, center)
+    center.deliver({ app: 'ticker', title: 'stays' })
+    fake.emit('app.uninstalled', {})
+    fake.emit('app.uninstalled', { app: 5 })
+    expect(titles()).toEqual(['stays'])
+    stop()
   })
 })

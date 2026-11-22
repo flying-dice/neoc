@@ -1,4 +1,5 @@
 import type { IconName } from '@vos/ui'
+import type { Host } from './host.svelte'
 import { appNotificationSchema } from '../shell/results'
 import { cleanBody, cleanTitle, spokenBody } from '../shell/notificationText'
 import { appOf, type AppDefinition, type AppId } from './apps.svelte'
@@ -218,3 +219,20 @@ export class Notifications {
 }
 
 export const notifications = new Notifications()
+
+/**
+ * What the shell takes from the host for the alerts: an app's notification, and an app being uninstalled (its alerts go
+ * with it, so one raised by the app that was there cannot open the app installed again under the same id; the install
+ * that follows is not a reason to forget, because the new app may notify while it loads, before `app.installed` comes).
+ * Returns the function that stops listening.
+ */
+export function listenToHost(
+  host: Pick<Host, 'onAppNotification' | 'onAppUninstalled'>,
+  center: Notifications = notifications
+): () => void {
+  const stops = [
+    host.onAppNotification((params) => center.deliver(params)),
+    host.onAppUninstalled((app) => center.forgetApps([app]))
+  ]
+  return () => stops.forEach((stop) => stop())
+}
