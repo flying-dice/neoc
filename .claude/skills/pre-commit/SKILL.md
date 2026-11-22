@@ -10,7 +10,8 @@ Run before every push. Loop until everything below is clean. Scale the work to t
 
 1. **Review the outgoing change** (`git diff origin/main...HEAD` plus uncommitted work) with `change-review`: correctness,
    unhappy paths, tests. Ask, by reading, what breaks it: a script value, a client message, a JSON-RPC param, an agent or tool input, an
-   app return value, a stored value from an older version, a window size or theme. Every new behaviour has a new check, in the
+   app return value, a stored value from an older version, a window size or theme. `REVIEW-READY.md` (sections 1 to 3) lists
+   what reviewers have found that authors could have found first; work through it here. Every new behaviour has a new check, in the
    layer it lives in: a Rust test (neoc-vm unit test; a `crates/neoc/tests/**/*.test.lua` suite for a module; `cargo nextest`
    for the vos layers: domain, use cases against the port fakes, adapters, the host end to end), a bun test for client and kit
    logic, a story or a journey for each new screen or state, a journey spec for each new or changed journey in
