@@ -64,6 +64,8 @@ return {
   nothing = function() end,
   fail = function(ctx) return ctx:fail("A task needs a title.") end,
   explode = function() error("boom") end,
+  raise_table = function() error({ code = 7 }) end,
+  raise_function = function() error(function() end) end,
   loop = function() local t = {} t.t = t return t end,
 }
 "#;
@@ -251,6 +253,20 @@ async fn emit_refuses_a_bad_name_the_hosts_own_names_big_data_and_a_flood() {
 }
 
 #[tokio::test]
+async fn a_handler_that_raises_a_value_that_is_not_a_message_never_sends_its_address() {
+    let rig = rig();
+    load(&rig, "tasks", TASKS).await.unwrap();
+    for handler in ["raise_table", "raise_function"] {
+        let PortError::Rejected(message) = call(&rig, "tasks", handler, Value::Null).await.unwrap_err()
+        else {
+            panic!("{handler}: rejected");
+        };
+        assert!(!message.contains("0x"), "{handler}: {message}");
+        assert!(message.contains("not a message"), "{handler}: {message}");
+    }
+}
+
+#[tokio::test]
 async fn a_background_task_can_emit_after_the_call_that_started_it() {
     let rig = rig();
     load(&rig, "tasks", EMITTER).await.unwrap();
@@ -295,8 +311,8 @@ async fn a_panic_in_a_handler_fails_that_call_and_the_app_answers_the_next() {
         }
     "#;
     runtime.load(&id("tasks"), backend(src), data).await.unwrap();
-    let call =
-        |method: &'static str| runtime.call_handler(&id("tasks"), method, Value::Null, user_ctx(1_000));
+    let app = id("tasks");
+    let call = |method: &'static str| runtime.call_handler(&app, method, Value::Null, user_ctx(1_000));
 
     match call("boom").await {
         Err(PortError::Internal(message)) => {
