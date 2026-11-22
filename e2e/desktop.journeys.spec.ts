@@ -6,10 +6,20 @@
 import type { Page } from '@playwright/test'
 import { chooseLayout, expect, openDesktop, resizeWindow, settle, test, windowOf } from './fixtures'
 
-/** The strip auto-hides while a window covers it: rest the pointer on the left edge, as a person would. */
-async function peekStrip(page: Page): Promise<void> {
+/**
+ * Click an item of the recent-apps strip, as a person would. The strip auto-hides while a window covers it (its items then ignore
+ * the pointer), and whether it does is settled by the layout a moment after the windows are placed: the edge that wakes it
+ * exists only once it does. So look again until the item can really be clicked (the edge, if there is one, is rested on first),
+ * rather than check once and act: a click that goes to a hidden strip finds nothing.
+ */
+async function clickStripItem(page: Page, testid: string): Promise<void> {
   const edge = page.getByTestId('stage-strip-edge')
-  if (await edge.count()) await edge.hover()
+  const item = page.getByTestId(testid)
+  await expect(async () => {
+    if (await edge.count()) await edge.hover()
+    await item.click({ trial: true, timeout: 1000 })
+  }).toPass()
+  await item.click()
 }
 
 test.describe('Desktop journeys', () => {
@@ -77,8 +87,7 @@ test.describe('Desktop journeys', () => {
     await openDesktop(page, { open: ['files', 'terminal'] })
     await expect(windowOf(page, 'terminal')).toBeVisible()
     await expect(windowOf(page, 'files')).toHaveCount(0)
-    await peekStrip(page)
-    await page.getByTestId('stage-strip-files').click()
+    await clickStripItem(page, 'stage-strip-files')
     await settle(page)
     await expect(windowOf(page, 'files')).toBeVisible()
     // Terminal took Files' place in the strip
@@ -93,8 +102,7 @@ test.describe('Desktop journeys', () => {
     await expect(windowOf(page, 'terminal')).toHaveCount(0)
     await expect(page.getByTestId('stage-strip-terminal')).toBeAttached()
     // bring Files back and close it: it is gone for good, the minimised Terminal is still in the strip
-    await peekStrip(page)
-    await page.getByTestId('stage-strip-files').click()
+    await clickStripItem(page, 'stage-strip-files')
     await expect(windowOf(page, 'files')).toBeVisible()
     await chooseLayout(page, 'files', 'close')
     await expect(windowOf(page, 'files')).toHaveCount(0)

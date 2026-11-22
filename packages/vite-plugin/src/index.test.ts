@@ -5,7 +5,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { build } from 'vite'
@@ -58,9 +58,22 @@ function put(dir: string, content: Record<string, string>): void {
 }
 
 /** The vite build of the project, with the plugin; resolves to the error it failed with, or `null`. */
-async function run(dir: string, options: Partial<Options> = {}): Promise<Error | null> {
+async function run(dir: string, options: Partial<Options> = {}, warnings: string[] = []): Promise<Error | null> {
   try {
-    await build({ root: dir, configFile: false, logLevel: 'silent', plugins: [vos(options)] })
+    await build({
+      root: dir,
+      configFile: false,
+      customLogger: {
+        info: () => {},
+        warn: (message) => void warnings.push(message),
+        warnOnce: (message) => void warnings.push(message),
+        error: () => {},
+        clearScreen: () => {},
+        hasErrorLogged: () => false,
+        hasWarned: false
+      },
+      plugins: [vos(options)]
+    })
     return null
   } catch (error) {
     return error instanceof Error ? error : new Error(String(error))
@@ -83,6 +96,11 @@ function snapshot(dir: string): Record<string, string> {
   return out
 }
 
+/** Whether a build left a staging folder behind in the generated folder. */
+function stagingLeft(dir: string): boolean {
+  return existsSync(join(dir, '.app')) && readdirSync(join(dir, '.app')).some((name) => name.startsWith('build-'))
+}
+
 let previous: string | undefined
 beforeAll(() => {
   previous = process.env.VOS_DEFINITIONS
@@ -103,7 +121,7 @@ describe.skipIf(luauLsp === null)('a build through the plugin', () => {
       for (const file of ref.files) {
         expect(createHash('sha256').update(readFileSync(join(dir, 'dist', file.path))).digest('hex'), file.path).toBe(file.sha256)
       }
-      expect(existsSync(join(dir, '.app/build'))).toBe(false)
+      expect(stagingLeft(dir)).toBe(false)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -132,7 +150,7 @@ describe.skipIf(luauLsp === null)('a build through the plugin', () => {
         expect(error, what).not.toBeNull()
         expect(`${error?.message}\n${error?.stack}`, what).toMatch(message)
         expect(snapshot(join(dir, 'dist')), `${what}: dist is untouched`).toEqual(good)
-        expect(existsSync(join(dir, '.app/build')), `${what}: nothing left in staging`).toBe(false)
+        expect(stagingLeft(dir), `${what}: nothing left in staging`).toBe(false)
         put(dir, files()) // back to the good project for the next one
       }
       // and the next good build replaces it whole, with the new contract's migration in place
@@ -169,10 +187,97 @@ describe.skipIf(luauLsp === null)('a build through the plugin', () => {
   })
 })
 
+describe.skipIf(luauLsp === null)('migrations and the output', () => {
+  const withMigrations = (migrations: unknown[]): Record<string, string> => ({
+    'openrpc.json': JSON.stringify({ ...CONTRACT, 'x-app': { id: 'probe', migrations } })
+  })
+
+  test('migrations are written under migrations/, where nothing generated can be, whatever they are called', async () => {
+    const dir = project(
+      files({
+        ...withMigrations([
+          { version: 1, name: 'client', file: 'client.js' },
+          { version: 2, name: 'app', file: 'db/app.luau' },
+          { version: 3, name: 'ref', file: 'app-ref.json' }
+        ]),
+        'client.js': 'select 1;',
+        'db/app.luau': '--!strict\nreturn {}\n',
+        'app-ref.json': 'select 3;'
+      })
+    )
+    try {
+      expect(await run(dir)).toBeNull()
+      const built = snapshot(join(dir, 'dist'))
+      expect(Object.keys(built).sort()).toEqual(['app-ref.json', 'app.luau', 'client.js', 'migrations/app-ref.json', 'migrations/app.luau', 'migrations/client.js'])
+      const ref = JSON.parse(readFileSync(join(dir, 'dist/app-ref.json'), 'utf8')) as { manifest: { migrations: { file: string }[] }; files: { path: string; sha256: string }[] }
+      expect(ref.manifest.migrations.map((m) => m.file)).toEqual(['migrations/client.js', 'migrations/app.luau', 'migrations/app-ref.json'])
+      // every path of the app ref once, with the hash of what is there
+      expect(new Set(ref.files.map((f) => f.path)).size).toBe(ref.files.length)
+      for (const f of ref.files) expect(built[f.path], f.path).toBe(f.sha256)
+      expect(readFileSync(join(dir, 'dist/client.js'), 'utf8')).not.toContain('select 1')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('duplicates and out-of-order versions are refused when the contract is read', async () => {
+    const dir = project(files({ 'a.sql': 'x', 'b/a.sql': 'y' }))
+    try {
+      for (const [what, migrations, message] of [
+        ['the same file twice', [{ version: 1, name: 'one', file: 'a.sql' }, { version: 2, name: 'two', file: 'a.sql' }], /already the file of an earlier migration/],
+        ['two files of one name', [{ version: 1, name: 'one', file: 'a.sql' }, { version: 2, name: 'two', file: 'b/a.sql' }], /would be written as migrations\/a\.sql/],
+        ['the same version twice', [{ version: 1, name: 'one', file: 'a.sql' }, { version: 1, name: 'two', file: 'b/a.sql' }], /must be 2/],
+        ['a version that skips', [{ version: 2, name: 'one', file: 'a.sql' }], /must be 1/]
+      ] as const) {
+        put(dir, withMigrations([...migrations]))
+        const error = await run(dir)
+        expect(error?.message, what).toMatch(message)
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('a link to another file of the project is that file, and one that leads out is refused naming where it leads', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'vos-plugin-link-'))
+    try {
+      const dir = join(parent, 'app')
+      mkdirSync(dir)
+      put(dir, files({ 'real.sql': 'create table t(a);', ...withMigrations([{ version: 1, name: 'init', file: 'link.sql' }]) }))
+      writeFileSync(join(parent, 'outside.sql'), 'drop table users;')
+      symlinkSync('real.sql', join(dir, 'link.sql'))
+      expect(await run(dir)).toBeNull()
+      expect(readFileSync(join(dir, 'dist/migrations/link.sql'), 'utf8')).toBe('create table t(a);')
+      rmSync(join(dir, 'link.sql'))
+      symlinkSync(join(parent, 'outside.sql'), join(dir, 'link.sql'))
+      const refused = await run(dir)
+      expect(refused?.message).toMatch(/resolves to .*outside\.sql through a symbolic link, which is outside/)
+      expect(refused?.message).toContain(realpathSync(parent))
+    } finally {
+      rmSync(parent, { recursive: true, force: true })
+    }
+  })
+})
+
+describe.skipIf(luauLsp === null)('builds at the same time', () => {
+  test('each has a staging folder of its own, so none is lost to another and dist is always a complete build', async () => {
+    const dir = project(files())
+    try {
+      const results = await Promise.all([run(dir), run(dir), run(dir)])
+      expect(results.map((r) => r?.message ?? null)).toEqual([null, null, null])
+      expect(Object.keys(snapshot(join(dir, 'dist'))).sort()).toEqual(['app-ref.json', 'app.luau', 'client.js'])
+      expect(stagingLeft(dir)).toBe(false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('without luau-lsp', () => {
   test('the build stops and says how to install it, unless it is turned off', async () => {
     const dir = project(files())
     const named = process.env.VOS_LUAU_LSP
+    const warnings: string[] = []
     try {
       // the binary the build is told to use is not there
       process.env.VOS_LUAU_LSP = '/nonexistent/luau-lsp'
@@ -180,7 +285,8 @@ describe('without luau-lsp', () => {
       expect(stopped?.message).toMatch(/luau-lsp not found: install the .* release binary/)
       expect(stopped?.message).toMatch(/check: false/)
       expect(existsSync(join(dir, 'dist'))).toBe(false)
-      expect(await run(dir, { check: false })).toBeNull()
+      expect(await run(dir, { check: false }, warnings)).toBeNull()
+      expect(warnings.join('\n')).toContain('the check is off (check: false)')
       expect(existsSync(join(dir, 'dist/app-ref.json'))).toBe(true)
     } finally {
       if (named === undefined) delete process.env.VOS_LUAU_LSP

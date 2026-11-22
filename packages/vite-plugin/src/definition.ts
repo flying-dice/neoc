@@ -19,7 +19,7 @@
  * Anything else is an error that names where it is, so a definition never means something a reader did not expect.
  */
 import { JS_WORDS } from './names.ts'
-import { refuseRelativeFile } from './paths.ts'
+import { migrationOutput, refuseRelativeFile } from './paths.ts'
 
 export type Schema = { description?: string } & (
   | { kind: 'string'; enum?: string[]; minLength?: number; maxLength?: number }
@@ -573,6 +573,8 @@ function appMeta(value: Json): AppMeta {
   }
   if (value.migrations !== undefined) {
     if (!Array.isArray(value.migrations)) fail(`${path}.migrations`, 'must be a list of { version, name, file }')
+    const seenFiles = new Set<string>()
+    const seenOutputs = new Set<string>()
     meta.migrations = value.migrations.map((m, i) => {
       const where = `${path}.migrations[${i}]`
       if (!isObject(m)) fail(where, 'must be { version, name, file }')
@@ -582,7 +584,16 @@ function appMeta(value: Json): AppMeta {
       if (refused !== null) fail(`${where}.file`, `\`${file}\` ${refused}`)
       const name = text(m.name, `${where}.name`)
       if (!/^[A-Za-z0-9_][A-Za-z0-9_ -]{0,63}$/.test(name)) fail(`${where}.name`, 'must be a short name: letters, digits, spaces, `_` and `-`, up to 64 characters')
-      return { version: count(m.version, `${where}.version`), name, file }
+      const version = count(m.version, `${where}.version`)
+      // the host runs them in order, once each, as 1, 2, 3, ...
+      if (version !== i + 1) fail(`${where}.version`, `must be ${i + 1}: migrations are numbered 1, 2, 3, ... in the order they run`)
+      if (seenFiles.has(file)) fail(`${where}.file`, `\`${file}\` is already the file of an earlier migration`)
+      seenFiles.add(file)
+      // in the output they all sit in `migrations/` under their own name: two files of one name would be one file
+      const out = migrationOutput(file)
+      if (seenOutputs.has(out)) fail(`${where}.file`, `\`${file}\` would be written as ${out}, which an earlier migration already is: give the files different names`)
+      seenOutputs.add(out)
+      return { version, name, file }
     })
   }
   if (value.csp !== undefined) {

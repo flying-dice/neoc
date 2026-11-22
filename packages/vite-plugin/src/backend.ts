@@ -5,11 +5,11 @@
  */
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { inside } from './paths.ts'
+import { contained, inside, migrationOutput } from './paths.ts'
 import type { Definition } from './definition.ts'
 
 /** The darklua release the bundles are pinned to (the host's own build uses the same one). */
@@ -85,15 +85,22 @@ export function writeApp(project: string, outDir: string, definition: Definition
     { path: client, url: client, sha256: sha256(clientBytes) }
   ]
   const meta = definition.app
-  for (const [index, { file }] of (meta.migrations ?? []).entries()) {
+  const outputs: { version: number; name: string; file: string }[] = []
+  for (const [index, migration] of (meta.migrations ?? []).entries()) {
+    const { file } = migration
     const from = inside(project, file)
     if (!existsSync(from) || !statSync(from).isFile()) {
       throw new Error(`x-app.migrations[${index}].file \`${file}\` is not a file of the project`)
     }
-    const to = inside(outDir, file)
+    // a link to another file of the project is its target's content; one that leads out was refused by `inside`
+    const real = realpathSync(from)
+    if (!contained(realpathSync(project), real)) throw new Error(`x-app.migrations[${index}].file \`${file}\` is a link to ${real}, outside the project`)
+    const output = migrationOutput(file)
+    const to = inside(outDir, output)
     mkdirSync(dirname(to), { recursive: true })
-    cpSync(from, to)
-    files.push({ path: file, url: file, sha256: sha256(readFileSync(from)) })
+    copyFileSync(real, to)
+    files.push({ path: output, url: output, sha256: sha256(readFileSync(real)) })
+    outputs.push({ version: migration.version, name: migration.name, file: output })
   }
   const appRef = {
     manifest: {
@@ -102,7 +109,7 @@ export function writeApp(project: string, outDir: string, definition: Definition
       version: definition.version,
       main: 'app.luau',
       client,
-      migrations: meta.migrations ?? [],
+      migrations: outputs,
       ...(meta.icon ? { icon: meta.icon } : {}),
       ...(meta.tint ? { tint: meta.tint } : {}),
       ...(meta.description ? { description: meta.description } : {}),

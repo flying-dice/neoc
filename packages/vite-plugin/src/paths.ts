@@ -35,8 +35,11 @@ export function inside(root: string, name: string): string {
   // a symbolic link in the way must not lead out either: judge the real path of the nearest part that exists
   let existing = target
   while (!existsSync(existing) && existing !== base) existing = resolve(existing, '..')
-  if (existsSync(existing) && !contained(realpathSync(base), realpathSync(existing))) {
-    throw new Error(`\`${name}\` resolves outside ${base} through a symbolic link: a build reads and writes only inside the project and its dist`)
+  if (existsSync(existing)) {
+    const real = realpathSync(existing)
+    if (!contained(realpathSync(base), real)) {
+      throw new Error(`\`${name}\` resolves to ${real} through a symbolic link, which is outside ${base}: a build reads and writes only inside the project and its dist`)
+    }
   }
   return target
 }
@@ -46,6 +49,12 @@ export function contained(base: string, target: string): boolean {
   const from = relative(base, target)
   return from === '' || (!from.startsWith('..') && !isAbsolute(from) && !from.split(sep).includes('..'))
 }
+
+/**
+ * Where a migration goes in the build's output: always under `migrations/`, which nothing the build generates (`app.luau`,
+ * `app-ref.json`, the client) can ever share, named by the file's own name.
+ */
+export const migrationOutput = (file: string): string => `migrations/${file.split('/').pop() as string}`
 
 /** The names of a path's segments joined for the app ref: always `/`. */
 export const asUrlPath = (name: string): string => name.split(sep).join('/')

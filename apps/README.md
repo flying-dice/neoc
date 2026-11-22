@@ -101,8 +101,10 @@ reads it as syntax); a method may not be a Luau reserved word (`end`, `function`
 builtin type of TypeScript or Luau (`string`, `buffer`, `class`, `await`, ...) but may be called `Record`, `Array` or `Promise`
 (the generated types reach those through names a schema cannot shadow); `__proto__`, `constructor` and `prototype` are never a
 name, and a schema never starts with `__vos`. A `$ref` cycle that does not pass through an array or an object property
-(`A` is `B` is `A`) is refused with the cycle named. A migration's `file` is a plain relative name inside the project (no `..`,
-no absolute path, no hidden segment): the build reads it from the project and writes it into `dist/`, and nothing else. Every type the generated files declare must have a name
+(`A` is `B` is `A`) is refused with the cycle named. Migrations are `x-app.migrations`, numbered 1, 2, 3, ... in the order they run; each `file` is a plain relative name inside the
+project (no `..`, no absolute path, no hidden segment; a link must lead to a file of the project), no file or version is given
+twice, and two files may not share a name. The build reads each from the project and writes it to `dist/migrations/<its name>`,
+which nothing the build generates can share, and the app ref lists it there. Every type the generated files declare must have a name
 of its own: a schema called `Host`, `Api`, `RpcError`, `Context` or `Handlers`, one named like a method's `<Method>Params` or
 `<Method>Result` (`ListResult` for `list`), or two methods that are one name in PascalCase (`add_task` and `addTask`) are
 refused when the contract is read, with the names that clash. Text from the contract (titles, summaries, enum values) is
@@ -130,8 +132,8 @@ declared method with no handler, or a handler of the wrong shape, fails the buil
 of any shape passes (a handler assigned from a local function, defined in a module you `require`, added to the table later).
 A function in the table that the contract does not declare is never called. **The build needs luau-lsp** (1.70.1, on the PATH or
 in `~/.local/bin`, or named by `VOS_LUAU_LSP`), as it needs darklua: without it the build stops and says how to install it, because
-it could not say the app will load. `vos({ check: false })` turns the check off, for someone who knows what they are doing (the host
-still refuses to load an app that does not implement every method). A build that fails at any step leaves `dist/` exactly as the
+it could not say the app will load. `vos({ check: false })` turns the check off, for someone who knows what they are doing (the build then says in one line that nothing
+verifies the handlers, every time; the host still refuses to load an app that does not implement every method). A build that fails at any step leaves `dist/` exactly as the
 last good build made it: the build is made in `.app/build` and moved into `dist/` only when every step has succeeded.
 
 ## The client
@@ -418,6 +420,10 @@ if app.files.errorKind(err) == "not_found" then end  -- the kinds of std:fs
   any file the host can. `crates/vos-lua/src/files.rs` says how links and races are handled.
 
 ## Adding an app
+
+**What you need installed first:** Bun, Rust (the host), **darklua 0.18.0** (`cargo install darklua --version 0.18.0 --locked`: bundles the Luau),
+**luau-lsp 1.70.1** (the release binary on the PATH or in `~/.local/bin`, or named by `VOS_LUAU_LSP`: the build checks the backend with it and
+stops without it unless you set `check: false`) and StyLua (`cargo install stylua --features luau`: `bun run lint`).
 
 An app that is a Vite project:
 

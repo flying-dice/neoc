@@ -44,7 +44,7 @@ export function luauFiles(project: string): string[] {
     for (const name of readdirSync(dir)) {
       if ((name.startsWith('.') && name !== '.app') || name === 'node_modules' || name === 'dist') continue
       // the build's staging folder holds the bundle it is making, not the project's Luau
-      if (name === 'build' && relative(project, dir) === '.app') continue
+      if (name.startsWith('build-') && relative(project, dir) === '.app') continue
       const path = join(dir, name)
       if (statSync(path).isDirectory()) walk(path)
       else if (name.endsWith('.luau')) found.push(relative(project, path))

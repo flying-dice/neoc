@@ -19,7 +19,7 @@
  * Room for more generated files: everything it writes is a list of `{ path, contents }` (`generate.ts`), so a later step that
  * hands an app other definitions (the UI kit's tags for the editor, say) is one more entry in that list.
  */
-import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { Plugin } from 'vite'
 import { promote, writeApp } from './backend.ts'
@@ -54,8 +54,12 @@ export function vos(options: Partial<Options> = {}): Plugin {
   const settings: Options = { ...DEFAULTS, ...options }
   let root = process.cwd()
   let distDir = resolve(process.cwd(), 'dist')
-  /** Where a build is made: `dist/` is only touched once every step has succeeded (`.app/` is not committed). */
-  let staging = resolve(process.cwd(), settings.generated, 'build')
+  /**
+   * Where this build is made: a folder of its own (a unique name from the platform's own routine for temporary directories, inside
+   * the project so the move into `dist/` stays on one file system), so two builds at once (the watcher and a one-off build) never
+   * share it. `dist/` is only touched once every step has succeeded.
+   */
+  let staging = resolve(process.cwd(), settings.generated)
   // a build that failed must not write an app ref: the one on disk (if any) is the last build that worked
   let failed = false
 
@@ -94,7 +98,10 @@ export function vos(options: Partial<Options> = {}): Plugin {
     config(config) {
       root = resolve(config.root ?? process.cwd())
       distDir = resolve(root, config.build?.outDir ?? 'dist')
-      staging = resolve(root, settings.generated, 'build')
+      mkdirSync(resolve(root, settings.generated), { recursive: true })
+      staging = mkdtempSync(join(resolve(root, settings.generated), 'build-'))
+      // whatever happens to the build, the folder does not outlive the process
+      process.once('exit', () => rmSync(staging, { recursive: true, force: true }))
       return {
         // a classic script, not a module: an app's frame has an opaque origin, where a module script needs CORS
         build: {
@@ -114,6 +121,8 @@ export function vos(options: Partial<Options> = {}): Plugin {
     buildStart() {
       failed = false
       rmSync(staging, { recursive: true, force: true })
+      // a build that does not check the backend says so, every time: nothing else will
+      if (!settings.check) this.warn(`vos: the check is off (check: false): nothing verifies that ${settings.backend} implements every method of ${settings.definition}`)
       regenerate()
       this.addWatchFile(resolve(root, settings.definition))
       for (const file of luauUnder(resolve(root, settings.backend, '..'))) this.addWatchFile(file)
