@@ -487,6 +487,7 @@ export class WindowManager {
   }
 
   // what each window has to finish before it goes (an app's frame telling its page to wrap up)
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- bookkeeping nothing renders from
   #closing = new Map<string, () => Promise<void>>()
 
   /**
