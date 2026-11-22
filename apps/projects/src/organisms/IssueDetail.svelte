@@ -27,13 +27,26 @@
   let asking = $state<number | null>(null)
   const confirming = $derived(asking === issue.id)
 
-  /** A kit field: the text it holds. */
-  type Field = HTMLElement & { value: string }
+  // What is typed in the title and the description is the window's until the backend has it: an answer to an earlier
+  // change (a new status) draws the issue again, and must not put back the text that is being typed over.
+  let typed = $state<{ issue: number; title: string | null; description: string | null }>({ issue: 0, title: null, description: null })
+  const title = $derived(typed.issue === issue.id && typed.title !== null ? typed.title : issue.title)
+  const description = $derived(typed.issue === issue.id && typed.description !== null ? typed.description : issue.description)
+
+  function type(change: { title?: string; description?: string }): void {
+    typed = { ...(typed.issue === issue.id ? typed : { title: null, description: null }), issue: issue.id, ...change }
+  }
+  $effect(() => {
+    // the backend has what was typed: the issue speaks for itself again
+    if (typed.issue !== issue.id) return
+    if (typed.title !== null && typed.title.trim() === issue.title) typed.title = null
+    if (typed.description !== null && typed.description === issue.description) typed.description = null
+  })
 
   // The title commits when its field is left, and on Enter. It cannot be blank: the field takes back the one it has.
-  function rename(field: Field): void {
-    if (field.value.trim() === '') field.value = issue.title
-    else onchange(issue, { title: field.value })
+  function rename(): void {
+    if (title.trim() === '') type({ title: issue.title })
+    else onchange(issue, { title })
   }
 </script>
 
@@ -79,8 +92,7 @@
           <form
             onsubmit={(e) => {
               e.preventDefault()
-              const field = e.currentTarget.querySelector<Field>('ui-text-field')
-              if (field) rename(field)
+              rename()
             }}
           >
             <ui-text-field
@@ -89,8 +101,9 @@
               autocomplete="off"
               enterkeyhint="done"
               maxlength={200}
-              value={issue.title}
-              onchange={(e) => rename(e.currentTarget as Field)}
+              value={title}
+              oninput={(e) => type({ title: (e.currentTarget as unknown as { value: string }).value })}
+              onchange={rename}
               data-testid="projects-issue-title"
             ></ui-text-field>
           </form>
@@ -136,8 +149,9 @@
         placeholder="What is known about it"
         maxlength={5000}
         rows={6}
-        value={issue.description}
-        onchange={(e) => onchange(issue, { description: e.currentTarget.value })}
+        value={description}
+        oninput={(e) => type({ description: e.currentTarget.value })}
+        onchange={() => onchange(issue, { description })}
         data-testid="projects-issue-description"
       ></textarea>
       <p class="edited" data-testid="projects-issue-edited">Edited {moment(issue.updated)}</p>
