@@ -57,7 +57,29 @@ export interface AppMeta {
   window?: { w: number; h: number; minW: number; minH: number }
   requires?: { host?: string }
   migrations?: { version: number; name: string; file: string }[]
+  /**
+   * What the app's frame may load, in the shape of MCP Apps' `_meta.ui.csp`: the host builds the frame's content security
+   * policy from it (nothing external when it is absent). `resourceDomains` are origins images, media, fonts and styles may
+   * come from; `connectDomains`, `frameDomains` and `baseUriDomains` are parsed but not applied (an app's calls go through
+   * the host). The app's code still comes only from the host.
+   */
+  csp?: Csp
+  /** The browser capabilities the frame asks for, in the shape of MCP Apps' `_meta.ui.permissions`; passed to the iframe's `allow`. */
+  permissions?: Partial<Record<(typeof PERMISSIONS)[number], Record<string, never>>>
 }
+
+export interface Csp {
+  connectDomains?: string[]
+  resourceDomains?: string[]
+  frameDomains?: string[]
+  baseUriDomains?: string[]
+}
+
+/** The permissions MCP Apps names. */
+export const PERMISSIONS = ['camera', 'microphone', 'geolocation', 'clipboardWrite'] as const
+
+/** An origin an app declares: `https://host[:port]`, or `https://*.domain.tld` for the subdomains of one domain. Never a bare scheme or `*`. */
+const ORIGIN = /^https?:\/\/(\*\.)?(([a-z0-9]([a-z0-9-]*[a-z0-9])?)\.)+[a-z]{2,}(:\d{1,5})?$|^https?:\/\/(localhost|\d{1,3}(\.\d{1,3}){3})(:\d{1,5})?$/i
 
 export interface Definition {
   /** The app's name (`info.title`). */
@@ -313,7 +335,7 @@ function definition(document: Json): Definition {
 function appMeta(value: Json): AppMeta {
   const path = 'x-app'
   if (!isObject(value)) fail(path, 'is required: the app\'s metadata ({ "id": ..., "icon": ... })')
-  only(value, ['id', 'icon', 'tint', 'description', 'window', 'requires', 'migrations'], path)
+  only(value, ['id', 'icon', 'tint', 'description', 'window', 'requires', 'migrations', 'csp', 'permissions'], path)
   const id = text(value.id, `${path}.id`)
   if (!/^[a-z0-9][a-z0-9-]{2,39}$/.test(id)) fail(`${path}.id`, 'must be 3 to 40 characters: lowercase letters, digits and dashes')
   const meta: AppMeta = { id }
@@ -348,6 +370,35 @@ function appMeta(value: Json): AppMeta {
       only(m, ['version', 'name', 'file'], where)
       return { version: count(m.version, `${where}.version`), name: text(m.name, `${where}.name`), file: text(m.file, `${where}.file`) }
     })
+  }
+  if (value.csp !== undefined) {
+    if (!isObject(value.csp)) fail(`${path}.csp`, 'must be { resourceDomains, connectDomains, frameDomains, baseUriDomains }')
+    const keys = ['connectDomains', 'resourceDomains', 'frameDomains', 'baseUriDomains'] as const
+    only(value.csp, [...keys], `${path}.csp`)
+    const csp: Csp = {}
+    for (const key of keys) {
+      const list = value.csp[key]
+      if (list === undefined) continue
+      if (!Array.isArray(list)) fail(`${path}.csp.${key}`, 'must be a list of origins')
+      csp[key] = list.map((origin, i) => {
+        if (typeof origin !== 'string' || !ORIGIN.test(origin))
+          fail(`${path}.csp.${key}[${i}]`, 'must be an origin such as https://cdn.example.com or https://*.example.com (no bare scheme, no `*`)')
+        return origin
+      })
+    }
+    meta.csp = csp
+  }
+  if (value.permissions !== undefined) {
+    if (!isObject(value.permissions)) fail(`${path}.permissions`, 'must be an object such as { "camera": {} }')
+    only(value.permissions, [...PERMISSIONS], `${path}.permissions`)
+    const permissions: NonNullable<AppMeta['permissions']> = {}
+    for (const name of PERMISSIONS) {
+      const given = value.permissions[name]
+      if (given === undefined) continue
+      if (!isObject(given) || Object.keys(given).length > 0) fail(`${path}.permissions.${name}`, 'must be {}')
+      permissions[name] = {}
+    }
+    meta.permissions = permissions
   }
   return meta
 }

@@ -88,7 +88,9 @@ export function writeApp(project: string, outDir: string, definition: Definition
       ...(meta.tint ? { tint: meta.tint } : {}),
       ...(meta.description ? { description: meta.description } : {}),
       ...(meta.window ? { window: meta.window } : {}),
-      ...(meta.requires ? { requires: meta.requires } : {})
+      ...(meta.requires ? { requires: meta.requires } : {}),
+      // what the app's frame may load and ask for (MCP Apps' `_meta.ui`): the host builds the frame's policy and `allow` from it
+      ...(meta.csp || meta.permissions ? { ui: { ...(meta.csp ? { csp: meta.csp } : {}), ...(meta.permissions ? { permissions: meta.permissions } : {}) } } : {})
     },
     files
   }

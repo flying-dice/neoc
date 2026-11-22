@@ -71,6 +71,26 @@ describe('parseDefinition', () => {
     expect(problem(doc({ info: { title: 'Notes', version: '1' } }))).toContain('info.version: must be major.minor.patch')
   })
 
+  test('x-app carries the frame\'s csp and permissions in the shape of MCP Apps, and refuses what opens everything', () => {
+    const ok = parseDefinition(
+      doc({
+        'x-app': {
+          id: 'feeds',
+          csp: { resourceDomains: ['https://cdn.example.com', 'https://*.images.example.org:8443'], connectDomains: ['https://api.example.com'] },
+          permissions: { clipboardWrite: {} }
+        }
+      })
+    )
+    expect(ok.app.csp?.resourceDomains).toEqual(['https://cdn.example.com', 'https://*.images.example.org:8443'])
+    expect(ok.app.permissions).toEqual({ clipboardWrite: {} })
+    const csp = (resourceDomains: unknown): string => problem(doc({ 'x-app': { id: 'feeds', csp: { resourceDomains } } }))
+    for (const bad of ['*', 'https:', 'https://*', "'unsafe-inline'", 'https://*.com', 'ftp://x.example.com', 'cdn.example.com', 5])
+      expect(csp([bad]), String(bad)).toContain('x-app.csp.resourceDomains[0]')
+    expect(problem(doc({ 'x-app': { id: 'feeds', csp: { scriptDomains: [] } } }))).toContain('x-app.csp.scriptDomains: is not supported')
+    expect(problem(doc({ 'x-app': { id: 'feeds', permissions: { camera: { x: 1 } } } }))).toContain('must be {}')
+    expect(problem(doc({ 'x-app': { id: 'feeds', permissions: { nfc: {} } } }))).toContain('x-app.permissions.nfc: is not supported')
+  })
+
   test('a method is an identifier, defined once, with its params by name and a result', () => {
     const method = (m: Record<string, unknown>): string =>
       doc({ methods: [{ params: [], result: { name: 'r', schema: { type: 'null' } }, ...m }] })
