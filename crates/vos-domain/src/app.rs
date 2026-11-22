@@ -1,4 +1,4 @@
-use crate::{error::DomainError, limits::MAX_PACKAGE_FILES, KitRequirement};
+use crate::{error::DomainError, limits::MAX_PACKAGE_FILES, KitRequirement, WindowDecl};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
@@ -76,6 +76,16 @@ pub struct Manifest {
     /// What the host must provide for the app to run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requires: Option<Requires>,
+    /// The app's client: the one prebuilt script (a path in the app ref, ending in `.js`) that the host loads into
+    /// a frame of its own and that defines `vosApp.mount(el, { rpc, host })`. An app with a client opens in a frame
+    /// and its Luau entry is its backend (it returns a table of handlers); an app without one describes its
+    /// screens as a view tree with `app.window` (retired by NEOC-298).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client: Option<String>,
+    /// The default window and its minimum size, for the shell to open the app with before anything runs. A view-tree
+    /// app may still declare it in `app.manifest`, which takes precedence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<WindowDecl>,
 }
 
 /// The `std:`, `lib:` and `vnd:` modules an app is not offered: `lib:test` (a test harness that prints to stdout),
@@ -128,6 +138,18 @@ impl Manifest {
                 "main must be the built Luau file (ending in `.luau`, or `.lua`), not `{}`; build the app with `bun run build:apps`",
                 self.main
             )));
+        }
+        if let Some(client) = &self.client {
+            let is_script =
+                std::path::Path::new(client).extension().is_some_and(|e| e.eq_ignore_ascii_case("js"));
+            if !is_script || client == &self.main {
+                return Err(DomainError::InvalidManifest(format!(
+                    "client must be the built script of the app's client (a path ending in `.js`), not `{client}`"
+                )));
+            }
+        }
+        if let Some(window) = &self.window {
+            window.validate()?;
         }
         let in_order = self.migrations.iter().enumerate().all(|(i, m)| m.version as usize == i + 1);
         if !in_order {
@@ -289,6 +311,8 @@ mod tests {
                 tint: None,
                 description: None,
                 requires: None,
+                client: None,
+                window: None,
             },
             files: vec![FileRef {
                 path: "main.lua".into(),
@@ -314,6 +338,8 @@ mod tests {
             tint: None,
             description: None,
             requires: None,
+            client: None,
+            window: None,
         };
         assert!(manifest("app.luau").validate().is_ok());
         assert!(
@@ -338,6 +364,8 @@ mod tests {
             tint: None,
             description: None,
             requires: Some(Requires { host: Some(">=1.0".into()) }),
+            client: None,
+            window: None,
         };
         assert!(m.validate().is_ok());
         m.requires = Some(Requires { host: Some(">=2.0".into()) });
@@ -371,6 +399,8 @@ mod tests {
             tint: None,
             description: None,
             requires: None,
+            client: None,
+            window: None,
         };
         AppRef { manifest, files }
     }
@@ -437,6 +467,51 @@ mod tests {
     }
 
     #[test]
+    fn a_client_is_a_script_and_the_window_follows_the_shell_minimum() {
+        let mut m = Manifest {
+            id: AppId::parse("tasks").unwrap(),
+            name: "Tasks".into(),
+            version: "1".into(),
+            main: "app.luau".into(),
+            migrations: vec![],
+            icon: None,
+            tint: None,
+            description: None,
+            requires: None,
+            client: Some("client.js".into()),
+            window: Some(WindowDecl { w: 420, h: 480, min_w: 320, min_h: 320 }),
+        };
+        assert!(m.validate().is_ok());
+        for bad in ["client", "client.css", "client.js.map", "app.luau"] {
+            m.client = Some(bad.into());
+            let err = m.validate().unwrap_err().to_string();
+            assert!(err.contains("client must be the built script"), "{bad}: {err}");
+        }
+        m.client = None;
+        assert!(m.validate().is_ok(), "an app without a client may state its window too");
+        m.window = Some(WindowDecl { w: 300, h: 300, min_w: 300, min_h: 300 });
+        assert!(m.validate().is_err(), "below the shell's 320x240");
+        m.window = Some(WindowDecl { w: 400, h: 300, min_w: 480, min_h: 300 });
+        assert!(m.validate().is_err(), "default smaller than minimum");
+    }
+
+    #[test]
+    fn a_manifest_without_a_client_or_window_reads_as_before() {
+        let m: Manifest = serde_json::from_str(
+            r#"{"id":"notes","name":"Notes","version":"1.0.0","main":"app.luau","permissions":["x"]}"#,
+        )
+        .unwrap();
+        assert_eq!((m.client, m.window), (None, None));
+        let with: Manifest = serde_json::from_str(
+            r#"{"id":"tasks","name":"T","version":"1.0.0","main":"app.luau","client":"client.js",
+                "window":{"w":420,"h":480,"minW":320,"minH":320}}"#,
+        )
+        .unwrap();
+        assert_eq!(with.client.as_deref(), Some("client.js"));
+        assert_eq!(with.window.map(|w| w.min_h), Some(320));
+    }
+
+    #[test]
     fn migration_order_is_validated() {
         let mut m = Manifest {
             id: AppId::parse("notes").unwrap(),
@@ -448,6 +523,8 @@ mod tests {
             tint: None,
             description: None,
             requires: None,
+            client: None,
+            window: None,
         };
         assert_eq!(m.validate(), Err(DomainError::MigrationOrder));
         m.migrations[0].version = 1;

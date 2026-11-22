@@ -45,7 +45,8 @@
     icon: 'doc',
     tint: 'yellow',
     description: 'Plain notes your agents can read and append to.',
-    source: 'this computer'
+    source: 'this computer',
+    client: false
   }
 
   /** Discover: the landing window, and the place apps are found, installed and managed. */

@@ -21,6 +21,21 @@ pub struct WindowDecl {
     pub min_h: u32,
 }
 
+impl WindowDecl {
+    /// A window is at least the shell's minimum, and its default size is not below its own minimum.
+    pub fn validate(&self) -> Result<(), DomainError> {
+        if self.min_w < MIN_WINDOW_W || self.min_h < MIN_WINDOW_H {
+            return Err(DomainError::InvalidManifest(format!(
+                "window min size must be at least {MIN_WINDOW_W}x{MIN_WINDOW_H}"
+            )));
+        }
+        if self.w < self.min_w || self.h < self.min_h {
+            return Err(DomainError::InvalidManifest("window size must not be below its minimum".into()));
+        }
+        Ok(())
+    }
+}
+
 /// `kit = ">=1.2"`: the component-kit version the app needs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
@@ -86,12 +101,7 @@ impl AppDecl {
             return invalid(format!("icon `{}` must be a lowercase symbol name", self.icon));
         }
         if let Some(w) = &self.window {
-            if w.min_w < MIN_WINDOW_W || w.min_h < MIN_WINDOW_H {
-                return invalid(format!("window min size must be at least {MIN_WINDOW_W}x{MIN_WINDOW_H}"));
-            }
-            if w.w < w.min_w || w.h < w.min_h {
-                return invalid("window size must not be below its minimum".into());
-            }
+            w.validate()?;
         }
         Ok(())
     }

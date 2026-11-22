@@ -64,7 +64,9 @@
     position: relative;
     width: 100%;
     height: 100%;
-    overflow: hidden;
+    /* `clip`, not `hidden`: a hidden box can still be scrolled by script, and focusing or scrolling into view something a
+       window left past the edge (an icon of the Dock) would slide the whole desktop sideways under the status bar */
+    overflow: clip;
     background: var(--wallpaper);
     background-size: cover;
     isolation: isolate;
@@ -86,6 +88,10 @@
     left: 50%;
     bottom: 12px;
     transform: translateX(-50%);
+    /* as wide as its icons, but never wider than the screen: `left: 50%` alone would give it half the screen to fit in, and
+       icons past the right edge could not be reached (the tray wraps instead, see Dock) */
+    width: max-content;
+    max-width: calc(100% - 24px);
     z-index: 11000;
     transition:
       transform var(--duration-slow) var(--ease-ios),

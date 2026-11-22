@@ -1,6 +1,6 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
-  import { expect, waitFor } from 'storybook/test'
+  import { expect, userEvent, waitFor } from 'storybook/test'
   import Dock from './Dock.svelte'
   import type { DockApp } from '../types'
 
@@ -72,4 +72,73 @@
   }}
 >
   {@render wallpaper()}
+</Story>
+
+{#snippet narrow(count: number, withRecents = false)}
+  <div
+    data-testid="dock-narrow"
+    style="display:flex;align-items:flex-end;justify-content:center;width:360px;height:200px;padding-bottom:12px;background:linear-gradient(135deg,#6e8efb,#c471ed);border-radius:var(--radius-xl)"
+  >
+    <Dock
+      testid="dock"
+      available={336}
+      apps={Array.from({ length: count }, (_, i) => ({
+        id: `a${i + 1}`,
+        name: `App ${i + 1}`,
+        icon: 'folder',
+        background: 'linear-gradient(180deg, #4da3ff, #0a84ff)'
+      }))}
+      recents={withRecents ? recents : []}
+    />
+  </div>
+{/snippet}
+
+<!-- More apps than a 360 wide screen has room for at full size: one row, the gaps tighten and the icons shrink (never below the 44 px target) until they fit. -->
+<Story
+  name="Many apps, narrow"
+  asChild
+  parameters={{ controls: { disable: true } }}
+  play={async ({ canvas }) => {
+    const tray = await canvas.findByTestId('dock')
+    const frame = canvas.getByTestId('dock-narrow').getBoundingClientRect()
+    await expect(tray.scrollWidth).toBeLessThanOrEqual(tray.clientWidth + 1)
+    const tops = new Set<number>()
+    for (const id of ['a1', 'a6']) {
+      const r = (await canvas.findByTestId(`dock-${id}`)).getBoundingClientRect()
+      tops.add(Math.round(r.top))
+      await expect(r.left).toBeGreaterThanOrEqual(frame.left)
+      await expect(r.right).toBeLessThanOrEqual(frame.right)
+      await expect(r.width).toBeGreaterThanOrEqual(44)
+    }
+    await expect(tops.size).toBe(1) // one row
+  }}
+>
+  {@render narrow(6)}
+</Story>
+
+<!-- So many that even the smallest icons do not fit: the Dock scrolls sideways inside itself, so every app can still be reached (by the pointer, and by the keyboard: focus scrolls the icon into view). -->
+<Story
+  name="Too many to fit"
+  asChild
+  parameters={{ controls: { disable: true } }}
+  play={async ({ canvas }) => {
+    const tray = await canvas.findByTestId('dock')
+    await expect(tray.scrollWidth).toBeGreaterThan(tray.clientWidth)
+    // Tab through every icon: each one that has focus is wholly inside the tray (real key presses: the browser scrolls a focused
+    // icon into view by its own rule, which can leave it half hidden at an edge)
+    const icons = ['a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7', 'a8', 'a9', 'notes']
+    await userEvent.tab()
+    for (const id of icons) {
+      const icon = await canvas.findByTestId(`dock-${id}`)
+      await expect(icon).toHaveFocus()
+      const t = tray.getBoundingClientRect()
+      const r = icon.getBoundingClientRect()
+      await expect(r.left).toBeGreaterThanOrEqual(t.left - 0.5)
+      await expect(r.right).toBeLessThanOrEqual(t.right + 0.5)
+      await expect(r.width).toBeGreaterThanOrEqual(44)
+      await userEvent.tab()
+    }
+  }}
+>
+  {@render narrow(9, true)}
 </Story>

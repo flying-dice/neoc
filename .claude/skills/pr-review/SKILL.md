@@ -243,8 +243,10 @@ itself is G1 (`bun run gate`).
   loopback; the Origin/Host guard covers every route; pairing codes stay single-use, short-lived and rate limited; app-ref
   files are sha256-verified and size-capped before install; the add-by-URL preview runs nothing; TLS and cookie flags are
   not weakened. New external links open only `http(s)`.
-- **The client runs no app code.** No app-specific knowledge in `client/` or `packages/ui`; nothing executable crosses the
-  wire; the client writes to the host only through the protocol (Bindings, events). Apps reach other apps only through tools.
+- **An app's client runs only in its own frame and reaches only its own backend.** No app-specific knowledge in `client/`
+  (outside the frame bridge) or `packages/ui`; a frame's app is decided by the shell's bridge, never by the message; nothing
+  executable crosses the wire for a view-tree app; the shell writes to the host only through the protocol (Bindings, events,
+  `app.call`). Apps reach other apps only through tools.
 
 **V4. UI structure, design and clean code**
 - Atomic placement makes sense (an organism isn't a page in disguise), the kit is used before a one-off, and a generic

@@ -1,0 +1,15 @@
+{
+  "name": "@vos-fixtures/tasks-svelte",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "A fixture app: a task list whose client is written in Svelte. `bun run build` writes dist/client.js.",
+  "scripts": {
+    "build": "vite build"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "svelte": "^5.57.2",
+    "vite": "^8.3.4"
+  }
+}

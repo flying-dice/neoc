@@ -4,7 +4,9 @@
   "type": "module",
   "workspaces": [
     "client",
-    "packages/*"
+    "packages/*",
+    "apps/*",
+    "e2e/apps/*"
   ],
   "scripts": {
     "dev": "bun scripts/dev.ts",

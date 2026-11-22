@@ -17,7 +17,7 @@ use vos_application::{
     PortError, ViewError, ViewService, ViewSink,
 };
 use vos_domain::{
-    api::{AgentList, AgentRow, AppList, AppState, AppSummary, AppWindow, DeviceList, DeviceRow},
+    api::{AgentList, AgentRow, AppEvent, AppList, AppState, AppSummary, AppWindow, DeviceList, DeviceRow},
     protocol::RpcError,
     source_label,
     ui::protocol::{
@@ -252,6 +252,7 @@ fn summary(a: &AppInfo) -> AppSummary {
             min_h: w.min_h,
         }),
         source: source_label(&a.source_url),
+        client: a.display.client,
     }
 }
 
@@ -274,6 +275,18 @@ fn rpc_err(e: &AppError) -> RpcError {
         AppError::NotRunning { .. } => -32005,
     };
     RpcError { code, message: e.to_string(), data: None }
+}
+
+/// What a client's `rpc` gets back when its handler fails: the handler's own message, as the app wrote it (an
+/// error it raised, `ctx:fail`, or a result it could not return), under the app-error code. Anything else (the app
+/// is not running, it is not installed) is an ordinary host error.
+fn handler_err(e: &AppError) -> RpcError {
+    match e {
+        AppError::Port(PortError::Rejected(message)) => {
+            RpcError { code: codes::APP_ERROR, message: message.clone(), data: None }
+        }
+        other => rpc_err(other),
+    }
 }
 
 /// A result as JSON, or an internal error.
@@ -338,6 +351,16 @@ struct RevokeParams {
 #[serde(deny_unknown_fields)]
 struct AppParams {
     app: AppId,
+}
+/// `app.call`: the shell forwards an app client's `rpc(method, args)`. `app` is the app of the frame the message
+/// came from (the shell decides it, never the client); `args` is whatever JSON the client sent.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CallParams {
+    app: AppId,
+    method: String,
+    #[serde(default)]
+    args: Value,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -418,6 +441,10 @@ impl RpcHandler for RpcHub {
                 let p: UrlParams = parse(params)?;
                 encode(&app.preview(&p.url).await.map_err(|e| rpc_err(&e))?)
             }
+            "app.call" => {
+                let p: CallParams = parse(params)?;
+                app.call_handler(&p.app, &p.method, p.args).await.map_err(|e| handler_err(&e))
+            }
             "app.enable" | "app.disable" | "app.deleteData" | "app.reload" => {
                 let p: AppParams = parse(params)?;
                 match method {
@@ -473,6 +500,15 @@ impl Shell for RpcHub {
     }
     async fn set_deep_links(&self, app: &AppId, patterns: Vec<String>) {
         tracing::debug!(%app, ?patterns, "shell: deep links (not shown yet)");
+    }
+    /// `app.emit`: every connected shell hears it and hands it to the frames of that app. The frames of other
+    /// apps never see it: the shell routes by the app named here.
+    async fn emit_event(&self, app: &AppId, name: &str, data: Value) {
+        if let Ok(event) =
+            serde_json::to_value(AppEvent { app: app.to_string(), name: name.to_owned(), data })
+        {
+            self.broadcast("app.event", &event);
+        }
     }
 }
 

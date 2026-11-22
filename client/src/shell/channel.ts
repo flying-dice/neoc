@@ -15,11 +15,17 @@ import { createRpcPeer, RpcError } from '../view/rpc/peer'
 type Transport = SessionOptions['transport']
 type Params = Record<string, unknown>
 
+/** How a call waits for its answer. */
+export interface CallOptions {
+  /** Give up after this long (default: the channel's); 0 waits for the host's answer or the end of the connection. */
+  timeoutMs?: number
+}
+
 export interface HostChannel {
   /** Hand this to the `Session`: it never sees the shell's responses. */
   readonly transport: Transport
   /** A host-management request (`app.list`, ...). Rejects with the host's message on a JSON-RPC error. */
-  call(method: string, params?: Params): Promise<unknown>
+  call(method: string, params?: Params, options?: CallOptions): Promise<unknown>
   /** Host notifications that no window owns. */
   onNotification(listener: (method: string, params: Params) => void): () => void
 }
@@ -102,8 +108,8 @@ export function createHostChannel(base: Transport, timeoutMs = 30_000): HostChan
 
   return {
     transport,
-    call(method: string, params: Params = {}): Promise<unknown> {
-      return peer.request<unknown>(method, params).catch((e: unknown) => {
+    call(method: string, params: Params = {}, options?: CallOptions): Promise<unknown> {
+      return peer.request<unknown>(method, params, options).catch((e: unknown) => {
         throw asHostError(e)
       })
     },
