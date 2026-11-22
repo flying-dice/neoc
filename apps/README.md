@@ -7,9 +7,10 @@ that says which methods the client may call, with which params and what they ret
 the typed `api` client, the Luau router, and the Luau interface the backend implements. The developer writes
 the client, and the implementation of the handlers; nothing else on either side of the RPC.
 
-Two apps show it: `e2e/apps/tasks-svelte` and `e2e/apps/tasks-react`, the same task list written once in each framework, on
-the same contract and the same backend (they are test fixtures, not in Discover). The older view-tree apps,
-`apps/calculator` and `apps/agents`, have no client: their Luau describes the screens instead (see "View-tree apps" below;
+`apps/calculator-web` is the reference app to copy: the Calculator, a Svelte keypad drawn with the kit's `ui-button`, on a
+Luau backend with one method (its README says how it is laid out and where its state lives). `e2e/apps/tasks-svelte` and
+`e2e/apps/tasks-react` are the same task list written once in each framework, on the same contract and the same backend
+(test fixtures, not in Discover). The older view-tree apps, `apps/calculator` and `apps/agents`, have no client: their Luau describes the screens instead (see "View-tree apps" below;
 NEOC-298 ports them and retires that model). The backend API is typed in `types/generated/vos.d.luau` (generated from the
 Rust schema by `bun run codegen`; never edit it): every `app.*` call and every `std:`/`lib:`/`vnd:` module an app may
 `require`. It is the reference; hover docs show in an editor running luau-lsp with
@@ -167,6 +168,13 @@ host.on('tasks.changed', () => reload())
 ```
 
 Set `data-testid` on every interactive element yourself (`<appId>-<thing>`).
+
+**Arguments are copied to the host page with `postMessage`**, so they must be plain data: a framework's reactive proxy is not
+(`Failed to execute 'postMessage' on 'Window': #<Object> could not be cloned`). In Svelte 5 keep a value you send back in
+`$state.raw` (as the Calculator keeps its screen) or send `$state.snapshot(value)`; in Vue, `toRaw(value)`.
+
+**In a shell window the window's grabber (its three dots) is drawn over the top of the frame**: keep the top 28 px clear of
+text and controls (the Calculator pads its top by that much).
 
 | | |
 |---|---|
@@ -554,7 +562,7 @@ stops without it unless you set `check: false`) and StyLua (`cargo install stylu
 
 An app that is a Vite project:
 
-1. **Project.** Copy `e2e/apps/tasks-svelte` (or `tasks-react`) to `apps/<id>` without its `node_modules`, `.app` and `dist`.
+1. **Project.** Copy `apps/calculator-web` (or `e2e/apps/tasks-svelte`, `tasks-react`) to `apps/<id>` without its `node_modules`, `.app` and `dist`.
    Rename the package in its `package.json` (`"name": "@vos-apps/<id>"`: two workspace packages with one name make
    `bun install` fail), then set `x-app` (id, icon, tint, window), the title and version `0.1.0` in `openrpc.json`. Keep the
    project's `.gitignore` (`.app` and `dist`: the repository's own ignores `dist` but not `.app`). Run `bun install` in the

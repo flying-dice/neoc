@@ -24,9 +24,10 @@ two products, and one set of rules for both:
     `app.luau` with darklua (types and comments stripped) and builds the client with the app's own package; the host runs
     the backend in one `neoc-vm` VM per app (the `vos-lua` adapter), loaded from an app ref over `file://`, `http://` or
     `https://`, serves the client's files at `/apps/<id>/static/` and holds it in a frame of the app's window, or of its
-    own page at `/apps/<id>`. The Calculator and Agents are still **view-tree
-    apps** (no client: their Luau describes the screens), until NEOC-298 ports them. Examples: `e2e/apps/tasks-svelte`,
-    `e2e/apps/tasks-react`; `apps/README.md` is the reference for writing one.
+    own page at `/apps/<id>`. Examples: `apps/calculator-web` (the Calculator built this way: a Svelte keypad on the
+    kit, its arithmetic in Luau), `e2e/apps/tasks-svelte`, `e2e/apps/tasks-react`; `apps/README.md` is the reference for
+    writing one. The Calculator (`apps/calculator`) and Agents are still **view-tree apps** (no client: their Luau
+    describes the screens) until NEOC-298 retires them; `calculator-web` then takes the id `calculator`.
   - **The client** (`client/`, a Vite + Svelte 5 PWA): the shell. It owns pairing, the desktop, windows, Discover and
     Settings, and runs each app's client in a sandboxed frame of its own (`organisms/AppFrame.svelte`, `shell/hostBridge.ts`);
     the standalone host page of an app is `wrapper/main.svelte.ts`, over the same registry of host services (`shell/hostServices.ts`);
@@ -462,7 +463,7 @@ A change is done when all of these hold:
 ## Adding things
 
 - **A neoc module:** [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-new-module).
-- **A vos app:** `apps/README.md`, "Adding an app". An app is a Vite project (copy `e2e/apps/tasks-svelte`): from its first
+- **A vos app:** `apps/README.md`, "Adding an app". An app is a Vite project (copy `apps/calculator-web`): from its first
   commit it has the contract `openrpc.json` (with `x-app`, a `window` min size, and a comment in the README of the app when the
   layout needs more than 320x240; no `app.json`), a backend `server/main.luau` that implements `Handlers`, a client with the
   plugin in its `vite.config.ts`, `lint` and `typecheck` scripts that cover the Luau, a `JOURNEYS.md` plus
