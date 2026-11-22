@@ -477,7 +477,7 @@ A change is done when all of these hold:
   `ui-<name>.stories.ts` with every state and a `play` function for the keyboard, and its entry in `packages/kit/README.md`
   ("Adding a component"). `bun run build:kit` writes `/kit/kit.js`, `/kit/tokens.css` and the Custom Elements Manifest
   into `client/public/kit/` (generated, not committed). The tokens are generated from `packages/ui`'s, never copied.
-- **A shell kit component or renderer adapter** (`packages/ui`, the shell and the view-tree renderer): a component in the right atomic layer of `packages/ui` with a required `testid` prop
+- **A shell kit component or renderer adapter** (view-tree apps, until NEOC-298): a component in the right atomic layer of `packages/ui` with a required `testid` prop
   and a story; an adapter under `client/src/view/<layer>/` that takes `AdapterProps`, reads props through `useView().view`
   inside `$derived`, renders children with `<Children>`, and is registered in `client/src/view/kit.ts`; the component's schema
   (props, events, slots, accessibility rules) is a Rust change in `vos-domain` first, then `bun run codegen`

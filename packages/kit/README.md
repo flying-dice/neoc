@@ -16,15 +16,22 @@ copy of it to every app's frame, so a change here reaches every installed app wi
 
 ## Using it from an app
 
-An installed app is its own Vite build output, served by the host as static files, and runs in two ways: **embedded** in a
-shell window's iframe, and **standalone** as a full-screen page at `/apps/<id>` (the host's minimal page loads the same
-sandboxed app). The vos Vite plugin puts the `<link>` and `<script>` tags for `/kit/tokens.css` and `/kit/kit.js` into the
-app's `index.html` at build time; the app never bundles the kit, and the host serves one copy. The kit needs no host to
-draw. System settings reach the app's document through the host's bridge in both modes: `data-theme="light|dark"` (and
-`color-scheme`) on `<html>`, kept current; the kit also reads `data-reduce-motion` on `<html>`, which zeroes the motion tokens. Until the host has set a
-theme (and with none at all, for example in Storybook), the tokens follow the browser's `prefers-color-scheme`, and an
-explicit `data-theme` always wins. Components an app uses for its own page (a banner, a list, a field) work the same
-everywhere. Sheets, alerts, toasts and the notification banner (how the shell shows an app's notification) are not kit components: only the shell draws them, over an embedded app.
+An app is its own Vite build, served by the host at `/apps/<id>/static/` and run in a sandboxed frame, embedded in a
+shell window or on its own page at `/apps/<id>` (`apps/README.md`). The host serves the kit's files at `/kit/tokens.css` and
+`/kit/kit.js`. **The vos plugin does not put their tags into the app's page yet**, so until it does the app adds them to its
+own `index.html` at build time, at the top of the head, before its own styles and script:
+`<link rel="stylesheet" href="/kit/tokens.css" crossorigin>` and `<script src="/kit/kit.js"></script>`. `apps/calculator-web/vite.config.ts`
+does this with a ten-line Vite plugin; writing the tags into `index.html` by hand would make Vite try to bundle them. The
+stylesheet is loaded `crossorigin`, as Vite loads the app's own: the frame has an opaque origin, so the host lets `Origin: null`
+read `/kit/` (GET and HEAD only) and answers with `Access-Control-Allow-Origin: *`, and the page, and a checker such as axe
+running in it, can read the stylesheet's rules. If the stylesheet fails to load, the kit's buttons draw with no fill, which
+leaves a keypad invisible (NEOC-341). The app never bundles the kit, and the host serves one copy. The kit needs no host to draw. The host's bridge sets `data-theme="light|dark"` and `color-scheme` on the frame's
+`<html>` from the appearance (the shell's, or on the app's own page the system setting) and keeps them current, in both modes. The kit also reads `data-reduce-motion` on `<html>`, which
+zeroes the motion tokens; the host does not set that one yet. With no `data-theme` (a kit loaded outside any vos page, for
+example in Storybook), the tokens follow the browser's `prefers-color-scheme`, and an explicit `data-theme` always wins.
+Components an app uses for its own page (a banner, a list, a field) work the same everywhere. Sheets, alerts, toasts and the
+notification banner (how the shell shows an app's notification) are not kit components: only the shell draws them, over an
+embedded app.
 
 The app writes no theme code and imports nothing:
 
@@ -85,8 +92,10 @@ handler has no role; the element handles its own keys, so silence that warning f
   `form`, `labels`, `validity`, `validationMessage`, `willValidate`, `checkValidity()`, `reportValidity()` and
   `setCustomValidity(message)` (the way an app shows its own error). A `ui-button type="submit"` submits the form with its
   own `name` and `value` in the data, but a native submit button is the only thing that can be `event.submitter`: for a
-  kit button it is `null`. In an app frame the host's sandbox allows forms, so `submit` fires and Enter and validation work;
-  call `preventDefault()` in your handler (a submission nobody prevents sends nothing and leaves the frame on an error page).
+  kit button it is `null`. In an app frame the host's sandbox allows forms, so `submit` fires and Enter and validation work,
+  and the host's bridge cancels a submission your handlers did not prevent, so nothing is sent and the frame stays on its page;
+  call `preventDefault()` in your handler to take it over (`form.submit()` from a script, or a form inside a shadow root,
+  still navigates the frame, sending no data).
 - **Events** are the platform's names. `change` (the person committed a value) carries a `detail` on `ui-toggle`,
   `ui-check` (`{ checked }`) and `ui-segmented` (`{ value }`); on `ui-text-field` it is the plain event (read `value`).
   `input` is each keystroke of a field. `press` is a `ui-row` tapped (see below). `click` is the ordinary click: it bubbles
