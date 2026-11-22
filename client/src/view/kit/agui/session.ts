@@ -13,6 +13,7 @@
  */
 import { EventType, type JsonPatchOperation } from '@ag-ui/core'
 import { messageOf } from '../../errors'
+import { randomId } from '../../../lib/randomId'
 import { applyPatch } from './jsonPatch'
 import {
   emptyThreadState,
@@ -197,7 +198,7 @@ export class ChatSession {
     }
     this.fetchImpl = o.fetch ?? ((input, init) => globalThis.fetch(input, init))
     this.base = o.baseUrl ?? ''
-    this.newId = o.newId ?? (() => crypto.randomUUID())
+    this.newId = o.newId ?? randomId
   }
 
   // ── observation ──────────────────────────────────────────────────────────────────────────────────────────
