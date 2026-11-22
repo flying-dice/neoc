@@ -131,6 +131,36 @@ print(object:len(), object:has("name"))
 local list = json.array()
 list:push(1)
 list:set(1, "one")
+-- a path is object keys and 1-based array indexes; a node is a handle, the null sentinel, a scalar or nil
+print(object:get("name"), list:get(1), object:get("name", 1, "x"))
+local name = object:get("name")
+if type(name) == "string" then
+	print(name:upper())
+end
+for _, key in ipairs(object:keys()) do
+	print(key:upper())
+end
+
+-- a parsed document is a handle, the null sentinel or a scalar: narrow it before calling a method
+local document = assert(serde_json.from_str('{"users": [{"name": "Ada"}]}')) :: lib_json_Object
+print(document:get("users", 1, "name"), document:keys())
+local rows = assert(serde_json.from_str("[1, 2]")) :: lib_json_Array
+print(rows:len(), rows:get(2))
+local scalar = assert(serde_json.from_str("42"))
+if type(scalar) == "number" then
+	print(scalar + 1)
+end
+print(serde_json.from_str("null") == json.null)
+-- a reader in, a writer out (`fs.open` is `any`; the cast names the handle a writer is)
+print(serde_json.from_reader(io.from_string("[1]")))
+local out = assert(fs.open({ path = "out.json", mode = "w" })) :: std_io_WriterHandle
+print(serde_json.to_writer({ a = 1 }, out))
+print(serde_yaml.decode(io.from_string("a: 1")), serde_yaml.encode_to({ a = 1 }, out))
+print(toml.decode(io.from_string("a = 1")), toml.encode_to({ a = 1 }, out))
+print(quick_xml.decode(io.from_string("<a>1</a>")), quick_xml.encode_to({ a = 1 }, out))
+-- the null sentinel is tested by value
+local _null: lib_json_JsonNull = json.null
+print(document:get("missing") == json.null)
 
 -- constructors live on a sub-table of the module, fields read as plain values
 local parsed = assert(url.Url.parse("https://example.com/a?b=1"))
@@ -220,6 +250,11 @@ print(network_databases)
 -- a handler reads its request, and may name the type of one
 local function describe(req: vnd_hyper_Request)
 	print(req.method, req.path, req.body, req.is_json, req.headers, req.json, req:header("accept"))
+	-- the parsed body is nil when it is empty or not JSON
+	local body = req.json
+	if body ~= nil then
+		print((body :: lib_json_Object):get("id"))
+	end
 end
 print(describe)
 

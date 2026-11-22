@@ -161,7 +161,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         r.field("headers", "LuaValue", "The request headers as a `{ [name]: value }` table.");
         r.field(
             "json",
-            "LuaValue",
+            &format!("{} | nil", crate::lua::lib::json::JSON_VALUE),
             concat!(
                 "The body parsed as JSON (a JSON handle or scalar), ",
                 "or nil when it is empty or invalid."
@@ -277,7 +277,8 @@ impl UserData for Request {
             }
             Ok(Value::Table(t))
         });
-        // TODO: clean-code - 0.55 - COUPLING: vnd:hyper reaches directly into vnd::serde_json::parse_to_handle; promote to a shared bridge in lib or accept it as a constructor dep.
+        // vnd:hyper calls vnd:serde_json's `parse_to_handle` directly. It is one short call into a function that
+        // already exists (its other caller is `from_str`), so a shared bridge module would add a file for nothing.
         fields.add_field_method_get("json", |lua, this| {
             if this.inner.body.is_empty() {
                 return Ok(Value::Nil);
