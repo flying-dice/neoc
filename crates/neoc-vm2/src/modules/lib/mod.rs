@@ -12,3 +12,4 @@ pub mod text;
 pub mod unicode;
 pub mod regex;
 pub mod diff;
+pub mod mime;
