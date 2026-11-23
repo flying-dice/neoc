@@ -43,6 +43,7 @@ local fs = require("std:fs")
 local io = require("std:io")
 local net = require("std:net")
 local path = require("std:path")
+local process = require("std:process")
 local task = require("std:task")
 local thread = require("std:thread")
 local time = require("std:time")
@@ -289,6 +290,31 @@ elseif portable_pty.error_kind(spawn_err) == "spawn" then
 	print("the shell could not be started")
 end
 print(portable_pty.spawn_command({ program = "ls", args = { "-l" }, cwd = "/tmp" }))
+
+-- a child process: its input and its two outputs as bytes until the end (`nil, nil`), and how it ended
+local helper, helper_err = process.spawn({
+	program = "cat",
+	args = { "-u" },
+	cwd = "/tmp",
+	env = { NO_COLOR = "1" },
+	clear_env = false,
+	stdin = "piped",
+	stdout = "piped",
+	stderr = "null",
+})
+if helper then
+	print(helper:write("hello\n"), helper:close_stdin(), (helper:id() or 0) + 1)
+	local reply, reply_err = helper:read(4096)
+	print(if reply then reply:upper() else process.error_kind(reply_err), helper:read_stderr())
+	helper:kill()
+	local ended = helper:wait()
+	if ended then
+		print((ended.code or 0) + (ended.signal or 0), ended.success)
+	end
+	helper:close()
+elseif process.error_kind(helper_err) == "spawn" then
+	print("the helper could not be started")
+end
 
 -- the credential store: a mock here; no credential is an answer (`nil, nil`), and a failure has a kind
 local credentials = keyring.mock()

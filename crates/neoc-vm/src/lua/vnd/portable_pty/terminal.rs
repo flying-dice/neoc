@@ -36,6 +36,7 @@ use tokio::sync::{Notify, mpsc, oneshot, watch};
 
 use super::error::{Kind, PtyError};
 use super::options::Command;
+use crate::lua::command_options::existing_dir;
 
 /// The most output held between the terminal and the script. Past it the reader waits, the operating system's own
 /// buffer fills, and the process waits in its write: a script that reads slowly slows the process down instead of
@@ -418,12 +419,7 @@ fn builder(command: Command) -> Result<CommandBuilder, PtyError> {
         None => CommandBuilder::new_default_prog(),
     };
     if let Some(cwd) = &command.cwd {
-        if !std::path::Path::new(cwd).is_dir() {
-            return Err(PtyError::new(
-                Kind::Spawn,
-                format!("the directory `{cwd}` does not exist or is not a directory"),
-            ));
-        }
+        existing_dir(cwd).map_err(|message| PtyError::new(Kind::Spawn, message))?;
         builder.cwd(cwd);
     }
     for (name, value) in &command.env {
