@@ -444,68 +444,50 @@ pub fn delay(lua: &Lua, after: Duration, routine: Routine, args: MultiValue) -> 
 
 #[cfg(test)]
 pub(crate) mod tests {
-    //! neoc-vm's `std:task` tests, against the scheduler. `spawn`, `defer`, `delay` and `await` have no binding in
-    //! `std:task` yet (see that module), so [`install_task_functions`] gives the scripts here the ones neoc-vm had,
-    //! written with plain mlua.
+    //! neoc-vm's `std:task` tests, through `std:task` itself. [`install_task_functions`] spells it as the scripts
+    //! here do, and adds what the scheduler takes that the module does not offer: a coroutine in a function's
+    //! place, and arguments to call it with.
 
-    use mlua::{Lua, MultiValue, UserData, UserDataMethods, Value};
+    use mlua::{Lua, MultiValue, Value};
 
     use std::time::Duration;
 
-    use super::{Outcome, Routine, Scheduler, TaskHandle};
-    use crate::lifecycle::{Role, async_function};
+    use super::{Routine, Scheduler, TaskHandle};
+    use crate::modules::std::task::task::Task;
 
-    struct Handle(TaskHandle);
-
-    impl UserData for Handle {
-        fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-            methods.add_method("cancel", |_, this, ()| Ok(this.0.cancel()));
-            methods.add_method("is_finished", |_, this, ()| Ok(this.0.is_finished()));
+    fn routine(value: Value) -> mlua::Result<Routine> {
+        match value {
+            Value::Function(function) => Ok(Routine::Function(function)),
+            Value::Thread(thread) => Ok(Routine::Coroutine(thread)),
+            _ => Err(mlua::Error::runtime("expected a function or a thread")),
         }
     }
 
-    /// Globals `spawn`, `defer`, `delay` (each returns a handle with `cancel` and `is_finished`), `await(handle)`
-    /// (the task's values, or `nil` and the error, `"cancelled"` for a cancelled one) and `wait(secs)`.
+    /// Globals `spawn`, `defer`, `delay` and `wait` (those of `std:task`) and `await(task)` (`task:await()`); and
+    /// `spawn_with`, `defer_with` and `delay_with`, the scheduler's own entry points, which also take a coroutine
+    /// and the arguments to call it with.
     pub(crate) fn install_task_functions(lua: &Lua) {
         let globals = lua.globals();
-        let routine = |value: Value, op: &str| match value {
-            Value::Function(function) => Ok(Routine::Function(function)),
-            Value::Thread(thread) => Ok(Routine::Coroutine(thread)),
-            _ => Err(mlua::Error::runtime(format!("{op}: expected a function or a thread"))),
-        };
+        let task = crate::modules::build(lua, "std:task").expect("std:task").unwrap();
+        for name in ["spawn", "defer", "delay", "wait"] {
+            globals.set(name, task.get::<Value>(name).unwrap()).unwrap();
+        }
+        let wait: Value = lua.load("return function(task) return task:await() end").eval().unwrap();
+        globals.set("await", wait).unwrap();
+
+        let task_of = |handle: TaskHandle| Task::from(handle);
         let spawn = lua.create_function(move |lua, (f, args): (Value, MultiValue)| {
-            super::spawn(lua, routine(f, "spawn")?, args).map(Handle)
+            super::spawn(lua, routine(f)?, args).map(task_of)
         });
-        globals.set("spawn", spawn.unwrap()).unwrap();
+        globals.set("spawn_with", spawn.unwrap()).unwrap();
         let defer = lua.create_function(move |lua, (f, args): (Value, MultiValue)| {
-            super::defer(lua, routine(f, "defer")?, args).map(Handle)
+            super::defer(lua, routine(f)?, args).map(task_of)
         });
-        globals.set("defer", defer.unwrap()).unwrap();
+        globals.set("defer_with", defer.unwrap()).unwrap();
         let delay = lua.create_function(move |lua, (secs, f, args): (f64, Value, MultiValue)| {
-            super::delay(lua, Duration::from_secs_f64(secs), routine(f, "delay")?, args).map(Handle)
+            super::delay(lua, Duration::from_secs_f64(secs), routine(f)?, args).map(task_of)
         });
-        globals.set("delay", delay.unwrap()).unwrap();
-        let wait = async_function(lua, Role::Wait, |lua, handle: mlua::UserDataRef<Handle>| {
-            let task = handle.0.clone();
-            async move {
-                Ok(match task.outcome().await {
-                    Outcome::Returned(values) => MultiValue::from_vec(values),
-                    Outcome::Failed(error) => {
-                        MultiValue::from_vec(vec![Value::Nil, Value::String(lua.create_string(error)?)])
-                    }
-                    Outcome::Cancelled => {
-                        MultiValue::from_vec(vec![Value::Nil, Value::String(lua.create_string("cancelled")?)])
-                    }
-                })
-            }
-        });
-        globals.set("await", wait.unwrap()).unwrap();
-        let sleep = async_function(lua, Role::Timer, |_, secs: f64| async move {
-            let start = tokio::time::Instant::now();
-            tokio::time::sleep(Duration::from_secs_f64(secs)).await;
-            Ok(start.elapsed().as_secs_f64())
-        });
-        globals.set("wait", sleep.unwrap()).unwrap();
+        globals.set("delay_with", delay.unwrap()).unwrap();
     }
 
     fn rt() -> tokio::runtime::Runtime {
@@ -554,7 +536,7 @@ pub(crate) mod tests {
     }
 
     /// From neoc's Luau suite: the first slice runs before `spawn` returns, arguments arrive with their holes, and
-    /// every value a task returns reaches whoever awaits it, each time.
+    /// the first value a task returns reaches whoever awaits it, each time.
     #[test]
     fn spawn_runs_its_first_slice_at_once_and_passes_arguments_and_results() {
         rt().block_on(async {
@@ -569,16 +551,19 @@ pub(crate) mod tests {
                     assert(order[1] == "spawned" and order[2] == "caller")
 
                     assert(await(spawn(function(...) return select("#", ...) end)) == 0)
-                    local n, a, b, c = await(spawn(function(...) return select("#", ...), ... end, 1, nil, 3))
-                    assert(a == 1 and b == nil and c == 3 and n == 3)
-                    assert(await(defer(function(x, y) return x .. y end, "x", "y")) == "xy")
-                    assert(await(delay(0, function(x) return x end, 42)) == 42)
+                    local got = await(spawn_with(function(...) return { n = select("#", ...), ... } end, 1, nil, 3))
+                    assert(got[1] == 1 and got[2] == nil and got[3] == 3 and got.n == 3)
+                    assert(await(defer_with(function(x, y) return x .. y end, "x", "y")) == "xy")
+                    assert(await(delay_with(0, function(x) return x end, 42)) == 42)
 
                     local done = spawn(function() return "done" end)
                     assert(await(done) == "done" and await(done) == "done" and done:is_finished())
                     assert(done:cancel() == false)
+                    -- the first value only, and no error beside it
                     local one, two, three = await(spawn(function() return 1, 2, 3 end))
-                    assert(one == 1 and two == 2 and three == 3)
+                    assert(one == 1 and two == nil and three == nil)
+                    local none, err = await(spawn(function() end))
+                    assert(none == nil and err == nil)
 
                     -- a table a task returns is the table itself, not a copy
                     local t = {}
@@ -652,9 +637,12 @@ pub(crate) mod tests {
                     r#"
                     local co = coroutine.create(function() end)
                     coroutine.resume(co)
-                    local _, dead = pcall(spawn, co)
-                    local _, running = pcall(spawn, coroutine.running())
+                    local _, dead = pcall(spawn_with, co)
+                    local _, running = pcall(spawn_with, coroutine.running())
                     local _, number = pcall(defer, 42)
+                    -- `std:task` itself takes a function only
+                    local _, thread = pcall(spawn, coroutine.create(function() end))
+                    assert(tostring(thread):find("std:task.spawn: argument #1 'body': expected a function", 1, true))
                     return tostring(dead), tostring(running), tostring(number)
                 "#,
                 )
@@ -663,7 +651,7 @@ pub(crate) mod tests {
                 .expect("refusals");
             assert!(dead.contains("cannot schedule a dead coroutine"), "{dead}");
             assert!(running.contains("cannot schedule a running coroutine"), "{running}");
-            assert!(number.contains("defer: expected a function or a thread"), "{number}");
+            assert!(number.contains("std:task.defer: argument #1 'body': expected a function"), "{number}");
         });
     }
 
@@ -681,7 +669,7 @@ pub(crate) mod tests {
                         return a .. b
                     end)
                     local _, first = coroutine.resume(co, "x")
-                    return first .. await(spawn(co, "y"))
+                    return first .. await(spawn_with(co, "y"))
                 "#,
                 )
                 .eval_async()
@@ -729,7 +717,7 @@ pub(crate) mod tests {
                     local before = h:is_finished()
                     h:cancel()
                     local r, e = await(h)
-                    return r == nil, e, not before and h:is_finished()
+                    return r == nil, e.kind, not before and h:is_finished()
                 "#,
                 )
                 .eval_async()
@@ -797,7 +785,7 @@ pub(crate) mod tests {
                         wait(0.05)
                         return ran
                     end)
-                    return await(h), select(2, await(dh))
+                    return await(h), select(2, await(dh)).kind
                 "#,
                 )
                 .eval_async()
@@ -821,7 +809,7 @@ pub(crate) mod tests {
                     r#"
                     local ran = false
                     local h = spawn(function() ran = true end)
-                    return ran, select(2, await(h))
+                    return ran, select(2, await(h)).kind
                 "#,
                 )
                 .eval_async()
@@ -871,7 +859,8 @@ pub(crate) mod tests {
                     local r2, e2 = await(later)
                     local r3, e3 = await(delayed)
                     local after = spawn(function() wait(0) return "still runs" end)
-                    return r1 == nil and r2 == nil and r3 == nil, e1, e2, e3, await(after)
+                    assert(e1.kind == "failed" and tostring(e1) == "std:task.Task:await: failed: " .. e1.reason)
+                    return r1 == nil and r2 == nil and r3 == nil, e1.reason, e2.reason, e3.reason, (await(after))
                 "#,
                 )
                 .eval_async::<(bool, String, String, String, String)>();
@@ -920,7 +909,7 @@ pub(crate) mod tests {
             crate::install_runtime_state(&lua, crate::Life::new());
             install_task_functions(&lua);
             let env = crate::script_env::new_env(&lua).expect("env");
-            for name in ["spawn", "await", "wait"] {
+            for name in ["spawn_with", "await", "wait"] {
                 env.set(name, lua.globals().get::<Value>(name).unwrap()).unwrap();
             }
             crate::script_env::freeze(&lua, &env).expect("freeze");
@@ -928,10 +917,10 @@ pub(crate) mod tests {
                 &lua,
                 r#"
                 local co = coroutine.create(function() wait(0.05) return "ran" end)
-                local h = spawn(co)
+                local h = spawn_with(co)
                 local resumed, why = coroutine.resume(co)
-                local _, foreign = pcall(spawn, coroutine.running())
-                return resumed, why, tostring(foreign), await(h)
+                local _, foreign = pcall(spawn_with, coroutine.running())
+                return resumed, why, tostring(foreign), (await(h))
                 "#,
             )
             .set_environment(env)

@@ -1,8 +1,57 @@
--- std:task: what both VMs offer. `spawn`, `defer`, `delay` and `Task:await` are neoc-vm's only for now
--- (task.vm2.luau), and without them there is no task to cancel.
+-- std:task: what both VMs offer. A task's body is a function without arguments, and a task that returns one value
+-- (what neoc-vm2 keeps of them: task.vm2.luau).
 local task = require("std:task")
 
 local slept = task.wait(0.02)
+
+-- the first slice runs inside `spawn`, the rest alongside the caller
+local order = {}
+local spawned = task.spawn(function()
+	table.insert(order, "spawned")
+	task.wait(0)
+	table.insert(order, "resumed")
+	return "done"
+end)
+table.insert(order, "caller")
+local done = spawned:await()
+
+-- deferred tasks run after the batch, in the order they were queued
+local first = task.defer(function()
+	table.insert(order, "first")
+end)
+local second = task.defer(function()
+	table.insert(order, "second")
+end)
+table.insert(order, "batch")
+first:await()
+second:await()
+
+local late = task.delay(0.01, function()
+	table.insert(order, "delayed")
+	return 42
+end)
+table.insert(order, "before")
+local answer = late:await()
+
+-- a table a task returns is that table
+local shared = {}
+local same = task.spawn(function()
+	task.wait(0)
+	return shared
+end):await() == shared
+
+-- cancelling: once, and a cancelled task never runs and has no value
+local ran = false
+local pending = task.delay(60, function()
+	ran = true
+end)
+local before = pending:is_finished()
+local cancelled, again = pending:cancel(), task.cancel(pending)
+local none, why = pending:await()
+
+local failed, reason = task.spawn(function()
+	error("boom")
+end):await()
 
 return {
 	type(task.wait),
@@ -16,4 +65,18 @@ return {
 	(pcall(task.cancel, 42)),
 	(pcall(task.cancel, nil)),
 	(pcall(task.cancel, {})),
+	order,
+	done,
+	answer,
+	same,
+	spawned:is_finished(),
+	spawned:cancel(),
+	(spawned:await()),
+	{ before, cancelled, again, pending:is_finished(), ran },
+	none == nil and why ~= nil,
+	failed == nil and reason ~= nil,
+	-- what is not a function is no task
+	(pcall(task.spawn, 42)),
+	(pcall(task.defer, nil)),
+	(pcall(task.delay, 0, "body")),
 }
