@@ -30,3 +30,4 @@ pub mod test;
 pub mod text;
 pub mod unicode;
 pub mod url;
+pub mod vcr;
