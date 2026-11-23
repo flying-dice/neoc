@@ -67,6 +67,7 @@ use serde_json::Value as Json;
 use tokio::sync::OnceCell;
 use tracing::Instrument;
 
+use crate::lua::error_text;
 use crate::lua::facade::Module;
 use crate::lua::lifecycle::{Life, Role, async_method};
 use crate::lua::sandbox::{from_err, ok};
@@ -120,13 +121,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "error_kind",
         &[("err", "string?")],
         "The stable kind inside an error string returned by a `vnd:bollard` function, or `nil` when the string is not one of theirs (or is `nil`, so `bollard.error_kind(err)` takes the `err` of any call). Such a string is `bollard.<function>: <kind>: <message>`. Kinds: `invalid_input` (an argument or option was refused, by this module or by Docker), `connect` (no Docker daemon could be reached: no socket, or nothing answers), `timed_out` (the daemon did not answer within the client's `timeout`), `not_found` (no such container, image, volume or network), `conflict` (the object's state does not allow it: a name in use, a running container, a volume in use), `api` (any other error status from Docker), `bad_response` (Docker's answer could not be read), `too_large` (a result longer than this module reads into memory), `other`. The message is Docker's own where Docker answered; it is for a log and may change.",
-        |_, err: Option<mlua::LuaString>| Ok(err.and_then(|err| error::kind_of(&err.to_string_lossy()).map(str::to_owned))),
+        error_text::reader(error::kind_of),
     )?;
     m.func(
         "error_message",
         &[("err", "string?")],
         "The message inside an error string returned by a `vnd:bollard` function: everything after the kind in `bollard.<function>: <kind>: <message>`, or `nil` when the string is not one of theirs (or is `nil`, so `bollard.error_message(err)` takes the `err` of any call), the same rule as `error_kind`. It is Docker's own sentence where Docker answered (`No such container: web`). It is for showing or logging as it is: branch on `error_kind`, not on these words, which differ between platforms and versions. Read it here instead of taking the error string apart.",
-        |_, err: Option<mlua::LuaString>| Ok(err.and_then(|err| error::message_of(&err.to_string_lossy()).map(str::to_owned))),
+        error_text::reader(error::message_of),
     )?;
 
     m.userdata("Client", |c| {

@@ -47,6 +47,7 @@ use std::sync::Arc;
 
 use mlua::{Lua, Table, UserData, UserDataMethods, Value};
 
+use crate::lua::error_text;
 use crate::lua::facade::Module;
 use crate::lua::lifecycle::{Life, Role, async_function, async_method, hold, idle};
 use crate::lua::sandbox::{from_err, ok};
@@ -106,13 +107,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "error_kind",
         &[("err", "string?")],
         "The stable kind inside an error string returned by a `vnd:portable_pty` function, or `nil` when the string is not one of theirs (or is `nil`, so `portable_pty.error_kind(err)` takes the `err` of any call). Such a string is `portable_pty.<function>: <kind>: <message>`. Kinds: `invalid_input` (an argument or option was refused), `spawn` (the command could not be started), `closed` (the terminal was closed), `io` (reading from the terminal or writing to it failed), `other`. The message is the crate's or the operating system's own; it is for a log and may change.",
-        |_, err: Option<mlua::LuaString>| Ok(err.and_then(|err| error::kind_of(&err.to_string_lossy()).map(str::to_owned))),
+        error_text::reader(error::kind_of),
     )?;
     m.func(
         "error_message",
         &[("err", "string?")],
         "The message inside an error string returned by a `vnd:portable_pty` function: everything after the kind in `portable_pty.<function>: <kind>: <message>`, or `nil` when the string is not one of theirs (or is `nil`, so `portable_pty.error_message(err)` takes the `err` of any call), the same rule as `error_kind`. It is the crate's or the operating system's wording. It is for showing or logging as it is: branch on `error_kind`, not on these words, which differ between platforms and versions. Read it here instead of taking the error string apart.",
-        |_, err: Option<mlua::LuaString>| Ok(err.and_then(|err| error::message_of(&err.to_string_lossy()).map(str::to_owned))),
+        error_text::reader(error::message_of),
     )?;
 
     m.userdata("Pty", |p| {

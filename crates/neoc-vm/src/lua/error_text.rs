@@ -45,6 +45,14 @@ pub(crate) fn read<'a, K>(
     Some((kind(text.kind)?, text.message))
 }
 
+/// The body of a module's `error_kind` or `error_message`: `part` of the `err` a script passed, or `nil` for `nil`
+/// and for a string `part` does not know. A string that is not UTF-8 is read lossily, so it is never a module's.
+pub(crate) fn reader(
+    part: fn(&str) -> Option<&str>,
+) -> impl Fn(&mlua::Lua, Option<mlua::LuaString>) -> mlua::Result<Option<String>> + Send + 'static {
+    move |_, err| Ok(err.and_then(|err| part(&err.to_string_lossy()).map(str::to_owned)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -60,16 +68,28 @@ mod tests {
             })
         );
         assert_eq!(
-            ErrorText::parse(
-                "files",
-                "files.createDir: already_exists: notes: it is there"
-            ),
+            ErrorText::parse("demo", "demo.do_thing: already_exists: it is there"),
             Some(ErrorText {
-                function: "createDir",
+                function: "do_thing",
                 kind: "already_exists",
-                message: "notes: it is there"
+                message: "it is there"
             })
         );
+    }
+
+    #[test]
+    fn parse_leaves_the_function_name_to_the_caller() {
+        for (err, function) in [
+            ("demo.: not_found: x", ""),
+            ("demo.DoThing: not_found: x", "DoThing"),
+            ("demo.do thing: not_found: x", "do thing"),
+        ] {
+            let text = ErrorText::parse("demo", err).expect(err);
+            assert_eq!(
+                (text.function, text.kind, text.message),
+                (function, "not_found", "x")
+            );
+        }
     }
 
     #[test]
