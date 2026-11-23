@@ -1657,12 +1657,20 @@ fn method_of(
             return ::std::result::Result::Err(::mlua::Error::runtime(::std::format!("{}: {}", #op, refused)))
         }
     };
+    let places = 1..=idents.len();
     let read = quote! {
         let mut __args = __args.into_iter();
         #(let #idents = match <#types as #facade::args::Argument>::read(
             __args.next().unwrap_or(::mlua::Value::Nil),
             &__lua,
-        )? {
+        )
+        // a value of the wrong type is raised as mlua raises it: with the argument's place and the method
+        .map_err(|e| ::mlua::Error::BadArgument {
+            to: ::std::option::Option::Some(::std::string::String::from(#name)),
+            pos: #places,
+            name: ::std::option::Option::None,
+            cause: ::std::sync::Arc::new(e),
+        })? {
             ::std::result::Result::Ok(value) => value,
             ::std::result::Result::Err(refused) => {
                 return ::std::result::Result::Ok(::std::result::Result::Err(refused));
