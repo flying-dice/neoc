@@ -219,13 +219,18 @@ const NOT_THERE: Record<string, string> = {
   Proxy: 'there are no proxies in an app'
 }
 
-/** The uses of a global of [`NOT_THERE`] in a file, each as an error: they would compile, and be nil when the app runs. */
+/**
+ * The uses of a global of [`NOT_THERE`] in a file, each as an error: they would compile, and be nil when the app runs.
+ * It catches the name written as a name, not every way to reach it (`globalThis["Date"]` is not seen).
+ */
 function globalsNotThere(program: ts.Program, file: ts.SourceFile): ts.Diagnostic[] {
   const checker = program.getTypeChecker()
   const found: ts.Diagnostic[] = []
   const visit = (node: ts.Node): void => {
     if (ts.isIdentifier(node) && Object.hasOwn(NOT_THERE, node.text)) {
-      const declarations = checker.getSymbolAtLocation(node)?.declarations ?? []
+      // `{ Date }` names the property and the value at once: the value is the one that matters
+      const symbol = ts.isShorthandPropertyAssignment(node.parent) ? checker.getShorthandAssignmentValueSymbol(node.parent) : checker.getSymbolAtLocation(node)
+      const declarations = symbol?.declarations ?? []
       // the library's own, not something of the same name the developer wrote
       if (declarations.length > 0 && declarations.every((d) => program.isSourceFileDefaultLibrary(d.getSourceFile()))) {
         found.push({

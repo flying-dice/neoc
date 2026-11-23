@@ -249,6 +249,7 @@ describe('compiling a backend in TypeScript', () => {
       expect.stringMatching(/^server\/main\.ts:\d+:\d+: `Date` is not in an app's environment: use `std:time` or `lib:chrono`$/),
       expect.stringMatching(/^server\/main\.ts:\d+:\d+: `JSON` is not in an app's environment: use `lib:json`$/)
     ])
+    expect(compile(withBody('app.kv.set("globals", { Date })')).problems).toEqual([expect.stringMatching(/`Date` is not in an app's environment/)])
     const own = compile(withBody('const JSON = { stringify: (value: unknown): string => String(value) }\n    app.kv.set("json", JSON.stringify(params))'))
     expect(own.problems).toEqual([])
   })
@@ -298,12 +299,14 @@ describe('a build of a project whose backend is TypeScript', () => {
   test('a build that stops on the backend still watches it, so that the fix is built', async () => {
     const dir = project(files({ 'server/main.ts': MAIN.replace('(): Note[] => numbered(', '(): string[] => (') }))
     const watched: string[] = []
+    const warned: string[] = []
     const plugin = vos()
     const start = plugin.buildStart as (this: { addWatchFile: (file: string) => void; warn: (message: string) => void }) => void
     try {
       ;(plugin.config as (config: { root: string }) => unknown)({ root: dir })
-      expect(() => start.call({ addWatchFile: (file) => watched.push(file), warn: () => {} })).toThrow(/does not compile/)
+      expect(() => start.call({ addWatchFile: (file) => watched.push(file), warn: (message) => warned.push(message) })).toThrow(/does not compile/)
       expect(watched).toEqual(expect.arrayContaining([join(dir, 'openrpc.json'), join(dir, 'server/main.ts'), join(dir, 'server/notes.ts')]))
+      expect(warned).toEqual([])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
