@@ -81,6 +81,11 @@ lru = "0.19"
 flate2 = "1"
 zstd = "0.14"
 brotli = "9"
+# `lib:archive`. zip without its default features: DEFLATE alone, through the flate2 already here. Its `deflate`
+# feature would add flate2's zlib-rs backend and, by feature unification, change the bytes `lib:compress` writes; it
+# is named by its two parts without zlib-rs.
+tar = "0.4"
+zip = { version = "9", default-features = false, features = ["deflate-flate2", "deflate-zopfli"] }
 # `lib:args`: clap's builder as a run-time argument parser (no derive: that is a binary's concern).
 clap = { version = "4", default-features = false, features = ["std", "help", "usage", "error-context", "string"] }
 
