@@ -128,6 +128,31 @@ test.beforeAll(async () => {
       ]
     } as AGUIEvent)
   )
+  // the other ways an agent can say the same things: in chunks, as "thinking" (the older reasoning), through
+  // subagents, and with what is not for the person (an encrypted value, an event of its framework)
+  agent.onPredicate(
+    (input) => lastSaid(input) === 'show the rest',
+    run(
+      { type: 'THINKING_START', title: 'Planning' },
+      { type: 'THINKING_TEXT_MESSAGE_START' },
+      { type: 'THINKING_TEXT_MESSAGE_CONTENT', delta: 'Two helpers will do.' },
+      { type: 'THINKING_TEXT_MESSAGE_END' },
+      { type: 'THINKING_END' },
+      { type: 'REASONING_MESSAGE_CHUNK', messageId: 'r7', delta: 'One reads, ' },
+      { type: 'REASONING_MESSAGE_CHUNK', delta: 'one writes.' },
+      { type: 'REASONING_ENCRYPTED_VALUE', subtype: 'message', entityId: 'r7', encryptedValue: 'c2VjcmV0' },
+      { type: 'SUBAGENT_STARTED', subagentRunId: 's1', name: 'researcher', description: 'Reads the sources' },
+      { type: 'SUBAGENT_STARTED', subagentRunId: 's2', name: 'writer', description: 'Writes it up' },
+      { type: 'TOOL_CALL_CHUNK', toolCallId: 'c7', toolCallName: 'library_search', delta: '{"q":' },
+      { type: 'TOOL_CALL_CHUNK', delta: '"tides"}' },
+      { type: 'TOOL_CALL_RESULT', messageId: 'tr7', toolCallId: 'c7', content: 'two books', role: 'tool' },
+      { type: 'SUBAGENT_FINISHED', subagentRunId: 's1', result: { ok: true } },
+      { type: 'SUBAGENT_ERROR', subagentRunId: 's2', message: 'The writer lost its place.' },
+      { type: 'RAW', event: { vendorOnly: 'not for the person' }, source: 'framework' },
+      { type: 'TEXT_MESSAGE_CHUNK', messageId: 'm7', role: 'assistant', delta: 'Found ' },
+      { type: 'TEXT_MESSAGE_CHUNK', delta: 'two books.' }
+    ) as AGUIEvent[]
+  )
   // a question the run stops at, and the run that goes on with its answer
   agent.onPredicate((input) => (input.resume?.length ?? 0) > 0, run(...says('m4', 'Sent.')))
   agent.onPredicate(
@@ -376,6 +401,33 @@ test.describe('Agents journeys', () => {
     await expect(thread(page)).toContainText('That is all so far.')
     await turnOver(page)
     await expect(thread(page).getByText('I will remember.')).toHaveCount(1)
+  })
+
+  test('AG14: an agent that answers in chunks, thinks aloud and sends helpers is shown the same way', async ({ page }) => {
+    await chatting(page)
+    await say(page, 'show the rest')
+    // a chunk without an id goes on with the message before it
+    await expect(thread(page)).toContainText('Found two books.')
+    await turnOver(page)
+    const item = (kind: string): Locator => frame(page).getByTestId(new RegExp(`^agents-item-${kind}-\\d+$`))
+    await expect(item('reasoning')).toHaveCount(2)
+    await item('reasoning').nth(0).locator('summary').click()
+    await expect(item('reasoning').nth(0)).toContainText('Two helpers will do.')
+    await item('reasoning').nth(1).locator('summary').click()
+    await expect(item('reasoning').nth(1)).toContainText('One reads, one writes.')
+    await expect(item('tool')).toContainText('library_search')
+    await item('tool').locator('summary').click()
+    await expect(item('tool')).toContainText('tides')
+    await expect(item('tool')).toContainText('two books')
+    await expect(item('subagent')).toHaveCount(2)
+    await expect(item('subagent').nth(0)).toContainText('researcher')
+    await expect(item('subagent').nth(0)).toContainText('done')
+    await expect(item('subagent').nth(1)).toContainText('writer')
+    await expect(item('subagent').nth(1)).toContainText('The writer lost its place.')
+    // what is not for the person is not in the chat
+    await expect(thread(page)).not.toContainText('c2VjcmV0')
+    await expect(thread(page)).not.toContainText('not for the person')
+    await expect(frame(page).getByTestId(/^agents-item-(custom|error)-/)).toHaveCount(0)
   })
 
   test('AG11: change an agent and remove it; a chat with it can still be read, and deleted', async ({ page }) => {

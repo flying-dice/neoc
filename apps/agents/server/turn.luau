@@ -398,7 +398,7 @@ local handle: { [string]: (run: Run, event: lib_agui_Event) -> () } = {
     finish(run, "subagent", event.subagent_run_id)
   end,
   SUBAGENT_ERROR = function(run, event)
-    local found = timeline.find(run.chat, "subagent", event.subagent_run_id or "")
+    local found = timeline.find(run.chat, "subagent", event.subagent_run_id or "", run.since)
     if found then
       timeline.set(run.chat, found.id, { data = codec.encode { error = event.message }, done = true })
     end
