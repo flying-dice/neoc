@@ -61,6 +61,22 @@ local handlers: rpc.Handlers = {
   whoami = function(ctx)
     return { kind = ctx.actor.kind, app = app.id }
   end,
+  -- for the Files journeys (e2e/files.journeys.spec.ts): a document for the host's Files page to list, download and remove
+  saveDocument = function(ctx, params)
+    local docs = app.files.documents
+    local folder = string.match(params.path, "^(.*)/[^/]+$")
+    if folder then
+      local made, why = docs:createDir(folder)
+      if not made then
+        return ctx:fail(`The file could not be written: {why}`)
+      end
+    end
+    local written, why = docs:write(params.path, params.text)
+    if not written then
+      return ctx:fail(`The file could not be written: {why}`)
+    end
+    return true
+  end,
 }
 
 app.tool {

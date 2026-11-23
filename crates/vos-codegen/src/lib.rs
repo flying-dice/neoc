@@ -4,15 +4,18 @@
 //! |---|---|---|
 //! | `types/generated/vos.ts` | the shell | the wire types of the `/rpc` socket via `ts-rs` (reads the serde attributes of `vos-domain`'s `protocol` and `api`), the version constants and the method table |
 //! | `types/generated/vos.d.luau` | app authors (luau-lsp) | Luau declarations: the `std:`/`lib:`/`vnd:` modules an app is offered (from `types/neoc.d.luau`), the `app` API and its global, and the one `declare require` |
+//! | `types/generated/vos.d.ts` | app authors (TypeScript, compiled to Luau by `TypeScriptToLua`) | the same declarations in TypeScript: a translation of `vos.d.luau`, so the two say the same |
 //!
 //! `bun run codegen` writes them; `bun run codegen:check` (part of `bun run lint`) fails when the committed files
 //! are stale, so drift between the Rust types and a consumer is a build failure.
 
 mod luau;
 mod ts;
+mod tsdecl;
 
 pub use luau::defs::{definitions as luau_definitions, require_overloads};
 pub use ts::generate as typescript;
+pub use tsdecl::declarations as typescript_declarations;
 
 use std::{fs, io, path::Path};
 
@@ -33,9 +36,12 @@ pub struct GeneratedFile {
 pub fn generate(root: &Path) -> Result<Vec<GeneratedFile>, String> {
     let neoc = fs::read_to_string(root.join(NEOC_DECLARATIONS))
         .map_err(|e| format!("cannot read {NEOC_DECLARATIONS}: {e}"))?;
+    let luau = luau::defs::definitions(&neoc)?;
+    let typescript = tsdecl::declarations(&luau).map_err(|e| format!("types/generated/vos.d.ts: {e}"))?;
     Ok(vec![
         GeneratedFile { path: "types/generated/vos.ts", contents: ts::generate() },
-        GeneratedFile { path: "types/generated/vos.d.luau", contents: luau::defs::definitions(&neoc)? },
+        GeneratedFile { path: "types/generated/vos.d.luau", contents: luau },
+        GeneratedFile { path: "types/generated/vos.d.ts", contents: typescript },
     ])
 }
 
@@ -157,7 +163,7 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
-    /// The app definitions are built from neoc's file: when that changes, the committed definitions are stale
+    /// The app definitions (Luau, and TypeScript from them) are built from neoc's file: when that changes, the committed definitions are stale
     /// (`bun run codegen:check` then asks for a regeneration), and a file of another shape is an error.
     #[test]
     fn the_definitions_follow_neoc_declarations() {
@@ -165,7 +171,8 @@ mod tests {
         let neoc = dir.join(NEOC_DECLARATIONS);
         let text = fs::read_to_string(&neoc).unwrap();
         fs::write(&neoc, text.replace("Read a key.", "Read a key (changed).")).unwrap();
-        assert_eq!(stale(&dir), ["types/generated/vos.d.luau"]);
+        // the TypeScript declarations are a translation of the Luau ones: they follow too
+        assert_eq!(stale(&dir), ["types/generated/vos.d.luau", "types/generated/vos.d.ts"]);
         fs::write(&neoc, "-- nothing\n").unwrap();
         assert!(stale(&dir)[0].contains("no `-- ===== require =====` section"), "{:?}", stale(&dir));
         fs::remove_dir_all(dir).unwrap();

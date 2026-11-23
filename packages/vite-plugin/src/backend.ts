@@ -1,6 +1,6 @@
 /**
  * The backend half of the build: the Luau entry bundled into one file with darklua (relative `require`s inlined, types
- * and comments stripped), and the app ref the host installs: the manifest from the app's `openrpc.json` plus every file with its sha256.
+ * and comments stripped), or a TypeScript backend compiled into one (`typescript-backend.ts`), and the app ref the host installs: the manifest from the app's `openrpc.json` plus every file with its sha256.
  * The output goes next to the client script, so the build's output folder is one installable app.
  */
 import { spawnSync } from 'node:child_process'
@@ -12,6 +12,8 @@ import { fileURLToPath } from 'node:url'
 import { findTool } from './find-tool.ts'
 import { contained, inside, migrationOutput } from './paths.ts'
 import type { Definition } from './definition.ts'
+import { isTypeScript, type Options } from './generate.ts'
+import { compileBackend } from './typescript-backend.ts'
 
 /** The darklua release the bundles are pinned to (the host's own build uses the same one). */
 export const DARKLUA_VERSION = '0.18.0'
@@ -55,6 +57,15 @@ export function bundleLuau(entry: string): string {
   }
 }
 
+/**
+ * The backend as the host runs it, one Luau chunk: a Luau backend's generated entry bundled by darklua, a TypeScript
+ * backend's compiled by TypeScriptToLua. The generated files must be there (`generate`).
+ */
+export function backendBundle(project: string, options: Options): string {
+  if (isTypeScript(options)) return compileBackend(project, options.generated, options.backend)
+  return bundleLuau(join(project, options.generated, 'entry.luau'))
+}
+
 const sha256 = (bytes: string | Buffer): string => createHash('sha256').update(bytes).digest('hex')
 
 /** Every file under `dir`, as paths relative to it with `/`, in a stable order. */
@@ -69,14 +80,13 @@ export function filesUnder(dir: string, prefix = ''): string[] {
 }
 
 /**
- * Write `app.luau` and `app-ref.json` into `outDir`, which already holds the client's `staticDir`: the build's staging folder,
- * not yet `dist/`. The manifest is the contract's (`info.title` and `info.version`, and `x-app`); every file the app ref lists is next to
+ * Write `app.luau` (`bundle`: the backend, from [`backendBundle`]) and `app-ref.json` into `outDir`, which already holds the
+ * client's `staticDir`: the build's staging folder, not yet `dist/`. The manifest is the contract's (`info.title` and `info.version`, and `x-app`); every file the app ref lists is next to
  * it, with a relative URL, so the folder installs from `file://`, `http://` or `https://` as it is. Every file a migration names
  * is read from inside the project and written to inside `outDir`, whatever the contract says.
  */
-export function writeApp(project: string, outDir: string, definition: Definition, entry: string, staticDir: string): void {
+export function writeApp(project: string, outDir: string, definition: Definition, bundle: string, staticDir: string): void {
   mkdirSync(outDir, { recursive: true })
-  const bundle = bundleLuau(join(project, entry))
   // the client is its built static files: every one is listed with its hash and served by the host as the app's own page
   const files = [{ path: 'app.luau', url: 'app.luau', sha256: sha256(bundle) }]
   for (const path of filesUnder(join(outDir, staticDir))) {

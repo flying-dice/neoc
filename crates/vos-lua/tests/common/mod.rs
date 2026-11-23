@@ -122,11 +122,15 @@ pub fn built_package(entry: &Path) -> AppPackage {
 
 /// The backend of the app project in `dir` (relative to the repository root: `apps/calculator`,
 /// `e2e/apps/tasks-svelte`), built. Its generated files are not committed: they are generated first, once per
-/// project, as the project's own scripts do.
+/// project, as the project's own scripts do. A backend written in TypeScript (`server/main.ts`) is compiled by the
+/// plugin, as the app's own build compiles it.
 pub fn built_project(dir: &str) -> AppPackage {
     use std::sync::Mutex;
     static GENERATED: Mutex<Vec<String>> = Mutex::new(Vec::new());
     let project = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(dir);
+    if project.join("server/main.ts").exists() {
+        return built_typescript(&project);
+    }
     {
         let mut generated = GENERATED.lock().unwrap();
         if !generated.iter().any(|done| done == dir) {
@@ -144,6 +148,30 @@ pub fn built_project(dir: &str) -> AppPackage {
         }
     }
     built_package(&project.join(".app/entry.luau"))
+}
+
+/// The backend of an app project written in TypeScript, as its build bundles it: `vos bundle` of the plugin
+/// (`packages/vite-plugin/bin/vos.ts`) generates the project's `.app/` and compiles the backend to one Luau chunk.
+/// Needs bun; no darklua.
+fn built_typescript(project: &Path) -> AppPackage {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let out = tempfile::Builder::new().prefix("vos-lua-test-").suffix(".luau").tempfile().unwrap();
+    let run = Command::new("bun")
+        .arg(root.join("packages/vite-plugin/bin/vos.ts"))
+        .arg("bundle")
+        .arg(out.path())
+        .current_dir(project)
+        .output()
+        .expect("bun is needed to build the apps these tests run (https://bun.sh)");
+    assert!(
+        run.status.success(),
+        "compiling the TypeScript backend of {} failed:\n{}{}",
+        project.display(),
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let files = BTreeMap::from([("app.luau".to_owned(), std::fs::read(out.path()).unwrap())]);
+    AppPackage { entry: "app.luau".into(), files }
 }
 
 /// The real database, except that a statement whose SQL contains `stall` never finishes (so a test can hold a
