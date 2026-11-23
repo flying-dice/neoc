@@ -1,4 +1,4 @@
--- intentional: an error is a typed FsError (kind, path, to, reason; error_kind and error_message are gone), open(path) reads while create(path) and append(path) write (it was open { path, mode }), Metadata and DirEntry are plain records (meta.len, entry.file_name) instead of objects with a method per field, set_permissions is set_mode and set_readonly, move is move_path (a function cannot be named with a Rust keyword yet), Watcher:receive takes a std:time Duration, and a wrong option is refused as a wrong argument with its place (it was a returned invalid_input).
+-- intentional: an error is a typed FsError (kind, path, to, reason; error_kind and error_message are gone), open(path) reads while create(path) and append(path) write (it was open { path, mode }), Metadata and DirEntry are plain records (meta.len, entry.file_name) instead of objects with a method per field, set_permissions is set_mode and set_readonly, Watcher:receive takes a std:time Duration, and a wrong option is refused as a wrong argument with its place (it was a returned invalid_input).
 local fs = require("std:fs")
 local path = require("std:path")
 local env = require("std:env")
@@ -86,12 +86,12 @@ local function body()
 	assert(too_big ~= nil and too_big.kind == "invalid_input")
 	assert((fs :: any).set_permissions == nil)
 
-	-- move_path: a rename that survives a filesystem boundary
-	assert(fs.move_path(p("w"), p("moved")) == true)
+	-- move: a rename that survives a filesystem boundary
+	assert(fs.move(p("w"), p("moved")) == true)
 	assert(fs.exists(p("w")) == false and fs.read(p("moved")) == "xyz")
-	assert(fs.move_path(p("sub"), p("sub2")) and fs.read(p("sub2/inner")) == "i")
-	local _, missing = fs.move_path(p("nope"), p("x"))
-	assert(missing ~= nil and missing.kind == "not_found" and missing.op == "std:fs.move_path")
+	assert(fs.move(p("sub"), p("sub2")) and fs.read(p("sub2/inner")) == "i")
+	local _, missing = fs.move(p("nope"), p("x"))
+	assert(missing ~= nil and missing.kind == "not_found" and missing.op == "std:fs.move")
 
 	-- a wrong option is a wrong argument
 	for _, call in

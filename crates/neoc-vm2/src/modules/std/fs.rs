@@ -4,7 +4,7 @@
 //! `symlink_metadata`, `read_dir`, `copy`, `rename`, `remove_file`, `remove_dir`, `remove_dir_all`, `canonicalize`,
 //! `read_link`, `symlink` and `exists`; plus what Rust leaves to crates or spells differently: `append` (a file
 //! opened to append), `set_mode` and `set_readonly` (the two things `set_permissions` does), `walk` (a recursive
-//! listing), `copy_dir` (a recursive copy), `move_path` (a rename that survives a filesystem boundary) and `watch`
+//! listing), `copy_dir` (a recursive copy), `move` (a rename that survives a filesystem boundary) and `watch`
 //! (the changes inside a directory, as the operating system reports them). `std:path` has the text-only helpers.
 //!
 //! Conventions, the same for every function:
@@ -16,7 +16,7 @@
 //!   (and `write` replaces its content). `copy_dir` refuses an existing destination instead of merging.
 //!   Symlinks found inside a tree are not followed while walking, copying or removing it (the path a script names
 //!   is: `walk` and `copy_dir` resolve a symlink given as their root, `remove_dir_all` refuses one); see [`ops`].
-//! - **Calls that can run for long wait; the rest run in place.** `copy`, `copy_dir`, `move_path`, `read_dir`,
+//! - **Calls that can run for long wait; the rest run in place.** `copy`, `copy_dir`, `move`, `read_dir`,
 //!   `remove_dir_all`, `walk` and `watch` do their work on the blocking pool: the call waits, and other calls run
 //!   meanwhile. Luau refuses a yield inside a metamethod, a `table.sort` comparator or a `string.gsub` callback, so
 //!   these seven fail with the yield error when called from one of them, and do nothing: the job starts only once
@@ -35,7 +35,7 @@
 //!   do not.
 //! - **Permissions.** `Metadata.mode` and `set_mode` are Unix bits and are absent / `unsupported` on Windows, where
 //!   `readonly` is the read-only attribute.
-//! - **Rename.** Atomic on one filesystem and `cross_device` across two (`move_path` copies then). Windows cannot
+//! - **Rename.** Atomic on one filesystem and `cross_device` across two (`move` copies then). Windows cannot
 //!   rename a file that is open and will not put a directory over a directory.
 //!
 //! [`ops`] (the operations, free of the Lua state) and [`error`] (their classified errors) are public, so an
@@ -54,9 +54,6 @@
 //! - A wrong option (an unknown name, a value of the wrong type) is raised as a wrong argument, with its place (it
 //!   was a returned `invalid_input`); `max_depth` is a whole number up to 4294967295.
 //!
-//! TODO(mlua-ir): a function cannot be named with a Rust keyword (`pub fn r#move` is exported as `r#move`), so
-//! `fs.move` is `fs.move_path`.
-
 pub mod error;
 pub mod ops;
 mod watch;
@@ -106,7 +103,7 @@ where
 }
 
 /// Files and directories. A failure is `nil` and an `FsError` whose `kind` means the same on every platform.
-/// `copy`, `copy_dir`, `move_path`, `read_dir`, `remove_dir_all`, `walk`, `watch` and `Watcher:receive` wait
+/// `copy`, `copy_dir`, `move`, `read_dir`, `remove_dir_all`, `walk`, `watch` and `Watcher:receive` wait
 /// without blocking other calls; where Luau cannot yield (a metamethod, a `table.sort` comparator, a `string.gsub`
 /// callback) they fail with the yield error and do nothing.
 #[mlua_ir::module("std:fs")]
@@ -323,7 +320,7 @@ pub mod fs {
     /// `from` only after the copy completed. That case is not atomic: a failed copy leaves the source whole, and a
     /// file or symlink at `to` is replaced by renaming the finished copy over it. Waits without blocking other
     /// calls.
-    pub async fn move_path(from: OsPath, to: OsPath) -> Result<(), FsError> {
+    pub async fn r#move(from: OsPath, to: OsPath) -> Result<(), FsError> {
         let (from, to) = (path_of(from)?, path_of(to)?);
         blocking(move |cancel| ops::move_path(&from, &to, cancel)).await
     }

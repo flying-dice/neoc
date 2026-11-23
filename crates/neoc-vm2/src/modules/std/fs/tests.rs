@@ -63,7 +63,7 @@ async fn every_failure_is_nil_then_a_typed_error() {
         fails("not_found", fs.copy(p("nope"), p("x")))
         fails("not_found", fs.copy_dir(p("nope"), p("x")))
         fails("not_found", fs.rename(p("nope"), p("x")))
-        fails("not_found", fs.move_path(p("nope"), p("x")))
+        fails("not_found", fs.move(p("nope"), p("x")))
         fails("not_found", fs.remove_file(p("nope")))
         fails("not_found", fs.remove_dir(p("nope")))
         fails("not_found", fs.remove_dir_all(p("nope")))
@@ -261,7 +261,7 @@ async fn copy_dir_copies_a_tree_into_a_new_path_only() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rename_and_move_have_the_same_destination_rules() {
     run(r#"
-        for _, op in { fs.rename, fs.move_path } do
+        for _, op in { fs.rename, fs.move } do
           ok(fs.write(p("a"), "a"))
           check(ok(op(p("a"), p("b"))) == true)
           check(fs.exists(p("a")) == false and ok(fs.read(p("b"))) == "a")
@@ -279,7 +279,7 @@ async fn rename_and_move_have_the_same_destination_rules() {
         end
         ok(fs.create_dir_all(p("tree/sub")))
         ok(fs.write(p("tree/sub/f"), "f"))
-        ok(fs.move_path(p("tree"), p("moved")))
+        ok(fs.move(p("tree"), p("moved")))
         check(fs.exists(p("tree")) == false and ok(fs.read(p("moved/sub/f"))) == "f")
         ok(fs.rename(p("moved"), p("renamed")))
         check(ok(fs.read(p("renamed/sub/f"))) == "f")
@@ -387,7 +387,7 @@ async fn hostile_paths_fail_cleanly() {
           assert(fs.remove_dir_all(bad) == nil)
           assert(fs.copy(bad, bad) == nil)
           assert(fs.copy_dir(bad, bad) == nil)
-          assert(fs.move_path(bad, bad) == nil)
+          assert(fs.move(bad, bad) == nil)
           assert(fs.rename(bad, bad) == nil)
           assert(fs.symlink(bad, bad) == nil)
           assert(fs.read_link(bad) == nil)
@@ -616,7 +616,7 @@ async fn the_long_calls_fail_where_luau_refuses_a_yield_and_do_nothing() {
         check(pcall(string.gsub, "abc", "b", function() fs.copy(p("src"), p("dst")) return "x" end) == false)
         check(pcall(string.gsub, "abc", "b", function() fs.copy_dir(p("tree"), p("treecopy")) return "x" end) == false)
         -- a table.sort comparator
-        check(pcall(table.sort, { 1, 2, 3 }, function(a, b) fs.move_path(p("m"), p("moved")) return a < b end) == false)
+        check(pcall(table.sort, { 1, 2, 3 }, function(a, b) fs.move(p("m"), p("moved")) return a < b end) == false)
         check(pcall(table.sort, { 1, 2, 3 }, function(a, b) fs.walk(dir) return a < b end) == false)
         check(pcall(table.sort, { 1, 2, 3 }, function(a, b) fs.read_dir(dir) return a < b end) == false)
         check(pcall(string.gsub, "abc", "b", function() fs.watch(dir) return "x" end) == false)
