@@ -531,7 +531,14 @@ fn member(stmt: &mut Stmt) -> syn::Result<Option<Tokens>> {
     };
     // the closure's own parameters: `lua`, then `this` for a method, then what a script passes
     let own = match kind {
-        Member::Field => return Ok(Some(quote!(spec.field(#name, #ty, #doc);))),
+        Member::Field => {
+            // a field takes nothing: a word about parameters is a slip
+            said.refuse(false, true, false)?;
+            if said.takes.is_some() {
+                return Err(syn::Error::new(span, "a field takes no parameters"));
+            }
+            return Ok(Some(quote!(spec.field(#name, #ty, #doc);)));
+        }
         Member::Method => 2,
         Member::Function => 1,
     };
