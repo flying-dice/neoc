@@ -535,9 +535,10 @@ local owned = {}
 local OWNER = "vos.app"
 local SIGNATURE = "vos.signature"
 
-
-local BUSY_LIMIT = 700
 local EVENTS = { "create", "start", "die", "destroy", "pause", "unpause", "restart" }
+
+
+local BUSY_LIMIT = 180
 
 
 
@@ -616,6 +617,8 @@ local images, err = api:list_images { filters = { reference = { image } } }
     
     while true do
       local step, step_err = pull:next()
+      
+      since = time.now()
       if step_err then
         return `The image {image} could not be pulled: {engine.sentence(step_err)}`
       end
@@ -700,12 +703,13 @@ while since and since:elapsed():as_secs() < BUSY_LIMIT do
 return if declared then make(api, declared, always == true) else removeAll(api)
       end)
     end
-    if turn == mine then
-      since = nil
-    end
     local failure= if ran then answer else "The container could not be made."
     
-    problem = if declared then failure or "" else ""
+    if turn == mine then
+      since = nil
+      
+      problem = if declared then failure or "" else ""
+    end
     return failure
   end
 

@@ -22,9 +22,10 @@ local owned = {}
 local OWNER = "vos.app"
 local SIGNATURE = "vos.signature"
 -- what changes how the container is doing; the rest of what Docker reports does not
--- the longest one `apply` is waited for, in seconds: more than pulling an image may take (`engine.puller`)
-local BUSY_LIMIT = 700
 local EVENTS = { "create", "start", "die", "destroy", "pause", "unpause", "restart" }
+-- How long an `apply` that says nothing is waited for, in seconds: more than Docker is given to act
+-- (`engine.actor`). A pull says it goes on with every step of its progress.
+local BUSY_LIMIT = 180
 export type Port = declaration.Port
 export type Mount = declaration.Mount
 export type Declaration = declaration.Declaration
@@ -103,6 +104,8 @@ function owned.container(name: string): Container
     -- the pull runs as its progress is read
     while true do
       local step, step_err = pull:next()
+      -- the pull goes on: whoever waits for this `apply` waits on
+      since = time.now()
       if step_err then
         return `The image {image} could not be pulled: {engine.sentence(step_err)}`
       end
@@ -187,12 +190,13 @@ function owned.container(name: string): Container
         return if declared then make(api, declared, always == true) else removeAll(api)
       end)
     end
+    local failure: string? = if ran then answer else "The container could not be made."
+    -- an `apply` that another took over says nothing of the container as it now is
     if turn == mine then
       since = nil
+      -- a container that is not wanted has no problem to show, whether or not Docker could remove it
+      problem = if declared then failure or "" else ""
     end
-    local failure: string? = if ran then answer else "The container could not be made."
-    -- a container that is not wanted has no problem to show, whether or not Docker could remove it
-    problem = if declared then failure or "" else ""
     return failure
   end
 
