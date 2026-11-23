@@ -152,7 +152,7 @@
     await waitFor(() => expect(canvas.queryByTestId('agents-confirm')).toBeNull())
     await userEvent.click(canvas.getByTestId('agents-remove-chat'))
     await appears(canvas, 'agents-confirm')
-    await userEvent.click(alertButton(canvas.getByTestId('agents-confirm'), 'confirm'))
+    await userEvent.click(alertButton(canvas.getByTestId('agents-confirm'), 'action'))
     await waitFor(() => expect(canvas.queryByTestId('agents-chat-a')).toBeNull())
     await expect(canvas.getByTestId('agents-chat-b')).toBeInTheDocument()
   }}
