@@ -4,6 +4,7 @@
 -- short list of memos in the app's own database, and no more: the journeys are about the app, not what it does.
 local app = require("vos:app")
 local rpc = require("../.app/rpc")
+local trim = require("lib:text").trim
 local db = app.db
 
 db:migrate {
@@ -28,7 +29,7 @@ local handlers: rpc.Handlers = {
     return list()
   end,
   add = function(ctx, params)
-    local body = string.match(params.body, "^%s*(.-)%s*$") :: string
+    local body = trim(params.body)
     if body == "" then
       return ctx:fail("A note needs some text.")
     end

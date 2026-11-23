@@ -22,9 +22,9 @@ function text.key(title: string): string
   return string.lower(strings.trim(title))
 end
 
--- At most `max` characters of a line, the last an ellipsis when some were left out.
-local function cut(line: string, max: number): string
-  return strings.clip(line, max, "…")
+-- A line as an excerpt: at most `EXCERPT_MAX` characters, the last an ellipsis when some were left out.
+local function excerpt(line: string): string
+  return strings.clip(line, EXCERPT_MAX, "…")
 end
 
 -- Why a note cannot be called `title` (trimmed), or nothing when it can.
@@ -118,13 +118,13 @@ function text.excerpt(body: string): string
     local said = strings.trim(plain((string.gsub(line, "^[%s#>%-%*%+]+", ""))))
     if said ~= "" and string.match(line, "^%s*```") == nil then
       if string.match(line, "^#+%s") == nil then
-        return cut(said, EXCERPT_MAX)
+        return excerpt(said)
       elseif heading == "" then
         heading = said
       end
     end
   end
-  return cut(heading, EXCERPT_MAX)
+  return excerpt(heading)
 end
 
 -- The first line of a text that links to the title with this key, without its marks; empty when none does.
@@ -132,7 +132,7 @@ function text.mention(body: string, key: string): string
   for _, line in prose(body) do
     for inside in string.gmatch(line, LINK) do
       if targetOf(inside) == key then
-        return cut(strings.trim(plain(line)), EXCERPT_MAX)
+        return excerpt(strings.trim(plain(line)))
       end
     end
   end
@@ -144,7 +144,7 @@ function text.line(body: string, words: string): string
   local wanted = string.lower(words)
   for _, line in lines(body) do
     if string.find(string.lower(line), wanted, 1, true) ~= nil then
-      return cut(strings.trim(plain(line)), EXCERPT_MAX)
+      return excerpt(strings.trim(plain(line)))
     end
   end
   return ""

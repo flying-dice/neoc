@@ -24,11 +24,13 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 ///
 /// Every function is set verbatim with [`crate::lua::facade::Module::set`]:
 /// each carries its own `#[instrument]` span, so routing through the facade's
-/// `func` / `try_func` would open a second span. The infallible case-conversion
-/// helpers, the `trim` family, `clip`, `to_valid_utf8` and `strip_ansi` return a bare value, while `word_wrap` / `closest` / `truncate` /
-/// the pad family build their `(value, error)` returns directly through `err` /
-/// `ok` with a baked `"text.<fn>: "` prefix. Their signatures are recorded via
-/// [`crate::lua::facade::Module::record_fn`].
+/// `func` / `try_func` would open a second span. `word_wrap` / `closest` /
+/// `truncate` / the pad family build their `(value, error)` returns directly
+/// through `err` / `ok` with a baked `"text.<fn>: "` prefix; the rest return a
+/// bare value. `clip` is among the rest although it refuses a `max` that is
+/// not a count: it raises, as for an argument of the wrong type, so that the
+/// common call is a plain `string` and not a `string?` to unwrap. Their
+/// signatures are recorded via [`crate::lua::facade::Module::record_fn`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:text")?;
 
@@ -149,7 +151,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "trim",
         &[("text", "string")],
         "string",
-        "Remove Unicode white space (the `White_Space` property: spaces, tabs, line breaks, U+00A0, U+3000, ...) from both ends of `text`.",
+        "Remove Unicode white space (the `White_Space` property: spaces, tabs, line breaks, U+00A0, U+3000, ...) from both ends of `text`. Raises when `text` is not valid UTF-8 (repair it with `to_valid_utf8` first).",
     );
 
     m.set("trim_start", lua.create_function(trim_start)?)?;
@@ -157,7 +159,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "trim_start",
         &[("text", "string")],
         "string",
-        "Remove Unicode white space from the start of `text`.",
+        "Remove Unicode white space from the start of `text`. Raises when `text` is not valid UTF-8 (repair it with `to_valid_utf8` first).",
     );
 
     m.set("trim_end", lua.create_function(trim_end)?)?;
@@ -165,7 +167,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "trim_end",
         &[("text", "string")],
         "string",
-        "Remove Unicode white space from the end of `text`.",
+        "Remove Unicode white space from the end of `text`. Raises when `text` is not valid UTF-8 (repair it with `to_valid_utf8` first).",
     );
 
     m.set("clip", lua.create_function(clip)?)?;
@@ -173,7 +175,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "clip",
         &[("text", "string"), ("max", "number"), ("ellipsis", "string?")],
         "string",
-        "Clip `text` to at most `max` characters. A character is an extended grapheme cluster (UAX #29, what `lib:unicode.graphemes` yields and a Swift `Character` is): a flag emoji or a letter with its combining accent is one, and is never cut apart. When `text` is cut and `ellipsis` is given, the ellipsis ends the result and counts toward `max`; an ellipsis longer than `max` is left out. Raises when `max` is negative or not an integer.",
+        "Clip `text` to at most `max` characters. A character is an extended grapheme cluster (UAX #29, what `lib:unicode.graphemes` yields and a Swift `Character` is): a flag emoji or a letter with its combining accent is one, and is never cut apart. When `text` is cut and `ellipsis` is given, the ellipsis ends the result and counts toward `max`; an ellipsis longer than `max` is left out. The count bounds characters, not bytes: one character may carry any number of combining marks. Raises (it does not return an error) when `max` is negative, fractional or NaN, and when `text` or `ellipsis` is not valid UTF-8; a `max` beyond any text, infinity included, is the whole text.",
     );
 
     m.set("to_valid_utf8", lua.create_function(to_valid_utf8)?)?;
@@ -189,7 +191,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "strip_ansi",
         &[("text", "string")],
         "string",
-        "Remove what a terminal would act on instead of show: escape sequences (colours, cursor movement, window titles) and control characters. Line feeds and tabs stay, so `\\r\\n` becomes `\\n`.",
+        "Remove what a terminal would act on instead of show: escape sequences (colours, cursor movement, window titles) and control characters. Line feeds and tabs stay, so `\\r\\n` becomes `\\n`. Each line is read on its own, so a sequence that is never ended takes the rest of its line and no more. A C1 control written as a character (U+0080 to U+009F) is removed without being read as the start of a sequence. Raises when `text` is not valid UTF-8 (repair it with `to_valid_utf8` first).",
     );
 
     Ok(m)
@@ -696,10 +698,15 @@ fn trim_end(_: &Lua, text: mlua::LuaString) -> mlua::Result<String> {
 #[instrument(name = "text.clip", target = "lua::lib::text", skip_all)]
 fn clip(
     _: &Lua,
-    (text, max, ellipsis): (mlua::LuaString, i64, Option<mlua::LuaString>),
+    (text, max, ellipsis): (mlua::LuaString, f64, Option<mlua::LuaString>),
 ) -> mlua::Result<String> {
-    let max =
-        usize::try_from(max).map_err(|_| mlua::Error::external("text.clip: max must be >= 0"))?;
+    if max.is_nan() || max < 0.0 || (max.is_finite() && max.fract() != 0.0) {
+        return Err(mlua::Error::external(
+            "text.clip: max must be a whole number >= 0",
+        ));
+    }
+    // A float-to-integer `as` saturates: a count beyond `usize` (infinity too) is one no text reaches.
+    let max = max as usize;
     let text = text.to_str()?;
     let ellipsis = match &ellipsis {
         Some(e) => e.to_str()?.to_owned(),
@@ -717,8 +724,10 @@ fn clip_str(text: &str, max: usize, ellipsis: &str) -> String {
     let Some(cut) = grapheme_offset(text, max) else {
         return text.to_owned();
     };
-    // An ellipsis that does not fit in `max` is left out, as `truncate` leaves out its own.
-    let Some(kept) = max.checked_sub(ellipsis.graphemes(true).count()) else {
+    // An ellipsis that does not fit in `max` is left out, as `truncate` leaves out its own. Counting it stops
+    // one past `max`: that is enough to know it does not fit.
+    let ellipsis_len = ellipsis.graphemes(true).take(max.saturating_add(1)).count();
+    let Some(kept) = max.checked_sub(ellipsis_len) else {
         return text[..cut].to_owned();
     };
     let cut = grapheme_offset(text, kept).unwrap_or(cut);
@@ -770,7 +779,15 @@ fn strip_ansi(_: &Lua, text: mlua::LuaString) -> mlua::Result<String> {
 
 fn strip_ansi_str(text: &str) -> String {
     let mut shown = Shown(String::new());
-    vte::Parser::new().advance(&mut shown, text.as_bytes());
+    // A parser per line: a string sequence (a window title, say) that is never ended would otherwise take
+    // every line after it, and one stray `ESC ]` would hide the rest of a log.
+    // The line feed is put back by hand: inside such a sequence the parser would take it as well.
+    for (at, line) in text.split('\n').enumerate() {
+        if at > 0 {
+            shown.0.push('\n');
+        }
+        vte::Parser::new().advance(&mut shown, line.as_bytes());
+    }
     shown.0
 }
 
