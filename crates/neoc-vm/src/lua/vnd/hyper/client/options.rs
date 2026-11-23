@@ -1,6 +1,6 @@
 //! Reading and checking a request's options. Everything here runs in the synchronous part of the call, before the
-//! future that performs the request is built (see `client`): a script table can run script code when it is read,
-//! and the future must hold none.
+//! future that performs the request is built (see `client`): the future holds no script value. The options are
+//! read raw (no `__index`, no `__pairs`), so reading them runs no script code.
 //!
 //! A bad option is an `invalid_input` error returned as `(nil, err)` like every other failure of the call; an option
 //! that no function reads is refused by name, so a misspelt option is never dropped.

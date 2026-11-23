@@ -64,11 +64,8 @@ impl DeclType for Headers {
     }
 }
 
-// Each entry point reads its options table in the synchronous part of the call, before it builds the future that
-// performs the request. A script table can run script code when it is read (a `__index`), which can call the same
-// entry point again: read inside the future, every level would stack another polled future on the C stack (about
-// 20 KiB a level in release, about 150 KiB in debug, with Luau's C-call limit at 200 levels), and read here each
-// level is a few hundred bytes. `thread.spawn` reads its options the same way (`prepare_spawn`).
+// Each entry point's options are read in the synchronous part of the call (`Checked`), before it builds the future
+// that performs the request, and raw: reading them runs no script code, and the future holds no script table.
 
 /// Perform an HTTP or HTTPS GET request.
 #[neoc_macros::lua_fn(doc_with = crate::lua::vnd::hyper::client_doc)]

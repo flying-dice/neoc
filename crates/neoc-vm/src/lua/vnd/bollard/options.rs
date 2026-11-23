@@ -1,12 +1,13 @@
-//! What a script passes to a `vnd:bollard` call, read before the call's future exists.
+//! What a script passes to a `vnd:bollard` call, read before the call's future exists (the types of `args`).
 //!
-//! A script table can run script code when it is read (a `__index`), so every argument is turned into plain data
-//! ([`Json`]) in the synchronous part of the call, as `vnd:hyper` reads its options. Two kinds of table arrive:
+//! Two kinds of table arrive:
 //!
-//! - **options** (the structs of `args`): this module's own lower-case keys (`all`, `force`, `filters`, `tail`). A
-//!   key that is not one of the call's is refused, so a misspelt option fails instead of being ignored.
+//! - **options** (the structs of `args`): this module's own lower-case keys (`all`, `force`, `filters`, `tail`),
+//!   read raw, field by field. A key that is not one of the call's is refused, so a misspelt option fails instead
+//!   of being ignored.
 //! - **Docker's own bodies** ([`body`]): the create calls take Docker's JSON as a table, with Docker's field names
-//!   (`Image`, `HostConfig`, `Labels`), and pass it through.
+//!   (`Image`, `HostConfig`, `Labels`), and pass it through. A body is turned into plain data ([`Json`]) in the
+//!   synchronous part of the call.
 //!
 //! Luau has one table for a list and a map, so an empty table says neither. [`tidy`] leaves every empty table out:
 //! to Docker an absent field and an empty list or map mean the same in every create body. It also writes a whole

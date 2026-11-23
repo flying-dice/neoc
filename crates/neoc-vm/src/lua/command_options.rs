@@ -84,7 +84,8 @@ impl Field for Dir {
     }
 }
 
-/// The arguments of a command: a list of at most [`MAX_ITEMS`] strings.
+/// The arguments of a command: a list of at most [`MAX_ITEMS`] strings. A key that is not one of the list's is
+/// not read.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Args(pub(crate) Vec<String>);
 
@@ -104,22 +105,11 @@ impl Field for Args {
         if len > MAX_ITEMS {
             return Err(too_many(key));
         }
-        if entries(&list) != Some(len) {
-            // a key that is not one of the list's
-            return Err(Refused::option(key, expected));
-        }
         (1..=len)
             .map(|index| text(&list.raw_get(index).unwrap_or(Value::Nil), key, expected))
             .collect::<Result<_, _>>()
             .map(Self)
     }
-}
-
-/// How many entries `table` holds, or `None` when they could not be counted.
-fn entries(table: &Table) -> Option<usize> {
-    table
-        .pairs::<Value, Value>()
-        .try_fold(0, |count, pair| pair.ok().map(|_| count + 1))
 }
 
 /// The environment variables a command is given: at most [`MAX_ITEMS`] names, each with a string.
@@ -195,6 +185,13 @@ mod tests {
             ["-c", "echo hi"]
         );
         assert!(read::<Args>(&lua, "args", "{}").unwrap().0.is_empty());
+        // the list part is the arguments, as `table.pack` gives them with its `n`
+        assert_eq!(
+            read::<Args>(&lua, "args", "table.pack('-c', 'x')")
+                .unwrap()
+                .0,
+            ["-c", "x"]
+        );
         assert_eq!(
             read::<Env>(&lua, "env", "{ B = '2', A = '1' }").unwrap().0,
             [
@@ -221,7 +218,6 @@ mod tests {
         let args = |source| read::<Args>(&lua, "args", source).unwrap_err();
         assert!(args("'-c'").contains("\"args\""));
         assert!(args("{ 1 }").contains("\"args\""));
-        assert!(args("{ '-c', flag = true }").contains("\"args\""));
         let many = format!("table.create({}, '')", MAX_ITEMS + 1);
         assert!(args(&many).contains("more than"));
 

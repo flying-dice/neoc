@@ -611,7 +611,7 @@ fn a_record_is_a_table_both_ways_and_refuses_what_is_not_one() {
         refused("return { type = 'x', kind = 1 }"),
         "unknown option \"kind\" (this function takes: code, type)"
     );
-    assert_eq!(refused("return 7"), "options must be a table, got integer");
+    assert_eq!(refused("return 7"), "options must be a table, got number");
     assert_eq!(
         refused("return { code = 3 }"),
         "option \"type\" must be a string"

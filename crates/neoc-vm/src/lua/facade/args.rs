@@ -299,7 +299,11 @@ pub fn options(value: Value, allowed: &[&str]) -> Result<Table, Refused> {
     let Value::Table(table) = value else {
         return Err(Refused(format!(
             "options must be a table, got {}",
-            value.type_name()
+            match value {
+                // a script knows one number type
+                Value::Integer(_) | Value::Number(_) => "number",
+                ref other => other.type_name(),
+            }
         )));
     };
     for pair in table.pairs::<Value, Value>() {
