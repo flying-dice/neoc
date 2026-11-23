@@ -109,6 +109,12 @@ impl KeyringError {
     }
 }
 
+impl From<crate::lua::facade::args::Refused> for KeyringError {
+    fn from(refused: crate::lua::facade::args::Refused) -> Self {
+        Self::invalid_input(refused.0)
+    }
+}
+
 impl From<Error> for KeyringError {
     fn from(e: Error) -> Self {
         match e {

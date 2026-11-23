@@ -630,7 +630,11 @@ async fn what_cannot_be_sent_is_refused_before_anything_is_sent() {
         refused[0]
             .starts_with("bollard.start_container: invalid_input: the container must be a name")
     );
-    assert!(refused[3].contains("unknown option \"al\""), "{}", refused[3]);
+    assert!(
+        refused[3].contains("unknown option \"al\""),
+        "{}",
+        refused[3]
+    );
     assert!(
         daemon.requests().is_empty(),
         "a refused call reached the daemon: {:?}",
