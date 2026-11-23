@@ -16,9 +16,9 @@ local db = app.db
 
 -- A turn runs vos tools and goes back to the agent at most this many times: an agent that asks for a tool in every
 -- run would otherwise never give the person the chat back.
--- the most tools of this machine one run may have run
-local MAX_CALLS = 32
 local MAX_ROUNDS = 16
+-- The most tools of this machine one run may have run.
+local MAX_CALLS = 32
 -- The longest a run may take as a whole: an agent that works for longer than half an hour is stopped.
 local RUN_TIMEOUT = 1800
 -- How much of a tool's result is given to the agent (and kept).
