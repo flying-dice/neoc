@@ -144,25 +144,22 @@ pub struct Hasher {
     state: State,
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("lib:hash", "Hasher")]
 impl UserData for Hasher {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Feed `data` into the running digest.
-        #[lua("()")]
         methods.add_method_mut("update", |_, this, data: mlua::LuaString| {
             this.state.update(&data.as_bytes());
             Ok(())
         });
 
         /// Return the current digest as raw bytes; idempotent and does not consume the hasher.
-        #[lua("string")]
         methods.add_method("digest", |lua, this, _: ()| {
             let bytes = this.state.digest();
             lua.create_string(&bytes)
         });
 
         /// Return the algorithm name this hasher was constructed with.
-        #[lua("string")]
         methods.add_method("algorithm", |_, this, _: ()| Ok(this.state.algo()));
 
         methods.add_meta_method(MetaMethod::ToString, |_, this, _: ()| {

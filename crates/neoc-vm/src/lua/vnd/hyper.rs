@@ -283,30 +283,19 @@ impl Request {
     }
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("vnd:hyper", "Request")]
 impl UserData for Request {
     fn add_fields<F: mlua::UserDataFields<Self>>(fields: &mut F) {
         /// The HTTP method (`GET`).
-        #[lua("string")]
-        fields.add_field_method_get("method", |lua, this| {
-            Ok(Value::String(lua.create_string(&this.inner.method)?))
-        });
+        fields.add_field_method_get("method", |lua, this| lua.create_string(&this.inner.method));
         /// The request path, without the query string.
-        #[lua("string")]
-        fields.add_field_method_get("path", |lua, this| {
-            Ok(Value::String(lua.create_string(&this.inner.path)?))
-        });
+        fields.add_field_method_get("path", |lua, this| lua.create_string(&this.inner.path));
         /// The raw request body.
-        #[lua("string")]
-        fields.add_field_method_get("body", |lua, this| {
-            Ok(Value::String(lua.create_string(&this.inner.body)?))
-        });
+        fields.add_field_method_get("body", |lua, this| lua.create_string(&this.inner.body));
         /// Whether the `Content-Type` header is `application/json`.
-        #[lua("bool")]
         fields.add_field_method_get("is_json", |_, this| Ok(this.inner.body_is_json));
 
         /// The request headers as a `{ [name]: value }` table, names in lower case. A header sent more than once is one value joined with `", "` (`cookie` and the rest; `set-cookie` with `"\n"`), and a value that is not UTF-8 has its bad bytes replaced with U+FFFD.
-        #[lua("LuaValue")]
         fields.add_field_method_get("headers", |lua, this| {
             let t = lua.create_table_with_capacity(0, this.inner.headers.len())?;
             for (k, v) in &this.inner.headers {
@@ -330,11 +319,10 @@ impl UserData for Request {
 
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Look up a request header by name (case-insensitive); returns the value string or nil when absent.
-        #[lua("string?")]
         methods.add_method("header", |lua, this, name: String| {
             match this.header_lookup(&name) {
-                Some(v) => Ok(Value::String(lua.create_string(v)?)),
-                None => Ok(Value::Nil),
+                Some(v) => Ok(Some(lua.create_string(v)?)),
+                None => Ok(None),
             }
         });
     }

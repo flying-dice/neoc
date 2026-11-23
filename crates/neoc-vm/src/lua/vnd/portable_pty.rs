@@ -138,7 +138,7 @@ async fn spawn_command(lua: Lua, opts: Option<Value>) -> mlua::Result<(Value, Va
     }
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("vnd:portable_pty", "Pty")]
 impl UserData for Pty {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         // `Role::Mixed`: see `byte_stream::read`
@@ -201,7 +201,6 @@ impl UserData for Pty {
         });
 
         /// The id of the process `spawn_command` started, while it runs. `nil` once it has ended or the terminal is closed: the number is then the operating system's to give to another process.
-        #[lua("number?")]
         methods.add_method("process_id", |_, this, (): ()| Ok(this.0.process_id()));
 
         #[lua("Result<{ exit_code: number, signal: string?, success: bool }, string>", doc = format!(
@@ -224,14 +223,12 @@ impl UserData for Pty {
         });
 
         /// End the process: on Unix it is sent a hangup (`SIGHUP`, what a terminal that goes away sends) and, if it still runs a quarter of a second later, the kill it cannot refuse (`SIGKILL`); on Windows it is terminated. It returns at once: `wait()` says when the process is gone. A process that has ended is left alone. The process's own children are not signalled here: the operating system hangs up those in the terminal's foreground when the process ends.
-        #[lua("()")]
         methods.add_method("kill", |_, this, (): ()| {
             this.0.kill();
             Ok(())
         });
 
         /// End the process as `kill()` does and let go of the terminal: output not yet read is dropped, every `read`, waiting or later, returns `(nil, nil)`, and `write` and `resize` fail with `closed`. `wait()` still says how the process ended. Closing again does nothing. A terminal is also closed when its handle is collected, and when the engine shuts down.
-        #[lua("()")]
         methods.add_method("close", |_, this, (): ()| {
             this.0.close();
             Ok(())

@@ -102,7 +102,7 @@ fn io_result<T>(
 /// not become a Lua-sized allocation.
 const READ_CHUNK_MAX: usize = 16 << 20;
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("std:io", "ReaderHandle")]
 impl UserData for ReaderHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Read up to `n` bytes; returns `(nil, nil)` at EOF.
@@ -148,7 +148,7 @@ impl UserData for ReaderHandle {
     }
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("std:io", "WriterHandle")]
 impl UserData for WriterHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Write all bytes of `data` to the stream.

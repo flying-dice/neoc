@@ -105,15 +105,13 @@ pub struct TaskHandle {
     inner: Arc<TaskInner>,
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("std:task", "Task")]
 impl UserData for TaskHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Cancel the task. Returns `true` if this call cancelled it; `false` if already finished.
-        #[lua("bool")]
         methods.add_method("cancel", |_, this, ()| Ok(this.inner.cancel()));
 
         /// Return `true` if the task has completed (success, error, or cancel).
-        #[lua("bool")]
         methods.add_method("is_finished", |_, this, ()| Ok(this.inner.is_finished()));
 
         /// Wait for the task to finish. Returns every value the task returned on success, `(nil, error)` on error, or `(nil, "cancelled")` if cancelled.

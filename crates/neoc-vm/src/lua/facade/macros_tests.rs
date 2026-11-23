@@ -36,7 +36,7 @@ fn twice(_: &Lua, n: f64) -> Result<f64, String> {
 
 struct Counter(f64);
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("vnd:demo", "Counter")]
 impl UserData for Counter {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
         /// The count so far.
@@ -253,7 +253,7 @@ fn add_reads<M: UserDataMethods<Gauge>>(methods: &mut M) {
     methods.add_method("read_twice", |_, this, ()| Ok(this.0 * 2.0));
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("vnd:demo", "Gauge")]
 impl UserData for Gauge {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// The reading.

@@ -97,11 +97,10 @@ impl GlobHandle {
     }
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("lib:glob", "Glob")]
 impl UserData for GlobHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Test whether `path` matches this compiled pattern.
-        #[lua("bool")]
         methods.add_method("is_match", |_, this, path: String| Ok(this.matches(&path)));
         /// Walk the filesystem and return `(paths, errors)` as `glob.scan` does: the matching paths, plus a list of `{ path, error }` rows for the entries the walk could not read (nil when there are none). A bad directory returns `(nil, message)` instead.
         #[lua("(LuaValue, LuaValue)")]
@@ -220,14 +219,12 @@ impl GlobSetHandle {
     }
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("lib:glob", "GlobSet")]
 impl UserData for GlobSetHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// True if any pattern in the set matches `path`.
-        #[lua("bool")]
         methods.add_method("is_match", |_, this, path: String| Ok(this.is_match(&path)));
         /// 1-based indices of every pattern in the set that matches `path`.
-        #[lua("LuaValue")]
         methods.add_method("matches", |lua, this, path: String| {
             let t = lua.create_table()?;
             for (i, idx) in this.matching_indices(&path).into_iter().enumerate() {
@@ -236,7 +233,6 @@ impl UserData for GlobSetHandle {
             Ok(t)
         });
         /// Number of patterns in the set.
-        #[lua("number")]
         methods.add_method("len", |_, this, _: ()| Ok(this.patterns.len() as i64));
     }
 }

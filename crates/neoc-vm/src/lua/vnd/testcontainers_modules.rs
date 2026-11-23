@@ -171,12 +171,11 @@ where
     I: TypedImage,
 {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        #[lua("string", doc = I::URL_DOC)]
+        #[lua(doc = I::URL_DOC)]
         methods.add_method("url", |_, this, _: ()| Ok(this.url.clone()));
         /// Return the container host (always `"127.0.0.1"`).
-        #[lua("string")]
         methods.add_method("host", |_, this, _: ()| Ok(this.host.clone()));
-        #[lua("number", doc = I::PORT_DOC)]
+        #[lua(doc = I::PORT_DOC)]
         methods.add_method("port", |_, this, _: ()| Ok(this.port as i32));
         /// Stop the container; idempotent. The container also stops on garbage collection if not stopped explicitly.
         #[lua("()")]
@@ -402,14 +401,13 @@ fn parse_wait(t: &Table) -> Result<WaitFor, String> {
     })
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("vnd:testcontainers_modules", "GenericContainer")]
 impl UserData for GenericContainer {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Return the container host (always `"127.0.0.1"`).
-        #[lua("string")]
         methods.add_method("host", |_, this, _: ()| Ok(this.host.clone()));
         /// Return the mapped host port for the given container port; only ports listed at start time are available, requesting an unmapped port errors.
-        #[lua("number", types(container_port = "number"))]
+        #[lua(types(container_port = "number"))]
         methods.add_method("port", |_, this, container_port: u16| {
             this.ports
                 .get(&container_port)

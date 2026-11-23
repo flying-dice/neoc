@@ -95,17 +95,15 @@ impl PatternHandle {
     }
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("lib:regex", "Pattern")]
 impl UserData for PatternHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// True iff `text` contains at least one match.
-        #[lua("bool")]
         methods.add_method("is_match", |_, this, text: String| {
             Ok(this.compiled.is_match(&text))
         });
 
         /// First match in `text`, or `nil` if none.
-        #[lua("LuaValue")]
         methods.add_method("find", |lua, this, text: String| {
             match this.compiled.captures(&text) {
                 Some(caps) => Ok(Some(build_match(lua, &this.compiled, &caps)?)),
@@ -114,7 +112,6 @@ impl UserData for PatternHandle {
         });
 
         /// Every non-overlapping match in `text`, in order. Empty when nothing matches.
-        #[lua("LuaValue")]
         methods.add_method("find_all", |lua, this, text: String| {
             let t = lua.create_table()?;
             for (i, caps) in this.compiled.captures_iter(&text).enumerate() {

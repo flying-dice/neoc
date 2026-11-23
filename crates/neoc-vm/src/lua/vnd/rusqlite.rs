@@ -158,7 +158,7 @@ fn open(lua: &Lua, path: String) -> mlua::Result<(Value, Value)> {
     }
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("vnd:rusqlite", "Database")]
 impl UserData for Database {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Execute a SQL statement, binding trailing arguments to `?` placeholders; returns rows affected.
@@ -180,7 +180,6 @@ impl UserData for Database {
         });
 
         /// Prepare a SQL statement for repeated execution, sharing this connection.
-        #[lua("Statement")]
         methods.add_method("prepare", |_, this, sql: String| {
             Ok(Statement {
                 sql: Arc::new(sql),
@@ -189,7 +188,6 @@ impl UserData for Database {
         });
 
         /// Close the connection; subsequent method calls on this handle error.
-        #[lua("()")]
         methods.add_method("close", |_, this, _: ()| {
             // Take the connection out so the next call lands on the
             // "database is closed" branch in the helpers below.
@@ -209,7 +207,7 @@ pub struct Statement {
     conn: Arc<SharedConn>,
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("vnd:rusqlite", "Statement")]
 impl UserData for Statement {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Execute the prepared statement with positional parameters; returns rows affected.

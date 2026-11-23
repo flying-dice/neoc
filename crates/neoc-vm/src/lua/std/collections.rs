@@ -29,7 +29,6 @@ use parking_lot::RwLock;
 
 use crate::lua::facade::Module;
 use crate::lua::lifecycle::{Role, async_method, idle};
-use crate::lua::sandbox::i64_to_lua;
 use crate::lua::serde_guard::refuse_buffer;
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
@@ -129,11 +128,11 @@ impl crate::lua::std::thread::Sendable for Map {
     }
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("std:collections", "Map")]
 impl UserData for Map {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Read a key.
-        #[lua("LuaValue", names(k = "key"))]
+        #[lua(names(k = "key"))]
         methods.add_method("get", |lua, this, k: String| {
             let v = this.0.inner.read().get(&k).cloned();
             match v {
@@ -143,7 +142,7 @@ impl UserData for Map {
         });
 
         /// Insert or replace a key.
-        #[lua("()", names(k = "key", v = "value"))]
+        #[lua(names(k = "key", v = "value"))]
         methods.add_method("set", |_, this, (k, v): (String, Value)| {
             refuse_buffer(&v, "collections.Map.set")?;
             let json = serde_json::to_value(&v).map_err(mlua::Error::external)?;
@@ -152,13 +151,13 @@ impl UserData for Map {
         });
 
         /// Remove a key, returning whether it was present.
-        #[lua("bool", names(k = "key"))]
+        #[lua(names(k = "key"))]
         methods.add_method("delete", |_, this, k: String| {
             Ok(this.0.inner.write().remove(&k).is_some())
         });
 
         /// Test for a key.
-        #[lua("bool", names(k = "key"))]
+        #[lua(names(k = "key"))]
         methods.add_method("has", |_, this, k: String| {
             Ok(this.0.inner.read().contains_key(&k))
         });
@@ -171,7 +170,6 @@ impl UserData for Map {
         );
 
         /// All keys as a 1-indexed table.
-        #[lua("LuaValue")]
         methods.add_method("keys", |lua, this, _: ()| {
             let keys: Vec<String> = this.0.inner.read().keys().cloned().collect();
             let t = lua.create_table_with_capacity(keys.len(), 0)?;
@@ -182,7 +180,6 @@ impl UserData for Map {
         });
 
         /// Remove all entries.
-        #[lua("()")]
         methods.add_method("clear", |_, this, _: ()| {
             this.0.inner.write().clear();
             Ok(())
@@ -220,41 +217,42 @@ impl crate::lua::std::thread::Sendable for Counter {
     }
 }
 
-#[neoc_macros::lua_userdata]
+/// A counter's value as the number a script gets: a float, which is exact up to 2^53.
+#[allow(clippy::cast_precision_loss)]
+fn number(value: i64) -> f64 {
+    value as f64
+}
+
+#[neoc_macros::lua_userdata("std:collections", "Counter")]
 impl UserData for Counter {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Current value.
-        #[lua("number")]
         methods.add_method("get", |_, this, _: ()| {
-            Ok(i64_to_lua(this.0.value.load(Ordering::Relaxed)))
+            Ok(number(this.0.value.load(Ordering::Relaxed)))
         });
 
         /// Add one, returning the new value.
-        #[lua("number")]
         methods.add_method("increment", |_, this, _: ()| {
-            Ok(i64_to_lua(
+            Ok(number(
                 this.0.value.fetch_add(1, Ordering::Relaxed).wrapping_add(1),
             ))
         });
 
         /// Subtract one, returning the new value.
-        #[lua("number")]
         methods.add_method("decrement", |_, this, _: ()| {
-            Ok(i64_to_lua(
+            Ok(number(
                 this.0.value.fetch_sub(1, Ordering::Relaxed).wrapping_sub(1),
             ))
         });
 
         /// Add `n`, returning the new value.
-        #[lua("number")]
         methods.add_method("add", |_, this, n: i64| {
-            Ok(i64_to_lua(
+            Ok(number(
                 this.0.value.fetch_add(n, Ordering::Relaxed).wrapping_add(n),
             ))
         });
 
         /// Set the value to `n`.
-        #[lua("()")]
         methods.add_method("set", |_, this, n: i64| {
             this.0.value.store(n, Ordering::Relaxed);
             Ok(())
@@ -279,7 +277,7 @@ pub struct Mutex(Arc<SharedMutex>);
 
 arc_newtype!(Mutex, SharedMutex);
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("std:collections", "Mutex")]
 impl UserData for Mutex {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         // `with_lock(fn)` — acquire the lock, call `fn` with no args, release

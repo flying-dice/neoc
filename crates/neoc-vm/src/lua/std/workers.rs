@@ -95,11 +95,10 @@ impl ShutdownSignal {
     }
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("std:workers", "ShutdownSignal")]
 impl UserData for ShutdownSignal {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Return `true` if the signal has already fired. Non-blocking.
-        #[lua("bool")]
         methods.add_method("is_fired", |_, this, _: ()| Ok(this.is_fired()));
         /// Yield the calling coroutine until the signal fires; returns immediately if already fired.
         #[lua("()")]

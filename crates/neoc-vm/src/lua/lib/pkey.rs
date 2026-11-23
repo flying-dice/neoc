@@ -278,11 +278,10 @@ impl KeyPair {
     }
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("lib:pkey", "KeyPair")]
 impl UserData for KeyPair {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Extract the public key.
-        #[lua("PublicKey")]
         methods.add_method("public_key", |_, this, _: ()| Ok(this.public()));
 
         /// Sign `message` with the private key, returning the raw signature bytes.
@@ -295,7 +294,6 @@ impl UserData for KeyPair {
         });
 
         /// Return the algorithm name this keypair was built with.
-        #[lua("string")]
         methods.add_method("algorithm", |_, this, _: ()| Ok(this.secret.algo().name()));
 
         /// Serialise the private key as a PKCS#8 PEM string (LF line endings).
@@ -409,7 +407,7 @@ impl PublicKey {
     }
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("lib:pkey", "PublicKey")]
 impl UserData for PublicKey {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Verify `signature` over `message`; returns `true` iff valid, `false` on any mismatch or malformed signature.
@@ -422,7 +420,6 @@ impl UserData for PublicKey {
         );
 
         /// Return the algorithm name this public key was built with.
-        #[lua("string")]
         methods.add_method("algorithm", |_, this, _: ()| Ok(this.public.algo().name()));
 
         /// Serialise the public key as an SPKI PEM string (LF line endings).

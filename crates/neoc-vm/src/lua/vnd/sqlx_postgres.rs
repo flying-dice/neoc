@@ -103,7 +103,7 @@ async fn open(lua: Lua, url: String) -> mlua::Result<(Value, Value)> {
     }
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("vnd:sqlx_postgres", "Database")]
 impl UserData for Database {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Execute a SQL statement, binding trailing arguments to `$1, $2, …` placeholders; returns rows affected.

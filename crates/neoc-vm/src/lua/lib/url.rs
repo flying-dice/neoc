@@ -103,44 +103,34 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 #[derive(Clone)]
 pub struct UrlHandle(pub Url);
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("lib:url", "Url")]
 impl UserData for UrlHandle {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
         /// The scheme, lower-cased (`https`).
-        #[lua("string")]
         fields.add_field_method_get("scheme", |_, this| Ok(this.0.scheme().to_owned()));
         /// The username, or an empty string.
-        #[lua("string")]
         fields.add_field_method_get("username", |_, this| Ok(this.0.username().to_owned()));
         /// The password, or nil.
-        #[lua("string?")]
         fields.add_field_method_get("password", |_, this| {
             Ok(this.0.password().map(str::to_owned))
         });
         /// The host, or nil for a URL without one.
-        #[lua("string?")]
         fields.add_field_method_get("host", |_, this| Ok(this.0.host_str().map(str::to_owned)));
         /// The explicit port, or nil when it is the scheme's default.
-        #[lua("number?")]
         fields.add_field_method_get("port", |_, this| Ok(this.0.port().map(|p| p as i64)));
         /// The percent-encoded path.
-        #[lua("string")]
         fields.add_field_method_get("path", |_, this| Ok(this.0.path().to_owned()));
         /// The query string without the `?`, or nil.
-        #[lua("string?")]
         fields.add_field_method_get("query", |_, this| Ok(this.0.query().map(str::to_owned)));
         /// The fragment without the `#`, or nil.
-        #[lua("string?")]
         fields.add_field_method_get("fragment", |_, this| {
             Ok(this.0.fragment().map(str::to_owned))
         });
         /// The serialised origin (`https://example.com:8080`).
-        #[lua("string")]
         fields.add_field_method_get("origin", |_, this| {
             Ok(this.0.origin().ascii_serialization())
         });
         /// The whole URL as a string.
-        #[lua("string")]
         fields.add_field_method_get("href", |_, this| Ok(this.0.as_str().to_owned()));
     }
 
@@ -211,7 +201,6 @@ impl UserData for UrlHandle {
         });
 
         /// Return a new `Url` with the path replaced. Always succeeds — the path is re-encoded against the WHATWG path set.
-        #[lua("Url")]
         methods.add_method("with_path", |_, this, path: String| {
             let mut u = this.0.clone();
             u.set_path(&path);
@@ -219,7 +208,6 @@ impl UserData for UrlHandle {
         });
 
         /// Return a new `Url` with the query string replaced (or cleared when `nil`).
-        #[lua("Url")]
         methods.add_method("with_query", |_, this, query: Option<String>| {
             let mut u = this.0.clone();
             u.set_query(query.as_deref());
@@ -227,7 +215,6 @@ impl UserData for UrlHandle {
         });
 
         /// Return a new `Url` with the fragment replaced (or cleared when `nil`).
-        #[lua("Url")]
         methods.add_method("with_fragment", |_, this, fragment: Option<String>| {
             let mut u = this.0.clone();
             u.set_fragment(fragment.as_deref());
@@ -235,7 +222,6 @@ impl UserData for UrlHandle {
         });
 
         /// Query pairs in order, including any repeated keys.
-        #[lua("LuaValue")]
         methods.add_method("query_pairs", |lua, this, _: ()| {
             let t = lua.create_table()?;
             for (i, (k, v)) in this.0.query_pairs().enumerate() {
@@ -252,7 +238,6 @@ impl UserData for UrlHandle {
         // `Object.fromEntries(new URLSearchParams(…))` shape. Callers who need
         // every value should use `query_pairs()` instead.
         /// Query as a map. Last value wins on repeated keys.
-        #[lua("LuaValue")]
         methods.add_method("query_map", |lua, this, _: ()| {
             let t = lua.create_table()?;
             for (k, v) in this.0.query_pairs() {

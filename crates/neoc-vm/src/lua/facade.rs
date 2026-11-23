@@ -47,6 +47,7 @@ use tracing_core::metadata::{Kind, Metadata};
 pub mod luau_decls;
 #[cfg(test)]
 mod macros_tests;
+pub mod typed;
 
 use crate::lua::lifecycle::{Role, async_function};
 use crate::lua::sandbox::{from_err, ok};
@@ -62,6 +63,16 @@ use crate::lua::sandbox::{from_err, ok};
 pub trait DeclType {
     /// Returns the recorded type name for this binding type.
     fn decl_type() -> String;
+}
+
+/// A userdata type that says the module it is a type of and its name there
+/// (`#[neoc_macros::lua_userdata("std:time", "Duration")]`), so that a function that takes or returns it
+/// declares it by its Rust type.
+pub trait Named {
+    /// The key of the module the type is declared by (`std:time`).
+    const MODULE: &'static str;
+    /// The name of the type in that module (`Duration`).
+    const NAME: &'static str;
 }
 
 macro_rules! decl_type {

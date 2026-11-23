@@ -96,11 +96,10 @@ impl TempFileHandle {
     }
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("lib:tempfile", "TempFile")]
 impl UserData for TempFileHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Return the absolute path to the temp file; stable across calls and does not consume the handle.
-        #[lua("string")]
         methods.add_method("path", |_, this, _: ()| Ok(this.path.clone()));
 
         /// Consume the handle and keep the file on disk past drop, returning the path.
@@ -114,7 +113,6 @@ impl UserData for TempFileHandle {
         });
 
         /// Release the handle eagerly; idempotent.
-        #[lua("()")]
         methods.add_method_mut("close", |_, this, _: ()| {
             this.inner.take();
             Ok(())
@@ -145,11 +143,10 @@ impl TempDirHandle {
     }
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("lib:tempfile", "TempDir")]
 impl UserData for TempDirHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Return the absolute path to the temp directory as a string.
-        #[lua("string")]
         methods.add_method("path", |_, this, _: ()| Ok(this.path.clone()));
 
         /// Consume the handle and keep the directory on disk past drop, returning the path.

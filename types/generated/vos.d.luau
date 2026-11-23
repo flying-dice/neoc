@@ -1043,7 +1043,7 @@ export type lib_regex_Pattern = {
 	--- True iff `text` contains at least one match.
 	is_match: (self: lib_regex_Pattern, text: string) -> boolean,
 	--- First match in `text`, or `nil` if none.
-	find: (self: lib_regex_Pattern, text: string) -> any,
+	find: (self: lib_regex_Pattern, text: string) -> any?,
 	--- Every non-overlapping match in `text`, in order. Empty when nothing matches.
 	find_all: (self: lib_regex_Pattern, text: string) -> any,
 	--- Replace the first match in `text`. Uses the regex crate's `$0` / `$1` / `${name}` substitution grammar.

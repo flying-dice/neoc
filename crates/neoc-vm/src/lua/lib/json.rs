@@ -572,7 +572,7 @@ fn node_to_table(lua: &Lua, root: &Root, path: &[PathSeg]) -> mlua::Result<Value
     })
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("lib:json", "Object")]
 impl UserData for Object {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         // `get`/`len`/`to_table` are shared with `Array` (both are root+path):
@@ -583,12 +583,11 @@ impl UserData for Object {
             walk_get(lua, &this.root, &this.path, args)
         });
         /// Insert or replace `key` with `value`.
-        #[lua("()", names(v = "value"))]
+        #[lua(names(v = "value"))]
         methods.add_method("set", |_, this, (key, v): (String, Value)| {
             this.set_inner(key, lua_value_to_json_value(&v)?)
         });
         /// Whether the object contains an entry for `key`.
-        #[lua("bool")]
         methods.add_method("has", |_, this, key: String| {
             Ok(with_resolved(&this.root, &this.path, |r| {
                 r.and_then(JsonValue::as_object)
@@ -611,12 +610,10 @@ impl UserData for Object {
             Ok(t)
         });
         /// Number of top-level keys.
-        #[lua("number")]
         methods.add_method("len", |_, this, _: ()| {
             Ok(node_len(&this.root, &this.path, NodeKind::Object))
         });
         /// Materialise the subtree as a Lua table.
-        #[lua("LuaValue")]
         methods.add_method("to_table", |lua, this, _: ()| {
             node_to_table(lua, &this.root, &this.path)
         });
@@ -669,7 +666,7 @@ impl Array {
     }
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("lib:json", "Array")]
 impl UserData for Array {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         // `get`/`len`/`to_table` are the same as `Object`'s — see those helpers.
@@ -679,7 +676,7 @@ impl UserData for Array {
             walk_get(lua, &this.root, &this.path, args)
         });
         /// Replace the element at a 1-based index.
-        #[lua("()", names(i = "index", v = "value"))]
+        #[lua(names(i = "index", v = "value"))]
         methods.add_method("set", |_, this, (i, v): (i64, Value)| {
             if i < 1 {
                 return Err(mlua::Error::external("json.array: index must be >= 1"));
@@ -690,17 +687,15 @@ impl UserData for Array {
             )
         });
         /// Append `value` to the end of the array.
-        #[lua("()", names(v = "value"))]
+        #[lua(names(v = "value"))]
         methods.add_method("push", |_, this, v: Value| {
             this.push_inner(lua_value_to_json_value(&v)?)
         });
         /// Current length of the array.
-        #[lua("number")]
         methods.add_method("len", |_, this, _: ()| {
             Ok(node_len(&this.root, &this.path, NodeKind::Array))
         });
         /// Materialise the array as a 1-indexed Lua table.
-        #[lua("LuaValue")]
         methods.add_method("to_table", |lua, this, _: ()| {
             node_to_table(lua, &this.root, &this.path)
         });

@@ -122,7 +122,6 @@ impl ServerHandle {
 impl UserData for ServerHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Return the local address the server is bound to.
-        #[lua("string")]
         methods.add_method("addr", |_, this, _: ()| {
             let state = this.inner.state.lock();
             match &*state {
@@ -133,7 +132,6 @@ impl UserData for ServerHandle {
         });
 
         /// Initiate graceful shutdown; returns immediately. Use `:wait()` to block until stopped.
-        #[lua("()")]
         methods.add_method("close", |_, this, _: ()| {
             let mut state = this.inner.state.lock();
             if let ServerState::Listening { shutdown, .. } = &mut *state

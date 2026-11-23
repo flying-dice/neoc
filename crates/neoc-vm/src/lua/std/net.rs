@@ -255,11 +255,10 @@ impl crate::lua::std::thread::Sendable for Listener {
     }
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("std:net", "TcpListener")]
 impl UserData for Listener {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Return the local address the socket is bound to, as a string like `"127.0.0.1:8080"`.
-        #[lua("string")]
         methods.add_method("addr", |_, this, _: ()| match this.local_addr() {
             Ok(a) => Ok(a.to_string()),
             Err(e) => Err(mlua::Error::external(e)),

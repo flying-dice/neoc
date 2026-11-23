@@ -139,7 +139,6 @@ impl UserData for Stream {
             }
         });
         /// Stop reading and drop the connection to Docker. Items already read may still be returned by `next`; then it is the end. A stream is also closed when it is collected, and when the script that made it is unloaded or shut down.
-        #[lua("()")]
         methods.add_method("close", |_, this, (): ()| {
             this.inner.reader.abort();
             Ok(())

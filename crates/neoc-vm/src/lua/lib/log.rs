@@ -215,11 +215,10 @@ fn optional_string(t: &Table, key: &str) -> mlua::Result<Option<String>> {
     }
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("lib:log", "Logger")]
 impl UserData for LuaLogger {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Return a child logger with `fields` merged into the bound context; the parent is unchanged.
-        #[lua("Logger")]
         methods.add_method("with", |lua, this, fields: Table| this.child(lua, fields));
         /// Emit a `trace`-level line if the logger's threshold permits it.
         #[lua("()")]

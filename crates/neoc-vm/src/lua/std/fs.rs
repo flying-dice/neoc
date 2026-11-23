@@ -554,14 +554,12 @@ fn open(opts: &Table) -> FsResult<OpenHandle> {
 /// The result of `metadata` / `symlink_metadata`.
 struct MetadataHandle(Meta);
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("std:fs", "Metadata")]
 impl UserData for MetadataHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// `"file"`, `"dir"`, `"symlink"` (only from `symlink_metadata`) or `"other"`.
-        #[lua("string")]
         methods.add_method("kind", |_, this, ()| Ok(this.0.kind.as_str()));
         /// `kind() == "file"`.
-        #[lua("bool")]
         methods.add_method("is_file", |_, this, ()| {
             Ok(this.0.kind == ops::FileKind::File)
         });
@@ -572,56 +570,39 @@ impl UserData for MetadataHandle {
             |_, this, ()| Ok(this.0.kind == ops::FileKind::Dir),
         );
         /// `kind() == "symlink"`.
-        #[lua("bool")]
         methods.add_method("is_symlink", |_, this, ()| {
             Ok(this.0.kind == ops::FileKind::Symlink)
         });
         /// Size in bytes (for a directory, whatever the platform reports).
-        #[lua("number")]
         methods.add_method("len", |_, this, ()| Ok(this.0.size));
         /// Whether the permissions forbid writing: on Unix, no write bit at all; on Windows, the read-only attribute.
-        #[lua("bool")]
         methods.add_method("readonly", |_, this, ()| Ok(this.0.readonly));
         /// Last modification, seconds since the Unix epoch; `nil` if unavailable.
-        #[lua("number?")]
         methods.add_method("modified", |_, this, ()| Ok(this.0.modified));
         /// Creation (birth) time, seconds since the Unix epoch; `nil` where the platform or filesystem does not record it.
-        #[lua("number?")]
         methods.add_method("created", |_, this, ()| Ok(this.0.created));
         /// Last access, seconds since the Unix epoch; `nil` if unavailable (and unreliable: many filesystems do not update it).
-        #[lua("number?")]
         methods.add_method("accessed", |_, this, ()| Ok(this.0.accessed));
         /// The Unix permission bits (`0o644` is `420`); `nil` on Windows.
-        #[lua("number?")]
         methods.add_method("mode", |_, this, ()| Ok(this.0.mode));
-    }
-}
-
-impl DeclType for MetadataHandle {
-    fn decl_type() -> String {
-        "Metadata".to_owned()
     }
 }
 
 /// One entry of a `read_dir` or `walk` listing.
 struct DirEntryHandle(Entry);
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("std:fs", "DirEntry")]
 impl UserData for DirEntryHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// The entry's own name, as the filesystem has it (bytes on Unix, so it may not be UTF-8).
-        #[lua("string")]
         methods.add_method("file_name", |lua, this, ()| os_to_lua(lua, &this.0.name));
         /// The directory given to `read_dir` or `walk` joined with the entry's path under it.
-        #[lua("string")]
         methods.add_method("path", |lua, this, ()| {
             os_to_lua(lua, this.0.path.as_os_str())
         });
         /// `"file"`, `"dir"`, `"symlink"` or `"other"`; a symlink is not resolved.
-        #[lua("string")]
         methods.add_method("kind", |_, this, ()| Ok(this.0.kind.as_str()));
         /// `kind() == "file"`.
-        #[lua("bool")]
         methods.add_method("is_file", |_, this, ()| {
             Ok(this.0.kind == ops::FileKind::File)
         });
@@ -632,12 +613,10 @@ impl UserData for DirEntryHandle {
             |_, this, ()| Ok(this.0.kind == ops::FileKind::Dir),
         );
         /// `kind() == "symlink"`.
-        #[lua("bool")]
         methods.add_method("is_symlink", |_, this, ()| {
             Ok(this.0.kind == ops::FileKind::Symlink)
         });
         /// How far below the listed directory the entry is: `1` for a direct child (always, for `read_dir`).
-        #[lua("number")]
         methods.add_method("depth", |_, this, ()| Ok(this.0.depth));
     }
 }

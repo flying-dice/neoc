@@ -32,32 +32,26 @@ use crate::lua::sandbox::{err, ok};
 #[derive(Clone, Copy)]
 pub struct DurationHandle(pub StdDuration);
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("std:time", "Duration")]
 impl UserData for DurationHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Whole seconds component (integer).
-        #[lua("number")]
         methods.add_method("as_secs", |_, this, ()| Ok(this.0.as_secs() as i64));
         /// Total milliseconds (integer, saturating).
-        #[lua("number")]
         methods.add_method("as_millis", |_, this, ()| {
             Ok(u128_to_i64_saturating(this.0.as_millis()))
         });
         /// Total microseconds (integer, saturating).
-        #[lua("number")]
         methods.add_method("as_micros", |_, this, ()| {
             Ok(u128_to_i64_saturating(this.0.as_micros()))
         });
         /// Total nanoseconds (integer, saturating).
-        #[lua("number")]
         methods.add_method("as_nanos", |_, this, ()| {
             Ok(u128_to_i64_saturating(this.0.as_nanos()))
         });
         /// Total seconds as a float.
-        #[lua("number")]
         methods.add_method("as_secs_f64", |_, this, ()| Ok(this.0.as_secs_f64()));
         /// True if the duration is exactly zero.
-        #[lua("bool")]
         methods.add_method("is_zero", |_, this, ()| Ok(this.0.is_zero()));
 
         // Saturating arithmetic — Rust's `+`/`-` panic on overflow/underflow,
@@ -196,11 +190,10 @@ fn scale_duration(d: StdDuration, factor: f64, ctx: &'static str) -> mlua::Resul
 #[derive(Clone, Copy)]
 pub struct InstantHandle(pub StdInstant);
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("std:time", "Instant")]
 impl UserData for InstantHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Return the `Duration` elapsed since this `Instant` was taken (saturating).
-        #[lua("Duration")]
         methods.add_method("elapsed", |_, this, ()| {
             Ok(DurationHandle(this.0.elapsed()))
         });

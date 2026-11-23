@@ -469,11 +469,11 @@ impl Drop for WorkerInner {
     }
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("std:thread", "WorkerHandle")]
 impl UserData for WorkerHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Send a JSON-serialisable value to the worker; errors if the worker has exited.
-        #[lua("()", names(v = "value"))]
+        #[lua(names(v = "value"))]
         methods.add_method("send", |_, this, v: Value| {
             send_json(&this.inner.tx, v, "thread.send", "worker has exited")
         });
@@ -510,7 +510,6 @@ impl UserData for WorkerHandle {
         });
 
         /// Abort the worker immediately. A subsequent `:await()` returns `(nil, "thread.await: terminated")`.
-        #[lua("()")]
         methods.add_method("terminate", |_, this, _: ()| {
             this.inner.abort.abort();
             Ok(())
@@ -528,11 +527,11 @@ pub struct Channel {
     rx: Arc<Mutex<mpsc::UnboundedReceiver<serde_json::Value>>>,
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("std:thread", "Channel")]
 impl UserData for Channel {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Send a JSON-serialisable value to the parent's message queue.
-        #[lua("()", names(v = "value"))]
+        #[lua(names(v = "value"))]
         methods.add_method("send", |_, this, v: Value| {
             send_json(&this.tx, v, "channel.send", "peer has exited")
         });

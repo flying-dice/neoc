@@ -131,25 +131,22 @@ pub struct Hmac {
     state: State,
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("lib:hmac", "Hmac")]
 impl UserData for Hmac {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Feed `data` into the running MAC.
-        #[lua("()")]
         methods.add_method_mut("update", |_, this, data: mlua::LuaString| {
             this.state.update(&data.as_bytes());
             Ok(())
         });
 
         /// Return the current tag as raw bytes; idempotent and does not consume the MAC.
-        #[lua("string")]
         methods.add_method("digest", |lua, this, _: ()| {
             let bytes = this.state.digest();
             lua.create_string(&bytes)
         });
 
         /// Return the algorithm name this MAC was constructed with.
-        #[lua("string")]
         methods.add_method("algorithm", |_, this, _: ()| Ok(this.state.algo()));
 
         methods.add_meta_method(MetaMethod::ToString, |_, this, _: ()| {

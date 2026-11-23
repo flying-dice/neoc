@@ -151,7 +151,7 @@ macro_rules! stmt_op {
     };
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("vnd:sqlx_mysql", "Database")]
 impl UserData for Database {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Execute a SQL statement, binding trailing arguments to `?` placeholders; returns rows affected.
@@ -177,7 +177,6 @@ impl UserData for Database {
         db_op!(methods, "query_one", "sqlx_mysql.query_one", run_query_one);
 
         /// Prepare a SQL statement for repeated execution, sharing this connection pool.
-        #[lua("Statement")]
         methods.add_method("prepare", |_, this, sql: String| {
             Ok(Statement {
                 sql: Arc::new(sql),
@@ -207,7 +206,7 @@ pub struct Statement {
     pool: Arc<MySqlPool>,
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("vnd:sqlx_mysql", "Statement")]
 impl UserData for Statement {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Execute the prepared statement with positional parameters; returns rows affected.

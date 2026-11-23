@@ -1061,7 +1061,7 @@ pub struct TemplateHandle {
     inner: Arc<TemplateInner>,
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("lib:template", "Template")]
 impl UserData for TemplateHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Render the compiled template with `context` as the variable map.

@@ -526,7 +526,6 @@ impl UserData for WatchHandle {
             },
         );
         /// Stop watching: the operating system's watch is released, events not yet received are dropped, and every `receive`, waiting or later, returns `(nil, nil)`. Closing again does nothing.
-        #[lua("()")]
         methods.add_method("close", |_, this, ()| {
             this.0.close();
             Ok(())

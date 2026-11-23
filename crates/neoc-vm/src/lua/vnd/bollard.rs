@@ -461,7 +461,7 @@ fn signal(opts: &Opts) -> Result<Option<String>, BollardError> {
     }
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("vnd:bollard", "Client")]
 impl UserData for Client {
     #[allow(clippy::too_many_lines)] // one registration per method
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {

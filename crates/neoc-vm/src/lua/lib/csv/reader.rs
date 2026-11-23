@@ -162,7 +162,6 @@ impl UserData for CsvReader {
         });
 
         /// Return a Lua iterator yielding the next row on each call, `nil` at EOF. Iterator errors raise.
-        #[lua("LuaValue")]
         methods.add_method("rows", |lua, this, _: ()| {
             create_rows_iter(lua, this.state.clone(), "csv.reader")
         });

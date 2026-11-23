@@ -133,25 +133,20 @@ fn record_userdata(m: &mut Module<'_>) {
 #[derive(Clone, Copy)]
 pub struct DateHandle(pub Date);
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("lib:chrono", "Date")]
 impl UserData for DateHandle {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
         /// Calendar year.
-        #[lua("number")]
         fields.add_field_method_get("year", |_, this| Ok(this.0.year() as i64));
         /// Month of year (1-12).
-        #[lua("number")]
         fields.add_field_method_get("month", |_, this| Ok(this.0.month() as i64));
         /// Day of month (1-31).
-        #[lua("number")]
         fields.add_field_method_get("day", |_, this| Ok(this.0.day() as i64));
         /// Day of week, Monday = 1.
-        #[lua("number")]
         fields.add_field_method_get("weekday", |_, this| {
             Ok(this.0.weekday().to_monday_one_offset() as i64)
         });
         /// Day of year (1-366).
-        #[lua("number")]
         fields.add_field_method_get("ordinal", |_, this| Ok(this.0.day_of_year() as i64));
     }
 
@@ -194,7 +189,7 @@ impl UserData for DateHandle {
         });
 
         /// Combine with a `Time` into a `DateTime`.
-        #[lua("DateTime", names(t = "time"), types(t = "Time"))]
+        #[lua(names(t = "time"), types(t = "Time"))]
         methods.add_method("at", |_, this, t: AnyUserData| {
             let th = t.borrow::<TimeHandle>()?;
             Ok(DateTimeHandle(this.0.to_datetime(th.0)))
@@ -330,17 +325,14 @@ fn date_parse_ctor(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
 #[derive(Clone, Copy)]
 pub struct TimeHandle(pub Time);
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("lib:chrono", "Time")]
 impl UserData for TimeHandle {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
         /// Hour of day (0-23).
-        #[lua("number")]
         fields.add_field_method_get("hour", |_, this| Ok(this.0.hour() as i64));
         /// Minute of hour (0-59).
-        #[lua("number")]
         fields.add_field_method_get("minute", |_, this| Ok(this.0.minute() as i64));
         /// Second of minute (0-59).
-        #[lua("number")]
         fields.add_field_method_get("second", |_, this| Ok(this.0.second() as i64));
         /// Sub-second nanoseconds.
         #[lua("number")]
@@ -352,7 +344,7 @@ impl UserData for TimeHandle {
 
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Combine with a `Date` into a `DateTime`.
-        #[lua("DateTime", names(d = "date"), types(d = "Date"))]
+        #[lua(names(d = "date"), types(d = "Date"))]
         methods.add_method("on", |_, this, d: AnyUserData| {
             let dh = d.borrow::<DateHandle>()?;
             Ok(DateTimeHandle(dh.0.to_datetime(this.0)))
@@ -440,26 +432,20 @@ fn time_parse_ctor(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
 #[derive(Clone, Copy)]
 pub struct DateTimeHandle(pub DateTime);
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("lib:chrono", "DateTime")]
 impl UserData for DateTimeHandle {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
         /// Calendar year.
-        #[lua("number")]
         fields.add_field_method_get("year", |_, this| Ok(this.0.year() as i64));
         /// Month of year (1-12).
-        #[lua("number")]
         fields.add_field_method_get("month", |_, this| Ok(this.0.month() as i64));
         /// Day of month (1-31).
-        #[lua("number")]
         fields.add_field_method_get("day", |_, this| Ok(this.0.day() as i64));
         /// Hour of day (0-23).
-        #[lua("number")]
         fields.add_field_method_get("hour", |_, this| Ok(this.0.hour() as i64));
         /// Minute of hour (0-59).
-        #[lua("number")]
         fields.add_field_method_get("minute", |_, this| Ok(this.0.minute() as i64));
         /// Second of minute (0-59).
-        #[lua("number")]
         fields.add_field_method_get("second", |_, this| Ok(this.0.second() as i64));
         /// Sub-second nanoseconds.
         #[lua("number")]
@@ -471,10 +457,8 @@ impl UserData for DateTimeHandle {
 
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// The civil `Date` component.
-        #[lua("Date")]
         methods.add_method("date", |_, this, _: ()| Ok(DateHandle(this.0.date())));
         /// The civil `Time` component.
-        #[lua("Time")]
         methods.add_method("time", |_, this, _: ()| Ok(TimeHandle(this.0.time())));
 
         /// Interpret this civil datetime in the named IANA zone.
@@ -640,26 +624,20 @@ fn datetime_parse_ctor(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
 #[derive(Clone)]
 pub struct ZonedDateTimeHandle(pub ZonedDateTime);
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("lib:chrono", "ZonedDateTime")]
 impl UserData for ZonedDateTimeHandle {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
         /// Calendar year.
-        #[lua("number")]
         fields.add_field_method_get("year", |_, this| Ok(this.0.year() as i64));
         /// Month of year (1-12).
-        #[lua("number")]
         fields.add_field_method_get("month", |_, this| Ok(this.0.month() as i64));
         /// Day of month (1-31).
-        #[lua("number")]
         fields.add_field_method_get("day", |_, this| Ok(this.0.day() as i64));
         /// Hour of day (0-23).
-        #[lua("number")]
         fields.add_field_method_get("hour", |_, this| Ok(this.0.hour() as i64));
         /// Minute of hour (0-59).
-        #[lua("number")]
         fields.add_field_method_get("minute", |_, this| Ok(this.0.minute() as i64));
         /// Second of minute (0-59).
-        #[lua("number")]
         fields.add_field_method_get("second", |_, this| Ok(this.0.second() as i64));
         /// Sub-second nanoseconds.
         #[lua("number")]
@@ -668,17 +646,14 @@ impl UserData for ZonedDateTimeHandle {
             |_, this| Ok(this.0.subsec_nanosecond() as i64),
         );
         /// IANA zone name, if any.
-        #[lua("string?")]
         fields.add_field_method_get("timezone", |_, this| {
             Ok(this.0.time_zone().iana_name().map(str::to_owned))
         });
         /// UTC offset in seconds.
-        #[lua("number")]
         fields.add_field_method_get("offset_seconds", |_, this| {
             Ok(this.0.offset().seconds() as i64)
         });
         /// Seconds since the Unix epoch.
-        #[lua("number")]
         fields.add_field_method_get("epoch_seconds", |_, this| {
             Ok(this.0.timestamp().as_second())
         });
@@ -686,13 +661,10 @@ impl UserData for ZonedDateTimeHandle {
 
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// The civil `Date` component.
-        #[lua("Date")]
         methods.add_method("date", |_, this, _: ()| Ok(DateHandle(this.0.date())));
         /// The civil `Time` component.
-        #[lua("Time")]
         methods.add_method("time", |_, this, _: ()| Ok(TimeHandle(this.0.time())));
         /// The civil `DateTime` component.
-        #[lua("DateTime")]
         methods.add_method("datetime", |_, this, _: ()| {
             Ok(DateTimeHandle(this.0.datetime()))
         });
@@ -828,41 +800,31 @@ fn zdt_parse_ctor(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
 #[derive(Clone, Copy)]
 pub struct DurationHandle(pub Span);
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("lib:chrono", "Duration")]
 impl UserData for DurationHandle {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
         // Field-style accessors return the *named* component of the span,
         // not a normalised total — `Duration.of({hours = 36}).hours` is
         // `36`, not `12`. Use `total_seconds` for a normalised number.
         /// Named years component.
-        #[lua("number")]
         fields.add_field_method_get("years", |_, this| Ok(this.0.get_years() as i64));
         /// Named months component.
-        #[lua("number")]
         fields.add_field_method_get("months", |_, this| Ok(this.0.get_months() as i64));
         /// Named weeks component.
-        #[lua("number")]
         fields.add_field_method_get("weeks", |_, this| Ok(this.0.get_weeks() as i64));
         /// Named days component.
-        #[lua("number")]
         fields.add_field_method_get("days", |_, this| Ok(this.0.get_days() as i64));
         /// Named hours component.
-        #[lua("number")]
         fields.add_field_method_get("hours", |_, this| Ok(this.0.get_hours()));
         /// Named minutes component.
-        #[lua("number")]
         fields.add_field_method_get("minutes", |_, this| Ok(this.0.get_minutes()));
         /// Named seconds component.
-        #[lua("number")]
         fields.add_field_method_get("seconds", |_, this| Ok(this.0.get_seconds()));
         /// Named milliseconds component.
-        #[lua("number")]
         fields.add_field_method_get("milliseconds", |_, this| Ok(this.0.get_milliseconds()));
         /// Named microseconds component.
-        #[lua("number")]
         fields.add_field_method_get("microseconds", |_, this| Ok(this.0.get_microseconds()));
         /// Named nanoseconds component.
-        #[lua("number")]
         fields.add_field_method_get("nanoseconds", |_, this| Ok(this.0.get_nanoseconds()));
     }
 
@@ -881,7 +843,6 @@ impl UserData for DurationHandle {
         });
 
         /// Return the sign-flipped span.
-        #[lua("Duration")]
         methods.add_method("negate", |_, this, _: ()| {
             Ok(DurationHandle(this.0.negate()))
         });

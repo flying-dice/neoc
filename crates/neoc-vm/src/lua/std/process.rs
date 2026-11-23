@@ -191,7 +191,7 @@ fn add_read<M: UserDataMethods<Child>>(methods: &mut M, source: &'static Source)
     );
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("std:process", "Child")]
 impl UserData for Child {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         #[lua("Result<bool, string>", doc = format!(
@@ -242,7 +242,6 @@ impl UserData for Child {
         }
 
         /// The operating system's id of the process, while it runs. `nil` once it has ended or `close()` was called: the number is then the operating system's to give to another process.
-        #[lua("number?")]
         methods.add_method("id", |_, this, (): ()| Ok(this.0.id()));
 
         #[lua("Result<{ code: number?, signal: number?, success: bool }, string>", doc = format!(
@@ -265,14 +264,12 @@ impl UserData for Child {
         });
 
         /// Kill the process: on Unix it and every process in its group (those it started, unless they moved to a group of their own) are sent the kill they cannot refuse (`SIGKILL`); on Windows the process alone is terminated. It returns at once: `wait()` says when the process is gone. Once `wait()` has said so, a kill does nothing, and what the process left behind runs on. To ask a process to finish instead, close its input (`close_stdin`) or tell it in its own protocol.
-        #[lua("()")]
         methods.add_method("kill", |_, this, (): ()| {
             this.0.kill();
             Ok(())
         });
 
         /// Kill the process as `kill()` does and let go of its streams: output not yet read is dropped, every `read` and `read_stderr`, waiting or later, returns `(nil, nil)`, and `write` fails with `closed`. `wait()` still says how the process ended. Closing again does nothing. A process is also closed when its handle is collected, and when the engine shuts down.
-        #[lua("()")]
         methods.add_method("close", |_, this, (): ()| {
             this.0.close();
             Ok(())

@@ -288,7 +288,7 @@ fn found(read: Result<Reply, Error>) -> Result<Reply, KeyringError> {
     }
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("vnd:keyring", "Store")]
 impl UserData for Store {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// The entry for a service and a user in this store. Nothing is read or written: the credential need not exist. What a store accepts as a service or a user is its own (`invalid_input`).
@@ -328,7 +328,7 @@ impl UserData for Store {
     }
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("vnd:keyring", "Entry")]
 impl UserData for Entry {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// The credential's secret as text, or `(nil, nil)` when the store has no such credential. A secret that is not UTF-8 is `bad_encoding` (read it with `get_secret`). The platform may ask the person first, and the call waits for them.
