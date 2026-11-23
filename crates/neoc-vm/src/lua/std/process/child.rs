@@ -41,10 +41,8 @@ use tokio::sync::{mpsc, watch};
 use super::error::{Kind, ProcessError};
 use super::options::{Command, Stream};
 use crate::lua::byte_stream::{Job, Output, READ_CHUNK, WriteFailed, submit};
+use crate::lua::child_exit::{self, Ended, WaitFailed};
 use crate::lua::command_options::existing_dir;
-
-/// How the child's task says the process ended: `None` while it runs.
-type Ended = Option<Result<Exit, String>>;
 
 /// How a process ended (`std::process::ExitStatus`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,7 +88,7 @@ pub(super) struct Process {
     stderr: Option<Arc<Output>>,
     /// Set to tell the child's task to kill the process.
     kill: watch::Sender<bool>,
-    exit: watch::Receiver<Ended>,
+    exit: watch::Receiver<Ended<Exit>>,
     id: Option<u32>,
     /// Set by [`Process::close`].
     closed: watch::Sender<bool>,
@@ -199,16 +197,15 @@ impl Process {
 
     /// Wait for the process to end.
     pub(super) fn wait(&self) -> impl Future<Output = Result<Exit, ProcessError>> + Send + use<> {
-        let mut exit = self.exit.clone();
+        let ended = child_exit::ended(self.exit.clone());
         async move {
-            match exit.wait_for(Option::is_some).await {
-                Ok(status) => match status.clone() {
-                    Some(Ok(exit)) => Ok(exit),
-                    Some(Err(message)) => Err(ProcessError::new(Kind::Io, message)),
-                    None => Err(lost_child()),
-                },
-                Err(_) => Err(lost_child()),
-            }
+            ended.await.map_err(|failed| match failed {
+                WaitFailed::Io(message) => ProcessError::new(Kind::Io, message),
+                WaitFailed::Lost => ProcessError::new(
+                    Kind::Other,
+                    "the task that watched the process stopped without saying how it ended",
+                ),
+            })
         }
     }
 
@@ -234,13 +231,6 @@ impl Drop for Process {
     fn drop(&mut self) {
         self.close();
     }
-}
-
-fn lost_child() -> ProcessError {
-    ProcessError::new(
-        Kind::Other,
-        "the task that watched the process stopped without saying how it ended",
-    )
 }
 
 /// tokio's command for `command`.
@@ -276,7 +266,7 @@ fn stdio(stream: Stream) -> Stdio {
 }
 
 /// Resolves when the process is closed or has ended: when its writer has nothing left to do.
-async fn stopped(mut closed: watch::Receiver<bool>, mut exit: watch::Receiver<Ended>) {
+async fn stopped(mut closed: watch::Receiver<bool>, mut exit: watch::Receiver<Ended<Exit>>) {
     // an error is the sender gone, which is the handle or the child's task gone: a stop too
     tokio::select! {
         _ = closed.wait_for(|closed| *closed) => {}
@@ -366,7 +356,7 @@ fn kill(child: &mut Child) {
 async fn watch_child(
     mut child: Child,
     mut killed: watch::Receiver<bool>,
-    exit: watch::Sender<Ended>,
+    exit: watch::Sender<Ended<Exit>>,
 ) {
     let ended = tokio::select! {
         // the end first: a process that has ended is reaped, and there is nothing to kill

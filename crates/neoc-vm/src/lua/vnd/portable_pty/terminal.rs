@@ -35,6 +35,7 @@ use tokio::sync::{mpsc, watch};
 use super::error::{Kind, PtyError};
 use super::options::Command;
 use crate::lua::byte_stream::{Job, Output, READ_CHUNK, WriteFailed, submit};
+use crate::lua::child_exit::{self, Ended, WaitFailed};
 use crate::lua::command_options::existing_dir;
 
 /// How long the child's thread sleeps between two looks at a process that gave no sign of ending. The end of the
@@ -73,7 +74,7 @@ pub(super) struct Terminal {
     /// The writer's queue: one piece at a time, so a second `write` waits for the first.
     input: Mutex<Option<mpsc::Sender<Job>>>,
     child: Mutex<std_mpsc::Sender<Signal>>,
-    exit: watch::Receiver<Option<Result<Exit, String>>>,
+    exit: watch::Receiver<Ended<Exit>>,
     process_id: Option<u32>,
     closed: watch::Sender<bool>,
 }
@@ -180,16 +181,15 @@ impl Terminal {
 
     /// Wait for the process to end.
     pub(super) fn wait(&self) -> impl Future<Output = Result<Exit, PtyError>> + Send + use<> {
-        let mut exit = self.exit.clone();
+        let ended = child_exit::ended(self.exit.clone());
         async move {
-            match exit.wait_for(Option::is_some).await {
-                Ok(status) => match status.clone() {
-                    Some(Ok(exit)) => Ok(exit),
-                    Some(Err(message)) => Err(PtyError::new(Kind::Io, message)),
-                    None => Err(lost_child()),
-                },
-                Err(_) => Err(lost_child()),
-            }
+            ended.await.map_err(|failed| match failed {
+                WaitFailed::Io(message) => PtyError::new(Kind::Io, message),
+                WaitFailed::Lost => PtyError::new(
+                    Kind::Other,
+                    "the thread that watched the process stopped without saying how it ended",
+                ),
+            })
         }
     }
 
@@ -238,13 +238,6 @@ fn attach(
         write_input(writer, jobs, &closed);
     })?;
     Ok((output, input))
-}
-
-fn lost_child() -> PtyError {
-    PtyError::new(
-        Kind::Other,
-        "the thread that watched the process stopped without saying how it ended",
-    )
 }
 
 fn thread(name: &str, body: impl FnOnce() + Send + 'static) -> Result<(), PtyError> {
@@ -324,7 +317,7 @@ fn write_input(
 fn watch_child(
     mut child: Box<dyn Child + Send + Sync>,
     signals: &std_mpsc::Receiver<Signal>,
-    exit: &watch::Sender<Option<Result<Exit, String>>>,
+    exit: &watch::Sender<Ended<Exit>>,
 ) {
     let mut pause = POLL_SOON;
     let status = loop {
