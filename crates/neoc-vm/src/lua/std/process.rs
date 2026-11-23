@@ -52,6 +52,7 @@ use crate::lua::lifecycle::{Life, Role, async_function, async_method};
 use crate::lua::sandbox::{from_err, ok};
 
 mod child;
+pub use child::kill_all;
 mod error;
 mod options;
 
@@ -152,7 +153,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             "kill",
             &[],
             "()",
-            "Kill the process: on Unix it and every process in its group (those it started, unless they moved to a group of their own) are sent the kill they cannot refuse (`SIGKILL`); on Windows the process alone is terminated. It returns at once: `wait()` says when the process is gone. A process that has ended is left alone, and so is what it left behind. To ask a process to finish instead, close its input (`close_stdin`) or tell it in its own protocol.",
+            "Kill the process: on Unix it and every process in its group (those it started, unless they moved to a group of their own) are sent the kill they cannot refuse (`SIGKILL`); on Windows the process alone is terminated. It returns at once: `wait()` says when the process is gone. Once `wait()` has said so, a kill does nothing, and what the process left behind runs on. To ask a process to finish instead, close its input (`close_stdin`) or tell it in its own protocol.",
         )
         .method(
             "close",

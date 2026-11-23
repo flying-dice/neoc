@@ -1,4 +1,4 @@
-//! What a script passes to `process.spawn`, read before the call's future exists (see
+//! What a script passes to `process.spawn`, read into plain data before the call first waits (see
 //! [`crate::lua::command_options`]).
 
 use mlua::Value;

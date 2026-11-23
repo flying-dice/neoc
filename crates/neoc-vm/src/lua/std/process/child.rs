@@ -9,8 +9,9 @@
 //! - the **writer** takes one piece of input at a time ([`Job`]) and says how the write went; it lets go of the
 //!   pipe, which is the end of the process's input, when it is told to (`close_stdin`), when the process has ended
 //!   and when the process is closed;
-//! - the **child's** task owns the process: it sees it end, and it is the only one that kills it, so a kill can never
-//!   reach another process that was given its id.
+//! - the **child's** task waits for the process, which reaps it, and says how it ended. A kill is made by whoever
+//!   asks for it, at once, under the lock the reaping takes ([`Owned`]): it can never reach another process that was
+//!   given the id.
 //!
 //! **The process's group.** On Unix the process is started as the leader of a process group of its own, and a kill
 //! is sent to the whole group: a program started through a wrapper (`sh -c`, `npx`) would otherwise live on, and keep
@@ -24,14 +25,14 @@
 //! every background job is: an inherited input is for an engine whose own input is a pipe or a file.
 //!
 //! **Closing** ([`Process::close`]: `close()`, the handle being collected, the engine shutting down) never blocks. It
-//! tells the child's task to kill the process and closes the buffers, which ends every `read` and stops the readers
-//! and the writer where they wait. The child's task ends once the process is reaped. Should the runtime itself go
-//! first, the task is dropped with the process in it, and tokio kills a process that is dropped (`kill_on_drop`):
-//! that last resort reaches the process alone, not its group.
+//! kills the process and closes the buffers, which ends every `read` and stops the readers and the writer where they
+//! wait. The child's task ends once the process is reaped. Should the runtime itself go first, the task is dropped,
+//! and it kills the process as it goes (`KillWithTask`). A program that ends by
+//! `std::process::exit` drops nothing: it calls [`kill_all`] first ([`crate::exit`] does).
 
 use std::future::Future;
 use std::process::{ExitStatus, Stdio};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use parking_lot::Mutex;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
@@ -86,8 +87,7 @@ pub(super) struct Process {
     /// `None` when the stream was not `"piped"`.
     stdout: Option<Arc<Output>>,
     stderr: Option<Arc<Output>>,
-    /// Set to tell the child's task to kill the process.
-    kill: watch::Sender<bool>,
+    child: Arc<Owned>,
     exit: watch::Receiver<Ended<Exit>>,
     id: Option<u32>,
     /// Set by [`Process::close`].
@@ -104,7 +104,6 @@ impl Process {
         let id = child.id();
         let (closed, _) = watch::channel(false);
         let (end_input, input_ended) = watch::channel(false);
-        let (kill, killed) = watch::channel(false);
         let (exit_tx, exit) = watch::channel(None);
 
         let input = match child.stdin.take() {
@@ -118,14 +117,15 @@ impl Process {
         };
         let stdout = child.stdout.take().map(read_into_buffer);
         let stderr = child.stderr.take().map(read_into_buffer);
-        tokio::spawn(watch_child(child, killed, exit_tx));
+        let child = Owned::new(child);
+        tokio::spawn(watch_child(Arc::clone(&child), exit_tx));
 
         Ok(Self {
             input: Mutex::new(input),
             end_input,
             stdout,
             stderr,
-            kill,
+            child,
             exit,
             id,
             closed,
@@ -155,10 +155,9 @@ impl Process {
         self.id
     }
 
-    /// Ask for the process to be killed. Nothing waits here: `wait` says when it is gone.
+    /// Kill the process. Nothing waits here: `wait` says when it is gone.
     pub(super) fn kill(&self) {
-        // a task that is gone has seen the process end
-        self.kill.send_replace(true);
+        self.child.kill();
     }
 
     /// Hand `data` to the writer and wait until it is written, or until the input or the process is closed.
@@ -249,7 +248,7 @@ fn builder(command: &Command) -> Result<tokio::process::Command, ProcessError> {
         .stdin(stdio(command.stdin))
         .stdout(stdio(command.stdout))
         .stderr(stdio(command.stderr))
-        // the last resort: the child's task was dropped with the runtime before it could kill the process
+        // `Owned` kills the process and its group when it is dropped; this has tokio reap it afterwards
         .kill_on_drop(true);
     // the leader of a group of its own, so that a kill reaches what it started (see the module docs)
     #[cfg(unix)]
@@ -335,43 +334,101 @@ async fn write_input(
     }
 }
 
-/// Kill the process `child`, which has not been reaped, and on Unix its group.
-fn kill(child: &mut Child) {
-    // The id is there until the process is reaped, and only the child's task reaps it: the number is still this
-    // process's, and so its group's. A group that is gone is no error to report.
-    #[cfg(unix)]
-    if let Some(group) = child
-        .id()
-        .and_then(|id| i32::try_from(id).ok())
-        .and_then(rustix::process::Pid::from_raw)
-    {
-        let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
-    }
-    // a process that has just ended refuses the kill, and the wait says how it ended
-    let _ = child.start_kill();
+/// The operating system's process, shared by the task that waits for it and by whoever kills it.
+///
+/// A kill must never reach a process that was reaped: its id is then the operating system's to give away, to a
+/// process that is not ours. So the wait that reaps (in [`Owned::ended`]) and every kill ([`Owned::kill`]) take the
+/// same lock, and a kill looks first: tokio has an id for the process only until it has reaped it. That makes the
+/// kill synchronous, which is what an engine that is about to exit needs ([`kill_all`]): no task has to run for it.
+struct Owned {
+    child: Mutex<Child>,
 }
 
-/// The child's task: wait for the process to end, kill it when told to (or when the handle is gone), and say how
-/// it ended. The wait reaps the process, so none is left as a zombie.
-async fn watch_child(
-    mut child: Child,
-    mut killed: watch::Receiver<bool>,
-    exit: watch::Sender<Ended<Exit>>,
-) {
-    let ended = tokio::select! {
-        // the end first: a process that has ended is reaped, and there is nothing to kill
-        biased;
-        status = child.wait() => Some(status),
-        // an error is the handle dropped without a close: a kill too
-        _ = killed.wait_for(|killed| *killed) => None,
-    };
-    let status = match ended {
-        Some(status) => status,
-        None => {
-            kill(&mut child);
-            child.wait().await
+/// Every process that may still run, for [`kill_all`]. Weakly: a process is let go of with its handle and its task.
+static LIVE: Mutex<Vec<Weak<Owned>>> = Mutex::new(Vec::new());
+
+impl Owned {
+    fn new(child: Child) -> Arc<Self> {
+        let owned = Arc::new(Self {
+            child: Mutex::new(child),
+        });
+        let mut live = LIVE.lock();
+        live.retain(|other| other.strong_count() > 0);
+        live.push(Arc::downgrade(&owned));
+        owned
+    }
+
+    /// Kill the process if it has not been reaped, and on Unix its group. A group that is gone, or a process that
+    /// has just ended, is no error to report: the wait says how it ended.
+    fn kill(&self) {
+        let mut child = self.child.lock();
+        let Some(id) = child.id() else {
+            return;
+        };
+        #[cfg(unix)]
+        if let Some(group) = i32::try_from(id)
+            .ok()
+            .and_then(rustix::process::Pid::from_raw)
+        {
+            let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
         }
-    };
+        #[cfg(not(unix))]
+        let _ = id;
+        let _ = child.start_kill();
+    }
+
+    /// Wait for the process to end. This is the wait that reaps it, so none is left as a zombie.
+    async fn ended(&self) -> std::io::Result<ExitStatus> {
+        std::future::poll_fn(|cx| {
+            // the lock is held for the poll only: a kill is never made while the process is being reaped
+            let mut child = self.child.lock();
+            let wait = std::pin::pin!(child.wait());
+            wait.poll(cx)
+        })
+        .await
+    }
+}
+
+impl Drop for Owned {
+    /// The handle and the task are both gone (the runtime was dropped with the task in it): the process and its
+    /// group are killed here. tokio's own `kill_on_drop` would reach the process alone.
+    fn drop(&mut self) {
+        self.kill();
+    }
+}
+
+/// Kill every process any script of this program started and that still runs, at once and without waiting. For a
+/// program that is about to end by `std::process::exit`, which runs no destructor and no task: without this the
+/// processes would live on. See [`crate::exit`].
+pub fn kill_all() {
+    let live: Vec<Arc<Owned>> = LIVE.lock().iter().filter_map(Weak::upgrade).collect();
+    for owned in live {
+        owned.kill();
+    }
+}
+
+/// Kills the process when the child's task is dropped before the process ended: the runtime went, and the engine,
+/// which may live on, still holds the handle. Nothing would wait for the process any more, so it is reaped here: a
+/// process that was sent the kill it cannot refuse is gone at once, and the wait for it is short and bounded.
+struct KillWithTask(Arc<Owned>);
+
+impl Drop for KillWithTask {
+    fn drop(&mut self) {
+        self.0.kill();
+        for _ in 0..200 {
+            // `Ok(None)` is a process that still runs; an error is one there is nothing left to wait for
+            if !matches!(self.0.child.lock().try_wait(), Ok(None)) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+}
+
+/// The child's task: wait for the process to end and say how it ended.
+async fn watch_child(child: Arc<Owned>, exit: watch::Sender<Ended<Exit>>) {
+    let child = KillWithTask(child);
+    let status = child.0.ended().await;
     exit.send_replace(Some(
         status
             .map(Exit::from)

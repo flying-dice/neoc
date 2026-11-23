@@ -4,7 +4,7 @@ use neoc_vm::lua::lib::compile::{TrailerError, detect_embedded_payload_from};
 use neoc_vm::lua::std::workers::ShutdownSignal;
 
 use std::path::Path;
-use std::{env, fs, process};
+use std::{env, fs};
 
 use clap::{Parser, Subcommand};
 
@@ -37,7 +37,7 @@ enum Commands {
 
 fn report_error(err: NeocError) -> ! {
     eprintln!("{:?}", miette::Report::new(err));
-    process::exit(1);
+    neoc_vm::exit(1);
 }
 
 /// Reports a runtime fault from a script. A `require` fault takes the dedicated
@@ -47,7 +47,7 @@ fn report_script_error(e: &mlua::Error, source: &str, path: &str) -> ! {
         report_error(neoc_err);
     }
     eprintln!("{e}");
-    process::exit(1);
+    neoc_vm::exit(1);
 }
 
 /// Expand one glob pattern to the matching file paths, walking from its leading
@@ -86,7 +86,7 @@ fn expand_args(args: impl Iterator<Item = String>) -> Vec<String> {
                 Ok(matched) => paths.extend(matched),
                 Err(e) => {
                     eprintln!("error: {e}");
-                    process::exit(1);
+                    neoc_vm::exit(1);
                 }
             }
         } else {
@@ -144,7 +144,7 @@ async fn drain_scheduler(engine: &mlua::Lua) {
     if let Some(scheduler) = engine.app_data_ref::<lua::std::task::Scheduler>() {
         scheduler.wait_all();
         if scheduler.had_task_errors() {
-            process::exit(1);
+            neoc_vm::exit(1);
         }
     }
 }
@@ -172,7 +172,7 @@ fn reject_neoc_paths(paths: &[String]) {
                 "error: {path}: `neoc run` runs Lua (`.lua`) scripts only; \
                  `.neoc` source is no longer supported"
             );
-            process::exit(1);
+            neoc_vm::exit(1);
         }
     }
 }
@@ -188,7 +188,7 @@ async fn run(paths: &[String], user_args: &[String]) {
     for path in paths {
         let source = fs::read_to_string(path).unwrap_or_else(|e| {
             eprintln!("error: {path}: {e}");
-            process::exit(1);
+            neoc_vm::exit(1);
         });
 
         let engine = engine_with_args(user_args);
@@ -226,7 +226,7 @@ async fn run(paths: &[String], user_args: &[String]) {
                 }
                 Err(e) => {
                     eprintln!("error reading test state: {e}");
-                    process::exit(1);
+                    neoc_vm::exit(1);
                 }
             }
         }
@@ -241,10 +241,10 @@ async fn run(paths: &[String], user_args: &[String]) {
                 "{}",
                 red(&format!("{total_passed} passed, {total_failed} failed"))
             );
-            process::exit(1);
+            neoc_vm::exit(1);
         }
     } else if total_failed > 0 {
-        process::exit(1);
+        neoc_vm::exit(1);
     }
 }
 
@@ -326,6 +326,8 @@ fn block_on_runtime<F: std::future::Future<Output = ()> + Send + 'static>(fut: F
             }
         }
     });
+    // an engine that outlives the run (a worker thread still has it) must not leave its processes behind
+    neoc_vm::kill_processes();
 }
 
 fn main() {
@@ -345,7 +347,7 @@ fn main() {
                 let resolved = expand_args(paths.into_iter());
                 if resolved.is_empty() {
                     eprintln!("error: no scripts to run");
-                    process::exit(1);
+                    neoc_vm::exit(1);
                 }
                 block_on_runtime(async move { run(&resolved, &args).await });
             }
