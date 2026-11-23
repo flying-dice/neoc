@@ -32,7 +32,7 @@
 //!
 //! | Word | Says | Where |
 //! | --- | --- | --- |
-//! | `"T"` or `returns = EXPR` | what a script gets: a return, a field's or a constant's type. The first is a literal, the second any expression that gives a `&str` (`returns = RESULT`, `returns = &format!(...)`) | everywhere but a registration, which reads the return itself |
+//! | `"T"` or `returns = EXPR` | what a script gets: a return, a field's or a constant's type. The first is a literal, the second any expression that gives a `&str` or a `String` (`returns = RESULT`, `returns = &format!(...)`) | everywhere but a registration, which reads the return itself |
 //! | `name = "..."` | the name a script calls it by | a function, a member (it must be said for one added out of sight, and replaces the name one is added under) |
 //! | `types(binding = EXPR)` | the type of the parameter bound as `binding` in Rust | anything with parameters |
 //! | `names(binding = "...")` | the name a script knows that parameter under | anything with parameters |
@@ -942,9 +942,10 @@ fn lua_members_impl(mut function: ItemFn) -> syn::Result<Tokens> {
 ///   `function`, `method` or `field` in it (and not `meta`), and that word is its kind: name the helper that
 ///   adds a function to the table accordingly (`matcher_function(lua, &t, "to_be", |...| ...)`).
 /// - The member's name is the first string literal among the call's arguments.
-/// - Its parameters are the closure's after `lua` (and after `this` for a method), and `#[lua(...)]` above
+/// - Its parameters are the closure's after its first (the receiver or `lua`), and `#[lua(...)]` above
 ///   the statement says the rest, as for `lua_userdata`.
-/// - It sits beside `#[lua_fn]`, not on top of it: the function that builds the table is not itself declared.
+/// - It reads only the members: where the function that builds the table is itself one a script calls,
+///   `#[lua_fn]` goes on it too, below this.
 #[proc_macro_attribute]
 pub fn lua_members(args: TokenStream, item: TokenStream) -> TokenStream {
     if !args.is_empty() {
