@@ -77,6 +77,8 @@ globset = "0.4"
 jiff = "1.0"
 # `lib:cache`: the bounded least-recently-used map.
 lru = "0.19"
+# `lib:args`: clap's builder as a run-time argument parser (no derive: that is a binary's concern).
+clap = { version = "4", default-features = false, features = ["std", "help", "usage", "error-context", "string"] }
 
 # `std:process` kills a process's whole group.
 [target.'cfg(unix)'.dependencies]
