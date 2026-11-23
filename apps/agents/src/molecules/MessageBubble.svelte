@@ -1,16 +1,17 @@
 <!-- @molecule MessageBubble — one thing said in a chat: the person's on the right, the agent's on the left, with a spinner while it is still coming -->
 <script lang="ts">
-  import type { Message } from 'app:rpc'
+  import type { Item } from 'app:rpc'
 
   interface Props {
-    message: Message
+    /** A `user` or an `assistant` item. */
+    item: Item
   }
 
-  let { message }: Props = $props()
+  let { item }: Props = $props()
 </script>
 
-<p class="message {message.role}" data-testid="agents-message-{message.role}-{message.id}">
-  <span class="text">{message.text}</span>{#if !message.done}<ui-spinner label="The agent is answering"></ui-spinner>{/if}
+<p class="message {item.kind}" data-testid="agents-message-{item.kind}-{item.id}">
+  <span class="text">{item.text}</span>{#if !item.done}<ui-spinner label="The agent is answering"></ui-spinner>{/if}
 </p>
 
 <style>
@@ -27,7 +28,7 @@
     background: var(--tint-fill);
     color: #fff;
   }
-  .agent {
+  .assistant {
     align-self: flex-start;
     background: var(--fill-tertiary);
   }

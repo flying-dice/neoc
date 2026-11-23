@@ -7,8 +7,8 @@
 use crate::{
     files::FileStore,
     ports::{
-        AppData, AppPackage, AppRuntime, CallContext, Clock, DataStore, EventSink, Fetcher, InstalledApp,
-        InstalledAppStore, ServerEvent, SqlMigration, ToolRegistry,
+        AppData, AppPackage, AppRuntime, AppTools, CallContext, Clock, DataStore, EventSink, Fetcher,
+        InstalledApp, InstalledAppStore, ServerEvent, SqlMigration, ToolRegistry,
     },
     AppError, PortError,
 };
@@ -838,5 +838,40 @@ impl AppService {
         budget.charge(path, bytes.len())?;
         app_ref.verify(path, &bytes)?;
         Ok(bytes)
+    }
+}
+
+#[async_trait::async_trait]
+impl AppTools for AppService {
+    fn all(&self) -> Vec<(QualifiedToolName, ToolSpec)> {
+        let apps = self.apps.lock();
+        let mut tools: Vec<(QualifiedToolName, ToolSpec)> = apps
+            .iter()
+            .filter(|(_, entry)| entry.status == AppStatus::Running)
+            .filter_map(|(app, entry)| entry.active.as_ref().map(|active| (app, active)))
+            .flat_map(|(app, active)| {
+                active.tools.iter().filter_map(|tool| {
+                    Some((QualifiedToolName::new(app.clone(), &tool.name).ok()?, tool.clone()))
+                })
+            })
+            .collect();
+        tools.sort_by_key(|(name, _)| name.to_string());
+        tools
+    }
+
+    async fn call(&self, caller: Actor, name: &QualifiedToolName, args: Value) -> Result<Value, PortError> {
+        let run = async {
+            self.require_running(name.app())?;
+            let ctx = CallContext { actor: caller, now_ms: self.p.clock.now_unix_ms() };
+            // as in `call_tool`: the requirement is handed to the runtime, not left to it
+            let read_only = self.tool_is_read_only(name).unwrap_or(false);
+            Ok::<Value, AppError>(
+                self.p.runtime.call_tool(name.app(), name.tool(), args, ctx, read_only).await?,
+            )
+        };
+        run.await.map_err(|e| match e {
+            AppError::Port(e) => e,
+            other => PortError::Rejected(other.to_string()),
+        })
     }
 }

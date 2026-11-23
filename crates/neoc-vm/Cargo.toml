@@ -232,6 +232,10 @@ unicode-segmentation = "1"
 unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
 caseless = "0.2"
 
+# The AG-UI protocol behind `lib:agui`: its types, the events of a run read from an SSE stream, JSON Patch. Our own
+# crate (`crates/neoc-agui`), with no I/O: the request is `vnd:hyper`'s client.
+neoc-agui = { path = "../neoc-agui" }
+
 # `std:process` kills the process group of a child on Unix (`kill_process_group`): a safe wrapper over `killpg`, where
 # this crate forbids `unsafe`. Already in the tree on every Unix (through tempfile), so this only names it and turns
 # on its `process` feature.

@@ -147,8 +147,29 @@ export type vos_Notification = {
 	actions: nil,
 }
 
+--- A tool of a running app, as an agent is shown it.
+export type vos_HostTool = {
+	--- `<appId>__<tool>`: what `app.tools.call` takes
+	name: string,
+	--- the app it belongs to
+	app: string,
+	title: string?,
+	description: string,
+	--- the JSON Schema of its input
+	input_schema: { [string]: any },
+	--- it changes nothing: it runs with every write refused
+	read_only: boolean,
+}
+
 export type vos_ToolRegistry = {
 	register: (def: vos_ToolDef) -> (),
+	--- Every tool of every running app (this one's too), in name order: what the app can offer an agent of its own.
+	all: () -> { vos_HostTool },
+	--- Run a tool of a running app for an agent of this app's own: `agent` is who the tool is told called it (its
+	--- `ctx.actor`), an id and a name of 1 to 200 bytes each. Nothing checks what that agent may call: the app decides
+	--- whom it offers the tools to. The result is `(result, nil)`, or `(nil, message)` when the tool failed, does not
+	--- exist or its app is not running; a name that is not `<appId>__<tool>` raises. A `readOnly` tool may not call one.
+	call: (name: string, args: { [string]: any }?, agent: { id: string, name: string }) -> (any, string?),
 }
 
 export type vos_AppApi = {

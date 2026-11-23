@@ -5,12 +5,14 @@
     draft: string
     /** The agent is answering: the button stops it, and nothing can be sent. */
     busy: boolean
+    /** The agent asked something: it is answered above, and nothing else can be sent until it is. */
+    waiting?: boolean
     ondraft: (text: string) => void
     onsend: () => void
     onstop: () => void
   }
 
-  let { draft, busy, ondraft, onsend, onstop }: Props = $props()
+  let { draft, busy, waiting = false, ondraft, onsend, onstop }: Props = $props()
 </script>
 
 <form
@@ -22,7 +24,8 @@
 >
   <ui-text-field
     label="Message"
-    placeholder="Message"
+    placeholder={waiting ? 'Answer the agent above first' : 'Message'}
+    disabled={waiting}
     enterkeyhint="send"
     autocomplete="off"
     hit
@@ -37,7 +40,7 @@
       <ui-icon slot="icon" name="stop"></ui-icon>
     </ui-button>
   {:else}
-    <ui-button type="submit" square shape="circle" hit label="Send" disabled={draft.trim() === ''} data-testid="agents-composer-send">
+    <ui-button type="submit" square shape="circle" hit label="Send" disabled={waiting || draft.trim() === ''} data-testid="agents-composer-send">
       <ui-icon slot="icon" name="arrow.up"></ui-icon>
     </ui-button>
   {/if}

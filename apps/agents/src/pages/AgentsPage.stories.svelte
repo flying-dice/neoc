@@ -1,6 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, waitFor } from 'storybook/test'
+  import { alertButton, alertDialog } from '@vos/storybook/kit'
   import AppWindow from '@vos/storybook/AppWindow.svelte'
   import definition from '../../openrpc.json'
   import AgentsPage from './AgentsPage.svelte'
@@ -19,7 +20,7 @@
 
   const TALK = conversation('a', 'What is 12 times 7?', [
     ['user', 'What is 12 times 7?'],
-    ['agent', '12 times 7 is 84.']
+    ['assistant', '12 times 7 is 84.']
   ])
   const withChats = (): FakeBackend => createFakeBackend({ chats: [TALK, conversation('b', 'Plan the week', [['user', 'Plan the week']])] })
 
@@ -41,6 +42,7 @@
   /** The kit's text field holds the real input in its shadow tree. */
   const input = (canvas: Canvas): HTMLInputElement =>
     canvas.getByTestId('agents-composer-input').shadowRoot!.querySelector('input')!
+  const field = (canvas: Canvas, id: string): HTMLInputElement => canvas.getByTestId(id).shadowRoot!.querySelector('input')!
   const appears = (canvas: Canvas, id: string): Promise<void> => waitFor(() => expect(canvas.getByTestId(id)).toBeVisible())
   const said = (canvas: Canvas, text: string): Promise<void> =>
     waitFor(() => expect(canvas.getByTestId('agents-thread')).toHaveTextContent(text))
@@ -82,6 +84,38 @@
   }}
 />
 
+<!-- Nobody to chat with: an agent is added by its name and its AG-UI endpoint, and can be chatted with at once. -->
+<Story
+  name="Adding the first agent"
+  args={{ backend: () => createFakeBackend({ agents: [] }) }}
+  play={async ({ canvas, userEvent }) => {
+    // the sidebar's own way to add one is there in a window of any width
+    await appears(canvas, 'agents-add')
+    await userEvent.click(canvas.getByTestId('agents-add'))
+    await appears(canvas, 'agents-form')
+    await expect(canvas.getByTestId('agents-form-save')).toHaveProperty('disabled', true)
+    await userEvent.type(field(canvas, 'agents-form-name'), 'Ada')
+    await userEvent.type(field(canvas, 'agents-form-url'), 'ftp://example.com')
+    await userEvent.click(canvas.getByTestId('agents-form-save'))
+    await waitFor(() => expect(canvas.getByTestId('agents-form-agent')).toHaveProperty('footer', 'The endpoint must be an http:// or https:// URL.'))
+    await userEvent.type(field(canvas, 'agents-form-url'), 'https://example.com/agent', { initialSelectionStart: 0, initialSelectionEnd: 1000 })
+    await userEvent.click(canvas.getByTestId('agents-form-save'))
+    await appears(canvas, 'agents-agent-agent-1')
+    await expect(canvas.queryByTestId('agents-form')).toBeNull()
+  }}
+/>
+
+<!-- An agent's row has the way to change it: its name, endpoint and token, or to remove it. -->
+<Story
+  name="Changing an agent"
+  play={async ({ canvas, userEvent }) => {
+    await appears(canvas, 'agents-edit-scripted')
+    await userEvent.click(canvas.getByTestId('agents-edit-scripted'))
+    await appears(canvas, 'agents-form-remove')
+    await expect(field(canvas, 'agents-form-name')).toHaveValue('Scripted agent')
+  }}
+/>
+
 <!-- Chats from before are listed; none is open until one is picked. -->
 <Story
   name="Chats from before"
@@ -101,6 +135,26 @@
     await said(canvas, '12 times 7 is 84.')
     await expect(canvas.getByTestId('agents-chat-a')).toHaveAttribute('selected', '')
     await expect(canvas.getByTestId('agents-title')).toHaveTextContent('What is 12 times 7?')
+  }}
+/>
+
+<!-- Deleting a chat asks first: Cancel keeps it, Delete takes it off the list. -->
+<Story
+  name="Deleting a chat"
+  args={{ backend: withChats }}
+  play={async ({ canvas, userEvent }) => {
+    await appears(canvas, 'agents-chat-a')
+    await userEvent.click(canvas.getByTestId('agents-chat-a'))
+    await appears(canvas, 'agents-remove-chat')
+    await userEvent.click(canvas.getByTestId('agents-remove-chat'))
+    await waitFor(() => expect(alertDialog(canvas.getByTestId('agents-confirm'))).toHaveTextContent('Delete this chat?'))
+    await userEvent.click(alertButton(canvas.getByTestId('agents-confirm'), 'cancel'))
+    await waitFor(() => expect(canvas.queryByTestId('agents-confirm')).toBeNull())
+    await userEvent.click(canvas.getByTestId('agents-remove-chat'))
+    await appears(canvas, 'agents-confirm')
+    await userEvent.click(alertButton(canvas.getByTestId('agents-confirm'), 'action'))
+    await waitFor(() => expect(canvas.queryByTestId('agents-chat-a')).toBeNull())
+    await expect(canvas.getByTestId('agents-chat-b')).toBeInTheDocument()
   }}
 />
 

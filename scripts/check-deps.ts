@@ -33,7 +33,10 @@ const INTERNAL: Record<string, string[]> = {
   // The Lua VM (Luau): a support library, not an adapter. It depends on no other crate here, and among the
   // vos crates only the Lua adapter may depend on it (the one place a script engine is wired to a port), so
   // the VM stays swappable. The `neoc` CLI is its other client.
-  'neoc-vm': [],
+  'neoc-vm': ['neoc-agui'],
+  // The AG-UI protocol (types, events, the event stream): what `lib:agui` gives a script. It depends on no other
+  // crate here, and only the VM depends on it.
+  'neoc-agui': [],
   neoc: ['neoc-vm'],
   'vos-sqlite': ['vos-domain', 'vos-application'],
   'vos-fetch': ['vos-application'],

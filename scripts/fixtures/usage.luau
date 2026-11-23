@@ -18,6 +18,7 @@ local process = require("std:process")
 local task = require("std:task")
 local thread = require("std:thread")
 local time = require("std:time")
+local agui = require("lib:agui")
 local archive = require("lib:archive")
 local args = require("lib:args")
 local base64 = require("lib:base64")
@@ -68,6 +69,7 @@ local _modules: { any } = {
   net,
   process,
   thread,
+  agui,
   archive,
   args,
   cache,

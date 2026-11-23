@@ -67,7 +67,7 @@ pub(super) const REQUEST_OPTIONS: &[&str] = &[
 
 /// The limits of one request.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct Limits {
+pub(crate) struct Limits {
     pub connect: Duration,
     pub idle: Duration,
     /// For the whole request, redirects and body included; none by default.
@@ -90,7 +90,7 @@ impl Default for Limits {
 }
 
 /// A request as the options describe it, checked and ready to send.
-pub(super) struct Prepared {
+pub(crate) struct Prepared {
     pub method: String,
     pub url: String,
     pub headers: HeaderMap,
@@ -119,7 +119,7 @@ impl Prepared {
     }
 
     /// `hyper.post(opts)`.
-    pub(super) fn post(opts: &Table) -> Result<Self, HyperError> {
+    pub(crate) fn post(opts: &Table) -> Result<Self, HyperError> {
         check_options(opts, POST_OPTIONS)?;
         Self::from_table("POST".to_owned(), opts)
     }

@@ -16,7 +16,7 @@ async function until(done: () => boolean): Promise<void> {
   expect(done()).toBe(true)
 }
 
-const said = (agents: Agents): string[] => agents.open?.messages.map((m) => `${m.role}: ${m.text}`) ?? []
+const said = (agents: Agents): string[] => agents.open?.items.map((i) => `${i.kind}: ${i.text}`) ?? []
 
 describe('a window that has just opened', () => {
   test('lists the agents, has no chats and no chat open', async () => {
@@ -39,7 +39,7 @@ describe('a chat', () => {
   test('starting one opens it, empty, and lists it', async () => {
     const agents = await opened()
     expect(await agents.startChat(SCRIPTED)).toBe(true)
-    expect(agents.open?.messages).toEqual([])
+    expect(agents.open?.items).toEqual([])
     expect(agents.open?.chat.title).toBe('New chat')
     expect(agents.chats).toHaveLength(1)
   })
@@ -54,8 +54,8 @@ describe('a chat', () => {
     expect(agents.open?.busy).toBe(true)
     expect(agents.sendable).toBe(false)
     await until(() => agents.open?.busy === false)
-    expect(said(agents)).toEqual(['user: hello', 'agent: Hi there'])
-    expect(agents.open?.messages.every((m) => m.done)).toBe(true)
+    expect(said(agents)).toEqual(['user: hello', 'assistant: Hi there'])
+    expect(agents.open?.items.every((i) => i.done)).toBe(true)
   })
 
   test('the first message names the chat, later ones do not', async () => {
@@ -69,7 +69,7 @@ describe('a chat', () => {
     await until(() => agents.open?.busy === false)
     expect(agents.open?.chat.title).toBe('hello')
     expect(agents.chats.map((c) => c.title)).toEqual(['hello'])
-    expect(said(agents).at(-1)).toBe('agent: echo: and another thing')
+    expect(said(agents).at(-1)).toBe('assistant: echo: and another thing')
   })
 
   test('nothing is sent while the agent answers, and what is typed stays', async () => {
@@ -80,7 +80,7 @@ describe('a chat', () => {
     agents.draft = 'wait'
     await agents.send()
     expect(agents.draft).toBe('wait')
-    expect(agents.open?.messages).toHaveLength(2)
+    expect(said(agents).filter((line) => line.startsWith('user'))).toEqual(['user: slow'])
   })
 
   test('stopping an answer ends the turn and keeps what was said', async () => {
@@ -88,22 +88,22 @@ describe('a chat', () => {
     await agents.startChat(SCRIPTED)
     agents.draft = 'slow'
     await agents.send()
-    await until(() => said(agents).at(-1) === 'agent: Thinking')
+    await until(() => said(agents).at(-1) === 'assistant: Thinking')
     await agents.stop()
     expect(agents.open?.busy).toBe(false)
-    expect(said(agents)).toEqual(['user: slow', 'agent: Thinking'])
-    expect(agents.open?.messages.at(-1)?.done).toBe(true)
+    expect(said(agents)).toEqual(['user: slow', 'assistant: Thinking'])
+    expect(agents.open?.items.at(-1)?.done).toBe(true)
   })
 
   test('opening another chat shows it; pieces of the one left behind are not added to it', async () => {
-    const agents = await opened(createFakeBackend({ pace: 1, chats: [conversation('old', 'Old', [['user', 'Old'], ['agent', 'echo: Old']])] }))
+    const agents = await opened(createFakeBackend({ pace: 1, chats: [conversation('old', 'Old', [['user', 'Old'], ['assistant', 'echo: Old']])] }))
     await agents.startChat(SCRIPTED)
     agents.draft = 'one two three'
     await agents.send()
     const old = agents.chats.find((c) => c.id === 'old')
     await agents.openChat(old!)
     await Bun.sleep(20)
-    expect(said(agents)).toEqual(['user: Old', 'agent: echo: Old'])
+    expect(said(agents)).toEqual(['user: Old', 'assistant: echo: Old'])
   })
 
   test('back leaves the chat for the list', async () => {
@@ -112,6 +112,108 @@ describe('a chat', () => {
     agents.back()
     expect(agents.open).toBeNull()
     expect(agents.chats).toHaveLength(1)
+  })
+})
+
+describe('what an agent does besides talking', () => {
+  async function after(text: string): Promise<Agents> {
+    const agents = await opened()
+    await agents.startChat(SCRIPTED)
+    agents.draft = text
+    await agents.send()
+    await until(() => agents.open?.busy === false)
+    return agents
+  }
+
+  test('a tool it used is in the chat, with what it was given and what it answered', async () => {
+    const agents = await after('tool')
+    expect(agents.open?.items.map((i) => i.kind)).toEqual(['user', 'tool', 'assistant'])
+    expect(agents.open?.items[1]).toMatchObject({ name: 'notes__add', text: '{"title":"Milk"}' })
+  })
+
+  test('a question stops the chat until it is answered, and the agent goes on with the answer', async () => {
+    const agents = await after('ask')
+    expect(agents.open?.waiting).toBe(true)
+    agents.draft = 'never mind'
+    expect(agents.sendable).toBe(false)
+    await agents.answer(agents.open!.items.at(-1)!, 'yes')
+    await until(() => agents.open?.busy === false)
+    expect(agents.open?.waiting).toBe(false)
+    expect(said(agents).at(-1)).toBe('assistant: You answered: yes')
+  })
+
+  test('a question can be declined', async () => {
+    const agents = await after('ask')
+    await agents.answer(agents.open!.items.at(-1)!, null)
+    await until(() => agents.open?.busy === false)
+    expect(said(agents).at(-1)).toBe('assistant: Then I will not.')
+  })
+
+  test('what the person did on a surface goes to the agent', async () => {
+    const agents = await after('surface')
+    const surface = agents.open!.items.at(-1)!
+    expect(surface).toMatchObject({ kind: 'activity', name: 'a2ui-surface' })
+    await agents.act(surface, { name: 'confirm', context: { name: 'Ada' } })
+    await until(() => agents.open?.busy === false)
+    expect(said(agents).at(-1)).toBe('assistant: You pressed confirm: {"name":"Ada"}')
+  })
+
+  test('the state an agent shares is kept as it changes', async () => {
+    const backend = createFakeBackend({ pace: 1 })
+    const agents = await opened(backend)
+    await agents.startChat(SCRIPTED)
+    backend.emit('state', { chat: agents.open!.chat.id, state: '{"count":2}' })
+    expect(agents.open?.state).toBe('{"count":2}')
+    backend.emit('state', { chat: 'another', state: '{"count":3}' })
+    expect(agents.open?.state).toBe('{"count":2}')
+  })
+
+  test('deleting the open chat closes it and takes it off the list', async () => {
+    const agents = await after('hello')
+    await agents.removeChat()
+    expect(agents.open).toBeNull()
+    expect(agents.chats).toEqual([])
+  })
+})
+
+describe('the agents', () => {
+  test('one is added with a name, an endpoint and a token, and the form closes', async () => {
+    const agents = await opened(createFakeBackend({ agents: [] }))
+    agents.edit(null)
+    expect(agents.savable).toBe(false)
+    Object.assign(agents.form!, { name: 'Ada', url: 'https://example.com/agent', token: 'secret' })
+    expect(agents.savable).toBe(true)
+    await agents.save()
+    expect(agents.form).toBeNull()
+    expect(agents.agents).toMatchObject([{ name: 'Ada', url: 'https://example.com/agent', token: true }])
+  })
+
+  test('a form the backend refuses stays open, with the reason', async () => {
+    const agents = await opened()
+    agents.edit(null)
+    Object.assign(agents.form!, { name: 'Ada', url: 'ftp://example.com' })
+    await agents.save()
+    expect(agents.form).not.toBeNull()
+    expect(agents.failure).toBe('The endpoint must be an http:// or https:// URL.')
+  })
+
+  test('one is changed, and its chats are listed under its new name', async () => {
+    const agents = await opened()
+    await agents.startChat(SCRIPTED)
+    agents.edit(agents.agents[0]!)
+    expect(agents.open).not.toBeNull()
+    agents.form!.name = 'Renamed'
+    await agents.save()
+    expect(agents.agents[0]?.name).toBe('Renamed')
+    expect(agents.chats[0]?.agent).toBe('Renamed')
+  })
+
+  test('one is removed', async () => {
+    const agents = await opened()
+    agents.edit(agents.agents[0]!)
+    await agents.remove()
+    expect(agents.agents).toEqual([])
+    expect(agents.form).toBeNull()
   })
 })
 
@@ -125,7 +227,7 @@ describe('the host connection', () => {
     await Bun.sleep(20)
     backend.emit('host:reconnected')
     await until(() => said(agents).length === 2)
-    expect(said(agents)).toEqual(['user: hello', 'agent: Hi there'])
+    expect(said(agents)).toEqual(['user: hello', 'assistant: Hi there'])
   })
 
   test('after `listen` is stopped, events are not heard', async () => {
@@ -138,7 +240,7 @@ describe('the host connection', () => {
     agents.draft = 'hello'
     await agents.send()
     await Bun.sleep(20)
-    expect(said(agents)).toEqual(['user: hello', 'agent: '])
+    expect(said(agents)).toEqual(['user: hello'])
   })
 })
 
@@ -160,7 +262,7 @@ describe('a backend that cannot be reached', () => {
     await failing.send()
     expect(failing.draft).toBe('hello')
     expect(failing.failure).toBe('Connection lost')
-    expect(failing.open?.messages).toEqual([])
+    expect(failing.open?.items).toEqual([])
   })
 
   test('a rejection that is not an Error is shown as text', async () => {

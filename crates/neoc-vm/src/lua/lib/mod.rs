@@ -5,6 +5,7 @@
 //! `pub fn module(lua: &Lua) -> Result<Table>` and are wired into the
 //! `require` registry by `crate::lua::modules::install`.
 
+pub mod agui;
 pub mod archive;
 pub mod args;
 pub mod base64;

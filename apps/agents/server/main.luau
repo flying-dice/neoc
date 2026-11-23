@@ -1,15 +1,21 @@
 --!strict
--- The Agents app's backend: the chats, what was said in them, and the agent's turn. It is self-contained: the chats and
--- their messages are in the app's own database, and the agent is this backend's own (agent.luau, a mock for now).
+-- The Agents app's backend: the agents the person added (roster.luau), the chats with them, and the agent's turn in a
+-- chat (turn.luau). An agent is an AG-UI endpoint: this backend posts the conversation to it and reads the events it
+-- answers with (`lib:agui`). Everything is the app's own: the agents, chats and items are in its database, and a token
+-- is in the keychain.
 --
--- A turn: `send` stores what the person said, answers at once, and leaves a task running that asks the agent. Each piece
--- of the agent's answer is added to the stored message and sent to the open window as a `piece` event; a `turn` event
--- says the answer is over (complete, stopped or failed). A window that missed events reads the chat again with `open`.
+-- A turn: `send` (or `answer`, or `act`) stores what the person did, answers at once, and leaves a task running the
+-- agent's turn. What the agent says and does reaches the open window as `item` events (a whole item, new or changed),
+-- `piece` events (text added to an item) and `state` events; a `turn` event says the turn is over (complete, stopped
+-- or failed). A window that missed events reads the chat again with `open`.
 local app = require("vos:app")
+local codec = require("./codec")
+local roster = require("./roster")
 local rpc = require("../.app/rpc")
 local strings = require("lib:text")
 local task = require("std:task")
-local agent = require("./agent")
+local timeline = require("./timeline")
+local turn = require("./turn")
 local db = app.db
 
 db:migrate {
@@ -33,14 +39,38 @@ db:migrate {
     );
     create index messages_by_thread on messages(thread_id, id);
   ]],
+  -- AG-UI agents replace the built-in one: its chats were with an agent that is gone, and go with it
+  [3] = [[
+    drop table messages;
+    delete from threads;
+    alter table threads add column state text not null default '';
+    create table agents (
+      id text primary key,
+      name text not null,
+      url text not null,
+      has_token integer not null default 0
+    );
+    create table items (
+      id integer primary key,
+      thread_id text not null,
+      kind text not null,
+      key text not null default '',
+      name text not null default '',
+      text text not null default '',
+      data text not null default '',
+      done integer not null default 1
+    );
+    create index items_by_thread on items(thread_id, id);
+    create index items_by_key on items(thread_id, kind, key);
+  ]],
 }
 
--- no turn outlives the backend: an answer that was still coming when it last stopped is as long as it will get
-db:exec("update messages set done = 1 where done = 0")
+-- no turn outlives the backend: what was still coming when it last stopped is as long as it will get
+db:exec("update items set done = 1 where done = 0 and kind <> 'interrupt'")
 
--- the turn in progress in each chat: the task asking the agent, and the message its answer goes into
-type Turn = { task: any, message: number }
-local running: { [string]: Turn } = {}
+-- the turn in progress in each chat, and the task running it
+type Running = { task: any, turn: turn.Turn }
+local running: { [string]: Running } = {}
 
 local TITLE_MAX = 48
 
@@ -64,30 +94,115 @@ local function chats(): { rpc.Chat }
   return list
 end
 
+-- the questions of the agent's (interrupts) the chat still has to send it answers to
+local function questions(chat: string): { timeline.Row }
+  local list: { timeline.Row } = {}
+  for _, row in timeline.rows(chat) do
+    if row.kind == "interrupt" and not row.done then
+      table.insert(list, row)
+    end
+  end
+  return list
+end
+
 local function conversation(id: string): rpc.Conversation?
-  local row = db:one("select id, title, agent_name, updated_at from threads where id = :id", { id = id })
+  local row = db:one("select id, title, agent_name, updated_at, state from threads where id = :id", { id = id })
   if not row then
     return nil
   end
-  local messages: { rpc.Message } = {}
-  for _, m in db:all("select id, role, text, done from messages where thread_id = :id order by id", { id = id }) do
-    table.insert(messages, { id = m.id, chat = id, role = m.role, text = m.text, done = m.done == 1 })
-  end
-  return { chat = chatOf(row), messages = messages, busy = running[id] ~= nil }
+  return {
+    chat = chatOf(row),
+    items = timeline.items(id),
+    busy = running[id] ~= nil,
+    waiting = #questions(id) > 0,
+    state = row.state,
+  }
+end
+
+local function touch(chat: string, title: string?)
+  db:exec(
+    [[update threads
+      set title = case when title = 'New chat' and :t <> '' then :t else title end,
+          updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      where id = :id]],
+    { t = title or "", id = chat }
+  )
 end
 
 -- the turn in `chat` is over, however it ended
-local function finish(chat: string, turn: Turn)
-  db:exec("update messages set done = 1 where id = :id", { id = turn.message })
-  if running[chat] == turn then
+local function finish(chat: string, mine: Running)
+  timeline.settle(chat)
+  if running[chat] == mine then
     running[chat] = nil
   end
   app.emit("turn", { chat = chat })
 end
 
+-- Leave the agent's turn running in `chat`. Deferred: the caller has answered before the agent says anything.
+local function begin(chat: string, agent: roster.Agent, extra: turn.Extra)
+  local mine: Running = { task = nil, turn = { stream = nil, stopped = false } }
+  running[chat] = mine
+  mine.task = task.defer(function()
+    local ok, problem = pcall(function(): string?
+      turn.take(chat, agent, extra, mine.turn)
+      return nil
+    end)
+    if not ok then
+      timeline.add(chat, "error", { text = `The agent's turn stopped: {tostring(problem)}` })
+    end
+    finish(chat, mine)
+  end)
+end
+
+-- The chat can take a turn now: it exists, its agent does, and no turn is running. Otherwise the reason, in the
+-- person's words.
+local function ready(chat: string): (roster.Agent?, string?)
+  local row = db:one("select agent_id from threads where id = :id", { id = chat })
+  if not row then
+    return nil, "There is no such chat."
+  end
+  if running[chat] then
+    return nil, "The agent is still answering."
+  end
+  local agent = roster.find(row.agent_id)
+  if not agent then
+    return nil, "That agent was removed. Its chats can be read, but not continued."
+  end
+  return agent, nil
+end
+
 local handlers: rpc.Handlers = {
   agents = function(_ctx)
-    return agent.roster()
+    return roster.all()
+  end,
+
+  addAgent = function(ctx, params)
+    local problem = roster.add(params.name, params.url, params.token)
+    if problem then
+      return ctx:fail(problem)
+    end
+    return roster.all()
+  end,
+
+  updateAgent = function(ctx, params)
+    local agent = roster.find(params.agent)
+    if not agent then
+      return ctx:fail("There is no such agent.")
+    end
+    local problem = roster.update(agent, params.name, params.url, params.token, params.forget == true)
+    if problem then
+      return ctx:fail(problem)
+    end
+    return roster.all()
+  end,
+
+  removeAgent = function(ctx, params)
+    local agent = roster.find(params.agent)
+    if not agent then
+      return ctx:fail("There is no such agent.")
+    end
+    roster.remove(agent)
+    return roster.all()
   end,
 
   chats = function(_ctx)
@@ -95,11 +210,11 @@ local handlers: rpc.Handlers = {
   end,
 
   start = function(ctx, params)
-    local who = agent.find(params.agent)
-    if not who then
+    local agent = roster.find(params.agent)
+    if not agent then
       return ctx:fail("There is no such agent.")
     end
-    local made = db:exec("insert into threads(agent_id, agent_name) values (:a, :n)", { a = who.id, n = who.name })
+    local made = db:exec("insert into threads(agent_id, agent_name) values (:a, :n)", { a = agent.id, n = agent.name })
     local row = db:one("select id from threads where rowid = :r", { r = made.last_insert_id })
     return conversation((row :: { [string]: any }).id) :: rpc.Conversation
   end,
@@ -110,65 +225,113 @@ local handlers: rpc.Handlers = {
 
   send = function(ctx, params)
     local chat = params.chat
-    local row = db:one("select agent_id from threads where id = :id", { id = chat })
-    if not row then
-      return ctx:fail("There is no such chat.")
+    local agent, problem = ready(chat)
+    if not agent then
+      return ctx:fail(problem or "")
     end
     local text = strings.trim(params.text)
     if text == "" then
       return ctx:fail("Write something first.")
     end
-    if running[chat] then
-      return ctx:fail("The agent is still answering.")
+    if #questions(chat) > 0 then
+      return ctx:fail("The agent asked something: answer or decline it first.")
     end
-    local who = agent.find(row.agent_id)
-    if not who then
-      return ctx:fail("That agent is not here any more.")
+    timeline.add(chat, "user", { text = text })
+    touch(chat, titleOf(text))
+    begin(chat, agent, { resume = nil, forwarded = nil })
+    return conversation(chat) :: rpc.Conversation
+  end,
+
+  answer = function(ctx, params)
+    local chat = params.chat
+    local agent, problem = ready(chat)
+    if not agent then
+      return ctx:fail(problem or "")
     end
-
-    local answer = db:tx(function(): number
-      db:exec("insert into messages(thread_id, role, text) values (:c, 'user', :t)", { c = chat, t = text })
-      db:exec(
-        [[update threads
-          set title = case when title = 'New chat' then :t else title end,
-              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-          where id = :id]],
-        { t = titleOf(text), id = chat }
-      )
-      return db:exec("insert into messages(thread_id, role, done) values (:c, 'agent', 0)", { c = chat }).last_insert_id
-    end)
-
-    local turn: Turn = { task = nil, message = answer }
-    running[chat] = turn
-    -- deferred: the turn is recorded (and this call has answered) before the agent says anything
-    turn.task = task.defer(function()
-      local ok, problem = pcall(function(): string?
-        agent.prompt(who, text, function(piece: string)
-          db:exec("update messages set text = text || :p where id = :id", { p = piece, id = answer })
-          app.emit("piece", { chat = chat, message = answer, text = piece })
-        end)
-        return nil
-      end)
-      if not ok then
-        db:exec(
-          "update messages set text = text || :p where id = :id",
-          { p = `\n\nThe agent stopped: {tostring(problem)}`, id = answer }
-        )
+    local row = timeline.get(chat, params.item)
+    if not row or row.kind ~= "interrupt" or row.done then
+      return ctx:fail("That question is not open any more.")
+    end
+    local payload: any = nil
+    if params.payload ~= nil and not params.decline then
+      payload = codec.decode(params.payload)
+      if payload == nil and string.match(params.payload, "^%s*null%s*$") == nil then
+        return ctx:fail("The answer is not JSON.")
       end
-      finish(chat, turn)
-    end)
+    end
+    local data = codec.decode(row.data) or {}
+    data.status = if params.decline then "cancelled" else "resolved"
+    data.payload = payload
+    timeline.set(chat, row.id, { data = codec.encode(data) })
 
+    -- the agent goes on when every question it stopped at has its answer: they go back to it together
+    local open = questions(chat)
+    local resume: { any } = {}
+    for _, question in open do
+      local answered = codec.decode(question.data) or {}
+      if answered.status ~= "resolved" and answered.status ~= "cancelled" then
+        return conversation(chat) :: rpc.Conversation
+      end
+      table.insert(resume, { interrupt_id = question.key, status = answered.status, payload = answered.payload })
+    end
+    for _, question in open do
+      timeline.set(chat, question.id, { done = true })
+    end
+    touch(chat, nil)
+    begin(chat, agent, { resume = resume, forwarded = nil })
+    return conversation(chat) :: rpc.Conversation
+  end,
+
+  act = function(ctx, params)
+    local chat = params.chat
+    local agent, problem = ready(chat)
+    if not agent then
+      return ctx:fail(problem or "")
+    end
+    local row = timeline.get(chat, params.item)
+    if not row or row.kind ~= "activity" then
+      return ctx:fail("That surface is not in this chat.")
+    end
+    local action = codec.decode(params.action)
+    if type(action) ~= "table" then
+      return ctx:fail("The action is not a JSON object.")
+    end
+    touch(chat, nil)
+    -- how A2UI over AG-UI carries what the person did on a surface: in the next run's forwarded props
+    begin(chat, agent, { resume = nil, forwarded = { a2uiAction = { userAction = action } } })
     return conversation(chat) :: rpc.Conversation
   end,
 
   stop = function(ctx, params)
-    local turn = running[params.chat]
-    if turn then
+    local mine = running[params.chat]
+    if mine then
+      mine.turn.stopped = true
+      if mine.turn.stream then
+        mine.turn.stream:close()
+      end
       -- a cancelled task does not run again, so its own `finish` never happens: finish for it
-      task.cancel(turn.task)
-      finish(params.chat, turn)
+      task.cancel(mine.task)
+      finish(params.chat, mine)
     end
     return conversation(params.chat) or ctx:fail("There is no such chat.")
+  end,
+
+  removeChat = function(ctx, params)
+    local mine = running[params.chat]
+    if mine then
+      mine.turn.stopped = true
+      if mine.turn.stream then
+        mine.turn.stream:close()
+      end
+      task.cancel(mine.task)
+      running[params.chat] = nil
+    end
+    db:tx(function()
+      db:exec("delete from items where thread_id = :id", { id = params.chat })
+      db:exec("delete from threads where id = :id", { id = params.chat })
+      return nil
+    end)
+    return chats()
   end,
 }
 
