@@ -32,6 +32,12 @@ sha3 = "0.12"
 blake3 = "1"
 md-5 = "0.11"
 sha1 = "0.11"
+ed25519-dalek = { version = "3", features = ["pkcs8", "pem", "rand_core", "digest"] }
+p256 = { version = "0.14", features = ["pem"] }
+rsa = { version = "0.10", features = ["pkcs1v15"] }
+signature = "3"
+pkcs8 = { version = "0.11", features = ["pem", "std"] }
+spki = { version = "0.8", features = ["pem", "std"] }
 aes-gcm = "0.11"
 chacha20poly1305 = "0.11"
 rand = "0.10"
