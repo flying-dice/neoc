@@ -9,6 +9,13 @@
 //!
 //! neoc-vm is the reference this crate is ported from, module by module.
 
+// until `std:process`, the first module that has a process, is ported
+#[allow(dead_code)]
+mod byte_stream;
+#[allow(dead_code)]
+mod child_exit;
+#[allow(dead_code)]
+mod command_options;
 pub mod declarations;
 pub mod engine;
 pub mod host;
