@@ -409,7 +409,7 @@ mod tests {
             unregistered.is_empty(),
             "declared but not registered: {unregistered:?}"
         );
-        assert_eq!(registered_set.len(), 54);
+        assert_eq!(registered_set.len(), 55);
 
         for key in &registered_set {
             let kind: String = lua
@@ -466,7 +466,7 @@ mod tests {
         let lua = make_engine().expect("engine");
         let sections = luau_decl_sections(&lua).expect("sections");
         let file = luau_decls(&lua).expect("file");
-        assert_eq!(sections.len(), 54);
+        assert_eq!(sections.len(), 55);
         for (key, section) in &sections {
             let scope = luau_decls::scope(key);
             assert!(
@@ -487,7 +487,7 @@ mod tests {
         assert!(file.contains("declare require: \n\t((path: \"std:collections\")"));
         assert_eq!(
             file.matches("((path: \"").count(),
-            54,
+            55,
             "one `require` overload per module"
         );
     }
@@ -852,10 +852,47 @@ mod tests {
         ),
     ];
 
-    /// The recorded types nothing here builds, each with why: a database server or Docker. Their records are the
+    /// The recorded types nothing here builds, each with why: a database server, Docker or an AG-UI endpoint, or a
+    /// table that is the script's to write. Their records are the
     /// only ones not held to the implementation. (`std:thread` `Channel` exists only inside a worker and is checked
     /// there, see `CHANNEL_PROBE`.)
     const NOT_BUILT: &[(&str, &str, &str)] = &[
+        (
+            "lib:agui",
+            "Run",
+            "needs an AG-UI endpoint (the module's own tests run one)",
+        ),
+        (
+            "lib:agui",
+            "Event",
+            "sent by an AG-UI endpoint (the module's own tests read every type)",
+        ),
+        (
+            "lib:agui",
+            "Interrupt",
+            "a part of an event an AG-UI endpoint sends",
+        ),
+        (
+            "lib:agui",
+            "RunAgentInput",
+            "a table the script writes, read by `agui.run` (the module's own tests send one)",
+        ),
+        (
+            "lib:agui",
+            "Message",
+            "a part of the input the script writes",
+        ),
+        (
+            "lib:agui",
+            "ToolCall",
+            "a part of the input the script writes",
+        ),
+        ("lib:agui", "Tool", "a part of the input the script writes"),
+        (
+            "lib:agui",
+            "Context",
+            "a part of the input the script writes",
+        ),
         ("vnd:sqlx_mysql", "Database", "needs a MySQL server"),
         ("vnd:sqlx_mysql", "Statement", "needs a MySQL server"),
         ("vnd:sqlx_postgres", "Database", "needs a PostgreSQL server"),
