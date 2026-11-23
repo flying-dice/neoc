@@ -400,17 +400,15 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// constructor-bearing type: `new` is recorded and registered on its sub-table,
 /// each method is recorded while its runtime
 /// registration stays in `impl UserData for Cache`.
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:cache")?;
 
     m.type_("Cache", |t| {
         Cache::lua(t);
-        t.try_constructor(
-            "new",
-            &[("options", "LuaValue")],
-            "Create a bounded LRU cache from an options table: `max_size` (required, ≥ 1) caps the entry count; `ttl` (optional, seconds, fractional allowed) sets a default per-entry expiry; `on_evict` (optional, `function(key, value)`) fires when the cache drops an entry itself — capacity eviction or TTL expiry — but not on `delete`, `clear`, or overwrite.",
-            |lua, opts: Table| Cache::build(lua, opts),
-        )?;
+        /// Create a bounded LRU cache from an options table: `max_size` (required, ≥ 1) caps the entry count; `ttl` (optional, seconds, fractional allowed) sets a default per-entry expiry; `on_evict` (optional, `function(key, value)`) fires when the cache drops an entry itself — capacity eviction or TTL expiry — but not on `delete`, `clear`, or overwrite.
+        #[lua(names(opts = "options"))]
+        t.try_constructor("new", |lua, opts: Table| Cache::build(lua, opts))?;
         Ok(())
     })?;
 

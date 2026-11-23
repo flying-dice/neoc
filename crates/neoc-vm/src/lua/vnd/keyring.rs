@@ -67,6 +67,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// Declares the `vnd:keyring` surface through the facade. `store`, `mock`, `error_kind` and `error_message` are plain
 /// functions; the `Store` and `Entry` types keep their own `impl UserData` and are recorded with
 /// [`crate::lua::facade::Module::userdata`].
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:keyring")?;
 
@@ -78,31 +79,21 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         }
         .instrument(span(op))
     })?;
+    /// The operating system's credential store: Keychain Services on macOS (the login keychain), the Credential Manager on Windows, the Secret Service on Linux and the other Unixes. A machine that has none, or whose store cannot be opened, is `no_store`. With `NEOC_KEYRING=mock` in the environment it is a mock store instead, one for the whole process (see `mock`). A script given this module is trusted with the secrets of the user it runs as. Errors are `keyring.<function>: <kind>: <message>` (see `error_kind`).
+    #[lua("Result<Store, string>", takes())]
     m.set("store", store)?;
-    m.record_fn(
-        "store",
-        &[],
-        "Result<Store, string>",
-        "The operating system's credential store: Keychain Services on macOS (the login keychain), the Credential Manager on Windows, the Secret Service on Linux and the other Unixes. A machine that has none, or whose store cannot be opened, is `no_store`. With `NEOC_KEYRING=mock` in the environment it is a mock store instead, one for the whole process (see `mock`). A script given this module is trusted with the secrets of the user it runs as. Errors are `keyring.<function>: <kind>: <message>` (see `error_kind`).",
-    );
 
     m.declared(
         mock_store::lua(),
         lua.create_function(|_, ()| mock_store().map_err(mlua::Error::external))?,
     )?;
 
-    m.func(
-        "error_kind",
-        &[("err", "string?")],
-        "The stable kind inside an error string returned by a `vnd:keyring` function, or `nil` when the string is not one of theirs (or is `nil`, so `keyring.error_kind(err)` takes the `err` of any call). Such a string is `keyring.<function>: <kind>: <message>`. Kinds: `invalid_input` (an argument was refused, by this module or by the store), `no_store` (this machine has no credential store that can be used), `no_access` (the store is locked, or the person refused), `not_found` (the credential an entry from `search` stood for is gone), `ambiguous` (more than one credential matches the service and user), `bad_encoding` (the secret is not UTF-8 text: read it with `get_secret`), `bad_data` (what the store holds could not be read), `unsupported` (the store does not do this), `platform` (the platform's store failed), `other`. The message is the store's own where it answered; it is for a log and may change, and never holds a secret.",
-        error_text::reader(error::kind_of),
-    )?;
-    m.func(
-        "error_message",
-        &[("err", "string?")],
-        "The message inside an error string returned by a `vnd:keyring` function: everything after the kind in `keyring.<function>: <kind>: <message>`, or `nil` when the string is not one of theirs (or is `nil`, so `keyring.error_message(err)` takes the `err` of any call), the same rule as `error_kind`. It is the store's or this module's wording, and never holds a secret. It is for showing or logging as it is: branch on `error_kind`, not on these words, which differ between platforms and versions. Read it here instead of taking the error string apart.",
-        error_text::reader(error::message_of),
-    )?;
+    /// The stable kind inside an error string returned by a `vnd:keyring` function, or `nil` when the string is not one of theirs (or is `nil`, so `keyring.error_kind(err)` takes the `err` of any call). Such a string is `keyring.<function>: <kind>: <message>`. Kinds: `invalid_input` (an argument was refused, by this module or by the store), `no_store` (this machine has no credential store that can be used), `no_access` (the store is locked, or the person refused), `not_found` (the credential an entry from `search` stood for is gone), `ambiguous` (more than one credential matches the service and user), `bad_encoding` (the secret is not UTF-8 text: read it with `get_secret`), `bad_data` (what the store holds could not be read), `unsupported` (the store does not do this), `platform` (the platform's store failed), `other`. The message is the store's own where it answered; it is for a log and may change, and never holds a secret.
+    #[lua(takes("err: string?"))]
+    m.func("error_kind", error_text::reader(error::kind_of))?;
+    /// The message inside an error string returned by a `vnd:keyring` function: everything after the kind in `keyring.<function>: <kind>: <message>`, or `nil` when the string is not one of theirs (or is `nil`, so `keyring.error_message(err)` takes the `err` of any call), the same rule as `error_kind`. It is the store's or this module's wording, and never holds a secret. It is for showing or logging as it is: branch on `error_kind`, not on these words, which differ between platforms and versions. Read it here instead of taking the error string apart.
+    #[lua(takes("err: string?"))]
+    m.func("error_message", error_text::reader(error::message_of))?;
 
     m.userdata("Store", |s| {
         s.method(

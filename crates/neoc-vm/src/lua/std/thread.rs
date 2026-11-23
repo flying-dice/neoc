@@ -69,11 +69,14 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// injected at spawn time (nil at the top level), so they are recorded as
 /// constants via [`crate::lua::facade::Module::const_`]. The `WorkerHandle` and
 /// `Channel` userdata keep their own `impl UserData` and are recorded here.
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:thread")?;
 
     m.declared(spawn::lua(), lua.create_function(spawn)?)?;
 
+    /// Return the number of logical CPU cores available to the process. At least 1.
+    #[lua("number")]
     m.set(
         "available_parallelism",
         lua.create_function(|_, _: ()| {
@@ -82,12 +85,6 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
                 .unwrap_or(1))
         })?,
     )?;
-    m.record_fn(
-        "available_parallelism",
-        &[],
-        "number",
-        "Return the number of logical CPU cores available to the process. At least 1.",
-    );
 
     // Overwritten by `run_worker` for actual workers; nil at the top level
     // so user code can branch on `if lib.thread.parent then …`.
@@ -113,18 +110,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     });
 
     m.userdata("Channel", |c| {
-        c.method(
-            "send",
-            &[("value", "LuaValue")],
-            "()",
-            "Send a JSON-serialisable value to the parent's message queue.",
-        )
-        .method(
-            "receive",
-            &[],
-            "Result<LuaValue, string>",
-            "Wait for a message from the parent. Returns `(nil, error)` once the parent has exited.",
-        );
+        Channel::lua(c);
     });
 
     Ok(m)
@@ -549,12 +535,17 @@ pub struct Channel {
     rx: Arc<Mutex<mpsc::UnboundedReceiver<serde_json::Value>>>,
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for Channel {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Send a JSON-serialisable value to the parent's message queue.
+        #[lua("()", names(v = "value"))]
         methods.add_method("send", |_, this, v: Value| {
             send_json(&this.tx, v, "channel.send", "peer has exited")
         });
 
+        /// Wait for a message from the parent. Returns `(nil, error)` once the parent has exited.
+        #[lua("Result<LuaValue, string>")]
         async_method(methods, "receive", Role::Wait, |lua, this, (): ()| {
             let rx = this.rx.clone();
             async move {

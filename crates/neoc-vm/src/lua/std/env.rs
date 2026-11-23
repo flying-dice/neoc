@@ -28,6 +28,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// recorded via
 /// [`crate::lua::facade::Module::record_fn`] /
 /// [`crate::lua::facade::Module::const_`].
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:env")?;
 
@@ -80,17 +81,15 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         })?,
     )?;
 
+    /// Return the platform temporary-file directory.
+    #[lua("string")]
     m.set(
         "temp_dir",
         lua.create_function(|_, ()| Ok(std::env::temp_dir().to_string_lossy().into_owned()))?,
     )?;
-    m.record_fn(
-        "temp_dir",
-        &[],
-        "string",
-        "Return the platform temporary-file directory.",
-    );
 
+    /// Return the process's current working directory, or an error.
+    #[lua("Result<string, string>")]
     m.set(
         "current_dir",
         lua.create_function(|lua, ()| match std::env::current_dir() {
@@ -98,13 +97,9 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             Err(e) => from_err(lua, "env.current_dir", e),
         })?,
     )?;
-    m.record_fn(
-        "current_dir",
-        &[],
-        "Result<string, string>",
-        "Return the process's current working directory, or an error.",
-    );
 
+    /// Read the environment variable `key`, or an error if it is unset or not valid Unicode.
+    #[lua("Result<string, string>")]
     m.set(
         "var",
         lua.create_function(|lua, key: String| match std::env::var(&key) {
@@ -112,13 +107,9 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             Err(e) => err(lua, format!("env.var: {key}: {e}")),
         })?,
     )?;
-    m.record_fn(
-        "var",
-        &[("key", "string")],
-        "Result<string, string>",
-        "Read the environment variable `key`, or an error if it is unset or not valid Unicode.",
-    );
 
+    /// Return every environment variable as a `{ [string]: string }` table, skipping non-Unicode entries.
+    #[lua("LuaValue")]
     m.set(
         "vars",
         lua.create_function(|lua, ()| {
@@ -131,13 +122,9 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             Ok(tbl)
         })?,
     )?;
-    m.record_fn(
-        "vars",
-        &[],
-        "LuaValue",
-        "Return every environment variable as a `{ [string]: string }` table, skipping non-Unicode entries.",
-    );
 
+    /// Return the CLI arguments passed to the script as a 1-indexed `{ string }` table.
+    #[lua("LuaValue")]
     m.set(
         "args",
         lua.create_function(|lua, ()| {
@@ -153,12 +140,6 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
                 .map_err(|_| mlua::Error::runtime(ERR))
         })?,
     )?;
-    m.record_fn(
-        "args",
-        &[],
-        "LuaValue",
-        "Return the CLI arguments passed to the script as a 1-indexed `{ string }` table.",
-    );
 
     Ok(m)
 }

@@ -34,63 +34,46 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `normalize` rejects an unknown form, `category` rejects input that is not
 /// exactly one codepoint. The other seven functions are total over any UTF-8
 /// string and route through [`crate::lua::facade::Module::func`].
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:unicode")?;
 
-    m.try_func(
-        "normalize",
-        &[("s", "string"), ("form", "string")],
-        "Normalise `s` to a Unicode normalisation form: \"nfc\", \"nfd\", \"nfkc\", or \"nfkd\" (case-insensitive). C-forms compose combining sequences, D-forms decompose them; the K-forms additionally fold compatibility characters (ﬁ → fi, ① → 1).",
-        |_, (s, form): (String, String)| normalize_form(&s, &form),
-    )?
-    .func(
-        "fold",
-        &[("s", "string")],
-        "Default Unicode case fold of `s` for caseless comparison (UAX #44): ß → \"ss\", ẞ → \"ss\", final and medial sigma → σ. Produces a comparison key — fold both sides and compare, do not display the result.",
-        |_, s: String| Ok(default_case_fold_str(&s)),
-    )?
-    .func(
-        "caseless_eq",
-        &[("a", "string"), ("b", "string")],
-        "Canonical caseless match of `a` and `b` (UAX #44 D145): true when they are equal ignoring case and ignoring canonical-equivalent combining-mark spellings. The robust default for comparing user-supplied text.",
-        |_, (a, b): (String, String)| Ok(canonical_caseless_match_str(&a, &b)),
-    )?
-    .func(
-        "graphemes",
-        &[("s", "string")],
-        "Split `s` into a 1-based array of extended grapheme clusters — user-perceived characters (UAX #29). A flag emoji or a base-plus-combining-accent is one element, not its component codepoints.",
-        build_grapheme_table,
-    )?
-    .func(
-        "grapheme_count",
-        &[("s", "string")],
-        "Count the extended grapheme clusters in `s` (UAX #29) without materialising them — the user-perceived length, which `#s` (bytes) and codepoint count both miss.",
-        |_, s: String| Ok(s.graphemes(true).count() as i64),
-    )?
-    .try_func(
-        "category",
-        &[("ch", "string")],
-        "General_Category of the single codepoint `ch` as its two-letter abbreviation (\"Lu\", \"Ll\", \"Nd\", \"Zs\", …). Errors unless `ch` is exactly one codepoint.",
-        |_, ch: String| category_of(&ch),
-    )?
-    .func(
-        "is_alphabetic",
-        &[("s", "string")],
-        "True when `s` is non-empty and every codepoint has the Unicode Alphabetic property — letters plus letter-numbers such as Roman numerals (broader than Python `str.isalpha`, which counts letters only). The empty string is false.",
-        |_, s: String| Ok(!s.is_empty() && s.chars().all(char::is_alphabetic)),
-    )?
-    .func(
-        "is_numeric",
-        &[("s", "string")],
-        "True when `s` is non-empty and every codepoint is in a Number category — Nd, Nl, or No (narrower than Python `str.isnumeric`, which also counts Numeric_Type codepoints outside those categories such as the CJK numeral 一, U+4E00, category Lo). The empty string is false.",
-        |_, s: String| Ok(!s.is_empty() && s.chars().all(char::is_numeric)),
-    )?
-    .func(
-        "width",
-        &[("s", "string")],
-        "Terminal display width of `s` in columns (Unicode East-Asian Width): wide/fullwidth CJK count as 2, zero-width and most combining marks as 0. Use this to align text, not `#s` (bytes) or grapheme count.",
-        |_, s: String| Ok(display_width(&s)),
-    )?;
+    /// Normalise `s` to a Unicode normalisation form: "nfc", "nfd", "nfkc", or "nfkd" (case-insensitive). C-forms compose combining sequences, D-forms decompose them; the K-forms additionally fold compatibility characters (ﬁ → fi, ① → 1).
+    #[lua]
+    m.try_func("normalize", |_, (s, form): (String, String)| {
+        normalize_form(&s, &form)
+    })?;
+    /// Default Unicode case fold of `s` for caseless comparison (UAX #44): ß → "ss", ẞ → "ss", final and medial sigma → σ. Produces a comparison key — fold both sides and compare, do not display the result.
+    #[lua]
+    m.func("fold", |_, s: String| Ok(default_case_fold_str(&s)))?;
+    /// Canonical caseless match of `a` and `b` (UAX #44 D145): true when they are equal ignoring case and ignoring canonical-equivalent combining-mark spellings. The robust default for comparing user-supplied text.
+    #[lua]
+    m.func("caseless_eq", |_, (a, b): (String, String)| {
+        Ok(canonical_caseless_match_str(&a, &b))
+    })?;
+    #[lua]
+    m.func("graphemes", build_grapheme_table)?;
+    /// Count the extended grapheme clusters in `s` (UAX #29) without materialising them — the user-perceived length, which `#s` (bytes) and codepoint count both miss.
+    #[lua]
+    m.func("grapheme_count", |_, s: String| {
+        Ok(s.graphemes(true).count() as i64)
+    })?;
+    /// General_Category of the single codepoint `ch` as its two-letter abbreviation ("Lu", "Ll", "Nd", "Zs", …). Errors unless `ch` is exactly one codepoint.
+    #[lua]
+    m.try_func("category", |_, ch: String| category_of(&ch))?;
+    /// True when `s` is non-empty and every codepoint has the Unicode Alphabetic property — letters plus letter-numbers such as Roman numerals (broader than Python `str.isalpha`, which counts letters only). The empty string is false.
+    #[lua]
+    m.func("is_alphabetic", |_, s: String| {
+        Ok(!s.is_empty() && s.chars().all(char::is_alphabetic))
+    })?;
+    /// True when `s` is non-empty and every codepoint is in a Number category — Nd, Nl, or No (narrower than Python `str.isnumeric`, which also counts Numeric_Type codepoints outside those categories such as the CJK numeral 一, U+4E00, category Lo). The empty string is false.
+    #[lua]
+    m.func("is_numeric", |_, s: String| {
+        Ok(!s.is_empty() && s.chars().all(char::is_numeric))
+    })?;
+    /// Terminal display width of `s` in columns (Unicode East-Asian Width): wide/fullwidth CJK count as 2, zero-width and most combining marks as 0. Use this to align text, not `#s` (bytes) or grapheme count.
+    #[lua]
+    m.func("width", |_, s: String| Ok(display_width(&s)))?;
 
     Ok(m)
 }
@@ -110,7 +93,9 @@ fn normalize_form(s: &str, form: &str) -> Result<String, String> {
     }
 }
 
-/// Builds the 1-based grapheme-cluster array backing the `graphemes` function.
+// Builds the 1-based grapheme-cluster array backing the `graphemes` function.
+/// Split `s` into a 1-based array of extended grapheme clusters — user-perceived characters (UAX #29). A flag emoji or a base-plus-combining-accent is one element, not its component codepoints.
+#[neoc_macros::lua_fn]
 fn build_grapheme_table(lua: &Lua, s: String) -> mlua::Result<Table> {
     let t = lua.create_table()?;
     for (i, g) in s.graphemes(true).enumerate() {

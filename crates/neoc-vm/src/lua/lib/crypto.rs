@@ -210,6 +210,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// [`crate::lua::facade::Module::try_func`]: the facade supplies the
 /// `crypto.<fn>` span and the `"crypto.<fn>: "` error prefix the hand-written
 /// form baked manually, leaving nothing to record separately.
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:crypto")?;
 
@@ -240,24 +241,21 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     // sister function uses. All three supported AEADs ship a 96-bit nonce and a
     // 128-bit tag; when (if) a 192-bit XChaCha variant lands, the nonce arm
     // grows a branch here.
-    m.try_func(
-        "key_size",
-        &[("algo", "string")],
-        "Return the required key length in bytes for `algo`.",
-        |_, algo: String| key_len(&algo).map(|n| n as i64),
-    )?
-    .try_func(
-        "nonce_size",
-        &[("algo", "string")],
-        "Return the required nonce length in bytes for `algo`.",
-        |_, algo: String| key_len(&algo).map(|_| NONCE_LEN as i64),
-    )?
-    .try_func(
-        "tag_size",
-        &[("algo", "string")],
-        "Return the auth-tag length appended to ciphertext, in bytes, for `algo`.",
-        |_, algo: String| key_len(&algo).map(|_| TAG_LEN as i64),
-    )?;
+    /// Return the required key length in bytes for `algo`.
+    #[lua]
+    m.try_func("key_size", |_, algo: String| {
+        key_len(&algo).map(|n| n as i64)
+    })?;
+    /// Return the required nonce length in bytes for `algo`.
+    #[lua]
+    m.try_func("nonce_size", |_, algo: String| {
+        key_len(&algo).map(|_| NONCE_LEN as i64)
+    })?;
+    /// Return the auth-tag length appended to ciphertext, in bytes, for `algo`.
+    #[lua]
+    m.try_func("tag_size", |_, algo: String| {
+        key_len(&algo).map(|_| TAG_LEN as i64)
+    })?;
 
     Ok(m)
 }

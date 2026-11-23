@@ -30,41 +30,24 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// exact error suffixes (reader/writer-handle, UTF-8, parse, serialize, and
 /// I/O failures), and the `lua::lib::toml` spans are byte-identical to the
 /// hand-written registration this replaces.
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:toml")?;
-    m.try_func(
-        "decode",
-        &[("reader", "std_io.ReaderHandle")],
-        "Read a reader handle to completion and parse it as TOML.",
-        decode,
-    )?
-    .try_func(
-        "decode_string",
-        &[("s", "string")],
-        "Parse a TOML string into a Lua value.",
-        decode_string,
-    )?
-    .try_func_raising(
-        "encode",
-        &[("value", "LuaValue")],
-        "Serialise a Lua value to a compact TOML string.",
-        encode,
-    )?
-    .try_func_raising(
-        "encode_pretty",
-        &[("value", "LuaValue")],
-        "Serialise a Lua value to a pretty-printed TOML string.",
-        encode_pretty,
-    )?
-    .try_func_raising(
-        "encode_to",
-        &[("value", "LuaValue"), ("writer", "std_io.WriterHandle")],
-        "Serialise a Lua value to TOML and write it to a writer handle.",
-        encode_to,
-    )?;
+    #[lua]
+    m.try_func("decode", decode)?;
+    #[lua]
+    m.try_func("decode_string", decode_string)?;
+    #[lua]
+    m.try_func_raising("encode", encode)?;
+    #[lua]
+    m.try_func_raising("encode_pretty", encode_pretty)?;
+    #[lua]
+    m.try_func_raising("encode_to", encode_to)?;
     Ok(m)
 }
 
+/// Read a reader handle to completion and parse it as TOML.
+#[neoc_macros::lua_fn(names(ud = "reader"), types(ud = "std_io.ReaderHandle"))]
 fn decode(lua: &Lua, ud: AnyUserData) -> Result<Value, String> {
     let rh = match ud.borrow::<ReaderHandle>() {
         Ok(h) => h,
@@ -80,6 +63,8 @@ fn decode(lua: &Lua, ud: AnyUserData) -> Result<Value, String> {
     parse_str(lua, s)
 }
 
+/// Parse a TOML string into a Lua value.
+#[neoc_macros::lua_fn]
 fn decode_string(lua: &Lua, s: mlua::LuaString) -> Result<Value, String> {
     let s = std::str::from_utf8(&s.as_bytes())
         .map(str::to_owned)
@@ -87,16 +72,22 @@ fn decode_string(lua: &Lua, s: mlua::LuaString) -> Result<Value, String> {
     parse_str(lua, &s)
 }
 
+/// Serialise a Lua value to a compact TOML string.
+#[neoc_macros::lua_fn(names(v = "value"))]
 fn encode(_: &Lua, v: Value) -> mlua::Result<Result<String, String>> {
     refuse_buffer(&v, "toml.encode")?;
     Ok(to_toml_string(&v, false))
 }
 
+/// Serialise a Lua value to a pretty-printed TOML string.
+#[neoc_macros::lua_fn(names(v = "value"))]
 fn encode_pretty(_: &Lua, v: Value) -> mlua::Result<Result<String, String>> {
     refuse_buffer(&v, "toml.encode_pretty")?;
     Ok(to_toml_string(&v, true))
 }
 
+/// Serialise a Lua value to TOML and write it to a writer handle.
+#[neoc_macros::lua_fn(names(v = "value", ud = "writer"), types(ud = "std_io.WriterHandle"))]
 fn encode_to(_: &Lua, (v, ud): (Value, AnyUserData)) -> mlua::Result<Result<bool, String>> {
     refuse_buffer(&v, "toml.encode_to")?;
     Ok(write_toml(&v, &ud))

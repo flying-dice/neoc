@@ -45,9 +45,12 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// facade's `func` / `try_func` path would change its behaviour. Its signature
 /// is recorded via
 /// [`crate::lua::facade::Module::record_fn`].
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:vcr")?;
 
+    /// Create a cassette in the given mode (`record` / `replay` / `off`). Returns a handle exposing `wrap` and `dump`. `NEOC_VCR=off` forces pass-through regardless of `opts.mode`.
+    #[lua("LuaValue")]
     m.set(
         "cassette",
         lua.create_function(|lua, opts: Table| {
@@ -71,12 +74,6 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             }
         })?,
     )?;
-    m.record_fn(
-        "cassette",
-        &[("opts", "LuaValue")],
-        "LuaValue",
-        "Create a cassette in the given mode (`record` / `replay` / `off`). Returns a handle exposing `wrap` and `dump`. `NEOC_VCR=off` forces pass-through regardless of `opts.mode`.",
-    );
 
     Ok(m)
 }

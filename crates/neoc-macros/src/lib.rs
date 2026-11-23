@@ -12,7 +12,8 @@
 //! m.declared(decode::lua(), lua.create_function(decode)?)?;
 //! ```
 //!
-//! [`lua_fn`] is for a function, [`lua_userdata`] for the methods and fields of an `impl UserData` block.
+//! [`lua_fn`] is for a function, [`lua_userdata`] for the methods and fields of an `impl UserData` block, and
+//! [`lua_module`] for the closures a module's `declare` function registers in place.
 //!
 //! What is read: the name (the function's, or the string a method is added under), each parameter's name and
 //! its type through `DeclType` (`String` is `string`, `Option<i64>` is `number?`), and the `///` lines as the doc.
@@ -23,7 +24,7 @@
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as Tokens};
-use quote::quote;
+use quote::{ToTokens, quote};
 use syn::spanned::Spanned;
 use syn::{
     Attribute, Expr, ExprClosure, FnArg, GenericArgument, Ident, ImplItem, ItemFn, ItemImpl, Lit,
@@ -130,7 +131,10 @@ impl Said {
     fn above(attrs: &mut Vec<Attribute>) -> syn::Result<Self> {
         let mut said = Self::default();
         for attr in attrs.iter().filter(|a| a.path().is_ident("lua")) {
-            attr.parse_args_with(|input: syn::parse::ParseStream| said.read(input))?;
+            // a bare `#[lua]` says only that the statement is one to read
+            if !matches!(attr.meta, syn::Meta::Path(_)) {
+                attr.parse_args_with(|input: syn::parse::ParseStream| said.read(input))?;
+            }
         }
         attrs.retain(|a| !a.path().is_ident("lua"));
         Ok(said)
@@ -255,8 +259,12 @@ fn is_unit(ty: &Type) -> bool {
 
 /// Whether a parameter is the `&Lua` every bound function takes first.
 fn is_lua(ty: &Type) -> bool {
-    matches!(ty, Type::Reference(reference)
-        if matches!(&*reference.elem, Type::Path(path) if path.path.segments.last().is_some_and(|s| s.ident == "Lua")))
+    let named = |ty: &Type| matches!(ty, Type::Path(path) if path.path.segments.last().is_some_and(|s| s.ident == "Lua"));
+    // `&Lua`, or `Lua` itself for an async function
+    match ty {
+        Type::Reference(reference) => named(&reference.elem),
+        other => named(other),
+    }
 }
 
 /// The recorded return of a function: what was said, or the `DeclType` of `T` in `mlua::Result<T>`.
@@ -512,6 +520,275 @@ pub fn lua_userdata(args: TokenStream, item: TokenStream) -> TokenStream {
     }
     let block = syn::parse_macro_input!(item as ItemImpl);
     lua_userdata_impl(block)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// The first closure in an expression: the one a registration is given, however it is wrapped
+/// (`lua.create_function(|lua, key: String| ...)?`, `async_function(lua, Role::Timer, |_, secs: f64| ...)`).
+fn closure_in(expr: &Expr) -> Option<&ExprClosure> {
+    struct First<'e>(Option<&'e ExprClosure>);
+    impl<'e> syn::visit::Visit<'e> for First<'e> {
+        fn visit_expr_closure(&mut self, closure: &'e ExprClosure) {
+            self.0.get_or_insert(closure);
+        }
+    }
+    let mut first = First(None);
+    syn::visit::Visit::visit_expr(&mut first, expr);
+    first.0
+}
+
+/// The registrations that take the parameter list and the doc themselves: `lua_module` writes both in.
+const REGISTRATIONS: &[&str] = &[
+    "func",
+    "try_func",
+    "try_func_raising",
+    "async_func",
+    "try_async_func",
+    "constructor",
+    "try_constructor",
+];
+
+/// The call a statement is, when it is one (`m.func(...)?;`), with the statement's attributes on it: syn
+/// leaves them on the outermost expression, which is the `?`.
+fn call_in(stmt: &mut Stmt) -> Option<&mut syn::ExprMethodCall> {
+    let Stmt::Expr(expr, _) = stmt else {
+        return None;
+    };
+    let call = match expr {
+        Expr::Try(tried) => {
+            let above = std::mem::take(&mut tried.attrs);
+            let inner = &mut *tried.expr;
+            if let Expr::MethodCall(call) = inner {
+                call.attrs.extend(above);
+            }
+            inner
+        }
+        other => other,
+    };
+    match call {
+        Expr::MethodCall(call) => Some(call),
+        _ => None,
+    }
+}
+
+/// What a marked statement says: the name it registers under, the attributes, the doc, and what it is given.
+struct Marked {
+    name: LitStr,
+    said: Said,
+    doc: String,
+    kind: String,
+    receiver: Tokens,
+    closure: Option<ExprClosure>,
+    /// The function, when it is given by its path and says its own parameters and doc (`#[lua_fn]`).
+    path: Option<syn::ExprPath>,
+}
+
+impl Marked {
+    /// Reads a statement and takes the marks out of it; `None` when it is not marked.
+    fn read(stmt: &mut Stmt) -> syn::Result<Option<Self>> {
+        let span = stmt.span();
+        let Some(call) = call_in(stmt) else {
+            return Ok(None);
+        };
+        if !call.attrs.iter().any(|a| a.path().is_ident("lua")) {
+            return Ok(None);
+        }
+        let doc = doc_of(&call.attrs);
+        call.attrs.retain(|a| !a.path().is_ident("doc"));
+        let said = Said::above(&mut call.attrs)?;
+        let Some(Expr::Lit(syn::ExprLit {
+            lit: Lit::Str(name),
+            ..
+        })) = call.args.first()
+        else {
+            return Err(syn::Error::new(
+                span,
+                "the first argument is the name, as a string",
+            ));
+        };
+        let closure = call.args.iter().skip(1).find_map(closure_in).cloned();
+        let path = match call.args.iter().nth(1) {
+            Some(Expr::Path(path)) if said.takes.is_none() => Some(path.clone()),
+            _ => None,
+        };
+        Ok(Some(Self {
+            name: name.clone(),
+            said,
+            doc,
+            kind: call.method.to_string(),
+            receiver: call.receiver.to_token_stream(),
+            closure,
+            path,
+        }))
+    }
+
+    /// The parameters a script passes: the closure's after `lua`, or the list said by hand.
+    fn params(&self, span: Span) -> syn::Result<Vec<Tokens>> {
+        if self.closure.is_none() && self.said.takes.is_none() {
+            return Err(syn::Error::new(
+                span,
+                "no closure to read the parameters from: say them with `takes(...)`",
+            ));
+        }
+        let inputs = self
+            .closure
+            .iter()
+            .flat_map(|c| c.inputs.iter().skip(1))
+            .map(|pat| (pat, None));
+        self.said.params(inputs)
+    }
+}
+
+/// Writes the parameter list and the doc into a registration, after the name.
+fn with_params(stmt: &mut Stmt, params: &Expr, doc: &Expr) {
+    if let Some(call) = call_in(stmt) {
+        call.args.insert(1, params.clone());
+        call.args.insert(2, doc.clone());
+    }
+}
+
+/// One statement of a `declare` function marked `#[lua(...)]`, with what the declarations say of it written
+/// in: the parameters and the doc as arguments of a registration, or a `record` after a `set`.
+fn registered(stmt: &mut Stmt) -> syn::Result<Option<Tokens>> {
+    let span = stmt.span();
+    let Some(marked) = Marked::read(stmt)? else {
+        return Ok(None);
+    };
+    let facade = facade();
+    let (name, doc, receiver) = (&marked.name, &marked.doc, &marked.receiver);
+    if marked.kind == "set" {
+        let Some(returns) = &marked.said.returns else {
+            return Err(syn::Error::new(
+                span,
+                "say what a script gets from this function: `#[lua(\"...\")]`",
+            ));
+        };
+        let params = marked.params(span)?;
+        return Ok(Some(quote! {
+            #stmt
+            #receiver.record(#facade::FnDecl {
+                name: ::std::string::String::from(#name),
+                params: ::std::vec![#(#params),*],
+                ret: ::std::string::String::from(#returns),
+                doc: ::std::string::String::from(#doc),
+            });
+        }));
+    }
+    if !REGISTRATIONS.contains(&marked.kind.as_str()) {
+        return Err(syn::Error::new(
+            span,
+            "`#[lua]` is for a `set` or a registration (`func`, `try_func`, ..., `constructor`)",
+        ));
+    }
+    if let Some(returns) = &marked.said.returns {
+        return Err(syn::Error::new(
+            returns.span(),
+            "the return of a registration is its function's: it is not said by hand",
+        ));
+    }
+    if let Some(path) = &marked.path {
+        if !doc.is_empty() {
+            return Err(syn::Error::new(
+                span,
+                "the doc of a function given by its path is the function's",
+            ));
+        }
+        with_params(
+            stmt,
+            &syn::parse_quote!(&__lua_params),
+            &syn::parse_quote!(&__lua_decl.doc),
+        );
+        return Ok(Some(quote! {
+            {
+                let __lua_decl = #path::lua();
+                let __lua_params = __lua_decl.borrowed();
+                #stmt
+            }
+        }));
+    }
+    let params = marked.params(span)?;
+    with_params(
+        stmt,
+        &syn::parse_quote!(&__lua_params),
+        &syn::parse_quote!(#doc),
+    );
+    Ok(Some(quote! {
+        {
+            let __lua_owned: ::std::vec::Vec<(::std::string::String, ::std::string::String)> = ::std::vec![#(#params),*];
+            let __lua_params: ::std::vec::Vec<(&str, &str)> = __lua_owned.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
+            #stmt
+        }
+    }))
+}
+
+/// Rewrites the statements of a block that are marked, and those of the closures given to `type_`.
+fn register_block(block: &mut syn::Block) -> syn::Result<()> {
+    let mut out = Vec::with_capacity(block.stmts.len());
+    for mut stmt in std::mem::take(&mut block.stmts) {
+        if let Some(tokens) = registered(&mut stmt)? {
+            let wrapped: syn::Block = syn::parse2(quote!({ #tokens }))?;
+            out.extend(wrapped.stmts);
+        } else {
+            if let Stmt::Expr(expr, _) = &mut stmt {
+                nested(expr)?;
+            }
+            out.push(stmt);
+        }
+    }
+    block.stmts = out;
+    Ok(())
+}
+
+/// The body of a closure given to `type_` is a list of registrations too (`t.constructor(...)`).
+fn nested(expr: &mut Expr) -> syn::Result<()> {
+    let call = match expr {
+        Expr::Try(tried) => &mut *tried.expr,
+        other => other,
+    };
+    let Expr::MethodCall(call) = call else {
+        return Ok(());
+    };
+    if call.method != "type_" {
+        return Ok(());
+    }
+    for arg in &mut call.args {
+        if let Expr::Closure(closure) = arg
+            && let Expr::Block(body) = &mut *closure.body
+        {
+            register_block(&mut body.block)?;
+        }
+    }
+    Ok(())
+}
+
+fn lua_module_impl(mut function: ItemFn) -> syn::Result<Tokens> {
+    register_block(&mut function.block)?;
+    Ok(function.to_token_stream())
+}
+
+/// Reads what the declarations say of the closures a module's `declare` function registers in place.
+///
+/// A statement of the function marked `#[lua(...)]` is one of:
+///
+/// - a registration, `m.func("name", |lua, input: String| ...)?` (and `try_func`, `try_func_raising`,
+///   `async_func`, `try_async_func`, a type's `constructor` and `try_constructor`): the parameter list and the
+///   doc are written into the call, so neither is an argument in the source. Given a function by its path
+///   (`m.try_func("parse", parse)?`), both are that function's own (`#[lua_fn]`);
+/// - `m.set("name", <a function made from a closure>)?`: the function is recorded after it, with the return
+///   `#[lua("...")]` says.
+///
+/// The parameters are the closure's after `lua`, read as `lua_fn` reads them (`types(...)`, `names(...)`,
+/// `takes(...)`), and the doc is the `///` lines above the statement.
+#[proc_macro_attribute]
+pub fn lua_module(args: TokenStream, item: TokenStream) -> TokenStream {
+    if !args.is_empty() {
+        return syn::Error::new(Span::call_site(), "`lua_module` takes no arguments")
+            .into_compile_error()
+            .into();
+    }
+    let function = syn::parse_macro_input!(item as ItemFn);
+    lua_module_impl(function)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }

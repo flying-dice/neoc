@@ -467,63 +467,54 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// function on the type's sub-table and opens a `skip_all` `"<Type>.<ctor>"`
 /// span, and each `method` records the matching `impl UserData` method in the
 /// recorded surface. `algorithms` is the one free function.
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:pkey")?;
 
     m.type_("KeyPair", |t| {
         KeyPair::lua(t);
-        t.try_constructor(
-            "generate",
-            &[("algo", "string")],
-            "Generate a fresh keypair for `algo` (one of `algorithms()`). RSA keys are 2048-bit.",
-            |_, algo: String| KeyPair::generate(Algo::parse(&algo)?),
-        )?.try_constructor(
-            "from_pem",
-            &[("algo", "string"), ("pem", "string")],
-            "Load a private key from a PKCS#8 PEM string. `algo` is required: a plain RSA key does not record the signing scheme (PSS vs PKCS#1 v1.5).",
-            |_, (algo, pem): (String, String)| KeyPair::from_pem(Algo::parse(&algo)?, &pem),
-        )?.try_constructor(
-            "from_der",
-            &[("algo", "string"), ("der", "string")],
-            "Load a private key from PKCS#8 DER bytes. `algo` is required, as for `from_pem`.",
-            |_, (algo, der): (String, mlua::LuaString)| {
-                KeyPair::from_der(Algo::parse(&algo)?, &der.as_bytes())
-            },
-        )?;
+        /// Generate a fresh keypair for `algo` (one of `algorithms()`). RSA keys are 2048-bit.
+        #[lua]
+        t.try_constructor("generate", |_, algo: String| {
+            KeyPair::generate(Algo::parse(&algo)?)
+        })?;
+        /// Load a private key from a PKCS#8 PEM string. `algo` is required: a plain RSA key does not record the signing scheme (PSS vs PKCS#1 v1.5).
+        #[lua]
+        t.try_constructor("from_pem", |_, (algo, pem): (String, String)| {
+            KeyPair::from_pem(Algo::parse(&algo)?, &pem)
+        })?;
+        /// Load a private key from PKCS#8 DER bytes. `algo` is required, as for `from_pem`.
+        #[lua]
+        t.try_constructor("from_der", |_, (algo, der): (String, mlua::LuaString)| {
+            KeyPair::from_der(Algo::parse(&algo)?, &der.as_bytes())
+        })?;
         Ok(())
     })?;
 
     m.type_("PublicKey", |t| {
         PublicKey::lua(t);
-        t.try_constructor(
-            "from_pem",
-            &[("algo", "string"), ("pem", "string")],
-            "Load a public key from an SPKI PEM string under `algo`.",
-            |_, (algo, pem): (String, String)| PublicKey::from_pem(Algo::parse(&algo)?, &pem),
-        )?
-        .try_constructor(
-            "from_der",
-            &[("algo", "string"), ("der", "string")],
-            "Load a public key from SPKI DER bytes under `algo`.",
-            |_, (algo, der): (String, mlua::LuaString)| {
-                PublicKey::from_der(Algo::parse(&algo)?, &der.as_bytes())
-            },
-        )?;
+        /// Load a public key from an SPKI PEM string under `algo`.
+        #[lua]
+        t.try_constructor("from_pem", |_, (algo, pem): (String, String)| {
+            PublicKey::from_pem(Algo::parse(&algo)?, &pem)
+        })?;
+        /// Load a public key from SPKI DER bytes under `algo`.
+        #[lua]
+        t.try_constructor("from_der", |_, (algo, der): (String, mlua::LuaString)| {
+            PublicKey::from_der(Algo::parse(&algo)?, &der.as_bytes())
+        })?;
         Ok(())
     })?;
 
-    m.func(
-        "algorithms",
-        &[],
-        "Return the list of supported algorithm names in canonical order.",
-        |lua, _: ()| {
-            let tbl = lua.create_table()?;
-            for (i, a) in ALGOS.iter().enumerate() {
-                tbl.set(i + 1, *a)?;
-            }
-            Ok(tbl)
-        },
-    )?;
+    /// Return the list of supported algorithm names in canonical order.
+    #[lua]
+    m.func("algorithms", |lua, _: ()| {
+        let tbl = lua.create_table()?;
+        for (i, a) in ALGOS.iter().enumerate() {
+            tbl.set(i + 1, *a)?;
+        }
+        Ok(tbl)
+    })?;
 
     Ok(m)
 }

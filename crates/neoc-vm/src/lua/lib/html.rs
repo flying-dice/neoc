@@ -17,20 +17,22 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// infallible string transforms; the registered Lua surface and the
 /// `lua::lib::html` spans are byte-identical to the hand-written registration
 /// this replaces.
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:html")?;
+    /// Escape the five XML entities (`&`, `<`, `>`, `"`, `'`) in `input`.
+    #[lua]
     m.func(
         "escape",
-        &[("input", "string"), ("opts", "LuaValue?")],
-        "Escape the five XML entities (`&`, `<`, `>`, `\"`, `'`) in `input`.",
-        |_, (input, _opts): (mlua::LuaString, Option<Table>)| Ok(escape_str(input.to_str()?.as_ref())),
-    )?
-    .func(
-        "unescape",
-        &[("input", "string")],
-        "Reverse HTML entity references (named and numeric) in `input`; unknown entities pass through unchanged.",
-        |_, input: mlua::LuaString| Ok(unescape_str(input.to_str()?.as_ref())),
+        |_, (input, _opts): (mlua::LuaString, Option<Table>)| {
+            Ok(escape_str(input.to_str()?.as_ref()))
+        },
     )?;
+    /// Reverse HTML entity references (named and numeric) in `input`; unknown entities pass through unchanged.
+    #[lua]
+    m.func("unescape", |_, input: mlua::LuaString| {
+        Ok(unescape_str(input.to_str()?.as_ref()))
+    })?;
     Ok(m)
 }
 

@@ -46,18 +46,18 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `#[instrument(name = "TcpListener.bind", target = "lua::lib::net")]`
 /// registration did. The `Listener` (`addr`) method keeps its own
 /// `impl UserData` and is recorded here.
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:net")?;
 
     // `require("std:net").TcpListener.bind(addr)`
     m.type_("TcpListener", |t| {
         Listener::lua(t);
-        t.try_constructor(
-            "bind",
-            &[("addr", "string")],
-            "Bind a TCP socket to `addr` (e.g. `\"0.0.0.0:3000\"`). Returns a listener handle on success.",
-            |lua, addr: String| bind(&addr).map(|l| Listener::new(lua, l)),
-        )?;
+        /// Bind a TCP socket to `addr` (e.g. `"0.0.0.0:3000"`). Returns a listener handle on success.
+        #[lua]
+        t.try_constructor("bind", |lua, addr: String| {
+            bind(&addr).map(|l| Listener::new(lua, l))
+        })?;
         Ok(())
     })?;
 

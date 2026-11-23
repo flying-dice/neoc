@@ -114,8 +114,11 @@ fn init_state(lua: &Lua) -> mlua::Result<()> {
 
 /// Register `describe` plus the `test` / `it` aliases — the suite-structure and
 /// test-case entry points, all async so bodies may call yielding functions.
+#[neoc_macros::lua_module]
 fn register_suite_fns(lua: &Lua, m: &mut Module<'_>) -> mlua::Result<()> {
     // describe(name, fn) — async so test bodies can call yielding functions
+    /// Declare a named test suite. Suites nest — `describe` inside `describe` prefixes the test name.
+    #[lua("()", names(f = "fn"))]
     m.set(
         "describe",
         async_function(
@@ -131,12 +134,6 @@ fn register_suite_fns(lua: &Lua, m: &mut Module<'_>) -> mlua::Result<()> {
             },
         )?,
     )?;
-    m.record_fn(
-        "describe",
-        &[("name", "string"), ("fn", "LuaValue")],
-        "()",
-        "Declare a named test suite. Suites nest — `describe` inside `describe` prefixes the test name.",
-    );
 
     // test(name, fn) / it(name, fn) — async for the same reason
     let run_test = async_function(
@@ -169,20 +166,12 @@ fn register_suite_fns(lua: &Lua, m: &mut Module<'_>) -> mlua::Result<()> {
             Ok(())
         },
     )?;
+    /// Declare a named test case. The callback may be async. Alias: `it`.
+    #[lua("()", takes("name: string", "fn: LuaValue"))]
     m.set("test", run_test.clone())?;
-    m.record_fn(
-        "test",
-        &[("name", "string"), ("fn", "LuaValue")],
-        "()",
-        "Declare a named test case. The callback may be async. Alias: `it`.",
-    );
+    /// Alias for `test`. Prefer this inside a `describe` block for BDD-style readability.
+    #[lua("()", takes("name: string", "fn: LuaValue"))]
     m.set("it", run_test)?;
-    m.record_fn(
-        "it",
-        &[("name", "string"), ("fn", "LuaValue")],
-        "()",
-        "Alias for `test`. Prefer this inside a `describe` block for BDD-style readability.",
-    );
     Ok(())
 }
 

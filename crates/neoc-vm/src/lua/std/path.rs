@@ -19,6 +19,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 }
 
 /// Declares the `std:path` surface through the facade.
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:path")?;
 
@@ -29,10 +30,10 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "The platform's preferred path separator: `\"/\"` on Unix, `\"\\\\\"` on Windows.",
     );
 
+    /// Join path parts with the platform separator. A later part that is absolute replaces everything before it (`join("a", "/b")` is `"/b"`), as `Path::join` does. Does not normalise: `join("a", "..")` is `"a/.."`.
+    #[lua]
     m.func(
         "join",
-        &[("first", "string"), ("...", "string")],
-        "Join path parts with the platform separator. A later part that is absolute replaces everything before it (`join(\"a\", \"/b\")` is `\"/b\"`), as `Path::join` does. Does not normalise: `join(\"a\", \"..\")` is `\"a/..\"`.",
         |lua, (first, rest): (LuaString, Variadic<LuaString>)| {
             let mut joined = path(&first)?;
             for part in rest.iter() {
@@ -41,96 +42,99 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             osstr::to_lua(lua, joined.as_os_str())
         },
     )?;
-    m.func(
-        "normalize",
-        &[("path", "string")],
-        "Clean a path by text alone: drop `.` and repeated separators, and fold `x/..` away. A leading `..` of a relative path stays; a `..` at the root is dropped; an empty result is `\".\"`. It does not look at the disk, so with symlinks `a/link/..` is not necessarily `a` (use `fs.canonicalize` for that).",
-        |lua, p: LuaString| osstr::to_lua(lua, normalized(&path(&p)?).as_os_str()),
-    )?;
-    m.func(
-        "parent",
-        &[("path", "string")],
-        "The path without its last component, or `nil` for a root (`\"/\"`) and for an empty path. The parent of `\"a\"` is `\"\"`.",
-        |lua, p: LuaString| path(&p)?.parent().map(|parent| osstr::to_lua(lua, parent.as_os_str())).transpose(),
-    )?;
-    m.func(
-        "file_name",
-        &[("path", "string")],
-        "The last component, or `nil` when the path ends in `..` or is a root. `file_name(\"a/b.txt\")` is `\"b.txt\"`.",
-        |lua, p: LuaString| path(&p)?.file_name().map(|name| osstr::to_lua(lua, name)).transpose(),
-    )?;
-    m.func(
-        "file_stem",
-        &[("path", "string")],
-        "The file name without its extension (`\"b\"` for `\"a/b.txt\"`; `\".bashrc\"` has no extension, so its stem is `\".bashrc\"`), or `nil` when there is no file name.",
-        |lua, p: LuaString| path(&p)?.file_stem().map(|stem| osstr::to_lua(lua, stem)).transpose(),
-    )?;
-    m.func(
-        "extension",
-        &[("path", "string")],
-        "The extension without the dot (`\"txt\"` for `\"a/b.txt\"`), or `nil` when there is none.",
-        |lua, p: LuaString| {
-            path(&p)?
-                .extension()
-                .map(|ext| osstr::to_lua(lua, ext))
-                .transpose()
-        },
-    )?;
+    /// Clean a path by text alone: drop `.` and repeated separators, and fold `x/..` away. A leading `..` of a relative path stays; a `..` at the root is dropped; an empty result is `"."`. It does not look at the disk, so with symlinks `a/link/..` is not necessarily `a` (use `fs.canonicalize` for that).
+    #[lua(names(p = "path"))]
+    m.func("normalize", |lua, p: LuaString| {
+        osstr::to_lua(lua, normalized(&path(&p)?).as_os_str())
+    })?;
+    /// The path without its last component, or `nil` for a root (`"/"`) and for an empty path. The parent of `"a"` is `""`.
+    #[lua(names(p = "path"))]
+    m.func("parent", |lua, p: LuaString| {
+        path(&p)?
+            .parent()
+            .map(|parent| osstr::to_lua(lua, parent.as_os_str()))
+            .transpose()
+    })?;
+    /// The last component, or `nil` when the path ends in `..` or is a root. `file_name("a/b.txt")` is `"b.txt"`.
+    #[lua(names(p = "path"))]
+    m.func("file_name", |lua, p: LuaString| {
+        path(&p)?
+            .file_name()
+            .map(|name| osstr::to_lua(lua, name))
+            .transpose()
+    })?;
+    /// The file name without its extension (`"b"` for `"a/b.txt"`; `".bashrc"` has no extension, so its stem is `".bashrc"`), or `nil` when there is no file name.
+    #[lua(names(p = "path"))]
+    m.func("file_stem", |lua, p: LuaString| {
+        path(&p)?
+            .file_stem()
+            .map(|stem| osstr::to_lua(lua, stem))
+            .transpose()
+    })?;
+    /// The extension without the dot (`"txt"` for `"a/b.txt"`), or `nil` when there is none.
+    #[lua(names(p = "path"))]
+    m.func("extension", |lua, p: LuaString| {
+        path(&p)?
+            .extension()
+            .map(|ext| osstr::to_lua(lua, ext))
+            .transpose()
+    })?;
+    /// The path with its extension replaced by `extension` (given without the dot); an empty `extension` removes it. A path with no file name is returned unchanged. An `extension` that contains a path separator is a Lua error.
+    #[lua(names(p = "path"))]
     m.func(
         "with_extension",
-        &[("path", "string"), ("extension", "string")],
-        "The path with its extension replaced by `extension` (given without the dot); an empty `extension` removes it. A path with no file name is returned unchanged. An `extension` that contains a path separator is a Lua error.",
         |lua, (p, extension): (LuaString, LuaString)| {
             let extension = path(&extension)?;
             // `Path::with_extension` panics on a separator, and a panic out of a host function ends the call
-            if extension.to_string_lossy().chars().any(std::path::is_separator) {
-                return Err(mlua::Error::runtime("an extension cannot contain a path separator"));
+            if extension
+                .to_string_lossy()
+                .chars()
+                .any(std::path::is_separator)
+            {
+                return Err(mlua::Error::runtime(
+                    "an extension cannot contain a path separator",
+                ));
             }
             osstr::to_lua(lua, path(&p)?.with_extension(extension).as_os_str())
         },
     )?;
+    /// The path with its last component replaced by `name` (appended when the path has none). A `name` that is absolute or has several components is joined as `Path::with_file_name` does, so an absolute one replaces the whole path.
+    #[lua(names(p = "path"))]
     m.func(
         "with_file_name",
-        &[("path", "string"), ("name", "string")],
-        "The path with its last component replaced by `name` (appended when the path has none). A `name` that is absolute or has several components is joined as `Path::with_file_name` does, so an absolute one replaces the whole path.",
         |lua, (p, name): (LuaString, LuaString)| {
             let name = path(&name)?;
             osstr::to_lua(lua, path(&p)?.with_file_name(name).as_os_str())
         },
     )?;
-    m.func(
-        "is_absolute",
-        &[("path", "string")],
-        "Whether the path is absolute for this platform (on Windows `\"/a\"` is not: it needs a drive).",
-        |_, p: LuaString| Ok(path(&p)?.is_absolute()),
-    )?;
-    m.try_func(
-        "absolute",
-        &[("path", "string")],
-        "The path made absolute by text alone: a relative path is joined to the current directory and `.` and repeated separators are dropped, but `..` is kept and nothing is looked up on disk (a symlink stays a symlink, the path need not exist; `fs.canonicalize` resolves them). An empty path is an error, and so is a current directory that is gone. Mirrors `std::path::absolute`.",
-        |lua, p: LuaString| {
-            let p = path_checked(&p)?;
-            let absolute = std::path::absolute(&p).map_err(|e| format!("{}: {e}", p.display()))?;
-            osstr::to_lua(lua, absolute.as_os_str()).map_err(|e| e.to_string())
-        },
-    )?;
-    m.func(
-        "components",
-        &[("path", "string")],
-        "The components of a path as an array of strings, as `Path::components` yields them: a root or drive prefix first (`\"/\"`, `\"C:\"`), then each name, with `\"..\"` kept and a `\".\"` only at the start (`components(\"/a/./b\")` is `{ \"/\", \"a\", \"b\" }`).",
-        |lua, p: LuaString| {
-            path(&p)?.components().map(|c| osstr::to_lua(lua, c.as_os_str())).collect::<mlua::Result<Vec<_>>>().map(Components)
-        },
-    )?;
-    m.func(
-        "strip_prefix",
-        &[("path", "string"), ("base", "string")],
-        "The path relative to `base`, or `nil` when `base` is not a prefix of it, compared component by component (`strip_prefix(\"/a/b/c\", \"/a/b\")` is `\"c\"`, but `\"/a/bc\"` is not under `\"/a/b\"`).",
-        |lua, (p, base): (LuaString, LuaString)| {
-            let (p, base) = (path(&p)?, path(&base)?);
-            p.strip_prefix(&base).ok().map(|rest| osstr::to_lua(lua, rest.as_os_str())).transpose()
-        },
-    )?;
+    /// Whether the path is absolute for this platform (on Windows `"/a"` is not: it needs a drive).
+    #[lua(names(p = "path"))]
+    m.func("is_absolute", |_, p: LuaString| Ok(path(&p)?.is_absolute()))?;
+    /// The path made absolute by text alone: a relative path is joined to the current directory and `.` and repeated separators are dropped, but `..` is kept and nothing is looked up on disk (a symlink stays a symlink, the path need not exist; `fs.canonicalize` resolves them). An empty path is an error, and so is a current directory that is gone. Mirrors `std::path::absolute`.
+    #[lua(names(p = "path"))]
+    m.try_func("absolute", |lua, p: LuaString| {
+        let p = path_checked(&p)?;
+        let absolute = std::path::absolute(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+        osstr::to_lua(lua, absolute.as_os_str()).map_err(|e| e.to_string())
+    })?;
+    /// The components of a path as an array of strings, as `Path::components` yields them: a root or drive prefix first (`"/"`, `"C:"`), then each name, with `".."` kept and a `"."` only at the start (`components("/a/./b")` is `{ "/", "a", "b" }`).
+    #[lua(names(p = "path"))]
+    m.func("components", |lua, p: LuaString| {
+        path(&p)?
+            .components()
+            .map(|c| osstr::to_lua(lua, c.as_os_str()))
+            .collect::<mlua::Result<Vec<_>>>()
+            .map(Components)
+    })?;
+    /// The path relative to `base`, or `nil` when `base` is not a prefix of it, compared component by component (`strip_prefix("/a/b/c", "/a/b")` is `"c"`, but `"/a/bc"` is not under `"/a/b"`).
+    #[lua(names(p = "path"))]
+    m.func("strip_prefix", |lua, (p, base): (LuaString, LuaString)| {
+        let (p, base) = (path(&p)?, path(&base)?);
+        p.strip_prefix(&base)
+            .ok()
+            .map(|rest| osstr::to_lua(lua, rest.as_os_str()))
+            .transpose()
+    })?;
 
     Ok(m)
 }

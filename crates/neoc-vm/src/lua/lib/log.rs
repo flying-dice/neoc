@@ -541,21 +541,17 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// module-level level functions delegate to a fresh default-configured instance
 /// on each call. The `Logger` userdata keeps its own `impl UserData` and is
 /// recorded here via [`crate::lua::facade::Module::userdata`].
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:log")?;
 
     // `log.new({ level?, format? })` — explicit logger instance.
+    /// Construct an explicit logger instance; `opts` may carry `level` and `format`.
+    #[lua("Logger")]
     m.set(
         "new",
         lua.create_function(|_, opts: Option<Table>| LuaLogger::from_options(opts))?,
     )?;
-
-    m.record_fn(
-        "new",
-        &[("opts", "LuaValue?")],
-        "Logger",
-        "Construct an explicit logger instance; `opts` may carry `level` and `format`.",
-    );
 
     // Module-level convenience: `log.info(msg, fields?)` delegates to a
     // default-configured instance (level=info, format=json).

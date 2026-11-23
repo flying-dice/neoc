@@ -39,6 +39,8 @@ use tracing_core::field::FieldSet;
 use tracing_core::metadata::{Kind, Metadata};
 
 pub mod luau_decls;
+#[cfg(test)]
+mod macros_tests;
 
 use crate::lua::lifecycle::{Role, async_function};
 use crate::lua::sandbox::{from_err, ok};
@@ -108,7 +110,7 @@ pub struct FnDecl {
 
 impl FnDecl {
     /// The parameters as the registrations take them.
-    fn borrowed(&self) -> Vec<(&str, &str)> {
+    pub(crate) fn borrowed(&self) -> Vec<(&str, &str)> {
         self.params
             .iter()
             .map(|(name, ty)| (name.as_str(), ty.as_str()))

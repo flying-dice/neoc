@@ -114,89 +114,81 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 /// A path argument as the script passed it.
 type Path1 = mlua::LuaString;
 
+#[neoc_macros::lua_module]
 fn declare_files(m: &mut Module<'_>) -> mlua::Result<()> {
-    m.try_func(
-        "open",
-        &[("opts", "LuaValue")],
-        "Open a file given `{ path, mode }`. Mode `\"r\"` returns a reader handle; `\"w\"` (create or truncate) and `\"a\"` (create or append) return a writer handle; any other mode is `invalid_input`.",
-        |_, opts: Table| open(&opts),
-    )?;
-    m.try_func(
-        "read",
-        &[("path", "string")],
-        "Read the entire contents of `path` into a binary-safe string. Mirrors `std::fs::read`.",
-        |lua, path: Path1| {
-            let path = path_of(&path)?;
-            let bytes = std::fs::read(&path).map_err(|e| FsError::io(&e, &path))?;
-            lua.create_string(&bytes).map_err(lua_failure)
-        },
-    )?;
-    m.try_func(
-        "write",
-        &[("path", "string"), ("data", "string")],
-        "Write `data` to `path`, replacing any existing content. Mirrors `std::fs::write`; binary-safe.",
-        |_, (path, data): (Path1, mlua::LuaString)| {
-            let path = path_of(&path)?;
-            std::fs::write(&path, data.as_bytes()).map(|()| true).map_err(|e| FsError::io(&e, &path))
-        },
-    )?;
-    m.try_func(
-        "exists",
-        &[("path", "string")],
-        "Whether `path` exists, following symlinks: `false` for a missing path and for a dangling symlink. Any other failure to check is an error with its kind, not `false`: `permission_denied`, `not_a_directory` when a parent is a file, `other` for a symlink loop. Use `symlink_metadata` to see a dangling link itself. Mirrors `std::fs::exists`.",
-        |_, path: Path1| ops::exists(&path_of(&path)?),
-    )?;
-    m.try_func(
-        "metadata",
-        &[("path", "string")],
-        "Metadata of `path`, following symlinks (a dangling symlink is `not_found`). See `Metadata` for what it says; timestamps are seconds since the Unix epoch, and `nil` where the platform or filesystem does not record them (`created` on some Linux filesystems). Mirrors `std::fs::metadata`.",
-        |_, path: Path1| ops::metadata(&path_of(&path)?, true).map(MetadataHandle),
-    )?;
-    m.try_func(
-        "symlink_metadata",
-        &[("path", "string")],
-        "Like `metadata`, but about the symlink itself when `path` is one (`kind()` is then `\"symlink\"`). Mirrors `std::fs::symlink_metadata`.",
-        |_, path: Path1| ops::metadata(&path_of(&path)?, false).map(MetadataHandle),
-    )?;
-    m.try_func(
-        "set_permissions",
-        &[("path", "string"), ("opts", "{ mode: number?, readonly: bool? }")],
-        "Change the permissions of `path` (through a symlink). Give exactly one of `mode`, the Unix permission bits (`0o755` is `493`, at most `4095`; `unsupported` on Windows), or `readonly`. `readonly = true` clears every write bit on Unix and sets the read-only attribute on Windows; `readonly = false` gives the owner (not group or others) write access on Unix. Mirrors `std::fs::set_permissions`.",
-        |_, (path, opts): (Path1, Table)| {
-            let path = path_of(&path)?;
-            let options = read_options(Some(&opts), PERMISSION_OPTIONS)?;
-            let mode = options.count("mode")?;
-            let readonly = options.flag("readonly")?;
-            let change = match (mode, readonly) {
-                (Some(mode), None) => Permission::Mode(u32::try_from(mode).map_err(|_| too_big("mode", mode))?),
-                (None, Some(on)) => Permission::Readonly(on),
-                _ => return Err(FsError::new(Kind::InvalidInput, "give exactly one of mode and readonly")),
-            };
-            ops::set_permissions(&path, change).map(|()| true)
-        },
-    )?;
+    /// Open a file given `{ path, mode }`. Mode `"r"` returns a reader handle; `"w"` (create or truncate) and `"a"` (create or append) return a writer handle; any other mode is `invalid_input`.
+    #[lua]
+    m.try_func("open", |_, opts: Table| open(&opts))?;
+    /// Read the entire contents of `path` into a binary-safe string. Mirrors `std::fs::read`.
+    #[lua(types(path = "string"))]
+    m.try_func("read", |lua, path: Path1| {
+        let path = path_of(&path)?;
+        let bytes = std::fs::read(&path).map_err(|e| FsError::io(&e, &path))?;
+        lua.create_string(&bytes).map_err(lua_failure)
+    })?;
+    /// Write `data` to `path`, replacing any existing content. Mirrors `std::fs::write`; binary-safe.
+    #[lua(types(path = "string"))]
+    m.try_func("write", |_, (path, data): (Path1, mlua::LuaString)| {
+        let path = path_of(&path)?;
+        std::fs::write(&path, data.as_bytes())
+            .map(|()| true)
+            .map_err(|e| FsError::io(&e, &path))
+    })?;
+    /// Whether `path` exists, following symlinks: `false` for a missing path and for a dangling symlink. Any other failure to check is an error with its kind, not `false`: `permission_denied`, `not_a_directory` when a parent is a file, `other` for a symlink loop. Use `symlink_metadata` to see a dangling link itself. Mirrors `std::fs::exists`.
+    #[lua(types(path = "string"))]
+    m.try_func("exists", |_, path: Path1| ops::exists(&path_of(&path)?))?;
+    /// Metadata of `path`, following symlinks (a dangling symlink is `not_found`). See `Metadata` for what it says; timestamps are seconds since the Unix epoch, and `nil` where the platform or filesystem does not record them (`created` on some Linux filesystems). Mirrors `std::fs::metadata`.
+    #[lua(types(path = "string"))]
+    m.try_func("metadata", |_, path: Path1| {
+        ops::metadata(&path_of(&path)?, true).map(MetadataHandle)
+    })?;
+    /// Like `metadata`, but about the symlink itself when `path` is one (`kind()` is then `"symlink"`). Mirrors `std::fs::symlink_metadata`.
+    #[lua(types(path = "string"))]
+    m.try_func("symlink_metadata", |_, path: Path1| {
+        ops::metadata(&path_of(&path)?, false).map(MetadataHandle)
+    })?;
+    /// Change the permissions of `path` (through a symlink). Give exactly one of `mode`, the Unix permission bits (`0o755` is `493`, at most `4095`; `unsupported` on Windows), or `readonly`. `readonly = true` clears every write bit on Unix and sets the read-only attribute on Windows; `readonly = false` gives the owner (not group or others) write access on Unix. Mirrors `std::fs::set_permissions`.
+    #[lua(types(path = "string", opts = "{ mode: number?, readonly: bool? }"))]
+    m.try_func("set_permissions", |_, (path, opts): (Path1, Table)| {
+        let path = path_of(&path)?;
+        let options = read_options(Some(&opts), PERMISSION_OPTIONS)?;
+        let mode = options.count("mode")?;
+        let readonly = options.flag("readonly")?;
+        let change = match (mode, readonly) {
+            (Some(mode), None) => {
+                Permission::Mode(u32::try_from(mode).map_err(|_| too_big("mode", mode))?)
+            }
+            (None, Some(on)) => Permission::Readonly(on),
+            _ => {
+                return Err(FsError::new(
+                    Kind::InvalidInput,
+                    "give exactly one of mode and readonly",
+                ));
+            }
+        };
+        ops::set_permissions(&path, change).map(|()| true)
+    })?;
     Ok(())
 }
 
+#[neoc_macros::lua_module]
 fn declare_directories(m: &mut Module<'_>) -> mlua::Result<()> {
-    m.try_func(
-        "create_dir",
-        &[("path", "string")],
-        "Create a single directory. Mirrors `std::fs::create_dir`: `already_exists` when the path exists, `not_found` when the parent is missing.",
-        |_, path: Path1| {
-            let path = path_of(&path)?;
-            std::fs::create_dir(&path).map(|()| true).map_err(|e| FsError::io(&e, &path))
-        },
-    )?;
-    m.try_func(
-        "create_dir_all",
-        &[("path", "string")],
-        "Create a directory and every missing ancestor. Mirrors `std::fs::create_dir_all`; succeeds if the directory already exists, and is `not_a_directory` when a part of the path is a file.",
-        |_, path: Path1| {
-            let path = path_of(&path)?;
-            std::fs::create_dir_all(&path).map(|()| true).map_err(|e| FsError::io(&e, &path))
-        },
-    )?;
+    /// Create a single directory. Mirrors `std::fs::create_dir`: `already_exists` when the path exists, `not_found` when the parent is missing.
+    #[lua(types(path = "string"))]
+    m.try_func("create_dir", |_, path: Path1| {
+        let path = path_of(&path)?;
+        std::fs::create_dir(&path)
+            .map(|()| true)
+            .map_err(|e| FsError::io(&e, &path))
+    })?;
+    /// Create a directory and every missing ancestor. Mirrors `std::fs::create_dir_all`; succeeds if the directory already exists, and is `not_a_directory` when a part of the path is a file.
+    #[lua(types(path = "string"))]
+    m.try_func("create_dir_all", |_, path: Path1| {
+        let path = path_of(&path)?;
+        std::fs::create_dir_all(&path)
+            .map(|()| true)
+            .map_err(|e| FsError::io(&e, &path))
+    })?;
     m.try_async_func(
         "read_dir",
         &[("path", "string")],
@@ -232,6 +224,7 @@ fn declare_directories(m: &mut Module<'_>) -> mlua::Result<()> {
     Ok(())
 }
 
+#[neoc_macros::lua_module]
 fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
     m.try_async_func(
         "copy",
@@ -261,12 +254,11 @@ fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
             }
         },
     )?;
-    m.try_func(
-        "rename",
-        &[("from", "string"), ("to", "string")],
-        "Rename or move `from` to `to` on the same filesystem, in one atomic step: the operating system's rename, as `std::fs::rename` calls it. An existing file or symlink at `to` is replaced; a directory replaces an empty directory only (`not_empty` otherwise); a file over a directory is `is_directory`, a directory over a file `not_a_directory`; a move across filesystems is `cross_device` (use `move`). A trailing separator or `.` on either path is dropped first, so a symlink is renamed as a link on every platform (macOS would otherwise follow `link/`). Platform differences: Windows refuses a directory over an existing directory (`permission_denied`) and cannot rename a file that is open.",
-        |_, (from, to): (Path1, Path1)| ops::rename(&path_of(&from)?, &path_of(&to)?).map(|()| true),
-    )?;
+    /// Rename or move `from` to `to` on the same filesystem, in one atomic step: the operating system's rename, as `std::fs::rename` calls it. An existing file or symlink at `to` is replaced; a directory replaces an empty directory only (`not_empty` otherwise); a file over a directory is `is_directory`, a directory over a file `not_a_directory`; a move across filesystems is `cross_device` (use `move`). A trailing separator or `.` on either path is dropped first, so a symlink is renamed as a link on every platform (macOS would otherwise follow `link/`). Platform differences: Windows refuses a directory over an existing directory (`permission_denied`) and cannot rename a file that is open.
+    #[lua(types(from = "string", to = "string"))]
+    m.try_func("rename", |_, (from, to): (Path1, Path1)| {
+        ops::rename(&path_of(&from)?, &path_of(&to)?).map(|()| true)
+    })?;
     m.try_async_func(
         "move",
         &[("from", "string"), ("to", "string")],
@@ -281,26 +273,24 @@ fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
             }
         },
     )?;
-    m.try_func(
-        "remove_file",
-        &[("path", "string"), ("opts", "{ missing_ok: bool? }?")],
-        "Remove a file or a symlink (the link, never its target; on Windows also a link to a directory). A directory is `is_directory`. Option `{ missing_ok }`: a missing path is then not an error and the result is `false` (otherwise `not_found`); a removal returns `true`. Mirrors `std::fs::remove_file`; on Windows a read-only file or one that is open may be `permission_denied`.",
-        |_, (path, opts): (Path1, Option<Table>)| {
-            let path = path_of(&path)?;
-            let missing_ok = read_options(opts.as_ref(), MISSING_OK)?.flag("missing_ok")?.unwrap_or(false);
-            ops::remove_file(&path, missing_ok)
-        },
-    )?;
-    m.try_func(
-        "remove_dir",
-        &[("path", "string"), ("opts", "{ missing_ok: bool? }?")],
-        "Remove an empty directory (`not_empty` otherwise; `remove_dir_all` removes a tree). A symlink to a directory is `not_a_directory` (use `remove_file`), also when written `link/`; so is a file. Option `{ missing_ok }` as for `remove_file`. Like `std::fs::remove_dir`, but a symlink is `not_a_directory` on every platform.",
-        |_, (path, opts): (Path1, Option<Table>)| {
-            let path = path_of(&path)?;
-            let missing_ok = read_options(opts.as_ref(), MISSING_OK)?.flag("missing_ok")?.unwrap_or(false);
-            ops::remove_dir(&path, missing_ok)
-        },
-    )?;
+    /// Remove a file or a symlink (the link, never its target; on Windows also a link to a directory). A directory is `is_directory`. Option `{ missing_ok }`: a missing path is then not an error and the result is `false` (otherwise `not_found`); a removal returns `true`. Mirrors `std::fs::remove_file`; on Windows a read-only file or one that is open may be `permission_denied`.
+    #[lua(types(path = "string", opts = "{ missing_ok: bool? }?"))]
+    m.try_func("remove_file", |_, (path, opts): (Path1, Option<Table>)| {
+        let path = path_of(&path)?;
+        let missing_ok = read_options(opts.as_ref(), MISSING_OK)?
+            .flag("missing_ok")?
+            .unwrap_or(false);
+        ops::remove_file(&path, missing_ok)
+    })?;
+    /// Remove an empty directory (`not_empty` otherwise; `remove_dir_all` removes a tree). A symlink to a directory is `not_a_directory` (use `remove_file`), also when written `link/`; so is a file. Option `{ missing_ok }` as for `remove_file`. Like `std::fs::remove_dir`, but a symlink is `not_a_directory` on every platform.
+    #[lua(types(path = "string", opts = "{ missing_ok: bool? }?"))]
+    m.try_func("remove_dir", |_, (path, opts): (Path1, Option<Table>)| {
+        let path = path_of(&path)?;
+        let missing_ok = read_options(opts.as_ref(), MISSING_OK)?
+            .flag("missing_ok")?
+            .unwrap_or(false);
+        ops::remove_dir(&path, missing_ok)
+    })?;
     m.try_async_func(
         "remove_dir_all",
         &[("path", "string"), ("opts", "{ missing_ok: bool? }?")],
@@ -321,43 +311,31 @@ fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
     Ok(())
 }
 
+#[neoc_macros::lua_module]
 fn declare_links_and_errors(m: &mut Module<'_>) -> mlua::Result<()> {
-    m.try_func(
-        "canonicalize",
-        &[("path", "string")],
-        "The absolute path of `path` with every symlink and `.`/`..` resolved; the path must exist (`not_found`). On Windows the result has the extended-length `\\\\?\\` prefix. Mirrors `std::fs::canonicalize`; `path.absolute` makes a path absolute without touching the disk.",
-        |lua, path: Path1| {
-            let resolved = ops::canonicalize(&path_of(&path)?)?;
-            os_to_lua(lua, resolved.as_os_str()).map_err(lua_failure)
-        },
-    )?;
-    m.try_func(
-        "read_link",
-        &[("path", "string")],
-        "The path the symlink `path` points to, as stored (possibly relative, possibly dangling). A path that is not a symlink is `invalid_input`. Mirrors `std::fs::read_link`.",
-        |lua, path: Path1| {
-            let target = ops::read_link(&path_of(&path)?)?;
-            os_to_lua(lua, target.as_os_str()).map_err(lua_failure)
-        },
-    )?;
-    m.try_func(
-        "symlink",
-        &[("target", "string"), ("link", "string")],
-        "Create the symlink `link` pointing at `target` (stored as given; it need not exist). `already_exists` when `link` exists. On Windows creating a symlink needs the privilege to do so (`permission_denied` otherwise), and the kind of link (file or directory) follows what `target` is when it is created.",
-        |_, (target, link): (Path1, Path1)| ops::symlink(&path_of(&target)?, &path_of(&link)?).map(|()| true),
-    )?;
-    m.func(
-        "error_kind",
-        &[("err", "string?")],
-        "The stable kind inside an error string returned by a `std:fs` function, or `nil` when the string is not one of theirs (or is `nil`, so `fs.error_kind(err)` takes the `err` of any call). Such a string is `fs.<function>: <kind>: <path>: <message>`; for a call on two paths (`copy`, `rename`, ...) the path part may be `<from> -> <to>`, and an error about no one path (a bad option, say) has none: `fs.<function>: <kind>: <message>`. Kinds: `not_found`, `permission_denied`, `already_exists`, `not_empty`, `is_directory`, `not_a_directory`, `cross_device`, `invalid_input`, `read_only_filesystem`, `storage_full`, `unsupported`, `too_large`, `timed_out`, `other`. They mean the same on every platform; the rest of the message is the operating system's wording and differs.",
-        error_text::reader(error::kind_of),
-    )?;
-    m.func(
-        "error_message",
-        &[("err", "string?")],
-        "The message inside an error string returned by a `std:fs` function: everything after the kind in `fs.<function>: <kind>: <message>`, or `nil` when the string is not one of theirs (or is `nil`, so `fs.error_message(err)` takes the `err` of any call), the same rule as `error_kind`. It is the path the error is about (when it is about one) and then the operating system's wording: `/x: No such file or directory (os error 2)`. It is for showing or logging as it is: branch on `error_kind`, not on these words, which differ between platforms and versions. Read it here instead of taking the error string apart.",
-        error_text::reader(error::message_of),
-    )?;
+    /// The absolute path of `path` with every symlink and `.`/`..` resolved; the path must exist (`not_found`). On Windows the result has the extended-length `\\?\` prefix. Mirrors `std::fs::canonicalize`; `path.absolute` makes a path absolute without touching the disk.
+    #[lua(types(path = "string"))]
+    m.try_func("canonicalize", |lua, path: Path1| {
+        let resolved = ops::canonicalize(&path_of(&path)?)?;
+        os_to_lua(lua, resolved.as_os_str()).map_err(lua_failure)
+    })?;
+    /// The path the symlink `path` points to, as stored (possibly relative, possibly dangling). A path that is not a symlink is `invalid_input`. Mirrors `std::fs::read_link`.
+    #[lua(types(path = "string"))]
+    m.try_func("read_link", |lua, path: Path1| {
+        let target = ops::read_link(&path_of(&path)?)?;
+        os_to_lua(lua, target.as_os_str()).map_err(lua_failure)
+    })?;
+    /// Create the symlink `link` pointing at `target` (stored as given; it need not exist). `already_exists` when `link` exists. On Windows creating a symlink needs the privilege to do so (`permission_denied` otherwise), and the kind of link (file or directory) follows what `target` is when it is created.
+    #[lua(types(target = "string", link = "string"))]
+    m.try_func("symlink", |_, (target, link): (Path1, Path1)| {
+        ops::symlink(&path_of(&target)?, &path_of(&link)?).map(|()| true)
+    })?;
+    /// The stable kind inside an error string returned by a `std:fs` function, or `nil` when the string is not one of theirs (or is `nil`, so `fs.error_kind(err)` takes the `err` of any call). Such a string is `fs.<function>: <kind>: <path>: <message>`; for a call on two paths (`copy`, `rename`, ...) the path part may be `<from> -> <to>`, and an error about no one path (a bad option, say) has none: `fs.<function>: <kind>: <message>`. Kinds: `not_found`, `permission_denied`, `already_exists`, `not_empty`, `is_directory`, `not_a_directory`, `cross_device`, `invalid_input`, `read_only_filesystem`, `storage_full`, `unsupported`, `too_large`, `timed_out`, `other`. They mean the same on every platform; the rest of the message is the operating system's wording and differs.
+    #[lua(takes("err: string?"))]
+    m.func("error_kind", error_text::reader(error::kind_of))?;
+    /// The message inside an error string returned by a `std:fs` function: everything after the kind in `fs.<function>: <kind>: <message>`, or `nil` when the string is not one of theirs (or is `nil`, so `fs.error_message(err)` takes the `err` of any call), the same rule as `error_kind`. It is the path the error is about (when it is about one) and then the operating system's wording: `/x: No such file or directory (os error 2)`. It is for showing or logging as it is: branch on `error_kind`, not on these words, which differ between platforms and versions. Read it here instead of taking the error string apart.
+    #[lua(takes("err: string?"))]
+    m.func("error_message", error_text::reader(error::message_of))?;
     Ok(())
 }
 

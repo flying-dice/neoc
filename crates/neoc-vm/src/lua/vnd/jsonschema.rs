@@ -146,9 +146,12 @@ pub fn module(lua: &Lua) -> mlua::Result<mlua::Table> {
 /// `Schema` (`JSchema`) and `ValidationResult` (`JValidationResult`) userdata
 /// types keep their own `impl UserData` (methods unchanged) and are recorded
 /// via [`crate::lua::facade::Module::userdata`].
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:jsonschema")?;
 
+    /// Parse and compile a JSON Schema string into a `Schema` validator.
+    #[lua("Result<Schema, string>")]
     m.set(
         "compile",
         lua.create_function(|lua, schema_json: mlua::LuaString| {
@@ -168,12 +171,6 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             }
         })?,
     )?;
-    m.record_fn(
-        "compile",
-        &[("schema_json", "string")],
-        "Result<Schema, string>",
-        "Parse and compile a JSON Schema string into a `Schema` validator.",
-    );
 
     m.userdata("Schema", |s| {
         JSchema::lua(s);

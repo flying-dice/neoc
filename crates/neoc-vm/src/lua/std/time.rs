@@ -467,6 +467,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `Instant` userdata keep their own `impl UserData` and are recorded here via
 /// [`crate::lua::facade::Module::userdata`]; `now` and `sleep` are recorded via
 /// [`crate::lua::facade::Module::record_fn`].
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:time")?;
 
@@ -492,17 +493,15 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let inst = lua.create_table()?;
     inst.set("now", now_fn.clone())?;
     m.set("Instant", inst)?;
+    /// Flat alias for `Instant.now()` — the current monotonic point in time.
+    #[lua("Instant", takes())]
     m.set("now", now_fn)?;
-    m.record_fn(
-        "now",
-        &[],
-        "Instant",
-        "Flat alias for `Instant.now()` — the current monotonic point in time.",
-    );
 
     // time.sleep(Duration) — async, mirrors `std::thread::sleep` but
     // cooperative. Returns the actual elapsed Duration so callers can
     // detect overruns.
+    /// Cooperative sleep for `duration` — yields to other tasks while waiting. Returns the actual elapsed `Duration`.
+    #[lua("Duration", names(d = "duration"), types(d = "Duration"))]
     m.set(
         "sleep",
         async_function(lua, Role::Timer, |_, d: AnyUserData| async move {
@@ -515,12 +514,6 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             Ok(DurationHandle(start.elapsed()))
         })?,
     )?;
-    m.record_fn(
-        "sleep",
-        &[("duration", "Duration")],
-        "Duration",
-        "Cooperative sleep for `duration` — yields to other tasks while waiting. Returns the actual elapsed `Duration`.",
-    );
 
     m.userdata("Duration", |d| {
         DurationHandle::lua(d);

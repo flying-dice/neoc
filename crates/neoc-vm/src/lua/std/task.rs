@@ -357,12 +357,15 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// neither `func` nor `try_func` fits. The `Task` userdata keeps its own
 /// `impl UserData` and is recorded here via
 /// [`crate::lua::facade::Module::userdata`].
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:task")?;
 
     // task.spawn(fn | thread, ...) — resume synchronously for the first slice,
     // then return a Task handle. If the function yields (async op), the
     // continuation runs as a separate tokio task.
+    /// Spawn a function or coroutine. The first synchronous slice runs immediately; a yield runs the continuation as a separate task.
+    #[lua("Task", takes("fn_or_thread: LuaValue", "...: LuaValue"))]
     m.set(
         "spawn",
         lua.create_function(|lua, (fn_val, args): (Value, MultiValue)| {
@@ -428,16 +431,12 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             Ok(TaskHandle { inner })
         })?,
     )?;
-    m.record_fn(
-        "spawn",
-        &[("fn_or_thread", "LuaValue"), ("...", "LuaValue")],
-        "Task",
-        "Spawn a function or coroutine. The first synchronous slice runs immediately; a yield runs the continuation as a separate task.",
-    );
 
     // task.defer(fn | thread, ...) — queue to run after the current batch.
     // Deferred tasks execute in FIFO order; each waits for the previous
     // defer to finish before starting.
+    /// Queue a function to run after the current synchronous batch. Deferred tasks execute in FIFO order.
+    #[lua("Task", takes("fn_or_thread: LuaValue", "...: LuaValue"))]
     m.set(
         "defer",
         lua.create_function(|lua, (fn_val, args): (Value, MultiValue)| {
@@ -497,15 +496,14 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             Ok(TaskHandle { inner })
         })?,
     )?;
-    m.record_fn(
-        "defer",
-        &[("fn_or_thread", "LuaValue"), ("...", "LuaValue")],
-        "Task",
-        "Queue a function to run after the current synchronous batch. Deferred tasks execute in FIFO order.",
-    );
 
     // task.delay(secs, fn, ...) — schedule fn after secs seconds.
     // delay(0) is semantically equivalent to defer.
+    /// Schedule a function to run after `secs` seconds. `delay(0, ...)` is equivalent to `defer(...)`.
+    #[lua(
+        "Task",
+        takes("secs: number", "fn_or_thread: LuaValue", "...: LuaValue")
+    )]
     m.set(
         "delay",
         lua.create_function(|lua, (secs, fn_val, args): (f64, Value, MultiValue)| {
@@ -533,21 +531,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             Ok(TaskHandle { inner })
         })?,
     )?;
-    m.record_fn(
-        "delay",
-        &[
-            ("secs", "number"),
-            ("fn_or_thread", "LuaValue"),
-            ("...", "LuaValue"),
-        ],
-        "Task",
-        "Schedule a function to run after `secs` seconds. `delay(0, ...)` is equivalent to `defer(...)`.",
-    );
 
     // task.wait(secs) — yield current coroutine for secs seconds.
     // Must be called from within a coroutine (spawned task or deferred task).
     // Negative and NaN values are clamped to 0, and a delay past 100 years (infinity included) to 100 years.
     // Returns elapsed time as a float.
+    /// Yield the current coroutine for `secs` seconds (NaN and negative clamp to 0, over 100 years clamps to 100 years). Returns the actual elapsed time.
+    #[lua("number")]
     m.set(
         "wait",
         async_function(lua, Role::Timer, |_, secs: f64| async move {
@@ -557,14 +547,10 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             Ok(start.elapsed().as_secs_f64())
         })?,
     )?;
-    m.record_fn(
-        "wait",
-        &[("secs", "number")],
-        "number",
-        "Yield the current coroutine for `secs` seconds (NaN and negative clamp to 0, over 100 years clamps to 100 years). Returns the actual elapsed time.",
-    );
 
     // task.cancel(handle) — flat Roblox-compatible function; delegates to handle:cancel().
+    /// Cancel a task by handle. Returns `true` if this call was the one that cancelled it.
+    #[lua("bool", names(val = "handle"), types(val = "Task"))]
     m.set(
         "cancel",
         lua.create_function(|_, val: Value| match val {
@@ -583,12 +569,6 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             ))),
         })?,
     )?;
-    m.record_fn(
-        "cancel",
-        &[("handle", "Task")],
-        "bool",
-        "Cancel a task by handle. Returns `true` if this call was the one that cancelled it.",
-    );
 
     m.userdata("Task", |t| {
         TaskHandle::lua(t);

@@ -37,6 +37,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// hand-written constructors carried no span; the userdata types keep their own
 /// `impl UserData` and are recorded here via
 /// [`crate::lua::facade::Module::userdata`].
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:glob")?;
 
@@ -48,14 +49,11 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     set_sub.set("new", lua.create_function(set_new)?)?;
     m.set("GlobSet", set_sub)?;
 
-    m.try_func(
-        "is_match",
-        &[("pattern", "string"), ("path", "string")],
-        "Compile `pattern` and test whether `path` matches it.",
-        |_, (pattern, path): (String, String)| {
-            GlobHandle::compile(&pattern).map(|g| g.matches(&path))
-        },
-    )?;
+    /// Compile `pattern` and test whether `path` matches it.
+    #[lua]
+    m.try_func("is_match", |_, (pattern, path): (String, String)| {
+        GlobHandle::compile(&pattern).map(|g| g.matches(&path))
+    })?;
 
     m.declared(flat_scan::lua(), lua.create_function(flat_scan)?)?;
 

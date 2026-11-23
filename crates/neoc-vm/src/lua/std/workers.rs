@@ -27,6 +27,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// process-global `ShutdownSignal` userdata, whose `is_fired` / `wait` methods
 /// keep their own `impl UserData` and are recorded here via
 /// [`crate::lua::facade::Module::userdata`].
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:workers")?;
 
@@ -36,13 +37,9 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     )?;
 
     // Backwards compat alias — deprecated, prefer on_shutdown().
+    /// Deprecated alias for `on_shutdown()`. Prefer `on_shutdown()` in new code.
+    #[lua("ShutdownSignal", takes())]
     m.set("shutdown_signal", lua.create_function(shutdown_signal_fn)?)?;
-    m.record_fn(
-        "shutdown_signal",
-        &[],
-        "ShutdownSignal",
-        "Deprecated alias for `on_shutdown()`. Prefer `on_shutdown()` in new code.",
-    );
 
     m.userdata("ShutdownSignal", |s| {
         ShutdownSignal::lua(s);

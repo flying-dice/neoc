@@ -145,15 +145,22 @@ impl TempDirHandle {
     }
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for TempDirHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Return the absolute path to the temp directory as a string.
+        #[lua("string")]
         methods.add_method("path", |_, this, _: ()| Ok(this.path.clone()));
 
+        /// Consume the handle and keep the directory on disk past drop, returning the path.
+        #[lua("Result<string, string>")]
         methods.add_method_mut("keep", |lua, this, _: ()| match this.inner.take() {
             Some(dir) => ok(lua, dir.keep().to_string_lossy().into_owned()),
             None => from_err(lua, "tempfile.TempDir.keep", "already closed"),
         });
 
+        /// Remove the directory eagerly, surfacing unlink errors; idempotent.
+        #[lua("Result<bool, string>")]
         methods.add_method_mut("close", |lua, this, _: ()| match this.inner.take() {
             // Explicit close surfaces unlink errors; drop swallows them by
             // design, so this is the only way for a script to learn that
@@ -231,24 +238,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     });
 
     m.userdata("TempDir", |t| {
-        t.method(
-            "path",
-            &[],
-            "string",
-            "Return the absolute path to the temp directory as a string.",
-        );
-        t.method(
-            "keep",
-            &[],
-            "Result<string, string>",
-            "Consume the handle and keep the directory on disk past drop, returning the path.",
-        );
-        t.method(
-            "close",
-            &[],
-            "Result<bool, string>",
-            "Remove the directory eagerly, surfacing unlink errors; idempotent.",
-        );
+        TempDirHandle::lua(t);
         t.static_fn(
             "new",
             &[("opts", "LuaValue?")],

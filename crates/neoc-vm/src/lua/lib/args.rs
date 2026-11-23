@@ -79,20 +79,17 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// text. The `(value, error)` shape, the `args.parse` / `args.help` error
 /// prefixes, and the `lua::lib::args` spans are byte-identical to the
 /// hand-written registration this replaces.
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:args")?;
-    m.try_func(
-        "parse",
-        &[("argv", "LuaValue"), ("config", "LuaValue")],
-        "Parse `argv` against `config`, returning the parsed-flags table (or, on `--help`/`-h`, a `{ help = true, help_text = ... }` table).",
-        |lua, (argv_tbl, config_tbl): (Table, Table)| parse(lua, &argv_tbl, &config_tbl),
-    )?
-    .try_func(
-        "help",
-        &[("config", "LuaValue")],
-        "Render `config`'s help text without parsing any arguments.",
-        |_, config_tbl: Table| help(&config_tbl),
-    )?;
+    /// Parse `argv` against `config`, returning the parsed-flags table (or, on `--help`/`-h`, a `{ help = true, help_text = ... }` table).
+    #[lua(names(argv_tbl = "argv", config_tbl = "config"))]
+    m.try_func("parse", |lua, (argv_tbl, config_tbl): (Table, Table)| {
+        parse(lua, &argv_tbl, &config_tbl)
+    })?;
+    /// Render `config`'s help text without parsing any arguments.
+    #[lua(names(config_tbl = "config"))]
+    m.try_func("help", |_, config_tbl: Table| help(&config_tbl))?;
     Ok(m)
 }
 

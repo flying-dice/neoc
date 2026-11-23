@@ -77,6 +77,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// Declares the `vnd:portable_pty` surface through the facade. `spawn_command`, `error_kind` and `error_message` are
 /// plain functions; the `Pty` type keeps its own `impl UserData` and is recorded with
 /// [`crate::lua::facade::Module::userdata`].
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:portable_pty")?;
 
@@ -96,18 +97,12 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         ),
     );
 
-    m.func(
-        "error_kind",
-        &[("err", "string?")],
-        "The stable kind inside an error string returned by a `vnd:portable_pty` function, or `nil` when the string is not one of theirs (or is `nil`, so `portable_pty.error_kind(err)` takes the `err` of any call). Such a string is `portable_pty.<function>: <kind>: <message>`. Kinds: `invalid_input` (an argument or option was refused), `spawn` (the command could not be started), `closed` (the terminal was closed), `io` (reading from the terminal or writing to it failed), `other`. The message is the crate's or the operating system's own; it is for a log and may change.",
-        error_text::reader(error::kind_of),
-    )?;
-    m.func(
-        "error_message",
-        &[("err", "string?")],
-        "The message inside an error string returned by a `vnd:portable_pty` function: everything after the kind in `portable_pty.<function>: <kind>: <message>`, or `nil` when the string is not one of theirs (or is `nil`, so `portable_pty.error_message(err)` takes the `err` of any call), the same rule as `error_kind`. It is the crate's or the operating system's wording. It is for showing or logging as it is: branch on `error_kind`, not on these words, which differ between platforms and versions. Read it here instead of taking the error string apart.",
-        error_text::reader(error::message_of),
-    )?;
+    /// The stable kind inside an error string returned by a `vnd:portable_pty` function, or `nil` when the string is not one of theirs (or is `nil`, so `portable_pty.error_kind(err)` takes the `err` of any call). Such a string is `portable_pty.<function>: <kind>: <message>`. Kinds: `invalid_input` (an argument or option was refused), `spawn` (the command could not be started), `closed` (the terminal was closed), `io` (reading from the terminal or writing to it failed), `other`. The message is the crate's or the operating system's own; it is for a log and may change.
+    #[lua(takes("err: string?"))]
+    m.func("error_kind", error_text::reader(error::kind_of))?;
+    /// The message inside an error string returned by a `vnd:portable_pty` function: everything after the kind in `portable_pty.<function>: <kind>: <message>`, or `nil` when the string is not one of theirs (or is `nil`, so `portable_pty.error_message(err)` takes the `err` of any call), the same rule as `error_kind`. It is the crate's or the operating system's wording. It is for showing or logging as it is: branch on `error_kind`, not on these words, which differ between platforms and versions. Read it here instead of taking the error string apart.
+    #[lua(takes("err: string?"))]
+    m.func("error_message", error_text::reader(error::message_of))?;
 
     m.userdata("Pty", |p| {
         p.method(

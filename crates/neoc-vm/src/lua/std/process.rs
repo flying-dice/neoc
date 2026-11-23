@@ -77,6 +77,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 
 /// Declares the `std:process` surface through the facade. `spawn` and `error_kind` are plain functions; the
 /// `Child` type keeps its own `impl UserData` and is recorded with [`crate::lua::facade::Module::userdata`].
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:process")?;
 
@@ -95,14 +96,11 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         ),
     );
 
-    m.func(
-        "error_kind",
-        &[("err", "string?")],
-        "The stable kind inside an error string returned by a `std:process` function, or `nil` when the string is not one of theirs (or is `nil`, so `process.error_kind(err)` takes the `err` of any call). Such a string is `process.<function>: <kind>: <message>`. Kinds: `invalid_input` (an argument or option was refused), `spawn` (the program could not be started), `not_piped` (the stream was not started as a pipe), `closed` (the stream, the process or the engine was closed), `io` (reading from a stream or writing to it failed, or the system did not say how the process ended), `other`. The message is the operating system's own; it is for a log and may change.",
-        |_, err: Option<mlua::LuaString>| {
-            Ok(err.and_then(|err| error::kind_of(&err.to_string_lossy()).map(str::to_owned)))
-        },
-    )?;
+    /// The stable kind inside an error string returned by a `std:process` function, or `nil` when the string is not one of theirs (or is `nil`, so `process.error_kind(err)` takes the `err` of any call). Such a string is `process.<function>: <kind>: <message>`. Kinds: `invalid_input` (an argument or option was refused), `spawn` (the program could not be started), `not_piped` (the stream was not started as a pipe), `closed` (the stream, the process or the engine was closed), `io` (reading from a stream or writing to it failed, or the system did not say how the process ended), `other`. The message is the operating system's own; it is for a log and may change.
+    #[lua]
+    m.func("error_kind", |_, err: Option<mlua::LuaString>| {
+        Ok(err.and_then(|err| error::kind_of(&err.to_string_lossy()).map(str::to_owned)))
+    })?;
 
     m.userdata("Child", |c| {
         c.method(

@@ -118,51 +118,32 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// the exact error suffixes (handle, parse, bridge, serialize, and I/O
 /// failures), and the `lua::lib::serde_json` spans are byte-identical to the
 /// hand-written registration this replaces.
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:serde_json")?;
-    m.try_func(
-        "from_str",
-        &[("s", "string")],
-        concat!(
-            "Parse a JSON string: an object or array becomes a `lib:json` handle, `null` the `json.null` sentinel, ",
-            "any other scalar a Lua value. Narrow a container with a cast (`v :: lib_json_Object`): ",
-            "`type(v) == \"userdata\"` narrows the handle types to nothing, and `type(v) == \"table\"` is false at run time."
-        ),
-        from_str,
-    )?
-    .try_func(
-        "from_reader",
-        &[("reader", "std_io.ReaderHandle")],
-        "Parse JSON from a reader handle, with the same results as `from_str`.",
-        from_reader,
-    )?
-    .try_func_raising(
-        "to_string",
-        &[("value", "LuaValue")],
-        "Serialise a Lua value to a compact JSON string.",
-        to_string,
-    )?
-    .try_func_raising(
-        "to_string_pretty",
-        &[("value", "LuaValue")],
-        "Serialise a Lua value to an indented, human-readable JSON string.",
-        to_string_pretty,
-    )?
-    .try_func_raising(
-        "to_writer",
-        &[("value", "LuaValue"), ("writer", "std_io.WriterHandle")],
-        "Serialise a Lua value to JSON and write it to a writer handle.",
-        to_writer,
-    )?;
+    #[lua]
+    m.try_func("from_str", from_str)?;
+    #[lua]
+    m.try_func("from_reader", from_reader)?;
+    #[lua]
+    m.try_func_raising("to_string", to_string)?;
+    #[lua]
+    m.try_func_raising("to_string_pretty", to_string_pretty)?;
+    #[lua]
+    m.try_func_raising("to_writer", to_writer)?;
     Ok(m)
 }
 
+/// Parse a JSON string: an object or array becomes a `lib:json` handle, `null` the `json.null` sentinel, any other scalar a Lua value. Narrow a container with a cast (`v :: lib_json_Object`): `type(v) == "userdata"` narrows the handle types to nothing, and `type(v) == "table"` is false at run time.
+#[neoc_macros::lua_fn]
 fn from_str(lua: &Lua, s: mlua::LuaString) -> Result<Parsed, String> {
     parse_to_handle(lua, &s.as_bytes())
         .map(Parsed)
         .map_err(|e| e.to_string())
 }
 
+/// Parse JSON from a reader handle, with the same results as `from_str`.
+#[neoc_macros::lua_fn(names(ud = "reader"), types(ud = "std_io.ReaderHandle"))]
 fn from_reader(lua: &Lua, ud: AnyUserData) -> Result<Parsed, String> {
     let jv = {
         let rh = ud
@@ -184,16 +165,22 @@ fn serialize_with(
     formatter(&json_value_to_jv(&j)).map_err(|e| e.to_string())
 }
 
+/// Serialise a Lua value to a compact JSON string.
+#[neoc_macros::lua_fn(names(v = "value"))]
 fn to_string(_: &Lua, v: Value) -> mlua::Result<Result<String, String>> {
     refuse_buffer(&v, "serde_json.to_string")?;
     Ok(serialize_with(v, serde_json::to_string))
 }
 
+/// Serialise a Lua value to an indented, human-readable JSON string.
+#[neoc_macros::lua_fn(names(v = "value"))]
 fn to_string_pretty(_: &Lua, v: Value) -> mlua::Result<Result<String, String>> {
     refuse_buffer(&v, "serde_json.to_string_pretty")?;
     Ok(serialize_with(v, serde_json::to_string_pretty))
 }
 
+/// Serialise a Lua value to JSON and write it to a writer handle.
+#[neoc_macros::lua_fn(names(v = "value", ud = "writer"), types(ud = "std_io.WriterHandle"))]
 fn to_writer(_: &Lua, (v, ud): (Value, AnyUserData)) -> mlua::Result<Result<bool, String>> {
     refuse_buffer(&v, "serde_json.to_writer")?;
     Ok(write_json(&v, &ud))

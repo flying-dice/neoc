@@ -36,14 +36,14 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// stops; it raises on a hard failure (glob resolution, bind). The registered
 /// async Lua surface and the `lua::lib::http` span (`http.serve_static`) are
 /// byte-identical to the hand-written registration this replaces.
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:http")?;
-    m.async_func(
-        "serve_static",
-        &[("glob_pattern", "string"), ("opts", "LuaValue?")],
-        "Serve the files matching `glob_pattern` over HTTP/1.1; `opts.host` / `opts.port` set the bind address (default `0.0.0.0:8080`). Blocks until Ctrl-C, or until an embedder stops the script's background work or shuts it down.",
-        |lua, args: (String, Option<Table>)| serve_static(lua, args),
-    )?;
+    /// Serve the files matching `glob_pattern` over HTTP/1.1; `opts.host` / `opts.port` set the bind address (default `0.0.0.0:8080`). Blocks until Ctrl-C, or until an embedder stops the script's background work or shuts it down.
+    #[lua(takes("glob_pattern: string", "opts: LuaValue?"))]
+    m.async_func("serve_static", |lua, args: (String, Option<Table>)| {
+        serve_static(lua, args)
+    })?;
     Ok(m)
 }
 

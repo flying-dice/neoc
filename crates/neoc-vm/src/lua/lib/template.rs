@@ -1104,6 +1104,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// shared `Engine` is cloned into each closure exactly as before. The compiled
 /// `Template` userdata keeps its own `impl UserData` and is recorded here via
 /// [`crate::lua::facade::Module::userdata`].
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let engine = Engine::new();
     let mut m = Module::new(lua, "lib:template")?;
@@ -1115,14 +1116,10 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     )?;
 
     let eng = engine.clone();
+    /// One-shot parse and render of `source` against `context`; `options.autoescape` toggles HTML escaping.
+    #[lua(names(src = "source", ctx = "context", opts = "options"))]
     m.try_func_raising(
         "render",
-        &[
-            ("source", "string"),
-            ("context", "LuaValue"),
-            ("options", "LuaValue?"),
-        ],
-        "One-shot parse and render of `source` against `context`; `options.autoescape` toggles HTML escaping.",
         move |lua, (src, ctx, opts): (String, Value, Option<Table>)| {
             refuse_buffer(&ctx, "template.render")?;
             Ok(render_impl(lua, &eng, src, ctx, opts))
@@ -1130,10 +1127,10 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     )?;
 
     let eng = engine.clone();
+    /// Register a Lua function as a custom tera filter, visible to every subsequent render.
+    #[lua(names(func = "fn"))]
     m.try_func(
         "add_filter",
-        &[("name", "string"), ("fn", "LuaValue")],
-        "Register a Lua function as a custom tera filter, visible to every subsequent render.",
         move |lua, (name, func): (String, Function)| add_filter_impl(lua, &eng, name, func),
     )?;
 
