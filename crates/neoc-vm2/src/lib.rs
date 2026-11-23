@@ -13,6 +13,7 @@ pub mod declarations;
 pub mod engine;
 pub mod host;
 pub mod lifecycle;
+mod limits;
 pub mod modules;
 pub mod panics;
 pub mod scheduler;
