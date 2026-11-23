@@ -18,11 +18,23 @@
 //!
 //! TODO(std:io): `from_reader(reader)` and `to_writer(value, writer)` wait for `std:io`'s reader and writer handles.
 
+/// Where `serde_json` stopped (line and column, both from 1) and why, without the place it ends its text with.
+pub(crate) fn place_and_reason(error: &::serde_json::Error) -> (u32, u32, String) {
+    let wide = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    let text = error.to_string();
+    let reason = match text.rfind(" at line ") {
+        Some(end) => text[..end].to_owned(),
+        None => text,
+    };
+    (wide(error.line()), wide(error.column()), reason)
+}
+
 #[mlua_ir::module("vnd:serde_json")]
 pub mod serde_json {
     use mlua_ir::{Bytes, LuaError};
     use serde::Serialize;
 
+    use super::place_and_reason;
     use crate::modules::lib::json::deeper_than;
     use crate::modules::lib::json::json::{Input, MAX_DEPTH, Node};
 
@@ -65,22 +77,12 @@ pub mod serde_json {
     }
 
     fn decode_error(error: &::serde_json::Error) -> DecodeError {
-        let (line, column) = (wide(error.line()), wide(error.column()));
-        // serde_json ends its text with the place; the place is in the fields
-        let text = error.to_string();
-        let reason = match text.rfind(" at line ") {
-            Some(end) => text[..end].to_owned(),
-            None => text,
-        };
+        let (line, column, reason) = place_and_reason(error);
         if error.is_eof() {
             DecodeError::Eof { line, column, reason }
         } else {
             DecodeError::Syntax { line, column, reason }
         }
-    }
-
-    fn wide(n: usize) -> u32 {
-        u32::try_from(n).unwrap_or(u32::MAX)
     }
 
     /// Parse a JSON text. An object or an array comes back as a `lib:json` handle, a string, number or boolean as a

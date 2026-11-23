@@ -3510,6 +3510,7 @@ dependencies = [
  "heck",
  "hex",
  "hmac",
+ "jsonschema",
  "md-5",
  "mime_guess",
  "mlua",
