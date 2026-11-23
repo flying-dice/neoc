@@ -18,7 +18,7 @@ const MAX_BUFFER: u32 = 1 << 30;
 const DEFAULT_ALPHABET: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
 /// Fill `buf` from the OS CSPRNG; an entropy-source failure is the reason, as text.
-fn fill_random(buf: &mut [u8]) -> Result<(), String> {
+pub(crate) fn fill_random(buf: &mut [u8]) -> Result<(), String> {
     SysRng.try_fill_bytes(buf).map_err(|e| e.to_string())
 }
 

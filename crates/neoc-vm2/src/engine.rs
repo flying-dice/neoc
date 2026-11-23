@@ -6,6 +6,7 @@ use mlua::{Lua, StdLib, Value};
 
 use crate::lifecycle::Life;
 use crate::modules;
+use crate::scheduler::Scheduler;
 
 /// Globals removed after the standard libraries load. Each is a sandbox hazard: runtime code loading
 /// (`loadstring`, which mlua adds to Luau), environment and identity tampering (`getfenv`, `setfenv`, `newproxy`),
@@ -13,7 +14,9 @@ use crate::modules;
 /// [`modules::install`]). The `io`, `os`, `package`, `debug`, `utf8`, `vector` and `integer` libraries are not opened
 /// either and stay on the list so a library a future mlua opens by default is removed. Paths are dotted; the last
 /// segment is the key removed from its parent table. `coroutine.close` goes too: it kills a suspended thread
-/// whoever made it (the script environment that holds it to an ownership rule is not ported to this crate yet).
+/// whoever made it (a task's thread, whose `await` would then return nothing at all). The function is kept for a
+/// [script environment](crate::script_env), whose `close` holds it to the ownership rule of `resume` (see
+/// [`STASHED_CLOSE`]).
 const STRIPPED_GLOBALS: &[&str] = &[
     "load",
     "loadstring",
@@ -54,13 +57,22 @@ pub fn make_engine() -> mlua::Result<Lua> {
 /// Fails when the engine or a module cannot be set up.
 pub fn make_engine_in(life: Life) -> mlua::Result<Lua> {
     let lua = make_bare_engine()?;
-    Life::adopt(&lua, life);
+    install_runtime_state(&lua, life);
     modules::install(&lua)?;
     Ok(lua)
 }
 
-/// An engine with the curated standard library and nothing else: no modules and no `require`. For an embedder that
-/// offers some of the modules itself ([`modules::build`]).
+/// What the modules keep per engine: the registry of what the script spawns and the `std:task` scheduler over it.
+/// [`make_engine`] sets it; an embedder that builds its own engine from [`make_bare_engine`] and offers the modules
+/// itself calls this first.
+pub fn install_runtime_state(lua: &Lua, life: Life) {
+    Life::adopt(lua, life.clone());
+    lua.set_app_data(Scheduler::with_life(life));
+}
+
+/// An engine with the curated standard library and nothing else: no modules, no scheduler and no `require`. For an
+/// embedder that offers some of the modules itself ([`modules::build`], after [`install_runtime_state`]) and runs
+/// each script in its own [environment](crate::script_env).
 ///
 /// # Errors
 /// Fails when the engine or a library cannot be set up.
@@ -70,9 +82,20 @@ pub fn make_bare_engine() -> mlua::Result<Lua> {
         StdLib::COROUTINE | StdLib::TABLE | StdLib::STRING | StdLib::MATH | StdLib::BIT | StdLib::BUFFER,
         mlua::LuaOptions::new(),
     )?;
+    stash_coroutine_close(&lua)?;
     strip_unsafe_globals(&lua)?;
     lock_string_metatable(&lua)?;
     Ok(lua)
+}
+
+/// Where the registry keeps Luau's own `coroutine.close`, taken out of `coroutine` before the strip: the script
+/// environment's `close` (`async_coroutines.lua`) calls it after its ownership check.
+pub(crate) const STASHED_CLOSE: &str = "neoc.coroutine_close";
+
+fn stash_coroutine_close(lua: &Lua) -> mlua::Result<()> {
+    let coroutine: mlua::Table = lua.globals().raw_get("coroutine")?;
+    let close: Value = coroutine.raw_get("close")?;
+    lua.set_named_registry_value(STASHED_CLOSE, close)
 }
 
 /// Every string shares one metatable (`{ __index = string }`) that `getmetatable("")` returns. Locking it makes
@@ -145,6 +168,17 @@ impl<S: AsChunk> AsChunk for Prepared<S> {
             std::borrow::Cow::Owned(bytes) => std::borrow::Cow::Owned(prepare_script(&bytes).into_owned()),
         })
     }
+}
+
+/// Luau bytecode for `return 7`, as the text the script-facing loaders take. Compiled with the debug level at 0 it
+/// has no debug info or chunk name, and every byte is below 0x80, so it survives the `String` conversion
+/// script-facing loaders apply. The fixture of the text-only loader tests: Luau's bytecode is not verified when it
+/// is loaded.
+#[cfg(test)]
+pub(crate) fn luau_bytecode() -> String {
+    let bytes = mlua::chunk::Compiler::new().set_debug_level(0).compile("return 7").expect("compile");
+    assert!(bytes[0] != 0, "a chunk starting with 0 is the compiler's error marker");
+    String::from_utf8(bytes).expect("the bytecode of `return 7` is ASCII")
 }
 
 #[cfg(test)]
