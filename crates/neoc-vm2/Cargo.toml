@@ -46,6 +46,19 @@ hmac = "0.13"
 subtle = "2"
 xxhash-rust = { version = "0.8", features = ["xxh3", "xxh64"] }
 serde_json = "1"
+heck = "0.5"
+unicode-width = "0.2"
+deunicode = "1"
+vte = "0.14"
+unicode-normalization = "0.1"
+unicode-segmentation = "1"
+unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
+caseless = "0.2"
+regex = "1"
+mime_guess = "2"
+similar = "3"
+url = "2"
+percent-encoding = "2"
 
 [dev-dependencies]
 neoc-vm = { workspace = true }

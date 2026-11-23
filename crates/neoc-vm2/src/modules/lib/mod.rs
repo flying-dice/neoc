@@ -8,3 +8,4 @@ pub mod hmac;
 pub mod random;
 pub mod crypto;
 pub mod pkey;
+pub mod text;
