@@ -440,3 +440,102 @@ fn a_constant_of_a_type_the_module_never_declares_is_refused() {
         "{error}"
     );
 }
+
+/// A type whose members say nothing of what they return or take: the compiler does.
+struct Probe(f64);
+
+// the test registers with mlua directly: what is under test is the reading of the types, not the scheduling
+#[allow(clippy::disallowed_methods)]
+#[neoc_macros::lua_userdata("vnd:typed", "Probe")]
+impl UserData for Probe {
+    fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
+        /// The reading.
+        fields.add_field_method_get("reading", |_, this| Ok(this.0));
+    }
+
+    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// The reading as text, when there is one.
+        methods.add_method("text", |_, this, ()| {
+            Ok((this.0 != 0.0).then(|| this.0.to_string()))
+        });
+        /// A probe moved by `by`.
+        methods.add_method("moved", |_, this, by: f64| Ok(Probe(this.0 + by)));
+        /// The reading over `by`, or why not.
+        methods.add_method("over", |_, this, by: f64| {
+            if by == 0.0 {
+                return crate::lua::sandbox::err("probe.over: by zero");
+            }
+            crate::lua::sandbox::ok(this.0 / by)
+        });
+        /// How far this is from `other`.
+        methods.add_method("gap", |_, this, other: super::Handle<Probe>| {
+            Ok(this.0 - other.borrow::<Probe>()?.0)
+        });
+        /// Every reading so far.
+        methods.add_method("history", |_, this, ()| Ok(super::List(vec![this.0])));
+        /// The reading, later.
+        methods.add_async_method("later", |_, this, ()| async move { Ok(this.0) });
+        // a metamethod is no member a script names
+        methods.add_meta_method(mlua::MetaMethod::ToString, |_, this, ()| {
+            Ok(this.0.to_string())
+        });
+    }
+}
+
+#[allow(clippy::disallowed_methods)]
+#[neoc_macros::lua_module]
+fn declare_typed(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "vnd:typed")?;
+    /// A probe at `at`.
+    #[lua]
+    m.set("probe", lua.create_function(|_, at: f64| Ok(Probe(at)))?)?;
+    /// A probe at zero, later.
+    #[lua]
+    m.set(
+        "probe_later",
+        lua.create_async_function(|_, ()| async move { Ok(Probe(0.0)) })?,
+    )?;
+    /// The most a probe reads.
+    #[lua(constant)]
+    m.set("LIMIT", 100.0)?;
+    m.userdata("Probe", Probe::lua);
+    Ok(m)
+}
+
+#[test]
+fn what_a_closure_returns_and_takes_is_read_from_its_types() {
+    let lua = Lua::new();
+    let decls = declare_typed(&lua)
+        .expect("declares")
+        .luau_decls()
+        .expect("declarations");
+    for line in [
+        "\t--- The reading.\n\treading: number,\n",
+        "\t--- The reading as text, when there is one.\n\ttext: (self: vnd_typed_Probe) -> string?,\n",
+        "\t--- A probe moved by `by`.\n\tmoved: (self: vnd_typed_Probe, by: number) -> vnd_typed_Probe,\n",
+        "\t--- The reading over `by`, or why not.\n\tover: (self: vnd_typed_Probe, by: number) -> (number?, string?),\n",
+        "\t--- How far this is from `other`.\n\tgap: (self: vnd_typed_Probe, other: vnd_typed_Probe) -> number,\n",
+        "\t--- Every reading so far.\n\thistory: (self: vnd_typed_Probe) -> { number },\n",
+        "\t--- The reading, later.\n\tlater: (self: vnd_typed_Probe) -> number,\n",
+        "\t--- A probe at `at`.\n\tprobe: (at: number) -> vnd_typed_Probe,\n",
+        "\t--- A probe at zero, later.\n\tprobe_later: () -> vnd_typed_Probe,\n",
+        "\t--- The most a probe reads.\n\tLIMIT: number,\n",
+    ] {
+        says(&decls, line);
+    }
+    assert!(!decls.contains("__tostring"), "{decls}");
+}
+
+#[test]
+fn a_type_is_registered_as_it_was_before_its_members_were_noted() {
+    // noting is for the declarations alone: with mlua, the members are the ones the block adds
+    let lua = Lua::new();
+    lua.globals().set("probe", Probe(6.0)).expect("set");
+    let read: (f64, String, f64, mlua::Value, mlua::Value) = lua
+        .load("local n, e = probe:over(0) return probe.reading, probe:text(), probe:moved(1).reading, n, e")
+        .eval()
+        .expect("runs");
+    assert_eq!((read.0, read.1.as_str(), read.2), (6.0, "6", 7.0));
+    assert!(read.3.is_nil());
+    assert_eq!(read.4.to_string().expect("text"), "probe.over: by zero");
+}

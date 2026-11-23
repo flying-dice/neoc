@@ -16,6 +16,12 @@
 //! `static_fn` and the rest). Those primitives stay public to the crate for the generated code and for this
 //! file's own tests; a module that calls one by hand is declaring something twice.
 //!
+//! The types say as much as they can. A function that can fail returns a
+//! [`Fallible`](crate::lua::sandbox::Fallible), a userdata type says its name ([`Named`]), a userdata argument
+//! is a [`Handle`], a list is a [`List`], and what a closure returns is read from its type by the functions of
+//! [`typed`]. A string beside the code is for what Rust cannot say: a `Table` or a `Value` that a script
+//! knows as something narrower.
+//!
 //! Three things the facade preserves byte-for-byte versus the hand-written
 //! `module()` functions it replaces:
 //!

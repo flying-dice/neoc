@@ -20,7 +20,22 @@
 //!
 //! What is read: the name (the function's, or the string a method is added under), each parameter's name and
 //! its type through `DeclType` (`String` is `string`, `Option<i64>` is `number?`), and the `///` lines as the doc.
-//! What Rust does not say is said once, on the spot: a return whose shape is made in the body (`(value, err)`),
+//!
+//! What a function returns is read from its type too, and for a closure, whose return is written nowhere, the
+//! compiler is asked: the closure goes to mlua through a function of `facade::typed` whose bounds name the
+//! type. So a function says what a script gets by returning it:
+//!
+//! | The Rust type | What a script gets |
+//! | --- | --- |
+//! | `Fallible<T>` (`ok(v)`, `err(msg)`) | `(T?, string?)`: the value, or `nil` and why not |
+//! | `Option<T>` | `T?` |
+//! | a userdata type that says its name (`#[lua_userdata("std:time", "Duration")]`) | that type |
+//! | `Handle<T>`, as a parameter | a userdata declared as `T`, borrowed by the function |
+//! | `List<T>` | `{ T }` |
+//! | a type of the module's own with a `DeclType` (an enum of the kinds a function can hand back) | what it says |
+//!
+//! What Rust does not say is said once, on the spot: a return that is a `Table` or a `Value` in Rust and
+//! something narrower to a script,
 //! the type of a parameter that is a `Value` or a `Table` in Rust and something narrower to a script
 //! (`types(key = "string | number")`), a parameter a script knows under another name (`names(s = "input")`), and
 //! the whole list where the function takes its arguments as they come (`takes("path: string", "...: LuaValue")`).
@@ -1002,8 +1017,12 @@ fn lua_userdata_impl(mut block: ItemImpl, named: &Named) -> syn::Result<Tokens> 
 /// It writes `Type::lua(spec)`, which records every member the block adds at the top of `add_fields` and
 /// `add_methods`, in order: hand it to the module (`m.userdata("Version", VersionHandle::lua)`).
 ///
+/// - `#[lua_userdata("std:time", "Duration")]` says the module the type is declared by and its name there:
+///   a function that takes or returns the type then declares it by its Rust type.
 /// - The name is the string the member is added under.
-/// - `#[lua("...")]` above the statement says what a script gets: a field's type, a method's return.
+/// - What a script gets (a field's type, a method's return) is what the closure returns: the closure is
+///   passed to mlua through `facade::typed`, which reads the type. `#[lua("...")]` above the statement says
+///   it by hand where the Rust type says less than a script should know (a `Table`, a `Value`).
 /// - A method's parameters are the closure's after `lua` and `this` (a function's, after `lua`), read as
 ///   `lua_fn` reads them, with `types(...)`, `names(...)` and `takes(...)` in the same `#[lua(...)]`.
 /// - The doc is the `///` lines above the statement.
@@ -1441,9 +1460,11 @@ fn lua_module_impl(mut function: ItemFn) -> syn::Result<Tokens> {
 ///   `async_func`, `try_async_func`, a type's `constructor` and `try_constructor`): the parameter list and the
 ///   doc are written into the call, so neither is an argument in the source. Given a function by its path
 ///   (`m.try_func("parse", parse)?`), both are that function's own (`#[lua_fn]`);
-/// - `m.set("name", <a function made from a closure>)?`: the function is recorded after it, with the return
-///   `#[lua("...")]` says;
-/// - `m.set("name", <a value>)?` under `#[lua("type", constant)]`: a constant of that type.
+/// - `m.set("name", <a function made from a closure>)?`: the function is recorded after it. What it returns
+///   is read from the closure's type, or is what `#[lua("...")]` says. A function made from something else
+///   (a function item, a helper's result) says its return and its `takes(...)`;
+/// - `m.set("name", <a value>)?` under `#[lua(constant)]`: a constant of the value's type, or of the type
+///   `#[lua("type", constant)]` says.
 ///   `on(m, "Type")` beside it says the value is set on the sub-table of the type `Type` of the module `m`
 ///   (`#[lua("Duration", constant, on(m, "Duration"))] dur.set("ZERO", ...)?`).
 ///
