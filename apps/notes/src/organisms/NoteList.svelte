@@ -1,7 +1,6 @@
 <!-- @organism NoteList — the notes of what is shown, under their headings (Pinned, Today, Yesterday, ...), with the search field and the button that starts a note; a folder of the person's own can be deleted from here, after an alert asks -->
 <script lang="ts">
   import type { Folder, Note } from 'app:rpc'
-  import ConfirmAlert from '../molecules/ConfirmAlert.svelte'
   import { stamp } from '../lib/dates'
   import { NO_PREVIEW, UNTITLED, type Section } from '../lib/views'
 
@@ -88,16 +87,19 @@
     {/if}
   </header>
   {#if folder && confirming}
-    <ConfirmAlert
+    <ui-alert
+      open
+      destructive
+      action-label="Delete"
       heading="Delete {folder.name}?"
       message="Its notes go to Recently Deleted."
-      testid="notes-confirm-folder"
+      data-testid="notes-confirm-folder"
       oncancel={() => (asking = null)}
       onconfirm={() => {
         asking = null
         onremovefolder?.(folder)
       }}
-    />
+    ></ui-alert>
   {/if}
   <div class="search">
     <ui-text-field

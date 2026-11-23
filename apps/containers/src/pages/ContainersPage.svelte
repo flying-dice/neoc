@@ -16,9 +16,8 @@
 
   let { containers, logsEvery = 2000 }: Props = $props()
 
-  // below 680 wide the stacks and the containers are one column each: `browsing` decides which one shows
-  let width = $state(980)
-  const narrow = $derived(width < 680)
+  // in a window too narrow for both, the split view shows one column: the kit says when, the same for every app
+  let narrow = $state(false)
   const engine = $derived(containers.engine)
   const inspected = $derived(containers.inspected)
   // a Docker that cannot be reached is said in the middle of the window, whichever column was in front
@@ -37,9 +36,9 @@
   })
 </script>
 
-<main class="app" bind:clientWidth={width} data-testid="containers-app">
-  <div class="columns" class:narrow class:browsing>
-    <div class="side">
+<main class="app" data-testid="containers-app">
+  <ui-split-view column={browsing ? 'sidebar' : 'detail'} oncollapsedchange={(e) => (narrow = e.detail.collapsed)}>
+    <div slot="sidebar">
       <StackSidebar
         {engine}
         total={containers.all.length}
@@ -51,7 +50,7 @@
         onconnect={() => void containers.connect()}
       />
     </div>
-    <div class="detail">
+    <div>
       {#if !containers.loaded}
         <div class="waiting">
           {#if !containers.failure}<ui-spinner size="large" label="Asking Docker" data-testid="containers-loading"></ui-spinner>{/if}
@@ -90,7 +89,7 @@
         />
       {/if}
     </div>
-  </div>
+  </ui-split-view>
   <!-- why the last call failed (Docker's own sentence, the backend's, or the host's), whichever column is in front -->
   {#if containers.failure}
     <ui-banner tone="error" data-testid="containers-failure">{containers.failure}</ui-banner>
@@ -106,35 +105,12 @@
     color: var(--label);
     font: var(--type-body);
   }
-  .columns {
+  ui-split-view {
     flex: 1;
-    min-height: 0;
-    display: grid;
-    grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
-  }
-  .side {
-    min-width: 0;
-    min-height: 0;
-    border-inline-end: 1px solid var(--separator);
-  }
-  .detail {
-    min-width: 0;
-    min-height: 0;
   }
   .waiting {
     height: 100%;
     display: grid;
     place-items: center;
-  }
-  /* one column: the stacks, or the containers once one is picked */
-  .narrow {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .narrow:not(.browsing) .side,
-  .narrow.browsing .detail {
-    display: none;
-  }
-  .narrow .side {
-    border-inline-end: 0;
   }
 </style>

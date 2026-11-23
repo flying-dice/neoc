@@ -123,8 +123,8 @@ test.describe('Projects journeys', () => {
     await part(page, 'issue-priority-high').click()
     await field(page, 'issue-title').fill(`${title}, for good`)
     await field(page, 'issue-title').press('Enter')
-    await part(page, 'issue-description').fill('The links go nowhere.')
-    await part(page, 'issue-description').press('Tab')
+    await part(page, 'issue-description').locator('textarea').fill('The links go nowhere.')
+    await part(page, 'issue-description').locator('textarea').press('Tab')
     await part(page, 'issue-back').click()
     await expect(cardIn(page, 'done', issue)).toBeVisible()
     await expect(card(page, issue, 'title')).toHaveText(`${title}, for good`)
@@ -136,10 +136,10 @@ test.describe('Projects journeys', () => {
     await expect(row).toHaveJSProperty('subheading', `${key}-1 · Bug · High`)
     await expect(row).toHaveJSProperty('value', 'Done')
     await row.click()
-    await expect(part(page, 'issue-description')).toHaveValue('The links go nowhere.')
+    await expect(part(page, 'issue-description').locator('textarea')).toHaveValue('The links go nowhere.')
     // deleting asks first
     await part(page, 'issue-remove').click()
-    await part(page, 'issue-confirm-delete').click()
+    await part(page, 'issue-confirm-confirm').click()
     await expect(part(page, 'issues-empty')).toBeVisible()
   })
 
@@ -164,13 +164,13 @@ test.describe('Projects journeys', () => {
     await field(page, 'new-page-input').fill(title)
     await field(page, 'new-page-input').press('Enter')
     // a new page opens ready to be written
-    await part(page, 'page-text').fill('How it should look.\n\nCalm and plain.')
+    await part(page, 'page-text').locator('textarea').fill('How it should look.\n\nCalm and plain.')
     await part(page, 'page-done').click()
     await expect(part(page, 'page-title')).toHaveText(title)
     await expect(part(page, 'page-body')).toHaveText('How it should look.\n\nCalm and plain.')
     // Cancel drops what was typed
     await part(page, 'page-edit').click()
-    await part(page, 'page-text').fill('Thrown away.')
+    await part(page, 'page-text').locator('textarea').fill('Thrown away.')
     await part(page, 'page-cancel').click()
     await expect(part(page, 'page-body')).toContainText('Calm and plain.')
     // a page named here goes under it
@@ -187,7 +187,7 @@ test.describe('Projects journeys', () => {
     await pageRow(page, title).first().click()
     await part(page, 'page-remove').click()
     await expect(part(page, 'page-confirm')).toContainText('The pages under it are deleted with it.')
-    await part(page, 'page-confirm-delete').click()
+    await part(page, 'page-confirm-confirm').click()
     await expect(part(page, 'pages-empty')).toBeVisible()
   })
 
@@ -230,7 +230,7 @@ test.describe('Projects journeys', () => {
     await expect(card(page, `${key}-1`, 'title')).toHaveText(title)
     await part(page, 'delete').click()
     await expect(part(page, 'confirm')).toContainText('Its issues and its pages are deleted with it.')
-    await part(page, 'confirm-delete').click()
+    await part(page, 'confirm-confirm').click()
     await expect(projectRow(page, key)).toHaveCount(0)
   })
 
@@ -245,7 +245,7 @@ test.describe('Projects journeys', () => {
     expect(Math.round(win.width), 'the minimum width of the contract').toBe(420)
     expect(Math.round(win.height), 'the minimum height of the contract').toBe(480)
     await expectNoOverflow(page.getByTestId(`window-${ID}-content`))
-    // below 720 wide the projects and the one that is shown are one column each
+    // under 700 wide (the kit's split view) the projects and the one that is shown are one column each
     await expect(part(page, 'title')).toBeVisible()
     await expect(part(page, 'new')).toBeHidden()
     await addIssue(page, title, `${key}-1`)

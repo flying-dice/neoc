@@ -24,7 +24,8 @@ export type vos_FileInfo = {
 --- written with `/` (`"notes/a.txt"`; `""` is the location itself); an absolute path, `..`, `:`, a backslash,
 --- NUL or a name over 255 bytes is `invalid_input`, and a symbolic link inside it is never followed. A failure
 --- returns `nil, "files.<method>: <kind>: [<path>: ]<message>"` (no path when the path itself is refused), with
---- the kinds of `std:fs` (`app.files.errorKind` reads it). A write inside a `readOnly` tool raises.
+--- the kinds of `std:fs` (`app.files.errorKind` reads the kind, `app.files.errorMessage` what follows it). A write
+--- inside a `readOnly` tool raises.
 --- A call holds the app's turn until it ends. Scoped to the app by convention: not a sandbox.
 export type vos_Files = {
 	--- The whole file (binary-safe); at most 64 MiB (`too_large`). A directory is `is_directory`.
@@ -54,6 +55,10 @@ export type vos_FilesApi = {
 	temp: vos_Files,
 	--- The kind of an error a file call returned (`"not_found"`, `"already_exists"`, ...), or nil for anything else.
 	errorKind: (err: string?) -> string?,
+	--- The message of an error a file call returned: everything after the kind (`"notes/a.txt: ..."`: the path, when
+	--- the error is about one, then the wording), or nil for anything else. To show or log as it is; branch on
+	--- `errorKind`.
+	errorMessage: (err: string?) -> string?,
 }
 
 export type vos_ExecResult = { changes: number, last_insert_id: number }

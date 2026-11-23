@@ -23,7 +23,7 @@
 //! recursion that only fits a bigger stack is a stack overflow, which aborts the host, so it fails here.
 //!
 //! Not swept: `std:thread`, `std:net` and the network modules (`vnd:bollard`, `vnd:hyper`, `vnd:sqlx_*`, `vnd:testcontainers_modules`), which open
-//! sockets or spawn workers, `vnd:portable_pty` (it starts processes), `vnd:keyring` (its `store()` is the credential store of whoever runs the tests), `std:workers` (a process-wide Ctrl-C signal) and `std:task` (its sleeps are covered by `std/task.rs` tests). The sweep
+//! sockets or spawn workers, `std:process` and `vnd:portable_pty` (they start processes), `vnd:keyring` (its `store()` is the credential store of whoever runs the tests), `std:workers` (a process-wide Ctrl-C signal) and `std:task` (its sleeps are covered by `std/task.rs` tests). The sweep
 //! runs in a scratch working directory.
 
 use mlua::{AnyUserData, Function, Lua, MultiValue, Table, Value};
@@ -44,6 +44,7 @@ fn module_names() -> Vec<String> {
 const SKIPPED_MODULES: &[&str] = &[
     "std:thread",
     "std:net",
+    "std:process",
     "std:task",
     "std:workers",
     "vnd:bollard",

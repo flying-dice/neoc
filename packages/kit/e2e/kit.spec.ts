@@ -23,16 +23,20 @@ test('the kit runs in a sandboxed frame under the frame policy and answers the k
   expect(await page.evaluate(() => window.origin)).toBe('null') // the frame has an opaque origin
   const tags = await page.evaluate(() =>
     [
+      'ui-alert',
       'ui-banner',
       'ui-button',
       'ui-check',
       'ui-empty-state',
       'ui-icon',
       'ui-list',
+      'ui-picker',
       'ui-row',
       'ui-section',
       'ui-segmented',
       'ui-spinner',
+      'ui-split-view',
+      'ui-text-area',
       'ui-text-field',
       'ui-toggle'
     ].filter((tag) => !customElements.get(tag))
@@ -247,6 +251,8 @@ test('a colour or a variant from an app or an agent is data: it cannot add a dec
 test('with hit, every control has a hit area of at least 44 x 44 pt around the drawn control', async ({
   page
 }) => {
+  // tall enough that every control is on screen: the points are asked of the viewport
+  await page.setViewportSize({ width: 900, height: 1200 })
   await page.goto(`${origin}/frame`)
   await page.evaluate(async () => {
     const grid = document.createElement('div')
@@ -267,6 +273,8 @@ test('with hit, every control has a hit area of at least 44 x 44 pt around the d
     make('ui-check', 'h-check', { label: 'c', hit: '' })
     make('ui-segmented', 'h-seg', { label: 's', value: 'a', hit: '' })
     make('ui-text-field', 'h-field', { label: 'f', hit: '' })
+    make('ui-text-area', 'h-area', { label: 'a', rows: '1', hit: '' })
+    make('ui-picker', 'h-picker', { label: 'p', hit: '' })
     document.body.replaceChildren(grid)
     ;(document.querySelector('ui-segmented') as unknown as { options: unknown }).options = [
       { value: 'a', label: 'A' },
@@ -520,7 +528,9 @@ for (const hit of [false, true]) {
         ['ui-toggle', { label: 't' }, ''],
         ['ui-check', { label: 'c' }, ''],
         ['ui-segmented', { label: 's' }, ''],
-        ['ui-text-field', { label: 'f' }, '']
+        ['ui-text-field', { label: 'f' }, ''],
+        ['ui-text-area', { label: 'a' }, ''],
+        ['ui-picker', { label: 'p', value: 'A' }, '']
       ]
       const layouts: [string, string][] = [
         ['column', 'display:flex;flex-direction:column;align-items:stretch;width:300px'],
@@ -546,7 +556,7 @@ for (const hit of [false, true]) {
           if (layout === 'forced') el.style.cssText = 'display:inline-flex;width:260px;height:100px'
           const id = `${layout}-${tag}`
           el.dataset.testid = id
-          if (tag === 'ui-segmented')
+          if (tag === 'ui-segmented' || tag === 'ui-picker')
             (el as HTMLElement & { options: unknown }).options = ['A', 'B'].map((v) => ({
               value: v,
               label: v
@@ -561,6 +571,8 @@ for (const hit of [false, true]) {
       await Promise.all(
         items.map((i) => (i.el as unknown as { updateComplete: Promise<unknown> }).updateComplete)
       )
+      // the controls that fill the width they are given
+      const FIELDS = ['ui-text-field', 'ui-text-area', 'ui-picker']
       const out: { id: string; drawn: [number, number]; empty: [number, number][] }[] = []
       for (const { id, el } of items) {
         const host = el.getBoundingClientRect()
@@ -570,7 +582,11 @@ for (const hit of [false, true]) {
               ? '.group'
               : el.localName === 'ui-text-field'
                 ? 'input'
-                : 'button'
+                : el.localName === 'ui-text-area'
+                  ? 'textarea'
+                  : el.localName === 'ui-picker'
+                    ? 'select'
+                    : 'button'
           )!
           .getBoundingClientRect()
         // the drawn part: a segmented control's first segment, the control itself otherwise
@@ -581,7 +597,7 @@ for (const hit of [false, true]) {
         const cx = inner.left + inner.width / 2
         const cy = inner.top + inner.height / 2
         const halfW =
-          hit && el.localName !== 'ui-text-field' ? Math.max(inner.width, 44) / 2 : inner.width / 2
+          hit && !FIELDS.includes(el.localName) ? Math.max(inner.width, 44) / 2 : inner.width / 2
         const halfH = hit ? Math.max(inner.height, 44) / 2 : inner.height / 2
         const candidates: [number, number][] = [
           [cx + halfW + 8, cy],
@@ -654,7 +670,9 @@ for (const hit of [false, true]) {
         ['ui-toggle', 'change', { label: 't' }, ''],
         ['ui-check', 'change', { label: 'c' }, ''],
         ['ui-segmented', 'change', { label: 's' }, ''],
-        ['ui-text-field', 'focusin', { label: 'f' }, '']
+        ['ui-text-field', 'focusin', { label: 'f' }, ''],
+        ['ui-text-area', 'focusin', { label: 'a' }, ''],
+        ['ui-picker', 'focusin', { label: 'p', value: 'A' }, '']
       ]
       const layouts: [string, string][] = [
         ['inline', 'display:block'],
@@ -675,7 +693,7 @@ for (const hit of [false, true]) {
           el.textContent = text
           const id = `${layout}-${tag}`
           el.dataset.testid = id
-          if (tag === 'ui-segmented')
+          if (tag === 'ui-segmented' || tag === 'ui-picker')
             (el as HTMLElement & { options: unknown }).options = ['A', 'B'].map((v) => ({
               value: v,
               label: v
@@ -885,7 +903,9 @@ for (const way of [
         'ui-toggle',
         'ui-check',
         'ui-segmented',
-        'ui-text-field'
+        'ui-text-field',
+        'ui-text-area',
+        'ui-picker'
       ] as const
       const mk = (tag: string, attrs: Record<string, string> = {}, text = ''): HTMLElement => {
         const el = document.createElement(tag)
@@ -917,8 +937,8 @@ for (const way of [
           let control: HTMLElement
           if (kind === 'native') control = mk('button', { type: 'submit', ...off }, 'Go')
           else if (kind === 'ui-button') control = mk('ui-button', { type: 'submit', ...off }, 'Go')
-          else if (kind === 'ui-segmented') {
-            control = mk('ui-segmented', { label: 's', ...off })
+          else if (kind === 'ui-segmented' || kind === 'ui-picker') {
+            control = mk(kind, { label: 's', ...off })
             ;(control as HTMLElement & { options: unknown }).options = ['A', 'B'].map((v) => ({
               value: v,
               label: v
@@ -999,7 +1019,8 @@ for (const way of [
     const centre = (id: string): Promise<{ x: number; y: number }> =>
       page.evaluate((id) => {
         const el = document.getElementById(id)!
-        const inner = el.shadowRoot?.querySelector('button, input, .group, .face') ?? el
+        const inner =
+          el.shadowRoot?.querySelector('button, input, textarea, select, .group, .face') ?? el
         const r = inner.getBoundingClientRect()
         return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
       }, id)
@@ -1077,7 +1098,9 @@ for (const way of [
       // and it looks disabled
       const dim = await page.evaluate((id) => {
         const el = document.getElementById(id)!
-        const inner = el.shadowRoot?.querySelector<HTMLElement>('button, input, .segment') ?? el
+        const inner =
+          el.shadowRoot?.querySelector<HTMLElement>('button, input, textarea, select, .segment') ??
+          el
         const target =
           el.localName === 'ui-row' ? el.shadowRoot!.querySelector<HTMLElement>('.content')! : inner
         return Number(getComputedStyle(target).opacity)
@@ -1100,8 +1123,12 @@ const KINDS = [
   'ui-toggle',
   'ui-check',
   'ui-segmented',
-  'ui-text-field'
+  'ui-text-field',
+  'ui-text-area',
+  'ui-picker'
 ] as const
+/** The controls whose answer to a click is to take the focus (a field to type in, a picker whose menu is the system's). */
+const TAKES_FOCUS: readonly string[] = ['ui-text-field', 'ui-text-area', 'ui-picker']
 type Step =
   'property on' | 'property off' | 'attribute on' | 'attribute off' | 'fieldset on' | 'fieldset off'
 const ROUTES: { name: string; steps: Step[]; deadAfter: boolean[] }[] = [
@@ -1154,7 +1181,7 @@ test('a control disabled and enabled again, by its property, its attribute or a 
           } else {
             control = document.createElement(kind)
             control.setAttribute('label', kind)
-            if (kind === 'ui-segmented')
+            if (kind === 'ui-segmented' || kind === 'ui-picker')
               (control as HTMLElement & { options: unknown }).options = ['A', 'B'].map((v) => ({
                 value: v,
                 label: v
@@ -1205,7 +1232,7 @@ test('a control disabled and enabled again, by its property, its attribute or a 
                 ([...el.shadowRoot!.querySelectorAll('button')].find(
                   (b) => b.getAttribute('aria-checked') !== 'true'
                 ) as HTMLElement)
-              : (el.shadowRoot?.querySelector('button, input') ?? el)
+              : (el.shadowRoot?.querySelector('button, input, textarea, select') ?? el)
           const r = inner.getBoundingClientRect()
           return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
         })
@@ -1234,10 +1261,10 @@ test('a control disabled and enabled again, by its property, its attribute or a 
           const acts =
             kind === 'native' || kind === 'ui-button'
               ? 'submit'
-              : kind === 'ui-text-field'
+              : TAKES_FOCUS.includes(kind)
                 ? 'focusin'
                 : 'change'
-          if (!heard.includes('click') && kind !== 'ui-text-field' && kind !== 'ui-segmented')
+          if (!heard.includes('click') && !TAKES_FOCUS.includes(kind) && kind !== 'ui-segmented')
             wrong.push(`${where}: enabled again but heard no click (${JSON.stringify(heard)})`)
           if (!heard.includes(acts))
             wrong.push(`${where}: enabled again but did not act (${JSON.stringify(heard)})`)

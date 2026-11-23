@@ -1,7 +1,6 @@
 <!-- @organism NoteEditor — one note: when it was edited, its text to type in, and what can be done with it (pin, move to a folder, delete); a deleted note is only read, and can be recovered or deleted for good after an alert asks -->
 <script lang="ts">
   import type { Folder, Note } from 'app:rpc'
-  import ConfirmAlert from '../molecules/ConfirmAlert.svelte'
   import { moment } from '../lib/dates'
 
   interface Props {
@@ -63,14 +62,16 @@
       </ui-button>
     {:else if note}
       {#if folders.length > 1}
-        <label class="move">
-          <span>Folder</span>
-          <select value={note.folder} onchange={(e) => onmove(note, Number(e.currentTarget.value))} data-testid="notes-move">
-            {#each folders as folder (folder.id)}
-              <option value={folder.id}>{folder.name}</option>
-            {/each}
-          </select>
-        </label>
+        <div class="move">
+          <span aria-hidden="true">Folder</span>
+          <ui-picker
+            label="Folder"
+            value={String(note.folder)}
+            options={folders.map((folder) => ({ value: String(folder.id), label: folder.name }))}
+            onchange={(e) => onmove(note, Number(e.detail.value))}
+            data-testid="notes-move"
+          ></ui-picker>
+        </div>
       {/if}
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
       <ui-button
@@ -91,31 +92,35 @@
     {/if}
   </header>
   {#if note && confirming}
-    <ConfirmAlert
+    <ui-alert
+      open
+      destructive
+      action-label="Delete"
       heading="Delete this note for good?"
       message="It cannot be brought back."
-      testid="notes-confirm-purge"
+      data-testid="notes-confirm-purge"
       oncancel={() => (asking = null)}
       onconfirm={() => {
         asking = null
         onpurge(note)
       }}
-    />
+    ></ui-alert>
   {/if}
   {#if note}
     <p class="edited" data-testid="notes-edited">{note.deleted ? 'Deleted. Edited' : 'Edited'} {moment(note.edited)}</p>
-    <textarea
+    <ui-text-area
       class="text"
-      aria-label="Note"
+      variant="bare"
+      label="Note"
       placeholder={loaded && !note.deleted ? 'Start writing' : ''}
       maxlength={20000}
       readonly={note.deleted}
       disabled={!loaded}
       value={text}
-      oninput={(e) => onedit(e.currentTarget.value)}
+      oninput={(e) => onedit((e.currentTarget as unknown as { value: string }).value)}
       onblur={oncommit}
       data-testid="notes-text"
-    ></textarea>
+    ></ui-text-area>
   {:else}
     <div class="none">
       <ui-empty-state icon="doc" heading="No Note Selected" message="Pick a note, or start one." data-testid="notes-none"></ui-empty-state>
@@ -151,22 +156,8 @@
     font: var(--type-subheadline);
     color: var(--label-secondary);
   }
-  .move select {
-    box-sizing: border-box;
-    min-width: 0;
+  .move ui-picker {
     max-width: 160px;
-    min-height: 36px;
-    padding: 0 10px;
-    border: 0;
-    border-radius: var(--radius-md);
-    background: var(--fill-tertiary);
-    color: var(--label);
-    font: var(--type-body);
-  }
-  .move select:focus-visible,
-  .text:focus-visible {
-    outline: 2px solid var(--focus-ring);
-    outline-offset: -2px;
   }
   .edited {
     margin: 0;
@@ -175,21 +166,12 @@
     font: var(--type-footnote);
     color: var(--label-secondary);
   }
+  /* the note is the pane: it takes the room that is left, with the pane's own margins around the words */
   .text {
     flex: 1;
-    min-height: 0;
-    box-sizing: border-box;
-    width: 100%;
-    margin: 0;
-    padding: 12px 20px 20px;
-    border: 0;
-    resize: none;
-    background: transparent;
-    color: var(--label);
-    font: var(--type-body);
   }
-  .text::placeholder {
-    color: var(--label-secondary);
+  .text::part(input) {
+    padding: 12px 20px 20px;
   }
   .none {
     flex: 1;

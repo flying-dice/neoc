@@ -5,6 +5,7 @@
 -- changes the same data and tells the open window with `app.emit`.
 local app = require("vos:app")
 local rpc = require("../.app/rpc")
+local trim = require("lib:text").trim
 local task = require("std:task")
 local t = app.t
 local db = app.db
@@ -25,10 +26,6 @@ local function list(): { rpc.Task }
     table.insert(tasks, { id = row.id, title = row.title, done = row.done == 1 })
   end
   return tasks
-end
-
-local function trim(text: string): string
-  return string.match(text, "^%s*(.-)%s*$") :: string
 end
 
 -- `hang` waits until `release_all` (an agent's tool) lets it go: the journeys' stand-in for a handler that waits on something that never answers

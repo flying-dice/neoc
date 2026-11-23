@@ -2,7 +2,6 @@
 <script lang="ts">
   import type { Page } from 'app:rpc'
   import Composer from '../molecules/Composer.svelte'
-  import ConfirmAlert from '../molecules/ConfirmAlert.svelte'
   import type { Leaf } from '../lib/catalog'
   import { moment } from '../lib/dates'
   import type { PageDraft } from '../lib/projects.svelte'
@@ -72,16 +71,19 @@
     {/if}
   </header>
   {#if confirming}
-    <ConfirmAlert
+    <ui-alert
+      open
+      destructive
+      action-label="Delete"
       heading="Delete {page.title}?"
       message={subpages.length > 0 ? 'The pages under it are deleted with it.' : 'It cannot be brought back.'}
-      testid="projects-page-confirm"
+      data-testid="projects-page-confirm"
       oncancel={() => (asking = null)}
       onconfirm={() => {
         asking = null
         onremove(page)
       }}
-    />
+    ></ui-alert>
   {/if}
   {#if edit}
     <div class="writing">
@@ -95,14 +97,14 @@
         oninput={(e) => ontype({ title: (e.currentTarget as unknown as { value: string }).value })}
         data-testid="projects-page-title-field"
       ></ui-text-field>
-      <textarea
-        aria-label="Text"
+      <ui-text-area
+        label="Text"
         placeholder="Start writing"
         maxlength={20000}
         value={edit.body}
-        oninput={(e) => ontype({ body: e.currentTarget.value })}
+        oninput={(e) => ontype({ body: (e.currentTarget as unknown as { value: string }).value })}
         data-testid="projects-page-text"
-      ></textarea>
+      ></ui-text-area>
     </div>
   {:else}
     <div class="scroll">
@@ -226,25 +228,8 @@
     flex-direction: column;
     gap: 12px;
   }
-  textarea {
+  /* the text takes the room the title leaves */
+  ui-text-area {
     flex: 1;
-    min-height: 0;
-    box-sizing: border-box;
-    width: 100%;
-    margin: 0;
-    padding: 12px;
-    border: 0;
-    border-radius: var(--radius-md);
-    resize: none;
-    background: var(--fill-quaternary);
-    color: var(--label);
-    font: var(--type-body);
-  }
-  textarea::placeholder {
-    color: var(--label-secondary);
-  }
-  textarea:focus-visible {
-    outline: 2px solid var(--focus-ring);
-    outline-offset: -2px;
   }
 </style>

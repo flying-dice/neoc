@@ -19,7 +19,7 @@ toml = { version = "1.2", features = ["parse", "display"] }
 quick-xml = { version = "0.42", features = ["serialize"] }
 tracing = "0.1"
 tracing-core = "0.1"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "net", "io-util", "signal"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "net", "io-util", "signal", "process"] }
 # The engine is Luau, vendored by `luau0-src` (no `vendored` feature: Luau always builds from source). `luau-jit`
 # (native code generation) is deliberately off: it is marked experimental in mlua, sets process-global Luau
 # fast flags, and was not verified on the Windows cross target. NEOC-137 measured it up to 3.6 times faster on a tight
@@ -115,6 +115,9 @@ strsim = "0.11"
 heck = "0.5"
 unicode-width = "0.2"
 deunicode = "1"
+# The terminal escape-sequence parser (the one Alacritty runs on) behind `text.strip_ansi`. `strip-ansi-escapes` is
+# this parser with a writer that also drops tabs, which a log needs kept, so the parser is used directly.
+vte = "0.14"
 thiserror = "2"
 miette = { version = "7", features = ["fancy"] }
 futures = { version = "0.3", default-features = false, features = ["std"] }
@@ -228,6 +231,12 @@ unicode-normalization = "0.1"
 unicode-segmentation = "1"
 unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
 caseless = "0.2"
+
+# `std:process` kills the process group of a child on Unix (`kill_process_group`): a safe wrapper over `killpg`, where
+# this crate forbids `unsafe`. Already in the tree on every Unix (through tempfile), so this only names it and turns
+# on its `process` feature.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["process"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }

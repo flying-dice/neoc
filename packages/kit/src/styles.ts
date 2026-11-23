@@ -14,6 +14,10 @@ export const base = css`
   *::after {
     box-sizing: inherit;
   }
+  /* hidden is hidden: a component's own display would otherwise win over the browser's rule for the attribute */
+  :host([hidden]) {
+    display: none !important;
+  }
   :focus-visible {
     outline: 3px solid var(--focus-ring);
     outline-offset: 2px;

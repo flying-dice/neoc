@@ -1,6 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, waitFor } from 'storybook/test'
+  import { alertButton } from '@vos/storybook/kit'
   import AppWindow from '@vos/storybook/AppWindow.svelte'
   import definition from '../../openrpc.json'
   import TodosPage from './TodosPage.svelte'
@@ -203,7 +204,7 @@
     await show(canvas, userEvent, 'todos-list-2')
     await appears(canvas, 'todos-delete-list')
     await userEvent.click(canvas.getByTestId('todos-delete-list'))
-    await userEvent.click(canvas.getByTestId('todos-confirm-delete'))
+    await userEvent.click(alertButton(canvas.getByTestId('todos-confirm'), 'action'))
     await gone(canvas, 'todos-list-2')
     await counts(canvas, 'todos-smart-all', 4)
   }}

@@ -54,7 +54,7 @@ fn arm_watchdog(label: &str) {
                         "    \x1b[2mtimed out after {}s with no result\x1b[0m",
                         test_timeout().as_secs()
                     );
-                    std::process::exit(TIMEOUT_EXIT_CODE);
+                    crate::exit(TIMEOUT_EXIT_CODE);
                 }
             }
         });

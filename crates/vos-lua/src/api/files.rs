@@ -12,17 +12,19 @@
 //! docs:copy("notes", "backup")                     -- a file, or a whole tree to a new path
 //! docs:remove("backup", { recursive = true })
 //! if app.files.errorKind(err) == "not_found" then ... end
+//! print(app.files.errorMessage(err))               -- "notes/a.txt: ...", to show or log as it is
 //! ```
 //!
 //! A path is relative to its location, written with `/`; the rules are the use case's (`vos_application::Files`)
 //! and the adapter's (`crate::files`, which says how links and races are handled). A failure returns
 //! `nil, "files.<method>: <kind>: [<path>: ]<message>"` (no path when the path itself was refused, or for
-//! `unsupported`) with the kinds of `std:fs` (`errorKind` reads it); a wrong
+//! `unsupported`) with the kinds of `std:fs` (`errorKind` reads the kind and `errorMessage` what follows it); a wrong
 //! argument type, an unknown option, and a write inside a `readOnly` tool raise, as everywhere in
 //! `app.*`. A file call holds the app's turn while it runs (`Role::Vm`, like `app.db`): the app's other calls wait
 //! for it, and none of them sees it half done. It does not need `std:fs`: the host does the work.
 
 use super::{data::reject_unknown, vm_function, Sh};
+use neoc_vm::lua::error_text::ErrorText;
 use neoc_vm::mlua::{self, Lua, LuaString, Table, Value as LuaValue};
 use std::future::Future;
 use vos_application::Files;
@@ -37,6 +39,7 @@ pub(super) fn install(lua: &Lua, sh: &Sh, app: &Table) -> mlua::Result<()> {
         files.set(at.as_str(), location(lua, sh, at)?)?;
     }
     files.set("errorKind", lua.create_function(|_, err: LuaValue| Ok(error_kind(&err)))?)?;
+    files.set("errorMessage", lua.create_function(|_, err: LuaValue| Ok(error_message(&err)))?)?;
     app.set("files", files)
 }
 
@@ -205,9 +208,19 @@ fn info_table(lua: &Lua, info: &FileInfo) -> mlua::Result<Table> {
 
 /// The kind in an error a file call returned (`files.read: not_found: ...`), or `nil` for anything else.
 fn error_kind(err: &LuaValue) -> Option<&'static str> {
+    error_parts(err, |kind, _| kind.as_str())
+}
+
+/// The message in an error a file call returned: everything after the kind (`notes/a.txt: no such file`), or `nil`
+/// for anything else.
+fn error_message(err: &LuaValue) -> Option<String> {
+    error_parts(err, |_, message| message.to_owned())
+}
+
+/// Reads the kind and the message of one of our error strings; the shape is `neoc-vm`'s, read by its reader.
+fn error_parts<T>(err: &LuaValue, take: impl FnOnce(FileErrorKind, &str) -> T) -> Option<T> {
     let LuaValue::String(err) = err else { return None };
     let err = err.to_str().ok()?;
-    let (_method, rest) = err.strip_prefix("files.")?.split_once(": ")?;
-    let kind = rest.split_once(": ").map_or(rest, |(kind, _)| kind);
-    FileErrorKind::parse(kind).map(FileErrorKind::as_str)
+    let text = ErrorText::parse("files", &err)?;
+    Some(take(FileErrorKind::parse(text.kind)?, text.message))
 }

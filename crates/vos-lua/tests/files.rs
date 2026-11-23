@@ -292,6 +292,17 @@ async fn errors_are_values_with_a_stable_kind_and_misuse_raises() {
             root_kind = app.files.errorKind(root_write),
             foreign = app.files.errorKind("fs.read: not_found: x: y"),
             not_text = app.files.errorKind(42),
+            missing_message = app.files.errorMessage(missing),
+            bad = bad,
+            -- the method name is not judged: a string in the shape with a known kind is read
+            odd_kind = app.files.errorKind("files.: not_found: x"),
+            odd_message = app.files.errorMessage("files.: not_found: x"),
+            bad_message = app.files.errorMessage(bad),
+            others_have_no_message = app.files.errorMessage("fs.read: not_found: x: y") == nil
+              and app.files.errorMessage("files.read: nonsense: x") == nil
+              and app.files.errorMessage("not_found: x") == nil
+              and app.files.errorMessage(42) == nil
+              and app.files.errorMessage(nil) == nil,
             bad_option = tostring(select(2, pcall(function() return docs:remove("x", { recrusive = true }) end))),
             bad_type = (pcall(function() return docs:read({} :: any) end)),
           }
@@ -306,6 +317,14 @@ async fn errors_are_values_with_a_stable_kind_and_misuse_raises() {
     );
     assert_eq!(out["foreign"], Value::Null, "only a files error has a files kind");
     assert_eq!(out["not_text"], Value::Null);
+    let missing = out["missing"].as_str().unwrap();
+    assert_eq!(out["missing_message"].as_str(), missing.strip_prefix("files.read: not_found: "), "{out}");
+    assert!(out["missing_message"].as_str().unwrap().starts_with("nope.txt: "), "{out}");
+    assert_eq!((&out["odd_kind"], &out["odd_message"]), (&json!("not_found"), &json!("x")), "{out}");
+    let bad = out["bad"].as_str().unwrap();
+    assert_eq!(out["bad_message"].as_str(), bad.strip_prefix("files.read: invalid_input: "), "{out}");
+    assert!(out["bad_message"].as_str().is_some_and(|m| !m.is_empty()), "{out}");
+    assert_eq!(out["others_have_no_message"], true, "only a files error has a files message: {out}");
     assert!(out["bad_option"].as_str().unwrap().contains("unknown option `recrusive`"), "{out}");
     assert_eq!(out["bad_type"], false, "a table is not a path: {out}");
 }

@@ -1,6 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
+  import { textArea } from '@vos/storybook/kit'
   import PageView from './PageView.svelte'
   import type { Page } from 'app:rpc'
   import { tree, type Leaf } from '../lib/catalog'
@@ -81,7 +82,7 @@
   name="Rewriting"
   args={{ edit: { title: 'Design', body: BODIES[1] } }}
   play={async ({ canvas, userEvent }) => {
-    await expect(canvas.getByTestId('projects-page-text')).toHaveValue(BODIES[1])
+    await expect(textArea(canvas.getByTestId('projects-page-text'))).toHaveValue(BODIES[1])
     await userEvent.click(canvas.getByTestId('projects-page-done'))
     await expect(onsave).toHaveBeenCalled()
   }}

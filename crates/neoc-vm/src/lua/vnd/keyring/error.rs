@@ -10,6 +10,8 @@ use std::fmt;
 
 use keyring_core::Error;
 
+use crate::lua::error_text;
+
 /// What went wrong. The names are the contract (`keyring.error_kind`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Kind {
@@ -163,17 +165,18 @@ impl std::error::Error for KeyringError {}
 /// The kind name inside an error string a `vnd:keyring` function returned (`keyring.store: no_store: ...`), or
 /// `None` when the text is not one of ours.
 pub(super) fn kind_of(err: &str) -> Option<&'static str> {
-    let rest = err.strip_prefix("keyring.")?;
-    let (function, rest) = rest.split_once(": ")?;
-    if function.is_empty()
-        || !function
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b == b'_')
-    {
-        return None;
-    }
-    let name = rest.split_once(": ").map_or(rest, |(name, _)| name);
-    Kind::parse(name).map(Kind::as_str)
+    read(err).map(|(kind, _)| kind.as_str())
+}
+
+/// The message inside an error string a `vnd:keyring` function returned: everything after the kind. `None` when the
+/// text is not one of ours.
+pub(super) fn message_of(err: &str) -> Option<&str> {
+    read(err).map(|(_, message)| message)
+}
+
+/// The kind and the message of one of our error strings; the shape is [`error_text`]'s.
+fn read(err: &str) -> Option<(Kind, &str)> {
+    error_text::read("keyring", err, Kind::parse)
 }
 
 #[cfg(test)]
@@ -250,5 +253,18 @@ mod tests {
         assert_eq!(malformed.kind(), Kind::BadData);
         assert!(!malformed.to_string().contains("hunter2"));
         assert!(malformed.to_string().contains("bad padding"));
+    }
+
+    #[test]
+    fn message_of_reads_our_strings_only() {
+        assert_eq!(
+            message_of("keyring.get_password: bad_encoding: the secret is not UTF-8 text: x"),
+            Some("the secret is not UTF-8 text: x")
+        );
+        assert_eq!(message_of("keyring.get_password: bad_encoding"), Some(""));
+        assert_eq!(message_of("keyring.store: nonsense: x"), None);
+        assert_eq!(message_of("bollard.ping: connect: x"), None);
+        assert_eq!(message_of("the secret is not UTF-8 text: x"), None);
+        assert_eq!(message_of(""), None);
     }
 }

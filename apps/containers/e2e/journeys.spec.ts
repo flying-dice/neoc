@@ -153,14 +153,14 @@ test.describe('Containers journeys', () => {
     await expect(part(page, 'inspector-confirm')).toHaveCount(0)
     expect(docker.container('pihole')?.running).toBe(true)
     await part(page, 'inspector-remove').click()
-    await part(page, 'inspector-confirm-ok').click()
+    await part(page, 'inspector-confirm-confirm').click()
     await expect(part(page, 'items')).toBeVisible()
     await expect(row(page, 'pihole')).toHaveCount(0)
     expect(docker.container('pihole')).toBeUndefined()
 
     await part(page, 'stack-blog').click()
     await part(page, 'stack-remove').click()
-    await part(page, 'stack-confirm-ok').click()
+    await part(page, 'stack-confirm-confirm').click()
     await expect(part(page, 'stack-blog')).toHaveCount(0)
     // what was shown is gone: every container is shown instead
     await expect(part(page, 'title')).toHaveText('All Containers')
@@ -210,7 +210,7 @@ test.describe('Containers journeys', () => {
     expect(Math.round(win.width), 'the minimum width of the contract').toBe(440)
     expect(Math.round(win.height), 'the minimum height of the contract').toBe(420)
     await expectNoOverflow(page.getByTestId(`window-${ID}-content`))
-    // below 680 wide the stacks and the containers are one column each: the stacks first
+    // under 700 wide (the kit's split view) the stacks and the containers are one column each: the stacks first
     await expect(part(page, 'stack-blog')).toBeVisible()
     await expect(row(page, 'pihole')).toBeHidden()
     await part(page, 'stack-blog').click()

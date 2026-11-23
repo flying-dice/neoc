@@ -8,6 +8,8 @@
 
 use std::fmt;
 
+use crate::lua::error_text;
+
 /// What went wrong. The names are the contract (`portable_pty.error_kind`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Kind {
@@ -72,11 +74,6 @@ impl PtyError {
     pub(super) fn closed() -> Self {
         Self::new(Kind::Closed, "the terminal is closed")
     }
-
-    #[cfg(test)]
-    pub(super) fn kind(&self) -> Kind {
-        self.kind
-    }
 }
 
 impl fmt::Display for PtyError {
@@ -90,17 +87,18 @@ impl std::error::Error for PtyError {}
 /// The kind name inside an error string a `vnd:portable_pty` function returned
 /// (`portable_pty.write: closed: ...`), or `None` when the text is not one of ours.
 pub(super) fn kind_of(err: &str) -> Option<&'static str> {
-    let rest = err.strip_prefix("portable_pty.")?;
-    let (function, rest) = rest.split_once(": ")?;
-    if function.is_empty()
-        || !function
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b == b'_')
-    {
-        return None;
-    }
-    let name = rest.split_once(": ").map_or(rest, |(name, _)| name);
-    Kind::parse(name).map(Kind::as_str)
+    read(err).map(|(kind, _)| kind.as_str())
+}
+
+/// The message inside an error string a `vnd:portable_pty` function returned: everything after the kind. `None`
+/// when the text is not one of ours.
+pub(super) fn message_of(err: &str) -> Option<&str> {
+    read(err).map(|(_, message)| message)
+}
+
+/// The kind and the message of one of our error strings; the shape is [`error_text`]'s.
+fn read(err: &str) -> Option<(Kind, &str)> {
+    error_text::read("portable_pty", err, Kind::parse)
 }
 
 #[cfg(test)]
@@ -135,5 +133,18 @@ mod tests {
         assert_eq!(kind_of("portable_pty.: closed: x"), None);
         assert_eq!(kind_of("portable_pty.Write: closed: x"), None);
         assert_eq!(kind_of(""), None);
+    }
+
+    #[test]
+    fn message_of_reads_our_strings_only() {
+        assert_eq!(
+            message_of("portable_pty.spawn_command: spawn: Unable to spawn nosuch: because"),
+            Some("Unable to spawn nosuch: because")
+        );
+        assert_eq!(message_of("portable_pty.spawn_command: spawn"), Some(""));
+        assert_eq!(message_of("portable_pty.write: nonsense: x"), None);
+        assert_eq!(message_of("bollard.ping: closed: x"), None);
+        assert_eq!(message_of("Unable to spawn nosuch: because"), None);
+        assert_eq!(message_of(""), None);
     }
 }
