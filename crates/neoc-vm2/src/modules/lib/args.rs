@@ -38,48 +38,6 @@ const POSITIONAL_ID: &str = "__positional";
 const REST_ID: &str = "__rest";
 const RESERVED_FLAG_NAMES: &[&str] = &["help", POSITIONAL_ID, REST_ID];
 
-/// A list of flags, strictly: a table with named keys is refused. Read as a plain `Vec`, such a table (the map form
-/// `flags = { verbose = { ... } }` that neoc-vm took) would be an empty list, and its flags silently not there.
-fn flag_list<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Vec<Flag>>, D::Error> {
-    struct FlagList;
-
-    impl<'de> serde::de::Visitor<'de> for FlagList {
-        type Value = Option<Vec<Flag>>;
-
-        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            formatter.write_str("a list of flags")
-        }
-
-        fn visit_unit<E>(self) -> Result<Self::Value, E> {
-            Ok(None)
-        }
-
-        fn visit_none<E>(self) -> Result<Self::Value, E> {
-            Ok(None)
-        }
-
-        fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-            let mut flags = Vec::new();
-            while let Some(flag) = seq.next_element()? {
-                flags.push(flag);
-            }
-            Ok(Some(flags))
-        }
-
-        fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
-            // an empty table is an empty list
-            match map.next_key::<serde::de::IgnoredAny>()? {
-                None => Ok(Some(Vec::new())),
-                Some(_) => Err(serde::de::Error::custom(
-                    "flags are a list of `{ name = ..., type = ... }`, not a table keyed by name",
-                )),
-            }
-        }
-    }
-
-    deserializer.deserialize_any(FlagList)
-}
-
 impl Flag {
     fn name(&self) -> &str {
         match self {
@@ -428,7 +386,6 @@ pub mod args {
         /// What the help says of it.
         pub description: Option<String>,
         /// Its flags, in the order the help shows them.
-        #[serde(default, deserialize_with = "super::flag_list")]
         pub flags: Option<Vec<Flag>>,
     }
 
@@ -441,7 +398,6 @@ pub mod args {
         /// What the help says the program does.
         pub description: Option<String>,
         /// The flags, in the order the help shows them.
-        #[serde(default, deserialize_with = "super::flag_list")]
         pub flags: Option<Vec<Flag>>,
         /// The subcommands by name. With any, one of them must be given, and the positional arguments are the
         /// subcommand's.
@@ -876,6 +832,13 @@ mod tests {
             let err = lua.load(format!("return args.help({config})")).eval::<Value>().expect_err(config).to_string();
             assert!(err.contains("lib:args.help: argument #1 'config'"), "{config}: {err}");
         }
+        // the map form neoc-vm took: read as a plain list it would be no flags at all
+        let err = lua
+            .load(r#"return args.parse({}, { name = "t", flags = { verbose = { type = "boolean" } } })"#)
+            .eval::<Value>()
+            .expect_err("flags keyed by name")
+            .to_string();
+        assert!(err.contains("flags: a list has only the keys 1, 2, 3, ...; found the key `verbose`"), "{err}");
         let err = lua
             .load(r#"return args.parse({ "a", 5 }, { name = "t" })"#)
             .eval::<Value>()
