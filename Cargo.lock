@@ -3511,6 +3511,7 @@ dependencies = [
  "heck",
  "hex",
  "hmac",
+ "jiff 1.0.1",
  "jsonschema",
  "md-5",
  "mime_guess",

@@ -73,6 +73,8 @@ notify = "9.0"
 # `std:fs` stages a cross-device move beside its destination; `lib:tempfile` is this crate.
 tempfile = "3"
 globset = "0.4"
+# `lib:chrono`: civil dates, IANA zones, RFC 3339 and strftime (the default features bundle the tzdb on Windows).
+jiff = "1.0"
 
 # `std:process` kills a process's whole group.
 [target.'cfg(unix)'.dependencies]
