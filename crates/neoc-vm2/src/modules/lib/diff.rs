@@ -212,10 +212,10 @@ pub mod diff {
     #[serde(tag = "kind", rename_all = "snake_case")]
     pub enum ApplyError {
         /// The patch is not a unified diff (what `parse_unified` would say).
-        #[error("malformed patch: {message}")]
+        #[error("malformed patch: {reason}")]
         MalformedPatch {
             /// `parse_unified`'s explanation.
-            message: String,
+            reason: String,
         },
         /// A hunk starts after the end of the text.
         #[error("hunk {hunk} starts past end of original (line {line} of {total} total)")]
@@ -614,7 +614,7 @@ pub mod diff {
     /// assert(err ~= nil and err.kind == "mismatch" and err.hunk == 1)
     /// ```
     pub fn apply(original: String, patch: String) -> Result<String, ApplyError> {
-        let parsed = parse(&patch).map_err(|e| ApplyError::MalformedPatch { message: e.to_string() })?;
+        let parsed = parse(&patch).map_err(|e| ApplyError::MalformedPatch { reason: e.to_string() })?;
         let lines: Vec<&str> = original.split_inclusive('\n').collect();
         apply_hunks(&lines, &parsed.hunks)
     }
@@ -1042,7 +1042,7 @@ mod tests {
     #[test]
     fn apply_a_malformed_patch() {
         let (kind, message, text): (String, String, String) = eval(
-            r#"local _, e = diff.apply("a\n", "this isn't a patch\n") return e.kind, e.message, tostring(e)"#,
+            r#"local _, e = diff.apply("a\n", "this isn't a patch\n") return e.kind, e.reason, tostring(e)"#,
         );
         assert_eq!(kind, "malformed_patch");
         assert!(message.contains("not a unified diff"), "{message}");

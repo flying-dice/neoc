@@ -43,7 +43,7 @@ assert(failure(patch_text, "alpha\n").kind == "overrun")
 assert(failure("--- a\n+++ b\n@@ -9,1 +9,1 @@\n-x\n+y\n").kind == "starts_past_end")
 assert(failure("--- a\n+++ b\n@@ -3,1 +3,1 @@\n-c\n+C\n@@ -1,1 +1,1 @@\n-a\n+A\n", "a\nb\nc\n").kind == "out_of_order")
 local malformed = failure("this isn't a patch\n")
-assert(malformed.kind == "malformed_patch" and malformed.message:find("not a unified diff", 1, true))
+assert(malformed.kind == "malformed_patch" and malformed.reason:find("not a unified diff", 1, true))
 
 local _, reconstruct = diff.apply_changes("alpha\n", { { op = "equal", value = "wrong\n" } })
 assert(reconstruct.kind == "does_not_reconstruct" and reconstruct.got == 6 and reconstruct.expected == 6)

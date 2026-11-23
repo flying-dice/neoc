@@ -33,10 +33,10 @@ pub mod regex {
     #[serde(tag = "kind", rename_all = "snake_case")]
     pub enum RegexError {
         /// The pattern is not valid regex syntax (an unclosed group, an unsupported lookaround, ...).
-        #[error("{message}")]
+        #[error("{reason}")]
         Syntax {
             /// The compiler's explanation, with the place in the pattern.
-            message: String,
+            reason: String,
         },
         /// The compiled pattern would be larger than the compiler's size limit.
         #[error("the compiled pattern exceeds the size limit of {limit} bytes")]
@@ -50,7 +50,7 @@ pub mod regex {
         fn from(e: regex::Error) -> Self {
             match e {
                 regex::Error::CompiledTooBig(limit) => RegexError::TooBig { limit: limit as u64 },
-                other => RegexError::Syntax { message: other.to_string() },
+                other => RegexError::Syntax { reason: other.to_string() },
             }
         }
     }
