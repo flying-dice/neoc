@@ -299,6 +299,15 @@ async fn what_is_not_a_command_is_refused_before_anything_starts() {
         assert(portable_pty.error_kind(nil) == nil)
         assert(portable_pty.error_kind("fs.read: not_found: x") == nil)
         assert(portable_pty.error_kind("\255\254") == nil)
+
+        local _, err = portable_pty.spawn_command({ rows = 0 })
+        local message = assert(portable_pty.error_message(err), tostring(err))
+        assert(message ~= "" and err == "portable_pty.spawn_command: invalid_input: " .. message, err)
+        assert(portable_pty.error_message("portable_pty.write: closed") == "")
+        assert(portable_pty.error_message("portable_pty.write: nonsense: x") == nil)
+        assert(portable_pty.error_message(nil) == nil)
+        assert(portable_pty.error_message("fs.read: not_found: x") == nil)
+        assert(portable_pty.error_message("\255\254") == nil)
     "#)
     .await;
 }

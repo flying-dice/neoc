@@ -107,7 +107,7 @@ local rmdir_ok, rmdir_err = fs.remove_dir("/tmp/empty")
 print(present, linked, target, resolved, unlinked, rmdir_ok, rmdir_err)
 local copied, copy_err = fs.copy("/tmp/x", "/tmp/y")
 if copy_err ~= nil then
-	print(copied, fs.error_kind(copy_err) == "not_found", copy_err)
+	print(copied, fs.error_kind(copy_err) == "not_found", (fs.error_message(copy_err) or copy_err):upper())
 end
 local bytes: number? = fs.copy_dir("/tmp/tree", "/tmp/tree2")
 local removed = fs.remove_dir_all("/tmp/tree2", { missing_ok = true })
@@ -246,6 +246,8 @@ if fetched then
 	print(fetched.status + 1, fetched.body:upper(), fetched.headers["content-type"], fetched.url:lower())
 elseif hyper.error_kind(fetch_err) == "timed_out" then
 	print("the server is not answering")
+else
+	print((hyper.error_message(fetch_err) or "it did not say why"):upper())
 end
 print(hyper.get("http://127.0.0.1:1/", { follow_redirects = false }))
 print(hyper.post({ url = "http://127.0.0.1:1/", body = buffer.create(4), headers = { ["Content-Type"] = "application/octet-stream" } }))
@@ -258,6 +260,8 @@ if containers then
 	print(containers[1].Names[1])
 elseif bollard.error_kind(list_err) == "connect" then
 	print("Docker is not running")
+else
+	print((bollard.error_message(list_err) or "Docker did not say why"):upper())
 end
 print(docker:create_container({ name = "web", Image = "nginx", HostConfig = { RestartPolicy = { Name = "always" } } }))
 print(docker:stop_container("web", { timeout = 5 }), docker:remove_container("web", { force = true, volumes = true }))
@@ -286,7 +290,7 @@ if shell then
 	end
 	shell:close()
 elseif portable_pty.error_kind(spawn_err) == "spawn" then
-	print("the shell could not be started")
+	print("the shell could not be started: " .. (portable_pty.error_message(spawn_err) or ""))
 end
 print(portable_pty.spawn_command({ program = "ls", args = { "-l" }, cwd = "/tmp" }))
 
@@ -305,7 +309,7 @@ if found then
 	print(#found, found[1]:get_secret())
 end
 local system_store, store_err = keyring.store()
-print(system_store, keyring.error_kind(store_err) == "no_store")
+print(system_store, keyring.error_kind(store_err) == "no_store", (keyring.error_message(store_err) or ""):upper())
 
 -- the SQL parameters of the network databases are trailing arguments too
 local function network_databases(

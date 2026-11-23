@@ -351,6 +351,24 @@ describe("hyper", function()
         end)
     end)
 
+    describe("error_message", function()
+        test("is what follows the kind", function()
+            local resp, err = hyper.get("ftp://example.com/")
+            expect(resp).toBeNil()
+            local message = hyper.error_message(err)
+            expect(message ~= "").toBe(true)
+            expect(err).toBe("hyper.get: invalid_url: " .. message)
+            expect(hyper.error_message("hyper.get: timed_out: no data: for 60s")).toBe("no data: for 60s")
+        end)
+
+        test("a string that is not ours has no message", function()
+            expect(hyper.error_message("fs.read: not_found: x")).toBeNil()
+            expect(hyper.error_message("nonsense")).toBeNil()
+            expect(hyper.error_message("hyper.get: not_a_kind: x")).toBeNil()
+            expect(hyper.error_message(nil)).toBeNil()
+        end)
+    end)
+
     -- redirects ---------------------------------------------------------------
 
     describe("redirects", function()
