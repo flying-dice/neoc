@@ -9,7 +9,8 @@
  *     reaches host internals (crates/); the one exception is the types generated from the Rust schema
  *     (types/generated), which the shell's protocol.ts re-exports. Test support may reach the repo's e2e/.
  *  2. The UI kit imports no other @vos package; the client imports only @vos/ui (and, in stories,
- *     @vos/storybook).
+ *     @vos/storybook; a Storybook may define the app kit's elements from @vos/kit, and an app's journeys may run
+ *     against @vos/docker/fake-docker).
  *  3. Browser code (client/src, packages/ui/src) imports no Node or Bun builtins.
  *  4. Client <-> host traffic is JSON-RPC over /rpc: `new WebSocket` only in the shell's transport.
  *  5. No {@html}, innerHTML, outerHTML, insertAdjacentHTML, document.write or Lit's unsafeHTML/unsafeSVG: agent and tool
@@ -170,8 +171,15 @@ function checkVosImport(rel: string, imp: Import, test: boolean): void {
   const kit = matches(spec, ['@vos/ui', '@vos/ui/*'])
   const storybook = test && matches(spec, ['@vos/storybook', '@vos/storybook/*'])
   if (/^packages\/(ui|kit)\/src\//.test(rel) && !test) return report(rel, imp.line, `the UI kit depends on no other @vos package ('${spec}')`)
-  if (!kit && !storybook && !rel.startsWith('packages/storybook/'))
-    report(rel, imp.line, `'${spec}' is not importable here: the client uses only @vos/ui (stories also @vos/storybook)`)
+  // a Storybook of parts made of the app kit's elements defines them from the kit; a journey of an app that runs on
+  // Docker runs against the container framework's fake
+  const support = test && (spec === '@vos/kit' || spec === '@vos/docker/fake-docker')
+  if (!kit && !storybook && !support && !rel.startsWith('packages/storybook/'))
+    report(
+      rel,
+      imp.line,
+      `'${spec}' is not importable here: the client uses only @vos/ui (stories also @vos/storybook and @vos/kit, journeys also @vos/docker/fake-docker)`
+    )
 }
 
 function checkImport(rel: string, imp: Import, abs: string): void {

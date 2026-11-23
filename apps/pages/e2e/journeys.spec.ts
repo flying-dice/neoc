@@ -1,7 +1,7 @@
 /**
  * Pages key user journeys, end to end: the real shell, the real host, the app's own client in a frame of its window,
  * and its Luau backend, which makes the server's container through `vnd:bollard`. The Docker it reaches is the
- * journeys' own (`./fakeDocker.ts`: the Engine API in this process), which every test first points the app at as a
+ * journeys' own (`@vos/docker/fake-docker`: the Engine API in this process), which every test first points the app at as a
  * person would, in the app's address field. So the journeys need no Docker, no web server and no folders, and what
  * they look at is what this app is for: the container it asks Docker for, whose configuration, ports and folders are
  * the sites.
@@ -12,7 +12,7 @@
 import type { FrameLocator, Locator, Page } from '@playwright/test'
 import { expect, expectNoOverflow, frameOf, openDesktop, openFromHome, resizeWindow, test, windowOf } from '../../../e2e/fixtures'
 import { callTool } from '../../../e2e/host/pair'
-import { startFakeDocker, type FakeDocker } from './fakeDocker'
+import { startFakeDocker, type FakeDocker } from '@vos/docker/fake-docker'
 
 const ID = 'pages'
 const IMAGE = 'nginx:1.30.0-alpine'
@@ -27,14 +27,16 @@ const of = (page: Page, name: string, what: string): Locator =>
   rows(page)
     .filter({ has: page.locator('[data-testid$="-name"]', { hasText: name }) })
     .locator(`[data-testid$="-${what}"]`)
-const config = (): string => docker.sidecar()?.config ?? ''
+const NAME = 'vos-pages'
+/** nginx's configuration, as the container's environment carries it. */
+const config = (): string => (docker.container(NAME)?.env.find((variable) => variable.startsWith('VOS_NGINX_CONF=')) ?? '').slice('VOS_NGINX_CONF='.length)
 
 test.describe.configure({ mode: 'serial' })
 
 let docker: FakeDocker
 
 test.beforeAll(async () => {
-  docker = await startFakeDocker()
+  docker = await startFakeDocker({ startLog: ['nginx/1.30.0', 'start worker processes'] })
 })
 
 test.beforeEach(() => docker.reset())
@@ -108,21 +110,21 @@ test.describe('Pages journeys', () => {
     // the container is the server: nginx, given its whole configuration, the site's port published and its folder only read
     expect(docker.pulled(), 'the image is pulled once, when Docker does not have it').toEqual([IMAGE])
     expect(docker.count()).toBe(1)
-    const made = docker.sidecar()!
+    const made = docker.container(NAME)!
     expect(made).toMatchObject({ name: 'vos-pages', image: IMAGE, ports: { '8081/tcp': '8081' }, restart: 'unless-stopped', running: true })
     expect(made.entrypoint.join(' ')).toContain('/etc/nginx/nginx.conf')
     expect(made.mounts).toHaveLength(1)
     expect(made.mounts[0]).toMatchObject({ source: '/srv/sites/blog', readOnly: true })
-    expect(made.config).toContain('listen 8081;')
-    expect(made.config).toContain(`root ${made.mounts[0]!.target};`)
-    expect(made.config, 'no site has a name: nothing listens on the shared port').not.toContain('default_server')
+    expect(config()).toContain('listen 8081;')
+    expect(config()).toContain(`root ${made.mounts[0]!.target};`)
+    expect(config(), 'no site has a name: nothing listens on the shared port').not.toContain('default_server')
   })
 
   test('PG2: a site with names is served on the shared port, and a change or a removal is the container made again', async ({ page }) => {
     await openPages(page)
     await add(page, { name: 'Blog', folder: '/srv/sites/blog', port: '8081', hostnames: 'Blog.Home, www.blog.home' })
     await expect(part(page, 'state')).toHaveText('Serving 1 site')
-    await expect.poll(() => docker.sidecar()?.ports).toEqual({ '80/tcp': '80', '8081/tcp': '8081' })
+    await expect.poll(() => docker.container(NAME)?.ports).toEqual({ '80/tcp': '80', '8081/tcp': '8081' })
     expect(config()).toContain('server_name blog.home www.blog.home;')
     // a name that is nobody's is not answered with the first site
     expect(config()).toContain('listen 80 default_server;')
@@ -134,7 +136,7 @@ test.describe('Pages journeys', () => {
     await expect.poll(config).toContain('server_name wiki.home;')
     expect(docker.count(), 'made again, not made twice').toBe(1)
     expect(docker.pulled(), 'the image is there already').toEqual([IMAGE])
-    expect(docker.sidecar()?.mounts.map((mount) => mount.source)).toEqual(['/srv/sites/blog', '/srv/sites/wiki'])
+    expect(docker.container(NAME)?.mounts.map((mount) => mount.source)).toEqual(['/srv/sites/blog', '/srv/sites/wiki'])
 
     // the Blog moves to another port and drops a name
     await of(page, 'Blog', 'edit').click()
@@ -142,13 +144,13 @@ test.describe('Pages journeys', () => {
     await field(page, 'site-port').fill('9090')
     await field(page, 'site-hostnames').fill('blog.home')
     await part(page, 'site-save').click()
-    await expect.poll(() => docker.sidecar()?.ports).toEqual({ '80/tcp': '80', '9090/tcp': '9090' })
+    await expect.poll(() => docker.container(NAME)?.ports).toEqual({ '80/tcp': '80', '9090/tcp': '9090' })
     expect(config()).not.toContain('www.blog.home')
 
     await of(page, 'Wiki', 'remove').click()
     await expect(names(page)).toHaveText(['Blog'])
     await expect.poll(config).not.toContain('wiki.home')
-    expect(docker.sidecar()?.running).toBe(true)
+    expect(docker.container(NAME)?.running).toBe(true)
   })
 
   test('PG3: a site that cannot be is refused in words, and nothing changes', async ({ page }) => {
@@ -195,7 +197,7 @@ test.describe('Pages journeys', () => {
     await part(page, 'apply').click()
     await expect(part(page, 'state')).toHaveText('Serving 1 site')
     await expect(part(page, 'attention')).toHaveCount(0)
-    expect(docker.sidecar()?.running).toBe(true)
+    expect(docker.container(NAME)?.running).toBe(true)
   })
 
   test('PG5: the shared port is the one Docker publishes for the sites with names', async ({ page }) => {
@@ -207,7 +209,7 @@ test.describe('Pages journeys', () => {
     await expect(field(page, 'port')).toHaveValue('80')
     await field(page, 'port').fill('8080')
     await part(page, 'settings-save').click()
-    await expect.poll(() => docker.sidecar()?.ports).toEqual({ '8080/tcp': '8080', '8081/tcp': '8081' })
+    await expect.poll(() => docker.container(NAME)?.ports).toEqual({ '8080/tcp': '8080', '8081/tcp': '8081' })
     expect(config()).toContain('listen 8080 default_server;')
     await part(page, 'tab-sites').click()
     await expect(of(page, 'Blog', 'open-1')).toHaveText('blog.home:8080')
@@ -223,7 +225,7 @@ test.describe('Pages journeys', () => {
     await field(page, 'port').fill('80')
     await part(page, 'settings-save').click()
     await expect(part(page, 'failure')).toHaveCount(0)
-    await expect.poll(() => docker.sidecar()?.ports).toEqual({ '80/tcp': '80', '8081/tcp': '8081' })
+    await expect.poll(() => docker.container(NAME)?.ports).toEqual({ '80/tcp': '80', '8081/tcp': '8081' })
   })
 
   test('PG6: a server that stops behind the app is seen with no input, and its log is read as it is written', async ({ page }) => {
@@ -232,10 +234,10 @@ test.describe('Pages journeys', () => {
     await expect(part(page, 'state')).toHaveText('Serving 1 site')
     await part(page, 'tab-log').click()
     await expect(part(page, 'log')).toContainText('start worker processes')
-    docker.write('192.168.1.7 - - "GET /index.html HTTP/1.1" 200 2143')
+    docker.write(NAME, '192.168.1.7 - - "GET /index.html HTTP/1.1" 200 2143')
     await expect(part(page, 'log')).toContainText('GET /index.html')
 
-    docker.stop()
+    docker.stop(NAME)
     await expect(part(page, 'state')).toHaveText('Not running')
     await expect(part(page, 'attention')).toContainText('Its container stopped')
     await part(page, 'apply').click()
@@ -281,7 +283,7 @@ test.describe('Pages journeys', () => {
     await of(page, 'Blog', 'enabled').click()
     await expect(part(page, 'state')).toHaveText('Serving 1 site')
     expect(config()).toContain('server_name blog.home;')
-    expect(docker.sidecar()?.ports).toEqual({ '80/tcp': '80', '8081/tcp': '8081' })
+    expect(docker.container(NAME)?.ports).toEqual({ '80/tcp': '80', '8081/tcp': '8081' })
   })
 
   test('PG8b: on this machine\'s own Docker a site whose folder is not there says so, and one whose folder is does not', async ({ page }) => {

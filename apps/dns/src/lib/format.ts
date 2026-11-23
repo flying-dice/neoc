@@ -1,7 +1,5 @@
 import type { Server, Settings } from 'app:rpc'
-
-/** How the server reads at a glance: answering, off, in between, or wanted on and not answering. */
-export type Tone = 'on' | 'off' | 'busy' | 'bad'
+import type { Tone } from '@vos/docker'
 
 /** The server answers, with the settings and the names as they stand. */
 export const isServing = (server: Server): boolean => server.state === 'running' && server.current

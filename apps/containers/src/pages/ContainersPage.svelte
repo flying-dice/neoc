@@ -2,7 +2,7 @@
 <script lang="ts">
   import ContainerInspector from '../organisms/ContainerInspector.svelte'
   import ContainerList from '../organisms/ContainerList.svelte'
-  import EngineDown from '../organisms/EngineDown.svelte'
+  import { EngineDown } from '@vos/docker'
   import StackSidebar from '../organisms/StackSidebar.svelte'
   import type { Containers } from '../lib/containers.svelte'
   import { isUp } from '../lib/format'
@@ -61,6 +61,7 @@
           draft={containers.hostDraft}
           ondraft={(address) => (containers.hostDraft = address)}
           onconnect={() => void containers.connect()}
+          testid="containers"
         />
       {:else if inspected}
         <ContainerInspector

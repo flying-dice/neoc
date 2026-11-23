@@ -1,7 +1,7 @@
 <!-- @organism SettingsForm — how the server answers, as a form of iPadOS is: a row each for its port, who it asks for the names it does not know and whether it logs each question, what is wrong with them in the footer under the rows, and a Save that cannot be pressed until there is something right to save; under it which Docker the server runs in, with the field that chooses another -->
 <script lang="ts">
   import type { Engine, Server } from 'app:rpc'
-  import ConnectionForm from '../molecules/ConnectionForm.svelte'
+  import { ConnectionForm } from '@vos/docker'
   import type { Problems, SettingsDraft } from '../lib/dns.svelte'
 
   interface Props {
@@ -127,7 +127,7 @@
       The server is dnsmasq, in a container this app makes and keeps (<code data-testid="dns-image">{server.image}</code>). It is removed when the
       server is turned off, and made again when something here changes.
     </p>
-    <ConnectionForm draft={hostDraft} host={engine.host} ondraft={onhostdraft} {onconnect} />
+    <ConnectionForm draft={hostDraft} host={engine.host} ondraft={onhostdraft} {onconnect} testid="dns" />
   </div>
 </section>
 

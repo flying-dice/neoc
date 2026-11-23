@@ -63,6 +63,7 @@
         "@storybook/svelte-vite": "10.6.7",
         "@sveltejs/vite-plugin-svelte": "^7.3.1",
         "@types/bun": "1.4.4",
+        "@vos/docker": "workspace:*",
         "@vos/storybook": "workspace:*",
         "@vos/vite-plugin": "workspace:*",
         "storybook": "10.6.7",
@@ -83,6 +84,7 @@
         "@storybook/svelte-vite": "10.6.7",
         "@sveltejs/vite-plugin-svelte": "^7.3.1",
         "@types/bun": "1.4.4",
+        "@vos/docker": "workspace:*",
         "@vos/storybook": "workspace:*",
         "@vos/vite-plugin": "workspace:*",
         "storybook": "10.6.7",
@@ -163,6 +165,7 @@
         "@storybook/svelte-vite": "10.6.7",
         "@sveltejs/vite-plugin-svelte": "^7.3.1",
         "@types/bun": "1.4.4",
+        "@vos/docker": "workspace:*",
         "@vos/storybook": "workspace:*",
         "@vos/vite-plugin": "workspace:*",
         "storybook": "10.6.7",
@@ -328,6 +331,30 @@
         "svelte-check": "^4.7.6",
         "typescript": "^5.9.3",
         "vite": "^8.3.4",
+      },
+    },
+    "packages/docker": {
+      "name": "@vos/docker",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@storybook/addon-a11y": "10.6.7",
+        "@storybook/addon-docs": "10.6.7",
+        "@storybook/addon-svelte-csf": "5.1.6",
+        "@storybook/addon-themes": "10.6.7",
+        "@storybook/svelte-vite": "10.6.7",
+        "@sveltejs/vite-plugin-svelte": "^7.3.1",
+        "@types/bun": "1.4.4",
+        "@vos/kit": "workspace:*",
+        "@vos/storybook": "workspace:*",
+        "@vos/vite-plugin": "workspace:*",
+        "storybook": "10.6.7",
+        "svelte": "^5.57.2",
+        "svelte-check": "^4.7.6",
+        "typescript": "^5.9.3",
+        "vite": "^8.3.4",
+      },
+      "peerDependencies": {
+        "svelte": "^5.0.0",
       },
     },
     "packages/kit": {
@@ -803,6 +830,8 @@
     "@vos-fixtures/ticker": ["@vos-fixtures/ticker@workspace:e2e/apps/ticker"],
 
     "@vos/client": ["@vos/client@workspace:client"],
+
+    "@vos/docker": ["@vos/docker@workspace:packages/docker"],
 
     "@vos/kit": ["@vos/kit@workspace:packages/kit"],
 

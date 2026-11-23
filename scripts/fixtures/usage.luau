@@ -7,6 +7,7 @@
 -- The check also requires every module an app is offered to be `require`d here (a line of the form
 -- `= require("lib:json")`), so a new module needs a line in this file.
 local app = require("vos:app")
+local docker = require("vos:docker")
 local collections = require("std:collections")
 local env = require("std:env")
 local fs = require("std:fs")
@@ -208,5 +209,20 @@ local handlers: vos_Handlers = {
     return changed.changes
   end,
 }
+
+-- vos:docker: which Docker, one container the app owns, and its log
+local server = docker.container("vos-usage")
+local declared: vos_DockerDeclaration = {
+  image = "nginx:1.30.0-alpine",
+  ports = { { host = 8081, container = 80 }, { host = 5353, container = 53, udp = true } },
+  mounts = { { source = "/srv/site", target = "/site" } },
+}
+local refused: string? = docker.use("tcp://nas.local:2375") or server:apply(declared, true)
+local reachable: boolean = docker.status().reachable and server:status(declared).current
+local written = server:logs(50)
+local shown: string = if written then written.text else docker.sentence(refused)
+task.spawn(docker.watch, server.filters, function()
+  app.emit("changed", { reachable = reachable, shown = shown, host = docker.host() })
+end)
 
 return handlers

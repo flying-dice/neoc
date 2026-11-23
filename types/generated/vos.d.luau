@@ -6,7 +6,7 @@
 -- file, `--definitions:@vos=<this file>` of `luau-lsp`, `luau-lsp.types.definitionFiles` in an editor). Never loaded
 -- by the host. What it declares, in this order: the modules an app is offered (neoc's sections, less the modules in
 -- NOT_FOR_APPS), then vos's types (`vos_<Name>`), the globals, and the ONE `declare require` (two do not merge) with
--- an overload for every module an app is offered and `vos:app`, and an unusable type for each module it is not.
+-- an overload for every module an app is offered, `vos:app` and `vos:docker`, and an unusable type for each module it is not.
 
 -- ===== std:collections =====
 
@@ -1891,6 +1891,92 @@ export type vos_AppApi = {
 	emit: (name: string, data: any?) -> (),
 }
 
+
+-- ===== vos:docker =====
+-- `local docker = require("vos:docker")`: the container framework, over `vnd:bollard`. The host carries it as Luau and
+-- runs it in the app's own VM, so the Docker an app chose and the clients that reach it are that app's alone. It keeps
+-- the choice in `app.kv` under `host`.
+
+--- Whether Docker can be reached, as a page shows it: its version when it can, why not (`problem`, a sentence) when
+--- it cannot. `host` is the chosen address; empty for this machine's own Docker.
+export type vos_DockerStatus = { reachable: boolean, version: string, host: string, problem: string }
+
+--- The end of what a container wrote, as text fit to show. `truncated`: there was more before it.
+export type vos_DockerLogs = { text: string, truncated: boolean }
+
+--- A port of the container, published on the machine's `host` port: TCP, or UDP when `udp`.
+export type vos_DockerPort = { host: number, container: number, udp: boolean? }
+
+--- A folder of the machine (`source`, a whole path) the container may read at `target`. It is never writable.
+export type vos_DockerMount = { source: string, target: string }
+
+--- What a container an app owns is made from. Everything it gets of the machine is here: nothing is published or
+--- mounted that is not declared.
+export type vos_DockerDeclaration = {
+	image: string,
+	entrypoint: { string }?,
+	command: { string }?,
+	--- `NAME=value`, each
+	environment: { string }?,
+	ports: { vos_DockerPort }?,
+	mounts: { vos_DockerMount }?,
+}
+
+--- How an owned container is doing. `current`: it was made from the declaration it was compared with. `problem`: why
+--- it could not be made or started the last time that was tried; empty when it could.
+export type vos_DockerContainerStatus = {
+	state: "absent" | "running" | "restarting" | "stopped",
+	status: string,
+	current: boolean,
+	problem: string,
+}
+
+--- One container the app owns, found by a label that carries the app's id (`vos.app=<app.id>`), never by its name.
+export type vos_DockerContainer = {
+	--- Docker's filters for what happens to the container, for `docker.watch`.
+	filters: { [string]: any },
+	--- How the container is doing, and whether it is what `declared` says (never, for none). With Docker away it is
+	--- `absent`.
+	status: (self: vos_DockerContainer, declared: vos_DockerDeclaration?) -> vos_DockerContainerStatus,
+	--- Have the container be what `declared` says: its image pulled when Docker has none, made and started; removed for
+	--- none. One that is that already, and runs, is left running unless `always`. It is never changed: a change of the
+	--- declaration is the container removed and made again. Answers with why it could not, as a sentence (a declaration
+	--- that is not one is refused before Docker hears of it), and with nothing when it did.
+	apply: (self: vos_DockerContainer, declared: vos_DockerDeclaration?, always: boolean?) -> string?,
+	--- The end of what the container wrote (`docker.logs`). Nothing, and no reason, when there is no container.
+	logs: (self: vos_DockerContainer, tail: number?) -> (vos_DockerLogs?, string?),
+}
+
+export type vos_Docker = {
+	--- The chosen Docker's address; empty for this machine's own.
+	host: () -> string,
+	--- Choose the Docker the app uses: `unix:///...`, `tcp://...`, `http://...` or `https://...`, or empty for this
+	--- machine's own. Answers with why the address was refused, and with nothing when it was taken (a Docker that is not
+	--- running there is a fine choice: `status` says so, and it may start later).
+	use: (host: string) -> string?,
+	--- Whether Docker can be reached. Never fails: a Docker that is away is an answer.
+	status: () -> vos_DockerStatus,
+	--- Why a `vnd:bollard` call failed, as a sentence for the person: Docker's own message when it has one, the
+	--- framework's words when Docker cannot be reached or is not answering.
+	sentence: (err: string?) -> string,
+	--- The client that reads what Docker has (it waits 5 seconds for an answer), or why there is none, as a sentence.
+	reader: () -> (vnd_bollard_Client?, string?),
+	--- The client that changes it (90 seconds).
+	actor: () -> (vnd_bollard_Client?, string?),
+	--- The client that pulls an image (10 minutes).
+	puller: () -> (vnd_bollard_Client?, string?),
+	--- The end of what a container wrote, by id or name: its output and its errors together, at most 256 KiB, as valid
+	--- UTF-8 without a terminal's colour sequences and control characters. `tail` is how many lines from the end (200
+	--- when left out, at most 10000).
+	logs: (container: string, tail: number?) -> (vos_DockerLogs?, string?),
+	--- Watch Docker for as long as the app is loaded, and call `changed` whenever what it has of `filters` (Docker's own,
+	--- for its events) may be different: something happened to a container, Docker came or went, or another Docker was
+	--- chosen. A Docker that is away is looked for again every 5 seconds. It never returns:
+	--- `task.spawn(docker.watch, filters, changed)`.
+	watch: (filters: { [string]: any }, changed: () -> ()) -> (),
+	--- The container named `name` (a new one is given that name) that is this app's.
+	container: (name: string) -> vos_DockerContainer,
+}
 -- ===== not for apps =====
 -- A module in NOT_FOR_APPS (the Lua adapter refuses it when it runs) and a global the app's environment does not
 -- have. A module or a library is a table with one `never` field: the first member access is a type error naming it
@@ -2024,6 +2110,7 @@ declare require:
 	& ((path: "vnd:testcontainers_modules") -> vnd_testcontainers_modules)
 	& ((path: "vnd:toml") -> vnd_toml)
 	& ((path: "vos:app") -> vos_AppApi)
+	& ((path: "vos:docker") -> vos_Docker)
 	& ((path: "lib:test") -> vos_NotForApps_lib_test)
 	& ((path: "lib:compile") -> vos_NotForApps_lib_compile)
 	& ((path: "std:workers") -> vos_NotForApps_std_workers)
