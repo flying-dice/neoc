@@ -14,7 +14,7 @@ path = "src/lib.rs"
 
 [dependencies]
 mlua-ir = { workspace = true }
-mlua-ir-gen = { git = "https://github.com/flying-dice/mlua-ir.git", rev = "e283fe8cc3b11d5306e1af8e035027deaca792ea" }
+mlua-ir-gen = { git = "https://github.com/flying-dice/mlua-ir.git", rev = "d2c9b7cfeedfe9dc253c2151f33502e2bee70ba4" }
 # The engine is Luau, as in neoc-vm; the same features.
 mlua = { version = "0.12", features = ["luau", "async", "send", "serialize", "macros"] }
 serde = { version = "1", features = ["derive"] }
