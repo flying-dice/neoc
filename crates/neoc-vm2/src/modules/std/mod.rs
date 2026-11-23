@@ -5,6 +5,7 @@ pub mod collections;
 pub mod env;
 pub mod fs;
 pub mod io;
+pub mod net;
 pub mod osstr;
 pub mod path;
 pub mod time;
