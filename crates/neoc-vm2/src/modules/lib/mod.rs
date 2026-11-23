@@ -26,6 +26,7 @@ pub mod regex;
 pub mod semver;
 pub mod tempfile;
 pub mod template;
+pub mod test;
 pub mod text;
 pub mod unicode;
 pub mod url;
