@@ -13,6 +13,7 @@ local fs = require("std:fs")
 local io = require("std:io")
 local net = require("std:net")
 local path = require("std:path")
+local process = require("std:process")
 local task = require("std:task")
 local thread = require("std:thread")
 local time = require("std:time")
@@ -64,6 +65,7 @@ local _modules: { any } = {
   env,
   io,
   net,
+  process,
   thread,
   archive,
   args,

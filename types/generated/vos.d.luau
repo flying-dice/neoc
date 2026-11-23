@@ -267,6 +267,34 @@ export type std_path = {
 	strip_prefix: (path: string, base: string) -> string?,
 }
 
+-- ===== std:process =====
+
+export type std_process_Child = {
+	--- Send bytes to the process's standard input: `true` once the pipe has taken them all. Nothing is added: a protocol of lines needs its `\n`. At most 1 MiB a call (`invalid_input` past that). Writes are made one after the other, and a process that does not read its input makes the write wait. `not_piped` when `stdin` is not a pipe; `closed` after `close_stdin()`, after `close()` and once the process has ended, also for a write that was waiting; `io` when the pipe refuses the bytes (the process closed its input). A write cannot be taken back: cancelling the task that waits in one does not stop it, and it may still be made. It waits like `task.wait`: other tasks run while it does.
+	write: (self: std_process_Child, data: string) -> (boolean?, string?),
+	--- Close the process's standard input: `true`. The process then reads the end of its input, which is how a program that reads until then is asked to finish. A write the pipe is taking is finished first; writes that wait behind it fail with `closed`. Closing again does nothing. `not_piped` when `stdin` is not a pipe.
+	close_stdin: (self: std_process_Child) -> (boolean?, string?),
+	--- Wait for the process's standard output and return it: the bytes the process wrote, at most `max` of them (a whole number from 1 to 65536, the default), as soon as there are any. The bytes are the process's own, and a read may end in the middle of a line or of a character. `(nil, nil)` is the end of the output: every process that had the pipe open is gone or closed it, or `close()` was called. `(nil, err)` is a failure: `not_piped` when `stdout` is not a pipe, `io` when reading failed (the read after it is the end), `invalid_input` for a `max` out of range. At most 256 KiB of output wait to be read: a process that writes more waits in its write until the script reads. A read that is abandoned takes nothing. It waits like `task.wait`: other tasks run while it does.
+	read: (self: std_process_Child, max: number?) -> (string?, string?),
+	--- `read` for the process's standard error, which has a buffer of its own. It waits like `task.wait`: other tasks run while it does.
+	read_stderr: (self: std_process_Child, max: number?) -> (string?, string?),
+	--- The operating system's id of the process, while it runs. `nil` once it has ended or `close()` was called: the number is then the operating system's to give to another process.
+	id: (self: std_process_Child) -> number?,
+	--- Wait for the process to end and return how it ended: `code` (the exit code when it ended by itself, else `nil`), `signal` (the number of the signal that ended it; `nil` when it ended by itself, and always on Windows) and `success` (it ended by itself with code 0). It does not close the process's input: a process that reads to the end of its input needs `close_stdin()` first. It may be called again, and after `close()`: the answer is the same. The output can outlive the process (a child of it still writes): read to the end for all of it. `io` when the operating system does not say how the process ended. It waits like `task.wait`: other tasks run while it does.
+	wait: (self: std_process_Child) -> ({ code: number?, signal: number?, success: boolean }?, string?),
+	--- Kill the process: on Unix it and every process in its group (those it started, unless they moved to a group of their own) are sent the kill they cannot refuse (`SIGKILL`); on Windows the process alone is terminated. It returns at once: `wait()` says when the process is gone. Once `wait()` has said so, a kill does nothing, and what the process left behind runs on. To ask a process to finish instead, close its input (`close_stdin`) or tell it in its own protocol.
+	kill: (self: std_process_Child) -> (),
+	--- Kill the process as `kill()` does and let go of its streams: output not yet read is dropped, every `read` and `read_stderr`, waiting or later, returns `(nil, nil)`, and `write` fails with `closed`. `wait()` still says how the process ended. Closing again does nothing. A process is also closed when its handle is collected, and when the engine shuts down.
+	close: (self: std_process_Child) -> (),
+}
+
+export type std_process = {
+	--- Start a program: a `Child`. `program` is a path, or a name looked up in `PATH`, and `args` its arguments (at most 1024); no shell reads them, so nothing in them is expanded or split. `cwd` is the directory it starts in (default: the engine's working directory). `env` is added to the environment the engine's process has, replacing a variable of the same name; with `clear_env` the process starts from an empty environment and has only what `env` gives it. Each of `stdin`, `stdout` and `stderr` is `"piped"` (the default: a pipe between the process and this handle), `"null"` (nothing: the process reads the end of its input, and what it writes is thrown away) or `"inherit"` (the engine's own stream). A piped output that nobody reads stops the process once 256 KiB of it wait: read it, or do not pipe it. The process runs as the engine's user and can do what that user can: a script given this module is trusted with the machine. Errors are `process.<function>: <kind>: <message>` (see `error_kind`): `invalid_input` for an option that is missing, unknown or of the wrong shape, `spawn` when the program could not be started (no such program, not executable, `cwd` is not a directory, or the system refused the process), `closed` when the engine has shut down. The process is killed, and its streams let go of, by `close()`, when the handle is collected, and when the engine shuts down. On Unix it is started in a process group of its own, which a kill reaches as a whole. That group is not the foreground of the engine's terminal: a Ctrl-C typed there does not reach the process (a script that should end on one kills its processes itself), and a process that reads an inherited `stdin` which is that terminal is stopped by it. It waits like `task.wait`: other tasks run while it does.
+	spawn: (opts: { program: string, args: { string }?, cwd: string?, env: { [string]: string }?, clear_env: boolean?, stdin: ("piped" | "null" | "inherit")?, stdout: ("piped" | "null" | "inherit")?, stderr: ("piped" | "null" | "inherit")? }) -> (std_process_Child?, string?),
+	--- The stable kind inside an error string returned by a `std:process` function, or `nil` when the string is not one of theirs (or is `nil`, so `process.error_kind(err)` takes the `err` of any call). Such a string is `process.<function>: <kind>: <message>`. Kinds: `invalid_input` (an argument or option was refused), `spawn` (the program could not be started), `not_piped` (the stream was not started as a pipe), `closed` (the stream, the process or the engine was closed), `io` (reading from a stream or writing to it failed, or the system did not say how the process ended), `other`. The message is the operating system's own; it is for a log and may change.
+	error_kind: (err: string?) -> string?,
+}
+
 -- ===== std:task =====
 
 export type std_task_Task = {
@@ -1949,6 +1977,7 @@ declare require:
 	& ((path: "std:io") -> std_io)
 	& ((path: "std:net") -> std_net)
 	& ((path: "std:path") -> std_path)
+	& ((path: "std:process") -> std_process)
 	& ((path: "std:task") -> std_task)
 	& ((path: "std:thread") -> std_thread)
 	& ((path: "std:time") -> std_time)

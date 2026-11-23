@@ -96,6 +96,7 @@ const REGISTRY: &[(&str, Build)] = &[
     ("std:io", stdmod::io::module),
     ("std:net", stdmod::net::module),
     ("std:path", stdmod::path::module),
+    ("std:process", stdmod::process::module),
     ("std:task", stdmod::task::module),
     ("std:thread", stdmod::thread::module),
     ("std:time", stdmod::time::module),
@@ -278,6 +279,7 @@ fn declared(lua: &Lua) -> mlua::Result<Vec<Module<'_>>> {
         stdmod::io::declare(lua)?,
         stdmod::net::declare(lua)?,
         stdmod::path::declare(lua)?,
+        stdmod::process::declare(lua)?,
         stdmod::task::declare(lua)?,
         stdmod::thread::declare(lua)?,
         stdmod::time::declare(lua)?,
@@ -337,7 +339,7 @@ pub const LUAU_DECLS_PATH: &str = "types/neoc.d.luau";
 /// The Luau declarations of every module, as `(registry_key, section)` in registry order.
 ///
 /// A section is the `export type` aliases of one module (its resource types and its table): each function's
-/// parameters, returns and docs. [`luau_decls`] joins them into the file.
+/// parameters, returns and docs. [`luau_decls()`] joins them into the file.
 ///
 /// # Errors
 /// Fails when a module cannot be built, or its recording disagrees with the
@@ -407,7 +409,7 @@ mod tests {
             unregistered.is_empty(),
             "declared but not registered: {unregistered:?}"
         );
-        assert_eq!(registered_set.len(), 54);
+        assert_eq!(registered_set.len(), 55);
 
         for key in &registered_set {
             let kind: String = lua
@@ -464,7 +466,7 @@ mod tests {
         let lua = make_engine().expect("engine");
         let sections = luau_decl_sections(&lua).expect("sections");
         let file = luau_decls(&lua).expect("file");
-        assert_eq!(sections.len(), 54);
+        assert_eq!(sections.len(), 55);
         for (key, section) in &sections {
             let scope = luau_decls::scope(key);
             assert!(
@@ -485,7 +487,7 @@ mod tests {
         assert!(file.contains("declare require: \n\t((path: \"std:collections\")"));
         assert_eq!(
             file.matches("((path: \"").count(),
-            54,
+            55,
             "one `require` overload per module"
         );
     }
@@ -768,6 +770,22 @@ mod tests {
                 return events, function() events:close() end
             end)()"#,
         ),
+        // a real process, ended by the cleanup
+        (
+            "std:process",
+            "Child",
+            if cfg!(windows) {
+                r#"(function()
+                    local child = assert(require("std:process").spawn({ program = "cmd.exe" }))
+                    return child, function() child:close() end
+                end)()"#
+            } else {
+                r#"(function()
+                    local child = assert(require("std:process").spawn({ program = "/bin/cat" }))
+                    return child, function() child:close() end
+                end)()"#
+            },
+        ),
         // a real terminal with a real process on it, ended by the cleanup
         (
             "vnd:portable_pty",
@@ -1022,6 +1040,7 @@ mod tests {
             "std:io" => stdmod::io::module(lua),
             "std:net" => stdmod::net::module(lua),
             "std:path" => stdmod::path::module(lua),
+            "std:process" => stdmod::process::module(lua),
             "std:task" => stdmod::task::module(lua),
             "std:thread" => stdmod::thread::module(lua),
             "std:time" => stdmod::time::module(lua),

@@ -5,10 +5,10 @@
 //! not one of the call's is refused, so a misspelt option fails instead of being ignored.
 
 use mlua::Value;
-use serde_json::{Map, Value as Json};
+use serde_json::Value as Json;
 
 use super::error::PtyError;
-use crate::lua::serde_guard::refuse_buffer;
+use crate::lua::command_options::{self, Refused, env, name, named, strings, wrong};
 
 /// The size of a terminal the crate opens when none is given: `portable_pty::PtySize::default()`.
 pub(super) const DEFAULT_ROWS: u16 = 24;
@@ -17,13 +17,6 @@ pub(super) const DEFAULT_COLS: u16 = 80;
 /// The most rows or columns a terminal has. ConPTY holds a size in signed 16-bit numbers, so this is the largest
 /// size every platform can be asked for.
 pub(super) const MAX_SIZE: u16 = 32_767;
-
-/// The most arguments a command takes here, and the most environment variables.
-pub(super) const MAX_ITEMS: usize = 1024;
-
-/// The longest program, argument, directory or environment value, in bytes. The operating system has its own limit
-/// on all of them together, and a command past that is a `spawn` error.
-pub(super) const MAX_TEXT: usize = 128 * 1024;
 
 const ALLOWED: [&str; 6] = ["program", "args", "cwd", "env", "rows", "cols"];
 
@@ -40,58 +33,33 @@ pub(super) struct Command {
     pub(super) cols: u16,
 }
 
+impl From<Refused> for PtyError {
+    fn from(refused: Refused) -> Self {
+        PtyError::invalid_input(refused.0)
+    }
+}
+
 /// The options of `spawn_command`. A buffer is refused (raised, as every serde conversion of a script value does:
 /// `serde_guard`); anything else that is wrong is `invalid_input`.
 pub(super) fn command(value: Option<&Value>, op: &str) -> mlua::Result<Result<Command, PtyError>> {
-    let json = match value {
-        None | Some(Value::Nil) => Json::Null,
-        Some(value) => {
-            refuse_buffer(value, op)?;
-            match serde_json::to_value(value) {
-                Ok(json) => json,
-                Err(e) => return Ok(Err(PtyError::invalid_input(e.to_string()))),
-            }
-        }
-    };
-    Ok(read(json))
+    Ok(command_options::to_json(value, op)?
+        .map_err(PtyError::from)
+        .and_then(read))
 }
 
 fn read(json: Json) -> Result<Command, PtyError> {
-    let fields = match json {
-        Json::Null => Map::new(),
-        Json::Object(fields) => fields,
-        // an empty Luau table may arrive as an empty list
-        Json::Array(items) if items.is_empty() => Map::new(),
-        _ => {
-            return Err(PtyError::invalid_input(
-                "the options must be a table of named options",
-            ));
-        }
-    };
-    if let Some(unknown) = fields.keys().find(|key| !ALLOWED.contains(&key.as_str())) {
-        return Err(PtyError::invalid_input(format!(
-            "unknown option `{unknown}` (this call takes: {})",
-            ALLOWED.join(", ")
-        )));
-    }
-    let program = string(&fields, "program")?;
-    if program.as_deref() == Some("") {
-        return Err(wrong("program", "the name or the path of a program"));
-    }
+    let fields = named(json, &ALLOWED)?;
+    let program = name(&fields, "program", "the name or the path of a program")?;
     let args = strings(&fields, "args")?;
     if program.is_none() && !args.is_empty() {
         return Err(PtyError::invalid_input(
             "option `args` needs `program`: the default shell takes no arguments",
         ));
     }
-    let cwd = string(&fields, "cwd")?;
-    if cwd.as_deref() == Some("") {
-        return Err(wrong("cwd", "the path of a directory"));
-    }
     Ok(Command {
         program,
         args,
-        cwd,
+        cwd: name(&fields, "cwd", "the path of a directory")?,
         env: env(&fields)?,
         rows: dimension(fields.get("rows"), "rows")?.unwrap_or(DEFAULT_ROWS),
         cols: dimension(fields.get("cols"), "cols")?.unwrap_or(DEFAULT_COLS),
@@ -108,7 +76,7 @@ fn dimension(value: Option<&Json>, key: &str) -> Result<Option<u16>, PtyError> {
         None | Some(Json::Null) => Ok(None),
         Some(value) => match value.as_f64() {
             Some(n) => whole(n, key).map(Some),
-            None => Err(wrong(key, &size_words())),
+            None => Err(wrong(key, &size_words()).into()),
         },
     }
 }
@@ -119,80 +87,17 @@ fn whole(n: f64, key: &str) -> Result<u16, PtyError> {
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         return Ok(n as u16);
     }
-    Err(wrong(key, &size_words()))
+    Err(wrong(key, &size_words()).into())
 }
 
 fn size_words() -> String {
     format!("a whole number from 1 to {MAX_SIZE}")
 }
 
-/// A string the operating system takes as it is: no NUL byte, and not longer than [`MAX_TEXT`].
-fn text(value: &Json, key: &str, what: &str) -> Result<String, PtyError> {
-    match value {
-        Json::String(s) if s.contains('\0') => Err(PtyError::invalid_input(format!(
-            "option `{key}` cannot contain a NUL byte"
-        ))),
-        Json::String(s) if s.len() > MAX_TEXT => Err(PtyError::invalid_input(format!(
-            "option `{key}` holds a string longer than {MAX_TEXT} bytes"
-        ))),
-        Json::String(s) => Ok(s.clone()),
-        _ => Err(wrong(key, what)),
-    }
-}
-
-fn string(fields: &Map<String, Json>, key: &str) -> Result<Option<String>, PtyError> {
-    match fields.get(key) {
-        None | Some(Json::Null) => Ok(None),
-        Some(value) => text(value, key, "a string").map(Some),
-    }
-}
-
-fn strings(fields: &Map<String, Json>, key: &str) -> Result<Vec<String>, PtyError> {
-    let expected = "a list of strings";
-    match fields.get(key) {
-        None | Some(Json::Null) => Ok(Vec::new()),
-        // an empty Luau table may arrive as an empty map
-        Some(Json::Object(map)) if map.is_empty() => Ok(Vec::new()),
-        Some(Json::Array(items)) if items.len() > MAX_ITEMS => Err(too_many(key)),
-        Some(Json::Array(items)) => items.iter().map(|item| text(item, key, expected)).collect(),
-        Some(_) => Err(wrong(key, expected)),
-    }
-}
-
-fn env(fields: &Map<String, Json>) -> Result<Vec<(String, String)>, PtyError> {
-    let expected = "a table of variable names, each with a string";
-    match fields.get("env") {
-        None | Some(Json::Null) => Ok(Vec::new()),
-        Some(Json::Array(items)) if items.is_empty() => Ok(Vec::new()),
-        Some(Json::Object(map)) if map.len() > MAX_ITEMS => Err(too_many("env")),
-        Some(Json::Object(map)) => map
-            .iter()
-            .map(|(name, value)| {
-                if name.is_empty() || name.contains('=') || name.contains('\0') {
-                    return Err(PtyError::invalid_input(
-                        "option `env` holds a name that is empty or contains `=` or a NUL byte",
-                    ));
-                }
-                Ok((name.clone(), text(value, "env", expected)?))
-            })
-            .collect(),
-        Some(_) => Err(wrong("env", expected)),
-    }
-}
-
-fn wrong(key: &str, expected: &str) -> PtyError {
-    PtyError::invalid_input(format!("option `{key}` must be {expected}"))
-}
-
-fn too_many(key: &str) -> PtyError {
-    PtyError::invalid_input(format!(
-        "option `{key}` holds more than {MAX_ITEMS} entries"
-    ))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lua::command_options::{MAX_ITEMS, MAX_TEXT};
     use serde_json::json;
 
     #[test]

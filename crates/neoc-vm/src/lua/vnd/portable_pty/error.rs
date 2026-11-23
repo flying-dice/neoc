@@ -74,11 +74,6 @@ impl PtyError {
     pub(super) fn closed() -> Self {
         Self::new(Kind::Closed, "the terminal is closed")
     }
-
-    #[cfg(test)]
-    pub(super) fn kind(&self) -> Kind {
-        self.kind
-    }
 }
 
 impl fmt::Display for PtyError {

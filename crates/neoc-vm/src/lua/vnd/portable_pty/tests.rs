@@ -320,7 +320,9 @@ async fn what_is_not_a_command_is_refused_before_anything_starts() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_closed_terminal_ends_reads_refuses_writes_and_has_ended_its_process() {
     let pid: u32 = run(r#"
-        local pty = sh("echo ready; cat")
+        -- `exit 3`: the hangup may reach `cat` as the end of its input before the signal does, and `cat` then ends
+        -- with 0; the shell does not
+        local pty = sh("echo ready; cat; exit 3")
         read_until(pty, "ready")
         local pid = pty:process_id()
 

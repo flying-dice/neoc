@@ -434,3 +434,79 @@ fn run_kills_a_hung_test_after_the_per_test_timeout() {
     assert!(stdout.contains("spins forever"), "got: {stdout}");
     assert!(stdout.contains("timed out after 1s"), "got: {stdout}");
 }
+
+/// Starts `sh`, which starts a `sleep` of its own, prints the two process ids and holds on to the handle, so that
+/// nothing but the end of `neoc` ends them. What follows it is how the script ends.
+#[cfg(unix)]
+const STARTS_A_PROCESS: &str = r#"local process = require("std:process")
+local child = assert(process.spawn({ program = "sh", args = { "-c", "sleep 300 & echo $$ $!; wait" } }))
+local ids = ""
+while not string.find(ids, "\n", 1, true) do
+    ids = ids .. assert(child:read())
+end
+print("ids " .. ids)
+_G.kept = child
+"#;
+
+/// Whether the process `id` still runs. One that ended and that nobody has reaped yet (a zombie) does not.
+#[cfg(unix)]
+fn runs(id: &str) -> bool {
+    let out = Command::new("ps")
+        .args(["-o", "stat=", "-p", id])
+        .output()
+        .unwrap();
+    let state = String::from_utf8_lossy(&out.stdout);
+    let state = state.trim();
+    !state.is_empty() && !state.starts_with('Z')
+}
+
+/// Run `neoc run` on a script that starts a process and then ends as `ending` says, and check that the process and
+/// the one it started are gone with it.
+#[cfg(unix)]
+fn assert_no_process_outlives(name: &str, ending: &str, exit_code: i32) {
+    let dir = tempdir().unwrap();
+    let script = write(dir.path(), name, &format!("{STARTS_A_PROCESS}{ending}\n"));
+    let out = Command::new(BIN)
+        .arg("run")
+        .arg(&script)
+        .env("NEOC_TEST_TIMEOUT_SECS", "1")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(exit_code), "{name}: {stdout}");
+    let ids: Vec<&str> = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("ids "))
+        .unwrap_or_else(|| panic!("{name}: the script did not print the ids: {stdout}"))
+        .split_whitespace()
+        .collect();
+    assert_eq!(ids.len(), 2, "{name}: {stdout}");
+    // the kill was sent before `neoc` ended; the processes are gone a moment after it
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while ids.iter().any(|id| runs(id)) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{name}: a process outlived the script (ids {ids:?})"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+/// NEOC-366: `neoc run` ends by `exit` when a script fails, which runs no destructor. A process the script started
+/// must not live on, however the run ends.
+#[cfg(unix)]
+#[test]
+fn a_process_a_script_started_does_not_outlive_the_run() {
+    assert_no_process_outlives("ends.lua", "", 0);
+    assert_no_process_outlives("raises.lua", "error(\"boom\")", 1);
+    assert_no_process_outlives(
+        "fails.test.lua",
+        "local t = require(\"lib:test\")\nt.test(\"fails\", function() t.expect(1).toBe(2) end)",
+        1,
+    );
+    assert_no_process_outlives(
+        "hangs.test.lua",
+        "local t = require(\"lib:test\")\nt.test(\"spins\", function() while true do end end)",
+        124,
+    );
+}
