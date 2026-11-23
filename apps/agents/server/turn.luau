@@ -116,8 +116,6 @@ type Run = {
   since: number,
   -- the tool calls this run made, by item
   calls: { number },
-  -- how much the turn has brought into the chat, in bytes (shared by the runs of the turn)
-  budget: { spent: number },
 }
 
 local function saveState(chat: string, state: any)
@@ -189,6 +187,9 @@ end
 
 -- a snapshot of the whole conversation: each message is set on the item that has its id, or added
 local function reconcile(run: Run, messages: { any })
+  -- the snapshot names the whole conversation, the earlier runs' messages too: each is looked for in all of the chat
+  local whole = table.clone(run)
+  whole.since = 0
   for _, message in messages do
     local role, id = message.role, message.id
     if role == "user" or role == "assistant" or role == "reasoning" then
@@ -199,10 +200,10 @@ local function reconcile(run: Run, messages: { any })
       if ours and timeline.get(run.chat, ours) then
         timeline.set(run.chat, ours, { text = text })
       elseif text ~= "" then
-        timeline.set(run.chat, ensure(run, role, key), { text = text, done = true })
+        timeline.set(run.chat, ensure(whole, role, key), { text = text, done = true })
       end
       for _, call in message.tool_calls or {} do
-        local item = toolItem(run, call.id, call["function"].name)
+        local item = toolItem(whole, call.id, call["function"].name)
         timeline.set(run.chat, item, { name = call["function"].name, text = call["function"].arguments, done = true })
       end
     elseif role == "tool" then
@@ -214,7 +215,7 @@ local function reconcile(run: Run, messages: { any })
         end)
       end
     elseif role == "activity" then
-      local item = ensure(run, "activity", id, { name = message.activity_type })
+      local item = ensure(whole, "activity", id, { name = message.activity_type })
       timeline.set(run.chat, item, { name = message.activity_type, data = codec.encode(message.content), done = true })
     end
   end
@@ -434,12 +435,17 @@ local function runTools(chat: string, agent: roster.Agent, ours: { [string]: boo
         result, problem = app.tools.call(row.name, args, { id = agent.id, name = agent.name })
       end
       data.ours = true
+      local text = if problem then "" else codec.encode(result)
+      if not problem and #text > MAX_RESULT then
+        -- not cut short: half a result reads as a whole one
+        problem = "The tool's result was too large to give to the agent."
+      end
       if problem then
-        data.error = strings.clip(problem, MAX_RESULT)
+        -- cut between characters: text cut inside one is not text, and would not be kept
+        data.error = strings.clip(problem, 2000)
         data.result = data.error
       else
-        -- cut between characters: text cut inside one is not text, and would not be kept
-        data.result = strings.clip(codec.encode(result), MAX_RESULT)
+        data.result = text
       end
       timeline.set(chat, row.id, { data = codec.encode(data), done = true })
       ran += 1
@@ -464,16 +470,9 @@ local function sentence(err: string): string
   return `The run failed: {message}`
 end
 
--- how much of the turn's allowance an event takes: its text, and what it carries
+-- how much of the turn's allowance an event takes: all of it, whatever field the agent put its text in
 local function weight(event: lib_agui_Event): number
-  local e = event :: any
-  local size = 200 + #(if type(e.delta) == "string" then e.delta else "")
-  for _, carried in
-    { e.snapshot, e.content, e.value, e.messages, e.patch, if type(e.delta) == "table" then e.delta else nil }
-  do
-    size += #codec.encode(carried)
-  end
-  return size
+  return 200 + #codec.encode(event)
 end
 
 -- How a run left the turn: `more` when it ended as a run does and the turn may go on with what it asked for.
@@ -515,8 +514,7 @@ local function once(
     return stopped
   end
   current.stream = stream
-  local run: Run =
-    { chat = chat, ours = tools.names, ended = false, halted = false, since = since, calls = {}, budget = budget }
+  local run: Run = { chat = chat, ours = tools.names, ended = false, halted = false, since = since, calls = {} }
   -- the run is over when it says so: an agent that keeps the connection open after that is not waited for
   while not run.ended do
     local event, failed = stream:next()
@@ -567,7 +565,7 @@ function turn.take(chat: string, agent: roster.Agent, extra: Extra, current: Tur
     end
     -- the next run of the turn carries the tools' results, not the answers again
     extra = { forwarded = nil, resume = nil }
-    if runTools(chat, agent, tools.names, left.calls) == 0 then
+    if runTools(chat, agent, tools.names, left.calls) == 0 or current.stopped then
       return
     end
   end

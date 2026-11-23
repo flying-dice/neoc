@@ -82,6 +82,10 @@ local function refusal(name: string, endpoint: string): string?
   if name == "" then
     return "Give the agent a name."
   end
+  -- a tool is told the agent's name, and takes no more than a short one
+  if #name > 100 then
+    return "Give the agent a shorter name."
+  end
   local parsed = url.parse(endpoint)
   if not parsed or (parsed.scheme ~= "http" and parsed.scheme ~= "https") or (parsed.host or "") == "" then
     return "The endpoint must be an http:// or https:// URL."

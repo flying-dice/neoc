@@ -4,9 +4,8 @@ use serde_json::Value;
 
 /// The most operations one patch may hold.
 pub const MAX_OPERATIONS: usize = 1_000;
-/// The most values (every object, array, string, number, `true`, `false` and `null`) the patched document may hold,
-/// counted generously: what an operation adds is counted, what it removes is not taken off.
-pub const MAX_VALUES: usize = 200_000;
+/// The largest the patched document may be, as [`size`] measures it (close to its bytes as JSON).
+pub const MAX_SIZE: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PatchError {
@@ -16,32 +15,40 @@ pub enum PatchError {
     /// An operation could not be applied (a path that is not there, a failed `test`).
     #[error("{0}")]
     Failed(#[from] json_patch::PatchError),
-    /// The patch has more than [`MAX_OPERATIONS`] operations, or would grow the document past [`MAX_VALUES`]
-    /// values. A `copy` doubles what it copies, so a short patch can ask for a document of any size.
+    /// The patch has more than [`MAX_OPERATIONS`] operations, or would grow the document past [`MAX_SIZE`]. A `copy` doubles what it copies, so a short patch can ask for a document of any size.
     #[error("the patch is too large: {0}")]
     TooLarge(&'static str),
 }
 
-/// How many values `value` holds, itself included, counted up to `limit` (a count past it is `limit + 1`).
-fn count(value: &Value, limit: usize) -> usize {
-    let mut seen = 0;
+/// About how many bytes `value` takes: the text of every string and key, and a few bytes for every value. Counted up
+/// to `limit` (a size past it is some number over `limit`).
+fn size(value: &Value, limit: usize) -> usize {
+    let mut seen = 0usize;
     let mut todo = vec![value];
     while let Some(value) = todo.pop() {
-        seen += 1;
+        seen = seen.saturating_add(8);
+        match value {
+            Value::String(text) => seen = seen.saturating_add(text.len()),
+            Value::Array(items) => todo.extend(items),
+            Value::Object(fields) => {
+                for (key, field) in fields {
+                    seen = seen.saturating_add(key.len());
+                    todo.push(field);
+                }
+            }
+            _ => {}
+        }
         if seen > limit {
             break;
-        }
-        match value {
-            Value::Array(items) => todo.extend(items),
-            Value::Object(fields) => todo.extend(fields.values()),
-            _ => {}
         }
     }
     seen
 }
 
 /// `document` with `patch` applied. All of the patch applies or none of it: on an error the document is unchanged.
-/// The patch comes from an agent, so what it may ask for is bounded ([`MAX_OPERATIONS`], [`MAX_VALUES`]).
+/// The patch comes from an agent, so what it may ask for is bounded ([`MAX_OPERATIONS`], [`MAX_SIZE`]). What an
+/// operation adds is counted and what it removes is not taken off; an operation that adds nothing (`remove`, `move`,
+/// `test`) is never refused for size, so a document that is already large can still be made smaller.
 ///
 /// # Errors
 /// See [`PatchError`].
@@ -53,17 +60,17 @@ pub fn apply(document: &mut Value, patch: &[Value]) -> Result<(), PatchError> {
     }
     let patch: json_patch::Patch = serde_json::from_value(Value::Array(patch.to_vec()))?;
     let mut next = document.clone();
-    let mut values = count(&next, MAX_VALUES);
+    let mut total = size(&next, MAX_SIZE);
     for operation in &patch.0 {
         let adds = match operation {
-            Op::Add(op) => count(&op.value, MAX_VALUES),
-            Op::Replace(op) => count(&op.value, MAX_VALUES),
-            Op::Copy(op) => next.pointer(op.from.as_str()).map_or(0, |from| count(from, MAX_VALUES)),
+            Op::Add(op) => size(&op.value, MAX_SIZE),
+            Op::Replace(op) => size(&op.value, MAX_SIZE),
+            Op::Copy(op) => next.pointer(op.from.as_str()).map_or(0, |from| size(from, MAX_SIZE)),
             Op::Move(_) | Op::Remove(_) | Op::Test(_) => 0,
         };
-        values = values.saturating_add(adds);
-        if values > MAX_VALUES {
-            return Err(PatchError::TooLarge("the document would hold more than 200000 values"));
+        total = total.saturating_add(adds);
+        if adds > 0 && total > MAX_SIZE {
+            return Err(PatchError::TooLarge("the document would be larger than 8 MB"));
         }
         json_patch::patch(&mut next, std::slice::from_ref(operation))?;
     }
@@ -115,5 +122,20 @@ mod tests {
         let many: Vec<Value> =
             (0..=MAX_OPERATIONS).map(|_| json!({ "op": "test", "path": "/a", "value": 1 })).collect();
         assert!(matches!(apply(&mut doc, &many), Err(PatchError::TooLarge(_))));
+    }
+
+    #[test]
+    fn a_large_text_cannot_be_copied_many_times_and_a_large_document_can_still_shrink() {
+        // one value, a megabyte of it: a count of values would let a thousand copies through
+        let mut doc = json!({ "big": "x".repeat(1024 * 1024) });
+        let before = doc.clone();
+        let copies: Vec<Value> =
+            (0..100).map(|i| json!({ "op": "copy", "from": "/big", "path": format!("/k{i}") })).collect();
+        assert!(matches!(apply(&mut doc, &copies), Err(PatchError::TooLarge(_))));
+        assert_eq!(doc, before);
+
+        let mut large = json!({ "a": "x".repeat(MAX_SIZE + 1), "b": 1 });
+        apply(&mut large, &[json!({ "op": "remove", "path": "/a" })]).unwrap();
+        assert_eq!(large, json!({ "b": 1 }));
     }
 }

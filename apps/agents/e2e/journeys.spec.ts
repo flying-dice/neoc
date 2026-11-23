@@ -117,6 +117,17 @@ test.beforeAll(async () => {
       { type: 'RUN_ERROR', message: 'The model gave up.' }
     )
   )
+  // the whole conversation again, as many agents send it at the end of a run: an earlier answer and a new one
+  agent.onPredicate(
+    (input) => lastSaid(input) === 'recap',
+    run({
+      type: 'MESSAGES_SNAPSHOT',
+      messages: [
+        { id: 'm1', role: 'assistant', content: 'I will remember.' },
+        { id: 'm9', role: 'assistant', content: 'That is all so far.' }
+      ]
+    } as AGUIEvent)
+  )
   // a question the run stops at, and the run that goes on with its answer
   agent.onPredicate((input) => (input.resume?.length ?? 0) > 0, run(...says('m4', 'Sent.')))
   agent.onPredicate(
@@ -354,6 +365,17 @@ test.describe('Agents journeys', () => {
     await expect(tools.nth(0)).not.toContainText('"result"')
     const carried = asked.findLast((input) => input.messages?.at(-1)?.role === 'tool')
     expect(carried?.messages?.filter((m) => m.role === 'tool')).toHaveLength(1)
+  })
+
+  test('AG13: an agent that sends the whole conversation again does not say its earlier answers twice', async ({ page }) => {
+    await chatting(page)
+    await say(page, 'remember the milk')
+    await expect(thread(page)).toContainText('I will remember.')
+    await turnOver(page)
+    await say(page, 'recap')
+    await expect(thread(page)).toContainText('That is all so far.')
+    await turnOver(page)
+    await expect(thread(page).getByText('I will remember.')).toHaveCount(1)
   })
 
   test('AG11: change an agent and remove it; a chat with it can still be read, and deleted', async ({ page }) => {

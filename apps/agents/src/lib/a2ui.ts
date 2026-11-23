@@ -146,8 +146,10 @@ export function boundPath(value: Json | undefined): string | undefined {
   return typeof path === 'string' ? path : undefined
 }
 
+/** The longest text one property shows: a component bound to all of the data does not write all of it out. */
+const MAX_TEXT = 20_000
 const asText = (value: Json | undefined): string =>
-  value === null || value === undefined ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value)
+  (value === null || value === undefined ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value)).slice(0, MAX_TEXT)
 
 /** `Hello ${/user/name}`: each `${path}` is the data at that path. A function call inside one is left empty. */
 function interpolate(template: string, data: Json, scope: Scope): string {
@@ -207,7 +209,8 @@ export interface UserAction {
 
 /** The components a component draws inside itself, each with the scope it is drawn in. */
 function inside(component: Component, data: Json, scope: Scope): Child[] {
-  const one = (id: Json | undefined): Child[] => (typeof id === 'string' ? [{ id, scope }] : [])
+  // read as the drawing reads it (`String(id)`), so nothing is drawn that was not counted
+  const one = (id: Json | undefined): Child[] => [{ id: String(id), scope }]
   switch (component.component) {
     case 'Row':
     case 'Column':

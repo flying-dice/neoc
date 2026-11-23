@@ -136,6 +136,16 @@ describe('what an agent cannot make the window do', () => {
     expect(drawable(surface, surface.data)).toBe(false)
   })
 
+  test('a child named by something other than text is counted as it is drawn', () => {
+    // a row of 200 cards, each holding the next row under a number: the drawing reads the number as an id
+    const rows = Array.from({ length: 6 }, (_, k) => ({ id: k === 0 ? 'root' : String(k), component: 'Row', children: Array(200).fill(`card${k}`) }))
+    const cards = Array.from({ length: 6 }, (_, k) => ({ id: `card${k}`, component: 'Card', child: k + 1 }))
+    const [surface] = surfacesOf({
+      a2ui_operations: [{ createSurface: { surfaceId: 's' } }, { updateComponents: { surfaceId: 's', components: [...rows, ...cards] } }]
+    })
+    expect(drawable(surface, surface.data)).toBe(false)
+  })
+
   test('an ordinary surface is drawn', () => {
     const [surface] = surfacesOf(V09)
     expect(drawable(surface, surface.data)).toBe(true)
