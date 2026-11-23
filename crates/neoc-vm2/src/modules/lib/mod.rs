@@ -7,6 +7,7 @@ pub mod diff;
 pub mod hash;
 pub mod hex;
 pub mod hmac;
+pub mod ini;
 pub mod json;
 pub mod mime;
 pub mod pkey;

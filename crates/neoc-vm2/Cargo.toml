@@ -57,6 +57,7 @@ caseless = "0.2"
 regex = "1"
 mime_guess = "2"
 similar = "3"
+rust-ini = "0.21"
 url = "2"
 percent-encoding = "2"
 
