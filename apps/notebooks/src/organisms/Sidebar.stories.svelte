@@ -1,6 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
+  import { alertButton } from '@vos/storybook/kit'
   import type { ComponentProps } from 'svelte'
   import type { Summary } from 'app:rpc'
   import Sidebar from './Sidebar.svelte'
@@ -154,7 +155,7 @@
   play={async ({ canvas, userEvent }) => {
     await userEvent.click(canvas.getByTestId('notebooks-delete-notebook'))
     await expect(canvas.getByTestId('notebooks-confirm-notebook').shadowRoot!.querySelector('dialog')).toHaveTextContent('Its notes are deleted with it.')
-    await userEvent.click(canvas.getByTestId('notebooks-confirm-notebook').shadowRoot!.querySelector<HTMLElement>('[part=action]')!)
+    await userEvent.click(alertButton(canvas.getByTestId('notebooks-confirm-notebook'), 'action'))
     await expect(mocks.onremovenotebook).toHaveBeenCalledTimes(1)
   }}
 />

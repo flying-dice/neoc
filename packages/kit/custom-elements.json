@@ -102,6 +102,16 @@
             },
             {
               "kind": "field",
+              "name": "opener",
+              "type": {
+                "text": "Element | null"
+              },
+              "privacy": "private",
+              "default": "null",
+              "description": "What had the focus when the alert opened, for the one case the dialog cannot give it back itself."
+            },
+            {
+              "kind": "field",
               "name": "dialog",
               "type": {
                 "text": "HTMLDialogElement | null"
@@ -2281,7 +2291,7 @@
       "declarations": [
         {
           "kind": "class",
-          "description": "A picker (SwiftUI's `Picker` in its menu style, a pop-up button): one choice from a list too long, or too changeable,\nfor a `ui-segmented`. It shows the chosen option and opens the system's own menu of them, so the keyboard, type-ahead\nand a screen reader work as they do on every select. A form control (see `FormControl`): the chosen value is\nsubmitted, and `required` keeps the form invalid until an option is chosen.\n\nWith a `value` no option has, it shows nothing chosen. Drawn 36 pt high; with `hit` it has a 44 pt high hit area.",
+          "description": "A picker (SwiftUI's `Picker` in its menu style, a pop-up button): one choice from a list too long, or too changeable,\nfor a `ui-segmented`. It shows the chosen option and opens the system's own menu of them, so the keyboard, type-ahead\nand a screen reader work as they do on every select. A form control (see `FormControl`): the chosen value is\nsubmitted, and `required` keeps the form invalid until an option is chosen.\n\nWith a `value` no option has, it shows nothing chosen. Drawn 36 pt high; with `hit` it is a 44 pt high target, all\nof which opens the menu.",
           "name": "UiPicker",
           "cssParts": [
             {
@@ -2323,6 +2333,30 @@
               "description": "The form is invalid until an option is chosen.",
               "default": "false",
               "attribute": "required",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "variant",
+              "privacy": "public",
+              "type": {
+                "text": "'field' | 'bare'"
+              },
+              "description": "`field` (default): a rounded filled field. `bare`: no box, for use inside a `ui-row`.",
+              "default": "'field'",
+              "attribute": "variant",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "invalid",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Shows the picker as invalid (`aria-invalid`): a red outline, or a red choice for a `bare` picker in a row.",
+              "default": "false",
+              "attribute": "invalid",
               "reflects": true
             },
             {
@@ -2448,6 +2482,12 @@
                 "name": "FormControl",
                 "module": "src/form-control.ts"
               }
+            },
+            {
+              "kind": "field",
+              "name": "onInput",
+              "privacy": "private",
+              "description": "A select's own `input` would cross to the page before `value` is updated, and a picker tells of a choice once, with\n`change`: it stops here."
             },
             {
               "kind": "field",
@@ -2828,6 +2868,24 @@
               "description": "The form is invalid until an option is chosen.",
               "default": "false",
               "fieldName": "required"
+            },
+            {
+              "name": "variant",
+              "type": {
+                "text": "'field' | 'bare'"
+              },
+              "description": "`field` (default): a rounded filled field. `bare`: no box, for use inside a `ui-row`.",
+              "default": "'field'",
+              "fieldName": "variant"
+            },
+            {
+              "name": "invalid",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Shows the picker as invalid (`aria-invalid`): a red outline, or a red choice for a `bare` picker in a row.",
+              "default": "false",
+              "fieldName": "invalid"
             },
             {
               "name": "name",
@@ -4212,17 +4270,8 @@
       "path": "src/components/ui-split-view.ts",
       "declarations": [
         {
-          "kind": "variable",
-          "name": "SPLIT_VIEW_COLLAPSES_BELOW",
-          "type": {
-            "text": "number"
-          },
-          "default": "700",
-          "description": "Under this width, in CSS pixels, a split view shows one column: the same for every app."
-        },
-        {
           "kind": "class",
-          "description": "A sidebar beside a detail (UISplitViewController, SwiftUI's `NavigationSplitView`), with a `content` column between\nthem when one is slotted. Given 700 pt or more it shows every column; given less it is `collapsed` and shows one:\nthe one `column` names (`NavigationSplitView`'s `preferredCompactColumn`). The app sets `column` as the person goes\nin (they picked a row: `detail`) and back out.\n\nThe way back is the app's, in the header of what it shows, as a navigation bar's back button is: draw it while the\nsplit view is `collapsed`, and set `column` when it is pressed. Read `collapsed`, or hear `collapsedchange`, for that\nand for whether a selection is worth showing in the sidebar (collapsed, the sidebar is a list to pick from).\n\nIt fills the height its parent gives it, and each column gives its one element its whole box.",
+          "description": "A sidebar beside a detail (UISplitViewController, SwiftUI's `NavigationSplitView`), with a `content` column between\nthem when one is slotted. Given 700 pt or more it shows every column; given less it is `collapsed` and shows one:\nthe one `column` names (`NavigationSplitView`'s `preferredCompactColumn`). The app sets `column` as the person goes\nin (they picked a row: `detail`) and back out.\n\nThe way back is the app's, in the header of what it shows, as a navigation bar's back button is: draw it while the\nsplit view is `collapsed`, and set `column` when it is pressed. Read `collapsed`, or hear `collapsedchange`, for that\nand for whether a selection is worth showing in the sidebar (collapsed, the sidebar is a list to pick from).\n\nWhen the column in front changes while the keyboard is in the one that goes, the focus moves to the column that\ncomes (its element takes it, with `tabindex=\"-1\"`), as iPadOS moves it into the view that was pushed: Tab goes on from\nthere, and a screen reader keeps its place.\n\nIt fills the height its parent gives it, and each column gives its one element its whole box.",
           "name": "UiSplitView",
           "cssProperties": [
             {
@@ -4263,15 +4312,22 @@
             },
             {
               "kind": "field",
-              "name": "collapsed",
-              "privacy": "public",
+              "name": "narrow",
               "type": {
                 "text": "boolean"
               },
-              "description": "Whether one column is shown. The element sets it from its own width: read it, do not set it.",
+              "privacy": "private",
+              "default": "false"
+            },
+            {
+              "kind": "field",
+              "name": "told",
+              "type": {
+                "text": "boolean"
+              },
+              "privacy": "private",
               "default": "false",
-              "attribute": "collapsed",
-              "reflects": true
+              "description": "The width last told of with `collapsedchange`."
             },
             {
               "kind": "field",
@@ -4281,7 +4337,17 @@
               },
               "privacy": "private",
               "default": "false",
-              "description": "Whether something is slotted as the middle column. Not a property of the element: it redraws by hand."
+              "description": "Whether something is slotted as the middle column. A plain field that redraws by hand, not a reactive one: the\nmanifest would list a reactive one among the element's attributes, and it is nobody's to set."
+            },
+            {
+              "kind": "field",
+              "name": "hadFocus",
+              "type": {
+                "text": "boolean"
+              },
+              "privacy": "private",
+              "default": "false",
+              "description": "Whether the focus was inside the view when this update began."
             },
             {
               "kind": "field",
@@ -4290,6 +4356,45 @@
                 "text": "ResizeObserver | undefined"
               },
               "privacy": "private"
+            },
+            {
+              "kind": "field",
+              "name": "collapsed",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Whether one column is shown. The element works it out from its own width, so it is read, never set; the host also\ncarries a `collapsed` attribute while it is true, for a style to select on.",
+              "readonly": true
+            },
+            {
+              "kind": "method",
+              "name": "measured",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "narrow",
+                  "type": {
+                    "text": "boolean"
+                  }
+                }
+              ],
+              "description": "The width was measured: when it crosses the breakpoint the view redraws."
+            },
+            {
+              "kind": "method",
+              "name": "keepFocus",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "The focus was in a column that is no longer shown: the column in front takes it."
             },
             {
               "kind": "field",
@@ -4325,15 +4430,6 @@
               "description": "The column in front while collapsed: `sidebar` (default), `content` or `detail`.",
               "default": "'sidebar'",
               "fieldName": "column"
-            },
-            {
-              "name": "collapsed",
-              "type": {
-                "text": "boolean"
-              },
-              "description": "Whether one column is shown. The element sets it from its own width: read it, do not set it.",
-              "default": "false",
-              "fieldName": "collapsed"
             }
           ],
           "superclass": {
@@ -4345,14 +4441,6 @@
         }
       ],
       "exports": [
-        {
-          "kind": "js",
-          "name": "SPLIT_VIEW_COLLAPSES_BELOW",
-          "declaration": {
-            "name": "SPLIT_VIEW_COLLAPSES_BELOW",
-            "module": "src/components/ui-split-view.ts"
-          }
-        },
         {
           "kind": "js",
           "name": "UiSplitView",
@@ -4369,7 +4457,7 @@
       "declarations": [
         {
           "kind": "class",
-          "description": "A multi-line text field (UITextView, SwiftUI's `TextEditor`): what `ui-text-field` is for one line, for many. Return\nstarts a new line and never submits the form. A form control (see `FormControl`): with a `name` it submits its text,\nand `required`, the length limits and `setCustomValidity` take part in validation.\n\nIt is `rows` lines high and scrolls in itself past that; given a height by its parent (a flex or grid item, a\n`height`), it fills it. There is no resize handle, as there is none on iPadOS.",
+          "description": "A multi-line text field (UITextView, SwiftUI's `TextEditor`): what `ui-text-field` is for one line, for many. Return\nstarts a new line and never submits the form. A form control (see `FormControl`): with a `name` it submits its text,\nand `required`, the length limits and `setCustomValidity` take part in validation.\n\nIt is `rows` lines high (with `hit`, never under 44 pt) and scrolls in itself past that; given a height by its parent (a flex or grid item, a\n`height`), it fills it. There is no resize handle, as there is none on iPadOS.",
           "name": "UiTextArea",
           "cssParts": [
             {

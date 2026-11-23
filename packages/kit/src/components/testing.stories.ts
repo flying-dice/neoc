@@ -6,6 +6,8 @@ import './ui-check'
 import './ui-list'
 import './ui-segmented'
 import './ui-text-field'
+import './ui-text-area'
+import './ui-picker'
 import './ui-toggle'
 
 const meta: Meta = {
@@ -40,6 +42,16 @@ export const ClickingTheElement: StoryObj = {
         ]}
       ></ui-segmented>
       <ui-text-field data-testid="tl-field" label="Name"></ui-text-field>
+      <ui-text-area data-testid="tl-area" label="Notes" rows="2"></ui-text-area>
+      <ui-picker
+        data-testid="tl-picker"
+        label="Folder"
+        value="a"
+        .options=${[
+          { value: 'a', label: 'A' },
+          { value: 'b', label: 'B' }
+        ]}
+      ></ui-picker>
       <ui-list label="Rows">
         <ui-section>
           <ui-row data-testid="tl-row" heading="A row" tappable></ui-row>
@@ -82,9 +94,12 @@ export const ClickingTheElement: StoryObj = {
       await expect(await heard(() => click(check))).toEqual(['check:change', 'check:click'])
       await expect(check.checked).toBe(true)
       await expect(await heard(() => click(row))).toEqual(['row:click', 'row:press'])
-      // the segmented control and the field take a click on the element without error; a field focuses on a real click
+      // the segmented control, the fields and the picker take a click on the element without error; a field focuses
+      // on a real click, and a picker opens the system's menu
       await click(canvas.getByTestId('tl-seg'))
       await click(canvas.getByTestId('tl-field'))
+      await click(canvas.getByTestId('tl-area'))
+      await click(canvas.getByTestId('tl-picker'))
     }
   }
 }

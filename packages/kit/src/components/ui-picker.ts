@@ -11,7 +11,8 @@ import { base } from '../styles'
  * and a screen reader work as they do on every select. A form control (see `FormControl`): the chosen value is
  * submitted, and `required` keeps the form invalid until an option is chosen.
  *
- * With a `value` no option has, it shows nothing chosen. Drawn 36 pt high; with `hit` it has a 44 pt high hit area.
+ * With a `value` no option has, it shows nothing chosen. Drawn 36 pt high; with `hit` it is a 44 pt high target, all
+ * of which opens the menu.
  *
  * @tag ui-picker
  * @fires {CustomEvent<{ value: string }>} change - The person chose an option. `value` is already updated.
@@ -24,24 +25,31 @@ export class UiPicker extends FormControl {
     /** The chosen option's value. */
     value: { type: String, reflect: true },
     /** The form is invalid until an option is chosen. */
-    required: { type: Boolean, reflect: true }
+    required: { type: Boolean, reflect: true },
+    /** `field` (default): a rounded filled field. `bare`: no box, for use inside a `ui-row`. */
+    variant: { type: String, reflect: true },
+    /** Shows the picker as invalid (`aria-invalid`): a red outline, or a red choice for a `bare` picker in a row. */
+    invalid: { type: Boolean, reflect: true }
   }
   declare options: { value: string; label: string; disabled?: boolean }[]
   declare value: string
   declare required: boolean
+  declare variant: 'field' | 'bare'
+  declare invalid: boolean
   private initial = ''
 
   static styles = [
     base,
     css`
-      /* with hit, 44 pt high: the strip around the 36 pt picker is layout space it owns */
+      /* with hit, 44 pt high: the select itself is that high, so a tap anywhere in the box opens the menu; the field
+         is drawn 36 pt high behind it */
       :host([hit]) {
         --ui-hit: 44px;
       }
       :host {
         display: inline-block;
         vertical-align: middle;
-        min-width: 0;
+        min-width: var(--ui-hit, 0px);
         max-width: 100%;
         height: fit-content;
       }
@@ -50,9 +58,21 @@ export class UiPicker extends FormControl {
         display: flex;
         align-items: center;
         width: 100%;
-        min-height: var(--ui-hit, 0px);
+      }
+      /* the drawn field */
+      .box::before {
+        content: '';
+        position: absolute;
+        inset-inline: 0;
+        top: 50%;
+        height: 36px;
+        transform: translateY(-50%);
+        border-radius: var(--radius-md);
+        background: var(--fill-tertiary);
+        pointer-events: none;
       }
       select {
+        position: relative;
         appearance: none;
         display: block;
         width: 100%;
@@ -62,18 +82,49 @@ export class UiPicker extends FormControl {
         /* the end clears the chevrons */
         padding-block: 0;
         padding-inline: 12px 30px;
-        min-height: 36px;
-        border-radius: var(--radius-md);
-        outline-offset: 2px;
-        background: var(--fill-tertiary);
+        min-height: max(36px, var(--ui-hit, 0px));
+        outline: none; /* the ring is drawn around the field, below */
+        background: transparent;
         font: var(--type-body);
         letter-spacing: var(--tracking-body);
         color: var(--label);
         text-overflow: ellipsis;
         cursor: pointer;
       }
+      .box:has(select:focus-visible)::before {
+        outline: 3px solid var(--focus-ring);
+        outline-offset: 2px;
+      }
+      :host([invalid]) .box:not(:has(select:focus-visible))::before {
+        box-shadow: inset 0 0 0 1.5px var(--ios-red);
+      }
+      /* bare, in a row: no box, the choice in the secondary colour at the row's end, as a value is in an iPadOS form */
+      :host([variant='bare']) .box::before,
+      :host([variant='bare'][invalid]) .box:not(:has(select:focus-visible))::before {
+        background: transparent;
+        box-shadow: none;
+        inset-inline: -6px;
+      }
+      /* as wide as the choice it shows, not as its longest option, and never so wide that the row's title has no room */
+      :host([variant='bare']) {
+        max-width: min(100%, 14em);
+      }
+      :host([variant='bare']) select {
+        field-sizing: content;
+        padding-inline: 0 18px;
+        color: var(--label-secondary);
+        text-align: end;
+      }
+      :host([variant='bare']) svg {
+        inset-inline-end: 0;
+      }
+      :host([variant='bare'][invalid]) select:not(:focus-visible) {
+        color: var(--ios-red);
+      }
       select:disabled {
         cursor: default;
+      }
+      .box:has(select:disabled) {
         opacity: 0.4;
       }
       /* the system's menu is drawn by the browser: its rows take the window's own colours */
@@ -93,9 +144,6 @@ export class UiPicker extends FormControl {
         stroke-linejoin: round;
         pointer-events: none;
       }
-      :host([disabled]) svg {
-        opacity: 0.4;
-      }
     `
   ]
 
@@ -104,6 +152,8 @@ export class UiPicker extends FormControl {
     this.options = []
     this.value = ''
     this.required = false
+    this.variant = 'field'
+    this.invalid = false
   }
 
   private get select(): HTMLSelectElement | null {
@@ -155,6 +205,14 @@ export class UiPicker extends FormControl {
     super.updated()
   }
 
+  /**
+   * A select's own `input` would cross to the page before `value` is updated, and a picker tells of a choice once, with
+   * `change`: it stops here.
+   */
+  private onInput = (e: Event): void => {
+    e.stopPropagation()
+  }
+
   private onChange = (e: Event): void => {
     this.value = (e.target as HTMLSelectElement).value
     this.dispatchEvent(
@@ -169,7 +227,9 @@ export class UiPicker extends FormControl {
         aria-label=${ifDefined(this.accessibleName)}
         aria-description=${ifDefined(this.description || undefined)}
         ?disabled=${this.isDisabled}
+        aria-invalid=${ifDefined(this.invalid ? 'true' : undefined)}
         ?required=${this.required}
+        @input=${this.onInput}
         @change=${this.onChange}
       >
         ${repeat(

@@ -61,6 +61,21 @@ const build = (page: Page, way: Way): Promise<void> =>
         }
       ],
       ['ui-text-field', { name: 'who', value: 'Ada', id: 'who', required: true }],
+      ['ui-text-area', { name: 'notes', value: 'Two lines', id: 'notes', required: true }],
+      [
+        'ui-picker',
+        {
+          name: 'folder',
+          value: '2',
+          id: 'folder',
+          label: 'Folder',
+          required: true,
+          options: [
+            { value: '1', label: 'Notes' },
+            { value: '2', label: 'Work' }
+          ]
+        }
+      ],
       ['ui-button', { name: 'go', value: '1', type: 'submit', id: 'go' }, 'Go']
     ]
     for (const [tag, props, text] of specs) {
@@ -110,7 +125,9 @@ for (const way of WAYS) {
         ['sync', 'on'],
         ['agree', 'yes'],
         ['size', 'b'],
-        ['who', 'Ada']
+        ['who', 'Ada'],
+        ['notes', 'Two lines'],
+        ['folder', '2']
       ])
     })
 
@@ -123,7 +140,7 @@ for (const way of WAYS) {
         fieldset.disabled = true
         fieldset.append(
           ...form.querySelectorAll(
-            ':scope > ui-toggle, :scope > ui-check, :scope > ui-segmented, :scope > ui-text-field, :scope > ui-button'
+            ':scope > ui-toggle, :scope > ui-check, :scope > ui-segmented, :scope > ui-text-field, :scope > ui-text-area, :scope > ui-picker, :scope > ui-button'
           )
         )
         form.append(fieldset)
@@ -131,7 +148,7 @@ for (const way of WAYS) {
         const inner = (id: string, sel: string): boolean =>
           (
             document.getElementById(id)!.shadowRoot!.querySelector(sel) as
-              HTMLButtonElement | HTMLInputElement
+              HTMLButtonElement | HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
           ).disabled
         return {
           entries: [...new FormData(form)],
@@ -143,6 +160,8 @@ for (const way of WAYS) {
               .shadowRoot!.querySelector('[role=radio]') as HTMLButtonElement
           ).disabled,
           field: inner('who', 'input'),
+          area: inner('notes', 'textarea'),
+          picker: inner('folder', 'select'),
           button: inner('go', 'button')
         }
       })
@@ -152,6 +171,8 @@ for (const way of WAYS) {
         check: true,
         seg: true,
         field: true,
+        area: true,
+        picker: true,
         button: true
       })
       // a click on the disabled submit button submits nothing
@@ -241,25 +262,46 @@ for (const way of WAYS) {
         q('check').checked = false
         q('seg').value = 'a'
         q('who').value = 'Grace'
-        await Promise.all(['toggle', 'check', 'seg', 'who'].map((id) => q(id).updateComplete))
+        q('notes').value = 'Other words'
+        q('folder').value = '1'
+        const all = ['toggle', 'check', 'seg', 'who', 'notes', 'folder']
+        await Promise.all(all.map((id) => q(id).updateComplete))
         form.reset()
-        await Promise.all(['toggle', 'check', 'seg', 'who'].map((id) => q(id).updateComplete))
+        await Promise.all(all.map((id) => q(id).updateComplete))
         const afterReset = [...new FormData(form)]
         // the browser gives back what it kept: the control's value while it was on, a string for the others
         q('check').checked = false
         q('check').formStateRestoreCallback('yes')
         q('seg').formStateRestoreCallback('a')
         q('who').formStateRestoreCallback('Linus')
-        await Promise.all(['check', 'seg', 'who'].map((id) => q(id).updateComplete))
-        return { afterReset, restored: [q('check').checked, q('seg').value, q('who').value] }
+        q('notes').formStateRestoreCallback('Kept\nlines')
+        q('folder').formStateRestoreCallback('1')
+        await Promise.all(
+          ['check', 'seg', 'who', 'notes', 'folder'].map((id) => q(id).updateComplete)
+        )
+        return {
+          afterReset,
+          restored: [
+            q('check').checked,
+            q('seg').value,
+            q('who').value,
+            q('notes').value,
+            q('folder').value
+          ],
+          // the picker shows the option it was given back
+          shown: q('folder').shadowRoot!.querySelector('select')!.value
+        }
       })
       expect(result.afterReset).toEqual([
         ['sync', 'on'],
         ['agree', 'yes'],
         ['size', 'b'],
-        ['who', 'Ada']
+        ['who', 'Ada'],
+        ['notes', 'Two lines'],
+        ['folder', '2']
       ])
-      expect(result.restored).toEqual([true, 'a', 'Linus'])
+      expect(result.restored).toEqual([true, 'a', 'Linus', 'Kept\nlines', '1'])
+      expect(result.shown).toBe('1')
     })
 
     test('submit by Enter in the field, and by a kit button, with the right data', async ({
@@ -268,6 +310,11 @@ for (const way of WAYS) {
       await page.locator('#who').focus()
       await page.keyboard.press('Enter')
       await page.locator('#go').click()
+      // Return in a text area is a new line, not a submission: taken out again, the text is as it was
+      await page.locator('#notes').focus()
+      await page.keyboard.press('End')
+      await page.keyboard.press('Enter')
+      await page.keyboard.press('Backspace')
       const submits = await page.evaluate(
         () =>
           (
@@ -282,13 +329,17 @@ for (const way of WAYS) {
         ['sync', 'on'],
         ['agree', 'yes'],
         ['size', 'b'],
-        ['who', 'Ada']
+        ['who', 'Ada'],
+        ['notes', 'Two lines'],
+        ['folder', '2']
       ])
       expect(submits[1]!.entries).toEqual([
         ['sync', 'on'],
         ['agree', 'yes'],
         ['size', 'b'],
         ['who', 'Ada'],
+        ['notes', 'Two lines'],
+        ['folder', '2'],
         ['go', '1']
       ])
       // a kit button cannot be the `submitter` (only a native submit button can): documented in the README

@@ -1,6 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
+  import { alertButton } from '@vos/storybook/kit'
   import IssueDetail from './IssueDetail.svelte'
   import type { Issue } from 'app:rpc'
   import { ISSUES } from '../lib/samples'
@@ -51,7 +52,7 @@
   play={async ({ canvas, userEvent }) => {
     await userEvent.click(canvas.getByTestId('projects-issue-remove'))
     await expect(onremove).not.toHaveBeenCalled()
-    await userEvent.click(canvas.getByTestId('projects-issue-confirm').shadowRoot!.querySelector<HTMLElement>('[part=action]')!)
+    await userEvent.click(alertButton(canvas.getByTestId('projects-issue-confirm'), 'action'))
     await expect(onremove).toHaveBeenCalledWith(bug)
   }}
 />

@@ -1,6 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
+  import { alertButton } from '@vos/storybook/kit'
   import type { Folder, Note } from 'app:rpc'
   import NoteEditor from './NoteEditor.svelte'
   import { listed, note } from '../lib/fakeApi'
@@ -147,7 +148,7 @@
     await userEvent.click(canvas.getByTestId('notes-purge'))
     await expect(canvas.getByTestId('notes-confirm-purge').shadowRoot!.querySelector('dialog')).toHaveTextContent('It cannot be brought back.')
     await expect(onpurge).not.toHaveBeenCalled()
-    await userEvent.click(canvas.getByTestId('notes-confirm-purge').shadowRoot!.querySelector<HTMLElement>('[part=action]')!)
+    await userEvent.click(alertButton(canvas.getByTestId('notes-confirm-purge'), 'action'))
     await expect(onpurge).toHaveBeenCalledTimes(1)
   }}
 />

@@ -25,39 +25,39 @@
   <!-- one column in a narrow window: the open chat is in front of the list -->
   <ui-split-view column={open === null ? 'sidebar' : 'detail'} oncollapsedchange={(e) => (narrow = e.detail.collapsed)}>
     <div slot="sidebar">
-    <ChatSidebar
-      agents={agents.agents}
-      chats={agents.chats}
-      selected={open?.chat.id}
-      onstart={(agent) => void agents.startChat(agent)}
-      onopen={(chat) => void agents.openChat(chat)}
-    />
+      <ChatSidebar
+        agents={agents.agents}
+        chats={agents.chats}
+        selected={open?.chat.id}
+        onstart={(agent) => void agents.startChat(agent)}
+        onopen={(chat) => void agents.openChat(chat)}
+      />
     </div>
     <div>
-    {#if open}
-      <ChatThread
-        conversation={open}
-        draft={agents.draft}
-        failure={agents.failure}
-        back={narrow}
-        ondraft={(text) => (agents.draft = text)}
-        onsend={() => void agents.send()}
-        onstop={() => void agents.stop()}
-        onback={() => agents.back()}
-      />
-    {:else}
-      <div class="nothing">
-        {#if agents.failure}
-          <ui-banner tone="error" data-testid="agents-failure">{agents.failure}</ui-banner>
-        {/if}
-        <ui-empty-state
-          icon="sparkles"
-          heading="No chat open"
-          message="Pick an agent in the sidebar to start a chat."
-          data-testid="agents-no-chat"
-        ></ui-empty-state>
-      </div>
-    {/if}
+      {#if open}
+        <ChatThread
+          conversation={open}
+          draft={agents.draft}
+          failure={agents.failure}
+          back={narrow}
+          ondraft={(text) => (agents.draft = text)}
+          onsend={() => void agents.send()}
+          onstop={() => void agents.stop()}
+          onback={() => agents.back()}
+        />
+      {:else}
+        <div class="nothing">
+          {#if agents.failure}
+            <ui-banner tone="error" data-testid="agents-failure">{agents.failure}</ui-banner>
+          {/if}
+          <ui-empty-state
+            icon="sparkles"
+            heading="No chat open"
+            message="Pick an agent in the sidebar to start a chat."
+            data-testid="agents-no-chat"
+          ></ui-empty-state>
+        </div>
+      {/if}
     </div>
   </ui-split-view>
 </main>

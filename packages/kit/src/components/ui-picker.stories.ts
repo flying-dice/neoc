@@ -3,6 +3,7 @@ import { html } from 'lit'
 import { expect, fn, userEvent, within } from 'storybook/test'
 import { expectHitArea } from '../story-support'
 import './ui-picker'
+import './ui-list'
 
 const folders = [
   { value: '1', label: 'Notes' },
@@ -117,5 +118,51 @@ export const HitArea: Story = {
     </div>`,
   play: async ({ canvasElement }) => {
     await expectHitArea(within(canvasElement).getByTestId('hit-picker'))
+  }
+}
+
+/** In a form, a picker is `bare` in its row: the choice at the row's end, and red while `invalid`. The row is the target. */
+export const InARow: Story = {
+  render: () =>
+    html`<div style="width:360px">
+      <ui-list label="Note">
+        <ui-section footer="The folder was deleted. Choose another." footer-tone="error">
+          <ui-row data-testid="row" heading="Folder"
+            ><ui-picker
+              slot="trailing"
+              data-testid="row-picker"
+              variant="bare"
+              label="Folder"
+              value="2"
+              .options=${folders}
+            ></ui-picker
+          ></ui-row>
+          <ui-row heading="Moved from"
+            ><ui-picker
+              slot="trailing"
+              data-testid="row-picker-invalid"
+              variant="bare"
+              invalid
+              label="Moved from"
+              value="1"
+              .options=${folders}
+            ></ui-picker
+          ></ui-row>
+        </ui-section>
+      </ui-list>
+    </div>`,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const picker = canvas.getByTestId('row-picker')
+    // the row gives the picker its 44 pt target and keeps the height of any other row
+    await expect(select(picker).getBoundingClientRect().height).toBe(44)
+    await expect(canvas.getByTestId('row').getBoundingClientRect().height).toBe(44)
+    // and the title keeps its room: the picker is as wide as its choice
+    await expect(picker.getBoundingClientRect().width).toBeLessThan(100)
+    await expect(canvas.getByTestId('row').shadowRoot!.querySelector('.title')).toBeVisible()
+    await expect(select(canvas.getByTestId('row-picker-invalid'))).toHaveAttribute(
+      'aria-invalid',
+      'true'
+    )
   }
 }

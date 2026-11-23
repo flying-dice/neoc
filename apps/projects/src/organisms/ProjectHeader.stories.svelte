@@ -1,6 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
+  import { alertButton } from '@vos/storybook/kit'
   import ProjectHeader from './ProjectHeader.svelte'
   import type { Project } from 'app:rpc'
   import { WEBSITE } from '../lib/fakeApi'
@@ -53,7 +54,7 @@
     await userEvent.click(canvas.getByTestId('projects-delete'))
     await expect(canvas.getByTestId('projects-confirm').shadowRoot!.querySelector('dialog')).toHaveTextContent('Its issues and its pages are deleted with it.')
     await expect(onremove).not.toHaveBeenCalled()
-    await userEvent.click(canvas.getByTestId('projects-confirm').shadowRoot!.querySelector<HTMLElement>('[part=action]')!)
+    await userEvent.click(alertButton(canvas.getByTestId('projects-confirm'), 'action'))
     await expect(onremove).toHaveBeenCalledWith(WEBSITE)
   }}
 />

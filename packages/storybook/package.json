@@ -7,6 +7,7 @@
   "exports": {
     "./main": "./main.ts",
     "./preview": "./preview.ts",
+    "./kit": "./kit.ts",
     "./AppWindow.svelte": {
       "types": "./AppWindow.svelte",
       "svelte": "./AppWindow.svelte",

@@ -1,6 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn, waitFor } from 'storybook/test'
+  import { alertButton } from '@vos/storybook/kit'
   import type { List, Todo } from 'app:rpc'
   import TodoList from './TodoList.svelte'
   import { REMINDERS, todo } from '../lib/fakeApi'
@@ -164,11 +165,11 @@
   args={{ removable: true }}
   play={async ({ canvas, userEvent }) => {
     await userEvent.click(canvas.getByTestId('todos-delete-list'))
-    await userEvent.click(canvas.getByTestId('todos-confirm').shadowRoot!.querySelector<HTMLElement>('[part=cancel]')!)
+    await userEvent.click(alertButton(canvas.getByTestId('todos-confirm'), 'cancel'))
     await expect(canvas.queryByTestId('todos-confirm')).toBeNull()
     await expect(onremovelist).not.toHaveBeenCalled()
     await userEvent.click(canvas.getByTestId('todos-delete-list'))
-    await userEvent.click(canvas.getByTestId('todos-confirm').shadowRoot!.querySelector<HTMLElement>('[part=action]')!)
+    await userEvent.click(alertButton(canvas.getByTestId('todos-confirm'), 'action'))
     await expect(onremovelist).toHaveBeenCalledWith(REMINDERS)
     await expect(canvas.queryByTestId('todos-confirm')).toBeNull()
   }}

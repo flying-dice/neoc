@@ -1,6 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn, waitFor } from 'storybook/test'
+  import { alertButton } from '@vos/storybook/kit'
   import AppWindow from '@vos/storybook/AppWindow.svelte'
   import definition from '../../openrpc.json'
   import NotebooksPage from './NotebooksPage.svelte'
@@ -263,7 +264,7 @@
     await appears(canvas, 'notebooks-empty')
     await expect(canvas.getByTestId('notebooks-notebook').shadowRoot!.querySelector('select')!).toHaveValue('3')
     await userEvent.click(canvas.getByTestId('notebooks-delete-notebook'))
-    await userEvent.click(canvas.getByTestId('notebooks-confirm-notebook').shadowRoot!.querySelector<HTMLElement>('[part=action]')!)
+    await userEvent.click(alertButton(canvas.getByTestId('notebooks-confirm-notebook'), 'action'))
     await appears(canvas, 'notebooks-note-1')
     await expect(canvas.getByTestId('notebooks-notebook').shadowRoot!.querySelector('select')!).toHaveValue('1')
   }}

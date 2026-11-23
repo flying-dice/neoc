@@ -1,6 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
+  import { alertButton } from '@vos/storybook/kit'
   import type { Container, Stack } from 'app:rpc'
   import ContainerList from './ContainerList.svelte'
   import type { Action } from '../lib/containers.svelte'
@@ -132,11 +133,11 @@
     await expect(onstack).toHaveBeenLastCalledWith(MEDIA, 'restart')
     // removing waits for the answer; cancelling asks for nothing
     await userEvent.click(canvas.getByTestId('containers-stack-remove'))
-    await userEvent.click(canvas.getByTestId('containers-stack-confirm').shadowRoot!.querySelector<HTMLElement>('[part=cancel]')!)
+    await userEvent.click(alertButton(canvas.getByTestId('containers-stack-confirm'), 'cancel'))
     await expect(canvas.queryByTestId('containers-stack-confirm')).toBeNull()
     await expect(onstack).toHaveBeenCalledTimes(1)
     await userEvent.click(canvas.getByTestId('containers-stack-remove'))
-    await userEvent.click(canvas.getByTestId('containers-stack-confirm').shadowRoot!.querySelector<HTMLElement>('[part=action]')!)
+    await userEvent.click(alertButton(canvas.getByTestId('containers-stack-confirm'), 'action'))
     await expect(onstack).toHaveBeenLastCalledWith(MEDIA, 'remove')
     await userEvent.click(canvas.getByTestId('containers-back'))
     await expect(onback).toHaveBeenCalledTimes(1)

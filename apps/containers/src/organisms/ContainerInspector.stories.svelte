@@ -1,6 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
+  import { alertButton } from '@vos/storybook/kit'
   import type { Container, Details, Logs } from 'app:rpc'
   import ContainerInspector from './ContainerInspector.svelte'
   import type { Action, Tab } from '../lib/containers.svelte'
@@ -147,10 +148,10 @@
     await userEvent.click(canvas.getByTestId('containers-inspector-tab').shadowRoot!.querySelector('[data-testid="containers-inspector-tab-details"]')!)
     await expect(ontab).toHaveBeenLastCalledWith('details')
     await userEvent.click(canvas.getByTestId('containers-inspector-remove'))
-    await userEvent.click(canvas.getByTestId('containers-inspector-confirm').shadowRoot!.querySelector<HTMLElement>('[part=cancel]')!)
+    await userEvent.click(alertButton(canvas.getByTestId('containers-inspector-confirm'), 'cancel'))
     await expect(onact).toHaveBeenCalledTimes(2)
     await userEvent.click(canvas.getByTestId('containers-inspector-remove'))
-    await userEvent.click(canvas.getByTestId('containers-inspector-confirm').shadowRoot!.querySelector<HTMLElement>('[part=action]')!)
+    await userEvent.click(alertButton(canvas.getByTestId('containers-inspector-confirm'), 'action'))
     await expect(onact).toHaveBeenLastCalledWith('remove')
     await userEvent.click(canvas.getByTestId('containers-inspector-back'))
     await expect(onback).toHaveBeenCalledTimes(1)

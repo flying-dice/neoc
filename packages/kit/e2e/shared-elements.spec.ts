@@ -122,6 +122,22 @@ test('an alert keeps the keyboard inside and the page behind it still, answers C
   await expect(dialog).toBeHidden()
   await expect(page.getByTestId('ask')).toBeFocused()
   expect(await heard(page)).toEqual(['cancel', 'cancel', 'cancel', 'cancel', 'confirm'])
+
+  // the browser's own request to close (a back gesture) is Cancel too, once
+  await page.keyboard.press('Enter')
+  await expect(cancel).toBeFocused()
+  await dialog.evaluate((el) => el.dispatchEvent(new Event('cancel', { cancelable: true })))
+  await expect(dialog).toBeHidden()
+  await expect(page.getByTestId('ask')).toBeFocused()
+  expect((await heard(page)).slice(5)).toEqual(['cancel'])
+
+  // taken out of the page while open (the app stopped asking for another reason): the focus still goes back, and
+  // nothing was answered
+  await page.keyboard.press('Enter')
+  await expect(cancel).toBeFocused()
+  await alert.evaluate((el) => el.remove())
+  await expect(page.getByTestId('ask')).toBeFocused()
+  expect((await heard(page)).slice(6)).toEqual([])
   expect(
     await page.evaluate(() => (window as unknown as { violations: string[] }).violations)
   ).toEqual([])
@@ -136,9 +152,12 @@ test('a split view shows one column under 700 wide and every column from 700, wh
     page,
     [
       el('ui-split-view', { 'data-testid': 'split', style: 'height:300px' }, [
-        el('div', { slot: 'sidebar', 'data-testid': 'sidebar' }, 'Sidebar'),
-        el('div', { 'data-testid': 'detail' }, 'Detail')
-      ])
+        el('div', { slot: 'sidebar', 'data-testid': 'sidebar' }, [
+          el('button', { 'data-testid': 'row' }, 'A row')
+        ]),
+        el('div', { 'data-testid': 'detail' }, [el('button', { 'data-testid': 'back' }, 'Back')])
+      ]),
+      el('button', { 'data-testid': 'outside' }, 'Outside')
     ],
     'split',
     ['collapsedchange']
@@ -152,9 +171,23 @@ test('a split view shows one column under 700 wide and every column from 700, wh
   await expect(split).toHaveAttribute('collapsed')
   await expect(page.getByTestId('sidebar')).toBeVisible()
   await expect(page.getByTestId('detail')).toBeHidden()
+  // the keyboard is on a row of the sidebar when the app shows the detail: the focus goes with it, and comes back
+  await page.getByTestId('row').focus()
   await split.evaluate((el) => ((el as HTMLElement & { column: string }).column = 'detail'))
   await expect(page.getByTestId('sidebar')).toBeHidden()
   await expect(page.getByTestId('detail')).toBeVisible()
+  await expect(page.getByTestId('detail')).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(page.getByTestId('back')).toBeFocused()
+  await split.evaluate((el) => ((el as HTMLElement & { column: string }).column = 'sidebar'))
+  await expect(page.getByTestId('sidebar')).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(page.getByTestId('row')).toBeFocused()
+  // with the focus elsewhere in the page, a change of column takes none
+  await page.getByTestId('outside').focus()
+  await split.evaluate((el) => ((el as HTMLElement & { column: string }).column = 'detail'))
+  await expect(page.getByTestId('detail')).toBeVisible()
+  await expect(page.getByTestId('outside')).toBeFocused()
 
   await page.setViewportSize({ width: 700, height: 500 })
   await expect(split).not.toHaveAttribute('collapsed')
@@ -213,4 +246,39 @@ test('a text area takes lines without submitting its form, and a picker takes a 
     ['folder', '2']
   ])
   expect((await heard(page)).filter((type) => type === 'change')).toEqual(['change', 'change'])
+  // a choice is told once, as `change`: the select's own `input` (before `value` is updated) stays inside the picker
+  expect((await heard(page)).filter((type) => type === 'input')).toEqual(
+    Array.from('Milk\nBread', () => 'input')
+  )
+})
+
+test('with hit, every part of a picker is the select: a tap at its edge opens the menu, as one in the middle does', async ({
+  page
+}) => {
+  await page.goto(`${server.origin}/frame`)
+  await stage(
+    page,
+    [el('ui-picker', { 'data-testid': 'picker', label: 'Folder', hit: '', style: 'margin:40px' })],
+    'picker',
+    []
+  )
+  const at = await page.evaluate(async () => {
+    const picker = document.querySelector('ui-picker') as HTMLElement & {
+      options: unknown
+      updateComplete: Promise<unknown>
+    }
+    picker.options = [{ value: '1', label: 'Notes' }]
+    await picker.updateComplete
+    const select = picker.shadowRoot!.querySelector('select')!
+    select.addEventListener('mousedown', (e) => {
+      e.preventDefault() // the menu itself is the system's: what is checked is that the select is what was pressed
+      ;(window as unknown as { heard: string[] }).heard.push('select')
+    })
+    const r = picker.getBoundingClientRect()
+    return { left: r.left, top: r.top, width: r.width, height: r.height }
+  })
+  expect(at.height).toBe(44)
+  for (const y of [2, at.height / 2, at.height - 2])
+    await page.mouse.click(at.left + at.width / 2, at.top + y)
+  expect(await heard(page)).toEqual(['select', 'select', 'select'])
 })

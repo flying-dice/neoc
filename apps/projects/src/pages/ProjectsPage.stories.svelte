@@ -1,6 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, waitFor } from 'storybook/test'
+  import { alertButton } from '@vos/storybook/kit'
   import AppWindow from '@vos/storybook/AppWindow.svelte'
   import definition from '../../openrpc.json'
   import ProjectsPage from './ProjectsPage.svelte'
@@ -234,7 +235,7 @@
   play={async ({ canvas, userEvent }) => {
     await show(canvas, userEvent, 'projects-project-APP')
     await userEvent.click(canvas.getByTestId('projects-delete'))
-    await userEvent.click(canvas.getByTestId('projects-confirm').shadowRoot!.querySelector<HTMLElement>('[part=action]')!)
+    await userEvent.click(alertButton(canvas.getByTestId('projects-confirm'), 'action'))
     await gone(canvas, 'projects-project-APP')
   }}
 />

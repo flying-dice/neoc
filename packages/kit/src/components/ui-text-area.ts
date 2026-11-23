@@ -9,7 +9,7 @@ import { base } from '../styles'
  * starts a new line and never submits the form. A form control (see `FormControl`): with a `name` it submits its text,
  * and `required`, the length limits and `setCustomValidity` take part in validation.
  *
- * It is `rows` lines high and scrolls in itself past that; given a height by its parent (a flex or grid item, a
+ * It is `rows` lines high (with `hit`, never under 44 pt) and scrolls in itself past that; given a height by its parent (a flex or grid item, a
  * `height`), it fills it. There is no resize handle, as there is none on iPadOS.
  *
  * @tag ui-text-area
@@ -58,6 +58,10 @@ export class UiTextArea extends FormControl {
   static styles = [
     base,
     css`
+      /* with hit, at least 44 pt high: a one-row area is a target as a field is */
+      :host([hit]) {
+        --ui-hit: 44px;
+      }
       :host {
         display: block;
         min-width: 0;
@@ -67,6 +71,7 @@ export class UiTextArea extends FormControl {
         display: block;
         width: 100%;
         height: 100%;
+        min-height: var(--ui-hit, 0px);
         min-width: 0;
         margin: 0;
         border: 0;

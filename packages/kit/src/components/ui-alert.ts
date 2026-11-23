@@ -124,6 +124,9 @@ export class UiAlert extends LitElement {
     this.testid = null
   }
 
+  /** What had the focus when the alert opened, for the one case the dialog cannot give it back itself. */
+  private opener: Element | null = null
+
   private get dialog(): HTMLDialogElement | null {
     return this.renderRoot.querySelector('dialog')
   }
@@ -136,7 +139,10 @@ export class UiAlert extends LitElement {
 
   disconnectedCallback(): void {
     super.disconnectedCallback()
-    if (this.dialog?.open) this.dialog.close()
+    if (!this.dialog?.open) return
+    // taken out of the page while open: a dialog that is gone gives no focus back, so it is given back here
+    this.dialog.close()
+    if (this.opener instanceof HTMLElement && this.opener.isConnected) this.opener.focus()
   }
 
   protected updated(): void {
@@ -151,6 +157,7 @@ export class UiAlert extends LitElement {
       dialog.close()
       return
     }
+    this.opener = document.activeElement
     dialog.showModal()
     const front = this.renderRoot.querySelector<UiButton>('ui-button.preferred')
     if (!front) return

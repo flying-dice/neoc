@@ -1,6 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, waitFor } from 'storybook/test'
+  import { alertButton } from '@vos/storybook/kit'
   import AppWindow from '@vos/storybook/AppWindow.svelte'
   import definition from '../../openrpc.json'
   import NotesPage from './NotesPage.svelte'
@@ -246,7 +247,7 @@
     await show(canvas, userEvent, 'notes-folder-2')
     await appears(canvas, 'notes-delete-folder')
     await userEvent.click(canvas.getByTestId('notes-delete-folder'))
-    await userEvent.click(canvas.getByTestId('notes-confirm-folder').shadowRoot!.querySelector<HTMLElement>('[part=action]')!)
+    await userEvent.click(alertButton(canvas.getByTestId('notes-confirm-folder'), 'action'))
     await titled(canvas, 'All Notes')
     await toFolders(canvas, userEvent)
     await gone(canvas, 'notes-folder-2')

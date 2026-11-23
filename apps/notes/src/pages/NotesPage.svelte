@@ -14,7 +14,7 @@
 
   let { notes, saveAfter = 600 }: Props = $props()
 
-  // in a window too narrow for both, the split view shows one column: the kit says when, the same for every app
+  // in a window too narrow for all three columns, the split view shows one: the kit says when, the same for every app
   let narrow = $state(false)
   // the pane in front, as the split view names its three columns
   const column = $derived(notes.pane === 'folders' ? 'sidebar' : notes.pane === 'list' ? 'content' : 'detail')

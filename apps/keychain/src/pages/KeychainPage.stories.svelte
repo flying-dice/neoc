@@ -1,6 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, waitFor } from 'storybook/test'
+  import { alertButton } from '@vos/storybook/kit'
   import AppWindow from '@vos/storybook/AppWindow.svelte'
   import definition from '../../openrpc.json'
   import KeychainPage from './KeychainPage.svelte'
@@ -123,12 +124,12 @@
     await appears(canvas, 'keychain-item-3-remove')
     await userEvent.click(canvas.getByTestId('keychain-item-3-remove'))
     await appears(canvas, 'keychain-confirm')
-    await userEvent.click(canvas.getByTestId('keychain-confirm').shadowRoot!.querySelector<HTMLElement>('[part=cancel]')!)
+    await userEvent.click(alertButton(canvas.getByTestId('keychain-confirm'), 'cancel'))
     await gone(canvas, 'keychain-confirm')
     await says(canvas, 'keychain-items-summary', '3 items')
     await userEvent.click(canvas.getByTestId('keychain-item-3-remove'))
     await appears(canvas, 'keychain-confirm')
-    await userEvent.click(canvas.getByTestId('keychain-confirm').shadowRoot!.querySelector<HTMLElement>('[part=action]')!)
+    await userEvent.click(alertButton(canvas.getByTestId('keychain-confirm'), 'action'))
     await gone(canvas, 'keychain-item-3')
     await says(canvas, 'keychain-items-summary', '2 items')
   }}

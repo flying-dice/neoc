@@ -3,7 +3,7 @@ import { define } from '../define'
 import { base } from '../styles'
 
 /** Under this width, in CSS pixels, a split view shows one column: the same for every app. */
-export const SPLIT_VIEW_COLLAPSES_BELOW = 700
+const COLLAPSES_BELOW = 700
 
 const COLUMNS = ['sidebar', 'content', 'detail'] as const
 
@@ -16,6 +16,10 @@ const COLUMNS = ['sidebar', 'content', 'detail'] as const
  * The way back is the app's, in the header of what it shows, as a navigation bar's back button is: draw it while the
  * split view is `collapsed`, and set `column` when it is pressed. Read `collapsed`, or hear `collapsedchange`, for that
  * and for whether a selection is worth showing in the sidebar (collapsed, the sidebar is a list to pick from).
+ *
+ * When the column in front changes while the keyboard is in the one that goes, the focus moves to the column that
+ * comes (its element takes it, with `tabindex="-1"`), as iPadOS moves it into the view that was pushed: Tab goes on from
+ * there, and a screen reader keeps its place.
  *
  * It fills the height its parent gives it, and each column gives its one element its whole box.
  *
@@ -30,14 +34,19 @@ const COLUMNS = ['sidebar', 'content', 'detail'] as const
 export class UiSplitView extends LitElement {
   static properties = {
     /** The column in front while collapsed: `sidebar` (default), `content` or `detail`. */
-    column: { type: String, reflect: true },
-    /** Whether one column is shown. The element sets it from its own width: read it, do not set it. */
-    collapsed: { type: Boolean, reflect: true }
+    column: { type: String, reflect: true }
   }
   declare column: 'sidebar' | 'content' | 'detail'
-  declare collapsed: boolean
-  /** Whether something is slotted as the middle column. Not a property of the element: it redraws by hand. */
+  private narrow = false
+  /** The width last told of with `collapsedchange`. */
+  private told = false
+  /**
+   * Whether something is slotted as the middle column. A plain field that redraws by hand, not a reactive one: the
+   * manifest would list a reactive one among the element's attributes, and it is nobody's to set.
+   */
   private threeColumns = false
+  /** Whether the focus was inside the view when this update began. */
+  private hadFocus = false
 
   static styles = [
     base,
@@ -88,6 +97,10 @@ export class UiSplitView extends LitElement {
       :host([collapsed]) slot.front {
         display: block;
       }
+      /* a column that was given the focus because it came to the front is not a control: no ring around the pane */
+      ::slotted([tabindex='-1']:focus-visible) {
+        outline: none !important;
+      }
     `
   ]
 
@@ -96,7 +109,14 @@ export class UiSplitView extends LitElement {
   constructor() {
     super()
     this.column = 'sidebar'
-    this.collapsed = false
+  }
+
+  /**
+   * Whether one column is shown. The element works it out from its own width, so it is read, never set; the host also
+   * carries a `collapsed` attribute while it is true, for a style to select on.
+   */
+  get collapsed(): boolean {
+    return this.narrow
   }
 
   connectedCallback(): void {
@@ -104,7 +124,7 @@ export class UiSplitView extends LitElement {
     this.observer = new ResizeObserver(([entry]) => {
       const width = entry?.contentRect.width ?? 0
       // not laid out (hidden, or not drawn yet) is not narrow
-      if (width > 0) this.collapsed = width < SPLIT_VIEW_COLLAPSES_BELOW
+      if (width > 0) this.measured(width < COLLAPSES_BELOW)
     })
     this.observer.observe(this)
   }
@@ -115,16 +135,41 @@ export class UiSplitView extends LitElement {
     this.observer = undefined
   }
 
-  protected updated(changed: Map<PropertyKey, unknown>): void {
-    // the first value (not collapsed) is not a change; the first measurement that differs is
-    if (changed.has('collapsed') && changed.get('collapsed') !== undefined)
-      this.dispatchEvent(
-        new CustomEvent('collapsedchange', {
-          detail: { collapsed: this.collapsed },
-          bubbles: true,
-          composed: true
-        })
-      )
+  protected willUpdate(): void {
+    this.hadFocus = this.matches(':focus-within')
+  }
+
+  protected updated(): void {
+    this.keepFocus()
+    // heard once the view is redrawn for the width it tells of
+    if (this.told === this.narrow) return
+    this.told = this.narrow
+    this.dispatchEvent(
+      new CustomEvent('collapsedchange', {
+        detail: { collapsed: this.narrow },
+        bubbles: true,
+        composed: true
+      })
+    )
+  }
+
+  /** The width was measured: when it crosses the breakpoint the view redraws. */
+  private measured(narrow: boolean): void {
+    if (narrow === this.narrow) return
+    this.narrow = narrow
+    this.toggleAttribute('collapsed', narrow)
+    this.requestUpdate()
+  }
+
+  /** The focus was in a column that is no longer shown: the column in front takes it. */
+  private keepFocus(): void {
+    if (!this.collapsed || !this.hadFocus) return
+    const column = this.renderRoot
+      .querySelector<HTMLSlotElement>('slot.front')
+      ?.assignedElements()[0]
+    if (!(column instanceof HTMLElement) || column.matches(':focus-within')) return
+    if (!column.hasAttribute('tabindex')) column.tabIndex = -1
+    column.focus({ preventScroll: true })
   }
 
   /** The column in front: the one asked for, or the nearest there is (no middle column: the detail). */

@@ -1,6 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
+  import { alertButton } from '@vos/storybook/kit'
   import type { ComponentProps } from 'svelte'
   import type { Note } from 'app:rpc'
   import NotePane from './NotePane.svelte'
@@ -133,7 +134,7 @@
     await expect(mocks.onopen).toHaveBeenCalledWith(1)
     await userEvent.click(canvas.getByTestId('notebooks-delete'))
     await expect(canvas.getByTestId('notebooks-confirm').shadowRoot!.querySelector('dialog')).toHaveTextContent('Delete Herbs?')
-    await userEvent.click(canvas.getByTestId('notebooks-confirm').shadowRoot!.querySelector<HTMLElement>('[part=action]')!)
+    await userEvent.click(alertButton(canvas.getByTestId('notebooks-confirm'), 'action'))
     await expect(mocks.onremove).toHaveBeenCalledTimes(1)
   }}
 />
