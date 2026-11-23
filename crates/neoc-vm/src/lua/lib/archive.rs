@@ -47,7 +47,7 @@ use tracing::instrument;
 use walkdir::WalkDir;
 
 use crate::lua::facade::Module;
-use crate::lua::sandbox::{err, from_err, ok};
+use crate::lua::sandbox::{Fallible, err, from_err, ok};
 
 /// Total decompressed output ceiling, mirroring `lib:compress`'s default.
 const DEFAULT_MAX_OUTPUT: usize = 256 * 1024 * 1024;
@@ -849,7 +849,7 @@ fn write_link(_target: &Path, _link: &str, _symlink: bool) -> Result<(), String>
 // ---------------------------------------------------------------------------
 
 /// Build a tar archive in memory from `{ path, archive_path? }` entries (read from disk) and return its bytes. `opts.compression` (`gzip`/`zstd`/`none`, default none) and `opts.strip_prefix` apply.
-#[neoc_macros::lua_fn(returns = "Result<string, string>")]
+#[neoc_macros::lua_fn]
 #[instrument(
     name = "archive.tar_create_bytes",
     target = "lua::lib::archive",
@@ -858,92 +858,92 @@ fn write_link(_target: &Path, _link: &str, _symlink: bool) -> Result<(), String>
 fn tar_create_bytes(
     lua: &Lua,
     (entries, opts): (Table, Option<Table>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<mlua::LuaString>> {
     let prefix = "archive.tar_create_bytes";
     let strip = match opt_string(opts.as_ref(), "strip_prefix", prefix) {
         Ok(s) => s,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return err(msg),
     };
     let comp = match opt_string(opts.as_ref(), "compression", prefix) {
         Ok(Some(label)) => match Comp::from_label(&label) {
             Ok(c) => c,
-            Err(msg) => return err(lua, format!("{prefix}: {msg}")),
+            Err(msg) => return err(format!("{prefix}: {msg}")),
         },
         Ok(None) => Comp::None,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return err(msg),
     };
     let sources = match parse_tar_entries(&entries, strip.as_deref()) {
         Ok(s) => s,
-        Err(msg) => return err(lua, format!("{prefix}: {msg}")),
+        Err(msg) => return err(format!("{prefix}: {msg}")),
     };
     match build_tar(&sources, comp) {
-        Ok(bytes) => ok(lua, lua.create_string(&bytes)?),
-        Err(msg) => from_err(lua, prefix, msg),
+        Ok(bytes) => ok(lua.create_string(&bytes)?),
+        Err(msg) => from_err(prefix, msg),
     }
 }
 
 /// Write a tar archive to `path` from `{ path, archive_path? }` entries. Compression is inferred from the extension (`.tar.gz`/`.tgz`/`.tar.zst`); `opts.compression` overrides it and a clash with the extension is an error.
-#[neoc_macros::lua_fn(returns = "Result<bool, string>")]
+#[neoc_macros::lua_fn]
 #[instrument(name = "archive.tar_create", target = "lua::lib::archive", skip_all)]
 fn tar_create(
-    lua: &Lua,
+    _: &Lua,
     (path, entries, opts): (String, Table, Option<Table>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<bool>> {
     let prefix = "archive.tar_create";
     let strip = match opt_string(opts.as_ref(), "strip_prefix", prefix) {
         Ok(s) => s,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return err(msg),
     };
     let explicit = match opt_string(opts.as_ref(), "compression", prefix) {
         Ok(s) => s,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return err(msg),
     };
     let comp = match resolve_create_comp(&path, explicit.as_deref()) {
         Ok(c) => c,
-        Err(msg) => return err(lua, format!("{prefix}: {msg}")),
+        Err(msg) => return err(format!("{prefix}: {msg}")),
     };
     let sources = match parse_tar_entries(&entries, strip.as_deref()) {
         Ok(s) => s,
-        Err(msg) => return err(lua, format!("{prefix}: {msg}")),
+        Err(msg) => return err(format!("{prefix}: {msg}")),
     };
     let bytes = match build_tar(&sources, comp) {
         Ok(b) => b,
-        Err(msg) => return from_err(lua, prefix, msg),
+        Err(msg) => return from_err(prefix, msg),
     };
     match fs::write(&path, &bytes) {
-        Ok(()) => ok(lua, true),
-        Err(e) => from_err(lua, prefix, format!("{path}: {e}")),
+        Ok(()) => ok(true),
+        Err(e) => from_err(prefix, format!("{path}: {e}")),
     }
 }
 
 /// Extract a tar archive (file path or raw bytes; compression auto-detected) under `dest`, returning the entry count. `opts.include` filters by glob; `opts.max_output_size` caps output. Traversal-safe.
-#[neoc_macros::lua_fn(returns = "Result<number, string>", names(source = "path_or_bytes"))]
+#[neoc_macros::lua_fn(names(source = "path_or_bytes"))]
 #[instrument(name = "archive.tar_extract", target = "lua::lib::archive", skip_all)]
 fn tar_extract(
-    lua: &Lua,
+    _: &Lua,
     (source, dest, opts): (mlua::LuaString, String, Option<Table>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<i64>> {
     let prefix = "archive.tar_extract";
     let cap = match opt_max_output(opts.as_ref(), prefix) {
         Ok(c) => c,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return err(msg),
     };
     let include = match build_include(opts.as_ref(), prefix) {
         Ok(i) => i,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return err(msg),
     };
     let bytes = match resolve_source(&source) {
         Ok(b) => b,
-        Err(msg) => return from_err(lua, prefix, msg),
+        Err(msg) => return from_err(prefix, msg),
     };
     match tar_extract_all(&bytes, Path::new(&dest), include.as_ref(), cap) {
-        Ok(n) => ok(lua, n as i64),
-        Err(msg) => from_err(lua, prefix, msg),
+        Ok(n) => ok(n as i64),
+        Err(msg) => from_err(prefix, msg),
     }
 }
 
 /// Extract a single named entry from an in-memory tar archive and return its contents. `opts.max_output_size` caps output.
-#[neoc_macros::lua_fn(returns = "Result<string, string>")]
+#[neoc_macros::lua_fn]
 #[instrument(
     name = "archive.tar_extract_bytes",
     target = "lua::lib::archive",
@@ -952,113 +952,113 @@ fn tar_extract(
 fn tar_extract_bytes(
     lua: &Lua,
     (bytes, name, opts): (mlua::LuaString, String, Option<Table>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<mlua::LuaString>> {
     let prefix = "archive.tar_extract_bytes";
     let cap = match opt_max_output(opts.as_ref(), prefix) {
         Ok(c) => c,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return err(msg),
     };
     match tar_extract_named(&bytes.as_bytes(), &name, cap) {
-        Ok(content) => ok(lua, lua.create_string(&content)?),
-        Err(msg) => from_err(lua, prefix, msg),
+        Ok(content) => ok(lua.create_string(&content)?),
+        Err(msg) => from_err(prefix, msg),
     }
 }
 
 /// List a tar archive (file path or raw bytes), returning `{ name, size, mode, timestamp, is_dir, compression_ratio }` per entry. `compression_ratio` is nil for tar (one solid stream).
-#[neoc_macros::lua_fn(returns = "Result<LuaValue, string>", names(source = "path_or_bytes"))]
+#[neoc_macros::lua_fn(names(source = "path_or_bytes"))]
 #[instrument(name = "archive.tar_list", target = "lua::lib::archive", skip_all)]
-fn tar_list(lua: &Lua, source: mlua::LuaString) -> mlua::Result<(Value, Value)> {
+fn tar_list(lua: &Lua, source: mlua::LuaString) -> mlua::Result<Fallible<Table>> {
     let prefix = "archive.tar_list";
     let bytes = match resolve_source(&source) {
         Ok(b) => b,
-        Err(msg) => return from_err(lua, prefix, msg),
+        Err(msg) => return from_err(prefix, msg),
     };
     match tar_list_entries(&bytes) {
-        Ok(metas) => ok(lua, entries_to_table(lua, &metas)?),
-        Err(msg) => from_err(lua, prefix, msg),
+        Ok(metas) => ok(entries_to_table(lua, &metas)?),
+        Err(msg) => from_err(prefix, msg),
     }
 }
 
 /// List an in-memory tar archive — same metadata as `tar_list`.
-#[neoc_macros::lua_fn(returns = "Result<LuaValue, string>")]
+#[neoc_macros::lua_fn]
 #[instrument(
     name = "archive.tar_list_bytes",
     target = "lua::lib::archive",
     skip_all
 )]
-fn tar_list_bytes(lua: &Lua, bytes: mlua::LuaString) -> mlua::Result<(Value, Value)> {
+fn tar_list_bytes(lua: &Lua, bytes: mlua::LuaString) -> mlua::Result<Fallible<Table>> {
     let prefix = "archive.tar_list_bytes";
     match tar_list_entries(&bytes.as_bytes()) {
-        Ok(metas) => ok(lua, entries_to_table(lua, &metas)?),
-        Err(msg) => from_err(lua, prefix, msg),
+        Ok(metas) => ok(entries_to_table(lua, &metas)?),
+        Err(msg) => from_err(prefix, msg),
     }
 }
 
 /// Build a zip archive in memory from a `{ [name] = contents }` map and return its bytes.
-#[neoc_macros::lua_fn(returns = "Result<string, string>")]
+#[neoc_macros::lua_fn]
 #[instrument(
     name = "archive.zip_create_bytes",
     target = "lua::lib::archive",
     skip_all
 )]
-fn zip_create_bytes(lua: &Lua, entries: Table) -> mlua::Result<(Value, Value)> {
+fn zip_create_bytes(lua: &Lua, entries: Table) -> mlua::Result<Fallible<mlua::LuaString>> {
     let prefix = "archive.zip_create_bytes";
     match build_zip_bytes(&entries) {
-        Ok(bytes) => ok(lua, lua.create_string(&bytes)?),
-        Err(msg) => from_err(lua, prefix, msg),
+        Ok(bytes) => ok(lua.create_string(&bytes)?),
+        Err(msg) => from_err(prefix, msg),
     }
 }
 
 /// Write a zip archive to `path` from a list of filesystem paths (files or directories). `opts.strip_prefix` applies.
-#[neoc_macros::lua_fn(returns = "Result<bool, string>")]
+#[neoc_macros::lua_fn]
 #[instrument(name = "archive.zip_create", target = "lua::lib::archive", skip_all)]
 fn zip_create(
-    lua: &Lua,
+    _: &Lua,
     (path, entries, opts): (String, Table, Option<Table>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<bool>> {
     let prefix = "archive.zip_create";
     let strip = match opt_string(opts.as_ref(), "strip_prefix", prefix) {
         Ok(s) => s,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return err(msg),
     };
     let file = match fs::File::create(&path) {
         Ok(f) => f,
-        Err(e) => return from_err(lua, prefix, format!("{path}: {e}")),
+        Err(e) => return from_err(prefix, format!("{path}: {e}")),
     };
     match build_zip_files(file, &entries, strip.as_deref()) {
-        Ok(()) => ok(lua, true),
-        Err(msg) => from_err(lua, prefix, msg),
+        Ok(()) => ok(true),
+        Err(msg) => from_err(prefix, msg),
     }
 }
 
 /// Extract a zip archive (file path or raw bytes) under `dest`, returning the entry count. `opts.include` filters by glob; `opts.max_output_size` caps output. Traversal-safe.
-#[neoc_macros::lua_fn(returns = "Result<number, string>", names(source = "path_or_bytes"))]
+#[neoc_macros::lua_fn(names(source = "path_or_bytes"))]
 #[instrument(name = "archive.zip_extract", target = "lua::lib::archive", skip_all)]
 fn zip_extract(
-    lua: &Lua,
+    _: &Lua,
     (source, dest, opts): (mlua::LuaString, String, Option<Table>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<i64>> {
     let prefix = "archive.zip_extract";
     let cap = match opt_max_output(opts.as_ref(), prefix) {
         Ok(c) => c,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return err(msg),
     };
     let include = match build_include(opts.as_ref(), prefix) {
         Ok(i) => i,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return err(msg),
     };
     let bytes = match resolve_source(&source) {
         Ok(b) => b,
-        Err(msg) => return from_err(lua, prefix, msg),
+        Err(msg) => return from_err(prefix, msg),
     };
     match zip_extract_all(&bytes, Path::new(&dest), include.as_ref(), cap) {
-        Ok(n) => ok(lua, n as i64),
-        Err(msg) => from_err(lua, prefix, msg),
+        Ok(n) => ok(n as i64),
+        Err(msg) => from_err(prefix, msg),
     }
 }
 
 /// Extract a single named entry from an in-memory zip archive and return its contents. `opts.max_output_size` caps output.
-#[neoc_macros::lua_fn(returns = "Result<string, string>")]
+#[neoc_macros::lua_fn]
 #[instrument(
     name = "archive.zip_extract_bytes",
     target = "lua::lib::archive",
@@ -1067,45 +1067,45 @@ fn zip_extract(
 fn zip_extract_bytes(
     lua: &Lua,
     (bytes, name, opts): (mlua::LuaString, String, Option<Table>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<mlua::LuaString>> {
     let prefix = "archive.zip_extract_bytes";
     let cap = match opt_max_output(opts.as_ref(), prefix) {
         Ok(c) => c,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return err(msg),
     };
     match zip_extract_named(&bytes.as_bytes(), &name, cap) {
-        Ok(content) => ok(lua, lua.create_string(&content)?),
-        Err(msg) => from_err(lua, prefix, msg),
+        Ok(content) => ok(lua.create_string(&content)?),
+        Err(msg) => from_err(prefix, msg),
     }
 }
 
 /// List a zip archive (file path or raw bytes), returning `{ name, size, mode, timestamp, is_dir, compression_ratio }` per entry.
-#[neoc_macros::lua_fn(returns = "Result<LuaValue, string>", names(source = "path_or_bytes"))]
+#[neoc_macros::lua_fn(names(source = "path_or_bytes"))]
 #[instrument(name = "archive.zip_list", target = "lua::lib::archive", skip_all)]
-fn zip_list(lua: &Lua, source: mlua::LuaString) -> mlua::Result<(Value, Value)> {
+fn zip_list(lua: &Lua, source: mlua::LuaString) -> mlua::Result<Fallible<Table>> {
     let prefix = "archive.zip_list";
     let bytes = match resolve_source(&source) {
         Ok(b) => b,
-        Err(msg) => return from_err(lua, prefix, msg),
+        Err(msg) => return from_err(prefix, msg),
     };
     match zip_list_entries(&bytes) {
-        Ok(metas) => ok(lua, entries_to_table(lua, &metas)?),
-        Err(msg) => from_err(lua, prefix, msg),
+        Ok(metas) => ok(entries_to_table(lua, &metas)?),
+        Err(msg) => from_err(prefix, msg),
     }
 }
 
 /// List an in-memory zip archive — same metadata as `zip_list`.
-#[neoc_macros::lua_fn(returns = "Result<LuaValue, string>")]
+#[neoc_macros::lua_fn]
 #[instrument(
     name = "archive.zip_list_bytes",
     target = "lua::lib::archive",
     skip_all
 )]
-fn zip_list_bytes(lua: &Lua, bytes: mlua::LuaString) -> mlua::Result<(Value, Value)> {
+fn zip_list_bytes(lua: &Lua, bytes: mlua::LuaString) -> mlua::Result<Fallible<Table>> {
     let prefix = "archive.zip_list_bytes";
     match zip_list_entries(&bytes.as_bytes()) {
-        Ok(metas) => ok(lua, entries_to_table(lua, &metas)?),
-        Err(msg) => from_err(lua, prefix, msg),
+        Ok(metas) => ok(entries_to_table(lua, &metas)?),
+        Err(msg) => from_err(prefix, msg),
     }
 }
 

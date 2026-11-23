@@ -9,7 +9,7 @@ use parking_lot::Mutex;
 use tracing::instrument;
 
 use crate::lua::facade::Module;
-use crate::lua::sandbox::{err, from_err, ok};
+use crate::lua::sandbox::{Fallible, err, from_err, ok};
 use crate::lua::std::io::ReaderHandle;
 
 mod reader;
@@ -247,16 +247,16 @@ fn parse_types_map(t: &Table, prefix: &str) -> Result<HashMap<String, ColumnType
 // ---------------------------------------------------------------------------
 
 /// Parse a CSV string into an array of rows. With `headers = true` rows are keyed by header name; typed columns coerce to number/boolean/nil.
-#[neoc_macros::lua_fn(name = "parse", returns = "Result<LuaValue, string>")]
+#[neoc_macros::lua_fn(name = "parse")]
 #[instrument(name = "csv.parse", target = "lua::lib::csv", skip_all)]
 fn parse_fn(
     lua: &Lua,
     (data, opts): (mlua::LuaString, Option<Table>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<Table>> {
     let prefix = "csv.parse";
     let parse_opts = match parse_parse_opts(opts.as_ref(), prefix) {
         Ok(o) => o,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return err(msg),
     };
     let bytes = data.as_bytes().to_vec();
     let capture = new_capture();
@@ -265,7 +265,7 @@ fn parse_fn(
     let headers = if parse_opts.headers {
         match validate_headers(&mut reader, Some(&capture), &parse_opts, prefix) {
             Ok(v) => Some(v),
-            Err(msg) => return err(lua, msg),
+            Err(msg) => return err(msg),
         }
     } else {
         None
@@ -287,29 +287,26 @@ fn parse_fn(
                     prefix,
                 ) {
                     Ok(v) => v,
-                    Err(msg) => return err(lua, msg),
+                    Err(msg) => return err(msg),
                 };
                 out.set(idx, v)?;
                 idx += 1;
             }
             Err(e) => {
                 let end = reader.position().byte();
-                return err(
-                    lua,
-                    csv_error_message(
-                        prefix,
-                        &e,
-                        parse_opts.delimiter,
-                        parse_opts.quote,
-                        Some(&record),
-                        Some(&capture),
-                        Some(end),
-                    ),
-                );
+                return err(csv_error_message(
+                    prefix,
+                    &e,
+                    parse_opts.delimiter,
+                    parse_opts.quote,
+                    Some(&record),
+                    Some(&capture),
+                    Some(end),
+                ));
             }
         }
     }
-    ok(lua, out)
+    ok(out)
 }
 
 /// Return a Lua iterator over rows in an in-memory CSV string. Iterator errors raise.
@@ -326,35 +323,28 @@ fn rows_fn(lua: &Lua, (data, opts): (mlua::LuaString, Option<Table>)) -> mlua::R
 }
 
 /// Construct a streaming reader over a `ReaderHandle`, taking an exclusive borrow on the handle for its lifetime.
-#[neoc_macros::lua_fn(
-    name = "reader",
-    returns = "Result<CsvReader, string>",
-    names(handle_val = "handle")
-)]
+#[neoc_macros::lua_fn(name = "reader", names(handle_val = "handle"))]
 #[instrument(name = "csv.reader", target = "lua::lib::csv", skip_all)]
 fn reader_fn(
-    lua: &Lua,
+    _: &Lua,
     (handle_val, opts): (Value, Option<Table>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<CsvReader>> {
     let parse_opts = match parse_parse_opts(opts.as_ref(), "csv.reader") {
         Ok(o) => o,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return err(msg),
     };
     let handle_ud = match handle_val {
         Value::UserData(ud) => ud,
-        _ => return err(lua, "csv.reader: argument must be a ReaderHandle"),
+        _ => return err("csv.reader: argument must be a ReaderHandle"),
     };
     let rh = match handle_ud.borrow::<ReaderHandle>() {
         Ok(h) => h,
-        Err(_) => return err(lua, "csv.reader: argument must be a ReaderHandle"),
+        Err(_) => return err("csv.reader: argument must be a ReaderHandle"),
     };
     let borrow = match rh.try_borrow_exclusive() {
         Some(b) => b,
         None => {
-            return err(
-                lua,
-                "csv.reader: handle is already in use by another reader",
-            );
+            return err("csv.reader: handle is already in use by another reader");
         }
     };
     let locking = LockingReader {
@@ -365,72 +355,72 @@ fn reader_fn(
     let source = wrap_capturing(Box::new(locking) as BoxedReader, capture.clone());
     let reader = build_csv_reader(source, &parse_opts);
     let state = new_reader_state(reader, parse_opts, capture, Some(borrow));
-    ok(lua, CsvReader { state })
+    ok(CsvReader { state })
 }
 
 /// Serialise an array of records to a CSV string. `opts.headers` is required and controls both the header row and field order.
-#[neoc_macros::lua_fn(name = "stringify", returns = "Result<string, string>")]
+#[neoc_macros::lua_fn(name = "stringify")]
 #[instrument(name = "csv.stringify", target = "lua::lib::csv", skip_all)]
-fn stringify_fn(lua: &Lua, (records, opts): (Table, Table)) -> mlua::Result<(Value, Value)> {
+fn stringify_fn(
+    lua: &Lua,
+    (records, opts): (Table, Table),
+) -> mlua::Result<Fallible<mlua::LuaString>> {
     let prefix = "csv.stringify";
     let write_opts = match parse_write_opts(&opts, prefix) {
         Ok(o) => o,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return err(msg),
     };
     let buf: Vec<u8> = Vec::new();
     let mut writer = build_csv_writer(buf, &write_opts);
     if let Err(e) = writer.write_record(&write_opts.headers) {
-        return from_err(lua, prefix, e);
+        return from_err(prefix, e);
     }
     for entry in records.sequence_values::<Value>() {
         let v = entry?;
         let row = match v {
             Value::Table(t) => t,
-            _ => return err(lua, format!("{prefix}: records must be tables")),
+            _ => return err(format!("{prefix}: records must be tables")),
         };
         let fields = match collect_keyed_row(lua, &row, &write_opts.headers, prefix) {
             Ok(v) => v,
-            Err(msg) => return err(lua, msg),
+            Err(msg) => return err(msg),
         };
         if let Err(e) = writer.write_record(&fields) {
-            return from_err(lua, prefix, e);
+            return from_err(prefix, e);
         }
     }
     let bytes = match writer.into_inner() {
         Ok(b) => b,
-        Err(e) => return from_err(lua, prefix, e.error()),
+        Err(e) => return from_err(prefix, e.error()),
     };
     match String::from_utf8(bytes) {
-        Ok(s) => ok(lua, lua.create_string(s.as_bytes())?),
-        Err(e) => from_err(lua, prefix, e),
+        Ok(s) => ok(lua.create_string(s.as_bytes())?),
+        Err(e) => from_err(prefix, e),
     }
 }
 
 /// Construct an incremental writer that buffers in memory until `:finish()`. `opts.headers` is required and emitted as the first row.
-#[neoc_macros::lua_fn(name = "writer", returns = "Result<CsvWriter, string>")]
+#[neoc_macros::lua_fn(name = "writer")]
 #[instrument(name = "csv.writer", target = "lua::lib::csv", skip_all)]
-fn writer_fn(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
+fn writer_fn(_: &Lua, opts: Table) -> mlua::Result<Fallible<CsvWriter>> {
     let prefix = "csv.writer";
     let write_opts = match parse_write_opts(&opts, prefix) {
         Ok(o) => o,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return err(msg),
     };
     let buf: Vec<u8> = Vec::new();
     let mut writer = build_csv_writer(buf, &write_opts);
     if let Err(e) = writer.write_record(&write_opts.headers) {
-        return from_err(lua, prefix, e);
+        return from_err(prefix, e);
     }
     let state = CsvWriterState {
         writer,
         headers: write_opts.headers,
         finished: false,
     };
-    ok(
-        lua,
-        CsvWriter {
-            state: Arc::new(Mutex::new(state)),
-        },
-    )
+    ok(CsvWriter {
+        state: Arc::new(Mutex::new(state)),
+    })
 }
 
 // ---------------------------------------------------------------------------

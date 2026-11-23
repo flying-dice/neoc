@@ -88,7 +88,7 @@ use tera::{Context, Filter as TeraFilter, Function as TeraFunction, Tera, Value 
 use tracing::instrument;
 
 use crate::lua::facade::Module;
-use crate::lua::sandbox::{from_err, ok};
+use crate::lua::sandbox::{Fallible, from_err, ok};
 use crate::lua::serde_guard::{BUFFER_REFUSED, contains_buffer, refuse_buffer};
 
 /// Tera autoescapes by filename suffix. We pick a sentinel that is unlikely
@@ -1065,7 +1065,7 @@ pub struct TemplateHandle {
 impl UserData for TemplateHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Render the compiled template with `context` as the variable map.
-        #[lua("Result<string, string>", names(ctx = "context"))]
+        #[lua(names(ctx = "context"))]
         methods.add_method("render", |lua, this, ctx: Value| {
             template_render(lua, this, ctx)
         });
@@ -1148,9 +1148,9 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 // ---------------------------------------------------------------------------
 
 #[instrument(name = "template.compile", target = "lua::lib::template", skip_all)]
-fn compile_impl(lua: &Lua, engine: &Engine, src: String) -> mlua::Result<(Value, Value)> {
+fn compile_impl(_: &Lua, engine: &Engine, src: String) -> mlua::Result<Fallible<TemplateHandle>> {
     if let Err(e) = check_complexity(&src) {
-        return from_err(lua, "template.compile", e);
+        return from_err("template.compile", e);
     }
     let name = engine.next_template_name();
     let mut guard = engine.lock();
@@ -1158,26 +1158,23 @@ fn compile_impl(lua: &Lua, engine: &Engine, src: String) -> mlua::Result<(Value,
         // Tera keeps a template whose `extends` or `import` it could not resolve, and then fails every later
         // `add_raw_template` while building the inheritance chains. The name is never handed out: drop it.
         guard.templates.remove(&name);
-        return from_err(lua, "template.compile", format_tera_error(&e));
+        return from_err("template.compile", format_tera_error(&e));
     }
     match check_renderable(&guard, &name) {
         Ok(plan) => bound_recursion(&mut guard, &name, &plan),
         Err(e) => {
             // drop the refused source: the name is never handed out, so nothing else would
             guard.templates.remove(&name);
-            return from_err(lua, "template.compile", e);
+            return from_err("template.compile", e);
         }
     }
     drop(guard);
-    ok(
-        lua,
-        TemplateHandle {
-            inner: Arc::new(TemplateInner {
-                engine: engine.clone(),
-                name,
-            }),
-        },
-    )
+    ok(TemplateHandle {
+        inner: Arc::new(TemplateInner {
+            engine: engine.clone(),
+            name,
+        }),
+    })
 }
 
 fn render_impl(
@@ -1237,21 +1234,21 @@ fn render_caught(lua: &Lua, tera: &Tera, name: &str, ctx: &Context) -> Result<St
     }
 }
 
-fn template_render(lua: &Lua, this: &TemplateHandle, ctx: Value) -> mlua::Result<(Value, Value)> {
+fn template_render(lua: &Lua, this: &TemplateHandle, ctx: Value) -> mlua::Result<Fallible<String>> {
     refuse_buffer(&ctx, "Template.render")?;
     let Some(_render_guard) = RenderGuard::enter() else {
-        return from_err(lua, "Template.render", RECURSIVE_RENDER_MSG);
+        return from_err("Template.render", RECURSIVE_RENDER_MSG);
     };
     let ctx_obj = match build_context(lua, &ctx) {
         Ok(c) => c,
-        Err(e) => return from_err(lua, "Template.render", e),
+        Err(e) => return from_err("Template.render", e),
     };
     let guard = this.inner.engine.lock();
     let rendered = render_caught(lua, &guard, &this.inner.name, &ctx_obj);
     drop(guard);
     match rendered {
-        Ok(s) => ok(lua, s),
-        Err(e) => from_err(lua, "Template.render", e),
+        Ok(s) => ok(s),
+        Err(e) => from_err("Template.render", e),
     }
 }
 

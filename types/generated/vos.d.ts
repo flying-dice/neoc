@@ -933,7 +933,7 @@ interface lib_chrono {
   /** Current wall-clock instant in UTC. */
   utc_now(this: void): lib_chrono_ZonedDateTime
   /** Recognise an ISO 8601 / RFC 9557 string and dispatch it to the matching `Date`, `Time`, `DateTime`, or `ZonedDateTime`. */
-  parse(this: void, s: string): LuaMultiReturn<[any, string | undefined]>
+  parse(this: void, s: string): LuaMultiReturn<[lib_chrono_Date | lib_chrono_Time | lib_chrono_DateTime | lib_chrono_ZonedDateTime | undefined, string | undefined]>
 }
 
 declare module "lib:chrono" {
@@ -947,7 +947,7 @@ declare module "lib:chrono" {
   /** Current wall-clock instant in UTC. */
   export function utc_now(this: void): lib_chrono_ZonedDateTime
   /** Recognise an ISO 8601 / RFC 9557 string and dispatch it to the matching `Date`, `Time`, `DateTime`, or `ZonedDateTime`. */
-  export function parse(this: void, s: string): LuaMultiReturn<[any, string | undefined]>
+  export function parse(this: void, s: string): LuaMultiReturn<[lib_chrono_Date | lib_chrono_Time | lib_chrono_DateTime | lib_chrono_ZonedDateTime | undefined, string | undefined]>
   export type Date = lib_chrono_Date
   export type DateStatics = lib_chrono_DateStatics
   export type Time = lib_chrono_Time

@@ -49,7 +49,7 @@ use mlua::{Lua, Table, UserData, UserDataMethods, Value};
 use crate::lua::byte_stream::{self, Output, WAITS};
 use crate::lua::facade::Module;
 use crate::lua::lifecycle::{Life, Role, async_function, async_method};
-use crate::lua::sandbox::{from_err, ok};
+use crate::lua::sandbox::{Fallible, from_err, ok};
 
 mod child;
 pub use child::kill_all;
@@ -104,17 +104,17 @@ pub struct Child(Arc<Process>);
             )), doc = format!(
             "Start a program: a `Child`. `program` is a path, or a name looked up in `PATH`, and `args` its arguments (at most 1024); no shell reads them, so nothing in them is expanded or split. `cwd` is the directory it starts in (default: the engine's working directory). `env` is added to the environment the engine's process has, replacing a variable of the same name; with `clear_env` the process starts from an empty environment and has only what `env` gives it. Each of `stdin`, `stdout` and `stderr` is `\"piped\"` (the default: a pipe between the process and this handle), `\"null\"` (nothing: the process reads the end of its input, and what it writes is thrown away) or `\"inherit\"` (the engine's own stream). A piped output that nobody reads stops the process once 256 KiB of it wait: read it, or do not pipe it. The process runs as the engine's user and can do what that user can: a script given this module is trusted with the machine. Errors are `process.<function>: <kind>: <message>` (see `error_kind`): `invalid_input` for an option that is missing, unknown or of the wrong shape, `spawn` when the program could not be started (no such program, not executable, `cwd` is not a directory, or the system refused the process), `closed` when the engine has shut down. The process is killed, and its streams let go of, by `close()`, when the handle is collected, and when the engine shuts down. On Unix it is started in a process group of its own, which a kill reaches as a whole. That group is not the foreground of the engine's terminal: a Ctrl-C typed there does not reach the process (a script that should end on one kills its processes itself), and a process that reads an inherited `stdin` which is that terminal is stopped by it. {WAITS}"
         ))]
-async fn spawn(lua: Lua, opts: Option<Value>) -> mlua::Result<(Value, Value)> {
+async fn spawn(lua: Lua, opts: Option<Value>) -> mlua::Result<Fallible<Child>> {
     // read before the first await: a script table can run script code when it is read
     let command = options::command(opts.as_ref(), SPAWN)?;
     drop(opts);
     let command = match command {
         Ok(command) => command,
-        Err(e) => return from_err(&lua, SPAWN, e),
+        Err(e) => return from_err(SPAWN, e),
     };
     let life = Life::of(&lua);
     if life.is_closed() {
-        return from_err(&lua, SPAWN, ProcessError::closed("the engine"));
+        return from_err(SPAWN, ProcessError::closed("the engine"));
     }
     // Do nothing on the first poll (see `std:fs`'s `blocking`): where Luau refuses the yield, the call is dropped
     // after that poll, and a process started now would run although the script was told the call failed.
@@ -140,11 +140,11 @@ async fn spawn(lua: Lua, opts: Option<Value>) -> mlua::Result<(Value, Value)> {
         Ok(process) => {
             if life.is_closed() {
                 // the engine shut down while the program was being started: it is closed already
-                return from_err(&lua, SPAWN, ProcessError::closed("the engine"));
+                return from_err(SPAWN, ProcessError::closed("the engine"));
             }
-            ok(&lua, Child(process))
+            ok(Child(process))
         }
-        Err(e) => from_err(&lua, SPAWN, e),
+        Err(e) => from_err(SPAWN, e),
     }
 }
 
@@ -201,7 +201,7 @@ impl UserData for Child {
             methods,
             "write",
             Role::Wait,
-            |lua, this, data: mlua::LuaString| {
+            |_, this, data: mlua::LuaString| {
                 let data = byte_stream::write_data(&data).map_err(ProcessError::invalid_input);
                 let write = data.map(|data| this.0.write(data));
                 async move {
@@ -215,19 +215,18 @@ impl UserData for Child {
                         }
                     };
                     match written {
-                        Ok(()) => ok(&lua, true),
-                        Err(e) => from_err(&lua, WRITE, e),
+                        Ok(()) => ok(true),
+                        Err(e) => from_err(WRITE, e),
                     }
                 }
             },
         );
 
         /// Close the process's standard input: `true`. The process then reads the end of its input, which is how a program that reads until then is asked to finish. A write the pipe is taking is finished first; writes that wait behind it fail with `closed`. Closing again does nothing. `not_piped` when `stdin` is not a pipe.
-        #[lua("Result<bool, string>")]
-        methods.add_method("close_stdin", |lua, this, (): ()| {
+        methods.add_method("close_stdin", |_, this, (): ()| {
             match this.0.close_stdin() {
-                Ok(()) => ok(lua, true),
-                Err(e) => from_err(lua, CLOSE_STDIN, e),
+                Ok(()) => ok(true),
+                Err(e) => from_err(CLOSE_STDIN, e),
             }
         });
 
@@ -256,9 +255,9 @@ impl UserData for Child {
                         status.raw_set("code", exit.code)?;
                         status.raw_set("signal", exit.signal)?;
                         status.raw_set("success", exit.success)?;
-                        ok(&lua, status)
+                        ok(status)
                     }
-                    Err(e) => from_err(&lua, WAIT, e),
+                    Err(e) => from_err(WAIT, e),
                 }
             }
         });

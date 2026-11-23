@@ -132,9 +132,9 @@ impl UserData for Stream {
                 // one reader at a time: a second `next` from another task waits for the first
                 let item = inner.queue.lock().await.recv().await;
                 match item {
-                    Some(Ok(item)) => ok(&lua, item.into_lua(&lua)?),
-                    Some(Err(e)) => from_err(&lua, inner.op, e),
-                    None => Ok((Value::Nil, Value::Nil)),
+                    Some(Ok(item)) => ok(item.into_lua(&lua)?),
+                    Some(Err(e)) => from_err(inner.op, e),
+                    None => ok(Value::Nil),
                 }
             }
         });

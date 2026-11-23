@@ -14,12 +14,12 @@
 //! linear-time guarantee is the design point. Scripts that need PCRE
 //! features should reach for a different tool.
 
-use mlua::{Lua, MetaMethod, Table, UserData, UserDataMethods, Value};
+use mlua::{Lua, MetaMethod, Table, UserData, UserDataMethods};
 use regex::{Regex, RegexBuilder};
 use tracing::instrument;
 
 use crate::lua::facade::Module;
-use crate::lua::sandbox::{err, ok};
+use crate::lua::sandbox::{Fallible, err, ok};
 
 // ---------------------------------------------------------------------------
 // Module
@@ -160,15 +160,15 @@ impl UserData for PatternHandle {
 }
 
 /// Compile `pattern`, with optional flags (`i`, `m`, `s`, `x`).
-#[neoc_macros::lua_fn(name = "new", returns = "Result<Pattern, string>")]
+#[neoc_macros::lua_fn(name = "new")]
 #[instrument(name = "regex.Pattern.new", target = "lua::lib::regex", skip_all)]
 fn pattern_new(
-    lua: &Lua,
+    _: &Lua,
     (pattern, flags): (String, Option<String>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<PatternHandle>> {
     match PatternHandle::compile(&pattern, flags.as_deref(), "regex.Pattern.new") {
-        Ok(p) => ok(lua, p),
-        Err(msg) => err(lua, msg),
+        Ok(p) => ok(p),
+        Err(msg) => err(msg),
     }
 }
 
@@ -184,88 +184,82 @@ macro_rules! compile_or_return {
     ($lua:expr, $pattern:expr, $flags:expr, $prefix:expr) => {
         match PatternHandle::compile($pattern, $flags, $prefix) {
             Ok(p) => p,
-            Err(msg) => return err($lua, msg),
+            Err(msg) => return err(msg),
         }
     };
 }
 
 /// Compile-and-test in one call. Returns `(nil, err)` on a pattern error.
-#[neoc_macros::lua_fn(name = "is_match", returns = "Result<bool, string>")]
+#[neoc_macros::lua_fn(name = "is_match")]
 #[instrument(name = "regex.is_match", target = "lua::lib::regex", skip_all)]
 fn flat_is_match(
-    lua: &Lua,
+    _: &Lua,
     (pattern, text, flags): (String, String, Option<String>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<bool>> {
     let p = compile_or_return!(lua, &pattern, flags.as_deref(), "regex.is_match");
-    ok(lua, p.compiled.is_match(&text))
+    ok(p.compiled.is_match(&text))
 }
 
 /// Compile-and-find-first in one call. Returns the `Match` table on a hit, `(nil, nil)` on a clean miss, `(nil, err)` on a pattern error.
-#[neoc_macros::lua_fn(name = "find", returns = "Result<LuaValue, string>")]
+#[neoc_macros::lua_fn(name = "find")]
 #[instrument(name = "regex.find", target = "lua::lib::regex", skip_all)]
 fn flat_find(
     lua: &Lua,
     (pattern, text, flags): (String, String, Option<String>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<Option<Table>>> {
     let p = compile_or_return!(lua, &pattern, flags.as_deref(), "regex.find");
     match p.compiled.captures(&text) {
-        Some(caps) => ok(lua, build_match(lua, &p.compiled, &caps)?),
-        None => Ok((Value::Nil, Value::Nil)),
+        Some(caps) => ok(Some(build_match(lua, &p.compiled, &caps)?)),
+        None => ok(None),
     }
 }
 
 /// Compile-and-find-all in one call. Returns a (possibly empty) array of `Match` tables, or `(nil, err)` on a pattern error.
-#[neoc_macros::lua_fn(name = "find_all", returns = "Result<LuaValue, string>")]
+#[neoc_macros::lua_fn(name = "find_all")]
 #[instrument(name = "regex.find_all", target = "lua::lib::regex", skip_all)]
 fn flat_find_all(
     lua: &Lua,
     (pattern, text, flags): (String, String, Option<String>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<Table>> {
     let p = compile_or_return!(lua, &pattern, flags.as_deref(), "regex.find_all");
     let t = lua.create_table()?;
     for (i, caps) in p.compiled.captures_iter(&text).enumerate() {
         t.set(i + 1, build_match(lua, &p.compiled, &caps)?)?;
     }
-    ok(lua, t)
+    ok(t)
 }
 
 /// Replace the first match. Substitution grammar uses `$0`, `$1`, `${name}` per the regex crate.
-#[neoc_macros::lua_fn(name = "replace", returns = "Result<string, string>")]
+#[neoc_macros::lua_fn(name = "replace")]
 #[instrument(name = "regex.replace", target = "lua::lib::regex", skip_all)]
 fn flat_replace(
-    lua: &Lua,
+    _: &Lua,
     (pattern, text, replacement, flags): (String, String, String, Option<String>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<String>> {
     let p = compile_or_return!(lua, &pattern, flags.as_deref(), "regex.replace");
-    ok(
-        lua,
-        p.compiled.replace(&text, replacement.as_str()).into_owned(),
-    )
+    ok(p.compiled.replace(&text, replacement.as_str()).into_owned())
 }
 
 /// Replace every match. Substitution grammar as `replace`.
-#[neoc_macros::lua_fn(name = "replace_all", returns = "Result<string, string>")]
+#[neoc_macros::lua_fn(name = "replace_all")]
 #[instrument(name = "regex.replace_all", target = "lua::lib::regex", skip_all)]
 fn flat_replace_all(
-    lua: &Lua,
+    _: &Lua,
     (pattern, text, replacement, flags): (String, String, String, Option<String>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<String>> {
     let p = compile_or_return!(lua, &pattern, flags.as_deref(), "regex.replace_all");
-    ok(
-        lua,
-        p.compiled
-            .replace_all(&text, replacement.as_str())
-            .into_owned(),
-    )
+    ok(p.compiled
+        .replace_all(&text, replacement.as_str())
+        .into_owned())
 }
 
 /// Split `text` on every match of `pattern`. `limit` caps the parts (`0`/`nil` unlimited); negative limits return `(nil, err)`.
-#[neoc_macros::lua_fn(name = "split", returns = "Result<LuaValue, string>")]
+#[neoc_macros::lua_fn(name = "split")]
 #[instrument(name = "regex.split", target = "lua::lib::regex", skip_all)]
 fn flat_split(
     lua: &Lua,
     (pattern, text, limit, flags): (String, String, Option<i64>, Option<String>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<Table>> {
     let p = compile_or_return!(lua, &pattern, flags.as_deref(), "regex.split");
     split_into_table(lua, &p.compiled, &text, limit, "regex.split")
 }
@@ -343,10 +337,10 @@ fn split_into_table(
     text: &str,
     limit: Option<i64>,
     prefix: &str,
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<Table>> {
     let limit = match limit {
         None => None,
-        Some(n) if n < 0 => return err(lua, format!("{prefix}: limit must be >= 0")),
+        Some(n) if n < 0 => return err(format!("{prefix}: limit must be >= 0")),
         Some(0) => None,
         Some(n) => Some(n as usize),
     };
@@ -366,7 +360,7 @@ fn split_into_table(
             }
         }
     }
-    ok(lua, t)
+    ok(t)
 }
 
 /// Apply Perl/Python/JS-style letter flags onto a `RegexBuilder`.

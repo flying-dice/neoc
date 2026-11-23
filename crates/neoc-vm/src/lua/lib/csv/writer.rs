@@ -20,74 +20,69 @@ pub(super) struct CsvWriter {
     pub(super) state: Arc<Mutex<CsvWriterState>>,
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("lib:csv", "CsvWriter")]
 impl UserData for CsvWriter {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Append a row. `values` is either a positional array (length must match `headers`) or a keyed table looked up by header name.
-        #[lua("Result<bool, string>")]
         methods.add_method("row", |lua, this, values: Table| {
             let mut s = this.state.lock();
             if s.finished {
-                return err(lua, "csv.writer: already finished");
+                return err("csv.writer: already finished");
             }
             let shape = match detect_shape(&values, "csv.writer") {
                 Ok(sh) => sh,
-                Err(msg) => return err(lua, msg),
+                Err(msg) => return err(msg),
             };
             let fields = match shape {
                 Shape::Array(len) => {
                     if len != s.headers.len() {
-                        return err(
-                            lua,
-                            format!(
-                                "csv.writer: row has {} values, expected {} (headers length)",
-                                len,
-                                s.headers.len()
-                            ),
-                        );
+                        return err(format!(
+                            "csv.writer: row has {} values, expected {} (headers length)",
+                            len,
+                            s.headers.len()
+                        ));
                     }
                     let mut v = Vec::with_capacity(len);
                     for i in 1..=len {
                         let cell: Value = values.get(i as i64)?;
                         match value_to_field(&cell, "csv.writer") {
                             Ok(f) => v.push(f),
-                            Err(msg) => return err(lua, msg),
+                            Err(msg) => return err(msg),
                         }
                     }
                     v
                 }
                 Shape::Keyed => match collect_keyed_row(lua, &values, &s.headers, "csv.writer") {
                     Ok(v) => v,
-                    Err(msg) => return err(lua, msg),
+                    Err(msg) => return err(msg),
                 },
             };
             if let Err(e) = s.writer.write_record(&fields) {
-                return from_err(lua, "csv.writer", e);
+                return from_err("csv.writer", e);
             }
-            ok(lua, true)
+            ok(true)
         });
 
         /// Flush and return the accumulated CSV string. Subsequent calls error.
-        #[lua("Result<string, string>")]
         methods.add_method("finish", |lua, this, _: ()| {
             let mut s = this.state.lock();
             if s.finished {
-                return err(lua, "csv.writer: already finished");
+                return err("csv.writer: already finished");
             }
             s.finished = true;
             if let Err(e) = s.writer.flush() {
-                return from_err(lua, "csv.writer", e);
+                return from_err("csv.writer", e);
             }
             // Swap out the writer to take ownership of the buffer.
             let placeholder = csv::WriterBuilder::new().from_writer(Vec::new());
             let writer = std::mem::replace(&mut s.writer, placeholder);
             let bytes = match writer.into_inner() {
                 Ok(b) => b,
-                Err(e) => return from_err(lua, "csv.writer", e.error()),
+                Err(e) => return from_err("csv.writer", e.error()),
             };
             match String::from_utf8(bytes) {
-                Ok(out) => ok(lua, lua.create_string(out.as_bytes())?),
-                Err(e) => from_err(lua, "csv.writer", e),
+                Ok(out) => ok(lua.create_string(out.as_bytes())?),
+                Err(e) => from_err("csv.writer", e),
             }
         });
     }

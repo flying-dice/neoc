@@ -260,24 +260,40 @@ pub fn i64_to_lua(v: i64) -> Value {
     Value::Number(v as f64)
 }
 
-/// Helper: build a `(value, nil)` success tuple.
-pub fn ok<V: IntoLua>(lua: &Lua, v: V) -> mlua::Result<(Value, Value)> {
-    Ok((v.into_lua(lua)?, Value::Nil))
+/// What a function that can fail hands a script: the value and `nil`, or `nil` and the reason.
+///
+/// It is the `(value, err)` pair of the runtime as a Rust type, so that the function's signature says what the
+/// value is (`mlua::Result<Fallible<String>>`) and the declarations read it from there
+/// (`Result<string, string>`). The outer `mlua::Result` is for what raises.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Fallible<T> {
+    Ok(T),
+    Err(String),
 }
 
-/// Helper: build a `(nil, "msg")` error tuple.
-pub fn err(lua: &Lua, msg: impl Into<String>) -> mlua::Result<(Value, Value)> {
-    let s = lua.create_string(msg.into().as_bytes())?;
-    Ok((Value::Nil, Value::String(s)))
+impl<T: IntoLua> mlua::IntoLuaMulti for Fallible<T> {
+    fn into_lua_multi(self, lua: &Lua) -> mlua::Result<mlua::MultiValue> {
+        let pair = match self {
+            Self::Ok(value) => [value.into_lua(lua)?, Value::Nil],
+            Self::Err(reason) => [Value::Nil, Value::String(lua.create_string(reason)?)],
+        };
+        Ok(mlua::MultiValue::from_iter(pair))
+    }
 }
 
-/// Helper: turn an `anyhow`-ish stringifiable error into the `(nil, err)` tuple.
-pub fn from_err<E: ::std::fmt::Display>(
-    lua: &Lua,
-    prefix: &str,
-    e: E,
-) -> mlua::Result<(Value, Value)> {
-    err(lua, format!("{prefix}: {e}"))
+/// The value of a function that can fail: `(value, nil)` to a script.
+pub fn ok<T>(value: T) -> mlua::Result<Fallible<T>> {
+    Ok(Fallible::Ok(value))
+}
+
+/// The failure of a function that can fail: `(nil, "msg")` to a script.
+pub fn err<T>(msg: impl Into<String>) -> mlua::Result<Fallible<T>> {
+    Ok(Fallible::Err(msg.into()))
+}
+
+/// The failure of a function that can fail, from an error and the function's prefix: `(nil, "<prefix>: <e>")`.
+pub fn from_err<T, E: ::std::fmt::Display>(prefix: &str, e: E) -> mlua::Result<Fallible<T>> {
+    err(format!("{prefix}: {e}"))
 }
 
 /// Luau bytecode for `return 7`, as the text the script-facing loaders take. Compiled with the debug level at 0 it

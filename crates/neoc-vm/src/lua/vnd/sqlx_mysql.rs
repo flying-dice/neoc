@@ -39,7 +39,7 @@ use tracing::log::LevelFilter;
 use super::split_sql_args;
 use crate::lua::facade::Module;
 use crate::lua::lifecycle::{Role, async_function, async_method};
-use crate::lua::sandbox::{from_err, i64_to_lua, ok};
+use crate::lua::sandbox::{Fallible, from_err, i64_to_lua, ok};
 
 /// sqlx caches prepared statements per connection up to this many entries.
 /// Default is 100; we bump it to cover apps that issue more distinct SQL
@@ -88,12 +88,12 @@ pub struct Database {
 }
 
 /// Open a MySQL connection pool. `url` is a standard MySQL URL: `mysql://user:pass@host:3306/dbname`.
-#[neoc_macros::lua_fn(returns = "Result<Database, string>", takes("url: string"))]
+#[neoc_macros::lua_fn(takes("url: string"))]
 #[instrument(name = "sqlx_mysql.open", target = "lua::lib::sqlx_mysql", skip_all)]
-async fn open(lua: Lua, url: String) -> mlua::Result<(Value, Value)> {
+async fn open(_: Lua, url: String) -> mlua::Result<Fallible<Database>> {
     let opts = match MySqlConnectOptions::from_str(&url) {
         Ok(o) => o,
-        Err(e) => return from_err(&lua, "sqlx_mysql.open", e),
+        Err(e) => return from_err("sqlx_mysql.open", e),
     };
     // sqlx logs every statement at INFO by default, which dominates trace
     // overhead on hot paths — silence here. Bump statement cache so reused
@@ -103,13 +103,10 @@ async fn open(lua: Lua, url: String) -> mlua::Result<(Value, Value)> {
         .log_statements(LevelFilter::Off)
         .log_slow_statements(LevelFilter::Off, std::time::Duration::from_secs(1));
     match PoolOptions::<MySql>::new().connect_with(opts).await {
-        Ok(pool) => ok(
-            &lua,
-            Database {
-                pool: Arc::new(pool),
-            },
-        ),
-        Err(e) => from_err(&lua, "sqlx_mysql.open", e),
+        Ok(pool) => ok(Database {
+            pool: Arc::new(pool),
+        }),
+        Err(e) => from_err("sqlx_mysql.open", e),
     }
 }
 
@@ -124,7 +121,7 @@ macro_rules! db_op {
                 async move {
                     let (sql, params) = match split_sql_args(args) {
                         Ok(v) => v,
-                        Err(e) => return from_err(&lua, $op, e),
+                        Err(e) => return from_err($op, e),
                     };
                     $run(&lua, &pool, $op, &sql, params).await
                 }
@@ -245,19 +242,19 @@ fn prepare_query<'q>(
 }
 
 async fn run_execute(
-    lua: &Lua,
+    _: &Lua,
     pool: &MySqlPool,
     op: &'static str,
     sql: &str,
     params: Vec<Value>,
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<i64>> {
     let q = match prepare_query(pool, sql, params) {
         Ok(q) => q,
-        Err(e) => return from_err(lua, op, e),
+        Err(e) => return from_err(op, e),
     };
     match q.execute(pool).await {
-        Ok(r) => ok(lua, r.rows_affected() as i64),
-        Err(e) => from_err(lua, op, e),
+        Ok(r) => ok(r.rows_affected() as i64),
+        Err(e) => from_err(op, e),
     }
 }
 
@@ -267,10 +264,10 @@ async fn run_query(
     op: &'static str,
     sql: &str,
     params: Vec<Value>,
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<Table>> {
     let q = match prepare_query(pool, sql, params) {
         Ok(q) => q,
-        Err(e) => return from_err(lua, op, e),
+        Err(e) => return from_err(op, e),
     };
     match q.fetch_all(pool).await {
         Ok(rows) => {
@@ -278,9 +275,9 @@ async fn run_query(
             for (i, row) in rows.iter().enumerate() {
                 out.set(i + 1, row_to_table(lua, row)?)?;
             }
-            ok(lua, out)
+            ok(out)
         }
-        Err(e) => from_err(lua, op, e),
+        Err(e) => from_err(op, e),
     }
 }
 
@@ -290,15 +287,15 @@ async fn run_query_one(
     op: &'static str,
     sql: &str,
     params: Vec<Value>,
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<Option<Table>>> {
     let q = match prepare_query(pool, sql, params) {
         Ok(q) => q,
-        Err(e) => return from_err(lua, op, e),
+        Err(e) => return from_err(op, e),
     };
     match q.fetch_optional(pool).await {
-        Ok(Some(row)) => ok(lua, row_to_table(lua, &row)?),
-        Ok(None) => ok(lua, Value::Nil),
-        Err(e) => from_err(lua, op, e),
+        Ok(Some(row)) => ok(Some(row_to_table(lua, &row)?)),
+        Ok(None) => ok(None),
+        Err(e) => from_err(op, e),
     }
 }
 

@@ -38,13 +38,13 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
 use keyring_core::{CredentialStore, Entry as Credential, Error};
-use mlua::{Lua, LuaString, Table, UserData, UserDataMethods, Value};
+use mlua::{IntoLua, Lua, LuaString, Table, UserData, UserDataMethods, Value};
 use tracing::Instrument;
 
 use crate::lua::error_text;
 use crate::lua::facade::Module;
 use crate::lua::lifecycle::{Role, async_function, async_method};
-use crate::lua::sandbox::{from_err, ok};
+use crate::lua::sandbox::{Fallible, from_err, ok};
 
 mod error;
 
@@ -189,16 +189,20 @@ enum Reply {
     Entries(Vec<Entry>),
 }
 
-fn reply(lua: &Lua, op: &str, result: Result<Reply, KeyringError>) -> mlua::Result<(Value, Value)> {
+fn reply(
+    lua: &Lua,
+    op: &str,
+    result: Result<Reply, KeyringError>,
+) -> mlua::Result<Fallible<Value>> {
     match result {
-        Ok(Reply::Done(done)) => ok(lua, done),
-        Ok(Reply::Missing) => Ok((Value::Nil, Value::Nil)),
-        Ok(Reply::Password(password)) => ok(lua, password),
-        Ok(Reply::Secret(secret)) => ok(lua, lua.create_string(&secret)?),
-        Ok(Reply::Store(store)) => ok(lua, store),
-        Ok(Reply::Entry(entry)) => ok(lua, entry),
-        Ok(Reply::Entries(entries)) => ok(lua, entries),
-        Err(e) => from_err(lua, op, e),
+        Ok(Reply::Done(done)) => ok(Value::Boolean(done)),
+        Ok(Reply::Missing) => ok(Value::Nil),
+        Ok(Reply::Password(password)) => ok(password.into_lua(lua)?),
+        Ok(Reply::Secret(secret)) => ok(Value::String(lua.create_string(&secret)?)),
+        Ok(Reply::Store(store)) => ok(store.into_lua(lua)?),
+        Ok(Reply::Entry(entry)) => ok(entry.into_lua(lua)?),
+        Ok(Reply::Entries(entries)) => ok(entries.into_lua(lua)?),
+        Err(e) => from_err(op, e),
     }
 }
 

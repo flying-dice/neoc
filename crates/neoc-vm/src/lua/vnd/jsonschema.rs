@@ -150,20 +150,17 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     #[lua("Result<Schema, string>")]
     m.set(
         "compile",
-        lua.create_function(|lua, schema_json: mlua::LuaString| {
+        lua.create_function(|_, schema_json: mlua::LuaString| {
             let bytes = schema_json.as_bytes();
             let schema_value: JV = match serde_json::from_slice(&bytes) {
                 Ok(v) => v,
-                Err(e) => return from_err(lua, "jsonschema.compile", e),
+                Err(e) => return from_err("jsonschema.compile", e),
             };
             match jsonschema::validator_for(&schema_value) {
-                Ok(validator) => ok(
-                    lua,
-                    JSchema {
-                        inner: Arc::new(validator),
-                    },
-                ),
-                Err(e) => from_err(lua, "jsonschema.compile", e),
+                Ok(validator) => ok(JSchema {
+                    inner: Arc::new(validator),
+                }),
+                Err(e) => from_err("jsonschema.compile", e),
             }
         })?,
     )?;

@@ -26,7 +26,7 @@
 
 use blake3::Hasher as Blake3Hasher;
 use md5::{Digest as Md5DigestTrait, Md5};
-use mlua::{Lua, MetaMethod, Table, UserData, UserDataMethods, Value};
+use mlua::{Lua, MetaMethod, Table, UserData, UserDataMethods};
 use sha1::Sha1;
 use sha2::{Digest as Sha2DigestTrait, Sha256, Sha384, Sha512};
 use sha3::{Sha3_256, Sha3_512};
@@ -35,7 +35,7 @@ use xxhash_rust::xxh3::Xxh3;
 use xxhash_rust::xxh64::Xxh64;
 
 use crate::lua::facade::Module;
-use crate::lua::sandbox::{err, ok};
+use crate::lua::sandbox::{Fallible, err, ok};
 
 /// Canonical algorithm list. Order: cryptographic
 /// first, non-cryptographic next, deprecated last. Used by `algorithms()` and
@@ -226,12 +226,12 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 }
 
 /// Start an incremental hash under `algo` (see `hash.algorithms()`).
-#[neoc_macros::lua_fn(name = "new", returns = "Result<Hasher, string>")]
+#[neoc_macros::lua_fn(name = "new")]
 #[instrument(name = "hash.Hasher.new", target = "lua::lib::hash", skip_all)]
-fn hasher_new(lua: &Lua, algo: String) -> mlua::Result<(Value, Value)> {
+fn hasher_new(_: &Lua, algo: String) -> mlua::Result<Fallible<Hasher>> {
     match State::new(&algo) {
-        Ok(state) => ok(lua, Hasher { state }),
-        Err(msg) => err(lua, format!("hash.Hasher.new: {msg}")),
+        Ok(state) => ok(Hasher { state }),
+        Err(msg) => err(format!("hash.Hasher.new: {msg}")),
     }
 }
 
@@ -239,13 +239,13 @@ fn hasher_new(lua: &Lua, algo: String) -> mlua::Result<(Value, Value)> {
 fn hash_one_shot(
     lua: &Lua,
     (algo, data): (String, mlua::LuaString),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<mlua::LuaString>> {
     match State::new(&algo) {
         Ok(mut state) => {
             state.update(&data.as_bytes());
-            ok(lua, lua.create_string(state.digest())?)
+            ok(lua.create_string(state.digest())?)
         }
-        Err(msg) => err(lua, format!("hash.hash: {msg}")),
+        Err(msg) => err(format!("hash.hash: {msg}")),
     }
 }
 

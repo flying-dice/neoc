@@ -23,7 +23,7 @@ use mlua::{AnyUserData, Lua, MetaMethod, Table, UserData, UserDataMethods, Value
 
 use crate::lua::facade::Module;
 use crate::lua::lifecycle::{Role, async_function};
-use crate::lua::sandbox::{err, ok};
+use crate::lua::sandbox::{Fallible, err, ok};
 
 // ---------------------------------------------------------------------------
 // Duration UserData
@@ -455,11 +455,11 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 }
 
 /// Parse a human duration such as `1h30m` or `250ms`.
-#[neoc_macros::lua_fn(name = "parse", returns = "Result<Duration, string>")]
-fn duration_parse(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
+#[neoc_macros::lua_fn(name = "parse")]
+fn duration_parse(_: &Lua, s: String) -> mlua::Result<Fallible<DurationHandle>> {
     match parse_duration(&s) {
-        Ok(d) => ok(lua, DurationHandle(d)),
-        Err(msg) => err(lua, format!("time.Duration.parse: {msg}")),
+        Ok(d) => ok(DurationHandle(d)),
+        Err(msg) => err(format!("time.Duration.parse: {msg}")),
     }
 }
 

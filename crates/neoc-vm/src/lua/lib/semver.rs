@@ -16,7 +16,7 @@ use semver::{BuildMetadata, Prerelease, Version, VersionReq};
 use tracing::instrument;
 
 use crate::lua::facade::Module;
-use crate::lua::sandbox::{err, ok};
+use crate::lua::sandbox::{Fallible, err, ok};
 
 // ---------------------------------------------------------------------------
 // Module
@@ -153,12 +153,12 @@ impl UserData for VersionHandle {
 }
 
 /// Parse a strict SemVer 2.0.0 version. Returns `(nil, err)` on malformed input.
-#[neoc_macros::lua_fn(name = "parse", returns = "Result<Version, string>")]
+#[neoc_macros::lua_fn(name = "parse")]
 #[instrument(name = "semver.Version.parse", target = "lua::lib::semver", skip_all)]
-fn version_parse_method(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
+fn version_parse_method(_: &Lua, s: String) -> mlua::Result<Fallible<VersionHandle>> {
     match parse_version(&s, "semver.Version.parse") {
-        Ok(v) => ok(lua, VersionHandle(v)),
-        Err(msg) => err(lua, msg),
+        Ok(v) => ok(VersionHandle(v)),
+        Err(msg) => err(msg),
     }
 }
 
@@ -185,16 +185,16 @@ impl UserData for VersionReqHandle {
 }
 
 /// Parse a requirement such as `">=1.2, <2"`; `(nil, err)` when malformed.
-#[neoc_macros::lua_fn(name = "parse", returns = "Result<VersionReq, string>")]
+#[neoc_macros::lua_fn(name = "parse")]
 #[instrument(
     name = "semver.VersionReq.parse",
     target = "lua::lib::semver",
     skip_all
 )]
-fn req_parse_method(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
+fn req_parse_method(_: &Lua, s: String) -> mlua::Result<Fallible<VersionReqHandle>> {
     match parse_req(&s, "semver.VersionReq.parse") {
-        Ok(r) => ok(lua, VersionReqHandle(r)),
-        Err(msg) => err(lua, msg),
+        Ok(r) => ok(VersionReqHandle(r)),
+        Err(msg) => err(msg),
     }
 }
 
@@ -203,12 +203,12 @@ fn req_parse_method(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
 // ---------------------------------------------------------------------------
 
 /// Alias for `Version.parse`. Returns `(nil, err)` on malformed input.
-#[neoc_macros::lua_fn(name = "parse", returns = "Result<Version, string>")]
+#[neoc_macros::lua_fn(name = "parse")]
 #[instrument(name = "semver.parse", target = "lua::lib::semver", skip_all)]
-fn flat_parse(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
+fn flat_parse(_: &Lua, s: String) -> mlua::Result<Fallible<VersionHandle>> {
     match parse_version(&s, "semver.parse") {
-        Ok(v) => ok(lua, VersionHandle(v)),
-        Err(msg) => err(lua, msg),
+        Ok(v) => ok(VersionHandle(v)),
+        Err(msg) => err(msg),
     }
 }
 
@@ -220,70 +220,66 @@ fn flat_valid(_: &Lua, s: String) -> mlua::Result<bool> {
 }
 
 /// Loose extraction: strips a leading `v`/`V`, fills missing minor/patch with `0`, drops build metadata and fourth components.
-#[neoc_macros::lua_fn(name = "coerce", returns = "Result<Version, string>")]
+#[neoc_macros::lua_fn(name = "coerce")]
 #[instrument(name = "semver.coerce", target = "lua::lib::semver", skip_all)]
-fn flat_coerce(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
+fn flat_coerce(_: &Lua, s: String) -> mlua::Result<Fallible<VersionHandle>> {
     match coerce_version(&s) {
-        Some(v) => ok(lua, VersionHandle(v)),
-        None => err(lua, format!("semver.coerce: no version found in {s:?}")),
+        Some(v) => ok(VersionHandle(v)),
+        None => err(format!("semver.coerce: no version found in {s:?}")),
     }
 }
 
 /// Three-way precedence compare returning `-1`, `0`, or `1`. Both args may be a `Version` or a string.
-#[neoc_macros::lua_fn(name = "compare", returns = "Result<number, string>")]
+#[neoc_macros::lua_fn(name = "compare")]
 #[instrument(name = "semver.compare", target = "lua::lib::semver", skip_all)]
-fn flat_compare(lua: &Lua, (a, b): (Value, Value)) -> mlua::Result<(Value, Value)> {
+fn flat_compare(_: &Lua, (a, b): (Value, Value)) -> mlua::Result<Fallible<i64>> {
     let av = match coerce_to_version(a, "semver.compare") {
         Ok(v) => v,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return err(msg),
     };
     let bv = match coerce_to_version(b, "semver.compare") {
         Ok(v) => v,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return err(msg),
     };
-    ok(lua, ordering_to_i64(av.cmp_precedence(&bv)))
+    ok(ordering_to_i64(av.cmp_precedence(&bv)))
 }
 
 /// True when `version` is in `range`. Returns `(nil, err)` only on a malformed range or version, never on a clean no-match.
-#[neoc_macros::lua_fn(name = "satisfies", returns = "Result<bool, string>")]
+#[neoc_macros::lua_fn(name = "satisfies")]
 #[instrument(name = "semver.satisfies", target = "lua::lib::semver", skip_all)]
-fn flat_satisfies(lua: &Lua, (version, range): (Value, Value)) -> mlua::Result<(Value, Value)> {
+fn flat_satisfies(_: &Lua, (version, range): (Value, Value)) -> mlua::Result<Fallible<bool>> {
     let v = match coerce_to_version(version, "semver.satisfies") {
         Ok(v) => v,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return err(msg),
     };
     let r = match coerce_to_req(range, "semver.satisfies") {
         Ok(r) => r,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return err(msg),
     };
-    ok(lua, r.matches(&v))
+    ok(r.matches(&v))
 }
 
 /// Increment `version` by `level` (`major`/`minor`/`patch`/`prerelease`) and return a SemVer 2.0.0 string; build metadata is stripped.
-#[neoc_macros::lua_fn(name = "increment", returns = "Result<string, string>")]
+#[neoc_macros::lua_fn(name = "increment")]
 #[instrument(name = "semver.increment", target = "lua::lib::semver", skip_all)]
-fn flat_increment(lua: &Lua, (version, level): (String, String)) -> mlua::Result<(Value, Value)> {
+fn flat_increment(_: &Lua, (version, level): (String, String)) -> mlua::Result<Fallible<String>> {
     let v = match parse_version(&version, "semver.increment") {
         Ok(v) => v,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return err(msg),
     };
     match increment_version(&v, &level) {
-        Ok(v2) => ok(lua, v2.to_string()),
-        Err(msg) => err(lua, format!("semver.increment: {msg}")),
+        Ok(v2) => ok(v2.to_string()),
+        Err(msg) => err(format!("semver.increment: {msg}")),
     }
 }
 
 /// Canonical SemVer 2.0.0 string for `v` (a `Version` or string). Equivalent to `tostring(v)`.
-#[neoc_macros::lua_fn(
-    name = "format",
-    returns = "Result<string, string>",
-    names(version = "v")
-)]
+#[neoc_macros::lua_fn(name = "format", names(version = "v"))]
 #[instrument(name = "semver.format", target = "lua::lib::semver", skip_all)]
-fn flat_format(lua: &Lua, version: Value) -> mlua::Result<(Value, Value)> {
+fn flat_format(_: &Lua, version: Value) -> mlua::Result<Fallible<String>> {
     match coerce_to_version(version, "semver.format") {
-        Ok(v) => ok(lua, v.to_string()),
-        Err(msg) => err(lua, msg),
+        Ok(v) => ok(v.to_string()),
+        Err(msg) => err(msg),
     }
 }
 

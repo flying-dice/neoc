@@ -285,11 +285,11 @@ impl UserData for KeyPair {
         methods.add_method("public_key", |_, this, _: ()| Ok(this.public()));
 
         /// Sign `message` with the private key, returning the raw signature bytes.
-        #[lua("Result<string, string>", names(msg = "message"))]
+        #[lua(names(msg = "message"))]
         methods.add_method("sign", |lua, this, msg: mlua::LuaString| {
             match this.sign(&msg.as_bytes()) {
-                Ok(sig) => ok(lua, lua.create_string(&sig)?),
-                Err(e) => err(lua, format!("KeyPair.sign: {e}")),
+                Ok(sig) => ok(lua.create_string(&sig)?),
+                Err(e) => err(format!("KeyPair.sign: {e}")),
             }
         });
 
@@ -297,17 +297,15 @@ impl UserData for KeyPair {
         methods.add_method("algorithm", |_, this, _: ()| Ok(this.secret.algo().name()));
 
         /// Serialise the private key as a PKCS#8 PEM string (LF line endings).
-        #[lua("Result<string, string>")]
         methods.add_method("to_pem", |lua, this, _: ()| match this.to_pem() {
-            Ok(pem) => ok(lua, lua.create_string(&pem)?),
-            Err(e) => err(lua, format!("KeyPair.to_pem: {e}")),
+            Ok(pem) => ok(lua.create_string(&pem)?),
+            Err(e) => err(format!("KeyPair.to_pem: {e}")),
         });
 
         /// Serialise the private key as PKCS#8 DER bytes.
-        #[lua("Result<string, string>")]
         methods.add_method("to_der", |lua, this, _: ()| match this.to_der() {
-            Ok(der) => ok(lua, lua.create_string(&der)?),
-            Err(e) => err(lua, format!("KeyPair.to_der: {e}")),
+            Ok(der) => ok(lua.create_string(&der)?),
+            Err(e) => err(format!("KeyPair.to_der: {e}")),
         });
 
         methods.add_meta_method(MetaMethod::ToString, |_, this, _: ()| {
@@ -423,17 +421,15 @@ impl UserData for PublicKey {
         methods.add_method("algorithm", |_, this, _: ()| Ok(this.public.algo().name()));
 
         /// Serialise the public key as an SPKI PEM string (LF line endings).
-        #[lua("Result<string, string>")]
         methods.add_method("to_pem", |lua, this, _: ()| match this.to_pem() {
-            Ok(pem) => ok(lua, lua.create_string(&pem)?),
-            Err(e) => err(lua, format!("PublicKey.to_pem: {e}")),
+            Ok(pem) => ok(lua.create_string(&pem)?),
+            Err(e) => err(format!("PublicKey.to_pem: {e}")),
         });
 
         /// Serialise the public key as SPKI DER bytes.
-        #[lua("Result<string, string>")]
         methods.add_method("to_der", |lua, this, _: ()| match this.to_der() {
-            Ok(der) => ok(lua, lua.create_string(&der)?),
-            Err(e) => err(lua, format!("PublicKey.to_der: {e}")),
+            Ok(der) => ok(lua.create_string(&der)?),
+            Err(e) => err(format!("PublicKey.to_der: {e}")),
         });
 
         methods.add_meta_method(MetaMethod::ToString, |_, this, _: ()| {

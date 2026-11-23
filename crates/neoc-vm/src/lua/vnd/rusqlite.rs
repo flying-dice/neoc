@@ -72,7 +72,7 @@ use tracing::instrument;
 
 use super::split_sql_args;
 use crate::lua::facade::Module;
-use crate::lua::sandbox::{from_err, i64_to_lua, ok};
+use crate::lua::sandbox::{Fallible, from_err, i64_to_lua, ok};
 
 /// A rusqlite connection behind a mutex. `None` once `:close()` has dropped it.
 struct SharedConn(Mutex<Option<rusqlite::Connection>>);
@@ -135,9 +135,9 @@ pub struct Database {
 }
 
 /// Open a SQLite database file. Pass `":memory:"` for an in-memory database.
-#[neoc_macros::lua_fn(returns = "Result<Database, string>")]
+#[neoc_macros::lua_fn]
 #[instrument(name = "rusqlite.open", target = "lua::lib::rusqlite", skip_all)]
-fn open(lua: &Lua, path: String) -> mlua::Result<(Value, Value)> {
+fn open(_: &Lua, path: String) -> mlua::Result<Fallible<Database>> {
     // OPEN_NO_MUTEX: `SharedConn` serialises access, SQLite's own per-connection
     // mutex would just be redundant work.
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
@@ -148,13 +148,10 @@ fn open(lua: &Lua, path: String) -> mlua::Result<(Value, Value)> {
     // the literal or a variable holding it is passed.
     let conn = rusqlite::Connection::open_with_flags(&path, flags);
     match conn {
-        Ok(c) => ok(
-            lua,
-            Database {
-                conn: Arc::new(SharedConn::new(c)),
-            },
-        ),
-        Err(e) => from_err(lua, "rusqlite.open", e),
+        Ok(c) => ok(Database {
+            conn: Arc::new(SharedConn::new(c)),
+        }),
+        Err(e) => from_err("rusqlite.open", e),
     }
 }
 
@@ -255,23 +252,25 @@ impl UserData for Statement {
 // shared execution helpers
 // ---------------------------------------------------------------------------
 
-/// A `run_*` helper: prepare + run the SQL, shaping the result for its op.
-type RunFn =
-    fn(&Lua, &Arc<SharedConn>, &'static str, &str, Vec<Value>) -> mlua::Result<(Value, Value)>;
-
 /// Split a `db:execute`/`query`/`query_one` call's args into SQL + params and
 /// dispatch to the matching `run_*` helper. The three `Database` methods differ
 /// only by op name and which helper shapes the result.
-fn db_dispatch(
+fn db_dispatch<R>(
     lua: &Lua,
     conn: &Arc<SharedConn>,
     op: &'static str,
     args: MultiValue,
-    run: RunFn,
-) -> mlua::Result<(Value, Value)> {
+    run: impl FnOnce(
+        &Lua,
+        &Arc<SharedConn>,
+        &'static str,
+        &str,
+        Vec<Value>,
+    ) -> mlua::Result<Fallible<R>>,
+) -> mlua::Result<Fallible<R>> {
     let (sql, params) = match split_sql_args(args) {
         Ok(v) => v,
-        Err(e) => return from_err(lua, op, e),
+        Err(e) => return from_err(op, e),
     };
     run(lua, conn, op, &sql, params)
 }
@@ -302,15 +301,15 @@ fn materialize_row(
 }
 
 fn run_execute(
-    lua: &Lua,
+    _: &Lua,
     handle: &Arc<SharedConn>,
     op: &'static str,
     sql: &str,
     params: Vec<Value>,
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<i64>> {
     let conn = match handle.lock() {
         Ok(c) => c,
-        Err(e) => return from_err(lua, op, e),
+        Err(e) => return from_err(op, e),
     };
     let lua_params: Vec<LuaToSql> = params.into_iter().map(LuaToSql).collect();
     let result = (|| -> rusqlite::Result<u64> {
@@ -320,8 +319,8 @@ fn run_execute(
         Ok(n as u64)
     })();
     match result {
-        Ok(n) => ok(lua, n as i64),
-        Err(e) => from_err(lua, op, e),
+        Ok(n) => ok(n as i64),
+        Err(e) => from_err(op, e),
     }
 }
 
@@ -331,10 +330,10 @@ fn run_query(
     op: &'static str,
     sql: &str,
     params: Vec<Value>,
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<Table>> {
     let conn = match handle.lock() {
         Ok(c) => c,
-        Err(e) => return from_err(lua, op, e),
+        Err(e) => return from_err(op, e),
     };
     let lua_params: Vec<LuaToSql> = params.into_iter().map(LuaToSql).collect();
     let result = (|| -> rusqlite::Result<Vec<Vec<(String, SqlValue)>>> {
@@ -352,9 +351,9 @@ fn run_query(
             for (i, row) in rows.into_iter().enumerate() {
                 out.set(i + 1, row_to_lua_table(lua, row)?)?;
             }
-            ok(lua, out)
+            ok(out)
         }
-        Err(e) => from_err(lua, op, e),
+        Err(e) => from_err(op, e),
     }
 }
 
@@ -364,10 +363,10 @@ fn run_query_one(
     op: &'static str,
     sql: &str,
     params: Vec<Value>,
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<Option<Table>>> {
     let conn = match handle.lock() {
         Ok(c) => c,
-        Err(e) => return from_err(lua, op, e),
+        Err(e) => return from_err(op, e),
     };
     let lua_params: Vec<LuaToSql> = params.into_iter().map(LuaToSql).collect();
     let result = (|| -> rusqlite::Result<Option<Vec<(String, SqlValue)>>> {
@@ -380,9 +379,9 @@ fn run_query_one(
             .transpose()
     })();
     match result {
-        Ok(Some(row)) => ok(lua, row_to_lua_table(lua, row)?),
-        Ok(None) => ok(lua, Value::Nil),
-        Err(e) => from_err(lua, op, e),
+        Ok(Some(row)) => ok(Some(row_to_lua_table(lua, row)?)),
+        Ok(None) => ok(None),
+        Err(e) => from_err(op, e),
     }
 }
 

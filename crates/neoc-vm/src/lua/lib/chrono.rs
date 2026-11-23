@@ -22,7 +22,7 @@ use mlua::{AnyUserData, Lua, MetaMethod, Table, UserData, UserDataFields, UserDa
 use tracing::instrument;
 
 use crate::lua::facade::Module;
-use crate::lua::sandbox::{err, ok};
+use crate::lua::sandbox::{Fallible, err, ok};
 
 // ---------------------------------------------------------------------------
 // Module
@@ -152,39 +152,39 @@ impl UserData for DateHandle {
 
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Return a copy with the year replaced.
-        #[lua("Result<Date, string>", names(y = "year"))]
-        methods.add_method("with_year", |lua, this, y: i64| {
+        #[lua(names(y = "year"))]
+        methods.add_method("with_year", |_, this, y: i64| {
             let y = match clamp_i16(y, "chrono.Date.with_year") {
                 Ok(v) => v,
-                Err(m) => return err(lua, m),
+                Err(m) => return err(m),
             };
             match this.0.with().year(y).build() {
-                Ok(d) => ok(lua, DateHandle(d)),
-                Err(e) => err(lua, format!("chrono.Date.with_year: {e}")),
+                Ok(d) => ok(DateHandle(d)),
+                Err(e) => err(format!("chrono.Date.with_year: {e}")),
             }
         });
         /// Return a copy with the month replaced.
-        #[lua("Result<Date, string>", names(m = "month"))]
-        methods.add_method("with_month", |lua, this, m: i64| {
+        #[lua(names(m = "month"))]
+        methods.add_method("with_month", |_, this, m: i64| {
             let m = match clamp_i8(m, "chrono.Date.with_month") {
                 Ok(v) => v,
-                Err(msg) => return err(lua, msg),
+                Err(msg) => return err(msg),
             };
             match this.0.with().month(m).build() {
-                Ok(d) => ok(lua, DateHandle(d)),
-                Err(e) => err(lua, format!("chrono.Date.with_month: {e}")),
+                Ok(d) => ok(DateHandle(d)),
+                Err(e) => err(format!("chrono.Date.with_month: {e}")),
             }
         });
         /// Return a copy with the day replaced.
-        #[lua("Result<Date, string>", names(d = "day"))]
-        methods.add_method("with_day", |lua, this, d: i64| {
+        #[lua(names(d = "day"))]
+        methods.add_method("with_day", |_, this, d: i64| {
             let d = match clamp_i8(d, "chrono.Date.with_day") {
                 Ok(v) => v,
-                Err(m) => return err(lua, m),
+                Err(m) => return err(m),
             };
             match this.0.with().day(d).build() {
-                Ok(d) => ok(lua, DateHandle(d)),
-                Err(e) => err(lua, format!("chrono.Date.with_day: {e}")),
+                Ok(d) => ok(DateHandle(d)),
+                Err(e) => err(format!("chrono.Date.with_day: {e}")),
             }
         });
 
@@ -196,68 +196,65 @@ impl UserData for DateHandle {
         });
 
         /// Add a day-resolution `Duration`.
-        #[lua("Result<Date, string>", names(d = "duration"), types(d = "Duration"))]
-        methods.add_method("add", |lua, this, d: AnyUserData| {
+        #[lua(names(d = "duration"), types(d = "Duration"))]
+        methods.add_method("add", |_, this, d: AnyUserData| {
             let span = match d.borrow::<DurationHandle>() {
                 Ok(h) => h.0,
-                Err(_) => return err(lua, "chrono.Date.add: expected Duration".to_string()),
+                Err(_) => return err("chrono.Date.add: expected Duration".to_string()),
             };
             if span_has_sub_day_units(&span) {
                 return err(
-                    lua,
                     "chrono.Date.add: Duration carries sub-day units; Date is day-resolution"
                         .to_string(),
                 );
             }
             match this.0.checked_add(span) {
-                Ok(r) => ok(lua, DateHandle(r)),
-                Err(e) => err(lua, format!("chrono.Date.add: {e}")),
+                Ok(r) => ok(DateHandle(r)),
+                Err(e) => err(format!("chrono.Date.add: {e}")),
             }
         });
         /// Subtract a day-resolution `Duration`.
-        #[lua("Result<Date, string>", names(d = "duration"), types(d = "Duration"))]
-        methods.add_method("sub", |lua, this, d: AnyUserData| {
+        #[lua(names(d = "duration"), types(d = "Duration"))]
+        methods.add_method("sub", |_, this, d: AnyUserData| {
             let span = match d.borrow::<DurationHandle>() {
                 Ok(h) => h.0,
-                Err(_) => return err(lua, "chrono.Date.sub: expected Duration".to_string()),
+                Err(_) => return err("chrono.Date.sub: expected Duration".to_string()),
             };
             if span_has_sub_day_units(&span) {
                 return err(
-                    lua,
                     "chrono.Date.sub: Duration carries sub-day units; Date is day-resolution"
                         .to_string(),
                 );
             }
             match this.0.checked_sub(span) {
-                Ok(r) => ok(lua, DateHandle(r)),
-                Err(e) => err(lua, format!("chrono.Date.sub: {e}")),
+                Ok(r) => ok(DateHandle(r)),
+                Err(e) => err(format!("chrono.Date.sub: {e}")),
             }
         });
 
         // Named `diff` rather than `until` because `until` is a Lua keyword
         // (the `repeat … until` loop) and rejected as a method name.
         /// Calendar span from this date until `other`.
-        #[lua("Result<Duration, string>", types(other = "Date"))]
-        methods.add_method("diff", |lua, this, other: AnyUserData| {
+        #[lua(types(other = "Date"))]
+        methods.add_method("diff", |_, this, other: AnyUserData| {
             let o = match other.borrow::<DateHandle>() {
                 Ok(h) => h.0,
-                Err(_) => return err(lua, "chrono.Date.diff: expected Date".to_string()),
+                Err(_) => return err("chrono.Date.diff: expected Date".to_string()),
             };
             match this.0.until(o) {
-                Ok(s) => ok(lua, DurationHandle(s)),
-                Err(e) => err(lua, format!("chrono.Date.diff: {e}")),
+                Ok(s) => ok(DurationHandle(s)),
+                Err(e) => err(format!("chrono.Date.diff: {e}")),
             }
         });
 
         /// Format via a strftime pattern.
-        #[lua("Result<string, string>")]
-        methods.add_method("format", |lua, this, fmt: String| {
+        methods.add_method("format", |_, this, fmt: String| {
             // jiff::fmt::strtime::format is fallible; Date::strftime returns a
             // `DisplayWithFormat` whose `Display` impl can return `fmt::Error`
             // and panics inside `to_string()` for unparseable patterns.
             match jiff::fmt::strtime::format(&fmt, this.0) {
-                Ok(s) => ok(lua, s),
-                Err(e) => err(lua, format!("chrono.Date.format: {e}")),
+                Ok(s) => ok(s),
+                Err(e) => err(format!("chrono.Date.format: {e}")),
             }
         });
 
@@ -283,38 +280,34 @@ impl UserData for DateHandle {
 }
 
 /// Build a date from year, month and day; an out-of-range value is an error.
-#[neoc_macros::lua_fn(
-    name = "new",
-    returns = "Result<Date, string>",
-    names(y = "year", m = "month", d = "day")
-)]
+#[neoc_macros::lua_fn(name = "new", names(y = "year", m = "month", d = "day"))]
 #[instrument(name = "chrono.Date.new", target = "lua::lib::chrono", skip_all)]
-fn date_new(lua: &Lua, (y, m, d): (i64, i64, i64)) -> mlua::Result<(Value, Value)> {
+fn date_new(_: &Lua, (y, m, d): (i64, i64, i64)) -> mlua::Result<Fallible<DateHandle>> {
     let y = match clamp_i16(y, "chrono.Date.new") {
         Ok(v) => v,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return err(msg),
     };
     let m = match clamp_i8(m, "chrono.Date.new") {
         Ok(v) => v,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return err(msg),
     };
     let d = match clamp_i8(d, "chrono.Date.new") {
         Ok(v) => v,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return err(msg),
     };
     match Date::new(y, m, d) {
-        Ok(date) => ok(lua, DateHandle(date)),
-        Err(e) => err(lua, format!("chrono.Date.new: {e}")),
+        Ok(date) => ok(DateHandle(date)),
+        Err(e) => err(format!("chrono.Date.new: {e}")),
     }
 }
 
 /// Parse an ISO 8601 date (`2026-05-20`).
-#[neoc_macros::lua_fn(name = "parse", returns = "Result<Date, string>")]
+#[neoc_macros::lua_fn(name = "parse")]
 #[instrument(name = "chrono.Date.parse", target = "lua::lib::chrono", skip_all)]
-fn date_parse_ctor(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
+fn date_parse_ctor(_: &Lua, s: String) -> mlua::Result<Fallible<DateHandle>> {
     match Date::from_str(&s) {
-        Ok(d) => ok(lua, DateHandle(d)),
-        Err(e) => err(lua, format!("chrono.Date.parse: {e}")),
+        Ok(d) => ok(DateHandle(d)),
+        Err(e) => err(format!("chrono.Date.parse: {e}")),
     }
 }
 
@@ -353,9 +346,9 @@ impl UserData for TimeHandle {
         #[lua("Result<string, string>")]
         methods.add_method(
             "format",
-            |lua, this, fmt: String| match jiff::fmt::strtime::format(&fmt, this.0) {
-                Ok(s) => ok(lua, s),
-                Err(e) => err(lua, format!("chrono.Time.format: {e}")),
+            |_, this, fmt: String| match jiff::fmt::strtime::format(&fmt, this.0) {
+                Ok(s) => ok(s),
+                Err(e) => err(format!("chrono.Time.format: {e}")),
             },
         );
         methods.add_meta_function(MetaMethod::Eq, |_, args: (AnyUserData, AnyUserData)| {
@@ -382,46 +375,45 @@ impl UserData for TimeHandle {
 /// Build a time of day; an out-of-range value is an error.
 #[neoc_macros::lua_fn(
     name = "new",
-    returns = "Result<Time, string>",
     names(h = "hour", m = "minute", s = "second", ns = "nanosecond")
 )]
 #[instrument(name = "chrono.Time.new", target = "lua::lib::chrono", skip_all)]
 fn time_new(
-    lua: &Lua,
+    _: &Lua,
     (h, m, s, ns): (i64, i64, i64, Option<i64>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<TimeHandle>> {
     let h = match clamp_i8(h, "chrono.Time.new") {
         Ok(v) => v,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return err(msg),
     };
     let m = match clamp_i8(m, "chrono.Time.new") {
         Ok(v) => v,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return err(msg),
     };
     let s = match clamp_i8(s, "chrono.Time.new") {
         Ok(v) => v,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return err(msg),
     };
     let ns = match ns {
         Some(v) => match clamp_i32(v, "chrono.Time.new") {
             Ok(n) => n,
-            Err(msg) => return err(lua, msg),
+            Err(msg) => return err(msg),
         },
         None => 0,
     };
     match Time::new(h, m, s, ns) {
-        Ok(t) => ok(lua, TimeHandle(t)),
-        Err(e) => err(lua, format!("chrono.Time.new: {e}")),
+        Ok(t) => ok(TimeHandle(t)),
+        Err(e) => err(format!("chrono.Time.new: {e}")),
     }
 }
 
 /// Parse an ISO 8601 time (`13:45:30`).
-#[neoc_macros::lua_fn(name = "parse", returns = "Result<Time, string>")]
+#[neoc_macros::lua_fn(name = "parse")]
 #[instrument(name = "chrono.Time.parse", target = "lua::lib::chrono", skip_all)]
-fn time_parse_ctor(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
+fn time_parse_ctor(_: &Lua, s: String) -> mlua::Result<Fallible<TimeHandle>> {
     match Time::from_str(&s) {
-        Ok(t) => ok(lua, TimeHandle(t)),
-        Err(e) => err(lua, format!("chrono.Time.parse: {e}")),
+        Ok(t) => ok(TimeHandle(t)),
+        Err(e) => err(format!("chrono.Time.parse: {e}")),
     }
 }
 
@@ -462,15 +454,14 @@ impl UserData for DateTimeHandle {
         methods.add_method("time", |_, this, _: ()| Ok(TimeHandle(this.0.time())));
 
         /// Interpret this civil datetime in the named IANA zone.
-        #[lua("Result<ZonedDateTime, string>")]
-        methods.add_method("in_zone", |lua, this, name: String| {
+        methods.add_method("in_zone", |_, this, name: String| {
             let tz = match lookup_zone(&name) {
                 Ok(z) => z,
-                Err(msg) => return err(lua, format!("chrono.DateTime.in_zone: {msg}")),
+                Err(msg) => return err(format!("chrono.DateTime.in_zone: {msg}")),
             };
             match this.0.to_zoned_datetime(tz) {
-                Ok(z) => ok(lua, ZonedDateTimeHandle(z)),
-                Err(e) => err(lua, format!("chrono.DateTime.in_zone: {e}")),
+                Ok(z) => ok(ZonedDateTimeHandle(z)),
+                Err(e) => err(format!("chrono.DateTime.in_zone: {e}")),
             }
         });
 
@@ -480,14 +471,14 @@ impl UserData for DateTimeHandle {
             names(d = "duration"),
             types(d = "Duration")
         )]
-        methods.add_method("add", |lua, this, d: AnyUserData| {
+        methods.add_method("add", |_, this, d: AnyUserData| {
             let span = match d.borrow::<DurationHandle>() {
                 Ok(h) => h.0,
-                Err(_) => return err(lua, "chrono.DateTime.add: expected Duration".to_string()),
+                Err(_) => return err("chrono.DateTime.add: expected Duration".to_string()),
             };
             match this.0.checked_add(span) {
-                Ok(r) => ok(lua, DateTimeHandle(r)),
-                Err(e) => err(lua, format!("chrono.DateTime.add: {e}")),
+                Ok(r) => ok(DateTimeHandle(r)),
+                Err(e) => err(format!("chrono.DateTime.add: {e}")),
             }
         });
         /// Subtract a `Duration`.
@@ -496,26 +487,26 @@ impl UserData for DateTimeHandle {
             names(d = "duration"),
             types(d = "Duration")
         )]
-        methods.add_method("sub", |lua, this, d: AnyUserData| {
+        methods.add_method("sub", |_, this, d: AnyUserData| {
             let span = match d.borrow::<DurationHandle>() {
                 Ok(h) => h.0,
-                Err(_) => return err(lua, "chrono.DateTime.sub: expected Duration".to_string()),
+                Err(_) => return err("chrono.DateTime.sub: expected Duration".to_string()),
             };
             match this.0.checked_sub(span) {
-                Ok(r) => ok(lua, DateTimeHandle(r)),
-                Err(e) => err(lua, format!("chrono.DateTime.sub: {e}")),
+                Ok(r) => ok(DateTimeHandle(r)),
+                Err(e) => err(format!("chrono.DateTime.sub: {e}")),
             }
         });
         /// Span from this datetime until `other`.
-        #[lua("Result<Duration, string>", types(other = "DateTime"))]
-        methods.add_method("diff", |lua, this, other: AnyUserData| {
+        #[lua(types(other = "DateTime"))]
+        methods.add_method("diff", |_, this, other: AnyUserData| {
             let o = match other.borrow::<DateTimeHandle>() {
                 Ok(h) => h.0,
-                Err(_) => return err(lua, "chrono.DateTime.diff: expected DateTime".to_string()),
+                Err(_) => return err("chrono.DateTime.diff: expected DateTime".to_string()),
             };
             match this.0.until(o) {
-                Ok(s) => ok(lua, DurationHandle(s)),
-                Err(e) => err(lua, format!("chrono.DateTime.diff: {e}")),
+                Ok(s) => ok(DurationHandle(s)),
+                Err(e) => err(format!("chrono.DateTime.diff: {e}")),
             }
         });
 
@@ -523,9 +514,9 @@ impl UserData for DateTimeHandle {
         #[lua("Result<string, string>")]
         methods.add_method(
             "format",
-            |lua, this, fmt: String| match jiff::fmt::strtime::format(&fmt, this.0) {
-                Ok(s) => ok(lua, s),
-                Err(e) => err(lua, format!("chrono.DateTime.format: {e}")),
+            |_, this, fmt: String| match jiff::fmt::strtime::format(&fmt, this.0) {
+                Ok(s) => ok(s),
+                Err(e) => err(format!("chrono.DateTime.format: {e}")),
             },
         );
 
@@ -553,7 +544,6 @@ impl UserData for DateTimeHandle {
 /// Build a civil datetime; an out-of-range value is an error.
 #[neoc_macros::lua_fn(
     name = "new",
-    returns = "Result<DateTime, string>",
     takes(
         "year: number",
         "month: number",
@@ -566,54 +556,54 @@ impl UserData for DateTimeHandle {
 )]
 #[instrument(name = "chrono.DateTime.new", target = "lua::lib::chrono", skip_all)]
 fn datetime_new(
-    lua: &Lua,
+    _: &Lua,
     args: (i64, i64, i64, i64, i64, i64, Option<i64>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<DateTimeHandle>> {
     let (y, mo, d, h, mi, s, ns) = args;
     let y = match clamp_i16(y, "chrono.DateTime.new") {
         Ok(v) => v,
-        Err(m) => return err(lua, m),
+        Err(m) => return err(m),
     };
     let mo = match clamp_i8(mo, "chrono.DateTime.new") {
         Ok(v) => v,
-        Err(m) => return err(lua, m),
+        Err(m) => return err(m),
     };
     let d = match clamp_i8(d, "chrono.DateTime.new") {
         Ok(v) => v,
-        Err(m) => return err(lua, m),
+        Err(m) => return err(m),
     };
     let h = match clamp_i8(h, "chrono.DateTime.new") {
         Ok(v) => v,
-        Err(m) => return err(lua, m),
+        Err(m) => return err(m),
     };
     let mi = match clamp_i8(mi, "chrono.DateTime.new") {
         Ok(v) => v,
-        Err(m) => return err(lua, m),
+        Err(m) => return err(m),
     };
     let s = match clamp_i8(s, "chrono.DateTime.new") {
         Ok(v) => v,
-        Err(m) => return err(lua, m),
+        Err(m) => return err(m),
     };
     let ns = match ns {
         Some(v) => match clamp_i32(v, "chrono.DateTime.new") {
             Ok(n) => n,
-            Err(m) => return err(lua, m),
+            Err(m) => return err(m),
         },
         None => 0,
     };
     match DateTime::new(y, mo, d, h, mi, s, ns) {
-        Ok(dt) => ok(lua, DateTimeHandle(dt)),
-        Err(e) => err(lua, format!("chrono.DateTime.new: {e}")),
+        Ok(dt) => ok(DateTimeHandle(dt)),
+        Err(e) => err(format!("chrono.DateTime.new: {e}")),
     }
 }
 
 /// Parse an ISO 8601 datetime (`2026-05-20T13:45:30`).
-#[neoc_macros::lua_fn(name = "parse", returns = "Result<DateTime, string>")]
+#[neoc_macros::lua_fn(name = "parse")]
 #[instrument(name = "chrono.DateTime.parse", target = "lua::lib::chrono", skip_all)]
-fn datetime_parse_ctor(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
+fn datetime_parse_ctor(_: &Lua, s: String) -> mlua::Result<Fallible<DateTimeHandle>> {
     match DateTime::from_str(&s) {
-        Ok(dt) => ok(lua, DateTimeHandle(dt)),
-        Err(e) => err(lua, format!("chrono.DateTime.parse: {e}")),
+        Ok(dt) => ok(DateTimeHandle(dt)),
+        Err(e) => err(format!("chrono.DateTime.parse: {e}")),
     }
 }
 
@@ -670,13 +660,12 @@ impl UserData for ZonedDateTimeHandle {
         });
 
         /// Convert to the named IANA zone, preserving the instant.
-        #[lua("Result<ZonedDateTime, string>")]
-        methods.add_method("in_zone", |lua, this, name: String| {
+        methods.add_method("in_zone", |_, this, name: String| {
             let tz = match lookup_zone(&name) {
                 Ok(z) => z,
-                Err(msg) => return err(lua, format!("chrono.ZonedDateTime.in_zone: {msg}")),
+                Err(msg) => return err(format!("chrono.ZonedDateTime.in_zone: {msg}")),
             };
-            ok(lua, ZonedDateTimeHandle(this.0.with_time_zone(tz)))
+            ok(ZonedDateTimeHandle(this.0.with_time_zone(tz)))
         });
 
         /// Add a `Duration`.
@@ -685,19 +674,16 @@ impl UserData for ZonedDateTimeHandle {
             names(d = "duration"),
             types(d = "Duration")
         )]
-        methods.add_method("add", |lua, this, d: AnyUserData| {
+        methods.add_method("add", |_, this, d: AnyUserData| {
             let span = match d.borrow::<DurationHandle>() {
                 Ok(h) => h.0,
                 Err(_) => {
-                    return err(
-                        lua,
-                        "chrono.ZonedDateTime.add: expected Duration".to_string(),
-                    );
+                    return err("chrono.ZonedDateTime.add: expected Duration".to_string());
                 }
             };
             match this.0.checked_add(span) {
-                Ok(r) => ok(lua, ZonedDateTimeHandle(r)),
-                Err(e) => err(lua, format!("chrono.ZonedDateTime.add: {e}")),
+                Ok(r) => ok(ZonedDateTimeHandle(r)),
+                Err(e) => err(format!("chrono.ZonedDateTime.add: {e}")),
             }
         });
         /// Subtract a `Duration`.
@@ -706,36 +692,30 @@ impl UserData for ZonedDateTimeHandle {
             names(d = "duration"),
             types(d = "Duration")
         )]
-        methods.add_method("sub", |lua, this, d: AnyUserData| {
+        methods.add_method("sub", |_, this, d: AnyUserData| {
             let span = match d.borrow::<DurationHandle>() {
                 Ok(h) => h.0,
                 Err(_) => {
-                    return err(
-                        lua,
-                        "chrono.ZonedDateTime.sub: expected Duration".to_string(),
-                    );
+                    return err("chrono.ZonedDateTime.sub: expected Duration".to_string());
                 }
             };
             match this.0.checked_sub(span) {
-                Ok(r) => ok(lua, ZonedDateTimeHandle(r)),
-                Err(e) => err(lua, format!("chrono.ZonedDateTime.sub: {e}")),
+                Ok(r) => ok(ZonedDateTimeHandle(r)),
+                Err(e) => err(format!("chrono.ZonedDateTime.sub: {e}")),
             }
         });
         /// Span from this instant until `other`.
-        #[lua("Result<Duration, string>", types(other = "ZonedDateTime"))]
-        methods.add_method("diff", |lua, this, other: AnyUserData| {
+        #[lua(types(other = "ZonedDateTime"))]
+        methods.add_method("diff", |_, this, other: AnyUserData| {
             let o = match other.borrow::<ZonedDateTimeHandle>() {
                 Ok(h) => h.0.clone(),
                 Err(_) => {
-                    return err(
-                        lua,
-                        "chrono.ZonedDateTime.diff: expected ZonedDateTime".to_string(),
-                    );
+                    return err("chrono.ZonedDateTime.diff: expected ZonedDateTime".to_string());
                 }
             };
             match this.0.until(&o) {
-                Ok(s) => ok(lua, DurationHandle(s)),
-                Err(e) => err(lua, format!("chrono.ZonedDateTime.diff: {e}")),
+                Ok(s) => ok(DurationHandle(s)),
+                Err(e) => err(format!("chrono.ZonedDateTime.diff: {e}")),
             }
         });
 
@@ -743,9 +723,9 @@ impl UserData for ZonedDateTimeHandle {
         #[lua("Result<string, string>")]
         methods.add_method(
             "format",
-            |lua, this, fmt: String| match jiff::fmt::strtime::format(&fmt, &this.0) {
-                Ok(s) => ok(lua, s),
-                Err(e) => err(lua, format!("chrono.ZonedDateTime.format: {e}")),
+            |_, this, fmt: String| match jiff::fmt::strtime::format(&fmt, &this.0) {
+                Ok(s) => ok(s),
+                Err(e) => err(format!("chrono.ZonedDateTime.format: {e}")),
             },
         );
 
@@ -754,8 +734,8 @@ impl UserData for ZonedDateTimeHandle {
         // for strict RFC 3339 without the suffix.
         /// RFC 3339 timestamp string (returned as `(string, nil)`).
         #[lua("(string, ())")]
-        methods.add_method("to_rfc3339", |lua, this, _: ()| {
-            ok(lua, this.0.timestamp().to_string())
+        methods.add_method("to_rfc3339", |_, this, _: ()| {
+            ok(this.0.timestamp().to_string())
         });
 
         methods.add_meta_function(MetaMethod::Eq, |_, args: (AnyUserData, AnyUserData)| {
@@ -780,16 +760,16 @@ impl UserData for ZonedDateTimeHandle {
 }
 
 /// Parse an RFC 9557 timestamp (`2026-05-20T13:45:30+01:00[Europe/London]`).
-#[neoc_macros::lua_fn(name = "parse", returns = "Result<ZonedDateTime, string>")]
+#[neoc_macros::lua_fn(name = "parse")]
 #[instrument(
     name = "chrono.ZonedDateTime.parse",
     target = "lua::lib::chrono",
     skip_all
 )]
-fn zdt_parse_ctor(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
+fn zdt_parse_ctor(_: &Lua, s: String) -> mlua::Result<Fallible<ZonedDateTimeHandle>> {
     match ZonedDateTime::from_str(&s) {
-        Ok(z) => ok(lua, ZonedDateTimeHandle(z)),
-        Err(e) => err(lua, format!("chrono.ZonedDateTime.parse: {e}")),
+        Ok(z) => ok(ZonedDateTimeHandle(z)),
+        Err(e) => err(format!("chrono.ZonedDateTime.parse: {e}")),
     }
 }
 
@@ -834,11 +814,10 @@ impl UserData for DurationHandle {
         // refuse to collapse without a reference instant — match jiff and
         // surface the error rather than picking a fictional value.
         /// Total span in seconds (calendar-agnostic units only).
-        #[lua("Result<number, string>")]
-        methods.add_method("total_seconds", |lua, this, _: ()| {
+        methods.add_method("total_seconds", |_, this, _: ()| {
             match this.0.total(Unit::Second) {
-                Ok(v) => ok(lua, v),
-                Err(e) => err(lua, format!("chrono.Duration.total_seconds: {e}")),
+                Ok(v) => ok(v),
+                Err(e) => err(format!("chrono.Duration.total_seconds: {e}")),
             }
         });
 
@@ -848,10 +827,10 @@ impl UserData for DurationHandle {
         });
         /// Return the absolute span (returned as `(span, nil)`).
         #[lua("(Duration, ())")]
-        methods.add_method("abs", |lua, this, _: ()| {
+        methods.add_method("abs", |_, this, _: ()| {
             // `Span::abs` is an `i64`-amount-wise sign flip — infallible for
             // every span jiff is willing to construct in the first place.
-            ok(lua, DurationHandle(this.0.abs()))
+            ok(DurationHandle(this.0.abs()))
         });
 
         methods.add_meta_function(MetaMethod::Eq, |_, args: (AnyUserData, AnyUserData)| {
@@ -866,16 +845,16 @@ impl UserData for DurationHandle {
 }
 
 /// Build a span from a table of named units, e.g. `{ hours = 1, minutes = 30 }`.
-#[neoc_macros::lua_fn(name = "of", returns = "Result<Duration, string>", names(t = "units"))]
+#[neoc_macros::lua_fn(name = "of", names(t = "units"))]
 #[instrument(name = "chrono.Duration.of", target = "lua::lib::chrono", skip_all)]
-fn duration_of(lua: &Lua, t: Table) -> mlua::Result<(Value, Value)> {
+fn duration_of(_: &Lua, t: Table) -> mlua::Result<Fallible<DurationHandle>> {
     let mut span = Span::new();
     macro_rules! apply {
         ($name:literal, $method:ident) => {
             if let Ok(v) = t.get::<i64>($name) {
                 span = match span.$method(v) {
                     Ok(s) => s,
-                    Err(e) => return err(lua, format!("chrono.Duration.of: {}: {e}", $name)),
+                    Err(e) => return err(format!("chrono.Duration.of: {}: {e}", $name)),
                 };
             }
         };
@@ -890,16 +869,16 @@ fn duration_of(lua: &Lua, t: Table) -> mlua::Result<(Value, Value)> {
     apply!("milliseconds", try_milliseconds);
     apply!("microseconds", try_microseconds);
     apply!("nanoseconds", try_nanoseconds);
-    ok(lua, DurationHandle(span))
+    ok(DurationHandle(span))
 }
 
 /// Parse an ISO 8601 or friendly duration (`PT1H30M`, `1h 30m`).
-#[neoc_macros::lua_fn(name = "parse", returns = "Result<Duration, string>")]
+#[neoc_macros::lua_fn(name = "parse")]
 #[instrument(name = "chrono.Duration.parse", target = "lua::lib::chrono", skip_all)]
-fn duration_parse_ctor(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
+fn duration_parse_ctor(_: &Lua, s: String) -> mlua::Result<Fallible<DurationHandle>> {
     match Span::from_str(&s) {
-        Ok(sp) => ok(lua, DurationHandle(sp)),
-        Err(e) => err(lua, format!("chrono.Duration.parse: {e}")),
+        Ok(sp) => ok(DurationHandle(sp)),
+        Err(e) => err(format!("chrono.Duration.parse: {e}")),
     }
 }
 
@@ -923,6 +902,37 @@ fn flat_utc_now(_: &Lua, _: ()) -> mlua::Result<ZonedDateTimeHandle> {
     ))
 }
 
+/// What `chrono.parse` recognised: one of the four kinds of value, whichever the string is the shape of.
+enum Temporal {
+    Date(DateHandle),
+    Time(TimeHandle),
+    DateTime(DateTimeHandle),
+    Zoned(ZonedDateTimeHandle),
+}
+
+impl mlua::IntoLua for Temporal {
+    fn into_lua(self, lua: &Lua) -> mlua::Result<Value> {
+        match self {
+            Self::Date(date) => date.into_lua(lua),
+            Self::Time(time) => time.into_lua(lua),
+            Self::DateTime(date_time) => date_time.into_lua(lua),
+            Self::Zoned(zoned) => zoned.into_lua(lua),
+        }
+    }
+}
+
+impl crate::lua::facade::DeclType for Temporal {
+    fn decl_type() -> String {
+        [
+            DateHandle::decl_type(),
+            TimeHandle::decl_type(),
+            DateTimeHandle::decl_type(),
+            ZonedDateTimeHandle::decl_type(),
+        ]
+        .join(" | ")
+    }
+}
+
 // Recognise whichever ISO 8601 / RFC 9557 shape the caller gave us and
 // dispatch to the matching UserData. Shape-gated rather than try-all-in-order
 // because jiff's `DateTime::from_str` accepts a bare `YYYY-MM-DD` as midnight —
@@ -930,37 +940,35 @@ fn flat_utc_now(_: &Lua, _: ()) -> mlua::Result<ZonedDateTimeHandle> {
 // with `00:00:00`. We use the string's structural markers (`T`, `:`, `[`) to
 // route to the right narrower parser.
 /// Recognise an ISO 8601 / RFC 9557 string and dispatch it to the matching `Date`, `Time`, `DateTime`, or `ZonedDateTime`.
-#[neoc_macros::lua_fn(name = "parse", returns = "Result<LuaValue, string>")]
+#[neoc_macros::lua_fn(name = "parse")]
 #[instrument(name = "chrono.parse", target = "lua::lib::chrono", skip_all)]
-fn flat_parse(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
+fn flat_parse(_: &Lua, s: String) -> mlua::Result<Fallible<Temporal>> {
     let has_datetime_shape = s.contains('T') || s.contains(' ');
     if has_datetime_shape {
         if let Ok(z) = ZonedDateTime::from_str(&s) {
-            return ok(lua, ZonedDateTimeHandle(z));
+            return ok(Temporal::Zoned(ZonedDateTimeHandle(z)));
         }
         // RFC 3339 with `Z` or numeric offset but no `[zone]` suffix —
         // `ZonedDateTime::from_str` rejects it, but `Timestamp::from_str` accepts.
         // Normalise to a UTC-zoned instant so the instant is preserved.
         if let Ok(ts) = Timestamp::from_str(&s) {
-            return ok(
-                lua,
-                ZonedDateTimeHandle(ts.to_zoned_datetime(TimeZone::UTC)),
-            );
+            return ok(Temporal::Zoned(ZonedDateTimeHandle(
+                ts.to_zoned_datetime(TimeZone::UTC),
+            )));
         }
         if let Ok(dt) = DateTime::from_str(&s) {
-            return ok(lua, DateTimeHandle(dt));
+            return ok(Temporal::DateTime(DateTimeHandle(dt)));
         }
     } else if s.contains(':') {
         if let Ok(t) = Time::from_str(&s) {
-            return ok(lua, TimeHandle(t));
+            return ok(Temporal::Time(TimeHandle(t)));
         }
     } else if let Ok(d) = Date::from_str(&s) {
-        return ok(lua, DateHandle(d));
+        return ok(Temporal::Date(DateHandle(d)));
     }
-    err(
-        lua,
-        format!("chrono.parse: cannot recognise {s:?} as Date, Time, DateTime, or ZonedDateTime"),
-    )
+    err(format!(
+        "chrono.parse: cannot recognise {s:?} as Date, Time, DateTime, or ZonedDateTime"
+    ))
 }
 
 // ---------------------------------------------------------------------------

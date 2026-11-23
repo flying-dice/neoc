@@ -33,7 +33,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use mlua::{Lua, UserData, UserDataMethods, Value};
+use mlua::{Lua, UserData, UserDataMethods};
 use notify::event::{EventKind, ModifyKind, RenameMode};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
 use parking_lot::Mutex;
@@ -430,11 +430,11 @@ fn timeout_of(secs: Option<f64>) -> FsResult<Option<Duration>> {
 }
 
 /// The `{ kind, path }` table of one event.
-fn event(lua: &Lua, change: Change, path: &Path) -> mlua::Result<(Value, Value)> {
+fn event(lua: &Lua, change: Change, path: &Path) -> mlua::Result<mlua::Table> {
     let table = lua.create_table_with_capacity(0, 2)?;
     table.raw_set("kind", change.as_str())?;
     table.raw_set("path", osstr::to_lua(lua, path.as_os_str())?)?;
-    ok(lua, table)
+    Ok(table)
 }
 
 /// The handle `fs.watch` returns.
@@ -501,7 +501,7 @@ impl UserData for WatchHandle {
                         Ok(limit) => limit,
                         Err(e) => {
                             hold().await;
-                            return from_err(&lua, RECEIVE, e);
+                            return from_err(RECEIVE, e);
                         }
                     };
                     // a deadline past what an Instant holds is no deadline
@@ -514,13 +514,15 @@ impl UserData for WatchHandle {
                             &root,
                             format!("no change within {secs} seconds"),
                         );
-                        return from_err(&lua, RECEIVE, e);
+                        return from_err(RECEIVE, e);
                     };
                     match next {
-                        Next::Item(Item::Change(change, path)) => event(&lua, change, &path),
-                        Next::Item(Item::Failed(e)) => from_err(&lua, RECEIVE, e),
-                        Next::Overflow => event(&lua, Change::Overflow, &root),
-                        Next::Closed => Ok((Value::Nil, Value::Nil)),
+                        Next::Item(Item::Change(change, path)) => {
+                            ok(Some(event(&lua, change, &path)?))
+                        }
+                        Next::Item(Item::Failed(e)) => from_err(RECEIVE, e),
+                        Next::Overflow => ok(Some(event(&lua, Change::Overflow, &root)?)),
+                        Next::Closed => ok(None),
                     }
                 }
             },

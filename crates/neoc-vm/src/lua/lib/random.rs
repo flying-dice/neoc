@@ -30,7 +30,7 @@
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use mlua::{Lua, Table, Value};
+use mlua::{Lua, Table};
 use rand::TryRng;
 use rand::rngs::SysRng;
 use tracing::instrument;
@@ -38,7 +38,7 @@ use uuid::Uuid;
 
 use crate::lua::facade::Module;
 use crate::lua::limits;
-use crate::lua::sandbox::{err, from_err, ok};
+use crate::lua::sandbox::{Fallible, err, from_err, ok};
 
 /// Fill `buf` from the OS CSPRNG. `SysRng` is fallible in rand 0.10; an
 /// entropy-source failure comes back as an error for the caller to surface (a
@@ -121,17 +121,17 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 // ---------------------------------------------------------------------------
 
 /// Return `n_bytes` cryptographically-random bytes as a raw string.
-#[neoc_macros::lua_fn(returns = "Result<string, string>")]
+#[neoc_macros::lua_fn]
 #[instrument(name = "random.random_bytes", target = "lua::lib::random", skip_all)]
-fn random_bytes(lua: &Lua, n_bytes: i64) -> mlua::Result<(Value, Value)> {
+fn random_bytes(lua: &Lua, n_bytes: i64) -> mlua::Result<Fallible<mlua::LuaString>> {
     let mut buf = match limits::size(n_bytes, "byte count").and_then(limits::zeroed) {
         Ok(buf) => buf,
-        Err(e) => return err(lua, format!("random.random_bytes: {e}")),
+        Err(e) => return err(format!("random.random_bytes: {e}")),
     };
     if let Err(e) = fill_random(&mut buf) {
-        return err(lua, format!("random.random_bytes: {e}"));
+        return err(format!("random.random_bytes: {e}"));
     }
-    ok(lua, lua.create_string(&buf)?)
+    ok(lua.create_string(&buf)?)
 }
 
 fn random_int(min: i64, max: i64) -> Result<i64, String> {
@@ -287,17 +287,17 @@ fn uuid_v7() -> mlua::Result<String> {
 }
 
 /// Parse a canonical UUID string and return its 16 raw bytes.
-#[neoc_macros::lua_fn(returns = "Result<string, string>")]
+#[neoc_macros::lua_fn]
 #[instrument(name = "random.uuid_parse", target = "lua::lib::random", skip_all)]
-fn uuid_parse(lua: &Lua, input: mlua::LuaString) -> mlua::Result<(Value, Value)> {
+fn uuid_parse(lua: &Lua, input: mlua::LuaString) -> mlua::Result<Fallible<mlua::LuaString>> {
     let bytes = input.as_bytes();
     let s = match std::str::from_utf8(&bytes) {
         Ok(s) => s,
-        Err(e) => return from_err(lua, "random.uuid_parse", e),
+        Err(e) => return from_err("random.uuid_parse", e),
     };
     match Uuid::parse_str(s) {
-        Ok(u) => ok(lua, lua.create_string(u.as_bytes())?),
-        Err(e) => from_err(lua, "random.uuid_parse", e),
+        Ok(u) => ok(lua.create_string(u.as_bytes())?),
+        Err(e) => from_err("random.uuid_parse", e),
     }
 }
 

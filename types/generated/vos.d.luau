@@ -681,7 +681,7 @@ export type lib_chrono = {
 	--- Current wall-clock instant in UTC.
 	utc_now: () -> lib_chrono_ZonedDateTime,
 	--- Recognise an ISO 8601 / RFC 9557 string and dispatch it to the matching `Date`, `Time`, `DateTime`, or `ZonedDateTime`.
-	parse: (s: string) -> (any, string?),
+	parse: (s: string) -> ((lib_chrono_Date | lib_chrono_Time | lib_chrono_DateTime | lib_chrono_ZonedDateTime)?, string?),
 }
 
 -- ===== lib:compress =====
@@ -714,7 +714,7 @@ export type lib_crypto = {
 
 export type lib_csv_CsvReader = {
 	--- Return the cached header row (parsing it if not yet read). Errors if the reader was not created with `headers = true`.
-	headers: (self: lib_csv_CsvReader) -> (any, string?),
+	headers: (self: lib_csv_CsvReader) -> (any?, string?),
 	--- Return a Lua iterator yielding the next row on each call, `nil` at EOF. Iterator errors raise.
 	rows: (self: lib_csv_CsvReader) -> any,
 }
@@ -1064,7 +1064,7 @@ export type lib_regex = {
 	--- Compile-and-test in one call. Returns `(nil, err)` on a pattern error.
 	is_match: (pattern: string, text: string, flags: string?) -> (boolean?, string?),
 	--- Compile-and-find-first in one call. Returns the `Match` table on a hit, `(nil, nil)` on a clean miss, `(nil, err)` on a pattern error.
-	find: (pattern: string, text: string, flags: string?) -> (any, string?),
+	find: (pattern: string, text: string, flags: string?) -> (any?, string?),
 	--- Compile-and-find-all in one call. Returns a (possibly empty) array of `Match` tables, or `(nil, err)` on a pattern error.
 	find_all: (pattern: string, text: string, flags: string?) -> (any, string?),
 	--- Replace the first match. Substitution grammar uses `$0`, `$1`, `${name}` per the regex crate.
@@ -1207,7 +1207,7 @@ export type lib_text = {
 	--- Codepoint-based Levenshtein edit distance.
 	levenshtein: (a: string, b: string) -> number,
 	--- Score each candidate against `input` by Levenshtein distance, returning the list sorted ascending (ties broken alphabetically).
-	closest: (input: string, candidates: any, opts: any?) -> (any, string?),
+	closest: (input: string, candidates: any, opts: any?) -> (any?, string?),
 	--- Truncate `text` so its display width is at most `max_len`. The `...` ellipsis counts toward the limit.
 	truncate: (text: string, max_len: number, opts: any?) -> (string?, string?),
 	--- Pad `text` on the left so total display width equals `width`. `fill_char` must be one display-width-1 character (default space).

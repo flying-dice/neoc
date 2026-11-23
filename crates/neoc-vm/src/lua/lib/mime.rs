@@ -1,10 +1,10 @@
 //! MIME type detection — extension ↔ MIME mapping and filename-based detection.
 
-use mlua::{Lua, Table, Value};
+use mlua::{Lua, Table};
 use tracing::instrument;
 
 use crate::lua::facade::Module;
-use crate::lua::sandbox::{from_err, ok};
+use crate::lua::sandbox::{Fallible, from_err, ok};
 
 /// Built-in preference map for canonical extensions where `mime_guess`'s
 /// alphabetical first entry isn't what users expect. Checked before falling
@@ -60,35 +60,34 @@ fn from_extension(_: &Lua, ext: String) -> Result<String, String> {
 }
 
 /// Pick a file extension for a MIME type, honouring an optional preference map.
-#[neoc_macros::lua_fn(returns = "Result<string, string>", names(user_prefs = "prefs"))]
+#[neoc_macros::lua_fn(names(user_prefs = "prefs"))]
 #[instrument(name = "mime.to_extension", target = "lua::lib::mime", skip_all)]
 fn to_extension(
-    lua: &Lua,
+    _: &Lua,
     (mime_type, user_prefs): (String, Option<Table>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<String>> {
     // 1. User preference map (optional Lua table arg).
     if let Some(ref prefs) = user_prefs
         && let Some(ext) = prefs.get::<Option<String>>(mime_type.as_str())?
     {
-        return ok(lua, ext);
+        return ok(ext);
     }
 
     // 2. Runtime preference map (canonical extensions).
     for &(mime, ext) in RUNTIME_PREFS {
         if mime == mime_type {
-            return ok(lua, ext.to_string());
+            return ok(ext.to_string());
         }
     }
 
     // 3. Fall back to mime_guess.
     let mime: mime_guess::mime::Mime = match mime_type.parse() {
         Ok(m) => m,
-        Err(e) => return from_err(lua, "mime.to_extension", e),
+        Err(e) => return from_err("mime.to_extension", e),
     };
     match mime_guess::get_mime_extensions(&mime) {
-        Some(exts) if !exts.is_empty() => ok(lua, format!(".{}", exts[0])),
+        Some(exts) if !exts.is_empty() => ok(format!(".{}", exts[0])),
         _ => from_err(
-            lua,
             "mime.to_extension",
             format!("no extension known for: {mime_type}"),
         ),

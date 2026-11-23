@@ -11,7 +11,7 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::lua::facade::Module;
 use crate::lua::limits;
-use crate::lua::sandbox::{err, ok};
+use crate::lua::sandbox::{Fallible, err, ok};
 
 const ELLIPSIS: &str = "...";
 const ELLIPSIS_WIDTH: usize = 3;
@@ -169,22 +169,22 @@ fn parse_wrap_opts(opts: Option<&Table>) -> Result<WrapOpts, String> {
 }
 
 /// Greedy word wrap, display-width aware. `width` must be > 0. Defaults: `break_words = false`, `preserve_newlines = true`.
-#[neoc_macros::lua_fn(returns = "Result<string, string>")]
+#[neoc_macros::lua_fn]
 #[instrument(name = "text.word_wrap", target = "lua::lib::text", skip_all)]
 fn word_wrap(
-    lua: &Lua,
+    _: &Lua,
     (text, width, opts): (mlua::LuaString, i64, Option<Table>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<String>> {
     if width <= 0 {
-        return err(lua, "text.word_wrap: width must be > 0");
+        return err("text.word_wrap: width must be > 0");
     }
     let width = width as usize;
     let parsed = match parse_wrap_opts(opts.as_ref()) {
         Ok(o) => o,
-        Err(m) => return err(lua, m),
+        Err(m) => return err(m),
     };
     let s_ref = text.to_str()?;
-    ok(lua, wrap_text(&s_ref, width, parsed))
+    ok(wrap_text(&s_ref, width, parsed))
 }
 
 fn wrap_text(text: &str, width: usize, opts: WrapOpts) -> String {
@@ -302,28 +302,28 @@ fn parse_closest_limit(opts: Option<&Table>) -> Result<Option<usize>, String> {
 }
 
 /// Score each candidate against `input` by Levenshtein distance, returning the list sorted ascending (ties broken alphabetically).
-#[neoc_macros::lua_fn(returns = "Result<LuaValue, string>")]
+#[neoc_macros::lua_fn]
 #[instrument(name = "text.closest", target = "lua::lib::text", skip_all)]
 fn closest(
     lua: &Lua,
     (input, candidates, opts): (mlua::LuaString, Table, Option<Table>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<Option<Table>>> {
     let input_str = input.to_str()?.to_string();
 
     let mut cands: Vec<String> = Vec::new();
     for entry in candidates.sequence_values::<Value>() {
         match entry? {
             Value::String(s) => cands.push(s.to_str()?.to_string()),
-            _ => return err(lua, "text.closest: candidates must be strings"),
+            _ => return err("text.closest: candidates must be strings"),
         }
     }
     if cands.is_empty() {
-        return ok(lua, Value::Nil);
+        return ok(None);
     }
 
     let limit = match parse_closest_limit(opts.as_ref()) {
         Ok(v) => v,
-        Err(m) => return err(lua, m),
+        Err(m) => return err(m),
     };
 
     let mut scored: Vec<(String, usize)> = cands
@@ -346,7 +346,7 @@ fn closest(
         row.set("distance", d as i64)?;
         tbl.raw_set(i + 1, row)?;
     }
-    ok(lua, tbl)
+    ok(Some(tbl))
 }
 
 // ---------------------------------------------------------------------------
@@ -386,31 +386,31 @@ fn parse_truncate_boundary(opts: Option<&Table>) -> Result<Boundary, String> {
 }
 
 /// Truncate `text` so its display width is at most `max_len`. The `...` ellipsis counts toward the limit.
-#[neoc_macros::lua_fn(returns = "Result<string, string>")]
+#[neoc_macros::lua_fn]
 #[instrument(name = "text.truncate", target = "lua::lib::text", skip_all)]
 fn truncate(
-    lua: &Lua,
+    _: &Lua,
     (text, max_len, opts): (mlua::LuaString, i64, Option<Table>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<String>> {
     if max_len < 0 {
-        return err(lua, "text.truncate: max_len must be >= 0");
+        return err("text.truncate: max_len must be >= 0");
     }
     let max = max_len as usize;
 
     let boundary = match parse_truncate_boundary(opts.as_ref()) {
         Ok(b) => b,
-        Err(m) => return err(lua, m),
+        Err(m) => return err(m),
     };
 
     let s_ref = text.to_str()?;
     let s: &str = &s_ref;
     if display_width(s) <= max {
-        return ok(lua, s.to_string());
+        return ok(s.to_string());
     }
 
     // When max can't fit the ellipsis, drop the ellipsis and take a prefix.
     if max < ELLIPSIS_WIDTH {
-        return ok(lua, take_by_width(s, max));
+        return ok(take_by_width(s, max));
     }
 
     let budget = max - ELLIPSIS_WIDTH;
@@ -418,7 +418,7 @@ fn truncate(
         Boundary::Char => take_by_width(s, budget),
         Boundary::Word => take_at_word(s, budget),
     };
-    ok(lua, format!("{prefix}{ELLIPSIS}"))
+    ok(format!("{prefix}{ELLIPSIS}"))
 }
 
 fn take_by_width(s: &str, budget: usize) -> String {
@@ -470,32 +470,32 @@ enum PadSide {
 }
 
 /// Pad `text` on the left so total display width equals `width`. `fill_char` must be one display-width-1 character (default space).
-#[neoc_macros::lua_fn(returns = "Result<string, string>", names(fill = "fill_char"))]
+#[neoc_macros::lua_fn(names(fill = "fill_char"))]
 #[instrument(name = "text.pad_left", target = "lua::lib::text", skip_all)]
 fn pad_left(
     lua: &Lua,
     (text, width, fill): (mlua::LuaString, i64, Option<mlua::LuaString>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<String>> {
     pad_text(lua, "text.pad_left", text, width, fill, PadSide::Left)
 }
 
 /// Pad `text` on the right so total display width equals `width`. Same constraints as `pad_left`.
-#[neoc_macros::lua_fn(returns = "Result<string, string>", names(fill = "fill_char"))]
+#[neoc_macros::lua_fn(names(fill = "fill_char"))]
 #[instrument(name = "text.pad_right", target = "lua::lib::text", skip_all)]
 fn pad_right(
     lua: &Lua,
     (text, width, fill): (mlua::LuaString, i64, Option<mlua::LuaString>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<String>> {
     pad_text(lua, "text.pad_right", text, width, fill, PadSide::Right)
 }
 
 /// Pad `text` on both sides so total display width equals `width`. Uneven padding places the extra column on the right.
-#[neoc_macros::lua_fn(returns = "Result<string, string>", names(fill = "fill_char"))]
+#[neoc_macros::lua_fn(names(fill = "fill_char"))]
 #[instrument(name = "text.center", target = "lua::lib::text", skip_all)]
 fn center(
     lua: &Lua,
     (text, width, fill): (mlua::LuaString, i64, Option<mlua::LuaString>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<String>> {
     pad_text(lua, "text.center", text, width, fill, PadSide::Center)
 }
 
@@ -518,26 +518,26 @@ fn parse_fill_char(fill: Option<mlua::LuaString>, prefix: &str) -> Result<char, 
 }
 
 fn pad_text(
-    lua: &Lua,
+    _: &Lua,
     prefix: &str,
     text: mlua::LuaString,
     width: i64,
     fill: Option<mlua::LuaString>,
     side: PadSide,
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<String>> {
     let width = match limits::size(width, "width") {
         Ok(w) => w,
-        Err(m) => return err(lua, format!("{prefix}: {m}")),
+        Err(m) => return err(format!("{prefix}: {m}")),
     };
     let fill_char = match parse_fill_char(fill, prefix) {
         Ok(c) => c,
-        Err(m) => return err(lua, m),
+        Err(m) => return err(m),
     };
     let s_ref = text.to_str()?;
     let s: &str = &s_ref;
     let s_w = display_width(s);
     if s_w >= width {
-        return ok(lua, s.to_string());
+        return ok(s.to_string());
     }
     let pad = width - s_w;
     let fill_str = |n: usize| -> String { std::iter::repeat_n(fill_char, n).collect() };
@@ -550,7 +550,7 @@ fn pad_text(
             format!("{}{s}{}", fill_str(left), fill_str(right))
         }
     };
-    ok(lua, out)
+    ok(out)
 }
 
 // ---------------------------------------------------------------------------

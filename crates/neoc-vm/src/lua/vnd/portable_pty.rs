@@ -52,7 +52,7 @@ use crate::lua::byte_stream::{self, WAITS};
 use crate::lua::error_text;
 use crate::lua::facade::Module;
 use crate::lua::lifecycle::{Life, Role, async_function, async_method};
-use crate::lua::sandbox::{from_err, ok};
+use crate::lua::sandbox::{Fallible, from_err, ok};
 
 mod error;
 mod options;
@@ -106,13 +106,13 @@ pub struct Pty(Arc<Terminal>);
 #[neoc_macros::lua_fn(returns = "Result<Pty, string>", types(opts = "{ program: string?, args: { string }?, cwd: string?, env: { [string]: string }?, rows: number?, cols: number? }?"), doc = format!(
             "Open a pseudo-terminal of `rows` by `cols` (default 24 by 80; each 1 to 32767) and start a command on it: a `Pty`. `program` is a path, or a name looked up in `PATH`, and `args` its arguments (at most 1024). Without `program` it is the user's default shell, started as a login shell: `$SHELL`, else the one of the password database, else `/bin/sh`; on Windows `%ComSpec%`. `cwd` is the directory it starts in (default: the user's home directory, not the engine's working directory). `env` is added to the environment the engine's process has, replacing a variable of the same name; nothing is taken away, and `TERM` is whatever that environment says unless `env` sets it (`xterm-256color` for a terminal that draws like xterm). The process runs as the engine's user and can do what that user can: a script given this module is trusted with the machine. Errors are `portable_pty.<function>: <kind>: <message>` (see `error_kind`): `invalid_input` for an option that is unknown or of the wrong shape, `spawn` when the command could not be started (no such program, not executable, `cwd` is not a directory, or the system refused the terminal or the process). The terminal is closed, and the process ended, by `close()`, when the handle is collected, and when the engine shuts down. {WAITS}"
         ))]
-async fn spawn_command(lua: Lua, opts: Option<Value>) -> mlua::Result<(Value, Value)> {
+async fn spawn_command(lua: Lua, opts: Option<Value>) -> mlua::Result<Fallible<Pty>> {
     // read before the first await: a script table can run script code when it is read
     let command = options::command(opts.as_ref(), SPAWN_COMMAND)?;
     drop(opts);
     let command = match command {
         Ok(command) => command,
-        Err(e) => return from_err(&lua, SPAWN_COMMAND, e),
+        Err(e) => return from_err(SPAWN_COMMAND, e),
     };
     // Do nothing on the first poll (see `std:fs`'s `blocking`): where Luau refuses the yield, the call is dropped
     // after that poll, and a process started now would run although the script was told the call failed.
@@ -132,9 +132,9 @@ async fn spawn_command(lua: Lua, opts: Option<Value>) -> mlua::Result<(Value, Va
             // weakly: a script that opens and drops terminals in a loop leaves nothing registered. Closed at once
             // when the engine is already shut down.
             Life::of(&lua).on_shutdown_with(&terminal, |terminal| terminal.close());
-            ok(&lua, Pty(terminal))
+            ok(Pty(terminal))
         }
-        Err(e) => from_err(&lua, SPAWN_COMMAND, e),
+        Err(e) => from_err(SPAWN_COMMAND, e),
     }
 }
 
@@ -166,7 +166,7 @@ impl UserData for Pty {
             methods,
             "write",
             Role::Wait,
-            |lua, this, data: mlua::LuaString| {
+            |_, this, data: mlua::LuaString| {
                 let terminal = Arc::clone(&this.0);
                 let data = byte_stream::write_data(&data).map_err(PtyError::invalid_input);
                 async move {
@@ -182,21 +182,20 @@ impl UserData for Pty {
                         }
                     };
                     match written {
-                        Ok(()) => ok(&lua, true),
-                        Err(e) => from_err(&lua, WRITE, e),
+                        Ok(()) => ok(true),
+                        Err(e) => from_err(WRITE, e),
                     }
                 }
             },
         );
 
         /// Tell the terminal its new size, each a whole number from 1 to 32767 (`invalid_input` otherwise): `true`. The process in the foreground is told by the operating system (`SIGWINCH` on Unix). `closed` after `close()`.
-        #[lua("Result<bool, string>")]
-        methods.add_method("resize", |lua, this, (rows, cols): (f64, f64)| {
+        methods.add_method("resize", |_, this, (rows, cols): (f64, f64)| {
             let resized =
                 options::size(rows, cols).and_then(|(rows, cols)| this.0.resize(rows, cols));
             match resized {
-                Ok(()) => ok(lua, true),
-                Err(e) => from_err(lua, RESIZE, e),
+                Ok(()) => ok(true),
+                Err(e) => from_err(RESIZE, e),
             }
         });
 
@@ -215,9 +214,9 @@ impl UserData for Pty {
                         status.raw_set("exit_code", exit.exit_code)?;
                         status.raw_set("signal", exit.signal)?;
                         status.raw_set("success", exit.success)?;
-                        ok(&lua, status)
+                        ok(status)
                     }
-                    Err(e) => from_err(&lua, WAIT, e),
+                    Err(e) => from_err(WAIT, e),
                 }
             }
         });

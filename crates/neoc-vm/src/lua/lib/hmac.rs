@@ -34,13 +34,13 @@
 //! the log.
 
 use hmac::{KeyInit, Mac};
-use mlua::{Lua, MetaMethod, Table, UserData, UserDataMethods, Value};
+use mlua::{Lua, MetaMethod, Table, UserData, UserDataMethods};
 use sha2::{Sha256, Sha384, Sha512};
 use subtle::ConstantTimeEq;
 use tracing::instrument;
 
 use crate::lua::facade::Module;
-use crate::lua::sandbox::{err, ok};
+use crate::lua::sandbox::{Fallible, err, ok};
 
 // `hmac::Hmac` is fully qualified so the Lua-facing UserData below can take the
 // unadorned `Hmac` name without colliding with the crate's generic type.
@@ -220,12 +220,12 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 }
 
 /// Start an incremental HMAC under `algo` with `key`.
-#[neoc_macros::lua_fn(name = "new", returns = "Result<Hmac, string>")]
+#[neoc_macros::lua_fn(name = "new")]
 #[instrument(name = "hmac.Hmac.new", target = "lua::lib::hmac", skip_all)]
-fn hmac_new(lua: &Lua, (algo, key): (String, mlua::LuaString)) -> mlua::Result<(Value, Value)> {
+fn hmac_new(_: &Lua, (algo, key): (String, mlua::LuaString)) -> mlua::Result<Fallible<Hmac>> {
     match State::new(&algo, &key.as_bytes()) {
-        Ok(state) => ok(lua, Hmac { state }),
-        Err(msg) => err(lua, format!("hmac.Hmac.new: {msg}")),
+        Ok(state) => ok(Hmac { state }),
+        Err(msg) => err(format!("hmac.Hmac.new: {msg}")),
     }
 }
 
@@ -233,13 +233,13 @@ fn hmac_new(lua: &Lua, (algo, key): (String, mlua::LuaString)) -> mlua::Result<(
 fn hmac_one_shot(
     lua: &Lua,
     (algo, key, data): (String, mlua::LuaString, mlua::LuaString),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<mlua::LuaString>> {
     match State::new(&algo, &key.as_bytes()) {
         Ok(mut state) => {
             state.update(&data.as_bytes());
-            ok(lua, lua.create_string(state.digest())?)
+            ok(lua.create_string(state.digest())?)
         }
-        Err(msg) => err(lua, format!("hmac.hmac: {msg}")),
+        Err(msg) => err(format!("hmac.hmac: {msg}")),
     }
 }
 

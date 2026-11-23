@@ -511,6 +511,26 @@ fn result_of(ty: &Type) -> Option<Returned<'_>> {
     })
 }
 
+/// `T` of `impl Future<Output = T>`: what a function that is not `async fn` but returns a future comes to.
+fn output_of(ty: &Type) -> Option<&Type> {
+    let Type::ImplTrait(opaque) = ty else {
+        return None;
+    };
+    opaque.bounds.iter().find_map(|bound| {
+        let syn::TypeParamBound::Trait(bound) = bound else {
+            return None;
+        };
+        let last = bound.path.segments.last()?;
+        let PathArguments::AngleBracketed(args) = &last.arguments else {
+            return None;
+        };
+        args.args.iter().find_map(|arg| match arg {
+            GenericArgument::AssocType(output) if output.ident == "Output" => Some(&output.ty),
+            _ => None,
+        })
+    })
+}
+
 /// The recorded return of a function: what was said, or the `DeclType` of `T` in `mlua::Result<T>`.
 fn returns_of(said: Option<&Expr>, output: &ReturnType) -> syn::Result<Tokens> {
     if let Some(text) = said {
@@ -519,7 +539,8 @@ fn returns_of(said: Option<&Expr>, output: &ReturnType) -> syn::Result<Tokens> {
     let facade = facade();
     match output {
         ReturnType::Default => Ok(quote!(::std::string::String::from("()"))),
-        ReturnType::Type(_, ty) => match result_of(ty) {
+        // a function that hands back a future says in its `Output` what the future comes to
+        ReturnType::Type(_, ty) => match result_of(output_of(ty).unwrap_or(ty)) {
             Some(Returned::Value(value)) => Ok(quote!(<#value as #facade::DeclType>::decl_type())),
             // a `Result<T, E>` of its own is what a script gets: a value or an error, not `T`
             Some(Returned::Either) => Ok(quote!(<#ty as #facade::DeclType>::decl_type())),

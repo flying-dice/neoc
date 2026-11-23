@@ -44,11 +44,11 @@ use aes_gcm::{
     aead::{Aead, Nonce, Payload},
 };
 use chacha20poly1305::ChaCha20Poly1305;
-use mlua::{Lua, Table, Value};
+use mlua::{Lua, Table};
 use tracing::instrument;
 
 use crate::lua::facade::Module;
-use crate::lua::sandbox::{err, ok};
+use crate::lua::sandbox::{Fallible, err, ok};
 
 /// Canonical algorithm list. Its order is the order `algorithms()` returns.
 /// Used by `algorithms()`, `key_size` / `nonce_size` / `tag_size`, and by tests
@@ -257,7 +257,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 }
 
 /// AEAD-encrypt `plaintext` under `algo`/`key`/`nonce`, binding optional `aad`. Returns ciphertext concatenated with the auth tag as raw bytes.
-#[neoc_macros::lua_fn(returns = "Result<string, string>")]
+#[neoc_macros::lua_fn]
 #[instrument(name = "crypto.encrypt", target = "lua::lib::crypto", skip_all)]
 fn encrypt(
     lua: &Lua,
@@ -268,10 +268,10 @@ fn encrypt(
         mlua::LuaString,
         Option<mlua::LuaString>,
     ),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<mlua::LuaString>> {
     let cipher = match Cipher::new(&algo, &key.as_bytes()) {
         Ok(c) => c,
-        Err(msg) => return err(lua, format!("crypto.encrypt: {msg}")),
+        Err(msg) => return err(format!("crypto.encrypt: {msg}")),
     };
     // Bind the optional AAD bytes into a stable slice for the call. An empty
     // slice when omitted matches the AEAD contract: encrypt-with-no-aad must
@@ -280,13 +280,13 @@ fn encrypt(
     let aad_bytes = aad.as_ref().map(|s| s.as_bytes());
     let aad_slice: &[u8] = aad_bytes.as_deref().unwrap_or(&[]);
     match cipher.encrypt(&nonce.as_bytes(), &plaintext.as_bytes(), aad_slice) {
-        Ok(bytes) => ok(lua, lua.create_string(&bytes)?),
-        Err(msg) => err(lua, format!("crypto.encrypt: {msg}")),
+        Ok(bytes) => ok(lua.create_string(&bytes)?),
+        Err(msg) => err(format!("crypto.encrypt: {msg}")),
     }
 }
 
 /// AEAD-decrypt `ciphertext` (with the trailing tag) under `algo`/`key`/`nonce`, requiring `aad` to match the value bound at encrypt time.
-#[neoc_macros::lua_fn(returns = "Result<string, string>")]
+#[neoc_macros::lua_fn]
 #[instrument(name = "crypto.decrypt", target = "lua::lib::crypto", skip_all)]
 fn decrypt(
     lua: &Lua,
@@ -297,16 +297,16 @@ fn decrypt(
         mlua::LuaString,
         Option<mlua::LuaString>,
     ),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<mlua::LuaString>> {
     let cipher = match Cipher::new(&algo, &key.as_bytes()) {
         Ok(c) => c,
-        Err(msg) => return err(lua, format!("crypto.decrypt: {msg}")),
+        Err(msg) => return err(format!("crypto.decrypt: {msg}")),
     };
     let aad_bytes = aad.as_ref().map(|s| s.as_bytes());
     let aad_slice: &[u8] = aad_bytes.as_deref().unwrap_or(&[]);
     match cipher.decrypt(&nonce.as_bytes(), &ciphertext.as_bytes(), aad_slice) {
-        Ok(bytes) => ok(lua, lua.create_string(&bytes)?),
-        Err(msg) => err(lua, format!("crypto.decrypt: {msg}")),
+        Ok(bytes) => ok(lua.create_string(&bytes)?),
+        Err(msg) => err(format!("crypto.decrypt: {msg}")),
     }
 }
 

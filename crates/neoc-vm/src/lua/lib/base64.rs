@@ -2,11 +2,11 @@
 
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
-use mlua::{Lua, Table, Value};
+use mlua::{Lua, Table};
 use tracing::instrument;
 
 use crate::lua::facade::Module;
-use crate::lua::sandbox::{from_err, ok};
+use crate::lua::sandbox::{Fallible, from_err, ok};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(declare(lua)?.into_table())
@@ -76,42 +76,45 @@ fn decode_with(
     engine: &base64::engine::GeneralPurpose,
     op: &'static str,
     input: mlua::LuaString,
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<mlua::LuaString>> {
     match engine.decode(input.as_bytes()) {
-        Ok(b) => ok(lua, lua.create_string(&b)?),
-        Err(e) => from_err(lua, op, e),
+        Ok(b) => ok(lua.create_string(&b)?),
+        Err(e) => from_err(op, e),
     }
 }
 
 /// Decode a standard-alphabet base64 string back to raw bytes.
-#[neoc_macros::lua_fn(returns = "Result<string, string>")]
+#[neoc_macros::lua_fn]
 #[instrument(name = "base64.decode", target = "lua::lib::base64", skip_all)]
-fn decode(lua: &Lua, input: mlua::LuaString) -> mlua::Result<(Value, Value)> {
+fn decode(lua: &Lua, input: mlua::LuaString) -> mlua::Result<Fallible<mlua::LuaString>> {
     decode_with(lua, &STANDARD, "base64.decode", input)
 }
 
 /// Decode standard-alphabet base64 that has no padding.
-#[neoc_macros::lua_fn(returns = "Result<string, string>")]
+#[neoc_macros::lua_fn]
 #[instrument(name = "base64.decode_no_pad", target = "lua::lib::base64", skip_all)]
-fn decode_no_pad(lua: &Lua, input: mlua::LuaString) -> mlua::Result<(Value, Value)> {
+fn decode_no_pad(lua: &Lua, input: mlua::LuaString) -> mlua::Result<Fallible<mlua::LuaString>> {
     decode_with(lua, &STANDARD_NO_PAD, "base64.decode_no_pad", input)
 }
 
 /// Decode URL-safe base64 with padding.
-#[neoc_macros::lua_fn(returns = "Result<string, string>")]
+#[neoc_macros::lua_fn]
 #[instrument(name = "base64.decode_url_safe", target = "lua::lib::base64", skip_all)]
-fn decode_url_safe(lua: &Lua, input: mlua::LuaString) -> mlua::Result<(Value, Value)> {
+fn decode_url_safe(lua: &Lua, input: mlua::LuaString) -> mlua::Result<Fallible<mlua::LuaString>> {
     decode_with(lua, &URL_SAFE, "base64.decode_url_safe", input)
 }
 
 /// Decode URL-safe base64 without padding.
-#[neoc_macros::lua_fn(returns = "Result<string, string>")]
+#[neoc_macros::lua_fn]
 #[instrument(
     name = "base64.decode_url_safe_no_pad",
     target = "lua::lib::base64",
     skip_all
 )]
-fn decode_url_safe_no_pad(lua: &Lua, input: mlua::LuaString) -> mlua::Result<(Value, Value)> {
+fn decode_url_safe_no_pad(
+    lua: &Lua,
+    input: mlua::LuaString,
+) -> mlua::Result<Fallible<mlua::LuaString>> {
     decode_with(
         lua,
         &URL_SAFE_NO_PAD,

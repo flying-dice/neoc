@@ -12,14 +12,14 @@ use hyper::body::Incoming;
 use hyper::service::service_fn;
 use hyper::{Request as HyperRequest, Response};
 use hyper_util::rt::TokioIo;
-use mlua::{Function, Lua, RegistryKey, UserData, UserDataMethods, Value};
+use mlua::{Function, Lua, RegistryKey, UserData, UserDataMethods};
 use parking_lot::Mutex;
 use tokio::runtime::Handle;
 use tokio::sync::oneshot;
 use tracing::instrument;
 
 use crate::lua::lifecycle::{Life, Role, async_method, idle};
-use crate::lua::sandbox::{from_err, ok};
+use crate::lua::sandbox::{Fallible, from_err, ok};
 use crate::lua::std::net::{Listener, ListenerSlot};
 use crate::lua::std::workers::ShutdownSignal;
 
@@ -118,7 +118,7 @@ impl ServerHandle {
     }
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("vnd:hyper", "ServerHandle")]
 impl UserData for ServerHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Return the local address the server is bound to.
@@ -209,23 +209,23 @@ impl UserData for ServerHandle {
 pub(super) fn serve(
     lua: &Lua,
     (listener, handler): (mlua::AnyUserData, Function),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<ServerHandle>> {
     let arc = match listener.borrow::<Listener>() {
         Ok(h) => h.slot(),
-        Err(e) => return from_err(lua, "hyper.serve", format!("expected TcpListener: {e}")),
+        Err(e) => return from_err("hyper.serve", format!("expected TcpListener: {e}")),
     };
     let key = match lua.create_registry_value(handler) {
         Ok(k) => k,
-        Err(e) => return from_err(lua, "hyper.serve", e),
+        Err(e) => return from_err("hyper.serve", e),
     };
     let server = match ServerHandle::from_listener(arc, Arc::new(key)) {
         Ok(s) => s,
-        Err(e) => return from_err(lua, "hyper.serve", e),
+        Err(e) => return from_err("hyper.serve", e),
     };
     if let Err(e) = server.start(lua) {
-        return from_err(lua, "hyper.serve", e);
+        return from_err("hyper.serve", e);
     }
-    ok(lua, server)
+    ok(server)
 }
 
 // ---------------------------------------------------------------------------

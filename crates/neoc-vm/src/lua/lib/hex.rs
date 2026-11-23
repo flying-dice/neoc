@@ -8,11 +8,11 @@
 //! without pre-cleaning), then strict: odd length or any non-hex character is
 //! refused via `from_err`.
 
-use mlua::{Lua, Table, Value};
+use mlua::{Lua, Table};
 use tracing::instrument;
 
 use crate::lua::facade::Module;
-use crate::lua::sandbox::{from_err, ok};
+use crate::lua::sandbox::{Fallible, from_err, ok};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(declare(lua)?.into_table())
@@ -52,9 +52,9 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 }
 
 /// Decode a hex string back to raw bytes; case-insensitive and tolerant of ASCII whitespace, strict otherwise.
-#[neoc_macros::lua_fn(returns = "Result<string, string>")]
+#[neoc_macros::lua_fn]
 #[instrument(name = "hex.decode", target = "lua::lib::hex", skip_all)]
-fn decode(lua: &Lua, input: mlua::LuaString) -> mlua::Result<(Value, Value)> {
+fn decode(lua: &Lua, input: mlua::LuaString) -> mlua::Result<Fallible<mlua::LuaString>> {
     // Drop ASCII whitespace before decoding so dumps like "de ad be ef" or
     // newline-wrapped blobs round-trip. The error position then refers to the
     // whitespace-stripped stream, but the offending character is still named —
@@ -66,8 +66,8 @@ fn decode(lua: &Lua, input: mlua::LuaString) -> mlua::Result<(Value, Value)> {
         .copied()
         .collect();
     match hex::decode(&cleaned) {
-        Ok(bytes) => ok(lua, lua.create_string(&bytes)?),
-        Err(e) => from_err(lua, "hex.decode", e),
+        Ok(bytes) => ok(lua.create_string(&bytes)?),
+        Err(e) => from_err("hex.decode", e),
     }
 }
 

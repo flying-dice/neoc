@@ -17,19 +17,19 @@ use similar::{Algorithm, ChangeTag, TextDiff};
 use tracing::instrument;
 
 use crate::lua::facade::Module;
-use crate::lua::sandbox::{err, ok};
+use crate::lua::sandbox::{Fallible, err, ok};
 
 const DEFAULT_CONTEXT: usize = 3;
 const NO_NEWLINE_MARKER: &str = "\\ No newline at end of file";
 
 /// Short-circuit on `Err(String)` from an option-parser by returning the
 /// `(nil, err)` tuple from the enclosing Lua function. Folds the 5x
-/// repeated `match { Ok => v, Err(msg) => return err(lua, msg) }` block.
+/// repeated `match { Ok => v, Err(msg) => return err(msg) }` block.
 macro_rules! short_circuit {
     ($lua:expr, $expr:expr) => {
         match $expr {
             Ok(v) => v,
-            Err(msg) => return err($lua, msg),
+            Err(msg) => return err(msg),
         }
     };
 }
@@ -142,41 +142,32 @@ fn parse_label(
 // ---------------------------------------------------------------------------
 
 /// Line-level change list between `old` and `new`. Default algorithm is patience.
-#[neoc_macros::lua_fn(
-    returns = "Result<LuaValue, string>",
-    takes("old: string", "new: string", "opts: LuaValue?")
-)]
+#[neoc_macros::lua_fn(takes("old: string", "new: string", "opts: LuaValue?"))]
 #[instrument(name = "diff.lines", target = "lua::lib::diff", skip_all)]
 fn lines(
     lua: &Lua,
     args: (mlua::LuaString, mlua::LuaString, Option<Table>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<Table>> {
     change_list(lua, Mode::Lines, args, "diff.lines")
 }
 
 /// Word-level change list, tokenising on whitespace boundaries.
-#[neoc_macros::lua_fn(
-    returns = "Result<LuaValue, string>",
-    takes("old: string", "new: string", "opts: LuaValue?")
-)]
+#[neoc_macros::lua_fn(takes("old: string", "new: string", "opts: LuaValue?"))]
 #[instrument(name = "diff.words", target = "lua::lib::diff", skip_all)]
 fn words(
     lua: &Lua,
     args: (mlua::LuaString, mlua::LuaString, Option<Table>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<Table>> {
     change_list(lua, Mode::Words, args, "diff.words")
 }
 
 /// Character-level change list, operating on Unicode codepoints.
-#[neoc_macros::lua_fn(
-    returns = "Result<LuaValue, string>",
-    takes("old: string", "new: string", "opts: LuaValue?")
-)]
+#[neoc_macros::lua_fn(takes("old: string", "new: string", "opts: LuaValue?"))]
 #[instrument(name = "diff.chars", target = "lua::lib::diff", skip_all)]
 fn chars(
     lua: &Lua,
     args: (mlua::LuaString, mlua::LuaString, Option<Table>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<Table>> {
     change_list(lua, Mode::Chars, args, "diff.chars")
 }
 
@@ -185,13 +176,13 @@ fn change_list(
     mode: Mode,
     (old, new, opts): (mlua::LuaString, mlua::LuaString, Option<Table>),
     prefix: &str,
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<Table>> {
     let old_s = old.to_str()?.to_owned();
     let new_s = new.to_str()?.to_owned();
     let alg = short_circuit!(lua, parse_algorithm(opts.as_ref(), prefix));
     let changes = compute_changes(mode, alg, &old_s, &new_s);
     let table = changes_to_table(lua, &changes)?;
-    ok(lua, table)
+    ok(table)
 }
 
 #[derive(Clone)]
@@ -277,12 +268,12 @@ struct UnifiedResult {
 }
 
 /// Compute a unified diff. The result carries `.hunks` and a `:format()` method producing the unified diff string.
-#[neoc_macros::lua_fn(returns = "Result<LuaValue, string>")]
+#[neoc_macros::lua_fn]
 #[instrument(name = "diff.unified", target = "lua::lib::diff", skip_all)]
 fn unified(
     lua: &Lua,
     (old, new, opts): (mlua::LuaString, mlua::LuaString, Option<Table>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<Table>> {
     let old_s = old.to_str()?.to_owned();
     let new_s = new.to_str()?.to_owned();
     let prefix = "diff.unified";
@@ -298,7 +289,7 @@ fn unified(
         new_label,
     };
     let table = unified_to_table(lua, result)?;
-    ok(lua, table)
+    ok(table)
 }
 
 fn build_hunks(alg: Algorithm, old: &str, new: &str, context_radius: usize) -> Vec<Hunk> {
@@ -471,16 +462,16 @@ fn fmt_range(start: usize, count: usize) -> String {
 // ---------------------------------------------------------------------------
 
 /// Parse a unified diff string back into the same structured result shape as `unified`.
-#[neoc_macros::lua_fn(returns = "Result<LuaValue, string>")]
+#[neoc_macros::lua_fn]
 #[instrument(name = "diff.parse_unified", target = "lua::lib::diff", skip_all)]
-fn parse_unified(lua: &Lua, patch: mlua::LuaString) -> mlua::Result<(Value, Value)> {
+fn parse_unified(lua: &Lua, patch: mlua::LuaString) -> mlua::Result<Fallible<Table>> {
     let s = patch.to_str()?.to_owned();
     match parse_unified_inner(&s) {
         Ok(r) => {
             let table = unified_to_table(lua, r)?;
-            ok(lua, table)
+            ok(table)
         }
-        Err(msg) => err(lua, msg),
+        Err(msg) => err(msg),
     }
 }
 
@@ -776,17 +767,17 @@ fn parse_range(
 // ---------------------------------------------------------------------------
 
 /// Apply a unified patch string to `original`. Requires exact context match.
-#[neoc_macros::lua_fn(returns = "Result<string, string>", names(orig = "original"))]
+#[neoc_macros::lua_fn(names(orig = "original"))]
 #[instrument(name = "diff.apply", target = "lua::lib::diff", skip_all)]
 fn apply(
-    lua: &Lua,
+    _: &Lua,
     (orig, patch): (mlua::LuaString, mlua::LuaString),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<String>> {
     let orig_s = orig.to_str()?.to_owned();
     let patch_s = patch.to_str()?.to_owned();
     match apply_inner(&orig_s, &patch_s) {
-        Ok(s) => ok(lua, s),
-        Err(msg) => err(lua, msg),
+        Ok(s) => ok(s),
+        Err(msg) => err(msg),
     }
 }
 
@@ -920,21 +911,21 @@ fn join_apply_lines(lines: &[(String, bool)]) -> String {
 // ---------------------------------------------------------------------------
 
 /// Apply a structured change list directly, validating that the equal + delete lines reconstruct `original` first.
-#[neoc_macros::lua_fn(returns = "Result<string, string>", names(orig = "original"))]
+#[neoc_macros::lua_fn(names(orig = "original"))]
 #[instrument(name = "diff.apply_changes", target = "lua::lib::diff", skip_all)]
 fn apply_changes(
-    lua: &Lua,
+    _: &Lua,
     (orig, changes): (mlua::LuaString, Table),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<String>> {
     let prefix = "diff.apply_changes";
     let orig_s = orig.to_str()?.to_owned();
     let changes = short_circuit!(lua, read_changes(&changes, prefix));
 
     if let Err(msg) = validate_change_list_reconstructs(&changes, &orig_s, prefix) {
-        return err(lua, msg);
+        return err(msg);
     }
 
-    ok(lua, emit_change_list(&changes))
+    ok(emit_change_list(&changes))
 }
 
 /// Catches misaligned change lists before they silently corrupt output:

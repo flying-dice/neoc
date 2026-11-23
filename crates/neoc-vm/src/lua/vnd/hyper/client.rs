@@ -13,11 +13,11 @@
 
 use std::future::Future;
 
-use mlua::{Lua, Table, Value};
+use mlua::{Lua, Table};
 use tracing::Instrument;
 
 use crate::lua::lifecycle::Life;
-use crate::lua::sandbox::{from_err, ok};
+use crate::lua::sandbox::{Fallible, from_err, ok};
 
 mod error;
 mod exchange;
@@ -41,21 +41,21 @@ use options::Prepared;
 pub(super) fn get(
     lua: Lua,
     (url, opts): (String, Option<Table>),
-) -> impl Future<Output = mlua::Result<(Value, Value)>> + Send + 'static {
+) -> impl Future<Output = mlua::Result<Fallible<Table>>> + Send + 'static {
     send(lua, "hyper.get", Prepared::get(url, opts.as_ref()))
 }
 
 pub(super) fn post(
     lua: Lua,
     opts: Table,
-) -> impl Future<Output = mlua::Result<(Value, Value)>> + Send + 'static {
+) -> impl Future<Output = mlua::Result<Fallible<Table>>> + Send + 'static {
     send(lua, "hyper.post", Prepared::post(&opts))
 }
 
 pub(super) fn request(
     lua: Lua,
     opts: Table,
-) -> impl Future<Output = mlua::Result<(Value, Value)>> + Send + 'static {
+) -> impl Future<Output = mlua::Result<Fallible<Table>>> + Send + 'static {
     send(lua, "hyper.request", Prepared::request(&opts))
 }
 
@@ -66,7 +66,7 @@ fn send(
     lua: Lua,
     prefix: &'static str,
     prepared: Result<Prepared, error::HyperError>,
-) -> impl Future<Output = mlua::Result<(Value, Value)>> + Send + 'static {
+) -> impl Future<Output = mlua::Result<Fallible<Table>>> + Send + 'static {
     let span = match prefix {
         "hyper.get" => tracing::info_span!(target: "lua::lib::hyper", "hyper.get"),
         "hyper.post" => tracing::info_span!(target: "lua::lib::hyper", "hyper.post"),
@@ -90,9 +90,9 @@ fn send(
                 t.set("headers", h)?;
                 t.set("body", lua.create_string(&resp.body)?)?;
                 t.set("url", resp.url)?;
-                ok(&lua, t)
+                ok(t)
             }
-            Err(e) => from_err(&lua, prefix, e),
+            Err(e) => from_err(prefix, e),
         }
     }
     .instrument(span)

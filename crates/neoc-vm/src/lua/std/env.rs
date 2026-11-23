@@ -3,12 +3,12 @@
 use mlua::{Lua, Table, Value};
 
 use crate::lua::facade::Module;
-use crate::lua::sandbox::{err, from_err, ok};
+use crate::lua::sandbox::{Fallible, err, from_err, ok};
 
 // Return a filesystem path to Lua as a lossy UTF-8 string under the
 // `(value, nil)` convention. Shared by `home_dir` / `current_dir`.
-fn ok_path(lua: &Lua, p: &std::path::Path) -> mlua::Result<(Value, Value)> {
-    ok(lua, p.to_string_lossy().as_ref())
+fn ok_path(p: &std::path::Path) -> mlua::Result<Fallible<String>> {
+    ok(p.to_string_lossy().into_owned())
 }
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
@@ -51,11 +51,11 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     #[lua("Result<string, string>")]
     m.set(
         "home_dir",
-        lua.create_function(|lua, ()| {
+        lua.create_function(|_, ()| {
             #[allow(deprecated)]
             match std::env::home_dir() {
-                Some(p) => ok_path(lua, &p),
-                None => err(lua, "env.home_dir: home directory not found"),
+                Some(p) => ok_path(&p),
+                None => err("env.home_dir: home directory not found"),
             }
         })?,
     )?;
@@ -71,9 +71,9 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     #[lua("Result<string, string>")]
     m.set(
         "current_dir",
-        lua.create_function(|lua, ()| match std::env::current_dir() {
-            Ok(p) => ok_path(lua, &p),
-            Err(e) => from_err(lua, "env.current_dir", e),
+        lua.create_function(|_, ()| match std::env::current_dir() {
+            Ok(p) => ok_path(&p),
+            Err(e) => from_err("env.current_dir", e),
         })?,
     )?;
 
@@ -81,9 +81,9 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     #[lua("Result<string, string>")]
     m.set(
         "var",
-        lua.create_function(|lua, key: String| match std::env::var(&key) {
-            Ok(v) => ok(lua, v),
-            Err(e) => err(lua, format!("env.var: {key}: {e}")),
+        lua.create_function(|_, key: String| match std::env::var(&key) {
+            Ok(v) => ok(v),
+            Err(e) => err(format!("env.var: {key}: {e}")),
         })?,
     )?;
 

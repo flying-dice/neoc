@@ -32,7 +32,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use mlua::{Lua, Table, UserData, UserDataMethods, Value};
+use mlua::{Lua, Table, UserData, UserDataMethods};
 use testcontainers_modules::mysql::Mysql;
 use testcontainers_modules::postgres::Postgres;
 use testcontainers_modules::testcontainers::core::{IntoContainerPort, WaitFor};
@@ -45,7 +45,7 @@ use tracing::instrument;
 
 use crate::lua::facade::Module;
 use crate::lua::lifecycle::{Role, async_function, async_method};
-use crate::lua::sandbox::{from_err, ok};
+use crate::lua::sandbox::{Fallible, from_err, ok};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(declare(lua)?.into_table())
@@ -84,9 +84,9 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         async_function(lua, Role::Wait, |lua, opts: Table| start_generic(lua, opts))?,
     )?;
 
-    m.userdata("MysqlContainer", TypedContainer::<Mysql>::lua);
+    m.userdata(Mysql::TYPE_NAME, TypedContainer::<Mysql>::lua);
 
-    m.userdata("PostgresContainer", TypedContainer::<Postgres>::lua);
+    m.userdata(Postgres::TYPE_NAME, TypedContainer::<Postgres>::lua);
 
     m.userdata("GenericContainer", |c| {
         GenericContainer::lua(c);
@@ -103,6 +103,8 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 trait TypedImage:
     testcontainers_modules::testcontainers::Image + Default + Send + Sync + 'static
 {
+    /// The name of the container's type in the module (`MysqlContainer`).
+    const TYPE_NAME: &'static str;
     const CONTAINER_PORT: u16;
     const OP_NAME: &'static str;
     /// What the declarations say of `url` and of `port`.
@@ -112,6 +114,7 @@ trait TypedImage:
 }
 
 impl TypedImage for Mysql {
+    const TYPE_NAME: &'static str = "MysqlContainer";
     const CONTAINER_PORT: u16 = 3306;
     const OP_NAME: &'static str = "testcontainers_modules.mysql";
     const URL_DOC: &'static str = "Return a MySQL connection URL pre-formatted for `sqlx_mysql.open` (user `root`, no password, database `test`).";
@@ -124,6 +127,7 @@ impl TypedImage for Mysql {
 }
 
 impl TypedImage for Postgres {
+    const TYPE_NAME: &'static str = "PostgresContainer";
     const CONTAINER_PORT: u16 = 5432;
     const OP_NAME: &'static str = "testcontainers_modules.postgres";
     const URL_DOC: &'static str = "Return a Postgres connection URL pre-formatted for `sqlx_postgres.open` (user `postgres`, password `postgres`, database `postgres`).";
@@ -143,26 +147,29 @@ pub struct TypedContainer<I: testcontainers_modules::testcontainers::Image> {
     port: u16,
 }
 
-async fn start_typed<I: TypedImage>(lua: Lua) -> mlua::Result<(Value, Value)> {
+impl<I: TypedImage> crate::lua::facade::DeclType for TypedContainer<I> {
+    fn decl_type() -> String {
+        I::TYPE_NAME.to_owned()
+    }
+}
+
+async fn start_typed<I: TypedImage>(_: Lua) -> mlua::Result<Fallible<TypedContainer<I>>> {
     let container = match I::default().start().await {
         Ok(c) => c,
-        Err(e) => return from_err(&lua, I::OP_NAME, e),
+        Err(e) => return from_err(I::OP_NAME, e),
     };
     let port = match container.get_host_port_ipv4(I::CONTAINER_PORT).await {
         Ok(p) => p,
-        Err(e) => return from_err(&lua, I::OP_NAME, e),
+        Err(e) => return from_err(I::OP_NAME, e),
     };
     let host = "127.0.0.1".to_string();
     let url = I::url(&host, port);
-    ok(
-        &lua,
-        TypedContainer::<I> {
-            inner: Arc::new(Mutex::new(Some(container))),
-            url,
-            host,
-            port,
-        },
-    )
+    ok(TypedContainer::<I> {
+        inner: Arc::new(Mutex::new(Some(container))),
+        url,
+        host,
+        port,
+    })
 }
 
 #[neoc_macros::lua_userdata]
@@ -187,28 +194,24 @@ where
 }
 
 /// Start a MySQL container with default settings, returning a handle once it is ready to accept connections.
-#[neoc_macros::lua_fn(name = "mysql", returns = "Result<MysqlContainer, string>", takes())]
+#[neoc_macros::lua_fn(name = "mysql", takes())]
 #[instrument(
     name = "testcontainers_modules.mysql",
     target = "lua::lib::testcontainers_modules",
     skip_all
 )]
-async fn start_mysql(lua: Lua) -> mlua::Result<(Value, Value)> {
+async fn start_mysql(lua: Lua) -> mlua::Result<Fallible<TypedContainer<Mysql>>> {
     start_typed::<Mysql>(lua).await
 }
 
 /// Start a Postgres container with default settings, returning a handle once it is ready.
-#[neoc_macros::lua_fn(
-    name = "postgres",
-    returns = "Result<PostgresContainer, string>",
-    takes()
-)]
+#[neoc_macros::lua_fn(name = "postgres", takes())]
 #[instrument(
     name = "testcontainers_modules.postgres",
     target = "lua::lib::testcontainers_modules",
     skip_all
 )]
-async fn start_postgres(lua: Lua) -> mlua::Result<(Value, Value)> {
+async fn start_postgres(lua: Lua) -> mlua::Result<Fallible<TypedContainer<Postgres>>> {
     start_typed::<Postgres>(lua).await
 }
 
@@ -331,15 +334,11 @@ async fn map_ports(
 // The options are read here, before the future exists (see `vnd:hyper`'s client): a script table can run script code
 // when it is read, and read inside the future each level of a recursion would stack another polled future.
 /// Start a generic Docker container from any image given `{ image, tag?, ports?, env?, cmd?, wait? }`, returning a handle once its readiness probe passes.
-#[neoc_macros::lua_fn(
-    name = "generic",
-    returns = "Result<GenericContainer, string>",
-    takes("opts: LuaValue")
-)]
+#[neoc_macros::lua_fn(name = "generic", takes("opts: LuaValue"))]
 fn start_generic(
     lua: Lua,
     opts: Table,
-) -> impl std::future::Future<Output = mlua::Result<(Value, Value)>> + Send + 'static {
+) -> impl std::future::Future<Output = mlua::Result<Fallible<GenericContainer>>> + Send + 'static {
     start_generic_with(lua, parse_generic_opts(&opts))
 }
 
@@ -349,36 +348,33 @@ fn start_generic(
     skip_all
 )]
 async fn start_generic_with(
-    lua: Lua,
+    _: Lua,
     parsed: mlua::Result<GenericOpts>,
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<GenericContainer>> {
     let op = "testcontainers_modules.generic";
 
     let parsed = match parsed {
         Ok(p) => p,
-        Err(e) => return from_err(&lua, op, e),
+        Err(e) => return from_err(op, e),
     };
     let exposed_ports = parsed.ports.clone();
     let req = build_request(parsed);
 
     let container = match req.start().await {
         Ok(c) => c,
-        Err(e) => return from_err(&lua, op, e),
+        Err(e) => return from_err(op, e),
     };
 
     let ports = match map_ports(&container, &exposed_ports).await {
         Ok(p) => p,
-        Err(e) => return from_err(&lua, op, e),
+        Err(e) => return from_err(op, e),
     };
 
-    ok(
-        &lua,
-        GenericContainer {
-            inner: Arc::new(Mutex::new(Some(container))),
-            host: "127.0.0.1".to_string(),
-            ports,
-        },
-    )
+    ok(GenericContainer {
+        inner: Arc::new(Mutex::new(Some(container))),
+        host: "127.0.0.1".to_string(),
+        ports,
+    })
 }
 
 fn parse_wait(t: &Table) -> Result<WaitFor, String> {

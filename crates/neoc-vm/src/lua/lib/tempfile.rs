@@ -28,12 +28,12 @@
 
 use std::path::PathBuf;
 
-use mlua::{Lua, MetaMethod, Table, UserData, UserDataMethods, Value};
+use mlua::{Lua, MetaMethod, Table, UserData, UserDataMethods};
 use tempfile::{Builder, NamedTempFile, TempDir};
 use tracing::instrument;
 
 use crate::lua::facade::Module;
-use crate::lua::sandbox::{from_err, ok};
+use crate::lua::sandbox::{Fallible, from_err, ok};
 
 // ---------------------------------------------------------------------------
 // Options
@@ -103,13 +103,12 @@ impl UserData for TempFileHandle {
         methods.add_method("path", |_, this, _: ()| Ok(this.path.clone()));
 
         /// Consume the handle and keep the file on disk past drop, returning the path.
-        #[lua("Result<string, string>")]
-        methods.add_method_mut("keep", |lua, this, _: ()| match this.inner.take() {
+        methods.add_method_mut("keep", |_, this, _: ()| match this.inner.take() {
             Some(file) => match file.keep() {
-                Ok((_, p)) => ok(lua, p.to_string_lossy().into_owned()),
-                Err(e) => from_err(lua, "tempfile.TempFile.keep", e.error),
+                Ok((_, p)) => ok(p.to_string_lossy().into_owned()),
+                Err(e) => from_err("tempfile.TempFile.keep", e.error),
             },
-            None => from_err(lua, "tempfile.TempFile.keep", "already closed"),
+            None => from_err("tempfile.TempFile.keep", "already closed"),
         });
 
         /// Release the handle eagerly; idempotent.
@@ -150,23 +149,21 @@ impl UserData for TempDirHandle {
         methods.add_method("path", |_, this, _: ()| Ok(this.path.clone()));
 
         /// Consume the handle and keep the directory on disk past drop, returning the path.
-        #[lua("Result<string, string>")]
-        methods.add_method_mut("keep", |lua, this, _: ()| match this.inner.take() {
-            Some(dir) => ok(lua, dir.keep().to_string_lossy().into_owned()),
-            None => from_err(lua, "tempfile.TempDir.keep", "already closed"),
+        methods.add_method_mut("keep", |_, this, _: ()| match this.inner.take() {
+            Some(dir) => ok(dir.keep().to_string_lossy().into_owned()),
+            None => from_err("tempfile.TempDir.keep", "already closed"),
         });
 
         /// Remove the directory eagerly, surfacing unlink errors; idempotent.
-        #[lua("Result<bool, string>")]
-        methods.add_method_mut("close", |lua, this, _: ()| match this.inner.take() {
+        methods.add_method_mut("close", |_, this, _: ()| match this.inner.take() {
             // Explicit close surfaces unlink errors; drop swallows them by
             // design, so this is the only way for a script to learn that
             // the directory could not be removed.
             Some(dir) => match dir.close() {
-                Ok(()) => Ok((Value::Boolean(true), Value::Nil)),
-                Err(e) => from_err(lua, "tempfile.TempDir.close", e),
+                Ok(()) => ok(true),
+                Err(e) => from_err("tempfile.TempDir.close", e),
             },
-            None => Ok((Value::Boolean(true), Value::Nil)),
+            None => ok(true),
         });
 
         methods.add_meta_method(MetaMethod::ToString, |_, this, _: ()| {
@@ -230,13 +227,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 }
 
 /// Create a temp file; `opts` is `{ prefix?, suffix?, dir? }`. Deleted on close.
-#[neoc_macros::lua_fn(name = "new", returns = "Result<TempFile, string>")]
+#[neoc_macros::lua_fn(name = "new")]
 #[instrument(
     name = "tempfile.TempFile.new",
     target = "lua::lib::tempfile",
     skip_all
 )]
-fn tempfile_new(lua: &Lua, opts: Option<Table>) -> mlua::Result<(Value, Value)> {
+fn tempfile_new(_: &Lua, opts: Option<Table>) -> mlua::Result<Fallible<TempFileHandle>> {
     let o = Options::from_table(opts)?;
     let builder = o.builder();
     let result = match o.parent() {
@@ -244,15 +241,15 @@ fn tempfile_new(lua: &Lua, opts: Option<Table>) -> mlua::Result<(Value, Value)> 
         None => builder.tempfile(),
     };
     match result {
-        Ok(f) => ok(lua, TempFileHandle::new(f)),
-        Err(e) => from_err(lua, "tempfile.TempFile.new", e),
+        Ok(f) => ok(TempFileHandle::new(f)),
+        Err(e) => from_err("tempfile.TempFile.new", e),
     }
 }
 
 /// Create a temp directory; `opts` is `{ prefix?, suffix?, dir? }`. Deleted on close.
-#[neoc_macros::lua_fn(name = "new", returns = "Result<TempDir, string>")]
+#[neoc_macros::lua_fn(name = "new")]
 #[instrument(name = "tempfile.TempDir.new", target = "lua::lib::tempfile", skip_all)]
-fn tempdir_new(lua: &Lua, opts: Option<Table>) -> mlua::Result<(Value, Value)> {
+fn tempdir_new(_: &Lua, opts: Option<Table>) -> mlua::Result<Fallible<TempDirHandle>> {
     let o = Options::from_table(opts)?;
     let builder = o.builder();
     let result = match o.parent() {
@@ -260,20 +257,20 @@ fn tempdir_new(lua: &Lua, opts: Option<Table>) -> mlua::Result<(Value, Value)> {
         None => builder.tempdir(),
     };
     match result {
-        Ok(d) => ok(lua, TempDirHandle::new(d)),
-        Err(e) => from_err(lua, "tempfile.TempDir.new", e),
+        Ok(d) => ok(TempDirHandle::new(d)),
+        Err(e) => from_err("tempfile.TempDir.new", e),
     }
 }
 
 #[instrument(name = "tempfile.tempfile", target = "lua::lib::tempfile", skip_all)]
-fn flat_tempfile(lua: &Lua, opts: Option<Table>) -> mlua::Result<(Value, Value)> {
+fn flat_tempfile(lua: &Lua, opts: Option<Table>) -> mlua::Result<Fallible<TempFileHandle>> {
     tempfile_new(lua, opts)
 }
 
 /// Create a temporary directory under the system temp directory, returning a `TempDir` handle.
-#[neoc_macros::lua_fn(name = "tempdir", returns = "Result<TempDir, string>")]
+#[neoc_macros::lua_fn(name = "tempdir")]
 #[instrument(name = "tempfile.tempdir", target = "lua::lib::tempfile", skip_all)]
-fn flat_tempdir(lua: &Lua, opts: Option<Table>) -> mlua::Result<(Value, Value)> {
+fn flat_tempdir(lua: &Lua, opts: Option<Table>) -> mlua::Result<Fallible<TempDirHandle>> {
     tempdir_new(lua, opts)
 }
 

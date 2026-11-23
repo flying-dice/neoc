@@ -14,12 +14,12 @@ use std::collections::VecDeque;
 use std::fmt::Display;
 use std::sync::Arc;
 
-use mlua::{Lua, Value};
+use mlua::Lua;
 use parking_lot::{Condvar, Mutex};
 use tokio::sync::{Notify, mpsc, oneshot, watch};
 
 use crate::lua::lifecycle::{hold, idle};
-use crate::lua::sandbox::{from_err, ok};
+use crate::lua::sandbox::{Fallible, from_err, ok};
 
 /// The most bytes one read returns, and how many it returns when it is not told: a size that fits in one message
 /// of most transports once it is encoded.
@@ -237,21 +237,21 @@ pub(crate) async fn read<E: Display>(
     op: &str,
     wanted: Result<(Arc<Output>, usize), E>,
     failed: fn(String) -> E,
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<Option<mlua::LuaString>>> {
     let (output, max) = match wanted {
         Ok(wanted) => wanted,
         Err(e) => {
             hold().await;
-            return from_err(&lua, op, e);
+            return from_err(op, e);
         }
     };
     loop {
         idle(output.readable()).await?;
         match output.take(max) {
-            Taken::Bytes(bytes) => return ok(&lua, lua.create_string(&bytes)?),
+            Taken::Bytes(bytes) => return ok(Some(lua.create_string(&bytes)?)),
             Taken::Nothing => {}
-            Taken::End => return Ok((Value::Nil, Value::Nil)),
-            Taken::Failed(message) => return from_err(&lua, op, failed(message)),
+            Taken::End => return ok(None),
+            Taken::Failed(message) => return from_err(op, failed(message)),
         }
     }
 }

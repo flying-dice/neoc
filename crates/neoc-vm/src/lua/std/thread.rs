@@ -52,7 +52,9 @@ use crate::lua::facade::Module;
 use crate::lua::lib::log::{LogFn, log_sink, set_log_sink};
 use crate::lua::lifecycle::{Life, Role, async_method};
 use crate::lua::panics;
-use crate::lua::sandbox::{WorkerEngineFn, from_err, load_source, ok, worker_engine_builder};
+use crate::lua::sandbox::{
+    Fallible, WorkerEngineFn, from_err, load_source, ok, worker_engine_builder,
+};
 use crate::lua::serde_guard::{BUFFER_REFUSED, contains_buffer, refuse_buffer};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
@@ -293,15 +295,15 @@ fn prepare_spawn(opts: &Table, args: &Value) -> Result<SpawnConfig, String> {
 }
 
 /// Spawn a new Lua VM as a worker on the same Tokio runtime, given `{ source | file, name?, args?, shared? }`.
-#[neoc_macros::lua_fn(returns = "Result<WorkerHandle, string>")]
+#[neoc_macros::lua_fn]
 #[instrument(name = "thread.spawn", target = "lua::lib::thread", skip_all)]
-fn spawn(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
+fn spawn(lua: &Lua, opts: Table) -> mlua::Result<Fallible<WorkerHandle>> {
     // `args` is one value (any JSON-encodable Lua value, a table for "named"
     // args) that arrives in the worker as the first vararg, as Node's
     // `workerData` does
     let args = match opt::<Value>(&opts, "args") {
         Ok(args) => args.unwrap_or(Value::Nil),
-        Err(e) => return from_err(lua, "thread.spawn", e),
+        Err(e) => return from_err("thread.spawn", e),
     };
     refuse_buffer(&args, "thread.spawn")?;
     let SpawnConfig {
@@ -311,13 +313,13 @@ fn spawn(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
         shared,
     } = match prepare_spawn(&opts, &args) {
         Ok(c) => c,
-        Err(e) => return from_err(lua, "thread.spawn", e),
+        Err(e) => return from_err("thread.spawn", e),
     };
 
     // a worker is built like its parent's engine, or not at all (see `sandbox::worker_engine_builder`)
     let build_engine = match worker_engine_builder(lua) {
         Ok(build) => build,
-        Err(e) => return from_err(lua, "thread.spawn", e),
+        Err(e) => return from_err("thread.spawn", e),
     };
 
     // Two unbounded mpscs: parent→worker and worker→parent. The worker's
@@ -347,17 +349,14 @@ fn spawn(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
     ));
     let abort = join.abort_handle();
 
-    ok(
-        lua,
-        WorkerHandle {
-            inner: Arc::new(WorkerInner {
-                tx: p2w_tx,
-                rx: Mutex::new(w2p_rx),
-                join: Mutex::new(Some(join)),
-                abort,
-            }),
-        },
-    )
+    ok(WorkerHandle {
+        inner: Arc::new(WorkerInner {
+            tx: p2w_tx,
+            rx: Mutex::new(w2p_rx),
+            join: Mutex::new(Some(join)),
+            abort,
+        }),
+    })
 }
 
 /// Read an optional typed field from the spawn `opts` table, stringifying any
@@ -497,14 +496,14 @@ impl UserData for WorkerHandle {
                     let mut guard = inner.join.lock().await;
                     match guard.take() {
                         Some(j) => j,
-                        None => return from_err(&lua, "thread.await", "already awaited"),
+                        None => return from_err("thread.await", "already awaited"),
                     }
                 };
                 match join.await {
-                    Ok(Ok(json)) => ok(&lua, lua.to_value(&json)?),
-                    Ok(Err(e)) => from_err(&lua, "thread.await", e),
-                    Err(e) if e.is_cancelled() => from_err(&lua, "thread.await", "terminated"),
-                    Err(e) => from_err(&lua, "thread.await", e),
+                    Ok(Ok(json)) => ok(lua.to_value(&json)?),
+                    Ok(Err(e)) => from_err("thread.await", e),
+                    Err(e) if e.is_cancelled() => from_err("thread.await", "terminated"),
+                    Err(e) => from_err("thread.await", e),
                 }
             }
         });
@@ -570,10 +569,10 @@ fn handle_recv_result(
     lua: &Lua,
     received: Option<serde_json::Value>,
     err_msg: &'static str,
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<Value>> {
     match received {
-        Some(json) => Ok((lua.to_value(&json)?, Value::Nil)),
-        None => Ok((Value::Nil, Value::String(lua.create_string(err_msg)?))),
+        Some(json) => ok(lua.to_value(&json)?),
+        None => crate::lua::sandbox::err(err_msg),
     }
 }
 

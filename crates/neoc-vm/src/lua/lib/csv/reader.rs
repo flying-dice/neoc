@@ -135,18 +135,14 @@ pub(super) struct CsvReader {
     pub(super) state: Arc<Mutex<CsvReaderState>>,
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("lib:csv", "CsvReader")]
 impl UserData for CsvReader {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Return the cached header row (parsing it if not yet read). Errors if the reader was not created with `headers = true`.
-        #[lua("Result<LuaValue, string>")]
         methods.add_method("headers", |lua, this, _: ()| {
             let mut state = this.state.lock();
             if !state.opts.headers {
-                return err(
-                    lua,
-                    "csv.reader: 'headers' option must be true to call :headers()",
-                );
+                return err("csv.reader: 'headers' option must be true to call :headers()");
             }
             match state.ensure_headers("csv.reader") {
                 Ok(Some(v)) => {
@@ -154,10 +150,10 @@ impl UserData for CsvReader {
                     for (i, h) in v.iter().enumerate() {
                         t.set(i + 1, lua.create_string(h.as_bytes())?)?;
                     }
-                    ok(lua, t)
+                    ok(Some(t))
                 }
-                Ok(None) => ok(lua, Value::Nil),
-                Err(msg) => err(lua, msg),
+                Ok(None) => ok(None),
+                Err(msg) => err(msg),
             }
         });
 

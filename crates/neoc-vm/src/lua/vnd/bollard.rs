@@ -70,7 +70,7 @@ use tracing::Instrument;
 use crate::lua::error_text;
 use crate::lua::facade::Module;
 use crate::lua::lifecycle::{Life, Role, async_method};
-use crate::lua::sandbox::{from_err, ok};
+use crate::lua::sandbox::{Fallible, from_err, ok};
 
 mod error;
 mod options;
@@ -162,32 +162,26 @@ impl Client {
 }
 
 /// A client for a Docker daemon. Nothing is sent until the client's first call. `host` is `unix:///path/docker.sock`, `tcp://host:2375`, `http://host:2375` or `https://host:2376`; without it `DOCKER_HOST` is used, and without that the local socket (`/var/run/docker.sock`, then Docker Desktop's and a rootless daemon's per-user socket). `timeout` is how long a call waits for the daemon's answer, in seconds (default 120). `tls_ca`, `tls_cert` and `tls_key` (all three, paths of PEM files) connect over TLS with a client certificate. Reaching Docker is root on its host: a script given this module is trusted with the machine. Errors are `bollard.<function>: <kind>: <message>` (see `error_kind`); a host with no Docker socket is `connect`.
-#[neoc_macros::lua_fn(
-    returns = "Result<Client, string>",
-    types(
-        opts = "{ host: string?, timeout: number?, tls_ca: string?, tls_cert: string?, tls_key: string? }?"
-    )
-)]
-fn connect(lua: &Lua, opts: Option<Value>) -> mlua::Result<(Value, Value)> {
+#[neoc_macros::lua_fn(types(
+    opts = "{ host: string?, timeout: number?, tls_ca: string?, tls_cert: string?, tls_key: string? }?"
+))]
+fn connect(_: &Lua, opts: Option<Value>) -> mlua::Result<Fallible<Client>> {
     let op = "bollard.connect";
     let opts = match opts {
         Some(opts) => match options::json(&opts, op)? {
             Ok(json) => Some(json),
-            Err(e) => return from_err(lua, op, e),
+            Err(e) => return from_err(op, e),
         },
         None => None,
     };
     match open(opts) {
-        Ok(docker) => ok(
-            lua,
-            Client {
-                inner: Arc::new(ClientInner {
-                    docker,
-                    negotiated: OnceCell::new(),
-                }),
-            },
-        ),
-        Err(e) => from_err(lua, op, e),
+        Ok(docker) => ok(Client {
+            inner: Arc::new(ClientInner {
+                docker,
+                negotiated: OnceCell::new(),
+            }),
+        }),
+        Err(e) => from_err(op, e),
     }
 }
 
@@ -300,11 +294,15 @@ fn table<T: Serialize>(answer: T) -> Result<Reply, BollardError> {
         .map_err(|e| BollardError::new(Kind::BadResponse, e.to_string()))
 }
 
-fn reply(lua: &Lua, op: &str, result: Result<Reply, BollardError>) -> mlua::Result<(Value, Value)> {
+fn reply(
+    lua: &Lua,
+    op: &str,
+    result: Result<Reply, BollardError>,
+) -> mlua::Result<Fallible<Value>> {
     match result {
-        Ok(Reply::Done) => ok(lua, true),
-        Ok(Reply::Missing) => Ok((Value::Nil, Value::Nil)),
-        Ok(Reply::Table(json)) => ok(lua, stream::to_lua(lua, &json)?),
+        Ok(Reply::Done) => ok(Value::Boolean(true)),
+        Ok(Reply::Missing) => ok(Value::Nil),
+        Ok(Reply::Table(json)) => ok(stream::to_lua(lua, &json)?),
         Ok(Reply::Exec {
             exit_code,
             stdout,
@@ -314,9 +312,9 @@ fn reply(lua: &Lua, op: &str, result: Result<Reply, BollardError>) -> mlua::Resu
             result.set("exit_code", exit_code)?;
             result.set("stdout", lua.create_string(&stdout)?)?;
             result.set("stderr", lua.create_string(&stderr)?)?;
-            ok(lua, result)
+            ok(Value::Table(result))
         }
-        Err(e) => from_err(lua, op, e),
+        Err(e) => from_err(op, e),
     }
 }
 
@@ -379,7 +377,7 @@ fn stream_call<M, A, P, S>(
     methods.add_method(method_name(op), move |lua, this, args: A| {
         let prepared = match prepare(op, args)? {
             Ok(prepared) => prepared,
-            Err(e) => return from_err(lua, op, e),
+            Err(e) => return from_err(op, e),
         };
         let client = this.clone();
         let source = Arc::clone(&source);
@@ -388,8 +386,8 @@ fn stream_call<M, A, P, S>(
             Ok(source(&docker, prepared))
         });
         match started {
-            Ok(stream) => ok(lua, stream),
-            Err(e) => from_err(lua, op, e),
+            Ok(stream) => ok(stream),
+            Err(e) => from_err(op, e),
         }
     });
 }

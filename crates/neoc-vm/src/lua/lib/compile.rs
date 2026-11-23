@@ -28,11 +28,11 @@
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
-use mlua::{Lua, Table, Value};
+use mlua::{Lua, Table};
 use tracing::instrument;
 
 use crate::lua::facade::Module;
-use crate::lua::sandbox::ok;
+use crate::lua::sandbox::{Fallible, ok};
 
 // ---------------------------------------------------------------------------
 // Trailer constants — shared between the bundler and the startup detector.
@@ -276,9 +276,9 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 //
 // Returns `(true, nil)` on success, `(nil, err)` on failure.
 /// Bundle a Lua source file into a self-contained executable. `opts` requires `entrypoint` and `output` string fields.
-#[neoc_macros::lua_fn(returns = "Result<bool, string>")]
+#[neoc_macros::lua_fn]
 #[instrument(name = "compile.bundle", target = "lua::lib::compile", skip_all)]
-fn bundle(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
+fn bundle(_: &Lua, opts: Table) -> mlua::Result<Fallible<bool>> {
     let entrypoint: String = opts.get::<String>("entrypoint").map_err(|_| {
         mlua::Error::external("compile.bundle: opts.entrypoint is required (string)")
     })?;
@@ -287,9 +287,9 @@ fn bundle(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
         .map_err(|_| mlua::Error::external("compile.bundle: opts.output is required (string)"))?;
 
     match bundle_impl(Path::new(&entrypoint), Path::new(&output)) {
-        Ok(()) => ok(lua, true),
+        Ok(()) => ok(true),
         // bundle_impl errors are already prefixed with "compile.bundle: ".
-        Err(e) => crate::lua::sandbox::err(lua, e),
+        Err(e) => crate::lua::sandbox::err(e),
     }
 }
 
@@ -536,7 +536,7 @@ mod tests {
     #[test]
     fn bundle_requires_entrypoint_field() {
         let lua = engine();
-        let result: mlua::Result<(Value, Value)> = lua
+        let result: mlua::Result<(mlua::Value, mlua::Value)> = lua
             .load(r#"return compile.bundle({ output = "/tmp/nope" })"#)
             .eval();
         assert!(result.is_err());
@@ -545,7 +545,7 @@ mod tests {
     #[test]
     fn bundle_requires_output_field() {
         let lua = engine();
-        let result: mlua::Result<(Value, Value)> = lua
+        let result: mlua::Result<(mlua::Value, mlua::Value)> = lua
             .load(r#"return compile.bundle({ entrypoint = "main.lua" })"#)
             .eval();
         assert!(result.is_err());

@@ -18,13 +18,13 @@ use std::io::{BufRead, Read, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use mlua::{AnyUserData, Lua, Table, UserData, UserDataMethods, Value};
+use mlua::{AnyUserData, Lua, Table, UserData, UserDataMethods};
 use parking_lot::Mutex;
 use tracing::instrument;
 
 use crate::lua::facade::Module;
 use crate::lua::limits;
-use crate::lua::sandbox::{from_err, ok};
+use crate::lua::sandbox::{Fallible, from_err, ok};
 
 // ---------------------------------------------------------------------------
 // Handle types
@@ -86,15 +86,15 @@ impl WriterHandle {
 /// Map an `io::Result` to the `(value, nil)` / `(nil, err)` convention shared by
 /// every reader/writer method: `on_ok` builds the success value, errors are
 /// stringified under `op`.
-fn io_result<T>(
+fn io_result<T, V>(
     lua: &Lua,
     op: &str,
     result: std::io::Result<T>,
-    on_ok: impl FnOnce(&Lua, T) -> mlua::Result<(Value, Value)>,
-) -> mlua::Result<(Value, Value)> {
+    on_ok: impl FnOnce(&Lua, T) -> mlua::Result<Fallible<V>>,
+) -> mlua::Result<Fallible<V>> {
     match result {
         Ok(v) => on_ok(lua, v),
-        Err(e) => from_err(lua, op, e),
+        Err(e) => from_err(op, e),
     }
 }
 
@@ -106,43 +106,40 @@ const READ_CHUNK_MAX: usize = 16 << 20;
 impl UserData for ReaderHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Read up to `n` bytes; returns `(nil, nil)` at EOF.
-        #[lua("Result<string, string>")]
         methods.add_method("read", |lua, this, n: usize| {
             // `read(n)` is "up to n bytes": clamp a Lua-sized request rather than abort on its allocation.
             let mut buf = match limits::zeroed(n.min(READ_CHUNK_MAX)) {
                 Ok(buf) => buf,
-                Err(e) => return from_err(lua, "io.read", std::io::Error::other(e)),
+                Err(e) => return from_err("io.read", std::io::Error::other(e)),
             };
             let result = this.inner.lock().read(&mut buf);
             io_result(lua, "io.read", result, |lua, k| match k {
-                0 => ok(lua, Value::Nil),
-                k => ok(lua, lua.create_string(&buf[..k])?),
+                0 => ok(None),
+                k => ok(Some(lua.create_string(&buf[..k])?)),
             })
         });
 
         /// Read one line, stripping the trailing newline; returns `(nil, nil)` at EOF.
-        #[lua("Result<string, string>")]
         methods.add_method("read_line", |lua, this, _: ()| {
             let mut line = String::new();
             let result = this.inner.lock().read_line(&mut line);
             io_result(lua, "io.read_line", result, |lua, n| {
                 if n == 0 {
-                    return ok(lua, Value::Nil);
+                    return ok(None);
                 }
                 // Strip a trailing newline, then an optional preceding CR.
                 let trimmed = line.strip_suffix('\n').unwrap_or(&line);
                 let trimmed = trimmed.strip_suffix('\r').unwrap_or(trimmed);
-                ok(lua, lua.create_string(trimmed.as_bytes())?)
+                ok(Some(lua.create_string(trimmed.as_bytes())?))
             })
         });
 
         /// Read the entire remaining stream into a single string.
-        #[lua("Result<string, string>")]
         methods.add_method("read_all", |lua, this, _: ()| {
             let mut buf = Vec::new();
             let result = this.inner.lock().read_to_end(&mut buf);
             io_result(lua, "io.read_all", result, |lua, _| {
-                ok(lua, lua.create_string(&buf)?)
+                ok(lua.create_string(&buf)?)
             })
         });
     }
@@ -152,17 +149,15 @@ impl UserData for ReaderHandle {
 impl UserData for WriterHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Write all bytes of `data` to the stream.
-        #[lua("Result<bool, string>")]
         methods.add_method("write", |lua, this, data: mlua::LuaString| {
             let result = this.0.lock().write_all(&data.as_bytes());
-            io_result(lua, "io.write", result, |lua, ()| ok(lua, true))
+            io_result(lua, "io.write", result, |_, ()| ok(true))
         });
 
         /// Flush any buffered bytes to the underlying sink.
-        #[lua("Result<bool, string>")]
         methods.add_method("flush", |lua, this, _: ()| {
             let result = this.0.lock().flush();
-            io_result(lua, "io.flush", result, |lua, ()| ok(lua, true))
+            io_result(lua, "io.flush", result, |_, ()| ok(true))
         });
     }
 }
@@ -216,16 +211,15 @@ fn from_string(_: &Lua, s: mlua::LuaString) -> mlua::Result<ReaderHandle> {
 /// `(nil, err)` tuple describing the bad argument — the caller returns the
 /// `Err` payload verbatim.
 fn borrow_or_err<T: 'static>(
-    lua: &Lua,
+    _: &Lua,
     ud: &AnyUserData,
     msg: &str,
-) -> Result<mlua::UserDataRef<T>, mlua::Result<(Value, Value)>> {
-    ud.borrow::<T>().map_err(|_| from_err(lua, "io.copy", msg))
+) -> Result<mlua::UserDataRef<T>, mlua::Result<Fallible<i64>>> {
+    ud.borrow::<T>().map_err(|_| from_err("io.copy", msg))
 }
 
 /// Copy all remaining bytes from `reader` into `writer`, returning the total bytes copied.
 #[neoc_macros::lua_fn(
-    returns = "Result<number, string>",
     names(reader_ud = "reader", writer_ud = "writer"),
     types(reader_ud = "ReaderHandle", writer_ud = "WriterHandle")
 )]
@@ -233,7 +227,7 @@ fn borrow_or_err<T: 'static>(
 fn copy(
     lua: &Lua,
     (reader_ud, writer_ud): (AnyUserData, AnyUserData),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<i64>> {
     let rh = match borrow_or_err::<ReaderHandle>(
         lua,
         &reader_ud,
@@ -253,5 +247,5 @@ fn copy(
     let mut r = rh.inner.lock();
     let mut w = wh.0.lock();
     let result = std::io::copy(&mut *r, &mut *w);
-    io_result(lua, "io.copy", result, |lua, n| ok(lua, n as i64))
+    io_result(lua, "io.copy", result, |_, n| ok(n as i64))
 }

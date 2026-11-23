@@ -16,7 +16,7 @@ use tracing::instrument;
 use walkdir::WalkDir;
 
 use crate::lua::facade::Module;
-use crate::lua::sandbox::{err, from_err, ok};
+use crate::lua::sandbox::{Fallible, err, ok};
 
 // ---------------------------------------------------------------------------
 // Module
@@ -174,11 +174,11 @@ fn single(pattern: &str) -> Result<GsSet, String> {
 }
 
 /// Compile one glob pattern.
-#[neoc_macros::lua_fn(name = "new", returns = "Result<Glob, string>")]
-fn glob_new(lua: &Lua, pattern: String) -> mlua::Result<(Value, Value)> {
+#[neoc_macros::lua_fn(name = "new")]
+fn glob_new(_: &Lua, pattern: String) -> mlua::Result<Fallible<GlobHandle>> {
     match GlobHandle::compile(&pattern) {
-        Ok(g) => ok(lua, g),
-        Err(msg) => err(lua, format!("glob.Glob.new: {msg}")),
+        Ok(g) => ok(g),
+        Err(msg) => err(format!("glob.Glob.new: {msg}")),
     }
 }
 
@@ -238,13 +238,13 @@ impl UserData for GlobSetHandle {
 }
 
 /// Compile a list of glob patterns into one matcher.
-#[neoc_macros::lua_fn(name = "new", returns = "Result<GlobSet, string>")]
-fn set_new(lua: &Lua, patterns: Table) -> mlua::Result<(Value, Value)> {
+#[neoc_macros::lua_fn(name = "new")]
+fn set_new(_: &Lua, patterns: Table) -> mlua::Result<Fallible<GlobSetHandle>> {
     let mut pats: Vec<String> = Vec::new();
     for pair in patterns.pairs::<i64, String>() {
         let (_, p) = match pair {
             Ok(v) => v,
-            Err(e) => return err(lua, format!("glob.GlobSet.new: {e}")),
+            Err(e) => return err(format!("glob.GlobSet.new: {e}")),
         };
         pats.push(p);
     }
@@ -252,19 +252,16 @@ fn set_new(lua: &Lua, patterns: Table) -> mlua::Result<(Value, Value)> {
     for p in &pats {
         let g = match compile(p) {
             Ok(g) => g,
-            Err(e) => return err(lua, format!("glob.GlobSet.new: {e}")),
+            Err(e) => return err(format!("glob.GlobSet.new: {e}")),
         };
         builder.add(g);
     }
     match builder.build() {
-        Ok(set) => ok(
-            lua,
-            GlobSetHandle {
-                patterns: pats,
-                set,
-            },
-        ),
-        Err(e) => err(lua, format!("glob.GlobSet.new: {e}")),
+        Ok(set) => ok(GlobSetHandle {
+            patterns: pats,
+            set,
+        }),
+        Err(e) => err(format!("glob.GlobSet.new: {e}")),
     }
 }
 
@@ -278,7 +275,7 @@ fn set_new(lua: &Lua, patterns: Table) -> mlua::Result<(Value, Value)> {
 fn flat_scan(lua: &Lua, (pattern, opts): (String, Option<Table>)) -> mlua::Result<(Value, Value)> {
     let g = match GlobHandle::compile(&pattern) {
         Ok(g) => g,
-        Err(msg) => return err(lua, format!("glob.scan: {msg}")),
+        Err(msg) => return refused(lua, format!("glob.scan: {msg}")),
     };
     run_scan(lua, &g.pattern, &g.matcher, opts, "glob.scan")
 }
@@ -360,6 +357,14 @@ fn build_ignore_set(tbl: &Table, prefix: &str) -> Result<GsSet, String> {
         .map_err(|e| format!("{prefix}: ignore: {e}"))
 }
 
+/// A scan that could not start: `nil` for the matches and the reason in place of the per-entry errors.
+fn refused(lua: &Lua, reason: impl AsRef<str>) -> mlua::Result<(Value, Value)> {
+    Ok((
+        Value::Nil,
+        Value::String(lua.create_string(reason.as_ref())?),
+    ))
+}
+
 fn run_scan(
     lua: &Lua,
     pattern: &str,
@@ -369,17 +374,17 @@ fn run_scan(
 ) -> mlua::Result<(Value, Value)> {
     let scan = match read_scan_opts(opts.as_ref(), prefix) {
         Ok(o) => o,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return refused(lua, msg),
     };
 
     if !scan.cwd.exists() {
-        return err(
+        return refused(
             lua,
             format!("{prefix}: directory not found: {}", scan.cwd.display()),
         );
     }
     if !scan.cwd.is_dir() {
-        return err(
+        return refused(
             lua,
             format!("{prefix}: not a directory: {}", scan.cwd.display()),
         );
@@ -388,7 +393,7 @@ fn run_scan(
     let absolute_root = if scan.absolute {
         match scan.cwd.canonicalize() {
             Ok(p) => Some(p),
-            Err(e) => return from_err(lua, prefix, e),
+            Err(e) => return refused(lua, format!("{prefix}: {e}")),
         }
     } else {
         None

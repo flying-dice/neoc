@@ -8,7 +8,7 @@ use mlua::{Lua, Table, Value};
 use tracing::instrument;
 
 use crate::lua::facade::Module;
-use crate::lua::sandbox::{err, from_err, ok};
+use crate::lua::sandbox::{Fallible, err, from_err, ok};
 
 // Sentinels — safe because we reject null bytes before parsing.
 const BARE_SENTINEL: &str = "\x01BARE\x01";
@@ -138,31 +138,31 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 }
 
 /// Parse an INI string into a table of sections. Section-less keys land under the empty-string key; bare keys become `true`.
-#[neoc_macros::lua_fn(returns = "Result<LuaValue, string>", names(opts_table = "opts"))]
+#[neoc_macros::lua_fn(names(opts_table = "opts"))]
 #[instrument(name = "ini.parse", target = "lua::lib::ini", skip_all)]
 fn parse(
     lua: &Lua,
     (text, opts_table): (mlua::LuaString, Option<Table>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<Table>> {
     let raw = str_of(&text)?;
 
     if raw.bytes().any(|b| b <= 0x08) {
-        return err(lua, "ini.parse: input contains control bytes");
+        return err("ini.parse: input contains control bytes");
     }
 
     let opts = read_opts(opts_table)?;
 
     let processed = match preprocess(&raw, &opts) {
         Ok(p) => p,
-        Err(e) => return from_err(lua, "ini.parse", e),
+        Err(e) => return from_err("ini.parse", e),
     };
 
     let conf = match Ini::load_from_str_noescape(&processed) {
         Ok(c) => c,
-        Err(e) => return from_err(lua, "ini.parse", e),
+        Err(e) => return from_err("ini.parse", e),
     };
 
-    ok(lua, assemble_table(lua, &conf, &opts)?)
+    ok(assemble_table(lua, &conf, &opts)?)
 }
 
 /// Build the Lua result table from a parsed INI document: one nested table per
@@ -249,12 +249,12 @@ fn read_opts(opts_table: Option<Table>) -> mlua::Result<ParseOpts> {
 // ---------------------------------------------------------------------------
 
 /// Serialise a section table back to an INI string. The empty-string section is emitted first as section-less keys.
-#[neoc_macros::lua_fn(returns = "Result<string, string>", names(opts_table = "opts"))]
+#[neoc_macros::lua_fn(names(opts_table = "opts"))]
 #[instrument(name = "ini.stringify", target = "lua::lib::ini", skip_all)]
 fn stringify(
-    lua: &Lua,
+    _: &Lua,
     (config, opts_table): (Table, Option<Table>),
-) -> mlua::Result<(Value, Value)> {
+) -> mlua::Result<Fallible<String>> {
     let spacing = if let Some(tbl) = &opts_table {
         tbl.get::<Option<bool>>("spacing")?.unwrap_or(false)
     } else {
@@ -286,7 +286,7 @@ fn stringify(
         first_section = false;
     }
 
-    ok(lua, out)
+    ok(out)
 }
 
 fn write_props(table: &Table, out: &mut String, spacing: bool) -> mlua::Result<()> {

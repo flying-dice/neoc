@@ -20,10 +20,7 @@ fn count_all(_first: Option<f64>, rest: Variadic<mlua::Value>) -> mlua::Result<u
 }
 
 /// Parse a number.
-#[neoc_macros::lua_fn(
-    returns = "Result<number, string>",
-    takes("text: string", "...: LuaValue")
-)]
+#[neoc_macros::lua_fn(takes("text: string", "...: LuaValue"))]
 fn parse(_: &Lua, text: String) -> mlua::Result<f64> {
     text.parse().map_err(mlua::Error::external)
 }

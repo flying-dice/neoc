@@ -50,7 +50,7 @@ mod macros_tests;
 pub mod typed;
 
 use crate::lua::lifecycle::{Role, async_function};
-use crate::lua::sandbox::{from_err, ok};
+use crate::lua::sandbox::{Fallible, from_err, ok};
 
 /// Maps a Rust binding type to its recorded type name.
 ///
@@ -92,6 +92,12 @@ decl_type!("LuaValue" => mlua::Value, mlua::MultiValue, mlua::AnyUserData, mlua:
 impl<T: DeclType> DeclType for Option<T> {
     fn decl_type() -> String {
         format!("{}?", T::decl_type())
+    }
+}
+
+impl<T: DeclType> DeclType for Fallible<T> {
+    fn decl_type() -> String {
+        format!("Result<{}, string>", T::decl_type())
     }
 }
 
@@ -346,8 +352,8 @@ impl<'l> Module<'l> {
         let span = dyn_span(&self.target(), &prefix);
         let func = self.lua.create_function(move |lua, a: A| {
             span.in_scope(|| match f(lua, a)? {
-                Ok(v) => ok(lua, v),
-                Err(e) => from_err(lua, &prefix, e),
+                Ok(v) => ok(v),
+                Err(e) => from_err(&prefix, e),
             })
         })?;
         self.table.set(name, func)?;
@@ -418,7 +424,7 @@ impl<'l> Module<'l> {
     ) -> mlua::Result<&mut Self>
     where
         A: FromLuaMulti + 'static,
-        T: DeclType + IntoLua,
+        T: DeclType + IntoLua + Send + 'static,
         E: std::fmt::Display,
         Fut: Future<Output = Result<T, E>> + Send + 'static,
     {
@@ -430,8 +436,8 @@ impl<'l> Module<'l> {
             let prefix = prefix.clone();
             async move {
                 match fut.await {
-                    Ok(v) => ok(&lua, v),
-                    Err(e) => from_err(&lua, &prefix, e),
+                    Ok(v) => ok(v),
+                    Err(e) => from_err(&prefix, e),
                 }
             }
         })?;
@@ -944,8 +950,8 @@ impl TypeSpec<'_, '_> {
             name,
             self.lua.create_function(move |lua, a: A| {
                 span.in_scope(|| match f(lua, a) {
-                    Ok(v) => ok(lua, v),
-                    Err(e) => from_err(lua, &prefix, e),
+                    Ok(v) => ok(v),
+                    Err(e) => from_err(&prefix, e),
                 })
             })?,
         )?;

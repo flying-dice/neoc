@@ -15,7 +15,7 @@ use tracing::instrument;
 use url::Url;
 
 use crate::lua::facade::Module;
-use crate::lua::sandbox::{err, ok};
+use crate::lua::sandbox::{Fallible, err, ok};
 
 // ---------------------------------------------------------------------------
 // Percent-encode sets
@@ -136,31 +136,25 @@ impl UserData for UrlHandle {
 
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Resolve `reference` against this URL using RFC 3986 § 5 rules.
-        #[lua("Result<Url, string>")]
         methods.add_method("resolve", |lua, this, reference: String| {
             join_url(lua, &this.0, &reference, "url.Url.resolve")
         });
 
         /// Return a new `Url` with the scheme replaced. Most special/non-special swaps are rejected by the spec.
-        #[lua("Result<Url, string>")]
-        methods.add_method("with_scheme", |lua, this, scheme: String| {
+        methods.add_method("with_scheme", |_, this, scheme: String| {
             let mut u = this.0.clone();
             match u.set_scheme(&scheme) {
-                Ok(()) => ok(lua, UrlHandle(u)),
-                Err(()) => err(
-                    lua,
-                    format!("url.Url.with_scheme: cannot set scheme {scheme:?}"),
-                ),
+                Ok(()) => ok(UrlHandle(u)),
+                Err(()) => err(format!("url.Url.with_scheme: cannot set scheme {scheme:?}")),
             }
         });
 
         /// Return a new `Url` with the host replaced. Returns `(nil, err)` if the host is malformed for the scheme.
-        #[lua("Result<Url, string>")]
-        methods.add_method("with_host", |lua, this, host: String| {
+        methods.add_method("with_host", |_, this, host: String| {
             let mut u = this.0.clone();
             match u.set_host(Some(&host)) {
-                Ok(()) => ok(lua, UrlHandle(u)),
-                Err(e) => err(lua, format!("url.Url.with_host: {e}")),
+                Ok(()) => ok(UrlHandle(u)),
+                Err(e) => err(format!("url.Url.with_host: {e}")),
             }
         });
 
@@ -172,31 +166,23 @@ impl UserData for UrlHandle {
         // reason: `with_port(8080.5)` silently truncating to 8080 is a
         // footgun, not a feature.
         /// Return a new `Url` with the port set (or cleared when `nil`). `port` must be an integer in `0..=65535`.
-        #[lua("Result<Url, string>")]
-        methods.add_method("with_port", |lua, this, port: Option<f64>| {
+        methods.add_method("with_port", |_, this, port: Option<f64>| {
             let port = match port {
                 None => None,
                 Some(n) if !n.is_finite() || n.trunc() != n => {
-                    return err(
-                        lua,
-                        format!("url.Url.with_port: port {n} is not an integer"),
-                    );
+                    return err(format!("url.Url.with_port: port {n} is not an integer"));
                 }
                 Some(n) if !(0.0..=65535.0).contains(&n) => {
-                    return err(
-                        lua,
-                        format!("url.Url.with_port: port {n} out of range (expected 0..=65535)"),
-                    );
+                    return err(format!(
+                        "url.Url.with_port: port {n} out of range (expected 0..=65535)"
+                    ));
                 }
                 Some(n) => Some(n as u16),
             };
             let mut u = this.0.clone();
             match u.set_port(port) {
-                Ok(()) => ok(lua, UrlHandle(u)),
-                Err(()) => err(
-                    lua,
-                    "url.Url.with_port: cannot set port on this URL".to_string(),
-                ),
+                Ok(()) => ok(UrlHandle(u)),
+                Err(()) => err("url.Url.with_port: cannot set port on this URL".to_string()),
             }
         });
 
@@ -262,40 +248,48 @@ impl UserData for UrlHandle {
 // ---------------------------------------------------------------------------
 
 /// Parse an absolute URL. Returns `(nil, err)` when it is invalid.
-#[neoc_macros::lua_fn(name = "parse", returns = "Result<Url, string>")]
+#[neoc_macros::lua_fn(name = "parse")]
 #[instrument(name = "url.Url.parse", target = "lua::lib::url", skip_all)]
-fn url_parse_method(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
+fn url_parse_method(_: &Lua, s: String) -> mlua::Result<Fallible<UrlHandle>> {
     match Url::parse(&s) {
-        Ok(u) => ok(lua, UrlHandle(u)),
-        Err(e) => err(lua, format!("url.Url.parse: invalid url {s:?}: {e}")),
+        Ok(u) => ok(UrlHandle(u)),
+        Err(e) => err(format!("url.Url.parse: invalid url {s:?}: {e}")),
     }
 }
 
 /// Alias for `Url.parse`. Returns `(nil, err)` on malformed input.
-#[neoc_macros::lua_fn(name = "parse", returns = "Result<Url, string>")]
+#[neoc_macros::lua_fn(name = "parse")]
 #[instrument(name = "url.parse", target = "lua::lib::url", skip_all)]
-fn flat_parse(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
+fn flat_parse(_: &Lua, s: String) -> mlua::Result<Fallible<UrlHandle>> {
     match Url::parse(&s) {
-        Ok(u) => ok(lua, UrlHandle(u)),
-        Err(e) => err(lua, format!("url.parse: invalid url {s:?}: {e}")),
+        Ok(u) => ok(UrlHandle(u)),
+        Err(e) => err(format!("url.parse: invalid url {s:?}: {e}")),
     }
 }
 
 /// Resolve a relative reference against `base` (a `Url` or string) using RFC 3986 § 5 rules.
-#[neoc_macros::lua_fn(name = "resolve", returns = "Result<Url, string>")]
+#[neoc_macros::lua_fn(name = "resolve")]
 #[instrument(name = "url.resolve", target = "lua::lib::url", skip_all)]
-fn flat_resolve(lua: &Lua, (base, reference): (Value, String)) -> mlua::Result<(Value, Value)> {
+fn flat_resolve(
+    lua: &Lua,
+    (base, reference): (Value, String),
+) -> mlua::Result<Fallible<UrlHandle>> {
     let base_url = match coerce_to_url(base, "url.resolve") {
         Ok(u) => u,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return err(msg),
     };
     join_url(lua, &base_url, &reference, "url.resolve")
 }
 
-fn join_url(lua: &Lua, base: &Url, reference: &str, prefix: &str) -> mlua::Result<(Value, Value)> {
+fn join_url(
+    _: &Lua,
+    base: &Url,
+    reference: &str,
+    prefix: &str,
+) -> mlua::Result<Fallible<UrlHandle>> {
     match base.join(reference) {
-        Ok(u) => ok(lua, UrlHandle(u)),
-        Err(e) => err(lua, format!("{prefix}: cannot resolve {reference:?}: {e}")),
+        Ok(u) => ok(UrlHandle(u)),
+        Err(e) => err(format!("{prefix}: cannot resolve {reference:?}: {e}")),
     }
 }
 
@@ -324,28 +318,25 @@ fn coerce_to_url(v: Value, prefix: &str) -> Result<Url, String> {
 // ---------------------------------------------------------------------------
 
 /// Percent-encode `input` against the named `set` (defaults to `component`). Returns `(nil, err)` only on an unknown set name.
-#[neoc_macros::lua_fn(name = "encode", returns = "Result<string, string>")]
+#[neoc_macros::lua_fn(name = "encode")]
 #[instrument(name = "url.encode", target = "lua::lib::url", skip_all)]
-fn flat_encode(lua: &Lua, (input, set): (String, Option<String>)) -> mlua::Result<(Value, Value)> {
+fn flat_encode(_: &Lua, (input, set): (String, Option<String>)) -> mlua::Result<Fallible<String>> {
     let set_name = set.as_deref().unwrap_or("component");
     match set_for(set_name) {
-        Some(ascii_set) => ok(lua, percent_encode(input.as_bytes(), ascii_set).to_string()),
-        None => err(
-            lua,
-            format!(
-                "url.encode: unknown set {set_name:?}: must be one of \"component\", \"path\", \"query\", \"fragment\""
-            ),
-        ),
+        Some(ascii_set) => ok(percent_encode(input.as_bytes(), ascii_set).to_string()),
+        None => err(format!(
+            "url.encode: unknown set {set_name:?}: must be one of \"component\", \"path\", \"query\", \"fragment\""
+        )),
     }
 }
 
 /// Percent-decode `input`. Returns `(nil, err)` when the decoded bytes are not valid UTF-8. Does not convert `+` to space.
-#[neoc_macros::lua_fn(name = "decode", returns = "Result<string, string>")]
+#[neoc_macros::lua_fn(name = "decode")]
 #[instrument(name = "url.decode", target = "lua::lib::url", skip_all)]
-fn flat_decode(lua: &Lua, input: String) -> mlua::Result<(Value, Value)> {
+fn flat_decode(_: &Lua, input: String) -> mlua::Result<Fallible<String>> {
     match percent_decode_str(&input).decode_utf8() {
-        Ok(cow) => ok(lua, cow.into_owned()),
-        Err(e) => err(lua, format!("url.decode: invalid utf-8: {e}")),
+        Ok(cow) => ok(cow.into_owned()),
+        Err(e) => err(format!("url.decode: invalid utf-8: {e}")),
     }
 }
 
@@ -354,27 +345,27 @@ fn flat_decode(lua: &Lua, input: String) -> mlua::Result<(Value, Value)> {
 // ---------------------------------------------------------------------------
 
 /// Form-encode an ordered list of `{ key, value }` pairs into a query string. Spaces become `+`.
-#[neoc_macros::lua_fn(name = "encode_query", returns = "Result<string, string>")]
+#[neoc_macros::lua_fn(name = "encode_query")]
 #[instrument(name = "url.encode_query", target = "lua::lib::url", skip_all)]
-fn flat_encode_query(lua: &Lua, pairs: Table) -> mlua::Result<(Value, Value)> {
+fn flat_encode_query(_: &Lua, pairs: Table) -> mlua::Result<Fallible<String>> {
     let mut ser = url::form_urlencoded::Serializer::new(String::new());
     let len = pairs.raw_len();
     for i in 1..=len {
         let pair: Table = match pairs.raw_get(i) {
             Ok(p) => p,
-            Err(e) => return err(lua, format!("url.encode_query: pair {i}: {e}")),
+            Err(e) => return err(format!("url.encode_query: pair {i}: {e}")),
         };
         let k: String = match pair.raw_get(1) {
             Ok(k) => k,
-            Err(e) => return err(lua, format!("url.encode_query: pair {i} key: {e}")),
+            Err(e) => return err(format!("url.encode_query: pair {i} key: {e}")),
         };
         let v: String = match pair.raw_get(2) {
             Ok(v) => v,
-            Err(e) => return err(lua, format!("url.encode_query: pair {i} value: {e}")),
+            Err(e) => return err(format!("url.encode_query: pair {i} value: {e}")),
         };
         ser.append_pair(&k, &v);
     }
-    ok(lua, ser.finish())
+    ok(ser.finish())
 }
 
 /// Parse an `application/x-www-form-urlencoded` payload into an ordered list of `{ key, value }` pairs. `+` decodes to space.
