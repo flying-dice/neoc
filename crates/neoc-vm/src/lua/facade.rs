@@ -484,7 +484,8 @@ impl<'l> Module<'l> {
     /// [`UserDataSpec::method`], each read-only value with
     /// [`UserDataSpec::field`], and the functions and constants of the type's
     /// sub-table on the module with [`UserDataSpec::static_fn`] and
-    /// [`UserDataSpec::static_const`]. This only records the surface — the
+    /// [`UserDataSpec::static_const`]. A module passes what `neoc_macros` wrote
+    /// (`Type::lua`, chained with `static_of`) and calls none of these itself. This only records the surface — the
     /// runtime registration of the type's methods stays in the type's own
     /// `impl UserData`, untouched, so its behaviour is byte-identical to today.
     pub fn userdata(
@@ -657,7 +658,7 @@ impl<'l> Module<'l> {
             let (key, _) = pair?;
             if !recorded(&key) {
                 return Err(mlua::Error::external(format!(
-                    "{}: {}.{key} is on the module table but not recorded (add it with static_fn or static_const)",
+                    "{}: {}.{key} is on the module table but not recorded (hand its `#[lua_fn]` to `static_of`, or mark where a constant is set with `#[lua(\"T\", constant, on(m, \"Type\"))]`)",
                     self.name, ud.type_name
                 )));
             }

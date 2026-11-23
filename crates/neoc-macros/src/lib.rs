@@ -33,7 +33,7 @@
 //! | Word | Says | Where |
 //! | --- | --- | --- |
 //! | `"T"` or `returns = EXPR` | what a script gets: a return, a field's or a constant's type. The first is a literal, the second any expression that gives a `&str` (`returns = RESULT`, `returns = &format!(...)`) | everywhere but a registration, which reads the return itself |
-//! | `name = "..."` | the name a script calls it by | a function, a member said above a statement that hides it |
+//! | `name = "..."` | the name a script calls it by | a function, a member (it must be said for one added out of sight, and replaces the name one is added under) |
 //! | `types(binding = EXPR)` | the type of the parameter bound as `binding` in Rust | anything with parameters |
 //! | `names(binding = "...")` | the name a script knows that parameter under | anything with parameters |
 //! | `takes("a: T", name = EXPR)` | the whole parameter list: each entry is `"name: type"`, or a name with an expression that gives its type; `takes()` is no parameters | anything with parameters |
@@ -270,6 +270,12 @@ impl Said {
             if !input.is_empty() {
                 input.parse::<Token![,]>()?;
             }
+        }
+        if let (true, Some((_, span))) = (self.skip, self.words.iter().find(|(w, _)| w != "skip")) {
+            return Err(syn::Error::new(
+                *span,
+                "this is said of a member `skip` leaves out",
+            ));
         }
         Ok(())
     }
@@ -932,7 +938,7 @@ fn lua_members_impl(mut function: ItemFn) -> syn::Result<Tokens> {
 /// It reads the statements at the top of the function as `lua_userdata` reads those of `add_methods`, and
 /// writes `<name>_members(spec)` beside it: hand that to the module (`m.userdata("Matcher", make_members)`).
 ///
-/// - A statement that is a call with a closure in it is a member when the name of what is called has
+/// - A statement that is a call is a member when the name of what is called has
 ///   `function`, `method` or `field` in it (and not `meta`), and that word is its kind: name the helper that
 ///   adds a function to the table accordingly (`matcher_function(lua, &t, "to_be", |...| ...)`).
 /// - The member's name is the first string literal among the call's arguments.
@@ -1233,6 +1239,10 @@ fn lua_module_impl(mut function: ItemFn) -> syn::Result<Tokens> {
 /// - `m.set("name", <a function made from a closure>)?`: the function is recorded after it, with the return
 ///   `#[lua("...")]` says;
 /// - `m.set("name", <a value>)?` under `#[lua("type", constant)]`: a constant of that type.
+///   `on(m, "Type")` beside it says the value is set on the sub-table of the type `Type` of the module `m`
+///   (`#[lua("Duration", constant, on(m, "Duration"))] dur.set("ZERO", ...)?`).
+///
+/// A bare `#[lua]` is enough for a registration given a function by its path, which says everything itself.
 ///
 /// The parameters are the closure's after `lua`, read as `lua_fn` reads them (`types(...)`, `names(...)`,
 /// `takes(...)`), and the doc is the `///` lines above the statement.
@@ -1296,6 +1306,16 @@ mod tests {
         );
         let text = out.map_or_default(|t| t.to_string());
         assert!(text.contains("< Result < f64 , String > as"), "{text}");
+    }
+
+    #[test]
+    fn a_member_left_out_says_nothing_else() {
+        let read = |input: syn::parse::ParseStream| crate::Said::default().read(input);
+        let said = syn::parse::Parser::parse2(read, quote!(skip, "number"));
+        refuses(
+            said.map(|()| proc_macro2::TokenStream::new()),
+            "`skip` leaves out",
+        );
     }
 
     #[test]
