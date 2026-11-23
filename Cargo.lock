@@ -3499,8 +3499,10 @@ name = "neoc-vm2"
 version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
+ "blake3",
  "futures",
  "hex",
+ "md-5",
  "mlua",
  "mlua-ir",
  "mlua-ir-gen",
@@ -3508,11 +3510,15 @@ dependencies = [
  "parking_lot 0.13.0",
  "serde",
  "serde_json",
+ "sha1 0.11.0",
+ "sha2 0.11.1",
+ "sha3",
  "strsim",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
  "tracing-core",
+ "xxhash-rust",
 ]
 
 [[package]]
