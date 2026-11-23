@@ -1,7 +1,7 @@
 -- lib:archive on neoc-vm and neoc-vm2: what both must answer the same. The functions were reshaped into archive
 -- objects (archive.vm2.luau), so `api` below is the only place that knows which VM it is on; what an archive holds,
--- what is extracted and what is refused are compared. A zip entry's timestamp is the time it was made and is left
--- out.
+-- what is extracted and what is refused are compared. An entry's timestamp is the time it (or its file on disk) was
+-- made, which differs between the two VMs' runs across a second boundary, so it is left out for tar and zip alike.
 local archive = require("lib:archive") :: any
 local fs = require("std:fs")
 local tempfile = require("lib:tempfile")
@@ -112,7 +112,7 @@ for _, compression in { "none", "gzip", "zstd" } do
 	}, { compression = compression }))
 	out["tar_" .. compression] = {
 		#bytes,
-		rows(assert(tar.list(bytes)), true),
+		rows(assert(tar.list(bytes)), false),
 		tar.read(bytes, "app/main.lua"),
 		tar.read(bytes, "blob.bin") == "\0\1\2\254\255\127\128",
 		fails(tar.read(bytes, "nope")),
@@ -120,12 +120,12 @@ for _, compression in { "none", "gzip", "zstd" } do
 end
 
 -- a directory is every file under it; strip_prefix shortens names
-out.tar_directory = rows(assert(tar.list((assert(tar.create({ { path = root .. "/sub", archive_path = "pkg" } }))))), true)
+out.tar_directory = rows(assert(tar.list((assert(tar.create({ { path = root .. "/sub", archive_path = "pkg" } }))))), false)
 out.tar_strip = rows(
 	assert(tar.list((assert(tar.create({ { path = root .. "/main.lua", archive_path = "src/main.lua" } }, { strip_prefix = "src/" }))))),
 	true
 )
-out.tar_no_entries = rows(assert(tar.list((assert(tar.create({}))))), true)
+out.tar_no_entries = rows(assert(tar.list((assert(tar.create({}))))), false)
 
 -- tar to a file: compressed as its extension says
 for _, name in { "bundle.tar", "bundle.tar.gz", "bundle.tgz", "bundle.tar.zst" } do
@@ -138,7 +138,7 @@ for _, name in { "bundle.tar", "bundle.tar.gz", "bundle.tgz", "bundle.tar.zst" }
 	out["file_" .. name] = {
 		written,
 		#assert(fs.read(path)),
-		rows(assert(tar.list_file(path)), true),
+		rows(assert(tar.list_file(path)), false),
 		tar.extract_file(path, to),
 		fs.read(to .. "/main.lua"),
 		fs.read(to .. "/Cargo.toml"),
