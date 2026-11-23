@@ -2,6 +2,7 @@
 //! its `pub mod` line here is what compiles and links it.
 
 pub mod base64;
+pub mod cache;
 pub mod chrono;
 pub mod crypto;
 pub mod csv;

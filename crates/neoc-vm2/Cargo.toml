@@ -75,6 +75,8 @@ tempfile = "3"
 globset = "0.4"
 # `lib:chrono`: civil dates, IANA zones, RFC 3339 and strftime (the default features bundle the tzdb on Windows).
 jiff = "1.0"
+# `lib:cache`: the bounded least-recently-used map.
+lru = "0.19"
 
 # `std:process` kills a process's whole group.
 [target.'cfg(unix)'.dependencies]
