@@ -4,7 +4,7 @@ local hash = require("lib:hash")
 local h = hash.Hasher.new("sha3_512")
 assert(h.algorithm == "sha3_512")
 assert(tostring(h:update("a")) == "Hasher(sha3_512)")
-assert(h:update("b"):update("c"):digest() == hash.hash("sha3_512", "aabc"))
+assert(h:update("b"):update("c"):digest() == hash.hash("sha3_512", "abc"))
 
 local ok, refused = pcall(hash.hash, "md4", "x")
 assert(not ok and tostring(refused):find("lib:hash.hash: argument #1 'algorithm'", 1, true))
