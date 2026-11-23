@@ -344,6 +344,12 @@ mod tests {
         assert_eq!(filters["label"], vec!["a=1", "b"]);
         assert!(read::<Filtered>(&lua, "{ filters = { status = 1 } }").is_err());
         assert!(read::<Filtered>(&lua, "{ filters = 'running' }").is_err());
+        // a table of names is not a list of values: read as one it would be no filter at all
+        assert!(
+            read::<Filtered>(&lua, "{ filters = { label = { ['app=web'] = true } } }").is_err()
+        );
+        assert!(read::<ExecOptions>(&lua, "{ env = { A = '1' } }").is_err());
+        assert!(read::<ExecOptions>(&lua, "{ env = {} }").is_ok());
     }
 
     #[test]

@@ -109,7 +109,8 @@ struct Watch {
     recursive: Option<bool>,
 }
 
-/// An option table that may be left out. It is read after the path, so a refused path is what the call says first.
+/// An option table that may be left out. What it refuses is said after the path was checked, so a refused path
+/// is what the call returns first; a value that is no table is raised before either.
 type Opts<T> = Checked<Option<Strict<T>>>;
 
 /// The options a call was given, or none.

@@ -1604,6 +1604,7 @@ fn method_of(
     method: &ImplItemFn,
     words: MethodWords,
     prefix: &str,
+    type_name: &str,
 ) -> syn::Result<(Tokens, Tokens)> {
     let facade = facade();
     let target = format!("lua::lib::{prefix}");
@@ -1657,7 +1658,9 @@ fn method_of(
             return ::std::result::Result::Err(::mlua::Error::runtime(::std::format!("{}: {}", #op, refused)))
         }
     };
-    let places = 1..=idents.len();
+    // mlua counts a method's arguments from the receiver, and names the method with its type
+    let places = 2..=idents.len() + 1;
+    let raised_to = format!("{type_name}.{name}");
     let read = quote! {
         let mut __args = __args.into_iter();
         #(let #idents = match <#types as #facade::args::Argument>::read(
@@ -1666,7 +1669,7 @@ fn method_of(
         )
         // a value of the wrong type is raised as mlua raises it: with the argument's place and the method
         .map_err(|e| ::mlua::Error::BadArgument {
-            to: ::std::option::Option::Some(::std::string::String::from(#name)),
+            to: ::std::option::Option::Some(::std::string::String::from(#raised_to)),
             pos: #places,
             name: ::std::option::Option::None,
             cause: ::std::sync::Arc::new(e),
@@ -1774,7 +1777,7 @@ fn lua_methods_impl(mut block: ItemImpl, named: &Named) -> syn::Result<Tokens> {
         if words.skip {
             continue;
         }
-        let (add, note) = method_of(method, words, &prefix)?;
+        let (add, note) = method_of(method, words, &prefix, &type_name.value())?;
         adds.push(add);
         notes.push(note);
     }

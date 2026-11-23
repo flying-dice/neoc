@@ -7,7 +7,7 @@
 
 use mlua::Value;
 
-use crate::lua::facade::args::{Field, Refused};
+use crate::lua::facade::args::{Field, Refused, list_len};
 use crate::lua::facade::{DeclType, List, Map};
 
 /// The most arguments a command takes, and the most environment variables.
@@ -84,8 +84,8 @@ impl Field for Dir {
     }
 }
 
-/// The arguments of a command: a list of at most [`MAX_ITEMS`] strings. A key that is not one of the list's is
-/// not read.
+/// The arguments of a command: a list of at most [`MAX_ITEMS`] strings. A key beside the list's own
+/// (`table.pack` adds `n`) is not read; a table with keys and no list is refused.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Args(pub(crate) Vec<String>);
 
@@ -101,7 +101,9 @@ impl Field for Args {
         let Value::Table(list) = value else {
             return Err(Refused::option(key, expected));
         };
-        let len = list.raw_len();
+        let Some(len) = list_len(&list) else {
+            return Err(Refused::option(key, expected));
+        };
         if len > MAX_ITEMS {
             return Err(too_many(key));
         }
@@ -218,6 +220,8 @@ mod tests {
         let args = |source| read::<Args>(&lua, "args", source).unwrap_err();
         assert!(args("'-c'").contains("\"args\""));
         assert!(args("{ 1 }").contains("\"args\""));
+        assert!(args("{ path = '/tmp/x' }").contains("\"args\""));
+        assert!(args("{ 'a', nil, 'c' }").contains("\"args\""));
         let many = format!("table.create({}, '')", MAX_ITEMS + 1);
         assert!(args(&many).contains("more than"));
 

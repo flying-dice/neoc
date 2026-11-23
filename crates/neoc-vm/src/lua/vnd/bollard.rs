@@ -98,7 +98,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 }
 
 /// Declares the `vnd:bollard` surface through the facade. `connect`, `error_kind` and `error_message` are plain
-/// functions; the `Client` and `Stream` types keep their own `impl UserData` and are recorded with
+/// functions; `Client`'s methods are its `lua_methods` block and `Stream` keeps its own `impl UserData`; both are recorded with
 /// [`crate::lua::facade::Module::userdata`].
 #[allow(clippy::too_many_lines)] // one record per method, nothing else
 #[neoc_macros::lua_module]

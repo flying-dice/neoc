@@ -253,8 +253,9 @@ impl<T: Field> Field for List<T> {
         let Value::Table(list) = value else {
             return Err(Refused::option(name, &what()));
         };
-        let mut items = Vec::with_capacity(list.raw_len());
-        for index in 1..=list.raw_len() {
+        let len = list_len(&list).ok_or_else(|| Refused::option(name, &what()))?;
+        let mut items = Vec::with_capacity(len.min(1024));
+        for index in 1..=len {
             let item = list
                 .raw_get::<Value>(index)
                 .map_err(|_| Refused::option(name, &what()))?;
@@ -286,6 +287,17 @@ impl<V: Field> Field for HashMap<String, V> {
 impl<V: DeclType> DeclType for HashMap<String, V> {
     fn decl_type() -> String {
         Map::<String, V>::decl_type()
+    }
+}
+
+/// How long the list in `table` is, or `None` for a table that is no list: one with entries and none of them in
+/// order from 1 (`{ app = "web" }`), which read as a list would be an empty one. A list may hold other keys
+/// beside its own (`table.pack` adds `n`); they are not read.
+#[must_use]
+pub fn list_len(table: &Table) -> Option<usize> {
+    match table.raw_len() {
+        0 if table.pairs::<Value, Value>().next().is_some() => None,
+        len => Some(len),
     }
 }
 
