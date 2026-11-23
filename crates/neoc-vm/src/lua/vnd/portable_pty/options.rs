@@ -9,6 +9,7 @@ use serde_json::Value as Json;
 
 use super::error::PtyError;
 use crate::lua::command_options::{self, Refused, env, name, named, strings, wrong};
+use crate::lua::facade::{List, Map, Shape};
 
 /// The size of a terminal the crate opens when none is given: `portable_pty::PtySize::default()`.
 pub(super) const DEFAULT_ROWS: u16 = 24;
@@ -18,7 +19,16 @@ pub(super) const DEFAULT_COLS: u16 = 80;
 /// size every platform can be asked for.
 pub(super) const MAX_SIZE: u16 = 32_767;
 
-const ALLOWED: [&str; 6] = ["program", "args", "cwd", "env", "rows", "cols"];
+/// The table `spawn_command` takes: [`command`] reads it, and refuses what is not a key of it.
+#[neoc_macros::lua_record(shape)]
+pub(super) struct Spawn {
+    program: Option<String>,
+    args: Option<List<String>>,
+    cwd: Option<String>,
+    env: Option<Map<String, String>>,
+    rows: Option<u16>,
+    cols: Option<u16>,
+}
 
 /// The command of one `spawn_command`, as plain data.
 #[derive(Debug, PartialEq, Eq)]
@@ -48,7 +58,7 @@ pub(super) fn command(value: Option<&Value>, op: &str) -> mlua::Result<Result<Co
 }
 
 fn read(json: Json) -> Result<Command, PtyError> {
-    let fields = named(json, &ALLOWED)?;
+    let fields = named(json, Spawn::KEYS)?;
     let program = name(&fields, "program", "the name or the path of a program")?;
     let args = strings(&fields, "args")?;
     if program.is_none() && !args.is_empty() {

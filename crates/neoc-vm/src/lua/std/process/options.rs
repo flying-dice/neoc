@@ -2,21 +2,30 @@
 //! [`crate::lua::command_options`]).
 
 use mlua::Value;
-use serde_json::{Map, Value as Json};
+use serde_json::{Map as Fields, Value as Json};
 
 use super::error::ProcessError;
 use crate::lua::command_options::{self, Refused, env, name, named, strings, wrong};
+use crate::lua::facade::{DeclType, List, Map, Shape};
 
-const ALLOWED: [&str; 8] = [
-    "program",
-    "args",
-    "cwd",
-    "env",
-    "clear_env",
-    "stdin",
-    "stdout",
-    "stderr",
-];
+/// The table `spawn` takes: [`command`] reads it, and refuses what is not a key of it.
+#[neoc_macros::lua_record(shape)]
+pub(super) struct Spawn {
+    program: String,
+    args: Option<List<String>>,
+    cwd: Option<String>,
+    env: Option<Map<String, String>>,
+    clear_env: Option<bool>,
+    stdin: Option<Stream>,
+    stdout: Option<Stream>,
+    stderr: Option<Stream>,
+}
+
+impl DeclType for Stream {
+    fn decl_type() -> String {
+        r#""piped" | "null" | "inherit""#.to_owned()
+    }
+}
 
 /// What one of the process's three standard streams is (`std::process::Stdio`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,7 +85,7 @@ pub(super) fn command(
 }
 
 fn read(json: Json) -> Result<Command, ProcessError> {
-    let fields = named(json, &ALLOWED)?;
+    let fields = named(json, Spawn::KEYS)?;
     let program_words = "the name or the path of a program";
     let Some(program) = name(&fields, "program", program_words)? else {
         return Err(wrong("program", program_words).into());
@@ -93,7 +102,7 @@ fn read(json: Json) -> Result<Command, ProcessError> {
     })
 }
 
-fn flag(fields: &Map<String, Json>, key: &str) -> Result<bool, Refused> {
+fn flag(fields: &Fields<String, Json>, key: &str) -> Result<bool, Refused> {
     match fields.get(key) {
         None | Some(Json::Null) => Ok(false),
         Some(Json::Bool(flag)) => Ok(*flag),
@@ -102,7 +111,7 @@ fn flag(fields: &Map<String, Json>, key: &str) -> Result<bool, Refused> {
 }
 
 /// The stream under `key`: a pipe unless the script says otherwise.
-fn stream(fields: &Map<String, Json>, key: &str) -> Result<Stream, Refused> {
+fn stream(fields: &Fields<String, Json>, key: &str) -> Result<Stream, Refused> {
     match fields.get(key) {
         None | Some(Json::Null) => Ok(Stream::Piped),
         Some(Json::String(name)) => Stream::parse(name).ok_or_else(|| wrong(key, Stream::NAMES)),

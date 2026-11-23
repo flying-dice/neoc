@@ -68,7 +68,7 @@ use tokio::sync::OnceCell;
 use tracing::Instrument;
 
 use crate::lua::error_text;
-use crate::lua::facade::{Bytes, DeclType, Module, typed};
+use crate::lua::facade::{Bytes, DeclType, Module, Shape, decl, typed};
 use crate::lua::lifecycle::{Life, Role, async_method};
 use crate::lua::sandbox::{Fallible, from_err, ok};
 
@@ -93,7 +93,94 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(declare(lua)?.into_table())
 }
 
-const FILTERS: &str = "filters: { [string]: any }?";
+/// The option tables of the calls: each is read by [`read_opts`], which refuses what is not a key of it.
+mod shapes {
+    use mlua::Value;
+
+    use crate::lua::facade::{List, Map};
+
+    /// Docker's filters: a list of values, or one, under each name.
+    type Filters = Option<Map<String, Value>>;
+
+    #[neoc_macros::lua_record(shape)]
+    pub(super) struct ListContainers {
+        all: Option<bool>,
+        limit: Option<i64>,
+        size: Option<bool>,
+        filters: Filters,
+    }
+
+    #[neoc_macros::lua_record(shape)]
+    pub(super) struct Stop {
+        timeout: Option<i64>,
+        signal: Option<String>,
+    }
+
+    #[neoc_macros::lua_record(shape)]
+    pub(super) struct Kill {
+        signal: Option<String>,
+    }
+
+    #[neoc_macros::lua_record(shape)]
+    pub(super) struct RemoveContainer {
+        force: Option<bool>,
+        volumes: Option<bool>,
+    }
+
+    #[neoc_macros::lua_record(shape)]
+    pub(super) struct Logs {
+        follow: Option<bool>,
+        stdout: Option<bool>,
+        stderr: Option<bool>,
+        tail: Option<i64>,
+        since: Option<i64>,
+        until: Option<i64>,
+        timestamps: Option<bool>,
+    }
+
+    #[neoc_macros::lua_record(shape)]
+    pub(super) struct Exec {
+        env: Option<List<String>>,
+        user: Option<String>,
+        working_dir: Option<String>,
+        privileged: Option<bool>,
+    }
+
+    #[neoc_macros::lua_record(shape)]
+    pub(super) struct ListImages {
+        all: Option<bool>,
+        digests: Option<bool>,
+        filters: Filters,
+    }
+
+    #[neoc_macros::lua_record(shape)]
+    pub(super) struct Pull {
+        platform: Option<String>,
+    }
+
+    #[neoc_macros::lua_record(shape)]
+    pub(super) struct RemoveImage {
+        force: Option<bool>,
+        noprune: Option<bool>,
+    }
+
+    #[neoc_macros::lua_record(shape)]
+    pub(super) struct Filtered {
+        filters: Filters,
+    }
+
+    #[neoc_macros::lua_record(shape)]
+    pub(super) struct Force {
+        force: Option<bool>,
+    }
+
+    #[neoc_macros::lua_record(shape)]
+    pub(super) struct Events {
+        since: Option<i64>,
+        until: Option<i64>,
+        filters: Filters,
+    }
+}
 const BODY: &str = "{ [string]: any }";
 
 /// Declares the `vnd:bollard` surface through the facade. `connect`, `error_kind` and `error_message` are plain
@@ -475,11 +562,11 @@ impl UserData for Client {
         });
 
         /// The containers, as Docker's list of summaries (`Id`, `Names`, `Image`, `State`, `Status`, `Labels`, `Ports`, ...). Only running ones unless `all`; `limit` is the most recently created ones; `size` adds `SizeRw` and `SizeRootFs`; `filters` are Docker's (`{ label = { "com.docker.compose.project=blog" }, status = "running" }`).
-        #[lua(name = "list_containers", takes(opts = format!("{{ all: bool?, limit: number?, size: bool?, {FILTERS} }}?")))]
+        #[lua(name = "list_containers", takes(opts = decl::<Option<shapes::ListContainers>>()))]
         call(
             methods,
             "bollard.list_containers",
-            only_opts(&["all", "limit", "size", "filters"]),
+            only_opts(shapes::ListContainers::KEYS),
             |docker, opts| async move {
                 let options = query::ListContainersOptions {
                     all: opts.bool("all")?.unwrap_or(false),
@@ -557,12 +644,12 @@ impl UserData for Client {
         /// Stop a container: Docker sends `signal` (default the image's stop signal, usually `SIGTERM`), waits `timeout` seconds (default 10) and then kills it. Stopping a stopped one succeeds.
         #[lua(
             name = "stop_container",
-            takes("name: string", "opts: { timeout: number?, signal: string? }?")
+            takes("name: string", opts = decl::<Option<shapes::Stop>>())
         )]
         call(
             methods,
             "bollard.stop_container",
-            named_with(CONTAINER, &["timeout", "signal"]),
+            named_with(CONTAINER, shapes::Stop::KEYS),
             |docker, (name, opts)| async move {
                 let options = query::StopContainerOptions {
                     signal: signal(&opts)?,
@@ -575,12 +662,12 @@ impl UserData for Client {
         /// Stop a container as `stop_container` does and start it again.
         #[lua(
             name = "restart_container",
-            takes("name: string", "opts: { timeout: number?, signal: string? }?")
+            takes("name: string", opts = decl::<Option<shapes::Stop>>())
         )]
         call(
             methods,
             "bollard.restart_container",
-            named_with(CONTAINER, &["timeout", "signal"]),
+            named_with(CONTAINER, shapes::Stop::KEYS),
             |docker, (name, opts)| async move {
                 let options = query::RestartContainerOptions {
                     signal: signal(&opts)?,
@@ -593,12 +680,12 @@ impl UserData for Client {
         /// Send a signal to a running container (default `SIGKILL`; `SIGHUP` to make a server reload). A container that is not running is `conflict`.
         #[lua(
             name = "kill_container",
-            takes("name: string", "opts: { signal: string? }?")
+            takes("name: string", opts = decl::<Option<shapes::Kill>>())
         )]
         call(
             methods,
             "bollard.kill_container",
-            named_with(CONTAINER, &["signal"]),
+            named_with(CONTAINER, shapes::Kill::KEYS),
             |docker, (name, opts)| async move {
                 let options = query::KillContainerOptions {
                     signal: signal(&opts)?.unwrap_or_else(|| "SIGKILL".to_owned()),
@@ -632,12 +719,12 @@ impl UserData for Client {
         /// Remove a container. A running one is `conflict` unless `force` (which kills it first); `volumes` removes its anonymous volumes with it.
         #[lua(
             name = "remove_container",
-            takes("name: string", "opts: { force: bool?, volumes: bool? }?")
+            takes("name: string", opts = decl::<Option<shapes::RemoveContainer>>())
         )]
         call(
             methods,
             "bollard.remove_container",
-            named_with(CONTAINER, &["force", "volumes"]),
+            named_with(CONTAINER, shapes::RemoveContainer::KEYS),
             |docker, (name, opts)| async move {
                 let options = query::RemoveContainerOptions {
                     force: opts.bool("force")?.unwrap_or(false),
@@ -653,23 +740,14 @@ impl UserData for Client {
             name = "logs",
             takes(
                 "name: string",
-                "opts: { follow: bool?, stdout: bool?, stderr: bool?, tail: number?, since: number?, until: number?, timestamps: bool? }?"
+                opts = decl::<Option<shapes::Logs>>()
             )
         )]
         stream_call(
             methods,
             "bollard.logs",
             |op, (name, opts): (String, Option<Value>)| {
-                let allowed = [
-                    "follow",
-                    "stdout",
-                    "stderr",
-                    "tail",
-                    "since",
-                    "until",
-                    "timestamps",
-                ];
-                let opts = match read_opts(op, opts, &allowed)? {
+                let opts = match read_opts(op, opts, shapes::Logs::KEYS)? {
                     Ok(opts) => opts,
                     Err(e) => return Ok(Err(e)),
                 };
@@ -702,15 +780,14 @@ impl UserData for Client {
             takes(
                 "name: string",
                 "cmd: { string }",
-                "opts: { env: { string }?, user: string?, working_dir: string?, privileged: bool? }?"
+                opts = decl::<Option<shapes::Exec>>()
             )
         )]
         call(
             methods,
             "bollard.exec",
             |op, (name, cmd, opts): (String, Value, Option<Value>)| {
-                let opts = match read_opts(op, opts, &["env", "user", "working_dir", "privileged"])?
-                {
+                let opts = match read_opts(op, opts, shapes::Exec::KEYS)? {
                     Ok(opts) => opts,
                     Err(e) => return Ok(Err(e)),
                 };
@@ -725,11 +802,11 @@ impl UserData for Client {
         );
 
         /// The images on the host, as Docker's list of summaries (`Id`, `RepoTags`, `Size`, `Created`, `Containers`, ...). `all` includes intermediate layers.
-        #[lua(name = "list_images", takes(opts = format!("{{ all: bool?, digests: bool?, {FILTERS} }}?")))]
+        #[lua(name = "list_images", takes(opts = decl::<Option<shapes::ListImages>>()))]
         call(
             methods,
             "bollard.list_images",
-            only_opts(&["all", "digests", "filters"]),
+            only_opts(shapes::ListImages::KEYS),
             |docker, opts| async move {
                 let options = query::ListImagesOptions {
                     all: opts.bool("all")?.unwrap_or(false),
@@ -743,13 +820,13 @@ impl UserData for Client {
         /// Pull an image from its registry: a `Stream` of Docker's progress tables (`status`, `id`, `progressDetail = { current, total }`), which ends when the pull is over. `nginx` pulls `nginx:latest`, never every tag. The pull runs as the stream is read and stops if the stream is closed; a pull that fails (no such image, no network) is the error of a `next()`.
         #[lua(
             name = "pull_image",
-            takes("image: string", "opts: { platform: string? }?")
+            takes("image: string", opts = decl::<Option<shapes::Pull>>())
         )]
         stream_call(
             methods,
             "bollard.pull_image",
             |op, (image, opts): (String, Option<Value>)| {
-                let opts = match read_opts(op, opts, &["platform"])? {
+                let opts = match read_opts(op, opts, shapes::Pull::KEYS)? {
                     Ok(opts) => opts,
                     Err(e) => return Ok(Err(e)),
                 };
@@ -772,13 +849,13 @@ impl UserData for Client {
         /// Remove an image, by reference or id: Docker's list of what was untagged and deleted. An image a container uses is `conflict` unless `force`; `noprune` keeps its untagged parents.
         #[lua(
             name = "remove_image",
-            takes("image: string", "opts: { force: bool?, noprune: bool? }?")
+            takes("image: string", opts = decl::<Option<shapes::RemoveImage>>())
         )]
         call(
             methods,
             "bollard.remove_image",
             |op, (image, opts): (String, Option<Value>)| {
-                let opts = match read_opts(op, opts, &["force", "noprune"])? {
+                let opts = match read_opts(op, opts, shapes::RemoveImage::KEYS)? {
                     Ok(opts) => opts,
                     Err(e) => return Ok(Err(e)),
                 };
@@ -795,11 +872,11 @@ impl UserData for Client {
         );
 
         /// The volumes: Docker's `{ Volumes = { ... }, Warnings }` (each volume `Name`, `Driver`, `Mountpoint`, `Labels`, ...).
-        #[lua(name = "list_volumes", takes(opts = format!("{{ {FILTERS} }}?")))]
+        #[lua(name = "list_volumes", takes(opts = decl::<Option<shapes::Filtered>>()))]
         call(
             methods,
             "bollard.list_volumes",
-            only_opts(&["filters"]),
+            only_opts(shapes::Filtered::KEYS),
             |docker, opts| async move {
                 let options = query::ListVolumesOptions {
                     filters: opts.filters()?,
@@ -821,12 +898,12 @@ impl UserData for Client {
         /// Remove a volume. One a container uses is `conflict`.
         #[lua(
             name = "remove_volume",
-            takes("name: string", "opts: { force: bool? }?")
+            takes("name: string", opts = decl::<Option<shapes::Force>>())
         )]
         call(
             methods,
             "bollard.remove_volume",
-            named_with(VOLUME, &["force"]),
+            named_with(VOLUME, shapes::Force::KEYS),
             |docker, (name, opts)| async move {
                 let options = query::RemoveVolumeOptions {
                     force: opts.bool("force")?.unwrap_or(false),
@@ -837,11 +914,11 @@ impl UserData for Client {
         );
 
         /// The networks, as Docker's list (`Id`, `Name`, `Driver`, `Scope`, `Labels`, ...).
-        #[lua(name = "list_networks", takes(opts = format!("{{ {FILTERS} }}?")))]
+        #[lua(name = "list_networks", takes(opts = decl::<Option<shapes::Filtered>>()))]
         call(
             methods,
             "bollard.list_networks",
-            only_opts(&["filters"]),
+            only_opts(shapes::Filtered::KEYS),
             |docker, opts| async move {
                 let options = query::ListNetworksOptions {
                     filters: opts.filters()?,
@@ -873,12 +950,12 @@ impl UserData for Client {
         );
 
         /// What happens on the daemon from now on, as a `Stream` of Docker's event tables (`Type = "container"`, `Action = "start"`, `Actor = { ID, Attributes }`, `time`, ...). `since` (a Unix time) replays earlier events first, `until` ends the stream at that time, `filters` are Docker's (`{ type = "container", event = { "start", "die" } }`). Without `until` the stream stays open until it is closed.
-        #[lua(name = "events", takes(opts = format!("{{ since: number?, until: number?, {FILTERS} }}?")))]
+        #[lua(name = "events", takes(opts = decl::<Option<shapes::Events>>()))]
         stream_call(
             methods,
             "bollard.events",
             |op, opts: Option<Value>| {
-                let opts = match read_opts(op, opts, &["since", "until", "filters"])? {
+                let opts = match read_opts(op, opts, shapes::Events::KEYS)? {
                     Ok(opts) => opts,
                     Err(e) => return Ok(Err(e)),
                 };

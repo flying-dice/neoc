@@ -69,7 +69,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use mlua::{IntoLua, Lua, Table, UserData, UserDataMethods, Value};
 
 use crate::lua::error_text;
-use crate::lua::facade::{DeclType, Module};
+use crate::lua::facade::{DeclType, Declared, Module, Shape};
 use crate::lua::std::io::{ReaderHandle, WriterHandle};
 use crate::lua::std::osstr;
 
@@ -80,11 +80,31 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(declare(lua)?.into_table())
 }
 
-/// What an option table may say, per function.
-const MISSING_OK: &[&str] = &["missing_ok"];
-const WALK_OPTIONS: &[&str] = &["max_depth"];
-const PERMISSION_OPTIONS: &[&str] = &["mode", "readonly"];
-const WATCH_OPTIONS: &[&str] = &["recursive"];
+/// What an option table may say, per function. Each is read by [`read_options`], which refuses what is not
+/// a key of it.
+#[neoc_macros::lua_record(shape)]
+struct Removal {
+    missing_ok: Option<bool>,
+}
+
+#[neoc_macros::lua_record(shape)]
+struct Walk {
+    max_depth: Option<u64>,
+}
+
+#[neoc_macros::lua_record(shape)]
+struct Permissions {
+    mode: Option<u64>,
+    readonly: Option<bool>,
+}
+
+#[neoc_macros::lua_record(shape)]
+struct Watch {
+    recursive: Option<bool>,
+}
+
+/// An option table as it was passed, declared as the shape `T`.
+type Opts<T> = Declared<Option<T>, Option<Table>>;
 
 /// What every call that waits on the blocking pool says about it, in place of a pointer to these module notes, which
 /// an editor's hover does not show.
@@ -148,26 +168,29 @@ fn declare_files(m: &mut Module<'_>) -> mlua::Result<()> {
         ops::metadata(&path_of(&path)?, false).map(MetadataHandle)
     })?;
     /// Change the permissions of `path` (through a symlink). Give exactly one of `mode`, the Unix permission bits (`0o755` is `493`, at most `4095`; `unsupported` on Windows), or `readonly`. `readonly = true` clears every write bit on Unix and sets the read-only attribute on Windows; `readonly = false` gives the owner (not group or others) write access on Unix. Mirrors `std::fs::set_permissions`.
-    #[lua(types(opts = "{ mode: number?, readonly: bool? }"))]
-    m.try_func("set_permissions", |_, (path, opts): (Path1, Table)| {
-        let path = path_of(&path)?;
-        let options = read_options(Some(&opts), PERMISSION_OPTIONS)?;
-        let mode = options.count("mode")?;
-        let readonly = options.flag("readonly")?;
-        let change = match (mode, readonly) {
-            (Some(mode), None) => {
-                Permission::Mode(u32::try_from(mode).map_err(|_| too_big("mode", mode))?)
-            }
-            (None, Some(on)) => Permission::Readonly(on),
-            _ => {
-                return Err(FsError::new(
-                    Kind::InvalidInput,
-                    "give exactly one of mode and readonly",
-                ));
-            }
-        };
-        ops::set_permissions(&path, change).map(|()| true)
-    })?;
+    #[lua]
+    m.try_func(
+        "set_permissions",
+        |_, (path, opts): (Path1, Declared<Permissions, Table>)| {
+            let path = path_of(&path)?;
+            let options = read_options(Some(&opts.0), Permissions::KEYS)?;
+            let mode = options.count("mode")?;
+            let readonly = options.flag("readonly")?;
+            let change = match (mode, readonly) {
+                (Some(mode), None) => {
+                    Permission::Mode(u32::try_from(mode).map_err(|_| too_big("mode", mode))?)
+                }
+                (None, Some(on)) => Permission::Readonly(on),
+                _ => {
+                    return Err(FsError::new(
+                        Kind::InvalidInput,
+                        "give exactly one of mode and readonly",
+                    ));
+                }
+            };
+            ops::set_permissions(&path, change).map(|()| true)
+        },
+    )?;
     Ok(())
 }
 
@@ -201,10 +224,10 @@ fn declare_directories(m: &mut Module<'_>) -> mlua::Result<()> {
         }
     })?;
     /// List everything under the directory `path`, recursively: an array of `DirEntry` (the directory itself is not in it), depth first, the children of each directory sorted by name, so the order is the same on every platform. A symlink inside is listed and never entered, so a link loop cannot make a walk run for ever; `path` itself may be a symlink to a directory and is followed. Option `{ max_depth }` (a non-negative whole number) limits how far down it goes: `1` is `read_dir`. It is `not_found` for a missing path and `not_a_directory` for a file; an unreadable subdirectory fails the whole walk with `permission_denied` and its path. At most 1048576 entries (`too_large` past that: walk the subdirectories separately).
-    #[lua(types(opts = "{ max_depth: number? }?"), doc_with = waits)]
-    m.try_async_func("walk", |_, (path, opts): (Path1, Option<Table>)| {
+    #[lua(doc_with = waits)]
+    m.try_async_func("walk", |_, (path, opts): (Path1, Opts<Walk>)| {
         let parsed = path_of(&path).and_then(|path| {
-            let options = read_options(opts.as_ref(), WALK_OPTIONS)?;
+            let options = read_options(opts.0.as_ref(), Walk::KEYS)?;
             let depth = options.count("max_depth")?;
             Ok((
                 path,
@@ -258,30 +281,30 @@ fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
         }
     })?;
     /// Remove a file or a symlink (the link, never its target; on Windows also a link to a directory). A directory is `is_directory`. Option `{ missing_ok }`: a missing path is then not an error and the result is `false` (otherwise `not_found`); a removal returns `true`. Mirrors `std::fs::remove_file`; on Windows a read-only file or one that is open may be `permission_denied`.
-    #[lua(types(opts = "{ missing_ok: bool? }?"))]
-    m.try_func("remove_file", |_, (path, opts): (Path1, Option<Table>)| {
+    #[lua]
+    m.try_func("remove_file", |_, (path, opts): (Path1, Opts<Removal>)| {
         let path = path_of(&path)?;
-        let missing_ok = read_options(opts.as_ref(), MISSING_OK)?
+        let missing_ok = read_options(opts.0.as_ref(), Removal::KEYS)?
             .flag("missing_ok")?
             .unwrap_or(false);
         ops::remove_file(&path, missing_ok)
     })?;
     /// Remove an empty directory (`not_empty` otherwise; `remove_dir_all` removes a tree). A symlink to a directory is `not_a_directory` (use `remove_file`), also when written `link/`; so is a file. Option `{ missing_ok }` as for `remove_file`. Like `std::fs::remove_dir`, but a symlink is `not_a_directory` on every platform.
-    #[lua(types(opts = "{ missing_ok: bool? }?"))]
-    m.try_func("remove_dir", |_, (path, opts): (Path1, Option<Table>)| {
+    #[lua]
+    m.try_func("remove_dir", |_, (path, opts): (Path1, Opts<Removal>)| {
         let path = path_of(&path)?;
-        let missing_ok = read_options(opts.as_ref(), MISSING_OK)?
+        let missing_ok = read_options(opts.0.as_ref(), Removal::KEYS)?
             .flag("missing_ok")?
             .unwrap_or(false);
         ops::remove_dir(&path, missing_ok)
     })?;
     /// Remove a directory and everything under it, children before parents. Symlinks inside are deleted without being followed, so nothing outside the tree is touched. It refuses `/`, `.`, `..` and the empty path (`invalid_input`, a guard against a typo, not a security boundary) and a symlink to a directory (`not_a_directory`, also when written `link/`: use `remove_file`). Option `{ missing_ok }` as for `remove_file`. A failure part way (a permission, an open file on Windows) leaves what was not yet removed. Delegates to `std::fs::remove_dir_all` (which is safe against a directory swapped for a symlink while it runs, and not limited by path length) after refusing a symlink root and the paths above; once started it cannot be interrupted.
-    #[lua(types(opts = "{ missing_ok: bool? }?"), doc_with = waits)]
+    #[lua(doc_with = waits)]
     m.try_async_func(
         "remove_dir_all",
-        |_, (path, opts): (Path1, Option<Table>)| {
+        |_, (path, opts): (Path1, Opts<Removal>)| {
             let parsed = path_of(&path).and_then(|path| {
-                let missing_ok = read_options(opts.as_ref(), MISSING_OK)?
+                let missing_ok = read_options(opts.0.as_ref(), Removal::KEYS)?
                     .flag("missing_ok")?
                     .unwrap_or(false);
                 Ok((path, missing_ok))
@@ -326,10 +349,10 @@ fn declare_links_and_errors(m: &mut Module<'_>) -> mlua::Result<()> {
 #[neoc_macros::lua_module]
 fn declare_watch(m: &mut Module<'_>) -> mlua::Result<()> {
     /// Watch the directory `path` for changes and return a `Watcher`; read them with `watcher:receive()`. Option `{ recursive }` watches the whole tree under it (default: only its direct children). It is `not_found` for a missing path and `not_a_directory` for a file. The watch is the operating system's (inotify, FSEvents, ReadDirectoryChangesW), so the directory is not rescanned. Each event is `{ kind, path }`, `path` under the `path` given here. Kinds: `create`, `modify`, `remove`, `rename` (one event per path, the old name and the new name each; they are not paired, and macOS cannot tell which is which: check with `exists`), and `overflow`: changes were lost (more than 4096 waiting, or the system's own buffer overflowed), so rescan; its `path` is the watched directory. Events are not deduplicated or debounced, and one change can be reported as several (FSEvents coalesces: a new file may also show as `modify`). On macOS a change made just before the watch started may also be reported. The watch stops at `watcher:close()`, when the handle is collected, and when the engine shuts down. Starting a recursive watch on Linux adds one watch per directory of the tree.
-    #[lua(types(opts = "{ recursive: bool? }?"), doc_with = waits)]
-    m.try_async_func("watch", |lua, (path, opts): (Path1, Option<Table>)| {
+    #[lua(doc_with = waits)]
+    m.try_async_func("watch", |lua, (path, opts): (Path1, Opts<Watch>)| {
         let parsed = path_of(&path).and_then(|path| {
-            let recursive = read_options(opts.as_ref(), WATCH_OPTIONS)?
+            let recursive = read_options(opts.0.as_ref(), Watch::KEYS)?
                 .flag("recursive")?
                 .unwrap_or(false);
             Ok((path, recursive))

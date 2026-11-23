@@ -50,7 +50,7 @@ use mlua::{Lua, Table, UserData, UserDataMethods, Value};
 
 use crate::lua::byte_stream::{self, WAITS};
 use crate::lua::error_text;
-use crate::lua::facade::Module;
+use crate::lua::facade::{Declared, Module};
 use crate::lua::lifecycle::{Life, Role, async_function, async_method};
 use crate::lua::sandbox::{Fallible, from_err, ok};
 
@@ -103,12 +103,15 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 /// The handle `spawn_command` returns.
 pub struct Pty(Arc<Terminal>);
 
-#[neoc_macros::lua_fn(returns = "Result<Pty, string>", types(opts = "{ program: string?, args: { string }?, cwd: string?, env: { [string]: string }?, rows: number?, cols: number? }?"), doc = format!(
+#[neoc_macros::lua_fn(doc = format!(
             "Open a pseudo-terminal of `rows` by `cols` (default 24 by 80; each 1 to 32767) and start a command on it: a `Pty`. `program` is a path, or a name looked up in `PATH`, and `args` its arguments (at most 1024). Without `program` it is the user's default shell, started as a login shell: `$SHELL`, else the one of the password database, else `/bin/sh`; on Windows `%ComSpec%`. `cwd` is the directory it starts in (default: the user's home directory, not the engine's working directory). `env` is added to the environment the engine's process has, replacing a variable of the same name; nothing is taken away, and `TERM` is whatever that environment says unless `env` sets it (`xterm-256color` for a terminal that draws like xterm). The process runs as the engine's user and can do what that user can: a script given this module is trusted with the machine. Errors are `portable_pty.<function>: <kind>: <message>` (see `error_kind`): `invalid_input` for an option that is unknown or of the wrong shape, `spawn` when the command could not be started (no such program, not executable, `cwd` is not a directory, or the system refused the terminal or the process). The terminal is closed, and the process ended, by `close()`, when the handle is collected, and when the engine shuts down. {WAITS}"
         ))]
-async fn spawn_command(lua: Lua, opts: Option<Value>) -> mlua::Result<Fallible<Pty>> {
+async fn spawn_command(
+    lua: Lua,
+    opts: Declared<Option<options::Spawn>, Option<Value>>,
+) -> mlua::Result<Fallible<Pty>> {
     // read before the first await: a script table can run script code when it is read
-    let command = options::command(opts.as_ref(), SPAWN_COMMAND)?;
+    let command = options::command(opts.0.as_ref(), SPAWN_COMMAND)?;
     drop(opts);
     let command = match command {
         Ok(command) => command,

@@ -47,7 +47,7 @@ use std::sync::Arc;
 use mlua::{Lua, Table, UserData, UserDataMethods, Value};
 
 use crate::lua::byte_stream::{self, Output, WAITS};
-use crate::lua::facade::{Module, typed};
+use crate::lua::facade::{Declared, Module, typed};
 use crate::lua::lifecycle::{Life, Role, async_function, async_method};
 use crate::lua::sandbox::{Fallible, from_err, ok};
 
@@ -68,8 +68,6 @@ const READ_STDERR: &str = "process.read_stderr";
 const WRITE: &str = "process.write";
 const CLOSE_STDIN: &str = "process.close_stdin";
 const WAIT: &str = "process.wait";
-
-const STREAM: &str = r#"("piped" | "null" | "inherit")?"#;
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(declare(lua)?.into_table())
@@ -99,14 +97,15 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 /// The handle `spawn` returns.
 pub struct Child(Arc<Process>);
 
-#[neoc_macros::lua_fn(returns = "Result<Child, string>", types(opts = format!(
-                "{{ program: string, args: {{ string }}?, cwd: string?, env: {{ [string]: string }}?, clear_env: boolean?, stdin: {STREAM}, stdout: {STREAM}, stderr: {STREAM} }}"
-            )), doc = format!(
+#[neoc_macros::lua_fn(doc = format!(
             "Start a program: a `Child`. `program` is a path, or a name looked up in `PATH`, and `args` its arguments (at most 1024); no shell reads them, so nothing in them is expanded or split. `cwd` is the directory it starts in (default: the engine's working directory). `env` is added to the environment the engine's process has, replacing a variable of the same name; with `clear_env` the process starts from an empty environment and has only what `env` gives it. Each of `stdin`, `stdout` and `stderr` is `\"piped\"` (the default: a pipe between the process and this handle), `\"null\"` (nothing: the process reads the end of its input, and what it writes is thrown away) or `\"inherit\"` (the engine's own stream). A piped output that nobody reads stops the process once 256 KiB of it wait: read it, or do not pipe it. The process runs as the engine's user and can do what that user can: a script given this module is trusted with the machine. Errors are `process.<function>: <kind>: <message>` (see `error_kind`): `invalid_input` for an option that is missing, unknown or of the wrong shape, `spawn` when the program could not be started (no such program, not executable, `cwd` is not a directory, or the system refused the process), `closed` when the engine has shut down. The process is killed, and its streams let go of, by `close()`, when the handle is collected, and when the engine shuts down. On Unix it is started in a process group of its own, which a kill reaches as a whole. That group is not the foreground of the engine's terminal: a Ctrl-C typed there does not reach the process (a script that should end on one kills its processes itself), and a process that reads an inherited `stdin` which is that terminal is stopped by it. {WAITS}"
         ))]
-async fn spawn(lua: Lua, opts: Option<Value>) -> mlua::Result<Fallible<Child>> {
+async fn spawn(
+    lua: Lua,
+    opts: Declared<options::Spawn, Option<Value>>,
+) -> mlua::Result<Fallible<Child>> {
     // read before the first await: a script table can run script code when it is read
-    let command = options::command(opts.as_ref(), SPAWN)?;
+    let command = options::command(opts.0.as_ref(), SPAWN)?;
     drop(opts);
     let command = match command {
         Ok(command) => command,

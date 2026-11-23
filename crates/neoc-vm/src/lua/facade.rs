@@ -90,14 +90,20 @@ macro_rules! decl_type {
 }
 
 decl_type!("string" => mlua::LuaString, String, &str, Vec<u8>);
-decl_type!("number" => f64, f32, i64, i32, u64, u32, usize, isize);
+decl_type!("number" => f64, f32, i64, i32, u64, u32, u16, usize, isize);
 decl_type!("bool" => bool);
 decl_type!("()" => ());
 decl_type!("LuaValue" => mlua::Value, mlua::MultiValue, mlua::AnyUserData, mlua::Table, mlua::Function);
 
 impl<T: DeclType> DeclType for Option<T> {
     fn decl_type() -> String {
-        format!("{}?", T::decl_type())
+        let inner = T::decl_type();
+        // `?` binds to the last of a union's alternatives: the whole union is what may be absent
+        if inner.contains(" | ") && !(inner.starts_with('(') && inner.ends_with(')')) {
+            format!("({inner})?")
+        } else {
+            format!("{inner}?")
+        }
     }
 }
 
@@ -148,6 +154,45 @@ impl<T: IntoLua> IntoLua for List<T> {
 impl<T: DeclType> DeclType for List<T> {
     fn decl_type() -> String {
         format!("{{ {} }}", T::decl_type())
+    }
+}
+
+/// What `T` is declared as: for a parameter list said by hand whose entry has a Rust type
+/// (`takes("name: string", opts = decl::<Option<Stop>>())`).
+#[must_use]
+pub fn decl<T: DeclType>() -> String {
+    T::decl_type()
+}
+
+/// A table with named keys: what `#[neoc_macros::lua_record]` says of a struct.
+pub trait Shape {
+    /// The keys of the table, in the order of the struct's fields.
+    const KEYS: &'static [&'static str];
+}
+
+/// A value a function reads by its own rules, declared as the type `T` it is meant to be:
+/// `opts: Declared<Option<Removal>, Option<Table>>` is `opts: { missing_ok: bool? }?` to a script and the
+/// table as it was passed (`opts.0`) to the function, which says what a wrong one is.
+pub struct Declared<T, V = mlua::Value>(pub V, std::marker::PhantomData<fn() -> T>);
+
+impl<T, V: mlua::FromLua> mlua::FromLua for Declared<T, V> {
+    fn from_lua(value: mlua::Value, lua: &Lua) -> mlua::Result<Self> {
+        Ok(Self(V::from_lua(value, lua)?, std::marker::PhantomData))
+    }
+}
+
+impl<T: DeclType, V> DeclType for Declared<T, V> {
+    fn decl_type() -> String {
+        T::decl_type()
+    }
+}
+
+/// A table of `V` under `K`, declared `{ [K]: V }`: for the field of a record's shape.
+pub struct Map<K, V>(std::marker::PhantomData<fn() -> (K, V)>);
+
+impl<K: DeclType, V: DeclType> DeclType for Map<K, V> {
+    fn decl_type() -> String {
+        format!("{{ [{}]: {} }}", K::decl_type(), V::decl_type())
     }
 }
 
