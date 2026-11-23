@@ -2,7 +2,6 @@
 <script lang="ts">
   import type { Container, Details, Logs } from 'app:rpc'
   import StateDot from '../atoms/StateDot.svelte'
-  import ConfirmAlert from '../molecules/ConfirmAlert.svelte'
   import type { Action, Tab } from '../lib/containers.svelte'
   import { imageLabel, isUp, stateLabel, toneOf } from '../lib/format'
 
@@ -117,16 +116,19 @@
     </ui-button>
   </div>
   {#if confirming}
-    <ConfirmAlert
+    <ui-alert
+      open
+      destructive
+      action-label="Remove"
       heading="Remove {container.name}?"
       message={up ? 'It is running: it is stopped and removed. Its named volumes stay.' : 'Its named volumes stay.'}
-      testid="containers-inspector-confirm"
+      data-testid="containers-inspector-confirm"
       oncancel={() => (confirming = false)}
       onconfirm={() => {
         confirming = false
         onact('remove')
       }}
-    />
+    ></ui-alert>
   {/if}
   <div class="tabs">
     <ui-segmented

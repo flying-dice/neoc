@@ -14,3 +14,12 @@
   <ui-text-field hit label="Name" type="email" oninput={(e) => e.data} onchange={() => {}} />
   <ui-banner tone="warning" heading="Low storage" />
 </ui-list>
+<ui-split-view column="detail" oncollapsedchange={(e) => (checked = e.detail.collapsed)}>
+  <div slot="sidebar"></div>
+  <div slot="content"></div>
+  <div>
+    <ui-text-area label="Notes" variant="bare" rows={4} maxlength={200} readonly oninput={(e) => e.data} onchange={() => {}} />
+    <ui-picker hit label="Folder" value="1" options={[{ value: '1', label: 'Notes' }]} onchange={(e) => e.detail.value.toUpperCase()} />
+  </div>
+</ui-split-view>
+<ui-alert open={checked} destructive heading="Delete Work?" message="Its todos go too." action-label="Delete" onconfirm={(e) => e.type} oncancel={() => {}} />

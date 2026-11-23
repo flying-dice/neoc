@@ -14,7 +14,7 @@ const part = (page: Page, name: string): Locator => frame(page).getByTestId(`${I
 // the kit's text field holds the real input in its shadow tree
 const search = (page: Page): Locator => part(page, 'search').locator('input')
 const newFolder = (page: Page): Locator => part(page, 'new-folder-input').locator('input')
-const text = (page: Page): Locator => part(page, 'text')
+const text = (page: Page): Locator => part(page, 'text').locator('textarea')
 
 let serial = 0
 const unique = (what: string): string => `${what} ${Date.now().toString(36)}-${++serial}`
@@ -129,7 +129,7 @@ test.describe('Notes journeys', () => {
     await row(page, title).click()
     await part(page, 'purge').click()
     await expect(part(page, 'confirm-purge')).toContainText('It cannot be brought back.')
-    await part(page, 'confirm-purge-delete').click()
+    await part(page, 'confirm-purge-confirm').click()
     await expect(row(page, title)).toHaveCount(0)
     await show(page, 'all', 'All Notes')
     await expect(row(page, title)).toHaveCount(0)
@@ -152,13 +152,13 @@ test.describe('Notes journeys', () => {
     await newFolder(page).fill('')
     await show(page, 'all', 'All Notes')
     await row(page, title).click()
-    await part(page, 'move').selectOption({ label: folder })
+    await part(page, 'move').locator('select').selectOption({ label: folder })
     await expect(folderRow(page, folder)).toHaveAttribute('aria-label', `${folder}, 1`)
     await folderRow(page, folder).click()
     await expect(row(page, title)).toBeVisible()
     await part(page, 'delete-folder').click()
     await expect(part(page, 'confirm-folder')).toContainText('Its notes go to Recently Deleted.')
-    await part(page, 'confirm-folder-delete').click()
+    await part(page, 'confirm-folder-confirm').click()
     await expect(folderRow(page, folder)).toHaveCount(0)
     await expect(part(page, 'title')).toHaveText('All Notes')
     await expect(row(page, title)).toHaveCount(0)
@@ -201,7 +201,7 @@ test.describe('Notes journeys', () => {
     expect(Math.round(win.width), 'the minimum width of the contract').toBe(420)
     expect(Math.round(win.height), 'the minimum height of the contract').toBe(420)
     await expectNoOverflow(page.getByTestId(`window-${ID}-content`))
-    // below 760 wide the folders, the notes and the note are one column each
+    // under 700 wide (the kit's split view) the folders, the notes and the note are one column each
     await expect(part(page, 'title')).toBeVisible()
     await expect(part(page, 'all')).toBeHidden()
     await part(page, 'new').click()
