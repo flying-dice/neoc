@@ -1,0 +1,27 @@
+[package]
+name = "neoc-agui"
+description = "The AG-UI protocol: the types of the official Python SDK (`ag_ui.core`), the events of a run read from its SSE stream, and JSON Patch for its deltas. No I/O: the caller brings the bytes."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+bytes = "1"
+futures-util = { workspace = true }
+# The SSE line protocol (fields, comments, multi-line data, CR/LF/CRLF, a split UTF-8 sequence): the parser
+# reqwest-eventsource is built on.
+eventsource-stream = "0.2"
+# RFC 6902, for STATE_DELTA and ACTIVITY_DELTA.
+json-patch = { version = "5", default-features = false }
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+[lints]
+workspace = true

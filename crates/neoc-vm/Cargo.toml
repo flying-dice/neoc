@@ -229,6 +229,10 @@ unicode-segmentation = "1"
 unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
 caseless = "0.2"
 
+# The AG-UI protocol behind `lib:agui`: its types, the events of a run read from an SSE stream, JSON Patch. Our own
+# crate (`crates/neoc-agui`), with no I/O: the request is `vnd:hyper`'s client.
+neoc-agui = { path = "../neoc-agui" }
+
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 # a self-signed certificate for the `vnd:hyper` TLS tests

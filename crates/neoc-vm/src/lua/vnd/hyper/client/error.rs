@@ -11,7 +11,7 @@ use std::io;
 /// What went wrong, stable across platforms. The names are the contract (`hyper.error_kind`); the mapping from
 /// `URLSession`'s error codes is in each variant's doc.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Kind {
+pub(crate) enum Kind {
     /// An option, a header or the body was refused before anything was sent (`NSURLErrorBadURL`'s sibling for
     /// everything that is not the URL).
     InvalidInput,
@@ -52,7 +52,7 @@ impl Kind {
     ];
 
     /// The stable name a script sees.
-    pub(super) fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Kind::InvalidInput => "invalid_input",
             Kind::InvalidUrl => "invalid_url",
@@ -67,20 +67,20 @@ impl Kind {
         }
     }
 
-    fn parse(name: &str) -> Option<Kind> {
+    pub(crate) fn parse(name: &str) -> Option<Kind> {
         Kind::ALL.into_iter().find(|k| k.as_str() == name)
     }
 }
 
 /// A failed request: its [`Kind`] and a message that says what was wrong.
 #[derive(Debug)]
-pub(super) struct HyperError {
+pub(crate) struct HyperError {
     kind: Kind,
     message: String,
 }
 
 impl HyperError {
-    pub(super) fn new(kind: Kind, message: impl Into<String>) -> Self {
+    pub(crate) fn new(kind: Kind, message: impl Into<String>) -> Self {
         Self {
             kind,
             message: message.into(),

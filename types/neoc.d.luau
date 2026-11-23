@@ -389,6 +389,176 @@ export type std_workers = {
 	shutdown_signal: () -> std_workers_ShutdownSignal,
 }
 
+-- ===== lib:agui =====
+
+export type lib_agui_Run = {
+	--- Wait for the agent's next event: a table with the event's `type` and its fields under their Python SDK names. `(nil, nil)` when the stream has ended: the agent closed it, which after a `RUN_FINISHED` or a `RUN_ERROR` is the end of the run and before one is a run cut short. `(nil, err)` (`agui.next: <kind>: <message>`) when the stream failed (the connection was lost, nothing arrived for `idle_timeout`, an event is not an AG-UI event or is over `max_event`); nothing follows an error. An event of a type the module does not know is skipped. Data inside an event (`snapshot`, `content`, `raw_event`, `value`) is as the agent sent it, with JSON `null` as `nil`.
+	next: (self: lib_agui_Run) -> (lib_agui_Event?, string?),
+	--- Stop the run: the connection closes, which is how an agent is told to stop, and `next()` returns `(nil, nil)` from then on. Closing a run that has ended does nothing.
+	close: (self: lib_agui_Run) -> (),
+}
+
+export type lib_agui_RunAgentInput = {
+	--- The conversation the run belongs to.
+	thread_id: string,
+	--- This run's own id.
+	run_id: string,
+	--- The run this one continues or branches from.
+	parent_run_id: string?,
+	--- The whole conversation so far. Activity messages are not sent back to an agent: leave them out.
+	messages: { lib_agui_Message }?,
+	--- The tools the caller offers: the agent asks for one with a tool call, the run ends, and the caller answers with a `tool` message in the next run.
+	tools: { lib_agui_Tool }?,
+	--- Things the agent should know, each a description and a value.
+	context: { lib_agui_Context }?,
+	--- The state the agent starts from.
+	state: any,
+	--- Anything else for the agent, passed through as it is.
+	forwarded_props: any,
+	--- The answers to the interrupts the last run ended with; `status` is `resolved` or `cancelled`.
+	resume: { { interrupt_id: string, status: string, payload: any, metadata: any } }?,
+}
+
+export type lib_agui_Message = {
+	--- The message's id.
+	id: string,
+	--- `developer`, `system`, `assistant`, `user`, `tool`, `activity` or `reasoning`: which of the other fields the message has.
+	role: string,
+	--- The text. A `user` or `tool` message may have a list of parts instead (`{ type = "text", text }`, `{ type = "image" | "audio" | "video" | "document", source = { type = "data" | "url" | "file", value, mime_type } }`); an `activity` message has a table.
+	content: any,
+	--- Who wrote it, where the role has more than one author.
+	name: string?,
+	--- `assistant`: the tools the agent asked for.
+	tool_calls: { lib_agui_ToolCall }?,
+	--- `tool`: the call this is the result of.
+	tool_call_id: string?,
+	--- `tool`: what went wrong, when the tool failed.
+	error: string?,
+	--- `activity`: what kind of activity `content` describes (`a2ui-surface`, ...).
+	activity_type: string?,
+	--- `reasoning` and `tool`: the provider's opaque form, to be sent back as it is.
+	encrypted_value: string?,
+	--- The sender's own annotations.
+	metadata: any,
+}
+
+export type lib_agui_ToolCall = {
+	--- The call's id: a `tool` message answers it by this.
+	id: string,
+	--- Always `function`.
+	type: string,
+	--- The tool asked for, and its arguments as JSON text.
+	["function"]: { name: string, arguments: string },
+	--- The provider's opaque form, to be sent back as it is.
+	encrypted_value: string?,
+}
+
+export type lib_agui_Tool = {
+	--- The tool's name.
+	name: string,
+	--- What it does, for the model.
+	description: string,
+	--- The JSON Schema of its arguments.
+	parameters: any,
+}
+
+export type lib_agui_Context = {
+	--- What the value is.
+	description: string,
+	--- The value.
+	value: string,
+}
+
+export type lib_agui_Event = {
+	--- Which event this is (one of `EVENT_TYPES`), and so which of the other fields it has.
+	type: string,
+	--- When the event was made, in milliseconds since the epoch.
+	timestamp: number?,
+	--- The event of the agent's own framework this one was made from.
+	raw_event: any,
+	--- The sender's own annotations.
+	metadata: any,
+	--- The subagent run the event belongs to (every `SUBAGENT_*` event, and any other event a subagent made).
+	subagent_run_id: string?,
+	--- `RUN_STARTED`, `RUN_FINISHED`.
+	thread_id: string?,
+	--- `RUN_STARTED`, `RUN_FINISHED`.
+	run_id: string?,
+	--- `RUN_STARTED`.
+	parent_run_id: string?,
+	--- `RUN_STARTED`: the input as the agent read it.
+	input: lib_agui_RunAgentInput?,
+	--- `RUN_FINISHED`, `SUBAGENT_FINISHED`: what the run produced.
+	result: any,
+	--- `RUN_FINISHED`, `RUN_ERROR`: the tokens each model call used.
+	usage: { { provider: string?, model: string?, input_tokens: number?, output_tokens: number?, total_tokens: number?, reasoning_tokens: number?, cached_input_tokens: number?, cache_write_input_tokens: number? } }?,
+	--- `RUN_ERROR`, `SUBAGENT_ERROR`: what went wrong.
+	message: string?,
+	--- `RUN_ERROR`, `SUBAGENT_ERROR`: the agent's own code for it.
+	code: string?,
+	--- `STEP_STARTED`, `STEP_FINISHED`.
+	step_name: string?,
+	--- The message a `TEXT_MESSAGE_*`, `REASONING_*`, `ACTIVITY_*` or `TOOL_CALL_RESULT` event is about. A `*_CHUNK` event has it on the first chunk of a message.
+	message_id: string?,
+	--- `TEXT_MESSAGE_START` (`assistant` unless it says otherwise), `REASONING_MESSAGE_START`, `TOOL_CALL_RESULT`, `TEXT_MESSAGE_CHUNK`.
+	role: string?,
+	--- The next piece of text (`TEXT_MESSAGE_CONTENT`, `REASONING_MESSAGE_CONTENT`, the `*_CHUNK` events, `THINKING_TEXT_MESSAGE_CONTENT`) or of a tool call's JSON arguments (`TOOL_CALL_ARGS`); for `STATE_DELTA`, the JSON Patch to the state.
+	delta: any,
+	--- `TOOL_CALL_START`, `TOOL_CALL_ARGS`, `TOOL_CALL_END`, `TOOL_CALL_RESULT`, `TOOL_CALL_CHUNK`.
+	tool_call_id: string?,
+	--- `TOOL_CALL_START`, `TOOL_CALL_CHUNK`: the tool asked for.
+	tool_call_name: string?,
+	--- `TOOL_CALL_START`, `TOOL_CALL_CHUNK`, `SUBAGENT_STARTED`: the assistant message the call belongs to.
+	parent_message_id: string?,
+	--- `TOOL_CALL_RESULT`: the result, as text. `ACTIVITY_SNAPSHOT`: the activity's content, a table.
+	content: any,
+	--- `STATE_SNAPSHOT`: the whole state.
+	snapshot: any,
+	--- `MESSAGES_SNAPSHOT`: the whole conversation as the agent has it.
+	messages: { lib_agui_Message }?,
+	--- `ACTIVITY_SNAPSHOT`, `ACTIVITY_DELTA`: what kind of activity it is.
+	activity_type: string?,
+	--- `ACTIVITY_SNAPSHOT`: `false` leaves an activity message that exists already as it is.
+	replace: boolean?,
+	--- `ACTIVITY_DELTA`: the JSON Patch to the activity's content.
+	patch: { any }?,
+	--- `RAW`: an event of the agent's own framework.
+	event: any,
+	--- `RAW`: where it came from.
+	source: string?,
+	--- `CUSTOM`: the event's name. `SUBAGENT_STARTED`: the subagent's. `TEXT_MESSAGE_START`: the author's.
+	name: string?,
+	--- `CUSTOM`: the event's payload.
+	value: any,
+	--- `REASONING_ENCRYPTED_VALUE`: `message` or `tool-call`, what `entity_id` names.
+	subtype: string?,
+	--- `REASONING_ENCRYPTED_VALUE`.
+	entity_id: string?,
+	--- `REASONING_ENCRYPTED_VALUE`: the provider's opaque form, to be sent back as it is.
+	encrypted_value: string?,
+	--- `SUBAGENT_STARTED`.
+	description: string?,
+	--- `SUBAGENT_STARTED`: the subagent that started this one.
+	parent_subagent_run_id: string?,
+	--- `SUBAGENT_STARTED`: the tool call that started it.
+	parent_tool_call_id: string?,
+	--- `SUBAGENT_FINISHED`: how it ended.
+	outcome: any,
+	--- `THINKING_START`.
+	title: string?,
+}
+
+export type lib_agui = {
+	--- Every event type the module reads, in the Python SDK's order (`TEXT_MESSAGE_START`, ...), the deprecated `THINKING_*` last. An event of any other type is skipped by `Run:next()`.
+	EVENT_TYPES: { string },
+	--- Start a run: POST `input` to the agent's AG-UI endpoint at `url` (`http` or `https`) and read its answer as a stream of events. Returns when the endpoint has answered: a `Run` whose `next()` gives the events, or `(nil, err)` with `err` = `agui.run: <kind>: <message>` (see `error_kind`). `input` is the `RunAgentInput`: `thread_id` and `run_id` are required, and `messages`, `tools`, `context`, `state`, `forwarded_props`, `parent_run_id` and `resume` are sent when given; a field the protocol does not have is ignored, and one of the wrong type is `invalid_input`. `headers` are added to the request (`Authorization` for an endpoint that wants a token); `Content-Type: application/json` and `Accept: text/event-stream` are sent unless given. `ca_pem`, `connect_timeout` (default 10) and `timeout` (the whole run; default none) are `vnd:hyper`'s. `idle_timeout` (seconds without data; default 300, since an agent that is thinking sends nothing). `max_event` (bytes, default 8388608) bounds one event, not the run. Redirects are not followed: a 3xx, like any answer that is not 2xx, is a `status` error that quotes the start of the body. An answer that is not `text/event-stream` is `protocol`. The connection belongs to the script: it closes when the run is closed or collected and when the script stops.
+	run: (opts: { url: string, input: lib_agui_RunAgentInput, headers: { [string]: string }?, ca_pem: string?, connect_timeout: number?, idle_timeout: number?, timeout: number?, max_event: number? }) -> (lib_agui_Run?, string?),
+	--- Apply a JSON Patch (RFC 6902: what `STATE_DELTA.delta` and `ACTIVITY_DELTA.patch` are) to `document` and return the new document; `document` itself is not changed. All of the patch applies or none of it: `(nil, err)` with kind `invalid_input` when `patch` is not a list of operations or an operation cannot be applied (a path that is not there, a failed `test`). A table with no entries is an empty object; JSON `null` is `nil`, so a patch cannot store one in an array.
+	apply_patch: (document: any, patch: { any }) -> (any, string?),
+	--- The stable kind inside an error string this module returned, or `nil` when the string is not one of its own (or is `nil`, so `agui.error_kind(err)` takes the `err` of any call). Such a string is `agui.<function>: <kind>: <message>`. Kinds: those of `vnd:hyper` (`invalid_input`, `invalid_url`, `connect`, `tls`, `timed_out`, `too_large` for an event over `max_event`, `connection_lost`, `bad_response`, `other`), `status` (the endpoint answered, and not with 2xx) and `protocol` (the answer is not an event stream, or an event in it is not an AG-UI event: a field missing or of the wrong type). The message is for a log and may change.
+	error_kind: (err: string?) -> string?,
+}
+
 -- ===== lib:archive =====
 
 export type lib_archive = {
@@ -1712,6 +1882,7 @@ declare require:
 	& ((path: "std:thread") -> std_thread)
 	& ((path: "std:time") -> std_time)
 	& ((path: "std:workers") -> std_workers)
+	& ((path: "lib:agui") -> lib_agui)
 	& ((path: "lib:archive") -> lib_archive)
 	& ((path: "lib:args") -> lib_args)
 	& ((path: "lib:base64") -> lib_base64)

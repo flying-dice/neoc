@@ -30,7 +30,10 @@ mod tls;
 mod tests;
 
 pub(super) use error::kind_of;
-use options::Prepared;
+// what a module that reads a response as a stream needs (`lib:agui`): the same options, connection and errors
+pub(crate) use error::{HyperError, Kind};
+pub(crate) use exchange::Streamed;
+pub(crate) use options::Prepared;
 
 // Each entry point reads its options table in the synchronous part of the call, before it builds the future that
 // performs the request. A script table can run script code when it is read (a `__index`), which can call the same

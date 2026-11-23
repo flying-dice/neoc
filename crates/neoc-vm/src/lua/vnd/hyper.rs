@@ -256,7 +256,7 @@ fn client_doc(what: &str) -> String {
     )
 }
 
-mod client;
+pub(crate) mod client;
 mod server;
 
 use client::{get, post, request};

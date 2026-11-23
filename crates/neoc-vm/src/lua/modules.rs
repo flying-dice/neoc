@@ -101,6 +101,7 @@ const REGISTRY: &[(&str, Build)] = &[
     ("std:time", stdmod::time::module),
     ("std:workers", stdmod::workers::module),
     // lib:* — blessed gap-fillers and our own custom modules.
+    ("lib:agui", lib::agui::module),
     ("lib:archive", lib::archive::module),
     ("lib:args", lib::args::module),
     ("lib:base64", lib::base64::module),
@@ -282,6 +283,7 @@ fn declared(lua: &Lua) -> mlua::Result<Vec<Module<'_>>> {
         stdmod::thread::declare(lua)?,
         stdmod::time::declare(lua)?,
         stdmod::workers::declare(lua)?,
+        lib::agui::declare(lua)?,
         lib::archive::declare(lua)?,
         lib::args::declare(lua)?,
         lib::base64::declare(lua)?,
@@ -1026,6 +1028,7 @@ mod tests {
             "std:thread" => stdmod::thread::module(lua),
             "std:time" => stdmod::time::module(lua),
             "std:workers" => stdmod::workers::module(lua),
+            "lib:agui" => lib::agui::module(lua),
             "lib:archive" => lib::archive::module(lua),
             "lib:args" => lib::args::module(lua),
             "lib:base64" => lib::base64::module(lua),
