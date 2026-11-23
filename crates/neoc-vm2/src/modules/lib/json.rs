@@ -81,7 +81,7 @@ impl Place {
 
 /// `true` when `value` nests more than `limit` containers deep. It stops at the limit, so its own recursion is
 /// bounded whatever it is given.
-fn deeper_than(value: &Value, limit: usize) -> bool {
+pub(crate) fn deeper_than(value: &Value, limit: usize) -> bool {
     let Some(rest) = limit.checked_sub(1) else {
         return matches!(value, Value::Array(_) | Value::Object(_));
     };
