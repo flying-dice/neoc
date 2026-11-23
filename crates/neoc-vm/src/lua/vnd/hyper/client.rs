@@ -13,10 +13,11 @@
 
 use std::future::Future;
 
-use mlua::{Lua, Table};
+use mlua::Lua;
 use tracing::Instrument;
 
-use crate::lua::facade::{Bytes, DeclType, Declared, Map};
+use crate::lua::facade::args::{Checked, Strict};
+use crate::lua::facade::{Bytes, DeclType, Map};
 use crate::lua::lifecycle::Life;
 use crate::lua::sandbox::{Fallible, from_err, ok};
 
@@ -73,27 +74,36 @@ impl DeclType for Headers {
 #[neoc_macros::lua_fn(doc_with = crate::lua::vnd::hyper::client_doc)]
 pub(super) fn get(
     lua: Lua,
-    (url, opts): (String, Declared<Option<GetOptions>, Option<Table>>),
+    (url, opts): (String, Checked<Option<Strict<GetOptions>>>),
 ) -> impl Future<Output = mlua::Result<Fallible<Response>>> + Send + 'static {
-    send(lua, "hyper.get", Prepared::get(url, opts.0.as_ref()))
+    let prepared = opts
+        .take::<error::HyperError>()
+        .and_then(|opts| Prepared::get(url, opts.map(|opts| opts.0)));
+    send(lua, "hyper.get", prepared)
 }
 
 /// Perform an HTTP or HTTPS POST request given `{ url, body?, ... }`; `body` is a string or a buffer.
 #[neoc_macros::lua_fn(doc_with = crate::lua::vnd::hyper::client_doc)]
 pub(super) fn post(
     lua: Lua,
-    opts: Declared<PostOptions, Table>,
+    opts: Checked<Strict<PostOptions>>,
 ) -> impl Future<Output = mlua::Result<Fallible<Response>>> + Send + 'static {
-    send(lua, "hyper.post", Prepared::post(&opts.0))
+    let prepared = opts
+        .take::<error::HyperError>()
+        .and_then(|opts| Prepared::post(&lua, opts.0));
+    send(lua, "hyper.post", prepared)
 }
 
 /// Perform an HTTP or HTTPS request given `{ method, url, body?, ... }`; `body` is a string or a buffer. A standard method in any case is the standard method (`put` is `PUT`); any other is sent as written.
 #[neoc_macros::lua_fn(doc_with = crate::lua::vnd::hyper::client_doc)]
 pub(super) fn request(
     lua: Lua,
-    opts: Declared<RequestOptions, Table>,
+    opts: Checked<Strict<RequestOptions>>,
 ) -> impl Future<Output = mlua::Result<Fallible<Response>>> + Send + 'static {
-    send(lua, "hyper.request", Prepared::request(&opts.0))
+    let prepared = opts
+        .take::<error::HyperError>()
+        .and_then(|opts| Prepared::request(&lua, opts.0));
+    send(lua, "hyper.request", prepared)
 }
 
 /// The future of a prepared request, or the `(nil, err)` of options that could not be read. Holds no script table.

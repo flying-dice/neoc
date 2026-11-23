@@ -158,7 +158,7 @@ describe("hyper", function()
             local resp, err = hyper.get(BASE .. "/headers", { header = { ["x-echo"] = "typo" } })
             expect(resp).toBeNil()
             expect(err).toContain(
-                "hyper.get: invalid_input: unknown option `header` (expected one of: headers, ca_pem, connect_timeout, idle_timeout, timeout, follow_redirects, max_body)"
+                'hyper.get: invalid_input: unknown option "header" (this function takes: headers, ca_pem, connect_timeout, idle_timeout, timeout, follow_redirects, max_body)'
             )
         end)
 
@@ -219,7 +219,7 @@ describe("hyper", function()
         test("an unknown option is an error that names it", function()
             local resp, err = hyper.post({ url = BASE .. "/echo", body = "x", timeuot = 5 })
             expect(resp).toBeNil()
-            expect(err).toContain("hyper.post: invalid_input: unknown option `timeuot` (expected one of: url, body, headers, ca_pem, ")
+            expect(err).toContain('hyper.post: invalid_input: unknown option "timeuot" (this function takes: url, body, headers, ca_pem, ')
         end)
 
         test("no body or an empty one is sent with content-length 0", function()
@@ -297,7 +297,7 @@ describe("hyper", function()
         test("an unknown option is an error that names it", function()
             local resp, err = hyper.request({ method = "GET", url = BASE .. "/headers", hedaers = {} })
             expect(resp).toBeNil()
-            expect(err).toContain("hyper.request: invalid_input: unknown option `hedaers`")
+            expect(err).toContain('hyper.request: invalid_input: unknown option "hedaers"')
         end)
 
         test("a PUT with no body says content-length 0, a DELETE with none sends no length", function()

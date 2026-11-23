@@ -1431,7 +1431,7 @@ async fn a_bad_option_is_an_invalid_input_error_that_names_it() {
                bad("must be a string, got table", {{ headers = {{ Accept = {{}} }} }})
                bad("ca_pem must be a string", {{ ca_pem = 1 }})
                bad("follow_redirects must be", {{ follow_redirects = {{}} }})
-               bad("unknown option `stream_body`", {{ stream_body = true }})
+               bad('unknown option "stream_body"', {{ stream_body = true }})
                bad("option names must be strings", {{ [1] = true }})
                local function post(_, opts) return hyper.post(opts) end
                local function request(_, opts) return hyper.request(opts) end
@@ -1444,7 +1444,7 @@ async fn a_bad_option_is_an_invalid_input_error_that_names_it() {
                bad("method must be a string", {{ url = url, method = 1 }}, request)
                bad("method is not a valid HTTP method name", {{ url = url, method = "GE T" }}, request)
                bad("method is not a valid HTTP method name", {{ url = url, method = "" }}, request)
-               bad("unknown option `method`", {{ url = url, method = "GET" }}, post)
+               bad('unknown option "method"', {{ url = url, method = "GET" }}, post)
                -- a number is a header value as Lua writes it
                local r, e = hyper.get(url, {{ headers = {{ ["x-n"] = 5 }} }})
                assert(r, e)
