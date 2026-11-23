@@ -6,38 +6,40 @@
 //!
 //! - a **reader** for each piped output stream fills a bounded buffer ([`Output`]) and stops at the end of the
 //!   stream (every process that held it is gone), when reading fails, or when the process is closed;
-//! - the **writer** takes one piece of input at a time ([`Job`]) and says how the write went; when its queue is
-//!   dropped it lets go of the pipe, which is the end of the process's input;
+//! - the **writer** takes one piece of input at a time ([`Job`]) and says how the write went; it lets go of the
+//!   pipe, which is the end of the process's input, when it is told to (`close_stdin`), when the process has ended
+//!   and when the process is closed;
 //! - the **child's** task owns the process: it sees it end, and it is the only one that kills it, so a kill can never
 //!   reach another process that was given its id.
 //!
+//! **The process's group.** On Unix the process is started as the leader of a process group of its own, and a kill
+//! is sent to the whole group: a program started through a wrapper (`sh -c`, `npx`) would otherwise live on, and keep
+//! the pipes open, after the wrapper was killed. A process that moved itself to another group is not reached. The
+//! group is no longer the terminal's foreground group, so a Ctrl-C typed at the engine's terminal reaches the
+//! engine and not the process: the engine ends it. On Windows only the process itself is terminated.
+//!
 //! **Closing** ([`Process::close`]: `close()`, the handle being collected, the engine shutting down) never blocks. It
-//! tells the child's task to kill the process, drops the writer's queue and closes the buffers, which ends every
-//! `read` and stops the readers and the writer where they wait. The child's task ends once the process is reaped.
-//! Should the runtime itself go first, the task is dropped with the process in it, and tokio kills a process that
-//! is dropped (`kill_on_drop`).
+//! tells the child's task to kill the process and closes the buffers, which ends every `read` and stops the readers
+//! and the writer where they wait. The child's task ends once the process is reaped. Should the runtime itself go
+//! first, the task is dropped with the process in it, and tokio kills a process that is dropped (`kill_on_drop`):
+//! that last resort reaches the process alone, not its group.
 
-use std::collections::VecDeque;
 use std::future::Future;
 use std::process::{ExitStatus, Stdio};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use parking_lot::Mutex;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin};
-use tokio::sync::{Notify, mpsc, oneshot, watch};
+use tokio::sync::{mpsc, watch};
 
 use super::error::{Kind, ProcessError};
 use super::options::{Command, Stream};
+use crate::lua::byte_stream::{Job, Output, READ_CHUNK, WriteFailed, submit};
 use crate::lua::command_options::existing_dir;
 
-/// The most output of one stream held between the process and the script. Past it the reader waits, the pipe fills,
-/// and the process waits in its write: a script that reads slowly slows the process down instead of filling memory.
-pub(super) const OUTPUT_BUFFER: usize = 256 * 1024;
-
-/// How much a reader asks the operating system for at a time.
-const READ_CHUNK: usize = 16 * 1024;
+/// How the child's task says the process ended: `None` while it runs.
+type Ended = Option<Result<Exit, String>>;
 
 /// How a process ended (`std::process::ExitStatus`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,143 +65,6 @@ impl From<ExitStatus> for Exit {
     }
 }
 
-/// What `read` finds.
-pub(super) enum Taken {
-    Bytes(Vec<u8>),
-    /// Nothing yet: wait again.
-    Nothing,
-    /// The end of the stream, or a closed process.
-    End,
-    Failed(ProcessError),
-}
-
-struct OutputState {
-    bytes: VecDeque<u8>,
-    /// Set once the reader stopped: `Ok` at the end of the stream, `Err` when reading failed (said by one `read`).
-    ended: Option<Result<(), String>>,
-    closed: bool,
-}
-
-/// What the process wrote to one stream and the script has not read yet.
-pub(super) struct Output {
-    state: Mutex<OutputState>,
-    /// Told when there is something for `read`: bytes, the end, or a close.
-    readable: Notify,
-    /// Told when there is something for the reader: room, or a close.
-    writable: Notify,
-}
-
-impl Output {
-    fn new() -> Self {
-        Self {
-            state: Mutex::new(OutputState {
-                bytes: VecDeque::new(),
-                ended: None,
-                closed: false,
-            }),
-            readable: Notify::new(),
-            writable: Notify::new(),
-        }
-    }
-
-    /// Wait until `ready` says something about the state, listening to `told` for changes.
-    async fn settled<T>(&self, told: &Notify, ready: impl Fn(&OutputState) -> Option<T>) -> T {
-        loop {
-            let changed = told.notified();
-            let mut changed = std::pin::pin!(changed);
-            // listen before looking: what changes after the look is heard
-            changed.as_mut().enable();
-            if let Some(found) = ready(&self.state.lock()) {
-                return found;
-            }
-            changed.await;
-        }
-    }
-
-    /// Wait for room for one more chunk. `false` once the process is closed: the reader stops.
-    async fn room(&self) -> bool {
-        self.settled(&self.writable, |state| {
-            if state.closed {
-                Some(false)
-            } else {
-                (state.bytes.len() < OUTPUT_BUFFER).then_some(true)
-            }
-        })
-        .await
-    }
-
-    /// Wait for the close.
-    async fn closed(&self) {
-        self.settled(&self.writable, |state| state.closed.then_some(()))
-            .await;
-    }
-
-    /// Add what the reader read (after [`Output::room`]). Dropped when the process was closed meanwhile.
-    fn push(&self, chunk: &[u8]) {
-        {
-            let mut state = self.state.lock();
-            if state.closed {
-                return;
-            }
-            state.bytes.extend(chunk);
-        }
-        self.readable.notify_waiters();
-    }
-
-    fn finish(&self, end: Result<(), String>) {
-        self.state.lock().ended = Some(end);
-        self.readable.notify_waiters();
-    }
-
-    fn close(&self) {
-        {
-            let mut state = self.state.lock();
-            state.closed = true;
-            state.bytes = VecDeque::new();
-        }
-        self.readable.notify_waiters();
-        self.writable.notify_waiters();
-    }
-
-    /// Wait until [`Output::take`] has something to say. It takes nothing, so a wait that is dropped loses nothing.
-    pub(super) async fn readable(&self) {
-        self.settled(&self.readable, |state| {
-            (state.closed || state.ended.is_some() || !state.bytes.is_empty()).then_some(())
-        })
-        .await;
-    }
-
-    /// At most `max` bytes of what is there.
-    pub(super) fn take(&self, max: usize) -> Taken {
-        let mut state = self.state.lock();
-        if state.closed {
-            return Taken::End;
-        }
-        if !state.bytes.is_empty() {
-            let n = max.min(state.bytes.len());
-            let bytes: Vec<u8> = state.bytes.drain(..n).collect();
-            drop(state);
-            self.writable.notify_waiters();
-            return Taken::Bytes(bytes);
-        }
-        match &mut state.ended {
-            None => Taken::Nothing,
-            Some(Ok(())) => Taken::End,
-            // said once; then it is the end
-            Some(end) => match std::mem::replace(end, Ok(())) {
-                Err(message) => Taken::Failed(ProcessError::new(Kind::Io, message)),
-                Ok(()) => Taken::End,
-            },
-        }
-    }
-}
-
-/// One piece of input for the writer, and where it says how the write went.
-struct Job {
-    data: Vec<u8>,
-    done: oneshot::Sender<Result<(), String>>,
-}
-
 /// The process's input, as the script sees it.
 enum Input {
     /// The writer's queue: one piece at a time, so a second `write` waits for the first.
@@ -213,51 +78,54 @@ enum Input {
 /// The process a `Child` handle holds. Dropping it closes it.
 pub(super) struct Process {
     input: Mutex<Input>,
+    /// Set to tell the writer to let go of the process's input.
+    end_input: watch::Sender<bool>,
     /// `None` when the stream was not `"piped"`.
     stdout: Option<Arc<Output>>,
     stderr: Option<Arc<Output>>,
     /// Set to tell the child's task to kill the process.
     kill: watch::Sender<bool>,
-    exit: watch::Receiver<Option<Result<Exit, String>>>,
+    exit: watch::Receiver<Ended>,
     id: Option<u32>,
+    /// Set by [`Process::close`].
     closed: watch::Sender<bool>,
-    closing: AtomicBool,
 }
 
 impl Process {
     /// Start `command` and the tasks that serve it. It forks (or creates a process on Windows), so call it on the
     /// blocking pool; it must run on the runtime, where the tasks are spawned.
-    pub(super) fn spawn(command: Command) -> Result<Self, ProcessError> {
-        let mut child = builder(&command)?
+    pub(super) fn spawn(command: &Command) -> Result<Self, ProcessError> {
+        let mut child = builder(command)?
             .spawn()
             .map_err(|e| ProcessError::new(Kind::Spawn, e.to_string()))?;
         let id = child.id();
         let (closed, _) = watch::channel(false);
+        let (end_input, input_ended) = watch::channel(false);
+        let (kill, killed) = watch::channel(false);
+        let (exit_tx, exit) = watch::channel(None);
 
         let input = match child.stdin.take() {
             Some(stdin) => {
                 let (input, jobs) = mpsc::channel(1);
-                tokio::spawn(write_input(stdin, jobs, closed.subscribe()));
+                let stop = stopped(closed.subscribe(), exit.clone());
+                tokio::spawn(write_input(stdin, jobs, input_ended, stop));
                 Input::Open(input)
             }
             None => Input::NotPiped,
         };
         let stdout = child.stdout.take().map(read_into_buffer);
         let stderr = child.stderr.take().map(read_into_buffer);
-
-        let (kill, killed) = watch::channel(false);
-        let (exit_tx, exit) = watch::channel(None);
         tokio::spawn(watch_child(child, killed, exit_tx));
 
         Ok(Self {
             input: Mutex::new(input),
+            end_input,
             stdout,
             stderr,
             kill,
             exit,
             id,
             closed,
-            closing: AtomicBool::new(false),
         })
     }
 
@@ -272,7 +140,7 @@ impl Process {
     }
 
     fn is_closed(&self) -> bool {
-        self.closing.load(Ordering::SeqCst)
+        *self.closed.borrow()
     }
 
     /// The process's id while it runs and is open: afterwards the number is the operating system's to give to
@@ -290,48 +158,40 @@ impl Process {
         self.kill.send_replace(true);
     }
 
-    /// Hand `data` to the writer and wait until it is written, or until the process is closed.
+    /// Hand `data` to the writer and wait until it is written, or until the input or the process is closed.
     pub(super) fn write(
         &self,
         data: Vec<u8>,
     ) -> impl Future<Output = Result<(), ProcessError>> + Send + use<> {
         let input = match &*self.input.lock() {
-            Input::Open(input) => Ok(input.clone()),
-            Input::Closed => Err(ProcessError::closed("stdin")),
+            Input::Open(input) => Ok(Some(input.clone())),
+            Input::Closed => Ok(None),
             Input::NotPiped => Err(ProcessError::not_piped("stdin")),
         };
-        let mut closed = self.closed.subscribe();
+        let closed = self.closed.subscribe();
         async move {
             let input = input?;
-            if data.is_empty() {
+            if data.is_empty() && input.is_some() {
                 return Ok(());
             }
-            let (done, written) = oneshot::channel();
-            let write = async {
-                if input.send(Job { data, done }).await.is_err() {
-                    return Err(ProcessError::closed("stdin"));
-                }
-                match written.await {
-                    Ok(Ok(())) => Ok(()),
-                    Ok(Err(message)) => Err(ProcessError::new(Kind::Io, message)),
-                    Err(_) => Err(ProcessError::closed("stdin")),
-                }
-            };
-            tokio::select! {
-                result = write => result,
-                _ = closed.wait_for(|closed| *closed) => Err(ProcessError::closed("stdin")),
-            }
+            submit(input, data, closed)
+                .await
+                .map_err(|failed| match failed {
+                    WriteFailed::Closed => ProcessError::closed("stdin"),
+                    WriteFailed::Io(message) => ProcessError::new(Kind::Io, message),
+                })
         }
     }
 
-    /// Let go of the process's input once what is being written is written: the process reads the end of its
-    /// input. Closing again does nothing.
+    /// Let go of the process's input once the write being made is made: the process reads the end of its input.
+    /// Writes that wait behind that one are refused. Closing again does nothing.
     pub(super) fn close_stdin(&self) -> Result<(), ProcessError> {
         let mut input = self.input.lock();
         if matches!(*input, Input::NotPiped) {
             return Err(ProcessError::not_piped("stdin"));
         }
         *input = Input::Closed;
+        self.end_input.send_replace(true);
         Ok(())
     }
 
@@ -352,7 +212,7 @@ impl Process {
 
     /// Kill the process and let go of its streams. Never blocks; closing again does nothing. See the module docs.
     pub(super) fn close(&self) {
-        if self.closing.swap(true, Ordering::SeqCst) {
+        if self.closed.send_replace(true) {
             return;
         }
         self.kill();
@@ -365,7 +225,6 @@ impl Process {
         for output in [&self.stdout, &self.stderr].into_iter().flatten() {
             output.close();
         }
-        self.closed.send_replace(true);
     }
 }
 
@@ -400,6 +259,9 @@ fn builder(command: &Command) -> Result<tokio::process::Command, ProcessError> {
         .stderr(stdio(command.stderr))
         // the last resort: the child's task was dropped with the runtime before it could kill the process
         .kill_on_drop(true);
+    // the leader of a group of its own, so that a kill reaches what it started (see the module docs)
+    #[cfg(unix)]
+    builder.process_group(0);
     Ok(builder)
 }
 
@@ -408,6 +270,15 @@ fn stdio(stream: Stream) -> Stdio {
         Stream::Piped => Stdio::piped(),
         Stream::Null => Stdio::null(),
         Stream::Inherit => Stdio::inherit(),
+    }
+}
+
+/// Resolves when the process is closed or has ended: when its writer has nothing left to do.
+async fn stopped(mut closed: watch::Receiver<bool>, mut exit: watch::Receiver<Ended>) {
+    // an error is the sender gone, which is the handle or the child's task gone: a stop too
+    tokio::select! {
+        _ = closed.wait_for(|closed| *closed) => {}
+        _ = exit.wait_for(Option::is_some) => {}
     }
 }
 
@@ -440,26 +311,56 @@ async fn read_output(mut source: impl AsyncRead + Unpin, output: Arc<Output>) {
     output.finish(end);
 }
 
-/// The writer's task: one piece of input after the other, until its queue is dropped (`close_stdin`) or the
-/// process is closed. Dropping `stdin` is the end of the process's input.
+/// The writer's task: one piece of input after the other, until it is told to end the input (`close_stdin`) or
+/// `stop` resolves. Dropping `stdin` is the end of the process's input; the jobs still queued are dropped with the
+/// queue, which refuses their writes.
 async fn write_input(
     mut stdin: ChildStdin,
     mut jobs: mpsc::Receiver<Job>,
-    mut closed: watch::Receiver<bool>,
+    mut input_ended: watch::Receiver<bool>,
+    stop: impl Future<Output = ()>,
 ) {
     let write = async {
-        while let Some(job) = jobs.recv().await {
+        loop {
+            let job = tokio::select! {
+                // the end first: a write that waited behind the one being made is refused, not made
+                biased;
+                _ = input_ended.wait_for(|ended| *ended) => break,
+                job = jobs.recv() => job,
+            };
+            let Some(job) = job else { break };
+            // its call was dropped before anything of it was written
+            if job.is_abandoned() {
+                continue;
+            }
             let written = async {
                 stdin.write_all(&job.data).await?;
                 stdin.flush().await
-            };
-            let _ = job.done.send(written.await.map_err(|e| e.to_string()));
+            }
+            .await;
+            job.finish(written);
         }
     };
     tokio::select! {
         () = write => {}
-        _ = closed.wait_for(|closed| *closed) => {}
+        () = stop => {}
     }
+}
+
+/// Kill the process `child`, which has not been reaped, and on Unix its group.
+fn kill(child: &mut Child) {
+    // The id is there until the process is reaped, and only the child's task reaps it: the number is still this
+    // process's, and so its group's. A group that is gone is no error to report.
+    #[cfg(unix)]
+    if let Some(group) = child
+        .id()
+        .and_then(|id| i32::try_from(id).ok())
+        .and_then(rustix::process::Pid::from_raw)
+    {
+        let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+    }
+    // a process that has just ended refuses the kill, and the wait says how it ended
+    let _ = child.start_kill();
 }
 
 /// The child's task: wait for the process to end, kill it when told to (or when the handle is gone), and say how
@@ -467,9 +368,11 @@ async fn write_input(
 async fn watch_child(
     mut child: Child,
     mut killed: watch::Receiver<bool>,
-    exit: watch::Sender<Option<Result<Exit, String>>>,
+    exit: watch::Sender<Ended>,
 ) {
     let ended = tokio::select! {
+        // the end first: a process that has ended is reaped, and there is nothing to kill
+        biased;
         status = child.wait() => Some(status),
         // an error is the handle dropped without a close: a kill too
         _ = killed.wait_for(|killed| *killed) => None,
@@ -477,8 +380,7 @@ async fn watch_child(
     let status = match ended {
         Some(status) => status,
         None => {
-            // a process that has just ended refuses the kill, and the wait says how it ended
-            let _ = child.start_kill();
+            kill(&mut child);
             child.wait().await
         }
     };
@@ -487,67 +389,4 @@ async fn watch_child(
             .map(Exit::from)
             .map_err(|e| format!("the process could not be waited for: {e}")),
     ));
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::Duration;
-
-    #[tokio::test]
-    async fn the_buffer_holds_a_bounded_amount_and_a_close_frees_the_reader() {
-        // a source that never ends: the reader stops by itself once the buffer is full
-        let output = read_into_buffer(tokio::io::repeat(7));
-        let held = |output: &Output| output.state.lock().bytes.len();
-        let settled = || async {
-            let mut last = usize::MAX;
-            loop {
-                tokio::time::sleep(Duration::from_millis(50)).await;
-                let now = held(&output);
-                if now == last {
-                    return now;
-                }
-                last = now;
-            }
-        };
-        let full = settled().await;
-        assert!(
-            (OUTPUT_BUFFER..OUTPUT_BUFFER + READ_CHUNK).contains(&full),
-            "{full} bytes are held"
-        );
-
-        // a read makes room, and the reader fills it again
-        let Taken::Bytes(bytes) = output.take(100_000) else {
-            panic!("there are bytes to take");
-        };
-        assert_eq!(bytes.len(), 100_000);
-        let refilled = settled().await;
-        assert!((OUTPUT_BUFFER..OUTPUT_BUFFER + READ_CHUNK).contains(&refilled));
-
-        output.close();
-        assert!(matches!(output.take(10), Taken::End));
-        // the reader lets go of the buffer: this is the only holder left
-        tokio::time::timeout(Duration::from_secs(5), async {
-            while Arc::strong_count(&output) > 1 {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("the reader stopped");
-    }
-
-    #[test]
-    fn a_read_failure_is_said_once_after_the_bytes_and_then_it_is_the_end() {
-        let output = Output::new();
-        assert!(matches!(output.take(10), Taken::Nothing));
-        output.push(b"abc");
-        output.finish(Err("the pipe broke".to_owned()));
-        assert!(matches!(output.take(2), Taken::Bytes(bytes) if bytes == b"ab"));
-        assert!(matches!(output.take(2), Taken::Bytes(bytes) if bytes == b"c"));
-        let Taken::Failed(e) = output.take(2) else {
-            panic!("the failure follows the bytes");
-        };
-        assert_eq!(e.kind(), Kind::Io);
-        assert!(matches!(output.take(2), Taken::End));
-    }
 }

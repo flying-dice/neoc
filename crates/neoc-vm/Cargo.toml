@@ -229,6 +229,12 @@ unicode-segmentation = "1"
 unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
 caseless = "0.2"
 
+# `std:process` kills the process group of a child on Unix (`kill_process_group`): a safe wrapper over `killpg`, where
+# this crate forbids `unsafe`. Already in the tree on every Unix (through tempfile), so this only names it and turns
+# on its `process` feature.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["process"] }
+
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 # a self-signed certificate for the `vnd:hyper` TLS tests

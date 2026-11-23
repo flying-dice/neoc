@@ -28,9 +28,9 @@
 //! **Waiting.** `spawn`, `read`, `read_stderr`, `write` and `wait` wait without holding the VM: other tasks run
 //! meanwhile, so one script holds many processes at once.
 //!
-//! **Limits.** A read returns at most [`MAX_READ`] bytes and a write takes at most [`MAX_WRITE`]; at most
-//! [`child::OUTPUT_BUFFER`] bytes of each output stream wait for the script, and a process that writes more waits
-//! until they are read. So a piped stream nobody reads stops the process once it is full: read it, or do not pipe
+//! **Limits.** A read returns at most [`MAX_READ`](byte_stream::MAX_READ) bytes and a write takes at most
+//! [`MAX_WRITE`](byte_stream::MAX_WRITE); at most [`OUTPUT_BUFFER`](byte_stream::OUTPUT_BUFFER) bytes of each output
+//! stream wait for the script, and a process that writes more waits until they are read. So a piped stream nobody reads stops the process once it is full: read it, or do not pipe
 //! it. Nothing limits how many processes a script starts.
 //!
 //! **What starting a process means.** The process runs as the user the engine runs as: it can do what that user
@@ -38,15 +38,16 @@
 //! the machine.
 //!
 //! **Lifetime.** A process belongs to the script that started it. `close()`, the handle being collected and the
-//! engine shutting down all do the same: the process is killed and its streams are let go of. Only the process
-//! itself is killed, not the processes it started.
+//! engine shutting down all do the same: the process is killed and its streams are let go of. On Unix the kill
+//! reaches the process's whole group, so what it started goes with it (`child`'s docs say how).
 
 use std::sync::Arc;
 
 use mlua::{Lua, Table, UserData, UserDataMethods, Value};
 
+use crate::lua::byte_stream::{self, Output, WAITS};
 use crate::lua::facade::Module;
-use crate::lua::lifecycle::{Life, Role, async_function, async_method, hold, idle};
+use crate::lua::lifecycle::{Life, Role, async_function, async_method};
 use crate::lua::sandbox::{from_err, ok};
 
 mod child;
@@ -56,15 +57,8 @@ mod options;
 #[cfg(test)]
 mod tests;
 
-use child::{Output, Process, Taken};
+use child::Process;
 use error::{Kind, ProcessError};
-
-/// The most bytes one read returns, and how many it returns when it is not told: a size that fits in one message
-/// of most transports once it is encoded.
-const MAX_READ: usize = 64 * 1024;
-
-/// The most bytes one `write` takes: far more than a message, and little enough to copy without a thought.
-const MAX_WRITE: usize = 1024 * 1024;
 
 const SPAWN: &str = "process.spawn";
 const READ: &str = "process.read";
@@ -72,8 +66,6 @@ const READ_STDERR: &str = "process.read_stderr";
 const WRITE: &str = "process.write";
 const CLOSE_STDIN: &str = "process.close_stdin";
 const WAIT: &str = "process.wait";
-
-const WAITS: &str = "It waits like `task.wait`: other tasks run while it does.";
 
 const STREAM: &str = r#"("piped" | "null" | "inherit")?"#;
 
@@ -97,14 +89,14 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         )],
         "Result<Child, string>",
         &format!(
-            "Start a program: a `Child`. `program` is a path, or a name looked up in `PATH`, and `args` its arguments (at most 1024); no shell reads them, so nothing in them is expanded or split. `cwd` is the directory it starts in (default: the engine's working directory). `env` is added to the environment the engine's process has, replacing a variable of the same name; with `clear_env` the process starts from an empty environment and has only what `env` gives it. Each of `stdin`, `stdout` and `stderr` is `\"piped\"` (the default: a pipe between the process and this handle), `\"null\"` (nothing: the process reads the end of its input, and what it writes is thrown away) or `\"inherit\"` (the engine's own stream). A piped output that nobody reads stops the process once 256 KiB of it wait: read it, or do not pipe it. The process runs as the engine's user and can do what that user can: a script given this module is trusted with the machine. Errors are `process.<function>: <kind>: <message>` (see `error_kind`): `invalid_input` for an option that is missing, unknown or of the wrong shape, `spawn` when the program could not be started (no such program, not executable, `cwd` is not a directory, or the system refused the process), `closed` when the engine is shutting down. The process is killed, and its streams let go of, by `close()`, when the handle is collected, and when the engine shuts down. {WAITS}"
+            "Start a program: a `Child`. `program` is a path, or a name looked up in `PATH`, and `args` its arguments (at most 1024); no shell reads them, so nothing in them is expanded or split. `cwd` is the directory it starts in (default: the engine's working directory). `env` is added to the environment the engine's process has, replacing a variable of the same name; with `clear_env` the process starts from an empty environment and has only what `env` gives it. Each of `stdin`, `stdout` and `stderr` is `\"piped\"` (the default: a pipe between the process and this handle), `\"null\"` (nothing: the process reads the end of its input, and what it writes is thrown away) or `\"inherit\"` (the engine's own stream). A piped output that nobody reads stops the process once 256 KiB of it wait: read it, or do not pipe it. The process runs as the engine's user and can do what that user can: a script given this module is trusted with the machine. Errors are `process.<function>: <kind>: <message>` (see `error_kind`): `invalid_input` for an option that is missing, unknown or of the wrong shape, `spawn` when the program could not be started (no such program, not executable, `cwd` is not a directory, or the system refused the process), `closed` when the engine has shut down. The process is killed, and its streams let go of, by `close()`, when the handle is collected, and when the engine shuts down. On Unix it is started in a process group of its own, which a kill reaches as a whole, and a Ctrl-C typed at the engine's terminal does not reach it. {WAITS}"
         ),
     );
 
     m.func(
         "error_kind",
         &[("err", "string?")],
-        "The stable kind inside an error string returned by a `std:process` function, or `nil` when the string is not one of theirs (or is `nil`, so `process.error_kind(err)` takes the `err` of any call). Such a string is `process.<function>: <kind>: <message>`. Kinds: `invalid_input` (an argument or option was refused), `spawn` (the program could not be started), `closed` (the stream is not a pipe, or it was closed), `io` (reading from a stream or writing to it failed, or the system did not say how the process ended), `other`. The message is the operating system's own; it is for a log and may change.",
+        "The stable kind inside an error string returned by a `std:process` function, or `nil` when the string is not one of theirs (or is `nil`, so `process.error_kind(err)` takes the `err` of any call). Such a string is `process.<function>: <kind>: <message>`. Kinds: `invalid_input` (an argument or option was refused), `spawn` (the program could not be started), `not_piped` (the stream was not started as a pipe), `closed` (the stream, the process or the engine was closed), `io` (reading from a stream or writing to it failed, or the system did not say how the process ended), `other`. The message is the operating system's own; it is for a log and may change.",
         |_, err: Option<mlua::LuaString>| {
             Ok(err.and_then(|err| error::kind_of(&err.to_string_lossy()).map(str::to_owned)))
         },
@@ -116,21 +108,21 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             &[("data", "string")],
             "Result<bool, string>",
             &format!(
-                "Send bytes to the process's standard input: `true` once the pipe has taken them all. Nothing is added: a protocol of lines needs its `\\n`. At most 1 MiB a call (`invalid_input` past that). Writes are made one after the other, and a process that does not read its input makes the write wait. `closed` when `stdin` is not a pipe, after `close_stdin()` and after `close()`, also for a write that was waiting; `io` when the pipe refuses the bytes (the process is gone, or closed its input). {WAITS}"
+                "Send bytes to the process's standard input: `true` once the pipe has taken them all. Nothing is added: a protocol of lines needs its `\\n`. At most 1 MiB a call (`invalid_input` past that). Writes are made one after the other, and a process that does not read its input makes the write wait. `not_piped` when `stdin` is not a pipe; `closed` after `close_stdin()`, after `close()` and once the process has ended, also for a write that was waiting; `io` when the pipe refuses the bytes (the process closed its input). A write that is cancelled before the pipe has taken any of it is not made; one the pipe is already taking cannot be taken back, and the process may receive part of it. {WAITS}"
             ),
         )
         .method(
             "close_stdin",
             &[],
             "Result<bool, string>",
-            "Close the process's standard input once the writes under way are made: `true`. The process then reads the end of its input, which is how a program that reads until then is asked to finish. Closing again does nothing. `closed` when `stdin` is not a pipe.",
+            "Close the process's standard input: `true`. The process then reads the end of its input, which is how a program that reads until then is asked to finish. A write the pipe is taking is finished first; writes that wait behind it fail with `closed`. Closing again does nothing. `not_piped` when `stdin` is not a pipe.",
         )
         .method(
             "read",
             &[("max", "number?")],
             "Result<string, string>",
             &format!(
-                "Wait for the process's standard output and return it: the bytes the process wrote, at most `max` of them (a whole number from 1 to 65536, the default), as soon as there are any. The bytes are the process's own, and a read may end in the middle of a line or of a character. `(nil, nil)` is the end of the output: every process that had the pipe open is gone or closed it, or `close()` was called. `(nil, err)` is a failure: `closed` when `stdout` is not a pipe, `io` when reading failed (the read after it is the end), `invalid_input` for a `max` out of range. At most 256 KiB of output wait to be read: a process that writes more waits in its write until the script reads. A read that is abandoned takes nothing. {WAITS}"
+                "Wait for the process's standard output and return it: the bytes the process wrote, at most `max` of them (a whole number from 1 to 65536, the default), as soon as there are any. The bytes are the process's own, and a read may end in the middle of a line or of a character. `(nil, nil)` is the end of the output: every process that had the pipe open is gone or closed it, or `close()` was called. `(nil, err)` is a failure: `not_piped` when `stdout` is not a pipe, `io` when reading failed (the read after it is the end), `invalid_input` for a `max` out of range. At most 256 KiB of output wait to be read: a process that writes more waits in its write until the script reads. A read that is abandoned takes nothing. {WAITS}"
             ),
         )
         .method(
@@ -159,7 +151,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             "kill",
             &[],
             "()",
-            "Kill the process: on Unix it is sent the kill it cannot refuse (`SIGKILL`), on Windows it is terminated. It returns at once: `wait()` says when the process is gone. A process that has ended is left alone. Only this process is killed, not the processes it started. To ask a process to finish instead, close its input (`close_stdin`) or tell it in its own protocol.",
+            "Kill the process: on Unix it and every process in its group (those it started, unless they moved to a group of their own) are sent the kill they cannot refuse (`SIGKILL`); on Windows the process alone is terminated. It returns at once: `wait()` says when the process is gone. A process that has ended is left alone, and so is what it left behind. To ask a process to finish instead, close its input (`close_stdin`) or tell it in its own protocol.",
         )
         .method(
             "close",
@@ -191,7 +183,7 @@ async fn spawn(lua: Lua, opts: Option<Value>) -> mlua::Result<(Value, Value)> {
     // after that poll, and a process started now would run although the script was told the call failed.
     tokio::task::yield_now().await;
     // A call that is dropped while this runs drops the process when it arrives, which kills it.
-    let spawned = tokio::task::spawn_blocking(move || Process::spawn(command))
+    let spawned = tokio::task::spawn_blocking(move || Process::spawn(&command))
         .await
         .unwrap_or_else(|e| {
             Err(ProcessError::new(
@@ -205,22 +197,13 @@ async fn spawn(lua: Lua, opts: Option<Value>) -> mlua::Result<(Value, Value)> {
             // weakly: a script that starts and drops processes in a loop leaves nothing registered. Closed at once
             // when the engine is already shut down.
             life.on_shutdown_with(&process, |process| process.close());
+            if life.is_closed() {
+                // the engine shut down while the program was being started: it is closed already
+                return from_err(&lua, SPAWN, ProcessError::closed("the engine"));
+            }
             ok(&lua, Child(process))
         }
         Err(e) => from_err(&lua, SPAWN, e),
-    }
-}
-
-/// A read's `max`: a whole number of bytes from 1 to [`MAX_READ`].
-fn read_size(max: Option<f64>) -> Result<usize, ProcessError> {
-    match max {
-        None => Ok(MAX_READ),
-        // checked: a whole number that fits
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        Some(max) if max.fract() == 0.0 && max >= 1.0 && max <= MAX_READ as f64 => Ok(max as usize),
-        Some(_) => Err(ProcessError::invalid_input(format!(
-            "`max` must be a whole number from 1 to {MAX_READ}"
-        ))),
     }
 }
 
@@ -247,39 +230,22 @@ const SOURCES: [Source; 2] = [
     },
 ];
 
-/// The method that reads `source`.
-///
-/// `Role::Mixed`, not `Role::Wait` (as `vnd:portable_pty`'s `read`): a `Wait` body would take the bytes when its
-/// wait ends and only then queue for the turn, and a call dropped there would lose them. The wait for output is an
-/// `idle` wait, and the bytes are taken with the turn held, in the poll that returns them.
+/// The method that reads `source` (`Role::Mixed`: see [`byte_stream::read`]).
 fn add_read<M: UserDataMethods<Child>>(methods: &mut M, source: &'static Source) {
     async_method(
         methods,
         source.method,
         Role::Mixed,
         move |lua, this, max: Option<f64>| {
-            let wanted = read_size(max).and_then(|max| match (source.buffer)(&this.0) {
-                Some(output) => Ok((output, max)),
-                None => Err(ProcessError::not_piped(source.stream)),
-            });
-            async move {
-                let (output, max) = match wanted {
-                    Ok(wanted) => wanted,
-                    Err(e) => {
-                        hold().await;
-                        return from_err(&lua, source.op, e);
-                    }
-                };
-                loop {
-                    idle(output.readable()).await?;
-                    match output.take(max) {
-                        Taken::Bytes(bytes) => return ok(&lua, lua.create_string(&bytes)?),
-                        Taken::Nothing => {}
-                        Taken::End => return Ok((Value::Nil, Value::Nil)),
-                        Taken::Failed(e) => return from_err(&lua, source.op, e),
-                    }
-                }
-            }
+            let wanted = byte_stream::read_size(max)
+                .map_err(ProcessError::invalid_input)
+                .and_then(|max| match (source.buffer)(&this.0) {
+                    Some(output) => Ok((output, max)),
+                    None => Err(ProcessError::not_piped(source.stream)),
+                });
+            byte_stream::read(lua, source.op, wanted, |message| {
+                ProcessError::new(Kind::Io, message)
+            })
         },
     );
 }
@@ -291,16 +257,7 @@ impl UserData for Child {
             "write",
             Role::Wait,
             |lua, this, data: mlua::LuaString| {
-                let data = {
-                    let bytes = data.as_bytes();
-                    if bytes.len() > MAX_WRITE {
-                        Err(ProcessError::invalid_input(format!(
-                            "one write takes at most {MAX_WRITE} bytes"
-                        )))
-                    } else {
-                        Ok(bytes.to_vec())
-                    }
-                };
+                let data = byte_stream::write_data(&data).map_err(ProcessError::invalid_input);
                 let write = data.map(|data| this.0.write(data));
                 async move {
                     let written = match write {

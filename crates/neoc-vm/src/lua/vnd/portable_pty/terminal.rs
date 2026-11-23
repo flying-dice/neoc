@@ -22,7 +22,6 @@
 //! terminal open (one started with `nohup`, say) keeps the reader in its read until it ends too: that costs a parked
 //! thread and a descriptor, and holds neither the engine nor the runtime.
 
-use std::collections::VecDeque;
 use std::future::Future;
 use std::io::{Read, Write};
 use std::sync::Arc;
@@ -31,20 +30,13 @@ use std::sync::mpsc::{self as std_mpsc, RecvTimeoutError};
 use std::time::Duration;
 
 use ::portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
-use parking_lot::{Condvar, Mutex};
-use tokio::sync::{Notify, mpsc, oneshot, watch};
+use parking_lot::Mutex;
+use tokio::sync::{mpsc, watch};
 
 use super::error::{Kind, PtyError};
 use super::options::Command;
+use crate::lua::byte_stream::{Job, Output, READ_CHUNK, WriteFailed, submit};
 use crate::lua::command_options::existing_dir;
-
-/// The most output held between the terminal and the script. Past it the reader waits, the operating system's own
-/// buffer fills, and the process waits in its write: a script that reads slowly slows the process down instead of
-/// filling memory.
-pub(super) const OUTPUT_BUFFER: usize = 256 * 1024;
-
-/// How much the reader asks the operating system for at a time.
-const READ_CHUNK: usize = 16 * 1024;
 
 /// How long the child's thread sleeps between two looks at a process that gave no sign of ending. The end of the
 /// output wakes it at once (see [`Signal::Look`]), so this is only how late `wait()` learns of a process that ended
@@ -64,125 +56,6 @@ pub(super) struct Exit {
     /// The operating system's words for the signal that ended it (Unix).
     pub(super) signal: Option<String>,
     pub(super) success: bool,
-}
-
-/// What `read` finds.
-pub(super) enum Taken {
-    Bytes(Vec<u8>),
-    /// Nothing yet: wait again.
-    Nothing,
-    /// The end of the output, or a closed terminal.
-    End,
-    Failed(PtyError),
-}
-
-struct OutputState {
-    bytes: VecDeque<u8>,
-    /// Set once the reader stopped: `Ok` at the end of the output, `Err` when reading failed (said by one `read`).
-    ended: Option<Result<(), String>>,
-    closed: bool,
-}
-
-/// The output the process wrote and the script has not read yet.
-pub(super) struct Output {
-    state: Mutex<OutputState>,
-    /// Told when there is something for `read`: bytes, the end, or a close.
-    readable: Notify,
-    /// Where the reader waits for room.
-    room: Condvar,
-}
-
-impl Output {
-    fn new() -> Self {
-        Self {
-            state: Mutex::new(OutputState {
-                bytes: VecDeque::new(),
-                ended: None,
-                closed: false,
-            }),
-            readable: Notify::new(),
-            room: Condvar::new(),
-        }
-    }
-
-    /// Add what the reader read, waiting for room first. `false` once the terminal is closed: the reader stops.
-    fn push(&self, chunk: &[u8]) -> bool {
-        let mut state = self.state.lock();
-        while state.bytes.len() >= OUTPUT_BUFFER && !state.closed {
-            self.room.wait(&mut state);
-        }
-        if state.closed {
-            return false;
-        }
-        state.bytes.extend(chunk);
-        drop(state);
-        self.readable.notify_waiters();
-        true
-    }
-
-    fn finish(&self, end: Result<(), String>) {
-        self.state.lock().ended = Some(end);
-        self.readable.notify_waiters();
-    }
-
-    fn close(&self) {
-        {
-            let mut state = self.state.lock();
-            state.closed = true;
-            state.bytes = VecDeque::new();
-        }
-        self.readable.notify_waiters();
-        self.room.notify_all();
-    }
-
-    fn is_ready(&self) -> bool {
-        let state = self.state.lock();
-        state.closed || state.ended.is_some() || !state.bytes.is_empty()
-    }
-
-    /// Wait until [`Output::take`] has something to say. It takes nothing, so a wait that is dropped loses nothing.
-    pub(super) async fn readable(&self) {
-        loop {
-            let told = self.readable.notified();
-            let mut told = std::pin::pin!(told);
-            // listen before looking: what changes after the look is heard
-            told.as_mut().enable();
-            if self.is_ready() {
-                return;
-            }
-            told.await;
-        }
-    }
-
-    /// At most `max` bytes of what is there.
-    pub(super) fn take(&self, max: usize) -> Taken {
-        let mut state = self.state.lock();
-        if state.closed {
-            return Taken::End;
-        }
-        if !state.bytes.is_empty() {
-            let n = max.min(state.bytes.len());
-            let bytes: Vec<u8> = state.bytes.drain(..n).collect();
-            drop(state);
-            self.room.notify_all();
-            return Taken::Bytes(bytes);
-        }
-        match &mut state.ended {
-            None => Taken::Nothing,
-            Some(Ok(())) => Taken::End,
-            // said once; then it is the end
-            Some(end) => match std::mem::replace(end, Ok(())) {
-                Err(message) => Taken::Failed(PtyError::new(Kind::Io, message)),
-                Ok(()) => Taken::End,
-            },
-        }
-    }
-}
-
-/// One piece of input for the writer, and where it says how the write went.
-struct Job {
-    data: Vec<u8>,
-    done: oneshot::Sender<Result<(), String>>,
 }
 
 /// What the child's thread is told.
@@ -299,27 +172,12 @@ impl Terminal {
         &self,
         data: Vec<u8>,
     ) -> impl Future<Output = Result<(), PtyError>> + Send + use<> {
-        let input = self.input.lock().clone();
-        let mut closed = self.closed.subscribe();
+        let write = submit(self.input.lock().clone(), data, self.closed.subscribe());
         async move {
-            let Some(input) = input else {
-                return Err(PtyError::closed());
-            };
-            let (done, written) = oneshot::channel();
-            let write = async {
-                if input.send(Job { data, done }).await.is_err() {
-                    return Err(PtyError::closed());
-                }
-                match written.await {
-                    Ok(Ok(())) => Ok(()),
-                    Ok(Err(message)) => Err(PtyError::new(Kind::Io, message)),
-                    Err(_) => Err(PtyError::closed()),
-                }
-            };
-            tokio::select! {
-                result = write => result,
-                _ = closed.wait_for(|closed| *closed) => Err(PtyError::closed()),
-            }
+            write.await.map_err(|failed| match failed {
+                WriteFailed::Closed => PtyError::closed(),
+                WriteFailed::Io(message) => PtyError::new(Kind::Io, message),
+            })
         }
     }
 
@@ -435,7 +293,7 @@ fn read_output(mut reader: Box<dyn Read + Send>, output: &Output) {
         match reader.read(&mut chunk) {
             Ok(0) => break Ok(()),
             Ok(n) => {
-                if !output.push(&chunk[..n]) {
+                if !output.push_blocking(&chunk[..n]) {
                     return;
                 }
             }
@@ -459,8 +317,12 @@ fn write_input(
         if *closed.borrow() {
             break;
         }
+        // its call was dropped before anything of it was typed
+        if job.is_abandoned() {
+            continue;
+        }
         let written = writer.write_all(&job.data).and_then(|()| writer.flush());
-        let _ = job.done.send(written.map_err(|e| e.to_string()));
+        job.finish(written);
     }
 }
 
@@ -499,68 +361,4 @@ fn watch_child(
             })
             .map_err(|e| format!("the process could not be waited for: {e}")),
     ));
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_buffer_holds_a_bounded_amount_and_a_close_frees_the_reader() {
-        let output = Arc::new(Output::new());
-        let pushed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let reader = {
-            let (output, pushed) = (Arc::clone(&output), Arc::clone(&pushed));
-            std::thread::spawn(move || {
-                let chunk = vec![7; READ_CHUNK];
-                while output.push(&chunk) {
-                    pushed.fetch_add(chunk.len(), Ordering::SeqCst);
-                }
-            })
-        };
-        // the reader stops by itself once the buffer is full: what it pushed stays the same
-        let settled = || {
-            let mut last = usize::MAX;
-            loop {
-                std::thread::sleep(Duration::from_millis(50));
-                let now = pushed.load(Ordering::SeqCst);
-                if now == last {
-                    return now;
-                }
-                last = now;
-            }
-        };
-        let held = settled();
-        assert!(
-            (OUTPUT_BUFFER..OUTPUT_BUFFER + READ_CHUNK).contains(&held),
-            "{held} bytes are held"
-        );
-
-        // a read makes room, and the reader fills exactly that again
-        let Taken::Bytes(bytes) = output.take(100_000) else {
-            panic!("there are bytes to take");
-        };
-        assert_eq!(bytes.len(), 100_000);
-        let refilled = settled();
-        assert!(refilled > held && refilled - 100_000 < OUTPUT_BUFFER + READ_CHUNK);
-
-        output.close();
-        reader.join().expect("the reader ended");
-        assert!(matches!(output.take(10), Taken::End));
-    }
-
-    #[test]
-    fn a_read_failure_is_said_once_after_the_bytes_and_then_it_is_the_end() {
-        let output = Output::new();
-        assert!(matches!(output.take(10), Taken::Nothing));
-        assert!(output.push(b"abc"));
-        output.finish(Err("the terminal broke".to_owned()));
-        assert!(matches!(output.take(2), Taken::Bytes(bytes) if bytes == b"ab"));
-        assert!(matches!(output.take(2), Taken::Bytes(bytes) if bytes == b"c"));
-        let Taken::Failed(e) = output.take(2) else {
-            panic!("the failure follows the bytes");
-        };
-        assert_eq!(e.kind(), Kind::Io);
-        assert!(matches!(output.take(2), Taken::End));
-    }
 }

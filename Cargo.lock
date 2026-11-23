@@ -3393,6 +3393,7 @@ dependencies = [
  "rsa",
  "rusqlite",
  "rust-ini",
+ "rustix",
  "rustls-platform-verifier",
  "semver",
  "serde",

@@ -16,7 +16,9 @@ pub(super) enum Kind {
     /// The command could not be started: there is no such program, it is not executable, `cwd` is not a directory,
     /// or the operating system refused the process.
     Spawn,
-    /// The stream is not a pipe or was closed (by `close_stdin` or `close`, or with the engine).
+    /// The stream is not a pipe: the command was started with `"null"` or `"inherit"` for it.
+    NotPiped,
+    /// The stream was closed (by `close_stdin` or `close`, or with the engine).
     Closed,
     /// Reading from a stream or writing to it failed, or the operating system did not say how the process ended.
     Io,
@@ -26,9 +28,10 @@ pub(super) enum Kind {
 
 impl Kind {
     /// Every kind, for the docs and the tests that hold them to each other.
-    pub(super) const ALL: [Kind; 5] = [
+    pub(super) const ALL: [Kind; 6] = [
         Kind::InvalidInput,
         Kind::Spawn,
+        Kind::NotPiped,
         Kind::Closed,
         Kind::Io,
         Kind::Other,
@@ -39,6 +42,7 @@ impl Kind {
         match self {
             Kind::InvalidInput => "invalid_input",
             Kind::Spawn => "spawn",
+            Kind::NotPiped => "not_piped",
             Kind::Closed => "closed",
             Kind::Io => "io",
             Kind::Other => "other",
@@ -74,12 +78,7 @@ impl ProcessError {
     }
 
     pub(super) fn not_piped(what: &str) -> Self {
-        Self::new(Kind::Closed, format!("{what} is not a pipe"))
-    }
-
-    #[cfg(test)]
-    pub(super) fn kind(&self) -> Kind {
-        self.kind
+        Self::new(Kind::NotPiped, format!("{what} is not a pipe"))
     }
 }
 

@@ -197,19 +197,19 @@ async fn a_stream_that_is_not_a_pipe_is_not_read_or_written() {
         -- no input: the process reads the end at once
         local child = sh("cat; echo done", { stdin = "null", stderr = "null" })
         local written, err = child:write("x")
-        assert(written == nil and process.error_kind(err) == "closed", tostring(err))
-        assert(string.find(err, "process.write: closed: stdin is not a pipe", 1, true) == 1, err)
+        assert(written == nil and process.error_kind(err) == "not_piped", tostring(err))
+        assert(string.find(err, "process.write: not_piped: stdin is not a pipe", 1, true) == 1, err)
         local closed, close_err = child:close_stdin()
-        assert(closed == nil and process.error_kind(close_err) == "closed", tostring(close_err))
+        assert(closed == nil and process.error_kind(close_err) == "not_piped", tostring(close_err))
         local errors, read_err = child:read_stderr()
-        assert(errors == nil and process.error_kind(read_err) == "closed", tostring(read_err))
+        assert(errors == nil and process.error_kind(read_err) == "not_piped", tostring(read_err))
         local out = read_all(child)
         assert(assert(child:wait()).success)
 
         -- no output: what the process writes is thrown away, and it ends all the same
         local silent = sh("echo lost; echo lost >&2", { stdout = "null", stderr = "null" })
         local null_out, null_err = silent:read()
-        assert(process.error_kind(null_err) == "closed")
+        assert(process.error_kind(null_err) == "not_piped")
         assert(assert(silent:wait()).success)
         return out, null_out
     "#)
@@ -287,6 +287,81 @@ async fn other_tasks_run_while_a_read_a_write_and_a_wait_are_waiting() {
     "#)
     .await;
     assert!(ticks >= 5, "the ticking task ran {ticks} times");
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_cancelled_write_does_not_keep_the_input_open() {
+    let dir = tempfile::tempdir().expect("a directory");
+    let lua = make_engine().expect("engine");
+    lua.globals()
+        .set("go", dir.path().join("go").to_string_lossy().into_owned())
+        .expect("a global");
+    let counted: String = run_in(
+        &lua,
+        r#"
+        -- it reads nothing until the file is there, so a write of more than the pipe holds waits
+        local child = assert(process.spawn({ program = "/bin/sh",
+            args = { "-c", 'while [ ! -e "$1" ]; do sleep 0.02; done; wc -c', "sh", go } }))
+        local megabyte = string.rep("x", 1024 * 1024)
+        local cancelled = task.spawn(function()
+            return child:write(megabyte)
+        end)
+        local behind = task.spawn(function()
+            return child:write(megabyte)
+        end)
+        -- one of the two is being taken by the pipe now, and the other waits behind it
+        task.wait(0.1)
+        cancelled:cancel()
+        assert(child:close_stdin())
+        assert(require("std:fs").write(go, ""))
+        -- the process reads the end of its input, although a write was cancelled while it waited
+        local counted = read_all(child)
+        assert(assert(child:wait()).success)
+        local written, err = behind:await()
+        assert(written or process.error_kind(err) == "closed", tostring(err))
+        return counted
+        "#,
+    )
+    .await;
+    // the write the pipe was taking was finished and the one behind it refused, whichever of the two it was
+    assert_eq!(counted.trim(), "1048576");
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_write_to_a_process_that_has_ended_is_refused() {
+    let (): () = run(r#"
+        local child = sh("exit 0")
+        assert(assert(child:wait()).success)
+        -- the writer lets go of the pipe when the process ends, which the script sees a moment later
+        local err
+        for _ = 1, 200 do
+            local written
+            written, err = child:write("late\n")
+            if not written then break end
+            task.wait(0.01)
+        end
+        assert(process.error_kind(err) == "closed" or process.error_kind(err) == "io", tostring(err))
+    "#)
+    .await;
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_kill_reaches_what_the_process_started() {
+    let (wrapper, started): (u32, u32) = run(r#"
+        -- a wrapper, as `sh -c` or `npx` is: the program that does the work is its child
+        local child = sh("sleep 1000 & echo $!; wait")
+        local started = tonumber(read_until(child, "\n"))
+        local wrapper = child:id()
+        child:close()
+        assert(assert(child:wait()).signal == 9)
+        return wrapper, started
+    "#)
+    .await;
+    assert!(!alive(wrapper));
+    gone(started).await;
 }
 
 // ---------------------------------------------------------------------------
