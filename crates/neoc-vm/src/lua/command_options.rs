@@ -5,7 +5,7 @@
 //! value by [`Field`] in the synchronous part of the call and raw, so reading runs no script code. What is
 //! refused is a [`Refused`]: the words for the script, which each module wraps in its own `invalid_input` error.
 
-use mlua::{Table, Value};
+use mlua::Value;
 
 use crate::lua::facade::args::{Field, Refused};
 use crate::lua::facade::{DeclType, List, Map};
