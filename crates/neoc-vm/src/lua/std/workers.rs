@@ -101,7 +101,6 @@ impl UserData for ShutdownSignal {
         /// Return `true` if the signal has already fired. Non-blocking.
         methods.add_method("is_fired", |_, this, _: ()| Ok(this.is_fired()));
         /// Yield the calling coroutine until the signal fires; returns immediately if already fired.
-        #[lua("()")]
         async_method(methods, "wait", Role::Wait, |_, this, (): ()| {
             let signal = this.clone();
             async move {

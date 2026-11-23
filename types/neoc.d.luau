@@ -1682,7 +1682,7 @@ export type vnd_sqlx_postgres_Database = {
 	--- Execute a SELECT and return all rows as a 1-indexed table of column-keyed row tables. A column of an unsupported type raises; cast it to text in SQL.
 	query: (self: vnd_sqlx_postgres_Database, sql: string, ...any) -> (any, string?),
 	--- Execute a SELECT and return the first matching row, or nil when none matched. A column of an unsupported type raises; cast it to text in SQL.
-	query_one: (self: vnd_sqlx_postgres_Database, sql: string, ...any) -> (any, string?),
+	query_one: (self: vnd_sqlx_postgres_Database, sql: string, ...any) -> (any?, string?),
 	--- Close all connections in the pool; subsequent method calls on this handle error.
 	close: (self: vnd_sqlx_postgres_Database) -> (),
 }

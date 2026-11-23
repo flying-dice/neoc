@@ -182,7 +182,6 @@ impl UserData for Database {
         });
 
         /// Close all connections in the pool; subsequent method calls on this handle error.
-        #[lua("()")]
         async_method(methods, "close", Role::Wait, |_, this, _: ()| {
             let pool = this.pool.clone();
             async move {

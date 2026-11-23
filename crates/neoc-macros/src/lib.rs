@@ -920,11 +920,19 @@ fn member(stmt: &mut Stmt, noted: bool) -> syn::Result<Vec<Tokens>> {
         &closure,
     ) {
         let facade = facade();
-        let through = Ident::new(&adder, Span::call_site());
+        // the crate's own `lifecycle::async_method` takes the closure `add_async_method` takes
+        let through = if adder == "async_method" {
+            "add_async_method"
+        } else {
+            adder.as_str()
+        };
+        let through = Ident::new(through, Span::call_site());
         // the type the closure is a member of is said, so that `this` has its type inside the closure
         let through = match adder.as_str() {
             "add_method" | "add_method_mut" => quote!(#through::<Self, _, _, _, _>),
-            "add_async_method" | "add_async_method_mut" => quote!(#through::<Self, _, _, _, _, _>),
+            "add_async_method" | "add_async_method_mut" | "async_method" => {
+                quote!(#through::<Self, _, _, _, _, _>)
+            }
             "add_field_method_get" => quote!(#through::<Self, _, _>),
             _ => quote!(#through),
         };
@@ -953,6 +961,7 @@ const INFERRED: &[&str] = &[
     "add_method_mut",
     "add_async_method",
     "add_async_method_mut",
+    "async_method",
     "add_function",
     "add_function_mut",
     "add_async_function",
@@ -1450,6 +1459,125 @@ fn lua_module_impl(mut function: ItemFn) -> syn::Result<Tokens> {
         Some(error) => Err(error),
         None => Ok(function.to_token_stream()),
     }
+}
+
+/// A struct that is a table to a script: `#[lua_record(into)]` for one a function hands a script,
+/// `#[lua_record(from)]` for one a script passes (a table of options), or both. Its fields are the table's
+/// keys, and the declaration is read from them (`{ code: number?, success: bool }`), so a function that
+/// returns or takes the struct says nothing more.
+///
+/// A record read `from` a script is strict: a value that is not a table is refused, and so is a key that is
+/// not a field. A field that may be left out is an `Option`.
+#[proc_macro_attribute]
+pub fn lua_record(args: TokenStream, item: TokenStream) -> TokenStream {
+    let record = syn::parse_macro_input!(item as syn::ItemStruct);
+    lua_record_impl(args.into(), &record)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+fn lua_record_impl(args: Tokens, record: &syn::ItemStruct) -> syn::Result<Tokens> {
+    let mut into = false;
+    let mut from = false;
+    let words = syn::meta::parser(|meta| {
+        if meta.path.is_ident("into") {
+            into = true;
+        } else if meta.path.is_ident("from") {
+            from = true;
+        } else {
+            return Err(meta.error("a record is `into` a script, `from` one, or both"));
+        }
+        Ok(())
+    });
+    syn::parse::Parser::parse2(words, args)?;
+    if !into && !from {
+        return Err(syn::Error::new(
+            record.ident.span(),
+            "say which way the record goes: `#[lua_record(into)]`, `#[lua_record(from)]` or both",
+        ));
+    }
+    let syn::Fields::Named(fields) = &record.fields else {
+        return Err(syn::Error::new(
+            record.ident.span(),
+            "a record is a struct with named fields: each is a key of the table",
+        ));
+    };
+    let facade = facade();
+    let ident = &record.ident;
+    let (generics, of, bounds) = record.generics.split_for_impl();
+    let names: Vec<&Ident> = fields.named.iter().flat_map(|f| &f.ident).collect();
+    let keys: Vec<String> = names
+        .iter()
+        .map(|name| {
+            let name = name.to_string();
+            name.strip_prefix("r#").unwrap_or(&name).to_owned()
+        })
+        .collect();
+    let types: Vec<&Type> = fields.named.iter().map(|f| &f.ty).collect();
+    let count = keys.len();
+    let label = ident.to_string();
+    let mut out = quote! {
+        #record
+
+        impl #generics #facade::DeclType for #ident #of #bounds {
+            fn decl_type() -> ::std::string::String {
+                let fields: [::std::string::String; #count] = [
+                    #(::std::format!("{}: {}", #keys, <#types as #facade::DeclType>::decl_type())),*
+                ];
+                ::std::format!("{{ {} }}", fields.join(", "))
+            }
+        }
+    };
+    if into {
+        out.extend(quote! {
+            impl #generics ::mlua::IntoLua for #ident #of #bounds {
+                fn into_lua(self, lua: &::mlua::Lua) -> ::mlua::Result<::mlua::Value> {
+                    let table = lua.create_table_with_capacity(0, #count)?;
+                    #(table.raw_set(#keys, self.#names)?;)*
+                    ::std::result::Result::Ok(::mlua::Value::Table(table))
+                }
+            }
+        });
+    }
+    if from {
+        out.extend(quote! {
+            impl #generics ::mlua::FromLua for #ident #of #bounds {
+                fn from_lua(value: ::mlua::Value, _: &::mlua::Lua) -> ::mlua::Result<Self> {
+                    let ::mlua::Value::Table(table) = value else {
+                        return ::std::result::Result::Err(::mlua::Error::FromLuaConversionError {
+                            from: value.type_name(),
+                            to: ::std::string::String::from(#label),
+                            message: ::std::option::Option::Some(::std::string::String::from(
+                                "expected a table",
+                            )),
+                        });
+                    };
+                    for pair in table.pairs::<::mlua::Value, ::mlua::Value>() {
+                        let (key, _) = pair?;
+                        let known = match &key {
+                            ::mlua::Value::String(key) => [#(#keys),*].iter().any(|k| key == *k),
+                            _ => false,
+                        };
+                        if !known {
+                            return ::std::result::Result::Err(::mlua::Error::FromLuaConversionError {
+                                from: "table",
+                                to: ::std::string::String::from(#label),
+                                message: ::std::option::Option::Some(::std::format!(
+                                    "unknown key {}: the keys are {}",
+                                    key.to_string()?,
+                                    [#(#keys),*].join(", "),
+                                )),
+                            });
+                        }
+                    }
+                    ::std::result::Result::Ok(Self {
+                        #(#names: table.raw_get(#keys)?,)*
+                    })
+                }
+            }
+        });
+    }
+    Ok(out)
 }
 
 /// Reads what the declarations say of the closures a module's `declare` function registers in place.

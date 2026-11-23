@@ -185,7 +185,6 @@ where
         #[lua(doc = I::PORT_DOC)]
         methods.add_method("port", |_, this, _: ()| Ok(this.port as i32));
         /// Stop the container; idempotent. The container also stops on garbage collection if not stopped explicitly.
-        #[lua("()")]
         async_method(methods, "stop", Role::Wait, |_, this, _: ()| {
             let inner = this.inner.clone();
             async move { stop_container(inner).await }
@@ -416,7 +415,6 @@ impl UserData for GenericContainer {
                 })
         });
         /// Stop the container; idempotent.
-        #[lua("()")]
         async_method(methods, "stop", Role::Wait, |_, this, _: ()| {
             let inner = this.inner.clone();
             async move { stop_container(inner).await }

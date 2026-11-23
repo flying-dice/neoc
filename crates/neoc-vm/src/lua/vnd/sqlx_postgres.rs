@@ -104,7 +104,7 @@ async fn open(_: Lua, url: String) -> mlua::Result<Fallible<Database>> {
 impl UserData for Database {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Execute a SQL statement, binding trailing arguments to `$1, $2, …` placeholders; returns rows affected.
-        #[lua("Result<number, string>", takes("sql: string", "...: LuaValue"))]
+        #[lua(takes("sql: string", "...: LuaValue"))]
         async_method(
             methods,
             "execute",
@@ -130,7 +130,7 @@ impl UserData for Database {
         );
 
         /// Execute a SELECT and return all rows as a 1-indexed table of column-keyed row tables. A column of an unsupported type raises; cast it to text in SQL.
-        #[lua("Result<LuaValue, string>", takes("sql: string", "...: LuaValue"))]
+        #[lua(takes("sql: string", "...: LuaValue"))]
         async_method(
             methods,
             "query",
@@ -162,7 +162,7 @@ impl UserData for Database {
         );
 
         /// Execute a SELECT and return the first matching row, or nil when none matched. A column of an unsupported type raises; cast it to text in SQL.
-        #[lua("Result<LuaValue, string>", takes("sql: string", "...: LuaValue"))]
+        #[lua(takes("sql: string", "...: LuaValue"))]
         async_method(
             methods,
             "query_one",
@@ -189,7 +189,6 @@ impl UserData for Database {
         );
 
         /// Close all connections in the pool; subsequent method calls on this handle error.
-        #[lua("()")]
         async_method(methods, "close", Role::Wait, |_, this, _: ()| {
             let pool = this.pool.clone();
             async move {

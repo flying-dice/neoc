@@ -477,7 +477,6 @@ impl UserData for WorkerHandle {
         });
 
         /// Wait for a message from the worker. Returns `(nil, error)` once the worker has exited.
-        #[lua("Result<LuaValue, string>")]
         async_method(methods, "receive", Role::Wait, |lua, this, (): ()| {
             let inner = this.inner.clone();
             async move {
@@ -487,7 +486,6 @@ impl UserData for WorkerHandle {
         });
 
         /// Wait for the worker to finish and return its result, or `(nil, error)` on failure.
-        #[lua("Result<LuaValue, string>")]
         async_method(methods, "await", Role::Wait, |lua, this, (): ()| {
             let inner = this.inner.clone();
             async move {
@@ -534,7 +532,6 @@ impl UserData for Channel {
         });
 
         /// Wait for a message from the parent. Returns `(nil, error)` once the parent has exited.
-        #[lua("Result<LuaValue, string>")]
         async_method(methods, "receive", Role::Wait, |lua, this, (): ()| {
             let rx = this.rx.clone();
             async move {

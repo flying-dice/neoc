@@ -50,6 +50,7 @@ const POLL_SOON: Duration = Duration::from_millis(1);
 const THREAD_STACK: usize = 128 * 1024;
 
 /// How a process ended.
+#[neoc_macros::lua_record(into)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Exit {
     pub(super) exit_code: u32,

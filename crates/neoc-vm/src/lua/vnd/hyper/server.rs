@@ -150,7 +150,6 @@ impl UserData for ServerHandle {
         // The wait does not hold the VM (an embedder's turn): the server's own
         // handlers keep running while a script sits in `server:wait()`.
         /// Block until the server stops accepting connections (`:close()`, the process shutdown signal, or an embedder shutting the script down).
-        #[lua("()")]
         async_method(methods, "wait", Role::Mixed, |lua, this, (): ()| {
             let inner = this.inner.clone();
             let life = Life::of(&lua);

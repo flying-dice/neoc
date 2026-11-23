@@ -194,7 +194,7 @@ fn add_read<M: UserDataMethods<Child>>(methods: &mut M, source: &'static Source)
 #[neoc_macros::lua_userdata("std:process", "Child")]
 impl UserData for Child {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        #[lua("Result<bool, string>", doc = format!(
+        #[lua(doc = format!(
                 "Send bytes to the process's standard input: `true` once the pipe has taken them all. Nothing is added: a protocol of lines needs its `\\n`. At most 1 MiB a call (`invalid_input` past that). Writes are made one after the other, and a process that does not read its input makes the write wait. `not_piped` when `stdin` is not a pipe; `closed` after `close_stdin()`, after `close()` and once the process has ended, also for a write that was waiting; `io` when the pipe refuses the bytes (the process closed its input). A write cannot be taken back: cancelling the task that waits in one does not stop it, and it may still be made. {WAITS}"
             ))]
         async_method(
@@ -243,20 +243,14 @@ impl UserData for Child {
         /// The operating system's id of the process, while it runs. `nil` once it has ended or `close()` was called: the number is then the operating system's to give to another process.
         methods.add_method("id", |_, this, (): ()| Ok(this.0.id()));
 
-        #[lua("Result<{ code: number?, signal: number?, success: bool }, string>", doc = format!(
+        #[lua(doc = format!(
                 "Wait for the process to end and return how it ended: `code` (the exit code when it ended by itself, else `nil`), `signal` (the number of the signal that ended it; `nil` when it ended by itself, and always on Windows) and `success` (it ended by itself with code 0). It does not close the process's input: a process that reads to the end of its input needs `close_stdin()` first. It may be called again, and after `close()`: the answer is the same. The output can outlive the process (a child of it still writes): read to the end for all of it. `io` when the operating system does not say how the process ended. {WAITS}"
             ))]
-        async_method(methods, "wait", Role::Wait, |lua, this, (): ()| {
+        async_method(methods, "wait", Role::Wait, |_, this, (): ()| {
             let ended = this.0.wait();
             async move {
                 match ended.await {
-                    Ok(exit) => {
-                        let status = lua.create_table_with_capacity(0, 3)?;
-                        status.raw_set("code", exit.code)?;
-                        status.raw_set("signal", exit.signal)?;
-                        status.raw_set("success", exit.success)?;
-                        ok(status)
-                    }
+                    Ok(exit) => ok(exit),
                     Err(e) => from_err(WAIT, e),
                 }
             }

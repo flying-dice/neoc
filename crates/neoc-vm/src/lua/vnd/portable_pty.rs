@@ -142,7 +142,7 @@ async fn spawn_command(lua: Lua, opts: Option<Value>) -> mlua::Result<Fallible<P
 impl UserData for Pty {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         // `Role::Mixed`: see `byte_stream::read`
-        #[lua("Result<string, string>", doc = format!(
+        #[lua(doc = format!(
                 "Wait for output and return it: the bytes the process wrote, at most `max` of them (a whole number from 1 to 65536, the default), as soon as there are any. The bytes are what a terminal receives: text in the process's encoding with its escape sequences, and a read may end in the middle of a character. `(nil, nil)` is the end of the output: every process that had the terminal open is gone, or the terminal was closed. `(nil, err)` is a failure (`io`), and the read after it is the end; a `max` out of range is `invalid_input`. At most 256 KiB of output wait to be read: a process that writes more waits in its write until the script reads. A read that is abandoned takes nothing. {WAITS}"
             ))]
         async_method(
@@ -159,7 +159,7 @@ impl UserData for Pty {
             },
         );
 
-        #[lua("Result<bool, string>", doc = format!(
+        #[lua(doc = format!(
                 "Send bytes to the process as its input, as if typed: `true` once the terminal has taken them all. A line ends with `\\r` or `\\n` as the program on the terminal expects (a shell takes either). At most 1 MiB a call (`invalid_input` past that). Writes are made one after the other, and a process that does not read its input makes the write wait. `closed` after `close()`, also for a write that was waiting; `io` when the terminal refuses the bytes (every process on it is gone). {WAITS}"
             ))]
         async_method(
@@ -202,20 +202,14 @@ impl UserData for Pty {
         /// The id of the process `spawn_command` started, while it runs. `nil` once it has ended or the terminal is closed: the number is then the operating system's to give to another process.
         methods.add_method("process_id", |_, this, (): ()| Ok(this.0.process_id()));
 
-        #[lua("Result<{ exit_code: number, signal: string?, success: bool }, string>", doc = format!(
+        #[lua(doc = format!(
                 "Wait for the process to end and return how it ended: `exit_code` (0 to 255 on Unix, and 1 when a signal ended it), `signal` (the operating system's words for that signal, which differ between systems; `nil` when it ended by itself, and always on Windows) and `success` (it ended by itself with code 0). It may be called again, and after `close()`: the answer is the same. The output can outlive the process (a child of it still writes): read to the end for all of it. `io` when the operating system does not say how the process ended. {WAITS}"
             ))]
-        async_method(methods, "wait", Role::Wait, |lua, this, (): ()| {
+        async_method(methods, "wait", Role::Wait, |_, this, (): ()| {
             let ended = this.0.wait();
             async move {
                 match ended.await {
-                    Ok(exit) => {
-                        let status = lua.create_table_with_capacity(0, 3)?;
-                        status.raw_set("exit_code", exit.exit_code)?;
-                        status.raw_set("signal", exit.signal)?;
-                        status.raw_set("success", exit.success)?;
-                        ok(status)
-                    }
+                    Ok(exit) => ok(exit),
                     Err(e) => from_err(WAIT, e),
                 }
             }

@@ -46,6 +46,7 @@ use crate::lua::child_exit::{self, Ended, WaitFailed};
 use crate::lua::command_options::existing_dir;
 
 /// How a process ended (`std::process::ExitStatus`).
+#[neoc_macros::lua_record(into)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Exit {
     /// The code it ended with by itself.
