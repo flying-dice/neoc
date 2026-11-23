@@ -2,15 +2,16 @@
 //! its `pub mod` line here is what compiles and links it.
 
 pub mod base64;
-pub mod hex;
-pub mod hash;
-pub mod hmac;
-pub mod random;
 pub mod crypto;
+pub mod diff;
+pub mod hash;
+pub mod hex;
+pub mod hmac;
+pub mod json;
+pub mod mime;
 pub mod pkey;
+pub mod random;
+pub mod regex;
 pub mod text;
 pub mod unicode;
-pub mod regex;
-pub mod diff;
-pub mod mime;
 pub mod url;
