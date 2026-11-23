@@ -110,18 +110,41 @@ async fn wrapper(State(state): State<AppsState>, Path(app): Path<String>, header
     let html = format!(
         "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
 <meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\">\n\
-<title>{name}</title>\n\
-<style>html,body{{margin:0;height:100%;background:transparent}}iframe{{display:block;width:100%;height:100%;border:0}}</style>\n\
+<title>VOS - {name}</title>\n\
+<meta name=\"mobile-web-app-capable\" content=\"yes\">\n\
+<meta name=\"apple-mobile-web-app-capable\" content=\"yes\">\n\
+<meta name=\"apple-mobile-web-app-title\" content=\"VOS - {name}\">\n\
+<meta name=\"apple-mobile-web-app-status-bar-style\" content=\"black-translucent\">\n\
+<style>{style}</style>\n\
 </head>\n<body>\n<iframe id=\"app\" title=\"{name}\" sandbox=\"allow-scripts allow-forms\" allow=\"{allow}\" \
-referrerpolicy=\"no-referrer\" data-entry=\"/apps/{id}/static/{entry}\" data-testid=\"{id}-frame\"></iframe>\n\
+referrerpolicy=\"no-referrer\" data-entry=\"/apps/{id}/static/{entry}\" data-icon=\"{icon}\" data-tint=\"{tint}\" \
+data-testid=\"{id}-frame\"></iframe>\n\
 <script type=\"module\" src=\"/wrapper.js\"></script>\n</body>\n</html>\n",
         name = escape(&info.name),
         entry = escape(site.entry()),
+        icon = escape(info.display.icon.as_deref().unwrap_or_default()),
+        tint = escape(info.display.tint.as_deref().unwrap_or_default()),
+        style = WRAPPER_STYLE,
     );
     with_page_headers(Html(html).into_response(), StatusCode::OK, WRAPPER_CSP)
 }
 
-const UNPAIRED: &str = "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\
+/// The wrapper page's whole style: the frame fills the page, inside the device's safe areas (an app's page is in a
+/// frame and cannot read them, and added to a phone's home screen the page is drawn under the status bar and the home
+/// indicator); the bottom is left to the app, which reaches the edge of the screen as a full screen window of the
+/// shell does. Installed (the page's script marks the root `installed`), the page is as tall as the screen (`100vh`):
+/// iOS makes `100%` shorter than the screen by the status bar there. The script says so, not a `display-mode` media
+/// query: iOS does not match one for a page added to the home screen without a manifest.
+/// `touch-action`: an app is not a document to pinch or double-tap larger.
+const WRAPPER_STYLE: &str =
+    "html,body{margin:0;height:100%;overflow:hidden;color-scheme:light dark;background:Canvas;\
+touch-action:pan-x pan-y;-webkit-text-size-adjust:100%}\
+html.installed,html.installed body{height:100vh}\
+body{box-sizing:border-box;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 \
+env(safe-area-inset-left,0px)}\
+iframe{display:block;width:100%;height:100%;border:0}";
+
+const UNPAIRED: &str ="<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\
 <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Pair this device</title>\
 <style>body{font:16px system-ui,sans-serif;margin:0;display:grid;place-items:center;height:100vh;text-align:center;\
 background:#fff;color:#111}@media(prefers-color-scheme:dark){body{background:#111;color:#eee}a{color:#6cf}}</style></head>\

@@ -1,6 +1,5 @@
 // @atoms barrel — generated listing; keep alphabetical.
 export { default as ActivityIndicator } from './ActivityIndicator.svelte'
-export { default as BatteryIndicator } from './BatteryIndicator.svelte'
 export { default as Button } from './Button.svelte'
 export { default as Card } from './Card.svelte'
 export { default as Icon } from './Icon.svelte'

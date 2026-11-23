@@ -13,16 +13,18 @@
   const searched = fn()
 </script>
 
-{#snippet bar(search: boolean)}
+{#snippet bar(search: boolean, bare = false)}
   <div
     data-testid="bar"
     style="width:640px;max-width:100%;padding:6px 0 60px;background:linear-gradient(135deg,#6e8efb,#c471ed);border-radius:var(--radius-xl)"
   >
-    <StatusBar testid="status-bar" battery={0.86} onsearch={search ? searched : undefined} searchShortcut="Meta+K" />
+    <StatusBar testid="status-bar" {bare} onsearch={search ? searched : undefined} searchShortcut="Meta+K">
+      {#snippet center()}<span data-testid="center">Reconnecting…</span>{/snippet}
+    </StatusBar>
   </div>
 {/snippet}
 
-<!-- The bar as it is without system search: the time and date, the indicators. -->
+<!-- The bar as it is without system search: the time and the date. -->
 <Story
   name="Plain"
   asChild
@@ -34,7 +36,7 @@
 </Story>
 
 <!--
-  With system search: a magnifier before the indicators, a button named "Search" that says it opens a dialog and which
+  With system search: a magnifier at the trailing edge, a button named "Search" that says it opens a dialog and which
   shortcut does the same. Its target is bigger than its glyph. Enter and a click both ask for search.
 -->
 <Story
@@ -58,4 +60,16 @@
   }}
 >
   {@render bar(true)}
+</Story>
+
+<!-- Turned off in Settings: no time, date or search, and what the shell must say (the centre) still shows. -->
+<Story
+  name="Bare"
+  asChild
+  play={async ({ canvas }) => {
+    await expect(canvas.queryByTestId('status-bar-search')).toBeNull()
+    await expect(canvas.getByTestId('bar')).toHaveTextContent(/^\s*Reconnecting…\s*$/)
+  }}
+>
+  {@render bar(true, true)}
 </Story>

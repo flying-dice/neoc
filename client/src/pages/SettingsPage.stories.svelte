@@ -272,6 +272,24 @@
   }}
 />
 
+<!--
+  Features: the parts of the shell a person can turn on and off. The status bar is off until chosen; by keyboard it is
+  turned on, and the choice is stored.
+-->
+<Story
+  name="Features"
+  play={async ({ canvas, userEvent }) => {
+    await userEvent.click(canvas.getByTestId('settings-pane-features'))
+    const toggle = canvas.getByTestId('settings-status-bar')
+    await expect(toggle).toHaveAttribute('aria-checked', 'false')
+    toggle.focus()
+    await userEvent.keyboard(' ')
+    await expect(toggle).toHaveAttribute('aria-checked', 'true')
+    await expect(settings.statusBar).toBe(true)
+    await expect(stored()).toMatchObject({ statusBar: true })
+  }}
+/>
+
 <!-- What was chosen is what the next page load starts with (the journeys reload the real shell to show the same). -->
 <Story
   name="Choices are kept for the next load"
@@ -309,7 +327,7 @@
   args={{ width: 380, height: 520 }}
   play={async ({ canvas, userEvent }) => {
     await waitFor(() => expect(canvas.queryByTestId('settings-nav')).toBeNull())
-    for (const id of ['general', 'appearance', 'devices'])
+    for (const id of ['general', 'appearance', 'features', 'devices'])
       await expect(canvas.getByTestId(`settings-pane-${id}`)).toBeVisible()
 
     canvas.getByTestId('settings-pane-appearance').focus()

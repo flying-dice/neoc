@@ -39,6 +39,8 @@ export interface SettingsValues {
   reduceTransparency: boolean
   /** Show an app's notifications as banners (`Notifications`). */
   banners: boolean
+  /** A feature (`Settings > Features`): the desktop's own status bar, with the time, the date and search. */
+  statusBar: boolean
 }
 
 export const DEFAULTS: Readonly<SettingsValues> = {
@@ -46,7 +48,8 @@ export const DEFAULTS: Readonly<SettingsValues> = {
   accent: 'blue',
   textScale: 100,
   reduceTransparency: false,
-  banners: true
+  banners: true,
+  statusBar: false
 }
 
 /**
@@ -66,7 +69,8 @@ const storedSchema = z.object({
     .multipleOf(TEXT_SCALE.step)
     .catch(DEFAULTS.textScale),
   reduceTransparency: z.boolean().catch(DEFAULTS.reduceTransparency),
-  banners: z.boolean().catch(DEFAULTS.banners)
+  banners: z.boolean().catch(DEFAULTS.banners),
+  statusBar: z.boolean().catch(DEFAULTS.statusBar)
 })
 
 /** The settings a stored text holds: the defaults for text that is absent, not JSON, or not an object. */
@@ -137,6 +141,7 @@ export class Settings {
   #textScale = $state(DEFAULTS.textScale)
   #reduceTransparency = $state(DEFAULTS.reduceTransparency)
   #banners = $state(DEFAULTS.banners)
+  #statusBar = $state(DEFAULTS.statusBar)
   /** What the system prefers, followed while `theme` is `auto`. */
   #systemDark = $state(false)
   #storage: SettingsStorage | null
@@ -195,6 +200,14 @@ export class Settings {
     this.#save()
   }
 
+  get statusBar(): boolean {
+    return this.#statusBar
+  }
+  set statusBar(value: boolean) {
+    this.#statusBar = value
+    this.#save()
+  }
+
   /** The appearance the shell shows now, `auto` resolved: what an app's frame is told. */
   get appearance(): 'light' | 'dark' {
     return this.#theme === 'auto' ? (this.#systemDark ? 'dark' : 'light') : this.#theme
@@ -224,6 +237,7 @@ export class Settings {
     this.#textScale = values.textScale
     this.#reduceTransparency = values.reduceTransparency
     this.#banners = values.banners
+    this.#statusBar = values.statusBar
   }
 
   #save(): void {
@@ -232,7 +246,8 @@ export class Settings {
       accent: this.#accent,
       textScale: this.#textScale,
       reduceTransparency: this.#reduceTransparency,
-      banners: this.#banners
+      banners: this.#banners,
+      statusBar: this.#statusBar
     }
     this.#storage?.write(JSON.stringify(values))
   }

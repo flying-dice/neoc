@@ -6,6 +6,7 @@ import type { IconName } from '@vos/ui'
 export const settingsPanes = [
   { id: 'general', title: 'General', icon: 'gear', color: 'var(--ios-gray)' },
   { id: 'appearance', title: 'Appearance', icon: 'sun', color: 'var(--ios-blue)' },
+  { id: 'features', title: 'Features', icon: 'flag', color: 'var(--ios-orange)' },
   { id: 'devices', title: 'Devices', icon: 'globe', color: 'var(--ios-green)' }
 ] as const satisfies readonly { id: string; title: string; icon: IconName; color: string }[]
 

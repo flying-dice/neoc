@@ -15,6 +15,8 @@ import { callWhenConnected, createHostChannel, type CallOptions } from '../shell
 import { contextChange, hostContextOf, type HostContext } from '../shell/hostContext'
 import { focusFrame } from '../shell/frameFocus'
 import { baseServices } from '../shell/hostServices'
+import { preventZoom } from '../shell/noZoom'
+import { showAppIcon } from './appIcon'
 import { createWebSocketTransport, defaultRpcUrl } from '../shell/rpc/websocket'
 
 const MODES = ['fullscreen'] as const
@@ -32,6 +34,18 @@ const currentContext = (): HostContext =>
     availableDisplayModes: [...MODES]
   })
 
+/**
+ * Is this page running from a home screen, with no browser around it? Safari says so with `navigator.standalone`
+ * (a page added without a manifest matches no `display-mode` query there); other browsers with the media query.
+ */
+function isInstalled(): boolean {
+  if ((navigator as Navigator & { standalone?: boolean }).standalone === true) return true
+  return (
+    typeof matchMedia === 'function' &&
+    matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches
+  )
+}
+
 export function start(root: Document = document): void {
   const iframe = root.getElementById('app')
   const appId = appIdOf(location.pathname)
@@ -39,6 +53,11 @@ export function start(root: Document = document): void {
     root.body.textContent = 'This page is not an app.'
     return
   }
+  // added to a home screen, the page is as tall as the screen (the host's style reads this class: see `WRAPPER_STYLE`)
+  if (isInstalled()) root.documentElement.classList.add('installed')
+  // the page is the app's own surface: it does not zoom, and its tab and home-screen icon are the app's
+  preventZoom(root)
+  void showAppIcon(root, iframe.dataset.icon, iframe.dataset.tint)
 
   const channel = createHostChannel(createWebSocketTransport({ url: defaultRpcUrl(location) }))
   channel.transport.connect()
@@ -87,6 +106,8 @@ export function start(root: Document = document): void {
   // the host context, live: what the system settings say, as what changed
   $effect.root(() => {
     $effect(() => {
+      // what shows around the frame (the safe areas of a phone) is in the appearance the app is in
+      root.documentElement.style.colorScheme = settings.appearance
       const now = currentContext()
       const change = contextChange(told, now)
       told = now

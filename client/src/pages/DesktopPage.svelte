@@ -281,12 +281,17 @@
   <HomeGrid testid="home" apps={homeApps} onselect={openFromHome} onmenu={askMenu} />
 {/snippet}
 
-<DesktopTemplate bind:workspaceWidth bind:workspaceHeight dockHidden={wm.dockHidden}>
+<DesktopTemplate
+  bind:workspaceWidth
+  bind:workspaceHeight
+  dockHidden={wm.dockHidden}
+  statusBarHidden={!settings.statusBar}
+>
   {#snippet statusBar()}
     <div data-testid="status-bar">
       <StatusBar
         testid="status-bar"
-        battery={0.86}
+        bare={!settings.statusBar}
         onsearch={openSearch}
         searchShortcut={searchShortcut(mac)}
       >

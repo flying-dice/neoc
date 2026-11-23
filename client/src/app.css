@@ -4,6 +4,23 @@ body,
   height: 100%;
   overflow: hidden;
 }
+/* Installed (Add to Home Screen): iOS lays a page that draws under its status bar (`black-translucent`,
+   `viewport-fit=cover`) out in a box shorter than the screen by the status bar's height, so `100%` leaves a bare strip
+   at the bottom. The viewport height is the whole screen there (an installed page has no browser bars to allow for). */
+@media (display-mode: standalone), (display-mode: fullscreen) {
+  html,
+  body,
+  #app {
+    height: 100vh;
+  }
+}
+html {
+  /* an app, not a document: no pinch or double-tap zoom, and no text the system resizes on rotation (scrolling stays) */
+  touch-action: pan-x pan-y;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  overscroll-behavior: none;
+}
 body {
   background: #000;
 }

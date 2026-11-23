@@ -56,6 +56,15 @@
     document.documentElement.style.colorScheme = value
   }
 
+  // an app is not a document to zoom: no pinch or double-tap scaling of its page (scrolling stays), as in the shell.
+  // Safari's own gesture events scale a page whatever `touch-action` says, so they are refused too.
+  document.documentElement.style.touchAction = 'pan-x pan-y'
+  ;['gesturestart', 'gesturechange', 'gestureend'].forEach(function (gesture) {
+    document.addEventListener(gesture, function (event) {
+      event.preventDefault()
+    })
+  })
+
   // before first paint: the appearance the host opened the page with, else the browser's
   var opened = new URLSearchParams(location.search).get('theme')
   setTheme(

@@ -14,6 +14,7 @@ import App from './App.svelte'
 import { apps } from './lib/apps.svelte'
 import { host } from './lib/host.svelte'
 import { settings } from './lib/settings.svelte'
+import { preventZoom } from './shell/noZoom'
 import { windowManager } from './lib/windowManager.svelte'
 
 declare global {
@@ -37,6 +38,7 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
     .catch((e: unknown) => console.warn('[vos] service worker:', e))
 }
 
+preventZoom()
 window.__vos = { host, wm: windowManager, settings, apps }
 mount(App, { target: document.getElementById('app')! })
 void host.start().then(() => {
