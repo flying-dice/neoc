@@ -16,8 +16,8 @@
 //! - A failure to bind is a typed `NetError` whose kind is the operating system's (`addr_in_use`,
 //!   `addr_not_available`, `permission_denied`, ...), with the address.
 //! - `addr()` of a listener the engine has closed returns a typed `closed` error (it raised).
-//!
-//! Not ported yet: handing a listener to a `std:thread` worker (its `Sendable`), which waits for `std:thread`.
+//! - A listener is handed to a `std:thread` worker as one of `std:thread`'s `Shared` handles (it implemented
+//!   `Sendable`).
 
 use std::net::SocketAddr;
 use std::sync::Arc;

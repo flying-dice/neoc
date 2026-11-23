@@ -1,7 +1,7 @@
 //! Concurrent data structures: `std:collections`.
 //!
 //! `Map` and `Counter` are handles on `Send + Sync` state behind an `Arc`: a copy of the handle (in another
-//! coroutine, or another worker once `std:thread` hands it over) sees the same entries and the same count.
+//! coroutine, or in a `std:thread` worker it was shared with) sees the same entries and the same count.
 //!
 //! ```lua
 //! local collections = require("std:collections")
