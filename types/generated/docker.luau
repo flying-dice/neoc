@@ -525,6 +525,7 @@ end function __DARKLUA_BUNDLE_MODULES.c()local v=__DARKLUA_BUNDLE_MODULES.cache.
 
 local app = require("vos:app")
 local task = require("std:task")
+local time = require("std:time")
 local declaration = __DARKLUA_BUNDLE_MODULES.c()
 local engine = __DARKLUA_BUNDLE_MODULES.b()
 
@@ -534,6 +535,8 @@ local owned = {}
 local OWNER = "vos.app"
 local SIGNATURE = "vos.signature"
 
+
+local BUSY_LIMIT = 700
 local EVENTS = { "create", "start", "die", "destroy", "pause", "unpause", "restart" }
 
 
@@ -558,7 +561,11 @@ local filter = { `{OWNER}={app.id}` }
   local problem = ""
 
   
-  local busy = false
+  
+  
+  local since= nil
+  
+  local turn = 0
 
   
   local function list(api)    
@@ -679,19 +686,23 @@ local status= { state = "absent", status = "", current = false, problem = proble
   
   
   function container.apply(_self, declared, always)    
-local api, unreachable = engine.actor()
-    if not api then
-      problem = if declared then unreachable or "" else ""
-      return unreachable
-    end
-    while busy do
+while since and since:elapsed():as_secs() < BUSY_LIMIT do
       task.wait(0.05)
     end
-    busy = true
-    local ran, answer = pcall(function()      
+    turn += 1
+    local mine = turn
+    since = time.now()
+    
+    local api, unreachable = engine.actor()
+    local ran, answer = true, unreachable
+    if api then
+      ran, answer = pcall(function()        
 return if declared then make(api, declared, always == true) else removeAll(api)
-    end)
-    busy = false
+      end)
+    end
+    if turn == mine then
+      since = nil
+    end
     local failure= if ran then answer else "The container could not be made."
     
     problem = if declared then failure or "" else ""

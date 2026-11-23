@@ -12,6 +12,7 @@
 -- A function that does something answers with a plain sentence when it could not, and with nothing when it did.
 local app = require("vos:app")
 local task = require("std:task")
+local time = require("std:time")
 local declaration = require("./declaration")
 local engine = require("./engine")
 
@@ -21,6 +22,8 @@ local owned = {}
 local OWNER = "vos.app"
 local SIGNATURE = "vos.signature"
 -- what changes how the container is doing; the rest of what Docker reports does not
+-- the longest one `apply` is waited for, in seconds: more than pulling an image may take (`engine.puller`)
+local BUSY_LIMIT = 700
 local EVENTS = { "create", "start", "die", "destroy", "pause", "unpause", "restart" }
 export type Port = declaration.Port
 export type Mount = declaration.Mount
@@ -44,8 +47,12 @@ function owned.container(name: string): Container
   -- why the container could not be made or started the last time it was tried; empty when it could
   local problem = ""
 
-  -- whether one `apply` is at work: a second waits, so that two never make the same container at once
-  local busy = false
+  -- Since when one `apply` is at work: a second waits, so that two never make the same container at once. It is a
+  -- moment and not a flag because a call the host dropped half way (its caller gave up) never gets to say it is
+  -- done: the next then waits no longer than a call can take.
+  local since: typeof(time.now())? = nil
+  -- which `apply` holds it: one that was taken over does not release it for the one that took over
+  local turn = 0
 
   -- this app's containers of this name, as Docker lists them: one, or none
   local function list(api: engine.Client): ({ any }?, string?)
@@ -166,19 +173,23 @@ function owned.container(name: string): Container
   -- already, and runs, is left running, unless `always`. What Docker refused is kept, for `status` to say, and
   -- answered.
   function container.apply(_self: Container, declared: Declaration?, always: boolean?): string?
-    local api, unreachable = engine.actor()
-    if not api then
-      problem = if declared then unreachable or "" else ""
-      return unreachable
-    end
-    while busy do
+    while since and since:elapsed():as_secs() < BUSY_LIMIT do
       task.wait(0.05)
     end
-    busy = true
-    local ran, answer = pcall(function(): string?
-      return if declared then make(api, declared, always == true) else removeAll(api)
-    end)
-    busy = false
+    turn += 1
+    local mine = turn
+    since = time.now()
+    -- asked for only now: another Docker may have been chosen while this waited
+    local api, unreachable = engine.actor()
+    local ran, answer = true, unreachable
+    if api then
+      ran, answer = pcall(function(): string?
+        return if declared then make(api, declared, always == true) else removeAll(api)
+      end)
+    end
+    if turn == mine then
+      since = nil
+    end
     local failure: string? = if ran then answer else "The container could not be made."
     -- a container that is not wanted has no problem to show, whether or not Docker could remove it
     problem = if declared then failure or "" else ""
