@@ -14,9 +14,14 @@
 //!
 //! **The process's group.** On Unix the process is started as the leader of a process group of its own, and a kill
 //! is sent to the whole group: a program started through a wrapper (`sh -c`, `npx`) would otherwise live on, and keep
-//! the pipes open, after the wrapper was killed. A process that moved itself to another group is not reached. The
-//! group is no longer the terminal's foreground group, so a Ctrl-C typed at the engine's terminal reaches the
-//! engine and not the process: the engine ends it. On Windows only the process itself is terminated.
+//! the pipes open, after the wrapper was killed. The kill reaches the process itself in any case; of what it
+//! started, it misses only a process that moved itself to another group. On Windows only the process itself is
+//! terminated.
+//!
+//! The group is not the foreground group of the engine's terminal. A Ctrl-C typed there reaches the engine and not
+//! the process, so a script that should end on one ends its processes itself (`std:workers`' shutdown signal). And a
+//! process that reads an inherited standard input which is that terminal is stopped by the terminal (`SIGTTIN`), as
+//! every background job is: an inherited input is for an engine whose own input is a pipe or a file.
 //!
 //! **Closing** ([`Process::close`]: `close()`, the handle being collected, the engine shutting down) never blocks. It
 //! tells the child's task to kill the process and closes the buffers, which ends every `read` and stops the readers
@@ -164,17 +169,14 @@ impl Process {
         data: Vec<u8>,
     ) -> impl Future<Output = Result<(), ProcessError>> + Send + use<> {
         let input = match &*self.input.lock() {
-            Input::Open(input) => Ok(Some(input.clone())),
-            Input::Closed => Ok(None),
             Input::NotPiped => Err(ProcessError::not_piped("stdin")),
+            // the writer lets go of the pipe when the process ends: refused here, so that no write races that
+            Input::Open(input) if self.exit.borrow().is_none() => Ok(Some(input.clone())),
+            Input::Open(_) | Input::Closed => Ok(None),
         };
         let closed = self.closed.subscribe();
         async move {
-            let input = input?;
-            if data.is_empty() && input.is_some() {
-                return Ok(());
-            }
-            submit(input, data, closed)
+            submit(input?, data, closed)
                 .await
                 .map_err(|failed| match failed {
                     WriteFailed::Closed => ProcessError::closed("stdin"),
@@ -329,10 +331,6 @@ async fn write_input(
                 job = jobs.recv() => job,
             };
             let Some(job) = job else { break };
-            // its call was dropped before anything of it was written
-            if job.is_abandoned() {
-                continue;
-            }
             let written = async {
                 stdin.write_all(&job.data).await?;
                 stdin.flush().await

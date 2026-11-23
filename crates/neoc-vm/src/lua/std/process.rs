@@ -30,8 +30,9 @@
 //!
 //! **Limits.** A read returns at most [`MAX_READ`](byte_stream::MAX_READ) bytes and a write takes at most
 //! [`MAX_WRITE`](byte_stream::MAX_WRITE); at most [`OUTPUT_BUFFER`](byte_stream::OUTPUT_BUFFER) bytes of each output
-//! stream wait for the script, and a process that writes more waits until they are read. So a piped stream nobody reads stops the process once it is full: read it, or do not pipe
-//! it. Nothing limits how many processes a script starts.
+//! stream wait for the script, and a process that writes more waits until they are read. So a piped stream nobody
+//! reads stops the process once it is full: read it, or do not pipe it. Nothing limits how many processes a script
+//! starts.
 //!
 //! **What starting a process means.** The process runs as the user the engine runs as: it can do what that user
 //! can. Nothing here narrows that, as nothing narrows `std:fs`: a script that is given this module is trusted with
@@ -89,7 +90,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         )],
         "Result<Child, string>",
         &format!(
-            "Start a program: a `Child`. `program` is a path, or a name looked up in `PATH`, and `args` its arguments (at most 1024); no shell reads them, so nothing in them is expanded or split. `cwd` is the directory it starts in (default: the engine's working directory). `env` is added to the environment the engine's process has, replacing a variable of the same name; with `clear_env` the process starts from an empty environment and has only what `env` gives it. Each of `stdin`, `stdout` and `stderr` is `\"piped\"` (the default: a pipe between the process and this handle), `\"null\"` (nothing: the process reads the end of its input, and what it writes is thrown away) or `\"inherit\"` (the engine's own stream). A piped output that nobody reads stops the process once 256 KiB of it wait: read it, or do not pipe it. The process runs as the engine's user and can do what that user can: a script given this module is trusted with the machine. Errors are `process.<function>: <kind>: <message>` (see `error_kind`): `invalid_input` for an option that is missing, unknown or of the wrong shape, `spawn` when the program could not be started (no such program, not executable, `cwd` is not a directory, or the system refused the process), `closed` when the engine has shut down. The process is killed, and its streams let go of, by `close()`, when the handle is collected, and when the engine shuts down. On Unix it is started in a process group of its own, which a kill reaches as a whole, and a Ctrl-C typed at the engine's terminal does not reach it. {WAITS}"
+            "Start a program: a `Child`. `program` is a path, or a name looked up in `PATH`, and `args` its arguments (at most 1024); no shell reads them, so nothing in them is expanded or split. `cwd` is the directory it starts in (default: the engine's working directory). `env` is added to the environment the engine's process has, replacing a variable of the same name; with `clear_env` the process starts from an empty environment and has only what `env` gives it. Each of `stdin`, `stdout` and `stderr` is `\"piped\"` (the default: a pipe between the process and this handle), `\"null\"` (nothing: the process reads the end of its input, and what it writes is thrown away) or `\"inherit\"` (the engine's own stream). A piped output that nobody reads stops the process once 256 KiB of it wait: read it, or do not pipe it. The process runs as the engine's user and can do what that user can: a script given this module is trusted with the machine. Errors are `process.<function>: <kind>: <message>` (see `error_kind`): `invalid_input` for an option that is missing, unknown or of the wrong shape, `spawn` when the program could not be started (no such program, not executable, `cwd` is not a directory, or the system refused the process), `closed` when the engine has shut down. The process is killed, and its streams let go of, by `close()`, when the handle is collected, and when the engine shuts down. On Unix it is started in a process group of its own, which a kill reaches as a whole. That group is not the foreground of the engine's terminal: a Ctrl-C typed there does not reach the process (a script that should end on one kills its processes itself), and a process that reads an inherited `stdin` which is that terminal is stopped by it. {WAITS}"
         ),
     );
 
@@ -108,7 +109,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             &[("data", "string")],
             "Result<bool, string>",
             &format!(
-                "Send bytes to the process's standard input: `true` once the pipe has taken them all. Nothing is added: a protocol of lines needs its `\\n`. At most 1 MiB a call (`invalid_input` past that). Writes are made one after the other, and a process that does not read its input makes the write wait. `not_piped` when `stdin` is not a pipe; `closed` after `close_stdin()`, after `close()` and once the process has ended, also for a write that was waiting; `io` when the pipe refuses the bytes (the process closed its input). A write that is cancelled before the pipe has taken any of it is not made; one the pipe is already taking cannot be taken back, and the process may receive part of it. {WAITS}"
+                "Send bytes to the process's standard input: `true` once the pipe has taken them all. Nothing is added: a protocol of lines needs its `\\n`. At most 1 MiB a call (`invalid_input` past that). Writes are made one after the other, and a process that does not read its input makes the write wait. `not_piped` when `stdin` is not a pipe; `closed` after `close_stdin()`, after `close()` and once the process has ended, also for a write that was waiting; `io` when the pipe refuses the bytes (the process closed its input). A write cannot be taken back: cancelling the task that waits in one does not stop it, and the process may still receive all of it or a part. {WAITS}"
             ),
         )
         .method(
@@ -182,21 +183,25 @@ async fn spawn(lua: Lua, opts: Option<Value>) -> mlua::Result<(Value, Value)> {
     // Do nothing on the first poll (see `std:fs`'s `blocking`): where Luau refuses the yield, the call is dropped
     // after that poll, and a process started now would run although the script was told the call failed.
     tokio::task::yield_now().await;
-    // A call that is dropped while this runs drops the process when it arrives, which kills it.
-    let spawned = tokio::task::spawn_blocking(move || Process::spawn(&command))
-        .await
-        .unwrap_or_else(|e| {
-            Err(ProcessError::new(
-                Kind::Other,
-                format!("starting the program failed: {e}"),
-            ))
-        });
+    // The process is registered where it is started: a call that is dropped while this runs drops the process when
+    // it arrives, which kills it, and one whose task is cancelled (its future kept, never polled again) leaves a
+    // process the engine's shutdown still closes. Weakly: a script that starts and drops processes in a loop leaves
+    // nothing registered. Closed at once when the engine is already shut down.
+    let registry = life.clone();
+    let spawned = tokio::task::spawn_blocking(move || {
+        let process = Arc::new(Process::spawn(&command)?);
+        registry.on_shutdown_with(&process, |process| process.close());
+        Ok(process)
+    })
+    .await
+    .unwrap_or_else(|e| {
+        Err(ProcessError::new(
+            Kind::Other,
+            format!("starting the program failed: {e}"),
+        ))
+    });
     match spawned {
         Ok(process) => {
-            let process = Arc::new(process);
-            // weakly: a script that starts and drops processes in a loop leaves nothing registered. Closed at once
-            // when the engine is already shut down.
-            life.on_shutdown_with(&process, |process| process.close());
             if life.is_closed() {
                 // the engine shut down while the program was being started: it is closed already
                 return from_err(&lua, SPAWN, ProcessError::closed("the engine"));

@@ -25,7 +25,6 @@
 use std::future::Future;
 use std::io::{Read, Write};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self as std_mpsc, RecvTimeoutError};
 use std::time::Duration;
 
@@ -77,7 +76,6 @@ pub(super) struct Terminal {
     exit: watch::Receiver<Option<Result<Exit, String>>>,
     process_id: Option<u32>,
     closed: watch::Sender<bool>,
-    closing: AtomicBool,
 }
 
 impl Terminal {
@@ -125,7 +123,6 @@ impl Terminal {
             exit,
             process_id,
             closed,
-            closing: AtomicBool::new(false),
         })
     }
 
@@ -134,7 +131,7 @@ impl Terminal {
     }
 
     pub(super) fn is_closed(&self) -> bool {
-        self.closing.load(Ordering::SeqCst)
+        *self.closed.borrow()
     }
 
     /// The process's id while it runs and the terminal is open: afterwards the number is the operating system's to
@@ -198,14 +195,13 @@ impl Terminal {
 
     /// End the process and let go of the terminal. Never blocks; closing again does nothing. See the module docs.
     pub(super) fn close(&self) {
-        if self.closing.swap(true, Ordering::SeqCst) {
+        if self.closed.send_replace(true) {
             return;
         }
         self.kill();
         drop(self.input.lock().take());
         drop(self.master.lock().take());
         self.output.close();
-        self.closed.send_replace(true);
     }
 }
 
@@ -316,10 +312,6 @@ fn write_input(
     while let Some(job) = jobs.blocking_recv() {
         if *closed.borrow() {
             break;
-        }
-        // its call was dropped before anything of it was typed
-        if job.is_abandoned() {
-            continue;
         }
         let written = writer.write_all(&job.data).and_then(|()| writer.flush());
         job.finish(written);

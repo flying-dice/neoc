@@ -263,11 +263,6 @@ pub(crate) struct Job {
 }
 
 impl Job {
-    /// Nobody waits for this write any more (its call was dropped): a writer that has not started it skips it.
-    pub(crate) fn is_abandoned(&self) -> bool {
-        self.done.is_closed()
-    }
-
     /// Say how the write went.
     pub(crate) fn finish(self, written: std::io::Result<()>) {
         // the call may be gone
@@ -287,8 +282,8 @@ pub(crate) enum WriteFailed {
 /// `None` is a stream that is closed already.
 ///
 /// The queue is let go of as soon as the writer has the job, so a write that waits does not keep the queue open
-/// (dropping the queue is how a stream's input is ended). A call that is dropped before its job is started
-/// writes nothing ([`Job::is_abandoned`]); one that is dropped later cannot take back what the writer already has.
+/// (dropping the queue is one way a stream's input is ended). A job that is queued is the writer's: a call that
+/// is dropped, or whose task is cancelled, does not take it back.
 pub(crate) async fn submit(
     input: Option<mpsc::Sender<Job>>,
     data: Vec<u8>,
@@ -425,7 +420,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_write_lets_go_of_the_queue_once_the_writer_has_it_and_a_dropped_one_is_abandoned() {
+    async fn a_write_lets_go_of_the_queue_once_the_writer_has_it_and_a_close_ends_one_that_waits() {
         let (input, mut jobs) = mpsc::channel(1);
         let (closed_tx, closed) = watch::channel(false);
 
@@ -433,21 +428,12 @@ mod tests {
         let writing = tokio::spawn(submit(Some(input.clone()), b"one".to_vec(), closed.clone()));
         let job = jobs.recv().await.expect("the job");
         drop(input);
-        assert!(!job.is_abandoned());
         assert!(matches!(
             tokio::time::timeout(Duration::from_millis(50), jobs.recv()).await,
             Ok(None)
         ));
         job.finish(Ok(()));
         assert!(matches!(writing.await, Ok(Ok(()))));
-
-        // a call that is dropped leaves a job nobody waits for
-        let (input, mut jobs) = mpsc::channel(1);
-        let dropped = tokio::spawn(submit(Some(input), b"two".to_vec(), closed.clone()));
-        let job = jobs.recv().await.expect("the job");
-        dropped.abort();
-        let _ = dropped.await;
-        assert!(job.is_abandoned());
 
         // a close ends a write that waits, and no queue is a closed stream
         let (input, mut jobs) = mpsc::channel(1);

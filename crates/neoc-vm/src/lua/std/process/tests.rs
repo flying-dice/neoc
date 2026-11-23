@@ -289,79 +289,126 @@ async fn other_tasks_run_while_a_read_a_write_and_a_wait_are_waiting() {
     assert!(ticks >= 5, "the ticking task ran {ticks} times");
 }
 
+/// A shell that reads nothing until the file `go` is there, then counts its input: a write of more than the pipe
+/// holds waits for as long as the test wants.
 #[cfg(unix)]
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_cancelled_write_does_not_keep_the_input_open() {
-    let dir = tempfile::tempdir().expect("a directory");
+const COUNTS_WHEN_TOLD: &str = r#"
+        local megabyte = string.rep("x", 1024 * 1024)
+        local child = assert(process.spawn({ program = "/bin/sh",
+            args = { "-c", 'while [ ! -e "$1" ]; do sleep 0.02; done; wc -c', "sh", go } }))
+        local function write_megabyte()
+            return task.spawn(function()
+                return child:write(megabyte)
+            end)
+        end
+        local function go_on()
+            assert(require("std:fs").write(go, ""))
+        end
+"#;
+
+/// An engine whose scripts have `go`, the path of a file that is not there yet.
+#[cfg(unix)]
+fn engine_with_go(dir: &tempfile::TempDir) -> Lua {
     let lua = make_engine().expect("engine");
     lua.globals()
         .set("go", dir.path().join("go").to_string_lossy().into_owned())
         .expect("a global");
-    let counted: String = run_in(
-        &lua,
-        r#"
-        -- it reads nothing until the file is there, so a write of more than the pipe holds waits
-        local child = assert(process.spawn({ program = "/bin/sh",
-            args = { "-c", 'while [ ! -e "$1" ]; do sleep 0.02; done; wc -c', "sh", go } }))
-        local megabyte = string.rep("x", 1024 * 1024)
-        local cancelled = task.spawn(function()
-            return child:write(megabyte)
-        end)
-        local behind = task.spawn(function()
-            return child:write(megabyte)
-        end)
-        -- one of the two is being taken by the pipe now, and the other waits behind it
-        task.wait(0.1)
-        cancelled:cancel()
-        assert(child:close_stdin())
-        assert(require("std:fs").write(go, ""))
-        -- the process reads the end of its input, although a write was cancelled while it waited
-        local counted = read_all(child)
-        assert(assert(child:wait()).success)
-        local written, err = behind:await()
-        assert(written or process.error_kind(err) == "closed", tostring(err))
-        return counted
-        "#,
-    )
-    .await;
-    // the write the pipe was taking was finished and the one behind it refused, whichever of the two it was
-    assert_eq!(counted.trim(), "1048576");
+    lua
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_write_to_a_process_that_has_ended_is_refused() {
-    let (): () = run(r#"
-        local child = sh("exit 0")
-        assert(assert(child:wait()).success)
-        -- the writer lets go of the pipe when the process ends, which the script sees a moment later
-        local err
-        for _ = 1, 200 do
-            local written
-            written, err = child:write("late\n")
-            if not written then break end
-            task.wait(0.01)
+async fn closing_the_input_ends_it_after_the_write_being_made_and_refuses_those_behind() {
+    let dir = tempfile::tempdir().expect("a directory");
+    let (made, megabytes): (u32, String) = run_in(
+        &engine_with_go(&dir),
+        &format!(
+            r#"{COUNTS_WHEN_TOLD}
+        local writes = {{ write_megabyte(), write_megabyte(), write_megabyte() }}
+        -- the pipe can be taking one of them at most: the others wait, or have not started
+        assert(child:close_stdin())
+        go_on()
+        local made = 0
+        for _, write in writes do
+            local written, err = write:await()
+            assert(written or process.error_kind(err) == "closed", tostring(err))
+            made += if written then 1 else 0
         end
-        assert(process.error_kind(err) == "closed" or process.error_kind(err) == "io", tostring(err))
+        -- the process reads the end of its input
+        local counted = tonumber(read_all(child))
+        assert(assert(child:wait()).success)
+        return made, tostring(counted / (1024 * 1024))
+        "#
+        ),
+    )
+    .await;
+    assert!(made <= 1, "{made} writes were made after the close");
+    assert_eq!(
+        megabytes,
+        made.to_string(),
+        "what was written is what arrived"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_cancelled_write_does_not_keep_the_input_open_and_may_still_be_made() {
+    let dir = tempfile::tempdir().expect("a directory");
+    let megabytes: f64 = run_in(
+        &engine_with_go(&dir),
+        &format!(
+            r#"{COUNTS_WHEN_TOLD}
+        local cancelled, kept = write_megabyte(), write_megabyte()
+        cancelled:cancel()
+        go_on()
+        assert(kept:await() == true)
+        -- the end of the input arrives, although a task was cancelled while it waited in a write
+        assert(child:close_stdin())
+        local counted = tonumber(read_all(child))
+        assert(assert(child:wait()).success)
+        return counted / (1024 * 1024)
+        "#
+        ),
+    )
+    .await;
+    // a write cannot be taken back: the cancelled one was made if the writer already had it
+    assert!(
+        megabytes == 1.0 || megabytes == 2.0,
+        "{megabytes} MiB arrived"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_input_of_a_process_that_has_ended_is_closed() {
+    let seen: String = run(r#"
+        -- the process ends at once and leaves a child that reads its input to the end
+        local child = sh("(cat >/dev/null; echo end-of-input) & exit 0")
+        assert(assert(child:wait()).success)
+        for _, data in { "late\n", "" } do
+            local written, err = child:write(data)
+            assert(written == nil and process.error_kind(err) == "closed", tostring(err))
+        end
+        -- nobody closed the input: the writer let go of it when the process ended
+        return read_all(child)
     "#)
     .await;
+    assert_eq!(seen, "end-of-input\n");
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_kill_reaches_what_the_process_started() {
-    let (wrapper, started): (u32, u32) = run(r#"
-        -- a wrapper, as `sh -c` or `npx` is: the program that does the work is its child
-        local child = sh("sleep 1000 & echo $!; wait")
-        local started = tonumber(read_until(child, "\n"))
-        local wrapper = child:id()
-        child:close()
+    let (): () = run(r#"
+        -- a wrapper, as `sh -c` or `npx` is: the program that does the work is its child, and holds the output
+        local child = sh("sleep 1000 & echo started; wait")
+        read_until(child, "started\n")
+        child:kill()
         assert(assert(child:wait()).signal == 9)
-        return wrapper, started
+        -- the output ends only when the last process that holds it is gone
+        assert(read_all(child) == "")
     "#)
     .await;
-    assert!(!alive(wrapper));
-    gone(started).await;
 }
 
 // ---------------------------------------------------------------------------

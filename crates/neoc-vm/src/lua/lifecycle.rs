@@ -5,7 +5,7 @@
 //! each) supplies the two things this module defines, and the VM keeps the rules.
 //!
 //! A script can start work that outlives the call that started it: `std:task` coroutines, a `vnd:hyper`
-//! server's accept loop and connections, `std:thread` workers, a `std:fs` watcher's operating-system watch. Two things follow, and this module is both
+//! server's accept loop and connections, `std:thread` workers, a `std:fs` watcher's operating-system watch, a `std:process` child, a `vnd:portable_pty` terminal. Two things follow, and this module is both
 //! of them:
 //!
 //! - **[`Life`]**, a per-VM registry of everything the script spawned. The embedder calls
