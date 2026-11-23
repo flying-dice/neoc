@@ -115,6 +115,9 @@ strsim = "0.11"
 heck = "0.5"
 unicode-width = "0.2"
 deunicode = "1"
+# The terminal escape-sequence parser (the one Alacritty runs on) behind `text.strip_ansi`. `strip-ansi-escapes` is
+# this parser with a writer that also drops tabs, which a log needs kept, so the parser is used directly.
+vte = "0.14"
 thiserror = "2"
 miette = { version = "7", features = ["fancy"] }
 futures = { version = "0.3", default-features = false, features = ["std"] }

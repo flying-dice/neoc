@@ -9,6 +9,7 @@ local app = require("vos:app")
 local bollard = require("vnd:bollard")
 local rpc = require("../.app/rpc")
 local stacks = require("./stacks")
+local strings = require("lib:text")
 local task = require("std:task")
 local text = require("./text")
 
@@ -102,7 +103,7 @@ end
 -- Choose the Docker this app manages: an address, or empty for this machine's own. The address is only checked for
 -- being one (a Docker that is not running there is said by the overview, and may start later).
 function engine.use(host: string): string?
-  host = string.match(host, "^%s*(.-)%s*$") :: string
+  host = strings.trim(host)
   if host ~= "" then
     if
       not (string.match(host, "^unix:///") or string.match(host, "^tcp://[^/]") or string.match(host, "^https?://[^/]"))

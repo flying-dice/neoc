@@ -4,6 +4,8 @@
 -- pass it on as it is), and with nothing when it did what it was asked.
 local app = require("vos:app")
 local rpc = require("../.app/rpc")
+local trim = require("lib:text").trim
+local unicode = require("lib:unicode")
 local db = app.db
 
 -- what can change on a todo: only what is given changes
@@ -38,10 +40,6 @@ db:migrate {
     insert into lists(name, color) values ('Reminders', 'blue');
   ]],
 }
-
-local function trim(text: string): string
-  return string.match(text, "^%s*(.-)%s*$") :: string
-end
 
 -- a day is `2026-06-09`; empty is no day
 local function isDay(text: string): boolean
@@ -78,9 +76,9 @@ end
 
 -- the list called `name`, whatever its capitals: how an agent names a list
 function store.listNamed(name: string): rpc.List?
-  local wanted = string.lower(trim(name))
+  local wanted = trim(name)
   for _, list in store.lists() do
-    if string.lower(list.name) == wanted then
+    if unicode.caseless_eq(list.name, wanted) then
       return list
     end
   end

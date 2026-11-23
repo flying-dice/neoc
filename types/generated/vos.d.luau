@@ -1188,6 +1188,18 @@ export type lib_text = {
 	center: (text: string, width: number, fill_char: string?) -> (string?, string?),
 	--- Convert `text` to a URL-safe ASCII slug via `deunicode` transliteration, then lowercase and hyphenate.
 	slugify: (text: string) -> string,
+	--- Remove Unicode white space (the `White_Space` property: spaces, tabs, line breaks, U+00A0, U+3000, ...) from both ends of `text`.
+	trim: (text: string) -> string,
+	--- Remove Unicode white space from the start of `text`.
+	trim_start: (text: string) -> string,
+	--- Remove Unicode white space from the end of `text`.
+	trim_end: (text: string) -> string,
+	--- Clip `text` to at most `max` characters. A character is an extended grapheme cluster (UAX #29, what `lib:unicode.graphemes` yields and a Swift `Character` is): a flag emoji or a letter with its combining accent is one, and is never cut apart. When `text` is cut and `ellipsis` is given, the ellipsis ends the result and counts toward `max`; an ellipsis longer than `max` is left out. Raises when `max` is negative or not an integer.
+	clip: (text: string, max: number, ellipsis: string?) -> string,
+	--- Make any byte string valid UTF-8: bytes that are not part of a character are replaced with U+FFFD (the replacement character). Valid input is returned as it is.
+	to_valid_utf8: (bytes: string) -> string,
+	--- Remove what a terminal would act on instead of show: escape sequences (colours, cursor movement, window titles) and control characters. Line feeds and tabs stay, so `\r\n` becomes `\n`.
+	strip_ansi: (text: string) -> string,
 }
 
 -- ===== lib:unicode =====
