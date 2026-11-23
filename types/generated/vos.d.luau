@@ -6,7 +6,7 @@
 -- file, `--definitions:@vos=<this file>` of `luau-lsp`, `luau-lsp.types.definitionFiles` in an editor). Never loaded
 -- by the host. What it declares, in this order: the modules an app is offered (neoc's sections, less the modules in
 -- NOT_FOR_APPS), then vos's types (`vos_<Name>`), the globals, and the ONE `declare require` (two do not merge) with
--- an overload for every module an app is offered and `vos:app`, and an unusable type for each module it is not.
+-- an overload for every module an app is offered, `vos:app` and `vos:docker`, and an unusable type for each module it is not.
 
 -- ===== std:collections =====
 

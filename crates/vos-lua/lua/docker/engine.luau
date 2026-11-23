@@ -203,6 +203,10 @@ function engine.watch(filters: { [string]: any }, changed: () -> ())
     if events then
       reachable = true
       watched[events] = true
+      -- another Docker was chosen while this one was asked: `engine.use` did not know of these events to close them
+      if choice ~= chosen then
+        events:close()
+      end
       -- from here on every change is heard; what happened before this was not
       changed()
       -- ends when Docker goes away, and when another Docker is chosen (`engine.use` closes it)

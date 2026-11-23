@@ -73,6 +73,7 @@ end
 
 local function unreachable(status: vos_DockerStatus, problem: string): rpc.Overview
   status.reachable = false
+  status.version = ""
   status.problem = problem
   return { engine = status, containers = {}, stacks = {} }
 end

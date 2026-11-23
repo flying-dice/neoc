@@ -5,11 +5,13 @@
 -- takes a moment and loses nothing, because such a container keeps nothing. So it is always what its label says it
 -- was made from, and "is it up to date" is one comparison.
 --
--- The container is found by a label that carries the app's identity (`vos.app=<app.id>`), not by its name: a
--- container of that name that is not the app's is never touched (Docker refuses the name, and the app says so).
+-- The container is found by a label that carries the app's identity (`vos.app=<app.id>`) and then by its name: a
+-- container of that name that is not the app's is never touched (Docker refuses the name, and the app says so), and
+-- an app that owns several keeps them apart by their names.
 --
 -- A function that does something answers with a plain sentence when it could not, and with nothing when it did.
 local app = require("vos:app")
+local task = require("std:task")
 local declaration = require("./declaration")
 local engine = require("./engine")
 
@@ -29,7 +31,7 @@ export type State = "absent" | "running" | "restarting" | "stopped"
 export type Status = { state: State, status: string, current: boolean, problem: string }
 
 export type Container = {
-  -- Docker's filters for what happens to the container, for `engine.watch`
+  -- Docker's filters for what happens to the app's containers, for `engine.watch`
   filters: { [string]: any },
   status: (self: Container, declared: Declaration?) -> Status,
   apply: (self: Container, declared: Declaration?, always: boolean?) -> string?,
@@ -42,13 +44,23 @@ function owned.container(name: string): Container
   -- why the container could not be made or started the last time it was tried; empty when it could
   local problem = ""
 
-  -- this app's containers, as Docker lists them: one, or none (more only if something went wrong half way)
+  -- whether one `apply` is at work: a second waits, so that two never make the same container at once
+  local busy = false
+
+  -- this app's containers of this name, as Docker lists them: one, or none
   local function list(api: engine.Client): ({ any }?, string?)
     local found, err = api:list_containers { all = true, filters = { label = filter } }
     if not found then
       return nil, engine.sentence(err)
     end
-    return found, nil
+    local named: { any } = {}
+    for _, summary in found do
+      local names: any = summary.Names
+      if type(names) == "table" and table.find(names, `/{name}`) then
+        table.insert(named, summary)
+      end
+    end
+    return named, nil
   end
 
   local function removeAll(api: engine.Client): string?
@@ -159,7 +171,15 @@ function owned.container(name: string): Container
       problem = if declared then unreachable or "" else ""
       return unreachable
     end
-    local failure = if declared then make(api, declared, always == true) else removeAll(api)
+    while busy do
+      task.wait(0.05)
+    end
+    busy = true
+    local ran, answer = pcall(function(): string?
+      return if declared then make(api, declared, always == true) else removeAll(api)
+    end)
+    busy = false
+    local failure: string? = if ran then answer else "The container could not be made."
     -- a container that is not wanted has no problem to show, whether or not Docker could remove it
     problem = if declared then failure or "" else ""
     return failure

@@ -291,6 +291,10 @@ function engine.watch(filters, changed)
       reachable = true
       watched[events] = true
       
+      if choice ~= chosen then
+        events:close()
+      end
+      
       changed()
       
       while events:next() do
@@ -323,6 +327,9 @@ local hex = require("lib:hex")
 local declaration = {}
 
 
+
+local MADE = "1"
+
 local MAX_WORDS = 4096
 local MAX_PORTS = 256
 local MAX_MOUNTS = 256
@@ -342,11 +349,24 @@ local MAX_MOUNTS = 256
 
 
 
+
+
+local function listed(list, limit)  
+if type(list) ~= "table" or #list > limit then
+    return false
+  end
+  local count = 0
+  for _ in list do
+    count += 1
+  end
+  return count == #list
+end
+
 local function words(list, limit)  
 if list == nil then
     return true
   end
-  if type(list) ~= "table" or #list > limit then
+  if not listed(list, limit) then
     return false
   end
   for _, word in list do
@@ -383,7 +403,7 @@ if type(declared) ~= "table" then
     end
   end
   local ports= declared.ports or {}
-  if type(ports) ~= "table" or #ports > MAX_PORTS then
+  if not listed(ports, MAX_PORTS) then
     return "A container's ports are a list."
   end
   for _, port in ports do
@@ -397,7 +417,7 @@ if type(declared) ~= "table" then
     end
   end
   local mounts= declared.mounts or {}
-  if type(mounts) ~= "table" or #mounts > MAX_MOUNTS then
+  if not listed(mounts, MAX_MOUNTS) then
     return "A container's folders are a list."
   end
   for _, mount in mounts do
@@ -443,6 +463,7 @@ local parts= {}
       table.insert(parts, `{#value}:{value}`)
     end
   end
+  add("made", { MADE })
   add("image", { declared.image })
   add("entrypoint", declared.entrypoint or {})
   add("command", declared.command or {})
@@ -501,7 +522,9 @@ end function __DARKLUA_BUNDLE_MODULES.c()local v=__DARKLUA_BUNDLE_MODULES.cache.
 
 
 
+
 local app = require("vos:app")
+local task = require("std:task")
 local declaration = __DARKLUA_BUNDLE_MODULES.c()
 local engine = __DARKLUA_BUNDLE_MODULES.b()
 
@@ -535,12 +558,22 @@ local filter = { `{OWNER}={app.id}` }
   local problem = ""
 
   
+  local busy = false
+
+  
   local function list(api)    
 local found, err = api:list_containers { all = true, filters = { label = filter } }
     if not found then
       return nil, engine.sentence(err)
     end
-    return found, nil
+    local named= {}
+    for _, summary in found do
+      local names= summary.Names
+      if type(names) == "table" and table.find(names, `/{name}`) then
+        table.insert(named, summary)
+      end
+    end
+    return named, nil
   end
 
   local function removeAll(api)    
@@ -651,7 +684,15 @@ local api, unreachable = engine.actor()
       problem = if declared then unreachable or "" else ""
       return unreachable
     end
-    local failure = if declared then make(api, declared, always == true) else removeAll(api)
+    while busy do
+      task.wait(0.05)
+    end
+    busy = true
+    local ran, answer = pcall(function()      
+return if declared then make(api, declared, always == true) else removeAll(api)
+    end)
+    busy = false
+    local failure= if ran then answer else "The container could not be made."
     
     problem = if declared then failure or "" else ""
     return failure

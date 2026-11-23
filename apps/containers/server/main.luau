@@ -1,6 +1,6 @@
 --!strict
 -- The Containers app's backend: the Docker containers and Compose stacks of a machine. It keeps nothing of its own
--- but the choice of which Docker (engine.luau): the containers are Docker's, read each time they are asked for.
+-- (the choice of which Docker is kept by `vos:docker`): the containers are Docker's, read each time they are asked for.
 -- Every call that changes something answers with the overview as it now stands, so the window that asked draws what
 -- Docker has.
 --

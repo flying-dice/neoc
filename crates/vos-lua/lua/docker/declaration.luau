@@ -7,6 +7,9 @@ local hex = require("lib:hex")
 
 local declaration = {}
 
+-- How the framework makes a container, beyond what is declared (read-only folders, the restart policy). It is part
+-- of the signature: change it with `body`, and containers made the old way are made again.
+local MADE = "1"
 -- the most of each that one container is declared with
 local MAX_WORDS = 4096
 local MAX_PORTS = 256
@@ -27,11 +30,24 @@ export type Declaration = {
   ports: { Port }?,
   mounts: { Mount }?,
 }
+-- Whether `list` is a list of at most `limit`: a table with any other key is not one, and Docker would be sent it
+-- as something else than was declared.
+local function listed(list: any, limit: number): boolean
+  if type(list) ~= "table" or #list > limit then
+    return false
+  end
+  local count = 0
+  for _ in list do
+    count += 1
+  end
+  return count == #list
+end
+
 local function words(list: any, limit: number): boolean
   if list == nil then
     return true
   end
-  if type(list) ~= "table" or #list > limit then
+  if not listed(list, limit) then
     return false
   end
   for _, word in list do
@@ -68,7 +84,7 @@ function declaration.refused(declared: Declaration): string?
     end
   end
   local ports: any = declared.ports or {}
-  if type(ports) ~= "table" or #ports > MAX_PORTS then
+  if not listed(ports, MAX_PORTS) then
     return "A container's ports are a list."
   end
   for _, port in ports do
@@ -82,7 +98,7 @@ function declaration.refused(declared: Declaration): string?
     end
   end
   local mounts: any = declared.mounts or {}
-  if type(mounts) ~= "table" or #mounts > MAX_MOUNTS then
+  if not listed(mounts, MAX_MOUNTS) then
     return "A container's folders are a list."
   end
   for _, mount in mounts do
@@ -128,6 +144,7 @@ function declaration.signature(declared: Declaration): string
       table.insert(parts, `{#value}:{value}`)
     end
   end
+  add("made", { MADE })
   add("image", { declared.image })
   add("entrypoint", declared.entrypoint or {})
   add("command", declared.command or {})

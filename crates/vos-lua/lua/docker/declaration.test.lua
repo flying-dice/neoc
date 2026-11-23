@@ -68,6 +68,13 @@ describe("a declaration", function()
     local ports = table.create(300, { host = 80, container = 80 })
     expect(type(declaration.refused { image = "nginx", ports = ports })).toBe("string")
   end)
+
+  test("a list with a key that is no place in it is refused", function()
+    local environment: any = { "A=b", extra = "X=y" }
+    expect(type(declaration.refused { image = "nginx", environment = environment })).toBe("string")
+    local ports: any = { { host = 80, container = 80 }, more = { host = 81, container = 81 } }
+    expect(type(declaration.refused { image = "nginx", ports = ports })).toBe("string")
+  end)
 end)
 
 describe("what Docker is asked for", function()
