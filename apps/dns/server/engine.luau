@@ -47,9 +47,7 @@ function engine.sentence(err: string?): string
   elseif kind == "timed_out" then
     return "Docker is not answering. It may still be starting, or be paused."
   end
-  -- `bollard.<function>: <kind>: <message>`
-  local message = string.match(err or "", "^bollard%.[%a_]+: [%a_]+: (.*)$")
-  return message or err or "Docker refused, and did not say why."
+  return bollard.error_message(err) or err or "Docker refused, and did not say why."
 end
 
 local function connected(): (Clients?, string?)

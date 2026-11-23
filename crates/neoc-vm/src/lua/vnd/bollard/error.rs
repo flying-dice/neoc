@@ -10,6 +10,8 @@ use std::fmt;
 
 use ::bollard::errors::Error;
 
+use crate::lua::error_text;
+
 /// What went wrong. The names are the contract (`bollard.error_kind`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Kind {
@@ -170,17 +172,18 @@ fn chain(e: &(dyn std::error::Error + 'static)) -> String {
 /// The kind name inside an error string a `vnd:bollard` function returned (`bollard.ping: connect: ...`), or `None`
 /// when the text is not one of ours.
 pub(super) fn kind_of(err: &str) -> Option<&'static str> {
-    let rest = err.strip_prefix("bollard.")?;
-    let (function, rest) = rest.split_once(": ")?;
-    if function.is_empty()
-        || !function
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b == b'_')
-    {
-        return None;
-    }
-    let name = rest.split_once(": ").map_or(rest, |(name, _)| name);
-    Kind::parse(name).map(Kind::as_str)
+    read(err).map(|(kind, _)| kind.as_str())
+}
+
+/// The message inside an error string a `vnd:bollard` function returned: everything after the kind. `None` when the
+/// text is not one of ours.
+pub(super) fn message_of(err: &str) -> Option<&str> {
+    read(err).map(|(_, message)| message)
+}
+
+/// The kind and the message of one of our error strings; the shape is [`error_text`]'s.
+fn read(err: &str) -> Option<(Kind, &str)> {
+    error_text::read("bollard", err, Kind::parse)
 }
 
 #[cfg(test)]
@@ -243,5 +246,18 @@ mod tests {
         let e = BollardError::from(Error::SocketNotFoundError("/nowhere/docker.sock".into()));
         assert_eq!(e.kind(), Kind::Connect);
         assert!(e.to_string().contains("/nowhere/docker.sock"));
+    }
+
+    #[test]
+    fn message_of_reads_our_strings_only() {
+        assert_eq!(
+            message_of("bollard.start_container: not_found: No such container: web"),
+            Some("No such container: web")
+        );
+        assert_eq!(message_of("bollard.start_container: not_found"), Some(""));
+        assert_eq!(message_of("bollard.ping: nonsense: x"), None);
+        assert_eq!(message_of("hyper.get: connect: x"), None);
+        assert_eq!(message_of("No such container: web"), None);
+        assert_eq!(message_of(""), None);
     }
 }

@@ -499,6 +499,16 @@ async fn dockers_refusals_keep_its_message_under_a_stable_kind() {
             bollard.error_kind(not_found), bollard.error_kind(conflict), bollard.error_kind(in_use),
             tostring(bollard.error_kind("something else")), tostring(bollard.error_kind(nil)),
         }, ",")
+        -- the message is the string after its kind, and only this module's strings have one
+        for _, err in { not_found, conflict, in_use } do
+            local message = assert(bollard.error_message(err), err)
+            assert(message ~= "" and string.sub(err, -#message) == message, err)
+            assert(string.find(err, ": " .. bollard.error_kind(err) .. ": " .. message, 1, true), err)
+        end
+        assert(bollard.error_message("bollard.ping: connect: nothing listens") == "nothing listens")
+        assert(bollard.error_message("bollard.ping: nonsense: x") == nil)
+        assert(bollard.error_message("keyring.store: no_store: x") == nil)
+        assert(bollard.error_message("something else") == nil and bollard.error_message(nil) == nil)
         return not_found, conflict, in_use, kinds
         "#,
     )
@@ -845,6 +855,7 @@ async fn no_call_panics_on_hostile_input() {
             for _, a in hostile do
                 try(bollard.connect, a)
                 try(bollard.error_kind, a)
+                try(bollard.error_message, a)
             end
             local methods = {
                 "ping", "version", "info", "list_containers", "inspect_container", "create_container",
