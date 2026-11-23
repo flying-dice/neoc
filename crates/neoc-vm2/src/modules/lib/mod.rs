@@ -10,3 +10,4 @@ pub mod crypto;
 pub mod pkey;
 pub mod text;
 pub mod unicode;
+pub mod regex;
