@@ -1,7 +1,6 @@
 <!-- @organism NotePane — one note: its title (typed over to rename it, with what is wrong with a title said under it), whether it is written or read, its bookmark, the way to delete it after an alert asks, its text as Markdown to write or as it reads, and the notes that link to it -->
 <script lang="ts">
   import type { Backlink, Note } from 'app:rpc'
-  import ConfirmAlert from '../molecules/ConfirmAlert.svelte'
   import Markdown from '../molecules/Markdown.svelte'
   import type { Mode, Status } from '../lib/notebooks.svelte'
 
@@ -146,15 +145,15 @@
   </div>
   <div class="content" class:writing={mode === 'edit'}>
     {#if mode === 'edit'}
-      <textarea
-        aria-label="The note, in Markdown"
+      <ui-text-area
+        label="The note, in Markdown"
         placeholder={'Write in Markdown. [[Another note]] links to it, #tag tags this one.'}
-        spellcheck="true"
         maxlength={200000}
         value={body}
-        oninput={(e) => onedit(e.currentTarget.value)}
+        oninput={(e) => onedit((e.currentTarget as unknown as { value: string }).value)}
         onblur={onflush}
-        data-testid="notebooks-editor"></textarea>
+        data-testid="notebooks-editor"
+      ></ui-text-area>
     {:else if body.trim() === ''}
       <ui-empty-state icon="doc" heading="Nothing Written" message="Choose Write to start the note." data-testid="notebooks-blank"></ui-empty-state>
     {:else}
@@ -177,16 +176,19 @@
     </aside>
   {/if}
   {#if confirming}
-    <ConfirmAlert
+    <ui-alert
+      open
+      destructive
+      action-label="Delete"
       heading="Delete {note.title}?"
       message="The links to it stay, and lead to a new note."
-      testid="notebooks-confirm"
+      data-testid="notebooks-confirm"
       oncancel={() => (asking = null)}
       onconfirm={() => {
         asking = null
         onremove()
       }}
-    />
+    ></ui-alert>
   {/if}
 </section>
 
@@ -240,24 +242,15 @@
     overflow: hidden;
     padding-bottom: 12px;
   }
-  textarea {
+  ui-text-area {
     flex: 1;
-    min-width: 0;
-    box-sizing: border-box;
-    resize: none;
-    padding: 10px 12px;
-    border: 0;
-    border-radius: var(--radius-md);
-    background: var(--fill-quaternary);
-    color: var(--label);
+  }
+  /* Markdown is written in the fixed-width face, so that its marks line up */
+  ui-text-area::part(input) {
     font-family: var(--font-mono);
     font-size: 14px;
     line-height: 1.55;
   }
-  textarea::placeholder {
-    color: var(--label-secondary);
-  }
-  textarea:focus-visible,
   .backlinks button:focus-visible {
     outline: 2px solid var(--focus-ring);
     outline-offset: -2px;

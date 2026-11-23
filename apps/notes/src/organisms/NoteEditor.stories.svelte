@@ -68,9 +68,9 @@
 <Story
   name="A note"
   play={async ({ canvas }) => {
-    await expect(canvas.getByTestId('notes-text')).toHaveValue(BODY)
+    await expect(canvas.getByTestId('notes-text').shadowRoot!.querySelector('textarea')!).toHaveValue(BODY)
     await expect(canvas.getByTestId('notes-edited')).toHaveTextContent('Edited 9 June 2026 at 08:05')
-    await expect(canvas.getByTestId('notes-move')).toHaveValue('1')
+    await expect(canvas.getByTestId('notes-move').shadowRoot!.querySelector('select')!).toHaveValue('1')
   }}
 />
 
@@ -98,7 +98,7 @@
   name="Being read"
   args={{ text: '', loaded: false }}
   play={async ({ canvas }) => {
-    await expect(canvas.getByTestId('notes-text')).toBeDisabled()
+    await expect(canvas.getByTestId('notes-text').shadowRoot!.querySelector('textarea')!).toBeDisabled()
   }}
 />
 
@@ -107,7 +107,7 @@
   name="A deleted note"
   args={{ note: { ...SHOPPING, deleted: true } }}
   play={async ({ canvas }) => {
-    await expect(canvas.getByTestId('notes-text')).toHaveAttribute('readonly')
+    await expect(canvas.getByTestId('notes-text').shadowRoot!.querySelector('textarea')!).toHaveAttribute('readonly')
     await expect(canvas.getByTestId('notes-restore')).toBeVisible()
     await expect(canvas.queryByTestId('notes-pin')).toBeNull()
   }}
@@ -127,11 +127,11 @@
   name="Typing, pinning, moving and deleting"
   tags={['play-only']}
   play={async ({ canvas, userEvent }) => {
-    await userEvent.type(canvas.getByTestId('notes-text'), '!')
+    await userEvent.type(canvas.getByTestId('notes-text').shadowRoot!.querySelector('textarea')!, '!')
     await expect(onedit).toHaveBeenCalledWith(`${BODY}!`)
     await userEvent.click(canvas.getByTestId('notes-pin'))
     await expect(onpin).toHaveBeenCalledWith(SHOPPING)
-    await userEvent.selectOptions(canvas.getByTestId('notes-move'), '2')
+    await userEvent.selectOptions(canvas.getByTestId('notes-move').shadowRoot!.querySelector('select')!, '2')
     await expect(onmove).toHaveBeenCalledWith(SHOPPING, 2)
     await userEvent.click(canvas.getByTestId('notes-remove'))
     await expect(onremove).toHaveBeenCalledWith(SHOPPING)
@@ -145,9 +145,9 @@
   args={{ note: { ...SHOPPING, deleted: true } }}
   play={async ({ canvas, userEvent }) => {
     await userEvent.click(canvas.getByTestId('notes-purge'))
-    await expect(canvas.getByTestId('notes-confirm-purge')).toHaveTextContent('It cannot be brought back.')
+    await expect(canvas.getByTestId('notes-confirm-purge').shadowRoot!.querySelector('dialog')).toHaveTextContent('It cannot be brought back.')
     await expect(onpurge).not.toHaveBeenCalled()
-    await userEvent.click(canvas.getByTestId('notes-confirm-purge-delete'))
+    await userEvent.click(canvas.getByTestId('notes-confirm-purge').shadowRoot!.querySelector<HTMLElement>('[part=action]')!)
     await expect(onpurge).toHaveBeenCalledTimes(1)
   }}
 />

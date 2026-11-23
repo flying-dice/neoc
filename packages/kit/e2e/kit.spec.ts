@@ -23,16 +23,20 @@ test('the kit runs in a sandboxed frame under the frame policy and answers the k
   expect(await page.evaluate(() => window.origin)).toBe('null') // the frame has an opaque origin
   const tags = await page.evaluate(() =>
     [
+      'ui-alert',
       'ui-banner',
       'ui-button',
       'ui-check',
       'ui-empty-state',
       'ui-icon',
       'ui-list',
+      'ui-picker',
       'ui-row',
       'ui-section',
       'ui-segmented',
       'ui-spinner',
+      'ui-split-view',
+      'ui-text-area',
       'ui-text-field',
       'ui-toggle'
     ].filter((tag) => !customElements.get(tag))

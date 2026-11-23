@@ -96,7 +96,7 @@
   args={{ title: 'blog', containers: of('blog'), stack: BLOG }}
   play={async ({ canvas, userEvent }) => {
     await userEvent.click(canvas.getByTestId('containers-stack-remove'))
-    await expect(canvas.getByTestId('containers-stack-confirm')).toHaveTextContent('Remove blog?')
+    await expect(canvas.getByTestId('containers-stack-confirm').shadowRoot!.querySelector('dialog')).toHaveTextContent('Remove blog?')
     await expect(onstack).not.toHaveBeenCalled()
   }}
 />
@@ -132,11 +132,11 @@
     await expect(onstack).toHaveBeenLastCalledWith(MEDIA, 'restart')
     // removing waits for the answer; cancelling asks for nothing
     await userEvent.click(canvas.getByTestId('containers-stack-remove'))
-    await userEvent.click(canvas.getByTestId('containers-stack-confirm-cancel'))
+    await userEvent.click(canvas.getByTestId('containers-stack-confirm').shadowRoot!.querySelector<HTMLElement>('[part=cancel]')!)
     await expect(canvas.queryByTestId('containers-stack-confirm')).toBeNull()
     await expect(onstack).toHaveBeenCalledTimes(1)
     await userEvent.click(canvas.getByTestId('containers-stack-remove'))
-    await userEvent.click(canvas.getByTestId('containers-stack-confirm-ok'))
+    await userEvent.click(canvas.getByTestId('containers-stack-confirm').shadowRoot!.querySelector<HTMLElement>('[part=action]')!)
     await expect(onstack).toHaveBeenLastCalledWith(MEDIA, 'remove')
     await userEvent.click(canvas.getByTestId('containers-back'))
     await expect(onback).toHaveBeenCalledTimes(1)

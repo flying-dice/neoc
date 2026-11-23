@@ -51,9 +51,9 @@
   tags={['play-only']}
   play={async ({ canvas, userEvent }) => {
     await userEvent.click(canvas.getByTestId('projects-delete'))
-    await expect(canvas.getByTestId('projects-confirm')).toHaveTextContent('Its issues and its pages are deleted with it.')
+    await expect(canvas.getByTestId('projects-confirm').shadowRoot!.querySelector('dialog')).toHaveTextContent('Its issues and its pages are deleted with it.')
     await expect(onremove).not.toHaveBeenCalled()
-    await userEvent.click(canvas.getByTestId('projects-confirm-delete'))
+    await userEvent.click(canvas.getByTestId('projects-confirm').shadowRoot!.querySelector<HTMLElement>('[part=action]')!)
     await expect(onremove).toHaveBeenCalledWith(WEBSITE)
   }}
 />

@@ -81,7 +81,7 @@
   name="Rewriting"
   args={{ edit: { title: 'Design', body: BODIES[1] } }}
   play={async ({ canvas, userEvent }) => {
-    await expect(canvas.getByTestId('projects-page-text')).toHaveValue(BODIES[1])
+    await expect(canvas.getByTestId('projects-page-text').shadowRoot!.querySelector('textarea')!).toHaveValue(BODIES[1])
     await userEvent.click(canvas.getByTestId('projects-page-done'))
     await expect(onsave).toHaveBeenCalled()
   }}

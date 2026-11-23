@@ -33,7 +33,7 @@ async function add(page: Page, service: string, account: string, password: strin
 /** Delete the first item, answering the question. */
 async function removeFirst(page: Page): Promise<void> {
   await of(page, 'remove').first().click()
-  await part(page, 'confirm-delete').click()
+  await part(page, 'confirm-confirm').click()
   await expect(part(page, 'confirm')).toHaveCount(0)
 }
 

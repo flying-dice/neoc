@@ -31,14 +31,19 @@ describe('the Custom Elements Manifest', () => {
   test('describes every tag the kit defines, with its attributes, events and slots', () => {
     const tags = elementsOf(manifest).map((e) => e.tagName)
     expect(tags).toEqual([
-      'ui-banner', 'ui-button', 'ui-check', 'ui-empty-state', 'ui-icon', 'ui-list', 'ui-row', 'ui-section', 'ui-segmented', 'ui-spinner',
-      'ui-text-field', 'ui-toggle'
+      'ui-alert', 'ui-banner', 'ui-button', 'ui-check', 'ui-empty-state', 'ui-icon', 'ui-list', 'ui-picker', 'ui-row', 'ui-section',
+      'ui-segmented', 'ui-spinner', 'ui-split-view', 'ui-text-area', 'ui-text-field', 'ui-toggle'
     ].sort((a, b) => a.localeCompare(b)))
     const byTag = Object.fromEntries(elementsOf(manifest).map((e) => [e.tagName, e]))
     expect(byTag['ui-button']!.attributes!.map((a) => a.name)).toContain('variant')
     expect(byTag['ui-toggle']!.events!.map((e) => e.name)).toEqual(['change']) // inherited from the shared base class
     expect(byTag['ui-toggle']!.events![0]!.type!.text).toBe('CustomEvent<{ checked: boolean }>')
     expect(byTag['ui-row']!.slots!.map((s) => s.name)).toEqual(['', 'leading', 'trailing'])
+    expect(byTag['ui-alert']!.events!.map((e) => e.name)).toEqual(['confirm', 'cancel'])
+    expect(byTag['ui-split-view']!.slots!.map((s) => s.name)).toEqual(['sidebar', 'content', ''])
+    expect(byTag['ui-split-view']!.events![0]!.type!.text).toBe('CustomEvent<{ collapsed: boolean }>')
+    expect(byTag['ui-picker']!.events![0]!.type!.text).toBe('CustomEvent<{ value: string }>')
+    expect(byTag['ui-text-area']!.events!.map((e) => e.name)).toEqual(['input', 'change'])
   })
 
   test('every attribute of every tag has a type and a description (the editor shows them)', () => {

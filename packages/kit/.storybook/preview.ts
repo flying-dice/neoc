@@ -10,7 +10,7 @@ const preview: Preview = {
     controls: { expanded: true },
     backgrounds: { disable: true },
     a11y: { test: 'error' },
-    options: { storySort: { order: ['Introduction', 'Controls', 'Lists', 'Feedback'] } }
+    options: { storySort: { order: ['Introduction', 'Controls', 'Lists', 'Layout', 'Feedback'] } }
   },
   decorators: [
     withThemeByDataAttribute({

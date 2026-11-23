@@ -15,7 +15,7 @@ const part = (page: Page, name: string): Locator => frame(page).getByTestId(`${I
 // the kit's text field holds the real input in its shadow tree
 const title = (page: Page): Locator => part(page, 'title').locator('input')
 const search = (page: Page): Locator => part(page, 'search').locator('input')
-const editor = (page: Page): Locator => part(page, 'editor')
+const editor = (page: Page): Locator => part(page, 'editor').locator('textarea')
 
 let serial = 0
 const unique = (what: string): string => `${what} ${Date.now().toString(36)}-${++serial}`
@@ -193,7 +193,7 @@ test.describe('Notebooks journeys', () => {
     await part(page, 'confirm-cancel').click()
     await expect(row(page, name)).toBeVisible()
     await part(page, 'delete').click()
-    await part(page, 'confirm-delete').click()
+    await part(page, 'confirm-confirm').click()
     await expect(row(page, name)).toHaveCount(0)
     await expect(part(page, 'none')).toBeVisible()
   })
@@ -214,7 +214,7 @@ test.describe('Notebooks journeys', () => {
     await write(page, name, 'Flour, water, salt.')
     await part(page, 'delete-notebook').click()
     await expect(part(page, 'confirm-notebook')).toContainText('Its notes are deleted with it.')
-    await part(page, 'confirm-notebook-delete').click()
+    await part(page, 'confirm-notebook-confirm').click()
     await expect(part(page, 'notebook').locator('option:checked')).toHaveText('Notebook')
     await expect(part(page, 'notebook').locator('option', { hasText: notebook })).toHaveCount(0)
     await expect(row(page, name)).toHaveCount(0)

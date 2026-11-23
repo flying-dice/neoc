@@ -173,7 +173,7 @@
     await tab(canvas, userEvent, 'pages')
     await userEvent.type(input(canvas, 'projects-new-page-input'), 'Glossary{Enter}')
     await appears(canvas, 'projects-page-text')
-    await userEvent.type(canvas.getByTestId('projects-page-text'), 'Words we use.')
+    await userEvent.type(canvas.getByTestId('projects-page-text').shadowRoot!.querySelector('textarea')!, 'Words we use.')
     await userEvent.click(canvas.getByTestId('projects-page-done'))
     await appears(canvas, 'projects-page-body')
     await expect(canvas.getByTestId('projects-page-body')).toHaveTextContent('Words we use.')
@@ -234,7 +234,7 @@
   play={async ({ canvas, userEvent }) => {
     await show(canvas, userEvent, 'projects-project-APP')
     await userEvent.click(canvas.getByTestId('projects-delete'))
-    await userEvent.click(canvas.getByTestId('projects-confirm-delete'))
+    await userEvent.click(canvas.getByTestId('projects-confirm').shadowRoot!.querySelector<HTMLElement>('[part=action]')!)
     await gone(canvas, 'projects-project-APP')
   }}
 />

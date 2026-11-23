@@ -109,8 +109,10 @@
   play={async ({ canvas, userEvent }) => {
     await appears(canvas, 'keychain-item-3-remove')
     await userEvent.click(canvas.getByTestId('keychain-item-3-remove'))
-    await says(canvas, 'keychain-confirm', 'Delete router.home?')
-    await says(canvas, 'keychain-confirm', 'The password of admin is deleted from the keychain of this machine.')
+    // the kit's alert holds its words in its shadow tree
+    const alert = (): Element | null => canvas.getByTestId('keychain-confirm').shadowRoot!.querySelector('dialog')
+    await waitFor(() => expect(alert()).toHaveTextContent('Delete router.home?'))
+    await expect(alert()).toHaveTextContent('The password of admin is deleted from the keychain of this machine.')
   }}
 />
 
@@ -120,13 +122,13 @@
   play={async ({ canvas, userEvent }) => {
     await appears(canvas, 'keychain-item-3-remove')
     await userEvent.click(canvas.getByTestId('keychain-item-3-remove'))
-    await appears(canvas, 'keychain-confirm-cancel')
-    await userEvent.click(canvas.getByTestId('keychain-confirm-cancel'))
+    await appears(canvas, 'keychain-confirm')
+    await userEvent.click(canvas.getByTestId('keychain-confirm').shadowRoot!.querySelector<HTMLElement>('[part=cancel]')!)
     await gone(canvas, 'keychain-confirm')
     await says(canvas, 'keychain-items-summary', '3 items')
     await userEvent.click(canvas.getByTestId('keychain-item-3-remove'))
-    await appears(canvas, 'keychain-confirm-delete')
-    await userEvent.click(canvas.getByTestId('keychain-confirm-delete'))
+    await appears(canvas, 'keychain-confirm')
+    await userEvent.click(canvas.getByTestId('keychain-confirm').shadowRoot!.querySelector<HTMLElement>('[part=action]')!)
     await gone(canvas, 'keychain-item-3')
     await says(canvas, 'keychain-items-summary', '2 items')
   }}

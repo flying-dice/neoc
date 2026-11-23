@@ -67,7 +67,7 @@
 <Story
   name="Writing"
   play={async ({ canvas }) => {
-    await expect(canvas.getByTestId('notebooks-editor')).toHaveValue(BODY)
+    await expect(canvas.getByTestId('notebooks-editor').shadowRoot!.querySelector('textarea')!).toHaveValue(BODY)
     await expect(canvas.getByTestId('notebooks-status')).toHaveTextContent('Saved')
     await expect(title(canvas)).toHaveValue('Herbs')
   }}
@@ -119,7 +119,7 @@
   tags={['play-only']}
   args={{ backlinks: BACKLINKS }}
   play={async ({ canvas, userEvent }) => {
-    await userEvent.type(canvas.getByTestId('notebooks-editor'), '!')
+    await userEvent.type(canvas.getByTestId('notebooks-editor').shadowRoot!.querySelector('textarea')!, '!')
     await expect(mocks.onedit).toHaveBeenCalledWith(`${BODY}!`)
     await userEvent.type(title(canvas), ' bed{Enter}')
     await expect(mocks.onretitle).toHaveBeenLastCalledWith('Herbs bed')
@@ -132,8 +132,8 @@
     await userEvent.click(canvas.getByTestId('notebooks-backlink-1'))
     await expect(mocks.onopen).toHaveBeenCalledWith(1)
     await userEvent.click(canvas.getByTestId('notebooks-delete'))
-    await expect(canvas.getByTestId('notebooks-confirm')).toHaveTextContent('Delete Herbs?')
-    await userEvent.click(canvas.getByTestId('notebooks-confirm-delete'))
+    await expect(canvas.getByTestId('notebooks-confirm').shadowRoot!.querySelector('dialog')).toHaveTextContent('Delete Herbs?')
+    await userEvent.click(canvas.getByTestId('notebooks-confirm').shadowRoot!.querySelector<HTMLElement>('[part=action]')!)
     await expect(mocks.onremove).toHaveBeenCalledTimes(1)
   }}
 />

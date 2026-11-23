@@ -127,9 +127,9 @@
   args={{ title: 'Work', folder: { id: 2, name: 'Work' } }}
   play={async ({ canvas, userEvent }) => {
     await userEvent.click(canvas.getByTestId('notes-delete-folder'))
-    await expect(canvas.getByTestId('notes-confirm-folder')).toHaveTextContent('Its notes go to Recently Deleted.')
+    await expect(canvas.getByTestId('notes-confirm-folder').shadowRoot!.querySelector('dialog')).toHaveTextContent('Its notes go to Recently Deleted.')
     await expect(onremovefolder).not.toHaveBeenCalled()
-    await userEvent.click(canvas.getByTestId('notes-confirm-folder-delete'))
+    await userEvent.click(canvas.getByTestId('notes-confirm-folder').shadowRoot!.querySelector<HTMLElement>('[part=action]')!)
     await expect(onremovefolder).toHaveBeenCalledWith({ id: 2, name: 'Work' })
   }}
 />

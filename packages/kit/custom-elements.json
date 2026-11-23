@@ -4,6 +4,260 @@
   "modules": [
     {
       "kind": "javascript-module",
+      "path": "src/components/ui-alert.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "An alert that asks before something is done (UIAlertController's alert): a heading, a message, Cancel and the answer\nthat goes ahead. While `open` it is modal: the window behind it is dimmed and inert, the focus stays inside and goes\nback where it was when the alert closes.\n\nThe answer that changes nothing is in front. With `destructive` the answer that goes ahead is red, and Cancel is bold\nand has the focus, so a stray Return deletes nothing; without it the answer that goes ahead is bold and has the focus.\nEscape, and the browser's own request to close (a back gesture), answer Cancel.\n\nAn answer closes the alert (`open` becomes false, the focus goes back) and then raises its event.\n\nThe two answers have the test ids `<data-testid of the alert>-cancel` and `<data-testid of the alert>-confirm`.",
+          "name": "UiAlert",
+          "cssParts": [
+            {
+              "description": "The Cancel button.",
+              "name": "cancel"
+            },
+            {
+              "description": "The button that goes ahead.",
+              "name": "action"
+            }
+          ],
+          "members": [
+            {
+              "kind": "field",
+              "name": "open",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Shows the alert, over everything else in the window.",
+              "default": "false",
+              "attribute": "open",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "heading",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "The question: `Delete Work?`",
+              "default": "''",
+              "attribute": "heading"
+            },
+            {
+              "kind": "field",
+              "name": "message",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "What going ahead does, under the heading.",
+              "default": "''",
+              "attribute": "message"
+            },
+            {
+              "kind": "field",
+              "name": "actionLabel",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "The word on the button that goes ahead (default `OK`).",
+              "default": "'OK'",
+              "attribute": "action-label"
+            },
+            {
+              "kind": "field",
+              "name": "cancelLabel",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "The word on the button that changes nothing (default `Cancel`).",
+              "default": "'Cancel'",
+              "attribute": "cancel-label"
+            },
+            {
+              "kind": "field",
+              "name": "destructive",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Going ahead deletes something or cannot be undone: its button is red, and Cancel has the focus.",
+              "default": "false",
+              "attribute": "destructive",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "testid",
+              "privacy": "public",
+              "type": {
+                "text": "string | null"
+              },
+              "description": "The test id; the answers' are this followed by `-cancel` and `-confirm`.",
+              "default": "null",
+              "attribute": "data-testid"
+            },
+            {
+              "kind": "field",
+              "name": "dialog",
+              "type": {
+                "text": "HTMLDialogElement | null"
+              },
+              "privacy": "private",
+              "readonly": true
+            },
+            {
+              "kind": "method",
+              "name": "show",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Brings the dialog in step with `open`, and puts the focus on the answer in front when it opens."
+            },
+            {
+              "kind": "method",
+              "name": "answer",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "type",
+                  "type": {
+                    "text": "'confirm' | 'cancel'"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "field",
+              "name": "onKeydown",
+              "privacy": "private"
+            },
+            {
+              "kind": "field",
+              "name": "onDialogCancel",
+              "privacy": "private",
+              "description": "The browser asks to close a modal dialog (Escape, a back gesture): that is Cancel, and the alert closes itself."
+            },
+            {
+              "kind": "field",
+              "name": "onDialogClose",
+              "privacy": "private",
+              "description": "The browser closed it without asking (it may, the second time it is asked in a row): still Cancel. `close` is told\nlate, so one from an answer already given can arrive after the alert was opened again: the dialog is open then, and\nthere is nothing to answer. Taken out of the page while open is not an answer either: it opens again when put back."
+            }
+          ],
+          "events": [
+            {
+              "type": {
+                "text": "Event"
+              },
+              "description": "The person chose the answer that goes ahead. The alert has closed.",
+              "name": "confirm"
+            },
+            {
+              "type": {
+                "text": "Event"
+              },
+              "description": "The person chose Cancel, pressed Escape or asked the browser to close it. The alert has closed.",
+              "name": "cancel"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "open",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Shows the alert, over everything else in the window.",
+              "default": "false",
+              "fieldName": "open"
+            },
+            {
+              "name": "heading",
+              "type": {
+                "text": "string"
+              },
+              "description": "The question: `Delete Work?`",
+              "default": "''",
+              "fieldName": "heading"
+            },
+            {
+              "name": "message",
+              "type": {
+                "text": "string"
+              },
+              "description": "What going ahead does, under the heading.",
+              "default": "''",
+              "fieldName": "message"
+            },
+            {
+              "name": "action-label",
+              "type": {
+                "text": "string"
+              },
+              "description": "The word on the button that goes ahead (default `OK`).",
+              "default": "'OK'",
+              "fieldName": "actionLabel"
+            },
+            {
+              "name": "cancel-label",
+              "type": {
+                "text": "string"
+              },
+              "description": "The word on the button that changes nothing (default `Cancel`).",
+              "default": "'Cancel'",
+              "fieldName": "cancelLabel"
+            },
+            {
+              "name": "destructive",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Going ahead deletes something or cannot be undone: its button is red, and Cancel has the focus.",
+              "default": "false",
+              "fieldName": "destructive"
+            },
+            {
+              "name": "data-testid",
+              "type": {
+                "text": "string | null"
+              },
+              "description": "The test id; the answers' are this followed by `-cancel` and `-confirm`.",
+              "default": "null",
+              "fieldName": "testid"
+            }
+          ],
+          "superclass": {
+            "name": "LitElement",
+            "package": "lit"
+          },
+          "tagName": "ui-alert",
+          "customElement": true
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "UiAlert",
+          "declaration": {
+            "name": "UiAlert",
+            "module": "src/components/ui-alert.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/ui-banner.ts",
       "declarations": [
         {
@@ -2023,6 +2277,645 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/ui-picker.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "A picker (SwiftUI's `Picker` in its menu style, a pop-up button): one choice from a list too long, or too changeable,\nfor a `ui-segmented`. It shows the chosen option and opens the system's own menu of them, so the keyboard, type-ahead\nand a screen reader work as they do on every select. A form control (see `FormControl`): the chosen value is\nsubmitted, and `required` keeps the form invalid until an option is chosen.\n\nWith a `value` no option has, it shows nothing chosen. Drawn 36 pt high; with `hit` it has a 44 pt high hit area.",
+          "name": "UiPicker",
+          "cssParts": [
+            {
+              "description": "The inner select.",
+              "name": "select"
+            }
+          ],
+          "members": [
+            {
+              "kind": "field",
+              "name": "options",
+              "privacy": "public",
+              "type": {
+                "text": "{ value: string; label: string; disabled?: boolean }[]"
+              },
+              "description": "The options: `[{ value, label, disabled? }]`. A JSON attribute works too.",
+              "default": "[]",
+              "attribute": "options"
+            },
+            {
+              "kind": "field",
+              "name": "value",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "The chosen option's value.",
+              "default": "''",
+              "attribute": "value",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "required",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "The form is invalid until an option is chosen.",
+              "default": "false",
+              "attribute": "required",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "initial",
+              "type": {
+                "text": "string"
+              },
+              "privacy": "private",
+              "default": "''"
+            },
+            {
+              "kind": "field",
+              "name": "select",
+              "type": {
+                "text": "HTMLSelectElement | null"
+              },
+              "privacy": "private",
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "choices",
+              "type": {
+                "text": "{ value: string; label: string; disabled?: boolean }[]"
+              },
+              "privacy": "private",
+              "description": "The options as given, or none when the property is not a list (a string an app or an agent passed is data).",
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "validationAnchor",
+              "type": {
+                "text": "HTMLElement | undefined"
+              },
+              "privacy": "protected",
+              "description": "The element in the shadow root the browser points at when it reports a problem.",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "formValue",
+              "type": {
+                "text": "string | null"
+              },
+              "privacy": "protected",
+              "description": "The value the form takes from this control: a string, or null for nothing.",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "captureInitial",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Remembers the value the control starts with, for `reset`. Called once, after the first render.",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "resetValue",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Puts the control back to the value it started with.",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "restoreValue",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "state",
+                  "type": {
+                    "text": "string | File | FormData | null"
+                  }
+                }
+              ],
+              "description": "Puts the control back to a value the browser kept (back/forward, autofill).",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "computeValidity",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "ValidityResult"
+                }
+              },
+              "description": "The inner select does the checking (`required`); the picker reports what it finds.",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "onChange",
+              "privacy": "private"
+            },
+            {
+              "kind": "field",
+              "name": "formAssociated",
+              "type": {
+                "text": "boolean"
+              },
+              "static": true,
+              "default": "true",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "shadowRootOptions",
+              "type": {
+                "text": "object"
+              },
+              "static": true,
+              "default": "{ ...LitElement.shadowRootOptions, delegatesFocus: true }",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "name",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "The form field name. Nothing is submitted without one.",
+              "default": "''",
+              "attribute": "name",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "disabled",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Dims the control and ignores input; also set by a disabled `<fieldset>` around it.",
+              "default": "false",
+              "attribute": "disabled",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "hit",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "A 44 x 44 pt hit area around the drawn control, as the shell's `hit` is (off by default: the control is drawn at its\nown size). Set it wherever nothing else gives the control a 44 pt target; a row, a banner and a toolbar item do.",
+              "default": "false",
+              "attribute": "hit",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "The accessible name. A `<label for>` pointing at the element names it too.",
+              "default": "''",
+              "attribute": "label",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "description",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Read after the name.",
+              "default": "''",
+              "attribute": "description",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "internals",
+              "privacy": "protected",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "customMessage",
+              "type": {
+                "text": "string"
+              },
+              "privacy": "private",
+              "default": "''",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "isDisabled",
+              "type": {
+                "text": "boolean"
+              },
+              "privacy": "protected",
+              "description": "Whether the control takes no input: itself disabled, or inside a disabled fieldset. One answer, the browser's own\n(`:disabled` is true for the `disabled` attribute and for a disabled ancestor fieldset), so the two cannot disagree.\n`willUpdate` keeps the attribute in step with the property before the render that reads this.",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "accessibleName",
+              "type": {
+                "text": "string | undefined"
+              },
+              "privacy": "protected",
+              "description": "The accessible name: `label`, else the text of the first `<label>` that names this element.",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "form",
+              "type": {
+                "text": "HTMLFormElement | null"
+              },
+              "description": "The form the control is in, or null.",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "labels",
+              "type": {
+                "text": "NodeList"
+              },
+              "description": "The `<label>` elements that name the control.",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "validity",
+              "type": {
+                "text": "ValidityState"
+              },
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "validationMessage",
+              "type": {
+                "text": "string"
+              },
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "willValidate",
+              "type": {
+                "text": "boolean"
+              },
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "checkValidity",
+              "return": {
+                "type": {
+                  "text": "boolean"
+                }
+              },
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "reportValidity",
+              "return": {
+                "type": {
+                  "text": "boolean"
+                }
+              },
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "setCustomValidity",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "message",
+                  "type": {
+                    "text": "string"
+                  }
+                }
+              ],
+              "description": "Marks the control invalid with a message of the app's own (`''` clears it), as a native input does.",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "swallowWhenDisabled",
+              "privacy": "private",
+              "description": "A native disabled control hears no click: `el.click()` on a disabled kit control reaches nobody either.",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "syncForm",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Tells the form the current value and validity.",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "formResetCallback",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "formDisabledCallback",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "The element's own attribute or a fieldset turned it on or off: draw again (`isDisabled` reads the browser).",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "formStateRestoreCallback",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "state",
+                  "type": {
+                    "text": "string | File | FormData | null"
+                  }
+                }
+              ],
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            }
+          ],
+          "events": [
+            {
+              "type": {
+                "text": "CustomEvent<{ value: string }>"
+              },
+              "description": "The person chose an option. `value` is already updated.",
+              "name": "change"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "options",
+              "type": {
+                "text": "{ value: string; label: string; disabled?: boolean }[]"
+              },
+              "description": "The options: `[{ value, label, disabled? }]`. A JSON attribute works too.",
+              "default": "[]",
+              "fieldName": "options"
+            },
+            {
+              "name": "value",
+              "type": {
+                "text": "string"
+              },
+              "description": "The chosen option's value.",
+              "default": "''",
+              "fieldName": "value"
+            },
+            {
+              "name": "required",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "The form is invalid until an option is chosen.",
+              "default": "false",
+              "fieldName": "required"
+            },
+            {
+              "name": "name",
+              "type": {
+                "text": "string"
+              },
+              "description": "The form field name. Nothing is submitted without one.",
+              "default": "''",
+              "fieldName": "name",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "name": "hit",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "A 44 x 44 pt hit area around the drawn control, as the shell's `hit` is (off by default: the control is drawn at its\nown size). Set it wherever nothing else gives the control a 44 pt target; a row, a banner and a toolbar item do.",
+              "default": "false",
+              "fieldName": "hit",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Dims the control and ignores input; also set by a disabled `<fieldset>` around it.",
+              "default": "false",
+              "fieldName": "disabled",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "description": "The accessible name. A `<label for>` pointing at the element names it too.",
+              "default": "''",
+              "fieldName": "label",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "name": "description",
+              "type": {
+                "text": "string"
+              },
+              "description": "Read after the name.",
+              "default": "''",
+              "fieldName": "description",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            }
+          ],
+          "superclass": {
+            "name": "FormControl",
+            "module": "/src/form-control"
+          },
+          "tagName": "ui-picker",
+          "customElement": true
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "UiPicker",
+          "declaration": {
+            "name": "UiPicker",
+            "module": "src/components/ui-picker.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/ui-row.ts",
       "declarations": [
         {
@@ -3310,6 +4203,971 @@
           "declaration": {
             "name": "UiSpinner",
             "module": "src/components/ui-spinner.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/components/ui-split-view.ts",
+      "declarations": [
+        {
+          "kind": "variable",
+          "name": "SPLIT_VIEW_COLLAPSES_BELOW",
+          "type": {
+            "text": "number"
+          },
+          "default": "700",
+          "description": "Under this width, in CSS pixels, a split view shows one column: the same for every app."
+        },
+        {
+          "kind": "class",
+          "description": "A sidebar beside a detail (UISplitViewController, SwiftUI's `NavigationSplitView`), with a `content` column between\nthem when one is slotted. Given 700 pt or more it shows every column; given less it is `collapsed` and shows one:\nthe one `column` names (`NavigationSplitView`'s `preferredCompactColumn`). The app sets `column` as the person goes\nin (they picked a row: `detail`) and back out.\n\nThe way back is the app's, in the header of what it shows, as a navigation bar's back button is: draw it while the\nsplit view is `collapsed`, and set `column` when it is pressed. Read `collapsed`, or hear `collapsedchange`, for that\nand for whether a selection is worth showing in the sidebar (collapsed, the sidebar is a list to pick from).\n\nIt fills the height its parent gives it, and each column gives its one element its whole box.",
+          "name": "UiSplitView",
+          "cssProperties": [
+            {
+              "description": "The width of the sidebar when there is room (default 280px).",
+              "name": "--ui-split-sidebar-width"
+            },
+            {
+              "description": "The width of the middle column when there is room (default 300px).",
+              "name": "--ui-split-content-width"
+            }
+          ],
+          "slots": [
+            {
+              "description": "The first column: what there is to pick from.",
+              "name": "sidebar"
+            },
+            {
+              "description": "A middle column, for three levels (folders, the notes of one, a note). Leave it out for two.",
+              "name": "content"
+            },
+            {
+              "description": "The detail: what was picked.",
+              "name": ""
+            }
+          ],
+          "members": [
+            {
+              "kind": "field",
+              "name": "column",
+              "privacy": "public",
+              "type": {
+                "text": "'sidebar' | 'content' | 'detail'"
+              },
+              "description": "The column in front while collapsed: `sidebar` (default), `content` or `detail`.",
+              "default": "'sidebar'",
+              "attribute": "column",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "collapsed",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Whether one column is shown. The element sets it from its own width: read it, do not set it.",
+              "default": "false",
+              "attribute": "collapsed",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "threeColumns",
+              "type": {
+                "text": "boolean"
+              },
+              "privacy": "private",
+              "default": "false",
+              "description": "Whether something is slotted as the middle column. Not a property of the element: it redraws by hand."
+            },
+            {
+              "kind": "field",
+              "name": "observer",
+              "type": {
+                "text": "ResizeObserver | undefined"
+              },
+              "privacy": "private"
+            },
+            {
+              "kind": "field",
+              "name": "front",
+              "type": {
+                "text": "(typeof COLUMNS)[number]"
+              },
+              "privacy": "private",
+              "description": "The column in front: the one asked for, or the nearest there is (no middle column: the detail).",
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "onContentSlot",
+              "privacy": "private"
+            }
+          ],
+          "events": [
+            {
+              "name": "collapsedchange",
+              "type": {
+                "text": "CustomEvent<{ collapsed: boolean }>"
+              },
+              "description": "The view went under or over the width at which it shows one column. `collapsed` is already updated."
+            }
+          ],
+          "attributes": [
+            {
+              "name": "column",
+              "type": {
+                "text": "'sidebar' | 'content' | 'detail'"
+              },
+              "description": "The column in front while collapsed: `sidebar` (default), `content` or `detail`.",
+              "default": "'sidebar'",
+              "fieldName": "column"
+            },
+            {
+              "name": "collapsed",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Whether one column is shown. The element sets it from its own width: read it, do not set it.",
+              "default": "false",
+              "fieldName": "collapsed"
+            }
+          ],
+          "superclass": {
+            "name": "LitElement",
+            "package": "lit"
+          },
+          "tagName": "ui-split-view",
+          "customElement": true
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "SPLIT_VIEW_COLLAPSES_BELOW",
+          "declaration": {
+            "name": "SPLIT_VIEW_COLLAPSES_BELOW",
+            "module": "src/components/ui-split-view.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "UiSplitView",
+          "declaration": {
+            "name": "UiSplitView",
+            "module": "src/components/ui-split-view.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/components/ui-text-area.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "A multi-line text field (UITextView, SwiftUI's `TextEditor`): what `ui-text-field` is for one line, for many. Return\nstarts a new line and never submits the form. A form control (see `FormControl`): with a `name` it submits its text,\nand `required`, the length limits and `setCustomValidity` take part in validation.\n\nIt is `rows` lines high and scrolls in itself past that; given a height by its parent (a flex or grid item, a\n`height`), it fills it. There is no resize handle, as there is none on iPadOS.",
+          "name": "UiTextArea",
+          "cssParts": [
+            {
+              "description": "The inner textarea: set its `font` for text that is not prose (code, Markdown).",
+              "name": "input"
+            }
+          ],
+          "members": [
+            {
+              "kind": "field",
+              "name": "value",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "The text.",
+              "default": "''",
+              "attribute": "value"
+            },
+            {
+              "kind": "field",
+              "name": "placeholder",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "A hint shown while empty. It is not the accessible name.",
+              "default": "''",
+              "attribute": "placeholder"
+            },
+            {
+              "kind": "field",
+              "name": "rows",
+              "privacy": "public",
+              "type": {
+                "text": "number"
+              },
+              "description": "How many lines high it is when its parent gives it no height.",
+              "default": "3",
+              "attribute": "rows"
+            },
+            {
+              "kind": "field",
+              "name": "readonly",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "The text can be selected and copied, not changed.",
+              "default": "false",
+              "attribute": "readonly",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "required",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "The form is invalid while the field is empty.",
+              "default": "false",
+              "attribute": "required",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "maxlength",
+              "privacy": "public",
+              "type": {
+                "text": "number | undefined"
+              },
+              "description": "The longest text, in characters.",
+              "attribute": "maxlength"
+            },
+            {
+              "kind": "field",
+              "name": "minlength",
+              "privacy": "public",
+              "type": {
+                "text": "number | undefined"
+              },
+              "description": "The shortest text, in characters, when there is any.",
+              "attribute": "minlength"
+            },
+            {
+              "kind": "field",
+              "name": "enterKeyHint",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "What the keyboard's return key says: `enter`, `done`, `go`, `next`, `previous`, `search` or `send`.",
+              "default": "''",
+              "attribute": "enterkeyhint"
+            },
+            {
+              "kind": "field",
+              "name": "autocapitalize",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "How the keyboard capitalises: `off`, `none`, `on`, `sentences`, `words` or `characters`.",
+              "default": "''",
+              "attribute": "autocapitalize"
+            },
+            {
+              "kind": "field",
+              "name": "variant",
+              "privacy": "public",
+              "type": {
+                "text": "'field' | 'bare'"
+              },
+              "description": "`field` (default): a rounded filled field. `bare`: no box, for text that is the whole pane.",
+              "default": "'field'",
+              "attribute": "variant",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "invalid",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Shows the field as invalid (`aria-invalid`): a red outline, or red text for a `bare` field.",
+              "default": "false",
+              "attribute": "invalid",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "initial",
+              "type": {
+                "text": "string"
+              },
+              "privacy": "private",
+              "default": "''"
+            },
+            {
+              "kind": "field",
+              "name": "input",
+              "type": {
+                "text": "HTMLTextAreaElement | null"
+              },
+              "privacy": "private",
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "validationAnchor",
+              "type": {
+                "text": "HTMLElement | undefined"
+              },
+              "privacy": "protected",
+              "description": "The element in the shadow root the browser points at when it reports a problem.",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "formValue",
+              "type": {
+                "text": "string | null"
+              },
+              "privacy": "protected",
+              "description": "The value the form takes from this control: a string, or null for nothing.",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "captureInitial",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Remembers the value the control starts with, for `reset`. Called once, after the first render.",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "resetValue",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Puts the control back to the value it started with.",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "restoreValue",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "state",
+                  "type": {
+                    "text": "string | File | FormData | null"
+                  }
+                }
+              ],
+              "description": "Puts the control back to a value the browser kept (back/forward, autofill).",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "computeValidity",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "ValidityResult"
+                }
+              },
+              "description": "The inner textarea does the checking (required, length); the field reports what it finds.",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "select",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Selects the text, as the native textarea does."
+            },
+            {
+              "kind": "field",
+              "name": "onInput",
+              "privacy": "private"
+            },
+            {
+              "kind": "field",
+              "name": "onChange",
+              "privacy": "private"
+            },
+            {
+              "kind": "field",
+              "name": "formAssociated",
+              "type": {
+                "text": "boolean"
+              },
+              "static": true,
+              "default": "true",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "shadowRootOptions",
+              "type": {
+                "text": "object"
+              },
+              "static": true,
+              "default": "{ ...LitElement.shadowRootOptions, delegatesFocus: true }",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "name",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "The form field name. Nothing is submitted without one.",
+              "default": "''",
+              "attribute": "name",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "disabled",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Dims the control and ignores input; also set by a disabled `<fieldset>` around it.",
+              "default": "false",
+              "attribute": "disabled",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "hit",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "A 44 x 44 pt hit area around the drawn control, as the shell's `hit` is (off by default: the control is drawn at its\nown size). Set it wherever nothing else gives the control a 44 pt target; a row, a banner and a toolbar item do.",
+              "default": "false",
+              "attribute": "hit",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "The accessible name. A `<label for>` pointing at the element names it too.",
+              "default": "''",
+              "attribute": "label",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "description",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Read after the name.",
+              "default": "''",
+              "attribute": "description",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "internals",
+              "privacy": "protected",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "customMessage",
+              "type": {
+                "text": "string"
+              },
+              "privacy": "private",
+              "default": "''",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "isDisabled",
+              "type": {
+                "text": "boolean"
+              },
+              "privacy": "protected",
+              "description": "Whether the control takes no input: itself disabled, or inside a disabled fieldset. One answer, the browser's own\n(`:disabled` is true for the `disabled` attribute and for a disabled ancestor fieldset), so the two cannot disagree.\n`willUpdate` keeps the attribute in step with the property before the render that reads this.",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "accessibleName",
+              "type": {
+                "text": "string | undefined"
+              },
+              "privacy": "protected",
+              "description": "The accessible name: `label`, else the text of the first `<label>` that names this element.",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "form",
+              "type": {
+                "text": "HTMLFormElement | null"
+              },
+              "description": "The form the control is in, or null.",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "labels",
+              "type": {
+                "text": "NodeList"
+              },
+              "description": "The `<label>` elements that name the control.",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "validity",
+              "type": {
+                "text": "ValidityState"
+              },
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "validationMessage",
+              "type": {
+                "text": "string"
+              },
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "willValidate",
+              "type": {
+                "text": "boolean"
+              },
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "checkValidity",
+              "return": {
+                "type": {
+                  "text": "boolean"
+                }
+              },
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "reportValidity",
+              "return": {
+                "type": {
+                  "text": "boolean"
+                }
+              },
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "setCustomValidity",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "message",
+                  "type": {
+                    "text": "string"
+                  }
+                }
+              ],
+              "description": "Marks the control invalid with a message of the app's own (`''` clears it), as a native input does.",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "swallowWhenDisabled",
+              "privacy": "private",
+              "description": "A native disabled control hears no click: `el.click()` on a disabled kit control reaches nobody either.",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "syncForm",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Tells the form the current value and validity.",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "formResetCallback",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "formDisabledCallback",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "The element's own attribute or a fieldset turned it on or off: draw again (`isDisabled` reads the browser).",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "formStateRestoreCallback",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "state",
+                  "type": {
+                    "text": "string | File | FormData | null"
+                  }
+                }
+              ],
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            }
+          ],
+          "events": [
+            {
+              "type": {
+                "text": "InputEvent"
+              },
+              "description": "The person typed. `value` is already updated (the native event, passed through).",
+              "name": "input"
+            },
+            {
+              "type": {
+                "text": "Event"
+              },
+              "description": "The person committed the text (blur). It has no `detail`: read `value`.",
+              "name": "change"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "value",
+              "type": {
+                "text": "string"
+              },
+              "description": "The text.",
+              "default": "''",
+              "fieldName": "value"
+            },
+            {
+              "name": "placeholder",
+              "type": {
+                "text": "string"
+              },
+              "description": "A hint shown while empty. It is not the accessible name.",
+              "default": "''",
+              "fieldName": "placeholder"
+            },
+            {
+              "name": "rows",
+              "type": {
+                "text": "number"
+              },
+              "description": "How many lines high it is when its parent gives it no height.",
+              "default": "3",
+              "fieldName": "rows"
+            },
+            {
+              "name": "readonly",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "The text can be selected and copied, not changed.",
+              "default": "false",
+              "fieldName": "readonly"
+            },
+            {
+              "name": "required",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "The form is invalid while the field is empty.",
+              "default": "false",
+              "fieldName": "required"
+            },
+            {
+              "name": "maxlength",
+              "type": {
+                "text": "number | undefined"
+              },
+              "description": "The longest text, in characters.",
+              "fieldName": "maxlength"
+            },
+            {
+              "name": "minlength",
+              "type": {
+                "text": "number | undefined"
+              },
+              "description": "The shortest text, in characters, when there is any.",
+              "fieldName": "minlength"
+            },
+            {
+              "name": "enterkeyhint",
+              "type": {
+                "text": "string"
+              },
+              "description": "What the keyboard's return key says: `enter`, `done`, `go`, `next`, `previous`, `search` or `send`.",
+              "default": "''",
+              "fieldName": "enterKeyHint"
+            },
+            {
+              "name": "autocapitalize",
+              "type": {
+                "text": "string"
+              },
+              "description": "How the keyboard capitalises: `off`, `none`, `on`, `sentences`, `words` or `characters`.",
+              "default": "''",
+              "fieldName": "autocapitalize"
+            },
+            {
+              "name": "variant",
+              "type": {
+                "text": "'field' | 'bare'"
+              },
+              "description": "`field` (default): a rounded filled field. `bare`: no box, for text that is the whole pane.",
+              "default": "'field'",
+              "fieldName": "variant"
+            },
+            {
+              "name": "invalid",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Shows the field as invalid (`aria-invalid`): a red outline, or red text for a `bare` field.",
+              "default": "false",
+              "fieldName": "invalid"
+            },
+            {
+              "name": "name",
+              "type": {
+                "text": "string"
+              },
+              "description": "The form field name. Nothing is submitted without one.",
+              "default": "''",
+              "fieldName": "name",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "name": "hit",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "A 44 x 44 pt hit area around the drawn control, as the shell's `hit` is (off by default: the control is drawn at its\nown size). Set it wherever nothing else gives the control a 44 pt target; a row, a banner and a toolbar item do.",
+              "default": "false",
+              "fieldName": "hit",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Dims the control and ignores input; also set by a disabled `<fieldset>` around it.",
+              "default": "false",
+              "fieldName": "disabled",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "description": "The accessible name. A `<label for>` pointing at the element names it too.",
+              "default": "''",
+              "fieldName": "label",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            },
+            {
+              "name": "description",
+              "type": {
+                "text": "string"
+              },
+              "description": "Read after the name.",
+              "default": "''",
+              "fieldName": "description",
+              "inheritedFrom": {
+                "name": "FormControl",
+                "module": "src/form-control.ts"
+              }
+            }
+          ],
+          "superclass": {
+            "name": "FormControl",
+            "module": "/src/form-control"
+          },
+          "tagName": "ui-text-area",
+          "customElement": true
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "UiTextArea",
+          "declaration": {
+            "name": "UiTextArea",
+            "module": "src/components/ui-text-area.ts"
           }
         }
       ]

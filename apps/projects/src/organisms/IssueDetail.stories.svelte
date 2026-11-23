@@ -39,7 +39,7 @@
   name="A bug"
   play={async ({ canvas, userEvent }) => {
     await expect(canvas.getByTestId('projects-issue-key')).toHaveTextContent('WEB-2')
-    await expect(canvas.getByTestId('projects-issue-description')).toHaveValue('They go nowhere on the pricing page.')
+    await expect(canvas.getByTestId('projects-issue-description').shadowRoot!.querySelector('textarea')!).toHaveValue('They go nowhere on the pricing page.')
     await userEvent.click(canvas.getByTestId('projects-issue-status').shadowRoot!.querySelector('[data-testid="projects-issue-status-doing"]')!)
     await expect(onchange).toHaveBeenCalledWith(bug, { status: 'doing' })
   }}
@@ -51,7 +51,7 @@
   play={async ({ canvas, userEvent }) => {
     await userEvent.click(canvas.getByTestId('projects-issue-remove'))
     await expect(onremove).not.toHaveBeenCalled()
-    await userEvent.click(canvas.getByTestId('projects-issue-confirm-delete'))
+    await userEvent.click(canvas.getByTestId('projects-issue-confirm').shadowRoot!.querySelector<HTMLElement>('[part=action]')!)
     await expect(onremove).toHaveBeenCalledWith(bug)
   }}
 />

@@ -129,8 +129,8 @@
   name="Asked before it is removed"
   play={async ({ canvas, userEvent }) => {
     await userEvent.click(canvas.getByTestId('containers-inspector-remove'))
-    await expect(canvas.getByTestId('containers-inspector-confirm')).toHaveTextContent('Remove blog-db-1?')
-    await expect(canvas.getByTestId('containers-inspector-confirm')).toHaveTextContent('It is running')
+    await expect(canvas.getByTestId('containers-inspector-confirm').shadowRoot!.querySelector('dialog')).toHaveTextContent('Remove blog-db-1?')
+    await expect(canvas.getByTestId('containers-inspector-confirm').shadowRoot!.querySelector('dialog')).toHaveTextContent('It is running')
     await expect(onact).not.toHaveBeenCalled()
   }}
 />
@@ -147,10 +147,10 @@
     await userEvent.click(canvas.getByTestId('containers-inspector-tab').shadowRoot!.querySelector('[data-testid="containers-inspector-tab-details"]')!)
     await expect(ontab).toHaveBeenLastCalledWith('details')
     await userEvent.click(canvas.getByTestId('containers-inspector-remove'))
-    await userEvent.click(canvas.getByTestId('containers-inspector-confirm-cancel'))
+    await userEvent.click(canvas.getByTestId('containers-inspector-confirm').shadowRoot!.querySelector<HTMLElement>('[part=cancel]')!)
     await expect(onact).toHaveBeenCalledTimes(2)
     await userEvent.click(canvas.getByTestId('containers-inspector-remove'))
-    await userEvent.click(canvas.getByTestId('containers-inspector-confirm-ok'))
+    await userEvent.click(canvas.getByTestId('containers-inspector-confirm').shadowRoot!.querySelector<HTMLElement>('[part=action]')!)
     await expect(onact).toHaveBeenLastCalledWith('remove')
     await userEvent.click(canvas.getByTestId('containers-inspector-back'))
     await expect(onback).toHaveBeenCalledTimes(1)

@@ -131,7 +131,7 @@
     await expect(mocks.ontag).toHaveBeenCalledWith('plans')
     await userEvent.type(input(canvas, 'notebooks-search'), 'm')
     await expect(mocks.onsearch).toHaveBeenCalledWith('m')
-    await userEvent.selectOptions(canvas.getByTestId('notebooks-notebook'), 'Work')
+    await userEvent.selectOptions(canvas.getByTestId('notebooks-notebook').shadowRoot!.querySelector('select')!, 'Work')
     await expect(mocks.onnotebook).toHaveBeenCalledWith(2)
   }}
 />
@@ -153,8 +153,8 @@
   args={{ notebooks: [NOTEBOOK, { id: 2, name: 'Work' }], notes: NOTES }}
   play={async ({ canvas, userEvent }) => {
     await userEvent.click(canvas.getByTestId('notebooks-delete-notebook'))
-    await expect(canvas.getByTestId('notebooks-confirm-notebook')).toHaveTextContent('Its notes are deleted with it.')
-    await userEvent.click(canvas.getByTestId('notebooks-confirm-notebook-delete'))
+    await expect(canvas.getByTestId('notebooks-confirm-notebook').shadowRoot!.querySelector('dialog')).toHaveTextContent('Its notes are deleted with it.')
+    await userEvent.click(canvas.getByTestId('notebooks-confirm-notebook').shadowRoot!.querySelector<HTMLElement>('[part=action]')!)
     await expect(mocks.onremovenotebook).toHaveBeenCalledTimes(1)
   }}
 />

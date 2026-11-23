@@ -203,7 +203,7 @@
     await show(canvas, userEvent, 'todos-list-2')
     await appears(canvas, 'todos-delete-list')
     await userEvent.click(canvas.getByTestId('todos-delete-list'))
-    await userEvent.click(canvas.getByTestId('todos-confirm-delete'))
+    await userEvent.click(canvas.getByTestId('todos-confirm').shadowRoot!.querySelector<HTMLElement>('[part=action]')!)
     await gone(canvas, 'todos-list-2')
     await counts(canvas, 'todos-smart-all', 4)
   }}

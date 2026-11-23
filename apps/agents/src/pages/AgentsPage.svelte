@@ -11,9 +11,8 @@
 
   let { agents }: Props = $props()
 
-  // below 700 wide the list and the chat are one column each: the open chat decides which one shows
-  let width = $state(960)
-  const narrow = $derived(width < 700)
+  // in a window too narrow for both, the split view shows one column: the kit says when, the same for every app
+  let narrow = $state(false)
   const open = $derived(agents.open)
 
   $effect(() => {
@@ -22,8 +21,10 @@
   })
 </script>
 
-<main class="agents" class:narrow class:chatting={open !== null} bind:clientWidth={width} data-testid="agents-app">
-  <div class="list">
+<main class="agents" data-testid="agents-app">
+  <!-- one column in a narrow window: the open chat is in front of the list -->
+  <ui-split-view column={open === null ? 'sidebar' : 'detail'} oncollapsedchange={(e) => (narrow = e.detail.collapsed)}>
+    <div slot="sidebar">
     <ChatSidebar
       agents={agents.agents}
       chats={agents.chats}
@@ -31,8 +32,8 @@
       onstart={(agent) => void agents.startChat(agent)}
       onopen={(chat) => void agents.openChat(chat)}
     />
-  </div>
-  <div class="detail">
+    </div>
+    <div>
     {#if open}
       <ChatThread
         conversation={open}
@@ -57,42 +58,21 @@
         ></ui-empty-state>
       </div>
     {/if}
-  </div>
+    </div>
+  </ui-split-view>
 </main>
 
 <style>
   .agents {
-    display: grid;
-    grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
     height: 100%;
     background: var(--bg);
     color: var(--label);
     font: var(--type-body);
-  }
-  .list {
-    min-width: 0;
-    min-height: 0;
-    border-inline-end: 1px solid var(--separator);
-  }
-  .detail {
-    min-width: 0;
-    min-height: 0;
   }
   .nothing {
     box-sizing: border-box;
     height: 100%;
     /* the top clears the window's grabber, which the shell draws over the frame */
     padding: 28px 12px 12px;
-  }
-  /* one column: the list, or the chat once one is open */
-  .narrow {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .narrow.chatting .list,
-  .narrow:not(.chatting) .detail {
-    display: none;
-  }
-  .narrow .list {
-    border-inline-end: 0;
   }
 </style>
