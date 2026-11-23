@@ -42,8 +42,8 @@ use std::{net::IpAddr, path::PathBuf, sync::Arc};
 use tokio_util::sync::CancellationToken;
 use vos_application::{
     ports::{
-        AgentDirectory, AppRuntime, Clock, DataStore, DeviceRegistry, EventSink, Fetcher, InstalledAppStore,
-        RandomSource, ToolRegistry,
+        AgentDirectory, AppRuntime, AppTools, Clock, DataStore, DeviceRegistry, EventSink, Fetcher,
+        InstalledAppStore, RandomSource, ToolRegistry,
     },
     AgentService, AppService, DeviceService, FileStore, FilesService, HostFiles, PairingPolicy, Ports,
 };
@@ -162,9 +162,10 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     // apps list
     let contacts = Arc::new(AgentService::new(system.clone(), mcp_state.clone(), random.clone()));
     contacts.load().await?;
-    let runtime: Arc<dyn AppRuntime> = Arc::new(
+    let lua = Arc::new(
         LuaRuntime::new(hub.clone(), hub.clone()).with_roster(contacts.clone()).with_files(files.clone()),
     );
+    let runtime: Arc<dyn AppRuntime> = lua.clone();
     let tools: Arc<dyn ToolRegistry> = mcp_state.clone();
     let events: Arc<dyn EventSink> = hub.clone();
     let installed: Arc<dyn InstalledAppStore> = system.clone();
@@ -186,6 +187,9 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     for (token, agent) in cfg.agents {
         contacts.ensure(agent, Some(&token)).await?;
     }
+    // every app can list and call the tools of the running apps (the Agents app offers them to its agents)
+    let app_tools: Arc<dyn AppTools> = service.clone();
+    lua.bind_tools(Arc::downgrade(&app_tools));
     hub.bind(service.clone(), devices.clone());
     hub.bind_agents(contacts.clone());
     // the Files page: every installed app's Documents, and this machine's own file system

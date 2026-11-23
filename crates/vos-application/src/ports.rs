@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use serde_json::{Map, Value};
 use std::{collections::BTreeMap, sync::Arc};
-use vos_domain::{Actor, Agent, AgentId, AppId, Device, DeviceId, Notification, ToolSpec};
+use vos_domain::{Actor, Agent, AgentId, AppId, Device, DeviceId, Notification, QualifiedToolName, ToolSpec};
 
 pub use crate::data::{AppData, DataStore, DataTx, ExecOutcome, Params, PortResult, SqlMigration};
 
@@ -81,6 +81,18 @@ pub trait ToolRegistry: Send + Sync {
     async fn retract(&self, app: &AppId) -> PortResult<()>;
     /// What one agent may see changed (its grants were edited): tell its sessions the tool list changed.
     async fn visibility_changed(&self, agent: &AgentId) -> PortResult<()>;
+}
+
+/// The tools of every running app, for an app that offers them to an agent of its own (the Agents app gives an
+/// agent it talks to the same tools an MCP agent has). It is not checked against any grant: an app is the person's
+/// own code, and the agent it speaks for is one the person added to it. The call is attributed to that agent.
+#[async_trait]
+pub trait AppTools: Send + Sync {
+    /// Every tool of every running app, under its qualified name (`<app>__<tool>`), in name order.
+    fn all(&self) -> Vec<(QualifiedToolName, ToolSpec)>;
+    /// Run a tool as `caller` (the agent the app speaks for), as an MCP `tools/call` does: a `readOnly` tool runs
+    /// read-only, and a tool of an app that is not running is an error.
+    async fn call(&self, caller: Actor, name: &QualifiedToolName, args: Value) -> PortResult<Value>;
 }
 
 #[async_trait]
