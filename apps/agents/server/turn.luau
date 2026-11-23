@@ -25,6 +25,8 @@ local MAX_RESULT = 200000
 -- make every later run send a conversation without end.
 local MAX_TURN = 8 * 1024 * 1024
 -- The largest state an agent may share, as JSON text.
+-- the most tools of this machine one run may have run
+local MAX_CALLS = 32
 local MAX_STATE = 1024 * 1024
 
 -- What a run adds to the conversation it sends, besides the conversation: the answers to its interrupts, or what
@@ -423,15 +425,30 @@ end
 
 -- Run the vos tools this run asked for. Returns how many ran. Only the calls of this run: a call an earlier turn
 -- left open (the person stopped it) is not run later.
-local function runTools(chat: string, agent: roster.Agent, ours: { [string]: boolean }, calls: { number }): number
+local function runTools(
+  chat: string,
+  agent: roster.Agent,
+  ours: { [string]: boolean },
+  calls: { number },
+  current: Turn,
+  budget: { spent: number }
+): number
   local ran = 0
   for _, id in calls do
+    -- a stop during one tool is not followed by the next
+    if current.stopped then
+      break
+    end
     local row = timeline.get(chat, id)
     local data = if row then codec.decode(row.data) or {} else nil
     if row and data and data.result == nil and data.error == nil and ours[row.name] then
       local args, problem = arguments(row.text)
       local result: any = nil
-      if args then
+      if ran >= MAX_CALLS then
+        problem = `The agent asked for more than {MAX_CALLS} tools at once; this one was not run.`
+      elseif budget.spent > MAX_TURN then
+        problem = "The turn already holds as much as it may (8 MB); this tool was not run."
+      elseif args then
         result, problem = app.tools.call(row.name, args, { id = agent.id, name = agent.name })
       end
       data.ours = true
@@ -447,6 +464,8 @@ local function runTools(chat: string, agent: roster.Agent, ours: { [string]: boo
       else
         data.result = text
       end
+      -- what a tool gives is part of what the turn brings into the chat, as the agent's own events are
+      budget.spent += 200 + #data.result
       timeline.set(chat, row.id, { data = codec.encode(data), done = true })
       ran += 1
     end
@@ -565,7 +584,7 @@ function turn.take(chat: string, agent: roster.Agent, extra: Extra, current: Tur
     end
     -- the next run of the turn carries the tools' results, not the answers again
     extra = { forwarded = nil, resume = nil }
-    if runTools(chat, agent, tools.names, left.calls) == 0 or current.stopped then
+    if runTools(chat, agent, tools.names, left.calls, current, budget) == 0 or current.stopped then
       return
     end
   end

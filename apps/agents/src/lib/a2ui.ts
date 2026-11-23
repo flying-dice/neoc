@@ -151,11 +151,20 @@ const MAX_TEXT = 20_000
 const asText = (value: Json | undefined): string =>
   (value === null || value === undefined ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value)).slice(0, MAX_TEXT)
 
+/** The most `${path}` a text may hold: each one reads the data, and a text of nothing else would read it without end. */
+const MAX_REFERENCES = 64
+
 /** `Hello ${/user/name}`: each `${path}` is the data at that path. A function call inside one is left empty. */
 function interpolate(template: string, data: Json, scope: Scope): string {
-  return template.replace(/\\\$\{|\$\{([^}]*)\}/g, (whole, path: string | undefined) =>
-    path === undefined ? '${' : /^[\w/~.-]+$/.test(path.trim()) ? asText(valueAt(data, absolute(path.trim(), scope))) : ''
-  )
+  let read = 0
+  return template.replace(/\\\$\{|\$\{([^}]*)\}/g, (whole, path: string | undefined) => {
+    if (path === undefined) return '${'
+    if (!/^[\w/~.-]+$/.test(path.trim()) || read >= MAX_REFERENCES) return ''
+    read += 1
+    const value = valueAt(data, absolute(path.trim(), scope))
+    // a text is made of texts and numbers: a list or an object has no place in a sentence
+    return typeof value === 'object' ? '' : asText(value)
+  })
 }
 
 /**
@@ -207,6 +216,20 @@ export interface UserAction {
   context: Record_
 }
 
+const records = (list: Json | undefined): Record_[] => (Array.isArray(list) ? list.filter(isRecord).slice(0, MAX_CHILDREN) : [])
+
+/** The tabs of a Tabs that can be shown: those that name a child. */
+export function tabsOf(component: Component, data: Json, scope: Scope): { title: string; child: string }[] {
+  return records(component.tabs).flatMap((tab) => (typeof tab.child === 'string' ? [{ title: textOf(tab.title, data, scope), child: tab.child }] : []))
+}
+
+/** The options of a ChoicePicker that can be chosen: those that have a value. */
+export function optionsOf(component: Component, data: Json, scope: Scope): { value: string; label: string }[] {
+  return records(component.options).flatMap((option) =>
+    typeof option.value === 'string' ? [{ value: option.value, label: textOf(option.label, data, scope) || option.value }] : []
+  )
+}
+
 /** The components a component draws inside itself, each with the scope it is drawn in. */
 function inside(component: Component, data: Json, scope: Scope): Child[] {
   // read as the drawing reads it (`String(id)`), so nothing is drawn that was not counted
@@ -222,7 +245,7 @@ function inside(component: Component, data: Json, scope: Scope): Child[] {
     case 'Modal':
       return [...one(component.trigger), ...one(component.content)]
     case 'Tabs':
-      return (Array.isArray(component.tabs) ? component.tabs : []).slice(0, MAX_CHILDREN).flatMap((tab) => (isRecord(tab) ? one(tab.child) : []))
+      return tabsOf(component, data, scope).map((tab) => ({ id: tab.child, scope }))
     default:
       return []
   }

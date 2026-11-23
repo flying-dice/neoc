@@ -7,7 +7,9 @@
     drawable,
     MAX_DEPTH,
     mediaUrl,
+    optionsOf,
     resolve,
+    tabsOf,
     textOf,
     userAction,
     withValueAt,
@@ -78,18 +80,6 @@
     const value = resolve(component.value, data, scope)
     return Array.isArray(value) ? value.filter((v) => typeof v === 'string') : typeof value === 'string' ? [value] : []
   }
-  const optionsOf = (component: Component, scope: Scope): { value: string; label: string }[] =>
-    (Array.isArray(component.options) ? component.options : []).flatMap((option) =>
-      typeof option === 'object' && option !== null && !Array.isArray(option) && typeof option.value === 'string'
-        ? [{ value: option.value, label: textOf(option.label, data, scope) || option.value }]
-        : []
-    )
-  const tabsOf = (component: Component, scope: Scope): { title: string; child: string }[] =>
-    (Array.isArray(component.tabs) ? component.tabs : []).flatMap((tab) =>
-      typeof tab === 'object' && tab !== null && !Array.isArray(tab) && typeof tab.child === 'string'
-        ? [{ title: textOf(tab.title, data, scope), child: tab.child }]
-        : []
-    )
   const dateType = (component: Component): string =>
     component.enableDate === true && component.enableTime === true ? 'datetime-local' : component.enableTime === true ? 'time' : 'date'
 </script>
@@ -198,7 +188,7 @@
         <span aria-hidden="true">{label}</span>
       </div>
     {:else if kind === 'ChoicePicker'}
-      {@const options = optionsOf(component, scope)}
+      {@const options = optionsOf(component, data, scope)}
       {@const picked = chosen(component, scope)}
       {@const label = textOf(component.label, data, scope) || 'Choice'}
       <div class="field">
@@ -252,7 +242,7 @@
         />
       </label>
     {:else if kind === 'Tabs'}
-      {@const tabs = tabsOf(component, scope)}
+      {@const tabs = tabsOf(component, data, scope)}
       {@const at = Math.min(Number(shown[id] ?? 0), tabs.length - 1)}
       {#if tabs.length > 0}
         <div class="box">

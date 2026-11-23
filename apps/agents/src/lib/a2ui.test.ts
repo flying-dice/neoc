@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { childrenOf, drawable, mediaUrl, resolve, surfacesOf, textOf, userAction, valueAt, withValueAt, type Component } from './a2ui'
+import { childrenOf, drawable, optionsOf, tabsOf, mediaUrl, resolve, surfacesOf, textOf, userAction, valueAt, withValueAt, type Component } from './a2ui'
 
 const V09 = {
   a2ui_operations: [
@@ -144,6 +144,21 @@ describe('what an agent cannot make the window do', () => {
       a2ui_operations: [{ createSurface: { surfaceId: 's' } }, { updateComponents: { surfaceId: 's', components: [...rows, ...cards] } }]
     })
     expect(drawable(surface, surface.data)).toBe(false)
+  })
+
+  test('tabs and options are the same few for the count and for the drawing', () => {
+    const tabs = [...Array(300).fill(1), ...Array.from({ length: 300 }, (_, i) => ({ title: `T${i}`, child: `c${i}` }))]
+    const options = Array.from({ length: 5000 }, (_, i) => ({ value: `v${i}` }))
+    expect(tabsOf({ id: 't', component: 'Tabs', tabs }, {}, '')).toHaveLength(200)
+    expect(tabsOf({ id: 't', component: 'Tabs', tabs }, {}, '')[0]).toEqual({ title: 'T0', child: 'c0' })
+    expect(optionsOf({ id: 'o', component: 'ChoicePicker', options }, {}, '')).toHaveLength(200)
+  })
+
+  test('a text of nothing but references reads the data a few times, and never writes a list into a sentence', () => {
+    const data = { name: 'Ada', all: [1, 2, 3] }
+    const many = { call: 'formatString', args: { value: '${/name}'.repeat(500) } }
+    expect(textOf(many, data)).toBe('Ada'.repeat(64))
+    expect(textOf({ call: 'formatString', args: { value: 'x${/all}y' } }, data)).toBe('xy')
   })
 
   test('an ordinary surface is drawn', () => {
