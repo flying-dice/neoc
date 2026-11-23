@@ -38,31 +38,9 @@ local __DARKLUA_BUNDLE_MODULES={cache={}}do do local function __modImpl()
 
 
 
+local strings = require("lib:text")
+
 local text = {}
-
-
-local ANSI = "\27%[[%d;?]*%a"
-
-
-local function valid(raw)  
-if utf8.len(raw) then
-    return raw
-  end
-  local out= {}
-  local at = 1
-  while at <= #raw do
-    local length, bad = utf8.len(raw, at)
-    if length then
-      table.insert(out, string.sub(raw, at))
-      break
-    end
-    local stop = bad     
-table.insert(out, string.sub(raw, at, stop - 1))
-    table.insert(out, "\u{FFFD}")
-    at = stop + 1
-  end
-  return table.concat(out)
-end
 
 
 
@@ -77,10 +55,7 @@ local cut = #raw > limit
       raw = string.sub(raw, newline + 1)
     end
   end
-  raw = string.gsub(raw, ANSI, "")
-  raw = string.gsub(raw, "\r\n", "\n")
-  raw = string.gsub(raw, "[%z\1-\8\11-\31\127]", "")
-  return valid(raw), cut
+  return strings.strip_ansi(strings.to_valid_utf8(raw)), cut
 end
 
 return text
@@ -147,9 +122,8 @@ local kind = bollard.error_kind(err)
   elseif kind == "timed_out" then
     return "Docker is not answering. It may still be starting, or be paused."
   end
-  
-  local message = string.match(err or "", "^bollard%.[%a_]+: [%a_]+: (.*)$")
-  return message or err or "Docker refused, and did not say why."
+  local message = bollard.error_message(err)
+  return if message and message ~= "" then message else err or "Docker refused, and did not say why."
 end
 
 local function connected()  
