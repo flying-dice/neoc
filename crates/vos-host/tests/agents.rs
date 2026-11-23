@@ -242,10 +242,10 @@ async fn an_app_lists_and_calls_the_tools_of_the_running_apps_for_an_agent_of_it
         json!(["ledger__add", "ledger__peek (read)", "ledger__sneaky (read)"])
     );
 
-    // the tool is told who called: the agent the app named
+    // the tool is told who called: the agent the app named, under the app's own id, so no app can speak as another's
     let added = ask("call", json!({ "tool": "ledger__add", "input": {} })).await;
     assert_eq!(added, json!({ "result": { "count": 1 } }));
-    assert_eq!(who(&r).await, json!(["agent:ada:Ada"]));
+    assert_eq!(who(&r).await, json!(["agent:broker:ada:Ada"]));
 
     // a readOnly tool still cannot write, whoever asks for it
     let sneaky = ask("call", json!({ "tool": "ledger__sneaky", "input": {} })).await;
@@ -266,6 +266,10 @@ async fn an_app_lists_and_calls_the_tools_of_the_running_apps_for_an_agent_of_it
         ask("bad", json!({ "tool": "ledger__add", "agent": { "id": "a" } })).await,
         json!({ "raised": true })
     );
-    assert_eq!(who(&r).await, json!(["agent:ada:Ada"]), "nothing was written by a call that was refused");
+    assert_eq!(
+        who(&r).await,
+        json!(["agent:broker:ada:Ada"]),
+        "nothing was written by a call that was refused"
+    );
     r.stop().await;
 }

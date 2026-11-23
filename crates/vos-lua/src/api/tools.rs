@@ -120,7 +120,9 @@ fn call(lua: &Lua, sh: &Arc<Shared>) -> mlua::Result<Function> {
                     ))),
                 }
             };
-            let caller = Actor::agent(&who("id")?, &who("name")?);
+            // the id is the app's own for its agent: under the app's name, it is never the id of an agent the person
+            // connected to this machine, nor of another app's
+            let caller = Actor::agent(&format!("{}:{}", sh.app, who("id")?), &who("name")?);
             let args = match args {
                 LuaValue::Nil => json!({}),
                 // an empty table reads as `[]`: no arguments

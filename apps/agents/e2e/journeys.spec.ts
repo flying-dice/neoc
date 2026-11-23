@@ -107,6 +107,16 @@ test.beforeAll(async () => {
       { type: 'TOOL_CALL_END', toolCallId: 'calc1' }
     )
   )
+  // a run that asks for a tool and then fails: the id is one another run also uses
+  agent.onPredicate(
+    (input) => lastSaid(input) === 'ask and fail',
+    run(
+      { type: 'TOOL_CALL_START', toolCallId: 'calc1', toolCallName: 'calculator__calculate' },
+      { type: 'TOOL_CALL_ARGS', toolCallId: 'calc1', delta: '{"expression":"6 * 7"}' },
+      { type: 'TOOL_CALL_END', toolCallId: 'calc1' },
+      { type: 'RUN_ERROR', message: 'The model gave up.' }
+    )
+  )
   // a question the run stops at, and the run that goes on with its answer
   agent.onPredicate((input) => (input.resume?.length ?? 0) > 0, run(...says('m4', 'Sent.')))
   agent.onPredicate(
@@ -326,6 +336,24 @@ test.describe('Agents journeys', () => {
     await say(page, 'hello')
     await expect(frame(page).getByTestId(/^agents-item-error-/)).toContainText("The agent's endpoint could not be reached")
     await turnOver(page)
+  })
+
+  test('AG12: a tool asked for by a run that failed is not run, then or in a later turn', async ({ page }) => {
+    await chatting(page)
+    await say(page, 'ask and fail')
+    await expect(frame(page).getByTestId(/^agents-item-error-/)).toContainText('The model gave up.')
+    await turnOver(page)
+    // a later turn asks for a tool under the same id: that one runs, and the failed run's call still has not
+    await say(page, 'what is 12 times 7')
+    await expect(thread(page)).toContainText('The Calculator says 84.')
+    const tools = frame(page).getByTestId(/^agents-item-tool-\d+$/)
+    await expect(tools).toHaveCount(2)
+    await tools.nth(0).locator('summary').click()
+    await tools.nth(1).locator('summary').click()
+    await expect(tools.nth(1)).toContainText('"result": 84')
+    await expect(tools.nth(0)).not.toContainText('"result"')
+    const carried = asked.findLast((input) => input.messages?.at(-1)?.role === 'tool')
+    expect(carried?.messages?.filter((m) => m.role === 'tool')).toHaveLength(1)
   })
 
   test('AG11: change an agent and remove it; a chat with it can still be read, and deleted', async ({ page }) => {

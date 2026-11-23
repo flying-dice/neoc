@@ -55,13 +55,21 @@ function timeline.get(chat: string, id: number): Row?
   return if r then rowOf(r) else nil
 end
 
--- the item of that kind the agent named `key`, in this chat
-function timeline.find(chat: string, kind: Kind, key: string): Row?
+-- The item of that kind the agent named `key`, in this chat. With `after`, only an item added after the item of that
+-- id: an agent may use the same id again in a later run (`call_1`), and it means a new thing by it.
+function timeline.find(chat: string, kind: Kind, key: string, after: number?): Row?
   local r = db:one(
-    `select {COLUMNS} from items where thread_id = :c and kind = :k and key = :key order by id desc limit 1`,
-    { c = chat, k = kind, key = key }
+    `select {COLUMNS} from items where thread_id = :c and kind = :k and key = :key and id > :after`
+      .. " order by id desc limit 1",
+    { c = chat, k = kind, key = key, after = after or 0 }
   )
   return if r then rowOf(r) else nil
+end
+
+-- the id of the last item of the chat, 0 when it has none
+function timeline.last(chat: string): number
+  local r = db:one("select coalesce(max(id), 0) as id from items where thread_id = :c", { c = chat })
+  return if r then r.id else 0
 end
 
 local function announce(chat: string, id: number)

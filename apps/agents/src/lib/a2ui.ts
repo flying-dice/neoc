@@ -34,6 +34,13 @@ const isRecord = (value: unknown): value is Record_ => typeof value === 'object'
 /** The most components and surfaces an activity is read to: an agent cannot make the window draw without end. */
 const MAX_COMPONENTS = 2000
 const MAX_SURFACES = 16
+/** The most operations of an activity that are read, and the deepest a path of the data may go. */
+const MAX_OPERATIONS = 2000
+const MAX_PATH = 32
+/** The most children of one container that are drawn, the deepest a component is drawn, and the most a surface draws. */
+const MAX_CHILDREN = 200
+export const MAX_DEPTH = 24
+const MAX_DRAWN = 4000
 
 /** The steps of a JSON Pointer (`/a/0/b`). */
 function steps(pointer: string): string[] {
@@ -63,13 +70,14 @@ export function valueAt(data: Json, pointer: string): Json | undefined {
 export function withValueAt(data: Json, pointer: string, value: Json | undefined): Json {
   const path = steps(pointer)
   if (path.length === 0) return value ?? {}
+  if (path.length > MAX_PATH) return data
   const put = (at: Json | undefined, depth: number): Json => {
     const step = path[depth]
     const last = depth === path.length - 1
     if (Array.isArray(at)) {
       const copy = [...at]
       const index = step === '-' ? copy.length : Number(step)
-      if (!Number.isInteger(index) || index < 0 || index > copy.length + 1000) return copy
+      if (!Number.isInteger(index) || index < 0 || index > copy.length) return copy
       if (last && value === undefined) copy.splice(index, 1)
       else copy[index] = last ? (value as Json) : put(copy[index], depth + 1)
       return copy
@@ -106,7 +114,7 @@ export function surfacesOf(content: unknown): Surface[] {
     surfaces.set(id, made)
     return made
   }
-  for (const operation of operations) {
+  for (const operation of operations.slice(0, MAX_OPERATIONS)) {
     if (!isRecord(operation)) continue
     const { createSurface, updateComponents, updateDataModel, deleteSurface } = operation
     if (isRecord(createSurface)) {
@@ -175,12 +183,17 @@ export interface Child {
 
 /** The children of a component: the ids it lists, or its template once for each item of the list it names. */
 export function childrenOf(children: Json | undefined, data: Json, scope: Scope): Child[] {
-  if (Array.isArray(children)) return children.filter((id) => typeof id === 'string').map((id) => ({ id, scope }))
+  if (Array.isArray(children)) {
+    return children
+      .slice(0, MAX_CHILDREN)
+      .filter((id) => typeof id === 'string')
+      .map((id) => ({ id, scope }))
+  }
   if (!isRecord(children) || typeof children.componentId !== 'string' || typeof children.path !== 'string') return []
   const base = absolute(children.path, scope)
   const items = valueAt(data, base)
   const keys = Array.isArray(items) ? items.map((_, i) => String(i)) : isRecord(items) ? Object.keys(items) : []
-  return keys.slice(0, 200).map((key) => ({ id: children.componentId as string, scope: `${base}/${key}` }))
+  return keys.slice(0, MAX_CHILDREN).map((key) => ({ id: children.componentId as string, scope: `${base}/${key}` }))
 }
 
 /** What goes back to the agent when the person presses a button: the action's name and its context, resolved. */
@@ -190,6 +203,42 @@ export interface UserAction {
   sourceComponentId: string
   timestamp: string
   context: Record_
+}
+
+/** The components a component draws inside itself, each with the scope it is drawn in. */
+function inside(component: Component, data: Json, scope: Scope): Child[] {
+  const one = (id: Json | undefined): Child[] => (typeof id === 'string' ? [{ id, scope }] : [])
+  switch (component.component) {
+    case 'Row':
+    case 'Column':
+    case 'List':
+      return childrenOf(component.children, data, scope)
+    case 'Card':
+    case 'Button':
+      return one(component.child)
+    case 'Modal':
+      return [...one(component.trigger), ...one(component.content)]
+    case 'Tabs':
+      return (Array.isArray(component.tabs) ? component.tabs : []).slice(0, MAX_CHILDREN).flatMap((tab) => (isRecord(tab) ? one(tab.child) : []))
+    default:
+      return []
+  }
+}
+
+/**
+ * Whether the surface can be drawn within what a window draws. A component may be named by many others, so a few
+ * components can ask for a drawing that never ends: the count is of what is drawn, and it stops at the limit.
+ */
+export function drawable(surface: Surface, data: Json): boolean {
+  let left = MAX_DRAWN
+  const count = (id: string, scope: Scope, depth: number): boolean => {
+    const component = surface.components.get(id)
+    if (!component || depth >= MAX_DEPTH) return true
+    left -= 1
+    if (left < 0) return false
+    return inside(component, data, scope).every((child) => count(child.id, child.scope, depth + 1))
+  }
+  return count('root', '', 0)
 }
 
 /** The action of a component as the message for the agent, or null when it has none the agent hears of. */

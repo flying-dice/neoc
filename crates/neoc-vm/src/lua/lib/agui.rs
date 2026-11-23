@@ -288,6 +288,7 @@ impl Request {
             inner: Arc::new(Inner {
                 queue: Mutex::new(queue),
                 reader: reader.abort_handle(),
+                closed: std::sync::atomic::AtomicBool::new(false),
             }),
         })
     }
@@ -322,6 +323,8 @@ pub struct Run {
 struct Inner {
     queue: Mutex<mpsc::Receiver<Result<neoc_agui::Event, AguiError>>>,
     reader: AbortHandle,
+    /// The script closed the run: the events already read are not given out any more.
+    closed: std::sync::atomic::AtomicBool,
 }
 
 impl Drop for Inner {
@@ -335,9 +338,15 @@ impl UserData for Run {
         async_method(methods, "next", Role::Wait, |lua, this, (): ()| {
             let inner = Arc::clone(&this.inner);
             async move {
+                let closed = || inner.closed.load(std::sync::atomic::Ordering::SeqCst);
+                if closed() {
+                    return Ok((Value::Nil, Value::Nil));
+                }
                 // one reader at a time: a second `next` from another task waits for the first
                 let item = inner.queue.lock().await.recv().await;
                 match item {
+                    // closed while this waited, or with events still queued: the run is over for the script
+                    _ if closed() => Ok((Value::Nil, Value::Nil)),
                     Some(Ok(event)) => ok(&lua, to_lua(&lua, &event)?),
                     Some(Err(e)) => err(&lua, e.text("next")),
                     None => Ok((Value::Nil, Value::Nil)),
@@ -345,6 +354,9 @@ impl UserData for Run {
             }
         });
         methods.add_method("close", |_, this, (): ()| {
+            this.inner
+                .closed
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             this.inner.reader.abort();
             Ok(())
         });

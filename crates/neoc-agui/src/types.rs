@@ -44,8 +44,9 @@ pub struct RunAgentInput {
     pub run_id: String,
     #[serde(default, alias = "parent_run_id", skip_serializing_if = "Option::is_none")]
     pub parent_run_id: Option<String>,
-    /// The state the agent starts from; absent is no state.
-    #[serde(default, skip_serializing_if = "Value::is_null")]
+    /// The state the agent starts from. Always sent, `null` when there is none: the Python SDK's `RunAgentInput`
+    /// has no default for it, so an agent built on it refuses an input without the key.
+    #[serde(default)]
     pub state: Value,
     /// The whole conversation so far.
     #[serde(default, deserialize_with = "list")]
@@ -293,7 +294,8 @@ mod tests {
                     { "role": "tool", "id": "3", "content": "done", "toolCallId": "c" },
                     { "role": "activity", "id": "4", "activityType": "PLAN", "content": { "snake_key": true } },
                 ],
-                "tools": [], "context": [],
+                // always sent: an agent that reads the input strictly needs the key, and null is "no state yet"
+                "tools": [], "context": [], "state": null,
             })
         );
         assert_eq!(serde_json::from_value::<RunAgentInput>(wire).unwrap(), input);

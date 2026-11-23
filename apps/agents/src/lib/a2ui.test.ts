@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { childrenOf, mediaUrl, resolve, surfacesOf, textOf, userAction, valueAt, withValueAt, type Component } from './a2ui'
+import { childrenOf, drawable, mediaUrl, resolve, surfacesOf, textOf, userAction, valueAt, withValueAt, type Component } from './a2ui'
 
 const V09 = {
   a2ui_operations: [
@@ -110,4 +110,34 @@ test('media is loaded from the web or from the URL itself, and from nowhere else
   expect(mediaUrl('javascript:alert(1)')).toBeUndefined()
   expect(mediaUrl('file:///etc/passwd')).toBeUndefined()
   expect(mediaUrl({ path: '/x' })).toBeUndefined()
+})
+
+describe('what an agent cannot make the window do', () => {
+  test('a list is not grown far past its end', () => {
+    expect(withValueAt({ a: [1] }, '/a/5000', 2)).toEqual({ a: [1] })
+    expect(withValueAt({ a: [1] }, '/a/1', 2)).toEqual({ a: [1, 2] })
+  })
+
+  test('a path deeper than data goes leaves the data alone', () => {
+    expect(withValueAt({ k: 1 }, '/a'.repeat(40), 1)).toEqual({ k: 1 })
+  })
+
+  test('a surface whose few components ask for a drawing without end is not drawn', () => {
+    // each column draws the next one twice: 2^20 texts from 21 components
+    const columns = Array.from({ length: 20 }, (_, i) => ({
+      id: i === 0 ? 'root' : `c${i}`,
+      component: 'Column',
+      children: [`c${i + 1}`, `c${i + 1}`]
+    }))
+    const components = [...columns, { id: 'c20', component: 'Text', text: 'x' }]
+    const [surface] = surfacesOf({
+      a2ui_operations: [{ createSurface: { surfaceId: 's' } }, { updateComponents: { surfaceId: 's', components } }]
+    })
+    expect(drawable(surface, surface.data)).toBe(false)
+  })
+
+  test('an ordinary surface is drawn', () => {
+    const [surface] = surfacesOf(V09)
+    expect(drawable(surface, surface.data)).toBe(true)
+  })
 })

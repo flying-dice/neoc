@@ -274,6 +274,31 @@ async fn an_event_over_the_limit_a_cut_stream_and_a_silent_agent_end_the_run() {
 }
 
 #[tokio::test]
+async fn a_closed_run_gives_out_nothing_more_even_what_was_already_read() {
+    let (port, _requests) = agent(&[
+        r#"{"type":"STEP_STARTED","stepName":"a"}"#,
+        r#"{"type":"STEP_STARTED","stepName":"b"}"#,
+        r#"{"type":"STEP_STARTED","stepName":"c"}"#,
+    ])
+    .await;
+    let lua = make_engine().expect("engine");
+    let got = run(
+        &lua,
+        &format!(
+            r#"
+            local run = assert(agui.run({{ url = "http://127.0.0.1:{port}/", input = input() }}))
+            local first = assert(run:next())
+            run:close()
+            local event, err = run:next()
+            return first.step_name .. " " .. tostring(event) .. " " .. tostring(err)
+            "#
+        ),
+    )
+    .await;
+    assert_eq!(got, "a nil nil");
+}
+
+#[tokio::test]
 async fn closing_a_run_closes_its_connection_and_so_does_shutting_the_engine_down() {
     let (gone, mut closed) = mpsc::unbounded_channel();
     let port = listen(move |mut stream| {

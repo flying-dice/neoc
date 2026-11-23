@@ -4,6 +4,8 @@
     boundPath,
     absolute,
     childrenOf,
+    drawable,
+    MAX_DEPTH,
     mediaUrl,
     resolve,
     textOf,
@@ -31,8 +33,10 @@
   // which tab of a Tabs, and whether a Modal is open, by component
   let shown = $state<Record<string, number | boolean>>({})
 
-  // a component inside itself would never finish drawing
-  const MAX_DEPTH = 24
+  // checked before anything is drawn: a surface over the limit is not drawn in part
+  const fits = $derived(drawable(surface, data))
+  // the looks of an image the window knows: an agent's own word is not a class of the page
+  const IMAGE = new Set(['icon', 'avatar', 'smallFeature', 'mediumFeature', 'largeFeature', 'header'])
 
   const testid = (id: string, scope: Scope): string => `agents-a2ui-${surface.id}-${id}${scope.replaceAll('/', '-')}`
 
@@ -116,7 +120,7 @@
       {@const url = mediaUrl(resolve(component.url, data, scope))}
       {#if url}
         <img
-          class="image {typeof component.variant === 'string' ? component.variant : 'mediumFeature'}"
+          class="image {typeof component.variant === 'string' && IMAGE.has(component.variant) ? component.variant : 'mediumFeature'}"
           src={url}
           alt={textOf(component.description, data, scope)}
           referrerpolicy="no-referrer"
@@ -290,7 +294,9 @@
 {/snippet}
 
 <div class="surface" data-testid="agents-surface-{surface.id}">
-  {#if surface.components.has('root')}
+  {#if !fits}
+    <p class="text caption" data-testid="agents-surface-{surface.id}-large">This surface is too large to draw.</p>
+  {:else if surface.components.has('root')}
     {@render draw('root', '', 0)}
   {:else}
     <ui-spinner label="The agent is drawing"></ui-spinner>
