@@ -69,7 +69,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use mlua::{IntoLua, Lua, Table, UserData, UserDataMethods, Value};
 
 use crate::lua::error_text;
-use crate::lua::facade::{DeclType, Declared, Module};
+use crate::lua::facade::args::{Checked, Strict};
+use crate::lua::facade::{DeclType, Module};
 use crate::lua::std::io::{ReaderHandle, WriterHandle};
 use crate::lua::std::osstr;
 
@@ -80,32 +81,44 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(declare(lua)?.into_table())
 }
 
-// What an option table may say, per function. Each is read by `read_options`, which refuses what is not a key
-// of it.
+// What an option table may say, per function: a key that is not a field is refused, and so is a value the field
+// does not take.
 
-#[neoc_macros::lua_record(shape)]
+#[neoc_macros::lua_record(from)]
+#[derive(Default)]
 struct Removal {
     missing_ok: Option<bool>,
 }
 
-#[neoc_macros::lua_record(shape)]
+#[neoc_macros::lua_record(from)]
+#[derive(Default)]
 struct Walk {
     max_depth: Option<u64>,
 }
 
-#[neoc_macros::lua_record(shape)]
+#[neoc_macros::lua_record(from)]
+#[derive(Default)]
 struct Permissions {
     mode: Option<u64>,
     readonly: Option<bool>,
 }
 
-#[neoc_macros::lua_record(shape)]
+#[neoc_macros::lua_record(from)]
+#[derive(Default)]
 struct Watch {
     recursive: Option<bool>,
 }
 
-/// An option table as it was passed, declared as the shape `T`.
-type Opts<T> = Declared<Option<T>, Option<Table>>;
+/// An option table that may be left out. It is read after the path, so a refused path is what the call says first.
+type Opts<T> = Checked<Option<Strict<T>>>;
+
+/// The options a call was given, or none.
+fn given<T: Default>(opts: Opts<T>) -> FsResult<T> {
+    Ok(opts
+        .take::<FsError>()?
+        .map(|opts| opts.0)
+        .unwrap_or_default())
+}
 
 /// What every call that waits on the blocking pool says about it, in place of a pointer to these module notes, which
 /// an editor's hover does not show.
@@ -172,11 +185,9 @@ fn declare_files(m: &mut Module<'_>) -> mlua::Result<()> {
     #[lua]
     m.try_func(
         "set_permissions",
-        |_, (path, opts): (Path1, Declared<Permissions, Table>)| {
+        |_, (path, opts): (Path1, Checked<Strict<Permissions>>)| {
             let path = path_of(&path)?;
-            let options = read_options(Some(&opts.0), opts.keys())?;
-            let mode = options.count("mode")?;
-            let readonly = options.flag("readonly")?;
+            let Permissions { mode, readonly } = opts.take::<FsError>()?.0;
             let change = match (mode, readonly) {
                 (Some(mode), None) => {
                     Permission::Mode(u32::try_from(mode).map_err(|_| too_big("mode", mode))?)
@@ -228,8 +239,7 @@ fn declare_directories(m: &mut Module<'_>) -> mlua::Result<()> {
     #[lua(doc_with = waits)]
     m.try_async_func("walk", |_, (path, opts): (Path1, Opts<Walk>)| {
         let parsed = path_of(&path).and_then(|path| {
-            let options = read_options(opts.0.as_ref(), opts.keys())?;
-            let depth = options.count("max_depth")?;
+            let depth = given(opts)?.max_depth;
             Ok((
                 path,
                 depth.map(|d| usize::try_from(d).unwrap_or(usize::MAX)),
@@ -285,18 +295,14 @@ fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
     #[lua]
     m.try_func("remove_file", |_, (path, opts): (Path1, Opts<Removal>)| {
         let path = path_of(&path)?;
-        let missing_ok = read_options(opts.0.as_ref(), opts.keys())?
-            .flag("missing_ok")?
-            .unwrap_or(false);
+        let missing_ok = given(opts)?.missing_ok.unwrap_or(false);
         ops::remove_file(&path, missing_ok)
     })?;
     /// Remove an empty directory (`not_empty` otherwise; `remove_dir_all` removes a tree). A symlink to a directory is `not_a_directory` (use `remove_file`), also when written `link/`; so is a file. Option `{ missing_ok }` as for `remove_file`. Like `std::fs::remove_dir`, but a symlink is `not_a_directory` on every platform.
     #[lua]
     m.try_func("remove_dir", |_, (path, opts): (Path1, Opts<Removal>)| {
         let path = path_of(&path)?;
-        let missing_ok = read_options(opts.0.as_ref(), opts.keys())?
-            .flag("missing_ok")?
-            .unwrap_or(false);
+        let missing_ok = given(opts)?.missing_ok.unwrap_or(false);
         ops::remove_dir(&path, missing_ok)
     })?;
     /// Remove a directory and everything under it, children before parents. Symlinks inside are deleted without being followed, so nothing outside the tree is touched. It refuses `/`, `.`, `..` and the empty path (`invalid_input`, a guard against a typo, not a security boundary) and a symlink to a directory (`not_a_directory`, also when written `link/`: use `remove_file`). Option `{ missing_ok }` as for `remove_file`. A failure part way (a permission, an open file on Windows) leaves what was not yet removed. Delegates to `std::fs::remove_dir_all` (which is safe against a directory swapped for a symlink while it runs, and not limited by path length) after refusing a symlink root and the paths above; once started it cannot be interrupted.
@@ -305,9 +311,7 @@ fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
         "remove_dir_all",
         |_, (path, opts): (Path1, Opts<Removal>)| {
             let parsed = path_of(&path).and_then(|path| {
-                let missing_ok = read_options(opts.0.as_ref(), opts.keys())?
-                    .flag("missing_ok")?
-                    .unwrap_or(false);
+                let missing_ok = given(opts)?.missing_ok.unwrap_or(false);
                 Ok((path, missing_ok))
             });
             async move {
@@ -353,9 +357,7 @@ fn declare_watch(m: &mut Module<'_>) -> mlua::Result<()> {
     #[lua(doc_with = waits)]
     m.try_async_func("watch", |lua, (path, opts): (Path1, Opts<Watch>)| {
         let parsed = path_of(&path).and_then(|path| {
-            let recursive = read_options(opts.0.as_ref(), opts.keys())?
-                .flag("recursive")?
-                .unwrap_or(false);
+            let recursive = given(opts)?.recursive.unwrap_or(false);
             Ok((path, recursive))
         });
         async move {
@@ -378,81 +380,6 @@ fn declare_types(m: &mut Module<'_>) {
     m.userdata("DirEntry", |t| {
         DirEntryHandle::lua(t);
     });
-}
-
-/// The parsed option table of one call: each name a script gave, with its value, checked against the names the
-/// function takes.
-struct Options(Vec<(String, Value)>);
-
-impl Options {
-    fn value(&self, name: &str) -> Option<&Value> {
-        self.0
-            .iter()
-            .find(|(key, _)| key == name)
-            .map(|(_, value)| value)
-    }
-
-    /// A boolean option, `None` when absent.
-    fn flag(&self, name: &str) -> FsResult<Option<bool>> {
-        match self.value(name) {
-            None => Ok(None),
-            Some(Value::Boolean(on)) => Ok(Some(*on)),
-            Some(_) => Err(FsError::new(
-                Kind::InvalidInput,
-                format!("option \"{name}\" must be a boolean"),
-            )),
-        }
-    }
-
-    /// A count option (a non-negative whole number), `None` when absent. A huge count is fine, it is a bound.
-    fn count(&self, name: &str) -> FsResult<Option<u64>> {
-        let invalid = || {
-            FsError::new(
-                Kind::InvalidInput,
-                format!("option \"{name}\" must be a non-negative whole number"),
-            )
-        };
-        match self.value(name) {
-            None => Ok(None),
-            Some(Value::Integer(n)) => u64::try_from(*n).map(Some).map_err(|_| invalid()),
-            Some(Value::Number(n)) if n.is_finite() && *n >= 0.0 && n.fract() == 0.0 => {
-                // `as` saturates: a count past u64 is "as far as it goes"
-                Ok(Some(*n as u64))
-            }
-            Some(_) => Err(invalid()),
-        }
-    }
-}
-
-/// Reads an options table: each key must be one of `allowed`. `None` is "no options".
-fn read_options(opts: Option<&Table>, allowed: &[&str]) -> FsResult<Options> {
-    let Some(opts) = opts else {
-        return Ok(Options(Vec::new()));
-    };
-    let mut read = Vec::new();
-    for pair in opts.pairs::<Value, Value>() {
-        let (key, value) = pair.map_err(lua_failure)?;
-        let name = match &key {
-            Value::String(s) => s.to_string_lossy(),
-            _ => {
-                return Err(FsError::new(
-                    Kind::InvalidInput,
-                    "option names must be strings",
-                ));
-            }
-        };
-        if !allowed.contains(&&*name) {
-            return Err(FsError::new(
-                Kind::InvalidInput,
-                format!(
-                    "unknown option \"{name}\" (this function takes: {})",
-                    allowed.join(", ")
-                ),
-            ));
-        }
-        read.push((name.to_string(), value));
-    }
-    Ok(Options(read))
 }
 
 fn too_big(name: &str, n: u64) -> FsError {

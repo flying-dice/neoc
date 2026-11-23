@@ -148,6 +148,12 @@ impl FsError {
     }
 }
 
+impl From<crate::lua::facade::args::Refused> for FsError {
+    fn from(refused: crate::lua::facade::args::Refused) -> Self {
+        Self::new(Kind::InvalidInput, refused.0)
+    }
+}
+
 impl fmt::Display for FsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.subject {

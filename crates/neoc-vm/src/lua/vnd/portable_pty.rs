@@ -110,10 +110,8 @@ async fn spawn_command(
     lua: Lua,
     opts: Declared<Option<options::Spawn>, Option<Value>>,
 ) -> mlua::Result<Fallible<Pty>> {
-    // read before the first await: a script table can run script code when it is read
-    let command = options::command(opts.0.as_ref(), SPAWN_COMMAND)?;
-    drop(opts);
-    let command = match command {
+    // read before the first await
+    let command = match options::command(opts.0, SPAWN_COMMAND)? {
         Ok(command) => command,
         Err(e) => return from_err(SPAWN_COMMAND, e),
     };
@@ -194,8 +192,9 @@ impl UserData for Pty {
 
         /// Tell the terminal its new size, each a whole number from 1 to 32767 (`invalid_input` otherwise): `true`. The process in the foreground is told by the operating system (`SIGWINCH` on Unix). `closed` after `close()`.
         methods.add_method("resize", |_, this, (rows, cols): (f64, f64)| {
-            let resized =
-                options::size(rows, cols).and_then(|(rows, cols)| this.0.resize(rows, cols));
+            let resized = options::size(rows, cols)
+                .map_err(PtyError::from)
+                .and_then(|(rows, cols)| this.0.resize(rows, cols));
             match resized {
                 Ok(()) => ok(true),
                 Err(e) => from_err(RESIZE, e),

@@ -104,10 +104,8 @@ async fn spawn(
     lua: Lua,
     opts: Declared<options::Spawn, Option<Value>>,
 ) -> mlua::Result<Fallible<Child>> {
-    // read before the first await: a script table can run script code when it is read
-    let command = options::command(opts.0.as_ref(), SPAWN)?;
-    drop(opts);
-    let command = match command {
+    // read before the first await
+    let command = match options::command(opts.0, SPAWN)? {
         Ok(command) => command,
         Err(e) => return from_err(SPAWN, e),
     };

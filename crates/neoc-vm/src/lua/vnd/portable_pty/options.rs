@@ -1,15 +1,16 @@
 //! What a script passes to `vnd:portable_pty`, read before the call's future exists.
 //!
-//! A script table can run script code when it is read (a `__index`), so the options of `spawn_command` are turned
-//! into plain data in the synchronous part of the call, as `vnd:bollard` and `vnd:hyper` read theirs. A key that is
-//! not one of the call's is refused, so a misspelt option fails instead of being ignored.
+//! The options of `spawn_command` are read into [`Spawn`] in the synchronous part of the call, and raw, so
+//! reading them runs no script code. A key that is not one of the call's is refused, so a misspelt option fails
+//! instead of being ignored.
 
 use mlua::Value;
-use serde_json::Value as Json;
 
 use super::error::PtyError;
-use crate::lua::command_options::{self, Refused, env, name, named, strings, wrong};
-use crate::lua::facade::{List, Map, Shape};
+use crate::lua::command_options::{Args, Dir, Env, Program};
+use crate::lua::facade::DeclType;
+use crate::lua::facade::args::{Field, Refused};
+use crate::lua::serde_guard::refuse_buffer;
 
 /// The size of a terminal the crate opens when none is given: `portable_pty::PtySize::default()`.
 pub(super) const DEFAULT_ROWS: u16 = 24;
@@ -19,15 +20,38 @@ pub(super) const DEFAULT_COLS: u16 = 80;
 /// size every platform can be asked for.
 pub(super) const MAX_SIZE: u16 = 32_767;
 
-/// The table `spawn_command` takes: [`command`] reads it, and refuses what is not a key of it.
-#[neoc_macros::lua_record(shape)]
+/// The table `spawn_command` takes. A key that is not a field is refused, and so is a value its field does not
+/// take.
+#[neoc_macros::lua_record(from)]
+#[derive(Debug, Default)]
 pub(super) struct Spawn {
-    program: Option<String>,
-    args: Option<List<String>>,
-    cwd: Option<String>,
-    env: Option<Map<String, String>>,
-    rows: Option<u16>,
-    cols: Option<u16>,
+    program: Option<Program>,
+    args: Option<Args>,
+    cwd: Option<Dir>,
+    env: Option<Env>,
+    rows: Option<Dimension>,
+    cols: Option<Dimension>,
+}
+
+/// The rows or the columns of a terminal: a whole number from 1 to [`MAX_SIZE`].
+#[derive(Debug)]
+pub(super) struct Dimension(u16);
+
+impl DeclType for Dimension {
+    fn decl_type() -> String {
+        u16::decl_type()
+    }
+}
+
+impl Field for Dimension {
+    fn field(key: &str, value: Value) -> Result<Self, Refused> {
+        let n = match value {
+            Value::Integer(n) => n as f64,
+            Value::Number(n) => n,
+            _ => return Err(Refused::option(key, &size_words())),
+        };
+        whole(n, key).map(Self)
+    }
 }
 
 /// The command of one `spawn_command`, as plain data.
@@ -49,94 +73,100 @@ impl From<Refused> for PtyError {
     }
 }
 
-/// The options of `spawn_command`. A buffer is refused (raised, as every serde conversion of a script value does:
-/// `serde_guard`); anything else that is wrong is `invalid_input`.
-pub(super) fn command(value: Option<&Value>, op: &str) -> mlua::Result<Result<Command, PtyError>> {
-    Ok(command_options::to_json(value, op)?
-        .map_err(PtyError::from)
-        .and_then(read))
-}
+/// The command the options say (none is the default shell at the default size).
+impl TryFrom<Spawn> for Command {
+    type Error = PtyError;
 
-fn read(json: Json) -> Result<Command, PtyError> {
-    let fields = named(json, Spawn::KEYS)?;
-    let program = name(&fields, "program", "the name or the path of a program")?;
-    let args = strings(&fields, "args")?;
-    if program.is_none() && !args.is_empty() {
-        return Err(PtyError::invalid_input(
-            "option `args` needs `program`: the default shell takes no arguments",
-        ));
+    fn try_from(spawn: Spawn) -> Result<Self, PtyError> {
+        let program = spawn.program.map(|program| program.0);
+        let args = spawn.args.unwrap_or_default().0;
+        if program.is_none() && !args.is_empty() {
+            return Err(PtyError::invalid_input(
+                "option \"args\" needs \"program\": the default shell takes no arguments",
+            ));
+        }
+        Ok(Command {
+            program,
+            args,
+            cwd: spawn.cwd.map(|cwd| cwd.0),
+            env: spawn.env.unwrap_or_default().0,
+            rows: spawn.rows.map_or(DEFAULT_ROWS, |rows| rows.0),
+            cols: spawn.cols.map_or(DEFAULT_COLS, |cols| cols.0),
+        })
     }
-    Ok(Command {
-        program,
-        args,
-        cwd: name(&fields, "cwd", "the path of a directory")?,
-        env: env(&fields)?,
-        rows: dimension(fields.get("rows"), "rows")?.unwrap_or(DEFAULT_ROWS),
-        cols: dimension(fields.get("cols"), "cols")?.unwrap_or(DEFAULT_COLS),
-    })
 }
 
 /// The `(rows, cols)` of a `resize`.
-pub(super) fn size(rows: f64, cols: f64) -> Result<(u16, u16), PtyError> {
+pub(super) fn size(rows: f64, cols: f64) -> Result<(u16, u16), Refused> {
     Ok((whole(rows, "rows")?, whole(cols, "cols")?))
 }
 
-fn dimension(value: Option<&Json>, key: &str) -> Result<Option<u16>, PtyError> {
-    match value {
-        None | Some(Json::Null) => Ok(None),
-        Some(value) => match value.as_f64() {
-            Some(n) => whole(n, key).map(Some),
-            None => Err(wrong(key, &size_words()).into()),
-        },
-    }
-}
-
-fn whole(n: f64, key: &str) -> Result<u16, PtyError> {
+fn whole(n: f64, key: &str) -> Result<u16, Refused> {
     if n.fract() == 0.0 && n >= 1.0 && n <= f64::from(MAX_SIZE) {
         // checked just above: a whole number that fits
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         return Ok(n as u16);
     }
-    Err(wrong(key, &size_words()).into())
+    Err(Refused::option(key, &size_words()))
 }
 
 fn size_words() -> String {
     format!("a whole number from 1 to {MAX_SIZE}")
 }
 
+/// The command a script's options say (none is the default shell at the default size). A buffer is raised, as
+/// every conversion of a script value raises it (`serde_guard`); anything else that is wrong is `invalid_input`.
+pub(super) fn command(value: Option<Value>, op: &str) -> mlua::Result<Result<Command, PtyError>> {
+    let spawn = match value {
+        None | Some(Value::Nil) => Ok(Spawn::default()),
+        Some(value) => {
+            refuse_buffer(&value, op)?;
+            Spawn::from_options(value)
+        }
+    };
+    Ok(spawn.map_err(PtyError::from).and_then(Command::try_from))
+}
+
 #[cfg(test)]
 mod tests {
+    use mlua::Lua;
+
     use super::*;
     use crate::lua::command_options::{MAX_ITEMS, MAX_TEXT};
-    use serde_json::json;
+
+    fn read(lua: &Lua, source: &str) -> Result<Command, PtyError> {
+        let value: Value = lua.load(source).eval().unwrap();
+        Spawn::from_options(value)?.try_into()
+    }
 
     #[test]
     fn no_options_is_the_default_shell_at_the_crates_default_size() {
-        for none in [Json::Null, json!({}), json!([])] {
-            assert_eq!(
-                read(none).unwrap(),
-                Command {
-                    program: None,
-                    args: vec![],
-                    cwd: None,
-                    env: vec![],
-                    rows: 24,
-                    cols: 80,
-                }
-            );
-        }
+        let lua = Lua::new();
+        let none = Command {
+            program: None,
+            args: vec![],
+            cwd: None,
+            env: vec![],
+            rows: 24,
+            cols: 80,
+        };
+        assert_eq!(read(&lua, "{}").unwrap(), none);
+        assert_eq!(Command::try_from(Spawn::default()).unwrap(), none);
     }
 
     #[test]
     fn a_command_keeps_its_arguments_directory_environment_and_size() {
-        let command = read(json!({
-            "program": "sh",
-            "args": ["-c", "echo hi"],
-            "cwd": "/tmp",
-            "env": { "TERM": "xterm-256color" },
-            "rows": 30,
-            "cols": 100,
-        }))
+        let command = read(
+            &Lua::new(),
+            r#"{
+                program = "sh",
+                args = { "-c", "echo hi" },
+                cwd = "/tmp",
+                env = { TERM = "xterm-256color" },
+                rows = 30,
+                cols = 100,
+            }"#,
+        )
         .unwrap();
         assert_eq!(command.program.as_deref(), Some("sh"));
         assert_eq!(command.args, ["-c", "echo hi"]);
@@ -150,24 +180,28 @@ mod tests {
 
     #[test]
     fn what_is_not_a_command_is_refused_with_the_option_named() {
-        let refused = |options: Json| read(options).unwrap_err().to_string();
-        assert!(refused(json!({ "progam": "sh" })).contains("unknown option `progam`"));
-        assert!(refused(json!("sh")).contains("table of named options"));
-        assert!(refused(json!({ "program": "" })).contains("`program`"));
-        assert!(refused(json!({ "program": 7 })).contains("`program`"));
-        assert!(refused(json!({ "program": "a\u{0}b" })).contains("NUL"));
-        assert!(refused(json!({ "args": ["-l"] })).contains("needs `program`"));
-        assert!(refused(json!({ "program": "sh", "args": "-c" })).contains("`args`"));
-        assert!(refused(json!({ "program": "sh", "args": [1] })).contains("`args`"));
-        assert!(refused(json!({ "cwd": "" })).contains("`cwd`"));
-        assert!(refused(json!({ "env": ["A=1"] })).contains("`env`"));
-        assert!(refused(json!({ "env": { "A": 1 } })).contains("`env`"));
-        assert!(refused(json!({ "env": { "A=B": "1" } })).contains("`env`"));
-        assert!(refused(json!({ "env": { "": "1" } })).contains("`env`"));
-        let long = "x".repeat(MAX_TEXT + 1);
-        assert!(refused(json!({ "program": long })).contains("longer than"));
-        let many: Vec<String> = vec![String::new(); MAX_ITEMS + 1];
-        assert!(refused(json!({ "program": "sh", "args": many })).contains("more than"));
+        let lua = Lua::new();
+        let refused = |options: &str| read(&lua, options).unwrap_err().to_string();
+        assert!(refused("{ progam = 'sh' }").contains("unknown option \"progam\""));
+        assert!(refused("'sh'").contains("must be a table"));
+        assert!(refused("{ program = '' }").contains("\"program\""));
+        assert!(refused("{ program = 7 }").contains("\"program\""));
+        assert!(refused("{ program = 'a\\0b' }").contains("NUL"));
+        assert!(refused("{ args = { '-l' } }").contains("needs \"program\""));
+        assert!(refused("{ program = 'sh', args = '-c' }").contains("\"args\""));
+        assert!(refused("{ program = 'sh', args = { 1 } }").contains("\"args\""));
+        assert!(refused("{ cwd = '' }").contains("\"cwd\""));
+        assert!(refused("{ env = { 'A=1' } }").contains("\"env\""));
+        assert!(refused("{ env = { A = 1 } }").contains("\"env\""));
+        assert!(refused("{ env = { ['A=B'] = '1' } }").contains("\"env\""));
+        assert!(refused("{ env = { [''] = '1' } }").contains("\"env\""));
+        let long = format!("{{ program = string.rep('x', {}) }}", MAX_TEXT + 1);
+        assert!(refused(&long).contains("longer than"));
+        let many = format!(
+            "{{ program = 'sh', args = table.create({}, '') }}",
+            MAX_ITEMS + 1
+        );
+        assert!(refused(&many).contains("more than"));
     }
 
     #[test]
@@ -177,9 +211,10 @@ mod tests {
             assert!(size(bad, 80.0).is_err(), "{bad} rows was accepted");
             assert!(size(24.0, bad).is_err(), "{bad} cols was accepted");
         }
-        let refused = |options: Json| read(options).unwrap_err().to_string();
-        assert!(refused(json!({ "rows": 0 })).contains("`rows`"));
-        assert!(refused(json!({ "cols": "80" })).contains("`cols`"));
-        assert!(refused(json!({ "cols": 1e9 })).contains("`cols`"));
+        let lua = Lua::new();
+        let refused = |options: &str| read(&lua, options).unwrap_err().to_string();
+        assert!(refused("{ rows = 0 }").contains("\"rows\""));
+        assert!(refused("{ cols = '80' }").contains("\"cols\""));
+        assert!(refused("{ cols = 1e9 }").contains("\"cols\""));
     }
 }

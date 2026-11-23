@@ -50,7 +50,7 @@ describe("portable_pty", function()
         test("an unknown option is refused", function()
             local pty, err = portable_pty.spawn_command({ progam = "sh" })
             expect(pty).toBeNil()
-            expect(err).toContain("unknown option `progam`")
+            expect(err).toContain('unknown option "progam"')
             expect(portable_pty.error_kind(err)).toBe("invalid_input")
         end)
 

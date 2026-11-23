@@ -179,7 +179,7 @@ fn connect(_: &Lua, opts: Checked<Option<Connect>>) -> mlua::Result<Fallible<Cli
 fn open(opts: Connect) -> Result<Docker, BollardError> {
     let timeout = opts.timeout.map_or(Ok(DEFAULT_TIMEOUT), |secs| {
         Duration::try_from_secs_f64(secs.0)
-            .map_err(|_| BollardError::invalid_input("option `timeout` is too long"))
+            .map_err(|_| BollardError::invalid_input("option \"timeout\" is too long"))
     })?;
     let host = match opts.host {
         Some(host) => host,
@@ -659,7 +659,7 @@ fn logs_options(opts: Logs) -> Result<query::LogsOptions, BollardError> {
         tail: match opts.tail {
             Some(lines) if lines < 0 => {
                 return Err(BollardError::invalid_input(
-                    "option `tail` must be a number of lines, zero or more",
+                    "option \"tail\" must be a number of lines, zero or more",
                 ));
             }
             Some(lines) => lines.to_string(),

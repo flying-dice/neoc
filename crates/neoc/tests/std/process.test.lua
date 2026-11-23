@@ -72,7 +72,7 @@ describe("process", function()
         test("an unknown option is refused", function()
             local child, err = process.spawn({ progam = "sh" })
             expect(child).toBeNil()
-            expect(err).toContain("unknown option `progam`")
+            expect(err).toContain('unknown option "progam"')
             expect(process.error_kind(err)).toBe("invalid_input")
         end)
 

@@ -5,7 +5,8 @@
 //! options is a struct marked `neoc_macros::lua_record(from)`: its fields are the keys, each read by [`Field`].
 //!
 //! A value of the wrong Lua type for a plain argument is raised, as mlua raises it for a closure's parameter.
-//! A table of options that is wrong (an unknown key, a value of the wrong type or out of range) is [`Refused`]:
+//! A table of options that is wrong (an unknown key, a value of the wrong type or out of range, or no table at
+//! all; a module that raises the last instead says [`Strict`]) is [`Refused`]:
 //! the function returns it as its own error (`(nil, "bollard.stop_container: invalid_input: ...")`), because a
 //! script recovers from a bad option the way it recovers from any other failure of the call.
 //!
@@ -87,6 +88,23 @@ impl<T: Argument> Argument for Option<T> {
             return Ok(Ok(None));
         }
         Ok(T::read(value, lua)?.map(Some))
+    }
+}
+
+/// A table of options that must be a table: any other value is raised, as a value of the wrong type is for a
+/// plain argument, where the bare record refuses it.
+pub struct Strict<T>(pub T);
+
+impl<T: Argument> Argument for Strict<T> {
+    fn read(value: Value, lua: &Lua) -> mlua::Result<Result<Self, Refused>> {
+        let table = Table::from_lua(value, lua)?;
+        Ok(T::read(Value::Table(table), lua)?.map(Self))
+    }
+}
+
+impl<T: DeclType> DeclType for Strict<T> {
+    fn decl_type() -> String {
+        T::decl_type()
     }
 }
 
