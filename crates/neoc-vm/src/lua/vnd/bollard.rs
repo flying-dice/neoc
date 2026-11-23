@@ -148,7 +148,7 @@ mod shapes {
     }
 
     #[neoc_macros::lua_record(shape)]
-    pub(super) struct Exec {
+    pub(super) struct ExecOptions {
         env: Option<List<String>>,
         user: Option<String>,
         working_dir: Option<String>,
@@ -790,14 +790,14 @@ impl UserData for Client {
             takes(
                 "name: string",
                 "cmd: { string }",
-                opts = decl::<Option<shapes::Exec>>()
+                opts = decl::<Option<shapes::ExecOptions>>()
             )
         )]
         call(
             methods,
             "bollard.exec",
             |op, (name, cmd, opts): (String, Value, Option<Value>)| {
-                let opts = match read_opts(op, opts, shapes::Exec::KEYS)? {
+                let opts = match read_opts(op, opts, shapes::ExecOptions::KEYS)? {
                     Ok(opts) => opts,
                     Err(e) => return Ok(Err(e)),
                 };

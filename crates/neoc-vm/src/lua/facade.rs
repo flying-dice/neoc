@@ -99,7 +99,7 @@ impl<T: DeclType> DeclType for Option<T> {
     fn decl_type() -> String {
         let inner = T::decl_type();
         // `?` binds to the last of a union's alternatives: the whole union is what may be absent
-        if inner.contains(" | ") && !(inner.starts_with('(') && inner.ends_with(')')) {
+        if luau_decls::is_union(&inner) {
             format!("({inner})?")
         } else {
             format!("{inner}?")

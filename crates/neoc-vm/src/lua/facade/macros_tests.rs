@@ -660,6 +660,8 @@ fn a_helper_answers_for_the_member_it_adds_and_silence_is_refused() {
     }
     let mut spec = Spec(Vec::new());
     Helped::lua(&mut spec);
+    // each helper call answers the first member still without an answer, so two members said above one
+    // statement get their own types in order
     assert_eq!(spec.0, ["count(0) -> number", "left(1) -> string?"]);
     let lost = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         Unanswered::lua(&mut Spec(Vec::new()));
@@ -671,5 +673,25 @@ fn a_helper_answers_for_the_member_it_adds_and_silence_is_refused() {
     assert!(
         message.contains("`lost`: nothing says what it returns"),
         "{message}"
+    );
+}
+
+#[test]
+fn an_optional_union_is_bracketed_and_nothing_else_is() {
+    use super::DeclType;
+    struct Either;
+    impl DeclType for Either {
+        fn decl_type() -> String {
+            r#""a | b" | number"#.to_owned()
+        }
+    }
+    assert_eq!(Option::<Either>::decl_type(), r#"("a | b" | number)?"#);
+    assert_eq!(
+        Option::<Left>::decl_type(),
+        "{ code: number?, type: string }?"
+    );
+    assert_eq!(
+        Option::<super::Declared<super::Map<String, Either>>>::decl_type(),
+        r#"{ [string]: "a | b" | number }?"#
     );
 }

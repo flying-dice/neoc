@@ -110,16 +110,17 @@ pub fn left(kind: &str, name: &str, params: impl FnOnce() -> Vec<(String, String
 }
 
 /// Called by a helper that adds a member for the caller (`call(methods, "keyring.entry", ...)`): what the
-/// member returns is `R`, the type the helper is generic over. It answers every member noted with [`left`]
-/// that has no answer yet, so a helper called in a loop answers for all the members the loop adds.
+/// member returns is `R`, the type the helper is generic over. It answers the first member noted with [`left`]
+/// that has no answer yet: a helper is called once for each member it adds, in the order they are said, so a
+/// helper that forgets to answer leaves a member without one, which [`record`] refuses.
 pub fn answers<R: DeclType>() {
     NOTES.with_borrow_mut(|notes| {
-        for member in notes.iter_mut().flatten() {
-            if let Noted::Method(s) | Noted::Function(s) = member
-                && s.ret == LEFT
-            {
-                s.ret = R::decl_type();
-            }
+        let unanswered = notes.iter_mut().flatten().find_map(|member| match member {
+            Noted::Method(s) | Noted::Function(s) if s.ret == LEFT => Some(s),
+            _ => None,
+        });
+        if let Some(signature) = unanswered {
+            signature.ret = R::decl_type();
         }
     });
 }

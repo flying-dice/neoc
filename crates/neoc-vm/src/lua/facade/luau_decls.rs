@@ -628,6 +628,11 @@ fn optional(ty: &str) -> String {
     }
 }
 
+/// Whether a type as text is a union at its top level (`a | b`, not `{ a: b | c }` and not `(a | b)`).
+pub(crate) fn is_union(ty: &str) -> bool {
+    top_level(ty).any(|(_, c)| c == '|')
+}
+
 /// The characters of `s` outside every bracket and every string literal, with their byte index: the bracket
 /// that opens a group and the one that closes it are outside it, what is between them is not.
 fn top_level(s: &str) -> impl Iterator<Item = (usize, char)> + '_ {

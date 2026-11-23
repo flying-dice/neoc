@@ -80,8 +80,9 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(declare(lua)?.into_table())
 }
 
-/// What an option table may say, per function. Each is read by [`read_options`], which refuses what is not
-/// a key of it.
+// What an option table may say, per function. Each is read by `read_options`, which refuses what is not a key
+// of it.
+
 #[neoc_macros::lua_record(shape)]
 struct Removal {
     missing_ok: Option<bool>,
