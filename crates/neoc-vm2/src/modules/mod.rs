@@ -6,7 +6,7 @@
 //!
 //! A module appears here by existing: writing `#[mlua_ir::module("lib:base64")] pub mod base64 { ... }` registers it
 //! (the macro submits it to `mlua_ir::modules()`). The only line a new module needs in this crate is its `pub mod`
-//! in `lib/mod.rs` or `std/mod.rs`, which gets it compiled and linked.
+//! in `lib/mod.rs`, `std/mod.rs` or `vnd/mod.rs`, which gets it compiled and linked.
 
 // What mlua-ir's macros imply, for every module below: a script's value is read before the call, so a function
 // takes it owned (`needless_pass_by_value`); a module is named after what it exposes (`module_inception`); and the
@@ -29,6 +29,7 @@ use strsim::levenshtein;
 
 pub mod lib;
 pub mod std;
+pub mod vnd;
 
 /// Soft cap on how many namespace members a `require` error inlines before it truncates with a `(+N more)` tail.
 const MAX_AVAILABLE_LIST: usize = 50;
