@@ -460,7 +460,6 @@ impl UserData for DateTimeHandle {
         });
 
         /// Add a `Duration`.
-        #[lua("Result<DateTime, string>")]
         methods.add_method("add", |_, this, duration: Handle<DurationHandle>| {
             let span = match duration.borrow::<DurationHandle>() {
                 Ok(h) => h.0,
@@ -472,7 +471,6 @@ impl UserData for DateTimeHandle {
             }
         });
         /// Subtract a `Duration`.
-        #[lua("Result<DateTime, string>")]
         methods.add_method("sub", |_, this, duration: Handle<DurationHandle>| {
             let span = match duration.borrow::<DurationHandle>() {
                 Ok(h) => h.0,
@@ -653,7 +651,6 @@ impl UserData for ZonedDateTimeHandle {
         });
 
         /// Add a `Duration`.
-        #[lua("Result<ZonedDateTime, string>")]
         methods.add_method("add", |_, this, duration: Handle<DurationHandle>| {
             let span = match duration.borrow::<DurationHandle>() {
                 Ok(h) => h.0,
@@ -667,7 +664,6 @@ impl UserData for ZonedDateTimeHandle {
             }
         });
         /// Subtract a `Duration`.
-        #[lua("Result<ZonedDateTime, string>")]
         methods.add_method("sub", |_, this, duration: Handle<DurationHandle>| {
             let span = match duration.borrow::<DurationHandle>() {
                 Ok(h) => h.0,

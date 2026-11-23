@@ -234,15 +234,26 @@ pub fn constant<V: DeclType>(ty: &OnceCell<String>, value: V) -> V {
 ///
 /// When called while another type is being recorded: a type's `add_methods` does not declare a second type.
 pub fn record<T: UserData>(spec: &mut impl Members) {
+    /// Stops the noting when the recording ends, however it ends: a panic in `add_methods` must not leave
+    /// every later registration on the thread noting into a list nobody reads.
+    struct Recording;
+    impl Drop for Recording {
+        fn drop(&mut self) {
+            NOTES.set(None);
+        }
+    }
     let before = NOTES.replace(Some(Vec::new()));
     assert!(
         before.is_none(),
         "a type's members are recorded one type at a time"
     );
+    let recording = Recording;
     let mut nothing = Unregistered::<T>(PhantomData);
     T::add_fields(&mut nothing);
     T::add_methods(&mut nothing);
-    for member in NOTES.take().unwrap_or_default() {
+    let noted = NOTES.take().unwrap_or_default();
+    drop(recording);
+    for member in noted {
         match member {
             Noted::Method(s) => spec.method(&s.name, &borrowed(&s.params), &s.ret, &s.doc),
             Noted::Function(s) => spec.function(&s.name, &borrowed(&s.params), &s.ret, &s.doc),

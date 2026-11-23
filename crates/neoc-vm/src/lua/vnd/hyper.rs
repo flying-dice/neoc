@@ -93,7 +93,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 ///
 /// Every function is set verbatim with [`crate::lua::facade::Module::set`]
 /// rather than `async_func` / `try_func`. The client functions (`get`, `post`,
-/// `request`) return a pre-built `(Value, Value)` tuple from `perform`, bake
+/// `request`) return a `Fallible` tuple from `perform`, bake
 /// their own `hyper.<fn>` error prefix, and open their own `hyper.<fn>` span (in `client::send`, around the future,
 /// after the options were read: a hand-written `tracing` span: an `#[instrument]` on these functions, which are
 /// synchronous now, would cover the option reading and not the request); `serve` likewise carries its own `#[instrument(name = "hyper.serve")]`

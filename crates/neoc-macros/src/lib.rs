@@ -6,8 +6,8 @@
 //!
 //! ```ignore
 //! /// Decode a standard-alphabet base64 string back to raw bytes.
-//! #[lua_fn(returns = "Result<string, string>")]
-//! fn decode(lua: &Lua, input: mlua::LuaString) -> mlua::Result<(Value, Value)> { ... }
+//! #[lua_fn]
+//! fn decode(lua: &Lua, input: mlua::LuaString) -> mlua::Result<Fallible<mlua::LuaString>> { ... }
 //!
 //! m.declared(decode::lua(), lua.create_function(decode)?)?;
 //! ```

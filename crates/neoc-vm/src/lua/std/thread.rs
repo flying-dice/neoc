@@ -53,7 +53,7 @@ use crate::lua::lib::log::{LogFn, log_sink, set_log_sink};
 use crate::lua::lifecycle::{Life, Role, async_method};
 use crate::lua::panics;
 use crate::lua::sandbox::{
-    Fallible, WorkerEngineFn, from_err, load_source, ok, worker_engine_builder,
+    Fallible, WorkerEngineFn, err, from_err, load_source, ok, worker_engine_builder,
 };
 use crate::lua::serde_guard::{BUFFER_REFUSED, contains_buffer, refuse_buffer};
 
@@ -572,7 +572,7 @@ fn handle_recv_result(
 ) -> mlua::Result<Fallible<Value>> {
     match received {
         Some(json) => ok(lua.to_value(&json)?),
-        None => crate::lua::sandbox::err(err_msg),
+        None => err(err_msg),
     }
 }
 

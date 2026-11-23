@@ -539,3 +539,44 @@ fn a_type_is_registered_as_it_was_before_its_members_were_noted() {
     assert!(read.3.is_nil());
     assert_eq!(read.4.to_string().expect("text"), "probe.over: by zero");
 }
+
+#[test]
+fn a_function_that_can_fail_hands_back_two_values() {
+    let lua = Lua::new();
+    lua.globals().set("probe", Probe(6.0)).expect("set");
+    let counts: (i64, i64) = lua
+        .load("return select('#', probe:over(2)), select('#', probe:over(0))")
+        .eval()
+        .expect("runs");
+    assert_eq!(counts, (2, 2));
+}
+
+#[test]
+fn a_recording_that_panics_leaves_no_notes_behind() {
+    struct Broken;
+    impl UserData for Broken {
+        fn add_methods<M: UserDataMethods<Self>>(_: &mut M) {
+            panic!("broken on purpose");
+        }
+    }
+    struct Spec(Vec<String>);
+    impl super::Members for Spec {
+        fn method(&mut self, name: &str, _: &[(&str, &str)], _: &str, _: &str) {
+            self.0.push(name.to_owned());
+        }
+        fn function(&mut self, name: &str, _: &[(&str, &str)], _: &str, _: &str) {
+            self.0.push(name.to_owned());
+        }
+        fn field(&mut self, name: &str, _: &str, _: &str) {
+            self.0.push(name.to_owned());
+        }
+    }
+    let mut spec = Spec(Vec::new());
+    let broken = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        super::typed::record::<Broken>(&mut Spec(Vec::new()));
+    }));
+    assert!(broken.is_err());
+    // the next type records as if nothing had happened
+    super::typed::record::<Probe>(&mut spec);
+    assert_eq!(spec.0.first().map(String::as_str), Some("reading"));
+}

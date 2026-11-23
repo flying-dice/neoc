@@ -56,7 +56,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `try_async_func` because the hand-written async function carries its own
 /// `#[instrument(name = "sqlx_mysql.open", target = "lua::lib::sqlx_mysql")]`
 /// attribute and bakes the `sqlx_mysql.open` error prefix into its pre-built
-/// `(Value, Value)` return — routing through the facade would add a second span
+/// `Fallible` return — routing through the facade would add a second span
 /// and double the prefix. Its signature is read by `neoc_macros`
 /// from the implementation. The `Database` and `Statement`
 /// userdata types keep their own `impl UserData` (the `db_op!` / `stmt_op!`

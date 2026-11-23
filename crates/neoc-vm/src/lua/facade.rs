@@ -110,7 +110,7 @@ impl<T: DeclType> DeclType for Fallible<T> {
 /// A userdata argument that is declared as the type `T` it is meant to be: `duration: Handle<DurationHandle>`
 /// is `duration: Duration` to a script. It is the userdata as it was passed, so the function decides what a
 /// wrong one is (an error it returns, or one it raises): `duration.borrow::<DurationHandle>()`.
-pub struct Handle<T>(mlua::AnyUserData, std::marker::PhantomData<T>);
+pub struct Handle<T>(mlua::AnyUserData, std::marker::PhantomData<fn() -> T>);
 
 impl<T> std::ops::Deref for Handle<T> {
     type Target = mlua::AnyUserData;
