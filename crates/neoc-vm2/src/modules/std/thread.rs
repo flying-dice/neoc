@@ -39,9 +39,6 @@
 //! - Every failure is a typed error: `SpawnError`, `ChannelError`, `AwaitError`. `send` still raises when the other
 //!   side has exited.
 //! - `WorkerHandle` is `Worker`.
-//!
-//! Not ported: a worker inheriting its parent's log sink (`lib:log` is not on neoc-vm2 yet; when it is, `spawn`
-//! hands the sink over as neoc-vm's `WorkerHost` did).
 
 use std::collections::BTreeMap;
 
@@ -49,12 +46,15 @@ use mlua::Value;
 
 use crate::engine::{WorkerEngineFn, load_source};
 use crate::lifecycle::Life;
+use crate::modules::lib::log::{LogFn, log_sink, set_log_sink};
 use crate::panics;
 
 /// What a worker script was started with: its engine's app data.
 struct WorkerContext {
     parent: thread::Channel,
     shared: BTreeMap<String, thread::Shared>,
+    /// Where the parent's `lib:log` lines go, when its embedder took them: the worker logs there too.
+    log_sink: Option<LogFn>,
 }
 
 /// Build the worker's engine and run `source` in it with `args`; what it returned, as plain data.
@@ -68,6 +68,9 @@ async fn run_worker(
 ) -> mlua::Result<serde_json::Value> {
     // the worker gets the same module set as its parent and spawns into the parent's registry
     let lua = build_engine(life)?;
+    if let Some(sink) = context.log_sink.clone() {
+        set_log_sink(&lua, sink);
+    }
     lua.set_app_data(context);
     // one value (any plain data, a table for "named" arguments) that arrives as the chunk's first vararg, as
     // Node's `workerData` does
@@ -90,7 +93,7 @@ pub mod thread {
     use serde::{Deserialize, Serialize};
     use tokio::sync::{Mutex as AsyncMutex, mpsc};
 
-    use super::{WorkerContext, run_worker};
+    use super::{WorkerContext, log_sink, run_worker};
     use crate::engine::worker_engine;
     use crate::lifecycle::Life;
     use crate::modules::std::collections::collections::{Counter, Map};
@@ -277,6 +280,7 @@ pub mod thread {
         let context = WorkerContext {
             parent: Channel { tx: to_parent, rx: Arc::new(AsyncMutex::new(from_parent)) },
             shared: shared.unwrap_or_default(),
+            log_sink: log_sink(lua),
         };
         let args = args.map_or(serde_json::Value::Null, |args| args.value);
 
@@ -415,6 +419,34 @@ mod tests {
         assert!(reason.contains("boom") && reason.contains("thread:worker"), "{reason}");
         assert!(text.starts_with("std:thread.Worker:await: failed: "), "{text}");
         assert!(named.contains("sums") && !named.contains("thread:worker"), "{named}");
+    }
+
+    /// A worker logs where its parent logs: the embedder's sink is handed to the worker's engine.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_worker_logs_to_its_parents_sink() {
+        let e = engine();
+        let lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let kept = lines.clone();
+        crate::modules::lib::log::set_log_sink(
+            &e,
+            std::sync::Arc::new(move |level, line| kept.lock().unwrap().push(format!("{level} {line}"))),
+        );
+        let done: String = eval(
+            &e,
+            r#"
+            require("lib:log").info("from the parent")
+            return (assert(thread.spawn([[
+                require("lib:log").warn("from the worker", { n = 1 })
+                return "done"
+            ]])):await())
+            "#,
+        )
+        .await;
+        assert_eq!(done, "done");
+        let lines = lines.lock().unwrap();
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[0].starts_with("info ") && lines[0].contains("from the parent"), "{lines:?}");
+        assert!(lines[1].starts_with("warn ") && lines[1].contains(r#""msg":"from the worker""#), "{lines:?}");
     }
 
     /// A host function that panics in a worker fails the worker: `await` returns the error, and the parent runs on.
