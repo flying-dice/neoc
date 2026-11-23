@@ -10,7 +10,7 @@
 //! `add_fields` and `add_methods` against a registry that registers nothing. A real registration with mlua
 //! passes through the same functions and notes nothing.
 
-use std::cell::RefCell;
+use std::cell::{OnceCell, RefCell};
 use std::future::Future;
 use std::marker::PhantomData;
 
@@ -199,6 +199,33 @@ where
         doc: doc.to_owned(),
     });
     function
+}
+
+/// The closure of a function set on a module: `ret` is told what it returns.
+pub fn returning<A, R, F>(ret: &OnceCell<String>, function: F) -> F
+where
+    F: Fn(&Lua, A) -> mlua::Result<R>,
+    R: DeclType,
+{
+    let _ = ret.set(R::decl_type());
+    function
+}
+
+/// The closure of a function set on a module that hands back a future: `ret` is told what it comes to.
+pub fn returning_async<A, R, FR, F>(ret: &OnceCell<String>, function: F) -> F
+where
+    F: Fn(Lua, A) -> FR,
+    FR: Future<Output = mlua::Result<R>>,
+    R: DeclType,
+{
+    let _ = ret.set(R::decl_type());
+    function
+}
+
+/// The value of a constant set on a module: `ty` is told its type.
+pub fn constant<V: DeclType>(ty: &OnceCell<String>, value: V) -> V {
+    let _ = ty.set(V::decl_type());
+    value
 }
 
 /// Records the members of `T` on `spec`, in the order its `add_fields` and then its `add_methods` add them.

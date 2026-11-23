@@ -111,7 +111,7 @@ interface std_env {
   /** Return every environment variable as a `{ [string]: string }` table, skipping non-Unicode entries. */
   vars(this: void): any
   /** Return the CLI arguments passed to the script as a 1-indexed `{ string }` table. */
-  args(this: void): any
+  args(this: void): string[]
 }
 
 declare module "std:env" {
@@ -138,7 +138,7 @@ declare module "std:env" {
   /** Return every environment variable as a `{ [string]: string }` table, skipping non-Unicode entries. */
   export function vars(this: void): any
   /** Return the CLI arguments passed to the script as a 1-indexed `{ string }` table. */
-  export function args(this: void): any
+  export function args(this: void): string[]
   export { var_ as var }
 }
 

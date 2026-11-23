@@ -90,7 +90,7 @@ export type std_env = {
 	--- Return every environment variable as a `{ [string]: string }` table, skipping non-Unicode entries.
 	vars: () -> any,
 	--- Return the CLI arguments passed to the script as a 1-indexed `{ string }` table.
-	args: () -> any,
+	args: () -> { string },
 }
 
 -- ===== std:fs =====
@@ -1596,7 +1596,7 @@ export type vnd_rusqlite_Database = {
 	--- Execute a SELECT and return all rows as a 1-indexed table of column-keyed row tables.
 	query: (self: vnd_rusqlite_Database, sql: string, ...any) -> (any, string?),
 	--- Execute a SELECT and return the first matching row, or nil when none matched.
-	query_one: (self: vnd_rusqlite_Database, sql: string, ...any) -> (any, string?),
+	query_one: (self: vnd_rusqlite_Database, sql: string, ...any) -> (any?, string?),
 	--- Prepare a SQL statement for repeated execution, sharing this connection.
 	prepare: (self: vnd_rusqlite_Database, sql: string) -> vnd_rusqlite_Statement,
 	--- Close the connection; subsequent method calls on this handle error.
@@ -1609,7 +1609,7 @@ export type vnd_rusqlite_Statement = {
 	--- Execute the prepared SELECT and return all rows.
 	query: (self: vnd_rusqlite_Statement, ...any) -> (any, string?),
 	--- Execute the prepared SELECT and return the first matching row, or nil when none matched.
-	query_one: (self: vnd_rusqlite_Statement, ...any) -> (any, string?),
+	query_one: (self: vnd_rusqlite_Statement, ...any) -> (any?, string?),
 }
 
 export type vnd_rusqlite = {

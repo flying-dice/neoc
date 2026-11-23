@@ -73,7 +73,7 @@ use mlua::{
 };
 use parking_lot::RwLock;
 
-use crate::lua::facade::Module;
+use crate::lua::facade::{List, Module};
 use crate::lua::sandbox::i64_to_lua;
 
 // ---------------------------------------------------------------------------
@@ -596,18 +596,12 @@ impl UserData for Object {
             }))
         });
         /// The object's keys as a table.
-        #[lua("{ string }")]
-        methods.add_method("keys", |lua, this, _: ()| {
-            let t = lua.create_table()?;
-            with_resolved(&this.root, &this.path, |r| -> mlua::Result<()> {
-                if let Some(JsonValue::Object(m)) = r {
-                    for (i, k) in m.keys().enumerate() {
-                        t.set(i + 1, k.as_str())?;
-                    }
-                }
-                Ok(())
-            })?;
-            Ok(t)
+        methods.add_method("keys", |_, this, _: ()| {
+            let keys = with_resolved(&this.root, &this.path, |r| match r {
+                Some(JsonValue::Object(m)) => m.keys().cloned().collect(),
+                _ => Vec::new(),
+            });
+            Ok(List::<String>(keys))
         });
         /// Number of top-level keys.
         methods.add_method("len", |_, this, _: ()| {
@@ -944,7 +938,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:json")?;
 
     /// Construct an empty mutable JSON object handle on a fresh root.
-    #[lua("Object")]
+    #[lua]
     m.set(
         "object",
         lua.create_function(|_, _: ()| {
@@ -955,7 +949,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         })?,
     )?;
     /// Construct an empty mutable JSON array handle on a fresh root.
-    #[lua("Array")]
+    #[lua]
     m.set(
         "array",
         lua.create_function(|_, _: ()| {

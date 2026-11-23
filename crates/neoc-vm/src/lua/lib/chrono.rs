@@ -328,7 +328,6 @@ impl UserData for TimeHandle {
         /// Second of minute (0-59).
         fields.add_field_method_get("second", |_, this| Ok(this.0.second() as i64));
         /// Sub-second nanoseconds.
-        #[lua("number")]
         fields.add_field_method_get(
             "nanosecond",
             |_, this| Ok(this.0.subsec_nanosecond() as i64),
@@ -343,7 +342,6 @@ impl UserData for TimeHandle {
             Ok(DateTimeHandle(dh.0.to_datetime(this.0)))
         });
         /// Format via a strftime pattern.
-        #[lua("Result<string, string>")]
         methods.add_method(
             "format",
             |_, this, fmt: String| match jiff::fmt::strtime::format(&fmt, this.0) {
@@ -440,7 +438,6 @@ impl UserData for DateTimeHandle {
         /// Second of minute (0-59).
         fields.add_field_method_get("second", |_, this| Ok(this.0.second() as i64));
         /// Sub-second nanoseconds.
-        #[lua("number")]
         fields.add_field_method_get(
             "nanosecond",
             |_, this| Ok(this.0.subsec_nanosecond() as i64),
@@ -511,7 +508,6 @@ impl UserData for DateTimeHandle {
         });
 
         /// Format via a strftime pattern.
-        #[lua("Result<string, string>")]
         methods.add_method(
             "format",
             |_, this, fmt: String| match jiff::fmt::strtime::format(&fmt, this.0) {
@@ -630,7 +626,6 @@ impl UserData for ZonedDateTimeHandle {
         /// Second of minute (0-59).
         fields.add_field_method_get("second", |_, this| Ok(this.0.second() as i64));
         /// Sub-second nanoseconds.
-        #[lua("number")]
         fields.add_field_method_get(
             "nanosecond",
             |_, this| Ok(this.0.subsec_nanosecond() as i64),
@@ -720,7 +715,6 @@ impl UserData for ZonedDateTimeHandle {
         });
 
         /// Format via a strftime pattern.
-        #[lua("Result<string, string>")]
         methods.add_method(
             "format",
             |_, this, fmt: String| match jiff::fmt::strtime::format(&fmt, &this.0) {
@@ -887,14 +881,14 @@ fn duration_parse_ctor(_: &Lua, s: String) -> mlua::Result<Fallible<DurationHand
 // ---------------------------------------------------------------------------
 
 /// Current wall-clock instant in the system's local timezone.
-#[neoc_macros::lua_fn(name = "now", returns = "ZonedDateTime")]
+#[neoc_macros::lua_fn(name = "now")]
 #[instrument(name = "chrono.now", target = "lua::lib::chrono", skip_all)]
 fn flat_now(_: &Lua, _: ()) -> mlua::Result<ZonedDateTimeHandle> {
     Ok(ZonedDateTimeHandle(ZonedDateTime::now()))
 }
 
 /// Current wall-clock instant in UTC.
-#[neoc_macros::lua_fn(name = "utc_now", returns = "ZonedDateTime")]
+#[neoc_macros::lua_fn(name = "utc_now")]
 #[instrument(name = "chrono.utc_now", target = "lua::lib::chrono", skip_all)]
 fn flat_utc_now(_: &Lua, _: ()) -> mlua::Result<ZonedDateTimeHandle> {
     Ok(ZonedDateTimeHandle(

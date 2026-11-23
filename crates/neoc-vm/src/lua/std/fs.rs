@@ -564,7 +564,6 @@ impl UserData for MetadataHandle {
             Ok(this.0.kind == ops::FileKind::File)
         });
         /// `kind() == "dir"`.
-        #[lua("bool")]
         methods.add_method(
             "is_dir",
             |_, this, ()| Ok(this.0.kind == ops::FileKind::Dir),
@@ -607,7 +606,6 @@ impl UserData for DirEntryHandle {
             Ok(this.0.kind == ops::FileKind::File)
         });
         /// `kind() == "dir"`.
-        #[lua("bool")]
         methods.add_method(
             "is_dir",
             |_, this, ()| Ok(this.0.kind == ops::FileKind::Dir),

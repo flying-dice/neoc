@@ -1111,7 +1111,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     let eng = engine.clone();
     /// Parse `source` once and return a reusable `Template`.
-    #[lua("Result<Template, string>", names(src = "source"))]
+    #[lua(names(src = "source"))]
     m.set(
         "compile",
         lua.create_function(move |lua, src: String| compile_impl(lua, &eng, src))?,

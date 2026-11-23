@@ -232,7 +232,7 @@ fn waits(doc: &str) -> String {
 }
 
 /// A gauge at zero.
-#[neoc_macros::lua_fn(name = "new", returns = "Gauge")]
+#[neoc_macros::lua_fn(name = "new")]
 fn gauge_new(_: &Lua, (): ()) -> mlua::Result<Gauge> {
     Ok(Gauge(0.0))
 }
@@ -250,7 +250,7 @@ fn add_reads<M: UserDataMethods<Gauge>>(methods: &mut M) {
     methods.add_method("read_twice", |_, this, ()| Ok(this.0 * 2.0));
 }
 
-#[neoc_macros::lua_userdata("vnd:demo", "Gauge")]
+#[neoc_macros::lua_userdata("vnd:more", "Gauge")]
 impl UserData for Gauge {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// The reading.

@@ -409,7 +409,7 @@ impl PublicKey {
 impl UserData for PublicKey {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Verify `signature` over `message`; returns `true` iff valid, `false` on any mismatch or malformed signature.
-        #[lua("bool", names(msg = "message", sig = "signature"))]
+        #[lua(names(msg = "message", sig = "signature"))]
         methods.add_method(
             "verify",
             |_, this, (msg, sig): (mlua::LuaString, mlua::LuaString)| {

@@ -159,19 +159,19 @@ fn open(_: &Lua, path: String) -> mlua::Result<Fallible<Database>> {
 impl UserData for Database {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Execute a SQL statement, binding trailing arguments to `?` placeholders; returns rows affected.
-        #[lua("Result<number, string>", takes("sql: string", "...: LuaValue"))]
+        #[lua(takes("sql: string", "...: LuaValue"))]
         methods.add_method("execute", |lua, this, args: MultiValue| {
             db_dispatch(lua, &this.conn, "rusqlite.execute", args, run_execute)
         });
 
         /// Execute a SELECT and return all rows as a 1-indexed table of column-keyed row tables.
-        #[lua("Result<LuaValue, string>", takes("sql: string", "...: LuaValue"))]
+        #[lua(takes("sql: string", "...: LuaValue"))]
         methods.add_method("query", |lua, this, args: MultiValue| {
             db_dispatch(lua, &this.conn, "rusqlite.query", args, run_query)
         });
 
         /// Execute a SELECT and return the first matching row, or nil when none matched.
-        #[lua("Result<LuaValue, string>", takes("sql: string", "...: LuaValue"))]
+        #[lua(takes("sql: string", "...: LuaValue"))]
         methods.add_method("query_one", |lua, this, args: MultiValue| {
             db_dispatch(lua, &this.conn, "rusqlite.query_one", args, run_query_one)
         });
@@ -208,7 +208,7 @@ pub struct Statement {
 impl UserData for Statement {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Execute the prepared statement with positional parameters; returns rows affected.
-        #[lua("Result<number, string>", takes("...: LuaValue"))]
+        #[lua(takes("...: LuaValue"))]
         methods.add_method("execute", |lua, this, args: MultiValue| {
             let params: Vec<Value> = args.into_iter().collect();
             run_execute(
@@ -221,7 +221,7 @@ impl UserData for Statement {
         });
 
         /// Execute the prepared SELECT and return all rows.
-        #[lua("Result<LuaValue, string>", takes("...: LuaValue"))]
+        #[lua(takes("...: LuaValue"))]
         methods.add_method("query", |lua, this, args: MultiValue| {
             let params: Vec<Value> = args.into_iter().collect();
             run_query(
@@ -234,7 +234,7 @@ impl UserData for Statement {
         });
 
         /// Execute the prepared SELECT and return the first matching row, or nil when none matched.
-        #[lua("Result<LuaValue, string>", takes("...: LuaValue"))]
+        #[lua(takes("...: LuaValue"))]
         methods.add_method("query_one", |lua, this, args: MultiValue| {
             let params: Vec<Value> = args.into_iter().collect();
             run_query_one(

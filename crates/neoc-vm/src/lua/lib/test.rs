@@ -118,7 +118,7 @@ fn init_state(lua: &Lua) -> mlua::Result<()> {
 fn register_suite_fns(lua: &Lua, m: &mut Module<'_>) -> mlua::Result<()> {
     // describe(name, fn) — async so test bodies can call yielding functions
     /// Declare a named test suite. Suites nest — `describe` inside `describe` prefixes the test name.
-    #[lua("()", names(f = "fn"))]
+    #[lua(names(f = "fn"))]
     m.set(
         "describe",
         async_function(

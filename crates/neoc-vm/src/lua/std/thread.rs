@@ -78,7 +78,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.declared(spawn::lua(), lua.create_function(spawn)?)?;
 
     /// Return the number of logical CPU cores available to the process. At least 1.
-    #[lua("number")]
+    #[lua]
     m.set(
         "available_parallelism",
         lua.create_function(|_, _: ()| {
@@ -97,7 +97,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     // received `shared = {…}` at spawn time; nil at the top level and in
     // workers spawned without a shared table.
     /// The reconstructed table of Sendable values passed via `shared` at spawn time; nil otherwise.
-    #[lua("LuaValue", constant)]
+    #[lua(constant)]
     m.set("shared", Value::Nil)?;
 
     m.userdata("WorkerHandle", |w| {

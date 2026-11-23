@@ -221,7 +221,6 @@ impl UserData for LuaLogger {
         /// Return a child logger with `fields` merged into the bound context; the parent is unchanged.
         methods.add_method("with", |lua, this, fields: Table| this.child(lua, fields));
         /// Emit a `trace`-level line if the logger's threshold permits it.
-        #[lua("()")]
         methods.add_method(
             "trace",
             |lua, this, (msg, fields): (String, Option<Table>)| {
@@ -229,7 +228,6 @@ impl UserData for LuaLogger {
             },
         );
         /// Emit a `debug`-level line if the logger's threshold permits it.
-        #[lua("()")]
         methods.add_method(
             "debug",
             |lua, this, (msg, fields): (String, Option<Table>)| {
@@ -237,7 +235,6 @@ impl UserData for LuaLogger {
             },
         );
         /// Emit an `info`-level line if the logger's threshold permits it.
-        #[lua("()")]
         methods.add_method(
             "info",
             |lua, this, (msg, fields): (String, Option<Table>)| {
@@ -245,7 +242,6 @@ impl UserData for LuaLogger {
             },
         );
         /// Emit a `warn`-level line if the logger's threshold permits it.
-        #[lua("()")]
         methods.add_method(
             "warn",
             |lua, this, (msg, fields): (String, Option<Table>)| {
@@ -253,7 +249,6 @@ impl UserData for LuaLogger {
             },
         );
         /// Emit an `error`-level line; highest severity short of `off`.
-        #[lua("()")]
         methods.add_method(
             "error",
             |lua, this, (msg, fields): (String, Option<Table>)| {
@@ -546,7 +541,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     // `log.new({ level?, format? })` — explicit logger instance.
     /// Construct an explicit logger instance; `opts` may carry `level` and `format`.
-    #[lua("Logger")]
+    #[lua]
     m.set(
         "new",
         lua.create_function(|_, opts: Option<Table>| LuaLogger::from_options(opts))?,
@@ -582,7 +577,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         ),
     ] {
         let lvl_copy = lvl;
-        #[lua("()", doc = doc)]
+        #[lua(doc = doc)]
         m.set(
             name,
             lua.create_function(move |lua, (msg, fields): (String, Option<Table>)| {

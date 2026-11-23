@@ -101,6 +101,22 @@ impl<T: DeclType> DeclType for Fallible<T> {
     }
 }
 
+/// A list a function hands a script: a table of `T` in order, declared `{ T }`. (A bare `Vec<u8>` is the bytes
+/// of a string, so a list says that it is one.)
+pub struct List<T>(pub Vec<T>);
+
+impl<T: IntoLua> IntoLua for List<T> {
+    fn into_lua(self, lua: &Lua) -> mlua::Result<mlua::Value> {
+        self.0.into_lua(lua)
+    }
+}
+
+impl<T: DeclType> DeclType for List<T> {
+    fn decl_type() -> String {
+        format!("{{ {} }}", T::decl_type())
+    }
+}
+
 impl<T: DeclType, E: DeclType> DeclType for Result<T, E> {
     fn decl_type() -> String {
         format!("Result<{}, {}>", T::decl_type(), E::decl_type())

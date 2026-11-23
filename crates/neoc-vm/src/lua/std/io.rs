@@ -199,7 +199,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 }
 
 /// Wrap a Lua string in a `ReaderHandle` so it can be passed to any reader consumer.
-#[neoc_macros::lua_fn(returns = "ReaderHandle")]
+#[neoc_macros::lua_fn]
 #[instrument(name = "io.from_string", target = "lua::lib::io", skip_all)]
 fn from_string(_: &Lua, s: mlua::LuaString) -> mlua::Result<ReaderHandle> {
     Ok(ReaderHandle::new(std::io::Cursor::new(

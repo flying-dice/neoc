@@ -113,7 +113,7 @@ impl UserData for ShutdownSignal {
 }
 
 /// Return the process-global `ShutdownSignal`. Fires on Ctrl-C (SIGINT).
-#[neoc_macros::lua_fn(name = "on_shutdown", returns = "ShutdownSignal")]
+#[neoc_macros::lua_fn(name = "on_shutdown")]
 fn shutdown_signal_fn(_: &Lua, _: ()) -> mlua::Result<ShutdownSignal> {
     Ok(ShutdownSignal::current())
 }

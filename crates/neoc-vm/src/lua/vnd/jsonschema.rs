@@ -147,7 +147,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:jsonschema")?;
 
     /// Parse and compile a JSON Schema string into a `Schema` validator.
-    #[lua("Result<Schema, string>")]
+    #[lua]
     m.set(
         "compile",
         lua.create_function(|_, schema_json: mlua::LuaString| {

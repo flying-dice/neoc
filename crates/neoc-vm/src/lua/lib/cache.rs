@@ -315,7 +315,6 @@ impl UserData for Cache {
 
         // set — insert as MRU, evicting the LRU entry if over capacity.
         /// Store `value` under `key` as most-recently-used, evicting the least-recently-used entry when over `max_size`. `ttl` (seconds) overrides the cache default: omit it for the default, pass > 0 for a custom expiry, pass ≤ 0 to pin the entry so it never expires. Key must be a string, number, or boolean; `value` must not be nil.
-        #[lua("()")]
         methods.add_method(
             "set",
             |lua, this, (key, value, ttl): (Value, Value, Option<f64>)| {

@@ -163,7 +163,6 @@ impl UserData for Map {
         });
 
         /// Number of entries.
-        #[lua("number")]
         methods.add_method(
             "size",
             |_, this, _: ()| Ok(this.0.inner.read().len() as i32),

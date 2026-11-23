@@ -205,7 +205,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.set("hash", lua.create_function(hash_one_shot)?)?;
 
     /// The list of supported algorithm names.
-    #[lua("LuaValue")]
+    #[lua]
     m.set(
         "algorithms",
         lua.create_function(|lua, _: ()| {

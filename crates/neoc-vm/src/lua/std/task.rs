@@ -363,7 +363,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     // then return a Task handle. If the function yields (async op), the
     // continuation runs as a separate tokio task.
     /// Spawn a function or coroutine. The first synchronous slice runs immediately; a yield runs the continuation as a separate task.
-    #[lua("Task", takes("fn_or_thread: LuaValue", "...: LuaValue"))]
+    #[lua(takes("fn_or_thread: LuaValue", "...: LuaValue"))]
     m.set(
         "spawn",
         lua.create_function(|lua, (fn_val, args): (Value, MultiValue)| {
@@ -434,7 +434,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     // Deferred tasks execute in FIFO order; each waits for the previous
     // defer to finish before starting.
     /// Queue a function to run after the current synchronous batch. Deferred tasks execute in FIFO order.
-    #[lua("Task", takes("fn_or_thread: LuaValue", "...: LuaValue"))]
+    #[lua(takes("fn_or_thread: LuaValue", "...: LuaValue"))]
     m.set(
         "defer",
         lua.create_function(|lua, (fn_val, args): (Value, MultiValue)| {
@@ -535,7 +535,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     // Negative and NaN values are clamped to 0, and a delay past 100 years (infinity included) to 100 years.
     // Returns elapsed time as a float.
     /// Yield the current coroutine for `secs` seconds (NaN and negative clamp to 0, over 100 years clamps to 100 years). Returns the actual elapsed time.
-    #[lua("number")]
+    #[lua]
     m.set(
         "wait",
         async_function(lua, Role::Timer, |_, secs: f64| async move {
@@ -548,7 +548,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     // task.cancel(handle) — flat Roblox-compatible function; delegates to handle:cancel().
     /// Cancel a task by handle. Returns `true` if this call was the one that cancelled it.
-    #[lua("bool", names(val = "handle"), types(val = "Task"))]
+    #[lua(names(val = "handle"), types(val = "Task"))]
     m.set(
         "cancel",
         lua.create_function(|_, val: Value| match val {

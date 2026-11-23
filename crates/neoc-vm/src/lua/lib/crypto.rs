@@ -220,7 +220,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.record(decrypt::lua());
 
     /// Return the list of supported algorithm names in canonical order.
-    #[lua("LuaValue")]
+    #[lua]
     m.set(
         "algorithms",
         lua.create_function(|lua, _: ()| {

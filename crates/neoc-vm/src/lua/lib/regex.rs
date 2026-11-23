@@ -121,7 +121,6 @@ impl UserData for PatternHandle {
         });
 
         /// Replace the first match in `text`. Uses the regex crate's `$0` / `$1` / `${name}` substitution grammar.
-        #[lua("string")]
         methods.add_method(
             "replace",
             |_, this, (text, replacement): (String, String)| {
@@ -133,7 +132,6 @@ impl UserData for PatternHandle {
         );
 
         /// Replace every match. Substitution grammar as `replace`.
-        #[lua("string")]
         methods.add_method(
             "replace_all",
             |_, this, (text, replacement): (String, String)| {
@@ -145,7 +143,6 @@ impl UserData for PatternHandle {
         );
 
         /// Split `text` on every match. `limit` caps the parts (`0`/`nil` unlimited); negative limits return `(nil, err)`.
-        #[lua("Result<LuaValue, string>")]
         methods.add_method(
             "split",
             |lua, this, (text, limit): (String, Option<i64>)| {

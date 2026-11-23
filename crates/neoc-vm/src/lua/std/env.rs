@@ -2,7 +2,7 @@
 
 use mlua::{Lua, Table, Value};
 
-use crate::lua::facade::Module;
+use crate::lua::facade::{List, Module};
 use crate::lua::sandbox::{Fallible, err, from_err, ok};
 
 // Return a filesystem path to Lua as a lossy UTF-8 string under the
@@ -29,26 +29,26 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:env")?;
 
     /// Target operating system (e.g. `"linux"`, `"macos"`, `"windows"`).
-    #[lua("string", constant)]
+    #[lua(constant)]
     m.set("os", std::env::consts::OS)?;
     /// Target CPU architecture (e.g. `"x86_64"`, `"aarch64"`).
-    #[lua("string", constant)]
+    #[lua(constant)]
     m.set("arch", std::env::consts::ARCH)?;
     /// Target OS family (`"unix"` or `"windows"`).
-    #[lua("string", constant)]
+    #[lua(constant)]
     m.set("family", std::env::consts::FAMILY)?;
     /// Executable file suffix for the target (e.g. `".exe"` on Windows).
-    #[lua("string", constant)]
+    #[lua(constant)]
     m.set("exe_suffix", std::env::consts::EXE_SUFFIX)?;
     /// Dynamic-library filename prefix for the target (e.g. `"lib"`).
-    #[lua("string", constant)]
+    #[lua(constant)]
     m.set("dll_prefix", std::env::consts::DLL_PREFIX)?;
     /// Dynamic-library filename suffix for the target (e.g. `".so"`, `".dylib"`).
-    #[lua("string", constant)]
+    #[lua(constant)]
     m.set("dll_suffix", std::env::consts::DLL_SUFFIX)?;
 
     /// Return the current user's home directory, or an error if it cannot be determined.
-    #[lua("Result<string, string>")]
+    #[lua]
     m.set(
         "home_dir",
         lua.create_function(|_, ()| {
@@ -61,14 +61,14 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     )?;
 
     /// Return the platform temporary-file directory.
-    #[lua("string")]
+    #[lua]
     m.set(
         "temp_dir",
         lua.create_function(|_, ()| Ok(std::env::temp_dir().to_string_lossy().into_owned()))?,
     )?;
 
     /// Return the process's current working directory, or an error.
-    #[lua("Result<string, string>")]
+    #[lua]
     m.set(
         "current_dir",
         lua.create_function(|_, ()| match std::env::current_dir() {
@@ -78,7 +78,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     )?;
 
     /// Read the environment variable `key`, or an error if it is unset or not valid Unicode.
-    #[lua("Result<string, string>")]
+    #[lua]
     m.set(
         "var",
         lua.create_function(|_, key: String| match std::env::var(&key) {
@@ -88,7 +88,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     )?;
 
     /// Return every environment variable as a `{ [string]: string }` table, skipping non-Unicode entries.
-    #[lua("LuaValue")]
+    #[lua]
     m.set(
         "vars",
         lua.create_function(|lua, ()| {
@@ -103,19 +103,20 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     )?;
 
     /// Return the CLI arguments passed to the script as a 1-indexed `{ string }` table.
-    #[lua("LuaValue")]
+    #[lua]
     m.set(
         "args",
         lua.create_function(|lua, ()| {
             const ERR: &str = "env.args: _NEOC_ARGS: expected array of strings";
             let tbl = match lua.globals().get::<Value>("_NEOC_ARGS") {
                 // Unset, nil, or unreadable → no args.
-                Err(_) | Ok(Value::Nil) => return Ok(Vec::<String>::new()),
+                Err(_) | Ok(Value::Nil) => return Ok(List(Vec::<String>::new())),
                 Ok(Value::Table(tbl)) => tbl,
                 Ok(_) => return Err(mlua::Error::runtime(ERR)),
             };
             tbl.sequence_values::<String>()
                 .collect::<mlua::Result<Vec<String>>>()
+                .map(List)
                 .map_err(|_| mlua::Error::runtime(ERR))
         })?,
     )?;

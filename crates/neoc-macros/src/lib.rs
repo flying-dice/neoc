@@ -1230,10 +1230,7 @@ fn written(stmt: &mut Stmt) -> syn::Result<Option<Tokens>> {
     let (name, doc, receiver) = (&marked.name, &marked.doc, &marked.receiver);
     if marked.kind == "set" {
         let Some(returns) = &marked.said.returns else {
-            return Err(syn::Error::new(
-                span,
-                "say what a script gets from this function: `#[lua(\"...\")]`",
-            ));
+            return inferred_set(stmt, &marked, span);
         };
         if marked.said.constant {
             marked.said.only("a constant", OF_A_CONSTANT)?;
@@ -1313,6 +1310,88 @@ fn written(stmt: &mut Stmt) -> syn::Result<Option<Tokens>> {
             let __lua_params: ::std::vec::Vec<(&str, &str)> = __lua_owned.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
             #stmt
         }
+    }))
+}
+
+/// Replaces the first closure of an expression with a call that is given it.
+struct Through(Option<Tokens>);
+
+impl syn::visit_mut::VisitMut for Through {
+    fn visit_expr_mut(&mut self, expr: &mut Expr) {
+        if self.0.is_none() {
+            return;
+        }
+        if let Expr::Closure(closure) = expr {
+            let sync = !waits(closure);
+            if let Some(facade) = self.0.take() {
+                *expr = if sync {
+                    syn::parse_quote!(#facade::typed::returning(&__lua_ret, #closure))
+                } else {
+                    syn::parse_quote!(#facade::typed::returning_async(&__lua_ret, #closure))
+                };
+            }
+            return;
+        }
+        syn::visit_mut::visit_expr_mut(self, expr);
+    }
+}
+
+/// Whether a closure hands back a future: it is `async`, or what it comes to is an `async` block.
+fn waits(closure: &ExprClosure) -> bool {
+    fn is_async(expr: &Expr) -> bool {
+        match expr {
+            Expr::Async(_) => true,
+            Expr::Block(block) => {
+                matches!(block.block.stmts.last(), Some(Stmt::Expr(last, None)) if is_async(last))
+            }
+            _ => false,
+        }
+    }
+    closure.asyncness.is_some() || is_async(&closure.body)
+}
+
+/// A `set` that does not say what a script gets: the compiler says it. A function's closure goes through
+/// `typed::returning`, whose bounds name what it returns, and a constant's value through `typed::constant`.
+fn inferred_set(stmt: &mut Stmt, marked: &Marked, span: Span) -> syn::Result<Option<Tokens>> {
+    let facade = facade();
+    let (name, doc, receiver) = (&marked.name, &marked.doc, &marked.receiver);
+    if marked.said.constant {
+        marked.said.only("a constant", OF_A_CONSTANT)?;
+        let Some(value) = call_in(stmt).and_then(|call| call.args.iter_mut().nth(1)) else {
+            return Err(syn::Error::new(span, "a constant is set to a value"));
+        };
+        *value = syn::parse_quote!(#facade::typed::constant(&__lua_ret, #value));
+        let record = if let Some((module, of)) = &marked.said.on {
+            quote!(#module.type_const(#of, #name, &__lua_ret, #doc);)
+        } else {
+            quote!(#receiver.const_(#name, &__lua_ret, #doc);)
+        };
+        return Ok(Some(quote! {
+            let __lua_ret = ::std::cell::OnceCell::new();
+            #stmt
+            let __lua_ret = __lua_ret.into_inner().unwrap_or_default();
+            #record
+        }));
+    }
+    if marked.closure.is_none() {
+        return Err(syn::Error::new(
+            span,
+            "say what a script gets from this function: `#[lua(\"...\")]`",
+        ));
+    }
+    marked.said.only("a function set on a module", OF_A_SET)?;
+    let params = marked.params(span)?;
+    let mut through = Through(Some(facade.clone()));
+    syn::visit_mut::VisitMut::visit_stmt_mut(&mut through, stmt);
+    Ok(Some(quote! {
+        let __lua_ret = ::std::cell::OnceCell::new();
+        #stmt
+        #receiver.record(#facade::FnDecl {
+            name: ::std::string::String::from(#name),
+            params: ::std::vec![#(#params),*],
+            ret: __lua_ret.into_inner().unwrap_or_default(),
+            doc: ::std::string::String::from(#doc),
+        });
     }))
 }
 
@@ -1634,8 +1713,24 @@ mod tests {
             lua_module_impl(declare(quote!(#[lua("number")] m.set("now", now_fn)?;))),
             "no closure to read the parameters from",
         );
+        // a closure's return is the compiler's to say: the closure goes through `typed::returning`
+        let inferred = lua_module_impl(declare(quote!(#[lua] m.set("one", make(|_, ()| Ok(1)))?;)))
+            .map_or_default(|t| t.to_string());
+        assert!(
+            inferred.contains("typed :: returning (& __lua_ret , | _ , () | Ok (1))"),
+            "{inferred}"
+        );
+        let waited = lua_module_impl(declare(
+            quote!(#[lua] m.set("one", make(|_, ()| async move { Ok(1) }))?;),
+        ))
+        .map_or_default(|t| t.to_string());
+        assert!(
+            waited.contains("typed :: returning_async (& __lua_ret"),
+            "{waited}"
+        );
+        // with no closure in sight there is nothing to read the return from
         refuses(
-            lua_module_impl(declare(quote!(#[lua] m.set("one", make(|_, ()| Ok(1)))?;))),
+            lua_module_impl(declare(quote!(#[lua(takes())] m.set("now", now_fn)?;))),
             "say what a script gets",
         );
         refuses(
@@ -1657,9 +1752,12 @@ mod tests {
         let text = out.map_or_default(|t| t.to_string());
         assert!(text.contains("m . const_ (\"os\""), "{text}");
         assert!(text.contains("\"The system.\""), "{text}");
-        refuses(
-            lua_module_impl(declare(quote!(#[lua(constant)] m.set("os", OS)?;))),
-            "say what a script gets",
+        // a constant that does not say its type has its value's
+        let inferred = lua_module_impl(declare(quote!(#[lua(constant)] m.set("os", OS)?;)))
+            .map_or_default(|t| t.to_string());
+        assert!(
+            inferred.contains("typed :: constant (& __lua_ret , OS)"),
+            "{inferred}"
         );
         refuses(
             lua_module_impl(declare(
