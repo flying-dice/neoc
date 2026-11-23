@@ -1710,6 +1710,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "00d174d5400e5e8fd687ad1049e2f578285fa914201b1af7e8b112a4546bd826"
 
 [[package]]
+name = "erased-discriminant"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1a6df962265a53221f29081896c412ef325c17fa7d638cd9578febe53d3c82c"
+dependencies = [
+ "typeid",
+]
+
+[[package]]
 name = "erased-serde"
 version = "0.4.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3306,6 +3315,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "mlua-ir"
+version = "0.1.0"
+source = "git+https://github.com/flying-dice/mlua-ir.git?rev=b58b00b07c426fe02a1383573172b98cdce7a8c3#b58b00b07c426fe02a1383573172b98cdce7a8c3"
+dependencies = [
+ "futures",
+ "inventory",
+ "mlua",
+ "mlua-ir-macros",
+ "serde",
+ "serde-reflection",
+ "serde_json",
+]
+
+[[package]]
+name = "mlua-ir-gen"
+version = "0.1.0"
+source = "git+https://github.com/flying-dice/mlua-ir.git?rev=b58b00b07c426fe02a1383573172b98cdce7a8c3#b58b00b07c426fe02a1383573172b98cdce7a8c3"
+dependencies = [
+ "mlua-ir",
+ "serde_json",
+]
+
+[[package]]
+name = "mlua-ir-macros"
+version = "0.1.0"
+source = "git+https://github.com/flying-dice/mlua-ir.git?rev=b58b00b07c426fe02a1383573172b98cdce7a8c3#b58b00b07c426fe02a1383573172b98cdce7a8c3"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "mlua-sys"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3449,6 +3492,26 @@ dependencies = [
  "xxhash-rust",
  "zip",
  "zstd",
+]
+
+[[package]]
+name = "neoc-vm2"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "futures",
+ "mlua",
+ "mlua-ir",
+ "mlua-ir-gen",
+ "neoc-vm",
+ "parking_lot 0.13.0",
+ "serde",
+ "serde_json",
+ "strsim",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "tracing-core",
 ]
 
 [[package]]
@@ -4939,6 +5002,20 @@ checksum = "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"
 dependencies = [
  "serde_core",
  "serde_derive",
+]
+
+[[package]]
+name = "serde-reflection"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68fb2363ca88876b3e16442b02dde5305646fd50df297c79a4b54fc5f5cf51d4"
+dependencies = [
+ "erased-discriminant",
+ "once_cell",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "typeid",
 ]
 
 [[package]]
