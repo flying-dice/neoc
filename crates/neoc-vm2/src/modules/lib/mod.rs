@@ -16,6 +16,7 @@ pub mod hash;
 pub mod hex;
 pub mod hmac;
 pub mod html;
+pub mod http;
 pub mod ini;
 pub mod json;
 pub mod log;
