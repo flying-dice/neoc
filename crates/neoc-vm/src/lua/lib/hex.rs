@@ -31,21 +31,20 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `hex.decode` error prefix, the raise on `create_string`, and the
 /// `lua::lib::hex` spans are byte-identical to the hand-written registration
 /// this replaces.
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:hex")?;
-    m.func(
-        "encode",
-        &[("input", "string")],
-        "Encode `input` bytes to a lowercase hex string — two characters per byte, drawn from `0`–`9` and `a`–`f`.",
-        |_, input: mlua::LuaString| Ok(hex::encode(input.as_bytes())),
-    )?
-    .func(
-        "encode_upper",
-        &[("input", "string")],
-        "Encode `input` bytes to an uppercase hex string (`0`–`9` and `A`–`F`).",
-        |_, input: mlua::LuaString| Ok(hex::encode_upper(input.as_bytes())),
-    )?
-    .set("decode", lua.create_function(decode)?)?;
+    /// Encode `input` bytes to a lowercase hex string — two characters per byte, drawn from `0`–`9` and `a`–`f`.
+    #[lua]
+    m.func("encode", |_, input: mlua::LuaString| {
+        Ok(hex::encode(input.as_bytes()))
+    })?;
+    /// Encode `input` bytes to an uppercase hex string (`0`–`9` and `A`–`F`).
+    #[lua]
+    m.func("encode_upper", |_, input: mlua::LuaString| {
+        Ok(hex::encode_upper(input.as_bytes()))
+    })?;
+    m.set("decode", lua.create_function(decode)?)?;
 
     m.record(decode::lua());
 

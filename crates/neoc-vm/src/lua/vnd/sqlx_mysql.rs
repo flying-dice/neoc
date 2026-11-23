@@ -72,57 +72,11 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     )?;
 
     m.userdata("Database", |d| {
-        d.method(
-            "execute",
-            &[("sql", "string"), ("...", "LuaValue")],
-            "Result<number, string>",
-            "Execute a SQL statement, binding trailing arguments to `?` placeholders; returns rows affected.",
-        )
-        .method(
-            "query",
-            &[("sql", "string"), ("...", "LuaValue")],
-            "Result<LuaValue, string>",
-            "Execute a SELECT and return all rows as a 1-indexed table of column-keyed row tables.",
-        )
-        .method(
-            "query_one",
-            &[("sql", "string"), ("...", "LuaValue")],
-            "Result<LuaValue, string>",
-            "Execute a SELECT and return the first matching row, or nil when none matched.",
-        )
-        .method(
-            "prepare",
-            &[("sql", "string")],
-            "Statement",
-            "Prepare a SQL statement for repeated execution, sharing this connection pool.",
-        )
-        .method(
-            "close",
-            &[],
-            "()",
-            "Close all connections in the pool; subsequent method calls on this handle error.",
-        );
+        Database::lua(d);
     });
 
     m.userdata("Statement", |s| {
-        s.method(
-            "execute",
-            &[("...", "LuaValue")],
-            "Result<number, string>",
-            "Execute the prepared statement with positional parameters; returns rows affected.",
-        )
-        .method(
-            "query",
-            &[("...", "LuaValue")],
-            "Result<LuaValue, string>",
-            "Execute the prepared SELECT and return all rows.",
-        )
-        .method(
-            "query_one",
-            &[("...", "LuaValue")],
-            "Result<LuaValue, string>",
-            "Execute the prepared SELECT and return the first matching row, or nil when none matched.",
-        );
+        Statement::lua(s);
     });
 
     Ok(m)
@@ -197,12 +151,33 @@ macro_rules! stmt_op {
     };
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for Database {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Execute a SQL statement, binding trailing arguments to `?` placeholders; returns rows affected.
+        #[lua(
+            "Result<number, string>",
+            name = "execute",
+            takes("sql: string", "...: LuaValue")
+        )]
         db_op!(methods, "execute", "sqlx_mysql.execute", run_execute);
+        /// Execute a SELECT and return all rows as a 1-indexed table of column-keyed row tables.
+        #[lua(
+            "Result<LuaValue, string>",
+            name = "query",
+            takes("sql: string", "...: LuaValue")
+        )]
         db_op!(methods, "query", "sqlx_mysql.query", run_query);
+        /// Execute a SELECT and return the first matching row, or nil when none matched.
+        #[lua(
+            "Result<LuaValue, string>",
+            name = "query_one",
+            takes("sql: string", "...: LuaValue")
+        )]
         db_op!(methods, "query_one", "sqlx_mysql.query_one", run_query_one);
 
+        /// Prepare a SQL statement for repeated execution, sharing this connection pool.
+        #[lua("Statement")]
         methods.add_method("prepare", |_, this, sql: String| {
             Ok(Statement {
                 sql: Arc::new(sql),
@@ -210,6 +185,8 @@ impl UserData for Database {
             })
         });
 
+        /// Close all connections in the pool; subsequent method calls on this handle error.
+        #[lua("()")]
         async_method(methods, "close", Role::Wait, |_, this, _: ()| {
             let pool = this.pool.clone();
             async move {
@@ -230,10 +207,17 @@ pub struct Statement {
     pool: Arc<MySqlPool>,
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for Statement {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Execute the prepared statement with positional parameters; returns rows affected.
+        #[lua("Result<number, string>", name = "execute", takes("...: LuaValue"))]
         stmt_op!(methods, "execute", "mysql.statement.execute", run_execute);
+        /// Execute the prepared SELECT and return all rows.
+        #[lua("Result<LuaValue, string>", name = "query", takes("...: LuaValue"))]
         stmt_op!(methods, "query", "mysql.statement.query", run_query);
+        /// Execute the prepared SELECT and return the first matching row, or nil when none matched.
+        #[lua("Result<LuaValue, string>", name = "query_one", takes("...: LuaValue"))]
         stmt_op!(
             methods,
             "query_one",

@@ -79,48 +79,39 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// (keeping their `#[instrument]` span and `random.<fn>` channel prefix) and
 /// recorded with
 /// what `neoc_macros` reads from the implementation.
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:random")?;
-    m.set("random_bytes", lua.create_function(random_bytes)?)?
-        .try_func(
-            "random_int",
-            &[("min", "number"), ("max", "number")],
-            "Return a uniform random integer in the closed interval `[min, max]`.",
-            |_, (min, max): (i64, i64)| random_int(min, max),
-        )?
-        .try_func(
-            "random_string",
-            &[("n", "number"), ("alphabet", "string?")],
-            "Return a random string of `n` characters drawn from `alphabet` (default `[0-9A-Za-z]`).",
-            |_, (n, alphabet): (i64, Option<mlua::LuaString>)| random_string(n, alphabet),
-        )?
-        .try_func(
-            "token_urlsafe",
-            &[("n_bytes", "number")],
-            "Return a URL-safe base64 token built from `n_bytes` random bytes.",
-            |_, n_bytes: i64| token_urlsafe(n_bytes),
-        )?
-        .func(
-            "uuid_v4",
-            &[],
-            "Generate a random (version 4) UUID as a canonical hyphenated string.",
-            |_, _: ()| uuid_v4(),
-        )?
-        .func(
-            "uuid_v7",
-            &[],
-            "Generate a timestamp-ordered (version 7) UUID as a canonical hyphenated string.",
-            |_, _: ()| uuid_v7(),
-        )?
-        .set("uuid_parse", lua.create_function(uuid_parse)?)?
-        .try_func(
-            "uuid_format",
-            &[("input", "string")],
-            "Format 16 raw bytes as a canonical hyphenated UUID string.",
-            |_, input: mlua::LuaString| uuid_format(input),
-        )?;
+    m.set("random_bytes", lua.create_function(random_bytes)?)?;
+    /// Return a uniform random integer in the closed interval `[min, max]`.
+    #[lua]
+    m.try_func("random_int", |_, (min, max): (i64, i64)| {
+        random_int(min, max)
+    })?;
+    /// Return a random string of `n` characters drawn from `alphabet` (default `[0-9A-Za-z]`).
+    #[lua]
+    m.try_func(
+        "random_string",
+        |_, (n, alphabet): (i64, Option<mlua::LuaString>)| random_string(n, alphabet),
+    )?;
+    /// Return a URL-safe base64 token built from `n_bytes` random bytes.
+    #[lua]
+    m.try_func("token_urlsafe", |_, n_bytes: i64| token_urlsafe(n_bytes))?;
+    /// Generate a random (version 4) UUID as a canonical hyphenated string.
+    #[lua]
+    m.func("uuid_v4", |_, _: ()| uuid_v4())?;
+    /// Generate a timestamp-ordered (version 7) UUID as a canonical hyphenated string.
+    #[lua]
+    m.func("uuid_v7", |_, _: ()| uuid_v7())?;
+    m.set("uuid_parse", lua.create_function(uuid_parse)?)?;
+    /// Format 16 raw bytes as a canonical hyphenated UUID string.
+    #[lua]
+    m.try_func("uuid_format", |_, input: mlua::LuaString| {
+        uuid_format(input)
+    })?;
 
-    m.record(random_bytes::lua()).record(uuid_parse::lua());
+    m.record(random_bytes::lua());
+    m.record(uuid_parse::lua());
 
     Ok(m)
 }

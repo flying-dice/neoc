@@ -583,18 +583,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         ),
     ] {
         let lvl_copy = lvl;
+        #[lua("()", doc = doc)]
         m.set(
             name,
             lua.create_function(move |lua, (msg, fields): (String, Option<Table>)| {
                 LuaLogger::default_instance().emit(lua, lvl_copy, &msg, fields.as_ref())
             })?,
         )?;
-        m.record_fn(
-            name,
-            &[("msg", "string"), ("fields", "LuaValue?")],
-            "()",
-            doc,
-        );
     }
 
     m.userdata("Logger", |l| {

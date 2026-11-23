@@ -183,34 +183,7 @@ fn register_expect(lua: &Lua, m: &mut Module<'_>) -> mlua::Result<()> {
     )?;
     // The matcher is a plain table of closures, not a userdata; its functions are
     // recorded so the definitions can type `expect(x).toBe(y)`.
-    m.userdata("Matcher", |t| {
-        t.function(
-            "toBe",
-            &[("expected", "LuaValue")],
-            "()",
-            "Assert the value equals `expected` (strict, no coercion).",
-        )
-        .function("toBeNil", &[], "()", "Assert the value is nil.")
-        .function(
-            "toBeTruthy",
-            &[],
-            "()",
-            "Assert the value is neither nil nor false.",
-        )
-        .function("toBeFalsy", &[], "()", "Assert the value is nil or false.")
-        .function(
-            "toContain",
-            &[("item", "LuaValue")],
-            "()",
-            "Assert a string contains the substring `item`, or a table holds the value `item`.",
-        )
-        .function(
-            "toThrow",
-            &[],
-            "()",
-            "Assert the value is a function that raises when called.",
-        );
-    });
+    m.userdata("Matcher", make_matcher_members);
     Ok(())
 }
 
@@ -227,7 +200,7 @@ pub fn summary(lua: &Lua) -> mlua::Result<(u32, u32)> {
 /// Register a dot-syntax matcher that captures the expect-ed value directly.
 /// `mlua::Value` is a cheap, `Send`-able registry handle, so each matcher closure
 /// just clones it — no shared slot to stash and re-read.
-fn register_matcher<A, F>(
+fn matcher_function<A, F>(
     lua: &Lua,
     m: &Table,
     name: &str,
@@ -245,12 +218,15 @@ where
 }
 
 /// Wrap `value` in a matcher table exposing dot-syntax assertions (`toBe`, `toBeNil`, `toBeTruthy`, `toBeFalsy`, `toContain`, `toThrow`).
+#[neoc_macros::lua_members]
 #[neoc_macros::lua_fn(name = "expect", returns = "Matcher")]
 fn make_matcher(lua: &Lua, value: Value) -> mlua::Result<Table> {
     let m = lua.create_table()?;
 
     // toBe(expected) — strict equality
-    register_matcher(lua, &m, "toBe", value.clone(), |actual, expected: Value| {
+    /// Assert the value equals `expected` (strict, no coercion).
+    #[lua("()")]
+    matcher_function(lua, &m, "toBe", value.clone(), |actual, expected: Value| {
         if actual == expected {
             Ok(())
         } else {
@@ -263,7 +239,9 @@ fn make_matcher(lua: &Lua, value: Value) -> mlua::Result<Table> {
     })?;
 
     // toBeNil()
-    register_matcher(lua, &m, "toBeNil", value.clone(), |actual, _: ()| {
+    /// Assert the value is nil.
+    #[lua("()")]
+    matcher_function(lua, &m, "toBeNil", value.clone(), |actual, _: ()| {
         if matches!(actual, Value::Nil) {
             Ok(())
         } else {
@@ -275,7 +253,9 @@ fn make_matcher(lua: &Lua, value: Value) -> mlua::Result<Table> {
     })?;
 
     // toBeTruthy()
-    register_matcher(lua, &m, "toBeTruthy", value.clone(), |actual, _: ()| {
+    /// Assert the value is neither nil nor false.
+    #[lua("()")]
+    matcher_function(lua, &m, "toBeTruthy", value.clone(), |actual, _: ()| {
         if !is_falsy(&actual) {
             Ok(())
         } else {
@@ -287,7 +267,9 @@ fn make_matcher(lua: &Lua, value: Value) -> mlua::Result<Table> {
     })?;
 
     // toBeFalsy()
-    register_matcher(lua, &m, "toBeFalsy", value.clone(), |actual, _: ()| {
+    /// Assert the value is nil or false.
+    #[lua("()")]
+    matcher_function(lua, &m, "toBeFalsy", value.clone(), |actual, _: ()| {
         if is_falsy(&actual) {
             Ok(())
         } else {
@@ -299,7 +281,9 @@ fn make_matcher(lua: &Lua, value: Value) -> mlua::Result<Table> {
     })?;
 
     // toContain(item) — substring for strings, value search for tables
-    register_matcher(
+    /// Assert a string contains the substring `item`, or a table holds the value `item`.
+    #[lua("()")]
+    matcher_function(
         lua,
         &m,
         "toContain",
@@ -345,6 +329,8 @@ fn make_matcher(lua: &Lua, value: Value) -> mlua::Result<Table> {
     // into text; Luau answers "error in error handling" when that conversion itself fails
     // (`tests/abort_regressions.rs` holds it to a 2 MiB thread).
     let thrower = value;
+    /// Assert the value is a function that raises when called.
+    #[lua("()", name = "toThrow", function, takes())]
     m.set(
         "toThrow",
         lua.create_function(move |_, (): ()| match &thrower {

@@ -20,8 +20,11 @@ pub(super) struct CsvWriter {
     pub(super) state: Arc<Mutex<CsvWriterState>>,
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for CsvWriter {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Append a row. `values` is either a positional array (length must match `headers`) or a keyed table looked up by header name.
+        #[lua("Result<bool, string>")]
         methods.add_method("row", |lua, this, values: Table| {
             let mut s = this.state.lock();
             if s.finished {
@@ -64,6 +67,8 @@ impl UserData for CsvWriter {
             ok(lua, true)
         });
 
+        /// Flush and return the accumulated CSV string. Subsequent calls error.
+        #[lua("Result<string, string>")]
         methods.add_method("finish", |lua, this, _: ()| {
             let mut s = this.state.lock();
             if s.finished {

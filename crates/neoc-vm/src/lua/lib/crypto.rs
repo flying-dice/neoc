@@ -199,7 +199,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `try_func` cannot model — so each is set verbatim with
 /// [`crate::lua::facade::Module::set`] (keeping its `crypto.<fn>` span and
 /// channel prefix) and recorded with
-/// [`crate::lua::facade::Module::record_fn`], exactly as `lib:base64`'s
+/// what `neoc_macros` reads from the implementation, exactly as `lib:base64`'s
 /// `decode*` functions are. `algorithms` builds a Lua table — there is no
 /// `DeclType` for `Vec`, and it carried no span in the hand-written form, so
 /// routing it through `func` would add one — and is likewise set verbatim and
@@ -214,11 +214,13 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:crypto")?;
 
-    m.set("encrypt", lua.create_function(encrypt)?)?
-        .record(encrypt::lua())
-        .set("decrypt", lua.create_function(decrypt)?)?
-        .record(decrypt::lua());
+    m.set("encrypt", lua.create_function(encrypt)?)?;
+    m.record(encrypt::lua());
+    m.set("decrypt", lua.create_function(decrypt)?)?;
+    m.record(decrypt::lua());
 
+    /// Return the list of supported algorithm names in canonical order.
+    #[lua("LuaValue")]
     m.set(
         "algorithms",
         lua.create_function(|lua, _: ()| {
@@ -228,13 +230,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             }
             Ok(tbl)
         })?,
-    )?
-    .record_fn(
-        "algorithms",
-        &[],
-        "LuaValue",
-        "Return the list of supported algorithm names in canonical order.",
-    );
+    )?;
 
     // Size queries validate the algorithm name through `key_len`'s table so an
     // unknown name reports the same `"unknown algorithm '<x>'"` text every

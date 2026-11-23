@@ -121,8 +121,11 @@ impl Stream {
     }
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for Stream {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Wait for the next item. `(nil, nil)` is the end: Docker sent everything, or the stream was closed. `(nil, err)` is a failure, and ends the stream too. It waits like `task.wait`: other tasks run while it does.
+        #[lua("Result<LuaValue, string>")]
         async_method(methods, "next", Role::Wait, |lua, this, (): ()| {
             let inner = Arc::clone(&this.inner);
             async move {
@@ -135,6 +138,8 @@ impl UserData for Stream {
                 }
             }
         });
+        /// Stop reading and drop the connection to Docker. Items already read may still be returned by `next`; then it is the end. A stream is also closed when it is collected, and when the script that made it is unloaded or shut down.
+        #[lua("()")]
         methods.add_method("close", |_, this, (): ()| {
             this.inner.reader.abort();
             Ok(())

@@ -741,6 +741,18 @@ impl UserDataSpec {
         self
     }
 
+    /// Records one function on the type's sub-table of the module table from what `#[lua_fn]` read of the
+    /// function that implements it: [`UserDataSpec::static_fn`] without the second writing.
+    pub fn static_of(&mut self, decl: FnDecl) -> &mut Self {
+        self.entry.statics.push(Entry {
+            name: decl.name,
+            params: decl.params,
+            ret: decl.ret,
+            doc: decl.doc,
+        });
+        self
+    }
+
     /// Records one constant value on the type's sub-table of the module table
     /// (`Duration.ZERO`).
     pub fn static_const(&mut self, name: &str, ty: &str, doc: &str) -> &mut Self {

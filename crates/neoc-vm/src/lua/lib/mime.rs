@@ -36,25 +36,20 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `(value, error)` shape, `mime.<fn>` error prefix, exact error suffixes, and
 /// `lua::lib::mime` span byte-identical to the hand-written registration this
 /// replaces.
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:mime")?;
-    m.try_func(
-        "from_extension",
-        &[("ext", "string")],
-        "Look up the MIME type for a file extension (leading dot optional).",
-        from_extension,
-    )?
-    .set("to_extension", lua.create_function(to_extension)?)?
-    .try_func(
-        "detect",
-        &[("filename", "string")],
-        "Detect the MIME type of a filename from its extension.",
-        detect,
-    )?;
+    #[lua]
+    m.try_func("from_extension", from_extension)?;
+    m.set("to_extension", lua.create_function(to_extension)?)?;
+    #[lua]
+    m.try_func("detect", detect)?;
     m.record(to_extension::lua());
     Ok(m)
 }
 
+/// Look up the MIME type for a file extension (leading dot optional).
+#[neoc_macros::lua_fn]
 fn from_extension(_: &Lua, ext: String) -> Result<String, String> {
     // Normalize: strip leading dot if present, so both ".json" and "json" work.
     let ext_clean = ext.strip_prefix('.').unwrap_or(&ext);
@@ -100,6 +95,8 @@ fn to_extension(
     }
 }
 
+/// Detect the MIME type of a filename from its extension.
+#[neoc_macros::lua_fn]
 fn detect(_: &Lua, filename: String) -> Result<String, String> {
     match mime_guess::from_path(&filename).first() {
         Some(mime) => Ok(mime.to_string()),

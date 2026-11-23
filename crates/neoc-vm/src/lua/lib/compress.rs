@@ -33,10 +33,11 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// the hand-written registration this replaces.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:compress")?;
-    m.set("encode", lua.create_function(encode)?)?
-        .set("decode", lua.create_function(decode)?)?;
+    m.set("encode", lua.create_function(encode)?)?;
+    m.set("decode", lua.create_function(decode)?)?;
 
-    m.record(encode::lua()).record(decode::lua());
+    m.record(encode::lua());
+    m.record(decode::lua());
 
     Ok(m)
 }

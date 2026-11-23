@@ -90,12 +90,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     m.userdata("Url", |u| {
         UrlHandle::lua(u);
-        u.static_fn(
-            "parse",
-            &[("s", "string")],
-            "Result<Url, string>",
-            "Parse an absolute URL. Returns `(nil, err)` when it is invalid.",
-        );
+        u.static_of(url_parse_method::lua());
     });
 
     Ok(m)
@@ -281,6 +276,8 @@ impl UserData for UrlHandle {
 // Parse / resolve
 // ---------------------------------------------------------------------------
 
+/// Parse an absolute URL. Returns `(nil, err)` when it is invalid.
+#[neoc_macros::lua_fn(name = "parse", returns = "Result<Url, string>")]
 #[instrument(name = "url.Url.parse", target = "lua::lib::url", skip_all)]
 fn url_parse_method(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
     match Url::parse(&s) {

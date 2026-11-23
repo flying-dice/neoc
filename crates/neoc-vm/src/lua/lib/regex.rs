@@ -65,12 +65,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     m.userdata("Pattern", |p| {
         PatternHandle::lua(p);
-        p.static_fn(
-            "new",
-            &[("pattern", "string"), ("flags", "string?")],
-            "Result<Pattern, string>",
-            "Compile `pattern`, with optional flags (`i`, `m`, `s`, `x`).",
-        );
+        p.static_of(pattern_new::lua());
     });
 
     Ok(m)
@@ -167,6 +162,8 @@ impl UserData for PatternHandle {
     }
 }
 
+/// Compile `pattern`, with optional flags (`i`, `m`, `s`, `x`).
+#[neoc_macros::lua_fn(name = "new", returns = "Result<Pattern, string>")]
 #[instrument(name = "regex.Pattern.new", target = "lua::lib::regex", skip_all)]
 fn pattern_new(
     lua: &Lua,

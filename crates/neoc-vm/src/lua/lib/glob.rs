@@ -59,22 +59,12 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     m.userdata("Glob", |g| {
         GlobHandle::lua(g);
-        g.static_fn(
-            "new",
-            &[("pattern", "string")],
-            "Result<Glob, string>",
-            "Compile one glob pattern.",
-        );
+        g.static_of(glob_new::lua());
     });
 
     m.userdata("GlobSet", |s| {
         GlobSetHandle::lua(s);
-        s.static_fn(
-            "new",
-            &[("patterns", "LuaValue")],
-            "Result<GlobSet, string>",
-            "Compile a list of glob patterns into one matcher.",
-        );
+        s.static_of(set_new::lua());
     });
 
     Ok(m)
@@ -184,6 +174,8 @@ fn single(pattern: &str) -> Result<GsSet, String> {
     builder.build().map_err(|e| e.to_string())
 }
 
+/// Compile one glob pattern.
+#[neoc_macros::lua_fn(name = "new", returns = "Result<Glob, string>")]
 fn glob_new(lua: &Lua, pattern: String) -> mlua::Result<(Value, Value)> {
     match GlobHandle::compile(&pattern) {
         Ok(g) => ok(lua, g),
@@ -249,6 +241,8 @@ impl UserData for GlobSetHandle {
     }
 }
 
+/// Compile a list of glob patterns into one matcher.
+#[neoc_macros::lua_fn(name = "new", returns = "Result<GlobSet, string>")]
 fn set_new(lua: &Lua, patterns: Table) -> mlua::Result<(Value, Value)> {
     let mut pats: Vec<String> = Vec::new();
     for pair in patterns.pairs::<i64, String>() {

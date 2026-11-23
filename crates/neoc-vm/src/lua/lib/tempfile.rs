@@ -199,6 +199,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// matches what the facade emits. Both userdata types keep their own
 /// `impl UserData` and are recorded here via
 /// [`crate::lua::facade::Module::userdata`].
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:tempfile")?;
 
@@ -210,46 +211,29 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     td_sub.set("new", lua.create_function(tempdir_new)?)?;
     m.set("TempDir", td_sub)?;
 
-    m.set("tempfile", lua.create_function(flat_tempfile)?)?
-        .set("tempdir", lua.create_function(flat_tempdir)?)?
-        .func(
-            "gettempdir",
-            &[],
-            "Return the system's temporary-directory path.",
-            |_, _: ()| flat_gettempdir(),
-        )?;
-
-    m.record_fn(
-        "tempfile",
-        &[("opts", "LuaValue?")],
-        "Result<TempFile, string>",
-        "Create a temporary file under the system temp directory, returning a `TempFile` handle.",
-    )
-    .record(flat_tempdir::lua());
+    /// Return the system's temporary-directory path.
+    #[lua]
+    m.func("gettempdir", |_, _: ()| flat_gettempdir())?;
+    /// Create a temporary file under the system temp directory, returning a `TempFile` handle.
+    #[lua("Result<TempFile, string>", takes("opts: LuaValue?"))]
+    m.set("tempfile", lua.create_function(flat_tempfile)?)?;
+    m.declared(flat_tempdir::lua(), lua.create_function(flat_tempdir)?)?;
 
     m.userdata("TempFile", |t| {
         TempFileHandle::lua(t);
-        t.static_fn(
-            "new",
-            &[("opts", "LuaValue?")],
-            "Result<TempFile, string>",
-            "Create a temp file; `opts` is `{ prefix?, suffix?, dir? }`. Deleted on close.",
-        );
+        t.static_of(tempfile_new::lua());
     });
 
     m.userdata("TempDir", |t| {
         TempDirHandle::lua(t);
-        t.static_fn(
-            "new",
-            &[("opts", "LuaValue?")],
-            "Result<TempDir, string>",
-            "Create a temp directory; `opts` is `{ prefix?, suffix?, dir? }`. Deleted on close.",
-        );
+        t.static_of(tempdir_new::lua());
     });
 
     Ok(m)
 }
 
+/// Create a temp file; `opts` is `{ prefix?, suffix?, dir? }`. Deleted on close.
+#[neoc_macros::lua_fn(name = "new", returns = "Result<TempFile, string>")]
 #[instrument(
     name = "tempfile.TempFile.new",
     target = "lua::lib::tempfile",
@@ -268,6 +252,8 @@ fn tempfile_new(lua: &Lua, opts: Option<Table>) -> mlua::Result<(Value, Value)> 
     }
 }
 
+/// Create a temp directory; `opts` is `{ prefix?, suffix?, dir? }`. Deleted on close.
+#[neoc_macros::lua_fn(name = "new", returns = "Result<TempDir, string>")]
 #[instrument(name = "tempfile.TempDir.new", target = "lua::lib::tempfile", skip_all)]
 fn tempdir_new(lua: &Lua, opts: Option<Table>) -> mlua::Result<(Value, Value)> {
     let o = Options::from_table(opts)?;

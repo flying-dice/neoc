@@ -196,13 +196,18 @@ fn scale_duration(d: StdDuration, factor: f64, ctx: &'static str) -> mlua::Resul
 #[derive(Clone, Copy)]
 pub struct InstantHandle(pub StdInstant);
 
+#[neoc_macros::lua_userdata]
 impl UserData for InstantHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Return the `Duration` elapsed since this `Instant` was taken (saturating).
+        #[lua("Duration")]
         methods.add_method("elapsed", |_, this, ()| {
             Ok(DurationHandle(this.0.elapsed()))
         });
         // Plain `add_function` (not `add_method`) so `this:duration_since(this)`
         // doesn't deadlock on overlapping userdata borrows.
+        /// Saturating difference `self - other`; returns `ZERO` if `other` is later.
+        #[lua("Duration", method, takes("other: Instant"))]
         methods.add_function("duration_since", |_, args: (AnyUserData, AnyUserData)| {
             let (a, b) = args;
             let this = a
@@ -456,6 +461,21 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(declare(lua)?.into_table())
 }
 
+/// Parse a human duration such as `1h30m` or `250ms`.
+#[neoc_macros::lua_fn(name = "parse", returns = "Result<Duration, string>")]
+fn duration_parse(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
+    match parse_duration(&s) {
+        Ok(d) => ok(lua, DurationHandle(d)),
+        Err(msg) => err(lua, format!("time.Duration.parse: {msg}")),
+    }
+}
+
+/// The current monotonic point in time.
+#[neoc_macros::lua_fn(name = "now", returns = "Instant")]
+fn instant_now(_: &Lua, (): ()) -> mlua::Result<InstantHandle> {
+    Ok(InstantHandle(StdInstant::now()))
+}
+
 /// Declares the `std:time` surface through the facade.
 ///
 /// The `Duration` and `Instant` constructor sub-tables are built verbatim and
@@ -478,18 +498,12 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     dur.set("from_micros", lua.create_function(from_micros)?)?;
     dur.set("from_nanos", lua.create_function(from_nanos)?)?;
     dur.set("from_secs_f64", lua.create_function(from_secs_f64)?)?;
-    dur.set(
-        "parse",
-        lua.create_function(|lua, s: String| match parse_duration(&s) {
-            Ok(d) => ok(lua, DurationHandle(d)),
-            Err(msg) => err(lua, format!("time.Duration.parse: {msg}")),
-        })?,
-    )?;
+    dur.set("parse", lua.create_function(duration_parse)?)?;
     m.set("Duration", dur)?;
 
     // `Instant.now` and the flat `time.now` alias share one closure so the
     // two surfaces can never diverge.
-    let now_fn = lua.create_function(|_, ()| Ok(InstantHandle(StdInstant::now())))?;
+    let now_fn = lua.create_function(instant_now)?;
     let inst = lua.create_table()?;
     inst.set("now", now_fn.clone())?;
     m.set("Instant", inst)?;
@@ -518,63 +532,17 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.userdata("Duration", |d| {
         DurationHandle::lua(d);
         d.static_const("ZERO", "Duration", "The zero-length duration.")
-            .static_fn(
-                "from_secs",
-                &[("secs", "number")],
-                "Duration",
-                "A duration of `secs` whole seconds; negative raises.",
-            )
-            .static_fn(
-                "from_millis",
-                &[("millis", "number")],
-                "Duration",
-                "A duration of `millis` milliseconds; negative raises.",
-            )
-            .static_fn(
-                "from_micros",
-                &[("micros", "number")],
-                "Duration",
-                "A duration of `micros` microseconds; negative raises.",
-            )
-            .static_fn(
-                "from_nanos",
-                &[("nanos", "number")],
-                "Duration",
-                "A duration of `nanos` nanoseconds; negative raises.",
-            )
-            .static_fn(
-                "from_secs_f64",
-                &[("secs", "number")],
-                "Duration",
-                "A duration of `secs` seconds as a float; negative or non-finite raises.",
-            )
-            .static_fn(
-                "parse",
-                &[("s", "string")],
-                "Result<Duration, string>",
-                "Parse a human duration such as `1h30m` or `250ms`.",
-            );
+            .static_of(from_secs::lua())
+            .static_of(from_millis::lua())
+            .static_of(from_micros::lua())
+            .static_of(from_nanos::lua())
+            .static_of(from_secs_f64::lua())
+            .static_of(duration_parse::lua());
     });
 
     m.userdata("Instant", |i| {
-        i.method(
-            "elapsed",
-            &[],
-            "Duration",
-            "Return the `Duration` elapsed since this `Instant` was taken (saturating).",
-        )
-        .method(
-            "duration_since",
-            &[("other", "Instant")],
-            "Duration",
-            "Saturating difference `self - other`; returns `ZERO` if `other` is later.",
-        )
-        .static_fn(
-            "now",
-            &[],
-            "Instant",
-            "The current monotonic point in time.",
-        );
+        InstantHandle::lua(i);
+        i.static_of(instant_now::lua());
     });
 
     Ok(m)
@@ -589,25 +557,35 @@ fn reject_negative(value: i64, ctx: &'static str) -> mlua::Result<u64> {
     Ok(value as u64)
 }
 
+/// A duration of `secs` whole seconds; negative raises.
+#[neoc_macros::lua_fn(returns = "Duration", names(v = "secs"))]
 fn from_secs(_: &Lua, v: i64) -> mlua::Result<DurationHandle> {
     reject_negative(v, "time.Duration.from_secs").map(|u| DurationHandle(StdDuration::from_secs(u)))
 }
 
+/// A duration of `millis` milliseconds; negative raises.
+#[neoc_macros::lua_fn(returns = "Duration", names(v = "millis"))]
 fn from_millis(_: &Lua, v: i64) -> mlua::Result<DurationHandle> {
     reject_negative(v, "time.Duration.from_millis")
         .map(|u| DurationHandle(StdDuration::from_millis(u)))
 }
 
+/// A duration of `micros` microseconds; negative raises.
+#[neoc_macros::lua_fn(returns = "Duration", names(v = "micros"))]
 fn from_micros(_: &Lua, v: i64) -> mlua::Result<DurationHandle> {
     reject_negative(v, "time.Duration.from_micros")
         .map(|u| DurationHandle(StdDuration::from_micros(u)))
 }
 
+/// A duration of `nanos` nanoseconds; negative raises.
+#[neoc_macros::lua_fn(returns = "Duration", names(v = "nanos"))]
 fn from_nanos(_: &Lua, v: i64) -> mlua::Result<DurationHandle> {
     reject_negative(v, "time.Duration.from_nanos")
         .map(|u| DurationHandle(StdDuration::from_nanos(u)))
 }
 
+/// A duration of `secs` seconds as a float; negative or non-finite raises.
+#[neoc_macros::lua_fn(returns = "Duration")]
 fn from_secs_f64(_: &Lua, secs: f64) -> mlua::Result<DurationHandle> {
     if !secs.is_finite() {
         return Err(mlua::Error::external(

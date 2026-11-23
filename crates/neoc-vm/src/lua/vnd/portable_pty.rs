@@ -81,21 +81,10 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:portable_pty")?;
 
-    m.set(
-        "spawn_command",
+    m.declared(
+        spawn_command::lua(),
         async_function(lua, Role::Wait, spawn_command)?,
     )?;
-    m.record_fn(
-        "spawn_command",
-        &[(
-            "opts",
-            "{ program: string?, args: { string }?, cwd: string?, env: { [string]: string }?, rows: number?, cols: number? }?",
-        )],
-        "Result<Pty, string>",
-        &format!(
-            "Open a pseudo-terminal of `rows` by `cols` (default 24 by 80; each 1 to 32767) and start a command on it: a `Pty`. `program` is a path, or a name looked up in `PATH`, and `args` its arguments (at most 1024). Without `program` it is the user's default shell, started as a login shell: `$SHELL`, else the one of the password database, else `/bin/sh`; on Windows `%ComSpec%`. `cwd` is the directory it starts in (default: the user's home directory, not the engine's working directory). `env` is added to the environment the engine's process has, replacing a variable of the same name; nothing is taken away, and `TERM` is whatever that environment says unless `env` sets it (`xterm-256color` for a terminal that draws like xterm). The process runs as the engine's user and can do what that user can: a script given this module is trusted with the machine. Errors are `portable_pty.<function>: <kind>: <message>` (see `error_kind`): `invalid_input` for an option that is unknown or of the wrong shape, `spawn` when the command could not be started (no such program, not executable, `cwd` is not a directory, or the system refused the terminal or the process). The terminal is closed, and the process ended, by `close()`, when the handle is collected, and when the engine shuts down. {WAITS}"
-        ),
-    );
 
     /// The stable kind inside an error string returned by a `vnd:portable_pty` function, or `nil` when the string is not one of theirs (or is `nil`, so `portable_pty.error_kind(err)` takes the `err` of any call). Such a string is `portable_pty.<function>: <kind>: <message>`. Kinds: `invalid_input` (an argument or option was refused), `spawn` (the command could not be started), `closed` (the terminal was closed), `io` (reading from the terminal or writing to it failed), `other`. The message is the crate's or the operating system's own; it is for a log and may change.
     #[lua(takes("err: string?"))]
@@ -105,54 +94,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.func("error_message", error_text::reader(error::message_of))?;
 
     m.userdata("Pty", |p| {
-        p.method(
-            "read",
-            &[("max", "number?")],
-            "Result<string, string>",
-            &format!(
-                "Wait for output and return it: the bytes the process wrote, at most `max` of them (a whole number from 1 to 65536, the default), as soon as there are any. The bytes are what a terminal receives: text in the process's encoding with its escape sequences, and a read may end in the middle of a character. `(nil, nil)` is the end of the output: every process that had the terminal open is gone, or the terminal was closed. `(nil, err)` is a failure (`io`), and the read after it is the end; a `max` out of range is `invalid_input`. At most 256 KiB of output wait to be read: a process that writes more waits in its write until the script reads. A read that is abandoned takes nothing. {WAITS}"
-            ),
-        )
-        .method(
-            "write",
-            &[("data", "string")],
-            "Result<bool, string>",
-            &format!(
-                "Send bytes to the process as its input, as if typed: `true` once the terminal has taken them all. A line ends with `\\r` or `\\n` as the program on the terminal expects (a shell takes either). At most 1 MiB a call (`invalid_input` past that). Writes are made one after the other, and a process that does not read its input makes the write wait. `closed` after `close()`, also for a write that was waiting; `io` when the terminal refuses the bytes (every process on it is gone). {WAITS}"
-            ),
-        )
-        .method(
-            "resize",
-            &[("rows", "number"), ("cols", "number")],
-            "Result<bool, string>",
-            "Tell the terminal its new size, each a whole number from 1 to 32767 (`invalid_input` otherwise): `true`. The process in the foreground is told by the operating system (`SIGWINCH` on Unix). `closed` after `close()`.",
-        )
-        .method(
-            "process_id",
-            &[],
-            "number?",
-            "The id of the process `spawn_command` started, while it runs. `nil` once it has ended or the terminal is closed: the number is then the operating system's to give to another process.",
-        )
-        .method(
-            "wait",
-            &[],
-            "Result<{ exit_code: number, signal: string?, success: bool }, string>",
-            &format!(
-                "Wait for the process to end and return how it ended: `exit_code` (0 to 255 on Unix, and 1 when a signal ended it), `signal` (the operating system's words for that signal, which differ between systems; `nil` when it ended by itself, and always on Windows) and `success` (it ended by itself with code 0). It may be called again, and after `close()`: the answer is the same. The output can outlive the process (a child of it still writes): read to the end for all of it. `io` when the operating system does not say how the process ended. {WAITS}"
-            ),
-        )
-        .method(
-            "kill",
-            &[],
-            "()",
-            "End the process: on Unix it is sent a hangup (`SIGHUP`, what a terminal that goes away sends) and, if it still runs a quarter of a second later, the kill it cannot refuse (`SIGKILL`); on Windows it is terminated. It returns at once: `wait()` says when the process is gone. A process that has ended is left alone. The process's own children are not signalled here: the operating system hangs up those in the terminal's foreground when the process ends.",
-        )
-        .method(
-            "close",
-            &[],
-            "()",
-            "End the process as `kill()` does and let go of the terminal: output not yet read is dropped, every `read`, waiting or later, returns `(nil, nil)`, and `write` and `resize` fail with `closed`. `wait()` still says how the process ended. Closing again does nothing. A terminal is also closed when its handle is collected, and when the engine shuts down.",
-        );
+        Pty::lua(p);
     });
 
     Ok(m)
@@ -161,6 +103,9 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 /// The handle `spawn_command` returns.
 pub struct Pty(Arc<Terminal>);
 
+#[neoc_macros::lua_fn(returns = "Result<Pty, string>", types(opts = "{ program: string?, args: { string }?, cwd: string?, env: { [string]: string }?, rows: number?, cols: number? }?"), doc = format!(
+            "Open a pseudo-terminal of `rows` by `cols` (default 24 by 80; each 1 to 32767) and start a command on it: a `Pty`. `program` is a path, or a name looked up in `PATH`, and `args` its arguments (at most 1024). Without `program` it is the user's default shell, started as a login shell: `$SHELL`, else the one of the password database, else `/bin/sh`; on Windows `%ComSpec%`. `cwd` is the directory it starts in (default: the user's home directory, not the engine's working directory). `env` is added to the environment the engine's process has, replacing a variable of the same name; nothing is taken away, and `TERM` is whatever that environment says unless `env` sets it (`xterm-256color` for a terminal that draws like xterm). The process runs as the engine's user and can do what that user can: a script given this module is trusted with the machine. Errors are `portable_pty.<function>: <kind>: <message>` (see `error_kind`): `invalid_input` for an option that is unknown or of the wrong shape, `spawn` when the command could not be started (no such program, not executable, `cwd` is not a directory, or the system refused the terminal or the process). The terminal is closed, and the process ended, by `close()`, when the handle is collected, and when the engine shuts down. {WAITS}"
+        ))]
 async fn spawn_command(lua: Lua, opts: Option<Value>) -> mlua::Result<(Value, Value)> {
     // read before the first await: a script table can run script code when it is read
     let command = options::command(opts.as_ref(), SPAWN_COMMAND)?;
@@ -193,9 +138,13 @@ async fn spawn_command(lua: Lua, opts: Option<Value>) -> mlua::Result<(Value, Va
     }
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for Pty {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         // `Role::Mixed`: see `byte_stream::read`
+        #[lua("Result<string, string>", doc = format!(
+                "Wait for output and return it: the bytes the process wrote, at most `max` of them (a whole number from 1 to 65536, the default), as soon as there are any. The bytes are what a terminal receives: text in the process's encoding with its escape sequences, and a read may end in the middle of a character. `(nil, nil)` is the end of the output: every process that had the terminal open is gone, or the terminal was closed. `(nil, err)` is a failure (`io`), and the read after it is the end; a `max` out of range is `invalid_input`. At most 256 KiB of output wait to be read: a process that writes more waits in its write until the script reads. A read that is abandoned takes nothing. {WAITS}"
+            ))]
         async_method(
             methods,
             "read",
@@ -210,6 +159,9 @@ impl UserData for Pty {
             },
         );
 
+        #[lua("Result<bool, string>", doc = format!(
+                "Send bytes to the process as its input, as if typed: `true` once the terminal has taken them all. A line ends with `\\r` or `\\n` as the program on the terminal expects (a shell takes either). At most 1 MiB a call (`invalid_input` past that). Writes are made one after the other, and a process that does not read its input makes the write wait. `closed` after `close()`, also for a write that was waiting; `io` when the terminal refuses the bytes (every process on it is gone). {WAITS}"
+            ))]
         async_method(
             methods,
             "write",
@@ -237,6 +189,8 @@ impl UserData for Pty {
             },
         );
 
+        /// Tell the terminal its new size, each a whole number from 1 to 32767 (`invalid_input` otherwise): `true`. The process in the foreground is told by the operating system (`SIGWINCH` on Unix). `closed` after `close()`.
+        #[lua("Result<bool, string>")]
         methods.add_method("resize", |lua, this, (rows, cols): (f64, f64)| {
             let resized =
                 options::size(rows, cols).and_then(|(rows, cols)| this.0.resize(rows, cols));
@@ -246,8 +200,13 @@ impl UserData for Pty {
             }
         });
 
+        /// The id of the process `spawn_command` started, while it runs. `nil` once it has ended or the terminal is closed: the number is then the operating system's to give to another process.
+        #[lua("number?")]
         methods.add_method("process_id", |_, this, (): ()| Ok(this.0.process_id()));
 
+        #[lua("Result<{ exit_code: number, signal: string?, success: bool }, string>", doc = format!(
+                "Wait for the process to end and return how it ended: `exit_code` (0 to 255 on Unix, and 1 when a signal ended it), `signal` (the operating system's words for that signal, which differ between systems; `nil` when it ended by itself, and always on Windows) and `success` (it ended by itself with code 0). It may be called again, and after `close()`: the answer is the same. The output can outlive the process (a child of it still writes): read to the end for all of it. `io` when the operating system does not say how the process ended. {WAITS}"
+            ))]
         async_method(methods, "wait", Role::Wait, |lua, this, (): ()| {
             let ended = this.0.wait();
             async move {
@@ -264,11 +223,15 @@ impl UserData for Pty {
             }
         });
 
+        /// End the process: on Unix it is sent a hangup (`SIGHUP`, what a terminal that goes away sends) and, if it still runs a quarter of a second later, the kill it cannot refuse (`SIGKILL`); on Windows it is terminated. It returns at once: `wait()` says when the process is gone. A process that has ended is left alone. The process's own children are not signalled here: the operating system hangs up those in the terminal's foreground when the process ends.
+        #[lua("()")]
         methods.add_method("kill", |_, this, (): ()| {
             this.0.kill();
             Ok(())
         });
 
+        /// End the process as `kill()` does and let go of the terminal: output not yet read is dropped, every `read`, waiting or later, returns `(nil, nil)`, and `write` and `resize` fail with `closed`. `wait()` still says how the process ended. Closing again does nothing. A terminal is also closed when its handle is collected, and when the engine shuts down.
+        #[lua("()")]
         methods.add_method("close", |_, this, (): ()| {
             this.0.close();
             Ok(())

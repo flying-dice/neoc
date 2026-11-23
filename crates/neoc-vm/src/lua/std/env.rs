@@ -30,43 +30,24 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:env")?;
 
-    m.set("os", std::env::consts::OS)?
-        .set("arch", std::env::consts::ARCH)?
-        .set("family", std::env::consts::FAMILY)?
-        .set("exe_suffix", std::env::consts::EXE_SUFFIX)?
-        .set("dll_prefix", std::env::consts::DLL_PREFIX)?
-        .set("dll_suffix", std::env::consts::DLL_SUFFIX)?;
-
-    m.const_(
-        "os",
-        "string",
-        "Target operating system (e.g. `\"linux\"`, `\"macos\"`, `\"windows\"`).",
-    )
-    .const_(
-        "arch",
-        "string",
-        "Target CPU architecture (e.g. `\"x86_64\"`, `\"aarch64\"`).",
-    )
-    .const_(
-        "family",
-        "string",
-        "Target OS family (`\"unix\"` or `\"windows\"`).",
-    )
-    .const_(
-        "exe_suffix",
-        "string",
-        "Executable file suffix for the target (e.g. `\".exe\"` on Windows).",
-    )
-    .const_(
-        "dll_prefix",
-        "string",
-        "Dynamic-library filename prefix for the target (e.g. `\"lib\"`).",
-    )
-    .const_(
-        "dll_suffix",
-        "string",
-        "Dynamic-library filename suffix for the target (e.g. `\".so\"`, `\".dylib\"`).",
-    );
+    /// Target operating system (e.g. `"linux"`, `"macos"`, `"windows"`).
+    #[lua("string", constant)]
+    m.set("os", std::env::consts::OS)?;
+    /// Target CPU architecture (e.g. `"x86_64"`, `"aarch64"`).
+    #[lua("string", constant)]
+    m.set("arch", std::env::consts::ARCH)?;
+    /// Target OS family (`"unix"` or `"windows"`).
+    #[lua("string", constant)]
+    m.set("family", std::env::consts::FAMILY)?;
+    /// Executable file suffix for the target (e.g. `".exe"` on Windows).
+    #[lua("string", constant)]
+    m.set("exe_suffix", std::env::consts::EXE_SUFFIX)?;
+    /// Dynamic-library filename prefix for the target (e.g. `"lib"`).
+    #[lua("string", constant)]
+    m.set("dll_prefix", std::env::consts::DLL_PREFIX)?;
+    /// Dynamic-library filename suffix for the target (e.g. `".so"`, `".dylib"`).
+    #[lua("string", constant)]
+    m.set("dll_suffix", std::env::consts::DLL_SUFFIX)?;
 
     /// Return the current user's home directory, or an error if it cannot be determined.
     #[lua("Result<string, string>")]

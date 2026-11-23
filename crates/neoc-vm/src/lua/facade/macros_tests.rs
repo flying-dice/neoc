@@ -225,3 +225,177 @@ fn what_is_declared_is_what_runs() {
         .expect("runs");
     assert_eq!(out, ("ab".to_string(), 2, 8.0, "X".to_string(), 7.0));
 }
+
+// ---- the forms for what a signature does not show ----------------------------------------------------
+
+const OPTIONS: &str = "{ deep: boolean? }";
+
+fn waits(doc: &str) -> String {
+    format!("{doc} It waits.")
+}
+
+/// A gauge at zero.
+#[neoc_macros::lua_fn(name = "new", returns = "Gauge")]
+fn gauge_new(_: &Lua, (): ()) -> mlua::Result<Gauge> {
+    Ok(Gauge(0.0))
+}
+
+/// A gauge at `from`.
+#[neoc_macros::lua_fn(registered)]
+fn gauge_from(_: &Lua, from: f64) -> mlua::Result<Gauge> {
+    Ok(Gauge(from))
+}
+
+struct Gauge(f64);
+
+fn add_reads<M: UserDataMethods<Gauge>>(methods: &mut M) {
+    methods.add_method("read", |_, this, ()| Ok(this.0));
+    methods.add_method("read_twice", |_, this, ()| Ok(this.0 * 2.0));
+}
+
+#[neoc_macros::lua_userdata]
+impl UserData for Gauge {
+    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// The reading.
+        #[lua("number", name = "read", takes())]
+        /// Twice the reading.
+        #[lua("number", name = "read_twice", takes(opts = format!("{OPTIONS}?")))]
+        add_reads(methods);
+        /// How far this is from `other`.
+        #[lua("number", method, takes("other: Gauge"))]
+        methods.add_function(
+            "gap",
+            |_, (a, b): (mlua::AnyUserData, mlua::AnyUserData)| {
+                Ok(a.borrow::<Gauge>()?.0 - b.borrow::<Gauge>()?.0)
+            },
+        );
+    }
+}
+
+/// A table of checks on `value`.
+#[neoc_macros::lua_members]
+fn checks(lua: &Lua, value: f64) -> mlua::Result<mlua::Table> {
+    let table = lua.create_table()?;
+    /// Whether the value is above `floor`.
+    #[lua("bool")]
+    check_function(lua, &table, "above", value, |value: f64, floor: f64| {
+        value > floor
+    })?;
+    /// Whether the value is zero.
+    #[lua("bool", name = "zero", function, takes())]
+    table.set("zero", value == 0.0)?;
+    Ok(table)
+}
+
+fn check_function(
+    lua: &Lua,
+    table: &mlua::Table,
+    name: &str,
+    value: f64,
+    check: impl Fn(f64, f64) -> bool + Send + 'static,
+) -> mlua::Result<()> {
+    table.set(
+        name,
+        lua.create_function(move |_, floor: f64| Ok(check(value, floor)))?,
+    )
+}
+
+#[neoc_macros::lua_module]
+fn declare_more(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "vnd:more")?;
+    /// The largest reading.
+    #[lua("number", constant)]
+    m.set("LIMIT", 100)?;
+    for (name, doc) in [("slow", "Read slowly."), ("slower", "Read more slowly.")] {
+        #[lua(returns = "number", types(_opts = format!("{OPTIONS}?")), doc = doc, doc_with = waits)]
+        m.set(
+            name,
+            lua.create_function(|_, _opts: Option<mlua::Table>| Ok(1))?,
+        )?;
+    }
+    let sub = lua.create_table()?;
+    sub.set("new", lua.create_function(gauge_new)?)?;
+    m.set("Gauge", sub)?;
+    m.userdata("Gauge", |g| {
+        Gauge::lua(g);
+        g.static_of(gauge_new::lua());
+    });
+    m.type_("Dial", |t| {
+        #[lua]
+        t.constructor("from", gauge_from)?;
+        Ok(())
+    })?;
+    m.userdata("Checks", checks_members);
+    Ok(m)
+}
+
+fn more() -> String {
+    let lua = Lua::new();
+    declare_more(&lua)
+        .expect("declares")
+        .luau_decls()
+        .expect("declarations")
+}
+
+#[test]
+fn a_constant_is_declared_where_it_is_set() {
+    says(&more(), "\t--- The largest reading.\n\tLIMIT: number,\n");
+}
+
+#[test]
+fn a_name_a_type_and_a_doc_can_be_put_together() {
+    let decls = more();
+    says(
+        &decls,
+        "\t--- Read slowly. It waits.\n\tslow: (opts: { deep: boolean? }?) -> number,\n",
+    );
+    says(
+        &decls,
+        "\t--- Read more slowly. It waits.\n\tslower: (opts: { deep: boolean? }?) -> number,\n",
+    );
+}
+
+#[test]
+fn members_added_out_of_sight_are_said_above_the_statement() {
+    let decls = more();
+    says(
+        &decls,
+        "\t--- The reading.\n\tread: (self: vnd_more_Gauge) -> number,\n",
+    );
+    says(
+        &decls,
+        "\t--- Twice the reading.\n\tread_twice: (self: vnd_more_Gauge, opts: { deep: boolean? }?) -> number,\n",
+    );
+    says(
+        &decls,
+        "\t--- How far this is from `other`.\n\tgap: (self: vnd_more_Gauge, other: vnd_more_Gauge) -> number,\n",
+    );
+}
+
+#[test]
+fn a_static_and_a_constructor_are_declared_from_their_functions() {
+    let decls = more();
+    says(
+        &decls,
+        "\t--- A gauge at zero.\n\tnew: () -> vnd_more_Gauge,\n",
+    );
+    says(
+        &decls,
+        "\t--- A gauge at `from`.\n\tfrom: (from: number) -> ",
+    );
+}
+
+#[test]
+fn a_table_a_function_builds_declares_its_members() {
+    let decls = more();
+    says(
+        &decls,
+        "\t--- Whether the value is above `floor`.\n\tabove: (floor: number) -> boolean,\n",
+    );
+    says(
+        &decls,
+        "\t--- Whether the value is zero.\n\tzero: () -> boolean,\n",
+    );
+    let lua = Lua::new();
+    assert!(checks(&lua, 0.0).is_ok());
+}

@@ -14,7 +14,8 @@
 //!
 //! The macros write paths into neoc-vm's facade (`crate::lua::facade`), so they are for neoc-vm's own modules.
 //!
-//! [`lua_fn`] is for a function, [`lua_userdata`] for the methods and fields of an `impl UserData` block, and
+//! [`lua_fn`] is for a function, [`lua_userdata`] for the methods and fields of an `impl UserData` block
+//! ([`lua_members`] for a type that is a plain table a function builds), and
 //! [`lua_module`] for the closures a module's `declare` function registers in place.
 //!
 //! What is read: the name (the function's, or the string a method is added under), each parameter's name and
@@ -53,21 +54,48 @@ fn doc_of(attrs: &[Attribute]) -> String {
     lines.join("\n")
 }
 
+/// One parameter of a list said whole: `"path: string"`, or `opts = OPTIONS` for a type that is put together.
+enum Taken {
+    Text(LitStr),
+    Named(Ident, Box<Expr>),
+}
+
+impl syn::parse::Parse for Taken {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        if input.peek(LitStr) {
+            return Ok(Self::Text(input.parse()?));
+        }
+        let name = input.parse()?;
+        input.parse::<Token![=]>()?;
+        Ok(Self::Named(name, Box::new(input.parse()?)))
+    }
+}
+
 /// What is said by hand of a function or a member: in `#[lua_fn(...)]`, or in `#[lua(...)]` above a member.
 #[derive(Default)]
 struct Said {
     /// `name = "..."`: the name a script uses, when it is not the Rust one.
     name: Option<LitStr>,
     /// `"..."` or `returns = "..."`: the recorded return (of a field, its type).
-    returns: Option<LitStr>,
+    returns: Option<Expr>,
     /// `types(key = "string | number")`: the recorded type of a parameter, by its Rust name.
-    types: Vec<(Ident, LitStr)>,
+    types: Vec<(Ident, Expr)>,
     /// `names(s = "input")`: the name a script knows a parameter by, by its Rust name.
     names: Vec<(Ident, LitStr)>,
     /// `takes("path: string", "...: LuaValue")`: the whole parameter list, when Rust's says nothing of it.
-    takes: Option<Vec<LitStr>>,
+    takes: Option<Vec<Taken>>,
+    /// `method`, `function` or `field`: what a member is to a script, when what adds it does not say.
+    kind: Option<Member>,
     /// `skip`: a member a script does not name.
     skip: bool,
+    /// `doc_with = path`: a function the doc is given to, for a doc that ends as several do.
+    doc_with: Option<syn::Path>,
+    /// `doc = expr`: the doc, when it is put together from parts and cannot be `///` lines.
+    doc: Option<Expr>,
+    /// `constant`: a value set on a module that is not a function.
+    constant: bool,
+    /// `registered`: a function handed to a registration, which reads the return from the function's type.
+    registered: bool,
 }
 
 impl Said {
@@ -79,6 +107,11 @@ impl Said {
                 let word: Ident = input.parse()?;
                 match word.to_string().as_str() {
                     "skip" => self.skip = true,
+                    "method" => self.kind = Some(Member::Method),
+                    "function" => self.kind = Some(Member::Function),
+                    "field" => self.kind = Some(Member::Field),
+                    "constant" => self.constant = true,
+                    "registered" => self.registered = true,
                     "name" => {
                         input.parse::<Token![=]>()?;
                         self.name = Some(input.parse()?);
@@ -87,18 +120,25 @@ impl Said {
                         input.parse::<Token![=]>()?;
                         self.returns = Some(input.parse()?);
                     }
+                    "doc" => {
+                        input.parse::<Token![=]>()?;
+                        self.doc = Some(input.parse()?);
+                    }
+                    "doc_with" => {
+                        input.parse::<Token![=]>()?;
+                        self.doc_with = Some(input.parse()?);
+                    }
                     "types" | "names" => {
                         let inner;
                         syn::parenthesized!(inner in input);
-                        let list = if word == "types" {
-                            &mut self.types
-                        } else {
-                            &mut self.names
-                        };
                         while !inner.is_empty() {
                             let binding: Ident = inner.parse()?;
                             inner.parse::<Token![=]>()?;
-                            list.push((binding, inner.parse()?));
+                            if word == "types" {
+                                self.types.push((binding, inner.parse()?));
+                            } else {
+                                self.names.push((binding, inner.parse()?));
+                            }
                             if !inner.is_empty() {
                                 inner.parse::<Token![,]>()?;
                             }
@@ -107,17 +147,16 @@ impl Said {
                     "takes" => {
                         let inner;
                         syn::parenthesized!(inner in input);
-                        let list = inner.parse_terminated(
-                            syn::parse::ParseBuffer::parse::<LitStr>,
-                            Token![,],
-                        )?;
+                        let list = inner
+                            .parse_terminated(<Taken as syn::parse::Parse>::parse, Token![,])?;
                         self.takes = Some(list.into_iter().collect());
                     }
                     _ => {
                         return Err(syn::Error::new(
                             word.span(),
                             "expected a return type as a string, `name = \"...\"`, `returns = \"...\"`, \
-                             `types(...)`, `names(...)`, `takes(...)` or `skip`",
+                             `types(...)`, `names(...)`, `takes(...)`, `doc = ...`, `doc_with = ...`, `method`, `function`, \
+                 `field`, `constant` or `skip`",
                         ));
                     }
                 }
@@ -152,7 +191,14 @@ impl Said {
             self.refuse(false, true, false)?;
             return takes
                 .iter()
-                .map(|pair| {
+                .map(|taken| {
+                    let pair = match taken {
+                        Taken::Text(pair) => pair,
+                        Taken::Named(name, ty) => {
+                            let name = name.to_string();
+                            return Ok(quote!((::std::string::String::from(#name), ::std::string::String::from(#ty))));
+                        }
+                    };
                     let text = pair.value();
                     let Some((name, ty)) = text.split_once(':') else {
                         return Err(syn::Error::new(pair.span(), "expected `\"name: type\"`"));
@@ -168,18 +214,36 @@ impl Said {
             self.param(pat, ty, &mut found, &mut seen)?;
         }
         // a name that is no parameter's is a slip, not something to pass over
-        match self
-            .types
-            .iter()
-            .chain(&self.names)
-            .find(|(of, _)| !seen.contains(of))
-        {
-            Some((of, _)) => Err(syn::Error::new(
+        match self.renamed().find(|of| !seen.contains(of)) {
+            Some(of) => Err(syn::Error::new(
                 of.span(),
                 format!("no parameter is named `{of}`"),
             )),
             None => Ok(found),
         }
+    }
+
+    /// The parameters that `types(...)` and `names(...)` speak of.
+    fn renamed(&self) -> impl Iterator<Item = &Ident> {
+        self.types
+            .iter()
+            .map(|(of, _)| of)
+            .chain(self.names.iter().map(|(of, _)| of))
+    }
+
+    /// The doc as the declarations keep it: the `///` lines, given to `doc_with` when one is said.
+    fn doc(&self, lines: &str) -> Tokens {
+        if self.doc.is_none() && self.doc_with.is_none() {
+            return quote!(#lines);
+        }
+        let doc = self
+            .doc
+            .as_ref()
+            .map_or_else(|| quote!(#lines), ToTokens::to_token_stream);
+        self.doc_with.as_ref().map_or_else(
+            || quote!(&*::std::string::String::from(#doc)),
+            |with| quote!(&*::std::string::String::from(#with(#doc))),
+        )
     }
 
     /// Refuses what means nothing where it is written, so that it is not passed over in silence.
@@ -196,7 +260,7 @@ impl Said {
                 "`skip` is for a member of a userdata type",
             ));
         }
-        if let (true, Some((of, _))) = (renames, self.types.iter().chain(&self.names).next()) {
+        if let (true, Some(of)) = (renames, self.renamed().next()) {
             return Err(syn::Error::new(
                 of.span(),
                 "`types(...)` and `names(...)` are for parameters read from the Rust: here the list is said elsewhere",
@@ -335,7 +399,7 @@ fn result_of(ty: &Type) -> Option<Returned<'_>> {
 }
 
 /// The recorded return of a function: what was said, or the `DeclType` of `T` in `mlua::Result<T>`.
-fn returns_of(said: Option<&LitStr>, output: &ReturnType) -> syn::Result<Tokens> {
+fn returns_of(said: Option<&Expr>, output: &ReturnType) -> syn::Result<Tokens> {
     if let Some(text) = said {
         return Ok(quote!(::std::string::String::from(#text)));
     }
@@ -363,6 +427,12 @@ fn lua_fn_impl(args: Tokens, mut function: ItemFn) -> syn::Result<Tokens> {
             "`skip` is for a member of a userdata type",
         ));
     }
+    if said.constant {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            "`constant` is for a `set` on a module",
+        ));
+    }
 
     let ident = function.sig.ident.clone();
     let name = said
@@ -386,7 +456,18 @@ fn lua_fn_impl(args: Tokens, mut function: ItemFn) -> syn::Result<Tokens> {
         inputs.push((&*typed.pat, Some(&*typed.ty)));
     }
     let params = said.params(inputs.into_iter())?;
-    let returns = returns_of(said.returns.as_ref(), &function.sig.output)?;
+    let returns = if said.registered {
+        if let Some(returns) = &said.returns {
+            return Err(syn::Error::new(
+                returns.span(),
+                "the return of a registered function is the registration's",
+            ));
+        }
+        quote!(::std::string::String::new())
+    } else {
+        returns_of(said.returns.as_ref(), &function.sig.output)?
+    };
+    let doc = said.doc(&doc);
     let facade = facade();
     let visibility = &function.vis;
     Ok(quote! {
@@ -420,7 +501,8 @@ fn lua_fn_impl(args: Tokens, mut function: ItemFn) -> syn::Result<Tokens> {
 ///   Rust type records (`DeclType`); `(a, b): (A, B)` is two, `_: ()` none, `rest: Variadic<T>` any number.
 ///   `types(key = "...")` says a parameter's type by hand, `names(s = "...")` its name, and
 ///   `takes("a: string", ...)` the whole list.
-/// - The return is the `T` of `mlua::Result<T>`, or `returns = "..."`.
+/// - The return is the `T` of `mlua::Result<T>`, or `returns = "..."`. A function handed to a registration
+///   (`t.constructor("new", make)`) says `registered`: the registration reads the return itself.
 /// - The doc is the `///` lines: they are the script's, and are not kept as the Rust function's.
 #[proc_macro_attribute]
 pub fn lua_fn(args: TokenStream, item: TokenStream) -> TokenStream {
@@ -431,6 +513,7 @@ pub fn lua_fn(args: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 /// How a member of a userdata type is added, by the name of what adds it.
+#[derive(Clone, Copy, PartialEq)]
 enum Member {
     Field,
     Method,
@@ -458,6 +541,15 @@ fn call_of(stmt: &mut Stmt) -> Option<(&mut Vec<Attribute>, String, Vec<&mut Exp
     let Stmt::Expr(expr, _) = stmt else {
         return None;
     };
+    // the attributes of `call(...)?;` are on the `?`: they are read from the call
+    if let Expr::Try(tried) = expr {
+        let above = std::mem::take(&mut tried.attrs);
+        match &mut *tried.expr {
+            Expr::MethodCall(call) => call.attrs.extend(above),
+            Expr::Call(call) => call.attrs.extend(above),
+            _ => tried.attrs = above,
+        }
+    }
     let expr = if matches!(expr, Expr::Try(tried) if tried.attrs.is_empty()) {
         let Expr::Try(tried) = expr else { return None };
         &mut *tried.expr
@@ -481,26 +573,141 @@ fn call_of(stmt: &mut Stmt) -> Option<(&mut Vec<Attribute>, String, Vec<&mut Exp
     }
 }
 
+/// The attributes of a statement, whatever it is: a call, a loop, a macro.
+fn attrs_of(stmt: &mut Stmt) -> Option<&mut Vec<Attribute>> {
+    match stmt {
+        Stmt::Macro(invoked) => Some(&mut invoked.attrs),
+        Stmt::Expr(expr, _) => match expr {
+            Expr::Call(e) => Some(&mut e.attrs),
+            Expr::MethodCall(e) => Some(&mut e.attrs),
+            Expr::Try(e) => match &mut *e.expr {
+                Expr::Call(inner) if e.attrs.is_empty() => Some(&mut inner.attrs),
+                Expr::MethodCall(inner) if e.attrs.is_empty() => Some(&mut inner.attrs),
+                _ => Some(&mut e.attrs),
+            },
+            Expr::ForLoop(e) => Some(&mut e.attrs),
+            Expr::Macro(e) => Some(&mut e.attrs),
+            Expr::If(e) => Some(&mut e.attrs),
+            Expr::Block(e) => Some(&mut e.attrs),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// One member as a statement on `spec`.
+fn record(
+    span: Span,
+    kind: Member,
+    name: &LitStr,
+    said: &Said,
+    doc: &str,
+    params: Option<Vec<Tokens>>,
+) -> syn::Result<Tokens> {
+    if said.constant {
+        return Err(syn::Error::new(
+            span,
+            "`constant` is for a `set` on a module",
+        ));
+    }
+    let doc = said.doc(doc);
+    let Some(ty) = &said.returns else {
+        return Err(syn::Error::new(
+            span,
+            "say what a script gets from this member: `#[lua(\"...\")]` above it (or `#[lua(skip)]`)",
+        ));
+    };
+    if kind == Member::Field {
+        // a field takes nothing: a word about parameters is a slip
+        said.refuse(false, true, false)?;
+        if said.takes.is_some() {
+            return Err(syn::Error::new(span, "a field takes no parameters"));
+        }
+        return Ok(quote!(spec.field(#name, &::std::string::String::from(#ty), #doc);));
+    }
+    let Some(params) = params else {
+        return Err(syn::Error::new(
+            span,
+            "no closure to read the parameters from: say them with `takes(...)`",
+        ));
+    };
+    let record = if kind == Member::Function {
+        quote!(function)
+    } else {
+        quote!(method)
+    };
+    Ok(quote! {{
+        let params: ::std::vec::Vec<(::std::string::String, ::std::string::String)> = ::std::vec![#(#params),*];
+        let params: ::std::vec::Vec<(&str, &str)> = params.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
+        spec.#record(#name, &params, &::std::string::String::from(#ty), #doc);
+    }})
+}
+
+/// The members a statement adds where the macro cannot see how (through a helper, in a loop, by a macro of the
+/// crate's own): one for each `#[lua(...)]` above it, each with its name and its parameters said, and the
+/// `///` lines above each as its doc.
+fn said_members(stmt: &mut Stmt) -> syn::Result<Vec<Tokens>> {
+    let span = stmt.span();
+    let Some(attrs) = attrs_of(stmt) else {
+        return Ok(Vec::new());
+    };
+    if !attrs.iter().any(|a| a.path().is_ident("lua")) {
+        return Ok(Vec::new());
+    }
+    let mut records = Vec::new();
+    let mut group = Vec::new();
+    for attr in std::mem::take(attrs) {
+        if attr.path().is_ident("doc") {
+            group.push(attr);
+        } else if attr.path().is_ident("lua") {
+            let doc = doc_of(&group);
+            group.push(attr);
+            let said = Said::above(&mut group)?;
+            group.clear();
+            if said.skip {
+                continue;
+            }
+            let Some(name) = &said.name else {
+                return Err(syn::Error::new(
+                    span,
+                    "what this statement adds cannot be read from it: say the member with `name = \"...\"` and \
+                     `takes(...)` (or `#[lua(skip)]`)",
+                ));
+            };
+            let params = if said.takes.is_some() {
+                Some(said.params(std::iter::empty())?)
+            } else {
+                None
+            };
+            records.push(record(
+                span,
+                said.kind.unwrap_or(Member::Method),
+                name,
+                &said,
+                &doc,
+                params,
+            )?);
+        } else {
+            attrs.push(attr);
+        }
+    }
+    Ok(records)
+}
+
 /// The record of one statement of `add_fields` or `add_methods`, as statements on `spec`: nothing for a
 /// statement that adds no member a script names.
-fn member(stmt: &mut Stmt) -> syn::Result<Option<Tokens>> {
+fn member(stmt: &mut Stmt) -> syn::Result<Vec<Tokens>> {
     let span = stmt.span();
-    let Some((attrs, adder, args)) = call_of(stmt) else {
-        return Ok(None);
+    let adds = call_of(stmt).and_then(|(_, adder, _)| member_kind(&adder));
+    let Some(added) = adds else {
+        return said_members(stmt);
+    };
+    let Some((attrs, _, args)) = call_of(stmt) else {
+        return Ok(Vec::new());
     };
     let doc = doc_of(attrs);
     attrs.retain(|a| !a.path().is_ident("doc"));
-    let marked = attrs.iter().any(|a| a.path().is_ident("lua"));
     let said = Said::above(attrs)?;
-    let Some(kind) = member_kind(&adder) else {
-        if marked {
-            return Err(syn::Error::new(
-                span,
-                "`#[lua]` is for a statement that adds a field, a method or a function",
-            ));
-        }
-        return Ok(None);
-    };
     let mut name = None;
     let mut closure: Option<&ExprClosure> = None;
     for arg in args {
@@ -515,7 +722,7 @@ fn member(stmt: &mut Stmt) -> syn::Result<Option<Tokens>> {
         }
     }
     if said.skip {
-        return Ok(None);
+        return Ok(Vec::new());
     }
     let Some(name) = said.name.clone().or(name) else {
         return Err(syn::Error::new(
@@ -523,46 +730,23 @@ fn member(stmt: &mut Stmt) -> syn::Result<Option<Tokens>> {
             "the name of this member is not a string here: say it with `#[lua(name = \"...\")]` (or `#[lua(skip)]`)",
         ));
     };
-    let Some(ty) = &said.returns else {
-        return Err(syn::Error::new(
-            span,
-            "say what a script gets from this member: `#[lua(\"...\")]` above it (or `#[lua(skip)]`)",
-        ));
-    };
-    // the closure's own parameters: `lua`, then `this` for a method, then what a script passes
-    let own = match kind {
-        Member::Field => {
-            // a field takes nothing: a word about parameters is a slip
-            said.refuse(false, true, false)?;
-            if said.takes.is_some() {
-                return Err(syn::Error::new(span, "a field takes no parameters"));
-            }
-            return Ok(Some(quote!(spec.field(#name, #ty, #doc);)));
-        }
-        Member::Method => 2,
-        Member::Function => 1,
-    };
-    if closure.is_none() && said.takes.is_none() {
-        return Err(syn::Error::new(
-            span,
-            "no closure to read the parameters from: say them with `takes(...)`",
-        ));
-    }
-    let inputs = closure
-        .into_iter()
-        .flat_map(|c| c.inputs.iter().skip(own))
-        .map(|pat| (pat, None));
-    let params = said.params(inputs)?;
-    let record = if matches!(kind, Member::Function) {
-        quote!(function)
+    let kind = said.kind.unwrap_or(added);
+    // the closure's own parameters: `lua`, then `this` for a method, then what a script passes. A member that
+    // is to a script what its adder does not make it (a function that takes the value itself) says its list.
+    let own = if added == Member::Method { 2 } else { 1 };
+    let readable = closure.filter(|_| kind == added || said.takes.is_some());
+    let params = if kind == Member::Field {
+        None
+    } else if readable.is_some() || said.takes.is_some() {
+        let inputs = readable
+            .into_iter()
+            .flat_map(|c| c.inputs.iter().skip(own))
+            .map(|pat| (pat, None));
+        Some(said.params(inputs)?)
     } else {
-        quote!(method)
+        None
     };
-    Ok(Some(quote! {{
-        let params: ::std::vec::Vec<(::std::string::String, ::std::string::String)> = ::std::vec![#(#params),*];
-        let params: ::std::vec::Vec<(&str, &str)> = params.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
-        spec.#record(#name, &params, #ty, #doc);
-    }}))
+    Ok(vec![record(span, kind, &name, &said, &doc, params)?])
 }
 
 fn lua_userdata_impl(mut block: ItemImpl) -> syn::Result<Tokens> {
@@ -606,6 +790,11 @@ fn lua_userdata_impl(mut block: ItemImpl) -> syn::Result<Tokens> {
 ///   `lua_fn` reads them, with `types(...)`, `names(...)` and `takes(...)` in the same `#[lua(...)]`.
 /// - The doc is the `///` lines above the statement.
 /// - A metamethod is not a member a script names; `#[lua(skip)]` leaves another one out.
+/// - A statement that adds members where this cannot see how (a helper, a loop, a macro of the crate's own)
+///   says each one above it: `#[lua("ret", name = "read", takes("max: number?"))]`, once per member, a
+///   method unless it says `function` or `field`. A member that is a method to a script but is added as a
+///   function (it takes the value itself) says `method` and its list.
+/// - Only the statements at the top of `add_fields` and `add_methods` are read.
 #[proc_macro_attribute]
 pub fn lua_userdata(args: TokenStream, item: TokenStream) -> TokenStream {
     if !args.is_empty() {
@@ -615,6 +804,42 @@ pub fn lua_userdata(args: TokenStream, item: TokenStream) -> TokenStream {
     }
     let block = syn::parse_macro_input!(item as ItemImpl);
     lua_userdata_impl(block)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+fn lua_members_impl(mut function: ItemFn) -> syn::Result<Tokens> {
+    let mut records = Vec::new();
+    for stmt in &mut function.block.stmts {
+        records.extend(member(stmt)?);
+    }
+    let name = quote::format_ident!("{}_members", function.sig.ident);
+    let facade = facade();
+    Ok(quote! {
+        #function
+
+        /// What the declarations say of the members the function of this name adds: read from it by
+        /// `lua_members`.
+        pub(crate) fn #name(spec: &mut impl #facade::Members) {
+            #(#records)*
+        }
+    })
+}
+
+/// Records what the declarations say of the members a function adds to a table it builds: a type that is a
+/// plain table of functions and has no `impl UserData`.
+///
+/// It reads the statements at the top of the function as `lua_userdata` reads those of `add_methods`, and
+/// writes `<name>_members(spec)` beside it: hand that to the module (`m.userdata("Matcher", make_members)`).
+#[proc_macro_attribute]
+pub fn lua_members(args: TokenStream, item: TokenStream) -> TokenStream {
+    if !args.is_empty() {
+        return syn::Error::new(Span::call_site(), "`lua_members` takes no arguments")
+            .into_compile_error()
+            .into();
+    }
+    let function = syn::parse_macro_input!(item as ItemFn);
+    lua_members_impl(function)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }
@@ -669,9 +894,11 @@ fn call_in(stmt: &mut Stmt) -> Option<&mut syn::ExprMethodCall> {
 
 /// What a marked statement says: the name it registers under, the attributes, the doc, and what it is given.
 struct Marked {
-    name: LitStr,
+    name: Expr,
     said: Said,
-    doc: String,
+    doc: Tokens,
+    /// Whether there are `///` lines above the statement.
+    documented: bool,
     kind: String,
     receiver: Tokens,
     closure: Option<ExprClosure>,
@@ -692,16 +919,11 @@ impl Marked {
         let doc = doc_of(&call.attrs);
         call.attrs.retain(|a| !a.path().is_ident("doc"));
         let said = Said::above(&mut call.attrs)?;
-        let Some(Expr::Lit(syn::ExprLit {
-            lit: Lit::Str(name),
-            ..
-        })) = call.args.first()
-        else {
-            return Err(syn::Error::new(
-                span,
-                "the first argument is the name, as a string",
-            ));
+        let Some(name) = call.args.first() else {
+            return Err(syn::Error::new(span, "the first argument is the name"));
         };
+        let documented = !doc.is_empty();
+        let doc = said.doc(&doc);
         let closure = call.args.iter().skip(1).find_map(closure_in).cloned();
         let path = match call.args.iter().nth(1) {
             Some(Expr::Path(path)) if said.takes.is_none() => Some(path.clone()),
@@ -711,6 +933,7 @@ impl Marked {
             name: name.clone(),
             said,
             doc,
+            documented,
             kind: call.method.to_string(),
             receiver: call.receiver.to_token_stream(),
             closure,
@@ -760,6 +983,16 @@ fn registered(stmt: &mut Stmt) -> syn::Result<Option<Tokens>> {
                 "say what a script gets from this function: `#[lua(\"...\")]`",
             ));
         };
+        if marked.said.constant {
+            marked.said.refuse(false, true, false)?;
+            if marked.said.takes.is_some() {
+                return Err(syn::Error::new(span, "a constant takes no parameters"));
+            }
+            return Ok(Some(quote! {
+                #stmt
+                #receiver.const_(#name, &::std::string::String::from(#returns), #doc);
+            }));
+        }
         let params = marked.params(span)?;
         return Ok(Some(quote! {
             #stmt
@@ -770,6 +1003,9 @@ fn registered(stmt: &mut Stmt) -> syn::Result<Option<Tokens>> {
                 doc: ::std::string::String::from(#doc),
             });
         }));
+    }
+    if marked.said.constant {
+        return Err(syn::Error::new(span, "`constant` is for a `set`"));
     }
     if !REGISTRATIONS.contains(&marked.kind.as_str()) {
         return Err(syn::Error::new(
@@ -784,7 +1020,7 @@ fn registered(stmt: &mut Stmt) -> syn::Result<Option<Tokens>> {
         ));
     }
     if let Some(path) = &marked.path {
-        if !doc.is_empty() {
+        if marked.documented {
             return Err(syn::Error::new(
                 span,
                 "the doc of a function given by its path is the function's",
@@ -818,49 +1054,42 @@ fn registered(stmt: &mut Stmt) -> syn::Result<Option<Tokens>> {
     }))
 }
 
-/// Rewrites the statements of a block that are marked, and those of the closures given to `type_`.
-fn register_block(block: &mut syn::Block) -> syn::Result<()> {
-    let mut out = Vec::with_capacity(block.stmts.len());
-    for mut stmt in std::mem::take(&mut block.stmts) {
-        if let Some(tokens) = registered(&mut stmt)? {
-            let wrapped: syn::Block = syn::parse2(quote!({ #tokens }))?;
-            out.extend(wrapped.stmts);
-        } else {
-            if let Stmt::Expr(expr, _) = &mut stmt {
-                nested(expr)?;
-            }
-            out.push(stmt);
-        }
-    }
-    block.stmts = out;
-    Ok(())
-}
+/// Rewrites the marked statements of every block of a function: its own, and those of the loops, the
+/// branches and the closures in it (a type's constructors are registered in the closure given to `type_`).
+struct Registrations(Option<syn::Error>);
 
-/// The body of a closure given to `type_` is a list of registrations too (`t.constructor(...)`).
-fn nested(expr: &mut Expr) -> syn::Result<()> {
-    let call = match expr {
-        Expr::Try(tried) => &mut *tried.expr,
-        other => other,
-    };
-    let Expr::MethodCall(call) = call else {
-        return Ok(());
-    };
-    if call.method != "type_" {
-        return Ok(());
-    }
-    for arg in &mut call.args {
-        if let Expr::Closure(closure) = arg
-            && let Expr::Block(body) = &mut *closure.body
-        {
-            register_block(&mut body.block)?;
+impl syn::visit_mut::VisitMut for Registrations {
+    fn visit_block_mut(&mut self, block: &mut syn::Block) {
+        let mut out = Vec::with_capacity(block.stmts.len());
+        for mut stmt in std::mem::take(&mut block.stmts) {
+            let written = registered(&mut stmt).and_then(|tokens| {
+                tokens
+                    .map(|t| syn::parse2::<syn::Block>(quote!({ #t })))
+                    .transpose()
+            });
+            match written {
+                Ok(Some(wrapped)) => out.extend(wrapped.stmts),
+                Ok(None) => {
+                    syn::visit_mut::visit_stmt_mut(self, &mut stmt);
+                    out.push(stmt);
+                }
+                Err(error) => {
+                    self.0.get_or_insert(error);
+                    out.push(stmt);
+                }
+            }
         }
+        block.stmts = out;
     }
-    Ok(())
 }
 
 fn lua_module_impl(mut function: ItemFn) -> syn::Result<Tokens> {
-    register_block(&mut function.block)?;
-    Ok(function.to_token_stream())
+    let mut registrations = Registrations(None);
+    syn::visit_mut::VisitMut::visit_block_mut(&mut registrations, &mut function.block);
+    match registrations.0 {
+        Some(error) => Err(error),
+        None => Ok(function.to_token_stream()),
+    }
 }
 
 /// Reads what the declarations say of the closures a module's `declare` function registers in place.
@@ -872,7 +1101,8 @@ fn lua_module_impl(mut function: ItemFn) -> syn::Result<Tokens> {
 ///   doc are written into the call, so neither is an argument in the source. Given a function by its path
 ///   (`m.try_func("parse", parse)?`), both are that function's own (`#[lua_fn]`);
 /// - `m.set("name", <a function made from a closure>)?`: the function is recorded after it, with the return
-///   `#[lua("...")]` says.
+///   `#[lua("...")]` says;
+/// - `m.set("name", <a value>)?` under `#[lua("type", constant)]`: a constant of that type.
 ///
 /// The parameters are the closure's after `lua`, read as `lua_fn` reads them (`types(...)`, `names(...)`,
 /// `takes(...)`), and the doc is the `///` lines above the statement.
@@ -894,7 +1124,7 @@ mod tests {
     use quote::quote;
     use syn::parse_quote;
 
-    use super::{lua_fn_impl, lua_module_impl, lua_userdata_impl};
+    use super::{lua_fn_impl, lua_members_impl, lua_module_impl, lua_userdata_impl};
 
     /// What the compiler says of `result` when it is refused.
     fn refusal(result: syn::Result<proc_macro2::TokenStream>) -> String {
@@ -1053,7 +1283,7 @@ mod tests {
         );
         refuses(
             lua_userdata_impl(block(quote!(#[lua("number")] methods.document("x");))),
-            "`#[lua]` is for a statement that adds",
+            "what this statement adds cannot be read from it",
         );
         refuses(
             lua_userdata_impl(block(
@@ -1112,9 +1342,159 @@ mod tests {
             lua_module_impl(declare(quote!(#[lua] m.other("x", |_, ()| Ok(1))?;))),
             "is for a `set` or a registration",
         );
+    }
+
+    #[test]
+    fn a_constant_is_a_set_with_a_type_and_nothing_else() {
+        let declare = |body: proc_macro2::TokenStream| -> syn::ItemFn {
+            parse_quote!(fn declare() { #body })
+        };
+        let out = lua_module_impl(declare(quote!(
+            /// The system.
+            #[lua("string", constant)]
+            m.set("os", OS)?;
+        )));
+        let text = out.map_or_default(|t| t.to_string());
+        assert!(text.contains("m . const_ (\"os\""), "{text}");
+        assert!(text.contains("\"The system.\""), "{text}");
         refuses(
-            lua_module_impl(declare(quote!(#[lua] m.func(NAME, |_, ()| Ok(1))?;))),
-            "the name, as a string",
+            lua_module_impl(declare(quote!(#[lua(constant)] m.set("os", OS)?;))),
+            "say what a script gets",
         );
+        refuses(
+            lua_module_impl(declare(
+                quote!(#[lua(constant)] m.func("os", |_, ()| Ok(1))?;),
+            )),
+            "`constant` is for a `set`",
+        );
+        refuses(
+            lua_module_impl(declare(
+                quote!(#[lua("string", constant, takes("a: string"))] m.set("os", OS)?;),
+            )),
+            "a constant takes no parameters",
+        );
+        refuses(
+            lua_fn_impl(
+                quote!(constant),
+                parse_quote!(
+                    fn f() {}
+                ),
+            ),
+            "`constant` is for a `set`",
+        );
+    }
+
+    #[test]
+    fn a_name_a_type_and_a_doc_can_be_computed() {
+        let declare = |body: proc_macro2::TokenStream| -> syn::ItemFn {
+            parse_quote!(fn declare() { #body })
+        };
+        let out = lua_module_impl(declare(quote!(for name in NAMES {
+            /// Waits.
+            #[lua(returns = RESULT, types(opts = &format!("{OPTIONS}?")), doc_with = waits)]
+            m.set(name, make(|_, opts: Table| Ok(1)))?;
+        })));
+        let text = out.map_or_default(|t| t.to_string());
+        assert!(text.contains("from (name)"), "{text}");
+        assert!(text.contains("from (RESULT)"), "{text}");
+        assert!(text.contains("format ! (\"{OPTIONS}?\")"), "{text}");
+        assert!(text.contains("from (waits (\"Waits.\"))"), "{text}");
+    }
+
+    #[test]
+    fn a_statement_that_adds_members_out_of_sight_says_each_one() {
+        let block = |body: proc_macro2::TokenStream| -> syn::ItemImpl {
+            parse_quote!(impl UserData for X { fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) { #body } })
+        };
+        let out = lua_userdata_impl(block(quote!(
+            /// Read from the output.
+            #[lua("string?", name = "read", takes("max: number?"))]
+            /// Read from the errors.
+            #[lua(returns = RESULT, name = "read_stderr", takes(opts = OPTIONS), function)]
+            for source in &SOURCES {
+                add_read(methods, source);
+            }
+        )));
+        let text = out.map_or_default(|t| t.to_string());
+        assert!(text.contains("spec . method (\"read\""), "{text}");
+        assert!(text.contains("\"Read from the output.\""), "{text}");
+        assert!(text.contains("spec . function (\"read_stderr\""), "{text}");
+        assert!(text.contains("\"Read from the errors.\""), "{text}");
+        assert!(
+            text.contains("from (\"opts\") , :: std :: string :: String :: from (OPTIONS)"),
+            "{text}"
+        );
+        assert!(!text.contains("# [lua"), "{text}");
+        refuses(
+            lua_userdata_impl(block(
+                quote!(#[lua("number", name = "x")] helper!(methods, "x");),
+            )),
+            "no closure to read the parameters from",
+        );
+    }
+
+    #[test]
+    fn a_function_can_be_a_method_to_a_script() {
+        let block = |body: proc_macro2::TokenStream| -> syn::ItemImpl {
+            parse_quote!(impl UserData for X { fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) { #body } })
+        };
+        let out = lua_userdata_impl(block(quote!(
+            #[lua("Duration", method, takes("other: Instant"))]
+            methods.add_function("since", |_, args: (AnyUserData, AnyUserData)| Ok(1));
+        )));
+        let text = out.map_or_default(|t| t.to_string());
+        assert!(text.contains("spec . method (\"since\""), "{text}");
+        refuses(
+            lua_userdata_impl(block(quote!(
+                #[lua("Duration", method)]
+                methods.add_function("since", |_, args: (AnyUserData, AnyUserData)| Ok(1));
+            ))),
+            "no closure to read the parameters from",
+        );
+    }
+
+    #[test]
+    fn a_registered_function_leaves_its_return_to_the_registration() {
+        let out = lua_fn_impl(
+            quote!(registered),
+            parse_quote!(
+                fn make(_: &Lua, _: ()) -> mlua::Result<Map> {
+                    todo!()
+                }
+            ),
+        );
+        let text = out.map_or_default(|t| t.to_string());
+        assert!(text.contains("String :: new ()"), "{text}");
+        assert!(!text.contains("DeclType"), "{text}");
+        refuses(
+            lua_fn_impl(
+                quote!(registered, returns = "Map"),
+                parse_quote!(
+                    fn make() -> mlua::Result<Map> {
+                        todo!()
+                    }
+                ),
+            ),
+            "is the registration's",
+        );
+    }
+
+    #[test]
+    fn a_function_that_builds_a_table_declares_its_members() {
+        let out = lua_members_impl(parse_quote!(
+            fn make(lua: &Lua, value: Value) -> mlua::Result<Table> {
+                let m = lua.create_table()?;
+                /// Assert the value equals `expected`.
+                #[lua("()")]
+                matcher_function(lua, &m, "toBe", value.clone(), |actual, expected: Value| {
+                    Ok(())
+                })?;
+                Ok(m)
+            }
+        ));
+        let text = out.map_or_default(|t| t.to_string());
+        assert!(text.contains("fn make_members"), "{text}");
+        assert!(text.contains("spec . function (\"toBe\""), "{text}");
+        assert!(text.contains("from (\"expected\")"), "{text}");
     }
 }

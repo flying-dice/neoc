@@ -23,12 +23,9 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:path")?;
 
+    /// The platform's preferred path separator: `"/"` on Unix, `"\\"` on Windows.
+    #[lua("string", constant)]
     m.set("separator", std::path::MAIN_SEPARATOR_STR)?;
-    m.const_(
-        "separator",
-        "string",
-        "The platform's preferred path separator: `\"/\"` on Unix, `\"\\\\\"` on Windows.",
-    );
 
     /// Join path parts with the platform separator. A later part that is absolute replaces everything before it (`join("a", "/b")` is `"/b"`), as `Path::join` does. Does not normalise: `join("a", "..")` is `"a/.."`.
     #[lua]

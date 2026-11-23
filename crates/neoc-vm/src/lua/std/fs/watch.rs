@@ -476,12 +476,18 @@ async fn receive(
     }
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for WatchHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         // `Role::Mixed`, not `Role::Wait`: a `Wait` body takes the event when its wait ends and only then queues for
         // the turn, and a call dropped there would lose it. `receive` waits for the operating system through `idle`
         // (an idle wait, as `Wait` is: never `Timer`, a timeout is not all it waits for) and takes the event with the
         // turn held.
+        /// Wait for the next change and return it as `{ kind, path }` (see `fs.watch`). Once the watcher is closed it returns `(nil, nil)`, also to a call already waiting. `timeout` (seconds; `nil` or `math.huge` waits for ever, `0` only takes what is already there) ends the wait with `timed_out`; a negative or NaN one is `invalid_input`. An error the watch reports (`fs.receive: <kind>: <path>: <message>`) is returned as `(nil, err)` and the watch goes on. Other tasks, and an embedder's other calls, run while it waits; where Luau cannot yield (a metamethod, a `table.sort` comparator, a `string.gsub` callback) a call that would have to wait fails with the yield error.
+        #[lua(
+            "Result<{ kind: \"create\" | \"modify\" | \"remove\" | \"rename\" | \"overflow\", path: string }, string>",
+            names(secs = "timeout")
+        )]
         async_method(
             methods,
             "receive",
@@ -519,6 +525,8 @@ impl UserData for WatchHandle {
                 }
             },
         );
+        /// Stop watching: the operating system's watch is released, events not yet received are dropped, and every `receive`, waiting or later, returns `(nil, nil)`. Closing again does nothing.
+        #[lua("()")]
         methods.add_method("close", |_, this, ()| {
             this.0.close();
             Ok(())

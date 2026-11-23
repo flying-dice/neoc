@@ -187,7 +187,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// digest bytes raises an `mlua::Error` directly (the bare `?`) — a mix
 /// `try_func` cannot model — so it is set verbatim with
 /// [`crate::lua::facade::Module::set`] (keeping its `hash.hash` span and
-/// channel prefix) and recorded with [`crate::lua::facade::Module::record_fn`].
+/// channel prefix) and recorded with what `neoc_macros` reads from the implementation.
 /// The `Hasher` constructor sub-table and the `algorithms` lister are likewise
 /// set verbatim with [`crate::lua::facade::Module::set`] because their
 /// hand-written registration carried (respectively) a `hash.Hasher.new` span
@@ -195,6 +195,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// routing them through the facade would change the trace shape. The `Hasher`
 /// userdata keeps its own `impl UserData` and is recorded here via
 /// [`crate::lua::facade::Module::userdata`].
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:hash")?;
 
@@ -202,8 +203,12 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     hasher_sub.set("new", lua.create_function(hasher_new)?)?;
     m.set("Hasher", hasher_sub)?;
 
+    /// One-shot hash of `data` under `algo`, returning the digest as raw bytes.
+    #[lua("Result<string, string>", takes("algo: string", "data: string"))]
     m.set("hash", lua.create_function(hash_one_shot)?)?;
 
+    /// The list of supported algorithm names.
+    #[lua("LuaValue")]
     m.set(
         "algorithms",
         lua.create_function(|lua, _: ()| {
@@ -215,32 +220,16 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         })?,
     )?;
 
-    m.record_fn(
-        "hash",
-        &[("algo", "string"), ("data", "string")],
-        "Result<string, string>",
-        "One-shot hash of `data` under `algo`, returning the digest as raw bytes.",
-    )
-    .record_fn(
-        "algorithms",
-        &[],
-        "LuaValue",
-        "The list of supported algorithm names.",
-    );
-
     m.userdata("Hasher", |h| {
         Hasher::lua(h);
-        h.static_fn(
-            "new",
-            &[("algo", "string")],
-            "Result<Hasher, string>",
-            "Start an incremental hash under `algo` (see `hash.algorithms()`).",
-        );
+        h.static_of(hasher_new::lua());
     });
 
     Ok(m)
 }
 
+/// Start an incremental hash under `algo` (see `hash.algorithms()`).
+#[neoc_macros::lua_fn(name = "new", returns = "Result<Hasher, string>")]
 #[instrument(name = "hash.Hasher.new", target = "lua::lib::hash", skip_all)]
 fn hasher_new(lua: &Lua, algo: String) -> mlua::Result<(Value, Value)> {
     match State::new(&algo) {

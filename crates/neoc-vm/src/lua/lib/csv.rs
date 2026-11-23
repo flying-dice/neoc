@@ -59,33 +59,11 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.declared(writer_fn::lua(), lua.create_function(writer_fn)?)?;
 
     m.userdata("CsvReader", |r| {
-        r.method(
-            "headers",
-            &[],
-            "Result<LuaValue, string>",
-            "Return the cached header row (parsing it if not yet read). Errors if the reader was not created with `headers = true`.",
-        )
-        .method(
-            "rows",
-            &[],
-            "LuaValue",
-            "Return a Lua iterator yielding the next row on each call, `nil` at EOF. Iterator errors raise.",
-        );
+        CsvReader::lua(r);
     });
 
     m.userdata("CsvWriter", |w| {
-        w.method(
-            "row",
-            &[("values", "LuaValue")],
-            "Result<bool, string>",
-            "Append a row. `values` is either a positional array (length must match `headers`) or a keyed table looked up by header name.",
-        )
-        .method(
-            "finish",
-            &[],
-            "Result<string, string>",
-            "Flush and return the accumulated CSV string. Subsequent calls error.",
-        );
+        CsvWriter::lua(w);
     });
 
     Ok(m)

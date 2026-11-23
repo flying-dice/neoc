@@ -170,7 +170,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 ///
 /// Every free function is set verbatim with [`crate::lua::facade::Module::set`]
 /// and recorded with
-/// [`crate::lua::facade::Module::record_fn`] or `#[lua]` above the `set`: `hmac.Hmac.new` and `hmac.hmac`
+/// what `neoc_macros` reads from the implementation: `hmac.Hmac.new` and `hmac.hmac`
 /// raise through [`crate::lua::sandbox::err`] with a baked `"<stem>.<fn>: <e>"`
 /// prefix under their own `#[instrument]` spans (the `hmac.Hmac.new` span the
 /// facade's `type_` would rename to `Hmac.new`), and `verify` / `algorithms`
@@ -185,13 +185,12 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     hmac_sub.set("new", lua.create_function(hmac_new)?)?;
     m.set("Hmac", hmac_sub)?;
 
-    m.set("hmac", lua.create_function(hmac_one_shot)?)?;
-    m.record_fn(
-        "hmac",
-        &[("algo", "string"), ("key", "string"), ("data", "string")],
+    /// One-shot tag of `data` under `algo` and `key`, returning the tag as raw bytes.
+    #[lua(
         "Result<string, string>",
-        "One-shot tag of `data` under `algo` and `key`, returning the tag as raw bytes.",
-    );
+        takes("algo: string", "key: string", "data: string")
+    )]
+    m.set("hmac", lua.create_function(hmac_one_shot)?)?;
 
     /// Compare two tags in constant time; returns `true` iff they are equal.
     #[lua("bool", types(a = "string", b = "string"))]
@@ -217,17 +216,14 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     m.userdata("Hmac", |h| {
         Hmac::lua(h);
-        h.static_fn(
-            "new",
-            &[("algo", "string"), ("key", "string")],
-            "Result<Hmac, string>",
-            "Start an incremental HMAC under `algo` with `key`.",
-        );
+        h.static_of(hmac_new::lua());
     });
 
     Ok(m)
 }
 
+/// Start an incremental HMAC under `algo` with `key`.
+#[neoc_macros::lua_fn(name = "new", returns = "Result<Hmac, string>")]
 #[instrument(name = "hmac.Hmac.new", target = "lua::lib::hmac", skip_all)]
 fn hmac_new(lua: &Lua, (algo, key): (String, mlua::LuaString)) -> mlua::Result<(Value, Value)> {
     match State::new(&algo, &key.as_bytes()) {

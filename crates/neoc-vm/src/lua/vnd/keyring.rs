@@ -96,57 +96,11 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.func("error_message", error_text::reader(error::message_of))?;
 
     m.userdata("Store", |s| {
-        s.method(
-            "entry",
-            &[("service", "string"), ("user", "string")],
-            ENTRY,
-            "The entry for a service and a user in this store. Nothing is read or written: the credential need not exist. What a store accepts as a service or a user is its own (`invalid_input`).",
-        )
-        .method(
-            "search",
-            &[("spec", "{ [string]: string }?")],
-            "Result<{ Entry }, string>",
-            "The entries of the credentials that match `spec`, whose keys are the store's own: macOS takes `service` and `user` (exact, and every generic password of the login keychain without them), the Secret Service takes any attribute (`service`, `username`, ...), a mock store matches `service` and `user` as substrings. A store with no search (the Windows Credential Manager) is `unsupported`. On the Secret Service a search may ask the person to unlock.",
-        );
+        Store::lua(s);
     });
 
     m.userdata("Entry", |e| {
-        e.method(
-            "get_password",
-            &[],
-            "Result<string, string>",
-            "The credential's secret as text, or `(nil, nil)` when the store has no such credential. A secret that is not UTF-8 is `bad_encoding` (read it with `get_secret`). The platform may ask the person first, and the call waits for them.",
-        )
-        .method(
-            "set_password",
-            &[("password", "string")],
-            DONE,
-            "Store text as the credential's secret: the credential is made, or its secret replaced.",
-        )
-        .method(
-            "get_secret",
-            &[],
-            "Result<string, string>",
-            "The credential's secret as the bytes the store holds (a string of bytes), or `(nil, nil)` when the store has no such credential.",
-        )
-        .method(
-            "set_secret",
-            &[("secret", "string")],
-            DONE,
-            "Store bytes (a string of bytes) as the credential's secret: the credential is made, or its secret replaced.",
-        )
-        .method(
-            "delete_credential",
-            &[],
-            DONE,
-            "Delete the credential from the store: `true`, or `false` when the store had no such credential.",
-        )
-        .method(
-            "get_specifiers",
-            &[],
-            "(string?, string?)",
-            "The service and the user this entry was made from, or `nil, nil` for an entry from `search` whose store does not say.",
-        );
+        Entry::lua(e);
     });
 
     Ok(m)
@@ -334,8 +288,11 @@ fn found(read: Result<Reply, Error>) -> Result<Reply, KeyringError> {
     }
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for Store {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// The entry for a service and a user in this store. Nothing is read or written: the credential need not exist. What a store accepts as a service or a user is its own (`invalid_input`).
+        #[lua(returns = ENTRY, name = "entry", takes("service: string", "user: string"))]
         call(
             methods,
             "keyring.entry",
@@ -349,6 +306,12 @@ impl UserData for Store {
                 }))
             },
         );
+        /// The entries of the credentials that match `spec`, whose keys are the store's own: macOS takes `service` and `user` (exact, and every generic password of the login keychain without them), the Secret Service takes any attribute (`service`, `username`, ...), a mock store matches `service` and `user` as substrings. A store with no search (the Windows Credential Manager) is `unsupported`. On the Secret Service a search may ask the person to unlock.
+        #[lua(
+            "Result<{ Entry }, string>",
+            name = "search",
+            takes("spec: { [string]: string }?")
+        )]
         call(methods, "keyring.search", spec_of, |store: &Store, spec| {
             let spec: HashMap<&str, &str> = spec
                 .iter()
@@ -365,14 +328,19 @@ impl UserData for Store {
     }
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for Entry {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// The credential's secret as text, or `(nil, nil)` when the store has no such credential. A secret that is not UTF-8 is `bad_encoding` (read it with `get_secret`). The platform may ask the person first, and the call waits for them.
+        #[lua("Result<string, string>", name = "get_password", takes())]
         call(
             methods,
             "keyring.get_password",
             nothing,
             |entry: &Entry, ()| found(entry.inner.get_password().map(Reply::Password)),
         );
+        /// Store text as the credential's secret: the credential is made, or its secret replaced.
+        #[lua(returns = DONE, name = "set_password", takes("password: string"))]
         call(
             methods,
             "keyring.set_password",
@@ -382,12 +350,16 @@ impl UserData for Entry {
                 Ok(Reply::Done(true))
             },
         );
+        /// The credential's secret as the bytes the store holds (a string of bytes), or `(nil, nil)` when the store has no such credential.
+        #[lua("Result<string, string>", name = "get_secret", takes())]
         call(
             methods,
             "keyring.get_secret",
             nothing,
             |entry: &Entry, ()| found(entry.inner.get_secret().map(Reply::Secret)),
         );
+        /// Store bytes (a string of bytes) as the credential's secret: the credential is made, or its secret replaced.
+        #[lua(returns = DONE, name = "set_secret", takes("secret: string"))]
         call(
             methods,
             "keyring.set_secret",
@@ -397,6 +369,8 @@ impl UserData for Entry {
                 Ok(Reply::Done(true))
             },
         );
+        /// Delete the credential from the store: `true`, or `false` when the store had no such credential.
+        #[lua(returns = DONE, name = "delete_credential", takes())]
         call(
             methods,
             "keyring.delete_credential",
@@ -407,6 +381,8 @@ impl UserData for Entry {
                 Err(e) => Err(e.into()),
             },
         );
+        /// The service and the user this entry was made from, or `nil, nil` for an entry from `search` whose store does not say.
+        #[lua("(string?, string?)")]
         methods.add_method("get_specifiers", |_, entry, ()| {
             Ok(match entry.inner.get_specifiers() {
                 Some((service, user)) => (Some(service), Some(user)),

@@ -88,22 +88,15 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     // Overwritten by `run_worker` for actual workers; nil at the top level
     // so user code can branch on `if lib.thread.parent then …`.
+    /// The `Channel` to the parent VM inside a spawned worker; nil at the top level.
+    #[lua("Channel?", constant)]
     m.set("parent", Value::Nil)?;
     // `shared` is set to the reconstructed shared table in workers that
     // received `shared = {…}` at spawn time; nil at the top level and in
     // workers spawned without a shared table.
+    /// The reconstructed table of Sendable values passed via `shared` at spawn time; nil otherwise.
+    #[lua("LuaValue", constant)]
     m.set("shared", Value::Nil)?;
-
-    m.const_(
-        "parent",
-        "Channel?",
-        "The `Channel` to the parent VM inside a spawned worker; nil at the top level.",
-    )
-    .const_(
-        "shared",
-        "LuaValue",
-        "The reconstructed table of Sendable values passed via `shared` at spawn time; nil otherwise.",
-    );
 
     m.userdata("WorkerHandle", |w| {
         WorkerHandle::lua(w);

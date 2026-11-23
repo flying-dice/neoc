@@ -64,22 +64,12 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     m.userdata("Version", |v| {
         VersionHandle::lua(v);
-        v.static_fn(
-            "parse",
-            &[("s", "string")],
-            "Result<Version, string>",
-            "Parse a strict SemVer 2.0.0 version. Returns `(nil, err)` on malformed input.",
-        );
+        v.static_of(version_parse_method::lua());
     });
 
     m.userdata("VersionReq", |r| {
         VersionReqHandle::lua(r);
-        r.static_fn(
-            "parse",
-            &[("s", "string")],
-            "Result<VersionReq, string>",
-            "Parse a requirement such as `\">=1.2, <2\"`; `(nil, err)` when malformed.",
-        );
+        r.static_of(req_parse_method::lua());
     });
 
     Ok(m)
@@ -169,6 +159,8 @@ impl UserData for VersionHandle {
     }
 }
 
+/// Parse a strict SemVer 2.0.0 version. Returns `(nil, err)` on malformed input.
+#[neoc_macros::lua_fn(name = "parse", returns = "Result<Version, string>")]
 #[instrument(name = "semver.Version.parse", target = "lua::lib::semver", skip_all)]
 fn version_parse_method(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
     match parse_version(&s, "semver.Version.parse") {
@@ -200,6 +192,8 @@ impl UserData for VersionReqHandle {
     }
 }
 
+/// Parse a requirement such as `">=1.2, <2"`; `(nil, err)` when malformed.
+#[neoc_macros::lua_fn(name = "parse", returns = "Result<VersionReq, string>")]
 #[instrument(
     name = "semver.VersionReq.parse",
     target = "lua::lib::semver",

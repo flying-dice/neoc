@@ -42,80 +42,43 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// Lua surface are byte-identical to the hand-written registration this
 /// replaces; the instance methods stay in each type's `impl UserData` and are
 /// recorded here only.
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:collections")?;
 
     // `require("std:collections").Map.new()`
     m.type_("Map", |t| {
-        t.constructor("new", &[], "Construct an empty concurrent map.", make_map)?
-            .method("get", &[("key", "string")], "LuaValue", "Read a key.")
-            .method(
-                "set",
-                &[("key", "string"), ("value", "LuaValue")],
-                "()",
-                "Insert or replace a key.",
-            )
-            .method(
-                "delete",
-                &[("key", "string")],
-                "bool",
-                "Remove a key, returning whether it was present.",
-            )
-            .method("has", &[("key", "string")], "bool", "Test for a key.")
-            .method("size", &[], "number", "Number of entries.")
-            .method("keys", &[], "LuaValue", "All keys as a 1-indexed table.")
-            .method("clear", &[], "()", "Remove all entries.");
+        Map::lua(t);
+        #[lua]
+        t.constructor("new", make_map)?;
         Ok(())
-    })?
+    })?;
     // `require("std:collections").Counter.new(initial?)`
-    .type_("Counter", |t| {
-        t.constructor(
-            "new",
-            &[("initial", "number?")],
-            "Construct a counter, optionally seeded with an initial value.",
-            make_counter,
-        )?
-        .method("get", &[], "number", "Current value.")
-        .method(
-            "increment",
-            &[],
-            "number",
-            "Add one, returning the new value.",
-        )
-        .method(
-            "decrement",
-            &[],
-            "number",
-            "Subtract one, returning the new value.",
-        )
-        .method(
-            "add",
-            &[("n", "number")],
-            "number",
-            "Add `n`, returning the new value.",
-        )
-        .method("set", &[("n", "number")], "()", "Set the value to `n`.");
+    m.type_("Counter", |t| {
+        Counter::lua(t);
+        #[lua]
+        t.constructor("new", make_counter)?;
         Ok(())
-    })?
+    })?;
     // `require("std:collections").Mutex.new()`
-    .type_("Mutex", |t| {
-        t.constructor("new", &[], "Construct a coordination mutex.", make_mutex)?
-            .method(
-                "with_lock",
-                &[("f", "LuaValue")],
-                "...",
-                "Acquire the lock, call `f`, release, and return every value `f` returns.",
-            );
+    m.type_("Mutex", |t| {
+        Mutex::lua(t);
+        #[lua]
+        t.constructor("new", make_mutex)?;
         Ok(())
     })?;
 
     Ok(m)
 }
 
+/// Construct an empty concurrent map.
+#[neoc_macros::lua_fn(registered)]
 fn make_map(_: &Lua, _: ()) -> mlua::Result<Map> {
     Ok(Map::from_arc(Arc::new(SharedMap::default())))
 }
 
+/// Construct a counter, optionally seeded with an initial value.
+#[neoc_macros::lua_fn(registered)]
 fn make_counter(_: &Lua, initial: Option<i64>) -> mlua::Result<Counter> {
     let c = Counter::from_arc(Arc::new(SharedCounter::default()));
     if let Some(v) = initial {
@@ -124,6 +87,8 @@ fn make_counter(_: &Lua, initial: Option<i64>) -> mlua::Result<Counter> {
     Ok(c)
 }
 
+/// Construct a coordination mutex.
+#[neoc_macros::lua_fn(registered)]
 fn make_mutex(_: &Lua, _: ()) -> mlua::Result<Mutex> {
     Ok(Mutex::from_arc(Arc::new(SharedMutex::default())))
 }
@@ -164,15 +129,11 @@ impl crate::lua::std::thread::Sendable for Map {
     }
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for Map {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_method("set", |_, this, (k, v): (String, Value)| {
-            refuse_buffer(&v, "collections.Map.set")?;
-            let json = serde_json::to_value(&v).map_err(mlua::Error::external)?;
-            this.0.inner.write().insert(k, json);
-            Ok(())
-        });
-
+        /// Read a key.
+        #[lua("LuaValue", names(k = "key"))]
         methods.add_method("get", |lua, this, k: String| {
             let v = this.0.inner.read().get(&k).cloned();
             match v {
@@ -181,19 +142,36 @@ impl UserData for Map {
             }
         });
 
+        /// Insert or replace a key.
+        #[lua("()", names(k = "key", v = "value"))]
+        methods.add_method("set", |_, this, (k, v): (String, Value)| {
+            refuse_buffer(&v, "collections.Map.set")?;
+            let json = serde_json::to_value(&v).map_err(mlua::Error::external)?;
+            this.0.inner.write().insert(k, json);
+            Ok(())
+        });
+
+        /// Remove a key, returning whether it was present.
+        #[lua("bool", names(k = "key"))]
         methods.add_method("delete", |_, this, k: String| {
             Ok(this.0.inner.write().remove(&k).is_some())
         });
 
+        /// Test for a key.
+        #[lua("bool", names(k = "key"))]
         methods.add_method("has", |_, this, k: String| {
             Ok(this.0.inner.read().contains_key(&k))
         });
 
+        /// Number of entries.
+        #[lua("number")]
         methods.add_method(
             "size",
             |_, this, _: ()| Ok(this.0.inner.read().len() as i32),
         );
 
+        /// All keys as a 1-indexed table.
+        #[lua("LuaValue")]
         methods.add_method("keys", |lua, this, _: ()| {
             let keys: Vec<String> = this.0.inner.read().keys().cloned().collect();
             let t = lua.create_table_with_capacity(keys.len(), 0)?;
@@ -203,6 +181,8 @@ impl UserData for Map {
             Ok(t)
         });
 
+        /// Remove all entries.
+        #[lua("()")]
         methods.add_method("clear", |_, this, _: ()| {
             this.0.inner.write().clear();
             Ok(())
@@ -240,30 +220,41 @@ impl crate::lua::std::thread::Sendable for Counter {
     }
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for Counter {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Current value.
+        #[lua("number")]
         methods.add_method("get", |_, this, _: ()| {
             Ok(i64_to_lua(this.0.value.load(Ordering::Relaxed)))
         });
 
+        /// Add one, returning the new value.
+        #[lua("number")]
         methods.add_method("increment", |_, this, _: ()| {
             Ok(i64_to_lua(
                 this.0.value.fetch_add(1, Ordering::Relaxed).wrapping_add(1),
             ))
         });
 
+        /// Subtract one, returning the new value.
+        #[lua("number")]
         methods.add_method("decrement", |_, this, _: ()| {
             Ok(i64_to_lua(
                 this.0.value.fetch_sub(1, Ordering::Relaxed).wrapping_sub(1),
             ))
         });
 
+        /// Add `n`, returning the new value.
+        #[lua("number")]
         methods.add_method("add", |_, this, n: i64| {
             Ok(i64_to_lua(
                 this.0.value.fetch_add(n, Ordering::Relaxed).wrapping_add(n),
             ))
         });
 
+        /// Set the value to `n`.
+        #[lua("()")]
         methods.add_method("set", |_, this, n: i64| {
             this.0.value.store(n, Ordering::Relaxed);
             Ok(())
@@ -288,10 +279,13 @@ pub struct Mutex(Arc<SharedMutex>);
 
 arc_newtype!(Mutex, SharedMutex);
 
+#[neoc_macros::lua_userdata]
 impl UserData for Mutex {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         // `with_lock(fn)` — acquire the lock, call `fn` with no args, release
         // even if `fn` errors, and return whatever `fn` returned.
+        /// Acquire the lock, call `f`, release, and return every value `f` returns.
+        #[lua("...")]
         async_method(methods, "with_lock", Role::Mixed, |_, this, f: Function| {
             let mu = this.0.clone();
             async move {

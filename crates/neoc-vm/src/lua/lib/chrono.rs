@@ -78,13 +78,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     // to the `(value, error)` channel, but the chosen handle's `into_lua` (done
     // by `ok`) raises an `mlua::Error` directly — a mix `try_func` cannot model
     // — so it too is set verbatim and recorded.
-    m.set("now", lua.create_function(flat_now)?)?
-        .set("utc_now", lua.create_function(flat_utc_now)?)?
-        .set("parse", lua.create_function(flat_parse)?)?;
+    m.set("now", lua.create_function(flat_now)?)?;
+    m.set("utc_now", lua.create_function(flat_utc_now)?)?;
+    m.set("parse", lua.create_function(flat_parse)?)?;
 
-    m.record(flat_now::lua())
-        .record(flat_utc_now::lua())
-        .record(flat_parse::lua());
+    m.record(flat_now::lua());
+    m.record(flat_utc_now::lua());
+    m.record(flat_parse::lua());
 
     record_userdata(&mut m);
 
@@ -94,93 +94,35 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 /// Records the five chrono userdata types' fields, methods and constructors in
 /// the recorded surface. The runtime registration of each type stays in its own
 /// `impl UserData`; this only mirrors the surface. Fields (`date.year`) are
-/// recorded with `field`, constructors (`Date.new`) with `static_fn`.
+/// recorded with `field`, constructors (`Date.new`) from the functions that implement them.
 fn record_userdata(m: &mut Module<'_>) {
     m.userdata("Date", |t| {
         DateHandle::lua(t);
-        t.static_fn(
-            "new",
-            &[("year", "number"), ("month", "number"), ("day", "number")],
-            "Result<Date, string>",
-            "Build a date from year, month and day; an out-of-range value is an error.",
-        )
-        .static_fn(
-            "parse",
-            &[("s", "string")],
-            "Result<Date, string>",
-            "Parse an ISO 8601 date (`2026-05-20`).",
-        );
+        t.static_of(date_new::lua())
+            .static_of(date_parse_ctor::lua());
     });
 
     m.userdata("Time", |t| {
         TimeHandle::lua(t);
-        t.static_fn(
-            "new",
-            &[
-                ("hour", "number"),
-                ("minute", "number"),
-                ("second", "number"),
-                ("nanosecond", "number?"),
-            ],
-            "Result<Time, string>",
-            "Build a time of day; an out-of-range value is an error.",
-        )
-        .static_fn(
-            "parse",
-            &[("s", "string")],
-            "Result<Time, string>",
-            "Parse an ISO 8601 time (`13:45:30`).",
-        );
+        t.static_of(time_new::lua())
+            .static_of(time_parse_ctor::lua());
     });
 
     m.userdata("DateTime", |t| {
         DateTimeHandle::lua(t);
-        t.static_fn(
-            "new",
-            &[
-                ("year", "number"),
-                ("month", "number"),
-                ("day", "number"),
-                ("hour", "number"),
-                ("minute", "number"),
-                ("second", "number"),
-                ("nanosecond", "number?"),
-            ],
-            "Result<DateTime, string>",
-            "Build a civil datetime; an out-of-range value is an error.",
-        )
-        .static_fn(
-            "parse",
-            &[("s", "string")],
-            "Result<DateTime, string>",
-            "Parse an ISO 8601 datetime (`2026-05-20T13:45:30`).",
-        );
+        t.static_of(datetime_new::lua())
+            .static_of(datetime_parse_ctor::lua());
     });
 
     m.userdata("ZonedDateTime", |t| {
         ZonedDateTimeHandle::lua(t);
-        t.static_fn(
-            "parse",
-            &[("s", "string")],
-            "Result<ZonedDateTime, string>",
-            "Parse an RFC 9557 timestamp (`2026-05-20T13:45:30+01:00[Europe/London]`).",
-        );
+        t.static_of(zdt_parse_ctor::lua());
     });
 
     m.userdata("Duration", |t| {
         DurationHandle::lua(t);
-        t.static_fn(
-            "of",
-            &[("units", "LuaValue")],
-            "Result<Duration, string>",
-            "Build a span from a table of named units, e.g. `{ hours = 1, minutes = 30 }`.",
-        )
-        .static_fn(
-            "parse",
-            &[("s", "string")],
-            "Result<Duration, string>",
-            "Parse an ISO 8601 or friendly duration (`PT1H30M`, `1h 30m`).",
-        );
+        t.static_of(duration_of::lua())
+            .static_of(duration_parse_ctor::lua());
     });
 }
 
@@ -345,6 +287,12 @@ impl UserData for DateHandle {
     }
 }
 
+/// Build a date from year, month and day; an out-of-range value is an error.
+#[neoc_macros::lua_fn(
+    name = "new",
+    returns = "Result<Date, string>",
+    names(y = "year", m = "month", d = "day")
+)]
 #[instrument(name = "chrono.Date.new", target = "lua::lib::chrono", skip_all)]
 fn date_new(lua: &Lua, (y, m, d): (i64, i64, i64)) -> mlua::Result<(Value, Value)> {
     let y = match clamp_i16(y, "chrono.Date.new") {
@@ -365,6 +313,8 @@ fn date_new(lua: &Lua, (y, m, d): (i64, i64, i64)) -> mlua::Result<(Value, Value
     }
 }
 
+/// Parse an ISO 8601 date (`2026-05-20`).
+#[neoc_macros::lua_fn(name = "parse", returns = "Result<Date, string>")]
 #[instrument(name = "chrono.Date.parse", target = "lua::lib::chrono", skip_all)]
 fn date_parse_ctor(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
     match Date::from_str(&s) {
@@ -437,6 +387,12 @@ impl UserData for TimeHandle {
     }
 }
 
+/// Build a time of day; an out-of-range value is an error.
+#[neoc_macros::lua_fn(
+    name = "new",
+    returns = "Result<Time, string>",
+    names(h = "hour", m = "minute", s = "second", ns = "nanosecond")
+)]
 #[instrument(name = "chrono.Time.new", target = "lua::lib::chrono", skip_all)]
 fn time_new(
     lua: &Lua,
@@ -467,6 +423,8 @@ fn time_new(
     }
 }
 
+/// Parse an ISO 8601 time (`13:45:30`).
+#[neoc_macros::lua_fn(name = "parse", returns = "Result<Time, string>")]
 #[instrument(name = "chrono.Time.parse", target = "lua::lib::chrono", skip_all)]
 fn time_parse_ctor(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
     match Time::from_str(&s) {
@@ -608,6 +566,20 @@ impl UserData for DateTimeHandle {
     }
 }
 
+/// Build a civil datetime; an out-of-range value is an error.
+#[neoc_macros::lua_fn(
+    name = "new",
+    returns = "Result<DateTime, string>",
+    takes(
+        "year: number",
+        "month: number",
+        "day: number",
+        "hour: number",
+        "minute: number",
+        "second: number",
+        "nanosecond: number?"
+    )
+)]
 #[instrument(name = "chrono.DateTime.new", target = "lua::lib::chrono", skip_all)]
 fn datetime_new(
     lua: &Lua,
@@ -651,6 +623,8 @@ fn datetime_new(
     }
 }
 
+/// Parse an ISO 8601 datetime (`2026-05-20T13:45:30`).
+#[neoc_macros::lua_fn(name = "parse", returns = "Result<DateTime, string>")]
 #[instrument(name = "chrono.DateTime.parse", target = "lua::lib::chrono", skip_all)]
 fn datetime_parse_ctor(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
     match DateTime::from_str(&s) {
@@ -833,6 +807,8 @@ impl UserData for ZonedDateTimeHandle {
     }
 }
 
+/// Parse an RFC 9557 timestamp (`2026-05-20T13:45:30+01:00[Europe/London]`).
+#[neoc_macros::lua_fn(name = "parse", returns = "Result<ZonedDateTime, string>")]
 #[instrument(
     name = "chrono.ZonedDateTime.parse",
     target = "lua::lib::chrono",
@@ -928,6 +904,8 @@ impl UserData for DurationHandle {
     }
 }
 
+/// Build a span from a table of named units, e.g. `{ hours = 1, minutes = 30 }`.
+#[neoc_macros::lua_fn(name = "of", returns = "Result<Duration, string>", names(t = "units"))]
 #[instrument(name = "chrono.Duration.of", target = "lua::lib::chrono", skip_all)]
 fn duration_of(lua: &Lua, t: Table) -> mlua::Result<(Value, Value)> {
     let mut span = Span::new();
@@ -954,6 +932,8 @@ fn duration_of(lua: &Lua, t: Table) -> mlua::Result<(Value, Value)> {
     ok(lua, DurationHandle(span))
 }
 
+/// Parse an ISO 8601 or friendly duration (`PT1H30M`, `1h 30m`).
+#[neoc_macros::lua_fn(name = "parse", returns = "Result<Duration, string>")]
 #[instrument(name = "chrono.Duration.parse", target = "lua::lib::chrono", skip_all)]
 fn duration_parse_ctor(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
     match Span::from_str(&s) {

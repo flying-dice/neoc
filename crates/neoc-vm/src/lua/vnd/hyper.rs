@@ -100,7 +100,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// attribute and bakes the `hyper.serve` prefix. Routing any of them through
 /// the facade's marshalling would add a span and reshape the result, so each is
 /// registered byte-for-byte as before and only its signature is recorded via
-/// [`crate::lua::facade::Module::record_fn`]. The `ServerHandle` and `Request`
+/// what `neoc_macros` reads from the implementation. The `ServerHandle` and `Request`
 /// userdata types keep their own `impl UserData` (fields and methods unchanged)
 /// and have their methods and fields recorded via
 /// [`crate::lua::facade::Module::userdata`].
@@ -112,44 +112,30 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let post_options = options_type("url: string, body: string | buffer?, ");
     let request_options = options_type("method: string, url: string, body: string | buffer?, ");
 
+    /// Perform an HTTP or HTTPS GET request.
+    #[lua(returns = RESULT, types(opts = format!("{get_options}?")), doc_with = client_doc)]
     m.set(
         "get",
-        async_function(lua, Role::Wait, |lua, args: (String, Option<Table>)| {
-            get(lua, args)
-        })?,
+        async_function(
+            lua,
+            Role::Wait,
+            |lua, (url, opts): (String, Option<Table>)| get(lua, (url, opts)),
+        )?,
     )?;
-    m.record_fn(
-        "get",
-        &[("url", "string"), ("opts", &format!("{get_options}?"))],
-        RESULT,
-        &client_doc("Perform an HTTP or HTTPS GET request."),
-    );
 
+    /// Perform an HTTP or HTTPS POST request given `{ url, body?, ... }`; `body` is a string or a buffer.
+    #[lua(returns = RESULT, types(opts = post_options), doc_with = client_doc)]
     m.set(
         "post",
         async_function(lua, Role::Wait, |lua, opts: Table| post(lua, opts))?,
     )?;
-    m.record_fn(
-        "post",
-        &[("opts", &post_options)],
-        RESULT,
-        &client_doc(
-            "Perform an HTTP or HTTPS POST request given `{ url, body?, ... }`; `body` is a string or a buffer.",
-        ),
-    );
 
+    /// Perform an HTTP or HTTPS request given `{ method, url, body?, ... }`; `body` is a string or a buffer. A standard method in any case is the standard method (`put` is `PUT`); any other is sent as written.
+    #[lua(returns = RESULT, types(opts = request_options), doc_with = client_doc)]
     m.set(
         "request",
         async_function(lua, Role::Wait, |lua, opts: Table| request(lua, opts))?,
     )?;
-    m.record_fn(
-        "request",
-        &[("opts", &request_options)],
-        RESULT,
-        &client_doc(
-            "Perform an HTTP or HTTPS request given `{ method, url, body?, ... }`; `body` is a string or a buffer. A standard method in any case is the standard method (`put` is `PUT`); any other is sent as written.",
-        ),
-    );
 
     /// The stable kind inside an error string returned by a `vnd:hyper` client function, or `nil` when the string is not one of theirs (or is `nil`, so `hyper.error_kind(err)` takes the `err` of any call). Such a string is `hyper.<function>: <kind>: <message>`. Kinds: `invalid_input` (an option, header or body was refused before anything was sent), `invalid_url` (not an `http` or `https` URL with a host, a redirect's `Location` included), `connect` (no connection: the name did not resolve, or the host refused or could not be reached), `tls` (the handshake failed, usually over the certificate), `timed_out` (a time limit passed), `too_many_redirects`, `too_large` (the body is over `max_body`), `connection_lost` (the connection ended or failed before the response was complete), `bad_response` (the server did not send valid HTTP), `other`. The kind means the same on every platform; the message is for a log and may change.
     #[lua(takes("err: string?"))]
@@ -169,46 +155,11 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.set("serve", lua.create_function(serve)?)?;
 
     m.userdata("ServerHandle", |s| {
-        s.method(
-            "addr",
-            &[],
-            "string",
-            "Return the local address the server is bound to.",
-        )
-        .method(
-            "close",
-            &[],
-            "()",
-            "Initiate graceful shutdown; returns immediately. Use `:wait()` to block until stopped.",
-        )
-        .method(
-            "wait",
-            &[],
-            "()",
-            "Block until the server stops accepting connections (`:close()`, the process shutdown signal, or an embedder shutting the script down).",
-        );
+        server::ServerHandle::lua(s);
     });
 
     m.userdata("Request", |r| {
-        r.field("method", "string", "The HTTP method (`GET`).");
-        r.field("path", "string", "The request path, without the query string.");
-        r.field("body", "string", "The raw request body.");
-        r.field("is_json", "bool", "Whether the `Content-Type` header is `application/json`.");
-        r.field("headers", "LuaValue", "The request headers as a `{ [name]: value }` table, names in lower case. A header sent more than once is one value joined with `\", \"` (`cookie` and the rest; `set-cookie` with `\"\\n\"`), and a value that is not UTF-8 has its bad bytes replaced with U+FFFD.");
-        r.field(
-            "json",
-            &format!("{} | nil", crate::lua::lib::json::JSON_VALUE),
-            concat!(
-                "The body parsed as JSON (a JSON handle or scalar), ",
-                "or nil when it is empty or invalid."
-            ),
-        );
-        r.method(
-            "header",
-            &[("name", "string")],
-            "string?",
-            "Look up a request header by name (case-insensitive); returns the value string or nil when absent.",
-        );
+        Request::lua(r);
     });
 
     Ok(m)
@@ -332,19 +283,30 @@ impl Request {
     }
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for Request {
     fn add_fields<F: mlua::UserDataFields<Self>>(fields: &mut F) {
+        /// The HTTP method (`GET`).
+        #[lua("string")]
         fields.add_field_method_get("method", |lua, this| {
             Ok(Value::String(lua.create_string(&this.inner.method)?))
         });
+        /// The request path, without the query string.
+        #[lua("string")]
         fields.add_field_method_get("path", |lua, this| {
             Ok(Value::String(lua.create_string(&this.inner.path)?))
         });
+        /// The raw request body.
+        #[lua("string")]
         fields.add_field_method_get("body", |lua, this| {
             Ok(Value::String(lua.create_string(&this.inner.body)?))
         });
+        /// Whether the `Content-Type` header is `application/json`.
+        #[lua("bool")]
         fields.add_field_method_get("is_json", |_, this| Ok(this.inner.body_is_json));
 
+        /// The request headers as a `{ [name]: value }` table, names in lower case. A header sent more than once is one value joined with `", "` (`cookie` and the rest; `set-cookie` with `"\n"`), and a value that is not UTF-8 has its bad bytes replaced with U+FFFD.
+        #[lua("LuaValue")]
         fields.add_field_method_get("headers", |lua, this| {
             let t = lua.create_table_with_capacity(0, this.inner.headers.len())?;
             for (k, v) in &this.inner.headers {
@@ -354,6 +316,8 @@ impl UserData for Request {
         });
         // vnd:hyper calls vnd:serde_json's `parse_to_handle` directly. It is one short call into a function that
         // already exists (its other caller is `from_str`), so a shared bridge module would add a file for nothing.
+        /// The body parsed as JSON (a JSON handle or scalar), or nil when it is empty or invalid.
+        #[lua(returns = format!("{} | nil", crate::lua::lib::json::JSON_VALUE))]
         fields.add_field_method_get("json", |lua, this| {
             if this.inner.body.is_empty() {
                 return Ok(Value::Nil);
@@ -365,6 +329,8 @@ impl UserData for Request {
     }
 
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Look up a request header by name (case-insensitive); returns the value string or nil when absent.
+        #[lua("string?")]
         methods.add_method("header", |lua, this, name: String| {
             match this.header_lookup(&name) {
                 Some(v) => Ok(Value::String(lua.create_string(v)?)),

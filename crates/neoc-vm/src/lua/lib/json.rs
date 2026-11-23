@@ -572,16 +572,23 @@ fn node_to_table(lua: &Lua, root: &Root, path: &[PathSeg]) -> mlua::Result<Value
     })
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for Object {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         // `get`/`len`/`to_table` are shared with `Array` (both are root+path):
         // `get` delegates to `walk_get`, the other two to the `node_*` helpers.
+        /// Walk a path of segments (a string is an object key, a number a 1-based array index) and return the node there, or nil when the path leads nowhere. An index of 0 or a fraction raises. Narrow a container with a cast (`v :: lib_json_Object`): `type(v) == "userdata"` narrows the handle types to nothing, and `type(v) == "table"` is false at run time.
+        #[lua(returns = format!("{JSON_VALUE} | nil"), takes("path: string | number", "...: string | number"))]
         methods.add_method("get", |lua, this, args: MultiValue| {
             walk_get(lua, &this.root, &this.path, args)
         });
+        /// Insert or replace `key` with `value`.
+        #[lua("()", names(v = "value"))]
         methods.add_method("set", |_, this, (key, v): (String, Value)| {
             this.set_inner(key, lua_value_to_json_value(&v)?)
         });
+        /// Whether the object contains an entry for `key`.
+        #[lua("bool")]
         methods.add_method("has", |_, this, key: String| {
             Ok(with_resolved(&this.root, &this.path, |r| {
                 r.and_then(JsonValue::as_object)
@@ -589,6 +596,8 @@ impl UserData for Object {
                     .unwrap_or(false)
             }))
         });
+        /// The object's keys as a table.
+        #[lua("{ string }")]
         methods.add_method("keys", |lua, this, _: ()| {
             let t = lua.create_table()?;
             with_resolved(&this.root, &this.path, |r| -> mlua::Result<()> {
@@ -601,9 +610,13 @@ impl UserData for Object {
             })?;
             Ok(t)
         });
+        /// Number of top-level keys.
+        #[lua("number")]
         methods.add_method("len", |_, this, _: ()| {
             Ok(node_len(&this.root, &this.path, NodeKind::Object))
         });
+        /// Materialise the subtree as a Lua table.
+        #[lua("LuaValue")]
         methods.add_method("to_table", |lua, this, _: ()| {
             node_to_table(lua, &this.root, &this.path)
         });
@@ -656,12 +669,17 @@ impl Array {
     }
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for Array {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         // `get`/`len`/`to_table` are the same as `Object`'s — see those helpers.
+        /// Walk a path of segments (a number is a 1-based array index, a string an object key) and return the node there, or nil when the path leads nowhere. An index of 0 or a fraction raises. Narrow a container with a cast (`v :: lib_json_Array`): `type(v) == "userdata"` narrows the handle types to nothing, and `type(v) == "table"` is false at run time.
+        #[lua(returns = format!("{JSON_VALUE} | nil"), takes("path: string | number", "...: string | number"))]
         methods.add_method("get", |lua, this, args: MultiValue| {
             walk_get(lua, &this.root, &this.path, args)
         });
+        /// Replace the element at a 1-based index.
+        #[lua("()", names(i = "index", v = "value"))]
         methods.add_method("set", |_, this, (i, v): (i64, Value)| {
             if i < 1 {
                 return Err(mlua::Error::external("json.array: index must be >= 1"));
@@ -671,12 +689,18 @@ impl UserData for Array {
                 lua_value_to_json_value(&v)?,
             )
         });
+        /// Append `value` to the end of the array.
+        #[lua("()", names(v = "value"))]
         methods.add_method("push", |_, this, v: Value| {
             this.push_inner(lua_value_to_json_value(&v)?)
         });
+        /// Current length of the array.
+        #[lua("number")]
         methods.add_method("len", |_, this, _: ()| {
             Ok(node_len(&this.root, &this.path, NodeKind::Array))
         });
+        /// Materialise the array as a 1-indexed Lua table.
+        #[lua("LuaValue")]
         methods.add_method("to_table", |lua, this, _: ()| {
             node_to_table(lua, &this.root, &this.path)
         });
@@ -920,11 +944,12 @@ pub(crate) const JSON_VALUE: &str =
 /// `impl UserData` (their methods are unchanged) and are recorded here via
 /// [`crate::lua::facade::Module::userdata`]; `null` is the cached singleton
 /// sentinel, set verbatim and recorded as a `const`.
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:json")?;
-    // `:get` gives `nil` for a path that leads nowhere.
-    let node = format!("{JSON_VALUE} | nil");
 
+    /// Construct an empty mutable JSON object handle on a fresh root.
+    #[lua("Object")]
     m.set(
         "object",
         lua.create_function(|_, _: ()| {
@@ -933,8 +958,10 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
                 path: Vec::new(),
             })
         })?,
-    )?
-    .set(
+    )?;
+    /// Construct an empty mutable JSON array handle on a fresh root.
+    #[lua("Array")]
+    m.set(
         "array",
         lua.create_function(|_, _: ()| {
             Ok(Array {
@@ -942,7 +969,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
                 path: Vec::new(),
             })
         })?,
-    )?
+    )?;
     // The `JsonNull` sentinel — userdata, **not** a string or any other
     // primitive. Bound on the module table so the comparison is
     // `local json = require("lib:json"); v == json.null`.
@@ -952,86 +979,18 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     // identity-equal to every value `:get` returns for a JSON null
     // (mlua's userdata equality is identity-based, not metamethod-
     // mediated).
-    .set("null", null_handle(lua)?)?;
-
-    m.record_fn(
-        "object",
-        &[],
-        "Object",
-        "Construct an empty mutable JSON object handle on a fresh root.",
-    );
-    m.record_fn(
-        "array",
-        &[],
-        "Array",
-        "Construct an empty mutable JSON array handle on a fresh root.",
-    );
+    #[lua("JsonNull", constant, doc = concat!(
+            "Sentinel userdata for explicit JSON `null`, distinct from Lua `nil`. Test for it with `v == json.null`: ",
+            "its type, `lib_json_JsonNull`, is structurally empty, so any table satisfies it."
+        ))]
+    m.set("null", null_handle(lua)?)?;
 
     m.userdata("Object", |o| {
-        o.method(
-            "get",
-            &[("path", "string | number"), ("...", "string | number")],
-            &node,
-            concat!(
-                "Walk a path of segments (a string is an object key, a number a 1-based array index) and return the ",
-                "node there, or nil when the path leads nowhere. An index of 0 or a fraction raises. Narrow a container ",
-                "with a cast (`v :: lib_json_Object`): `type(v) == \"userdata\"` narrows the handle types to nothing, ",
-                "and `type(v) == \"table\"` is false at run time."
-            ),
-        )
-        .method(
-            "set",
-            &[("key", "string"), ("value", "LuaValue")],
-            "()",
-            "Insert or replace `key` with `value`.",
-        )
-        .method(
-            "has",
-            &[("key", "string")],
-            "bool",
-            "Whether the object contains an entry for `key`.",
-        )
-        .method("keys", &[], "{ string }", "The object's keys as a table.")
-        .method("len", &[], "number", "Number of top-level keys.")
-        .method(
-            "to_table",
-            &[],
-            "LuaValue",
-            "Materialise the subtree as a Lua table.",
-        );
+        Object::lua(o);
     });
 
     m.userdata("Array", |a| {
-        a.method(
-            "get",
-            &[("path", "string | number"), ("...", "string | number")],
-            &node,
-            concat!(
-                "Walk a path of segments (a number is a 1-based array index, a string an object key) and return the ",
-                "node there, or nil when the path leads nowhere. An index of 0 or a fraction raises. Narrow a container ",
-                "with a cast (`v :: lib_json_Array`): `type(v) == \"userdata\"` narrows the handle types to nothing, ",
-                "and `type(v) == \"table\"` is false at run time."
-            ),
-        )
-        .method(
-            "set",
-            &[("index", "number"), ("value", "LuaValue")],
-            "()",
-            "Replace the element at a 1-based index.",
-        )
-        .method(
-            "push",
-            &[("value", "LuaValue")],
-            "()",
-            "Append `value` to the end of the array.",
-        )
-        .method("len", &[], "number", "Current length of the array.")
-        .method(
-            "to_table",
-            &[],
-            "LuaValue",
-            "Materialise the array as a 1-indexed Lua table.",
-        );
+        Array::lua(a);
     });
 
     // `JsonNull` has no methods (only `__eq` and `__tostring`); it is recorded so `json.null` and the parse
@@ -1040,14 +999,6 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     // member would be one the live value does not have. So the type tells a null apart from a scalar but not
     // from a handle or a table; the doc says to test with `== json.null`.
     m.userdata("JsonNull", |_| {});
-    m.const_(
-        "null",
-        "JsonNull",
-        concat!(
-            "Sentinel userdata for explicit JSON `null`, distinct from Lua `nil`. Test for it with `v == json.null`: ",
-            "its type, `lib_json_JsonNull`, is structurally empty, so any table satisfies it."
-        ),
-    );
 
     Ok(m)
 }

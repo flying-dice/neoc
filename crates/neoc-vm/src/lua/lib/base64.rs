@@ -26,20 +26,20 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `base64.decode*` channel prefix.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:base64")?;
-    m.func_of(&encode::lua(), encode)?
-        .func_of(&encode_no_pad::lua(), encode_no_pad)?
-        .func_of(&encode_url_safe::lua(), encode_url_safe)?
-        .func_of(&encode_url_safe_no_pad::lua(), encode_url_safe_no_pad)?
-        .declared(decode::lua(), lua.create_function(decode)?)?
-        .declared(decode_no_pad::lua(), lua.create_function(decode_no_pad)?)?
-        .declared(
-            decode_url_safe::lua(),
-            lua.create_function(decode_url_safe)?,
-        )?
-        .declared(
-            decode_url_safe_no_pad::lua(),
-            lua.create_function(decode_url_safe_no_pad)?,
-        )?;
+    m.func_of(&encode::lua(), encode)?;
+    m.func_of(&encode_no_pad::lua(), encode_no_pad)?;
+    m.func_of(&encode_url_safe::lua(), encode_url_safe)?;
+    m.func_of(&encode_url_safe_no_pad::lua(), encode_url_safe_no_pad)?;
+    m.declared(decode::lua(), lua.create_function(decode)?)?;
+    m.declared(decode_no_pad::lua(), lua.create_function(decode_no_pad)?)?;
+    m.declared(
+        decode_url_safe::lua(),
+        lua.create_function(decode_url_safe)?,
+    )?;
+    m.declared(
+        decode_url_safe_no_pad::lua(),
+        lua.create_function(decode_url_safe_no_pad)?,
+    )?;
     Ok(m)
 }
 

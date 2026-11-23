@@ -118,8 +118,11 @@ impl ServerHandle {
     }
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for ServerHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Return the local address the server is bound to.
+        #[lua("string")]
         methods.add_method("addr", |_, this, _: ()| {
             let state = this.inner.state.lock();
             match &*state {
@@ -129,6 +132,8 @@ impl UserData for ServerHandle {
             }
         });
 
+        /// Initiate graceful shutdown; returns immediately. Use `:wait()` to block until stopped.
+        #[lua("()")]
         methods.add_method("close", |_, this, _: ()| {
             let mut state = this.inner.state.lock();
             if let ServerState::Listening { shutdown, .. } = &mut *state
@@ -146,6 +151,8 @@ impl UserData for ServerHandle {
         // local graceful shutdown so the run_server loop drains cleanly.
         // The wait does not hold the VM (an embedder's turn): the server's own
         // handlers keep running while a script sits in `server:wait()`.
+        /// Block until the server stops accepting connections (`:close()`, the process shutdown signal, or an embedder shutting the script down).
+        #[lua("()")]
         async_method(methods, "wait", Role::Mixed, |lua, this, (): ()| {
             let inner = this.inner.clone();
             let life = Life::of(&lua);

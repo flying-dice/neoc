@@ -84,39 +84,9 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         async_function(lua, Role::Wait, |lua, opts: Table| start_generic(lua, opts))?,
     )?;
 
-    m.userdata("MysqlContainer", |c| {
-        c.method(
-            "url",
-            &[],
-            "string",
-            "Return a MySQL connection URL pre-formatted for `sqlx_mysql.open` (user `root`, no password, database `test`).",
-        )
-        .method("host", &[], "string", "Return the container host (always `\"127.0.0.1\"`).")
-        .method("port", &[], "number", "Return the mapped host port for MySQL's 3306.")
-        .method(
-            "stop",
-            &[],
-            "()",
-            "Stop the container; idempotent. The container also stops on garbage collection if not stopped explicitly.",
-        );
-    });
+    m.userdata("MysqlContainer", TypedContainer::<Mysql>::lua);
 
-    m.userdata("PostgresContainer", |c| {
-        c.method(
-            "url",
-            &[],
-            "string",
-            "Return a Postgres connection URL pre-formatted for `sqlx_postgres.open` (user `postgres`, password `postgres`, database `postgres`).",
-        )
-        .method("host", &[], "string", "Return the container host (always `\"127.0.0.1\"`).")
-        .method("port", &[], "number", "Return the mapped host port for Postgres's 5432.")
-        .method(
-            "stop",
-            &[],
-            "()",
-            "Stop the container; idempotent. The container also stops on garbage collection if not stopped explicitly.",
-        );
-    });
+    m.userdata("PostgresContainer", TypedContainer::<Postgres>::lua);
 
     m.userdata("GenericContainer", |c| {
         GenericContainer::lua(c);
@@ -135,12 +105,17 @@ trait TypedImage:
 {
     const CONTAINER_PORT: u16;
     const OP_NAME: &'static str;
+    /// What the declarations say of `url` and of `port`.
+    const URL_DOC: &'static str;
+    const PORT_DOC: &'static str;
     fn url(host: &str, port: u16) -> String;
 }
 
 impl TypedImage for Mysql {
     const CONTAINER_PORT: u16 = 3306;
     const OP_NAME: &'static str = "testcontainers_modules.mysql";
+    const URL_DOC: &'static str = "Return a MySQL connection URL pre-formatted for `sqlx_mysql.open` (user `root`, no password, database `test`).";
+    const PORT_DOC: &'static str = "Return the mapped host port for MySQL's 3306.";
 
     /// `Mysql::default()` exposes db `test` to user `root` with no password.
     fn url(host: &str, port: u16) -> String {
@@ -151,6 +126,8 @@ impl TypedImage for Mysql {
 impl TypedImage for Postgres {
     const CONTAINER_PORT: u16 = 5432;
     const OP_NAME: &'static str = "testcontainers_modules.postgres";
+    const URL_DOC: &'static str = "Return a Postgres connection URL pre-formatted for `sqlx_postgres.open` (user `postgres`, password `postgres`, database `postgres`).";
+    const PORT_DOC: &'static str = "Return the mapped host port for Postgres's 5432.";
 
     /// `Postgres::default()` exposes db `postgres` to user `postgres`/`postgres`.
     fn url(host: &str, port: u16) -> String {
@@ -188,14 +165,21 @@ async fn start_typed<I: TypedImage>(lua: Lua) -> mlua::Result<(Value, Value)> {
     )
 }
 
+#[neoc_macros::lua_userdata]
 impl<I> UserData for TypedContainer<I>
 where
-    I: testcontainers_modules::testcontainers::Image + 'static,
+    I: TypedImage,
 {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        #[lua("string", doc = I::URL_DOC)]
         methods.add_method("url", |_, this, _: ()| Ok(this.url.clone()));
+        /// Return the container host (always `"127.0.0.1"`).
+        #[lua("string")]
         methods.add_method("host", |_, this, _: ()| Ok(this.host.clone()));
+        #[lua("number", doc = I::PORT_DOC)]
         methods.add_method("port", |_, this, _: ()| Ok(this.port as i32));
+        /// Stop the container; idempotent. The container also stops on garbage collection if not stopped explicitly.
+        #[lua("()")]
         async_method(methods, "stop", Role::Wait, |_, this, _: ()| {
             let inner = this.inner.clone();
             async move { stop_container(inner).await }

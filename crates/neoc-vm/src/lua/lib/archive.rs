@@ -69,31 +69,31 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:archive")?;
 
-    m.set("tar_create_bytes", lua.create_function(tar_create_bytes)?)?
-        .set("tar_create", lua.create_function(tar_create)?)?
-        .set("tar_extract", lua.create_function(tar_extract)?)?
-        .set("tar_extract_bytes", lua.create_function(tar_extract_bytes)?)?
-        .set("tar_list", lua.create_function(tar_list)?)?
-        .set("tar_list_bytes", lua.create_function(tar_list_bytes)?)?
-        .set("zip_create_bytes", lua.create_function(zip_create_bytes)?)?
-        .set("zip_create", lua.create_function(zip_create)?)?
-        .set("zip_extract", lua.create_function(zip_extract)?)?
-        .set("zip_extract_bytes", lua.create_function(zip_extract_bytes)?)?
-        .set("zip_list", lua.create_function(zip_list)?)?
-        .set("zip_list_bytes", lua.create_function(zip_list_bytes)?)?;
+    m.set("tar_create_bytes", lua.create_function(tar_create_bytes)?)?;
+    m.set("tar_create", lua.create_function(tar_create)?)?;
+    m.set("tar_extract", lua.create_function(tar_extract)?)?;
+    m.set("tar_extract_bytes", lua.create_function(tar_extract_bytes)?)?;
+    m.set("tar_list", lua.create_function(tar_list)?)?;
+    m.set("tar_list_bytes", lua.create_function(tar_list_bytes)?)?;
+    m.set("zip_create_bytes", lua.create_function(zip_create_bytes)?)?;
+    m.set("zip_create", lua.create_function(zip_create)?)?;
+    m.set("zip_extract", lua.create_function(zip_extract)?)?;
+    m.set("zip_extract_bytes", lua.create_function(zip_extract_bytes)?)?;
+    m.set("zip_list", lua.create_function(zip_list)?)?;
+    m.set("zip_list_bytes", lua.create_function(zip_list_bytes)?)?;
 
-    m.record(tar_create_bytes::lua())
-        .record(tar_create::lua())
-        .record(tar_extract::lua())
-        .record(tar_extract_bytes::lua())
-        .record(tar_list::lua())
-        .record(tar_list_bytes::lua())
-        .record(zip_create_bytes::lua())
-        .record(zip_create::lua())
-        .record(zip_extract::lua())
-        .record(zip_extract_bytes::lua())
-        .record(zip_list::lua())
-        .record(zip_list_bytes::lua());
+    m.record(tar_create_bytes::lua());
+    m.record(tar_create::lua());
+    m.record(tar_extract::lua());
+    m.record(tar_extract_bytes::lua());
+    m.record(tar_list::lua());
+    m.record(tar_list_bytes::lua());
+    m.record(zip_create_bytes::lua());
+    m.record(zip_create::lua());
+    m.record(zip_extract::lua());
+    m.record(zip_extract_bytes::lua());
+    m.record(zip_list::lua());
+    m.record(zip_list_bytes::lua());
 
     Ok(m)
 }
