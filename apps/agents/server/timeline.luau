@@ -92,20 +92,28 @@ end
 
 -- Change the fields given of an item and tell the window.
 function timeline.set(chat: string, id: number, fields: Fields)
-  db:exec(
-    [[update items set
-        text = coalesce(:text, text), name = coalesce(:name, name), data = coalesce(:data, data),
-        done = coalesce(:done, done)
-      where thread_id = :c and id = :id]],
-    {
-      c = chat,
-      id = id,
-      text = fields.text,
-      name = fields.name,
-      data = fields.data,
-      done = if fields.done == nil then nil elseif fields.done then 1 else 0,
-    }
-  )
+  -- only the columns given are named: a parameter with no value is no parameter
+  local changes: { string } = {}
+  local values: { [string]: any } = { c = chat, id = id }
+  if fields.text ~= nil then
+    table.insert(changes, "text = :text")
+    values.text = fields.text
+  end
+  if fields.name ~= nil then
+    table.insert(changes, "name = :name")
+    values.name = fields.name
+  end
+  if fields.data ~= nil then
+    table.insert(changes, "data = :data")
+    values.data = fields.data
+  end
+  if fields.done ~= nil then
+    table.insert(changes, "done = :done")
+    values.done = if fields.done then 1 else 0
+  end
+  if #changes > 0 then
+    db:exec(`update items set {table.concat(changes, ", ")} where thread_id = :c and id = :id`, values)
+  end
   announce(chat, id)
 end
 

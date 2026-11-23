@@ -125,10 +125,10 @@ end
 local function touch(chat: string, title: string?)
   db:exec(
     [[update threads
-      set title = case when title = 'New chat' and :t is not null then :t else title end,
+      set title = case when title = 'New chat' and :t <> '' then :t else title end,
           updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
       where id = :id]],
-    { t = title, id = chat }
+    { t = title or "", id = chat }
   )
 end
 

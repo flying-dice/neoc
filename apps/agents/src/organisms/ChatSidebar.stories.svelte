@@ -10,10 +10,12 @@
     chats: readonly Chat[]
     selected?: string
     onstart: (agent: Agent) => void
+    onedit: (agent: Agent | null) => void
     onopen: (chat: Chat) => void
   }
 
   const onstart = fn<(agent: Agent) => void>()
+  const onedit = fn<(agent: Agent | null) => void>()
   const onopen = fn<(chat: Chat) => void>()
 
   const chat = (id: string, title: string): Chat => ({ id, title, agent: SCRIPTED.name, updated: '2026-06-09T08:41:00.000Z' })
@@ -24,9 +26,10 @@
     title: 'Organisms/ChatSidebar',
     component: ChatSidebar,
     tags: ['autodocs'],
-    args: { agents: [SCRIPTED], chats: [], onstart, onopen },
+    args: { agents: [SCRIPTED], chats: [], onstart, onedit, onopen },
     beforeEach: () => {
       onstart.mockClear()
+      onedit.mockClear()
       onopen.mockClear()
     },
     render: template
@@ -57,10 +60,19 @@
   }}
 />
 
+<!-- Nobody to chat with yet: the way to add an agent. -->
+<Story
+  name="No agents"
+  args={{ agents: [] }}
+  play={async ({ canvas }) => {
+    await expect(canvas.getByTestId('agents-add')).toBeVisible()
+  }}
+/>
+
 <Story
   name="Several agents"
   args={{
-    agents: [SCRIPTED, { id: 'writer', name: 'Writer', role: 'Drafts and edits', icon: 'square.and.pencil' }],
+    agents: [SCRIPTED, { id: 'writer', name: 'Writer', url: 'https://writer.example.com/agui', token: true }],
     chats: CHATS.slice(0, 1)
   }}
 />
@@ -74,5 +86,12 @@
     await expect(onstart).toHaveBeenCalledWith(SCRIPTED)
     await userEvent.click(canvas.getByTestId('agents-chat-a'))
     await expect(onopen).toHaveBeenCalledWith(CHATS[0])
+    // the button on an agent's row changes the agent, and does not start a chat with it
+    onstart.mockClear()
+    await userEvent.click(canvas.getByTestId('agents-edit-scripted'))
+    await expect(onedit).toHaveBeenCalledWith(SCRIPTED)
+    await expect(onstart).not.toHaveBeenCalled()
+    await userEvent.click(canvas.getByTestId('agents-add'))
+    await expect(onedit).toHaveBeenCalledWith(null)
   }}
 />

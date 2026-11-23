@@ -1,9 +1,10 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
-  import type { Conversation } from 'app:rpc'
+  import type { Conversation, Item } from 'app:rpc'
+  import type { UserAction } from '../lib/a2ui'
   import ChatThread from './ChatThread.svelte'
-  import { conversation } from '../lib/fakeApi'
+  import { SURFACE, conversation } from '../lib/fakeApi'
 
   interface Args {
     conversation: Conversation
@@ -13,28 +14,58 @@
     ondraft: (text: string) => void
     onsend: () => void
     onstop: () => void
+    onanswer: (item: Item, answer: string | null) => void
+    onaction: (item: Item, action: UserAction) => void
+    onremove: () => void
     onback?: () => void
   }
 
   const ondraft = fn<(text: string) => void>()
   const onsend = fn<() => void>()
   const onstop = fn<() => void>()
+  const onanswer = fn<(item: Item, answer: string | null) => void>()
+  const onaction = fn<(item: Item, action: UserAction) => void>()
+  const onremove = fn<() => void>()
   const onback = fn<() => void>()
 
   const TALK = conversation('a', 'What is 12 times 7?', [
     ['user', 'What is 12 times 7?'],
-    ['agent', '12 times 7 is 84.'],
+    ['assistant', '12 times 7 is 84.'],
     ['user', 'And divided by 4?']
   ])
   const answering = (text: string): Conversation => ({
     ...TALK,
-    messages: [...TALK.messages, { id: 9, chat: 'a', role: 'agent', text, done: false }],
+    items: [...TALK.items, { id: 9, chat: 'a', kind: 'assistant', text, name: '', data: '', done: false }],
     busy: true
   })
+  /** Everything an agent can put in a chat besides its words. */
+  const WORK = conversation('w', 'Add milk to my list', [
+    ['user', 'Add milk to my list'],
+    { kind: 'reasoning', text: 'The person keeps a shopping list in Notes. I should add to it.' },
+    { kind: 'step', name: 'plan' },
+    { kind: 'tool', name: 'notes__add', text: '{"title":"Milk"}', data: JSON.stringify({ ours: true, result: '{"id":12}' }) },
+    { kind: 'tool', name: 'web_search', text: '{"q":"milk"}', data: JSON.stringify({ ours: false }), done: false },
+    { kind: 'subagent', name: 'researcher', text: 'Looks for prices', data: JSON.stringify({ error: 'It ran out of time.' }) },
+    { kind: 'activity', name: 'PLAN', data: JSON.stringify({ steps: ['find the list', 'add milk'] }) },
+    { kind: 'custom', name: 'usage', data: JSON.stringify({ tokens: 412 }) },
+    ['assistant', 'Milk is on your list.'],
+    { kind: 'error', text: "The agent's answer ended before it was finished." }
+  ])
+  const ASKED = conversation('q', 'Send the report', [
+    ['user', 'Send the report'],
+    { kind: 'interrupt', text: 'Send the report to everyone?', name: 'approval', data: JSON.stringify({ status: 'open' }), done: false }
+  ])
+  const DRAWN = conversation('s', 'Book a table', [
+    ['user', 'Book a table'],
+    { kind: 'activity', name: 'a2ui-surface', data: JSON.stringify(SURFACE) }
+  ])
+  const field = (canvas: { getByTestId(id: string): HTMLElement }, id: string): HTMLInputElement =>
+    canvas.getByTestId(id).shadowRoot!.querySelector('input')!
+
   const long = conversation(
     'l',
     'A long chat',
-    Array.from({ length: 24 }, (_, i): ['user' | 'agent', string] => [i % 2 === 0 ? 'user' : 'agent', `Line ${i + 1}`])
+    Array.from({ length: 24 }, (_, i): ['user' | 'assistant', string] => [i % 2 === 0 ? 'user' : 'assistant', `Line ${i + 1}`])
   )
 
   /** One chat: its title, what was said, the composer. It keeps nothing but where the log is scrolled to. */
@@ -42,9 +73,12 @@
     title: 'Organisms/ChatThread',
     component: ChatThread,
     tags: ['autodocs'],
-    args: { conversation: TALK, draft: '', ondraft, onsend, onstop, onback },
+    args: { conversation: TALK, draft: '', ondraft, onsend, onstop, onanswer, onaction, onremove, onback },
     beforeEach: () => {
       onback.mockClear()
+      onanswer.mockClear()
+      onaction.mockClear()
+      onremove.mockClear()
     },
     render: template
   })
@@ -74,7 +108,54 @@
   args={{ conversation: answering('84 divided by') }}
   play={async ({ canvas }) => {
     await expect(canvas.getByTestId('agents-composer-stop')).toBeVisible()
-    await expect(canvas.getByTestId('agents-message-agent-9')).toHaveTextContent('84 divided by')
+    await expect(canvas.getByTestId('agents-message-assistant-9')).toHaveTextContent('84 divided by')
+  }}
+/>
+
+<!-- What an agent did: its reasoning and tools closed until asked for, an activity it reported, and a run that failed. -->
+<Story
+  name="What the agent did"
+  args={{ conversation: { ...WORK, state: '{"list":["Milk"]}' } }}
+  play={async ({ canvas, userEvent }) => {
+    await expect(canvas.getByTestId('agents-item-tool-4')).toHaveTextContent('notes__add')
+    await expect(canvas.getByTestId('agents-item-tool-4')).toHaveTextContent('an app on this machine')
+    await userEvent.click(canvas.getByTestId('agents-item-tool-4-summary'))
+    await expect(canvas.getByTestId('agents-item-tool-4')).toHaveTextContent('"title": "Milk"')
+    await expect(canvas.getByTestId('agents-item-subagent-6')).toHaveTextContent('It ran out of time.')
+    await expect(canvas.getByTestId('agents-item-activity-7')).toHaveTextContent('find the list')
+    await expect(canvas.getByTestId('agents-item-error-10')).toHaveTextContent('ended before it was finished')
+    await expect(canvas.getByTestId('agents-state')).toHaveTextContent('State the agent shares')
+  }}
+/>
+
+<!-- The agent stopped at a question: it is answered or declined in the chat, and nothing else is sent until then. -->
+<Story
+  name="A question from the agent"
+  args={{ conversation: ASKED }}
+  play={async ({ canvas, userEvent }) => {
+    await expect(canvas.getByTestId('agents-question-2')).toHaveTextContent('Send the report to everyone?')
+    await expect(canvas.getByTestId('agents-composer-send')).toHaveProperty('disabled', true)
+    await userEvent.type(field(canvas, 'agents-question-2-input'), 'Only to Ada')
+    await userEvent.click(canvas.getByTestId('agents-question-2-answer'))
+    await expect(onanswer).toHaveBeenCalledWith(ASKED.items[1], 'Only to Ada')
+    await userEvent.click(canvas.getByTestId('agents-question-2-decline'))
+    await expect(onanswer).toHaveBeenCalledWith(ASKED.items[1], null)
+  }}
+/>
+
+<!-- A surface the agent drew (A2UI): what is typed in it changes its text at once, and its button tells the agent. -->
+<Story
+  name="A surface the agent drew"
+  args={{ conversation: DRAWN }}
+  play={async ({ canvas, userEvent }) => {
+    await expect(canvas.getByTestId('agents-surface-booking')).toHaveTextContent('A table for 2, for Ada.')
+    await userEvent.type(field(canvas, 'agents-a2ui-booking-who'), ' L')
+    await expect(canvas.getByTestId('agents-surface-booking')).toHaveTextContent('A table for 2, for Ada L.')
+    await userEvent.click(canvas.getByTestId('agents-a2ui-booking-confirm'))
+    await expect(onaction).toHaveBeenCalledWith(
+      DRAWN.items[1],
+      expect.objectContaining({ name: 'confirm', surfaceId: 'booking', sourceComponentId: 'confirm', context: { name: 'Ada L' } })
+    )
   }}
 />
 
@@ -95,6 +176,15 @@
     const thread = canvas.getByTestId('agents-thread')
     await expect(thread.scrollHeight).toBeGreaterThan(thread.clientHeight)
     await expect(Math.ceil(thread.scrollTop + thread.clientHeight)).toBeGreaterThanOrEqual(thread.scrollHeight - 1)
+  }}
+/>
+
+<Story
+  name="Deleting the chat"
+  tags={['play-only']}
+  play={async ({ canvas, userEvent }) => {
+    await userEvent.click(canvas.getByTestId('agents-remove-chat'))
+    await expect(onremove).toHaveBeenCalledTimes(1)
   }}
 />
 
