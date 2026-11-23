@@ -15,6 +15,7 @@ pub mod mime;
 pub mod pkey;
 pub mod random;
 pub mod regex;
+pub mod semver;
 pub mod text;
 pub mod unicode;
 pub mod url;
