@@ -2,4 +2,6 @@
 //! its file; its `pub mod` line here is what compiles and links it.
 
 pub mod env;
+pub mod osstr;
+pub mod path;
 pub mod time;
