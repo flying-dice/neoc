@@ -3,8 +3,8 @@
 //! A script table can run script code when it is read (a `__index`), so every argument is turned into plain data
 //! ([`Json`]) in the synchronous part of the call, as `vnd:hyper` reads its options. Two kinds of table arrive:
 //!
-//! - **options** ([`Opts`]): this module's own lower-case keys (`all`, `force`, `filters`, `tail`). A key that is not
-//!   one of the call's is refused, so a misspelt option fails instead of being ignored.
+//! - **options** (the structs of `args`): this module's own lower-case keys (`all`, `force`, `filters`, `tail`). A
+//!   key that is not one of the call's is refused, so a misspelt option fails instead of being ignored.
 //! - **Docker's own bodies** ([`body`]): the create calls take Docker's JSON as a table, with Docker's field names
 //!   (`Image`, `HostConfig`, `Labels`), and pass it through.
 //!
@@ -12,25 +12,22 @@
 //! to Docker an absent field and an empty list or map mean the same in every create body. It also writes a whole
 //! number as an integer, which is what Docker's integer fields take.
 
-use std::collections::HashMap;
-
 use mlua::Value;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value as Json};
 
 use super::error::BollardError;
-use crate::lua::serde_guard::refuse_buffer;
+use crate::lua::facade::args::Refused;
 
 /// The longest name of a container, volume or network Docker takes, and far more than any image reference needs.
 const MAX_NAME: usize = 512;
 
-/// A script value as plain data. A buffer is refused (raised, as every serde conversion of a script value does:
-/// `serde_guard`); anything else that cannot be data (a function, a table that holds itself) is `invalid_input`.
-pub(super) fn json(value: &Value, op: &str) -> mlua::Result<Result<Json, BollardError>> {
-    refuse_buffer(value, op)?;
-    Ok(serde_json::to_value(value)
+/// A script value as plain data, or why it cannot be data (a function, a table that holds itself). The caller
+/// refuses a buffer first (`serde_guard`).
+pub(super) fn json(value: &Value) -> Result<Json, Refused> {
+    serde_json::to_value(value)
         .map(tidy)
-        .map_err(|e| BollardError::invalid_input(e.to_string())))
+        .map_err(|e| Refused(e.to_string()))
 }
 
 /// `value` without its empty tables and with whole numbers as integers (see the module docs). An empty Luau table
@@ -74,7 +71,7 @@ pub(super) fn body<T: DeserializeOwned>(value: Json, what: &str) -> Result<T, Bo
 
 /// The name of a container, volume or network as it goes into the request path: Docker's own alphabet
 /// (`[A-Za-z0-9][A-Za-z0-9_.-]*`), so a name cannot reach another endpoint. An id is hexadecimal and passes.
-pub(super) fn name(name: &str, what: &str) -> Result<String, BollardError> {
+pub(super) fn name(name: &str, what: &str) -> Result<String, Refused> {
     let first_ok = name
         .bytes()
         .next()
@@ -83,7 +80,7 @@ pub(super) fn name(name: &str, what: &str) -> Result<String, BollardError> {
         .bytes()
         .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'));
     if !first_ok || !rest_ok || name.len() > MAX_NAME {
-        return Err(BollardError::invalid_input(format!(
+        return Err(Refused(format!(
             "{what} must be a name or an id: letters, digits, `_`, `.` and `-`, starting with a letter or digit"
         )));
     }
@@ -92,7 +89,7 @@ pub(super) fn name(name: &str, what: &str) -> Result<String, BollardError> {
 
 /// An image reference as it goes into the request path or query: a name's alphabet plus `/`, `:` and `@`
 /// (`registry:5000/team/app:1.2`, `app@sha256:...`), with no empty or dot-only path part.
-pub(super) fn image(reference: &str) -> Result<String, BollardError> {
+pub(super) fn image(reference: &str) -> Result<String, Refused> {
     let chars_ok = reference
         .bytes()
         .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-' | b'/' | b':' | b'@'));
@@ -100,8 +97,9 @@ pub(super) fn image(reference: &str) -> Result<String, BollardError> {
         .split('/')
         .all(|part| !part.is_empty() && part != "." && part != "..");
     if !chars_ok || !parts_ok || reference.len() > MAX_NAME {
-        return Err(BollardError::invalid_input(
-            "the image must be a reference like `nginx`, `nginx:1.27` or `registry:5000/team/app@sha256:...`",
+        return Err(Refused(
+            "the image must be a reference like `nginx`, `nginx:1.27` or `registry:5000/team/app@sha256:...`"
+                .to_owned(),
         ));
     }
     Ok(reference.to_owned())
@@ -109,7 +107,7 @@ pub(super) fn image(reference: &str) -> Result<String, BollardError> {
 
 /// An image reference as the repository and the tag a pull names. Without a tag or a digest the tag is `latest`:
 /// Docker's API pulls *every* tag of a repository when none is given, which no caller of `pull_image` means.
-pub(super) fn pull_target(reference: &str) -> Result<(String, Option<String>), BollardError> {
+pub(super) fn pull_target(reference: &str) -> Result<(String, Option<String>), Refused> {
     let reference = image(reference)?;
     if reference.contains('@') {
         return Ok((reference, None));
@@ -122,116 +120,6 @@ pub(super) fn pull_target(reference: &str) -> Result<(String, Option<String>), B
         }
         None => (reference, Some("latest".to_owned())),
     })
-}
-
-/// The options table of one call.
-pub(super) struct Opts {
-    fields: Map<String, Json>,
-}
-
-impl Opts {
-    /// The options a script gave (`nil` and `{}` are no options), which may hold only the keys in `allowed`.
-    pub(super) fn read(value: Option<Json>, allowed: &[&str]) -> Result<Self, BollardError> {
-        let fields = match value {
-            None | Some(Json::Null) => Map::new(),
-            Some(Json::Object(fields)) => fields,
-            Some(_) => {
-                return Err(BollardError::invalid_input(
-                    "the options must be a table of named options",
-                ));
-            }
-        };
-        if let Some(unknown) = fields.keys().find(|key| !allowed.contains(&key.as_str())) {
-            return Err(BollardError::invalid_input(format!(
-                "unknown option `{unknown}` (this call takes: {})",
-                allowed.join(", ")
-            )));
-        }
-        Ok(Self { fields })
-    }
-
-    pub(super) fn bool(&self, key: &str) -> Result<Option<bool>, BollardError> {
-        match self.fields.get(key) {
-            None => Ok(None),
-            Some(Json::Bool(b)) => Ok(Some(*b)),
-            Some(_) => Err(wrong(key, "true or false")),
-        }
-    }
-
-    pub(super) fn string(&self, key: &str) -> Result<Option<String>, BollardError> {
-        match self.fields.get(key) {
-            None => Ok(None),
-            Some(Json::String(s)) => Ok(Some(s.clone())),
-            Some(_) => Err(wrong(key, "a string")),
-        }
-    }
-
-    /// A whole number that fits Docker's 32-bit parameters (a count of lines, seconds, a Unix time).
-    pub(super) fn int(&self, key: &str) -> Result<Option<i32>, BollardError> {
-        match self.fields.get(key) {
-            None => Ok(None),
-            Some(value) => value
-                .as_i64()
-                .and_then(|n| i32::try_from(n).ok())
-                .map(Some)
-                .ok_or_else(|| wrong(key, "a whole number")),
-        }
-    }
-
-    /// A positive number of seconds.
-    pub(super) fn seconds(&self, key: &str) -> Result<Option<f64>, BollardError> {
-        match self.fields.get(key) {
-            None => Ok(None),
-            Some(value) => value
-                .as_f64()
-                .filter(|secs| secs.is_finite() && *secs > 0.0)
-                .map(Some)
-                .ok_or_else(|| wrong(key, "a positive number of seconds")),
-        }
-    }
-
-    pub(super) fn strings(&self, key: &str) -> Result<Option<Vec<String>>, BollardError> {
-        match self.fields.get(key) {
-            None => Ok(None),
-            Some(value) => string_list(value)
-                .map(Some)
-                .ok_or_else(|| wrong(key, "a list of strings")),
-        }
-    }
-
-    /// Docker's `filters`: each name with the values it may have (`{ label = { "app=web" }, status = "running" }`;
-    /// one value may be written without its list).
-    pub(super) fn filters(&self) -> Result<Option<HashMap<String, Vec<String>>>, BollardError> {
-        let expected = "a table of filter names, each with a string or a list of strings";
-        match self.fields.get("filters") {
-            None => Ok(None),
-            Some(Json::Object(filters)) => filters
-                .iter()
-                .map(|(name, values)| {
-                    let values = match values {
-                        Json::String(one) => Some(vec![one.clone()]),
-                        many => string_list(many),
-                    };
-                    values.map(|values| (name.clone(), values))
-                })
-                .collect::<Option<HashMap<_, _>>>()
-                .map(Some)
-                .ok_or_else(|| wrong("filters", expected)),
-            Some(_) => Err(wrong("filters", expected)),
-        }
-    }
-}
-
-fn string_list(value: &Json) -> Option<Vec<String>> {
-    value
-        .as_array()?
-        .iter()
-        .map(|item| item.as_str().map(str::to_owned))
-        .collect()
-}
-
-fn wrong(key: &str, expected: &str) -> BollardError {
-    BollardError::invalid_input(format!("option `{key}` must be {expected}"))
 }
 
 #[cfg(test)]
@@ -300,44 +188,5 @@ mod tests {
             ("registry:5000/team/app".into(), Some("1.2".into()))
         );
         assert_eq!(target("app@sha256:abc"), ("app@sha256:abc".into(), None));
-    }
-
-    #[test]
-    fn options_refuse_unknown_keys_and_wrong_types() {
-        let read = |value| Opts::read(Some(value), &["all", "tail", "filters", "timeout"]);
-        assert!(Opts::read(None, &[]).is_ok());
-        assert!(read(Json::Null).is_ok());
-        let unknown = read(json!({ "al": true })).err().unwrap().to_string();
-        assert!(unknown.contains("unknown option `al`"), "{unknown}");
-        assert!(read(json!("all")).is_err());
-
-        let opts = read(json!({ "all": true, "tail": 50, "timeout": 2.5 })).unwrap();
-        assert_eq!(opts.bool("all").unwrap(), Some(true));
-        assert_eq!(opts.int("tail").unwrap(), Some(50));
-        assert_eq!(opts.seconds("timeout").unwrap(), Some(2.5));
-        assert!(opts.string("all").is_err());
-        assert!(opts.bool("tail").is_err());
-        assert!(read(json!({ "tail": 1.5 })).unwrap().int("tail").is_err());
-        assert!(read(json!({ "tail": 1e12 })).unwrap().int("tail").is_err());
-        assert!(
-            read(json!({ "timeout": 0 }))
-                .unwrap()
-                .seconds("timeout")
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn filters_take_one_value_or_a_list() {
-        let opts = Opts::read(
-            Some(json!({ "filters": { "status": "running", "label": ["a=1", "b"] } })),
-            &["filters"],
-        )
-        .unwrap();
-        let filters = opts.filters().unwrap().unwrap();
-        assert_eq!(filters["status"], vec!["running"]);
-        assert_eq!(filters["label"], vec!["a=1", "b"]);
-        let bad = Opts::read(Some(json!({ "filters": { "status": 1 } })), &["filters"]).unwrap();
-        assert!(bad.filters().is_err());
     }
 }

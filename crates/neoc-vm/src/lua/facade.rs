@@ -144,6 +144,7 @@ impl<T: DeclType> DeclType for Handle<T> {
 
 /// A list a function hands a script: a table of `T` in order, declared `{ T }`. (A bare `Vec<u8>` is the bytes
 /// of a string, so a list says that it is one.)
+#[derive(Debug)]
 pub struct List<T>(pub Vec<T>);
 
 impl<T: IntoLua> IntoLua for List<T> {

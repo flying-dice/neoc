@@ -95,6 +95,12 @@ impl BollardError {
     }
 }
 
+impl From<crate::lua::facade::args::Refused> for BollardError {
+    fn from(refused: crate::lua::facade::args::Refused) -> Self {
+        Self::invalid_input(refused.0)
+    }
+}
+
 impl From<Error> for BollardError {
     fn from(e: Error) -> Self {
         match e {

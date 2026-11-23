@@ -174,8 +174,7 @@ fn whole(value: &Value) -> Option<i64> {
         // 2^63 is the first float past every i64
         Value::Number(n)
             if n.fract() == 0.0
-                && n >= -9_223_372_036_854_775_808.0
-                && n < 9_223_372_036_854_775_808.0 =>
+                && (-9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0).contains(&n) =>
         {
             Some(n as i64)
         }
@@ -321,3 +320,8 @@ pub fn refused<T, E: std::fmt::Display>(
 ) -> mlua::Result<crate::lua::sandbox::Fallible<T>> {
     crate::lua::sandbox::from_err(op, e)
 }
+
+/// The name of the method being called, as its errors carry it (`bollard.logs`): a method that takes one as a
+/// leading parameter is given it by `lua_methods`.
+#[derive(Debug, Clone, Copy)]
+pub struct Op(pub &'static str);

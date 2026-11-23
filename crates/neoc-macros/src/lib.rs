@@ -73,8 +73,8 @@ use proc_macro2::{Span, TokenStream as Tokens};
 use quote::{ToTokens, quote};
 use syn::spanned::Spanned;
 use syn::{
-    Attribute, Expr, ExprClosure, FnArg, GenericArgument, Ident, ImplItem, ItemFn, ItemImpl, Lit,
-    LitStr, Pat, PathArguments, ReturnType, Stmt, Token, Type,
+    Attribute, Expr, ExprClosure, FnArg, GenericArgument, Ident, ImplItem, ImplItemFn, ItemFn,
+    ItemImpl, Lit, LitStr, Pat, PathArguments, ReturnType, Stmt, Token, Type,
 };
 
 /// Where neoc-vm keeps what the generated code names.
@@ -1504,7 +1504,9 @@ fn lua_module_impl(mut function: ItemFn) -> syn::Result<Tokens> {
 /// The block is the type's `impl UserData`: every method with a `self` receiver is a method a script calls,
 /// unless it says `#[lua(skip)]`. `#[lua(name = "...")]` gives another name, `#[lua(role = Mixed)]` the
 /// `lifecycle::Role` of an `async` method (`Wait` when not said), `#[lua(doc = EXPR)]` a doc that is put
-/// together. A first parameter of type `&Lua` (`Lua` for an `async` method) is the engine, not an argument.
+/// together. A leading parameter of type `&Lua` (`Lua` for an `async` method) is the engine, and one of type
+/// `Op` is the method's name as its errors carry it (`bollard.logs`): neither is an argument. An `async`
+/// method runs in a span `<module>.call` at target `lua::lib::<module>`, with that name as `op`.
 #[proc_macro_attribute]
 pub fn lua_methods(args: TokenStream, item: TokenStream) -> TokenStream {
     let named = syn::parse_macro_input!(args as Named);
@@ -1590,6 +1592,154 @@ fn is_engine(ty: &Type) -> bool {
     matches!(ty, Type::Path(path) if path.path.segments.last().is_some_and(|s| s.ident == "Lua"))
 }
 
+/// Whether a parameter's type is `Op`: the method's own name as its errors carry it (`bollard.logs`).
+fn is_op(ty: &Type) -> bool {
+    matches!(ty, Type::Path(path) if path.path.segments.last().is_some_and(|s| s.ident == "Op"))
+}
+
+/// One method of a `lua_methods` block: its registration, and what the declarations say of it.
+#[allow(clippy::too_many_lines)] // the generated registration, written out once
+fn method_of(
+    method: &ImplItemFn,
+    words: MethodWords,
+    prefix: &str,
+) -> syn::Result<(Tokens, Tokens)> {
+    let facade = facade();
+    let target = format!("lua::lib::{prefix}");
+    let span = format!("{prefix}.call");
+    let ident = &method.sig.ident;
+    let name = words.name.map_or_else(|| ident.to_string(), |n| n.value());
+    let op = format!("{prefix}.{name}");
+    let doc = match (&words.doc, doc_of(&method.attrs)) {
+        (Some(doc), _) => quote!(&::std::string::String::from(#doc)),
+        (None, doc) => quote!(#doc),
+    };
+    let is_async = method.sig.asyncness.is_some();
+    // what the method is given that a script does not pass, in the order it takes them
+    let mut given = Vec::new();
+    let mut params = Vec::new();
+    for input in method.sig.inputs.iter().skip(1) {
+        let FnArg::Typed(typed) = input else { continue };
+        if params.is_empty() && is_engine(&typed.ty) {
+            given.push(if is_async {
+                quote!(__lua.clone())
+            } else {
+                quote!(__lua)
+            });
+            continue;
+        }
+        if params.is_empty() && is_op(&typed.ty) {
+            given.push(quote!(#facade::args::Op(#op)));
+            continue;
+        }
+        let Pat::Ident(binding) = &*typed.pat else {
+            return Err(syn::Error::new(
+                typed.pat.span(),
+                "a parameter of a method a script calls has a name: it is the name the script knows it by",
+            ));
+        };
+        params.push((binding.ident.clone(), &*typed.ty));
+    }
+    let idents: Vec<&Ident> = params.iter().map(|(ident, _)| ident).collect();
+    let types: Vec<&Type> = params.iter().map(|(_, ty)| *ty).collect();
+    let texts: Vec<String> = idents
+        .iter()
+        .map(|n| n.to_string().trim_start_matches("r#").to_owned())
+        .collect();
+    let returned = returned(&method.sig.output);
+    let refuse = if let Handed::Fallible(_, error) = &returned {
+        quote! {
+            return #facade::args::refused(#op, <#error as ::std::convert::From<#facade::args::Refused>>::from(refused))
+        }
+    } else {
+        quote! {
+            return ::std::result::Result::Err(::mlua::Error::runtime(::std::format!("{}: {}", #op, refused)))
+        }
+    };
+    let read = quote! {
+        let mut __args = __args.into_iter();
+        #(let #idents = match <#types as #facade::args::Argument>::read(
+            __args.next().unwrap_or(::mlua::Value::Nil),
+            &__lua,
+        )? {
+            ::std::result::Result::Ok(value) => value,
+            ::std::result::Result::Err(refused) => {
+                return ::std::result::Result::Ok(::std::result::Result::Err(refused));
+            }
+        };)*
+        ::std::result::Result::Ok(::std::result::Result::Ok((#(#idents,)*)))
+    };
+    let wait = if is_async { quote!(.await) } else { quote!() };
+    let call = || quote!(__this.#ident(#(#given,)* #(#idents),*) #wait);
+    let hand = |called: Tokens| match &returned {
+        Handed::Fallible(..) => quote! {
+            match #called {
+                ::std::result::Result::Ok(value) => crate::lua::sandbox::ok(value),
+                ::std::result::Result::Err(e) => crate::lua::sandbox::from_err(#op, e),
+            }
+        },
+        Handed::Raised(_) => called,
+        Handed::Plain(_) => quote!(::std::result::Result::Ok(#called)),
+    };
+    let reading = quote! {
+        let __read: ::mlua::Result<::std::result::Result<(#(#types,)*), #facade::args::Refused>> =
+            (|| { #read })();
+    };
+    let taken = quote! {
+        let (#(#idents,)*) = match __read? {
+            ::std::result::Result::Ok(read) => read,
+            ::std::result::Result::Err(refused) => { #refuse; }
+        };
+    };
+    let add = if is_async {
+        let role = words
+            .role
+            .unwrap_or_else(|| Ident::new("Wait", Span::call_site()));
+        let handed = hand(call());
+        quote! {
+            crate::lua::lifecycle::async_method(
+                methods,
+                #name,
+                crate::lua::lifecycle::Role::#role,
+                |__lua: ::mlua::Lua, __this: ::mlua::UserDataRef<Self>, __args: ::mlua::MultiValue| {
+                    #reading
+                    let __this = <Self as ::std::clone::Clone>::clone(&__this);
+                    ::tracing::Instrument::instrument(
+                        async move {
+                            #taken
+                            #handed
+                        },
+                        ::tracing::info_span!(target: #target, #span, op = #op),
+                    )
+                },
+            );
+        }
+    } else {
+        let handed = hand(call());
+        quote! {
+            methods.add_method(#name, |__lua: &::mlua::Lua, __this: &Self, __args: ::mlua::MultiValue| {
+                #reading
+                #taken
+                #handed
+            });
+        }
+    };
+    let ret = match &returned {
+        Handed::Fallible(value, _) => {
+            quote!(<crate::lua::sandbox::Fallible<#value> as #facade::DeclType>::decl_type())
+        }
+        Handed::Raised(value) => quote!(<#value as #facade::DeclType>::decl_type()),
+        Handed::Plain(value) => quote!(<#value as #facade::DeclType>::decl_type()),
+    };
+    let note = quote! {{
+        let params: ::std::vec::Vec<(&str, ::std::string::String)> =
+            ::std::vec![#((#texts, <#types as #facade::DeclType>::decl_type())),*];
+        let params: ::std::vec::Vec<(&str, &str)> = params.iter().map(|(n, t)| (*n, t.as_str())).collect();
+        spec.method(#name, &params, &#ret, #doc);
+    }};
+    Ok((add, note))
+}
+
 fn lua_methods_impl(mut block: ItemImpl, named: &Named) -> syn::Result<Tokens> {
     let facade = facade();
     let Some((module, type_name)) = &named.0 else {
@@ -1615,127 +1765,9 @@ fn lua_methods_impl(mut block: ItemImpl, named: &Named) -> syn::Result<Tokens> {
         if words.skip {
             continue;
         }
-        let ident = &method.sig.ident;
-        let name = words.name.map_or_else(|| ident.to_string(), |n| n.value());
-        let op = format!("{prefix}.{name}");
-        let doc = match (&words.doc, doc_of(&method.attrs)) {
-            (Some(doc), _) => quote!(&::std::string::String::from(#doc)),
-            (None, doc) => quote!(#doc),
-        };
-        let is_async = method.sig.asyncness.is_some();
-        let mut engine = false;
-        let mut params = Vec::new();
-        for (index, input) in method.sig.inputs.iter().enumerate().skip(1) {
-            let FnArg::Typed(typed) = input else { continue };
-            if index == 1 && is_engine(&typed.ty) {
-                engine = true;
-                continue;
-            }
-            let Pat::Ident(binding) = &*typed.pat else {
-                return Err(syn::Error::new(
-                    typed.pat.span(),
-                    "a parameter of a method a script calls has a name: it is the name the script knows it by",
-                ));
-            };
-            params.push((binding.ident.clone(), &*typed.ty));
-        }
-        let names: Vec<&Ident> = params.iter().map(|(name, _)| name).collect();
-        let types: Vec<&Type> = params.iter().map(|(_, ty)| *ty).collect();
-        let texts: Vec<String> = names
-            .iter()
-            .map(|n| n.to_string().trim_start_matches("r#").to_owned())
-            .collect();
-        let returned = returned(&method.sig.output);
-        let refuse = match &returned {
-            Handed::Fallible(_, error) => quote! {
-                return #facade::args::refused(#op, <#error as ::std::convert::From<#facade::args::Refused>>::from(refused))
-            },
-            _ => quote! {
-                return ::std::result::Result::Err(::mlua::Error::runtime(::std::format!("{}: {}", #op, refused)))
-            },
-        };
-        let read = quote! {
-            let mut __args = __args.into_iter();
-            #(let #names = match <#types as #facade::args::Argument>::read(
-                __args.next().unwrap_or(::mlua::Value::Nil),
-                &__lua,
-            )? {
-                ::std::result::Result::Ok(value) => value,
-                ::std::result::Result::Err(refused) => {
-                    return ::std::result::Result::Ok(::std::result::Result::Err(refused));
-                }
-            };)*
-            ::std::result::Result::Ok(::std::result::Result::Ok((#(#names,)*)))
-        };
-        let lua_arg = if engine {
-            quote!(__lua.clone(),)
-        } else {
-            quote!()
-        };
-        let lua_ref = if engine { quote!(__lua,) } else { quote!() };
-        let wait = if is_async { quote!(.await) } else { quote!() };
-        let call = |lua: &Tokens| quote!(__this.#ident(#lua #(#names),*) #wait);
-        let hand = |called: Tokens| match &returned {
-            Handed::Fallible(..) => quote! {
-                match #called {
-                    ::std::result::Result::Ok(value) => crate::lua::sandbox::ok(value),
-                    ::std::result::Result::Err(e) => crate::lua::sandbox::from_err(#op, e),
-                }
-            },
-            Handed::Raised(_) => called,
-            Handed::Plain(_) => quote!(::std::result::Result::Ok(#called)),
-        };
-        let reading = quote! {
-            let __read: ::mlua::Result<::std::result::Result<(#(#types,)*), #facade::args::Refused>> =
-                (|| { #read })();
-        };
-        let taken = quote! {
-            let (#(#names,)*) = match __read? {
-                ::std::result::Result::Ok(read) => read,
-                ::std::result::Result::Err(refused) => { #refuse; }
-            };
-        };
-        adds.push(if is_async {
-            let role = words.role.unwrap_or_else(|| Ident::new("Wait", Span::call_site()));
-            let handed = hand(call(&lua_arg));
-            quote! {
-                crate::lua::lifecycle::async_method(
-                    methods,
-                    #name,
-                    crate::lua::lifecycle::Role::#role,
-                    |__lua: ::mlua::Lua, __this: ::mlua::UserDataRef<Self>, __args: ::mlua::MultiValue| {
-                        #reading
-                        let __this = <Self as ::std::clone::Clone>::clone(&__this);
-                        async move {
-                            #taken
-                            #handed
-                        }
-                    },
-                );
-            }
-        } else {
-            let handed = hand(call(&lua_ref));
-            quote! {
-                methods.add_method(#name, |__lua: &::mlua::Lua, __this: &Self, __args: ::mlua::MultiValue| {
-                    #reading
-                    #taken
-                    #handed
-                });
-            }
-        });
-        let ret = match &returned {
-            Handed::Fallible(value, _) => {
-                quote!(<crate::lua::sandbox::Fallible<#value> as #facade::DeclType>::decl_type())
-            }
-            Handed::Raised(value) => quote!(<#value as #facade::DeclType>::decl_type()),
-            Handed::Plain(value) => quote!(<#value as #facade::DeclType>::decl_type()),
-        };
-        notes.push(quote! {{
-            let params: ::std::vec::Vec<(&str, ::std::string::String)> =
-                ::std::vec![#((#texts, <#types as #facade::DeclType>::decl_type())),*];
-            let params: ::std::vec::Vec<(&str, &str)> = params.iter().map(|(n, t)| (*n, t.as_str())).collect();
-            spec.method(#name, &params, &#ret, #doc);
-        }});
+        let (add, note) = method_of(method, words, &prefix)?;
+        adds.push(add);
+        notes.push(note);
     }
     let ty = &block.self_ty;
     let (generics, _, where_clause) = block.generics.split_for_impl();
