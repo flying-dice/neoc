@@ -66,6 +66,12 @@ csv = "1"
 toml = { version = "1.2", features = ["parse", "display"] }
 url = "2"
 percent-encoding = "2"
+# `std:fs`: iterative tree walks, and the operating system's own directory watching (9.0 at least: see
+# `std/fs/watch.rs`).
+walkdir = "2"
+notify = "9.0"
+# `std:fs` stages a cross-device move beside its destination; `lib:tempfile` is this crate.
+tempfile = "3"
 
 [dev-dependencies]
 neoc-vm = { workspace = true }

@@ -113,6 +113,13 @@ pub mod time {
         Duration { inner }
     }
 
+    /// For the modules that take a duration (a timeout).
+    impl From<Duration> for StdDuration {
+        fn from(duration: Duration) -> Self {
+            duration.inner
+        }
+    }
+
     /// A count of units, saturating at the largest whole number a Lua number holds.
     fn count(n: u128) -> u64 {
         u64::try_from(n).unwrap_or(u64::MAX).min(MAX_COUNT)

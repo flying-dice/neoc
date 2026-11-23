@@ -1,6 +1,6 @@
 -- std:io on neoc-vm and neoc-vm2: what both must answer the same. Returns plain values, compared by the harness.
--- Writers come from std:fs, which neoc-vm2 does not have yet, so `write`, `flush` and `copy` are covered by the
--- module's Rust tests. Lines that are not UTF-8 and what an error is differ on purpose: see io.vm2.luau.
+-- Writers come from std:fs: `write`, `flush` and `copy` are in files.luau. Lines that are not UTF-8 and what an
+-- error is differ on purpose: see io.vm2.luau.
 local io = require("std:io")
 local out = {}
 

@@ -1,4 +1,4 @@
-//! Paths between Lua strings and the operating system: what `std:path` takes and returns.
+//! Paths between Lua strings and the operating system: what `std:path` and `std:fs` take and return.
 //!
 //! A Lua string is bytes. On Unix a path is bytes too, so every path round-trips. Elsewhere a path is text (UTF-16
 //! on Windows), so a Lua string that is not valid UTF-8 is not a path and is refused as an argument, and a path that
@@ -27,6 +27,20 @@ impl OsPath {
 impl AsRef<Path> for OsPath {
     fn as_ref(&self) -> &Path {
         &self.0
+    }
+}
+
+/// As a field of a record a script is given: the same string [`IntoLuaRet`] gives.
+impl serde::Serialize for OsPath {
+    #[cfg(unix)]
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use std::os::unix::ffi::OsStrExt;
+        serializer.serialize_bytes(self.0.as_os_str().as_bytes())
+    }
+
+    #[cfg(not(unix))]
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0.to_string_lossy())
     }
 }
 

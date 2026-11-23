@@ -3517,6 +3517,7 @@ dependencies = [
  "mlua-ir",
  "mlua-ir-gen",
  "neoc-vm",
+ "notify",
  "p256",
  "parking_lot 0.13.0",
  "percent-encoding",
@@ -3538,6 +3539,7 @@ dependencies = [
  "spki",
  "strsim",
  "subtle",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "toml",
@@ -3550,6 +3552,7 @@ dependencies = [
  "url",
  "uuid",
  "vte",
+ "walkdir",
  "xxhash-rust",
 ]
 
