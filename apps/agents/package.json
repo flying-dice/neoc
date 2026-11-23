@@ -9,13 +9,14 @@
     "build": "vite build",
     "dev": "vite build --watch",
     "typecheck": "vos typecheck && svelte-check --tsconfig ./tsconfig.json",
-    "test": "bun test ./src",
+    "test": "bun test ./src ./tests",
     "lint": "vos lint",
     "format": "vos format",
     "storybook": "storybook dev -p 6010 --no-open",
     "build-storybook": "storybook build -o storybook-static --quiet"
   },
   "devDependencies": {
+    "@copilotkit/aimock": "^1.48.1",
     "@storybook/addon-a11y": "10.6.7",
     "@storybook/addon-docs": "10.6.7",
     "@storybook/addon-svelte-csf": "5.1.6",

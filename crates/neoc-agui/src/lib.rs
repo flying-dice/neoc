@@ -16,7 +16,7 @@ pub mod snake;
 pub mod stream;
 pub mod types;
 
-pub use events::{Event, TokenUsage};
+pub use events::{Event, Interrupt, RunOutcome, SubagentOutcome, TokenUsage};
 pub use patch::{PatchError, apply as apply_patch};
 pub use stream::{DEFAULT_MAX_EVENT, StreamError, events as event_stream};
 pub use types::{

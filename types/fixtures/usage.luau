@@ -6,6 +6,7 @@
 -- fails.
 --
 -- The test also requires every module key to be `require`d here, so a new module needs a line in this file.
+local agui = require("lib:agui")
 local archive = require("lib:archive")
 local args = require("lib:args")
 local base64 = require("lib:base64")
@@ -63,7 +64,7 @@ local toml = require("vnd:toml")
 
 -- every module is a table of its own, so naming it is not an unused import
 local _modules: { any } = {
-	archive, args, cache, compile, compress, crypto, csv, diff, glob, hex, hmac, html, http, ini, log, mime,
+	agui, archive, args, cache, compile, compress, crypto, csv, diff, glob, hex, hmac, html, http, ini, log, mime,
 	pkey, random, template, tempfile, text, unicode, vcr, collections, env, io, net, thread, workers, bollard, hyper,
 	jsonschema, keyring, portable_pty, quick_xml, serde_json, serde_yaml, sqlx_mysql, sqlx_postgres, testcontainers_modules, toml,
 }

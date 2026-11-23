@@ -16,6 +16,7 @@ local path = require("std:path")
 local task = require("std:task")
 local thread = require("std:thread")
 local time = require("std:time")
+local agui = require("lib:agui")
 local archive = require("lib:archive")
 local args = require("lib:args")
 local base64 = require("lib:base64")
@@ -65,6 +66,7 @@ local _modules: { any } = {
   io,
   net,
   thread,
+  agui,
   archive,
   args,
   cache,

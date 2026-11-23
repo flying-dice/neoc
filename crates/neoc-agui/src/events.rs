@@ -28,6 +28,51 @@ pub struct TokenUsage {
     pub cache_write_input_tokens: Option<u64>,
 }
 
+/// A question a run stopped at: the next run answers it with a [`crate::ResumeEntry`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Interrupt {
+    pub id: String,
+    /// Why the run stopped: the agent's own word for it (`tool_approval`, ...).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// The question, for the person.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    /// The JSON Schema the answer's payload must fit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_schema: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent_run_id: Option<String>,
+}
+
+/// How a run ended: `success`, or `interrupt` with the questions it stopped at. Absent on a `RUN_FINISHED`, it is
+/// success.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunOutcome {
+    #[serde(rename = "type")]
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interrupts: Option<Vec<Interrupt>>,
+}
+
+/// How a subagent ended: `success`, or `suspended` at the run's interrupts it owns.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentOutcome {
+    #[serde(rename = "type")]
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interrupt_ids: Option<Vec<String>>,
+}
+
 fn yes() -> bool {
     true
 }
@@ -140,6 +185,8 @@ events! {
         thread_id: String,
         run_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        protocol_version: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         parent_run_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         input: Option<Box<RunAgentInput>>,
@@ -151,6 +198,8 @@ events! {
         run_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         result: Option<Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        outcome: Option<RunOutcome>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         usage: Option<Vec<TokenUsage>>,
     }
@@ -199,7 +248,7 @@ events! {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         result: Option<Value>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        outcome: Option<Value>,
+        outcome: Option<SubagentOutcome>,
     }
     SubagentError {
         message: String,

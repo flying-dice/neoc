@@ -505,6 +505,36 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         t.field("description", "string", "What the value is.");
         t.field("value", "string", "The value.");
     });
+    m.userdata("Interrupt", |t| {
+        t.field(
+            "id",
+            "string",
+            "What a resume entry's `interrupt_id` names.",
+        );
+        t.field(
+            "reason",
+            "string?",
+            "Why the run stopped, in the agent's own word (`tool_approval`, ...).",
+        );
+        t.field("message", "string?", "The question, for the person.");
+        t.field(
+            "tool_call_id",
+            "string?",
+            "The tool call the question is about.",
+        );
+        t.field(
+            "response_schema",
+            "any",
+            "The JSON Schema the answer's `payload` must fit.",
+        );
+        t.field(
+            "expires_at",
+            "string?",
+            "When the question stops being answerable.",
+        );
+        t.field("metadata", "any", "The sender's own annotations.");
+        t.field("subagent_run_id", "string?", "The subagent that asked.");
+    });
     m.userdata("Event", |t| {
         t.field("type", "string", "Which event this is (one of `EVENT_TYPES`), and so which of the other fields it has.");
         t.field("timestamp", "number?", "When the event was made, in milliseconds since the epoch.");
@@ -542,7 +572,8 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         t.field("description", "string?", "`SUBAGENT_STARTED`.");
         t.field("parent_subagent_run_id", "string?", "`SUBAGENT_STARTED`: the subagent that started this one.");
         t.field("parent_tool_call_id", "string?", "`SUBAGENT_STARTED`: the tool call that started it.");
-        t.field("outcome", "any", "`SUBAGENT_FINISHED`: how it ended.");
+        t.field("outcome", "{ type: string, interrupts: { Interrupt }?, interrupt_ids: { string }? }?", "How it ended. `RUN_FINISHED`: `type` is `success` (also when there is no outcome) or `interrupt`, with the questions the run stopped at in `interrupts`: the next run answers every one of them in its input's `resume`. `SUBAGENT_FINISHED`: `success`, or `suspended` at the interrupts named in `interrupt_ids`.");
+        t.field("protocol_version", "string?", "`RUN_STARTED`: the version of the protocol the agent speaks.");
         t.field("title", "string?", "`THINKING_START`.");
     });
 

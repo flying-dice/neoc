@@ -455,6 +455,25 @@ export type lib_agui_Context = {
 	value: string,
 }
 
+export type lib_agui_Interrupt = {
+	--- What a resume entry's `interrupt_id` names.
+	id: string,
+	--- Why the run stopped, in the agent's own word (`tool_approval`, ...).
+	reason: string?,
+	--- The question, for the person.
+	message: string?,
+	--- The tool call the question is about.
+	tool_call_id: string?,
+	--- The JSON Schema the answer's `payload` must fit.
+	response_schema: any,
+	--- When the question stops being answerable.
+	expires_at: string?,
+	--- The sender's own annotations.
+	metadata: any,
+	--- The subagent that asked.
+	subagent_run_id: string?,
+}
+
 export type lib_agui_Event = {
 	--- Which event this is (one of `EVENT_TYPES`), and so which of the other fields it has.
 	type: string,
@@ -528,8 +547,10 @@ export type lib_agui_Event = {
 	parent_subagent_run_id: string?,
 	--- `SUBAGENT_STARTED`: the tool call that started it.
 	parent_tool_call_id: string?,
-	--- `SUBAGENT_FINISHED`: how it ended.
-	outcome: any,
+	--- How it ended. `RUN_FINISHED`: `type` is `success` (also when there is no outcome) or `interrupt`, with the questions the run stopped at in `interrupts`: the next run answers every one of them in its input's `resume`. `SUBAGENT_FINISHED`: `success`, or `suspended` at the interrupts named in `interrupt_ids`.
+	outcome: { type: string, interrupts: { lib_agui_Interrupt }?, interrupt_ids: { string }? }?,
+	--- `RUN_STARTED`: the version of the protocol the agent speaks.
+	protocol_version: string?,
 	--- `THINKING_START`.
 	title: string?,
 }
