@@ -46,7 +46,7 @@ impl LateTools {
 #[async_trait]
 impl AppTools for LateTools {
     fn all(&self) -> Vec<(QualifiedToolName, ToolSpec)> {
-        self.bound().map(|tools| tools.all()).unwrap_or_default()
+        self.bound().map_or_else(Vec::new, |tools| tools.all())
     }
 
     async fn call(&self, caller: Actor, name: &QualifiedToolName, args: Value) -> PortResult<Value> {
