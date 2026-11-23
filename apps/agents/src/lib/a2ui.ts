@@ -203,8 +203,17 @@ export function childrenOf(children: Json | undefined, data: Json, scope: Scope)
   if (!isRecord(children) || typeof children.componentId !== 'string' || typeof children.path !== 'string') return []
   const base = absolute(children.path, scope)
   const items = valueAt(data, base)
-  const keys = Array.isArray(items) ? items.map((_, i) => String(i)) : isRecord(items) ? Object.keys(items) : []
-  return keys.slice(0, MAX_CHILDREN).map((key) => ({ id: children.componentId as string, scope: `${base}/${key}` }))
+  // only the keys that are drawn are made: the list may be millions long
+  const keys: string[] = []
+  if (Array.isArray(items)) {
+    for (let i = 0; i < Math.min(items.length, MAX_CHILDREN); i++) keys.push(String(i))
+  } else if (isRecord(items)) {
+    for (const key in items) {
+      if (keys.length >= MAX_CHILDREN) break
+      if (Object.hasOwn(items, key)) keys.push(key)
+    }
+  }
+  return keys.map((key) => ({ id: children.componentId as string, scope: `${base}/${key}` }))
 }
 
 /** What goes back to the agent when the person presses a button: the action's name and its context, resolved. */
@@ -219,8 +228,10 @@ export interface UserAction {
 const records = (list: Json | undefined): Record_[] => (Array.isArray(list) ? list.filter(isRecord).slice(0, MAX_CHILDREN) : [])
 
 /** The tabs of a Tabs that can be shown: those that name a child. */
+const shownTabs = (component: Component): Record_[] => records(component.tabs).filter((tab) => typeof tab.child === 'string')
+
 export function tabsOf(component: Component, data: Json, scope: Scope): { title: string; child: string }[] {
-  return records(component.tabs).flatMap((tab) => (typeof tab.child === 'string' ? [{ title: textOf(tab.title, data, scope), child: tab.child }] : []))
+  return shownTabs(component).map((tab) => ({ title: textOf(tab.title, data, scope), child: tab.child as string }))
 }
 
 /** The options of a ChoicePicker that can be chosen: those that have a value. */
@@ -245,7 +256,8 @@ function inside(component: Component, data: Json, scope: Scope): Child[] {
     case 'Modal':
       return [...one(component.trigger), ...one(component.content)]
     case 'Tabs':
-      return tabsOf(component, data, scope).map((tab) => ({ id: tab.child, scope }))
+      // the children only: the count reads no title
+      return shownTabs(component).map((tab) => ({ id: tab.child as string, scope }))
     default:
       return []
   }

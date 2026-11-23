@@ -194,7 +194,7 @@
       <div class="field">
         {#if component.label !== undefined}<span class="caption">{label}</span>{/if}
         {#if component.variant === 'multipleSelection'}
-          {#each options as option (option.value)}
+          {#each options as option, i (i)}
             <div class="check">
               <ui-check
                 label={option.label}

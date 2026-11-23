@@ -16,6 +16,8 @@ local db = app.db
 
 -- A turn runs vos tools and goes back to the agent at most this many times: an agent that asks for a tool in every
 -- run would otherwise never give the person the chat back.
+-- the most tools of this machine one run may have run
+local MAX_CALLS = 32
 local MAX_ROUNDS = 16
 -- The longest a run may take as a whole: an agent that works for longer than half an hour is stopped.
 local RUN_TIMEOUT = 1800
@@ -25,8 +27,6 @@ local MAX_RESULT = 200000
 -- make every later run send a conversation without end.
 local MAX_TURN = 8 * 1024 * 1024
 -- The largest state an agent may share, as JSON text.
--- the most tools of this machine one run may have run
-local MAX_CALLS = 32
 local MAX_STATE = 1024 * 1024
 
 -- What a run adds to the conversation it sends, besides the conversation: the answers to its interrupts, or what
@@ -445,7 +445,7 @@ local function runTools(
       local args, problem = arguments(row.text)
       local result: any = nil
       if ran >= MAX_CALLS then
-        problem = `The agent asked for more than {MAX_CALLS} tools at once; this one was not run.`
+        problem = `The agent asked for more than {MAX_CALLS} tools in one go; this one was not run.`
       elseif budget.spent > MAX_TURN then
         problem = "The turn already holds as much as it may (8 MB); this tool was not run."
       elseif args then
