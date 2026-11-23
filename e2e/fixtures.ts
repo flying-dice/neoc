@@ -101,6 +101,12 @@ export async function openDesktop(page: Page, options: DesktopOptions = {}): Pro
   }
 }
 
+/** Turn the status bar on (Settings > Features: it is off until chosen), for a journey that uses its search button. */
+export async function showStatusBar(page: Page): Promise<void> {
+  await page.evaluate(() => (window.__vos.settings.statusBar = true))
+  await page.getByTestId('status-bar-search').waitFor()
+}
+
 /**
  * The Home Screen (the grid of every app on the wallpaper), which is only there while no window is on stage: what is
  * on stage steps aside into the recent-apps strip, closing nothing (the shell's "Show Home Screen").

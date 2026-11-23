@@ -16,6 +16,8 @@
     /** Drawn over everything else, in a box the size of the desktop. */
     overlay?: Snippet
     dockHidden?: boolean
+    /** The status bar takes no room: the workspace starts at the top (what the bar still says is drawn over it). */
+    statusBarHidden?: boolean
     /** Bound to the workspace size, for layout maths. */
     workspaceWidth?: number
     workspaceHeight?: number
@@ -27,6 +29,7 @@
     dock,
     overlay,
     dockHidden = false,
+    statusBarHidden = false,
     workspaceWidth = $bindable(0),
     workspaceHeight = $bindable(0)
   }: Props = $props()
@@ -34,7 +37,7 @@
   let peeking = $state(false)
 </script>
 
-<div class="desktop">
+<div class="desktop" class:no-status-bar={statusBarHidden}>
   <div class="status-bar">{@render statusBar()}</div>
   <main class="workspace" bind:clientWidth={workspaceWidth} bind:clientHeight={workspaceHeight}>
     {@render workspace()}
@@ -82,6 +85,12 @@
   .workspace {
     position: absolute;
     inset: calc(34px + env(safe-area-inset-top, 0px)) 0 0;
+  }
+  .no-status-bar .status-bar {
+    pointer-events: none;
+  }
+  .no-status-bar .workspace {
+    top: env(safe-area-inset-top, 0px);
   }
   .dock {
     position: absolute;

@@ -110,10 +110,10 @@ async fn wrapper(State(state): State<AppsState>, Path(app): Path<String>, header
     let html = format!(
         "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
 <meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\">\n\
-<title>{name}</title>\n\
+<title>VOS - {name}</title>\n\
 <meta name=\"mobile-web-app-capable\" content=\"yes\">\n\
 <meta name=\"apple-mobile-web-app-capable\" content=\"yes\">\n\
-<meta name=\"apple-mobile-web-app-title\" content=\"{name}\">\n\
+<meta name=\"apple-mobile-web-app-title\" content=\"VOS - {name}\">\n\
 <meta name=\"apple-mobile-web-app-status-bar-style\" content=\"black-translucent\">\n\
 <style>{style}</style>\n\
 </head>\n<body>\n<iframe id=\"app\" title=\"{name}\" sandbox=\"allow-scripts allow-forms\" allow=\"{allow}\" \
@@ -131,14 +131,17 @@ data-testid=\"{id}-frame\"></iframe>\n\
 
 /// The wrapper page's whole style: the frame fills the page, inside the device's safe areas (an app's page is in a
 /// frame and cannot read them, and added to a phone's home screen the page is drawn under the status bar and the home
-/// indicator). Installed, the page is as tall as the screen (`100vh`): iOS makes `100%` shorter than the screen by the
-/// status bar there. `touch-action`: an app is not a document to pinch or double-tap larger.
+/// indicator); the bottom is left to the app, which reaches the edge of the screen as a full screen window of the
+/// shell does. Installed (the page's script marks the root `installed`), the page is as tall as the screen (`100vh`):
+/// iOS makes `100%` shorter than the screen by the status bar there. The script says so, not a `display-mode` media
+/// query: iOS does not match one for a page added to the home screen without a manifest.
+/// `touch-action`: an app is not a document to pinch or double-tap larger.
 const WRAPPER_STYLE: &str =
     "html,body{margin:0;height:100%;overflow:hidden;color-scheme:light dark;background:Canvas;\
 touch-action:pan-x pan-y;-webkit-text-size-adjust:100%}\
-@media(display-mode:standalone),(display-mode:fullscreen){html,body{height:100vh}}\
-body{box-sizing:border-box;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) \
-env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)}\
+html.installed,html.installed body{height:100vh}\
+body{box-sizing:border-box;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 \
+env(safe-area-inset-left,0px)}\
 iframe{display:block;width:100%;height:100%;border:0}";
 
 const UNPAIRED: &str ="<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\

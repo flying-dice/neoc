@@ -1,7 +1,8 @@
 <!--
   @page SettingsPage — the settings of this browser and this host, as an iPadOS Settings split view: General (whether
-  notifications show as banners, the host's version), Appearance (theme, accent colour, text size, transparency) and
-  Devices (the paired devices, and revoking one). Everything in General and Appearance is the `settings` store, kept in
+  notifications show as banners, the host's version), Appearance (theme, accent colour, text size, transparency), Features
+  (parts of the shell that can be turned on and off: the status bar) and Devices (the paired devices, and revoking
+  one). Everything in General, Appearance and Features is the `settings` store, kept in
   this browser; Devices is the host's (`host.devices.*`).
 
   In a window narrower than the split view allows, the list of panes and the pane are one column at a time: the list
@@ -10,7 +11,7 @@
 
   Test ids: `settings` (the page), `settings-pane-<id>` (the list), `settings-nav` (+ `-back`), `settings-banners`,
   `settings-about-host`, `settings-theme` (+ `-light|dark|auto`), `settings-accent-<name>`, `settings-text-size`
-  (+ `-value`), `settings-reduce-transparency`, the Devices pane's (see DevicesPane) and
+  (+ `-value`), `settings-reduce-transparency`, `settings-status-bar`, the Devices pane's (see DevicesPane) and
   `settings-device-revoke-alert` (+ `-action-cancel|revoke`).
 -->
 <script lang="ts">
@@ -200,6 +201,21 @@
                       testid="settings-reduce-transparency"
                       bind:checked={settings.reduceTransparency}
                       label="Reduce Transparency"
+                    />
+                  {/snippet}
+                </ListRow>
+              </ListSection>
+            {:else if pane === 'features'}
+              <ListSection
+                header="Desktop"
+                footer="The time, the date and a search button along the top of the desktop. Off, the desktop reaches the top of the screen, and search is on the Home Screen and its keyboard shortcut."
+              >
+                <ListRow testid="settings-status-bar-row" title="Status Bar">
+                  {#snippet trailing()}
+                    <Toggle
+                      testid="settings-status-bar"
+                      bind:checked={settings.statusBar}
+                      label="Status Bar"
                     />
                   {/snippet}
                 </ListRow>

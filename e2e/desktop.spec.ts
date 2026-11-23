@@ -64,7 +64,8 @@ test('the desktop lands on Discover, with the pinned apps and the open ones in t
     await expect(page.getByTestId(`dock-${id}`)).toHaveCount(0)
   // the Home Screen is not under a window
   await expect(page.getByTestId('home')).toHaveCount(0)
-  await expect(page.getByTestId('status-bar-search')).toBeVisible()
+  // the status bar is a feature that is off until chosen (Settings > Features)
+  await expect(page.getByTestId('status-bar-search')).toHaveCount(0)
   await expectAccessible(page, testInfo)
   await expect(page).toHaveScreenshot('desktop-landing.png')
 })

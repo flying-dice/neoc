@@ -6,6 +6,7 @@
   import { setInstalledApps } from '../lib/apps.svelte'
   import { DEFAULT_PINS, dockPins } from '../lib/dock.svelte'
   import { spotlight } from '../lib/search.svelte'
+  import { settings } from '../lib/settings.svelte'
   import { isApplePlatform } from '../lib/shortcuts'
   import { FAKE_AGENTS_APP, FAKE_CALCULATOR } from '../shell/fakeHost'
   import type { AppSummary } from '../shell/hostApi'
@@ -21,6 +22,8 @@
     for (const id of [...dockPins.pinned]) dockPins.unpin(id)
     for (const id of DEFAULT_PINS) dockPins.pin(id)
     setInstalledApps([FAKE_CALCULATOR])
+    // the status bar is a feature that is off until chosen (Settings > Features): these stories show the shell with it
+    settings.statusBar = true
   }
 
   const installed = (

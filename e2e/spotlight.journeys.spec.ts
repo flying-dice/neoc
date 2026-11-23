@@ -6,7 +6,7 @@
  * Not covered, because the shell cannot do it today: the shortcut while the keyboard is inside an app's frame (S7).
  */
 import type { Page } from '@playwright/test'
-import { chooseLayout, expect, expectAccessible, frameOf, openDesktop, test, windowOf } from './fixtures'
+import { chooseLayout, expect, expectAccessible, frameOf, openDesktop, showStatusBar, test, windowOf } from './fixtures'
 
 const field = (page: Page) => page.getByTestId('spotlight-field')
 const result = (page: Page, id: string) => page.getByTestId(`spotlight-result-${id}`)
@@ -30,6 +30,7 @@ const keyboardIn = (page: Page): Promise<string | null> =>
 test.describe('Spotlight journeys', () => {
   test('S1: from the status bar, over a full screen app: find an app by name and open it', async ({ page }) => {
     await openDesktop(page, { open: ['files'] })
+    await showStatusBar(page)
     await chooseLayout(page, 'files', 'fullscreen') // the Dock is hidden and no icon of the Home Screen is on show
     await page.mouse.move(640, 300)
     const button = page.getByTestId('status-bar-search')
@@ -75,6 +76,7 @@ test.describe('Spotlight journeys', () => {
     expect(await keyboardIn(page)).toBe('window-settings')
 
     // Settings is open already: another pane is found and shown in the same window
+    await showStatusBar(page)
     await page.getByTestId('status-bar-search').click()
     await expect(field(page)).toBeFocused()
     await page.keyboard.type('DEVI') // case does not matter
@@ -201,6 +203,7 @@ test.describe('Spotlight journeys', () => {
     await expect(page.getByTestId('calculator-frame')).toBeFocused() // the app has the keyboard
     const before = await display.textContent()
     // the status bar's button is the way in while an app has the keyboard
+    await showStatusBar(page)
     await page.getByTestId('status-bar-search').click()
     await expect(field(page)).toBeFocused()
     await page.keyboard.type('files 123')

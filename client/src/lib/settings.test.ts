@@ -40,7 +40,8 @@ const valuesOf = (s: Settings): SettingsValues => ({
   accent: s.accent,
   textScale: s.textScale,
   reduceTransparency: s.reduceTransparency,
-  banners: s.banners
+  banners: s.banners,
+  statusBar: s.statusBar
 })
 
 const chosen: SettingsValues = {
@@ -48,7 +49,8 @@ const chosen: SettingsValues = {
   accent: 'green',
   textScale: 115,
   reduceTransparency: true,
-  banners: false
+  banners: false,
+  statusBar: true
 }
 
 /** What `apply` needs of an element. */
@@ -67,14 +69,15 @@ function root(): HTMLElement & { props: Record<string, string>; classes: Set<str
 }
 
 describe('with nothing stored', () => {
-  test('the defaults: automatic theme, blue, normal text, materials, banners on', () => {
+  test('the defaults: automatic theme, blue, normal text, materials, banners on, no status bar', () => {
     const settings = new Settings(memory())
     expect(valuesOf(settings)).toEqual({
       theme: 'auto',
       accent: 'blue',
       textScale: 100,
       reduceTransparency: false,
-      banners: true
+      banners: true,
+      statusBar: false
     })
   })
 
@@ -100,8 +103,9 @@ describe('a change', () => {
     settings.textScale = 115
     settings.reduceTransparency = true
     settings.banners = false
+    settings.statusBar = true
     expect(JSON.parse(storage.value!)).toEqual(chosen)
-    expect(storage.writes).toBe(5)
+    expect(storage.writes).toBe(6)
   })
 
   test('survives a reload: the next page starts with what was chosen', () => {
@@ -112,6 +116,7 @@ describe('a change', () => {
     before.textScale = 115
     before.reduceTransparency = true
     before.banners = false
+    before.statusBar = true
     expect(valuesOf(new Settings(storage))).toEqual(chosen)
   })
 
@@ -143,7 +148,8 @@ describe('what is read is checked', () => {
       ['accent', ['Green', 'var(--ios-green)', 'url(https://example.test/x)', '#00ff00', 7, null]],
       ['textScale', [80, 130, 101, 112.5, '115', null, Number.NaN]],
       ['reduceTransparency', ['true', 1, null]],
-      ['banners', ['false', 0, null]]
+      ['banners', ['false', 0, null]],
+      ['statusBar', ['true', 1, null]]
     ]
     for (const [field, values] of bad) {
       for (const value of values) {

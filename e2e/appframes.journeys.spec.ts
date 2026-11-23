@@ -249,8 +249,8 @@ for (const id of FIXTURE_APPS) {
 
     test(`AS1 (${id}): opened on its own page, the app works with no shell`, async ({ page }) => {
       await page.goto(`/apps/${id}`)
-      // the page's title is the app's name
-      await expect(page).toHaveTitle(FRAMEWORK[id] === 'Svelte' ? 'Tasks (Svelte)' : 'Tasks (React)')
+      // the page's title is the system's name, then the app's
+      await expect(page).toHaveTitle(FRAMEWORK[id] === 'Svelte' ? 'VOS - Tasks (Svelte)' : 'VOS - Tasks (React)')
       // the page is the app and nothing else: one frame, no chrome, no shell
       await expect(page.locator('iframe')).toHaveCount(1)
       await expect(page.getByTestId('dock')).toHaveCount(0)

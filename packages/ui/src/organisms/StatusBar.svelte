@@ -1,12 +1,11 @@
 <!--
-  @organism StatusBar — iPadOS status bar (time + date leading, indicators trailing).
-  Molecules: StatusIndicators. Atoms: Icon.
-  With `onsearch` a magnifier button sits before the indicators: system search, reachable whatever covers the screen.
+  @organism StatusBar — the desktop's status bar: the time and the date leading, and nothing the
+  page cannot know (a browser is not told the device's battery or network, so none is drawn). Atoms: Icon.
+  With `onsearch` a magnifier button sits at the trailing edge: system search, reachable whatever covers the screen.
   Test id: `${testid}-search` on that button.
 -->
 <script lang="ts">
   import type { Snippet } from 'svelte'
-  import StatusIndicators from '../molecules/StatusIndicators.svelte'
   import Icon from '../atoms/Icon.svelte'
 
   interface Props {
@@ -16,12 +15,13 @@
     onsearch?: () => void
     /** The keyboard shortcut that does the same, for assistive technology (`aria-keyshortcuts`: "Meta+K"). */
     searchShortcut?: string
-    battery?: number
     /** Center slot: the shell's connection state. */
     center?: Snippet
+    /** Only the center slot: no time, date or search (the person turned the bar off; what the shell must say still shows). */
+    bare?: boolean
   }
 
-  let { testid, onsearch, searchShortcut, battery = 1, center }: Props = $props()
+  let { testid, onsearch, searchShortcut, center, bare = false }: Props = $props()
 
   let now = $state(new Date())
 
@@ -38,12 +38,14 @@
 
 <div class="ios-statusbar">
   <span class="leading">
-    <span class="time">{time}</span>
-    <span class="date">{date}</span>
+    {#if !bare}
+      <span class="time">{time}</span>
+      <span class="date">{date}</span>
+    {/if}
   </span>
   <span class="center">{#if center}{@render center()}{/if}</span>
   <span class="trailing">
-    {#if onsearch}
+    {#if onsearch && !bare}
       <button
         type="button"
         class="search"
@@ -56,7 +58,6 @@
         <Icon name="magnifyingglass" size={16} weight={2.6} />
       </button>
     {/if}
-    <StatusIndicators {battery} />
   </span>
 </div>
 
