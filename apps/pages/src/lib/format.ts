@@ -1,7 +1,5 @@
 import type { Server, Settings, Site } from 'app:rpc'
-
-/** How the server reads at a glance: serving, off, in between, or wanted on and not serving. */
-export type Tone = 'on' | 'off' | 'busy' | 'bad'
+import type { Tone } from '@vos/docker'
 
 /** A site is on and nothing is known to be wrong with its folder: it is one the container is made for. */
 export const isServed = (site: Site): boolean => site.enabled && site.problem === ''

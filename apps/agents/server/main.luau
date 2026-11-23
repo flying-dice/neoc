@@ -12,6 +12,7 @@ local app = require("vos:app")
 local codec = require("./codec")
 local roster = require("./roster")
 local rpc = require("../.app/rpc")
+local strings = require("lib:text")
 local task = require("std:task")
 local timeline = require("./timeline")
 local turn = require("./turn")
@@ -75,12 +76,8 @@ local TITLE_MAX = 48
 
 -- the first message names the chat; later messages only move it to the top
 local function titleOf(text: string): string
-  local line = string.gsub(string.match(text, "^%s*([^\n]*)") or "", "%s+$", "")
-  local length = utf8.len(line)
-  if length == nil or length <= TITLE_MAX then
-    return if line == "" then "New chat" else line
-  end
-  return string.sub(line, 1, utf8.offset(line, TITLE_MAX) - 1) .. "…"
+  local line = strings.trim(string.match(strings.trim_start(text), "^[^\n]*") or "")
+  return if line == "" then "New chat" else strings.clip(line, TITLE_MAX, "…")
 end
 
 local function chatOf(row: { [string]: any }): rpc.Chat
@@ -232,7 +229,7 @@ local handlers: rpc.Handlers = {
     if not agent then
       return ctx:fail(problem or "")
     end
-    local text = string.match(params.text, "^%s*(.-)%s*$") :: string
+    local text = strings.trim(params.text)
     if text == "" then
       return ctx:fail("Write something first.")
     end

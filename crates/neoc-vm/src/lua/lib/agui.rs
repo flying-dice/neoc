@@ -44,6 +44,7 @@ use neoc_agui::{RunAgentInput, StreamError};
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::AbortHandle;
 
+use crate::lua::error_text;
 use crate::lua::facade::Module;
 use crate::lua::lifecycle::{Life, Role, async_function, async_method};
 use crate::lua::sandbox::{err, ok};
@@ -100,23 +101,23 @@ impl From<StreamError<HyperError>> for AguiError {
     }
 }
 
-/// The kind inside an error string of this module, or `None` when the text is not one of ours.
-fn kind_of(text: &str) -> Option<&'static str> {
-    let rest = text.strip_prefix("agui.")?;
-    let (function, rest) = rest.split_once(": ")?;
-    if function.is_empty()
-        || !function
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b == b'_')
-    {
-        return None;
-    }
-    let name = rest.split_once(": ").map_or(rest, |(name, _)| name);
-    match name {
+/// The kind and the message of one of this module's error strings; the shape is [`error_text`]'s.
+fn read(err: &str) -> Option<(&'static str, &str)> {
+    error_text::read("agui", err, |name| match name {
         "status" => Some("status"),
         "protocol" => Some("protocol"),
         other => Kind::parse(other).map(Kind::as_str),
-    }
+    })
+}
+
+/// The kind inside an error string of this module, or `None` when the text is not one of ours.
+fn kind_of(err: &str) -> Option<&'static str> {
+    read(err).map(|(kind, _)| kind)
+}
+
+/// The message inside an error string of this module: everything after the kind.
+fn message_of(err: &str) -> Option<&str> {
+    read(err).map(|(_, message)| message)
 }
 
 /// A value of the crate as a plain Lua value with the Python SDK's field names; a JSON `null` is `nil`.
@@ -425,7 +426,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "error_kind",
         &[("err", "string?")],
         "The stable kind inside an error string this module returned, or `nil` when the string is not one of its own (or is `nil`, so `agui.error_kind(err)` takes the `err` of any call). Such a string is `agui.<function>: <kind>: <message>`. Kinds: those of `vnd:hyper` (`invalid_input`, `invalid_url`, `connect`, `tls`, `timed_out`, `too_large` for an event over `max_event`, `connection_lost`, `bad_response`, `other`), `status` (the endpoint answered, and not with 2xx) and `protocol` (the answer is not an event stream, or an event in it is not an AG-UI event: a field missing or of the wrong type). The message is for a log and may change.",
-        |_, err: Option<mlua::LuaString>| Ok(err.and_then(|err| kind_of(&err.to_string_lossy()).map(str::to_owned))),
+        error_text::reader(kind_of),
+    )?;
+    m.func(
+        "error_message",
+        &[("err", "string?")],
+        "The message inside an error string this module returned: everything after the kind in `agui.<function>: <kind>: <message>`, or `nil` when the string is not one of its own (or is `nil`). It is for a person or a log, and its wording may change.",
+        error_text::reader(message_of),
     )?;
 
     let types = lua.create_table()?;

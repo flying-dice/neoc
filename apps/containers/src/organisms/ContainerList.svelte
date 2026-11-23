@@ -1,7 +1,6 @@
 <!-- @organism ContainerList — the containers that are shown, each with the button that starts or stops it; for a Compose stack, also where it came from and the buttons that act on all of it -->
 <script lang="ts">
   import type { Container, Stack } from 'app:rpc'
-  import ConfirmAlert from '../molecules/ConfirmAlert.svelte'
   import ContainerRow from '../molecules/ContainerRow.svelte'
   import type { Action } from '../lib/containers.svelte'
   import { runningSummary } from '../lib/format'
@@ -97,16 +96,19 @@
       </ui-button>
     </div>
     {#if confirming}
-      <ConfirmAlert
+      <ui-alert
+        open
+        destructive
+        action-label="Remove"
         heading="Remove {stack.name}?"
         message="Its containers and networks are removed, running or not. Its volumes stay."
-        testid="containers-stack-confirm"
+        data-testid="containers-stack-confirm"
         oncancel={() => (asking = null)}
         onconfirm={() => {
           asking = null
           onstack?.(stack, 'remove')
         }}
-      />
+      ></ui-alert>
     {/if}
   {/if}
   <div class="scroll">

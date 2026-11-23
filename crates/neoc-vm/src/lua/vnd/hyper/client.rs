@@ -29,7 +29,7 @@ mod tls;
 #[cfg(test)]
 mod tests;
 
-pub(super) use error::kind_of;
+pub(super) use error::{kind_of, message_of};
 // what a module that reads a response as a stream needs (`lib:agui`): the same options, connection and errors
 pub(crate) use error::{HyperError, Kind};
 pub(crate) use exchange::Streamed;

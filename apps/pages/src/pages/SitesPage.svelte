@@ -1,8 +1,7 @@
 <!-- @page SitesPage — the whole app: the web server at the top, and under it the sites it serves, its settings or its log; or what to do when Docker cannot be reached; driven by one window's Pages state -->
 <script lang="ts">
-  import EngineDown from '../organisms/EngineDown.svelte'
+  import { ContainerLog, EngineDown } from '@vos/docker'
   import ServerHeader from '../organisms/ServerHeader.svelte'
-  import ServerLog from '../organisms/ServerLog.svelte'
   import SettingsForm from '../organisms/SettingsForm.svelte'
   import SiteList from '../organisms/SiteList.svelte'
   import { machineOf } from '../lib/format'
@@ -52,6 +51,7 @@
         draft={pages.hostDraft}
         ondraft={(address) => (pages.hostDraft = address)}
         onconnect={() => void pages.connect()}
+        testid="pages"
       />
     </div>
   {:else}
@@ -100,7 +100,12 @@
           onconnect={() => void pages.connect()}
         />
       {:else}
-        <ServerLog server={pages.server} logs={pages.logs} />
+        <ContainerLog
+          absent={pages.server.state === 'absent'}
+          none="The server has no container. It writes here once a site is on."
+          logs={pages.logs}
+          testid="pages"
+        />
       {/if}
     </div>
   {/if}

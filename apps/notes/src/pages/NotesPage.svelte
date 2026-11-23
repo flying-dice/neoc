@@ -14,9 +14,10 @@
 
   let { notes, saveAfter = 600 }: Props = $props()
 
-  // below 760 wide the folders, the notes and the note are one column each: `pane` decides which one shows
-  let width = $state(960)
-  const narrow = $derived(width < 760)
+  // in a window too narrow for all three columns, the split view shows one: the kit says when, the same for every app
+  let narrow = $state(false)
+  // the pane in front, as the split view names its three columns
+  const column = $derived(notes.pane === 'folders' ? 'sidebar' : notes.pane === 'list' ? 'content' : 'detail')
 
   // what is typed is saved a moment after the last key, when the text is left, and when the window goes
   let pending: ReturnType<typeof setTimeout> | undefined
@@ -40,9 +41,9 @@
   })
 </script>
 
-<main class="notes" bind:clientWidth={width} data-testid="notes-app">
-  <div class="columns" class:narrow data-pane={notes.pane}>
-    <div class="side">
+<main class="notes" data-testid="notes-app">
+  <ui-split-view {column} oncollapsedchange={(e) => (narrow = e.detail.collapsed)}>
+    <div slot="sidebar">
       <FolderSidebar
         folders={notes.folders}
         counts={notes.counts}
@@ -54,7 +55,7 @@
         onadd={() => void notes.addFolder()}
       />
     </div>
-    <div class="middle">
+    <div slot="content">
       <NoteList
         title={notes.title}
         sections={notes.sections}
@@ -71,7 +72,7 @@
         onback={() => void notes.back()}
       />
     </div>
-    <div class="detail">
+    <div>
       <NoteEditor
         note={notes.note}
         text={notes.text}
@@ -88,7 +89,7 @@
         onback={() => void notes.back()}
       />
     </div>
-  </div>
+  </ui-split-view>
   <!-- why the last call failed (the backend's own sentence, or the host's), whichever column is in front -->
   {#if notes.failure}
     <ui-banner tone="error" data-testid="notes-failure">{notes.failure}</ui-banner>
@@ -104,33 +105,9 @@
     color: var(--label);
     font: var(--type-body);
   }
-  .columns {
+  /* three columns want room: the folders are given less than a sidebar's usual width */
+  ui-split-view {
     flex: 1;
-    min-height: 0;
-    display: grid;
-    grid-template-columns: minmax(200px, 240px) minmax(240px, 300px) minmax(0, 1fr);
-  }
-  .side,
-  .middle,
-  .detail {
-    min-width: 0;
-    min-height: 0;
-  }
-  .side,
-  .middle {
-    border-inline-end: 1px solid var(--separator);
-  }
-  /* one column: the folders, the notes of one, or a note */
-  .narrow {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .narrow > div {
-    display: none;
-    border-inline-end: 0;
-  }
-  .narrow[data-pane='folders'] .side,
-  .narrow[data-pane='list'] .middle,
-  .narrow[data-pane='note'] .detail {
-    display: block;
+    --ui-split-sidebar-width: 240px;
   }
 </style>

@@ -1,6 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
+  import { alertButton, alertDialog } from '@vos/storybook/kit'
   import type { Folder, Note } from 'app:rpc'
   import NoteList from './NoteList.svelte'
   import { listed, note } from '../lib/fakeApi'
@@ -127,9 +128,9 @@
   args={{ title: 'Work', folder: { id: 2, name: 'Work' } }}
   play={async ({ canvas, userEvent }) => {
     await userEvent.click(canvas.getByTestId('notes-delete-folder'))
-    await expect(canvas.getByTestId('notes-confirm-folder')).toHaveTextContent('Its notes go to Recently Deleted.')
+    await expect(alertDialog(canvas.getByTestId('notes-confirm-folder'))).toHaveTextContent('Its notes go to Recently Deleted.')
     await expect(onremovefolder).not.toHaveBeenCalled()
-    await userEvent.click(canvas.getByTestId('notes-confirm-folder-delete'))
+    await userEvent.click(alertButton(canvas.getByTestId('notes-confirm-folder'), 'action'))
     await expect(onremovefolder).toHaveBeenCalledWith({ id: 2, name: 'Work' })
   }}
 />

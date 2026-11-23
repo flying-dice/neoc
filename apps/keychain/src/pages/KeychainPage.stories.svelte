@@ -1,6 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, waitFor } from 'storybook/test'
+  import { alertButton, alertDialog } from '@vos/storybook/kit'
   import AppWindow from '@vos/storybook/AppWindow.svelte'
   import definition from '../../openrpc.json'
   import KeychainPage from './KeychainPage.svelte'
@@ -109,8 +110,10 @@
   play={async ({ canvas, userEvent }) => {
     await appears(canvas, 'keychain-item-3-remove')
     await userEvent.click(canvas.getByTestId('keychain-item-3-remove'))
-    await says(canvas, 'keychain-confirm', 'Delete router.home?')
-    await says(canvas, 'keychain-confirm', 'The password of admin is deleted from the keychain of this machine.')
+    // the kit's alert holds its words in its shadow tree
+    const alert = (): Element | null => alertDialog(canvas.getByTestId('keychain-confirm'))
+    await waitFor(() => expect(alert()).toHaveTextContent('Delete router.home?'))
+    await expect(alert()).toHaveTextContent('The password of admin is deleted from the keychain of this machine.')
   }}
 />
 
@@ -120,13 +123,13 @@
   play={async ({ canvas, userEvent }) => {
     await appears(canvas, 'keychain-item-3-remove')
     await userEvent.click(canvas.getByTestId('keychain-item-3-remove'))
-    await appears(canvas, 'keychain-confirm-cancel')
-    await userEvent.click(canvas.getByTestId('keychain-confirm-cancel'))
+    await appears(canvas, 'keychain-confirm')
+    await userEvent.click(alertButton(canvas.getByTestId('keychain-confirm'), 'cancel'))
     await gone(canvas, 'keychain-confirm')
     await says(canvas, 'keychain-items-summary', '3 items')
     await userEvent.click(canvas.getByTestId('keychain-item-3-remove'))
-    await appears(canvas, 'keychain-confirm-delete')
-    await userEvent.click(canvas.getByTestId('keychain-confirm-delete'))
+    await appears(canvas, 'keychain-confirm')
+    await userEvent.click(alertButton(canvas.getByTestId('keychain-confirm'), 'action'))
     await gone(canvas, 'keychain-item-3')
     await says(canvas, 'keychain-items-summary', '2 items')
   }}

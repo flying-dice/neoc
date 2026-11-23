@@ -17,7 +17,7 @@
 -- Turning a site on and off, and the settings, are left to the person.
 local app = require("vos:app")
 local config = require("./config")
-local engine = require("./engine")
+local docker = require("vos:docker")
 local rpc = require("../.app/rpc")
 local sidecar = require("./sidecar")
 local task = require("std:task")
@@ -40,17 +40,11 @@ local function changed()
 end
 
 -- the watcher is the app's own task: it starts at load without holding it up, and stops when the app is unloaded
-task.spawn(engine.watch, { type = "container", label = sidecar.FILTER.label, event = sidecar.EVENTS }, changed)
+task.spawn(docker.watch, sidecar.FILTERS, changed)
 
 local function overview(): rpc.Overview
-  local version, unreachable = engine.version()
   return {
-    engine = {
-      reachable = version ~= nil,
-      version = version or "",
-      host = engine.host(),
-      problem = if version then "" else unreachable or "",
-    },
+    engine = docker.status(),
     server = sidecar.server(),
     settings = config.settings(),
     sites = sidecar.sites(),
@@ -70,7 +64,7 @@ local handlers: rpc.Handlers = {
   end,
 
   connect = function(ctx, params)
-    local refused = engine.use(params.host)
+    local refused = docker.use(params.host)
     return if refused then ctx:fail(refused) else overview()
   end,
 

@@ -11,6 +11,8 @@ use std::fmt;
 use std::io;
 use std::path::Path;
 
+use crate::lua::error_text;
+
 /// What went wrong, stable across platforms. The names are the wire contract (`fs.error_kind`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -160,17 +162,18 @@ impl std::error::Error for FsError {}
 /// The kind name inside an error string a `std:fs` function returned (`fs.read: not_found: ...`), or `None` when
 /// the text is not one of ours.
 pub fn kind_of(err: &str) -> Option<&'static str> {
-    let rest = err.strip_prefix("fs.")?;
-    let (function, rest) = rest.split_once(": ")?;
-    if function.is_empty()
-        || !function
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b == b'_')
-    {
-        return None;
-    }
-    let name = rest.split_once(": ").map_or(rest, |(name, _)| name);
-    Kind::parse(name).map(Kind::as_str)
+    read(err).map(|(kind, _)| kind.as_str())
+}
+
+/// The message inside an error string a `std:fs` function returned: everything after the kind. `None` when the
+/// text is not one of ours.
+pub fn message_of(err: &str) -> Option<&str> {
+    read(err).map(|(_, message)| message)
+}
+
+/// The kind and the message of one of our error strings; the shape is [`error_text`]'s.
+fn read(err: &str) -> Option<(Kind, &str)> {
+    error_text::read("fs", err, Kind::parse)
 }
 
 #[cfg(test)]
@@ -249,5 +252,18 @@ mod tests {
         assert_eq!(kind_of("fs.: not_found: x"), None);
         assert_eq!(kind_of("fs.Read: not_found: x"), None);
         assert_eq!(kind_of(""), None);
+    }
+
+    #[test]
+    fn message_of_reads_our_strings_only() {
+        assert_eq!(
+            message_of("fs.read: not_found: /x: No such file"),
+            Some("/x: No such file")
+        );
+        assert_eq!(message_of("fs.read: not_found"), Some(""));
+        assert_eq!(message_of("fs.read: nonsense: /x: boom"), None);
+        assert_eq!(message_of("hyper.get: timed_out: x"), None);
+        assert_eq!(message_of("/x: No such file"), None);
+        assert_eq!(message_of(""), None);
     }
 }

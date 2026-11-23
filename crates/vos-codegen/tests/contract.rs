@@ -123,7 +123,7 @@ fn the_modules_an_app_is_not_offered_are_unusable_and_the_others_are_neocs() {
         assert!(overloads.contains(&(name.clone(), ty.clone())), "{name} keeps neoc's type {ty}");
         assert!(defs.contains(&format!("-- ===== {name} =====\n")), "{name} keeps its section");
     }
-    assert_eq!(overloads.len(), theirs.len() + 1, "neoc's modules and `vos:app`");
+    assert_eq!(overloads.len(), theirs.len() + 2, "neoc's modules, `vos:app` and `vos:docker`");
 }
 
 #[test]

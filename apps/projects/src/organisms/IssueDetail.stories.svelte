@@ -1,6 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
+  import { alertButton, textArea } from '@vos/storybook/kit'
   import IssueDetail from './IssueDetail.svelte'
   import type { Issue } from 'app:rpc'
   import { ISSUES } from '../lib/samples'
@@ -39,7 +40,7 @@
   name="A bug"
   play={async ({ canvas, userEvent }) => {
     await expect(canvas.getByTestId('projects-issue-key')).toHaveTextContent('WEB-2')
-    await expect(canvas.getByTestId('projects-issue-description')).toHaveValue('They go nowhere on the pricing page.')
+    await expect(textArea(canvas.getByTestId('projects-issue-description'))).toHaveValue('They go nowhere on the pricing page.')
     await userEvent.click(canvas.getByTestId('projects-issue-status').shadowRoot!.querySelector('[data-testid="projects-issue-status-doing"]')!)
     await expect(onchange).toHaveBeenCalledWith(bug, { status: 'doing' })
   }}
@@ -51,7 +52,7 @@
   play={async ({ canvas, userEvent }) => {
     await userEvent.click(canvas.getByTestId('projects-issue-remove'))
     await expect(onremove).not.toHaveBeenCalled()
-    await userEvent.click(canvas.getByTestId('projects-issue-confirm-delete'))
+    await userEvent.click(alertButton(canvas.getByTestId('projects-issue-confirm'), 'action'))
     await expect(onremove).toHaveBeenCalledWith(bug)
   }}
 />

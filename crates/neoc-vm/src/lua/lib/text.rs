@@ -6,6 +6,7 @@ use heck::{
 use mlua::{Lua, Table, Value};
 use strsim::levenshtein as strsim_levenshtein;
 use tracing::instrument;
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthChar;
 
 use crate::lua::facade::Module;
@@ -23,11 +24,13 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 ///
 /// Every function is set verbatim with [`crate::lua::facade::Module::set`]:
 /// each carries its own `#[instrument]` span, so routing through the facade's
-/// `func` / `try_func` would open a second span. The infallible case-conversion
-/// helpers return a bare value, while `word_wrap` / `closest` / `truncate` /
-/// the pad family build their `(value, error)` returns directly through `err` /
-/// `ok` with a baked `"text.<fn>: "` prefix. Their signatures are recorded via
-/// [`crate::lua::facade::Module::record_fn`].
+/// `func` / `try_func` would open a second span. `word_wrap` / `closest` /
+/// `truncate` / the pad family build their `(value, error)` returns directly
+/// through `err` / `ok` with a baked `"text.<fn>: "` prefix; the rest return a
+/// bare value. `clip` is among the rest although it refuses a `max` that is
+/// not a count: it raises, as for an argument of the wrong type, so that the
+/// common call is a plain `string` and not a `string?` to unwrap. Their
+/// signatures are recorded via [`crate::lua::facade::Module::record_fn`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:text")?;
 
@@ -141,6 +144,54 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         &[("text", "string")],
         "string",
         "Convert `text` to a URL-safe ASCII slug via `deunicode` transliteration, then lowercase and hyphenate.",
+    );
+
+    m.set("trim", lua.create_function(trim)?)?;
+    m.record_fn(
+        "trim",
+        &[("text", "string")],
+        "string",
+        "Remove Unicode white space (the `White_Space` property: spaces, tabs, line breaks, U+00A0, U+3000, ...) from both ends of `text`. Raises when `text` is not valid UTF-8 (repair it with `to_valid_utf8` first).",
+    );
+
+    m.set("trim_start", lua.create_function(trim_start)?)?;
+    m.record_fn(
+        "trim_start",
+        &[("text", "string")],
+        "string",
+        "Remove Unicode white space from the start of `text`. Raises when `text` is not valid UTF-8 (repair it with `to_valid_utf8` first).",
+    );
+
+    m.set("trim_end", lua.create_function(trim_end)?)?;
+    m.record_fn(
+        "trim_end",
+        &[("text", "string")],
+        "string",
+        "Remove Unicode white space from the end of `text`. Raises when `text` is not valid UTF-8 (repair it with `to_valid_utf8` first).",
+    );
+
+    m.set("clip", lua.create_function(clip)?)?;
+    m.record_fn(
+        "clip",
+        &[("text", "string"), ("max", "number"), ("ellipsis", "string?")],
+        "string",
+        "Clip `text` to at most `max` characters. A character is an extended grapheme cluster (UAX #29, what `lib:unicode.graphemes` yields and a Swift `Character` is): a flag emoji or a letter with its combining accent is one, and is never cut apart. When `text` is cut and `ellipsis` is given, the ellipsis ends the result and counts toward `max`; an ellipsis longer than `max` is left out. The count bounds characters, not bytes: one character may carry any number of combining marks. Raises (it does not return an error) when `max` is negative, fractional or NaN, and when `text` or `ellipsis` is not valid UTF-8; a `max` beyond any text, infinity included, is the whole text.",
+    );
+
+    m.set("to_valid_utf8", lua.create_function(to_valid_utf8)?)?;
+    m.record_fn(
+        "to_valid_utf8",
+        &[("bytes", "string")],
+        "string",
+        "Make any byte string valid UTF-8: bytes that are not part of a character are replaced with U+FFFD (the replacement character). Valid input is returned as it is.",
+    );
+
+    m.set("strip_ansi", lua.create_function(strip_ansi)?)?;
+    m.record_fn(
+        "strip_ansi",
+        &[("text", "string")],
+        "string",
+        "Remove what a terminal would act on instead of show: escape sequences (colours, cursor movement, window titles) and control characters. Line feeds and tabs stay, so `\\r\\n` becomes `\\n`. Each line is read on its own, so a sequence that is never ended takes the rest of its line and no more. A C1 control written as a character (U+0080 to U+009F) is removed without being read as the start of a sequence. Raises when `text` is not valid UTF-8 (repair it with `to_valid_utf8` first).",
     );
 
     Ok(m)
@@ -619,6 +670,125 @@ fn slugify_str(input: &str) -> String {
         }
     }
     out
+}
+
+// ---------------------------------------------------------------------------
+// trim — std's `str::trim*`, which trim the Unicode `White_Space` property.
+// ---------------------------------------------------------------------------
+
+#[instrument(name = "text.trim", target = "lua::lib::text", skip_all)]
+fn trim(_: &Lua, text: mlua::LuaString) -> mlua::Result<String> {
+    Ok(text.to_str()?.trim().to_owned())
+}
+
+#[instrument(name = "text.trim_start", target = "lua::lib::text", skip_all)]
+fn trim_start(_: &Lua, text: mlua::LuaString) -> mlua::Result<String> {
+    Ok(text.to_str()?.trim_start().to_owned())
+}
+
+#[instrument(name = "text.trim_end", target = "lua::lib::text", skip_all)]
+fn trim_end(_: &Lua, text: mlua::LuaString) -> mlua::Result<String> {
+    Ok(text.to_str()?.trim_end().to_owned())
+}
+
+// ---------------------------------------------------------------------------
+// clip — at most `max` extended grapheme clusters (unicode-segmentation).
+// ---------------------------------------------------------------------------
+
+#[instrument(name = "text.clip", target = "lua::lib::text", skip_all)]
+fn clip(
+    _: &Lua,
+    (text, max, ellipsis): (mlua::LuaString, f64, Option<mlua::LuaString>),
+) -> mlua::Result<String> {
+    if max.is_nan() || max < 0.0 || (max.is_finite() && max.fract() != 0.0) {
+        return Err(mlua::Error::external(
+            "text.clip: max must be a whole number >= 0",
+        ));
+    }
+    // A float-to-integer `as` saturates: a count beyond `usize` (infinity too) is one no text reaches.
+    let max = max as usize;
+    let text = text.to_str()?;
+    let ellipsis = match &ellipsis {
+        Some(e) => e.to_str()?.to_owned(),
+        None => String::new(),
+    };
+    Ok(clip_str(&text, max, &ellipsis))
+}
+
+/// The byte offset where the grapheme at index `count` starts, or `None` when `s` has no more than `count`.
+fn grapheme_offset(s: &str, count: usize) -> Option<usize> {
+    s.grapheme_indices(true).nth(count).map(|(at, _)| at)
+}
+
+fn clip_str(text: &str, max: usize, ellipsis: &str) -> String {
+    let Some(cut) = grapheme_offset(text, max) else {
+        return text.to_owned();
+    };
+    // An ellipsis that does not fit in `max` is left out, as `truncate` leaves out its own. Counting it stops
+    // one past `max`: that is enough to know it does not fit.
+    let ellipsis_len = ellipsis.graphemes(true).take(max.saturating_add(1)).count();
+    let Some(kept) = max.checked_sub(ellipsis_len) else {
+        return text[..cut].to_owned();
+    };
+    let cut = grapheme_offset(text, kept).unwrap_or(cut);
+    format!("{}{ellipsis}", &text[..cut])
+}
+
+// ---------------------------------------------------------------------------
+// to_valid_utf8 — std's lossy decoding.
+// ---------------------------------------------------------------------------
+
+#[instrument(name = "text.to_valid_utf8", target = "lua::lib::text", skip_all)]
+fn to_valid_utf8(lua: &Lua, bytes: mlua::LuaString) -> mlua::Result<mlua::LuaString> {
+    let repaired = match String::from_utf8_lossy(&bytes.as_bytes()) {
+        std::borrow::Cow::Borrowed(_) => None,
+        std::borrow::Cow::Owned(repaired) => Some(repaired),
+    };
+    match repaired {
+        None => Ok(bytes),
+        Some(repaired) => lua.create_string(repaired),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// strip_ansi — vte parses the terminal's language; what it would print stays.
+// ---------------------------------------------------------------------------
+
+/// What a terminal would show of the bytes `vte` parsed: the printed characters, line feeds and tabs.
+struct Shown(String);
+
+impl vte::Perform for Shown {
+    fn print(&mut self, c: char) {
+        // DEL and the C1 controls reach `print`; they are no more text than the C0 controls `execute` gets.
+        if !c.is_control() {
+            self.0.push(c);
+        }
+    }
+
+    fn execute(&mut self, byte: u8) {
+        if matches!(byte, b'\n' | b'\t') {
+            self.0.push(char::from(byte));
+        }
+    }
+}
+
+#[instrument(name = "text.strip_ansi", target = "lua::lib::text", skip_all)]
+fn strip_ansi(_: &Lua, text: mlua::LuaString) -> mlua::Result<String> {
+    Ok(strip_ansi_str(&text.to_str()?))
+}
+
+fn strip_ansi_str(text: &str) -> String {
+    let mut shown = Shown(String::new());
+    // A parser per line: a string sequence (a window title, say) that is never ended would otherwise take
+    // every line after it, and one stray `ESC ]` would hide the rest of a log.
+    // The line feed is put back by hand: inside such a sequence the parser would take it as well.
+    for (at, line) in text.split('\n').enumerate() {
+        if at > 0 {
+            shown.0.push('\n');
+        }
+        vte::Parser::new().advance(&mut shown, line.as_bytes());
+    }
+    shown.0
 }
 
 // ---------------------------------------------------------------------------

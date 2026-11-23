@@ -6,6 +6,8 @@ import './ui-check'
 import './ui-list'
 import './ui-segmented'
 import './ui-text-field'
+import './ui-text-area'
+import './ui-picker'
 import './ui-toggle'
 
 const meta: Meta = {
@@ -51,6 +53,24 @@ const controls = (disabled: 'own' | 'fieldset'): TemplateResult => {
     <div data-testid="${disabled}-card-field" style="padding:8px;background:var(--fill-tertiary)">
       <ui-text-field data-testid="${disabled}-field" label="Field" ?disabled=${own}></ui-text-field>
     </div>
+    <div data-testid="${disabled}-card-area" style="padding:8px;background:var(--fill-tertiary)">
+      <ui-text-area
+        data-testid="${disabled}-area"
+        label="Area"
+        rows="2"
+        value="Lines"
+        ?disabled=${own}
+      ></ui-text-area>
+    </div>
+    <div data-testid="${disabled}-card-picker" style="padding:8px;background:var(--fill-tertiary)">
+      <ui-picker
+        data-testid="${disabled}-picker"
+        label="Picker"
+        value="a"
+        .options=${options}
+        ?disabled=${own}
+      ></ui-picker>
+    </div>
   </fieldset>`
 }
 
@@ -65,7 +85,7 @@ export const DisabledControls: StoryObj = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     const log: string[] = []
-    const kinds = ['native', 'button', 'toggle', 'check', 'seg', 'field']
+    const kinds = ['native', 'button', 'toggle', 'check', 'seg', 'field', 'area', 'picker']
     for (const way of ['own', 'fieldset']) {
       for (const kind of kinds) {
         const id = `${way}-${kind}`

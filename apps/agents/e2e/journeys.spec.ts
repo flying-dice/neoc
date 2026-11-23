@@ -339,6 +339,7 @@ test.describe('Agents journeys', () => {
     await expect(agentRow(page, `${name} renamed`)).toBeVisible()
     await agentRow(page, `${name} renamed`).getByTestId(/^agents-edit-/).click()
     await part(page, 'form-remove').click()
+    await part(page, 'confirm-confirm').click()
     await expect(agentRow(page, name)).toHaveCount(0)
     // the chat is still there, under the agent's last name, and says why it cannot go on
     await frame(page).getByTestId(/^agents-chat-/).filter({ hasText: `${name} renamed` }).first().click()
@@ -346,6 +347,7 @@ test.describe('Agents journeys', () => {
     await say(page, 'hello')
     await expect(part(page, 'failure')).toContainText('That agent was removed.')
     await part(page, 'remove-chat').click()
+    await part(page, 'confirm-confirm').click()
     await expect(part(page, 'no-chat')).toBeVisible()
     await expect(frame(page).getByTestId(/^agents-chat-/).filter({ hasText: `${name} renamed` })).toHaveCount(0)
   })

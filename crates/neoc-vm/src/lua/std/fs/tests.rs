@@ -64,6 +64,18 @@ async fn every_failure_is_nil_then_an_error_with_a_stable_kind() {
         check(fs.error_kind("fs.read: not_found: x") == "not_found")
         check(fs.error_kind("something else") == nil)
         check(fs.error_kind("fs.read: bogus_kind: x") == nil)
+
+        -- the message is the string after its kind: the path, then the operating system's wording
+        local _, err = fs.read(p("nope"))
+        local message = fs.error_message(err)
+        check(message ~= nil and err == "fs.read: not_found: " .. message, err)
+        check(string.find(message, p("nope") .. ": ", 1, true) == 1, message)
+        check(fs.error_message("fs.copy: invalid_input: bad option") == "bad option")
+        check(fs.error_message("fs.read: not_found") == "")
+        check(fs.error_message("something else") == nil)
+        check(fs.error_message("fs.read: bogus_kind: x") == nil)
+        check(fs.error_message("hyper.get: timed_out: x") == nil)
+        check(fs.error_message(nil) == nil)
     "#)
     .await;
 }
@@ -297,6 +309,7 @@ async fn a_wrong_argument_type_is_a_lua_error_never_a_panic() {
         "fs.metadata(nil)",
         "fs.set_permissions('a')",
         "fs.error_kind({})",
+        "fs.error_message({})",
     ] {
         let outcome: mlua::Result<mlua::MultiValue> = lua
             .load(format!("local fs = require('std:fs'); return {call}"))
@@ -601,6 +614,7 @@ async fn the_long_calls_fail_where_luau_refuses_a_yield_and_do_nothing() {
 async fn error_kind_and_trailing_separators_on_hostile_strings() {
     run(r#"
         check(fs.error_kind("\255\254") == nil, "invalid UTF-8 is not one of ours")
+        check(fs.error_message("\255\254") == nil, "invalid UTF-8 is not one of ours")
         ok(fs.create_dir(p("real")))
         ok(fs.write(p("real/f"), "f"))
         if fs.symlink("real", p("lnk")) ~= nil then

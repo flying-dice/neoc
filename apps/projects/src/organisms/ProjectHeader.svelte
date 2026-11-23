@@ -1,7 +1,6 @@
 <!-- @organism ProjectHeader — the project that is shown: its colour, name and key, the control that picks its board, its issues or its pages, and the way to delete it, after an alert asks -->
 <script lang="ts">
   import type { Project } from 'app:rpc'
-  import ConfirmAlert from '../molecules/ConfirmAlert.svelte'
   import { TABS, type Tab } from '../lib/catalog'
 
   interface Props {
@@ -61,16 +60,19 @@
     ></ui-segmented>
   </div>
   {#if confirming}
-    <ConfirmAlert
+    <ui-alert
+      open
+      destructive
+      action-label="Delete"
       heading="Delete {project.name}?"
       message="Its issues and its pages are deleted with it."
-      testid="projects-confirm"
+      data-testid="projects-confirm"
       oncancel={() => (asking = null)}
       onconfirm={() => {
         asking = null
         onremove(project)
       }}
-    />
+    ></ui-alert>
   {/if}
 </header>
 

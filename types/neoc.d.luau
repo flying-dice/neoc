@@ -187,6 +187,8 @@ export type std_fs = {
 	symlink: (target: string, link: string) -> (boolean?, string?),
 	--- The stable kind inside an error string returned by a `std:fs` function, or `nil` when the string is not one of theirs (or is `nil`, so `fs.error_kind(err)` takes the `err` of any call). Such a string is `fs.<function>: <kind>: <path>: <message>`; for a call on two paths (`copy`, `rename`, ...) the path part may be `<from> -> <to>`, and an error about no one path (a bad option, say) has none: `fs.<function>: <kind>: <message>`. Kinds: `not_found`, `permission_denied`, `already_exists`, `not_empty`, `is_directory`, `not_a_directory`, `cross_device`, `invalid_input`, `read_only_filesystem`, `storage_full`, `unsupported`, `too_large`, `timed_out`, `other`. They mean the same on every platform; the rest of the message is the operating system's wording and differs.
 	error_kind: (err: string?) -> string?,
+	--- The message inside an error string returned by a `std:fs` function: everything after the kind in `fs.<function>: <kind>: <message>`, or `nil` when the string is not one of theirs (or is `nil`, so `fs.error_message(err)` takes the `err` of any call), the same rule as `error_kind`. It is the path the error is about (when it is about one) and then the operating system's wording: `/x: No such file or directory (os error 2)`. It is for showing or logging as it is: branch on `error_kind`, not on these words, which differ between platforms and versions. Read it here instead of taking the error string apart.
+	error_message: (err: string?) -> string?,
 	--- Watch the directory `path` for changes and return a `Watcher`; read them with `watcher:receive()`. Option `{ recursive }` watches the whole tree under it (default: only its direct children). It is `not_found` for a missing path and `not_a_directory` for a file. The watch is the operating system's (inotify, FSEvents, ReadDirectoryChangesW), so the directory is not rescanned. Each event is `{ kind, path }`, `path` under the `path` given here. Kinds: `create`, `modify`, `remove`, `rename` (one event per path, the old name and the new name each; they are not paired, and macOS cannot tell which is which: check with `exists`), and `overflow`: changes were lost (more than 4096 waiting, or the system's own buffer overflowed), so rescan; its `path` is the watched directory. Events are not deduplicated or debounced, and one change can be reported as several (FSEvents coalesces: a new file may also show as `modify`). On macOS a change made just before the watch started may also be reported. The watch stops at `watcher:close()`, when the handle is collected, and when the engine shuts down. Starting a recursive watch on Linux adds one watch per directory of the tree. It waits like `task.wait`: other tasks, and an embedder's other calls, run while it does. Where Luau cannot yield (a metamethod, a `table.sort` comparator, a `string.gsub` callback) it fails with the yield error and does nothing.
 	watch: (path: string, opts: { recursive: boolean? }?) -> (std_fs_Watcher?, string?),
 }
@@ -261,6 +263,34 @@ export type std_path = {
 	components: (path: string) -> { string },
 	--- The path relative to `base`, or `nil` when `base` is not a prefix of it, compared component by component (`strip_prefix("/a/b/c", "/a/b")` is `"c"`, but `"/a/bc"` is not under `"/a/b"`).
 	strip_prefix: (path: string, base: string) -> string?,
+}
+
+-- ===== std:process =====
+
+export type std_process_Child = {
+	--- Send bytes to the process's standard input: `true` once the pipe has taken them all. Nothing is added: a protocol of lines needs its `\n`. At most 1 MiB a call (`invalid_input` past that). Writes are made one after the other, and a process that does not read its input makes the write wait. `not_piped` when `stdin` is not a pipe; `closed` after `close_stdin()`, after `close()` and once the process has ended, also for a write that was waiting; `io` when the pipe refuses the bytes (the process closed its input). A write cannot be taken back: cancelling the task that waits in one does not stop it, and it may still be made. It waits like `task.wait`: other tasks run while it does.
+	write: (self: std_process_Child, data: string) -> (boolean?, string?),
+	--- Close the process's standard input: `true`. The process then reads the end of its input, which is how a program that reads until then is asked to finish. A write the pipe is taking is finished first; writes that wait behind it fail with `closed`. Closing again does nothing. `not_piped` when `stdin` is not a pipe.
+	close_stdin: (self: std_process_Child) -> (boolean?, string?),
+	--- Wait for the process's standard output and return it: the bytes the process wrote, at most `max` of them (a whole number from 1 to 65536, the default), as soon as there are any. The bytes are the process's own, and a read may end in the middle of a line or of a character. `(nil, nil)` is the end of the output: every process that had the pipe open is gone or closed it, or `close()` was called. `(nil, err)` is a failure: `not_piped` when `stdout` is not a pipe, `io` when reading failed (the read after it is the end), `invalid_input` for a `max` out of range. At most 256 KiB of output wait to be read: a process that writes more waits in its write until the script reads. A read that is abandoned takes nothing. It waits like `task.wait`: other tasks run while it does.
+	read: (self: std_process_Child, max: number?) -> (string?, string?),
+	--- `read` for the process's standard error, which has a buffer of its own. It waits like `task.wait`: other tasks run while it does.
+	read_stderr: (self: std_process_Child, max: number?) -> (string?, string?),
+	--- The operating system's id of the process, while it runs. `nil` once it has ended or `close()` was called: the number is then the operating system's to give to another process.
+	id: (self: std_process_Child) -> number?,
+	--- Wait for the process to end and return how it ended: `code` (the exit code when it ended by itself, else `nil`), `signal` (the number of the signal that ended it; `nil` when it ended by itself, and always on Windows) and `success` (it ended by itself with code 0). It does not close the process's input: a process that reads to the end of its input needs `close_stdin()` first. It may be called again, and after `close()`: the answer is the same. The output can outlive the process (a child of it still writes): read to the end for all of it. `io` when the operating system does not say how the process ended. It waits like `task.wait`: other tasks run while it does.
+	wait: (self: std_process_Child) -> ({ code: number?, signal: number?, success: boolean }?, string?),
+	--- Kill the process: on Unix it and every process in its group (those it started, unless they moved to a group of their own) are sent the kill they cannot refuse (`SIGKILL`); on Windows the process alone is terminated. It returns at once: `wait()` says when the process is gone. Once `wait()` has said so, a kill does nothing, and what the process left behind runs on. To ask a process to finish instead, close its input (`close_stdin`) or tell it in its own protocol.
+	kill: (self: std_process_Child) -> (),
+	--- Kill the process as `kill()` does and let go of its streams: output not yet read is dropped, every `read` and `read_stderr`, waiting or later, returns `(nil, nil)`, and `write` fails with `closed`. `wait()` still says how the process ended. Closing again does nothing. A process is also closed when its handle is collected, and when the engine shuts down.
+	close: (self: std_process_Child) -> (),
+}
+
+export type std_process = {
+	--- Start a program: a `Child`. `program` is a path, or a name looked up in `PATH`, and `args` its arguments (at most 1024); no shell reads them, so nothing in them is expanded or split. `cwd` is the directory it starts in (default: the engine's working directory). `env` is added to the environment the engine's process has, replacing a variable of the same name; with `clear_env` the process starts from an empty environment and has only what `env` gives it. Each of `stdin`, `stdout` and `stderr` is `"piped"` (the default: a pipe between the process and this handle), `"null"` (nothing: the process reads the end of its input, and what it writes is thrown away) or `"inherit"` (the engine's own stream). A piped output that nobody reads stops the process once 256 KiB of it wait: read it, or do not pipe it. The process runs as the engine's user and can do what that user can: a script given this module is trusted with the machine. Errors are `process.<function>: <kind>: <message>` (see `error_kind`): `invalid_input` for an option that is missing, unknown or of the wrong shape, `spawn` when the program could not be started (no such program, not executable, `cwd` is not a directory, or the system refused the process), `closed` when the engine has shut down. The process is killed, and its streams let go of, by `close()`, when the handle is collected, and when the engine shuts down. On Unix it is started in a process group of its own, which a kill reaches as a whole. That group is not the foreground of the engine's terminal: a Ctrl-C typed there does not reach the process (a script that should end on one kills its processes itself), and a process that reads an inherited `stdin` which is that terminal is stopped by it. It waits like `task.wait`: other tasks run while it does.
+	spawn: (opts: { program: string, args: { string }?, cwd: string?, env: { [string]: string }?, clear_env: boolean?, stdin: ("piped" | "null" | "inherit")?, stdout: ("piped" | "null" | "inherit")?, stderr: ("piped" | "null" | "inherit")? }) -> (std_process_Child?, string?),
+	--- The stable kind inside an error string returned by a `std:process` function, or `nil` when the string is not one of theirs (or is `nil`, so `process.error_kind(err)` takes the `err` of any call). Such a string is `process.<function>: <kind>: <message>`. Kinds: `invalid_input` (an argument or option was refused), `spawn` (the program could not be started), `not_piped` (the stream was not started as a pipe), `closed` (the stream, the process or the engine was closed), `io` (reading from a stream or writing to it failed, or the system did not say how the process ended), `other`. The message is the operating system's own; it is for a log and may change.
+	error_kind: (err: string?) -> string?,
 }
 
 -- ===== std:task =====
@@ -578,6 +608,8 @@ export type lib_agui = {
 	apply_patch: (document: any, patch: { any }) -> (any, string?),
 	--- The stable kind inside an error string this module returned, or `nil` when the string is not one of its own (or is `nil`, so `agui.error_kind(err)` takes the `err` of any call). Such a string is `agui.<function>: <kind>: <message>`. Kinds: those of `vnd:hyper` (`invalid_input`, `invalid_url`, `connect`, `tls`, `timed_out`, `too_large` for an event over `max_event`, `connection_lost`, `bad_response`, `other`), `status` (the endpoint answered, and not with 2xx) and `protocol` (the answer is not an event stream, or an event in it is not an AG-UI event: a field missing or of the wrong type). The message is for a log and may change.
 	error_kind: (err: string?) -> string?,
+	--- The message inside an error string this module returned: everything after the kind in `agui.<function>: <kind>: <message>`, or `nil` when the string is not one of its own (or is `nil`). It is for a person or a log, and its wording may change.
+	error_message: (err: string?) -> string?,
 }
 
 -- ===== lib:archive =====
@@ -1428,6 +1460,18 @@ export type lib_text = {
 	center: (text: string, width: number, fill_char: string?) -> (string?, string?),
 	--- Convert `text` to a URL-safe ASCII slug via `deunicode` transliteration, then lowercase and hyphenate.
 	slugify: (text: string) -> string,
+	--- Remove Unicode white space (the `White_Space` property: spaces, tabs, line breaks, U+00A0, U+3000, ...) from both ends of `text`. Raises when `text` is not valid UTF-8 (repair it with `to_valid_utf8` first).
+	trim: (text: string) -> string,
+	--- Remove Unicode white space from the start of `text`. Raises when `text` is not valid UTF-8 (repair it with `to_valid_utf8` first).
+	trim_start: (text: string) -> string,
+	--- Remove Unicode white space from the end of `text`. Raises when `text` is not valid UTF-8 (repair it with `to_valid_utf8` first).
+	trim_end: (text: string) -> string,
+	--- Clip `text` to at most `max` characters. A character is an extended grapheme cluster (UAX #29, what `lib:unicode.graphemes` yields and a Swift `Character` is): a flag emoji or a letter with its combining accent is one, and is never cut apart. When `text` is cut and `ellipsis` is given, the ellipsis ends the result and counts toward `max`; an ellipsis longer than `max` is left out. The count bounds characters, not bytes: one character may carry any number of combining marks. Raises (it does not return an error) when `max` is negative, fractional or NaN, and when `text` or `ellipsis` is not valid UTF-8; a `max` beyond any text, infinity included, is the whole text.
+	clip: (text: string, max: number, ellipsis: string?) -> string,
+	--- Make any byte string valid UTF-8: bytes that are not part of a character are replaced with U+FFFD (the replacement character). Valid input is returned as it is.
+	to_valid_utf8: (bytes: string) -> string,
+	--- Remove what a terminal would act on instead of show: escape sequences (colours, cursor movement, window titles) and control characters. Line feeds and tabs stay, so `\r\n` becomes `\n`. Each line is read on its own, so a sequence that is never ended takes the rest of its line and no more. A C1 control written as a character (U+0080 to U+009F) is removed without being read as the start of a sequence. Raises when `text` is not valid UTF-8 (repair it with `to_valid_utf8` first).
+	strip_ansi: (text: string) -> string,
 }
 
 -- ===== lib:unicode =====
@@ -1593,6 +1637,8 @@ export type vnd_bollard = {
 	connect: (opts: { host: string?, timeout: number?, tls_ca: string?, tls_cert: string?, tls_key: string? }?) -> (vnd_bollard_Client?, string?),
 	--- The stable kind inside an error string returned by a `vnd:bollard` function, or `nil` when the string is not one of theirs (or is `nil`, so `bollard.error_kind(err)` takes the `err` of any call). Such a string is `bollard.<function>: <kind>: <message>`. Kinds: `invalid_input` (an argument or option was refused, by this module or by Docker), `connect` (no Docker daemon could be reached: no socket, or nothing answers), `timed_out` (the daemon did not answer within the client's `timeout`), `not_found` (no such container, image, volume or network), `conflict` (the object's state does not allow it: a name in use, a running container, a volume in use), `api` (any other error status from Docker), `bad_response` (Docker's answer could not be read), `too_large` (a result longer than this module reads into memory), `other`. The message is Docker's own where Docker answered; it is for a log and may change.
 	error_kind: (err: string?) -> string?,
+	--- The message inside an error string returned by a `vnd:bollard` function: everything after the kind in `bollard.<function>: <kind>: <message>`, or `nil` when the string is not one of theirs (or is `nil`, so `bollard.error_message(err)` takes the `err` of any call), the same rule as `error_kind`. It is Docker's own sentence where Docker answered (`No such container: web`). It is for showing or logging as it is: branch on `error_kind`, not on these words, which differ between platforms and versions. Read it here instead of taking the error string apart.
+	error_message: (err: string?) -> string?,
 }
 
 -- ===== vnd:hyper =====
@@ -1632,6 +1678,8 @@ export type vnd_hyper = {
 	request: (opts: { method: string, url: string, body: string | buffer?, headers: { [string]: string }?, ca_pem: string?, connect_timeout: number?, idle_timeout: number?, timeout: number?, follow_redirects: boolean | number?, max_body: number? }) -> ({ status: number, headers: { [string]: string }, body: string, url: string }?, string?),
 	--- The stable kind inside an error string returned by a `vnd:hyper` client function, or `nil` when the string is not one of theirs (or is `nil`, so `hyper.error_kind(err)` takes the `err` of any call). Such a string is `hyper.<function>: <kind>: <message>`. Kinds: `invalid_input` (an option, header or body was refused before anything was sent), `invalid_url` (not an `http` or `https` URL with a host, a redirect's `Location` included), `connect` (no connection: the name did not resolve, or the host refused or could not be reached), `tls` (the handshake failed, usually over the certificate), `timed_out` (a time limit passed), `too_many_redirects`, `too_large` (the body is over `max_body`), `connection_lost` (the connection ended or failed before the response was complete), `bad_response` (the server did not send valid HTTP), `other`. The kind means the same on every platform; the message is for a log and may change.
 	error_kind: (err: string?) -> string?,
+	--- The message inside an error string returned by a `vnd:hyper` client function: everything after the kind in `hyper.<function>: <kind>: <message>`, or `nil` when the string is not one of theirs (or is `nil`, so `hyper.error_message(err)` takes the `err` of any call), the same rule as `error_kind`. It is this module's or the transport's wording. It is for showing or logging as it is: branch on `error_kind`, not on these words, which differ between platforms and versions. Read it here instead of taking the error string apart.
+	error_message: (err: string?) -> string?,
 	--- Attach `handler` to `listener` and start accepting HTTP connections. The handler returns a body string, `{ status?, body?, headers? }`, or nothing (an empty 200).
 	serve: (listener: std_net_TcpListener, handler: (req: vnd_hyper_Request) -> ...(string | { status: number?, body: string?, headers: { [string]: string }? } | nil)) -> (vnd_hyper_ServerHandle?, string?),
 }
@@ -1688,6 +1736,8 @@ export type vnd_keyring = {
 	mock: () -> vnd_keyring_Store,
 	--- The stable kind inside an error string returned by a `vnd:keyring` function, or `nil` when the string is not one of theirs (or is `nil`, so `keyring.error_kind(err)` takes the `err` of any call). Such a string is `keyring.<function>: <kind>: <message>`. Kinds: `invalid_input` (an argument was refused, by this module or by the store), `no_store` (this machine has no credential store that can be used), `no_access` (the store is locked, or the person refused), `not_found` (the credential an entry from `search` stood for is gone), `ambiguous` (more than one credential matches the service and user), `bad_encoding` (the secret is not UTF-8 text: read it with `get_secret`), `bad_data` (what the store holds could not be read), `unsupported` (the store does not do this), `platform` (the platform's store failed), `other`. The message is the store's own where it answered; it is for a log and may change, and never holds a secret.
 	error_kind: (err: string?) -> string?,
+	--- The message inside an error string returned by a `vnd:keyring` function: everything after the kind in `keyring.<function>: <kind>: <message>`, or `nil` when the string is not one of theirs (or is `nil`, so `keyring.error_message(err)` takes the `err` of any call), the same rule as `error_kind`. It is the store's or this module's wording, and never holds a secret. It is for showing or logging as it is: branch on `error_kind`, not on these words, which differ between platforms and versions. Read it here instead of taking the error string apart.
+	error_message: (err: string?) -> string?,
 }
 
 -- ===== vnd:portable_pty =====
@@ -1714,6 +1764,8 @@ export type vnd_portable_pty = {
 	spawn_command: (opts: { program: string?, args: { string }?, cwd: string?, env: { [string]: string }?, rows: number?, cols: number? }?) -> (vnd_portable_pty_Pty?, string?),
 	--- The stable kind inside an error string returned by a `vnd:portable_pty` function, or `nil` when the string is not one of theirs (or is `nil`, so `portable_pty.error_kind(err)` takes the `err` of any call). Such a string is `portable_pty.<function>: <kind>: <message>`. Kinds: `invalid_input` (an argument or option was refused), `spawn` (the command could not be started), `closed` (the terminal was closed), `io` (reading from the terminal or writing to it failed), `other`. The message is the crate's or the operating system's own; it is for a log and may change.
 	error_kind: (err: string?) -> string?,
+	--- The message inside an error string returned by a `vnd:portable_pty` function: everything after the kind in `portable_pty.<function>: <kind>: <message>`, or `nil` when the string is not one of theirs (or is `nil`, so `portable_pty.error_message(err)` takes the `err` of any call), the same rule as `error_kind`. It is the crate's or the operating system's wording. It is for showing or logging as it is: branch on `error_kind`, not on these words, which differ between platforms and versions. Read it here instead of taking the error string apart.
+	error_message: (err: string?) -> string?,
 }
 
 -- ===== vnd:quick_xml =====
@@ -1899,6 +1951,7 @@ declare require:
 	& ((path: "std:io") -> std_io)
 	& ((path: "std:net") -> std_net)
 	& ((path: "std:path") -> std_path)
+	& ((path: "std:process") -> std_process)
 	& ((path: "std:task") -> std_task)
 	& ((path: "std:thread") -> std_thread)
 	& ((path: "std:time") -> std_time)

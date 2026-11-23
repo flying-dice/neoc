@@ -1,9 +1,8 @@
 <!-- @page DnsPage — the whole app: the server and its switch at the top, and under it the names it answers for, its settings or its log; or what to do when Docker cannot be reached; driven by one window's Dns state -->
 <script lang="ts">
-  import EngineDown from '../organisms/EngineDown.svelte'
+  import { ContainerLog, EngineDown } from '@vos/docker'
   import RecordList from '../organisms/RecordList.svelte'
   import ServerHeader from '../organisms/ServerHeader.svelte'
-  import ServerLog from '../organisms/ServerLog.svelte'
   import SettingsForm from '../organisms/SettingsForm.svelte'
   import type { Dns, Tab } from '../lib/dns.svelte'
 
@@ -47,6 +46,7 @@
         draft={dns.hostDraft}
         ondraft={(address) => (dns.hostDraft = address)}
         onconnect={() => void dns.connect()}
+        testid="dns"
       />
     </div>
   {:else}
@@ -98,7 +98,12 @@
           onconnect={() => void dns.connect()}
         />
       {:else}
-        <ServerLog server={dns.server} logs={dns.logs} />
+        <ContainerLog
+          absent={dns.server.state === 'absent'}
+          none="The server has no container. It writes here once it is turned on."
+          logs={dns.logs}
+          testid="dns"
+        />
       {/if}
     </div>
   {/if}

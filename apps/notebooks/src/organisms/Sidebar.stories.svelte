@@ -1,6 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
+  import { alertButton, alertDialog, pickerSelect } from '@vos/storybook/kit'
   import type { ComponentProps } from 'svelte'
   import type { Summary } from 'app:rpc'
   import Sidebar from './Sidebar.svelte'
@@ -131,7 +132,7 @@
     await expect(mocks.ontag).toHaveBeenCalledWith('plans')
     await userEvent.type(input(canvas, 'notebooks-search'), 'm')
     await expect(mocks.onsearch).toHaveBeenCalledWith('m')
-    await userEvent.selectOptions(canvas.getByTestId('notebooks-notebook'), 'Work')
+    await userEvent.selectOptions(pickerSelect(canvas.getByTestId('notebooks-notebook')), 'Work')
     await expect(mocks.onnotebook).toHaveBeenCalledWith(2)
   }}
 />
@@ -153,8 +154,8 @@
   args={{ notebooks: [NOTEBOOK, { id: 2, name: 'Work' }], notes: NOTES }}
   play={async ({ canvas, userEvent }) => {
     await userEvent.click(canvas.getByTestId('notebooks-delete-notebook'))
-    await expect(canvas.getByTestId('notebooks-confirm-notebook')).toHaveTextContent('Its notes are deleted with it.')
-    await userEvent.click(canvas.getByTestId('notebooks-confirm-notebook-delete'))
+    await expect(alertDialog(canvas.getByTestId('notebooks-confirm-notebook'))).toHaveTextContent('Its notes are deleted with it.')
+    await userEvent.click(alertButton(canvas.getByTestId('notebooks-confirm-notebook'), 'action'))
     await expect(mocks.onremovenotebook).toHaveBeenCalledTimes(1)
   }}
 />

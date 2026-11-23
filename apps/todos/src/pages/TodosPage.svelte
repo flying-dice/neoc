@@ -11,9 +11,8 @@
 
   let { todos }: Props = $props()
 
-  // below 640 wide the lists and the todos are one column each: `browsing` decides which one shows
-  let width = $state(860)
-  const narrow = $derived(width < 640)
+  // in a window too narrow for both, the split view shows one column: the kit says when, the same for every app
+  let narrow = $state(false)
   // where several lists' todos are together, each says which list it is in
   const gathered = $derived(todos.view.kind === 'smart' && todos.lists.length > 1)
 
@@ -23,9 +22,9 @@
   })
 </script>
 
-<main class="todos" bind:clientWidth={width} data-testid="todos-app">
-  <div class="columns" class:narrow class:browsing={todos.browsing}>
-    <div class="side">
+<main class="todos" data-testid="todos-app">
+  <ui-split-view column={todos.browsing ? 'sidebar' : 'detail'} oncollapsedchange={(e) => (narrow = e.detail.collapsed)}>
+    <div slot="sidebar">
       <ListSidebar
         lists={todos.lists}
         counts={todos.counts}
@@ -37,7 +36,7 @@
         onadd={() => void todos.addList()}
       />
     </div>
-    <div class="detail">
+    <div>
       <TodoList
         title={todos.title}
         todos={todos.todos}
@@ -62,7 +61,7 @@
         onback={() => todos.back()}
       />
     </div>
-  </div>
+  </ui-split-view>
   <!-- why the last call failed (the backend's own sentence, or the host's), whichever column is in front -->
   {#if todos.failure}
     <ui-banner tone="error" data-testid="todos-failure">{todos.failure}</ui-banner>
@@ -78,30 +77,7 @@
     color: var(--label);
     font: var(--type-body);
   }
-  .columns {
+  ui-split-view {
     flex: 1;
-    min-height: 0;
-    display: grid;
-    grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
-  }
-  .side {
-    min-width: 0;
-    min-height: 0;
-    border-inline-end: 1px solid var(--separator);
-  }
-  .detail {
-    min-width: 0;
-    min-height: 0;
-  }
-  /* one column: the lists, or the todos once a list is picked */
-  .narrow {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .narrow:not(.browsing) .side,
-  .narrow.browsing .detail {
-    display: none;
-  }
-  .narrow .side {
-    border-inline-end: 0;
   }
 </style>

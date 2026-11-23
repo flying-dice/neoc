@@ -54,6 +54,8 @@ export class Agents {
   draft = $state('')
   /** The agent form, while it is open. */
   form = $state<AgentForm | null>(null)
+  /** What the person asked to delete, until they say yes or no: the open chat, or the agent in the form. */
+  asking = $state<'chat' | 'agent' | null>(null)
 
   readonly #rpc: AgentsRpc
   readonly #events: AgentsEvents
@@ -185,6 +187,7 @@ export class Agents {
 
   /** Delete the open chat. */
   async removeChat(): Promise<void> {
+    this.asking = null
     if (this.#open === null) return
     try {
       this.#chats = await this.#rpc.removeChat({ chat: this.#open.chat.id })
@@ -226,6 +229,7 @@ export class Agents {
 
   /** Remove the agent the form is changing, and its token. Its chats stay. */
   async remove(): Promise<void> {
+    this.asking = null
     const agent = this.form?.agent
     if (!agent) return
     try {

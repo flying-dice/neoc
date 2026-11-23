@@ -404,7 +404,7 @@ end
 -- the person's words for a failure of `lib:agui`
 local function sentence(err: string): string
   local kind = agui.error_kind(err)
-  local message = string.match(err, "^agui%.[%a_]+: [%a_]+: (.*)$") or err
+  local message = agui.error_message(err) or err
   if kind == "connect" then
     return `The agent's endpoint could not be reached: {message}`
   elseif kind == "status" then

@@ -7,12 +7,14 @@
 -- The check also requires every module an app is offered to be `require`d here (a line of the form
 -- `= require("lib:json")`), so a new module needs a line in this file.
 local app = require("vos:app")
+local docker = require("vos:docker")
 local collections = require("std:collections")
 local env = require("std:env")
 local fs = require("std:fs")
 local io = require("std:io")
 local net = require("std:net")
 local path = require("std:path")
+local process = require("std:process")
 local task = require("std:task")
 local thread = require("std:thread")
 local time = require("std:time")
@@ -65,6 +67,7 @@ local _modules: { any } = {
   env,
   io,
   net,
+  process,
   thread,
   agui,
   archive,
@@ -129,6 +132,7 @@ local _file: string? = fs.read("/tmp/x")
 local _entries = assert(fs.read_dir("/tmp"))
 local _name: string? = path.file_name("/tmp/x")
 local _kind: string? = fs.error_kind("fs.read: not_found: /tmp/x: gone")
+local _message: string? = fs.error_message("fs.read: not_found: /tmp/x: gone")
 local _slept: number = task.wait(0)
 
 -- ── the globals an app has: the base library of Luau, `utf8` and `typeof` from the prelude, `bit32` ────────────
@@ -155,6 +159,7 @@ local _made: boolean?, _madeErr: string? = docs:createDir("notes")
 local _wrote: boolean? = docs:write("notes/a.txt", "hello")
 local _text: string?, readErr: string? = docs:read("notes/a.txt")
 local _missing: string? = app.files.errorKind(readErr)
+local _why: string? = app.files.errorMessage(readErr)
 local entries: { vos_FileInfo } = docs:list("notes") or {}
 for _, entry in entries do
   local _entryName: string, _size: number, _modified: number? = entry.name, entry.size, entry.modified
@@ -206,5 +211,20 @@ local handlers: vos_Handlers = {
     return changed.changes
   end,
 }
+
+-- vos:docker: which Docker, one container the app owns, and its log
+local server = docker.container("vos-usage")
+local declared: vos_DockerDeclaration = {
+  image = "nginx:1.30.0-alpine",
+  ports = { { host = 8081, container = 80 }, { host = 5353, container = 53, udp = true } },
+  mounts = { { source = "/srv/site", target = "/site" } },
+}
+local refused: string? = docker.use("tcp://nas.local:2375") or server:apply(declared, true)
+local reachable: boolean = docker.status().reachable and server:status(declared).current
+local written = server:logs(50)
+local shown: string = if written then written.text else docker.sentence(refused)
+task.spawn(docker.watch, server.filters, function()
+  app.emit("changed", { reachable = reachable, shown = shown, host = docker.host() })
+end)
 
 return handlers

@@ -2,7 +2,7 @@
 //!
 //! The VM is a bare `neoc-vm` engine with the app's own environment table (see
 //! `neoc_vm::lua::script_env`): the prelude's polyfills, the `app` capability table and a `require` that
-//! knows only `vos:app` and the library's modules. Nothing in it is budgeted (no CPU, memory or time limits: the host is a
+//! knows only `vos:app`, the frameworks the host carries (`vos:docker`) and the library's modules. Nothing in it is budgeted (no CPU, memory or time limits: the host is a
 //! homelab's own and apps are meant to do real work); it then runs the app's entry, which returns the app's
 //! handlers. After that the host calls into it: handlers and tools. One call runs in a VM at a time (an app is
 //! single-threaded by design); the VM lives as long as its `AppVm`.

@@ -1,6 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, waitFor } from 'storybook/test'
+  import { alertButton, alertDialog } from '@vos/storybook/kit'
   import AppWindow from '@vos/storybook/AppWindow.svelte'
   import definition from '../../openrpc.json'
   import AgentsPage from './AgentsPage.svelte'
@@ -134,6 +135,26 @@
     await said(canvas, '12 times 7 is 84.')
     await expect(canvas.getByTestId('agents-chat-a')).toHaveAttribute('selected', '')
     await expect(canvas.getByTestId('agents-title')).toHaveTextContent('What is 12 times 7?')
+  }}
+/>
+
+<!-- Deleting a chat asks first: Cancel keeps it, Delete takes it off the list. -->
+<Story
+  name="Deleting a chat"
+  args={{ backend: withChats }}
+  play={async ({ canvas, userEvent }) => {
+    await appears(canvas, 'agents-chat-a')
+    await userEvent.click(canvas.getByTestId('agents-chat-a'))
+    await appears(canvas, 'agents-remove-chat')
+    await userEvent.click(canvas.getByTestId('agents-remove-chat'))
+    await waitFor(() => expect(alertDialog(canvas.getByTestId('agents-confirm'))).toHaveTextContent('Delete this chat?'))
+    await userEvent.click(alertButton(canvas.getByTestId('agents-confirm'), 'cancel'))
+    await waitFor(() => expect(canvas.queryByTestId('agents-confirm')).toBeNull())
+    await userEvent.click(canvas.getByTestId('agents-remove-chat'))
+    await appears(canvas, 'agents-confirm')
+    await userEvent.click(alertButton(canvas.getByTestId('agents-confirm'), 'confirm'))
+    await waitFor(() => expect(canvas.queryByTestId('agents-chat-a')).toBeNull())
+    await expect(canvas.getByTestId('agents-chat-b')).toBeInTheDocument()
   }}
 />
 

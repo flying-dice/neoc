@@ -141,7 +141,7 @@ test.describe('Todos journeys', () => {
     await expect(listRow(page, list)).toHaveAttribute('aria-label', `${list}, 1`) // it counts what is still to do
     await part(page, 'delete-list').click()
     await expect(part(page, 'confirm')).toContainText('Its todos are deleted with it.')
-    await part(page, 'confirm-delete').click()
+    await part(page, 'confirm-confirm').click()
     await expect(listRow(page, list)).toHaveCount(0)
     await expect(part(page, 'title')).toHaveText('All')
     await expect(row(page, title)).toHaveCount(0)
@@ -183,7 +183,7 @@ test.describe('Todos journeys', () => {
     expect(Math.round(win.width), 'the minimum width of the contract').toBe(420)
     expect(Math.round(win.height), 'the minimum height of the contract').toBe(420)
     await expectNoOverflow(page.getByTestId(`window-${ID}-content`))
-    // below 640 wide the lists and the todos are one column each: a list picked shows its todos, Back returns to the lists
+    // under 700 wide (the kit's split view) the lists and the todos are one column each: a list picked shows its todos, Back returns to the lists
     await expect(part(page, 'smart-all')).toBeVisible()
     await expect(part(page, 'title')).toBeHidden()
     await show(page, 'all')

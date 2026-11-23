@@ -8,6 +8,8 @@
 use std::fmt;
 use std::io;
 
+use crate::lua::error_text;
+
 /// What went wrong, stable across platforms. The names are the contract (`hyper.error_kind`); the mapping from
 /// `URLSession`'s error codes is in each variant's doc.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -150,17 +152,18 @@ pub(super) fn chain(e: &(dyn std::error::Error + 'static)) -> String {
 /// The kind name inside an error string a `vnd:hyper` function returned (`hyper.get: timed_out: ...`), or `None`
 /// when the text is not one of ours.
 pub(crate) fn kind_of(err: &str) -> Option<&'static str> {
-    let rest = err.strip_prefix("hyper.")?;
-    let (function, rest) = rest.split_once(": ")?;
-    if function.is_empty()
-        || !function
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b == b'_')
-    {
-        return None;
-    }
-    let name = rest.split_once(": ").map_or(rest, |(name, _)| name);
-    Kind::parse(name).map(Kind::as_str)
+    read(err).map(|(kind, _)| kind.as_str())
+}
+
+/// The message inside an error string a `vnd:hyper` function returned: everything after the kind. `None` when the
+/// text is not one of ours.
+pub(crate) fn message_of(err: &str) -> Option<&str> {
+    read(err).map(|(_, message)| message)
+}
+
+/// The kind and the message of one of our error strings; the shape is [`error_text`]'s.
+fn read(err: &str) -> Option<(Kind, &str)> {
+    error_text::read("hyper", err, Kind::parse)
 }
 
 #[cfg(test)]
@@ -205,5 +208,18 @@ mod tests {
         assert_eq!(kind_of("hyper.: timed_out: x"), None);
         assert_eq!(kind_of("hyper.Get: timed_out: x"), None);
         assert_eq!(kind_of(""), None);
+    }
+
+    #[test]
+    fn message_of_reads_our_strings_only() {
+        assert_eq!(
+            message_of("hyper.get: timed_out: no data for 60s"),
+            Some("no data for 60s")
+        );
+        assert_eq!(message_of("hyper.get: timed_out"), Some(""));
+        assert_eq!(message_of("hyper.get: nonsense: x"), None);
+        assert_eq!(message_of("fs.read: not_found: x"), None);
+        assert_eq!(message_of("no data for 60s"), None);
+        assert_eq!(message_of(""), None);
     }
 }

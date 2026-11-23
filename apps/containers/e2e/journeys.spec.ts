@@ -1,7 +1,7 @@
 /**
  * Containers key user journeys, end to end: the real shell, the real host, the app's own client in a frame of its
  * window, and its Luau backend, which reaches Docker through `vnd:bollard`. The Docker it reaches is the journeys' own
- * (`./fakeDocker.ts`: the Engine API in this process), which every test first points the app at as a person would, in
+ * (`@vos/docker/fake-docker`: the Engine API in this process), which every test first points the app at as a person would, in
  * the app's address field. So the journeys need no Docker, and what they find is the same on every machine.
  *
  * The app's choice of Docker is kept on the shared host, and the fake's containers are shared too: the tests run one
@@ -11,7 +11,8 @@
 import type { FrameLocator, Locator, Page } from '@playwright/test'
 import { expect, expectNoOverflow, frameOf, openDesktop, openFromHome, resizeWindow, test, windowOf } from '../../../e2e/fixtures'
 import { callTool } from '../../../e2e/host/pair'
-import { startFakeDocker, type FakeDocker } from './fakeDocker'
+import { startFakeDocker, type FakeDocker } from '@vos/docker/fake-docker'
+import { CONTAINERS, NETWORKS } from './machine'
 
 const ID = 'containers'
 const frame = (page: Page): FrameLocator => frameOf(page, ID)
@@ -25,7 +26,7 @@ test.describe.configure({ mode: 'serial' })
 let docker: FakeDocker
 
 test.beforeAll(async () => {
-  docker = await startFakeDocker()
+  docker = await startFakeDocker({ containers: CONTAINERS, networks: NETWORKS })
 })
 
 test.beforeEach(() => docker.reset())
@@ -82,10 +83,10 @@ test.describe('Containers journeys', () => {
     await row(page, 'pihole', 'stop').click()
     await expect(row(page, 'pihole', 'start')).toBeVisible()
     await expect(part(page, 'summary')).toHaveText('2 of 4 containers running')
-    expect(docker.running('pihole')).toBe(false)
+    expect(docker.container('pihole')?.running).toBe(false)
     await row(page, 'pihole', 'start').click()
     await expect(row(page, 'pihole', 'stop')).toBeVisible()
-    expect(docker.running('pihole')).toBe(true)
+    expect(docker.container('pihole')?.running).toBe(true)
   })
 
   test('CT3: start, restart and stop a Compose stack as one', async ({ page }) => {
@@ -107,8 +108,8 @@ test.describe('Containers journeys', () => {
     await part(page, 'stack-stop').click()
     await expect(part(page, 'summary')).toContainText('0 of 2 containers running')
     await expect(part(page, 'stack-blog')).toHaveAttribute('aria-label', 'blog, Stopped')
-    expect(docker.running('blog-db-1')).toBe(false)
-    expect(docker.running('pihole'), 'a container outside the stack is left alone').toBe(true)
+    expect(docker.container('blog-db-1')?.running).toBe(false)
+    expect(docker.container('pihole')?.running, 'a container outside the stack is left alone').toBe(true)
   })
 
   test('CT4: read the logs of a container as it writes them, and what it was made with', async ({ page }) => {
@@ -150,21 +151,21 @@ test.describe('Containers journeys', () => {
     // saying no removes nothing
     await part(page, 'inspector-confirm-cancel').click()
     await expect(part(page, 'inspector-confirm')).toHaveCount(0)
-    expect(docker.running('pihole')).toBe(true)
+    expect(docker.container('pihole')?.running).toBe(true)
     await part(page, 'inspector-remove').click()
-    await part(page, 'inspector-confirm-ok').click()
+    await part(page, 'inspector-confirm-confirm').click()
     await expect(part(page, 'items')).toBeVisible()
     await expect(row(page, 'pihole')).toHaveCount(0)
-    expect(docker.running('pihole')).toBeUndefined()
+    expect(docker.container('pihole')).toBeUndefined()
 
     await part(page, 'stack-blog').click()
     await part(page, 'stack-remove').click()
-    await part(page, 'stack-confirm-ok').click()
+    await part(page, 'stack-confirm-confirm').click()
     await expect(part(page, 'stack-blog')).toHaveCount(0)
     // what was shown is gone: every container is shown instead
     await expect(part(page, 'title')).toHaveText('All Containers')
     await expect(row(page, 'media-jellyfin-1')).toBeVisible()
-    expect(docker.running('blog-db-1')).toBeUndefined()
+    expect(docker.container('blog-db-1')).toBeUndefined()
     expect(docker.networks(), "the stack's network went with it, the other stack's stayed").toEqual(['media_default'])
   })
 
@@ -209,7 +210,7 @@ test.describe('Containers journeys', () => {
     expect(Math.round(win.width), 'the minimum width of the contract').toBe(440)
     expect(Math.round(win.height), 'the minimum height of the contract').toBe(420)
     await expectNoOverflow(page.getByTestId(`window-${ID}-content`))
-    // below 680 wide the stacks and the containers are one column each: the stacks first
+    // under 700 wide (the kit's split view) the stacks and the containers are one column each: the stacks first
     await expect(part(page, 'stack-blog')).toBeVisible()
     await expect(row(page, 'pihole')).toBeHidden()
     await part(page, 'stack-blog').click()

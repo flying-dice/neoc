@@ -4,6 +4,8 @@
 -- handler and the tool pass it on as it is), and with nothing when it did what it was asked.
 local app = require("vos:app")
 local rpc = require("../.app/rpc")
+local trim = require("lib:text").trim
+local unicode = require("lib:unicode")
 local db = app.db
 
 -- what can change on an issue: only what is given changes
@@ -60,10 +62,6 @@ db:migrate {
   ]],
 }
 
-local function trim(text: string): string
-  return string.match(text, "^%s*(.-)%s*$") :: string
-end
-
 -- a key is what a project's issues are numbered under, as in WEB-12: two to five capitals or digits, a letter first
 local function isKey(text: string): boolean
   return string.match(text, "^%u[%u%d]+$") ~= nil and #text >= 2 and #text <= 5
@@ -97,9 +95,9 @@ end
 
 -- the project called `name` or keyed `name`, whatever its capitals: how an agent names a project
 function store.projectNamed(name: string): rpc.Project?
-  local wanted = string.lower(trim(name))
+  local wanted = trim(name)
   for _, project in store.projects() do
-    if string.lower(project.key) == wanted or string.lower(project.name) == wanted then
+    if unicode.caseless_eq(project.key, wanted) or unicode.caseless_eq(project.name, wanted) then
       return project
     end
   end

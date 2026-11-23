@@ -1,6 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, waitFor } from 'storybook/test'
+  import { alertButton, textArea } from '@vos/storybook/kit'
   import AppWindow from '@vos/storybook/AppWindow.svelte'
   import definition from '../../openrpc.json'
   import NotesPage from './NotesPage.svelte'
@@ -54,7 +55,7 @@
     waitFor(() => expect(canvas.getByTestId('notes-title')).toHaveTextContent(title))
   const counts = (canvas: Canvas, id: string, count: number): Promise<void> =>
     waitFor(() => expect(canvas.getByTestId(id)).toHaveProperty('value', String(count)))
-  const says = (canvas: Canvas, text: string): Promise<void> => waitFor(() => expect(canvas.getByTestId('notes-text')).toHaveValue(text))
+  const says = (canvas: Canvas, text: string): Promise<void> => waitFor(() => expect(textArea(canvas.getByTestId('notes-text'))).toHaveValue(text))
 
   /** A narrow window shows one column at a time: step back until the folders are in front. In a wide one there is no way back to take. */
   async function toFolders(canvas: Canvas, user: User): Promise<void> {
@@ -145,7 +146,7 @@
     await appears(canvas, 'notes-new')
     await userEvent.click(canvas.getByTestId('notes-new'))
     await appears(canvas, 'notes-text')
-    await userEvent.type(canvas.getByTestId('notes-text'), 'Ideas')
+    await userEvent.type(textArea(canvas.getByTestId('notes-text')), 'Ideas')
     await waitFor(() => expect(canvas.getByTestId('notes-item-1')).toHaveProperty('heading', 'Ideas'))
   }}
 />
@@ -187,7 +188,7 @@
     await expect(canvas.queryByTestId('notes-new')).toBeNull()
     await open(canvas, userEvent, 4)
     await says(canvas, 'Old plan\nNever mind')
-    await expect(canvas.getByTestId('notes-text')).toHaveAttribute('readonly')
+    await expect(textArea(canvas.getByTestId('notes-text'))).toHaveAttribute('readonly')
     await expect(canvas.getByTestId('notes-restore')).toBeVisible()
   }}
 />
@@ -246,7 +247,7 @@
     await show(canvas, userEvent, 'notes-folder-2')
     await appears(canvas, 'notes-delete-folder')
     await userEvent.click(canvas.getByTestId('notes-delete-folder'))
-    await userEvent.click(canvas.getByTestId('notes-confirm-folder-delete'))
+    await userEvent.click(alertButton(canvas.getByTestId('notes-confirm-folder'), 'action'))
     await titled(canvas, 'All Notes')
     await toFolders(canvas, userEvent)
     await gone(canvas, 'notes-folder-2')

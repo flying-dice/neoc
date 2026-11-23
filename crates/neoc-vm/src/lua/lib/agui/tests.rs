@@ -218,6 +218,8 @@ async fn what_is_not_a_run_is_an_error_with_a_kind() {
             local r, e = run:next()
             assert(r == nil and e == nil)
             assert(agui.error_kind("hyper.get: connect: x") == nil and agui.error_kind(nil) == nil)
+            assert(agui.error_message("agui.run: status: the endpoint answered 404") == "the endpoint answered 404")
+            assert(agui.error_message("hyper.get: connect: x") == nil and agui.error_message(nil) == nil)
             return table.concat(out, " ")
             "#
         ),

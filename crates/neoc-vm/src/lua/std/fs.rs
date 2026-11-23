@@ -4,17 +4,18 @@
 //! `symlink_metadata`, `read_dir`, `copy`, `rename`, `remove_file`, `remove_dir`, `remove_dir_all`,
 //! `canonicalize`, `read_link`, `symlink`, `set_permissions`, and `exists`; plus what Rust leaves to crates:
 //! `walk` (a recursive listing), `copy_dir` (a recursive copy), `move` (a rename that survives a filesystem
-//! boundary), `watch` (the changes inside a directory, as the operating system reports them) and `error_kind`.
-//! Paths are Lua strings; on Unix they are bytes (a name `read_dir` returns can always be passed back), elsewhere
-//! they must be UTF-8 (and a name that is not valid Unicode comes back lossily; Windows was never built or run). `std:path` has the text-only path helpers.
+//! boundary), `watch` (the changes inside a directory, as the operating system reports them), `error_kind` and
+//! `error_message`. Paths are Lua strings; on Unix they are bytes (a name `read_dir` returns can always be passed
+//! back), elsewhere they must be UTF-8 (and a name that is not valid Unicode comes back lossily; Windows was never
+//! built or run). `std:path` has the text-only path helpers.
 //!
 //! Conventions, the same for every function:
 //!
 //! - **`(value, err)`.** A failure returns `nil, err`; `err` is one string, `fs.<function>: <kind>: <path>:
-//!   <message>`, with a stable `kind` (see [`error::Kind`], read it with `error_kind`). An error of a call on two
-//!   paths may name both, `<from> -> <to>`, in place of `<path>`; one about no path (a bad option) leaves the path
-//!   part out, `fs.<function>: <kind>: <message>`. A wrong argument type is
-//!   a Lua error, as everywhere in the VM (`open` is the exception for its options table: a missing or
+//!   <message>`, with a stable `kind` (see [`error::Kind`], read it with `error_kind`, and what follows it with
+//!   `error_message`). An error of a call on two paths may name both, `<from> -> <to>`, in place of `<path>`; one
+//!   about no path (a bad option) leaves the path part out, `fs.<function>: <kind>: <message>`. A wrong argument
+//!   type is a Lua error, as everywhere in the VM (`open` is the exception for its options table: a missing or
 //!   mistyped `path` or `mode` is `invalid_input`).
 //! - **Options are tables of booleans or counts** (`missing_ok`, `max_depth`, `recursive`); an unknown name, or a value of the
 //!   wrong type, is `invalid_input` rather than being ignored, so a typo cannot silently change what a call does.
@@ -67,6 +68,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use mlua::{IntoLua, Lua, Table, UserData, UserDataMethods, Value};
 
+use crate::lua::error_text;
 use crate::lua::facade::{DeclType, Module};
 use crate::lua::std::io::{ReaderHandle, WriterHandle};
 use crate::lua::std::osstr;
@@ -93,9 +95,9 @@ fn waits(doc: &str) -> String {
     format!("{doc} {WAITS}")
 }
 
-/// Declares the `std:fs` surface through the facade: every function is a fallible one (except `error_kind`), so each
-/// is registered (with its `fs.<name>` tracing span and the `(nil, err)` shape) and recorded for the definitions in
-/// one call.
+/// Declares the `std:fs` surface through the facade: every function is a fallible one (except `error_kind` and
+/// `error_message`), so each is registered (with its `fs.<name>` tracing span and the `(nil, err)` shape) and
+/// recorded for the definitions in one call.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:fs")?;
 
@@ -348,9 +350,13 @@ fn declare_links_and_errors(m: &mut Module<'_>) -> mlua::Result<()> {
         "error_kind",
         &[("err", "string?")],
         "The stable kind inside an error string returned by a `std:fs` function, or `nil` when the string is not one of theirs (or is `nil`, so `fs.error_kind(err)` takes the `err` of any call). Such a string is `fs.<function>: <kind>: <path>: <message>`; for a call on two paths (`copy`, `rename`, ...) the path part may be `<from> -> <to>`, and an error about no one path (a bad option, say) has none: `fs.<function>: <kind>: <message>`. Kinds: `not_found`, `permission_denied`, `already_exists`, `not_empty`, `is_directory`, `not_a_directory`, `cross_device`, `invalid_input`, `read_only_filesystem`, `storage_full`, `unsupported`, `too_large`, `timed_out`, `other`. They mean the same on every platform; the rest of the message is the operating system's wording and differs.",
-        |_, err: Option<mlua::LuaString>| {
-            Ok(err.and_then(|err| error::kind_of(&err.to_string_lossy()).map(str::to_owned)))
-        },
+        error_text::reader(error::kind_of),
+    )?;
+    m.func(
+        "error_message",
+        &[("err", "string?")],
+        "The message inside an error string returned by a `std:fs` function: everything after the kind in `fs.<function>: <kind>: <message>`, or `nil` when the string is not one of theirs (or is `nil`, so `fs.error_message(err)` takes the `err` of any call), the same rule as `error_kind`. It is the path the error is about (when it is about one) and then the operating system's wording: `/x: No such file or directory (os error 2)`. It is for showing or logging as it is: branch on `error_kind`, not on these words, which differ between platforms and versions. Read it here instead of taking the error string apart.",
+        error_text::reader(error::message_of),
     )?;
     Ok(())
 }

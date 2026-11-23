@@ -7,3 +7,6 @@
 <ui-toggle onchange={(e) => e.detail.value} />
 <ui-toggle checked="yes" />
 <ui-row heading="Buy milk" onpress={(e) => e.detail.nope} />
+<ui-split-view column="middle" />
+<ui-alert onconfirm={(e) => e.detail} />
+<ui-picker onchange={(e) => e.detail.checked} />

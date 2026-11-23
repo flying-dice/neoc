@@ -2,7 +2,6 @@
 <script lang="ts">
   import type { Hit, Notebook, Summary } from 'app:rpc'
   import Composer from '../molecules/Composer.svelte'
-  import ConfirmAlert from '../molecules/ConfirmAlert.svelte'
   import { changedLabel } from '../lib/dates'
   import type { TagCount } from '../lib/library'
 
@@ -82,16 +81,13 @@
 <nav class="sidebar" aria-label="Notebook">
   <div class="top">
     <div class="notebook">
-      <select
-        aria-label="Notebook"
-        value={notebook?.id}
-        onchange={(e) => onnotebook(Number(e.currentTarget.value))}
+      <ui-picker
+        label="Notebook"
+        value={notebook ? String(notebook.id) : ''}
+        options={notebooks.map((each) => ({ value: String(each.id), label: each.name }))}
+        onchange={(e) => onnotebook(Number(e.detail.value))}
         data-testid="notebooks-notebook"
-      >
-        {#each notebooks as each (each.id)}
-          <option value={each.id}>{each.name}</option>
-        {/each}
-      </select>
+      ></ui-picker>
       <!-- ui-button is a button (its own role and keys); Svelte cannot see inside it -->
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
       <ui-button
@@ -225,16 +221,19 @@
     {/if}
   </div>
   {#if notebook && asking}
-    <ConfirmAlert
+    <ui-alert
+      open
+      destructive
+      action-label="Delete"
       heading="Delete {notebook.name}?"
       message="Its notes are deleted with it."
-      testid="notebooks-confirm-notebook"
+      data-testid="notebooks-confirm-notebook"
       oncancel={() => (asking = false)}
       onconfirm={() => {
         asking = false
         onremovenotebook()
       }}
-    />
+    ></ui-alert>
   {/if}
 </nav>
 
@@ -269,20 +268,13 @@
   .actions :global(.new::part(button)) {
     width: 100%;
   }
-  select {
+  ui-picker {
     flex: 1;
-    min-width: 0;
-    box-sizing: border-box;
-    min-height: 36px;
-    padding: 0 10px;
-    border: 0;
-    border-radius: var(--radius-md);
-    background: var(--fill-tertiary);
-    color: var(--label);
-    font: var(--type-headline);
-    text-overflow: ellipsis;
   }
-  select:focus-visible,
+  /* the notebook is the sidebar's heading */
+  ui-picker::part(select) {
+    font: var(--type-headline);
+  }
   .tag:focus-visible {
     outline: 2px solid var(--focus-ring);
     outline-offset: 1px;

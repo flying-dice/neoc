@@ -1,6 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
-  import { expect, fn } from 'storybook/test'
+  import { expect, fn, waitFor } from 'storybook/test'
+  import { alertButton, alertDialog } from '@vos/storybook/kit'
   import type { List, Todo } from 'app:rpc'
   import TodoList from './TodoList.svelte'
   import { REMINDERS, todo } from '../lib/fakeApi'
@@ -150,8 +151,10 @@
   play={async ({ canvas, userEvent }) => {
     await userEvent.click(canvas.getByTestId('todos-delete-list'))
     // an alert over the window, not a line in it
-    await expect(canvas.getByRole('alertdialog', { name: 'Delete Reminders?' })).toBeVisible()
-    await expect(canvas.getByTestId('todos-confirm')).toHaveTextContent('Its todos are deleted with it.')
+    const alert = alertDialog(canvas.getByTestId('todos-confirm'))
+    await waitFor(() => expect(alert.matches(':modal')).toBe(true))
+    await expect(alert).toHaveTextContent('Delete Reminders?')
+    await expect(alert).toHaveTextContent('Its todos are deleted with it.')
     await expect(onremovelist).not.toHaveBeenCalled()
   }}
 />
@@ -162,11 +165,11 @@
   args={{ removable: true }}
   play={async ({ canvas, userEvent }) => {
     await userEvent.click(canvas.getByTestId('todos-delete-list'))
-    await userEvent.click(canvas.getByTestId('todos-confirm-cancel'))
+    await userEvent.click(alertButton(canvas.getByTestId('todos-confirm'), 'cancel'))
     await expect(canvas.queryByTestId('todos-confirm')).toBeNull()
     await expect(onremovelist).not.toHaveBeenCalled()
     await userEvent.click(canvas.getByTestId('todos-delete-list'))
-    await userEvent.click(canvas.getByTestId('todos-confirm-delete'))
+    await userEvent.click(alertButton(canvas.getByTestId('todos-confirm'), 'action'))
     await expect(onremovelist).toHaveBeenCalledWith(REMINDERS)
     await expect(canvas.queryByTestId('todos-confirm')).toBeNull()
   }}

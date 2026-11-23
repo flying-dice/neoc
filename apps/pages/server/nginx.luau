@@ -6,9 +6,8 @@
 --
 -- Nothing here talks to Docker or keeps anything: this is where a hostname is checked, and where the configuration
 -- is written.
-local hash = require("lib:hash")
-local hex = require("lib:hex")
 local rpc = require("../.app/rpc")
+local trim = require("lib:text").trim
 
 local nginx = {}
 
@@ -33,7 +32,7 @@ export type Plan = { config: string, ports: { number }, mounts: { Mount } }
 -- A hostname as it is kept: lower case, without the dot at its end. The second result says what is wrong with one
 -- that is not a name. Only letters, digits, hyphens and dots pass, so a name cannot say anything else to nginx.
 function nginx.hostname(raw: string): (string?, string?)
-  local text = string.lower(string.match(raw, "^%s*(.-)%.?%s*$") :: string)
+  local text = string.lower((string.gsub(trim(raw), "%.$", "")))
   if text == "" then
     return nil, "A hostname is blank."
   elseif #text > 253 then
@@ -114,19 +113,6 @@ function nginx.plan(settings: rpc.Settings, sites: { rpc.Site }): Plan
     "",
   }, "\n")
   return { config = config, ports = ports, mounts = mounts }
-end
-
--- What a container is made from, as one short word: two containers with the same signature are the same server.
-function nginx.signature(plan: Plan): string
-  local parts = { nginx.IMAGE, plan.config }
-  for _, port in plan.ports do
-    table.insert(parts, tostring(port))
-  end
-  for _, mount in plan.mounts do
-    table.insert(parts, `{mount.source}\0{mount.target}`)
-  end
-  local digest = hash.hash("sha256", table.concat(parts, "\n"))
-  return hex.encode(digest or "")
 end
 
 return nginx

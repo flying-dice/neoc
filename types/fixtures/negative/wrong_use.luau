@@ -110,5 +110,6 @@ hyper.get("http://127.0.0.1:1/", { follow_redirects = "yes" }) -- expect-error: 
 hyper.post({ body = "x" }) -- expect-error: because the former is missing field 'url'
 hyper.request({ method = "GET", url = "http://127.0.0.1:1/", body = {} }) -- expect-error: '{| body: {|  |}, method: string, url: string |}'
 hyper.error_kind(5) -- expect-error: Expected this to be 'string?', but got 'number'
+hyper.error_message(5) -- expect-error: Expected this to be 'string?', but got 'number'
 print(hyper.get("http://127.0.0.1:1/").status) -- expect-error: could be nil
 print(assert(hyper.get("http://127.0.0.1:1/")).body + 1) -- expect-error: Expected this to be 'number', but got 'string'

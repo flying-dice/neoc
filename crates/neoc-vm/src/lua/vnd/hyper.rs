@@ -32,7 +32,8 @@
 //!   past that, a declared length first. It never decompresses: it sends no `Accept-Encoding` and returns the bytes
 //!   as they came, so the cap is on what was read from the socket. A script that decodes a body (`lib:compress`)
 //!   bounds the decoded size itself.
-//! - **It says what failed**: `hyper.<fn>: <kind>: <message>`, and `hyper.error_kind(err)` returns the kind.
+//! - **It says what failed**: `hyper.<fn>: <kind>: <message>`; `hyper.error_kind(err)` returns the kind and
+//!   `hyper.error_message(err)` the message.
 //!
 //! ## Server
 //! `serve(listener, handler)` mirrors hyper's `service_fn` model: the
@@ -69,6 +70,7 @@ use hyper::body::Incoming;
 use hyper::{Request as HyperRequest, Response};
 use mlua::{Function, Lua, RegistryKey, Table, UserData, UserDataMethods, Value};
 
+use crate::lua::error_text;
 use crate::lua::facade::Module;
 use crate::lua::lifecycle::{Role, async_function};
 
@@ -152,9 +154,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "error_kind",
         &[("err", "string?")],
         "The stable kind inside an error string returned by a `vnd:hyper` client function, or `nil` when the string is not one of theirs (or is `nil`, so `hyper.error_kind(err)` takes the `err` of any call). Such a string is `hyper.<function>: <kind>: <message>`. Kinds: `invalid_input` (an option, header or body was refused before anything was sent), `invalid_url` (not an `http` or `https` URL with a host, a redirect's `Location` included), `connect` (no connection: the name did not resolve, or the host refused or could not be reached), `tls` (the handshake failed, usually over the certificate), `timed_out` (a time limit passed), `too_many_redirects`, `too_large` (the body is over `max_body`), `connection_lost` (the connection ended or failed before the response was complete), `bad_response` (the server did not send valid HTTP), `other`. The kind means the same on every platform; the message is for a log and may change.",
-        |_, err: Option<mlua::LuaString>| {
-            Ok(err.and_then(|err| client::kind_of(&err.to_string_lossy()).map(str::to_owned)))
-        },
+        error_text::reader(client::kind_of),
+    )?;
+    m.func(
+        "error_message",
+        &[("err", "string?")],
+        "The message inside an error string returned by a `vnd:hyper` client function: everything after the kind in `hyper.<function>: <kind>: <message>`, or `nil` when the string is not one of theirs (or is `nil`, so `hyper.error_message(err)` takes the `err` of any call), the same rule as `error_kind`. It is this module's or the transport's wording. It is for showing or logging as it is: branch on `error_kind`, not on these words, which differ between platforms and versions. Read it here instead of taking the error string apart.",
+        error_text::reader(client::message_of),
     )?;
 
     m.set("serve", lua.create_function(serve)?)?;

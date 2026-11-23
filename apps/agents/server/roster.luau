@@ -35,7 +35,7 @@ end
 
 -- the keychain's own message, without the module's prefix
 local function sentence(err: string?): string
-  local message = string.match(err or "", "^keyring%.[%a_]+: [%a_]+: (.*)$")
+  local message = keyring.error_message(err)
   return `The keychain did not take the token: {message or err or "it did not say why"}`
 end
 

@@ -26,13 +26,15 @@
 //! on it (`process_id`, `wait`, `kill`).
 //!
 //! **Errors.** A call returns `(value, nil)` or `(nil, "portable_pty.<function>: <kind>: <message>")`; the kinds are
-//! stable (`error`, `portable_pty.error_kind`). An argument of the wrong type is raised, as everywhere.
+//! stable (`error`, `portable_pty.error_kind`; `portable_pty.error_message` is the message). An argument of the wrong
+//! type is raised, as everywhere.
 //!
 //! **Waiting.** `spawn_command`, `read`, `write` and `wait` wait without holding the VM: other tasks run meanwhile.
 //! The crate's own reads, writes and waits block, so each terminal has three threads that do them (`terminal`).
 //!
-//! **Limits.** A read returns at most [`MAX_READ`] bytes and a write takes at most [`MAX_WRITE`]; at most
-//! [`terminal::OUTPUT_BUFFER`] bytes of output wait for the script, and a process that writes more waits until they are read.
+//! **Limits.** A read returns at most 64 KiB (`byte_stream::MAX_READ`) and a write takes at most
+//! 1 MiB (`byte_stream::MAX_WRITE`); at most 256 KiB (`byte_stream::OUTPUT_BUFFER`) of output wait
+//! for the script, and a process that writes more waits until they are read.
 //! A size is 1 to 32767 rows and columns. Nothing limits how many terminals a script opens.
 //!
 //! **What starting a command means.** The process runs as the user the engine runs as, with that user's
@@ -46,8 +48,10 @@ use std::sync::Arc;
 
 use mlua::{Lua, Table, UserData, UserDataMethods, Value};
 
+use crate::lua::byte_stream::{self, WAITS};
+use crate::lua::error_text;
 use crate::lua::facade::Module;
-use crate::lua::lifecycle::{Life, Role, async_function, async_method, hold, idle};
+use crate::lua::lifecycle::{Life, Role, async_function, async_method};
 use crate::lua::sandbox::{from_err, ok};
 
 mod error;
@@ -58,14 +62,7 @@ mod terminal;
 mod tests;
 
 use error::{Kind, PtyError};
-use terminal::{Taken, Terminal};
-
-/// The most bytes one `read` returns, and how many it returns when it is not told: a size that fits in one message
-/// of most transports once it is encoded.
-const MAX_READ: usize = 64 * 1024;
-
-/// The most bytes one `write` takes: far more than a paste, and little enough to copy without a thought.
-const MAX_WRITE: usize = 1024 * 1024;
+use terminal::Terminal;
 
 const SPAWN_COMMAND: &str = "portable_pty.spawn_command";
 const READ: &str = "portable_pty.read";
@@ -73,14 +70,12 @@ const WRITE: &str = "portable_pty.write";
 const RESIZE: &str = "portable_pty.resize";
 const WAIT: &str = "portable_pty.wait";
 
-const WAITS: &str = "It waits like `task.wait`: other tasks run while it does.";
-
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(declare(lua)?.into_table())
 }
 
-/// Declares the `vnd:portable_pty` surface through the facade. `spawn_command` and `error_kind` are plain
-/// functions; the `Pty` type keeps its own `impl UserData` and is recorded with
+/// Declares the `vnd:portable_pty` surface through the facade. `spawn_command`, `error_kind` and `error_message` are
+/// plain functions; the `Pty` type keeps its own `impl UserData` and is recorded with
 /// [`crate::lua::facade::Module::userdata`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:portable_pty")?;
@@ -105,9 +100,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "error_kind",
         &[("err", "string?")],
         "The stable kind inside an error string returned by a `vnd:portable_pty` function, or `nil` when the string is not one of theirs (or is `nil`, so `portable_pty.error_kind(err)` takes the `err` of any call). Such a string is `portable_pty.<function>: <kind>: <message>`. Kinds: `invalid_input` (an argument or option was refused), `spawn` (the command could not be started), `closed` (the terminal was closed), `io` (reading from the terminal or writing to it failed), `other`. The message is the crate's or the operating system's own; it is for a log and may change.",
-        |_, err: Option<mlua::LuaString>| {
-            Ok(err.and_then(|err| error::kind_of(&err.to_string_lossy()).map(str::to_owned)))
-        },
+        error_text::reader(error::kind_of),
+    )?;
+    m.func(
+        "error_message",
+        &[("err", "string?")],
+        "The message inside an error string returned by a `vnd:portable_pty` function: everything after the kind in `portable_pty.<function>: <kind>: <message>`, or `nil` when the string is not one of theirs (or is `nil`, so `portable_pty.error_message(err)` takes the `err` of any call), the same rule as `error_kind`. It is the crate's or the operating system's wording. It is for showing or logging as it is: branch on `error_kind`, not on these words, which differ between platforms and versions. Read it here instead of taking the error string apart.",
+        error_text::reader(error::message_of),
     )?;
 
     m.userdata("Pty", |p| {
@@ -199,49 +198,20 @@ async fn spawn_command(lua: Lua, opts: Option<Value>) -> mlua::Result<(Value, Va
     }
 }
 
-/// `read`'s `max`: a whole number of bytes from 1 to [`MAX_READ`].
-fn read_size(max: Option<f64>) -> Result<usize, PtyError> {
-    match max {
-        None => Ok(MAX_READ),
-        // checked: a whole number that fits
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        Some(max) if max.fract() == 0.0 && max >= 1.0 && max <= MAX_READ as f64 => Ok(max as usize),
-        Some(_) => Err(PtyError::invalid_input(format!(
-            "`max` must be a whole number from 1 to {MAX_READ}"
-        ))),
-    }
-}
-
 impl UserData for Pty {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        // `Role::Mixed`, not `Role::Wait` (as `std:fs`'s `Watcher:receive`): a `Wait` body would take the bytes when
-        // its wait ends and only then queue for the turn, and a call dropped there would lose them. The wait for
-        // output is an `idle` wait, and the bytes are taken with the turn held, in the poll that returns them.
+        // `Role::Mixed`: see `byte_stream::read`
         async_method(
             methods,
             "read",
             Role::Mixed,
             |lua, this, max: Option<f64>| {
-                let output = this.0.output();
-                let max = read_size(max);
-                async move {
-                    let max = match max {
-                        Ok(max) => max,
-                        Err(e) => {
-                            hold().await;
-                            return from_err(&lua, READ, e);
-                        }
-                    };
-                    loop {
-                        idle(output.readable()).await?;
-                        match output.take(max) {
-                            Taken::Bytes(bytes) => return ok(&lua, lua.create_string(&bytes)?),
-                            Taken::Nothing => {}
-                            Taken::End => return Ok((Value::Nil, Value::Nil)),
-                            Taken::Failed(e) => return from_err(&lua, READ, e),
-                        }
-                    }
-                }
+                let wanted = byte_stream::read_size(max)
+                    .map(|max| (this.0.output(), max))
+                    .map_err(PtyError::invalid_input);
+                byte_stream::read(lua, READ, wanted, |message| {
+                    PtyError::new(Kind::Io, message)
+                })
             },
         );
 
@@ -251,16 +221,7 @@ impl UserData for Pty {
             Role::Wait,
             |lua, this, data: mlua::LuaString| {
                 let terminal = Arc::clone(&this.0);
-                let data = {
-                    let bytes = data.as_bytes();
-                    if bytes.len() > MAX_WRITE {
-                        Err(PtyError::invalid_input(format!(
-                            "one write takes at most {MAX_WRITE} bytes"
-                        )))
-                    } else {
-                        Ok(bytes.to_vec())
-                    }
-                };
+                let data = byte_stream::write_data(&data).map_err(PtyError::invalid_input);
                 async move {
                     let written = match data {
                         Err(e) => Err(e),

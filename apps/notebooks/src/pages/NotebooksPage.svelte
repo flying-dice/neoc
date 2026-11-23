@@ -15,9 +15,8 @@
 
   let { notebooks, onlink }: Props = $props()
 
-  // below 700 wide the notes and the note are one column each: `browsing` decides which one shows
-  let width = $state(1000)
-  const narrow = $derived(width < 700)
+  // in a window too narrow for both, the split view shows one column: the kit says when, the same for every app
+  let narrow = $state(false)
   const note = $derived(notebooks.note)
 
   $effect(() => {
@@ -41,9 +40,9 @@
 
 <svelte:window onkeydown={keyed} />
 
-<main class="notebooks" bind:clientWidth={width} data-testid="notebooks-app">
-  <div class="columns" class:narrow class:browsing={notebooks.browsing}>
-    <div class="side">
+<main class="notebooks" data-testid="notebooks-app">
+  <ui-split-view column={notebooks.browsing ? 'sidebar' : 'detail'} oncollapsedchange={(e) => (narrow = e.detail.collapsed)}>
+    <div slot="sidebar">
       <Sidebar
         notebooks={notebooks.notebooks}
         notebook={notebooks.notebook}
@@ -70,7 +69,7 @@
         onremovenotebook={() => void notebooks.removeNotebook()}
       />
     </div>
-    <div class="detail">
+    <div>
       {#if notebooks.pane === 'graph'}
         <GraphPane
           title={notebooks.notebook?.name ?? ''}
@@ -111,7 +110,7 @@
         </div>
       {/if}
     </div>
-  </div>
+  </ui-split-view>
   <!-- why the last call failed when it was not about what was typed (the host's own sentence), whichever column is in front -->
   {#if notebooks.failure}
     <ui-banner tone="error" data-testid="notebooks-failure">{notebooks.failure}</ui-banner>
@@ -136,20 +135,10 @@
     color: var(--label);
     font: var(--type-body);
   }
-  .columns {
+  /* the sidebar holds a notebook's whole list, with its search and its tags: it is given more room than most */
+  ui-split-view {
     flex: 1;
-    min-height: 0;
-    display: grid;
-    grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
-  }
-  .side {
-    min-width: 0;
-    min-height: 0;
-    border-inline-end: 1px solid var(--separator);
-  }
-  .detail {
-    min-width: 0;
-    min-height: 0;
+    --ui-split-sidebar-width: 320px;
   }
   .none {
     box-sizing: border-box;
@@ -157,16 +146,5 @@
     padding-top: 28px;
     display: grid;
     place-items: center;
-  }
-  /* one column: the notes, or the note once one is picked */
-  .narrow {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .narrow:not(.browsing) .side,
-  .narrow.browsing .detail {
-    display: none;
-  }
-  .narrow .side {
-    border-inline-end: 0;
   }
 </style>

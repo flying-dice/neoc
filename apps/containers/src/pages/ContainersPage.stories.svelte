@@ -1,6 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, waitFor } from 'storybook/test'
+  import { alertButton } from '@vos/storybook/kit'
   import AppWindow from '@vos/storybook/AppWindow.svelte'
   import definition from '../../openrpc.json'
   import ContainersPage from './ContainersPage.svelte'
@@ -148,8 +149,8 @@
     await show(canvas, userEvent, 'containers-scope-all')
     await inspect(canvas, userEvent, 'scratch')
     await userEvent.click(canvas.getByTestId('containers-inspector-remove'))
-    await appears(canvas, 'containers-inspector-confirm-ok')
-    await userEvent.click(canvas.getByTestId('containers-inspector-confirm-ok'))
+    await appears(canvas, 'containers-inspector-confirm')
+    await userEvent.click(alertButton(canvas.getByTestId('containers-inspector-confirm'), 'action'))
     await appears(canvas, 'containers-items')
     await gone(canvas, 'containers-item-scratch')
     await says(canvas, 'containers-summary', '4 of 5 containers running')
@@ -164,7 +165,7 @@
     await show(canvas, userEvent, 'containers-stack-blog')
     await appears(canvas, 'containers-stack-remove')
     await userEvent.click(canvas.getByTestId('containers-stack-remove'))
-    await userEvent.click(canvas.getByTestId('containers-stack-confirm-ok'))
+    await userEvent.click(alertButton(canvas.getByTestId('containers-stack-confirm'), 'action'))
     await gone(canvas, 'containers-stack-blog')
     await appears(canvas, 'containers-stack-media')
   }}

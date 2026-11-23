@@ -17,9 +17,8 @@
 
   let { projects }: Props = $props()
 
-  // below 720 wide the projects and the one that is shown are one column each: `browsing` decides which one shows
-  let width = $state(1040)
-  const narrow = $derived(width < 720)
+  // in a window too narrow for both, the split view shows one column: the kit says when, the same for every app
+  let narrow = $state(false)
 
   $effect(() => {
     void projects.load()
@@ -27,9 +26,9 @@
   })
 </script>
 
-<main class="projects" bind:clientWidth={width} data-testid="projects-app">
-  <div class="columns" class:narrow class:browsing={projects.browsing}>
-    <div class="side">
+<main class="projects" data-testid="projects-app">
+  <ui-split-view column={projects.browsing ? 'sidebar' : 'detail'} oncollapsedchange={(e) => (narrow = e.detail.collapsed)}>
+    <div slot="sidebar">
       <ProjectSidebar
         projects={projects.projects}
         open={projects.open}
@@ -38,7 +37,7 @@
         onnew={() => projects.begin()}
       />
     </div>
-    <div class="detail">
+    <div>
       {#if projects.form}
         <section class="starting" aria-label="New Project" data-testid="projects-starting">
           <h1>New Project</h1>
@@ -132,7 +131,7 @@
         </div>
       {/if}
     </div>
-  </div>
+  </ui-split-view>
   <!-- why the last call failed (the backend's own sentence, or the host's), whichever column is in front -->
   {#if projects.failure}
     <ui-banner tone="error" data-testid="projects-failure">{projects.failure}</ui-banner>
@@ -148,20 +147,8 @@
     color: var(--label);
     font: var(--type-body);
   }
-  .columns {
+  ui-split-view {
     flex: 1;
-    min-height: 0;
-    display: grid;
-    grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
-  }
-  .side {
-    min-width: 0;
-    min-height: 0;
-    border-inline-end: 1px solid var(--separator);
-  }
-  .detail {
-    min-width: 0;
-    min-height: 0;
   }
   .project {
     height: 100%;
@@ -189,16 +176,5 @@
     height: 100%;
     display: grid;
     place-items: center;
-  }
-  /* one column: the projects, or the one that is picked */
-  .narrow {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .narrow:not(.browsing) .side,
-  .narrow.browsing .detail {
-    display: none;
-  }
-  .narrow .side {
-    border-inline-end: 0;
   }
 </style>
