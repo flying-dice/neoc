@@ -4,8 +4,16 @@
  *  • Hashed build assets (immutable URLs): cache first.
  *  • Never touches /rpc (WebSocket), /mcp or /apps (an app's page and its files: always live, never the shell in its place).
  */
-const CACHE = 'vos-shell-v1'
-const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon-512.png']
+const CACHE = 'vos-shell-v2'
+const SHELL = [
+  '/',
+  '/index.html',
+  '/manifest.webmanifest',
+  '/icon.svg',
+  '/icon-192.png',
+  '/icon-512.png',
+  '/apple-touch-icon.png'
+]
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

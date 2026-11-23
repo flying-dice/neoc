@@ -76,16 +76,17 @@
     left: 0;
     right: 0;
     z-index: 900;
-    padding-top: 6px;
+    /* the safe areas: on a phone the desktop is drawn edge to edge, under the device's own status bar and home indicator */
+    padding-top: calc(6px + env(safe-area-inset-top, 0px));
   }
   .workspace {
     position: absolute;
-    inset: 34px 0 0;
+    inset: calc(34px + env(safe-area-inset-top, 0px)) 0 0;
   }
   .dock {
     position: absolute;
     left: 50%;
-    bottom: 12px;
+    bottom: max(12px, env(safe-area-inset-bottom, 0px));
     transform: translateX(-50%);
     /* as wide as its icons, but never wider than the screen: `left: 50%` alone would give it half the screen to fit in, and
        icons past the right edge could not be reached (the tray wraps instead, see Dock) */

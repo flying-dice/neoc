@@ -221,6 +221,10 @@ async fn the_host_route_is_a_wrapper_page_for_a_paired_device_and_says_to_pair_o
     );
     assert!(html.contains(r#"data-entry="/apps/tasks/static/index.html""#), "{html}");
     assert!(html.contains(r#"src="/wrapper.js""#), "{html}");
+    // added to a home screen it is an app of its own name, and the page is told the icon to draw for it
+    assert!(html.contains(r#"<meta name="apple-mobile-web-app-capable" content="yes">"#), "{html}");
+    assert!(html.contains(r#"<meta name="apple-mobile-web-app-title" content="tasks">"#), "{html}");
+    assert!(html.contains("data-icon=\"") && html.contains("data-tint=\""), "{html}");
     assert_eq!(html.matches("<iframe").count(), 1, "one iframe and nothing else drawn: {html}");
 
     // an app that is not installed has no page
