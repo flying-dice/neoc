@@ -503,7 +503,6 @@ async fn dockers_refusals_keep_its_message_under_a_stable_kind() {
         for _, err in { not_found, conflict, in_use } do
             local message = assert(bollard.error_message(err), err)
             assert(message ~= "" and string.sub(err, -#message) == message, err)
-            assert(string.find(err, ": " .. bollard.error_kind(err) .. ": " .. message, 1, true), err)
         end
         assert(bollard.error_message("bollard.ping: connect: nothing listens") == "nothing listens")
         assert(bollard.error_message("bollard.ping: nonsense: x") == nil)

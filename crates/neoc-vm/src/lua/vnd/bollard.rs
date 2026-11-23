@@ -33,9 +33,8 @@
 //!
 //! **Errors.** A call returns `(value, nil)` or `(nil, "bollard.<function>: <kind>: <message>")`; the kinds are
 //! stable (`error`, `bollard.error_kind`; `bollard.error_message` is the message). `connect` is the kind of a host
-//! with no Docker: there is no socket, or
-//! nothing answers on it. `inspect_container` is the one call for which "no such container" is not an error: it
-//! returns `(nil, nil)`.
+//! with no Docker: there is no socket, or nothing answers on it. `inspect_container` is the one call for which "no
+//! such container" is not an error: it returns `(nil, nil)`.
 //!
 //! **Connecting.** `connect()` makes a client and sends nothing: the first call does. With no `host` it uses
 //! `DOCKER_HOST`, and without that the local socket: `/var/run/docker.sock`, then the per-user sockets of Docker
@@ -121,17 +120,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "error_kind",
         &[("err", "string?")],
         "The stable kind inside an error string returned by a `vnd:bollard` function, or `nil` when the string is not one of theirs (or is `nil`, so `bollard.error_kind(err)` takes the `err` of any call). Such a string is `bollard.<function>: <kind>: <message>`. Kinds: `invalid_input` (an argument or option was refused, by this module or by Docker), `connect` (no Docker daemon could be reached: no socket, or nothing answers), `timed_out` (the daemon did not answer within the client's `timeout`), `not_found` (no such container, image, volume or network), `conflict` (the object's state does not allow it: a name in use, a running container, a volume in use), `api` (any other error status from Docker), `bad_response` (Docker's answer could not be read), `too_large` (a result longer than this module reads into memory), `other`. The message is Docker's own where Docker answered; it is for a log and may change.",
-        |_, err: Option<mlua::LuaString>| {
-            Ok(err.and_then(|err| error::kind_of(&err.to_string_lossy()).map(str::to_owned)))
-        },
+        |_, err: Option<mlua::LuaString>| Ok(err.and_then(|err| error::kind_of(&err.to_string_lossy()).map(str::to_owned))),
     )?;
     m.func(
         "error_message",
         &[("err", "string?")],
         "The message inside an error string returned by a `vnd:bollard` function: everything after the kind in `bollard.<function>: <kind>: <message>`, or `nil` when the string is not one of theirs (or is `nil`, so `bollard.error_message(err)` takes the `err` of any call), the same rule as `error_kind`. It is Docker's own sentence where Docker answered (`No such container: web`). It is for showing or logging as it is: branch on `error_kind`, not on these words, which differ between platforms and versions. Read it here instead of taking the error string apart.",
-        |_, err: Option<mlua::LuaString>| {
-            Ok(err.and_then(|err| error::message_of(&err.to_string_lossy()).map(str::to_owned)))
-        },
+        |_, err: Option<mlua::LuaString>| Ok(err.and_then(|err| error::message_of(&err.to_string_lossy()).map(str::to_owned))),
     )?;
 
     m.userdata("Client", |c| {

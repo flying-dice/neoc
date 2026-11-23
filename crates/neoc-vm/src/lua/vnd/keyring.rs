@@ -100,17 +100,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "error_kind",
         &[("err", "string?")],
         "The stable kind inside an error string returned by a `vnd:keyring` function, or `nil` when the string is not one of theirs (or is `nil`, so `keyring.error_kind(err)` takes the `err` of any call). Such a string is `keyring.<function>: <kind>: <message>`. Kinds: `invalid_input` (an argument was refused, by this module or by the store), `no_store` (this machine has no credential store that can be used), `no_access` (the store is locked, or the person refused), `not_found` (the credential an entry from `search` stood for is gone), `ambiguous` (more than one credential matches the service and user), `bad_encoding` (the secret is not UTF-8 text: read it with `get_secret`), `bad_data` (what the store holds could not be read), `unsupported` (the store does not do this), `platform` (the platform's store failed), `other`. The message is the store's own where it answered; it is for a log and may change, and never holds a secret.",
-        |_, err: Option<LuaString>| {
-            Ok(err.and_then(|err| error::kind_of(&err.to_string_lossy()).map(str::to_owned)))
-        },
+        |_, err: Option<LuaString>| Ok(err.and_then(|err| error::kind_of(&err.to_string_lossy()).map(str::to_owned))),
     )?;
     m.func(
         "error_message",
         &[("err", "string?")],
         "The message inside an error string returned by a `vnd:keyring` function: everything after the kind in `keyring.<function>: <kind>: <message>`, or `nil` when the string is not one of theirs (or is `nil`, so `keyring.error_message(err)` takes the `err` of any call), the same rule as `error_kind`. It is the store's or this module's wording, and never holds a secret. It is for showing or logging as it is: branch on `error_kind`, not on these words, which differ between platforms and versions. Read it here instead of taking the error string apart.",
-        |_, err: Option<mlua::LuaString>| {
-            Ok(err.and_then(|err| error::message_of(&err.to_string_lossy()).map(str::to_owned)))
-        },
+        |_, err: Option<mlua::LuaString>| Ok(err.and_then(|err| error::message_of(&err.to_string_lossy()).map(str::to_owned))),
     )?;
 
     m.userdata("Store", |s| {

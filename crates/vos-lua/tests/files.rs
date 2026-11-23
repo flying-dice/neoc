@@ -293,6 +293,7 @@ async fn errors_are_values_with_a_stable_kind_and_misuse_raises() {
             foreign = app.files.errorKind("fs.read: not_found: x: y"),
             not_text = app.files.errorKind(42),
             missing_message = app.files.errorMessage(missing),
+            bad = bad,
             bad_message = app.files.errorMessage(bad),
             others_have_no_message = app.files.errorMessage("fs.read: not_found: x: y") == nil
               and app.files.errorMessage("files.read: nonsense: x") == nil
@@ -316,10 +317,9 @@ async fn errors_are_values_with_a_stable_kind_and_misuse_raises() {
     let missing = out["missing"].as_str().unwrap();
     assert_eq!(out["missing_message"].as_str(), missing.strip_prefix("files.read: not_found: "), "{out}");
     assert!(out["missing_message"].as_str().unwrap().starts_with("nope.txt: "), "{out}");
-    assert!(
-        out["bad_message"].as_str().is_some_and(|m| !m.is_empty() && !m.contains("invalid_input")),
-        "{out}"
-    );
+    let bad = out["bad"].as_str().unwrap();
+    assert_eq!(out["bad_message"].as_str(), bad.strip_prefix("files.read: invalid_input: "), "{out}");
+    assert!(out["bad_message"].as_str().is_some_and(|m| !m.is_empty()), "{out}");
     assert_eq!(out["others_have_no_message"], true, "only a files error has a files message: {out}");
     assert!(out["bad_option"].as_str().unwrap().contains("unknown option `recrusive`"), "{out}");
     assert_eq!(out["bad_type"], false, "a table is not a path: {out}");

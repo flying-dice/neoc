@@ -16,18 +16,11 @@ pub struct ErrorText<'a> {
 }
 
 impl<'a> ErrorText<'a> {
-    /// The parts of `err` when it is `<module>.<function>: <kind>[: <message>]`, with `<function>` a name of ASCII
-    /// letters, digits and `_`. `None` for any other text.
+    /// The parts of `err` when it is `<module>.<function>: <kind>[: <message>]`. `None` for any other text. What a
+    /// function name may be is the caller's rule: this only splits.
     pub fn parse(module: &str, err: &'a str) -> Option<Self> {
         let rest = err.strip_prefix(module)?.strip_prefix('.')?;
         let (function, rest) = rest.split_once(": ")?;
-        if function.is_empty()
-            || !function
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'_')
-        {
-            return None;
-        }
         let (kind, message) = rest.split_once(": ").unwrap_or((rest, ""));
         Some(Self {
             function,
@@ -45,11 +38,8 @@ pub(crate) fn read<'a, K>(
     kind: impl FnOnce(&str) -> Option<K>,
 ) -> Option<(K, &'a str)> {
     let text = ErrorText::parse(module, err)?;
-    if !text
-        .function
-        .bytes()
-        .all(|b| b.is_ascii_lowercase() || b == b'_')
-    {
+    let snake_case = |b: u8| b.is_ascii_lowercase() || b == b'_';
+    if text.function.is_empty() || !text.function.bytes().all(snake_case) {
         return None;
     }
     Some((kind(text.kind)?, text.message))
@@ -98,8 +88,6 @@ mod tests {
             "fs.",
             "fs.read",
             "fs.read:not_found",
-            "fs.: not_found: x",
-            "fs.re ad: not_found: x",
             "fsx.read: not_found: x",
             "hyper.get: timed_out: x",
             "not_found: x",
@@ -119,6 +107,8 @@ mod tests {
         assert_eq!(read("fs", "fs.read: nonsense: /x", known), None);
         assert_eq!(read("fs", "fs.Read: not_found: /x", known), None);
         assert_eq!(read("fs", "fs.read2: not_found: /x", known), None);
+        assert_eq!(read("fs", "fs.re ad: not_found: /x", known), None);
+        assert_eq!(read("fs", "fs.: not_found: /x", known), None);
         assert_eq!(read("fs", "bollard.ping: not_found: x", known), None);
     }
 }

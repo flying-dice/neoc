@@ -95,8 +95,8 @@ pub(super) fn kind_of(err: &str) -> Option<&'static str> {
     read(err).map(|(kind, _)| kind.as_str())
 }
 
-/// The message inside an error string a `vnd:portable_pty` function returned: everything after the kind. `None` when the
-/// text is not one of ours.
+/// The message inside an error string a `vnd:portable_pty` function returned: everything after the kind. `None`
+/// when the text is not one of ours.
 pub(super) fn message_of(err: &str) -> Option<&str> {
     read(err).map(|(_, message)| message)
 }

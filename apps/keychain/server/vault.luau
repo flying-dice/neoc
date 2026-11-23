@@ -25,7 +25,8 @@ local function sentence(err: string?): string
   elseif kind == "bad_encoding" then
     return "This item's secret is not text, so it cannot be shown."
   end
-  return keyring.error_message(err) or err or "The keychain refused, and did not say why."
+  local message = keyring.error_message(err)
+  return if message and message ~= "" then message else err or "The keychain refused, and did not say why."
 end
 
 local function entry(service: string, account: string): (vnd_keyring_Entry?, string?)

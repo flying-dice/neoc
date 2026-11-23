@@ -47,7 +47,8 @@ function engine.sentence(err: string?): string
   elseif kind == "timed_out" then
     return "Docker is not answering. It may still be starting, or be paused."
   end
-  return bollard.error_message(err) or err or "Docker refused, and did not say why."
+  local message = bollard.error_message(err)
+  return if message and message ~= "" then message else err or "Docker refused, and did not say why."
 end
 
 local function connected(): (Clients?, string?)
