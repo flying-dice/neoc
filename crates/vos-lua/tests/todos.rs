@@ -102,6 +102,12 @@ async fn what_cannot_be_done_is_refused_in_words() {
     for (method, args, why) in [
         ("add", json!({ "list": 1, "title": "   " }), "A todo needs a title."),
         ("add", json!({ "list": 1, "title": "Milk", "due": "9 June" }), "A day is written like 2026-06-09."),
+        // digits of another script are not a day (the host's patterns are Unicode ones)
+        (
+            "add",
+            json!({ "list": 1, "title": "Milk", "due": "٢٠٢٦-٠٦-٠٩" }),
+            "A day is written like 2026-06-09.",
+        ),
         (
             "add",
             json!({ "list": 1, "title": "Milk", "due": "2026-13-01" }),

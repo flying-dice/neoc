@@ -57,7 +57,7 @@ export const DEFAULTS: Options = {
 }
 
 /** The backend of a project that is written in TypeScript, when its options do not name one. */
-const TYPESCRIPT_BACKEND = 'server/main.ts'
+export const TYPESCRIPT_BACKEND = 'server/main.ts'
 
 /** The options of a project: what it gave, and the defaults for the rest (the backend's language from the file that is there). */
 export function resolveOptions(project: string, options: Partial<Options> = {}): Options {

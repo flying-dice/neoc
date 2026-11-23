@@ -44,8 +44,8 @@ const handlers: Handlers = {
       say('shown', trim(String(error)))
     }
 
-    // the bitwise operators are Luau's bit32
-    say('bits', [6 & 3, 6 | 1, 6 ^ 3, 1 << 4, 256 >> 2, 256 >>> 4, ~0xfffffff0].join(' '))
+    // the bitwise operators are Luau's bit32: unsigned, so `>>` of a negative number keeps the sign bit as a large number
+    say('bits', [6 & 3, 6 | 1, 6 ^ 3, 1 << 4, 256 >> 2, 256 >>> 4, ~0xfffffff0, -8 >> 1, -8 >>> 1].join(' '))
 
     // the host's modules: a plain function, several values back, a method on what one returned
     say('module', base64.encode(trim('  hi  ')))

@@ -31,7 +31,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } fro
 import { join, resolve } from 'node:path'
 import type { HtmlTagDescriptor, Logger, Plugin } from 'vite'
 import { backendBundle, promote, writeApp } from './backend.ts'
-import { DEFAULTS, generate, isTypeScript, readDefinition, removeOtherBackend, resolveOptions, write, type Options } from './generate.ts'
+import { DEFAULTS, TYPESCRIPT_BACKEND, generate, isTypeScript, readDefinition, removeOtherBackend, resolveOptions, write, type Options } from './generate.ts'
 import { analyze, ToolMissing } from './luau-tools.ts'
 
 export type { Options } from './generate.ts'
@@ -106,16 +106,20 @@ export function vos(options: Partial<Options> = {}): Plugin {
   let compiled: string | undefined
 
   /**
-   * Generate, and check the backend against the contract. The check is the Luau type checker's, not a pattern over the
+   * Generate, and check the backend against the contract. The check is a type checker's (luau-lsp for a backend in Luau,
+   * the TypeScript compiler for one in TypeScript, whose compiled bundle is kept in `compiled`), not a pattern over the
    * source: the generated `Handlers` type has one function per declared method, so a missing handler, a handler of the
-   * wrong shape, or one that is not declared is a type error in `server/main.luau`, and valid code of any shape (a handler
-   * defined in a required module, assigned from a local function, added to the table later) never fails.
+   * wrong shape, or one that is not declared is a type error in the backend, and valid code of any shape (a handler
+   * defined in another module, assigned from a local function, added to the table later) never fails.
    */
   const regenerate = (): void => {
     write(root, generate(root, settings))
     removeOtherBackend(root, settings)
     const backend = resolve(root, settings.backend)
-    if (!existsSync(backend)) throw new Error(`${settings.backend} not found: the backend returns one handler per method of ${settings.definition}`)
+    if (!existsSync(backend)) {
+      const either = options.backend === undefined ? ` (or ${TYPESCRIPT_BACKEND}, for a backend in TypeScript)` : ''
+      throw new Error(`${settings.backend}${either} not found: the backend returns one handler per method of ${settings.definition}`)
+    }
     // a backend in TypeScript is checked by compiling it: the generated entry passes its handlers to the router, whose
     // parameter is the `Handlers` of the definition. What it compiles to is kept for the end of the build.
     if (isTypeScript(settings)) {
@@ -186,9 +190,12 @@ export function vos(options: Partial<Options> = {}): Plugin {
       rmSync(staging, { recursive: true, force: true })
       // a build that does not check the backend says so, every time: nothing else will
       if (!settings.check && !isTypeScript(settings)) this.warn(`vos: the check is off (check: false): nothing verifies that ${settings.backend} implements every method of ${settings.definition}`)
-      regenerate()
+      if (options.backend === undefined && !isTypeScript(settings) && existsSync(resolve(root, TYPESCRIPT_BACKEND)))
+        this.warn(`vos: ${settings.backend} and ${TYPESCRIPT_BACKEND} are both there: the backend is ${settings.backend}, and ${TYPESCRIPT_BACKEND} is not built or checked`)
+      // watched before anything can fail: a watching build whose first run stops on an error is rebuilt by the fix
       this.addWatchFile(resolve(root, settings.definition))
       for (const file of sourcesUnder(resolve(root, settings.backend, '..'))) this.addWatchFile(file)
+      regenerate()
     },
     buildEnd(error) {
       if (error) failed = true

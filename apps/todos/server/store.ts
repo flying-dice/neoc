@@ -45,11 +45,19 @@ db.migrate({
   `
 })
 
-const [DAY] = Pattern.new('^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$')
+// `[0-9]`, not `\\d`: the host's patterns are Unicode ones, where `\\d` is a digit of any script
+const DAY = pattern('^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$')
+
+/** A pattern of the app's own: one that does not compile is a mistake here, found when the app loads. */
+function pattern(source: string): Pattern {
+  const [compiled, problem] = Pattern.new(source)
+  if (compiled === undefined) throw new Error(`the pattern ${source} does not compile: ${problem}`)
+  return compiled
+}
 
 /** A day is `2026-06-09`; empty is no day. */
 function isDay(text: string): boolean {
-  return text === '' || (DAY !== undefined && DAY.is_match(text))
+  return text === '' || DAY.is_match(text)
 }
 
 function todoOf(row: Row): Todo {

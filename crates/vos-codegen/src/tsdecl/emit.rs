@@ -247,12 +247,11 @@ impl Emitter<'_> {
         if let Some((key, value)) = index {
             match self.indexer(key, value)? {
                 Some(indexer) => fields.push(indexer),
-                None if props.is_empty() => {
-                    return Ok(format!("LuaTable<{}, {}>", self.ty(key)?, self.ty(value)?));
-                }
                 None => {
-                    return Err("a table type with properties and an indexer that is not by string or number"
-                        .to_owned())
+                    return Err(
+                        "a table type written in place with an indexer that is not by string or number"
+                            .to_owned(),
+                    )
                 }
             }
         }

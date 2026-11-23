@@ -243,6 +243,22 @@ describe('compiling a backend in TypeScript', () => {
     expect(compound.problems).toEqual([expect.stringMatching(/^server\/main\.ts:\d+:\d+: `&=` is not compiled for Luau: write the assignment out \(`x = x & y`\)$/)])
   })
 
+  test('a global of TypeScript’s library that an app does not have is refused, and a name of the developer’s own is not', () => {
+    const { problems } = compile(withBody('app.kv.set("now", Date.now())\n    app.kv.set("json", JSON.stringify(params))'))
+    expect(problems).toEqual([
+      expect.stringMatching(/^server\/main\.ts:\d+:\d+: `Date` is not in an app's environment: use `std:time` or `lib:chrono`$/),
+      expect.stringMatching(/^server\/main\.ts:\d+:\d+: `JSON` is not in an app's environment: use `lib:json`$/)
+    ])
+    const own = compile(withBody('const JSON = { stringify: (value: unknown): string => String(value) }\n    app.kv.set("json", JSON.stringify(params))'))
+    expect(own.problems).toEqual([])
+  })
+
+  test('a test beside the backend is not part of the app', () => {
+    const { bundle, problems } = compile(MAIN, { 'server/notes.test.ts': "import { test } from 'bun:test'\ntest('x', () => {})\n" })
+    expect(problems).toEqual([])
+    expect(bundle).not.toContain('bun:test')
+  })
+
   test('what TypeScriptToLua does not compile is a problem of the build, with its place', () => {
     const { problems } = compile(withBody('const day = /^\\d+$/.test(params.title)\n    app.kv.set("day", day)'))
     expect(problems.join('\n')).toMatch(/server\/main\.ts:\d+:\d+: /)
@@ -274,6 +290,20 @@ describe('a build of a project whose backend is TypeScript', () => {
       const failed = await run(dir)
       expect(failed?.message).toMatch(/server\/main\.ts does not compile \(TypeScript, to Luau\):\nserver\/main\.ts:\d+:\d+: /)
       expect(readFileSync(join(dir, 'dist/app.luau'), 'utf8')).toBe(built)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('a build that stops on the backend still watches it, so that the fix is built', async () => {
+    const dir = project(files({ 'server/main.ts': MAIN.replace('(): Note[] => numbered(', '(): string[] => (') }))
+    const watched: string[] = []
+    const plugin = vos()
+    const start = plugin.buildStart as (this: { addWatchFile: (file: string) => void; warn: (message: string) => void }) => void
+    try {
+      ;(plugin.config as (config: { root: string }) => unknown)({ root: dir })
+      expect(() => start.call({ addWatchFile: (file) => watched.push(file), warn: () => {} })).toThrow(/does not compile/)
+      expect(watched).toEqual(expect.arrayContaining([join(dir, 'openrpc.json'), join(dir, 'server/main.ts'), join(dir, 'server/notes.ts')]))
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

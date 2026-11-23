@@ -57,7 +57,7 @@ async fn what_the_compiler_writes_runs_in_an_apps_environment() {
             "spread=1 bc",
             "caught=not this one",
             "shown=Error: not this one",
-            "bits=2 7 5 16 64 16 15",
+            "bits=2 7 5 16 64 16 15 4294967292 2147483644",
             "module=aGk=",
             "values=hi true",
             "method=true",
