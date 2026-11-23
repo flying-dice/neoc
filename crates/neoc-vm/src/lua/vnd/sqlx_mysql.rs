@@ -66,16 +66,10 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:sqlx_mysql")?;
 
-    m.set(
-        "open",
+    m.declared(
+        open::lua(),
         async_function(lua, Role::Wait, |lua, url: String| open(lua, url))?,
     )?;
-    m.record_fn(
-        "open",
-        &[("url", "string")],
-        "Result<Database, string>",
-        "Open a MySQL connection pool. `url` is a standard MySQL URL: `mysql://user:pass@host:3306/dbname`.",
-    );
 
     m.userdata("Database", |d| {
         d.method(
@@ -139,6 +133,8 @@ pub struct Database {
     pool: Arc<MySqlPool>,
 }
 
+/// Open a MySQL connection pool. `url` is a standard MySQL URL: `mysql://user:pass@host:3306/dbname`.
+#[neoc_macros::lua_fn(returns = "Result<Database, string>", takes("url: string"))]
 #[instrument(name = "sqlx_mysql.open", target = "lua::lib::sqlx_mysql", skip_all)]
 async fn open(lua: Lua, url: String) -> mlua::Result<(Value, Value)> {
     let opts = match MySqlConnectOptions::from_str(&url) {

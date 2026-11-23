@@ -214,31 +214,9 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:crypto")?;
 
     m.set("encrypt", lua.create_function(encrypt)?)?
-        .record_fn(
-            "encrypt",
-            &[
-                ("algo", "string"),
-                ("key", "string"),
-                ("nonce", "string"),
-                ("plaintext", "string"),
-                ("aad", "string?"),
-            ],
-            "Result<string, string>",
-            "AEAD-encrypt `plaintext` under `algo`/`key`/`nonce`, binding optional `aad`. Returns ciphertext concatenated with the auth tag as raw bytes.",
-        )
+        .record(encrypt::lua())
         .set("decrypt", lua.create_function(decrypt)?)?
-        .record_fn(
-            "decrypt",
-            &[
-                ("algo", "string"),
-                ("key", "string"),
-                ("nonce", "string"),
-                ("ciphertext", "string"),
-                ("aad", "string?"),
-            ],
-            "Result<string, string>",
-            "AEAD-decrypt `ciphertext` (with the trailing tag) under `algo`/`key`/`nonce`, requiring `aad` to match the value bound at encrypt time.",
-        );
+        .record(decrypt::lua());
 
     m.set(
         "algorithms",
@@ -284,6 +262,8 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     Ok(m)
 }
 
+/// AEAD-encrypt `plaintext` under `algo`/`key`/`nonce`, binding optional `aad`. Returns ciphertext concatenated with the auth tag as raw bytes.
+#[neoc_macros::lua_fn(returns = "Result<string, string>")]
 #[instrument(name = "crypto.encrypt", target = "lua::lib::crypto", skip_all)]
 fn encrypt(
     lua: &Lua,
@@ -311,6 +291,8 @@ fn encrypt(
     }
 }
 
+/// AEAD-decrypt `ciphertext` (with the trailing tag) under `algo`/`key`/`nonce`, requiring `aad` to match the value bound at encrypt time.
+#[neoc_macros::lua_fn(returns = "Result<string, string>")]
 #[instrument(name = "crypto.decrypt", target = "lua::lib::crypto", skip_all)]
 fn decrypt(
     lua: &Lua,

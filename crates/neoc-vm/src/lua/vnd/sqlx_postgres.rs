@@ -63,42 +63,13 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:sqlx_postgres")?;
 
-    m.set(
-        "open",
+    m.declared(
+        open::lua(),
         async_function(lua, Role::Wait, |lua, url: String| open(lua, url))?,
     )?;
-    m.record_fn(
-        "open",
-        &[("url", "string")],
-        "Result<Database, string>",
-        "Open a Postgres connection pool. `url` is a standard Postgres URL: `postgres://user:pass@host:5432/dbname`.",
-    );
 
     m.userdata("Database", |d| {
-        d.method(
-            "execute",
-            &[("sql", "string"), ("...", "LuaValue")],
-            "Result<number, string>",
-            "Execute a SQL statement, binding trailing arguments to `$1, $2, …` placeholders; returns rows affected.",
-        )
-        .method(
-            "query",
-            &[("sql", "string"), ("...", "LuaValue")],
-            "Result<LuaValue, string>",
-            "Execute a SELECT and return all rows as a 1-indexed table of column-keyed row tables. A column of an unsupported type raises; cast it to text in SQL.",
-        )
-        .method(
-            "query_one",
-            &[("sql", "string"), ("...", "LuaValue")],
-            "Result<LuaValue, string>",
-            "Execute a SELECT and return the first matching row, or nil when none matched. A column of an unsupported type raises; cast it to text in SQL.",
-        )
-        .method(
-            "close",
-            &[],
-            "()",
-            "Close all connections in the pool; subsequent method calls on this handle error.",
-        );
+        Database::lua(d);
     });
 
     Ok(m)
@@ -109,6 +80,8 @@ pub struct Database {
     pool: Arc<PgPool>,
 }
 
+/// Open a Postgres connection pool. `url` is a standard Postgres URL: `postgres://user:pass@host:5432/dbname`.
+#[neoc_macros::lua_fn(returns = "Result<Database, string>", takes("url: string"))]
 #[instrument(
     name = "sqlx_postgres.open",
     target = "lua::lib::sqlx_postgres",
@@ -130,8 +103,11 @@ async fn open(lua: Lua, url: String) -> mlua::Result<(Value, Value)> {
     }
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for Database {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Execute a SQL statement, binding trailing arguments to `$1, $2, …` placeholders; returns rows affected.
+        #[lua("Result<number, string>", takes("sql: string", "...: LuaValue"))]
         async_method(
             methods,
             "execute",
@@ -156,6 +132,8 @@ impl UserData for Database {
             },
         );
 
+        /// Execute a SELECT and return all rows as a 1-indexed table of column-keyed row tables. A column of an unsupported type raises; cast it to text in SQL.
+        #[lua("Result<LuaValue, string>", takes("sql: string", "...: LuaValue"))]
         async_method(
             methods,
             "query",
@@ -186,6 +164,8 @@ impl UserData for Database {
             },
         );
 
+        /// Execute a SELECT and return the first matching row, or nil when none matched. A column of an unsupported type raises; cast it to text in SQL.
+        #[lua("Result<LuaValue, string>", takes("sql: string", "...: LuaValue"))]
         async_method(
             methods,
             "query_one",
@@ -211,6 +191,8 @@ impl UserData for Database {
             },
         );
 
+        /// Close all connections in the pool; subsequent method calls on this handle error.
+        #[lua("()")]
         async_method(methods, "close", Role::Wait, |_, this, _: ()| {
             let pool = this.pool.clone();
             async move {

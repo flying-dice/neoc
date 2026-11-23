@@ -36,22 +36,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.set("encode", lua.create_function(encode)?)?
         .set("decode", lua.create_function(decode)?)?;
 
-    m.record_fn(
-        "encode",
-        &[("format", "string"), ("data", "string"), ("opts", "LuaValue?")],
-        "Result<string, string>",
-        "Compress `data` with `format` (`gzip`, `zlib`, `zstd`, or `brotli`); `opts.level` tunes the compression level.",
-    )
-    .record_fn(
-        "decode",
-        &[("format", "string"), ("data", "string"), ("opts", "LuaValue?")],
-        "Result<string, string>",
-        "Decompress `data` with `format`; `opts.max_size` caps the output size (default 256 MiB).",
-    );
+    m.record(encode::lua()).record(decode::lua());
 
     Ok(m)
 }
 
+/// Compress `data` with `format` (`gzip`, `zlib`, `zstd`, or `brotli`); `opts.level` tunes the compression level.
+#[neoc_macros::lua_fn(returns = "Result<string, string>")]
 #[instrument(name = "compress.encode", target = "lua::lib::compress", skip_all)]
 fn encode(
     lua: &Lua,
@@ -71,6 +62,8 @@ fn encode(
     }
 }
 
+/// Decompress `data` with `format`; `opts.max_size` caps the output size (default 256 MiB).
+#[neoc_macros::lua_fn(returns = "Result<string, string>")]
 #[instrument(name = "compress.decode", target = "lua::lib::compress", skip_all)]
 fn decode(
     lua: &Lua,

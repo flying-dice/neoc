@@ -34,165 +34,48 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:text")?;
 
-    m.set("to_camel_case", lua.create_function(to_camel_case)?)?;
-    m.record_fn(
-        "to_camel_case",
-        &[("text", "string")],
-        "string",
-        "Convert to `camelCase`. Acronym boundaries are detected by the backing `heck` crate.",
-    );
+    m.declared(to_camel_case::lua(), lua.create_function(to_camel_case)?)?;
 
-    m.set("to_snake_case", lua.create_function(to_snake_case)?)?;
-    m.record_fn(
-        "to_snake_case",
-        &[("text", "string")],
-        "string",
-        "Convert to `snake_case`.",
-    );
+    m.declared(to_snake_case::lua(), lua.create_function(to_snake_case)?)?;
 
-    m.set("to_kebab_case", lua.create_function(to_kebab_case)?)?;
-    m.record_fn(
-        "to_kebab_case",
-        &[("text", "string")],
-        "string",
-        "Convert to `kebab-case`.",
-    );
+    m.declared(to_kebab_case::lua(), lua.create_function(to_kebab_case)?)?;
 
-    m.set("to_pascal_case", lua.create_function(to_pascal_case)?)?;
-    m.record_fn(
-        "to_pascal_case",
-        &[("text", "string")],
-        "string",
-        "Convert to `PascalCase`.",
-    );
+    m.declared(to_pascal_case::lua(), lua.create_function(to_pascal_case)?)?;
 
-    m.set("to_title_case", lua.create_function(to_title_case)?)?;
-    m.record_fn(
-        "to_title_case",
-        &[("text", "string")],
-        "string",
-        "Convert to `Title Case`.",
-    );
+    m.declared(to_title_case::lua(), lua.create_function(to_title_case)?)?;
 
-    m.set("to_constant_case", lua.create_function(to_constant_case)?)?;
-    m.record_fn(
-        "to_constant_case",
-        &[("text", "string")],
-        "string",
-        "Convert to `CONSTANT_CASE`.",
-    );
+    m.declared(
+        to_constant_case::lua(),
+        lua.create_function(to_constant_case)?,
+    )?;
 
-    m.set("word_wrap", lua.create_function(word_wrap)?)?;
-    m.record_fn(
-        "word_wrap",
-        &[("text", "string"), ("width", "number"), ("opts", "LuaValue?")],
-        "Result<string, string>",
-        "Greedy word wrap, display-width aware. `width` must be > 0. Defaults: `break_words = false`, `preserve_newlines = true`.",
-    );
+    m.declared(word_wrap::lua(), lua.create_function(word_wrap)?)?;
 
-    m.set("levenshtein", lua.create_function(levenshtein)?)?;
-    m.record_fn(
-        "levenshtein",
-        &[("a", "string"), ("b", "string")],
-        "number",
-        "Codepoint-based Levenshtein edit distance.",
-    );
+    m.declared(levenshtein::lua(), lua.create_function(levenshtein)?)?;
 
-    m.set("closest", lua.create_function(closest)?)?;
-    m.record_fn(
-        "closest",
-        &[("input", "string"), ("candidates", "LuaValue"), ("opts", "LuaValue?")],
-        "Result<LuaValue, string>",
-        "Score each candidate against `input` by Levenshtein distance, returning the list sorted ascending (ties broken alphabetically).",
-    );
+    m.declared(closest::lua(), lua.create_function(closest)?)?;
 
-    m.set("truncate", lua.create_function(truncate)?)?;
-    m.record_fn(
-        "truncate",
-        &[("text", "string"), ("max_len", "number"), ("opts", "LuaValue?")],
-        "Result<string, string>",
-        "Truncate `text` so its display width is at most `max_len`. The `...` ellipsis counts toward the limit.",
-    );
+    m.declared(truncate::lua(), lua.create_function(truncate)?)?;
 
-    m.set("pad_left", lua.create_function(pad_left)?)?;
-    m.record_fn(
-        "pad_left",
-        &[("text", "string"), ("width", "number"), ("fill_char", "string?")],
-        "Result<string, string>",
-        "Pad `text` on the left so total display width equals `width`. `fill_char` must be one display-width-1 character (default space).",
-    );
+    m.declared(pad_left::lua(), lua.create_function(pad_left)?)?;
 
-    m.set("pad_right", lua.create_function(pad_right)?)?;
-    m.record_fn(
-        "pad_right",
-        &[("text", "string"), ("width", "number"), ("fill_char", "string?")],
-        "Result<string, string>",
-        "Pad `text` on the right so total display width equals `width`. Same constraints as `pad_left`.",
-    );
+    m.declared(pad_right::lua(), lua.create_function(pad_right)?)?;
 
-    m.set("center", lua.create_function(center)?)?;
-    m.record_fn(
-        "center",
-        &[("text", "string"), ("width", "number"), ("fill_char", "string?")],
-        "Result<string, string>",
-        "Pad `text` on both sides so total display width equals `width`. Uneven padding places the extra column on the right.",
-    );
+    m.declared(center::lua(), lua.create_function(center)?)?;
 
-    m.set("slugify", lua.create_function(slugify)?)?;
-    m.record_fn(
-        "slugify",
-        &[("text", "string")],
-        "string",
-        "Convert `text` to a URL-safe ASCII slug via `deunicode` transliteration, then lowercase and hyphenate.",
-    );
+    m.declared(slugify::lua(), lua.create_function(slugify)?)?;
 
-    m.set("trim", lua.create_function(trim)?)?;
-    m.record_fn(
-        "trim",
-        &[("text", "string")],
-        "string",
-        "Remove Unicode white space (the `White_Space` property: spaces, tabs, line breaks, U+00A0, U+3000, ...) from both ends of `text`. Raises when `text` is not valid UTF-8 (repair it with `to_valid_utf8` first).",
-    );
+    m.declared(trim::lua(), lua.create_function(trim)?)?;
 
-    m.set("trim_start", lua.create_function(trim_start)?)?;
-    m.record_fn(
-        "trim_start",
-        &[("text", "string")],
-        "string",
-        "Remove Unicode white space from the start of `text`. Raises when `text` is not valid UTF-8 (repair it with `to_valid_utf8` first).",
-    );
+    m.declared(trim_start::lua(), lua.create_function(trim_start)?)?;
 
-    m.set("trim_end", lua.create_function(trim_end)?)?;
-    m.record_fn(
-        "trim_end",
-        &[("text", "string")],
-        "string",
-        "Remove Unicode white space from the end of `text`. Raises when `text` is not valid UTF-8 (repair it with `to_valid_utf8` first).",
-    );
+    m.declared(trim_end::lua(), lua.create_function(trim_end)?)?;
 
-    m.set("clip", lua.create_function(clip)?)?;
-    m.record_fn(
-        "clip",
-        &[("text", "string"), ("max", "number"), ("ellipsis", "string?")],
-        "string",
-        "Clip `text` to at most `max` characters. A character is an extended grapheme cluster (UAX #29, what `lib:unicode.graphemes` yields and a Swift `Character` is): a flag emoji or a letter with its combining accent is one, and is never cut apart. When `text` is cut and `ellipsis` is given, the ellipsis ends the result and counts toward `max`; an ellipsis longer than `max` is left out. The count bounds characters, not bytes: one character may carry any number of combining marks. Raises (it does not return an error) when `max` is negative, fractional or NaN, and when `text` or `ellipsis` is not valid UTF-8; a `max` beyond any text, infinity included, is the whole text.",
-    );
+    m.declared(clip::lua(), lua.create_function(clip)?)?;
 
-    m.set("to_valid_utf8", lua.create_function(to_valid_utf8)?)?;
-    m.record_fn(
-        "to_valid_utf8",
-        &[("bytes", "string")],
-        "string",
-        "Make any byte string valid UTF-8: bytes that are not part of a character are replaced with U+FFFD (the replacement character). Valid input is returned as it is.",
-    );
+    m.declared(to_valid_utf8::lua(), lua.create_function(to_valid_utf8)?)?;
 
-    m.set("strip_ansi", lua.create_function(strip_ansi)?)?;
-    m.record_fn(
-        "strip_ansi",
-        &[("text", "string")],
-        "string",
-        "Remove what a terminal would act on instead of show: escape sequences (colours, cursor movement, window titles) and control characters. Line feeds and tabs stay, so `\\r\\n` becomes `\\n`. Each line is read on its own, so a sequence that is never ended takes the rest of its line and no more. A C1 control written as a character (U+0080 to U+009F) is removed without being read as the start of a sequence. Raises when `text` is not valid UTF-8 (repair it with `to_valid_utf8` first).",
-    );
+    m.declared(strip_ansi::lua(), lua.create_function(strip_ansi)?)?;
 
     Ok(m)
 }
@@ -201,31 +84,43 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 // Case conversion — heck does the word-boundary detection and acronym handling.
 // ---------------------------------------------------------------------------
 
+/// Convert to `camelCase`. Acronym boundaries are detected by the backing `heck` crate.
+#[neoc_macros::lua_fn(names(s = "text"))]
 #[instrument(name = "text.to_camel_case", target = "lua::lib::text", skip_all)]
 fn to_camel_case(_: &Lua, s: mlua::LuaString) -> mlua::Result<String> {
     Ok(s.to_str()?.to_lower_camel_case())
 }
 
+/// Convert to `snake_case`.
+#[neoc_macros::lua_fn(names(s = "text"))]
 #[instrument(name = "text.to_snake_case", target = "lua::lib::text", skip_all)]
 fn to_snake_case(_: &Lua, s: mlua::LuaString) -> mlua::Result<String> {
     Ok(s.to_str()?.to_snake_case())
 }
 
+/// Convert to `kebab-case`.
+#[neoc_macros::lua_fn(names(s = "text"))]
 #[instrument(name = "text.to_kebab_case", target = "lua::lib::text", skip_all)]
 fn to_kebab_case(_: &Lua, s: mlua::LuaString) -> mlua::Result<String> {
     Ok(s.to_str()?.to_kebab_case())
 }
 
+/// Convert to `PascalCase`.
+#[neoc_macros::lua_fn(names(s = "text"))]
 #[instrument(name = "text.to_pascal_case", target = "lua::lib::text", skip_all)]
 fn to_pascal_case(_: &Lua, s: mlua::LuaString) -> mlua::Result<String> {
     Ok(s.to_str()?.to_upper_camel_case())
 }
 
+/// Convert to `Title Case`.
+#[neoc_macros::lua_fn(names(s = "text"))]
 #[instrument(name = "text.to_title_case", target = "lua::lib::text", skip_all)]
 fn to_title_case(_: &Lua, s: mlua::LuaString) -> mlua::Result<String> {
     Ok(s.to_str()?.to_title_case())
 }
 
+/// Convert to `CONSTANT_CASE`.
+#[neoc_macros::lua_fn(names(s = "text"))]
 #[instrument(name = "text.to_constant_case", target = "lua::lib::text", skip_all)]
 fn to_constant_case(_: &Lua, s: mlua::LuaString) -> mlua::Result<String> {
     Ok(s.to_str()?.to_shouty_snake_case())
@@ -273,6 +168,8 @@ fn parse_wrap_opts(opts: Option<&Table>) -> Result<WrapOpts, String> {
     Ok(out)
 }
 
+/// Greedy word wrap, display-width aware. `width` must be > 0. Defaults: `break_words = false`, `preserve_newlines = true`.
+#[neoc_macros::lua_fn(returns = "Result<string, string>")]
 #[instrument(name = "text.word_wrap", target = "lua::lib::text", skip_all)]
 fn word_wrap(
     lua: &Lua,
@@ -380,6 +277,8 @@ fn chunk_by_width(s: &str, width: usize) -> (Vec<String>, String, usize) {
 // levenshtein / closest
 // ---------------------------------------------------------------------------
 
+/// Codepoint-based Levenshtein edit distance.
+#[neoc_macros::lua_fn]
 #[instrument(name = "text.levenshtein", target = "lua::lib::text", skip_all)]
 fn levenshtein(_: &Lua, (a, b): (mlua::LuaString, mlua::LuaString)) -> mlua::Result<i64> {
     let a = a.to_str()?;
@@ -402,6 +301,8 @@ fn parse_closest_limit(opts: Option<&Table>) -> Result<Option<usize>, String> {
     }
 }
 
+/// Score each candidate against `input` by Levenshtein distance, returning the list sorted ascending (ties broken alphabetically).
+#[neoc_macros::lua_fn(returns = "Result<LuaValue, string>")]
 #[instrument(name = "text.closest", target = "lua::lib::text", skip_all)]
 fn closest(
     lua: &Lua,
@@ -484,6 +385,8 @@ fn parse_truncate_boundary(opts: Option<&Table>) -> Result<Boundary, String> {
     }
 }
 
+/// Truncate `text` so its display width is at most `max_len`. The `...` ellipsis counts toward the limit.
+#[neoc_macros::lua_fn(returns = "Result<string, string>")]
 #[instrument(name = "text.truncate", target = "lua::lib::text", skip_all)]
 fn truncate(
     lua: &Lua,
@@ -566,6 +469,8 @@ enum PadSide {
     Center,
 }
 
+/// Pad `text` on the left so total display width equals `width`. `fill_char` must be one display-width-1 character (default space).
+#[neoc_macros::lua_fn(returns = "Result<string, string>", names(fill = "fill_char"))]
 #[instrument(name = "text.pad_left", target = "lua::lib::text", skip_all)]
 fn pad_left(
     lua: &Lua,
@@ -574,6 +479,8 @@ fn pad_left(
     pad_text(lua, "text.pad_left", text, width, fill, PadSide::Left)
 }
 
+/// Pad `text` on the right so total display width equals `width`. Same constraints as `pad_left`.
+#[neoc_macros::lua_fn(returns = "Result<string, string>", names(fill = "fill_char"))]
 #[instrument(name = "text.pad_right", target = "lua::lib::text", skip_all)]
 fn pad_right(
     lua: &Lua,
@@ -582,6 +489,8 @@ fn pad_right(
     pad_text(lua, "text.pad_right", text, width, fill, PadSide::Right)
 }
 
+/// Pad `text` on both sides so total display width equals `width`. Uneven padding places the extra column on the right.
+#[neoc_macros::lua_fn(returns = "Result<string, string>", names(fill = "fill_char"))]
 #[instrument(name = "text.center", target = "lua::lib::text", skip_all)]
 fn center(
     lua: &Lua,
@@ -648,6 +557,8 @@ fn pad_text(
 // slugify — strip diacritics (URL-safe default), lowercase, hyphens.
 // ---------------------------------------------------------------------------
 
+/// Convert `text` to a URL-safe ASCII slug via `deunicode` transliteration, then lowercase and hyphenate.
+#[neoc_macros::lua_fn]
 #[instrument(name = "text.slugify", target = "lua::lib::text", skip_all)]
 fn slugify(_: &Lua, text: mlua::LuaString) -> mlua::Result<String> {
     let s_ref = text.to_str()?;
@@ -676,16 +587,22 @@ fn slugify_str(input: &str) -> String {
 // trim — std's `str::trim*`, which trim the Unicode `White_Space` property.
 // ---------------------------------------------------------------------------
 
+/// Remove Unicode white space (the `White_Space` property: spaces, tabs, line breaks, U+00A0, U+3000, ...) from both ends of `text`. Raises when `text` is not valid UTF-8 (repair it with `to_valid_utf8` first).
+#[neoc_macros::lua_fn]
 #[instrument(name = "text.trim", target = "lua::lib::text", skip_all)]
 fn trim(_: &Lua, text: mlua::LuaString) -> mlua::Result<String> {
     Ok(text.to_str()?.trim().to_owned())
 }
 
+/// Remove Unicode white space from the start of `text`. Raises when `text` is not valid UTF-8 (repair it with `to_valid_utf8` first).
+#[neoc_macros::lua_fn]
 #[instrument(name = "text.trim_start", target = "lua::lib::text", skip_all)]
 fn trim_start(_: &Lua, text: mlua::LuaString) -> mlua::Result<String> {
     Ok(text.to_str()?.trim_start().to_owned())
 }
 
+/// Remove Unicode white space from the end of `text`. Raises when `text` is not valid UTF-8 (repair it with `to_valid_utf8` first).
+#[neoc_macros::lua_fn]
 #[instrument(name = "text.trim_end", target = "lua::lib::text", skip_all)]
 fn trim_end(_: &Lua, text: mlua::LuaString) -> mlua::Result<String> {
     Ok(text.to_str()?.trim_end().to_owned())
@@ -695,6 +612,8 @@ fn trim_end(_: &Lua, text: mlua::LuaString) -> mlua::Result<String> {
 // clip — at most `max` extended grapheme clusters (unicode-segmentation).
 // ---------------------------------------------------------------------------
 
+/// Clip `text` to at most `max` characters. A character is an extended grapheme cluster (UAX #29, what `lib:unicode.graphemes` yields and a Swift `Character` is): a flag emoji or a letter with its combining accent is one, and is never cut apart. When `text` is cut and `ellipsis` is given, the ellipsis ends the result and counts toward `max`; an ellipsis longer than `max` is left out. The count bounds characters, not bytes: one character may carry any number of combining marks. Raises (it does not return an error) when `max` is negative, fractional or NaN, and when `text` or `ellipsis` is not valid UTF-8; a `max` beyond any text, infinity included, is the whole text.
+#[neoc_macros::lua_fn]
 #[instrument(name = "text.clip", target = "lua::lib::text", skip_all)]
 fn clip(
     _: &Lua,
@@ -738,6 +657,8 @@ fn clip_str(text: &str, max: usize, ellipsis: &str) -> String {
 // to_valid_utf8 — std's lossy decoding.
 // ---------------------------------------------------------------------------
 
+/// Make any byte string valid UTF-8: bytes that are not part of a character are replaced with U+FFFD (the replacement character). Valid input is returned as it is.
+#[neoc_macros::lua_fn]
 #[instrument(name = "text.to_valid_utf8", target = "lua::lib::text", skip_all)]
 fn to_valid_utf8(lua: &Lua, bytes: mlua::LuaString) -> mlua::Result<mlua::LuaString> {
     let repaired = match String::from_utf8_lossy(&bytes.as_bytes()) {
@@ -772,6 +693,8 @@ impl vte::Perform for Shown {
     }
 }
 
+/// Remove what a terminal would act on instead of show: escape sequences (colours, cursor movement, window titles) and control characters. Line feeds and tabs stay, so `\r\n` becomes `\n`. Each line is read on its own, so a sequence that is never ended takes the rest of its line and no more. A C1 control written as a character (U+0080 to U+009F) is removed without being read as the start of a sequence. Raises when `text` is not valid UTF-8 (repair it with `to_valid_utf8` first).
+#[neoc_macros::lua_fn]
 #[instrument(name = "text.strip_ansi", target = "lua::lib::text", skip_all)]
 fn strip_ansi(_: &Lua, text: mlua::LuaString) -> mlua::Result<String> {
     Ok(strip_ansi_str(&text.to_str()?))

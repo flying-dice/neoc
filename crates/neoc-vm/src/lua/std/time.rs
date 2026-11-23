@@ -32,19 +32,32 @@ use crate::lua::sandbox::{err, ok};
 #[derive(Clone, Copy)]
 pub struct DurationHandle(pub StdDuration);
 
+#[neoc_macros::lua_userdata]
 impl UserData for DurationHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Whole seconds component (integer).
+        #[lua("number")]
         methods.add_method("as_secs", |_, this, ()| Ok(this.0.as_secs() as i64));
+        /// Total milliseconds (integer, saturating).
+        #[lua("number")]
         methods.add_method("as_millis", |_, this, ()| {
             Ok(u128_to_i64_saturating(this.0.as_millis()))
         });
+        /// Total microseconds (integer, saturating).
+        #[lua("number")]
         methods.add_method("as_micros", |_, this, ()| {
             Ok(u128_to_i64_saturating(this.0.as_micros()))
         });
+        /// Total nanoseconds (integer, saturating).
+        #[lua("number")]
         methods.add_method("as_nanos", |_, this, ()| {
             Ok(u128_to_i64_saturating(this.0.as_nanos()))
         });
+        /// Total seconds as a float.
+        #[lua("number")]
         methods.add_method("as_secs_f64", |_, this, ()| Ok(this.0.as_secs_f64()));
+        /// True if the duration is exactly zero.
+        #[lua("bool")]
         methods.add_method("is_zero", |_, this, ()| Ok(this.0.is_zero()));
 
         // Saturating arithmetic — Rust's `+`/`-` panic on overflow/underflow,
@@ -510,74 +523,44 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     );
 
     m.userdata("Duration", |d| {
-        d.method(
-            "as_secs",
-            &[],
-            "number",
-            "Whole seconds component (integer).",
-        )
-        .method(
-            "as_millis",
-            &[],
-            "number",
-            "Total milliseconds (integer, saturating).",
-        )
-        .method(
-            "as_micros",
-            &[],
-            "number",
-            "Total microseconds (integer, saturating).",
-        )
-        .method(
-            "as_nanos",
-            &[],
-            "number",
-            "Total nanoseconds (integer, saturating).",
-        )
-        .method("as_secs_f64", &[], "number", "Total seconds as a float.")
-        .method(
-            "is_zero",
-            &[],
-            "bool",
-            "True if the duration is exactly zero.",
-        )
-        .static_const("ZERO", "Duration", "The zero-length duration.")
-        .static_fn(
-            "from_secs",
-            &[("secs", "number")],
-            "Duration",
-            "A duration of `secs` whole seconds; negative raises.",
-        )
-        .static_fn(
-            "from_millis",
-            &[("millis", "number")],
-            "Duration",
-            "A duration of `millis` milliseconds; negative raises.",
-        )
-        .static_fn(
-            "from_micros",
-            &[("micros", "number")],
-            "Duration",
-            "A duration of `micros` microseconds; negative raises.",
-        )
-        .static_fn(
-            "from_nanos",
-            &[("nanos", "number")],
-            "Duration",
-            "A duration of `nanos` nanoseconds; negative raises.",
-        )
-        .static_fn(
-            "from_secs_f64",
-            &[("secs", "number")],
-            "Duration",
-            "A duration of `secs` seconds as a float; negative or non-finite raises.",
-        )
-        .static_fn(
-            "parse",
-            &[("s", "string")],
-            "Result<Duration, string>",
-            "Parse a human duration such as `1h30m` or `250ms`.",
-        );
+        DurationHandle::lua(d);
+        d.static_const("ZERO", "Duration", "The zero-length duration.")
+            .static_fn(
+                "from_secs",
+                &[("secs", "number")],
+                "Duration",
+                "A duration of `secs` whole seconds; negative raises.",
+            )
+            .static_fn(
+                "from_millis",
+                &[("millis", "number")],
+                "Duration",
+                "A duration of `millis` milliseconds; negative raises.",
+            )
+            .static_fn(
+                "from_micros",
+                &[("micros", "number")],
+                "Duration",
+                "A duration of `micros` microseconds; negative raises.",
+            )
+            .static_fn(
+                "from_nanos",
+                &[("nanos", "number")],
+                "Duration",
+                "A duration of `nanos` nanoseconds; negative raises.",
+            )
+            .static_fn(
+                "from_secs_f64",
+                &[("secs", "number")],
+                "Duration",
+                "A duration of `secs` seconds as a float; negative or non-finite raises.",
+            )
+            .static_fn(
+                "parse",
+                &[("s", "string")],
+                "Result<Duration, string>",
+                "Parse a human duration such as `1h30m` or `250ms`.",
+            );
     });
 
     m.userdata("Instant", |i| {

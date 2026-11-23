@@ -82,78 +82,18 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         .set("zip_list", lua.create_function(zip_list)?)?
         .set("zip_list_bytes", lua.create_function(zip_list_bytes)?)?;
 
-    m.record_fn(
-        "tar_create_bytes",
-        &[("entries", "LuaValue"), ("opts", "LuaValue?")],
-        "Result<string, string>",
-        "Build a tar archive in memory from `{ path, archive_path? }` entries (read from disk) and return its bytes. `opts.compression` (`gzip`/`zstd`/`none`, default none) and `opts.strip_prefix` apply.",
-    )
-    .record_fn(
-        "tar_create",
-        &[("path", "string"), ("entries", "LuaValue"), ("opts", "LuaValue?")],
-        "Result<bool, string>",
-        "Write a tar archive to `path` from `{ path, archive_path? }` entries. Compression is inferred from the extension (`.tar.gz`/`.tgz`/`.tar.zst`); `opts.compression` overrides it and a clash with the extension is an error.",
-    )
-    .record_fn(
-        "tar_extract",
-        &[("path_or_bytes", "string"), ("dest", "string"), ("opts", "LuaValue?")],
-        "Result<number, string>",
-        "Extract a tar archive (file path or raw bytes; compression auto-detected) under `dest`, returning the entry count. `opts.include` filters by glob; `opts.max_output_size` caps output. Traversal-safe.",
-    )
-    .record_fn(
-        "tar_extract_bytes",
-        &[("bytes", "string"), ("name", "string"), ("opts", "LuaValue?")],
-        "Result<string, string>",
-        "Extract a single named entry from an in-memory tar archive and return its contents. `opts.max_output_size` caps output.",
-    )
-    .record_fn(
-        "tar_list",
-        &[("path_or_bytes", "string")],
-        "Result<LuaValue, string>",
-        "List a tar archive (file path or raw bytes), returning `{ name, size, mode, timestamp, is_dir, compression_ratio }` per entry. `compression_ratio` is nil for tar (one solid stream).",
-    )
-    .record_fn(
-        "tar_list_bytes",
-        &[("bytes", "string")],
-        "Result<LuaValue, string>",
-        "List an in-memory tar archive — same metadata as `tar_list`.",
-    )
-    .record_fn(
-        "zip_create_bytes",
-        &[("entries", "LuaValue")],
-        "Result<string, string>",
-        "Build a zip archive in memory from a `{ [name] = contents }` map and return its bytes.",
-    )
-    .record_fn(
-        "zip_create",
-        &[("path", "string"), ("entries", "LuaValue"), ("opts", "LuaValue?")],
-        "Result<bool, string>",
-        "Write a zip archive to `path` from a list of filesystem paths (files or directories). `opts.strip_prefix` applies.",
-    )
-    .record_fn(
-        "zip_extract",
-        &[("path_or_bytes", "string"), ("dest", "string"), ("opts", "LuaValue?")],
-        "Result<number, string>",
-        "Extract a zip archive (file path or raw bytes) under `dest`, returning the entry count. `opts.include` filters by glob; `opts.max_output_size` caps output. Traversal-safe.",
-    )
-    .record_fn(
-        "zip_extract_bytes",
-        &[("bytes", "string"), ("name", "string"), ("opts", "LuaValue?")],
-        "Result<string, string>",
-        "Extract a single named entry from an in-memory zip archive and return its contents. `opts.max_output_size` caps output.",
-    )
-    .record_fn(
-        "zip_list",
-        &[("path_or_bytes", "string")],
-        "Result<LuaValue, string>",
-        "List a zip archive (file path or raw bytes), returning `{ name, size, mode, timestamp, is_dir, compression_ratio }` per entry.",
-    )
-    .record_fn(
-        "zip_list_bytes",
-        &[("bytes", "string")],
-        "Result<LuaValue, string>",
-        "List an in-memory zip archive — same metadata as `zip_list`.",
-    );
+    m.record(tar_create_bytes::lua())
+        .record(tar_create::lua())
+        .record(tar_extract::lua())
+        .record(tar_extract_bytes::lua())
+        .record(tar_list::lua())
+        .record(tar_list_bytes::lua())
+        .record(zip_create_bytes::lua())
+        .record(zip_create::lua())
+        .record(zip_extract::lua())
+        .record(zip_extract_bytes::lua())
+        .record(zip_list::lua())
+        .record(zip_list_bytes::lua());
 
     Ok(m)
 }
@@ -908,6 +848,8 @@ fn write_link(_target: &Path, _link: &str, _symlink: bool) -> Result<(), String>
 // Lua-facing functions
 // ---------------------------------------------------------------------------
 
+/// Build a tar archive in memory from `{ path, archive_path? }` entries (read from disk) and return its bytes. `opts.compression` (`gzip`/`zstd`/`none`, default none) and `opts.strip_prefix` apply.
+#[neoc_macros::lua_fn(returns = "Result<string, string>")]
 #[instrument(
     name = "archive.tar_create_bytes",
     target = "lua::lib::archive",
@@ -940,6 +882,8 @@ fn tar_create_bytes(
     }
 }
 
+/// Write a tar archive to `path` from `{ path, archive_path? }` entries. Compression is inferred from the extension (`.tar.gz`/`.tgz`/`.tar.zst`); `opts.compression` overrides it and a clash with the extension is an error.
+#[neoc_macros::lua_fn(returns = "Result<bool, string>")]
 #[instrument(name = "archive.tar_create", target = "lua::lib::archive", skip_all)]
 fn tar_create(
     lua: &Lua,
@@ -972,6 +916,8 @@ fn tar_create(
     }
 }
 
+/// Extract a tar archive (file path or raw bytes; compression auto-detected) under `dest`, returning the entry count. `opts.include` filters by glob; `opts.max_output_size` caps output. Traversal-safe.
+#[neoc_macros::lua_fn(returns = "Result<number, string>", names(source = "path_or_bytes"))]
 #[instrument(name = "archive.tar_extract", target = "lua::lib::archive", skip_all)]
 fn tar_extract(
     lua: &Lua,
@@ -996,6 +942,8 @@ fn tar_extract(
     }
 }
 
+/// Extract a single named entry from an in-memory tar archive and return its contents. `opts.max_output_size` caps output.
+#[neoc_macros::lua_fn(returns = "Result<string, string>")]
 #[instrument(
     name = "archive.tar_extract_bytes",
     target = "lua::lib::archive",
@@ -1016,6 +964,8 @@ fn tar_extract_bytes(
     }
 }
 
+/// List a tar archive (file path or raw bytes), returning `{ name, size, mode, timestamp, is_dir, compression_ratio }` per entry. `compression_ratio` is nil for tar (one solid stream).
+#[neoc_macros::lua_fn(returns = "Result<LuaValue, string>", names(source = "path_or_bytes"))]
 #[instrument(name = "archive.tar_list", target = "lua::lib::archive", skip_all)]
 fn tar_list(lua: &Lua, source: mlua::LuaString) -> mlua::Result<(Value, Value)> {
     let prefix = "archive.tar_list";
@@ -1029,6 +979,8 @@ fn tar_list(lua: &Lua, source: mlua::LuaString) -> mlua::Result<(Value, Value)> 
     }
 }
 
+/// List an in-memory tar archive — same metadata as `tar_list`.
+#[neoc_macros::lua_fn(returns = "Result<LuaValue, string>")]
 #[instrument(
     name = "archive.tar_list_bytes",
     target = "lua::lib::archive",
@@ -1042,6 +994,8 @@ fn tar_list_bytes(lua: &Lua, bytes: mlua::LuaString) -> mlua::Result<(Value, Val
     }
 }
 
+/// Build a zip archive in memory from a `{ [name] = contents }` map and return its bytes.
+#[neoc_macros::lua_fn(returns = "Result<string, string>")]
 #[instrument(
     name = "archive.zip_create_bytes",
     target = "lua::lib::archive",
@@ -1055,6 +1009,8 @@ fn zip_create_bytes(lua: &Lua, entries: Table) -> mlua::Result<(Value, Value)> {
     }
 }
 
+/// Write a zip archive to `path` from a list of filesystem paths (files or directories). `opts.strip_prefix` applies.
+#[neoc_macros::lua_fn(returns = "Result<bool, string>")]
 #[instrument(name = "archive.zip_create", target = "lua::lib::archive", skip_all)]
 fn zip_create(
     lua: &Lua,
@@ -1075,6 +1031,8 @@ fn zip_create(
     }
 }
 
+/// Extract a zip archive (file path or raw bytes) under `dest`, returning the entry count. `opts.include` filters by glob; `opts.max_output_size` caps output. Traversal-safe.
+#[neoc_macros::lua_fn(returns = "Result<number, string>", names(source = "path_or_bytes"))]
 #[instrument(name = "archive.zip_extract", target = "lua::lib::archive", skip_all)]
 fn zip_extract(
     lua: &Lua,
@@ -1099,6 +1057,8 @@ fn zip_extract(
     }
 }
 
+/// Extract a single named entry from an in-memory zip archive and return its contents. `opts.max_output_size` caps output.
+#[neoc_macros::lua_fn(returns = "Result<string, string>")]
 #[instrument(
     name = "archive.zip_extract_bytes",
     target = "lua::lib::archive",
@@ -1119,6 +1079,8 @@ fn zip_extract_bytes(
     }
 }
 
+/// List a zip archive (file path or raw bytes), returning `{ name, size, mode, timestamp, is_dir, compression_ratio }` per entry.
+#[neoc_macros::lua_fn(returns = "Result<LuaValue, string>", names(source = "path_or_bytes"))]
 #[instrument(name = "archive.zip_list", target = "lua::lib::archive", skip_all)]
 fn zip_list(lua: &Lua, source: mlua::LuaString) -> mlua::Result<(Value, Value)> {
     let prefix = "archive.zip_list";
@@ -1132,6 +1094,8 @@ fn zip_list(lua: &Lua, source: mlua::LuaString) -> mlua::Result<(Value, Value)> 
     }
 }
 
+/// List an in-memory zip archive — same metadata as `zip_list`.
+#[neoc_macros::lua_fn(returns = "Result<LuaValue, string>")]
 #[instrument(
     name = "archive.zip_list_bytes",
     target = "lua::lib::archive",

@@ -188,16 +188,10 @@ fn register_suite_fns(lua: &Lua, m: &mut Module<'_>) -> mlua::Result<()> {
 
 /// Register `expect(value)`, which wraps a value in the dot-syntax matcher table.
 fn register_expect(lua: &Lua, m: &mut Module<'_>) -> mlua::Result<()> {
-    m.set(
-        "expect",
+    m.declared(
+        make_matcher::lua(),
         lua.create_function(|lua, value: Value| make_matcher(lua, value))?,
     )?;
-    m.record_fn(
-        "expect",
-        &[("value", "LuaValue")],
-        "Matcher",
-        "Wrap `value` in a matcher table exposing dot-syntax assertions (`toBe`, `toBeNil`, `toBeTruthy`, `toBeFalsy`, `toContain`, `toThrow`).",
-    );
     // The matcher is a plain table of closures, not a userdata; its functions are
     // recorded so the definitions can type `expect(x).toBe(y)`.
     m.userdata("Matcher", |t| {
@@ -261,6 +255,8 @@ where
     )
 }
 
+/// Wrap `value` in a matcher table exposing dot-syntax assertions (`toBe`, `toBeNil`, `toBeTruthy`, `toBeFalsy`, `toContain`, `toThrow`).
+#[neoc_macros::lua_fn(name = "expect", returns = "Matcher")]
 fn make_matcher(lua: &Lua, value: Value) -> mlua::Result<Table> {
     let m = lua.create_table()?;
 

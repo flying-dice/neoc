@@ -48,45 +48,15 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:csv")?;
 
-    m.set("parse", lua.create_function(parse_fn)?)?;
-    m.record_fn(
-        "parse",
-        &[("data", "string"), ("opts", "LuaValue?")],
-        "Result<LuaValue, string>",
-        "Parse a CSV string into an array of rows. With `headers = true` rows are keyed by header name; typed columns coerce to number/boolean/nil.",
-    );
+    m.declared(parse_fn::lua(), lua.create_function(parse_fn)?)?;
 
-    m.set("rows", lua.create_function(rows_fn)?)?;
-    m.record_fn(
-        "rows",
-        &[("data", "string"), ("opts", "LuaValue?")],
-        "LuaValue",
-        "Return a Lua iterator over rows in an in-memory CSV string. Iterator errors raise.",
-    );
+    m.declared(rows_fn::lua(), lua.create_function(rows_fn)?)?;
 
-    m.set("reader", lua.create_function(reader_fn)?)?;
-    m.record_fn(
-        "reader",
-        &[("handle", "LuaValue"), ("opts", "LuaValue?")],
-        "Result<CsvReader, string>",
-        "Construct a streaming reader over a `ReaderHandle`, taking an exclusive borrow on the handle for its lifetime.",
-    );
+    m.declared(reader_fn::lua(), lua.create_function(reader_fn)?)?;
 
-    m.set("stringify", lua.create_function(stringify_fn)?)?;
-    m.record_fn(
-        "stringify",
-        &[("records", "LuaValue"), ("opts", "LuaValue")],
-        "Result<string, string>",
-        "Serialise an array of records to a CSV string. `opts.headers` is required and controls both the header row and field order.",
-    );
+    m.declared(stringify_fn::lua(), lua.create_function(stringify_fn)?)?;
 
-    m.set("writer", lua.create_function(writer_fn)?)?;
-    m.record_fn(
-        "writer",
-        &[("opts", "LuaValue")],
-        "Result<CsvWriter, string>",
-        "Construct an incremental writer that buffers in memory until `:finish()`. `opts.headers` is required and emitted as the first row.",
-    );
+    m.declared(writer_fn::lua(), lua.create_function(writer_fn)?)?;
 
     m.userdata("CsvReader", |r| {
         r.method(
@@ -298,6 +268,8 @@ fn parse_types_map(t: &Table, prefix: &str) -> Result<HashMap<String, ColumnType
 // Top-level functions
 // ---------------------------------------------------------------------------
 
+/// Parse a CSV string into an array of rows. With `headers = true` rows are keyed by header name; typed columns coerce to number/boolean/nil.
+#[neoc_macros::lua_fn(name = "parse", returns = "Result<LuaValue, string>")]
 #[instrument(name = "csv.parse", target = "lua::lib::csv", skip_all)]
 fn parse_fn(
     lua: &Lua,
@@ -362,6 +334,8 @@ fn parse_fn(
     ok(lua, out)
 }
 
+/// Return a Lua iterator over rows in an in-memory CSV string. Iterator errors raise.
+#[neoc_macros::lua_fn(name = "rows")]
 #[instrument(name = "csv.rows", target = "lua::lib::csv", skip_all)]
 fn rows_fn(lua: &Lua, (data, opts): (mlua::LuaString, Option<Table>)) -> mlua::Result<Function> {
     let parse_opts = parse_parse_opts(opts.as_ref(), "csv.rows").map_err(mlua::Error::external)?;
@@ -373,6 +347,12 @@ fn rows_fn(lua: &Lua, (data, opts): (mlua::LuaString, Option<Table>)) -> mlua::R
     create_rows_iter(lua, state, "csv.rows")
 }
 
+/// Construct a streaming reader over a `ReaderHandle`, taking an exclusive borrow on the handle for its lifetime.
+#[neoc_macros::lua_fn(
+    name = "reader",
+    returns = "Result<CsvReader, string>",
+    names(handle_val = "handle")
+)]
 #[instrument(name = "csv.reader", target = "lua::lib::csv", skip_all)]
 fn reader_fn(
     lua: &Lua,
@@ -410,6 +390,8 @@ fn reader_fn(
     ok(lua, CsvReader { state })
 }
 
+/// Serialise an array of records to a CSV string. `opts.headers` is required and controls both the header row and field order.
+#[neoc_macros::lua_fn(name = "stringify", returns = "Result<string, string>")]
 #[instrument(name = "csv.stringify", target = "lua::lib::csv", skip_all)]
 fn stringify_fn(lua: &Lua, (records, opts): (Table, Table)) -> mlua::Result<(Value, Value)> {
     let prefix = "csv.stringify";
@@ -446,6 +428,8 @@ fn stringify_fn(lua: &Lua, (records, opts): (Table, Table)) -> mlua::Result<(Val
     }
 }
 
+/// Construct an incremental writer that buffers in memory until `:finish()`. `opts.headers` is required and emitted as the first row.
+#[neoc_macros::lua_fn(name = "writer", returns = "Result<CsvWriter, string>")]
 #[instrument(name = "csv.writer", target = "lua::lib::csv", skip_all)]
 fn writer_fn(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
     let prefix = "csv.writer";

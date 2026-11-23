@@ -278,10 +278,15 @@ impl KeyPair {
     }
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for KeyPair {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Extract the public key.
+        #[lua("PublicKey")]
         methods.add_method("public_key", |_, this, _: ()| Ok(this.public()));
 
+        /// Sign `message` with the private key, returning the raw signature bytes.
+        #[lua("Result<string, string>", names(msg = "message"))]
         methods.add_method("sign", |lua, this, msg: mlua::LuaString| {
             match this.sign(&msg.as_bytes()) {
                 Ok(sig) => ok(lua, lua.create_string(&sig)?),
@@ -289,13 +294,19 @@ impl UserData for KeyPair {
             }
         });
 
+        /// Return the algorithm name this keypair was built with.
+        #[lua("string")]
         methods.add_method("algorithm", |_, this, _: ()| Ok(this.secret.algo().name()));
 
+        /// Serialise the private key as a PKCS#8 PEM string (LF line endings).
+        #[lua("Result<string, string>")]
         methods.add_method("to_pem", |lua, this, _: ()| match this.to_pem() {
             Ok(pem) => ok(lua, lua.create_string(&pem)?),
             Err(e) => err(lua, format!("KeyPair.to_pem: {e}")),
         });
 
+        /// Serialise the private key as PKCS#8 DER bytes.
+        #[lua("Result<string, string>")]
         methods.add_method("to_der", |lua, this, _: ()| match this.to_der() {
             Ok(der) => ok(lua, lua.create_string(&der)?),
             Err(e) => err(lua, format!("KeyPair.to_der: {e}")),
@@ -398,8 +409,11 @@ impl PublicKey {
     }
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for PublicKey {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Verify `signature` over `message`; returns `true` iff valid, `false` on any mismatch or malformed signature.
+        #[lua("bool", names(msg = "message", sig = "signature"))]
         methods.add_method(
             "verify",
             |_, this, (msg, sig): (mlua::LuaString, mlua::LuaString)| {
@@ -407,13 +421,19 @@ impl UserData for PublicKey {
             },
         );
 
+        /// Return the algorithm name this public key was built with.
+        #[lua("string")]
         methods.add_method("algorithm", |_, this, _: ()| Ok(this.public.algo().name()));
 
+        /// Serialise the public key as an SPKI PEM string (LF line endings).
+        #[lua("Result<string, string>")]
         methods.add_method("to_pem", |lua, this, _: ()| match this.to_pem() {
             Ok(pem) => ok(lua, lua.create_string(&pem)?),
             Err(e) => err(lua, format!("PublicKey.to_pem: {e}")),
         });
 
+        /// Serialise the public key as SPKI DER bytes.
+        #[lua("Result<string, string>")]
         methods.add_method("to_der", |lua, this, _: ()| match this.to_der() {
             Ok(der) => ok(lua, lua.create_string(&der)?),
             Err(e) => err(lua, format!("PublicKey.to_der: {e}")),
@@ -451,55 +471,30 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:pkey")?;
 
     m.type_("KeyPair", |t| {
+        KeyPair::lua(t);
         t.try_constructor(
             "generate",
             &[("algo", "string")],
             "Generate a fresh keypair for `algo` (one of `algorithms()`). RSA keys are 2048-bit.",
             |_, algo: String| KeyPair::generate(Algo::parse(&algo)?),
-        )?
-        .try_constructor(
+        )?.try_constructor(
             "from_pem",
             &[("algo", "string"), ("pem", "string")],
             "Load a private key from a PKCS#8 PEM string. `algo` is required: a plain RSA key does not record the signing scheme (PSS vs PKCS#1 v1.5).",
             |_, (algo, pem): (String, String)| KeyPair::from_pem(Algo::parse(&algo)?, &pem),
-        )?
-        .try_constructor(
+        )?.try_constructor(
             "from_der",
             &[("algo", "string"), ("der", "string")],
             "Load a private key from PKCS#8 DER bytes. `algo` is required, as for `from_pem`.",
             |_, (algo, der): (String, mlua::LuaString)| {
                 KeyPair::from_der(Algo::parse(&algo)?, &der.as_bytes())
             },
-        )?
-        .method("public_key", &[], "PublicKey", "Extract the public key.")
-        .method(
-            "sign",
-            &[("message", "string")],
-            "Result<string, string>",
-            "Sign `message` with the private key, returning the raw signature bytes.",
-        )
-        .method(
-            "algorithm",
-            &[],
-            "string",
-            "Return the algorithm name this keypair was built with.",
-        )
-        .method(
-            "to_pem",
-            &[],
-            "Result<string, string>",
-            "Serialise the private key as a PKCS#8 PEM string (LF line endings).",
-        )
-        .method(
-            "to_der",
-            &[],
-            "Result<string, string>",
-            "Serialise the private key as PKCS#8 DER bytes.",
-        );
+        )?;
         Ok(())
     })?;
 
     m.type_("PublicKey", |t| {
+        PublicKey::lua(t);
         t.try_constructor(
             "from_pem",
             &[("algo", "string"), ("pem", "string")],
@@ -513,31 +508,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             |_, (algo, der): (String, mlua::LuaString)| {
                 PublicKey::from_der(Algo::parse(&algo)?, &der.as_bytes())
             },
-        )?
-        .method(
-            "verify",
-            &[("message", "string"), ("signature", "string")],
-            "bool",
-            "Verify `signature` over `message`; returns `true` iff valid, `false` on any mismatch or malformed signature.",
-        )
-        .method(
-            "algorithm",
-            &[],
-            "string",
-            "Return the algorithm name this public key was built with.",
-        )
-        .method(
-            "to_pem",
-            &[],
-            "Result<string, string>",
-            "Serialise the public key as an SPKI PEM string (LF line endings).",
-        )
-        .method(
-            "to_der",
-            &[],
-            "Result<string, string>",
-            "Serialise the public key as SPKI DER bytes.",
-        );
+        )?;
         Ok(())
     })?;
 

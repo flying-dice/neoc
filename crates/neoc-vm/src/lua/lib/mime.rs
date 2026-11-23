@@ -51,12 +51,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "Detect the MIME type of a filename from its extension.",
         detect,
     )?;
-    m.record_fn(
-        "to_extension",
-        &[("mime_type", "string"), ("prefs", "LuaValue?")],
-        "Result<string, string>",
-        "Pick a file extension for a MIME type, honouring an optional preference map.",
-    );
+    m.record(to_extension::lua());
     Ok(m)
 }
 
@@ -69,6 +64,8 @@ fn from_extension(_: &Lua, ext: String) -> Result<String, String> {
     }
 }
 
+/// Pick a file extension for a MIME type, honouring an optional preference map.
+#[neoc_macros::lua_fn(returns = "Result<string, string>", names(user_prefs = "prefs"))]
 #[instrument(name = "mime.to_extension", target = "lua::lib::mime", skip_all)]
 fn to_extension(
     lua: &Lua,

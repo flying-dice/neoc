@@ -96,10 +96,15 @@ impl TempFileHandle {
     }
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for TempFileHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Return the absolute path to the temp file; stable across calls and does not consume the handle.
+        #[lua("string")]
         methods.add_method("path", |_, this, _: ()| Ok(this.path.clone()));
 
+        /// Consume the handle and keep the file on disk past drop, returning the path.
+        #[lua("Result<string, string>")]
         methods.add_method_mut("keep", |lua, this, _: ()| match this.inner.take() {
             Some(file) => match file.keep() {
                 Ok((_, p)) => ok(lua, p.to_string_lossy().into_owned()),
@@ -108,6 +113,8 @@ impl UserData for TempFileHandle {
             None => from_err(lua, "tempfile.TempFile.keep", "already closed"),
         });
 
+        /// Release the handle eagerly; idempotent.
+        #[lua("()")]
         methods.add_method_mut("close", |_, this, _: ()| {
             this.inner.take();
             Ok(())
@@ -211,27 +218,10 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "Result<TempFile, string>",
         "Create a temporary file under the system temp directory, returning a `TempFile` handle.",
     )
-    .record_fn(
-        "tempdir",
-        &[("opts", "LuaValue?")],
-        "Result<TempDir, string>",
-        "Create a temporary directory under the system temp directory, returning a `TempDir` handle.",
-    );
+    .record(flat_tempdir::lua());
 
     m.userdata("TempFile", |t| {
-        t.method(
-            "path",
-            &[],
-            "string",
-            "Return the absolute path to the temp file; stable across calls and does not consume the handle.",
-        );
-        t.method(
-            "keep",
-            &[],
-            "Result<string, string>",
-            "Consume the handle and keep the file on disk past drop, returning the path.",
-        );
-        t.method("close", &[], "()", "Release the handle eagerly; idempotent.");
+        TempFileHandle::lua(t);
         t.static_fn(
             "new",
             &[("opts", "LuaValue?")],
@@ -307,6 +297,8 @@ fn flat_tempfile(lua: &Lua, opts: Option<Table>) -> mlua::Result<(Value, Value)>
     tempfile_new(lua, opts)
 }
 
+/// Create a temporary directory under the system temp directory, returning a `TempDir` handle.
+#[neoc_macros::lua_fn(name = "tempdir", returns = "Result<TempDir, string>")]
 #[instrument(name = "tempfile.tempdir", target = "lua::lib::tempfile", skip_all)]
 fn flat_tempdir(lua: &Lua, opts: Option<Table>) -> mlua::Result<(Value, Value)> {
     tempdir_new(lua, opts)

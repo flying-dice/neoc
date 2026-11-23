@@ -111,48 +111,13 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:rusqlite")?;
 
-    m.set(
-        "open",
+    m.declared(
+        open::lua(),
         lua.create_function(|lua, path: String| open(lua, path))?,
     )?;
-    m.record_fn(
-        "open",
-        &[("path", "string")],
-        "Result<Database, string>",
-        "Open a SQLite database file. Pass `\":memory:\"` for an in-memory database.",
-    );
 
     m.userdata("Database", |d| {
-        d.method(
-            "execute",
-            &[("sql", "string"), ("...", "LuaValue")],
-            "Result<number, string>",
-            "Execute a SQL statement, binding trailing arguments to `?` placeholders; returns rows affected.",
-        )
-        .method(
-            "query",
-            &[("sql", "string"), ("...", "LuaValue")],
-            "Result<LuaValue, string>",
-            "Execute a SELECT and return all rows as a 1-indexed table of column-keyed row tables.",
-        )
-        .method(
-            "query_one",
-            &[("sql", "string"), ("...", "LuaValue")],
-            "Result<LuaValue, string>",
-            "Execute a SELECT and return the first matching row, or nil when none matched.",
-        )
-        .method(
-            "prepare",
-            &[("sql", "string")],
-            "Statement",
-            "Prepare a SQL statement for repeated execution, sharing this connection.",
-        )
-        .method(
-            "close",
-            &[],
-            "()",
-            "Close the connection; subsequent method calls on this handle error.",
-        );
+        Database::lua(d);
     });
 
     m.userdata("Statement", |s| {
@@ -186,6 +151,8 @@ pub struct Database {
     conn: Arc<SharedConn>,
 }
 
+/// Open a SQLite database file. Pass `":memory:"` for an in-memory database.
+#[neoc_macros::lua_fn(returns = "Result<Database, string>")]
 #[instrument(name = "rusqlite.open", target = "lua::lib::rusqlite", skip_all)]
 fn open(lua: &Lua, path: String) -> mlua::Result<(Value, Value)> {
     // OPEN_NO_MUTEX: `SharedConn` serialises access, SQLite's own per-connection
@@ -208,20 +175,29 @@ fn open(lua: &Lua, path: String) -> mlua::Result<(Value, Value)> {
     }
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for Database {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Execute a SQL statement, binding trailing arguments to `?` placeholders; returns rows affected.
+        #[lua("Result<number, string>", takes("sql: string", "...: LuaValue"))]
         methods.add_method("execute", |lua, this, args: MultiValue| {
             db_dispatch(lua, &this.conn, "rusqlite.execute", args, run_execute)
         });
 
+        /// Execute a SELECT and return all rows as a 1-indexed table of column-keyed row tables.
+        #[lua("Result<LuaValue, string>", takes("sql: string", "...: LuaValue"))]
         methods.add_method("query", |lua, this, args: MultiValue| {
             db_dispatch(lua, &this.conn, "rusqlite.query", args, run_query)
         });
 
+        /// Execute a SELECT and return the first matching row, or nil when none matched.
+        #[lua("Result<LuaValue, string>", takes("sql: string", "...: LuaValue"))]
         methods.add_method("query_one", |lua, this, args: MultiValue| {
             db_dispatch(lua, &this.conn, "rusqlite.query_one", args, run_query_one)
         });
 
+        /// Prepare a SQL statement for repeated execution, sharing this connection.
+        #[lua("Statement")]
         methods.add_method("prepare", |_, this, sql: String| {
             Ok(Statement {
                 sql: Arc::new(sql),
@@ -229,6 +205,8 @@ impl UserData for Database {
             })
         });
 
+        /// Close the connection; subsequent method calls on this handle error.
+        #[lua("()")]
         methods.add_method("close", |_, this, _: ()| {
             // Take the connection out so the next call lands on the
             // "database is closed" branch in the helpers below.

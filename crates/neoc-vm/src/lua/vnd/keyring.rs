@@ -86,16 +86,10 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "The operating system's credential store: Keychain Services on macOS (the login keychain), the Credential Manager on Windows, the Secret Service on Linux and the other Unixes. A machine that has none, or whose store cannot be opened, is `no_store`. With `NEOC_KEYRING=mock` in the environment it is a mock store instead, one for the whole process (see `mock`). A script given this module is trusted with the secrets of the user it runs as. Errors are `keyring.<function>: <kind>: <message>` (see `error_kind`).",
     );
 
-    m.set(
-        "mock",
+    m.declared(
+        mock_store::lua(),
         lua.create_function(|_, ()| mock_store().map_err(mlua::Error::external))?,
     )?;
-    m.record_fn(
-        "mock",
-        &[],
-        "Store",
-        "A new mock store, for tests: in memory, its own, and gone with the process. It takes any service and user, and `search` matches `service` and `user` as substrings.",
-    );
 
     m.func(
         "error_kind",
@@ -226,6 +220,8 @@ fn process_mock() -> Result<Store, KeyringError> {
     Ok(SHARED.get_or_init(|| made).clone())
 }
 
+/// A new mock store, for tests: in memory, its own, and gone with the process. It takes any service and user, and `search` matches `service` and `user` as substrings.
+#[neoc_macros::lua_fn(name = "mock", returns = "Store")]
 fn mock_store() -> Result<Store, KeyringError> {
     let inner: Arc<CredentialStore> = keyring_core::mock::Store::new()?;
     Ok(Store { inner })

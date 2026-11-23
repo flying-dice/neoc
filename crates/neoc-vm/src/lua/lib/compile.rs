@@ -267,20 +267,16 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:compile")?;
 
-    m.set("bundle", lua.create_function(bundle)?)?;
-    m.record_fn(
-        "bundle",
-        &[("opts", "LuaValue")],
-        "Result<bool, string>",
-        "Bundle a Lua source file into a self-contained executable. `opts` requires `entrypoint` and `output` string fields.",
-    );
+    m.declared(bundle::lua(), lua.create_function(bundle)?)?;
 
     Ok(m)
 }
 
-/// `compile.bundle({ entrypoint = "main.lua", output = "my-app" })`
-///
-/// Returns `(true, nil)` on success, `(nil, err)` on failure.
+// `compile.bundle({ entrypoint = "main.lua", output = "my-app" })`
+//
+// Returns `(true, nil)` on success, `(nil, err)` on failure.
+/// Bundle a Lua source file into a self-contained executable. `opts` requires `entrypoint` and `output` string fields.
+#[neoc_macros::lua_fn(returns = "Result<bool, string>")]
 #[instrument(name = "compile.bundle", target = "lua::lib::compile", skip_all)]
 fn bundle(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
     let entrypoint: String = opts.get::<String>("entrypoint").map_err(|_| {

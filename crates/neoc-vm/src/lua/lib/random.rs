@@ -120,18 +120,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             |_, input: mlua::LuaString| uuid_format(input),
         )?;
 
-    m.record_fn(
-        "random_bytes",
-        &[("n_bytes", "number")],
-        "Result<string, string>",
-        "Return `n_bytes` cryptographically-random bytes as a raw string.",
-    )
-    .record_fn(
-        "uuid_parse",
-        &[("input", "string")],
-        "Result<string, string>",
-        "Parse a canonical UUID string and return its 16 raw bytes.",
-    );
+    m.record(random_bytes::lua()).record(uuid_parse::lua());
 
     Ok(m)
 }
@@ -140,6 +129,8 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 // CSPRNG
 // ---------------------------------------------------------------------------
 
+/// Return `n_bytes` cryptographically-random bytes as a raw string.
+#[neoc_macros::lua_fn(returns = "Result<string, string>")]
 #[instrument(name = "random.random_bytes", target = "lua::lib::random", skip_all)]
 fn random_bytes(lua: &Lua, n_bytes: i64) -> mlua::Result<(Value, Value)> {
     let mut buf = match limits::size(n_bytes, "byte count").and_then(limits::zeroed) {
@@ -304,6 +295,8 @@ fn uuid_v7() -> mlua::Result<String> {
     Ok(Uuid::now_v7().to_string())
 }
 
+/// Parse a canonical UUID string and return its 16 raw bytes.
+#[neoc_macros::lua_fn(returns = "Result<string, string>")]
 #[instrument(name = "random.uuid_parse", target = "lua::lib::random", skip_all)]
 fn uuid_parse(lua: &Lua, input: mlua::LuaString) -> mlua::Result<(Value, Value)> {
     let bytes = input.as_bytes();

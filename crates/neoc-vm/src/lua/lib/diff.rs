@@ -50,69 +50,21 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:diff")?;
 
-    m.set("lines", lua.create_function(lines)?)?;
-    m.record_fn(
-        "lines",
-        &[("old", "string"), ("new", "string"), ("opts", "LuaValue?")],
-        "Result<LuaValue, string>",
-        "Line-level change list between `old` and `new`. Default algorithm is patience.",
-    );
+    m.declared(lines::lua(), lua.create_function(lines)?)?;
 
-    m.set("words", lua.create_function(words)?)?;
-    m.record_fn(
-        "words",
-        &[("old", "string"), ("new", "string"), ("opts", "LuaValue?")],
-        "Result<LuaValue, string>",
-        "Word-level change list, tokenising on whitespace boundaries.",
-    );
+    m.declared(words::lua(), lua.create_function(words)?)?;
 
-    m.set("chars", lua.create_function(chars)?)?;
-    m.record_fn(
-        "chars",
-        &[("old", "string"), ("new", "string"), ("opts", "LuaValue?")],
-        "Result<LuaValue, string>",
-        "Character-level change list, operating on Unicode codepoints.",
-    );
+    m.declared(chars::lua(), lua.create_function(chars)?)?;
 
-    m.set("unified", lua.create_function(unified)?)?;
-    m.record_fn(
-        "unified",
-        &[("old", "string"), ("new", "string"), ("opts", "LuaValue?")],
-        "Result<LuaValue, string>",
-        "Compute a unified diff. The result carries `.hunks` and a `:format()` method producing the unified diff string.",
-    );
+    m.declared(unified::lua(), lua.create_function(unified)?)?;
 
-    m.set("parse_unified", lua.create_function(parse_unified)?)?;
-    m.record_fn(
-        "parse_unified",
-        &[("patch", "string")],
-        "Result<LuaValue, string>",
-        "Parse a unified diff string back into the same structured result shape as `unified`.",
-    );
+    m.declared(parse_unified::lua(), lua.create_function(parse_unified)?)?;
 
-    m.set("apply", lua.create_function(apply)?)?;
-    m.record_fn(
-        "apply",
-        &[("original", "string"), ("patch", "string")],
-        "Result<string, string>",
-        "Apply a unified patch string to `original`. Requires exact context match.",
-    );
+    m.declared(apply::lua(), lua.create_function(apply)?)?;
 
-    m.set("apply_changes", lua.create_function(apply_changes)?)?;
-    m.record_fn(
-        "apply_changes",
-        &[("original", "string"), ("changes", "LuaValue")],
-        "Result<string, string>",
-        "Apply a structured change list directly, validating that the equal + delete lines reconstruct `original` first.",
-    );
+    m.declared(apply_changes::lua(), lua.create_function(apply_changes)?)?;
 
-    m.set("similarity", lua.create_function(similarity)?)?;
-    m.record_fn(
-        "similarity",
-        &[("a", "string"), ("b", "string")],
-        "number",
-        "Edit-ratio similarity score in `[0.0, 1.0]`, computed from a character-level patience diff.",
-    );
+    m.declared(similarity::lua(), lua.create_function(similarity)?)?;
 
     Ok(m)
 }
@@ -189,6 +141,11 @@ fn parse_label(
 // Change-list functions
 // ---------------------------------------------------------------------------
 
+/// Line-level change list between `old` and `new`. Default algorithm is patience.
+#[neoc_macros::lua_fn(
+    returns = "Result<LuaValue, string>",
+    takes("old: string", "new: string", "opts: LuaValue?")
+)]
 #[instrument(name = "diff.lines", target = "lua::lib::diff", skip_all)]
 fn lines(
     lua: &Lua,
@@ -197,6 +154,11 @@ fn lines(
     change_list(lua, Mode::Lines, args, "diff.lines")
 }
 
+/// Word-level change list, tokenising on whitespace boundaries.
+#[neoc_macros::lua_fn(
+    returns = "Result<LuaValue, string>",
+    takes("old: string", "new: string", "opts: LuaValue?")
+)]
 #[instrument(name = "diff.words", target = "lua::lib::diff", skip_all)]
 fn words(
     lua: &Lua,
@@ -205,6 +167,11 @@ fn words(
     change_list(lua, Mode::Words, args, "diff.words")
 }
 
+/// Character-level change list, operating on Unicode codepoints.
+#[neoc_macros::lua_fn(
+    returns = "Result<LuaValue, string>",
+    takes("old: string", "new: string", "opts: LuaValue?")
+)]
 #[instrument(name = "diff.chars", target = "lua::lib::diff", skip_all)]
 fn chars(
     lua: &Lua,
@@ -309,6 +276,8 @@ struct UnifiedResult {
     new_label: String,
 }
 
+/// Compute a unified diff. The result carries `.hunks` and a `:format()` method producing the unified diff string.
+#[neoc_macros::lua_fn(returns = "Result<LuaValue, string>")]
 #[instrument(name = "diff.unified", target = "lua::lib::diff", skip_all)]
 fn unified(
     lua: &Lua,
@@ -501,6 +470,8 @@ fn fmt_range(start: usize, count: usize) -> String {
 // Parse unified
 // ---------------------------------------------------------------------------
 
+/// Parse a unified diff string back into the same structured result shape as `unified`.
+#[neoc_macros::lua_fn(returns = "Result<LuaValue, string>")]
 #[instrument(name = "diff.parse_unified", target = "lua::lib::diff", skip_all)]
 fn parse_unified(lua: &Lua, patch: mlua::LuaString) -> mlua::Result<(Value, Value)> {
     let s = patch.to_str()?.to_owned();
@@ -804,6 +775,8 @@ fn parse_range(
 // Apply
 // ---------------------------------------------------------------------------
 
+/// Apply a unified patch string to `original`. Requires exact context match.
+#[neoc_macros::lua_fn(returns = "Result<string, string>", names(orig = "original"))]
 #[instrument(name = "diff.apply", target = "lua::lib::diff", skip_all)]
 fn apply(
     lua: &Lua,
@@ -946,6 +919,8 @@ fn join_apply_lines(lines: &[(String, bool)]) -> String {
 // Apply structured change list
 // ---------------------------------------------------------------------------
 
+/// Apply a structured change list directly, validating that the equal + delete lines reconstruct `original` first.
+#[neoc_macros::lua_fn(returns = "Result<string, string>", names(orig = "original"))]
 #[instrument(name = "diff.apply_changes", target = "lua::lib::diff", skip_all)]
 fn apply_changes(
     lua: &Lua,
@@ -1031,6 +1006,8 @@ fn read_changes(t: &Table, prefix: &str) -> Result<Vec<Change>, String> {
 // Similarity
 // ---------------------------------------------------------------------------
 
+/// Edit-ratio similarity score in `[0.0, 1.0]`, computed from a character-level patience diff.
+#[neoc_macros::lua_fn]
 #[instrument(name = "diff.similarity", target = "lua::lib::diff", skip_all)]
 fn similarity(_: &Lua, (a, b): (mlua::LuaString, mlua::LuaString)) -> mlua::Result<f64> {
     let a_s = a.to_str()?;

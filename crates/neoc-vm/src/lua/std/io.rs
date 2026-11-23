@@ -102,8 +102,11 @@ fn io_result<T>(
 /// not become a Lua-sized allocation.
 const READ_CHUNK_MAX: usize = 16 << 20;
 
+#[neoc_macros::lua_userdata]
 impl UserData for ReaderHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Read up to `n` bytes; returns `(nil, nil)` at EOF.
+        #[lua("Result<string, string>")]
         methods.add_method("read", |lua, this, n: usize| {
             // `read(n)` is "up to n bytes": clamp a Lua-sized request rather than abort on its allocation.
             let mut buf = match limits::zeroed(n.min(READ_CHUNK_MAX)) {
@@ -117,6 +120,8 @@ impl UserData for ReaderHandle {
             })
         });
 
+        /// Read one line, stripping the trailing newline; returns `(nil, nil)` at EOF.
+        #[lua("Result<string, string>")]
         methods.add_method("read_line", |lua, this, _: ()| {
             let mut line = String::new();
             let result = this.inner.lock().read_line(&mut line);
@@ -131,6 +136,8 @@ impl UserData for ReaderHandle {
             })
         });
 
+        /// Read the entire remaining stream into a single string.
+        #[lua("Result<string, string>")]
         methods.add_method("read_all", |lua, this, _: ()| {
             let mut buf = Vec::new();
             let result = this.inner.lock().read_to_end(&mut buf);
@@ -141,13 +148,18 @@ impl UserData for ReaderHandle {
     }
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for WriterHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Write all bytes of `data` to the stream.
+        #[lua("Result<bool, string>")]
         methods.add_method("write", |lua, this, data: mlua::LuaString| {
             let result = this.0.lock().write_all(&data.as_bytes());
             io_result(lua, "io.write", result, |lua, ()| ok(lua, true))
         });
 
+        /// Flush any buffered bytes to the underlying sink.
+        #[lua("Result<bool, string>")]
         methods.add_method("flush", |lua, this, _: ()| {
             let result = this.0.lock().flush();
             io_result(lua, "io.flush", result, |lua, ()| ok(lua, true))
@@ -176,61 +188,23 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:io")?;
 
-    m.set("from_string", lua.create_function(from_string)?)?;
-    m.record_fn(
-        "from_string",
-        &[("s", "string")],
-        "ReaderHandle",
-        "Wrap a Lua string in a `ReaderHandle` so it can be passed to any reader consumer.",
-    );
+    m.declared(from_string::lua(), lua.create_function(from_string)?)?;
 
-    m.set("copy", lua.create_function(copy)?)?;
-    m.record_fn(
-        "copy",
-        &[("reader", "ReaderHandle"), ("writer", "WriterHandle")],
-        "Result<number, string>",
-        "Copy all remaining bytes from `reader` into `writer`, returning the total bytes copied.",
-    );
+    m.declared(copy::lua(), lua.create_function(copy)?)?;
 
     m.userdata("ReaderHandle", |r| {
-        r.method(
-            "read",
-            &[("n", "number")],
-            "Result<string, string>",
-            "Read up to `n` bytes; returns `(nil, nil)` at EOF.",
-        )
-        .method(
-            "read_line",
-            &[],
-            "Result<string, string>",
-            "Read one line, stripping the trailing newline; returns `(nil, nil)` at EOF.",
-        )
-        .method(
-            "read_all",
-            &[],
-            "Result<string, string>",
-            "Read the entire remaining stream into a single string.",
-        );
+        ReaderHandle::lua(r);
     });
 
     m.userdata("WriterHandle", |w| {
-        w.method(
-            "write",
-            &[("data", "string")],
-            "Result<bool, string>",
-            "Write all bytes of `data` to the stream.",
-        )
-        .method(
-            "flush",
-            &[],
-            "Result<bool, string>",
-            "Flush any buffered bytes to the underlying sink.",
-        );
+        WriterHandle::lua(w);
     });
 
     Ok(m)
 }
 
+/// Wrap a Lua string in a `ReaderHandle` so it can be passed to any reader consumer.
+#[neoc_macros::lua_fn(returns = "ReaderHandle")]
 #[instrument(name = "io.from_string", target = "lua::lib::io", skip_all)]
 fn from_string(_: &Lua, s: mlua::LuaString) -> mlua::Result<ReaderHandle> {
     Ok(ReaderHandle::new(std::io::Cursor::new(
@@ -249,6 +223,12 @@ fn borrow_or_err<T: 'static>(
     ud.borrow::<T>().map_err(|_| from_err(lua, "io.copy", msg))
 }
 
+/// Copy all remaining bytes from `reader` into `writer`, returning the total bytes copied.
+#[neoc_macros::lua_fn(
+    returns = "Result<number, string>",
+    names(reader_ud = "reader", writer_ud = "writer"),
+    types(reader_ud = "ReaderHandle", writer_ud = "WriterHandle")
+)]
 #[instrument(name = "io.copy", target = "lua::lib::io", skip_all)]
 fn copy(
     lua: &Lua,

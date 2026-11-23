@@ -1061,8 +1061,11 @@ pub struct TemplateHandle {
     inner: Arc<TemplateInner>,
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for TemplateHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Render the compiled template with `context` as the variable map.
+        #[lua("Result<string, string>", names(ctx = "context"))]
         methods.add_method("render", |lua, this, ctx: Value| {
             template_render(lua, this, ctx)
         });
@@ -1106,16 +1109,10 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:template")?;
 
     let eng = engine.clone();
-    m.set(
-        "compile",
+    m.declared(
+        compile_impl::lua(),
         lua.create_function(move |lua, src: String| compile_impl(lua, &eng, src))?,
     )?;
-    m.record_fn(
-        "compile",
-        &[("source", "string")],
-        "Result<Template, string>",
-        "Parse `source` once and return a reusable `Template`.",
-    );
 
     let eng = engine.clone();
     m.try_func_raising(
@@ -1141,12 +1138,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     )?;
 
     m.userdata("Template", |t| {
-        t.method(
-            "render",
-            &[("context", "LuaValue")],
-            "Result<string, string>",
-            "Render the compiled template with `context` as the variable map.",
-        );
+        TemplateHandle::lua(t);
     });
 
     Ok(m)
@@ -1156,6 +1148,12 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 // Compile / render implementations.
 // ---------------------------------------------------------------------------
 
+/// Parse `source` once and return a reusable `Template`.
+#[neoc_macros::lua_fn(
+    name = "compile",
+    returns = "Result<Template, string>",
+    takes("source: string")
+)]
 #[instrument(name = "template.compile", target = "lua::lib::template", skip_all)]
 fn compile_impl(lua: &Lua, engine: &Engine, src: String) -> mlua::Result<(Value, Value)> {
     if let Err(e) = check_complexity(&src) {

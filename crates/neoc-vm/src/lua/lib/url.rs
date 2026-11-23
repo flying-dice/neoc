@@ -70,119 +70,26 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     url_sub.set("parse", lua.create_function(url_parse_method)?)?;
     m.set("Url", url_sub)?;
 
-    m.set("parse", lua.create_function(flat_parse)?)?;
-    m.record_fn(
-        "parse",
-        &[("s", "string")],
-        "Result<Url, string>",
-        "Alias for `Url.parse`. Returns `(nil, err)` on malformed input.",
-    );
+    m.declared(flat_parse::lua(), lua.create_function(flat_parse)?)?;
 
-    m.set("resolve", lua.create_function(flat_resolve)?)?;
-    m.record_fn(
-        "resolve",
-        &[("base", "LuaValue"), ("reference", "string")],
-        "Result<Url, string>",
-        "Resolve a relative reference against `base` (a `Url` or string) using RFC 3986 § 5 rules.",
-    );
+    m.declared(flat_resolve::lua(), lua.create_function(flat_resolve)?)?;
 
-    m.set("encode", lua.create_function(flat_encode)?)?;
-    m.record_fn(
-        "encode",
-        &[("input", "string"), ("set", "string?")],
-        "Result<string, string>",
-        "Percent-encode `input` against the named `set` (defaults to `component`). Returns `(nil, err)` only on an unknown set name.",
-    );
+    m.declared(flat_encode::lua(), lua.create_function(flat_encode)?)?;
 
-    m.set("decode", lua.create_function(flat_decode)?)?;
-    m.record_fn(
-        "decode",
-        &[("input", "string")],
-        "Result<string, string>",
-        "Percent-decode `input`. Returns `(nil, err)` when the decoded bytes are not valid UTF-8. Does not convert `+` to space.",
-    );
+    m.declared(flat_decode::lua(), lua.create_function(flat_decode)?)?;
 
-    m.set("encode_query", lua.create_function(flat_encode_query)?)?;
-    m.record_fn(
-        "encode_query",
-        &[("pairs", "LuaValue")],
-        "Result<string, string>",
-        "Form-encode an ordered list of `{ key, value }` pairs into a query string. Spaces become `+`.",
-    );
+    m.declared(
+        flat_encode_query::lua(),
+        lua.create_function(flat_encode_query)?,
+    )?;
 
-    m.set("decode_query", lua.create_function(flat_decode_query)?)?;
-    m.record_fn(
-        "decode_query",
-        &[("input", "string")],
-        "LuaValue",
-        "Parse an `application/x-www-form-urlencoded` payload into an ordered list of `{ key, value }` pairs. `+` decodes to space.",
-    );
+    m.declared(
+        flat_decode_query::lua(),
+        lua.create_function(flat_decode_query)?,
+    )?;
 
     m.userdata("Url", |u| {
-        u.field("scheme", "string", "The scheme, lower-cased (`https`).");
-        u.field("username", "string", "The username, or an empty string.");
-        u.field("password", "string?", "The password, or nil.");
-        u.field("host", "string?", "The host, or nil for a URL without one.");
-        u.field("port", "number?", "The explicit port, or nil when it is the scheme's default.");
-        u.field("path", "string", "The percent-encoded path.");
-        u.field("query", "string?", "The query string without the `?`, or nil.");
-        u.field("fragment", "string?", "The fragment without the `#`, or nil.");
-        u.field("origin", "string", "The serialised origin (`https://example.com:8080`).");
-        u.field("href", "string", "The whole URL as a string.");
-        u.method(
-            "resolve",
-            &[("reference", "string")],
-            "Result<Url, string>",
-            "Resolve `reference` against this URL using RFC 3986 § 5 rules.",
-        );
-        u.method(
-            "with_scheme",
-            &[("scheme", "string")],
-            "Result<Url, string>",
-            "Return a new `Url` with the scheme replaced. Most special/non-special swaps are rejected by the spec.",
-        );
-        u.method(
-            "with_host",
-            &[("host", "string")],
-            "Result<Url, string>",
-            "Return a new `Url` with the host replaced. Returns `(nil, err)` if the host is malformed for the scheme.",
-        );
-        u.method(
-            "with_port",
-            &[("port", "number?")],
-            "Result<Url, string>",
-            "Return a new `Url` with the port set (or cleared when `nil`). `port` must be an integer in `0..=65535`.",
-        );
-        u.method(
-            "with_path",
-            &[("path", "string")],
-            "Url",
-            "Return a new `Url` with the path replaced. Always succeeds — the path is re-encoded against the WHATWG path set.",
-        );
-        u.method(
-            "with_query",
-            &[("query", "string?")],
-            "Url",
-            "Return a new `Url` with the query string replaced (or cleared when `nil`).",
-        );
-        u.method(
-            "with_fragment",
-            &[("fragment", "string?")],
-            "Url",
-            "Return a new `Url` with the fragment replaced (or cleared when `nil`).",
-        );
-        u.method(
-            "query_pairs",
-            &[],
-            "LuaValue",
-            "Query pairs in order, including any repeated keys.",
-        );
-        u.method(
-            "query_map",
-            &[],
-            "LuaValue",
-            "Query as a map. Last value wins on repeated keys.",
-        );
+        UrlHandle::lua(u);
         u.static_fn(
             "parse",
             &[("s", "string")],
@@ -201,31 +108,56 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 #[derive(Clone)]
 pub struct UrlHandle(pub Url);
 
+#[neoc_macros::lua_userdata]
 impl UserData for UrlHandle {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
+        /// The scheme, lower-cased (`https`).
+        #[lua("string")]
         fields.add_field_method_get("scheme", |_, this| Ok(this.0.scheme().to_owned()));
+        /// The username, or an empty string.
+        #[lua("string")]
         fields.add_field_method_get("username", |_, this| Ok(this.0.username().to_owned()));
+        /// The password, or nil.
+        #[lua("string?")]
         fields.add_field_method_get("password", |_, this| {
             Ok(this.0.password().map(str::to_owned))
         });
+        /// The host, or nil for a URL without one.
+        #[lua("string?")]
         fields.add_field_method_get("host", |_, this| Ok(this.0.host_str().map(str::to_owned)));
+        /// The explicit port, or nil when it is the scheme's default.
+        #[lua("number?")]
         fields.add_field_method_get("port", |_, this| Ok(this.0.port().map(|p| p as i64)));
+        /// The percent-encoded path.
+        #[lua("string")]
         fields.add_field_method_get("path", |_, this| Ok(this.0.path().to_owned()));
+        /// The query string without the `?`, or nil.
+        #[lua("string?")]
         fields.add_field_method_get("query", |_, this| Ok(this.0.query().map(str::to_owned)));
+        /// The fragment without the `#`, or nil.
+        #[lua("string?")]
         fields.add_field_method_get("fragment", |_, this| {
             Ok(this.0.fragment().map(str::to_owned))
         });
+        /// The serialised origin (`https://example.com:8080`).
+        #[lua("string")]
         fields.add_field_method_get("origin", |_, this| {
             Ok(this.0.origin().ascii_serialization())
         });
+        /// The whole URL as a string.
+        #[lua("string")]
         fields.add_field_method_get("href", |_, this| Ok(this.0.as_str().to_owned()));
     }
 
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Resolve `reference` against this URL using RFC 3986 § 5 rules.
+        #[lua("Result<Url, string>")]
         methods.add_method("resolve", |lua, this, reference: String| {
             join_url(lua, &this.0, &reference, "url.Url.resolve")
         });
 
+        /// Return a new `Url` with the scheme replaced. Most special/non-special swaps are rejected by the spec.
+        #[lua("Result<Url, string>")]
         methods.add_method("with_scheme", |lua, this, scheme: String| {
             let mut u = this.0.clone();
             match u.set_scheme(&scheme) {
@@ -237,6 +169,8 @@ impl UserData for UrlHandle {
             }
         });
 
+        /// Return a new `Url` with the host replaced. Returns `(nil, err)` if the host is malformed for the scheme.
+        #[lua("Result<Url, string>")]
         methods.add_method("with_host", |lua, this, host: String| {
             let mut u = this.0.clone();
             match u.set_host(Some(&host)) {
@@ -252,6 +186,8 @@ impl UserData for UrlHandle {
         // too. Floats with a fractional part are rejected for the same
         // reason: `with_port(8080.5)` silently truncating to 8080 is a
         // footgun, not a feature.
+        /// Return a new `Url` with the port set (or cleared when `nil`). `port` must be an integer in `0..=65535`.
+        #[lua("Result<Url, string>")]
         methods.add_method("with_port", |lua, this, port: Option<f64>| {
             let port = match port {
                 None => None,
@@ -279,24 +215,32 @@ impl UserData for UrlHandle {
             }
         });
 
+        /// Return a new `Url` with the path replaced. Always succeeds — the path is re-encoded against the WHATWG path set.
+        #[lua("Url")]
         methods.add_method("with_path", |_, this, path: String| {
             let mut u = this.0.clone();
             u.set_path(&path);
             Ok(UrlHandle(u))
         });
 
+        /// Return a new `Url` with the query string replaced (or cleared when `nil`).
+        #[lua("Url")]
         methods.add_method("with_query", |_, this, query: Option<String>| {
             let mut u = this.0.clone();
             u.set_query(query.as_deref());
             Ok(UrlHandle(u))
         });
 
+        /// Return a new `Url` with the fragment replaced (or cleared when `nil`).
+        #[lua("Url")]
         methods.add_method("with_fragment", |_, this, fragment: Option<String>| {
             let mut u = this.0.clone();
             u.set_fragment(fragment.as_deref());
             Ok(UrlHandle(u))
         });
 
+        /// Query pairs in order, including any repeated keys.
+        #[lua("LuaValue")]
         methods.add_method("query_pairs", |lua, this, _: ()| {
             let t = lua.create_table()?;
             for (i, (k, v)) in this.0.query_pairs().enumerate() {
@@ -312,6 +256,8 @@ impl UserData for UrlHandle {
         // value — `?a=1&a=2` → `{a = "2"}`. Matches the JavaScript
         // `Object.fromEntries(new URLSearchParams(…))` shape. Callers who need
         // every value should use `query_pairs()` instead.
+        /// Query as a map. Last value wins on repeated keys.
+        #[lua("LuaValue")]
         methods.add_method("query_map", |lua, this, _: ()| {
             let t = lua.create_table()?;
             for (k, v) in this.0.query_pairs() {
@@ -343,6 +289,8 @@ fn url_parse_method(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
     }
 }
 
+/// Alias for `Url.parse`. Returns `(nil, err)` on malformed input.
+#[neoc_macros::lua_fn(name = "parse", returns = "Result<Url, string>")]
 #[instrument(name = "url.parse", target = "lua::lib::url", skip_all)]
 fn flat_parse(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
     match Url::parse(&s) {
@@ -351,6 +299,8 @@ fn flat_parse(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
     }
 }
 
+/// Resolve a relative reference against `base` (a `Url` or string) using RFC 3986 § 5 rules.
+#[neoc_macros::lua_fn(name = "resolve", returns = "Result<Url, string>")]
 #[instrument(name = "url.resolve", target = "lua::lib::url", skip_all)]
 fn flat_resolve(lua: &Lua, (base, reference): (Value, String)) -> mlua::Result<(Value, Value)> {
     let base_url = match coerce_to_url(base, "url.resolve") {
@@ -391,6 +341,8 @@ fn coerce_to_url(v: Value, prefix: &str) -> Result<Url, String> {
 // Percent encode / decode
 // ---------------------------------------------------------------------------
 
+/// Percent-encode `input` against the named `set` (defaults to `component`). Returns `(nil, err)` only on an unknown set name.
+#[neoc_macros::lua_fn(name = "encode", returns = "Result<string, string>")]
 #[instrument(name = "url.encode", target = "lua::lib::url", skip_all)]
 fn flat_encode(lua: &Lua, (input, set): (String, Option<String>)) -> mlua::Result<(Value, Value)> {
     let set_name = set.as_deref().unwrap_or("component");
@@ -405,6 +357,8 @@ fn flat_encode(lua: &Lua, (input, set): (String, Option<String>)) -> mlua::Resul
     }
 }
 
+/// Percent-decode `input`. Returns `(nil, err)` when the decoded bytes are not valid UTF-8. Does not convert `+` to space.
+#[neoc_macros::lua_fn(name = "decode", returns = "Result<string, string>")]
 #[instrument(name = "url.decode", target = "lua::lib::url", skip_all)]
 fn flat_decode(lua: &Lua, input: String) -> mlua::Result<(Value, Value)> {
     match percent_decode_str(&input).decode_utf8() {
@@ -417,6 +371,8 @@ fn flat_decode(lua: &Lua, input: String) -> mlua::Result<(Value, Value)> {
 // Query string round-trip
 // ---------------------------------------------------------------------------
 
+/// Form-encode an ordered list of `{ key, value }` pairs into a query string. Spaces become `+`.
+#[neoc_macros::lua_fn(name = "encode_query", returns = "Result<string, string>")]
 #[instrument(name = "url.encode_query", target = "lua::lib::url", skip_all)]
 fn flat_encode_query(lua: &Lua, pairs: Table) -> mlua::Result<(Value, Value)> {
     let mut ser = url::form_urlencoded::Serializer::new(String::new());
@@ -439,6 +395,8 @@ fn flat_encode_query(lua: &Lua, pairs: Table) -> mlua::Result<(Value, Value)> {
     ok(lua, ser.finish())
 }
 
+/// Parse an `application/x-www-form-urlencoded` payload into an ordered list of `{ key, value }` pairs. `+` decodes to space.
+#[neoc_macros::lua_fn(name = "decode_query")]
 #[instrument(name = "url.decode_query", target = "lua::lib::url", skip_all)]
 fn flat_decode_query(lua: &Lua, input: String) -> mlua::Result<Table> {
     let t = lua.create_table()?;

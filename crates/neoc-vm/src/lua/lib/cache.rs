@@ -300,9 +300,12 @@ fn positive_duration(ttl: Option<f64>) -> Option<Duration> {
     }
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for Cache {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         // get — look up under the lock, then notify outside it.
+        /// Look up `key`, returning the stored value or nil on a miss or expiry. A hit promotes the entry to most-recently-used and counts a hit; a miss or a freshly-expired entry counts a miss (an expired entry is also dropped, counting as an eviction). Key must be a string, number, or boolean.
+        #[lua("LuaValue")]
         methods.add_method("get", |lua, this, key: Value| {
             let ck = cache_key(&key, "cache.get")?;
             let now = Instant::now();
@@ -312,6 +315,8 @@ impl UserData for Cache {
         });
 
         // set — insert as MRU, evicting the LRU entry if over capacity.
+        /// Store `value` under `key` as most-recently-used, evicting the least-recently-used entry when over `max_size`. `ttl` (seconds) overrides the cache default: omit it for the default, pass > 0 for a custom expiry, pass ≤ 0 to pin the entry so it never expires. Key must be a string, number, or boolean; `value` must not be nil.
+        #[lua("()")]
         methods.add_method(
             "set",
             |lua, this, (key, value, ttl): (Value, Value, Option<f64>)| {
@@ -332,18 +337,24 @@ impl UserData for Cache {
         );
 
         // delete — caller-driven, so no eviction accounting or callback.
+        /// Remove `key`, returning true if it was present. Caller-driven, so it never fires `on_evict` nor counts as an eviction.
+        #[lua("bool")]
         methods.add_method("delete", |_, this, key: Value| {
             let ck = cache_key(&key, "cache.delete")?;
             Ok(this.state.lock().map.pop(&ck).is_some())
         });
 
         // clear — caller-driven; entries go, cumulative stats stay.
+        /// Remove every entry. Caller-driven: no `on_evict`, no eviction count; the cumulative statistics are preserved.
+        #[lua("()")]
         methods.add_method("clear", |_, this, ()| {
             this.state.lock().map.clear();
             Ok(())
         });
 
         // len — sweep expired entries (active expiry), then report live count.
+        /// Number of live entries. Expired entries are purged first (each counts as an eviction and fires `on_evict`), so the count never includes stale data.
+        #[lua("number")]
         methods.add_method("len", |lua, this, ()| {
             let now = Instant::now();
             let (live, evicted) = {
@@ -356,6 +367,8 @@ impl UserData for Cache {
         });
 
         // stats — a snapshot of the cumulative counters.
+        /// Snapshot of the cumulative counters as a table with `hits`, `misses`, and `evictions`. Counts persist across `clear`.
+        #[lua("LuaValue")]
         methods.add_method("stats", |lua, this, ()| {
             let st = this.state.lock();
             let t = lua.create_table()?;
@@ -391,48 +404,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:cache")?;
 
     m.type_("Cache", |t| {
+        Cache::lua(t);
         t.try_constructor(
             "new",
             &[("options", "LuaValue")],
             "Create a bounded LRU cache from an options table: `max_size` (required, ≥ 1) caps the entry count; `ttl` (optional, seconds, fractional allowed) sets a default per-entry expiry; `on_evict` (optional, `function(key, value)`) fires when the cache drops an entry itself — capacity eviction or TTL expiry — but not on `delete`, `clear`, or overwrite.",
             |lua, opts: Table| Cache::build(lua, opts),
-        )?
-        .method(
-            "get",
-            &[("key", "LuaValue")],
-            "LuaValue",
-            "Look up `key`, returning the stored value or nil on a miss or expiry. A hit promotes the entry to most-recently-used and counts a hit; a miss or a freshly-expired entry counts a miss (an expired entry is also dropped, counting as an eviction). Key must be a string, number, or boolean.",
-        )
-        .method(
-            "set",
-            &[("key", "LuaValue"), ("value", "LuaValue"), ("ttl", "number?")],
-            "()",
-            "Store `value` under `key` as most-recently-used, evicting the least-recently-used entry when over `max_size`. `ttl` (seconds) overrides the cache default: omit it for the default, pass > 0 for a custom expiry, pass ≤ 0 to pin the entry so it never expires. Key must be a string, number, or boolean; `value` must not be nil.",
-        )
-        .method(
-            "delete",
-            &[("key", "LuaValue")],
-            "bool",
-            "Remove `key`, returning true if it was present. Caller-driven, so it never fires `on_evict` nor counts as an eviction.",
-        )
-        .method(
-            "clear",
-            &[],
-            "()",
-            "Remove every entry. Caller-driven: no `on_evict`, no eviction count; the cumulative statistics are preserved.",
-        )
-        .method(
-            "len",
-            &[],
-            "number",
-            "Number of live entries. Expired entries are purged first (each counts as an eviction and fires `on_evict`), so the count never includes stale data.",
-        )
-        .method(
-            "stats",
-            &[],
-            "LuaValue",
-            "Snapshot of the cumulative counters as a table with `hits`, `misses`, and `evictions`. Counts persist across `clear`.",
-        );
+        )?;
         Ok(())
     })?;
 

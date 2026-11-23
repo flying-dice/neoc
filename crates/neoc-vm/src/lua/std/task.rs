@@ -105,12 +105,19 @@ pub struct TaskHandle {
     inner: Arc<TaskInner>,
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for TaskHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Cancel the task. Returns `true` if this call cancelled it; `false` if already finished.
+        #[lua("bool")]
         methods.add_method("cancel", |_, this, ()| Ok(this.inner.cancel()));
 
+        /// Return `true` if the task has completed (success, error, or cancel).
+        #[lua("bool")]
         methods.add_method("is_finished", |_, this, ()| Ok(this.inner.is_finished()));
 
+        /// Wait for the task to finish. Returns every value the task returned on success, `(nil, error)` on error, or `(nil, "cancelled")` if cancelled.
+        #[lua("(LuaValue?, ...)")]
         async_method(methods, "await", Role::Wait, |lua, this, ()| {
             let inner = this.inner.clone();
             inner.awaited.store(true, Ordering::Relaxed);
@@ -584,24 +591,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     );
 
     m.userdata("Task", |t| {
-        t.method(
-            "cancel",
-            &[],
-            "bool",
-            "Cancel the task. Returns `true` if this call cancelled it; `false` if already finished.",
-        )
-        .method(
-            "is_finished",
-            &[],
-            "bool",
-            "Return `true` if the task has completed (success, error, or cancel).",
-        )
-        .method(
-            "await",
-            &[],
-            "(LuaValue?, ...)",
-            "Wait for the task to finish. Returns every value the task returned on success, `(nil, error)` on error, or `(nil, \"cancelled\")` if cancelled.",
-        );
+        TaskHandle::lua(t);
     });
 
     Ok(m)

@@ -72,13 +72,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:thread")?;
 
-    m.set("spawn", lua.create_function(spawn)?)?;
-    m.record_fn(
-        "spawn",
-        &[("opts", "LuaValue")],
-        "Result<WorkerHandle, string>",
-        "Spawn a new Lua VM as a worker on the same Tokio runtime, given `{ source | file, name?, args?, shared? }`.",
-    );
+    m.declared(spawn::lua(), lua.create_function(spawn)?)?;
 
     m.set(
         "available_parallelism",
@@ -115,30 +109,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     );
 
     m.userdata("WorkerHandle", |w| {
-        w.method(
-            "send",
-            &[("value", "LuaValue")],
-            "()",
-            "Send a JSON-serialisable value to the worker; errors if the worker has exited.",
-        )
-        .method(
-            "receive",
-            &[],
-            "Result<LuaValue, string>",
-            "Wait for a message from the worker. Returns `(nil, error)` once the worker has exited.",
-        )
-        .method(
-            "await",
-            &[],
-            "Result<LuaValue, string>",
-            "Wait for the worker to finish and return its result, or `(nil, error)` on failure.",
-        )
-        .method(
-            "terminate",
-            &[],
-            "()",
-            "Abort the worker immediately. A subsequent `:await()` returns `(nil, \"thread.await: terminated\")`.",
-        );
+        WorkerHandle::lua(w);
     });
 
     m.userdata("Channel", |c| {
@@ -342,6 +313,8 @@ fn prepare_spawn(opts: &Table, args: &Value) -> Result<SpawnConfig, String> {
     })
 }
 
+/// Spawn a new Lua VM as a worker on the same Tokio runtime, given `{ source | file, name?, args?, shared? }`.
+#[neoc_macros::lua_fn(returns = "Result<WorkerHandle, string>")]
 #[instrument(name = "thread.spawn", target = "lua::lib::thread", skip_all)]
 fn spawn(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
     // `args` is one value (any JSON-encodable Lua value, a table for "named"
@@ -517,12 +490,17 @@ impl Drop for WorkerInner {
     }
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for WorkerHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Send a JSON-serialisable value to the worker; errors if the worker has exited.
+        #[lua("()", names(v = "value"))]
         methods.add_method("send", |_, this, v: Value| {
             send_json(&this.inner.tx, v, "thread.send", "worker has exited")
         });
 
+        /// Wait for a message from the worker. Returns `(nil, error)` once the worker has exited.
+        #[lua("Result<LuaValue, string>")]
         async_method(methods, "receive", Role::Wait, |lua, this, (): ()| {
             let inner = this.inner.clone();
             async move {
@@ -531,6 +509,8 @@ impl UserData for WorkerHandle {
             }
         });
 
+        /// Wait for the worker to finish and return its result, or `(nil, error)` on failure.
+        #[lua("Result<LuaValue, string>")]
         async_method(methods, "await", Role::Wait, |lua, this, (): ()| {
             let inner = this.inner.clone();
             async move {
@@ -550,6 +530,8 @@ impl UserData for WorkerHandle {
             }
         });
 
+        /// Abort the worker immediately. A subsequent `:await()` returns `(nil, "thread.await: terminated")`.
+        #[lua("()")]
         methods.add_method("terminate", |_, this, _: ()| {
             this.inner.abort.abort();
             Ok(())

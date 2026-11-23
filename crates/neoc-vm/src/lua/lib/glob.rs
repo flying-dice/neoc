@@ -57,29 +57,11 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         },
     )?;
 
-    m.set("scan", lua.create_function(flat_scan)?)?;
-
-    m.record_fn(
-        "scan",
-        &[("pattern", "string"), ("opts", "LuaValue?")],
-        "(LuaValue, LuaValue)",
-        "Compile `pattern`, walk the filesystem, and return `(paths, errors)`: all matching paths, plus a list of `{ path, error }` rows for the entries the walk could not read (nil when there are none). A bad pattern or directory returns `(nil, message)` instead.",
-    );
+    m.declared(flat_scan::lua(), lua.create_function(flat_scan)?)?;
 
     m.userdata("Glob", |g| {
-        g.method(
-            "is_match",
-            &[("path", "string")],
-            "bool",
-            "Test whether `path` matches this compiled pattern.",
-        )
-        .method(
-            "scan",
-            &[("opts", "LuaValue?")],
-            "(LuaValue, LuaValue)",
-            "Walk the filesystem and return `(paths, errors)` as `glob.scan` does: the matching paths, plus a list of `{ path, error }` rows for the entries the walk could not read (nil when there are none). A bad directory returns `(nil, message)` instead.",
-        )
-        .static_fn(
+        GlobHandle::lua(g);
+        g.static_fn(
             "new",
             &[("pattern", "string")],
             "Result<Glob, string>",
@@ -88,20 +70,8 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     });
 
     m.userdata("GlobSet", |s| {
-        s.method(
-            "is_match",
-            &[("path", "string")],
-            "bool",
-            "True if any pattern in the set matches `path`.",
-        )
-        .method(
-            "matches",
-            &[("path", "string")],
-            "LuaValue",
-            "1-based indices of every pattern in the set that matches `path`.",
-        )
-        .method("len", &[], "number", "Number of patterns in the set.")
-        .static_fn(
+        GlobSetHandle::lua(s);
+        s.static_fn(
             "new",
             &[("patterns", "LuaValue")],
             "Result<GlobSet, string>",
@@ -139,9 +109,14 @@ impl GlobHandle {
     }
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for GlobHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Test whether `path` matches this compiled pattern.
+        #[lua("bool")]
         methods.add_method("is_match", |_, this, path: String| Ok(this.matches(&path)));
+        /// Walk the filesystem and return `(paths, errors)` as `glob.scan` does: the matching paths, plus a list of `{ path, error }` rows for the entries the walk could not read (nil when there are none). A bad directory returns `(nil, message)` instead.
+        #[lua("(LuaValue, LuaValue)")]
         methods.add_method("scan", |lua, this, opts: Option<Table>| {
             run_scan(lua, &this.pattern, &this.matcher, opts, "Glob:scan")
         });
@@ -255,9 +230,14 @@ impl GlobSetHandle {
     }
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for GlobSetHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// True if any pattern in the set matches `path`.
+        #[lua("bool")]
         methods.add_method("is_match", |_, this, path: String| Ok(this.is_match(&path)));
+        /// 1-based indices of every pattern in the set that matches `path`.
+        #[lua("LuaValue")]
         methods.add_method("matches", |lua, this, path: String| {
             let t = lua.create_table()?;
             for (i, idx) in this.matching_indices(&path).into_iter().enumerate() {
@@ -265,6 +245,8 @@ impl UserData for GlobSetHandle {
             }
             Ok(t)
         });
+        /// Number of patterns in the set.
+        #[lua("number")]
         methods.add_method("len", |_, this, _: ()| Ok(this.patterns.len() as i64));
     }
 }
@@ -302,6 +284,8 @@ fn set_new(lua: &Lua, patterns: Table) -> mlua::Result<(Value, Value)> {
 // Flat functions
 // ---------------------------------------------------------------------------
 
+/// Compile `pattern`, walk the filesystem, and return `(paths, errors)`: all matching paths, plus a list of `{ path, error }` rows for the entries the walk could not read (nil when there are none). A bad pattern or directory returns `(nil, message)` instead.
+#[neoc_macros::lua_fn(name = "scan", returns = "(LuaValue, LuaValue)")]
 #[instrument(name = "glob.scan", target = "lua::lib::glob", skip_all)]
 fn flat_scan(lua: &Lua, (pattern, opts): (String, Option<Table>)) -> mlua::Result<(Value, Value)> {
     let g = match GlobHandle::compile(&pattern) {

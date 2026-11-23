@@ -47,16 +47,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     )?
     .set("decode", lua.create_function(decode)?)?;
 
-    m.record_fn(
-        "decode",
-        &[("input", "string")],
-        "Result<string, string>",
-        "Decode a hex string back to raw bytes; case-insensitive and tolerant of ASCII whitespace, strict otherwise.",
-    );
+    m.record(decode::lua());
 
     Ok(m)
 }
 
+/// Decode a hex string back to raw bytes; case-insensitive and tolerant of ASCII whitespace, strict otherwise.
+#[neoc_macros::lua_fn(returns = "Result<string, string>")]
 #[instrument(name = "hex.decode", target = "lua::lib::hex", skip_all)]
 fn decode(lua: &Lua, input: mlua::LuaString) -> mlua::Result<(Value, Value)> {
     // Drop ASCII whitespace before decoding so dumps like "de ad be ef" or

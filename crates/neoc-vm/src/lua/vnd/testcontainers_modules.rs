@@ -69,38 +69,20 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:testcontainers_modules")?;
 
-    m.set(
-        "mysql",
+    m.declared(
+        start_mysql::lua(),
         async_function(lua, Role::Wait, |lua, _: ()| start_mysql(lua))?,
     )?;
-    m.record_fn(
-        "mysql",
-        &[],
-        "Result<MysqlContainer, string>",
-        "Start a MySQL container with default settings, returning a handle once it is ready to accept connections.",
-    );
 
-    m.set(
-        "postgres",
+    m.declared(
+        start_postgres::lua(),
         async_function(lua, Role::Wait, |lua, _: ()| start_postgres(lua))?,
     )?;
-    m.record_fn(
-        "postgres",
-        &[],
-        "Result<PostgresContainer, string>",
-        "Start a Postgres container with default settings, returning a handle once it is ready.",
-    );
 
-    m.set(
-        "generic",
+    m.declared(
+        start_generic::lua(),
         async_function(lua, Role::Wait, |lua, opts: Table| start_generic(lua, opts))?,
     )?;
-    m.record_fn(
-        "generic",
-        &[("opts", "LuaValue")],
-        "Result<GenericContainer, string>",
-        "Start a generic Docker container from any image given `{ image, tag?, ports?, env?, cmd?, wait? }`, returning a handle once its readiness probe passes.",
-    );
 
     m.userdata("MysqlContainer", |c| {
         c.method(
@@ -137,14 +119,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     });
 
     m.userdata("GenericContainer", |c| {
-        c.method("host", &[], "string", "Return the container host (always `\"127.0.0.1\"`).")
-            .method(
-                "port",
-                &[("container_port", "number")],
-                "number",
-                "Return the mapped host port for the given container port; only ports listed at start time are available, requesting an unmapped port errors.",
-            )
-            .method("stop", &[], "()", "Stop the container; idempotent.");
+        GenericContainer::lua(c);
     });
 
     Ok(m)
@@ -228,6 +203,8 @@ where
     }
 }
 
+/// Start a MySQL container with default settings, returning a handle once it is ready to accept connections.
+#[neoc_macros::lua_fn(name = "mysql", returns = "Result<MysqlContainer, string>", takes())]
 #[instrument(
     name = "testcontainers_modules.mysql",
     target = "lua::lib::testcontainers_modules",
@@ -237,6 +214,12 @@ async fn start_mysql(lua: Lua) -> mlua::Result<(Value, Value)> {
     start_typed::<Mysql>(lua).await
 }
 
+/// Start a Postgres container with default settings, returning a handle once it is ready.
+#[neoc_macros::lua_fn(
+    name = "postgres",
+    returns = "Result<PostgresContainer, string>",
+    takes()
+)]
 #[instrument(
     name = "testcontainers_modules.postgres",
     target = "lua::lib::testcontainers_modules",
@@ -362,8 +345,14 @@ async fn map_ports(
     Ok(ports)
 }
 
-/// The options are read here, before the future exists (see `vnd:hyper`'s client): a script table can run script code
-/// when it is read, and read inside the future each level of a recursion would stack another polled future.
+// The options are read here, before the future exists (see `vnd:hyper`'s client): a script table can run script code
+// when it is read, and read inside the future each level of a recursion would stack another polled future.
+/// Start a generic Docker container from any image given `{ image, tag?, ports?, env?, cmd?, wait? }`, returning a handle once its readiness probe passes.
+#[neoc_macros::lua_fn(
+    name = "generic",
+    returns = "Result<GenericContainer, string>",
+    takes("opts: LuaValue")
+)]
 fn start_generic(
     lua: Lua,
     opts: Table,
@@ -429,9 +418,14 @@ fn parse_wait(t: &Table) -> Result<WaitFor, String> {
     })
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for GenericContainer {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Return the container host (always `"127.0.0.1"`).
+        #[lua("string")]
         methods.add_method("host", |_, this, _: ()| Ok(this.host.clone()));
+        /// Return the mapped host port for the given container port; only ports listed at start time are available, requesting an unmapped port errors.
+        #[lua("number", types(container_port = "number"))]
         methods.add_method("port", |_, this, container_port: u16| {
             this.ports
                 .get(&container_port)
@@ -443,6 +437,8 @@ impl UserData for GenericContainer {
                     ))
                 })
         });
+        /// Stop the container; idempotent.
+        #[lua("()")]
         async_method(methods, "stop", Role::Wait, |_, this, _: ()| {
             let inner = this.inner.clone();
             async move { stop_container(inner).await }

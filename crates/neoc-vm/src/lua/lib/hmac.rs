@@ -116,9 +116,11 @@ impl State {
     }
 }
 
-/// Constant-time tag comparison. `subtle` compares every byte regardless of
-/// where the first mismatch is; a length mismatch (not secret — fixed by the
-/// algorithm) yields `false` without inspecting contents.
+// Constant-time tag comparison. `subtle` compares every byte regardless of
+// where the first mismatch is; a length mismatch (not secret — fixed by the
+// algorithm) yields `false` without inspecting contents.
+/// Compare two tags in constant time; returns `true` iff they are equal.
+#[neoc_macros::lua_fn(returns = "bool", types(a = "string", b = "string"))]
 fn verify(a: &[u8], b: &[u8]) -> bool {
     a.ct_eq(b).into()
 }
@@ -131,18 +133,25 @@ pub struct Hmac {
     state: State,
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for Hmac {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Feed `data` into the running MAC.
+        #[lua("()")]
         methods.add_method_mut("update", |_, this, data: mlua::LuaString| {
             this.state.update(&data.as_bytes());
             Ok(())
         });
 
+        /// Return the current tag as raw bytes; idempotent and does not consume the MAC.
+        #[lua("string")]
         methods.add_method("digest", |lua, this, _: ()| {
             let bytes = this.state.digest();
             lua.create_string(&bytes)
         });
 
+        /// Return the algorithm name this MAC was constructed with.
+        #[lua("string")]
         methods.add_method("algorithm", |_, this, _: ()| Ok(this.state.algo()));
 
         methods.add_meta_method(MetaMethod::ToString, |_, this, _: ()| {
@@ -198,25 +207,8 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     )?;
 
     m.userdata("Hmac", |h| {
-        h.method(
-            "update",
-            &[("data", "string")],
-            "()",
-            "Feed `data` into the running MAC.",
-        )
-        .method(
-            "digest",
-            &[],
-            "string",
-            "Return the current tag as raw bytes; idempotent and does not consume the MAC.",
-        )
-        .method(
-            "algorithm",
-            &[],
-            "string",
-            "Return the algorithm name this MAC was constructed with.",
-        )
-        .static_fn(
+        Hmac::lua(h);
+        h.static_fn(
             "new",
             &[("algo", "string"), ("key", "string")],
             "Result<Hmac, string>",
@@ -230,12 +222,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "Result<string, string>",
         "One-shot tag of `data` under `algo` and `key`, returning the tag as raw bytes.",
     )
-    .record_fn(
-        "verify",
-        &[("a", "string"), ("b", "string")],
-        "bool",
-        "Compare two tags in constant time; returns `true` iff they are equal.",
-    )
+    .record(verify::lua())
     .record_fn(
         "algorithms",
         &[],

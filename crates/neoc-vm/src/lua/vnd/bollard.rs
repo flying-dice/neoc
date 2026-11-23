@@ -106,16 +106,7 @@ const STREAM: &str = "Result<Stream, string>";
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:bollard")?;
 
-    m.set("connect", lua.create_function(connect)?)?;
-    m.record_fn(
-        "connect",
-        &[(
-            "opts",
-            "{ host: string?, timeout: number?, tls_ca: string?, tls_cert: string?, tls_key: string? }?",
-        )],
-        "Result<Client, string>",
-        "A client for a Docker daemon. Nothing is sent until the client's first call. `host` is `unix:///path/docker.sock`, `tcp://host:2375`, `http://host:2375` or `https://host:2376`; without it `DOCKER_HOST` is used, and without that the local socket (`/var/run/docker.sock`, then Docker Desktop's and a rootless daemon's per-user socket). `timeout` is how long a call waits for the daemon's answer, in seconds (default 120). `tls_ca`, `tls_cert` and `tls_key` (all three, paths of PEM files) connect over TLS with a client certificate. Reaching Docker is root on its host: a script given this module is trusted with the machine. Errors are `bollard.<function>: <kind>: <message>` (see `error_kind`); a host with no Docker socket is `connect`.",
-    );
+    m.declared(connect::lua(), lua.create_function(connect)?)?;
 
     m.func(
         "error_kind",
@@ -326,6 +317,13 @@ impl Client {
     }
 }
 
+/// A client for a Docker daemon. Nothing is sent until the client's first call. `host` is `unix:///path/docker.sock`, `tcp://host:2375`, `http://host:2375` or `https://host:2376`; without it `DOCKER_HOST` is used, and without that the local socket (`/var/run/docker.sock`, then Docker Desktop's and a rootless daemon's per-user socket). `timeout` is how long a call waits for the daemon's answer, in seconds (default 120). `tls_ca`, `tls_cert` and `tls_key` (all three, paths of PEM files) connect over TLS with a client certificate. Reaching Docker is root on its host: a script given this module is trusted with the machine. Errors are `bollard.<function>: <kind>: <message>` (see `error_kind`); a host with no Docker socket is `connect`.
+#[neoc_macros::lua_fn(
+    returns = "Result<Client, string>",
+    types(
+        opts = "{ host: string?, timeout: number?, tls_ca: string?, tls_cert: string?, tls_key: string? }?"
+    )
+)]
 fn connect(lua: &Lua, opts: Option<Value>) -> mlua::Result<(Value, Value)> {
     let op = "bollard.connect";
     let opts = match opts {

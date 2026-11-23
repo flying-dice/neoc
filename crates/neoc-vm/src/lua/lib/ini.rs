@@ -130,25 +130,15 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:ini")?;
 
-    m.set("parse", lua.create_function(parse)?)?;
-    m.record_fn(
-        "parse",
-        &[("text", "string"), ("opts", "LuaValue?")],
-        "Result<LuaValue, string>",
-        "Parse an INI string into a table of sections. Section-less keys land under the empty-string key; bare keys become `true`.",
-    );
+    m.declared(parse::lua(), lua.create_function(parse)?)?;
 
-    m.set("stringify", lua.create_function(stringify)?)?;
-    m.record_fn(
-        "stringify",
-        &[("config", "LuaValue"), ("opts", "LuaValue?")],
-        "Result<string, string>",
-        "Serialise a section table back to an INI string. The empty-string section is emitted first as section-less keys.",
-    );
+    m.declared(stringify::lua(), lua.create_function(stringify)?)?;
 
     Ok(m)
 }
 
+/// Parse an INI string into a table of sections. Section-less keys land under the empty-string key; bare keys become `true`.
+#[neoc_macros::lua_fn(returns = "Result<LuaValue, string>", names(opts_table = "opts"))]
 #[instrument(name = "ini.parse", target = "lua::lib::ini", skip_all)]
 fn parse(
     lua: &Lua,
@@ -258,6 +248,8 @@ fn read_opts(opts_table: Option<Table>) -> mlua::Result<ParseOpts> {
 // Stringify
 // ---------------------------------------------------------------------------
 
+/// Serialise a section table back to an INI string. The empty-string section is emitted first as section-less keys.
+#[neoc_macros::lua_fn(returns = "Result<string, string>", names(opts_table = "opts"))]
 #[instrument(name = "ini.stringify", target = "lua::lib::ini", skip_all)]
 fn stringify(
     lua: &Lua,

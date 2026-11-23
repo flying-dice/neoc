@@ -30,13 +30,10 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:workers")?;
 
-    m.set("on_shutdown", lua.create_function(shutdown_signal_fn)?)?;
-    m.record_fn(
-        "on_shutdown",
-        &[],
-        "ShutdownSignal",
-        "Return the process-global `ShutdownSignal`. Fires on Ctrl-C (SIGINT).",
-    );
+    m.declared(
+        shutdown_signal_fn::lua(),
+        lua.create_function(shutdown_signal_fn)?,
+    )?;
 
     // Backwards compat alias — deprecated, prefer on_shutdown().
     m.set("shutdown_signal", lua.create_function(shutdown_signal_fn)?)?;
@@ -48,18 +45,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     );
 
     m.userdata("ShutdownSignal", |s| {
-        s.method(
-            "is_fired",
-            &[],
-            "bool",
-            "Return `true` if the signal has already fired. Non-blocking.",
-        )
-        .method(
-            "wait",
-            &[],
-            "()",
-            "Yield the calling coroutine until the signal fires; returns immediately if already fired.",
-        );
+        ShutdownSignal::lua(s);
     });
 
     Ok(m)
@@ -112,9 +98,14 @@ impl ShutdownSignal {
     }
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for ShutdownSignal {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Return `true` if the signal has already fired. Non-blocking.
+        #[lua("bool")]
         methods.add_method("is_fired", |_, this, _: ()| Ok(this.is_fired()));
+        /// Yield the calling coroutine until the signal fires; returns immediately if already fired.
+        #[lua("()")]
         async_method(methods, "wait", Role::Wait, |_, this, (): ()| {
             let signal = this.clone();
             async move {
@@ -125,6 +116,8 @@ impl UserData for ShutdownSignal {
     }
 }
 
+/// Return the process-global `ShutdownSignal`. Fires on Ctrl-C (SIGINT).
+#[neoc_macros::lua_fn(name = "on_shutdown", returns = "ShutdownSignal")]
 fn shutdown_signal_fn(_: &Lua, _: ()) -> mlua::Result<ShutdownSignal> {
     Ok(ShutdownSignal::current())
 }

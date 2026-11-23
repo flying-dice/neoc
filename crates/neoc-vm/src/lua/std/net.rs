@@ -51,18 +51,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     // `require("std:net").TcpListener.bind(addr)`
     m.type_("TcpListener", |t| {
+        Listener::lua(t);
         t.try_constructor(
             "bind",
             &[("addr", "string")],
             "Bind a TCP socket to `addr` (e.g. `\"0.0.0.0:3000\"`). Returns a listener handle on success.",
             |lua, addr: String| bind(&addr).map(|l| Listener::new(lua, l)),
-        )?
-        .method(
-            "addr",
-            &[],
-            "string",
-            "Return the local address the socket is bound to, as a string like `\"127.0.0.1:8080\"`.",
-        );
+        )?;
         Ok(())
     })?;
 
@@ -260,8 +255,11 @@ impl crate::lua::std::thread::Sendable for Listener {
     }
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for Listener {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Return the local address the socket is bound to, as a string like `"127.0.0.1:8080"`.
+        #[lua("string")]
         methods.add_method("addr", |_, this, _: ()| match this.local_addr() {
             Ok(a) => Ok(a.to_string()),
             Err(e) => Err(mlua::Error::external(e)),

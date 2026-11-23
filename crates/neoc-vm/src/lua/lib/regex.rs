@@ -46,109 +46,26 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     pattern_sub.set("new", lua.create_function(pattern_new)?)?;
     m.set("Pattern", pattern_sub)?;
 
-    m.set("is_match", lua.create_function(flat_is_match)?)?;
-    m.record_fn(
-        "is_match",
-        &[
-            ("pattern", "string"),
-            ("text", "string"),
-            ("flags", "string?"),
-        ],
-        "Result<bool, string>",
-        "Compile-and-test in one call. Returns `(nil, err)` on a pattern error.",
-    );
+    m.declared(flat_is_match::lua(), lua.create_function(flat_is_match)?)?;
 
-    m.set("find", lua.create_function(flat_find)?)?;
-    m.record_fn(
-        "find",
-        &[("pattern", "string"), ("text", "string"), ("flags", "string?")],
-        "Result<LuaValue, string>",
-        "Compile-and-find-first in one call. Returns the `Match` table on a hit, `(nil, nil)` on a clean miss, `(nil, err)` on a pattern error.",
-    );
+    m.declared(flat_find::lua(), lua.create_function(flat_find)?)?;
 
-    m.set("find_all", lua.create_function(flat_find_all)?)?;
-    m.record_fn(
-        "find_all",
-        &[("pattern", "string"), ("text", "string"), ("flags", "string?")],
-        "Result<LuaValue, string>",
-        "Compile-and-find-all in one call. Returns a (possibly empty) array of `Match` tables, or `(nil, err)` on a pattern error.",
-    );
+    m.declared(flat_find_all::lua(), lua.create_function(flat_find_all)?)?;
 
-    m.set("replace", lua.create_function(flat_replace)?)?;
-    m.record_fn(
-        "replace",
-        &[("pattern", "string"), ("text", "string"), ("replacement", "string"), ("flags", "string?")],
-        "Result<string, string>",
-        "Replace the first match. Substitution grammar uses `$0`, `$1`, `${name}` per the regex crate.",
-    );
+    m.declared(flat_replace::lua(), lua.create_function(flat_replace)?)?;
 
-    m.set("replace_all", lua.create_function(flat_replace_all)?)?;
-    m.record_fn(
-        "replace_all",
-        &[
-            ("pattern", "string"),
-            ("text", "string"),
-            ("replacement", "string"),
-            ("flags", "string?"),
-        ],
-        "Result<string, string>",
-        "Replace every match. Substitution grammar as `replace`.",
-    );
+    m.declared(
+        flat_replace_all::lua(),
+        lua.create_function(flat_replace_all)?,
+    )?;
 
-    m.set("split", lua.create_function(flat_split)?)?;
-    m.record_fn(
-        "split",
-        &[("pattern", "string"), ("text", "string"), ("limit", "number?"), ("flags", "string?")],
-        "Result<LuaValue, string>",
-        "Split `text` on every match of `pattern`. `limit` caps the parts (`0`/`nil` unlimited); negative limits return `(nil, err)`.",
-    );
+    m.declared(flat_split::lua(), lua.create_function(flat_split)?)?;
 
-    m.set("escape", lua.create_function(flat_escape)?)?;
-    m.record_fn(
-        "escape",
-        &[("text", "string")],
-        "string",
-        "Escape every regex metacharacter in `text` so the result matches `text` literally.",
-    );
+    m.declared(flat_escape::lua(), lua.create_function(flat_escape)?)?;
 
     m.userdata("Pattern", |p| {
-        p.method(
-            "is_match",
-            &[("text", "string")],
-            "bool",
-            "True iff `text` contains at least one match.",
-        )
-        .method(
-            "find",
-            &[("text", "string")],
-            "LuaValue",
-            "First match in `text`, or `nil` if none.",
-        )
-        .method(
-            "find_all",
-            &[("text", "string")],
-            "LuaValue",
-            "Every non-overlapping match in `text`, in order. Empty when nothing matches.",
-        )
-        .method(
-            "replace",
-            &[("text", "string"), ("replacement", "string")],
-            "string",
-            "Replace the first match in `text`. Uses the regex crate's `$0` / `$1` / `${name}` substitution grammar.",
-        )
-        .method(
-            "replace_all",
-            &[("text", "string"), ("replacement", "string")],
-            "string",
-            "Replace every match. Substitution grammar as `replace`.",
-        )
-        .method(
-            "split",
-            &[("text", "string"), ("limit", "number?")],
-            "Result<LuaValue, string>",
-            "Split `text` on every match. `limit` caps the parts (`0`/`nil` unlimited); negative limits return `(nil, err)`.",
-        )
-        .static_fn(
+        PatternHandle::lua(p);
+        p.static_fn(
             "new",
             &[("pattern", "string"), ("flags", "string?")],
             "Result<Pattern, string>",
@@ -183,12 +100,17 @@ impl PatternHandle {
     }
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for PatternHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// True iff `text` contains at least one match.
+        #[lua("bool")]
         methods.add_method("is_match", |_, this, text: String| {
             Ok(this.compiled.is_match(&text))
         });
 
+        /// First match in `text`, or `nil` if none.
+        #[lua("LuaValue")]
         methods.add_method("find", |lua, this, text: String| {
             match this.compiled.captures(&text) {
                 Some(caps) => Ok(Some(build_match(lua, &this.compiled, &caps)?)),
@@ -196,6 +118,8 @@ impl UserData for PatternHandle {
             }
         });
 
+        /// Every non-overlapping match in `text`, in order. Empty when nothing matches.
+        #[lua("LuaValue")]
         methods.add_method("find_all", |lua, this, text: String| {
             let t = lua.create_table()?;
             for (i, caps) in this.compiled.captures_iter(&text).enumerate() {
@@ -204,6 +128,8 @@ impl UserData for PatternHandle {
             Ok(t)
         });
 
+        /// Replace the first match in `text`. Uses the regex crate's `$0` / `$1` / `${name}` substitution grammar.
+        #[lua("string")]
         methods.add_method(
             "replace",
             |_, this, (text, replacement): (String, String)| {
@@ -214,6 +140,8 @@ impl UserData for PatternHandle {
             },
         );
 
+        /// Replace every match. Substitution grammar as `replace`.
+        #[lua("string")]
         methods.add_method(
             "replace_all",
             |_, this, (text, replacement): (String, String)| {
@@ -224,6 +152,8 @@ impl UserData for PatternHandle {
             },
         );
 
+        /// Split `text` on every match. `limit` caps the parts (`0`/`nil` unlimited); negative limits return `(nil, err)`.
+        #[lua("Result<LuaValue, string>")]
         methods.add_method(
             "split",
             |lua, this, (text, limit): (String, Option<i64>)| {
@@ -265,6 +195,8 @@ macro_rules! compile_or_return {
     };
 }
 
+/// Compile-and-test in one call. Returns `(nil, err)` on a pattern error.
+#[neoc_macros::lua_fn(name = "is_match", returns = "Result<bool, string>")]
 #[instrument(name = "regex.is_match", target = "lua::lib::regex", skip_all)]
 fn flat_is_match(
     lua: &Lua,
@@ -274,6 +206,8 @@ fn flat_is_match(
     ok(lua, p.compiled.is_match(&text))
 }
 
+/// Compile-and-find-first in one call. Returns the `Match` table on a hit, `(nil, nil)` on a clean miss, `(nil, err)` on a pattern error.
+#[neoc_macros::lua_fn(name = "find", returns = "Result<LuaValue, string>")]
 #[instrument(name = "regex.find", target = "lua::lib::regex", skip_all)]
 fn flat_find(
     lua: &Lua,
@@ -286,6 +220,8 @@ fn flat_find(
     }
 }
 
+/// Compile-and-find-all in one call. Returns a (possibly empty) array of `Match` tables, or `(nil, err)` on a pattern error.
+#[neoc_macros::lua_fn(name = "find_all", returns = "Result<LuaValue, string>")]
 #[instrument(name = "regex.find_all", target = "lua::lib::regex", skip_all)]
 fn flat_find_all(
     lua: &Lua,
@@ -299,6 +235,8 @@ fn flat_find_all(
     ok(lua, t)
 }
 
+/// Replace the first match. Substitution grammar uses `$0`, `$1`, `${name}` per the regex crate.
+#[neoc_macros::lua_fn(name = "replace", returns = "Result<string, string>")]
 #[instrument(name = "regex.replace", target = "lua::lib::regex", skip_all)]
 fn flat_replace(
     lua: &Lua,
@@ -311,6 +249,8 @@ fn flat_replace(
     )
 }
 
+/// Replace every match. Substitution grammar as `replace`.
+#[neoc_macros::lua_fn(name = "replace_all", returns = "Result<string, string>")]
 #[instrument(name = "regex.replace_all", target = "lua::lib::regex", skip_all)]
 fn flat_replace_all(
     lua: &Lua,
@@ -325,6 +265,8 @@ fn flat_replace_all(
     )
 }
 
+/// Split `text` on every match of `pattern`. `limit` caps the parts (`0`/`nil` unlimited); negative limits return `(nil, err)`.
+#[neoc_macros::lua_fn(name = "split", returns = "Result<LuaValue, string>")]
 #[instrument(name = "regex.split", target = "lua::lib::regex", skip_all)]
 fn flat_split(
     lua: &Lua,
@@ -334,6 +276,8 @@ fn flat_split(
     split_into_table(lua, &p.compiled, &text, limit, "regex.split")
 }
 
+/// Escape every regex metacharacter in `text` so the result matches `text` literally.
+#[neoc_macros::lua_fn(name = "escape")]
 #[instrument(name = "regex.escape", target = "lua::lib::regex", skip_all)]
 fn flat_escape(_: &Lua, text: String) -> mlua::Result<String> {
     Ok(regex::escape(&text))

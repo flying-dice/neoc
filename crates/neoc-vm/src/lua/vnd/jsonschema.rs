@@ -61,8 +61,11 @@ fn lua_value_to_jv(value: &Value) -> mlua::Result<JV> {
     serde_json::to_value(value).map_err(mlua::Error::external)
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for JSchema {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Fast validation gate: whether `value` conforms to the schema, short-circuiting on the first error.
+        #[lua("bool")]
         methods.add_method("is_valid", |_, this, value: Value| {
             // Surface a conversion failure rather than masquerading it as
             // "invalid" — a non-encodable input is a caller bug, not a schema miss.
@@ -71,6 +74,8 @@ impl UserData for JSchema {
             Ok(this.inner.is_valid(&jv))
         });
 
+        /// Full validation run, returning a `ValidationResult` exposing every error message.
+        #[lua("ValidationResult")]
         methods.add_method("validate", |_, this, value: Value| {
             refuse_buffer(&value, "jsonschema.Schema.validate")?;
             let jv = match lua_value_to_jv(&value) {
@@ -98,9 +103,14 @@ pub struct JValidationResult {
     errors: Vec<String>,
 }
 
+#[neoc_macros::lua_userdata]
 impl UserData for JValidationResult {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Whether the validated value passed.
+        #[lua("bool")]
         methods.add_method("ok", |_, this, _: ()| Ok(this.valid));
+        /// All validation error messages as a 1-indexed table of strings; empty when ok.
+        #[lua("LuaValue")]
         methods.add_method("errors", |lua, this, _: ()| {
             let t = lua.create_table_with_capacity(this.errors.len(), 0)?;
             for (i, e) in this.errors.iter().enumerate() {
@@ -166,28 +176,11 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     );
 
     m.userdata("Schema", |s| {
-        s.method(
-            "is_valid",
-            &[("value", "LuaValue")],
-            "bool",
-            "Fast validation gate: whether `value` conforms to the schema, short-circuiting on the first error.",
-        )
-        .method(
-            "validate",
-            &[("value", "LuaValue")],
-            "ValidationResult",
-            "Full validation run, returning a `ValidationResult` exposing every error message.",
-        );
+        JSchema::lua(s);
     });
 
     m.userdata("ValidationResult", |r| {
-        r.method("ok", &[], "bool", "Whether the validated value passed.")
-            .method(
-                "errors",
-                &[],
-                "LuaValue",
-                "All validation error messages as a 1-indexed table of strings; empty when ok.",
-            );
+        JValidationResult::lua(r);
     });
 
     Ok(m)
