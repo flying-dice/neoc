@@ -121,7 +121,7 @@ impl Stream {
     }
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("vnd:bollard", "Stream")]
 impl UserData for Stream {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Wait for the next item. `(nil, nil)` is the end: Docker sent everything, or the stream was closed. `(nil, err)` is a failure, and ends the stream too. It waits like `task.wait`: other tasks run while it does.

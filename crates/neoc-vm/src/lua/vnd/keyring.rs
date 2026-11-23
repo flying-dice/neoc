@@ -42,7 +42,7 @@ use mlua::{IntoLua, Lua, LuaString, Table, UserData, UserDataMethods, Value};
 use tracing::Instrument;
 
 use crate::lua::error_text;
-use crate::lua::facade::Module;
+use crate::lua::facade::{Bytes, DeclType, List, Module, typed};
 use crate::lua::lifecycle::{Role, async_function, async_method};
 use crate::lua::sandbox::{Fallible, from_err, ok};
 
@@ -57,9 +57,6 @@ use error::{KeyringError, Kind};
 const CHOICE: &str = "NEOC_KEYRING";
 const MOCK: &str = "mock";
 
-const ENTRY: &str = "Result<Entry, string>";
-const DONE: &str = "Result<bool, string>";
-
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(declare(lua)?.into_table())
 }
@@ -71,17 +68,15 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:keyring")?;
 
-    let store = async_function(lua, Role::Wait, |lua, ()| {
-        let op = "keyring.store";
-        async move {
-            let opened = blocking(|| default_store().map(Reply::Store)).await;
-            reply(&lua, op, opened)
-        }
-        .instrument(span(op))
-    })?;
     /// The operating system's credential store: Keychain Services on macOS (the login keychain), the Credential Manager on Windows, the Secret Service on Linux and the other Unixes. A machine that has none, or whose store cannot be opened, is `no_store`. With `NEOC_KEYRING=mock` in the environment it is a mock store instead, one for the whole process (see `mock`). A script given this module is trusted with the secrets of the user it runs as. Errors are `keyring.<function>: <kind>: <message>` (see `error_kind`).
-    #[lua("Result<Store, string>", takes())]
-    m.set("store", store)?;
+    #[lua]
+    m.set(
+        "store",
+        async_function(lua, Role::Wait, |_, ()| {
+            let op = "keyring.store";
+            async move { reply(op, blocking(default_store).await) }.instrument(span(op))
+        })?,
+    )?;
 
     m.declared(
         mock_store::lua(),
@@ -176,40 +171,19 @@ fn mock_store() -> Result<Store, KeyringError> {
 // Calls
 // ---------------------------------------------------------------------------
 
-/// What a finished call hands the script.
-enum Reply {
-    /// It was done (`true`), or there was nothing to do it to (`false`: `delete_credential`).
-    Done(bool),
-    /// There is no such credential, and that is an answer: `nil`.
-    Missing,
-    Password(String),
-    Secret(Vec<u8>),
-    Store(Store),
-    Entry(Entry),
-    Entries(Vec<Entry>),
-}
-
-fn reply(
-    lua: &Lua,
-    op: &str,
-    result: Result<Reply, KeyringError>,
-) -> mlua::Result<Fallible<Value>> {
+/// What a finished call hands the script: its value, or `nil` and why not.
+fn reply<R>(op: &str, result: Result<R, KeyringError>) -> mlua::Result<Fallible<R>> {
     match result {
-        Ok(Reply::Done(done)) => ok(Value::Boolean(done)),
-        Ok(Reply::Missing) => ok(Value::Nil),
-        Ok(Reply::Password(password)) => ok(password.into_lua(lua)?),
-        Ok(Reply::Secret(secret)) => ok(Value::String(lua.create_string(&secret)?)),
-        Ok(Reply::Store(store)) => ok(store.into_lua(lua)?),
-        Ok(Reply::Entry(entry)) => ok(entry.into_lua(lua)?),
-        Ok(Reply::Entries(entries)) => ok(entries.into_lua(lua)?),
+        Ok(value) => ok(value),
         Err(e) => from_err(op, e),
     }
 }
 
 /// Runs `job` on the blocking pool and waits for it: a store call is the platform's, and may wait for the person.
-async fn blocking<F>(job: F) -> Result<Reply, KeyringError>
+async fn blocking<F, R>(job: F) -> Result<R, KeyringError>
 where
-    F: FnOnce() -> Result<Reply, KeyringError> + Send + 'static,
+    F: FnOnce() -> Result<R, KeyringError> + Send + 'static,
+    R: Send + 'static,
 {
     // Do nothing on the first poll. mlua polls a host call once before it tries to yield, and where Luau refuses
     // the yield (a `gsub` callback, a metamethod) it drops the call after that poll: a job started now would write
@@ -224,21 +198,24 @@ where
 }
 
 /// Register the method `op` (`keyring.<method>`) of a store or an entry. `prepare` reads the arguments in the
-/// synchronous part of the call; `run` is the store call, made on the blocking pool.
-fn call<T, M, A, P>(
+/// synchronous part of the call; `run` is the store call, made on the blocking pool, and what it gives is what
+/// the method is declared to return.
+fn call<T, M, A, P, R>(
     methods: &mut M,
     op: &'static str,
     prepare: impl Fn(A) -> Result<P, KeyringError> + Send + 'static,
-    run: impl Fn(&T, P) -> Result<Reply, KeyringError> + Send + Sync + 'static,
+    run: impl Fn(&T, P) -> Result<R, KeyringError> + Send + Sync + 'static,
 ) where
+    R: IntoLua + DeclType + Send + 'static,
     T: Clone + Send + Sync + 'static,
     M: UserDataMethods<T>,
     A: mlua::FromLuaMulti,
     P: Send + 'static,
 {
+    typed::answers::<Fallible<R>>();
     let run = Arc::new(run);
     let name = op.strip_prefix("keyring.").unwrap_or(op);
-    async_method(methods, name, Role::Wait, move |lua, this, args: A| {
+    async_method(methods, name, Role::Wait, move |_, this, args: A| {
         let this: T = this.clone();
         let prepared = prepare(args);
         let run = Arc::clone(&run);
@@ -247,7 +224,7 @@ fn call<T, M, A, P>(
                 Ok(prepared) => blocking(move || run(&this, prepared)).await,
                 Err(e) => Err(e),
             };
-            reply(&lua, op, result)
+            reply(op, result)
         }
         .instrument(span(op))
     });
@@ -285,10 +262,11 @@ fn spec_of(spec: Option<Table>) -> Result<HashMap<String, String>, KeyringError>
 }
 
 /// A read for which "the store has no such credential" is the answer `nil`.
-fn found(read: Result<Reply, Error>) -> Result<Reply, KeyringError> {
+fn found<R>(read: Result<R, Error>) -> Result<Option<R>, KeyringError> {
     match read {
-        Err(Error::NoEntry) => Ok(Reply::Missing),
-        other => other.map_err(KeyringError::from),
+        Ok(value) => Ok(Some(value)),
+        Err(Error::NoEntry) => Ok(None),
+        Err(e) => Err(e.into()),
     }
 }
 
@@ -296,7 +274,7 @@ fn found(read: Result<Reply, Error>) -> Result<Reply, KeyringError> {
 impl UserData for Store {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// The entry for a service and a user in this store. Nothing is read or written: the credential need not exist. What a store accepts as a service or a user is its own (`invalid_input`).
-        #[lua(returns = ENTRY, name = "entry", takes("service: string", "user: string"))]
+        #[lua(name = "entry", takes("service: string", "user: string"))]
         call(
             methods,
             "keyring.entry",
@@ -305,17 +283,13 @@ impl UserData for Store {
             },
             |store: &Store, (service, user)| {
                 let entry = Credential::new_in_store(&store.inner, &service, &user)?;
-                Ok(Reply::Entry(Entry {
+                Ok(Entry {
                     inner: Arc::new(entry),
-                }))
+                })
             },
         );
         /// The entries of the credentials that match `spec`, whose keys are the store's own: macOS takes `service` and `user` (exact, and every generic password of the login keychain without them), the Secret Service takes any attribute (`service`, `username`, ...), a mock store matches `service` and `user` as substrings. A store with no search (the Windows Credential Manager) is `unsupported`. On the Secret Service a search may ask the person to unlock.
-        #[lua(
-            "Result<{ Entry }, string>",
-            name = "search",
-            takes("spec: { [string]: string }?")
-        )]
+        #[lua(name = "search", takes("spec: { [string]: string }?"))]
         call(methods, "keyring.search", spec_of, |store: &Store, spec| {
             let spec: HashMap<&str, &str> = spec
                 .iter()
@@ -327,7 +301,7 @@ impl UserData for Store {
                     inner: Arc::new(entry),
                 })
                 .collect();
-            Ok(Reply::Entries(entries))
+            Ok(List(entries))
         });
     }
 }
@@ -336,52 +310,52 @@ impl UserData for Store {
 impl UserData for Entry {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// The credential's secret as text, or `(nil, nil)` when the store has no such credential. A secret that is not UTF-8 is `bad_encoding` (read it with `get_secret`). The platform may ask the person first, and the call waits for them.
-        #[lua("Result<string, string>", name = "get_password", takes())]
+        #[lua(name = "get_password", takes())]
         call(
             methods,
             "keyring.get_password",
             nothing,
-            |entry: &Entry, ()| found(entry.inner.get_password().map(Reply::Password)),
+            |entry: &Entry, ()| found(entry.inner.get_password()),
         );
         /// Store text as the credential's secret: the credential is made, or its secret replaced.
-        #[lua(returns = DONE, name = "set_password", takes("password: string"))]
+        #[lua(name = "set_password", takes("password: string"))]
         call(
             methods,
             "keyring.set_password",
             |password: LuaString| text(&password, "the password"),
             |entry: &Entry, password| {
                 entry.inner.set_password(&password)?;
-                Ok(Reply::Done(true))
+                Ok(true)
             },
         );
         /// The credential's secret as the bytes the store holds (a string of bytes), or `(nil, nil)` when the store has no such credential.
-        #[lua("Result<string, string>", name = "get_secret", takes())]
+        #[lua(name = "get_secret", takes())]
         call(
             methods,
             "keyring.get_secret",
             nothing,
-            |entry: &Entry, ()| found(entry.inner.get_secret().map(Reply::Secret)),
+            |entry: &Entry, ()| found(entry.inner.get_secret().map(Bytes)),
         );
         /// Store bytes (a string of bytes) as the credential's secret: the credential is made, or its secret replaced.
-        #[lua(returns = DONE, name = "set_secret", takes("secret: string"))]
+        #[lua(name = "set_secret", takes("secret: string"))]
         call(
             methods,
             "keyring.set_secret",
             |secret: LuaString| Ok(secret.as_bytes().to_vec()),
             |entry: &Entry, secret| {
                 entry.inner.set_secret(&secret)?;
-                Ok(Reply::Done(true))
+                Ok(true)
             },
         );
         /// Delete the credential from the store: `true`, or `false` when the store had no such credential.
-        #[lua(returns = DONE, name = "delete_credential", takes())]
+        #[lua(name = "delete_credential", takes())]
         call(
             methods,
             "keyring.delete_credential",
             nothing,
             |entry: &Entry, ()| match entry.inner.delete_credential() {
-                Ok(()) => Ok(Reply::Done(true)),
-                Err(Error::NoEntry) => Ok(Reply::Done(false)),
+                Ok(()) => Ok(true),
+                Err(Error::NoEntry) => Ok(false),
                 Err(e) => Err(e.into()),
             },
         );

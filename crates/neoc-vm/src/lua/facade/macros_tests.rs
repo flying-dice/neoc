@@ -580,3 +580,96 @@ fn a_recording_that_panics_leaves_no_notes_behind() {
     super::typed::record::<Probe>(&mut spec);
     assert_eq!(spec.0.first().map(String::as_str), Some("reading"));
 }
+
+/// What a reading left: a table to a script, and the declaration is its fields.
+#[neoc_macros::lua_record(into, from)]
+struct Left {
+    code: Option<i64>,
+    r#type: String,
+}
+
+#[test]
+fn a_record_is_a_table_both_ways_and_refuses_what_is_not_one() {
+    use super::DeclType;
+    assert_eq!(Left::decl_type(), "{ code: number?, type: string }");
+    let lua = Lua::new();
+    let left = Left {
+        code: None,
+        r#type: "done".to_owned(),
+    };
+    lua.globals().set("left", left).expect("set");
+    let back: Left = lua
+        .load("assert(left.code == nil and left.type == 'done'); return { code = 3, type = 'x' }")
+        .eval()
+        .expect("a table of the fields is the record");
+    assert_eq!((back.code, back.r#type.as_str()), (Some(3), "x"));
+    let unknown = lua
+        .load("return { type = 'x', kind = 1 }")
+        .eval::<Left>()
+        .map_or_else(|e| e.to_string(), |_| String::new());
+    assert!(unknown.contains("unknown key kind"), "{unknown}");
+    assert!(lua.load("return 7").eval::<Left>().is_err());
+    assert!(lua.load("return { code = 3 }").eval::<Left>().is_err());
+}
+
+/// A type whose member a helper adds: the statement says the name and the parameters, the helper the return.
+struct Helped;
+
+fn helped<M: UserDataMethods<Helped>, R>(methods: &mut M, name: &str, value: fn() -> R)
+where
+    R: mlua::IntoLua + super::DeclType + 'static,
+{
+    super::typed::answers::<R>();
+    #[allow(clippy::disallowed_methods)]
+    methods.add_method(name, move |_, _, ()| Ok(value()));
+}
+
+fn silent<M: UserDataMethods<Unanswered>>(_: &mut M) {}
+
+#[neoc_macros::lua_userdata("vnd:typed", "Helped")]
+impl UserData for Helped {
+    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// How many.
+        #[lua(name = "count", takes())]
+        helped(methods, "count", || 3_i64);
+        /// What was left.
+        #[lua(name = "left", takes("after: number"))]
+        helped(methods, "left", || None::<String>);
+    }
+}
+
+struct Unanswered;
+
+#[neoc_macros::lua_userdata]
+impl UserData for Unanswered {
+    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        #[lua(name = "lost", takes())]
+        silent(methods);
+    }
+}
+
+#[test]
+fn a_helper_answers_for_the_member_it_adds_and_silence_is_refused() {
+    struct Spec(Vec<String>);
+    impl super::Members for Spec {
+        fn method(&mut self, name: &str, params: &[(&str, &str)], ret: &str, _: &str) {
+            self.0.push(format!("{name}({}) -> {ret}", params.len()));
+        }
+        fn function(&mut self, _: &str, _: &[(&str, &str)], _: &str, _: &str) {}
+        fn field(&mut self, _: &str, _: &str, _: &str) {}
+    }
+    let mut spec = Spec(Vec::new());
+    Helped::lua(&mut spec);
+    assert_eq!(spec.0, ["count(0) -> number", "left(1) -> string?"]);
+    let lost = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        Unanswered::lua(&mut Spec(Vec::new()));
+    }));
+    let message = lost
+        .err()
+        .and_then(|e| e.downcast_ref::<String>().cloned())
+        .unwrap_or_default();
+    assert!(
+        message.contains("`lost`: nothing says what it returns"),
+        "{message}"
+    );
+}

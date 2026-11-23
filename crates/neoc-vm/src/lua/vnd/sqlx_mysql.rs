@@ -37,7 +37,7 @@ use tracing::instrument;
 use tracing::log::LevelFilter;
 
 use super::split_sql_args;
-use crate::lua::facade::Module;
+use crate::lua::facade::{Module, typed};
 use crate::lua::lifecycle::{Role, async_function, async_method};
 use crate::lua::sandbox::{Fallible, from_err, i64_to_lua, ok};
 
@@ -116,7 +116,7 @@ macro_rules! db_op {
             $methods,
             $name,
             Role::Wait,
-            |lua, this, args: MultiValue| {
+            typed::answering::<Self, _, _, _, _>(|lua, this, args: MultiValue| {
                 let pool = this.pool.clone();
                 async move {
                     let (sql, params) = match split_sql_args(args) {
@@ -125,7 +125,7 @@ macro_rules! db_op {
                     };
                     $run(&lua, &pool, $op, &sql, params).await
                 }
-            },
+            }),
         );
     };
 }
@@ -136,14 +136,14 @@ macro_rules! stmt_op {
             $methods,
             $name,
             Role::Wait,
-            |lua, this, args: MultiValue| {
+            typed::answering::<Self, _, _, _, _>(|lua, this, args: MultiValue| {
                 let sql = this.sql.clone();
                 let pool = this.pool.clone();
                 async move {
                     let params = args.into_iter().collect();
                     $run(&lua, &pool, $op, &sql, params).await
                 }
-            },
+            }),
         );
     };
 }
@@ -152,25 +152,13 @@ macro_rules! stmt_op {
 impl UserData for Database {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Execute a SQL statement, binding trailing arguments to `?` placeholders; returns rows affected.
-        #[lua(
-            "Result<number, string>",
-            name = "execute",
-            takes("sql: string", "...: LuaValue")
-        )]
+        #[lua(name = "execute", takes("sql: string", "...: LuaValue"))]
         db_op!(methods, "execute", "sqlx_mysql.execute", run_execute);
         /// Execute a SELECT and return all rows as a 1-indexed table of column-keyed row tables.
-        #[lua(
-            "Result<LuaValue, string>",
-            name = "query",
-            takes("sql: string", "...: LuaValue")
-        )]
+        #[lua(name = "query", takes("sql: string", "...: LuaValue"))]
         db_op!(methods, "query", "sqlx_mysql.query", run_query);
         /// Execute a SELECT and return the first matching row, or nil when none matched.
-        #[lua(
-            "Result<LuaValue, string>",
-            name = "query_one",
-            takes("sql: string", "...: LuaValue")
-        )]
+        #[lua(name = "query_one", takes("sql: string", "...: LuaValue"))]
         db_op!(methods, "query_one", "sqlx_mysql.query_one", run_query_one);
 
         /// Prepare a SQL statement for repeated execution, sharing this connection pool.
@@ -206,13 +194,13 @@ pub struct Statement {
 impl UserData for Statement {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Execute the prepared statement with positional parameters; returns rows affected.
-        #[lua("Result<number, string>", name = "execute", takes("...: LuaValue"))]
+        #[lua(name = "execute", takes("...: LuaValue"))]
         stmt_op!(methods, "execute", "mysql.statement.execute", run_execute);
         /// Execute the prepared SELECT and return all rows.
-        #[lua("Result<LuaValue, string>", name = "query", takes("...: LuaValue"))]
+        #[lua(name = "query", takes("...: LuaValue"))]
         stmt_op!(methods, "query", "mysql.statement.query", run_query);
         /// Execute the prepared SELECT and return the first matching row, or nil when none matched.
-        #[lua("Result<LuaValue, string>", name = "query_one", takes("...: LuaValue"))]
+        #[lua(name = "query_one", takes("...: LuaValue"))]
         stmt_op!(
             methods,
             "query_one",

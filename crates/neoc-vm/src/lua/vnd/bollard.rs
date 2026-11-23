@@ -61,14 +61,14 @@ use ::bollard::models::{
 use ::bollard::query_parameters as query;
 use ::bollard::{API_DEFAULT_VERSION, Docker};
 use futures::StreamExt;
-use mlua::{Lua, Table, UserData, UserDataMethods, Value};
+use mlua::{IntoLua, Lua, Table, UserData, UserDataMethods, Value};
 use serde::Serialize;
 use serde_json::Value as Json;
 use tokio::sync::OnceCell;
 use tracing::Instrument;
 
 use crate::lua::error_text;
-use crate::lua::facade::Module;
+use crate::lua::facade::{Bytes, DeclType, Module, typed};
 use crate::lua::lifecycle::{Life, Role, async_method};
 use crate::lua::sandbox::{Fallible, from_err, ok};
 
@@ -95,9 +95,6 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 
 const FILTERS: &str = "filters: { [string]: any }?";
 const BODY: &str = "{ [string]: any }";
-const TABLE: &str = "Result<LuaValue, string>";
-const DONE: &str = "Result<bool, string>";
-const STREAM: &str = "Result<Stream, string>";
 
 /// Declares the `vnd:bollard` surface through the facade. `connect`, `error_kind` and `error_message` are plain
 /// functions; the `Client` and `Stream` types keep their own `impl UserData` and are recorded with
@@ -271,49 +268,40 @@ fn local_sockets() -> Vec<PathBuf> {
 // Calls
 // ---------------------------------------------------------------------------
 
-/// What a finished call hands the script.
-enum Reply {
-    /// It was done: `true`.
-    Done,
-    /// There is no such thing, and that is an answer: `nil` (`inspect_container`).
-    Missing,
-    /// Docker's answer, as a table.
-    Table(Json),
-    /// What a command run by `exec` left.
-    Exec {
-        exit_code: Option<i64>,
-        stdout: Vec<u8>,
-        stderr: Vec<u8>,
-    },
+/// Docker's answer, which a script gets as a table.
+struct Answer(Json);
+
+impl IntoLua for Answer {
+    fn into_lua(self, lua: &Lua) -> mlua::Result<Value> {
+        stream::to_lua(lua, &self.0)
+    }
+}
+
+impl DeclType for Answer {
+    fn decl_type() -> String {
+        Value::decl_type()
+    }
+}
+
+/// What a command run by `exec` left.
+#[neoc_macros::lua_record(into)]
+struct Exec {
+    exit_code: Option<i64>,
+    stdout: Bytes,
+    stderr: Bytes,
 }
 
 /// Docker's typed answer as the JSON Docker sent.
-fn table<T: Serialize>(answer: T) -> Result<Reply, BollardError> {
+fn table<T: Serialize>(answer: T) -> Result<Answer, BollardError> {
     serde_json::to_value(answer)
-        .map(Reply::Table)
+        .map(Answer)
         .map_err(|e| BollardError::new(Kind::BadResponse, e.to_string()))
 }
 
-fn reply(
-    lua: &Lua,
-    op: &str,
-    result: Result<Reply, BollardError>,
-) -> mlua::Result<Fallible<Value>> {
+/// What a finished call hands the script: its value, or `nil` and why not.
+fn reply<R>(op: &str, result: Result<R, BollardError>) -> mlua::Result<Fallible<R>> {
     match result {
-        Ok(Reply::Done) => ok(Value::Boolean(true)),
-        Ok(Reply::Missing) => ok(Value::Nil),
-        Ok(Reply::Table(json)) => ok(stream::to_lua(lua, &json)?),
-        Ok(Reply::Exec {
-            exit_code,
-            stdout,
-            stderr,
-        }) => {
-            let result = lua.create_table()?;
-            result.set("exit_code", exit_code)?;
-            result.set("stdout", lua.create_string(&stdout)?)?;
-            result.set("stderr", lua.create_string(&stderr)?)?;
-            ok(Value::Table(result))
-        }
+        Ok(value) => ok(value),
         Err(e) => from_err(op, e),
     }
 }
@@ -324,8 +312,8 @@ type Prepared<P> = mlua::Result<Result<P, BollardError>>;
 
 /// Register the method `op` (`bollard.<method>`). `prepare` reads the arguments in the synchronous part of the
 /// call (a script table can run script code when it is read, see `vnd:hyper`'s client); `run` is the request, made
-/// after the client settled its API version.
-fn call<M, A, P, Fut>(
+/// after the client settled its API version, and what it gives is what the method is declared to return.
+fn call<M, A, P, Fut, R>(
     methods: &mut M,
     op: &'static str,
     prepare: impl Fn(&'static str, A) -> Prepared<P> + Send + 'static,
@@ -334,14 +322,16 @@ fn call<M, A, P, Fut>(
     M: UserDataMethods<Client>,
     A: mlua::FromLuaMulti,
     P: Send + 'static,
-    Fut: Future<Output = Result<Reply, BollardError>> + Send + 'static,
+    Fut: Future<Output = Result<R, BollardError>> + Send + 'static,
+    R: IntoLua + DeclType + Send + 'static,
 {
+    typed::answers::<Fallible<R>>();
     let run = Arc::new(run);
     async_method(
         methods,
         method_name(op),
         Role::Wait,
-        move |lua, this, args: A| {
+        move |_, this, args: A| {
             let client = this.clone();
             let prepared = prepare(op, args);
             let run = Arc::clone(&run);
@@ -353,7 +343,7 @@ fn call<M, A, P, Fut>(
                     },
                     Err(e) => Err(e),
                 };
-                reply(&lua, op, result)
+                reply(op, result)
             }
             .instrument(tracing::info_span!(target: "lua::lib::bollard", "bollard.call", op))
         },
@@ -373,6 +363,7 @@ fn stream_call<M, A, P, S>(
     P: Send + 'static,
     S: futures::Stream<Item = Result<Item, BollardError>> + Send + 'static,
 {
+    typed::answers::<Fallible<Stream>>();
     let source = Arc::new(source);
     methods.add_method(method_name(op), move |lua, this, args: A| {
         let prepared = match prepare(op, args)? {
@@ -464,13 +455,13 @@ impl UserData for Client {
     #[allow(clippy::too_many_lines)] // one registration per method
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Ask the daemon whether it is there: `true`, or the error (`connect` when no daemon answers).
-        #[lua(returns = DONE, name = "ping", takes())]
+        #[lua(name = "ping", takes())]
         call(methods, "bollard.ping", nothing, |docker, ()| async move {
             docker.ping().await?;
-            Ok(Reply::Done)
+            Ok(true)
         });
         /// The daemon's version: Docker's `/version` table (`Version`, `ApiVersion`, `Os`, `Arch`, ...).
-        #[lua(returns = TABLE, name = "version", takes())]
+        #[lua(name = "version", takes())]
         call(
             methods,
             "bollard.version",
@@ -478,13 +469,13 @@ impl UserData for Client {
             |docker, ()| async move { table(docker.version().await?) },
         );
         /// The daemon's system information: Docker's `/info` table (`Containers`, `Images`, `ServerVersion`, `OperatingSystem`, ...).
-        #[lua(returns = TABLE, name = "info", takes())]
+        #[lua(name = "info", takes())]
         call(methods, "bollard.info", nothing, |docker, ()| async move {
             table(docker.info().await?)
         });
 
         /// The containers, as Docker's list of summaries (`Id`, `Names`, `Image`, `State`, `Status`, `Labels`, `Ports`, ...). Only running ones unless `all`; `limit` is the most recently created ones; `size` adds `SizeRw` and `SizeRootFs`; `filters` are Docker's (`{ label = { "com.docker.compose.project=blog" }, status = "running" }`).
-        #[lua(returns = TABLE, name = "list_containers", takes(opts = format!("{{ all: bool?, limit: number?, size: bool?, {FILTERS} }}?")))]
+        #[lua(name = "list_containers", takes(opts = format!("{{ all: bool?, limit: number?, size: bool?, {FILTERS} }}?")))]
         call(
             methods,
             "bollard.list_containers",
@@ -500,7 +491,7 @@ impl UserData for Client {
             },
         );
         /// Docker's inspect table of a container, by name or id (`Id`, `State`, `Config.Labels`, `HostConfig`, `NetworkSettings`, ...), or `(nil, nil)` when there is no such container.
-        #[lua(returns = TABLE, name = "inspect_container", takes("name: string"))]
+        #[lua(name = "inspect_container", takes("name: string"))]
         call(
             methods,
             "bollard.inspect_container",
@@ -511,14 +502,14 @@ impl UserData for Client {
                     .await
                     .map_err(BollardError::from);
                 match inspected {
-                    Ok(container) => table(container),
-                    Err(e) if e.kind() == Kind::NotFound => Ok(Reply::Missing),
+                    Ok(container) => table(container).map(Some),
+                    Err(e) if e.kind() == Kind::NotFound => Ok(None),
                     Err(e) => Err(e),
                 }
             },
         );
         /// Create a container (not started) from Docker's create body, with Docker's field names: `{ name = "web", Image = "nginx", Env = { "A=1" }, Labels = { ... }, HostConfig = { Binds = { ... }, PortBindings = { ["80/tcp"] = { { HostPort = "8088" } } }, RestartPolicy = { Name = "unless-stopped" } } }`. The lower-case `name` (and `platform`) are the call's own. Returns `{ Id, Warnings }`. The image must be on the host already (`pull_image`): a missing one is `not_found`; a name in use is `conflict`.
-        #[lua(returns = TABLE, name = "create_container", takes(config = BODY))]
+        #[lua(name = "create_container", takes(config = BODY))]
         call(
             methods,
             "bollard.create_container",
@@ -551,7 +542,7 @@ impl UserData for Client {
             },
         );
         /// Start a container. Starting a running one succeeds.
-        #[lua(returns = DONE, name = "start_container", takes("name: string"))]
+        #[lua(name = "start_container", takes("name: string"))]
         call(
             methods,
             "bollard.start_container",
@@ -560,11 +551,14 @@ impl UserData for Client {
                 docker
                     .start_container(&name, None::<query::StartContainerOptions>)
                     .await?;
-                Ok(Reply::Done)
+                Ok(true)
             },
         );
         /// Stop a container: Docker sends `signal` (default the image's stop signal, usually `SIGTERM`), waits `timeout` seconds (default 10) and then kills it. Stopping a stopped one succeeds.
-        #[lua(returns = DONE, name = "stop_container", takes("name: string", "opts: { timeout: number?, signal: string? }?"))]
+        #[lua(
+            name = "stop_container",
+            takes("name: string", "opts: { timeout: number?, signal: string? }?")
+        )]
         call(
             methods,
             "bollard.stop_container",
@@ -575,11 +569,14 @@ impl UserData for Client {
                     t: opts.int("timeout")?,
                 };
                 docker.stop_container(&name, Some(options)).await?;
-                Ok(Reply::Done)
+                Ok(true)
             },
         );
         /// Stop a container as `stop_container` does and start it again.
-        #[lua(returns = DONE, name = "restart_container", takes("name: string", "opts: { timeout: number?, signal: string? }?"))]
+        #[lua(
+            name = "restart_container",
+            takes("name: string", "opts: { timeout: number?, signal: string? }?")
+        )]
         call(
             methods,
             "bollard.restart_container",
@@ -590,11 +587,14 @@ impl UserData for Client {
                     t: opts.int("timeout")?,
                 };
                 docker.restart_container(&name, Some(options)).await?;
-                Ok(Reply::Done)
+                Ok(true)
             },
         );
         /// Send a signal to a running container (default `SIGKILL`; `SIGHUP` to make a server reload). A container that is not running is `conflict`.
-        #[lua(returns = DONE, name = "kill_container", takes("name: string", "opts: { signal: string? }?"))]
+        #[lua(
+            name = "kill_container",
+            takes("name: string", "opts: { signal: string? }?")
+        )]
         call(
             methods,
             "bollard.kill_container",
@@ -604,33 +604,36 @@ impl UserData for Client {
                     signal: signal(&opts)?.unwrap_or_else(|| "SIGKILL".to_owned()),
                 };
                 docker.kill_container(&name, Some(options)).await?;
-                Ok(Reply::Done)
+                Ok(true)
             },
         );
         /// Suspend every process of a running container.
-        #[lua(returns = DONE, name = "pause_container", takes("name: string"))]
+        #[lua(name = "pause_container", takes("name: string"))]
         call(
             methods,
             "bollard.pause_container",
             named(CONTAINER),
             |docker, name| async move {
                 docker.pause_container(&name).await?;
-                Ok(Reply::Done)
+                Ok(true)
             },
         );
         /// Resume a paused container.
-        #[lua(returns = DONE, name = "unpause_container", takes("name: string"))]
+        #[lua(name = "unpause_container", takes("name: string"))]
         call(
             methods,
             "bollard.unpause_container",
             named(CONTAINER),
             |docker, name| async move {
                 docker.unpause_container(&name).await?;
-                Ok(Reply::Done)
+                Ok(true)
             },
         );
         /// Remove a container. A running one is `conflict` unless `force` (which kills it first); `volumes` removes its anonymous volumes with it.
-        #[lua(returns = DONE, name = "remove_container", takes("name: string", "opts: { force: bool?, volumes: bool? }?"))]
+        #[lua(
+            name = "remove_container",
+            takes("name: string", "opts: { force: bool?, volumes: bool? }?")
+        )]
         call(
             methods,
             "bollard.remove_container",
@@ -642,11 +645,17 @@ impl UserData for Client {
                     link: false,
                 };
                 docker.remove_container(&name, Some(options)).await?;
-                Ok(Reply::Done)
+                Ok(true)
             },
         );
         /// A container's output as a `Stream` of `{ stream = "stdout" | "stderr", data = string }` pieces (a container with a TTY sends everything as `"console"`). `tail` is how many lines from the end to start with (default all), `since` and `until` are Unix times, `timestamps` prefixes each line, `stdout = false` or `stderr = false` leaves one out. The stream ends after what there is, or with `follow` stays open for new output until the container stops. A container that does not exist is the error of the first `next()`.
-        #[lua(returns = STREAM, name = "logs", takes("name: string", "opts: { follow: bool?, stdout: bool?, stderr: bool?, tail: number?, since: number?, until: number?, timestamps: bool? }?"))]
+        #[lua(
+            name = "logs",
+            takes(
+                "name: string",
+                "opts: { follow: bool?, stdout: bool?, stderr: bool?, tail: number?, since: number?, until: number?, timestamps: bool? }?"
+            )
+        )]
         stream_call(
             methods,
             "bollard.logs",
@@ -670,7 +679,7 @@ impl UserData for Client {
             |docker, (name, options)| docker.logs(&name, Some(options)).map(output_item),
         );
         /// One reading of a container's resource use: Docker's stats table (`cpu_stats`, `memory_stats`, `networks`, `blkio_stats`, ...).
-        #[lua(returns = TABLE, name = "stats", takes("name: string"))]
+        #[lua(name = "stats", takes("name: string"))]
         call(
             methods,
             "bollard.stats",
@@ -689,7 +698,6 @@ impl UserData for Client {
         );
         /// Run a command in a running container and wait for it: `docker:exec("web", { "nginx", "-t" })`. Returns its exit code and what it wrote (at most 64 MiB together, `too_large` past that); a command that fails is a result with a non-zero `exit_code`, not an error. `env` is a list of `NAME=value`.
         #[lua(
-            "Result<{ exit_code: number?, stdout: string, stderr: string }, string>",
             name = "exec",
             takes(
                 "name: string",
@@ -717,7 +725,7 @@ impl UserData for Client {
         );
 
         /// The images on the host, as Docker's list of summaries (`Id`, `RepoTags`, `Size`, `Created`, `Containers`, ...). `all` includes intermediate layers.
-        #[lua(returns = TABLE, name = "list_images", takes(opts = format!("{{ all: bool?, digests: bool?, {FILTERS} }}?")))]
+        #[lua(name = "list_images", takes(opts = format!("{{ all: bool?, digests: bool?, {FILTERS} }}?")))]
         call(
             methods,
             "bollard.list_images",
@@ -733,7 +741,10 @@ impl UserData for Client {
             },
         );
         /// Pull an image from its registry: a `Stream` of Docker's progress tables (`status`, `id`, `progressDetail = { current, total }`), which ends when the pull is over. `nginx` pulls `nginx:latest`, never every tag. The pull runs as the stream is read and stops if the stream is closed; a pull that fails (no such image, no network) is the error of a `next()`.
-        #[lua(returns = STREAM, name = "pull_image", takes("image: string", "opts: { platform: string? }?"))]
+        #[lua(
+            name = "pull_image",
+            takes("image: string", "opts: { platform: string? }?")
+        )]
         stream_call(
             methods,
             "bollard.pull_image",
@@ -759,7 +770,10 @@ impl UserData for Client {
             },
         );
         /// Remove an image, by reference or id: Docker's list of what was untagged and deleted. An image a container uses is `conflict` unless `force`; `noprune` keeps its untagged parents.
-        #[lua(returns = TABLE, name = "remove_image", takes("image: string", "opts: { force: bool?, noprune: bool? }?"))]
+        #[lua(
+            name = "remove_image",
+            takes("image: string", "opts: { force: bool?, noprune: bool? }?")
+        )]
         call(
             methods,
             "bollard.remove_image",
@@ -781,7 +795,7 @@ impl UserData for Client {
         );
 
         /// The volumes: Docker's `{ Volumes = { ... }, Warnings }` (each volume `Name`, `Driver`, `Mountpoint`, `Labels`, ...).
-        #[lua(returns = TABLE, name = "list_volumes", takes(opts = format!("{{ {FILTERS} }}?")))]
+        #[lua(name = "list_volumes", takes(opts = format!("{{ {FILTERS} }}?")))]
         call(
             methods,
             "bollard.list_volumes",
@@ -794,7 +808,7 @@ impl UserData for Client {
             },
         );
         /// Create a volume from Docker's create body (`{ Name = "data", Labels = { ... } }`; without a `Name` Docker makes one up). Returns the volume. Creating one that exists returns it.
-        #[lua(returns = TABLE, name = "create_volume", takes(config = BODY))]
+        #[lua(name = "create_volume", takes(config = BODY))]
         call(
             methods,
             "bollard.create_volume",
@@ -805,7 +819,10 @@ impl UserData for Client {
             },
         );
         /// Remove a volume. One a container uses is `conflict`.
-        #[lua(returns = DONE, name = "remove_volume", takes("name: string", "opts: { force: bool? }?"))]
+        #[lua(
+            name = "remove_volume",
+            takes("name: string", "opts: { force: bool? }?")
+        )]
         call(
             methods,
             "bollard.remove_volume",
@@ -815,12 +832,12 @@ impl UserData for Client {
                     force: opts.bool("force")?.unwrap_or(false),
                 };
                 docker.remove_volume(&name, Some(options)).await?;
-                Ok(Reply::Done)
+                Ok(true)
             },
         );
 
         /// The networks, as Docker's list (`Id`, `Name`, `Driver`, `Scope`, `Labels`, ...).
-        #[lua(returns = TABLE, name = "list_networks", takes(opts = format!("{{ {FILTERS} }}?")))]
+        #[lua(name = "list_networks", takes(opts = format!("{{ {FILTERS} }}?")))]
         call(
             methods,
             "bollard.list_networks",
@@ -833,7 +850,7 @@ impl UserData for Client {
             },
         );
         /// Create a network from Docker's create body (`{ Name = "backend", Driver = "bridge", Labels = { ... } }`). Returns `{ Id, Warning }`. A name in use is `conflict`.
-        #[lua(returns = TABLE, name = "create_network", takes(config = BODY))]
+        #[lua(name = "create_network", takes(config = BODY))]
         call(
             methods,
             "bollard.create_network",
@@ -844,19 +861,19 @@ impl UserData for Client {
             },
         );
         /// Remove a network, by name or id. One with containers attached is an error (`api`: Docker answers 403).
-        #[lua(returns = DONE, name = "remove_network", takes("name: string"))]
+        #[lua(name = "remove_network", takes("name: string"))]
         call(
             methods,
             "bollard.remove_network",
             named(NETWORK),
             |docker, name| async move {
                 docker.remove_network(&name).await?;
-                Ok(Reply::Done)
+                Ok(true)
             },
         );
 
         /// What happens on the daemon from now on, as a `Stream` of Docker's event tables (`Type = "container"`, `Action = "start"`, `Actor = { ID, Attributes }`, `time`, ...). `since` (a Unix time) replays earlier events first, `until` ends the stream at that time, `filters` are Docker's (`{ type = "container", event = { "start", "die" } }`). Without `until` the stream stays open until it is closed.
-        #[lua(returns = STREAM, name = "events", takes(opts = format!("{{ since: number?, until: number?, {FILTERS} }}?")))]
+        #[lua(name = "events", takes(opts = format!("{{ since: number?, until: number?, {FILTERS} }}?")))]
         stream_call(
             methods,
             "bollard.events",
@@ -936,7 +953,7 @@ fn exec_config(cmd: Json, opts: &Opts) -> Result<ExecConfig, BollardError> {
 }
 
 /// Run a command in a container, read what it writes to the end, then ask how it exited.
-async fn exec(docker: Docker, name: String, config: ExecConfig) -> Result<Reply, BollardError> {
+async fn exec(docker: Docker, name: String, config: ExecConfig) -> Result<Exec, BollardError> {
     let created = docker.create_exec(&name, config).await?;
     let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
     if let StartExecResults::Attached { mut output, .. } =
@@ -960,9 +977,9 @@ async fn exec(docker: Docker, name: String, config: ExecConfig) -> Result<Reply,
         }
     }
     let exit_code = docker.inspect_exec(&created.id).await?.exit_code;
-    Ok(Reply::Exec {
+    Ok(Exec {
         exit_code,
-        stdout,
-        stderr,
+        stdout: Bytes(stdout),
+        stderr: Bytes(stderr),
     })
 }

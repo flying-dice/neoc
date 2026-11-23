@@ -93,6 +93,42 @@ pub fn said(kind: &str, name: &str, params: Vec<(String, String)>, ret: &str, do
     });
 }
 
+/// What a member's return is while nobody has said it.
+const LEFT: &str = "\0left";
+
+/// Notes a member a helper adds, with what it returns left to the helper: the helper knows the type of what it
+/// registers, and says it with [`answers`].
+pub fn left(kind: &str, name: &str, params: Vec<(String, String)>, doc: &str) {
+    said(kind, name, params, LEFT, doc);
+}
+
+/// Called by a helper that adds a member for the caller (`call(methods, "keyring.entry", ...)`): what the
+/// member returns is `R`, the type the helper is generic over. It answers every member noted with [`left`]
+/// that has no answer yet, so a helper called in a loop answers for all the members the loop adds.
+pub fn answers<R: DeclType>() {
+    NOTES.with_borrow_mut(|notes| {
+        for member in notes.iter_mut().flatten() {
+            if let Noted::Method(s) | Noted::Function(s) = member
+                && s.ret == LEFT
+            {
+                s.ret = R::decl_type();
+            }
+        }
+    });
+}
+
+/// [`answers`] for a helper that hands its closure to `lifecycle::async_method`: the closure passes through
+/// and its return is the answer.
+pub fn answering<T: 'static, A, R, MR, M>(method: M) -> M
+where
+    M: Fn(Lua, UserDataRef<T>, A) -> MR,
+    MR: Future<Output = mlua::Result<R>>,
+    R: DeclType,
+{
+    answers::<R>();
+    method
+}
+
 /// The closure of `add_method`.
 pub fn add_method<T, A, R, M, P>(method: M, of: Of<'_, P>) -> M
 where
@@ -254,6 +290,14 @@ pub fn record<T: UserData>(spec: &mut impl Members) {
     let noted = NOTES.take().unwrap_or_default();
     drop(recording);
     for member in noted {
+        if let Noted::Method(s) | Noted::Function(s) = &member {
+            assert!(
+                s.ret != LEFT,
+                "`{}`: nothing says what it returns. Say it above the statement, or have the helper that adds \
+                 it call `typed::answers`",
+                s.name
+            );
+        }
         match member {
             Noted::Method(s) => spec.method(&s.name, &borrowed(&s.params), &s.ret, &s.doc),
             Noted::Function(s) => spec.function(&s.name, &borrowed(&s.params), &s.ret, &s.doc),

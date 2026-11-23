@@ -747,6 +747,18 @@ fn record(
     said.only("a member of a type", OF_A_MEMBER)?;
     let doc = said.doc(doc)?;
     let Some(ty) = &said.returns else {
+        // added out of sight (by a helper, in a loop) with nothing said of what it returns: the helper says
+        // it, from the type of what it registers (`typed::answers`)
+        if let (true, Some(params), false) = (noted, &params, kind == Member::Field) {
+            let kind = if kind == Member::Function {
+                "function"
+            } else {
+                "method"
+            };
+            return Ok(quote! {
+                #facade::typed::left(#kind, #name, ::std::vec![#(#params),*], #doc);
+            });
+        }
         return Err(syn::Error::new(
             span,
             "say what a script gets from this member: `#[lua(\"...\")]` above it (or `#[lua(skip)]`)",
@@ -1364,11 +1376,14 @@ impl syn::visit_mut::VisitMut for Through {
     }
 }
 
-/// Whether a closure hands back a future: it is `async`, or what it comes to is an `async` block.
+/// Whether a closure hands back a future: it is `async`, or what it comes to is an `async` block (with or
+/// without a method called on it).
 fn waits(closure: &ExprClosure) -> bool {
     fn is_async(expr: &Expr) -> bool {
         match expr {
             Expr::Async(_) => true,
+            // a future a method was called on is still one (`async move { ... }.instrument(span)`)
+            Expr::MethodCall(call) => is_async(&call.receiver),
             Expr::Block(block) => {
                 matches!(block.block.stmts.last(), Some(Stmt::Expr(last, None)) if is_async(last))
             }
@@ -1619,7 +1634,9 @@ mod tests {
     use quote::quote;
     use syn::parse_quote;
 
-    use super::{lua_fn_impl, lua_members_impl, lua_module_impl, lua_userdata_impl};
+    use super::{
+        lua_fn_impl, lua_members_impl, lua_module_impl, lua_record_impl, lua_userdata_impl,
+    };
 
     /// What the compiler says of `result` when it is refused.
     fn refusal(result: syn::Result<proc_macro2::TokenStream>) -> String {
@@ -1764,6 +1781,42 @@ mod tests {
     }
 
     #[test]
+    fn a_record_declares_its_fields_and_converts_the_way_it_says() {
+        let record: syn::ItemStruct = parse_quote!(
+            struct Exit {
+                code: Option<i32>,
+                r#type: String,
+            }
+        );
+        let into = lua_record_impl(quote!(into), &record).map_or_default(|t| t.to_string());
+        assert!(
+            into.contains("\"{}: {}\" , \"code\" , < Option < i32 > as"),
+            "{into}"
+        );
+        assert!(into.contains("\"type\""), "{into}");
+        assert!(into.contains("IntoLua for Exit"), "{into}");
+        assert!(!into.contains("FromLua for Exit"), "{into}");
+        let from = lua_record_impl(quote!(from), &record).map_or_default(|t| t.to_string());
+        assert!(from.contains("FromLua for Exit"), "{from}");
+        assert!(from.contains("unknown key"), "{from}");
+        refuses(
+            lua_record_impl(quote!(), &record),
+            "say which way the record goes",
+        );
+        refuses(
+            lua_record_impl(quote!(sideways), &record),
+            "`into` a script, `from` one",
+        );
+        let tuple: syn::ItemStruct = parse_quote!(
+            struct Pair(i32, i32);
+        );
+        refuses(
+            lua_record_impl(quote!(into), &tuple),
+            "a struct with named fields",
+        );
+    }
+
+    #[test]
     fn a_member_refuses_what_it_cannot_read() {
         let block = |body: proc_macro2::TokenStream| -> syn::ItemImpl {
             parse_quote!(impl UserData for X { fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) { #body } })
@@ -1781,10 +1834,17 @@ mod tests {
             "{inferred}"
         );
         assert!(inferred.contains("name : \"x\""), "{inferred}");
-        // a helper's closure is not one mlua is given: what it adds is said
+        // a helper's closure is not one mlua is given: the name and the parameters are said, and what it
+        // returns is left to the helper
+        let left = lua_userdata_impl(
+            block(quote!(#[lua(name = "x", takes())] helper(methods, |_, this, ()| Ok(()));)),
+            &Named::default(),
+        )
+        .map_or_default(|t| t.to_string());
+        assert!(left.contains("typed :: left (\"method\" , \"x\""), "{left}");
         refuses(
             lua_userdata_impl(
-                block(quote!(#[lua(name = "x", takes())] helper(methods, |_, this, ()| Ok(()));)),
+                block(quote!(#[lua(name = "x")] helper(methods, |_, this, ()| Ok(()));)),
                 &Named::default(),
             ),
             "say what a script gets",

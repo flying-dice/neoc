@@ -47,7 +47,7 @@ use std::sync::Arc;
 use mlua::{Lua, Table, UserData, UserDataMethods, Value};
 
 use crate::lua::byte_stream::{self, Output, WAITS};
-use crate::lua::facade::Module;
+use crate::lua::facade::{Module, typed};
 use crate::lua::lifecycle::{Life, Role, async_function, async_method};
 use crate::lua::sandbox::{Fallible, from_err, ok};
 
@@ -177,7 +177,7 @@ fn add_read<M: UserDataMethods<Child>>(methods: &mut M, source: &'static Source)
         methods,
         source.method,
         Role::Mixed,
-        move |lua, this, max: Option<f64>| {
+        typed::answering::<Child, _, _, _, _>(move |lua, this, max: Option<f64>| {
             let wanted = byte_stream::read_size(max)
                 .map_err(ProcessError::invalid_input)
                 .and_then(|max| match (source.buffer)(&this.0) {
@@ -187,7 +187,7 @@ fn add_read<M: UserDataMethods<Child>>(methods: &mut M, source: &'static Source)
             byte_stream::read(lua, source.op, wanted, |message| {
                 ProcessError::new(Kind::Io, message)
             })
-        },
+        }),
     );
 }
 
@@ -230,10 +230,10 @@ impl UserData for Child {
             }
         });
 
-        #[lua("Result<string, string>", name = "read", takes("max: number?"), doc = format!(
+        #[lua(name = "read", takes("max: number?"), doc = format!(
                 "Wait for the process's standard output and return it: the bytes the process wrote, at most `max` of them (a whole number from 1 to 65536, the default), as soon as there are any. The bytes are the process's own, and a read may end in the middle of a line or of a character. `(nil, nil)` is the end of the output: every process that had the pipe open is gone or closed it, or `close()` was called. `(nil, err)` is a failure: `not_piped` when `stdout` is not a pipe, `io` when reading failed (the read after it is the end), `invalid_input` for a `max` out of range. At most 256 KiB of output wait to be read: a process that writes more waits in its write until the script reads. A read that is abandoned takes nothing. {WAITS}"
             ))]
-        #[lua("Result<string, string>", name = "read_stderr", takes("max: number?"), doc = format!(
+        #[lua(name = "read_stderr", takes("max: number?"), doc = format!(
                 "`read` for the process's standard error, which has a buffer of its own. {WAITS}"
             ))]
         for source in &SOURCES {

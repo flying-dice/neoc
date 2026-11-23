@@ -149,7 +149,11 @@ pub struct TypedContainer<I: testcontainers_modules::testcontainers::Image> {
 
 impl<I: TypedImage> crate::lua::facade::DeclType for TypedContainer<I> {
     fn decl_type() -> String {
-        I::TYPE_NAME.to_owned()
+        format!(
+            "{}.{}",
+            crate::lua::facade::luau_decls::scope("vnd:testcontainers_modules"),
+            I::TYPE_NAME
+        )
     }
 }
 

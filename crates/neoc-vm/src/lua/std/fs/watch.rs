@@ -74,6 +74,18 @@ impl Change {
     }
 }
 
+impl mlua::IntoLua for Change {
+    fn into_lua(self, lua: &Lua) -> mlua::Result<mlua::Value> {
+        self.as_str().into_lua(lua)
+    }
+}
+
+impl DeclType for Change {
+    fn decl_type() -> String {
+        r#""create" | "modify" | "remove" | "rename" | "overflow""#.to_owned()
+    }
+}
+
 /// One entry of the queue: a change at a path, or an error the watch reported.
 #[derive(Debug)]
 pub(super) enum Item {
@@ -429,12 +441,18 @@ fn timeout_of(secs: Option<f64>) -> FsResult<Option<Duration>> {
     }
 }
 
-/// The `{ kind, path }` table of one event.
-fn event(lua: &Lua, change: Change, path: &Path) -> mlua::Result<mlua::Table> {
-    let table = lua.create_table_with_capacity(0, 2)?;
-    table.raw_set("kind", change.as_str())?;
-    table.raw_set("path", osstr::to_lua(lua, path.as_os_str())?)?;
-    Ok(table)
+/// One event as a script gets it.
+#[neoc_macros::lua_record(into)]
+struct Event {
+    kind: Change,
+    path: mlua::LuaString,
+}
+
+fn event(lua: &Lua, kind: Change, path: &Path) -> mlua::Result<Event> {
+    Ok(Event {
+        kind,
+        path: osstr::to_lua(lua, path.as_os_str())?,
+    })
 }
 
 /// The handle `fs.watch` returns.
@@ -476,7 +494,7 @@ async fn receive(
     }
 }
 
-#[neoc_macros::lua_userdata]
+#[neoc_macros::lua_userdata("std:fs", "Watcher")]
 impl UserData for WatchHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         // `Role::Mixed`, not `Role::Wait`: a `Wait` body takes the event when its wait ends and only then queues for
@@ -484,9 +502,6 @@ impl UserData for WatchHandle {
         // (an idle wait, as `Wait` is: never `Timer`, a timeout is not all it waits for) and takes the event with the
         // turn held.
         /// Wait for the next change and return it as `{ kind, path }` (see `fs.watch`). Once the watcher is closed it returns `(nil, nil)`, also to a call already waiting. `timeout` (seconds; `nil` or `math.huge` waits for ever, `0` only takes what is already there) ends the wait with `timed_out`; a negative or NaN one is `invalid_input`. An error the watch reports (`fs.receive: <kind>: <path>: <message>`) is returned as `(nil, err)` and the watch goes on. Other tasks, and an embedder's other calls, run while it waits; where Luau cannot yield (a metamethod, a `table.sort` comparator, a `string.gsub` callback) a call that would have to wait fails with the yield error.
-        #[lua(
-            "Result<{ kind: \"create\" | \"modify\" | \"remove\" | \"rename\" | \"overflow\", path: string }, string>"
-        )]
         async_method(
             methods,
             "receive",
@@ -531,12 +546,6 @@ impl UserData for WatchHandle {
             this.0.close();
             Ok(())
         });
-    }
-}
-
-impl DeclType for WatchHandle {
-    fn decl_type() -> String {
-        "Watcher".to_owned()
     }
 }
 

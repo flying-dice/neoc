@@ -151,6 +151,22 @@ impl<T: DeclType> DeclType for List<T> {
     }
 }
 
+/// Bytes a function hands a script: a string, declared `string`. (A bare `Vec<u8>` would reach a script as a
+/// table of numbers.)
+pub struct Bytes(pub Vec<u8>);
+
+impl IntoLua for Bytes {
+    fn into_lua(self, lua: &Lua) -> mlua::Result<mlua::Value> {
+        lua.create_string(&self.0).map(mlua::Value::String)
+    }
+}
+
+impl DeclType for Bytes {
+    fn decl_type() -> String {
+        "string".to_string()
+    }
+}
+
 impl<T: DeclType, E: DeclType> DeclType for Result<T, E> {
     fn decl_type() -> String {
         format!("Result<{}, {}>", T::decl_type(), E::decl_type())

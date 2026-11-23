@@ -1387,7 +1387,7 @@ export type vnd_bollard_Client = {
 	--- The containers, as Docker's list of summaries (`Id`, `Names`, `Image`, `State`, `Status`, `Labels`, `Ports`, ...). Only running ones unless `all`; `limit` is the most recently created ones; `size` adds `SizeRw` and `SizeRootFs`; `filters` are Docker's (`{ label = { "com.docker.compose.project=blog" }, status = "running" }`).
 	list_containers: (self: vnd_bollard_Client, opts: { all: boolean?, limit: number?, size: boolean?, filters: { [string]: any }? }?) -> (any, string?),
 	--- Docker's inspect table of a container, by name or id (`Id`, `State`, `Config.Labels`, `HostConfig`, `NetworkSettings`, ...), or `(nil, nil)` when there is no such container.
-	inspect_container: (self: vnd_bollard_Client, name: string) -> (any, string?),
+	inspect_container: (self: vnd_bollard_Client, name: string) -> (any?, string?),
 	--- Create a container (not started) from Docker's create body, with Docker's field names: `{ name = "web", Image = "nginx", Env = { "A=1" }, Labels = { ... }, HostConfig = { Binds = { ... }, PortBindings = { ["80/tcp"] = { { HostPort = "8088" } } }, RestartPolicy = { Name = "unless-stopped" } } }`. The lower-case `name` (and `platform`) are the call's own. Returns `{ Id, Warnings }`. The image must be on the host already (`pull_image`): a missing one is `not_found`; a name in use is `conflict`.
 	create_container: (self: vnd_bollard_Client, config: { [string]: any }) -> (any, string?),
 	--- Start a container. Starting a running one succeeds.
@@ -1653,7 +1653,7 @@ export type vnd_sqlx_mysql_Database = {
 	--- Execute a SELECT and return all rows as a 1-indexed table of column-keyed row tables.
 	query: (self: vnd_sqlx_mysql_Database, sql: string, ...any) -> (any, string?),
 	--- Execute a SELECT and return the first matching row, or nil when none matched.
-	query_one: (self: vnd_sqlx_mysql_Database, sql: string, ...any) -> (any, string?),
+	query_one: (self: vnd_sqlx_mysql_Database, sql: string, ...any) -> (any?, string?),
 	--- Prepare a SQL statement for repeated execution, sharing this connection pool.
 	prepare: (self: vnd_sqlx_mysql_Database, sql: string) -> vnd_sqlx_mysql_Statement,
 	--- Close all connections in the pool; subsequent method calls on this handle error.
@@ -1666,7 +1666,7 @@ export type vnd_sqlx_mysql_Statement = {
 	--- Execute the prepared SELECT and return all rows.
 	query: (self: vnd_sqlx_mysql_Statement, ...any) -> (any, string?),
 	--- Execute the prepared SELECT and return the first matching row, or nil when none matched.
-	query_one: (self: vnd_sqlx_mysql_Statement, ...any) -> (any, string?),
+	query_one: (self: vnd_sqlx_mysql_Statement, ...any) -> (any?, string?),
 }
 
 export type vnd_sqlx_mysql = {
