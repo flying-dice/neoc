@@ -13,3 +13,4 @@ pub mod unicode;
 pub mod regex;
 pub mod diff;
 pub mod mime;
+pub mod url;
