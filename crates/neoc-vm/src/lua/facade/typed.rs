@@ -72,12 +72,19 @@ impl<P: FnOnce() -> Vec<(String, String)>> Of<'_, P> {
 }
 
 /// Notes a member whose return is said by hand, or that is added where the macro cannot pass a closure through
-/// (a helper, a loop): `kind` is `"method"`, `"function"` or `"field"`.
-pub fn said(kind: &str, name: &str, params: Vec<(String, String)>, ret: &str, doc: &str) {
+/// (a helper, a loop): `kind` is `"method"`, `"function"` or `"field"`. The parameters are built only when a
+/// note is taken.
+pub fn said(
+    kind: &str,
+    name: &str,
+    params: impl FnOnce() -> Vec<(String, String)>,
+    ret: &str,
+    doc: &str,
+) {
     note(|| {
         let signature = || Signature {
             name: name.to_owned(),
-            params,
+            params: params(),
             ret: ret.to_owned(),
             doc: doc.to_owned(),
         };
@@ -98,7 +105,7 @@ const LEFT: &str = "\0left";
 
 /// Notes a member a helper adds, with what it returns left to the helper: the helper knows the type of what it
 /// registers, and says it with [`answers`].
-pub fn left(kind: &str, name: &str, params: Vec<(String, String)>, doc: &str) {
+pub fn left(kind: &str, name: &str, params: impl FnOnce() -> Vec<(String, String)>, doc: &str) {
     said(kind, name, params, LEFT, doc);
 }
 

@@ -180,8 +180,11 @@ fn to_string_pretty(_: &Lua, value: Value) -> mlua::Result<Result<String, String
 }
 
 /// Serialise a Lua value to JSON and write it to a writer handle.
-#[neoc_macros::lua_fn(types(writer = "std_io.WriterHandle"))]
-fn to_writer(_: &Lua, (value, writer): (Value, AnyUserData)) -> mlua::Result<Result<bool, String>> {
+#[neoc_macros::lua_fn]
+fn to_writer(
+    _: &Lua,
+    (value, writer): (Value, Handle<WriterHandle>),
+) -> mlua::Result<Result<bool, String>> {
     refuse_buffer(&value, "serde_json.to_writer")?;
     Ok(write_json(&value, &writer))
 }

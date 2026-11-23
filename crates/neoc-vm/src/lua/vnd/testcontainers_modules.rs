@@ -406,7 +406,6 @@ impl UserData for GenericContainer {
         /// Return the container host (always `"127.0.0.1"`).
         methods.add_method("host", |_, this, _: ()| Ok(this.host.clone()));
         /// Return the mapped host port for the given container port; only ports listed at start time are available, requesting an unmapped port errors.
-        #[lua(types(container_port = "number"))]
         methods.add_method("port", |_, this, container_port: u16| {
             this.ports
                 .get(&container_port)

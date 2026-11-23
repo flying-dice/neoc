@@ -108,34 +108,11 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:hyper")?;
 
-    let get_options = options_type("");
-    let post_options = options_type("url: string, body: string | buffer?, ");
-    let request_options = options_type("method: string, url: string, body: string | buffer?, ");
+    m.declared(get::lua(), async_function(lua, Role::Wait, get)?)?;
 
-    /// Perform an HTTP or HTTPS GET request.
-    #[lua(returns = RESULT, types(opts = format!("{get_options}?")), doc_with = client_doc)]
-    m.set(
-        "get",
-        async_function(
-            lua,
-            Role::Wait,
-            |lua, (url, opts): (String, Option<Table>)| get(lua, (url, opts)),
-        )?,
-    )?;
+    m.declared(post::lua(), async_function(lua, Role::Wait, post)?)?;
 
-    /// Perform an HTTP or HTTPS POST request given `{ url, body?, ... }`; `body` is a string or a buffer.
-    #[lua(returns = RESULT, types(opts = post_options), doc_with = client_doc)]
-    m.set(
-        "post",
-        async_function(lua, Role::Wait, |lua, opts: Table| post(lua, opts))?,
-    )?;
-
-    /// Perform an HTTP or HTTPS request given `{ method, url, body?, ... }`; `body` is a string or a buffer. A standard method in any case is the standard method (`put` is `PUT`); any other is sent as written.
-    #[lua(returns = RESULT, types(opts = request_options), doc_with = client_doc)]
-    m.set(
-        "request",
-        async_function(lua, Role::Wait, |lua, opts: Table| request(lua, opts))?,
-    )?;
+    m.declared(request::lua(), async_function(lua, Role::Wait, request)?)?;
 
     /// The stable kind inside an error string returned by a `vnd:hyper` client function, or `nil` when the string is not one of theirs (or is `nil`, so `hyper.error_kind(err)` takes the `err` of any call). Such a string is `hyper.<function>: <kind>: <message>`. Kinds: `invalid_input` (an option, header or body was refused before anything was sent), `invalid_url` (not an `http` or `https` URL with a host, a redirect's `Location` included), `connect` (no connection: the name did not resolve, or the host refused or could not be reached), `tls` (the handshake failed, usually over the certificate), `timed_out` (a time limit passed), `too_many_redirects`, `too_large` (the body is over `max_body`), `connection_lost` (the connection ended or failed before the response was complete), `bad_response` (the server did not send valid HTTP), `other`. The kind means the same on every platform; the message is for a log and may change.
     #[lua(takes("err: string?"))]
@@ -163,18 +140,6 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     });
 
     Ok(m)
-}
-
-/// What a client function returns: the response table, or `(nil, err)`.
-const RESULT: &str =
-    "Result<{ status: number, headers: { [string]: string }, body: string, url: string }, string>";
-
-/// The type of an options table: `lead` is the fields only some functions take, then the ones all of them do.
-fn options_type(lead: &str) -> String {
-    format!(
-        "{{ {lead}headers: {{ [string]: string }}?, ca_pem: string?, connect_timeout: number?, \
-         idle_timeout: number?, timeout: number?, follow_redirects: boolean | number?, max_body: number? }}"
-    )
 }
 
 /// The doc of a client function: `what` it does, then what every one of them shares.

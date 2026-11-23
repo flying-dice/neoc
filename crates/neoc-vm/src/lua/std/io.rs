@@ -22,7 +22,7 @@ use mlua::{AnyUserData, Lua, Table, UserData, UserDataMethods};
 use parking_lot::Mutex;
 use tracing::instrument;
 
-use crate::lua::facade::Module;
+use crate::lua::facade::{Handle, Module};
 use crate::lua::limits;
 use crate::lua::sandbox::{Fallible, from_err, ok};
 
@@ -219,9 +219,12 @@ fn borrow_or_err<T: 'static>(
 }
 
 /// Copy all remaining bytes from `reader` into `writer`, returning the total bytes copied.
-#[neoc_macros::lua_fn(types(reader = "ReaderHandle", writer = "WriterHandle"))]
+#[neoc_macros::lua_fn]
 #[instrument(name = "io.copy", target = "lua::lib::io", skip_all)]
-fn copy(lua: &Lua, (reader, writer): (AnyUserData, AnyUserData)) -> mlua::Result<Fallible<i64>> {
+fn copy(
+    lua: &Lua,
+    (reader, writer): (Handle<ReaderHandle>, Handle<WriterHandle>),
+) -> mlua::Result<Fallible<i64>> {
     let rh = match borrow_or_err::<ReaderHandle>(
         lua,
         &reader,

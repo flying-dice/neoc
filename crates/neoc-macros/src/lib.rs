@@ -16,7 +16,8 @@
 //!
 //! [`lua_fn`] is for a function, [`lua_userdata`] for the methods and fields of an `impl UserData` block
 //! ([`lua_members`] for a type that is a plain table a function builds), and
-//! [`lua_module`] for the closures a module's `declare` function registers in place.
+//! [`lua_module`] for the closures a module's `declare` function registers in place. [`lua_record`] is for a
+//! struct that is a table to a script.
 //!
 //! What is read: the name (the function's, or the string a method is added under), each parameter's name and
 //! its type through `DeclType` (`String` is `string`, `Option<i64>` is `number?`), and the `///` lines as the doc.
@@ -32,7 +33,14 @@
 //! | a userdata type that says its name (`#[lua_userdata("std:time", "Duration")]`) | that type |
 //! | `Handle<T>`, as a parameter | a userdata declared as `T`, borrowed by the function |
 //! | `List<T>` | `{ T }` |
+//! | `Bytes` | `string`: bytes that need not be text |
+//! | a struct that is a table (`#[lua_record(into)]`, `from`) | `{ field: T, ... }`, read from its fields |
+//! | `Declared<T, V>`, as a parameter | the value `V` as it was passed, declared as `T`: for a table the function reads by its own rules, with `T` a `#[lua_record(shape)]` of its keys |
 //! | a type of the module's own with a `DeclType` (an enum of the kinds a function can hand back) | what it says |
+//!
+//! A member a helper adds for its caller (`call(methods, "keyring.entry", ...)`) says its name and its
+//! parameters above the statement, and the helper says what it returns from the type it is generic over
+//! (`typed::answers::<R>()`).
 //!
 //! What Rust does not say is said once, on the spot: a return that is a `Table` or a `Value` in Rust and
 //! something narrower to a script,
@@ -756,7 +764,7 @@ fn record(
                 "method"
             };
             return Ok(quote! {
-                #facade::typed::left(#kind, #name, ::std::vec![#(#params),*], #doc);
+                #facade::typed::left(#kind, #name, || ::std::vec![#(#params),*], #doc);
             });
         }
         return Err(syn::Error::new(
@@ -771,7 +779,7 @@ fn record(
             return Err(syn::Error::new(span, "a field takes no parameters"));
         }
         return Ok(if noted {
-            quote!(#facade::typed::said("field", #name, ::std::vec::Vec::new(), &::std::string::String::from(#ty), #doc);)
+            quote!(#facade::typed::said("field", #name, ::std::vec::Vec::new, &::std::string::String::from(#ty), #doc);)
         } else {
             quote!(spec.field(#name, &::std::string::String::from(#ty), #doc);)
         });
@@ -789,7 +797,7 @@ fn record(
             "method"
         };
         return Ok(quote! {
-            #facade::typed::said(#kind, #name, ::std::vec![#(#params),*], &::std::string::String::from(#ty), #doc);
+            #facade::typed::said(#kind, #name, || ::std::vec![#(#params),*], &::std::string::String::from(#ty), #doc);
         });
     }
     let record = if kind == Member::Function {
@@ -1353,7 +1361,8 @@ fn written(stmt: &mut Stmt) -> syn::Result<Option<Tokens>> {
     }))
 }
 
-/// Replaces the first closure of an expression with a call that is given it.
+/// Replaces the first closure of an expression with a call that is given it: the closure [`closure_in`] finds,
+/// which the parameters are read from (both stop at the first closure in the same order).
 struct Through(Option<Tokens>);
 
 impl syn::visit_mut::VisitMut for Through {
@@ -1547,7 +1556,6 @@ fn lua_record_impl(args: Tokens, record: &syn::ItemStruct) -> syn::Result<Tokens
         .collect();
     let types: Vec<&Type> = fields.named.iter().map(|f| &f.ty).collect();
     let count = keys.len();
-    let label = ident.to_string();
     let mut out = quote! {
         #unbuilt
         #record
@@ -1577,44 +1585,52 @@ fn lua_record_impl(args: Tokens, record: &syn::ItemStruct) -> syn::Result<Tokens
         });
     }
     if from {
-        out.extend(quote! {
-            impl #generics ::mlua::FromLua for #ident #of #bounds {
-                fn from_lua(value: ::mlua::Value, _: &::mlua::Lua) -> ::mlua::Result<Self> {
-                    let ::mlua::Value::Table(table) = value else {
-                        return ::std::result::Result::Err(::mlua::Error::FromLuaConversionError {
-                            from: value.type_name(),
-                            to: ::std::string::String::from(#label),
-                            message: ::std::option::Option::Some(::std::string::String::from(
-                                "expected a table",
-                            )),
-                        });
-                    };
-                    for pair in table.pairs::<::mlua::Value, ::mlua::Value>() {
-                        let (key, _) = pair?;
-                        let known = match &key {
-                            ::mlua::Value::String(key) => [#(#keys),*].iter().any(|k| key == *k),
-                            _ => false,
-                        };
-                        if !known {
-                            return ::std::result::Result::Err(::mlua::Error::FromLuaConversionError {
-                                from: "table",
-                                to: ::std::string::String::from(#label),
-                                message: ::std::option::Option::Some(::std::format!(
-                                    "unknown key {}: the keys are {}",
-                                    key.to_string()?,
-                                    [#(#keys),*].join(", "),
-                                )),
-                            });
-                        }
-                    }
-                    ::std::result::Result::Ok(Self {
-                        #(#names: table.raw_get(#keys)?,)*
-                    })
-                }
-            }
-        });
+        out.extend(record_from(record, &keys, &names));
     }
     Ok(out)
+}
+
+/// The `FromLua` of a record: a table whose keys are all fields, each read as the field's type.
+fn record_from(record: &syn::ItemStruct, keys: &[String], names: &[&Ident]) -> Tokens {
+    let ident = &record.ident;
+    let (generics, of, bounds) = record.generics.split_for_impl();
+    let label = ident.to_string();
+    quote! {
+        impl #generics ::mlua::FromLua for #ident #of #bounds {
+            fn from_lua(value: ::mlua::Value, _: &::mlua::Lua) -> ::mlua::Result<Self> {
+                let ::mlua::Value::Table(table) = value else {
+                    return ::std::result::Result::Err(::mlua::Error::FromLuaConversionError {
+                        from: value.type_name(),
+                        to: ::std::string::String::from(#label),
+                        message: ::std::option::Option::Some(::std::string::String::from(
+                            "expected a table",
+                        )),
+                    });
+                };
+                for pair in table.pairs::<::mlua::Value, ::mlua::Value>() {
+                    let (key, _) = pair?;
+                    let known = match &key {
+                        ::mlua::Value::String(key) => [#(#keys),*].iter().any(|k| key == *k),
+                        _ => false,
+                    };
+                    if !known {
+                        return ::std::result::Result::Err(::mlua::Error::FromLuaConversionError {
+                            from: "table",
+                            to: ::std::string::String::from(#label),
+                            message: ::std::option::Option::Some(::std::format!(
+                                "unknown key {}: the keys are {}",
+                                key.to_string()?,
+                                [#(#keys),*].join(", "),
+                            )),
+                        });
+                    }
+                }
+                ::std::result::Result::Ok(Self {
+                    #(#names: table.raw_get(#keys)?,)*
+                })
+            }
+        }
+    }
 }
 
 /// Reads what the declarations say of the closures a module's `declare` function registers in place.
@@ -1873,7 +1889,10 @@ mod tests {
             &Named::default(),
         )
         .map_or_default(|t| t.to_string());
-        assert!(left.contains("typed :: left (\"method\" , \"x\""), "{left}");
+        assert!(
+            left.contains("typed :: left (\"method\" , \"x\" , | |"),
+            "{left}"
+        );
         refuses(
             lua_userdata_impl(
                 block(quote!(#[lua(name = "x")] helper(methods, |_, this, ()| Ok(()));)),

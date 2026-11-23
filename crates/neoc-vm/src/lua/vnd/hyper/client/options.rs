@@ -15,6 +15,7 @@ use tokio_rustls::rustls::RootCertStore;
 use tokio_rustls::rustls::pki_types::{CertificateDer, pem::PemObject};
 
 use super::error::HyperError;
+use crate::lua::facade::{DeclType, Map, Shape};
 
 /// No data for this long ends a request (`idle_timeout`).
 pub(super) const DEFAULT_IDLE: Duration = Duration::from_secs(60);
@@ -31,39 +32,52 @@ const STANDARD_METHODS: &[&str] = &[
     "GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH",
 ];
 
-/// The option names each entry point reads; any other key is an error.
-pub(super) const GET_OPTIONS: &[&str] = &[
-    "headers",
-    "ca_pem",
-    "connect_timeout",
-    "idle_timeout",
-    "timeout",
-    "follow_redirects",
-    "max_body",
-];
-pub(super) const POST_OPTIONS: &[&str] = &[
-    "url",
-    "body",
-    "headers",
-    "ca_pem",
-    "connect_timeout",
-    "idle_timeout",
-    "timeout",
-    "follow_redirects",
-    "max_body",
-];
-pub(super) const REQUEST_OPTIONS: &[&str] = &[
-    "method",
-    "url",
-    "body",
-    "headers",
-    "ca_pem",
-    "connect_timeout",
-    "idle_timeout",
-    "timeout",
-    "follow_redirects",
-    "max_body",
-];
+/// A request body: a string or a buffer.
+pub(in crate::lua::vnd::hyper) struct Body;
+
+impl DeclType for Body {
+    fn decl_type() -> String {
+        "string | buffer".to_owned()
+    }
+}
+
+/// `follow_redirects`: whether to, or how many.
+pub(in crate::lua::vnd::hyper) struct Redirects;
+
+impl DeclType for Redirects {
+    fn decl_type() -> String {
+        "boolean | number".to_owned()
+    }
+}
+
+/// The options of one entry point: the fields only it takes, then the ones all of them do. Any other key is an
+/// error.
+macro_rules! options {
+    ($name:ident { $($lead:ident: $ty:ty,)* }) => {
+        #[neoc_macros::lua_record(shape)]
+        pub(in crate::lua::vnd::hyper) struct $name {
+            $($lead: $ty,)*
+            headers: Option<Map<String, String>>,
+            ca_pem: Option<String>,
+            connect_timeout: Option<f64>,
+            idle_timeout: Option<f64>,
+            timeout: Option<f64>,
+            follow_redirects: Option<Redirects>,
+            max_body: Option<u64>,
+        }
+    };
+}
+
+options!(GetOptions {});
+options!(PostOptions {
+    url: String,
+    body: Option<Body>,
+});
+options!(RequestOptions {
+    method: String,
+    url: String,
+    body: Option<Body>,
+});
 
 /// The limits of one request.
 #[derive(Clone, Copy, Debug)]
@@ -112,7 +126,7 @@ impl Prepared {
             limits: Limits::default(),
         };
         if let Some(opts) = opts {
-            check_options(opts, GET_OPTIONS)?;
+            check_options(opts, GetOptions::KEYS)?;
             prepared.read_common(opts)?;
         }
         Ok(prepared)
@@ -120,13 +134,13 @@ impl Prepared {
 
     /// `hyper.post(opts)`.
     pub(super) fn post(opts: &Table) -> Result<Self, HyperError> {
-        check_options(opts, POST_OPTIONS)?;
+        check_options(opts, PostOptions::KEYS)?;
         Self::from_table("POST".to_owned(), opts)
     }
 
     /// `hyper.request(opts)`.
     pub(super) fn request(opts: &Table) -> Result<Self, HyperError> {
-        check_options(opts, REQUEST_OPTIONS)?;
+        check_options(opts, RequestOptions::KEYS)?;
         let method: String = required_string(opts, "method")?;
         Self::from_table(normalize_method(&method)?, opts)
     }

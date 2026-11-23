@@ -74,8 +74,11 @@ fn encode(_: &Lua, value: Value) -> mlua::Result<Result<String, String>> {
 }
 
 /// Serialise a Lua value to XML and write it to a writer handle.
-#[neoc_macros::lua_fn(types(writer = "std_io.WriterHandle"))]
-fn encode_to(_: &Lua, (value, writer): (Value, AnyUserData)) -> mlua::Result<Result<bool, String>> {
+#[neoc_macros::lua_fn]
+fn encode_to(
+    _: &Lua,
+    (value, writer): (Value, Handle<WriterHandle>),
+) -> mlua::Result<Result<bool, String>> {
     refuse_buffer(&value, "quick_xml.encode_to")?;
     Ok(write_xml(&value, &writer))
 }

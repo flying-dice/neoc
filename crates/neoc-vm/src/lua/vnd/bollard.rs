@@ -68,7 +68,7 @@ use tokio::sync::OnceCell;
 use tracing::Instrument;
 
 use crate::lua::error_text;
-use crate::lua::facade::{Bytes, DeclType, Module, Shape, decl, typed};
+use crate::lua::facade::{Bytes, DeclType, Declared, Module, Shape, decl, typed};
 use crate::lua::lifecycle::{Life, Role, async_method};
 use crate::lua::sandbox::{Fallible, from_err, ok};
 
@@ -101,6 +101,15 @@ mod shapes {
 
     /// Docker's filters: a list of values, or one, under each name.
     type Filters = Option<Map<String, Value>>;
+
+    #[neoc_macros::lua_record(shape)]
+    pub(super) struct Connect {
+        host: Option<String>,
+        timeout: Option<f64>,
+        tls_ca: Option<String>,
+        tls_cert: Option<String>,
+        tls_key: Option<String>,
+    }
 
     #[neoc_macros::lua_record(shape)]
     pub(super) struct ListContainers {
@@ -246,12 +255,13 @@ impl Client {
 }
 
 /// A client for a Docker daemon. Nothing is sent until the client's first call. `host` is `unix:///path/docker.sock`, `tcp://host:2375`, `http://host:2375` or `https://host:2376`; without it `DOCKER_HOST` is used, and without that the local socket (`/var/run/docker.sock`, then Docker Desktop's and a rootless daemon's per-user socket). `timeout` is how long a call waits for the daemon's answer, in seconds (default 120). `tls_ca`, `tls_cert` and `tls_key` (all three, paths of PEM files) connect over TLS with a client certificate. Reaching Docker is root on its host: a script given this module is trusted with the machine. Errors are `bollard.<function>: <kind>: <message>` (see `error_kind`); a host with no Docker socket is `connect`.
-#[neoc_macros::lua_fn(types(
-    opts = "{ host: string?, timeout: number?, tls_ca: string?, tls_cert: string?, tls_key: string? }?"
-))]
-fn connect(_: &Lua, opts: Option<Value>) -> mlua::Result<Fallible<Client>> {
+#[neoc_macros::lua_fn]
+fn connect(
+    _: &Lua,
+    opts: Declared<Option<shapes::Connect>, Option<Value>>,
+) -> mlua::Result<Fallible<Client>> {
     let op = "bollard.connect";
-    let opts = match opts {
+    let opts = match opts.0 {
         Some(opts) => match options::json(&opts, op)? {
             Ok(json) => Some(json),
             Err(e) => return from_err(op, e),
@@ -270,7 +280,7 @@ fn connect(_: &Lua, opts: Option<Value>) -> mlua::Result<Fallible<Client>> {
 }
 
 fn open(opts: Option<Json>) -> Result<Docker, BollardError> {
-    let opts = Opts::read(opts, &["host", "timeout", "tls_ca", "tls_cert", "tls_key"])?;
+    let opts = Opts::read(opts, shapes::Connect::KEYS)?;
     let timeout = opts
         .seconds("timeout")?
         .map_or(Ok(DEFAULT_TIMEOUT), |secs| {

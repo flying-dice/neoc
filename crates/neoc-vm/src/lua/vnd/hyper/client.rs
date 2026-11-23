@@ -16,6 +16,7 @@ use std::future::Future;
 use mlua::{Lua, Table};
 use tracing::Instrument;
 
+use crate::lua::facade::{Bytes, DeclType, Declared, Map};
 use crate::lua::lifecycle::Life;
 use crate::lua::sandbox::{Fallible, from_err, ok};
 
@@ -31,6 +32,36 @@ mod tests;
 
 pub(super) use error::{kind_of, message_of};
 use options::Prepared;
+pub(super) use options::{GetOptions, PostOptions, RequestOptions};
+
+/// What a client function hands a script.
+#[neoc_macros::lua_record(into)]
+pub(super) struct Response {
+    status: u16,
+    headers: Headers,
+    body: Bytes,
+    /// The URL the response came from: the last one of the redirect chain.
+    url: String,
+}
+
+/// The headers of a response: one value under each lower-case name.
+pub(super) struct Headers(Vec<(String, String)>);
+
+impl mlua::IntoLua for Headers {
+    fn into_lua(self, lua: &Lua) -> mlua::Result<mlua::Value> {
+        let headers = lua.create_table()?;
+        for (name, value) in self.0 {
+            headers.set(name, value)?;
+        }
+        Ok(mlua::Value::Table(headers))
+    }
+}
+
+impl DeclType for Headers {
+    fn decl_type() -> String {
+        Map::<String, String>::decl_type()
+    }
+}
 
 // Each entry point reads its options table in the synchronous part of the call, before it builds the future that
 // performs the request. A script table can run script code when it is read (a `__index`), which can call the same
@@ -38,25 +69,31 @@ use options::Prepared;
 // 20 KiB a level in release, about 150 KiB in debug, with Luau's C-call limit at 200 levels), and read here each
 // level is a few hundred bytes. `thread.spawn` reads its options the same way (`prepare_spawn`).
 
+/// Perform an HTTP or HTTPS GET request.
+#[neoc_macros::lua_fn(doc_with = crate::lua::vnd::hyper::client_doc)]
 pub(super) fn get(
     lua: Lua,
-    (url, opts): (String, Option<Table>),
-) -> impl Future<Output = mlua::Result<Fallible<Table>>> + Send + 'static {
-    send(lua, "hyper.get", Prepared::get(url, opts.as_ref()))
+    (url, opts): (String, Declared<Option<GetOptions>, Option<Table>>),
+) -> impl Future<Output = mlua::Result<Fallible<Response>>> + Send + 'static {
+    send(lua, "hyper.get", Prepared::get(url, opts.0.as_ref()))
 }
 
+/// Perform an HTTP or HTTPS POST request given `{ url, body?, ... }`; `body` is a string or a buffer.
+#[neoc_macros::lua_fn(doc_with = crate::lua::vnd::hyper::client_doc)]
 pub(super) fn post(
     lua: Lua,
-    opts: Table,
-) -> impl Future<Output = mlua::Result<Fallible<Table>>> + Send + 'static {
-    send(lua, "hyper.post", Prepared::post(&opts))
+    opts: Declared<PostOptions, Table>,
+) -> impl Future<Output = mlua::Result<Fallible<Response>>> + Send + 'static {
+    send(lua, "hyper.post", Prepared::post(&opts.0))
 }
 
+/// Perform an HTTP or HTTPS request given `{ method, url, body?, ... }`; `body` is a string or a buffer. A standard method in any case is the standard method (`put` is `PUT`); any other is sent as written.
+#[neoc_macros::lua_fn(doc_with = crate::lua::vnd::hyper::client_doc)]
 pub(super) fn request(
     lua: Lua,
-    opts: Table,
-) -> impl Future<Output = mlua::Result<Fallible<Table>>> + Send + 'static {
-    send(lua, "hyper.request", Prepared::request(&opts))
+    opts: Declared<RequestOptions, Table>,
+) -> impl Future<Output = mlua::Result<Fallible<Response>>> + Send + 'static {
+    send(lua, "hyper.request", Prepared::request(&opts.0))
 }
 
 /// The future of a prepared request, or the `(nil, err)` of options that could not be read. Holds no script table.
@@ -66,7 +103,7 @@ fn send(
     lua: Lua,
     prefix: &'static str,
     prepared: Result<Prepared, error::HyperError>,
-) -> impl Future<Output = mlua::Result<Fallible<Table>>> + Send + 'static {
+) -> impl Future<Output = mlua::Result<Fallible<Response>>> + Send + 'static {
     let span = match prefix {
         "hyper.get" => tracing::info_span!(target: "lua::lib::hyper", "hyper.get"),
         "hyper.post" => tracing::info_span!(target: "lua::lib::hyper", "hyper.post"),
@@ -80,18 +117,12 @@ fn send(
             Err(e) => Err(e),
         };
         match performed {
-            Ok(resp) => {
-                let t = lua.create_table()?;
-                t.set("status", i64::from(resp.status))?;
-                let h = lua.create_table()?;
-                for (k, v) in resp.headers {
-                    h.set(k, v)?;
-                }
-                t.set("headers", h)?;
-                t.set("body", lua.create_string(&resp.body)?)?;
-                t.set("url", resp.url)?;
-                ok(t)
-            }
+            Ok(resp) => ok(Response {
+                status: resp.status,
+                headers: Headers(resp.headers),
+                body: Bytes(resp.body),
+                url: resp.url,
+            }),
             Err(e) => from_err(prefix, e),
         }
     }

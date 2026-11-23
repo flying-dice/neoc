@@ -27,7 +27,7 @@ use mlua::{Lua, MultiValue, Table, Thread, UserData, UserDataMethods, Value};
 use parking_lot::Mutex;
 use tokio::sync::Notify;
 
-use crate::lua::facade::Module;
+use crate::lua::facade::{Declared, Module};
 use crate::lua::lifecycle::{
     Life, Pruned, Role, async_function, async_method, entrance, first_slice, inherited,
 };
@@ -548,10 +548,10 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     // task.cancel(handle) — flat Roblox-compatible function; delegates to handle:cancel().
     /// Cancel a task by handle. Returns `true` if this call was the one that cancelled it.
-    #[lua(names(val = "handle"), types(val = "Task"))]
+    #[lua]
     m.set(
         "cancel",
-        lua.create_function(|_, val: Value| match val {
+        lua.create_function(|_, handle: Declared<TaskHandle>| match handle.0 {
             Value::UserData(ud) => {
                 let h = ud.borrow::<TaskHandle>().map_err(|_| {
                     mlua::Error::external(
