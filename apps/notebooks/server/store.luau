@@ -9,7 +9,9 @@
 -- from then on.
 local app = require("vos:app")
 local rpc = require("../.app/rpc")
+local strings = require("lib:text")
 local text = require("./text")
+local unicode = require("lib:unicode")
 local db = app.db
 
 local store = {}
@@ -72,9 +74,9 @@ end
 
 -- the notebook called `name`, whatever its capitals: how an agent names a notebook
 function store.notebookNamed(name: string): rpc.Notebook?
-  local wanted = text.key(name)
+  local wanted = strings.trim(name)
   for _, notebook in store.notebooks() do
-    if text.key(notebook.name) == wanted then
+    if unicode.caseless_eq(notebook.name, wanted) then
       return notebook
     end
   end
@@ -180,7 +182,7 @@ function store.create(notebook: number, title: string?, body: string?): (number?
   if not hasNotebook(notebook) then
     return nil, "There is no such notebook."
   end
-  local named = if title ~= nil then text.trim(title) else untitled(notebook)
+  local named = if title ~= nil then strings.trim(title) else untitled(notebook)
   local problem = text.titleProblem(named)
   if problem then
     return nil, problem
@@ -228,7 +230,7 @@ function store.rename(id: number, title: string): string?
   if not row then
     return "There is no such note."
   end
-  local named = text.trim(title)
+  local named = strings.trim(title)
   local key = text.key(named)
   local problem = text.titleProblem(named)
   if problem then
@@ -276,7 +278,7 @@ function store.remove(id: number): string?
 end
 
 function store.addNotebook(name: string): string?
-  local named = text.trim(name)
+  local named = strings.trim(name)
   if named == "" then
     return "A notebook needs a name."
   elseif store.notebookNamed(named) ~= nil then
@@ -306,7 +308,7 @@ end
 -- The notes of a notebook with `query` in their title or their text, the ones with it in their title first. Each
 -- comes with the line the words are in.
 function store.search(notebook: number, query: string): { rpc.Hit }
-  local words = text.trim(query)
+  local words = strings.trim(query)
   local hits: { rpc.Hit } = {}
   if words == "" then
     return hits

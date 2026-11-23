@@ -1239,6 +1239,18 @@ export type lib_text = {
 	center: (text: string, width: number, fill_char: string?) -> (string?, string?),
 	--- Convert `text` to a URL-safe ASCII slug via `deunicode` transliteration, then lowercase and hyphenate.
 	slugify: (text: string) -> string,
+	--- Remove Unicode white space (the `White_Space` property: spaces, tabs, line breaks, U+00A0, U+3000, ...) from both ends of `text`. Raises when `text` is not valid UTF-8 (repair it with `to_valid_utf8` first).
+	trim: (text: string) -> string,
+	--- Remove Unicode white space from the start of `text`. Raises when `text` is not valid UTF-8 (repair it with `to_valid_utf8` first).
+	trim_start: (text: string) -> string,
+	--- Remove Unicode white space from the end of `text`. Raises when `text` is not valid UTF-8 (repair it with `to_valid_utf8` first).
+	trim_end: (text: string) -> string,
+	--- Clip `text` to at most `max` characters. A character is an extended grapheme cluster (UAX #29, what `lib:unicode.graphemes` yields and a Swift `Character` is): a flag emoji or a letter with its combining accent is one, and is never cut apart. When `text` is cut and `ellipsis` is given, the ellipsis ends the result and counts toward `max`; an ellipsis longer than `max` is left out. The count bounds characters, not bytes: one character may carry any number of combining marks. Raises (it does not return an error) when `max` is negative, fractional or NaN, and when `text` or `ellipsis` is not valid UTF-8; a `max` beyond any text, infinity included, is the whole text.
+	clip: (text: string, max: number, ellipsis: string?) -> string,
+	--- Make any byte string valid UTF-8: bytes that are not part of a character are replaced with U+FFFD (the replacement character). Valid input is returned as it is.
+	to_valid_utf8: (bytes: string) -> string,
+	--- Remove what a terminal would act on instead of show: escape sequences (colours, cursor movement, window titles) and control characters. Line feeds and tabs stay, so `\r\n` becomes `\n`. Each line is read on its own, so a sequence that is never ended takes the rest of its line and no more. A C1 control written as a character (U+0080 to U+009F) is removed without being read as the start of a sequence. Raises when `text` is not valid UTF-8 (repair it with `to_valid_utf8` first).
+	strip_ansi: (text: string) -> string,
 }
 
 -- ===== lib:unicode =====

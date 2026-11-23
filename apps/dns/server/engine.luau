@@ -5,6 +5,7 @@
 local app = require("vos:app")
 local bollard = require("vnd:bollard")
 local task = require("std:task")
+local trim = require("lib:text").trim
 
 local engine = {}
 
@@ -102,7 +103,7 @@ end
 -- Choose the Docker the server runs in: an address, or empty for this machine's own. The address is only checked
 -- for being one (a Docker that is not running there is said by the overview, and may start later).
 function engine.use(host: string): string?
-  host = string.match(host, "^%s*(.-)%s*$") :: string
+  host = trim(host)
   if host ~= "" then
     if
       not (string.match(host, "^unix:///") or string.match(host, "^tcp://[^/]") or string.match(host, "^https?://[^/]"))

@@ -7,6 +7,7 @@
 -- on as it is), and with nothing when it did what it was asked.
 local app = require("vos:app")
 local rpc = require("../.app/rpc")
+local strings = require("lib:text")
 local vault = require("./vault")
 local db = app.db
 
@@ -22,10 +23,6 @@ db:migrate {
     );
   ]],
 }
-
-local function trim(text: string): string
-  return string.match(text, "^%s*(.-)%s*$") :: string
-end
 
 local function itemOf(row: { [string]: any }): rpc.Item
   return { id = row.id, service = row.service, account = row.account }
@@ -55,7 +52,8 @@ end
 -- replaced, so that nothing another program keeps there is lost to a slip here. Without one it is an item the keychain
 -- has already, shown as it is.
 function items.add(service: string, account: string, password: string?): string?
-  local what, whose = trim(service), trim(account)
+  local what = strings.trim(service)
+  local whose = strings.trim(account)
   if what == "" then
     return "Say what the password is for."
   elseif whose == "" then
