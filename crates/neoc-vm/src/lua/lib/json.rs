@@ -583,7 +583,6 @@ impl UserData for Object {
             walk_get(lua, &this.root, &this.path, args)
         });
         /// Insert or replace `key` with `value`.
-        #[lua]
         methods.add_method("set", |_, this, (key, value): (String, Value)| {
             this.set_inner(key, lua_value_to_json_value(&value)?)
         });
@@ -670,7 +669,6 @@ impl UserData for Array {
             walk_get(lua, &this.root, &this.path, args)
         });
         /// Replace the element at a 1-based index.
-        #[lua]
         methods.add_method("set", |_, this, (index, value): (i64, Value)| {
             if index < 1 {
                 return Err(mlua::Error::external("json.array: index must be >= 1"));
@@ -681,7 +679,6 @@ impl UserData for Array {
             )
         });
         /// Append `value` to the end of the array.
-        #[lua]
         methods.add_method("push", |_, this, value: Value| {
             this.push_inner(lua_value_to_json_value(&value)?)
         });

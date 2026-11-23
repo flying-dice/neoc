@@ -152,7 +152,6 @@ impl UserData for DateHandle {
 
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Return a copy with the year replaced.
-        #[lua]
         methods.add_method("with_year", |_, this, year: i64| {
             let year = match clamp_i16(year, "chrono.Date.with_year") {
                 Ok(v) => v,
@@ -164,7 +163,6 @@ impl UserData for DateHandle {
             }
         });
         /// Return a copy with the month replaced.
-        #[lua]
         methods.add_method("with_month", |_, this, month: i64| {
             let month = match clamp_i8(month, "chrono.Date.with_month") {
                 Ok(v) => v,
@@ -176,7 +174,6 @@ impl UserData for DateHandle {
             }
         });
         /// Return a copy with the day replaced.
-        #[lua]
         methods.add_method("with_day", |_, this, day: i64| {
             let day = match clamp_i8(day, "chrono.Date.with_day") {
                 Ok(v) => v,
@@ -189,14 +186,12 @@ impl UserData for DateHandle {
         });
 
         /// Combine with a `Time` into a `DateTime`.
-        #[lua]
         methods.add_method("at", |_, this, time: Handle<TimeHandle>| {
             let th = time.borrow::<TimeHandle>()?;
             Ok(DateTimeHandle(this.0.to_datetime(th.0)))
         });
 
         /// Add a day-resolution `Duration`.
-        #[lua]
         methods.add_method("add", |_, this, duration: Handle<DurationHandle>| {
             let span = match duration.borrow::<DurationHandle>() {
                 Ok(h) => h.0,
@@ -214,7 +209,6 @@ impl UserData for DateHandle {
             }
         });
         /// Subtract a day-resolution `Duration`.
-        #[lua]
         methods.add_method("sub", |_, this, duration: Handle<DurationHandle>| {
             let span = match duration.borrow::<DurationHandle>() {
                 Ok(h) => h.0,
@@ -235,7 +229,6 @@ impl UserData for DateHandle {
         // Named `diff` rather than `until` because `until` is a Lua keyword
         // (the `repeat … until` loop) and rejected as a method name.
         /// Calendar span from this date until `other`.
-        #[lua]
         methods.add_method("diff", |_, this, other: Handle<DateHandle>| {
             let o = match other.borrow::<DateHandle>() {
                 Ok(h) => h.0,
@@ -336,7 +329,6 @@ impl UserData for TimeHandle {
 
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Combine with a `Date` into a `DateTime`.
-        #[lua]
         methods.add_method("on", |_, this, date: Handle<DateHandle>| {
             let dh = date.borrow::<DateHandle>()?;
             Ok(DateTimeHandle(dh.0.to_datetime(this.0)))
@@ -482,7 +474,6 @@ impl UserData for DateTimeHandle {
             }
         });
         /// Span from this datetime until `other`.
-        #[lua]
         methods.add_method("diff", |_, this, other: Handle<DateTimeHandle>| {
             let o = match other.borrow::<DateTimeHandle>() {
                 Ok(h) => h.0,
@@ -677,7 +668,6 @@ impl UserData for ZonedDateTimeHandle {
             }
         });
         /// Span from this instant until `other`.
-        #[lua]
         methods.add_method("diff", |_, this, other: Handle<ZonedDateTimeHandle>| {
             let o = match other.borrow::<ZonedDateTimeHandle>() {
                 Ok(h) => h.0.clone(),

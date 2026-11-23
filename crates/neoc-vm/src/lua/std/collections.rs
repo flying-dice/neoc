@@ -132,7 +132,6 @@ impl crate::lua::std::thread::Sendable for Map {
 impl UserData for Map {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Read a key.
-        #[lua]
         methods.add_method("get", |lua, this, key: String| {
             let v = this.0.inner.read().get(&key).cloned();
             match v {
@@ -142,7 +141,6 @@ impl UserData for Map {
         });
 
         /// Insert or replace a key.
-        #[lua]
         methods.add_method("set", |_, this, (key, value): (String, Value)| {
             refuse_buffer(&value, "collections.Map.set")?;
             let json = serde_json::to_value(&value).map_err(mlua::Error::external)?;
@@ -151,13 +149,11 @@ impl UserData for Map {
         });
 
         /// Remove a key, returning whether it was present.
-        #[lua]
         methods.add_method("delete", |_, this, key: String| {
             Ok(this.0.inner.write().remove(&key).is_some())
         });
 
         /// Test for a key.
-        #[lua]
         methods.add_method("has", |_, this, key: String| {
             Ok(this.0.inner.read().contains_key(&key))
         });

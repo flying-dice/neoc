@@ -1065,7 +1065,6 @@ pub struct TemplateHandle {
 impl UserData for TemplateHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Render the compiled template with `context` as the variable map.
-        #[lua]
         methods.add_method("render", |lua, this, context: Value| {
             template_render(lua, this, context)
         });
