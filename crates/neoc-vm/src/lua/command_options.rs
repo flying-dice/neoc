@@ -136,8 +136,8 @@ pub(crate) fn env(fields: &Map<String, Json>) -> Result<Vec<(String, String)>, R
     }
 }
 
-/// The directory under `cwd`, when there is one. It is checked here and not left to the start of the command: the
-/// operating system reports a missing directory as if the program were missing.
+/// Check that `cwd` is a directory. It is checked here and not left to the start of the command: the operating
+/// system reports a missing directory as if the program were missing.
 pub(crate) fn existing_dir(cwd: &str) -> Result<(), String> {
     if std::path::Path::new(cwd).is_dir() {
         Ok(())

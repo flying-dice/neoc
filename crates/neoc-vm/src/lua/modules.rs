@@ -339,7 +339,7 @@ pub const LUAU_DECLS_PATH: &str = "types/neoc.d.luau";
 /// The Luau declarations of every module, as `(registry_key, section)` in registry order.
 ///
 /// A section is the `export type` aliases of one module (its resource types and its table): each function's
-/// parameters, returns and docs. [`luau_decls`] joins them into the file.
+/// parameters, returns and docs. [`luau_decls()`] joins them into the file.
 ///
 /// # Errors
 /// Fails when a module cannot be built, or its recording disagrees with the

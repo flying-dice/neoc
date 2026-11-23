@@ -28,8 +28,8 @@
 //! **Waiting.** `spawn`, `read`, `read_stderr`, `write` and `wait` wait without holding the VM: other tasks run
 //! meanwhile, so one script holds many processes at once.
 //!
-//! **Limits.** A read returns at most [`MAX_READ`](byte_stream::MAX_READ) bytes and a write takes at most
-//! [`MAX_WRITE`](byte_stream::MAX_WRITE); at most [`OUTPUT_BUFFER`](byte_stream::OUTPUT_BUFFER) bytes of each output
+//! **Limits.** A read returns at most 64 KiB (`byte_stream::MAX_READ`) and a write takes at most
+//! 1 MiB (`byte_stream::MAX_WRITE`); at most 256 KiB (`byte_stream::OUTPUT_BUFFER`) of each output
 //! stream wait for the script, and a process that writes more waits until they are read. So a piped stream nobody
 //! reads stops the process once it is full: read it, or do not pipe it. Nothing limits how many processes a script
 //! starts.

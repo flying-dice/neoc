@@ -31,8 +31,8 @@
 //! **Waiting.** `spawn_command`, `read`, `write` and `wait` wait without holding the VM: other tasks run meanwhile.
 //! The crate's own reads, writes and waits block, so each terminal has three threads that do them (`terminal`).
 //!
-//! **Limits.** A read returns at most [`MAX_READ`](byte_stream::MAX_READ) bytes and a write takes at most
-//! [`MAX_WRITE`](byte_stream::MAX_WRITE); at most [`OUTPUT_BUFFER`](byte_stream::OUTPUT_BUFFER) bytes of output wait
+//! **Limits.** A read returns at most 64 KiB (`byte_stream::MAX_READ`) and a write takes at most
+//! 1 MiB (`byte_stream::MAX_WRITE`); at most 256 KiB (`byte_stream::OUTPUT_BUFFER`) of output wait
 //! for the script, and a process that writes more waits until they are read.
 //! A size is 1 to 32767 rows and columns. Nothing limits how many terminals a script opens.
 //!

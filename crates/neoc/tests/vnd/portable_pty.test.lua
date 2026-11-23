@@ -177,7 +177,7 @@ describe("portable_pty", function()
 
     describe("a closed terminal", function()
         test("ends its reads, refuses writes and resizes, and still says how the command ended", function()
-            local pty = sh("echo ready; cat")
+            local pty = sh("echo ready; cat; exit 3")
             read_until(pty, "ready")
             local waiting = task.spawn(function()
                 return pty:read()
