@@ -32,7 +32,7 @@ pub mod task {
 
     /// A task's body: a function of the script's, run as a coroutine of its own. What it returns first is what
     /// `Task:await` gives.
-    pub type Body = Callback<fn() -> Live<TaskResult>>;
+    pub type Body = Callback<fn()>;
 
     /// Why a task has no result.
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error, LuaError)]
