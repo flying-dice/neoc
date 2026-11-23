@@ -18,9 +18,7 @@
 //!   agree; `Map:keys()` is sorted.
 //! - A value that is not plain data (a buffer, a function) is refused as an argument of `Map:set`, with its place.
 //! - `Counter` takes whole numbers only: `Counter.new(1.5)` is refused.
-//!
-//! TODO(mlua-ir): `Mutex` (`with_lock(f)`) is not ported: it needs a callback that can be awaited (the body of a
-//! lock waits on IO) and that returns whatever the script's function returns.
+//! - `Mutex` is not offered: nothing used it.
 
 #[mlua_ir::module("std:collections")]
 pub mod collections {

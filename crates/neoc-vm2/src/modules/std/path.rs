@@ -9,8 +9,6 @@
 //! - `join` takes a base and one part, as `Path::join` does (it took any number of parts).
 //! - `with_extension` returns a typed error for an extension that holds a separator (it raised a string).
 //! - `absolute`'s failure is a typed error (`empty_path`, `current_dir`).
-//!
-//! TODO(mlua-ir): `join(base, ...parts)` needs variadic parameters.
 
 use std::path::{Component, Path, PathBuf};
 
