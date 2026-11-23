@@ -118,7 +118,8 @@ impl Process {
         let stdout = child.stdout.take().map(read_into_buffer);
         let stderr = child.stderr.take().map(read_into_buffer);
         let child = Owned::new(child);
-        tokio::spawn(watch_child(Arc::clone(&child), exit_tx));
+        // made here and not in the task: a task that is dropped before it first runs kills the process too
+        tokio::spawn(watch_child(KillWithTask(Arc::clone(&child)), exit_tx));
 
         Ok(Self {
             input: Mutex::new(input),
@@ -426,8 +427,7 @@ impl Drop for KillWithTask {
 }
 
 /// The child's task: wait for the process to end and say how it ended.
-async fn watch_child(child: Arc<Owned>, exit: watch::Sender<Ended<Exit>>) {
-    let child = KillWithTask(child);
+async fn watch_child(child: KillWithTask, exit: watch::Sender<Ended<Exit>>) {
     let status = child.0.ended().await;
     exit.send_replace(Some(
         status

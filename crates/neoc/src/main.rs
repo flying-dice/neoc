@@ -53,7 +53,7 @@ fn report_script_error(e: &mlua::Error, source: &str, path: &str) -> ! {
 /// Expand one glob pattern to the matching file paths, walking from its leading
 /// literal prefix so unrelated trees aren't scanned. Returns an error string
 /// (bad pattern, walk failure, or no matches) rather than exiting — the caller
-/// owns the `process::exit` policy.
+/// owns the exit policy.
 fn glob_expand(pattern: &str) -> Result<Vec<String>, String> {
     let matcher = globset::Glob::new(pattern)
         .map_err(|e| format!("invalid pattern {pattern}: {e}"))?
