@@ -466,7 +466,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// functions likewise carried no span and are set verbatim. The `Duration` /
 /// `Instant` userdata keep their own `impl UserData` and are recorded here via
 /// [`crate::lua::facade::Module::userdata`]; `now` and `sleep` are recorded via
-/// [`crate::lua::facade::Module::record_fn`].
+/// what `neoc_macros` reads from the implementation.
 #[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:time")?;

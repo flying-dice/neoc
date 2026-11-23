@@ -199,7 +199,7 @@ fn the_example_writes_and_checks() {
     assert!(fs::read_to_string(&file).unwrap().ends_with("-- stale\n"));
 }
 
-/// A file that cannot be written (here: a folder) is exit 1 with the reason, not a panic and not exit 0.
+/// `--ast` writes the tree as JSON, and `--ast --check` says whether a file is that tree.
 #[test]
 fn the_example_writes_and_checks_the_tree() {
     let scratch = Scratch::new("decls-example-ast");
@@ -223,6 +223,7 @@ fn the_example_writes_and_checks_the_tree() {
     assert!(stdout.contains("--check OK"), "{stdout}");
 }
 
+/// A file that cannot be written (here: a folder) is exit 1 with the reason, not a panic and not exit 0.
 #[test]
 fn the_example_reports_a_file_it_cannot_write() {
     let scratch = Scratch::new("decls-unwritable");

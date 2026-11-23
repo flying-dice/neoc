@@ -142,7 +142,7 @@ pub fn module(lua: &Lua) -> mlua::Result<mlua::Table> {
 /// than `try_func` because the hand-written function carries **no**
 /// `#[instrument]` span and bakes its own `jsonschema.compile` error prefix —
 /// routing through `try_func` would add a span and double the prefix. Its
-/// signature is recorded via [`crate::lua::facade::Module::record_fn`]. The
+/// signature is recorded via what `neoc_macros` reads from the implementation. The
 /// `Schema` (`JSchema`) and `ValidationResult` (`JValidationResult`) userdata
 /// types keep their own `impl UserData` (methods unchanged) and are recorded
 /// via [`crate::lua::facade::Module::userdata`].

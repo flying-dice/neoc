@@ -44,7 +44,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `recording` / `replay` open their own spans), so routing it through the
 /// facade's `func` / `try_func` path would change its behaviour. Its signature
 /// is recorded via
-/// [`crate::lua::facade::Module::record_fn`].
+/// what `neoc_macros` reads from the implementation.
 #[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:vcr")?;

@@ -21,8 +21,8 @@ cargo fmt --check
 step "cargo clippy --workspace --all-targets -- -D warnings"
 cargo clippy --workspace --all-targets -- -D warnings
 
-step "cargo test -p neoc -p neoc-vm"
-cargo test -p neoc -p neoc-vm
+step "cargo test -p neoc -p neoc-vm -p neoc-decl -p neoc-macros"
+cargo test -p neoc -p neoc-vm -p neoc-decl -p neoc-macros
 
 # The suites that need a Docker daemon (sqlx_mysql, sqlx_postgres, testcontainers_modules) are left out; with Docker
 # running, `neoc run 'crates/neoc/tests/**/*.test.lua' 'crates/neoc/tests/**/*.spec.lua'` runs every suite. No test

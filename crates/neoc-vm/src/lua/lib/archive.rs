@@ -65,7 +65,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `(value, error)` channel — the same mixed shape as `lib:compress`. That mix
 /// is outside `try_func`, so each function is registered verbatim with
 /// [`Module::set`] (keeping its `archive.<fn>` span + error prefix) and
-/// recorded with [`Module::record_fn`].
+/// recorded with what `neoc_macros` reads from the implementation.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:archive")?;
 

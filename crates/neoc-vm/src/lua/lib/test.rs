@@ -93,7 +93,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// not apply. The matcher functions live on a plain returned table, not a
 /// userdata type; they are recorded as a `Matcher` type's `function`s. The free
 /// functions' signatures are recorded via
-/// [`crate::lua::facade::Module::record_fn`].
+/// what `neoc_macros` reads from the implementation.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:test")?;
     init_state(lua)?;

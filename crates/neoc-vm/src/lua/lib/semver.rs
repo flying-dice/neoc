@@ -15,8 +15,6 @@ use regex::Regex;
 use semver::{BuildMetadata, Prerelease, Version, VersionReq};
 use tracing::instrument;
 
-use neoc_macros::lua_userdata;
-
 use crate::lua::facade::Module;
 use crate::lua::sandbox::{err, ok};
 
@@ -94,7 +92,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 #[derive(Clone)]
 pub struct VersionHandle(pub Version);
 
-#[lua_userdata]
+#[neoc_macros::lua_userdata]
 impl UserData for VersionHandle {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
         /// Major version.
@@ -186,7 +184,7 @@ fn version_parse_method(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
 #[derive(Clone)]
 pub struct VersionReqHandle(pub VersionReq);
 
-#[lua_userdata]
+#[neoc_macros::lua_userdata]
 impl UserData for VersionReqHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// True when `version` is in the range. Accepts a `Version` or a string (raises if invalid).

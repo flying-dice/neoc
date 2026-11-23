@@ -27,8 +27,9 @@
 //! The emitter refuses what it can see it cannot express: a control character in a doc or a type, a tuple
 //! or `...` inside `Result<>`, a top-level `...` that is not last, a character a type does not use, unbalanced
 //! brackets, a name that is not an identifier. That is an error of [`Module::luau_decls`], not invalid Luau in
-//! the file. What it does not look for (a malformed type that uses only permitted characters) is caught by the
-//! test-only `grammar` module, which parses the whole generated file with no luau-lsp needed.
+//! the file. A type that uses only permitted characters and is still malformed is an error too: every type is
+//! read into the tree (`neoc_decl::parse`) before anything is written. The test-only `grammar` module parses
+//! the whole generated file besides, with no luau-lsp needed.
 
 use std::fmt::Write as _;
 

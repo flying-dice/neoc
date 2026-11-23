@@ -126,7 +126,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// (e.g. control-byte rejection) with `(value, error)` returns built directly
 /// from `err` / `from_err`, so neither fits the facade's `func` / `try_func`
 /// return model. Their signatures are recorded via
-/// [`crate::lua::facade::Module::record_fn`].
+/// what `neoc_macros` reads from the implementation.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:ini")?;
 

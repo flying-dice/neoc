@@ -113,7 +113,7 @@ jobs:
       # neoc's own suite: runtime lib tests plus the `neoc` binary's CLI
       # integration tests and Gherkin spec. The vos crates' tests need bun and darklua
       # which this job does not install, so they are not run here.
-      - run: cargo test -p neoc -p neoc-vm
+      - run: cargo test -p neoc -p neoc-vm -p neoc-decl -p neoc-macros
       # Docker-dependent suites (sqlx_mysql, sqlx_postgres,
       # testcontainers_modules) are excluded: they need a live Docker daemon.
       - name: Script suites (neoc run)

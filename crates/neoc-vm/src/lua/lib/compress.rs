@@ -27,7 +27,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// directly (the bare `?`) — a mix `try_func` cannot model. Both are registered
 /// verbatim with [`crate::lua::facade::Module::set`] (keeping their
 /// `#[instrument]` span and `compress.<fn>` channel prefix) and recorded with
-/// [`crate::lua::facade::Module::record_fn`]. The `(value, error)` shape, the
+/// what `neoc_macros` reads from the implementation. The `(value, error)` shape, the
 /// `compress.encode` / `compress.decode` error prefixes, the raise on
 /// `create_string`, and the `lua::lib::compress` spans are byte-identical to
 /// the hand-written registration this replaces.

@@ -78,7 +78,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// Both are registered verbatim with [`crate::lua::facade::Module::set`]
 /// (keeping their `#[instrument]` span and `random.<fn>` channel prefix) and
 /// recorded with
-/// [`crate::lua::facade::Module::record_fn`].
+/// what `neoc_macros` reads from the implementation.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:random")?;
     m.set("random_bytes", lua.create_function(random_bytes)?)?

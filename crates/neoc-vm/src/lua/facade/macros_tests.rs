@@ -95,6 +95,7 @@ fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.set("same", lua.create_function(|_, n: f64| Ok(n))?)?;
     m.userdata("Counter", Counter::lua);
     m.type_("Maker", |t| {
+        Counter::lua(t);
         /// A counter that starts at `from`.
         #[lua]
         t.constructor("starting", |_, from: f64| Ok(from))?;
@@ -196,6 +197,21 @@ fn a_constructor_in_a_type_is_declared_from_its_closure() {
         &declarations(),
         "\t--- A counter that starts at `from`.\n\tstarting: (from: number) -> ",
     );
+}
+
+#[test]
+fn a_type_takes_the_members_of_an_impl_too() {
+    let decls = declarations();
+    let maker = decls
+        .split("export type vnd_demo_Maker = {")
+        .nth(1)
+        .unwrap_or_default();
+    says(maker, "\tvalue: number,\n");
+    says(
+        maker,
+        "\tadd: (self: vnd_demo_Maker, by: number) -> number,\n",
+    );
+    says(maker, "\tzero: () -> ");
 }
 
 #[test]

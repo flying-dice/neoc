@@ -31,7 +31,7 @@ const INTERNAL: Record<string, string[]> = {
   'vos-application': ['vos-domain'],
   // The Lua adapter runs apps (Luau source) on top of the Lua VM library below.
   'vos-lua': ['vos-domain', 'vos-application', 'neoc-vm'],
-  // The Lua VM (Luau): a support library, not an adapter. It depends on no other crate here, and among the
+  // The Lua VM (Luau): a support library, not an adapter. Of the crates here it depends only on the two below that say what a module declares, and among the
   // vos crates only the Lua adapter may depend on it (the one place a script engine is wired to a port), so
   // the VM stays swappable. The `neoc` CLI is its other client.
   'neoc-vm': ['neoc-decl', 'neoc-macros'],

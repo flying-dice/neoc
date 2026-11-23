@@ -1097,7 +1097,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `mlua::Error` directly — a mix `try_func` cannot model — so it is registered
 /// verbatim with [`crate::lua::facade::Module::set`] (keeping its
 /// `template.compile` span and channel prefix) and recorded with
-/// [`crate::lua::facade::Module::record_fn`]. The `(value, error)` shape, the
+/// what `neoc_macros` reads from the implementation. The `(value, error)` shape, the
 /// exact error strings, the raise on `into_lua`, and the `lua::lib::template`
 /// spans are byte-identical to the hand-written registration this replaces
 /// (which never saw a buffer: one raises from `render` and `Template:render`). The
@@ -1110,8 +1110,10 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:template")?;
 
     let eng = engine.clone();
-    m.declared(
-        compile_impl::lua(),
+    /// Parse `source` once and return a reusable `Template`.
+    #[lua("Result<Template, string>", names(src = "source"))]
+    m.set(
+        "compile",
         lua.create_function(move |lua, src: String| compile_impl(lua, &eng, src))?,
     )?;
 
@@ -1145,12 +1147,6 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 // Compile / render implementations.
 // ---------------------------------------------------------------------------
 
-/// Parse `source` once and return a reusable `Template`.
-#[neoc_macros::lua_fn(
-    name = "compile",
-    returns = "Result<Template, string>",
-    takes("source: string")
-)]
 #[instrument(name = "template.compile", target = "lua::lib::template", skip_all)]
 fn compile_impl(lua: &Lua, engine: &Engine, src: String) -> mlua::Result<(Value, Value)> {
     if let Err(e) = check_complexity(&src) {

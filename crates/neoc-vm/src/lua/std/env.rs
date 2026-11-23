@@ -7,8 +7,6 @@ use crate::lua::sandbox::{err, from_err, ok};
 
 // Return a filesystem path to Lua as a lossy UTF-8 string under the
 // `(value, nil)` convention. Shared by `home_dir` / `current_dir`.
-/// Return the current user's home directory, or an error if it cannot be determined.
-#[neoc_macros::lua_fn(name = "home_dir", returns = "Result<string, string>", takes())]
 fn ok_path(lua: &Lua, p: &std::path::Path) -> mlua::Result<(Value, Value)> {
     ok(lua, p.to_string_lossy().as_ref())
 }
@@ -26,7 +24,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// messages, `args` raises `mlua::Error` directly, and the platform constants
 /// are plain string values — none fit the facade's regular paths. Each is
 /// recorded via
-/// [`crate::lua::facade::Module::record_fn`] /
+/// what `neoc_macros` reads from the implementation /
 /// [`crate::lua::facade::Module::const_`].
 #[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
@@ -70,8 +68,10 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "Dynamic-library filename suffix for the target (e.g. `\".so\"`, `\".dylib\"`).",
     );
 
-    m.declared(
-        ok_path::lua(),
+    /// Return the current user's home directory, or an error if it cannot be determined.
+    #[lua("Result<string, string>")]
+    m.set(
+        "home_dir",
         lua.create_function(|lua, ()| {
             #[allow(deprecated)]
             match std::env::home_dir() {

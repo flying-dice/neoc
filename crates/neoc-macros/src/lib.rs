@@ -12,6 +12,8 @@
 //! m.declared(decode::lua(), lua.create_function(decode)?)?;
 //! ```
 //!
+//! The macros write paths into neoc-vm's facade (`crate::lua::facade`), so they are for neoc-vm's own modules.
+//!
 //! [`lua_fn`] is for a function, [`lua_userdata`] for the methods and fields of an `impl UserData` block, and
 //! [`lua_module`] for the closures a module's `declare` function registers in place.
 //!
@@ -147,6 +149,7 @@ impl Said {
         inputs: impl Iterator<Item = (&'p Pat, Option<&'p Type>)>,
     ) -> syn::Result<Vec<Tokens>> {
         if let Some(takes) = &self.takes {
+            self.refuse(false, true, false)?;
             return takes
                 .iter()
                 .map(|pair| {
@@ -160,17 +163,59 @@ impl Said {
                 .collect();
         }
         let mut found = Vec::new();
+        let mut seen = Vec::new();
         for (pat, ty) in inputs {
-            self.param(pat, ty, &mut found)?;
+            self.param(pat, ty, &mut found, &mut seen)?;
         }
-        Ok(found)
+        // a name that is no parameter's is a slip, not something to pass over
+        match self
+            .types
+            .iter()
+            .chain(&self.names)
+            .find(|(of, _)| !seen.contains(of))
+        {
+            Some((of, _)) => Err(syn::Error::new(
+                of.span(),
+                format!("no parameter is named `{of}`"),
+            )),
+            None => Ok(found),
+        }
+    }
+
+    /// Refuses what means nothing where it is written, so that it is not passed over in silence.
+    fn refuse(&self, name: bool, renames: bool, skip: bool) -> syn::Result<()> {
+        if let (true, Some(said)) = (name, &self.name) {
+            return Err(syn::Error::new(
+                said.span(),
+                "the name is the one in the call: `name` is not for this",
+            ));
+        }
+        if skip && self.skip {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                "`skip` is for a member of a userdata type",
+            ));
+        }
+        if let (true, Some((of, _))) = (renames, self.types.iter().chain(&self.names).next()) {
+            return Err(syn::Error::new(
+                of.span(),
+                "`types(...)` and `names(...)` are for parameters read from the Rust: here the list is said elsewhere",
+            ));
+        }
+        Ok(())
     }
 
     /// What one Rust parameter is to a script: nothing for `_: ()`, one parameter for `name: T`, one each for
     /// `(a, b): (A, B)`, and any number (`...`) for `rest: Variadic<T>`.
-    fn param(&self, pat: &Pat, ty: Option<&Type>, found: &mut Vec<Tokens>) -> syn::Result<()> {
+    fn param(
+        &self,
+        pat: &Pat,
+        ty: Option<&Type>,
+        found: &mut Vec<Tokens>,
+        seen: &mut Vec<Ident>,
+    ) -> syn::Result<()> {
         match pat {
-            Pat::Type(typed) => return self.param(&typed.pat, Some(&typed.ty), found),
+            Pat::Type(typed) => return self.param(&typed.pat, Some(&typed.ty), found, seen),
             Pat::Tuple(parts) => {
                 let types: Vec<Option<&Type>> = match ty {
                     Some(Type::Tuple(tuple)) if tuple.elems.len() == parts.elems.len() => {
@@ -185,7 +230,7 @@ impl Said {
                     }
                 };
                 for (part, ty) in parts.elems.iter().zip(types) {
-                    self.param(part, ty, found)?;
+                    self.param(part, ty, found, seen)?;
                 }
                 return Ok(());
             }
@@ -201,6 +246,7 @@ impl Said {
             ));
         };
         let binding = &binding.ident;
+        seen.push(binding.clone());
         let name = if let Some((_, name)) = self.names.iter().find(|(of, _)| of == binding) {
             name.value()
         } else {
@@ -267,6 +313,27 @@ fn is_lua(ty: &Type) -> bool {
     }
 }
 
+/// What a function's `Result` gives a script.
+enum Returned<'t> {
+    /// `mlua::Result<T>`: `T`, the error being raised.
+    Value(&'t Type),
+    /// `Result<T, E>`: the result itself.
+    Either,
+}
+
+fn result_of(ty: &Type) -> Option<Returned<'_>> {
+    let value = generic_of(ty, "Result")?;
+    let Type::Path(path) = ty else { return None };
+    let PathArguments::AngleBracketed(args) = &path.path.segments.last()?.arguments else {
+        return None;
+    };
+    Some(if args.args.len() == 1 {
+        Returned::Value(value)
+    } else {
+        Returned::Either
+    })
+}
+
 /// The recorded return of a function: what was said, or the `DeclType` of `T` in `mlua::Result<T>`.
 fn returns_of(said: Option<&LitStr>, output: &ReturnType) -> syn::Result<Tokens> {
     if let Some(text) = said {
@@ -275,8 +342,10 @@ fn returns_of(said: Option<&LitStr>, output: &ReturnType) -> syn::Result<Tokens>
     let facade = facade();
     match output {
         ReturnType::Default => Ok(quote!(::std::string::String::from("()"))),
-        ReturnType::Type(_, ty) => match generic_of(ty, "Result") {
-            Some(value) => Ok(quote!(<#value as #facade::DeclType>::decl_type())),
+        ReturnType::Type(_, ty) => match result_of(ty) {
+            Some(Returned::Value(value)) => Ok(quote!(<#value as #facade::DeclType>::decl_type())),
+            // a `Result<T, E>` of its own is what a script gets: a value or an error, not `T`
+            Some(Returned::Either) => Ok(quote!(<#ty as #facade::DeclType>::decl_type())),
             None => Err(syn::Error::new(
                 ty.span(),
                 "the return is not `mlua::Result<T>`: say what a script gets with `returns = \"...\"`",
@@ -285,9 +354,9 @@ fn returns_of(said: Option<&LitStr>, output: &ReturnType) -> syn::Result<Tokens>
     }
 }
 
-fn lua_fn_impl(args: TokenStream, mut function: ItemFn) -> syn::Result<Tokens> {
+fn lua_fn_impl(args: Tokens, mut function: ItemFn) -> syn::Result<Tokens> {
     let mut said = Said::default();
-    syn::parse::Parser::parse(|input: syn::parse::ParseStream| said.read(input), args)?;
+    syn::parse::Parser::parse2(|input: syn::parse::ParseStream| said.read(input), args)?;
     if said.skip {
         return Err(syn::Error::new(
             Span::call_site(),
@@ -356,7 +425,7 @@ fn lua_fn_impl(args: TokenStream, mut function: ItemFn) -> syn::Result<Tokens> {
 #[proc_macro_attribute]
 pub fn lua_fn(args: TokenStream, item: TokenStream) -> TokenStream {
     let function = syn::parse_macro_input!(item as ItemFn);
-    lua_fn_impl(args, function)
+    lua_fn_impl(args.into(), function)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }
@@ -421,8 +490,15 @@ fn member(stmt: &mut Stmt) -> syn::Result<Option<Tokens>> {
     };
     let doc = doc_of(attrs);
     attrs.retain(|a| !a.path().is_ident("doc"));
+    let marked = attrs.iter().any(|a| a.path().is_ident("lua"));
     let said = Said::above(attrs)?;
     let Some(kind) = member_kind(&adder) else {
+        if marked {
+            return Err(syn::Error::new(
+                span,
+                "`#[lua]` is for a statement that adds a field, a method or a function",
+            ));
+        }
         return Ok(None);
     };
     let mut name = None;
@@ -438,8 +514,14 @@ fn member(stmt: &mut Stmt) -> syn::Result<Option<Tokens>> {
             _ => {}
         }
     }
-    let (Some(name), false) = (said.name.clone().or(name), said.skip) else {
+    if said.skip {
         return Ok(None);
+    }
+    let Some(name) = said.name.clone().or(name) else {
+        return Err(syn::Error::new(
+            span,
+            "the name of this member is not a string here: say it with `#[lua(name = \"...\")]` (or `#[lua(skip)]`)",
+        ));
     };
     let Some(ty) = &said.returns else {
         return Err(syn::Error::new(
@@ -453,6 +535,12 @@ fn member(stmt: &mut Stmt) -> syn::Result<Option<Tokens>> {
         Member::Method => 2,
         Member::Function => 1,
     };
+    if closure.is_none() && said.takes.is_none() {
+        return Err(syn::Error::new(
+            span,
+            "no closure to read the parameters from: say them with `takes(...)`",
+        ));
+    }
     let inputs = closure
         .into_iter()
         .flat_map(|c| c.inputs.iter().skip(own))
@@ -655,6 +743,7 @@ fn registered(stmt: &mut Stmt) -> syn::Result<Option<Tokens>> {
     let Some(marked) = Marked::read(stmt)? else {
         return Ok(None);
     };
+    marked.said.refuse(true, marked.path.is_some(), true)?;
     let facade = facade();
     let (name, doc, receiver) = (&marked.name, &marked.doc, &marked.receiver);
     if marked.kind == "set" {
@@ -791,4 +880,234 @@ pub fn lua_module(args: TokenStream, item: TokenStream) -> TokenStream {
     lua_module_impl(function)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use quote::quote;
+    use syn::parse_quote;
+
+    use super::{lua_fn_impl, lua_module_impl, lua_userdata_impl};
+
+    /// What the compiler says of `result` when it is refused.
+    fn refusal(result: syn::Result<proc_macro2::TokenStream>) -> String {
+        match result {
+            Ok(tokens) => format!("accepted: {tokens}"),
+            Err(error) => error.to_string(),
+        }
+    }
+
+    #[track_caller]
+    fn refuses(result: syn::Result<proc_macro2::TokenStream>, why: &str) {
+        let said = refusal(result);
+        assert!(said.contains(why), "expected `{why}`, got `{said}`");
+    }
+
+    #[test]
+    fn a_function_is_accepted_as_it_is_written() {
+        let out = lua_fn_impl(
+            quote!(),
+            parse_quote!(
+                fn f(_: &Lua, a: String) -> mlua::Result<String> {
+                    Ok(a)
+                }
+            ),
+        );
+        let text = out.map_or_default(|t| t.to_string());
+        assert!(text.contains("mod f"), "{text}");
+    }
+
+    #[test]
+    fn a_result_with_its_own_error_is_recorded_whole() {
+        let out = lua_fn_impl(
+            quote!(),
+            parse_quote!(
+                fn f(n: f64) -> Result<f64, String> {
+                    Ok(n)
+                }
+            ),
+        );
+        let text = out.map_or_default(|t| t.to_string());
+        assert!(text.contains("< Result < f64 , String > as"), "{text}");
+    }
+
+    #[test]
+    fn a_function_refuses_what_it_cannot_read() {
+        refuses(
+            lua_fn_impl(
+                quote!(skip),
+                parse_quote!(
+                    fn f() {}
+                ),
+            ),
+            "`skip` is for a member",
+        );
+        refuses(
+            lua_fn_impl(
+                quote!(),
+                parse_quote!(
+                    fn f() -> f64 {
+                        1.0
+                    }
+                ),
+            ),
+            "say what a script gets",
+        );
+        refuses(
+            lua_fn_impl(
+                quote!(),
+                parse_quote!(
+                    fn f((a, _): (String, String)) -> mlua::Result<()> {
+                        Ok(())
+                    }
+                ),
+            ),
+            "needs a name",
+        );
+        refuses(
+            lua_fn_impl(
+                quote!(),
+                parse_quote!(
+                    fn f(&self) {}
+                ),
+            ),
+            "free function",
+        );
+        refuses(
+            lua_fn_impl(
+                quote!(colour = "red"),
+                parse_quote!(
+                    fn f() {}
+                ),
+            ),
+            "expected a return type",
+        );
+    }
+
+    #[test]
+    fn a_name_that_is_no_parameters_is_refused() {
+        refuses(
+            lua_fn_impl(
+                quote!(names(txt = "text")),
+                parse_quote!(
+                    fn f(text: String) -> mlua::Result<()> {
+                        Ok(())
+                    }
+                ),
+            ),
+            "no parameter is named `txt`",
+        );
+        refuses(
+            lua_fn_impl(
+                quote!(types(nope = "string")),
+                parse_quote!(
+                    fn f(text: String) -> mlua::Result<()> {
+                        Ok(())
+                    }
+                ),
+            ),
+            "no parameter is named `nope`",
+        );
+        refuses(
+            lua_fn_impl(
+                quote!(takes("a: string"), types(text = "string")),
+                parse_quote!(
+                    fn f(text: String) -> mlua::Result<()> {
+                        Ok(())
+                    }
+                ),
+            ),
+            "the list is said elsewhere",
+        );
+    }
+
+    #[test]
+    fn a_member_refuses_what_it_cannot_read() {
+        let block = |body: proc_macro2::TokenStream| -> syn::ItemImpl {
+            parse_quote!(impl UserData for X { fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) { #body } })
+        };
+        refuses(
+            lua_userdata_impl(block(
+                quote!(methods.add_method("x", |_, this, ()| Ok(()));),
+            )),
+            "say what a script gets",
+        );
+        refuses(
+            lua_userdata_impl(block(
+                quote!(#[lua("number")] methods.add_method("x", Self::helper);),
+            )),
+            "no closure to read the parameters from",
+        );
+        refuses(
+            lua_userdata_impl(block(
+                quote!(#[lua("number")] methods.add_method(NAME, |_, this, ()| Ok(1));),
+            )),
+            "the name of this member is not a string",
+        );
+        refuses(
+            lua_userdata_impl(block(quote!(#[lua("number")] methods.document("x");))),
+            "`#[lua]` is for a statement that adds",
+        );
+        refuses(
+            lua_userdata_impl(block(
+                quote!(#[lua("number", names(b = "by"))] methods.add_method("x", |_, this, a: f64| Ok(a));),
+            )),
+            "no parameter is named `b`",
+        );
+    }
+
+    #[test]
+    fn a_registration_refuses_what_means_nothing_there() {
+        let declare = |body: proc_macro2::TokenStream| -> syn::ItemFn {
+            parse_quote!(fn declare() { #body })
+        };
+        refuses(
+            lua_module_impl(declare(
+                quote!(#[lua(name = "other")] m.func("upper", |_, t: String| Ok(t))?;),
+            )),
+            "`name` is not for this",
+        );
+        refuses(
+            lua_module_impl(declare(
+                quote!(#[lua(skip)] m.func("upper", |_, t: String| Ok(t))?;),
+            )),
+            "`skip` is for a member",
+        );
+        refuses(
+            lua_module_impl(declare(
+                quote!(#[lua("string")] m.func("upper", |_, t: String| Ok(t))?;),
+            )),
+            "it is not said by hand",
+        );
+        refuses(
+            lua_module_impl(declare(
+                quote!(#[lua(names(t = "text"))] m.try_func("parse", parse)?;),
+            )),
+            "the list is said elsewhere",
+        );
+        refuses(
+            lua_module_impl(declare(quote!(
+                /// A doc.
+                #[lua]
+                m.try_func("parse", parse)?;
+            ))),
+            "the doc of a function given by its path",
+        );
+        refuses(
+            lua_module_impl(declare(quote!(#[lua("number")] m.set("now", now_fn)?;))),
+            "no closure to read the parameters from",
+        );
+        refuses(
+            lua_module_impl(declare(quote!(#[lua] m.set("one", make(|_, ()| Ok(1)))?;))),
+            "say what a script gets",
+        );
+        refuses(
+            lua_module_impl(declare(quote!(#[lua] m.other("x", |_, ()| Ok(1))?;))),
+            "is for a `set` or a registration",
+        );
+        refuses(
+            lua_module_impl(declare(quote!(#[lua] m.func(NAME, |_, ()| Ok(1))?;))),
+            "the name, as a string",
+        );
+    }
 }

@@ -119,8 +119,6 @@ impl State {
 // Constant-time tag comparison. `subtle` compares every byte regardless of
 // where the first mismatch is; a length mismatch (not secret — fixed by the
 // algorithm) yields `false` without inspecting contents.
-/// Compare two tags in constant time; returns `true` iff they are equal.
-#[neoc_macros::lua_fn(returns = "bool", types(a = "string", b = "string"))]
 fn verify(a: &[u8], b: &[u8]) -> bool {
     a.ct_eq(b).into()
 }
@@ -172,13 +170,14 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 ///
 /// Every free function is set verbatim with [`crate::lua::facade::Module::set`]
 /// and recorded with
-/// [`crate::lua::facade::Module::record_fn`]: `hmac.Hmac.new` and `hmac.hmac`
+/// [`crate::lua::facade::Module::record_fn`] or `#[lua]` above the `set`: `hmac.Hmac.new` and `hmac.hmac`
 /// raise through [`crate::lua::sandbox::err`] with a baked `"<stem>.<fn>: <e>"`
 /// prefix under their own `#[instrument]` spans (the `hmac.Hmac.new` span the
 /// facade's `type_` would rename to `Hmac.new`), and `verify` / `algorithms`
 /// carry no span at all — routing any of them through the facade would change
 /// the trace shape. The `Hmac` userdata keeps its own `impl UserData` and is
 /// recorded here via [`crate::lua::facade::Module::userdata`].
+#[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:hmac")?;
 
@@ -187,7 +186,15 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.set("Hmac", hmac_sub)?;
 
     m.set("hmac", lua.create_function(hmac_one_shot)?)?;
+    m.record_fn(
+        "hmac",
+        &[("algo", "string"), ("key", "string"), ("data", "string")],
+        "Result<string, string>",
+        "One-shot tag of `data` under `algo` and `key`, returning the tag as raw bytes.",
+    );
 
+    /// Compare two tags in constant time; returns `true` iff they are equal.
+    #[lua("bool", types(a = "string", b = "string"))]
     m.set(
         "verify",
         lua.create_function(|_, (a, b): (mlua::LuaString, mlua::LuaString)| {
@@ -195,6 +202,8 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         })?,
     )?;
 
+    /// Return the list of supported algorithm names in canonical order.
+    #[lua("LuaValue")]
     m.set(
         "algorithms",
         lua.create_function(|lua, _: ()| {
@@ -215,20 +224,6 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             "Start an incremental HMAC under `algo` with `key`.",
         );
     });
-
-    m.record_fn(
-        "hmac",
-        &[("algo", "string"), ("key", "string"), ("data", "string")],
-        "Result<string, string>",
-        "One-shot tag of `data` under `algo` and `key`, returning the tag as raw bytes.",
-    )
-    .record(verify::lua())
-    .record_fn(
-        "algorithms",
-        &[],
-        "LuaValue",
-        "Return the list of supported algorithm names in canonical order.",
-    );
 
     Ok(m)
 }
