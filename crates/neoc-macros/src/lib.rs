@@ -35,7 +35,8 @@
 //! | `List<T>` | `{ T }` |
 //! | `Bytes` | `string`: bytes that need not be text |
 //! | a struct that is a table (`#[lua_record(into)]`, `from`) | `{ field: T, ... }`, read from its fields |
-//! | `Declared<T, V>`, as a parameter | the value `V` as it was passed, declared as `T`: for a table the function reads by its own rules, with `T` a `#[lua_record(shape)]` of its keys |
+//! | `Checked<T>`, as a parameter | `T`, read from what the script passed; a refusal is the function's to return (`opts.take()?`) |
+//! | `Declared<T, V>`, as a parameter | the value `V` as it was passed, declared as `T`: for a value the function reads itself |
 //! | a type of the module's own with a `DeclType` (an enum of the kinds a function can hand back) | what it says |
 //!
 //! A member a helper adds for its caller (`call(methods, "keyring.entry", ...)`) says its name and its
@@ -1808,12 +1809,6 @@ fn lua_methods_impl(mut block: ItemImpl, named: &Named) -> syn::Result<Tokens> {
 /// A record read `from` a script is strict: a value that is not a table is refused, and so is a key that is
 /// not a field, and a value that is not what its field takes. A field that may be left out is an `Option`. A
 /// refusal is not raised: the function returns it as its own error (`facade::args`).
-///
-/// `#[lua_record(shape)]` is for a table a module reads by its own rules (its own errors, its own ranges): the
-/// struct is only what the table looks like. It is never built; a parameter is
-/// `Declared<Option<Shape>, Option<Table>>`, the value as it was passed, and the reader takes the keys it
-/// allows from the struct (`opts.keys()`, `Shape::KEYS`). The field types are declarations: nothing checks them
-/// against what the reader takes.
 #[proc_macro_attribute]
 pub fn lua_record(args: TokenStream, item: TokenStream) -> TokenStream {
     let record = syn::parse_macro_input!(item as syn::ItemStruct);
@@ -1825,36 +1820,23 @@ pub fn lua_record(args: TokenStream, item: TokenStream) -> TokenStream {
 fn lua_record_impl(args: Tokens, record: &syn::ItemStruct) -> syn::Result<Tokens> {
     let mut into = false;
     let mut from = false;
-    let mut shape = false;
     let words = syn::meta::parser(|meta| {
         if meta.path.is_ident("into") {
             into = true;
         } else if meta.path.is_ident("from") {
             from = true;
-        } else if meta.path.is_ident("shape") {
-            shape = true;
         } else {
-            return Err(meta.error(
-                "a record is `into` a script, `from` one, or both; or it is only the `shape` of a table",
-            ));
+            return Err(meta.error("a record is `into` a script, `from` one, or both"));
         }
         Ok(())
     });
     syn::parse::Parser::parse2(words, args)?;
-    if !into && !from && !shape {
+    if !into && !from {
         return Err(syn::Error::new(
             record.ident.span(),
-            "say which way the record goes: `#[lua_record(into)]`, `#[lua_record(from)]` or both (or `shape`)",
+            "say which way the record goes: `#[lua_record(into)]`, `#[lua_record(from)]` or both",
         ));
     }
-    if shape && (into || from) {
-        return Err(syn::Error::new(
-            record.ident.span(),
-            "a `shape` is never built: it is not also `into` or `from`",
-        ));
-    }
-    // a shape is read for its fields only
-    let unbuilt = shape.then(|| quote!(#[allow(dead_code)]));
     let syn::Fields::Named(fields) = &record.fields else {
         return Err(syn::Error::new(
             record.ident.span(),
@@ -1875,7 +1857,6 @@ fn lua_record_impl(args: Tokens, record: &syn::ItemStruct) -> syn::Result<Tokens
     let types: Vec<&Type> = fields.named.iter().map(|f| &f.ty).collect();
     let count = keys.len();
     let mut out = quote! {
-        #unbuilt
         #record
 
         impl #generics #facade::DeclType for #ident #of #bounds {
@@ -2162,16 +2143,6 @@ mod tests {
         refuses(
             lua_record_impl(quote!(sideways), &record),
             "`into` a script, `from` one",
-        );
-        let shape = lua_record_impl(quote!(shape), &record).map_or_default(|t| t.to_string());
-        assert!(
-            shape.contains("KEYS : & 'static [& 'static str] = & [\"code\" , \"type\"]"),
-            "{shape}"
-        );
-        assert!(!shape.contains("IntoLua for Exit"), "{shape}");
-        refuses(
-            lua_record_impl(quote!(shape, into), &record),
-            "a `shape` is never built",
         );
         let tuple: syn::ItemStruct = parse_quote!(
             struct Pair(i32, i32);
