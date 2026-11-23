@@ -6,3 +6,4 @@ pub mod hex;
 pub mod hash;
 pub mod hmac;
 pub mod random;
+pub mod crypto;
