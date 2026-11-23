@@ -1,6 +1,7 @@
 //! `vnd:*` modules: vendored crates, each named after its crate. A module is a `#[mlua_ir::module("vnd:<name>")]`
 //! inside its file; its `pub mod` line here is what compiles and links it.
 
+pub mod hyper;
 pub mod jsonschema;
 pub mod quick_xml;
 pub mod serde_json;
