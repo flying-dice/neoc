@@ -3317,7 +3317,7 @@ dependencies = [
 [[package]]
 name = "mlua-ir"
 version = "0.1.0"
-source = "git+https://github.com/flying-dice/mlua-ir.git?rev=4ea7a4d8b5fe7fec9979a87036c989e203acdf28#4ea7a4d8b5fe7fec9979a87036c989e203acdf28"
+source = "git+https://github.com/flying-dice/mlua-ir.git?rev=e283fe8cc3b11d5306e1af8e035027deaca792ea#e283fe8cc3b11d5306e1af8e035027deaca792ea"
 dependencies = [
  "futures",
  "inventory",
@@ -3331,7 +3331,7 @@ dependencies = [
 [[package]]
 name = "mlua-ir-gen"
 version = "0.1.0"
-source = "git+https://github.com/flying-dice/mlua-ir.git?rev=4ea7a4d8b5fe7fec9979a87036c989e203acdf28#4ea7a4d8b5fe7fec9979a87036c989e203acdf28"
+source = "git+https://github.com/flying-dice/mlua-ir.git?rev=e283fe8cc3b11d5306e1af8e035027deaca792ea#e283fe8cc3b11d5306e1af8e035027deaca792ea"
 dependencies = [
  "mlua-ir",
  "serde_json",
@@ -3340,7 +3340,7 @@ dependencies = [
 [[package]]
 name = "mlua-ir-macros"
 version = "0.1.0"
-source = "git+https://github.com/flying-dice/mlua-ir.git?rev=4ea7a4d8b5fe7fec9979a87036c989e203acdf28#4ea7a4d8b5fe7fec9979a87036c989e203acdf28"
+source = "git+https://github.com/flying-dice/mlua-ir.git?rev=e283fe8cc3b11d5306e1af8e035027deaca792ea#e283fe8cc3b11d5306e1af8e035027deaca792ea"
 dependencies = [
  "heck",
  "proc-macro2",
