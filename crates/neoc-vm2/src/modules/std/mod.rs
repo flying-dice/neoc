@@ -11,3 +11,4 @@ pub mod path;
 pub mod task;
 pub mod thread;
 pub mod time;
+pub mod workers;
