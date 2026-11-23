@@ -5,6 +5,7 @@
 local app = require("vos:app")
 local nginx = require("./nginx")
 local rpc = require("../.app/rpc")
+local trim = require("lib:text").trim
 
 local config = {}
 
@@ -86,7 +87,7 @@ end
 -- A folder as it is kept: a full path without the slash at its end. Whether it is there is not asked here: it is a
 -- folder of the machine Docker runs on, which may be another one.
 local function folderOf(raw: string): (string?, string?)
-  local folder = string.match(raw, "^%s*(.-)%s*$") :: string
+  local folder = trim(raw)
   if folder == "" then
     return nil, "The folder is blank."
   elseif #folder > MAX_FOLDER then
@@ -106,7 +107,7 @@ end
 -- What was given for a site, as it is kept, or what is wrong with it. `except` is the site being changed, which
 -- does not clash with itself.
 local function checked(given: Given, except: number?): (Given?, string?)
-  local name = string.match(given.name, "^%s*(.-)%s*$") :: string
+  local name = trim(given.name)
   if name == "" then
     return nil, "The name is blank."
   elseif #name > MAX_NAME then

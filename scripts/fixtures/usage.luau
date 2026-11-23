@@ -129,6 +129,7 @@ local _file: string? = fs.read("/tmp/x")
 local _entries = assert(fs.read_dir("/tmp"))
 local _name: string? = path.file_name("/tmp/x")
 local _kind: string? = fs.error_kind("fs.read: not_found: /tmp/x: gone")
+local _message: string? = fs.error_message("fs.read: not_found: /tmp/x: gone")
 local _slept: number = task.wait(0)
 
 -- ── the globals an app has: the base library of Luau, `utf8` and `typeof` from the prelude, `bit32` ────────────
@@ -155,6 +156,7 @@ local _made: boolean?, _madeErr: string? = docs:createDir("notes")
 local _wrote: boolean? = docs:write("notes/a.txt", "hello")
 local _text: string?, readErr: string? = docs:read("notes/a.txt")
 local _missing: string? = app.files.errorKind(readErr)
+local _why: string? = app.files.errorMessage(readErr)
 local entries: { vos_FileInfo } = docs:list("notes") or {}
 for _, entry in entries do
   local _entryName: string, _size: number, _modified: number? = entry.name, entry.size, entry.modified

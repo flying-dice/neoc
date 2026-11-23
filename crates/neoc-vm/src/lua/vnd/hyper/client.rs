@@ -29,7 +29,7 @@ mod tls;
 #[cfg(test)]
 mod tests;
 
-pub(super) use error::kind_of;
+pub(super) use error::{kind_of, message_of};
 use options::Prepared;
 
 // Each entry point reads its options table in the synchronous part of the call, before it builds the future that

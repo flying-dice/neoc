@@ -2,7 +2,6 @@
 <script lang="ts">
   import type { List, Todo } from 'app:rpc'
   import Composer from '../molecules/Composer.svelte'
-  import ConfirmAlert from '../molecules/ConfirmAlert.svelte'
   import TodoRow from '../molecules/TodoRow.svelte'
 
   interface Props {
@@ -96,16 +95,19 @@
     {/if}
   </header>
   {#if list && confirming}
-    <ConfirmAlert
+    <ui-alert
+      open
+      destructive
+      action-label="Delete"
       heading="Delete {list.name}?"
       message="Its todos are deleted with it."
-      testid="todos-confirm"
+      data-testid="todos-confirm"
       oncancel={() => (asking = null)}
       onconfirm={() => {
         asking = null
         onremovelist?.(list)
       }}
-    />
+    ></ui-alert>
   {/if}
   <div class="scroll">
     {#if todos.length > 0}

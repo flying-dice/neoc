@@ -72,6 +72,16 @@ describe("portable_pty", function()
             expect(portable_pty.error_kind(nil)).toBeNil()
             expect(portable_pty.error_kind("fs.read: not_found: x")).toBeNil()
         end)
+
+        test("error_message is what follows the kind, and nil for what is not one of its errors", function()
+            local pty, err = portable_pty.spawn_command({ args = { "-l" } })
+            expect(pty).toBeNil()
+            local message = portable_pty.error_message(err)
+            expect(message ~= "").toBe(true)
+            expect(err).toBe("portable_pty.spawn_command: invalid_input: " .. message)
+            expect(portable_pty.error_message(nil)).toBeNil()
+            expect(portable_pty.error_message("fs.read: not_found: x")).toBeNil()
+        end)
     end)
 
     if not unix then

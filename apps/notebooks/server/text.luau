@@ -4,6 +4,8 @@
 --
 -- A link is `[[Title]]`, `[[Title|shown text]]` or `[[Title#Heading]]`: the title is what is before the `|` and the
 -- `#`. Text in a fenced block (```) or in `inline code` is code, not writing: it has no links and no tags.
+local strings = require("lib:text")
+
 local text = {}
 
 -- the inside of a link: no bracket and no line break
@@ -14,23 +16,15 @@ local FORBIDDEN = "[%[%]|#%^\n]"
 text.TITLE_MAX = 120
 local EXCERPT_MAX = 160
 
-function text.trim(value: string): string
-  -- the pattern matches every string, so there is always a capture
-  return string.match(value, "^%s*(.-)%s*$") or ""
-end
-
--- How a title is compared: two titles that differ only in capitals and outer spaces name the same note.
+-- How a title is compared: two titles that differ only in capitals and outer spaces name the same note. The key is
+-- kept with each note and in each link to it, so it stays the ASCII lower case those were written with.
 function text.key(title: string): string
-  return string.lower(text.trim(title))
+  return string.lower(strings.trim(title))
 end
 
--- The first `max` characters of a line, with an ellipsis when some were left out.
-function text.cut(line: string, max: number): string
-  local length = utf8.len(line)
-  if length == nil or length <= max then
-    return line
-  end
-  return string.sub(line, 1, utf8.offset(line, max + 1) - 1) .. "…"
+-- A line as an excerpt: at most `EXCERPT_MAX` characters, the last an ellipsis when some were left out.
+local function excerpt(line: string): string
+  return strings.clip(line, EXCERPT_MAX, "…")
 end
 
 -- Why a note cannot be called `title` (trimmed), or nothing when it can.
@@ -71,7 +65,7 @@ end
 -- A line without the marks of its styles and its links: `**Sow** in [[March|spring]]` reads `Sow in spring`.
 local function plain(line: string): string
   local unlinked = string.gsub(line, LINK, function(inside: string): string
-    return text.trim(string.match(inside, "|(.*)$") or inside)
+    return strings.trim(string.match(inside, "|(.*)$") or inside)
   end)
   local unmarked = string.gsub(unlinked, "%*%*", "")
   unmarked = string.gsub(unmarked, "~~", "")
@@ -121,16 +115,16 @@ end
 function text.excerpt(body: string): string
   local heading = ""
   for _, line in lines(body) do
-    local said = text.trim(plain((string.gsub(line, "^[%s#>%-%*%+]+", ""))))
+    local said = strings.trim(plain((string.gsub(line, "^[%s#>%-%*%+]+", ""))))
     if said ~= "" and string.match(line, "^%s*```") == nil then
       if string.match(line, "^#+%s") == nil then
-        return text.cut(said, EXCERPT_MAX)
+        return excerpt(said)
       elseif heading == "" then
         heading = said
       end
     end
   end
-  return text.cut(heading, EXCERPT_MAX)
+  return excerpt(heading)
 end
 
 -- The first line of a text that links to the title with this key, without its marks; empty when none does.
@@ -138,7 +132,7 @@ function text.mention(body: string, key: string): string
   for _, line in prose(body) do
     for inside in string.gmatch(line, LINK) do
       if targetOf(inside) == key then
-        return text.cut(text.trim(plain(line)), EXCERPT_MAX)
+        return excerpt(strings.trim(plain(line)))
       end
     end
   end
@@ -150,7 +144,7 @@ function text.line(body: string, words: string): string
   local wanted = string.lower(words)
   for _, line in lines(body) do
     if string.find(string.lower(line), wanted, 1, true) ~= nil then
-      return text.cut(text.trim(plain(line)), EXCERPT_MAX)
+      return excerpt(strings.trim(plain(line)))
     end
   end
   return ""

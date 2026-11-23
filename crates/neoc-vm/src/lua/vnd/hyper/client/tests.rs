@@ -494,6 +494,28 @@ async fn error_kind_reads_our_strings_only() {
     assert_eq!(out, "ok");
 }
 
+#[tokio::test]
+async fn error_message_is_what_follows_the_kind_of_our_strings_only() {
+    let lua = engine().await;
+    let out = run(
+        &lua,
+        r#"assert(hyper.error_message("hyper.get: timed_out: no data for 60s") == "no data for 60s")
+           assert(hyper.error_message("hyper.read: connection_lost: reset: by peer") == "reset: by peer")
+           assert(hyper.error_message("hyper.get: timed_out") == "")
+           assert(hyper.error_message("hyper.get: unheard_of: x") == nil)
+           assert(hyper.error_message("fs.read: not_found: x") == nil)
+           assert(hyper.error_message("something else") == nil)
+           assert(hyper.error_message("") == nil)
+           assert(hyper.error_message(nil) == nil)
+           local _, err = hyper.get("ftp://example.com/")
+           local message = assert(hyper.error_message(err), err)
+           assert(message ~= "" and err == "hyper.get: invalid_url: " .. message, err)
+           return "ok""#,
+    )
+    .await;
+    assert_eq!(out, "ok");
+}
+
 // ---------------------------------------------------------------------------
 // timeouts
 // ---------------------------------------------------------------------------

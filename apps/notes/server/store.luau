@@ -7,6 +7,10 @@
 -- it can be brought back; a note with nothing in it is not worth keeping, and is gone at once.
 local app = require("vos:app")
 local rpc = require("../.app/rpc")
+local strings = require("lib:text")
+local unicode = require("lib:unicode")
+
+local trim = strings.trim
 local db = app.db
 
 local store = {}
@@ -42,16 +46,6 @@ db:migrate {
   ]],
 }
 
-local function trim(text: string): string
-  return string.match(text, "^%s*(.-)%s*$") :: string
-end
-
--- the first `LINE` characters of a line (whole characters: a cut never falls inside one)
-local function clipped(line: string): string
-  local cut = utf8.offset(line, LINE + 1)
-  return if cut then string.sub(line, 1, cut - 1) else line
-end
-
 -- A note's title and preview: its first two lines that say something.
 function store.lines(text: string): (string, string)
   local title, preview = "", ""
@@ -59,9 +53,9 @@ function store.lines(text: string): (string, string)
     local said = trim(line)
     if said ~= "" then
       if title == "" then
-        title = clipped(said)
+        title = strings.clip(said, LINE)
       else
-        preview = clipped(said)
+        preview = strings.clip(said, LINE)
         break
       end
     end
@@ -92,9 +86,9 @@ end
 
 -- the folder called `name`, whatever its capitals: how an agent names a folder, and how a name is found taken
 function store.folderNamed(name: string): rpc.Folder?
-  local wanted = string.lower(trim(name))
+  local wanted = trim(name)
   for _, folder in store.folders() do
-    if string.lower(folder.name) == wanted then
+    if unicode.caseless_eq(folder.name, wanted) then
       return folder
     end
   end

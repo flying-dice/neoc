@@ -1,6 +1,5 @@
 <!-- @page KeychainPage — the whole app: the items of this machine's keychain and the form that adds one, the question before one is deleted, or why there is no keychain to show; driven by one window's Keychain state -->
 <script lang="ts">
-  import ConfirmAlert from '../molecules/ConfirmAlert.svelte'
   import ItemList from '../organisms/ItemList.svelte'
   import type { Keychain } from '../lib/keychain.svelte'
 
@@ -46,13 +45,16 @@
     </div>
   {/if}
   {#if keychain.asking}
-    <ConfirmAlert
+    <ui-alert
+      open
+      destructive
+      action-label="Delete"
       heading="Delete {keychain.asking.service}?"
       message="The password of {keychain.asking.account} is deleted from the keychain of this machine."
-      testid="keychain-confirm"
+      data-testid="keychain-confirm"
       onconfirm={() => void keychain.remove()}
       oncancel={() => keychain.keep()}
-    />
+    ></ui-alert>
   {/if}
   <!-- why the last call failed (the host's sentence), whatever is in front; what the keychain refused is said at the form or the item -->
   {#if keychain.failure}

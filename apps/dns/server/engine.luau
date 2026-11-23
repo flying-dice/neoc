@@ -5,6 +5,7 @@
 local app = require("vos:app")
 local bollard = require("vnd:bollard")
 local task = require("std:task")
+local trim = require("lib:text").trim
 
 local engine = {}
 
@@ -47,9 +48,8 @@ function engine.sentence(err: string?): string
   elseif kind == "timed_out" then
     return "Docker is not answering. It may still be starting, or be paused."
   end
-  -- `bollard.<function>: <kind>: <message>`
-  local message = string.match(err or "", "^bollard%.[%a_]+: [%a_]+: (.*)$")
-  return message or err or "Docker refused, and did not say why."
+  local message = bollard.error_message(err)
+  return if message and message ~= "" then message else err or "Docker refused, and did not say why."
 end
 
 local function connected(): (Clients?, string?)
@@ -103,7 +103,7 @@ end
 -- Choose the Docker the server runs in: an address, or empty for this machine's own. The address is only checked
 -- for being one (a Docker that is not running there is said by the overview, and may start later).
 function engine.use(host: string): string?
-  host = string.match(host, "^%s*(.-)%s*$") :: string
+  host = trim(host)
   if host ~= "" then
     if
       not (string.match(host, "^unix:///") or string.match(host, "^tcp://[^/]") or string.match(host, "^https?://[^/]"))

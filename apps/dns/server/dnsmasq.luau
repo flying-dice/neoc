@@ -8,6 +8,7 @@
 local hash = require("lib:hash")
 local hex = require("lib:hex")
 local rpc = require("../.app/rpc")
+local trim = require("lib:text").trim
 
 local dnsmasq = {}
 
@@ -63,7 +64,7 @@ end
 -- An IP address as it is kept: IPv4, or IPv6 in lower case. The second result says what is wrong with one that is
 -- not. Only digits, hex letters, dots and colons pass, so an address cannot say anything else to dnsmasq.
 function dnsmasq.address(raw: string): (string?, string?)
-  local text = string.lower(string.match(raw, "^%s*(.-)%s*$") :: string)
+  local text = string.lower(trim(raw))
   if isV4(text) or isV6(text) then
     return text, nil
   end
@@ -73,7 +74,7 @@ end
 -- A name as it is kept: lower case, without the dot at its end. The second result says what is wrong with one that
 -- is not a name. Only letters, digits, hyphens and dots pass, so a name cannot say anything else to dnsmasq.
 function dnsmasq.name(raw: string): (string?, string?)
-  local text = string.lower(string.match(raw, "^%s*(.-)%.?%s*$") :: string)
+  local text = string.lower((string.gsub(trim(raw), "%.$", "")))
   if text == "" then
     return nil, "The name is blank."
   elseif #text > 253 then

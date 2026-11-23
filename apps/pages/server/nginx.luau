@@ -9,6 +9,7 @@
 local hash = require("lib:hash")
 local hex = require("lib:hex")
 local rpc = require("../.app/rpc")
+local trim = require("lib:text").trim
 
 local nginx = {}
 
@@ -33,7 +34,7 @@ export type Plan = { config: string, ports: { number }, mounts: { Mount } }
 -- A hostname as it is kept: lower case, without the dot at its end. The second result says what is wrong with one
 -- that is not a name. Only letters, digits, hyphens and dots pass, so a name cannot say anything else to nginx.
 function nginx.hostname(raw: string): (string?, string?)
-  local text = string.lower(string.match(raw, "^%s*(.-)%.?%s*$") :: string)
+  local text = string.lower((string.gsub(trim(raw), "%.$", "")))
   if text == "" then
     return nil, "A hostname is blank."
   elseif #text > 253 then

@@ -9,6 +9,7 @@
 pub(crate) mod byte_stream;
 pub(crate) mod child_exit;
 pub(crate) mod command_options;
+pub mod error_text;
 pub mod facade;
 pub mod lib;
 pub mod lifecycle;

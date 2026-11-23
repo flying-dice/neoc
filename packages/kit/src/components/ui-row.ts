@@ -238,7 +238,9 @@ export class UiRow extends LitElement {
          position it has with the shell's controls. Vertically that is the row's padding. Horizontally, between two
          controls, at most half of the 8 px gap each (so their boxes meet and never overlap); the whole extra only on an
          outer edge, where the neighbour is the row's padding or its text, not a control. */
-      ::slotted(:is(ui-button, ui-toggle, ui-check, ui-segmented, ui-text-field)) {
+      ::slotted(
+        :is(ui-button, ui-toggle, ui-check, ui-segmented, ui-text-field, ui-text-area, ui-picker)
+      ) {
         --ui-hit: 44px;
       }
       ::slotted(ui-toggle) {
@@ -247,13 +249,22 @@ export class UiRow extends LitElement {
       ::slotted(ui-segmented) {
         margin-block: -6px;
       }
-      ::slotted(ui-text-field) {
+      ::slotted(:is(ui-text-field, ui-picker)) {
         margin-block: -4px;
       }
       /* a bare field has no box to take back: its text sits on the row's own line, level with the label before it */
       ::slotted(ui-text-field[variant='bare']) {
         margin-block: 0;
         align-self: center;
+      }
+      /* a bare picker has no box either: it takes the row's whole padding, so the row keeps its height and all of it
+         opens the menu */
+      ::slotted(ui-picker[variant='bare']) {
+        margin-block: -11px;
+      }
+      /* a text area in a row is as high as its lines: it takes nothing back */
+      ::slotted(ui-text-area) {
+        flex: 1;
       }
       ::slotted(ui-button) {
         margin-block: -5px; /* drawn 34 pt high */

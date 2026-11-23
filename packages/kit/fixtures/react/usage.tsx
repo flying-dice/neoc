@@ -12,6 +12,12 @@ export const valid = (
     <ui-segmented hit label="Filter" value="a" options={[{ value: 'a', label: 'A' }]} onchange={(e) => e.detail.value.toUpperCase()} />
     <ui-text-field hit label="Name" type="email" oninput={(e) => e.data} onchange={() => {}} />
     <ui-banner tone="warning" heading="Low storage" />
+    <ui-split-view column="detail" oncollapsedchange={(e) => e.detail.collapsed satisfies boolean}>
+      <div slot="sidebar" />
+      <ui-text-area label="Notes" variant="bare" rows={4} maxlength={200} readonly oninput={(e) => e.data} onchange={() => {}} />
+      <ui-picker hit label="Folder" value="1" options={[{ value: '1', label: 'Notes' }]} onchange={(e) => e.detail.value.toUpperCase()} />
+    </ui-split-view>
+    <ui-alert open destructive heading="Delete Work?" message="Its todos go too." action-label="Delete" onconfirm={(e) => e.type satisfies string} oncancel={() => {}} />
   </ui-list>
 )
 
@@ -27,5 +33,9 @@ export const wrong = (
     <ui-toggle onchange={(e) => e.detail.value} />
     {/* @ts-expect-error a boolean attribute is a boolean */}
     <ui-toggle checked="yes" />
+    {/* @ts-expect-error a split view has no column of that name */}
+    <ui-split-view column="middle" />
+    {/* @ts-expect-error the payload of a picker's change is { value: string } */}
+    <ui-picker onchange={(e) => e.detail.checked} />
   </div>
 )

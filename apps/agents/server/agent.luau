@@ -7,6 +7,7 @@
 -- what changes: `roster` lists the agents that can be started, and `prompt` sends the turn and calls `said` with each
 -- piece of the answer. The rest of the app (main.luau, the client) does not know which of the two it is talking to.
 local task = require("std:task")
+local trim = require("lib:text").trim
 
 export type Agent = {
   id: string,
@@ -41,7 +42,7 @@ end
 
 -- what the script says to a prompt, and how long it waits before each piece
 local function script(text: string): ({ string }, number)
-  local said = string.lower(string.match(text, "^%s*(.-)%s*$") :: string)
+  local said = string.lower(trim(text))
   if said == "hello" then
     return { "Hi ", "there" }, 0.05
   elseif said == "slow" then

@@ -1,7 +1,6 @@
 <!-- @organism IssueDetail — one issue, open: its title to type over, the kind of work it is, its priority and its column as choices, what is known about it to write, and the way to delete it, after an alert asks -->
 <script lang="ts">
   import type { Issue, IssueType, Priority, Status } from 'app:rpc'
-  import ConfirmAlert from '../molecules/ConfirmAlert.svelte'
   import { PRIORITIES, STATUSES, TYPES } from '../lib/catalog'
   import { moment } from '../lib/dates'
   import type { IssueChanges } from '../lib/projects.svelte'
@@ -74,16 +73,19 @@
     </ui-button>
   </header>
   {#if confirming}
-    <ConfirmAlert
+    <ui-alert
+      open
+      destructive
+      action-label="Delete"
       heading="Delete {issue.key}?"
       message="It cannot be brought back."
-      testid="projects-issue-confirm"
+      data-testid="projects-issue-confirm"
       oncancel={() => (asking = null)}
       onconfirm={() => {
         asking = null
         onremove(issue)
       }}
-    />
+    ></ui-alert>
   {/if}
   <div class="scroll">
     <ui-list label="Issue {issue.key}">
@@ -143,17 +145,17 @@
       </ui-section>
     </ui-list>
     <div class="description">
-      <h2 id="projects-issue-description-heading">Description</h2>
-      <textarea
-        aria-labelledby="projects-issue-description-heading"
+      <h2>Description</h2>
+      <ui-text-area
+        label="Description"
         placeholder="What is known about it"
         maxlength={5000}
         rows={6}
         value={description}
-        oninput={(e) => type({ description: e.currentTarget.value })}
+        oninput={(e) => type({ description: (e.currentTarget as unknown as { value: string }).value })}
         onchange={() => onchange(issue, { description })}
         data-testid="projects-issue-description"
-      ></textarea>
+      ></ui-text-area>
       <p class="edited" data-testid="projects-issue-edited">Edited {moment(issue.updated)}</p>
     </div>
   </div>
@@ -203,26 +205,6 @@
     font: var(--type-footnote);
     color: var(--label-secondary);
     text-transform: uppercase;
-  }
-  textarea {
-    box-sizing: border-box;
-    display: block;
-    width: 100%;
-    margin: 0;
-    padding: 12px 16px;
-    border: 0;
-    border-radius: var(--radius-md);
-    resize: vertical;
-    background: var(--bg-grouped-secondary);
-    color: var(--label);
-    font: var(--type-body);
-  }
-  textarea::placeholder {
-    color: var(--label-secondary);
-  }
-  textarea:focus-visible {
-    outline: 2px solid var(--focus-ring);
-    outline-offset: -2px;
   }
   .edited {
     margin: 6px 0 0;

@@ -173,6 +173,27 @@ async fn error_kind_reads_this_modules_errors_only() {
     assert!(none.is_nil());
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn error_message_is_what_follows_the_kind_of_this_modules_errors_only() {
+    let (err, message, empty, theirs, none): (String, String, String, Value, Value) = run(r#"
+        local keyring = require("vnd:keyring")
+        local _, err = keyring.mock():entry("\255", "ada")
+        assert(keyring.error_message("keyring.store: nonsense: x") == nil)
+        assert(keyring.error_message("something else") == nil)
+        return err, keyring.error_message(err), keyring.error_message("keyring.store: no_store"),
+            keyring.error_message("fs.read: not_found: x"), keyring.error_message(nil)
+        "#)
+    .await;
+    assert!(!message.is_empty(), "{err}");
+    assert_eq!(
+        err.strip_prefix("keyring.entry: invalid_input: "),
+        Some(message.as_str())
+    );
+    assert_eq!(empty, "");
+    assert!(theirs.is_nil());
+    assert!(none.is_nil());
+}
+
 #[test]
 fn every_kind_is_in_the_docs_of_error_kind() {
     let lua = make_engine().expect("engine");
