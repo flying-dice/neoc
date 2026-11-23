@@ -8,7 +8,7 @@
       "declarations": [
         {
           "kind": "class",
-          "description": "An alert that asks before something is done (UIAlertController's alert): a heading, a message, Cancel and the answer\nthat goes ahead. While `open` it is modal: the window behind it is dimmed and inert, the focus stays inside and goes\nback where it was when the alert closes.\n\nThe answer that changes nothing is in front. With `destructive` the answer that goes ahead is red, and Cancel is bold\nand has the focus, so a stray Return deletes nothing; without it the answer that goes ahead is bold and has the focus.\nEscape, and the browser's own request to close (a back gesture), answer Cancel.\n\nAn answer closes the alert (`open` becomes false, the focus goes back) and then raises its event.\n\nThe two answers have the test ids `<data-testid of the alert>-cancel` and `<data-testid of the alert>-confirm`.",
+          "description": "An alert that asks before something is done (UIAlertController's alert): a heading, a message, Cancel and the answer\nthat goes ahead. While `open` it is modal: the window behind it is dimmed and inert, the focus stays inside and goes\nback where it was when the alert closes.\n\nThe answer that changes nothing is in front. With `destructive` the answer that goes ahead is red, and Cancel is\nbold and has the focus, so a stray Return deletes nothing; without it the answer that goes ahead is bold and has the\nfocus.\nEscape, and the browser's own request to close (a back gesture), answer Cancel. So does hiding what holds the alert\nwhile it is open: a question nobody can see is not left over an inert page.\n\nAn answer closes the alert (`open` becomes false, the focus goes back) and then raises its event.\n\nThe two answers have the test ids `<data-testid of the alert>-cancel` and `<data-testid of the alert>-confirm`.",
           "name": "UiAlert",
           "cssParts": [
             {
@@ -112,12 +112,52 @@
             },
             {
               "kind": "field",
+              "name": "drawn",
+              "type": {
+                "text": "ResizeObserver | undefined"
+              },
+              "privacy": "private",
+              "description": "Watches that the open alert is still drawn."
+            },
+            {
+              "kind": "field",
               "name": "dialog",
               "type": {
                 "text": "HTMLDialogElement | null"
               },
               "privacy": "private",
               "readonly": true
+            },
+            {
+              "kind": "method",
+              "name": "focused",
+              "privacy": "private",
+              "static": true,
+              "return": {
+                "type": {
+                  "text": "Element | null"
+                }
+              },
+              "description": "The element with the focus, through every shadow root on the way to it."
+            },
+            {
+              "kind": "method",
+              "name": "watchDrawn",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "dialog",
+                  "type": {
+                    "text": "HTMLDialogElement"
+                  }
+                }
+              ],
+              "description": "An open alert that stops being drawn (what holds it was hidden: a column of a split view that went out of front)\nwould leave the page inert behind a question nobody can see, so it is answered Cancel."
             },
             {
               "kind": "method",
@@ -171,14 +211,14 @@
               "type": {
                 "text": "Event"
               },
-              "description": "The person chose the answer that goes ahead. The alert has closed.",
+              "description": "The person chose the answer that goes ahead. The alert has closed. It does not bubble.",
               "name": "confirm"
             },
             {
               "type": {
                 "text": "Event"
               },
-              "description": "The person chose Cancel, pressed Escape or asked the browser to close it. The alert has closed.",
+              "description": "Cancel, Escape or the browser's request to close. The alert has closed. It does not bubble.",
               "name": "cancel"
             }
           ],
@@ -2487,7 +2527,7 @@
               "kind": "field",
               "name": "onInput",
               "privacy": "private",
-              "description": "A select's own `input` would cross to the page before `value` is updated, and a picker tells of a choice once, with\n`change`: it stops here."
+              "description": "The select's own `input` crosses to the page, as a field's does: `value` is updated before anyone hears it."
             },
             {
               "kind": "field",
@@ -2833,6 +2873,13 @@
             }
           ],
           "events": [
+            {
+              "type": {
+                "text": "Event"
+              },
+              "description": "The person chose an option (the native event, passed through). `value` is already updated.",
+              "name": "input"
+            },
             {
               "type": {
                 "text": "CustomEvent<{ value: string }>"
@@ -4271,7 +4318,7 @@
       "declarations": [
         {
           "kind": "class",
-          "description": "A sidebar beside a detail (UISplitViewController, SwiftUI's `NavigationSplitView`), with a `content` column between\nthem when one is slotted. Given 700 pt or more it shows every column; given less it is `collapsed` and shows one:\nthe one `column` names (`NavigationSplitView`'s `preferredCompactColumn`). The app sets `column` as the person goes\nin (they picked a row: `detail`) and back out.\n\nThe way back is the app's, in the header of what it shows, as a navigation bar's back button is: draw it while the\nsplit view is `collapsed`, and set `column` when it is pressed. Read `collapsed`, or hear `collapsedchange`, for that\nand for whether a selection is worth showing in the sidebar (collapsed, the sidebar is a list to pick from).\n\nWhen the column in front changes while the keyboard is in the one that goes, the focus moves to the column that\ncomes (its element takes it, with `tabindex=\"-1\"`), as iPadOS moves it into the view that was pushed: Tab goes on from\nthere, and a screen reader keeps its place.\n\nIt fills the height its parent gives it, and each column gives its one element its whole box.",
+          "description": "A sidebar beside a detail (UISplitViewController, SwiftUI's `NavigationSplitView`), with a `content` column between\nthem when one is slotted. Given 700 pt or more it shows every column; given less it is `collapsed` and shows one:\nthe one `column` names (`NavigationSplitView`'s `preferredCompactColumn`). The app sets `column` as the person goes\nin (they picked a row: `detail`) and back out.\n\nThe way back is the app's, in the header of what it shows, as a navigation bar's back button is: draw it while the\nsplit view is `collapsed`, and set `column` when it is pressed. Read `collapsed`, or hear `collapsedchange`, for that\nand for whether a selection is worth showing in the sidebar (collapsed, the sidebar is a list to pick from).\n\nWhen the column in front changes while the keyboard is in the one that goes, the focus moves to the column that\ncomes, as iPadOS moves it into the view that was pushed: Tab goes on from there, and a screen reader keeps its place.\nThe column's element takes it, and is given `tabindex=\"-1\"` for that, which it keeps (no ring is drawn around it).\n\nIt fills the height its parent gives it, and each column gives its one element its whole box.",
           "name": "UiSplitView",
           "cssProperties": [
             {
@@ -4457,7 +4504,7 @@
       "declarations": [
         {
           "kind": "class",
-          "description": "A multi-line text field (UITextView, SwiftUI's `TextEditor`): what `ui-text-field` is for one line, for many. Return\nstarts a new line and never submits the form. A form control (see `FormControl`): with a `name` it submits its text,\nand `required`, the length limits and `setCustomValidity` take part in validation.\n\nIt is `rows` lines high (with `hit`, never under 44 pt) and scrolls in itself past that; given a height by its parent (a flex or grid item, a\n`height`), it fills it. There is no resize handle, as there is none on iPadOS.",
+          "description": "A multi-line text field (UITextView, SwiftUI's `TextEditor`): what `ui-text-field` is for one line, for many. Return\nstarts a new line and never submits the form. A form control (see `FormControl`): with a `name` it submits its text,\nand `required`, the length limits and `setCustomValidity` take part in validation.\n\nIt is `rows` lines high (with `hit`, never under 44 pt) and scrolls in itself past that; given a height by its\nparent (a flex or grid item, a `height`), it fills it. There is no resize handle, as there is none on iPadOS.",
           "name": "UiTextArea",
           "cssParts": [
             {

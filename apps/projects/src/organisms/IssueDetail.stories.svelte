@@ -1,7 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
-  import { alertButton } from '@vos/storybook/kit'
+  import { alertButton, textArea } from '@vos/storybook/kit'
   import IssueDetail from './IssueDetail.svelte'
   import type { Issue } from 'app:rpc'
   import { ISSUES } from '../lib/samples'
@@ -40,7 +40,7 @@
   name="A bug"
   play={async ({ canvas, userEvent }) => {
     await expect(canvas.getByTestId('projects-issue-key')).toHaveTextContent('WEB-2')
-    await expect(canvas.getByTestId('projects-issue-description').shadowRoot!.querySelector('textarea')!).toHaveValue('They go nowhere on the pricing page.')
+    await expect(textArea(canvas.getByTestId('projects-issue-description'))).toHaveValue('They go nowhere on the pricing page.')
     await userEvent.click(canvas.getByTestId('projects-issue-status').shadowRoot!.querySelector('[data-testid="projects-issue-status-doing"]')!)
     await expect(onchange).toHaveBeenCalledWith(bug, { status: 'doing' })
   }}

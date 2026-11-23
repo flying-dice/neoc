@@ -1,7 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, waitFor } from 'storybook/test'
-  import { alertButton } from '@vos/storybook/kit'
+  import { alertButton, textArea } from '@vos/storybook/kit'
   import AppWindow from '@vos/storybook/AppWindow.svelte'
   import definition from '../../openrpc.json'
   import ProjectsPage from './ProjectsPage.svelte'
@@ -174,7 +174,7 @@
     await tab(canvas, userEvent, 'pages')
     await userEvent.type(input(canvas, 'projects-new-page-input'), 'Glossary{Enter}')
     await appears(canvas, 'projects-page-text')
-    await userEvent.type(canvas.getByTestId('projects-page-text').shadowRoot!.querySelector('textarea')!, 'Words we use.')
+    await userEvent.type(textArea(canvas.getByTestId('projects-page-text')), 'Words we use.')
     await userEvent.click(canvas.getByTestId('projects-page-done'))
     await appears(canvas, 'projects-page-body')
     await expect(canvas.getByTestId('projects-page-body')).toHaveTextContent('Words we use.')

@@ -1,7 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
-  import { alertButton } from '@vos/storybook/kit'
+  import { alertButton, alertDialog } from '@vos/storybook/kit'
   import type { Container, Details, Logs } from 'app:rpc'
   import ContainerInspector from './ContainerInspector.svelte'
   import type { Action, Tab } from '../lib/containers.svelte'
@@ -130,8 +130,8 @@
   name="Asked before it is removed"
   play={async ({ canvas, userEvent }) => {
     await userEvent.click(canvas.getByTestId('containers-inspector-remove'))
-    await expect(canvas.getByTestId('containers-inspector-confirm').shadowRoot!.querySelector('dialog')).toHaveTextContent('Remove blog-db-1?')
-    await expect(canvas.getByTestId('containers-inspector-confirm').shadowRoot!.querySelector('dialog')).toHaveTextContent('It is running')
+    await expect(alertDialog(canvas.getByTestId('containers-inspector-confirm'))).toHaveTextContent('Remove blog-db-1?')
+    await expect(alertDialog(canvas.getByTestId('containers-inspector-confirm'))).toHaveTextContent('It is running')
     await expect(onact).not.toHaveBeenCalled()
   }}
 />

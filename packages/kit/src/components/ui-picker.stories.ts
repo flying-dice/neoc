@@ -121,7 +121,10 @@ export const HitArea: Story = {
   }
 }
 
-/** In a form, a picker is `bare` in its row: the choice at the row's end, and red while `invalid`. The row is the target. */
+/**
+ * In a form, a picker is `bare` in its row: the choice at the row's end, and red while `invalid`. The row is the
+ * target.
+ */
 export const InARow: Story = {
   render: () =>
     html`<div style="width:360px">

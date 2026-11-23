@@ -131,13 +131,24 @@ test('an alert keeps the keyboard inside and the page behind it still, answers C
   await expect(page.getByTestId('ask')).toBeFocused()
   expect((await heard(page)).slice(5)).toEqual(['cancel'])
 
+  // what holds it is hidden while it is open (a column of a split view went out of front): nobody can see the
+  // question, so it is answered Cancel and the page is not left inert
+  await page.keyboard.press('Enter')
+  await expect(cancel).toBeFocused()
+  await alert.evaluate((el) => (el.parentElement!.hidden = true))
+  await expect.poll(async () => (await heard(page)).slice(6)).toEqual(['cancel'])
+  await expect(alert).toHaveJSProperty('open', false)
+  await alert.evaluate((el) => (el.parentElement!.hidden = false))
+  await expect(dialog).toBeHidden()
+  await page.getByTestId('ask').focus()
+
   // taken out of the page while open (the app stopped asking for another reason): the focus still goes back, and
   // nothing was answered
   await page.keyboard.press('Enter')
   await expect(cancel).toBeFocused()
   await alert.evaluate((el) => el.remove())
   await expect(page.getByTestId('ask')).toBeFocused()
-  expect((await heard(page)).slice(6)).toEqual([])
+  expect((await heard(page)).slice(7)).toEqual([])
   expect(
     await page.evaluate(() => (window as unknown as { violations: string[] }).violations)
   ).toEqual([])
@@ -246,9 +257,9 @@ test('a text area takes lines without submitting its form, and a picker takes a 
     ['folder', '2']
   ])
   expect((await heard(page)).filter((type) => type === 'change')).toEqual(['change', 'change'])
-  // a choice is told once, as `change`: the select's own `input` (before `value` is updated) stays inside the picker
+  // a choice is also heard as `input`, as typing in a field is: one more than the keys typed
   expect((await heard(page)).filter((type) => type === 'input')).toEqual(
-    Array.from('Milk\nBread', () => 'input')
+    Array.from('Milk\nBread!', () => 'input')
   )
 })
 

@@ -1,7 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
-  import { alertButton } from '@vos/storybook/kit'
+  import { alertButton, alertDialog } from '@vos/storybook/kit'
   import type { Container, Stack } from 'app:rpc'
   import ContainerList from './ContainerList.svelte'
   import type { Action } from '../lib/containers.svelte'
@@ -97,7 +97,7 @@
   args={{ title: 'blog', containers: of('blog'), stack: BLOG }}
   play={async ({ canvas, userEvent }) => {
     await userEvent.click(canvas.getByTestId('containers-stack-remove'))
-    await expect(canvas.getByTestId('containers-stack-confirm').shadowRoot!.querySelector('dialog')).toHaveTextContent('Remove blog?')
+    await expect(alertDialog(canvas.getByTestId('containers-stack-confirm'))).toHaveTextContent('Remove blog?')
     await expect(onstack).not.toHaveBeenCalled()
   }}
 />

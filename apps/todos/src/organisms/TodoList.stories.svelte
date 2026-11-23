@@ -1,7 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn, waitFor } from 'storybook/test'
-  import { alertButton } from '@vos/storybook/kit'
+  import { alertButton, alertDialog } from '@vos/storybook/kit'
   import type { List, Todo } from 'app:rpc'
   import TodoList from './TodoList.svelte'
   import { REMINDERS, todo } from '../lib/fakeApi'
@@ -151,7 +151,7 @@
   play={async ({ canvas, userEvent }) => {
     await userEvent.click(canvas.getByTestId('todos-delete-list'))
     // an alert over the window, not a line in it
-    const alert = canvas.getByTestId('todos-confirm').shadowRoot!.querySelector('dialog')!
+    const alert = alertDialog(canvas.getByTestId('todos-confirm'))
     await waitFor(() => expect(alert.matches(':modal')).toBe(true))
     await expect(alert).toHaveTextContent('Delete Reminders?')
     await expect(alert).toHaveTextContent('Its todos are deleted with it.')

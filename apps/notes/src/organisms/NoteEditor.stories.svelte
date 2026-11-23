@@ -1,7 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
-  import { alertButton } from '@vos/storybook/kit'
+  import { alertButton, alertDialog, pickerSelect, textArea } from '@vos/storybook/kit'
   import type { Folder, Note } from 'app:rpc'
   import NoteEditor from './NoteEditor.svelte'
   import { listed, note } from '../lib/fakeApi'
@@ -69,9 +69,9 @@
 <Story
   name="A note"
   play={async ({ canvas }) => {
-    await expect(canvas.getByTestId('notes-text').shadowRoot!.querySelector('textarea')!).toHaveValue(BODY)
+    await expect(textArea(canvas.getByTestId('notes-text'))).toHaveValue(BODY)
     await expect(canvas.getByTestId('notes-edited')).toHaveTextContent('Edited 9 June 2026 at 08:05')
-    await expect(canvas.getByTestId('notes-move').shadowRoot!.querySelector('select')!).toHaveValue('1')
+    await expect(pickerSelect(canvas.getByTestId('notes-move'))).toHaveValue('1')
   }}
 />
 
@@ -99,7 +99,7 @@
   name="Being read"
   args={{ text: '', loaded: false }}
   play={async ({ canvas }) => {
-    await expect(canvas.getByTestId('notes-text').shadowRoot!.querySelector('textarea')!).toBeDisabled()
+    await expect(textArea(canvas.getByTestId('notes-text'))).toBeDisabled()
   }}
 />
 
@@ -108,7 +108,7 @@
   name="A deleted note"
   args={{ note: { ...SHOPPING, deleted: true } }}
   play={async ({ canvas }) => {
-    await expect(canvas.getByTestId('notes-text').shadowRoot!.querySelector('textarea')!).toHaveAttribute('readonly')
+    await expect(textArea(canvas.getByTestId('notes-text'))).toHaveAttribute('readonly')
     await expect(canvas.getByTestId('notes-restore')).toBeVisible()
     await expect(canvas.queryByTestId('notes-pin')).toBeNull()
   }}
@@ -128,11 +128,11 @@
   name="Typing, pinning, moving and deleting"
   tags={['play-only']}
   play={async ({ canvas, userEvent }) => {
-    await userEvent.type(canvas.getByTestId('notes-text').shadowRoot!.querySelector('textarea')!, '!')
+    await userEvent.type(textArea(canvas.getByTestId('notes-text')), '!')
     await expect(onedit).toHaveBeenCalledWith(`${BODY}!`)
     await userEvent.click(canvas.getByTestId('notes-pin'))
     await expect(onpin).toHaveBeenCalledWith(SHOPPING)
-    await userEvent.selectOptions(canvas.getByTestId('notes-move').shadowRoot!.querySelector('select')!, '2')
+    await userEvent.selectOptions(pickerSelect(canvas.getByTestId('notes-move')), '2')
     await expect(onmove).toHaveBeenCalledWith(SHOPPING, 2)
     await userEvent.click(canvas.getByTestId('notes-remove'))
     await expect(onremove).toHaveBeenCalledWith(SHOPPING)
@@ -146,7 +146,7 @@
   args={{ note: { ...SHOPPING, deleted: true } }}
   play={async ({ canvas, userEvent }) => {
     await userEvent.click(canvas.getByTestId('notes-purge'))
-    await expect(canvas.getByTestId('notes-confirm-purge').shadowRoot!.querySelector('dialog')).toHaveTextContent('It cannot be brought back.')
+    await expect(alertDialog(canvas.getByTestId('notes-confirm-purge'))).toHaveTextContent('It cannot be brought back.')
     await expect(onpurge).not.toHaveBeenCalled()
     await userEvent.click(alertButton(canvas.getByTestId('notes-confirm-purge'), 'action'))
     await expect(onpurge).toHaveBeenCalledTimes(1)

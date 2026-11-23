@@ -18,8 +18,8 @@ const COLUMNS = ['sidebar', 'content', 'detail'] as const
  * and for whether a selection is worth showing in the sidebar (collapsed, the sidebar is a list to pick from).
  *
  * When the column in front changes while the keyboard is in the one that goes, the focus moves to the column that
- * comes (its element takes it, with `tabindex="-1"`), as iPadOS moves it into the view that was pushed: Tab goes on from
- * there, and a screen reader keeps its place.
+ * comes, as iPadOS moves it into the view that was pushed: Tab goes on from there, and a screen reader keeps its place.
+ * The column's element takes it, and is given `tabindex="-1"` for that, which it keeps (no ring is drawn around it).
  *
  * It fills the height its parent gives it, and each column gives its one element its whole box.
  *
@@ -27,7 +27,8 @@ const COLUMNS = ['sidebar', 'content', 'detail'] as const
  * @slot sidebar - The first column: what there is to pick from.
  * @slot content - A middle column, for three levels (folders, the notes of one, a note). Leave it out for two.
  * @slot - The detail: what was picked.
- * @fires {CustomEvent<{ collapsed: boolean }>} collapsedchange - The view went under or over the width at which it shows one column. `collapsed` is already updated.
+ * @fires {CustomEvent<{ collapsed: boolean }>} collapsedchange - The view went under or over the width at which it
+ * shows one column. `collapsed` is already updated.
  * @cssprop --ui-split-sidebar-width - The width of the sidebar when there is room (default 280px).
  * @cssprop --ui-split-content-width - The width of the middle column when there is room (default 300px).
  */

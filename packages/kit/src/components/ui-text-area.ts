@@ -9,8 +9,8 @@ import { base } from '../styles'
  * starts a new line and never submits the form. A form control (see `FormControl`): with a `name` it submits its text,
  * and `required`, the length limits and `setCustomValidity` take part in validation.
  *
- * It is `rows` lines high (with `hit`, never under 44 pt) and scrolls in itself past that; given a height by its parent (a flex or grid item, a
- * `height`), it fills it. There is no resize handle, as there is none on iPadOS.
+ * It is `rows` lines high (with `hit`, never under 44 pt) and scrolls in itself past that; given a height by its
+ * parent (a flex or grid item, a `height`), it fills it. There is no resize handle, as there is none on iPadOS.
  *
  * @tag ui-text-area
  * @fires {InputEvent} input - The person typed. `value` is already updated (the native event, passed through).

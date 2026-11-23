@@ -84,7 +84,10 @@ export const CollapsedOnTheDetail: Story = {
   }
 }
 
-/** One breakpoint: under 700 one column and an event, at 700 every column and another; `column` says which is in front. */
+/**
+ * One breakpoint: under 700 one column and an event, at 700 every column and another; `column` says which is in
+ * front.
+ */
 export const CollapsesAndComesBack: Story = {
   tags: ['play-only'],
   render: () => view(900, 'sidebar', true),
@@ -196,5 +199,11 @@ export const AWayBack: Story = {
     await split.updateComplete
     await expect(shown(canvasElement)).toEqual(['detail'])
     await expect(canvas.getByTestId('detail').matches(':focus-within')).toBe(true)
+
+    // with room for both columns there is nowhere to go back to: no Back
+    canvas.getByTestId('window').style.width = '760px'
+    await waitFor(() => expect(split.collapsed).toBe(false))
+    await expect(back).not.toBeVisible()
+    await expect(shown(canvasElement)).toEqual(['sidebar', 'detail'])
   }
 }

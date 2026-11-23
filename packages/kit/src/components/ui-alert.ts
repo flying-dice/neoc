@@ -10,17 +10,19 @@ import type { UiButton } from './ui-button'
  * that goes ahead. While `open` it is modal: the window behind it is dimmed and inert, the focus stays inside and goes
  * back where it was when the alert closes.
  *
- * The answer that changes nothing is in front. With `destructive` the answer that goes ahead is red, and Cancel is bold
- * and has the focus, so a stray Return deletes nothing; without it the answer that goes ahead is bold and has the focus.
- * Escape, and the browser's own request to close (a back gesture), answer Cancel.
+ * The answer that changes nothing is in front. With `destructive` the answer that goes ahead is red, and Cancel is
+ * bold and has the focus, so a stray Return deletes nothing; without it the answer that goes ahead is bold and has the
+ * focus.
+ * Escape, and the browser's own request to close (a back gesture), answer Cancel. So does hiding what holds the alert
+ * while it is open: a question nobody can see is not left over an inert page.
  *
  * An answer closes the alert (`open` becomes false, the focus goes back) and then raises its event.
  *
  * The two answers have the test ids `<data-testid of the alert>-cancel` and `<data-testid of the alert>-confirm`.
  *
  * @tag ui-alert
- * @fires {Event} confirm - The person chose the answer that goes ahead. The alert has closed.
- * @fires {Event} cancel - The person chose Cancel, pressed Escape or asked the browser to close it. The alert has closed.
+ * @fires {Event} confirm - The person chose the answer that goes ahead. The alert has closed. It does not bubble.
+ * @fires {Event} cancel - Cancel, Escape or the browser's request to close. The alert has closed. It does not bubble.
  * @csspart cancel - The Cancel button.
  * @csspart action - The button that goes ahead.
  */
@@ -127,6 +129,9 @@ export class UiAlert extends LitElement {
   /** What had the focus when the alert opened, for the one case the dialog cannot give it back itself. */
   private opener: Element | null = null
 
+  /** Watches that the open alert is still drawn. */
+  private drawn: ResizeObserver | undefined
+
   private get dialog(): HTMLDialogElement | null {
     return this.renderRoot.querySelector('dialog')
   }
@@ -142,7 +147,27 @@ export class UiAlert extends LitElement {
     if (!this.dialog?.open) return
     // taken out of the page while open: a dialog that is gone gives no focus back, so it is given back here
     this.dialog.close()
+    this.drawn?.disconnect()
     if (this.opener instanceof HTMLElement && this.opener.isConnected) this.opener.focus()
+  }
+
+  /** The element with the focus, through every shadow root on the way to it. */
+  private static focused(): Element | null {
+    let at = document.activeElement
+    while (at?.shadowRoot?.activeElement) at = at.shadowRoot.activeElement
+    return at
+  }
+
+  /**
+   * An open alert that stops being drawn (what holds it was hidden: a column of a split view that went out of front)
+   * would leave the page inert behind a question nobody can see, so it is answered Cancel.
+   */
+  private watchDrawn(dialog: HTMLDialogElement): void {
+    this.drawn?.disconnect()
+    this.drawn = new ResizeObserver(() => {
+      if (this.open && dialog.open && dialog.getClientRects().length === 0) this.answer('cancel')
+    })
+    this.drawn.observe(dialog)
   }
 
   protected updated(): void {
@@ -154,11 +179,13 @@ export class UiAlert extends LitElement {
     const dialog = this.dialog
     if (!dialog || !this.isConnected || dialog.open === this.open) return
     if (!this.open) {
+      this.drawn?.disconnect()
       dialog.close()
       return
     }
-    this.opener = document.activeElement
+    this.opener = UiAlert.focused()
     dialog.showModal()
+    this.watchDrawn(dialog)
     const front = this.renderRoot.querySelector<UiButton>('ui-button.preferred')
     if (!front) return
     // at once, so that a key pressed next goes where the focus is seen to be; an alert drawn open waits for its
@@ -174,11 +201,11 @@ export class UiAlert extends LitElement {
     if (!this.open) return
     this.open = false
     // closed now, not at the next update: the focus is back where it was before anyone hears the answer
+    this.drawn?.disconnect()
     if (this.dialog?.open) this.dialog.close()
-    const across = { bubbles: true, composed: true }
-    this.dispatchEvent(
-      type === 'confirm' ? new Event('confirm', across) : new Event('cancel', across)
-    )
+    // heard on the alert only, as a dialog's own `cancel` is: an answer is not for an ancestor (a dialog around it
+    // would take a bubbling `cancel` for its own)
+    this.dispatchEvent(type === 'confirm' ? new Event('confirm') : new Event('cancel'))
   }
 
   private onKeydown = (e: KeyboardEvent): void => {

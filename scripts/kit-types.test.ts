@@ -42,7 +42,9 @@ describe('the Custom Elements Manifest', () => {
     expect(byTag['ui-alert']!.events!.map((e) => e.name)).toEqual(['confirm', 'cancel'])
     expect(byTag['ui-split-view']!.slots!.map((s) => s.name)).toEqual(['sidebar', 'content', ''])
     expect(byTag['ui-split-view']!.events![0]!.type!.text).toBe('CustomEvent<{ collapsed: boolean }>')
-    expect(byTag['ui-picker']!.events![0]!.type!.text).toBe('CustomEvent<{ value: string }>')
+    expect(byTag['ui-picker']!.events!.find((e) => e.name === 'change')!.type!.text).toBe(
+      'CustomEvent<{ value: string }>'
+    )
     expect(byTag['ui-text-area']!.events!.map((e) => e.name)).toEqual(['input', 'change'])
   })
 

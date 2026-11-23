@@ -1,7 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
-  import { alertButton } from '@vos/storybook/kit'
+  import { alertButton, alertDialog, textArea } from '@vos/storybook/kit'
   import type { ComponentProps } from 'svelte'
   import type { Note } from 'app:rpc'
   import NotePane from './NotePane.svelte'
@@ -68,7 +68,7 @@
 <Story
   name="Writing"
   play={async ({ canvas }) => {
-    await expect(canvas.getByTestId('notebooks-editor').shadowRoot!.querySelector('textarea')!).toHaveValue(BODY)
+    await expect(textArea(canvas.getByTestId('notebooks-editor'))).toHaveValue(BODY)
     await expect(canvas.getByTestId('notebooks-status')).toHaveTextContent('Saved')
     await expect(title(canvas)).toHaveValue('Herbs')
   }}
@@ -120,7 +120,7 @@
   tags={['play-only']}
   args={{ backlinks: BACKLINKS }}
   play={async ({ canvas, userEvent }) => {
-    await userEvent.type(canvas.getByTestId('notebooks-editor').shadowRoot!.querySelector('textarea')!, '!')
+    await userEvent.type(textArea(canvas.getByTestId('notebooks-editor')), '!')
     await expect(mocks.onedit).toHaveBeenCalledWith(`${BODY}!`)
     await userEvent.type(title(canvas), ' bed{Enter}')
     await expect(mocks.onretitle).toHaveBeenLastCalledWith('Herbs bed')
@@ -133,7 +133,7 @@
     await userEvent.click(canvas.getByTestId('notebooks-backlink-1'))
     await expect(mocks.onopen).toHaveBeenCalledWith(1)
     await userEvent.click(canvas.getByTestId('notebooks-delete'))
-    await expect(canvas.getByTestId('notebooks-confirm').shadowRoot!.querySelector('dialog')).toHaveTextContent('Delete Herbs?')
+    await expect(alertDialog(canvas.getByTestId('notebooks-confirm'))).toHaveTextContent('Delete Herbs?')
     await userEvent.click(alertButton(canvas.getByTestId('notebooks-confirm'), 'action'))
     await expect(mocks.onremove).toHaveBeenCalledTimes(1)
   }}

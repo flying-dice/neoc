@@ -15,6 +15,7 @@ import { base } from '../styles'
  * of which opens the menu.
  *
  * @tag ui-picker
+ * @fires {Event} input - The person chose an option (the native event, passed through). `value` is already updated.
  * @fires {CustomEvent<{ value: string }>} change - The person chose an option. `value` is already updated.
  * @csspart select - The inner select.
  */
@@ -105,9 +106,10 @@ export class UiPicker extends FormControl {
         box-shadow: none;
         inset-inline: -6px;
       }
-      /* as wide as the choice it shows, not as its longest option, and never so wide that the row's title has no room */
+      /* as wide as the choice it shows (where the browser can: field-sizing), not as its longest option, and never so
+         wide that the row's title has no room */
       :host([variant='bare']) {
-        max-width: min(100%, 14em);
+        max-width: min(100%, 10em);
       }
       :host([variant='bare']) select {
         field-sizing: content;
@@ -205,12 +207,9 @@ export class UiPicker extends FormControl {
     super.updated()
   }
 
-  /**
-   * A select's own `input` would cross to the page before `value` is updated, and a picker tells of a choice once, with
-   * `change`: it stops here.
-   */
+  /** The select's own `input` crosses to the page, as a field's does: `value` is updated before anyone hears it. */
   private onInput = (e: Event): void => {
-    e.stopPropagation()
+    this.value = (e.target as HTMLSelectElement).value
   }
 
   private onChange = (e: Event): void => {

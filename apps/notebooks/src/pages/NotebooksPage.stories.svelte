@@ -1,7 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn, waitFor } from 'storybook/test'
-  import { alertButton } from '@vos/storybook/kit'
+  import { alertButton, pickerSelect, textArea } from '@vos/storybook/kit'
   import AppWindow from '@vos/storybook/AppWindow.svelte'
   import definition from '../../openrpc.json'
   import NotebooksPage from './NotebooksPage.svelte'
@@ -79,7 +79,7 @@
   name="Just opened"
   play={async ({ canvas }) => {
     await appears(canvas, 'notebooks-empty')
-    await expect(canvas.getByTestId('notebooks-notebook').shadowRoot!.querySelector('select')!).toHaveValue('1')
+    await expect(pickerSelect(canvas.getByTestId('notebooks-notebook'))).toHaveValue('1')
   }}
 />
 
@@ -115,7 +115,7 @@
     await appears(canvas, 'notebooks-new')
     await userEvent.click(canvas.getByTestId('notebooks-new'))
     await titled(canvas, 'Untitled')
-    await userEvent.type(canvas.getByTestId('notebooks-editor').shadowRoot!.querySelector('textarea')!, 'First thoughts. #ideas')
+    await userEvent.type(textArea(canvas.getByTestId('notebooks-editor')), 'First thoughts. #ideas')
     await saved(canvas)
     if (canvas.queryByTestId('notebooks-back')) await userEvent.click(canvas.getByTestId('notebooks-back'))
     await appears(canvas, 'notebooks-tag-ideas')
@@ -151,7 +151,7 @@
     await userEvent.click(canvas.getByTestId('notebooks-reading-task-5'))
     await waitFor(() => expect(canvas.getByTestId('notebooks-reading-task-5')).toBeChecked())
     await userEvent.click(segment(canvas, 'edit'))
-    await waitFor(() => expect(canvas.getByTestId('notebooks-editor').shadowRoot!.querySelector('textarea')!.value).toContain('- [x] Clear the north bed'))
+    await waitFor(() => expect(textArea(canvas.getByTestId('notebooks-editor')).value).toContain('- [x] Clear the north bed'))
   }}
 />
 
@@ -262,11 +262,11 @@
     await waitFor(() => expect(canvas.getByTestId('notebooks-new-notebook-problem')).toHaveTextContent('There is already a notebook called work.'))
     await retype(userEvent, input(canvas, 'notebooks-new-notebook-input'), 'Recipes{Enter}')
     await appears(canvas, 'notebooks-empty')
-    await expect(canvas.getByTestId('notebooks-notebook').shadowRoot!.querySelector('select')!).toHaveValue('3')
+    await expect(pickerSelect(canvas.getByTestId('notebooks-notebook'))).toHaveValue('3')
     await userEvent.click(canvas.getByTestId('notebooks-delete-notebook'))
     await userEvent.click(alertButton(canvas.getByTestId('notebooks-confirm-notebook'), 'action'))
     await appears(canvas, 'notebooks-note-1')
-    await expect(canvas.getByTestId('notebooks-notebook').shadowRoot!.querySelector('select')!).toHaveValue('1')
+    await expect(pickerSelect(canvas.getByTestId('notebooks-notebook'))).toHaveValue('1')
   }}
 />
 
