@@ -583,9 +583,9 @@ impl UserData for Object {
             walk_get(lua, &this.root, &this.path, args)
         });
         /// Insert or replace `key` with `value`.
-        #[lua(names(v = "value"))]
-        methods.add_method("set", |_, this, (key, v): (String, Value)| {
-            this.set_inner(key, lua_value_to_json_value(&v)?)
+        #[lua]
+        methods.add_method("set", |_, this, (key, value): (String, Value)| {
+            this.set_inner(key, lua_value_to_json_value(&value)?)
         });
         /// Whether the object contains an entry for `key`.
         methods.add_method("has", |_, this, key: String| {
@@ -670,20 +670,20 @@ impl UserData for Array {
             walk_get(lua, &this.root, &this.path, args)
         });
         /// Replace the element at a 1-based index.
-        #[lua(names(i = "index", v = "value"))]
-        methods.add_method("set", |_, this, (i, v): (i64, Value)| {
-            if i < 1 {
+        #[lua]
+        methods.add_method("set", |_, this, (index, value): (i64, Value)| {
+            if index < 1 {
                 return Err(mlua::Error::external("json.array: index must be >= 1"));
             }
             this.set_inner(
-                usize::try_from(i - 1).unwrap_or(usize::MAX),
-                lua_value_to_json_value(&v)?,
+                usize::try_from(index - 1).unwrap_or(usize::MAX),
+                lua_value_to_json_value(&value)?,
             )
         });
         /// Append `value` to the end of the array.
-        #[lua(names(v = "value"))]
-        methods.add_method("push", |_, this, v: Value| {
-            this.push_inner(lua_value_to_json_value(&v)?)
+        #[lua]
+        methods.add_method("push", |_, this, value: Value| {
+            this.push_inner(lua_value_to_json_value(&value)?)
         });
         /// Current length of the array.
         methods.add_method("len", |_, this, _: ()| {

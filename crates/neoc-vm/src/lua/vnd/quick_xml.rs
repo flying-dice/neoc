@@ -13,7 +13,7 @@
 
 use mlua::{AnyUserData, Lua, LuaSerdeExt, Table, Value};
 
-use crate::lua::facade::Module;
+use crate::lua::facade::{Handle, Module};
 use crate::lua::serde_guard::refuse_buffer;
 use crate::lua::std::io::{ReaderHandle, WriterHandle};
 
@@ -41,9 +41,9 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 }
 
 /// Read a reader handle to completion and parse it as XML.
-#[neoc_macros::lua_fn(names(ud = "reader"), types(ud = "std_io.ReaderHandle"))]
-fn decode(lua: &Lua, ud: AnyUserData) -> Result<Value, String> {
-    let rh = match ud.borrow::<ReaderHandle>() {
+#[neoc_macros::lua_fn]
+fn decode(lua: &Lua, reader: Handle<ReaderHandle>) -> Result<Value, String> {
+    let rh = match reader.borrow::<ReaderHandle>() {
         Ok(h) => h,
         Err(_) => return Err("expected a reader handle".to_string()),
     };
@@ -67,17 +67,17 @@ fn decode_string(lua: &Lua, s: mlua::LuaString) -> Result<Value, String> {
 }
 
 /// Serialise a Lua value to an XML string rooted at `<root>`.
-#[neoc_macros::lua_fn(names(v = "value"))]
-fn encode(_: &Lua, v: Value) -> mlua::Result<Result<String, String>> {
-    refuse_buffer(&v, "quick_xml.encode")?;
-    Ok(to_xml_string(&v))
+#[neoc_macros::lua_fn]
+fn encode(_: &Lua, value: Value) -> mlua::Result<Result<String, String>> {
+    refuse_buffer(&value, "quick_xml.encode")?;
+    Ok(to_xml_string(&value))
 }
 
 /// Serialise a Lua value to XML and write it to a writer handle.
-#[neoc_macros::lua_fn(names(v = "value", ud = "writer"), types(ud = "std_io.WriterHandle"))]
-fn encode_to(_: &Lua, (v, ud): (Value, AnyUserData)) -> mlua::Result<Result<bool, String>> {
-    refuse_buffer(&v, "quick_xml.encode_to")?;
-    Ok(write_xml(&v, &ud))
+#[neoc_macros::lua_fn(types(writer = "std_io.WriterHandle"))]
+fn encode_to(_: &Lua, (value, writer): (Value, AnyUserData)) -> mlua::Result<Result<bool, String>> {
+    refuse_buffer(&value, "quick_xml.encode_to")?;
+    Ok(write_xml(&value, &writer))
 }
 
 fn write_xml(v: &Value, ud: &AnyUserData) -> Result<bool, String> {

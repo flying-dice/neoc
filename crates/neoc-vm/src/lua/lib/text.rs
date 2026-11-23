@@ -85,45 +85,45 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 // ---------------------------------------------------------------------------
 
 /// Convert to `camelCase`. Acronym boundaries are detected by the backing `heck` crate.
-#[neoc_macros::lua_fn(names(s = "text"))]
+#[neoc_macros::lua_fn]
 #[instrument(name = "text.to_camel_case", target = "lua::lib::text", skip_all)]
-fn to_camel_case(_: &Lua, s: mlua::LuaString) -> mlua::Result<String> {
-    Ok(s.to_str()?.to_lower_camel_case())
+fn to_camel_case(_: &Lua, text: mlua::LuaString) -> mlua::Result<String> {
+    Ok(text.to_str()?.to_lower_camel_case())
 }
 
 /// Convert to `snake_case`.
-#[neoc_macros::lua_fn(names(s = "text"))]
+#[neoc_macros::lua_fn]
 #[instrument(name = "text.to_snake_case", target = "lua::lib::text", skip_all)]
-fn to_snake_case(_: &Lua, s: mlua::LuaString) -> mlua::Result<String> {
-    Ok(s.to_str()?.to_snake_case())
+fn to_snake_case(_: &Lua, text: mlua::LuaString) -> mlua::Result<String> {
+    Ok(text.to_str()?.to_snake_case())
 }
 
 /// Convert to `kebab-case`.
-#[neoc_macros::lua_fn(names(s = "text"))]
+#[neoc_macros::lua_fn]
 #[instrument(name = "text.to_kebab_case", target = "lua::lib::text", skip_all)]
-fn to_kebab_case(_: &Lua, s: mlua::LuaString) -> mlua::Result<String> {
-    Ok(s.to_str()?.to_kebab_case())
+fn to_kebab_case(_: &Lua, text: mlua::LuaString) -> mlua::Result<String> {
+    Ok(text.to_str()?.to_kebab_case())
 }
 
 /// Convert to `PascalCase`.
-#[neoc_macros::lua_fn(names(s = "text"))]
+#[neoc_macros::lua_fn]
 #[instrument(name = "text.to_pascal_case", target = "lua::lib::text", skip_all)]
-fn to_pascal_case(_: &Lua, s: mlua::LuaString) -> mlua::Result<String> {
-    Ok(s.to_str()?.to_upper_camel_case())
+fn to_pascal_case(_: &Lua, text: mlua::LuaString) -> mlua::Result<String> {
+    Ok(text.to_str()?.to_upper_camel_case())
 }
 
 /// Convert to `Title Case`.
-#[neoc_macros::lua_fn(names(s = "text"))]
+#[neoc_macros::lua_fn]
 #[instrument(name = "text.to_title_case", target = "lua::lib::text", skip_all)]
-fn to_title_case(_: &Lua, s: mlua::LuaString) -> mlua::Result<String> {
-    Ok(s.to_str()?.to_title_case())
+fn to_title_case(_: &Lua, text: mlua::LuaString) -> mlua::Result<String> {
+    Ok(text.to_str()?.to_title_case())
 }
 
 /// Convert to `CONSTANT_CASE`.
-#[neoc_macros::lua_fn(names(s = "text"))]
+#[neoc_macros::lua_fn]
 #[instrument(name = "text.to_constant_case", target = "lua::lib::text", skip_all)]
-fn to_constant_case(_: &Lua, s: mlua::LuaString) -> mlua::Result<String> {
-    Ok(s.to_str()?.to_shouty_snake_case())
+fn to_constant_case(_: &Lua, text: mlua::LuaString) -> mlua::Result<String> {
+    Ok(text.to_str()?.to_shouty_snake_case())
 }
 
 // ---------------------------------------------------------------------------
@@ -470,33 +470,40 @@ enum PadSide {
 }
 
 /// Pad `text` on the left so total display width equals `width`. `fill_char` must be one display-width-1 character (default space).
-#[neoc_macros::lua_fn(names(fill = "fill_char"))]
+#[neoc_macros::lua_fn]
 #[instrument(name = "text.pad_left", target = "lua::lib::text", skip_all)]
 fn pad_left(
     lua: &Lua,
-    (text, width, fill): (mlua::LuaString, i64, Option<mlua::LuaString>),
+    (text, width, fill_char): (mlua::LuaString, i64, Option<mlua::LuaString>),
 ) -> mlua::Result<Fallible<String>> {
-    pad_text(lua, "text.pad_left", text, width, fill, PadSide::Left)
+    pad_text(lua, "text.pad_left", text, width, fill_char, PadSide::Left)
 }
 
 /// Pad `text` on the right so total display width equals `width`. Same constraints as `pad_left`.
-#[neoc_macros::lua_fn(names(fill = "fill_char"))]
+#[neoc_macros::lua_fn]
 #[instrument(name = "text.pad_right", target = "lua::lib::text", skip_all)]
 fn pad_right(
     lua: &Lua,
-    (text, width, fill): (mlua::LuaString, i64, Option<mlua::LuaString>),
+    (text, width, fill_char): (mlua::LuaString, i64, Option<mlua::LuaString>),
 ) -> mlua::Result<Fallible<String>> {
-    pad_text(lua, "text.pad_right", text, width, fill, PadSide::Right)
+    pad_text(
+        lua,
+        "text.pad_right",
+        text,
+        width,
+        fill_char,
+        PadSide::Right,
+    )
 }
 
 /// Pad `text` on both sides so total display width equals `width`. Uneven padding places the extra column on the right.
-#[neoc_macros::lua_fn(names(fill = "fill_char"))]
+#[neoc_macros::lua_fn]
 #[instrument(name = "text.center", target = "lua::lib::text", skip_all)]
 fn center(
     lua: &Lua,
-    (text, width, fill): (mlua::LuaString, i64, Option<mlua::LuaString>),
+    (text, width, fill_char): (mlua::LuaString, i64, Option<mlua::LuaString>),
 ) -> mlua::Result<Fallible<String>> {
-    pad_text(lua, "text.center", text, width, fill, PadSide::Center)
+    pad_text(lua, "text.center", text, width, fill_char, PadSide::Center)
 }
 
 // Validates and extracts a single-codepoint, single-column fill character.

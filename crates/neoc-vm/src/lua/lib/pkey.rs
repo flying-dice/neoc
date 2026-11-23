@@ -285,9 +285,9 @@ impl UserData for KeyPair {
         methods.add_method("public_key", |_, this, _: ()| Ok(this.public()));
 
         /// Sign `message` with the private key, returning the raw signature bytes.
-        #[lua(names(msg = "message"))]
-        methods.add_method("sign", |lua, this, msg: mlua::LuaString| {
-            match this.sign(&msg.as_bytes()) {
+        #[lua]
+        methods.add_method("sign", |lua, this, message: mlua::LuaString| {
+            match this.sign(&message.as_bytes()) {
                 Ok(sig) => ok(lua.create_string(&sig)?),
                 Err(e) => err(format!("KeyPair.sign: {e}")),
             }
@@ -409,11 +409,11 @@ impl PublicKey {
 impl UserData for PublicKey {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Verify `signature` over `message`; returns `true` iff valid, `false` on any mismatch or malformed signature.
-        #[lua(names(msg = "message", sig = "signature"))]
+        #[lua]
         methods.add_method(
             "verify",
-            |_, this, (msg, sig): (mlua::LuaString, mlua::LuaString)| {
-                Ok(this.verify(&msg.as_bytes(), &sig.as_bytes()))
+            |_, this, (message, signature): (mlua::LuaString, mlua::LuaString)| {
+                Ok(this.verify(&message.as_bytes(), &signature.as_bytes()))
             },
         );
 

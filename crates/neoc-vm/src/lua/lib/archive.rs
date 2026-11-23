@@ -917,11 +917,11 @@ fn tar_create(
 }
 
 /// Extract a tar archive (file path or raw bytes; compression auto-detected) under `dest`, returning the entry count. `opts.include` filters by glob; `opts.max_output_size` caps output. Traversal-safe.
-#[neoc_macros::lua_fn(names(source = "path_or_bytes"))]
+#[neoc_macros::lua_fn]
 #[instrument(name = "archive.tar_extract", target = "lua::lib::archive", skip_all)]
 fn tar_extract(
     _: &Lua,
-    (source, dest, opts): (mlua::LuaString, String, Option<Table>),
+    (path_or_bytes, dest, opts): (mlua::LuaString, String, Option<Table>),
 ) -> mlua::Result<Fallible<i64>> {
     let prefix = "archive.tar_extract";
     let cap = match opt_max_output(opts.as_ref(), prefix) {
@@ -932,7 +932,7 @@ fn tar_extract(
         Ok(i) => i,
         Err(msg) => return err(msg),
     };
-    let bytes = match resolve_source(&source) {
+    let bytes = match resolve_source(&path_or_bytes) {
         Ok(b) => b,
         Err(msg) => return from_err(prefix, msg),
     };
@@ -965,11 +965,11 @@ fn tar_extract_bytes(
 }
 
 /// List a tar archive (file path or raw bytes), returning `{ name, size, mode, timestamp, is_dir, compression_ratio }` per entry. `compression_ratio` is nil for tar (one solid stream).
-#[neoc_macros::lua_fn(names(source = "path_or_bytes"))]
+#[neoc_macros::lua_fn]
 #[instrument(name = "archive.tar_list", target = "lua::lib::archive", skip_all)]
-fn tar_list(lua: &Lua, source: mlua::LuaString) -> mlua::Result<Fallible<Table>> {
+fn tar_list(lua: &Lua, path_or_bytes: mlua::LuaString) -> mlua::Result<Fallible<Table>> {
     let prefix = "archive.tar_list";
-    let bytes = match resolve_source(&source) {
+    let bytes = match resolve_source(&path_or_bytes) {
         Ok(b) => b,
         Err(msg) => return from_err(prefix, msg),
     };
@@ -1032,11 +1032,11 @@ fn zip_create(
 }
 
 /// Extract a zip archive (file path or raw bytes) under `dest`, returning the entry count. `opts.include` filters by glob; `opts.max_output_size` caps output. Traversal-safe.
-#[neoc_macros::lua_fn(names(source = "path_or_bytes"))]
+#[neoc_macros::lua_fn]
 #[instrument(name = "archive.zip_extract", target = "lua::lib::archive", skip_all)]
 fn zip_extract(
     _: &Lua,
-    (source, dest, opts): (mlua::LuaString, String, Option<Table>),
+    (path_or_bytes, dest, opts): (mlua::LuaString, String, Option<Table>),
 ) -> mlua::Result<Fallible<i64>> {
     let prefix = "archive.zip_extract";
     let cap = match opt_max_output(opts.as_ref(), prefix) {
@@ -1047,7 +1047,7 @@ fn zip_extract(
         Ok(i) => i,
         Err(msg) => return err(msg),
     };
-    let bytes = match resolve_source(&source) {
+    let bytes = match resolve_source(&path_or_bytes) {
         Ok(b) => b,
         Err(msg) => return from_err(prefix, msg),
     };
@@ -1080,11 +1080,11 @@ fn zip_extract_bytes(
 }
 
 /// List a zip archive (file path or raw bytes), returning `{ name, size, mode, timestamp, is_dir, compression_ratio }` per entry.
-#[neoc_macros::lua_fn(names(source = "path_or_bytes"))]
+#[neoc_macros::lua_fn]
 #[instrument(name = "archive.zip_list", target = "lua::lib::archive", skip_all)]
-fn zip_list(lua: &Lua, source: mlua::LuaString) -> mlua::Result<Fallible<Table>> {
+fn zip_list(lua: &Lua, path_or_bytes: mlua::LuaString) -> mlua::Result<Fallible<Table>> {
     let prefix = "archive.zip_list";
-    let bytes = match resolve_source(&source) {
+    let bytes = match resolve_source(&path_or_bytes) {
         Ok(b) => b,
         Err(msg) => return from_err(prefix, msg),
     };

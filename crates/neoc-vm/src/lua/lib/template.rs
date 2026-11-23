@@ -1065,9 +1065,9 @@ pub struct TemplateHandle {
 impl UserData for TemplateHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Render the compiled template with `context` as the variable map.
-        #[lua(names(ctx = "context"))]
-        methods.add_method("render", |lua, this, ctx: Value| {
-            template_render(lua, this, ctx)
+        #[lua]
+        methods.add_method("render", |lua, this, context: Value| {
+            template_render(lua, this, context)
         });
         methods.add_meta_method(MetaMethod::ToString, |_, this, _: ()| {
             Ok(format!("Template({})", this.inner.name))
@@ -1111,20 +1111,20 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     let eng = engine.clone();
     /// Parse `source` once and return a reusable `Template`.
-    #[lua(names(src = "source"))]
+    #[lua]
     m.set(
         "compile",
-        lua.create_function(move |lua, src: String| compile_impl(lua, &eng, src))?,
+        lua.create_function(move |lua, source: String| compile_impl(lua, &eng, source))?,
     )?;
 
     let eng = engine.clone();
     /// One-shot parse and render of `source` against `context`; `options.autoescape` toggles HTML escaping.
-    #[lua(names(src = "source", ctx = "context", opts = "options"))]
+    #[lua]
     m.try_func_raising(
         "render",
-        move |lua, (src, ctx, opts): (String, Value, Option<Table>)| {
-            refuse_buffer(&ctx, "template.render")?;
-            Ok(render_impl(lua, &eng, src, ctx, opts))
+        move |lua, (source, context, options): (String, Value, Option<Table>)| {
+            refuse_buffer(&context, "template.render")?;
+            Ok(render_impl(lua, &eng, source, context, options))
         },
     )?;
 

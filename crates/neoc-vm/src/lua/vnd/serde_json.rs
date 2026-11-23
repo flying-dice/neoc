@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 
 use mlua::{AnyUserData, IntoLua, Lua, Table, Value};
 
-use crate::lua::facade::{DeclType, Module};
+use crate::lua::facade::{DeclType, Handle, Module};
 use crate::lua::lib::json::{JSON_VALUE, JsonValue, lua_value_to_json_value, wrap_root};
 use crate::lua::serde_guard::refuse_buffer;
 use crate::lua::std::io::{ReaderHandle, WriterHandle};
@@ -143,10 +143,10 @@ fn from_str(lua: &Lua, s: mlua::LuaString) -> Result<Parsed, String> {
 }
 
 /// Parse JSON from a reader handle, with the same results as `from_str`.
-#[neoc_macros::lua_fn(names(ud = "reader"), types(ud = "std_io.ReaderHandle"))]
-fn from_reader(lua: &Lua, ud: AnyUserData) -> Result<Parsed, String> {
+#[neoc_macros::lua_fn]
+fn from_reader(lua: &Lua, reader: Handle<ReaderHandle>) -> Result<Parsed, String> {
     let jv = {
-        let rh = ud
+        let rh = reader
             .borrow::<ReaderHandle>()
             .map_err(|_| "expected a reader handle — accepted: Reader".to_string())?;
         let mut locked = rh.inner.lock();
@@ -166,24 +166,24 @@ fn serialize_with(
 }
 
 /// Serialise a Lua value to a compact JSON string.
-#[neoc_macros::lua_fn(names(v = "value"))]
-fn to_string(_: &Lua, v: Value) -> mlua::Result<Result<String, String>> {
-    refuse_buffer(&v, "serde_json.to_string")?;
-    Ok(serialize_with(v, serde_json::to_string))
+#[neoc_macros::lua_fn]
+fn to_string(_: &Lua, value: Value) -> mlua::Result<Result<String, String>> {
+    refuse_buffer(&value, "serde_json.to_string")?;
+    Ok(serialize_with(value, serde_json::to_string))
 }
 
 /// Serialise a Lua value to an indented, human-readable JSON string.
-#[neoc_macros::lua_fn(names(v = "value"))]
-fn to_string_pretty(_: &Lua, v: Value) -> mlua::Result<Result<String, String>> {
-    refuse_buffer(&v, "serde_json.to_string_pretty")?;
-    Ok(serialize_with(v, serde_json::to_string_pretty))
+#[neoc_macros::lua_fn]
+fn to_string_pretty(_: &Lua, value: Value) -> mlua::Result<Result<String, String>> {
+    refuse_buffer(&value, "serde_json.to_string_pretty")?;
+    Ok(serialize_with(value, serde_json::to_string_pretty))
 }
 
 /// Serialise a Lua value to JSON and write it to a writer handle.
-#[neoc_macros::lua_fn(names(v = "value", ud = "writer"), types(ud = "std_io.WriterHandle"))]
-fn to_writer(_: &Lua, (v, ud): (Value, AnyUserData)) -> mlua::Result<Result<bool, String>> {
-    refuse_buffer(&v, "serde_json.to_writer")?;
-    Ok(write_json(&v, &ud))
+#[neoc_macros::lua_fn(types(writer = "std_io.WriterHandle"))]
+fn to_writer(_: &Lua, (value, writer): (Value, AnyUserData)) -> mlua::Result<Result<bool, String>> {
+    refuse_buffer(&value, "serde_json.to_writer")?;
+    Ok(write_json(&value, &writer))
 }
 
 fn write_json(v: &Value, ud: &AnyUserData) -> Result<bool, String> {

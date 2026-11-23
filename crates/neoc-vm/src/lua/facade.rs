@@ -101,6 +101,34 @@ impl<T: DeclType> DeclType for Fallible<T> {
     }
 }
 
+/// A userdata argument that is declared as the type `T` it is meant to be: `duration: Handle<DurationHandle>`
+/// is `duration: Duration` to a script. It is the userdata as it was passed, so the function decides what a
+/// wrong one is (an error it returns, or one it raises): `duration.borrow::<DurationHandle>()`.
+pub struct Handle<T>(mlua::AnyUserData, std::marker::PhantomData<T>);
+
+impl<T> std::ops::Deref for Handle<T> {
+    type Target = mlua::AnyUserData;
+
+    fn deref(&self) -> &mlua::AnyUserData {
+        &self.0
+    }
+}
+
+impl<T> mlua::FromLua for Handle<T> {
+    fn from_lua(value: mlua::Value, lua: &Lua) -> mlua::Result<Self> {
+        Ok(Self(
+            mlua::AnyUserData::from_lua(value, lua)?,
+            std::marker::PhantomData,
+        ))
+    }
+}
+
+impl<T: DeclType> DeclType for Handle<T> {
+    fn decl_type() -> String {
+        T::decl_type()
+    }
+}
+
 /// A list a function hands a script: a table of `T` in order, declared `{ T }`. (A bare `Vec<u8>` is the bytes
 /// of a string, so a list says that it is one.)
 pub struct List<T>(pub Vec<T>);

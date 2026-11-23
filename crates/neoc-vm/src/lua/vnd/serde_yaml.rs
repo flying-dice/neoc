@@ -48,9 +48,9 @@ fn borrow_handle<T: 'static>(ud: &AnyUserData, kind: &str) -> Result<mlua::UserD
 }
 
 /// Read a reader handle to completion and parse it as YAML.
-#[neoc_macros::lua_fn(names(ud = "reader"), types(ud = "std_io.ReaderHandle"))]
-fn decode(lua: &Lua, ud: AnyUserData) -> Result<Value, String> {
-    let rh = borrow_handle::<ReaderHandle>(&ud, "reader")?;
+#[neoc_macros::lua_fn(types(reader = "std_io.ReaderHandle"))]
+fn decode(lua: &Lua, reader: AnyUserData) -> Result<Value, String> {
+    let rh = borrow_handle::<ReaderHandle>(&reader, "reader")?;
     let mut locked = rh.inner.lock();
     let result = serde_yaml::from_reader::<_, serde_json::Value>(&mut **locked);
     drop(locked);
@@ -78,19 +78,19 @@ fn json_result_to_value<E: std::fmt::Display>(
 }
 
 /// Serialise a Lua value to a YAML string.
-#[neoc_macros::lua_fn(names(v = "value"))]
-fn encode(_: &Lua, v: Value) -> mlua::Result<Result<String, String>> {
-    refuse_buffer(&v, "serde_yaml.encode")?;
-    Ok(lua_to_json_value(&v)
+#[neoc_macros::lua_fn]
+fn encode(_: &Lua, value: Value) -> mlua::Result<Result<String, String>> {
+    refuse_buffer(&value, "serde_yaml.encode")?;
+    Ok(lua_to_json_value(&value)
         .map_err(|e| e.to_string())
         .and_then(|json| serde_yaml::to_string(&json).map_err(|e| e.to_string())))
 }
 
 /// Serialise a Lua value to YAML and write it to a writer handle.
-#[neoc_macros::lua_fn(names(v = "value", ud = "writer"), types(ud = "std_io.WriterHandle"))]
-fn encode_to(_: &Lua, (v, ud): (Value, AnyUserData)) -> mlua::Result<Result<bool, String>> {
-    refuse_buffer(&v, "serde_yaml.encode_to")?;
-    Ok(write_yaml(&v, &ud))
+#[neoc_macros::lua_fn(types(writer = "std_io.WriterHandle"))]
+fn encode_to(_: &Lua, (value, writer): (Value, AnyUserData)) -> mlua::Result<Result<bool, String>> {
+    refuse_buffer(&value, "serde_yaml.encode_to")?;
+    Ok(write_yaml(&value, &writer))
 }
 
 fn write_yaml(v: &Value, ud: &AnyUserData) -> Result<bool, String> {

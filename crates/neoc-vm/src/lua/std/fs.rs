@@ -120,14 +120,14 @@ fn declare_files(m: &mut Module<'_>) -> mlua::Result<()> {
     #[lua]
     m.try_func("open", |_, opts: Table| open(&opts))?;
     /// Read the entire contents of `path` into a binary-safe string. Mirrors `std::fs::read`.
-    #[lua(types(path = "string"))]
+    #[lua]
     m.try_func("read", |lua, path: Path1| {
         let path = path_of(&path)?;
         let bytes = std::fs::read(&path).map_err(|e| FsError::io(&e, &path))?;
         lua.create_string(&bytes).map_err(lua_failure)
     })?;
     /// Write `data` to `path`, replacing any existing content. Mirrors `std::fs::write`; binary-safe.
-    #[lua(types(path = "string"))]
+    #[lua]
     m.try_func("write", |_, (path, data): (Path1, mlua::LuaString)| {
         let path = path_of(&path)?;
         std::fs::write(&path, data.as_bytes())
@@ -135,20 +135,20 @@ fn declare_files(m: &mut Module<'_>) -> mlua::Result<()> {
             .map_err(|e| FsError::io(&e, &path))
     })?;
     /// Whether `path` exists, following symlinks: `false` for a missing path and for a dangling symlink. Any other failure to check is an error with its kind, not `false`: `permission_denied`, `not_a_directory` when a parent is a file, `other` for a symlink loop. Use `symlink_metadata` to see a dangling link itself. Mirrors `std::fs::exists`.
-    #[lua(types(path = "string"))]
+    #[lua]
     m.try_func("exists", |_, path: Path1| ops::exists(&path_of(&path)?))?;
     /// Metadata of `path`, following symlinks (a dangling symlink is `not_found`). See `Metadata` for what it says; timestamps are seconds since the Unix epoch, and `nil` where the platform or filesystem does not record them (`created` on some Linux filesystems). Mirrors `std::fs::metadata`.
-    #[lua(types(path = "string"))]
+    #[lua]
     m.try_func("metadata", |_, path: Path1| {
         ops::metadata(&path_of(&path)?, true).map(MetadataHandle)
     })?;
     /// Like `metadata`, but about the symlink itself when `path` is one (`kind()` is then `"symlink"`). Mirrors `std::fs::symlink_metadata`.
-    #[lua(types(path = "string"))]
+    #[lua]
     m.try_func("symlink_metadata", |_, path: Path1| {
         ops::metadata(&path_of(&path)?, false).map(MetadataHandle)
     })?;
     /// Change the permissions of `path` (through a symlink). Give exactly one of `mode`, the Unix permission bits (`0o755` is `493`, at most `4095`; `unsupported` on Windows), or `readonly`. `readonly = true` clears every write bit on Unix and sets the read-only attribute on Windows; `readonly = false` gives the owner (not group or others) write access on Unix. Mirrors `std::fs::set_permissions`.
-    #[lua(types(path = "string", opts = "{ mode: number?, readonly: bool? }"))]
+    #[lua(types(opts = "{ mode: number?, readonly: bool? }"))]
     m.try_func("set_permissions", |_, (path, opts): (Path1, Table)| {
         let path = path_of(&path)?;
         let options = read_options(Some(&opts), PERMISSION_OPTIONS)?;
@@ -174,7 +174,7 @@ fn declare_files(m: &mut Module<'_>) -> mlua::Result<()> {
 #[neoc_macros::lua_module]
 fn declare_directories(m: &mut Module<'_>) -> mlua::Result<()> {
     /// Create a single directory. Mirrors `std::fs::create_dir`: `already_exists` when the path exists, `not_found` when the parent is missing.
-    #[lua(types(path = "string"))]
+    #[lua]
     m.try_func("create_dir", |_, path: Path1| {
         let path = path_of(&path)?;
         std::fs::create_dir(&path)
@@ -182,7 +182,7 @@ fn declare_directories(m: &mut Module<'_>) -> mlua::Result<()> {
             .map_err(|e| FsError::io(&e, &path))
     })?;
     /// Create a directory and every missing ancestor. Mirrors `std::fs::create_dir_all`; succeeds if the directory already exists, and is `not_a_directory` when a part of the path is a file.
-    #[lua(types(path = "string"))]
+    #[lua]
     m.try_func("create_dir_all", |_, path: Path1| {
         let path = path_of(&path)?;
         std::fs::create_dir_all(&path)
@@ -190,7 +190,7 @@ fn declare_directories(m: &mut Module<'_>) -> mlua::Result<()> {
             .map_err(|e| FsError::io(&e, &path))
     })?;
     /// List the directory `path`: an array of `DirEntry`, sorted by name (Rust leaves the order unspecified), without `.` and `..`. A symlink is listed as `"symlink"`, not as what it points at, and is not entered. It is `not_found` for a missing path and `not_a_directory` for a file. The whole listing is read at once, and at most 1048576 entries (`too_large` past that). On Unix a name is the file's own bytes and can be passed back to any `std:fs` function unchanged; on Windows (never built or run) a name that is not valid Unicode comes back with replacement characters and may not name the same file. `walk` lists a whole tree; `lib:glob` matches patterns.
-    #[lua(types(path = "string"), doc_with = waits)]
+    #[lua(doc_with = waits)]
     m.try_async_func("read_dir", |_, path: Path1| {
         let path = path_of(&path);
         async move {
@@ -201,7 +201,7 @@ fn declare_directories(m: &mut Module<'_>) -> mlua::Result<()> {
         }
     })?;
     /// List everything under the directory `path`, recursively: an array of `DirEntry` (the directory itself is not in it), depth first, the children of each directory sorted by name, so the order is the same on every platform. A symlink inside is listed and never entered, so a link loop cannot make a walk run for ever; `path` itself may be a symlink to a directory and is followed. Option `{ max_depth }` (a non-negative whole number) limits how far down it goes: `1` is `read_dir`. It is `not_found` for a missing path and `not_a_directory` for a file; an unreadable subdirectory fails the whole walk with `permission_denied` and its path. At most 1048576 entries (`too_large` past that: walk the subdirectories separately).
-    #[lua(types(path = "string", opts = "{ max_depth: number? }?"), doc_with = waits)]
+    #[lua(types(opts = "{ max_depth: number? }?"), doc_with = waits)]
     m.try_async_func("walk", |_, (path, opts): (Path1, Option<Table>)| {
         let parsed = path_of(&path).and_then(|path| {
             let options = read_options(opts.as_ref(), WALK_OPTIONS)?;
@@ -224,7 +224,7 @@ fn declare_directories(m: &mut Module<'_>) -> mlua::Result<()> {
 #[neoc_macros::lua_module]
 fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
     /// Copy the file `from` to the path `to` and return the number of bytes written. Mirrors `std::fs::copy`: `to` is created or replaced and takes the permission bits of `from`; a symlink given as `from` is resolved, and so is one at `to`: the file it points at is written (the link stays a link), and a dangling one creates its target. `to` is the new path of the copy, not a directory to copy into (`is_directory`), `from` must be a file (`is_directory` for a directory: use `copy_dir`; `invalid_input` for a device or FIFO), as must an existing `to` (`invalid_input` for a FIFO or device: opening one for writing could block for ever), and copying a file onto itself is `invalid_input` rather than emptying it. Its parent must exist (`not_found`).
-    #[lua(types(from = "string", to = "string"), doc_with = waits)]
+    #[lua(doc_with = waits)]
     m.try_async_func("copy", |_, (from, to): (Path1, Path1)| {
         let paths = path_of(&from).and_then(|from| Ok((from, path_of(&to)?)));
         async move {
@@ -233,7 +233,7 @@ fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
         }
     })?;
     /// Copy the directory `from` and everything under it to the new path `to`, and return the bytes of file data copied. `to` must not exist (`already_exists`; nothing is merged) and its parent must; a destination inside the source is `invalid_input`. Files keep their permission bits, directories get the default ones, and symlinks are recreated as symlinks with the target as stored (a relative target stays relative), never followed, so a link loop cannot make it run for ever. A source that holds something that is not a file, directory or symlink (a device, FIFO, socket) is `invalid_input`. A failure part way removes the partial `to` again (best effort: if that removal fails too, the partial copy stays). A symlink given as `from` is resolved.
-    #[lua(types(from = "string", to = "string"), doc_with = waits)]
+    #[lua(doc_with = waits)]
     m.try_async_func("copy_dir", |_, (from, to): (Path1, Path1)| {
         let paths = path_of(&from).and_then(|from| Ok((from, path_of(&to)?)));
         async move {
@@ -242,12 +242,12 @@ fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
         }
     })?;
     /// Rename or move `from` to `to` on the same filesystem, in one atomic step: the operating system's rename, as `std::fs::rename` calls it. An existing file or symlink at `to` is replaced; a directory replaces an empty directory only (`not_empty` otherwise); a file over a directory is `is_directory`, a directory over a file `not_a_directory`; a move across filesystems is `cross_device` (use `move`). A trailing separator or `.` on either path is dropped first, so a symlink is renamed as a link on every platform (macOS would otherwise follow `link/`). Platform differences: Windows refuses a directory over an existing directory (`permission_denied`) and cannot rename a file that is open.
-    #[lua(types(from = "string", to = "string"))]
+    #[lua]
     m.try_func("rename", |_, (from, to): (Path1, Path1)| {
         ops::rename(&path_of(&from)?, &path_of(&to)?).map(|()| true)
     })?;
     /// Move `from` to `to`, with the rules of `rename`. When the two are on different filesystems it copies instead (a file, a symlink as a symlink, or a whole directory tree, never following a link) and removes `from` only after the copy completed. That case is not atomic: a failed copy leaves the source whole, a failure while removing a source tree leaves it partly removed and the destination complete, an existing empty directory at `to` is removed before the copy starts, and a file or symlink at `to` is replaced by renaming the finished copy over it (so a copy that fails leaves the old `to` as it was). A trailing separator on either path is dropped, so `link/` moves the link, not its target.
-    #[lua(types(from = "string", to = "string"), doc_with = waits)]
+    #[lua(doc_with = waits)]
     m.try_async_func("move", |_, (from, to): (Path1, Path1)| {
         let paths = path_of(&from).and_then(|from| Ok((from, path_of(&to)?)));
         async move {
@@ -258,7 +258,7 @@ fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
         }
     })?;
     /// Remove a file or a symlink (the link, never its target; on Windows also a link to a directory). A directory is `is_directory`. Option `{ missing_ok }`: a missing path is then not an error and the result is `false` (otherwise `not_found`); a removal returns `true`. Mirrors `std::fs::remove_file`; on Windows a read-only file or one that is open may be `permission_denied`.
-    #[lua(types(path = "string", opts = "{ missing_ok: bool? }?"))]
+    #[lua(types(opts = "{ missing_ok: bool? }?"))]
     m.try_func("remove_file", |_, (path, opts): (Path1, Option<Table>)| {
         let path = path_of(&path)?;
         let missing_ok = read_options(opts.as_ref(), MISSING_OK)?
@@ -267,7 +267,7 @@ fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
         ops::remove_file(&path, missing_ok)
     })?;
     /// Remove an empty directory (`not_empty` otherwise; `remove_dir_all` removes a tree). A symlink to a directory is `not_a_directory` (use `remove_file`), also when written `link/`; so is a file. Option `{ missing_ok }` as for `remove_file`. Like `std::fs::remove_dir`, but a symlink is `not_a_directory` on every platform.
-    #[lua(types(path = "string", opts = "{ missing_ok: bool? }?"))]
+    #[lua(types(opts = "{ missing_ok: bool? }?"))]
     m.try_func("remove_dir", |_, (path, opts): (Path1, Option<Table>)| {
         let path = path_of(&path)?;
         let missing_ok = read_options(opts.as_ref(), MISSING_OK)?
@@ -276,7 +276,7 @@ fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
         ops::remove_dir(&path, missing_ok)
     })?;
     /// Remove a directory and everything under it, children before parents. Symlinks inside are deleted without being followed, so nothing outside the tree is touched. It refuses `/`, `.`, `..` and the empty path (`invalid_input`, a guard against a typo, not a security boundary) and a symlink to a directory (`not_a_directory`, also when written `link/`: use `remove_file`). Option `{ missing_ok }` as for `remove_file`. A failure part way (a permission, an open file on Windows) leaves what was not yet removed. Delegates to `std::fs::remove_dir_all` (which is safe against a directory swapped for a symlink while it runs, and not limited by path length) after refusing a symlink root and the paths above; once started it cannot be interrupted.
-    #[lua(types(path = "string", opts = "{ missing_ok: bool? }?"), doc_with = waits)]
+    #[lua(types(opts = "{ missing_ok: bool? }?"), doc_with = waits)]
     m.try_async_func(
         "remove_dir_all",
         |_, (path, opts): (Path1, Option<Table>)| {
@@ -298,19 +298,19 @@ fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
 #[neoc_macros::lua_module]
 fn declare_links_and_errors(m: &mut Module<'_>) -> mlua::Result<()> {
     /// The absolute path of `path` with every symlink and `.`/`..` resolved; the path must exist (`not_found`). On Windows the result has the extended-length `\\?\` prefix. Mirrors `std::fs::canonicalize`; `path.absolute` makes a path absolute without touching the disk.
-    #[lua(types(path = "string"))]
+    #[lua]
     m.try_func("canonicalize", |lua, path: Path1| {
         let resolved = ops::canonicalize(&path_of(&path)?)?;
         os_to_lua(lua, resolved.as_os_str()).map_err(lua_failure)
     })?;
     /// The path the symlink `path` points to, as stored (possibly relative, possibly dangling). A path that is not a symlink is `invalid_input`. Mirrors `std::fs::read_link`.
-    #[lua(types(path = "string"))]
+    #[lua]
     m.try_func("read_link", |lua, path: Path1| {
         let target = ops::read_link(&path_of(&path)?)?;
         os_to_lua(lua, target.as_os_str()).map_err(lua_failure)
     })?;
     /// Create the symlink `link` pointing at `target` (stored as given; it need not exist). `already_exists` when `link` exists. On Windows creating a symlink needs the privilege to do so (`permission_denied` otherwise), and the kind of link (file or directory) follows what `target` is when it is created.
-    #[lua(types(target = "string", link = "string"))]
+    #[lua]
     m.try_func("symlink", |_, (target, link): (Path1, Path1)| {
         ops::symlink(&path_of(&target)?, &path_of(&link)?).map(|()| true)
     })?;
@@ -326,7 +326,7 @@ fn declare_links_and_errors(m: &mut Module<'_>) -> mlua::Result<()> {
 #[neoc_macros::lua_module]
 fn declare_watch(m: &mut Module<'_>) -> mlua::Result<()> {
     /// Watch the directory `path` for changes and return a `Watcher`; read them with `watcher:receive()`. Option `{ recursive }` watches the whole tree under it (default: only its direct children). It is `not_found` for a missing path and `not_a_directory` for a file. The watch is the operating system's (inotify, FSEvents, ReadDirectoryChangesW), so the directory is not rescanned. Each event is `{ kind, path }`, `path` under the `path` given here. Kinds: `create`, `modify`, `remove`, `rename` (one event per path, the old name and the new name each; they are not paired, and macOS cannot tell which is which: check with `exists`), and `overflow`: changes were lost (more than 4096 waiting, or the system's own buffer overflowed), so rescan; its `path` is the watched directory. Events are not deduplicated or debounced, and one change can be reported as several (FSEvents coalesces: a new file may also show as `modify`). On macOS a change made just before the watch started may also be reported. The watch stops at `watcher:close()`, when the handle is collected, and when the engine shuts down. Starting a recursive watch on Linux adds one watch per directory of the tree.
-    #[lua(types(path = "string", opts = "{ recursive: bool? }?"), doc_with = waits)]
+    #[lua(types(opts = "{ recursive: bool? }?"), doc_with = waits)]
     m.try_async_func("watch", |lua, (path, opts): (Path1, Option<Table>)| {
         let parsed = path_of(&path).and_then(|path| {
             let recursive = read_options(opts.as_ref(), WATCH_OPTIONS)?

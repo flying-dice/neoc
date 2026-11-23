@@ -323,17 +323,14 @@ fn rows_fn(lua: &Lua, (data, opts): (mlua::LuaString, Option<Table>)) -> mlua::R
 }
 
 /// Construct a streaming reader over a `ReaderHandle`, taking an exclusive borrow on the handle for its lifetime.
-#[neoc_macros::lua_fn(name = "reader", names(handle_val = "handle"))]
+#[neoc_macros::lua_fn(name = "reader")]
 #[instrument(name = "csv.reader", target = "lua::lib::csv", skip_all)]
-fn reader_fn(
-    _: &Lua,
-    (handle_val, opts): (Value, Option<Table>),
-) -> mlua::Result<Fallible<CsvReader>> {
+fn reader_fn(_: &Lua, (handle, opts): (Value, Option<Table>)) -> mlua::Result<Fallible<CsvReader>> {
     let parse_opts = match parse_parse_opts(opts.as_ref(), "csv.reader") {
         Ok(o) => o,
         Err(msg) => return err(msg),
     };
-    let handle_ud = match handle_val {
+    let handle_ud = match handle {
         Value::UserData(ud) => ud,
         _ => return err("csv.reader: argument must be a ReaderHandle"),
     };

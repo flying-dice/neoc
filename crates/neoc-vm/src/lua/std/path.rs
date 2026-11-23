@@ -108,10 +108,11 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     #[lua(names(p = "path"))]
     m.func("is_absolute", |_, p: LuaString| Ok(path(&p)?.is_absolute()))?;
     /// The path made absolute by text alone: a relative path is joined to the current directory and `.` and repeated separators are dropped, but `..` is kept and nothing is looked up on disk (a symlink stays a symlink, the path need not exist; `fs.canonicalize` resolves them). An empty path is an error, and so is a current directory that is gone. Mirrors `std::path::absolute`.
-    #[lua(names(p = "path"))]
-    m.try_func("absolute", |lua, p: LuaString| {
-        let p = path_checked(&p)?;
-        let absolute = std::path::absolute(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+    #[lua]
+    m.try_func("absolute", |lua, path: LuaString| {
+        let path = path_checked(&path)?;
+        let absolute =
+            std::path::absolute(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         osstr::to_lua(lua, absolute.as_os_str()).map_err(|e| e.to_string())
     })?;
     /// The components of a path as an array of strings, as `Path::components` yields them: a root or drive prefix first (`"/"`, `"C:"`), then each name, with `".."` kept and a `"."` only at the start (`components("/a/./b")` is `{ "/", "a", "b" }`).

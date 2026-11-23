@@ -21,7 +21,7 @@ use jiff::{Span, Timestamp, Unit, ZonedDateTime};
 use mlua::{AnyUserData, Lua, MetaMethod, Table, UserData, UserDataFields, UserDataMethods, Value};
 use tracing::instrument;
 
-use crate::lua::facade::Module;
+use crate::lua::facade::{Handle, Module};
 use crate::lua::sandbox::{Fallible, err, ok};
 
 // ---------------------------------------------------------------------------
@@ -152,53 +152,53 @@ impl UserData for DateHandle {
 
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Return a copy with the year replaced.
-        #[lua(names(y = "year"))]
-        methods.add_method("with_year", |_, this, y: i64| {
-            let y = match clamp_i16(y, "chrono.Date.with_year") {
+        #[lua]
+        methods.add_method("with_year", |_, this, year: i64| {
+            let year = match clamp_i16(year, "chrono.Date.with_year") {
                 Ok(v) => v,
                 Err(m) => return err(m),
             };
-            match this.0.with().year(y).build() {
+            match this.0.with().year(year).build() {
                 Ok(d) => ok(DateHandle(d)),
                 Err(e) => err(format!("chrono.Date.with_year: {e}")),
             }
         });
         /// Return a copy with the month replaced.
-        #[lua(names(m = "month"))]
-        methods.add_method("with_month", |_, this, m: i64| {
-            let m = match clamp_i8(m, "chrono.Date.with_month") {
+        #[lua]
+        methods.add_method("with_month", |_, this, month: i64| {
+            let month = match clamp_i8(month, "chrono.Date.with_month") {
                 Ok(v) => v,
                 Err(msg) => return err(msg),
             };
-            match this.0.with().month(m).build() {
+            match this.0.with().month(month).build() {
                 Ok(d) => ok(DateHandle(d)),
                 Err(e) => err(format!("chrono.Date.with_month: {e}")),
             }
         });
         /// Return a copy with the day replaced.
-        #[lua(names(d = "day"))]
-        methods.add_method("with_day", |_, this, d: i64| {
-            let d = match clamp_i8(d, "chrono.Date.with_day") {
+        #[lua]
+        methods.add_method("with_day", |_, this, day: i64| {
+            let day = match clamp_i8(day, "chrono.Date.with_day") {
                 Ok(v) => v,
                 Err(m) => return err(m),
             };
-            match this.0.with().day(d).build() {
-                Ok(d) => ok(DateHandle(d)),
+            match this.0.with().day(day).build() {
+                Ok(day) => ok(DateHandle(day)),
                 Err(e) => err(format!("chrono.Date.with_day: {e}")),
             }
         });
 
         /// Combine with a `Time` into a `DateTime`.
-        #[lua(names(t = "time"), types(t = "Time"))]
-        methods.add_method("at", |_, this, t: AnyUserData| {
-            let th = t.borrow::<TimeHandle>()?;
+        #[lua]
+        methods.add_method("at", |_, this, time: Handle<TimeHandle>| {
+            let th = time.borrow::<TimeHandle>()?;
             Ok(DateTimeHandle(this.0.to_datetime(th.0)))
         });
 
         /// Add a day-resolution `Duration`.
-        #[lua(names(d = "duration"), types(d = "Duration"))]
-        methods.add_method("add", |_, this, d: AnyUserData| {
-            let span = match d.borrow::<DurationHandle>() {
+        #[lua]
+        methods.add_method("add", |_, this, duration: Handle<DurationHandle>| {
+            let span = match duration.borrow::<DurationHandle>() {
                 Ok(h) => h.0,
                 Err(_) => return err("chrono.Date.add: expected Duration".to_string()),
             };
@@ -214,9 +214,9 @@ impl UserData for DateHandle {
             }
         });
         /// Subtract a day-resolution `Duration`.
-        #[lua(names(d = "duration"), types(d = "Duration"))]
-        methods.add_method("sub", |_, this, d: AnyUserData| {
-            let span = match d.borrow::<DurationHandle>() {
+        #[lua]
+        methods.add_method("sub", |_, this, duration: Handle<DurationHandle>| {
+            let span = match duration.borrow::<DurationHandle>() {
                 Ok(h) => h.0,
                 Err(_) => return err("chrono.Date.sub: expected Duration".to_string()),
             };
@@ -235,8 +235,8 @@ impl UserData for DateHandle {
         // Named `diff` rather than `until` because `until` is a Lua keyword
         // (the `repeat … until` loop) and rejected as a method name.
         /// Calendar span from this date until `other`.
-        #[lua(types(other = "Date"))]
-        methods.add_method("diff", |_, this, other: AnyUserData| {
+        #[lua]
+        methods.add_method("diff", |_, this, other: Handle<DateHandle>| {
             let o = match other.borrow::<DateHandle>() {
                 Ok(h) => h.0,
                 Err(_) => return err("chrono.Date.diff: expected Date".to_string()),
@@ -280,22 +280,22 @@ impl UserData for DateHandle {
 }
 
 /// Build a date from year, month and day; an out-of-range value is an error.
-#[neoc_macros::lua_fn(name = "new", names(y = "year", m = "month", d = "day"))]
+#[neoc_macros::lua_fn(name = "new")]
 #[instrument(name = "chrono.Date.new", target = "lua::lib::chrono", skip_all)]
-fn date_new(_: &Lua, (y, m, d): (i64, i64, i64)) -> mlua::Result<Fallible<DateHandle>> {
-    let y = match clamp_i16(y, "chrono.Date.new") {
+fn date_new(_: &Lua, (year, month, day): (i64, i64, i64)) -> mlua::Result<Fallible<DateHandle>> {
+    let year = match clamp_i16(year, "chrono.Date.new") {
         Ok(v) => v,
         Err(msg) => return err(msg),
     };
-    let m = match clamp_i8(m, "chrono.Date.new") {
+    let month = match clamp_i8(month, "chrono.Date.new") {
         Ok(v) => v,
         Err(msg) => return err(msg),
     };
-    let d = match clamp_i8(d, "chrono.Date.new") {
+    let day = match clamp_i8(day, "chrono.Date.new") {
         Ok(v) => v,
         Err(msg) => return err(msg),
     };
-    match Date::new(y, m, d) {
+    match Date::new(year, month, day) {
         Ok(date) => ok(DateHandle(date)),
         Err(e) => err(format!("chrono.Date.new: {e}")),
     }
@@ -336,9 +336,9 @@ impl UserData for TimeHandle {
 
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Combine with a `Date` into a `DateTime`.
-        #[lua(names(d = "date"), types(d = "Date"))]
-        methods.add_method("on", |_, this, d: AnyUserData| {
-            let dh = d.borrow::<DateHandle>()?;
+        #[lua]
+        methods.add_method("on", |_, this, date: Handle<DateHandle>| {
+            let dh = date.borrow::<DateHandle>()?;
             Ok(DateTimeHandle(dh.0.to_datetime(this.0)))
         });
         /// Format via a strftime pattern.
@@ -371,35 +371,32 @@ impl UserData for TimeHandle {
 }
 
 /// Build a time of day; an out-of-range value is an error.
-#[neoc_macros::lua_fn(
-    name = "new",
-    names(h = "hour", m = "minute", s = "second", ns = "nanosecond")
-)]
+#[neoc_macros::lua_fn(name = "new")]
 #[instrument(name = "chrono.Time.new", target = "lua::lib::chrono", skip_all)]
 fn time_new(
     _: &Lua,
-    (h, m, s, ns): (i64, i64, i64, Option<i64>),
+    (hour, minute, second, nanosecond): (i64, i64, i64, Option<i64>),
 ) -> mlua::Result<Fallible<TimeHandle>> {
-    let h = match clamp_i8(h, "chrono.Time.new") {
+    let hour = match clamp_i8(hour, "chrono.Time.new") {
         Ok(v) => v,
         Err(msg) => return err(msg),
     };
-    let m = match clamp_i8(m, "chrono.Time.new") {
+    let minute = match clamp_i8(minute, "chrono.Time.new") {
         Ok(v) => v,
         Err(msg) => return err(msg),
     };
-    let s = match clamp_i8(s, "chrono.Time.new") {
+    let second = match clamp_i8(second, "chrono.Time.new") {
         Ok(v) => v,
         Err(msg) => return err(msg),
     };
-    let ns = match ns {
+    let nanosecond = match nanosecond {
         Some(v) => match clamp_i32(v, "chrono.Time.new") {
             Ok(n) => n,
             Err(msg) => return err(msg),
         },
         None => 0,
     };
-    match Time::new(h, m, s, ns) {
+    match Time::new(hour, minute, second, nanosecond) {
         Ok(t) => ok(TimeHandle(t)),
         Err(e) => err(format!("chrono.Time.new: {e}")),
     }
@@ -463,13 +460,9 @@ impl UserData for DateTimeHandle {
         });
 
         /// Add a `Duration`.
-        #[lua(
-            "Result<DateTime, string>",
-            names(d = "duration"),
-            types(d = "Duration")
-        )]
-        methods.add_method("add", |_, this, d: AnyUserData| {
-            let span = match d.borrow::<DurationHandle>() {
+        #[lua("Result<DateTime, string>")]
+        methods.add_method("add", |_, this, duration: Handle<DurationHandle>| {
+            let span = match duration.borrow::<DurationHandle>() {
                 Ok(h) => h.0,
                 Err(_) => return err("chrono.DateTime.add: expected Duration".to_string()),
             };
@@ -479,13 +472,9 @@ impl UserData for DateTimeHandle {
             }
         });
         /// Subtract a `Duration`.
-        #[lua(
-            "Result<DateTime, string>",
-            names(d = "duration"),
-            types(d = "Duration")
-        )]
-        methods.add_method("sub", |_, this, d: AnyUserData| {
-            let span = match d.borrow::<DurationHandle>() {
+        #[lua("Result<DateTime, string>")]
+        methods.add_method("sub", |_, this, duration: Handle<DurationHandle>| {
+            let span = match duration.borrow::<DurationHandle>() {
                 Ok(h) => h.0,
                 Err(_) => return err("chrono.DateTime.sub: expected Duration".to_string()),
             };
@@ -495,8 +484,8 @@ impl UserData for DateTimeHandle {
             }
         });
         /// Span from this datetime until `other`.
-        #[lua(types(other = "DateTime"))]
-        methods.add_method("diff", |_, this, other: AnyUserData| {
+        #[lua]
+        methods.add_method("diff", |_, this, other: Handle<DateTimeHandle>| {
             let o = match other.borrow::<DateTimeHandle>() {
                 Ok(h) => h.0,
                 Err(_) => return err("chrono.DateTime.diff: expected DateTime".to_string()),
@@ -664,13 +653,9 @@ impl UserData for ZonedDateTimeHandle {
         });
 
         /// Add a `Duration`.
-        #[lua(
-            "Result<ZonedDateTime, string>",
-            names(d = "duration"),
-            types(d = "Duration")
-        )]
-        methods.add_method("add", |_, this, d: AnyUserData| {
-            let span = match d.borrow::<DurationHandle>() {
+        #[lua("Result<ZonedDateTime, string>")]
+        methods.add_method("add", |_, this, duration: Handle<DurationHandle>| {
+            let span = match duration.borrow::<DurationHandle>() {
                 Ok(h) => h.0,
                 Err(_) => {
                     return err("chrono.ZonedDateTime.add: expected Duration".to_string());
@@ -682,13 +667,9 @@ impl UserData for ZonedDateTimeHandle {
             }
         });
         /// Subtract a `Duration`.
-        #[lua(
-            "Result<ZonedDateTime, string>",
-            names(d = "duration"),
-            types(d = "Duration")
-        )]
-        methods.add_method("sub", |_, this, d: AnyUserData| {
-            let span = match d.borrow::<DurationHandle>() {
+        #[lua("Result<ZonedDateTime, string>")]
+        methods.add_method("sub", |_, this, duration: Handle<DurationHandle>| {
+            let span = match duration.borrow::<DurationHandle>() {
                 Ok(h) => h.0,
                 Err(_) => {
                     return err("chrono.ZonedDateTime.sub: expected Duration".to_string());
@@ -700,8 +681,8 @@ impl UserData for ZonedDateTimeHandle {
             }
         });
         /// Span from this instant until `other`.
-        #[lua(types(other = "ZonedDateTime"))]
-        methods.add_method("diff", |_, this, other: AnyUserData| {
+        #[lua]
+        methods.add_method("diff", |_, this, other: Handle<ZonedDateTimeHandle>| {
             let o = match other.borrow::<ZonedDateTimeHandle>() {
                 Ok(h) => h.0.clone(),
                 Err(_) => {
@@ -839,13 +820,13 @@ impl UserData for DurationHandle {
 }
 
 /// Build a span from a table of named units, e.g. `{ hours = 1, minutes = 30 }`.
-#[neoc_macros::lua_fn(name = "of", names(t = "units"))]
+#[neoc_macros::lua_fn(name = "of")]
 #[instrument(name = "chrono.Duration.of", target = "lua::lib::chrono", skip_all)]
-fn duration_of(_: &Lua, t: Table) -> mlua::Result<Fallible<DurationHandle>> {
+fn duration_of(_: &Lua, units: Table) -> mlua::Result<Fallible<DurationHandle>> {
     let mut span = Span::new();
     macro_rules! apply {
         ($name:literal, $method:ident) => {
-            if let Ok(v) = t.get::<i64>($name) {
+            if let Ok(v) = units.get::<i64>($name) {
                 span = match span.$method(v) {
                     Ok(s) => s,
                     Err(e) => return err(format!("chrono.Duration.of: {}: {e}", $name)),

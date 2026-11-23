@@ -472,9 +472,9 @@ impl Drop for WorkerInner {
 impl UserData for WorkerHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Send a JSON-serialisable value to the worker; errors if the worker has exited.
-        #[lua(names(v = "value"))]
-        methods.add_method("send", |_, this, v: Value| {
-            send_json(&this.inner.tx, v, "thread.send", "worker has exited")
+        #[lua]
+        methods.add_method("send", |_, this, value: Value| {
+            send_json(&this.inner.tx, value, "thread.send", "worker has exited")
         });
 
         /// Wait for a message from the worker. Returns `(nil, error)` once the worker has exited.
@@ -530,9 +530,9 @@ pub struct Channel {
 impl UserData for Channel {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Send a JSON-serialisable value to the parent's message queue.
-        #[lua(names(v = "value"))]
-        methods.add_method("send", |_, this, v: Value| {
-            send_json(&this.tx, v, "channel.send", "peer has exited")
+        #[lua]
+        methods.add_method("send", |_, this, value: Value| {
+            send_json(&this.tx, value, "channel.send", "peer has exited")
         });
 
         /// Wait for a message from the parent. Returns `(nil, error)` once the parent has exited.

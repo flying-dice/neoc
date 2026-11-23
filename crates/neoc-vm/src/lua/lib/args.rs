@@ -83,13 +83,13 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:args")?;
     /// Parse `argv` against `config`, returning the parsed-flags table (or, on `--help`/`-h`, a `{ help = true, help_text = ... }` table).
-    #[lua(names(argv_tbl = "argv", config_tbl = "config"))]
-    m.try_func("parse", |lua, (argv_tbl, config_tbl): (Table, Table)| {
-        parse(lua, &argv_tbl, &config_tbl)
+    #[lua]
+    m.try_func("parse", |lua, (argv, config): (Table, Table)| {
+        parse(lua, &argv, &config)
     })?;
     /// Render `config`'s help text without parsing any arguments.
-    #[lua(names(config_tbl = "config"))]
-    m.try_func("help", |_, config_tbl: Table| help(&config_tbl))?;
+    #[lua]
+    m.try_func("help", |_, config: Table| help(&config))?;
     Ok(m)
 }
 

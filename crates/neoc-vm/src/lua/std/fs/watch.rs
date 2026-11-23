@@ -485,17 +485,16 @@ impl UserData for WatchHandle {
         // turn held.
         /// Wait for the next change and return it as `{ kind, path }` (see `fs.watch`). Once the watcher is closed it returns `(nil, nil)`, also to a call already waiting. `timeout` (seconds; `nil` or `math.huge` waits for ever, `0` only takes what is already there) ends the wait with `timed_out`; a negative or NaN one is `invalid_input`. An error the watch reports (`fs.receive: <kind>: <path>: <message>`) is returned as `(nil, err)` and the watch goes on. Other tasks, and an embedder's other calls, run while it waits; where Luau cannot yield (a metamethod, a `table.sort` comparator, a `string.gsub` callback) a call that would have to wait fails with the yield error.
         #[lua(
-            "Result<{ kind: \"create\" | \"modify\" | \"remove\" | \"rename\" | \"overflow\", path: string }, string>",
-            names(secs = "timeout")
+            "Result<{ kind: \"create\" | \"modify\" | \"remove\" | \"rename\" | \"overflow\", path: string }, string>"
         )]
         async_method(
             methods,
             "receive",
             Role::Mixed,
-            |lua, this, secs: Option<f64>| {
+            |lua, this, timeout: Option<f64>| {
                 let queue = Arc::clone(&this.0.queue);
                 let root = this.0.root.clone();
-                let limit = timeout_of(secs);
+                let limit = timeout_of(timeout);
                 async move {
                     let limit = match limit {
                         Ok(limit) => limit,
@@ -508,11 +507,11 @@ impl UserData for WatchHandle {
                     let deadline =
                         limit.and_then(|limit| tokio::time::Instant::now().checked_add(limit));
                     let Some(next) = receive(&queue, deadline).await? else {
-                        let secs = limit.map_or(0.0, |limit| limit.as_secs_f64());
+                        let timeout = limit.map_or(0.0, |limit| limit.as_secs_f64());
                         let e = FsError::at(
                             Kind::TimedOut,
                             &root,
-                            format!("no change within {secs} seconds"),
+                            format!("no change within {timeout} seconds"),
                         );
                         return from_err(RECEIVE, e);
                     };

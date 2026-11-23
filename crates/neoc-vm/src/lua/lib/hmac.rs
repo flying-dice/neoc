@@ -190,7 +190,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.set("hmac", lua.create_function(hmac_one_shot)?)?;
 
     /// Compare two tags in constant time; returns `true` iff they are equal.
-    #[lua(types(a = "string", b = "string"))]
+    #[lua]
     m.set(
         "verify",
         lua.create_function(|_, (a, b): (mlua::LuaString, mlua::LuaString)| {

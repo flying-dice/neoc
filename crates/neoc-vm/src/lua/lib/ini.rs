@@ -249,13 +249,10 @@ fn read_opts(opts_table: Option<Table>) -> mlua::Result<ParseOpts> {
 // ---------------------------------------------------------------------------
 
 /// Serialise a section table back to an INI string. The empty-string section is emitted first as section-less keys.
-#[neoc_macros::lua_fn(names(opts_table = "opts"))]
+#[neoc_macros::lua_fn]
 #[instrument(name = "ini.stringify", target = "lua::lib::ini", skip_all)]
-fn stringify(
-    _: &Lua,
-    (config, opts_table): (Table, Option<Table>),
-) -> mlua::Result<Fallible<String>> {
-    let spacing = if let Some(tbl) = &opts_table {
+fn stringify(_: &Lua, (config, opts): (Table, Option<Table>)) -> mlua::Result<Fallible<String>> {
+    let spacing = if let Some(tbl) = &opts {
         tbl.get::<Option<bool>>("spacing")?.unwrap_or(false)
     } else {
         false

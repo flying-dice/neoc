@@ -219,31 +219,23 @@ fn borrow_or_err<T: 'static>(
 }
 
 /// Copy all remaining bytes from `reader` into `writer`, returning the total bytes copied.
-#[neoc_macros::lua_fn(
-    names(reader_ud = "reader", writer_ud = "writer"),
-    types(reader_ud = "ReaderHandle", writer_ud = "WriterHandle")
-)]
+#[neoc_macros::lua_fn(types(reader = "ReaderHandle", writer = "WriterHandle"))]
 #[instrument(name = "io.copy", target = "lua::lib::io", skip_all)]
-fn copy(
-    lua: &Lua,
-    (reader_ud, writer_ud): (AnyUserData, AnyUserData),
-) -> mlua::Result<Fallible<i64>> {
+fn copy(lua: &Lua, (reader, writer): (AnyUserData, AnyUserData)) -> mlua::Result<Fallible<i64>> {
     let rh = match borrow_or_err::<ReaderHandle>(
         lua,
-        &reader_ud,
+        &reader,
         "first argument is not a reader handle",
     ) {
         Ok(h) => h,
         Err(e) => return e,
     };
-    let wh = match borrow_or_err::<WriterHandle>(
-        lua,
-        &writer_ud,
-        "second argument is not a writer handle",
-    ) {
-        Ok(h) => h,
-        Err(e) => return e,
-    };
+    let wh =
+        match borrow_or_err::<WriterHandle>(lua, &writer, "second argument is not a writer handle")
+        {
+            Ok(h) => h,
+            Err(e) => return e,
+        };
     let mut r = rh.inner.lock();
     let mut w = wh.0.lock();
     let result = std::io::copy(&mut *r, &mut *w);

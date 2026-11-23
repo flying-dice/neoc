@@ -132,9 +132,9 @@ impl crate::lua::std::thread::Sendable for Map {
 impl UserData for Map {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         /// Read a key.
-        #[lua(names(k = "key"))]
-        methods.add_method("get", |lua, this, k: String| {
-            let v = this.0.inner.read().get(&k).cloned();
+        #[lua]
+        methods.add_method("get", |lua, this, key: String| {
+            let v = this.0.inner.read().get(&key).cloned();
             match v {
                 Some(json) => lua.to_value(&json),
                 None => Ok(Value::Nil),
@@ -142,24 +142,24 @@ impl UserData for Map {
         });
 
         /// Insert or replace a key.
-        #[lua(names(k = "key", v = "value"))]
-        methods.add_method("set", |_, this, (k, v): (String, Value)| {
-            refuse_buffer(&v, "collections.Map.set")?;
-            let json = serde_json::to_value(&v).map_err(mlua::Error::external)?;
-            this.0.inner.write().insert(k, json);
+        #[lua]
+        methods.add_method("set", |_, this, (key, value): (String, Value)| {
+            refuse_buffer(&value, "collections.Map.set")?;
+            let json = serde_json::to_value(&value).map_err(mlua::Error::external)?;
+            this.0.inner.write().insert(key, json);
             Ok(())
         });
 
         /// Remove a key, returning whether it was present.
-        #[lua(names(k = "key"))]
-        methods.add_method("delete", |_, this, k: String| {
-            Ok(this.0.inner.write().remove(&k).is_some())
+        #[lua]
+        methods.add_method("delete", |_, this, key: String| {
+            Ok(this.0.inner.write().remove(&key).is_some())
         });
 
         /// Test for a key.
-        #[lua(names(k = "key"))]
-        methods.add_method("has", |_, this, k: String| {
-            Ok(this.0.inner.read().contains_key(&k))
+        #[lua]
+        methods.add_method("has", |_, this, key: String| {
+            Ok(this.0.inner.read().contains_key(&key))
         });
 
         /// Number of entries.

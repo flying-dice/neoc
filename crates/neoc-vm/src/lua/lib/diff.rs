@@ -767,13 +767,13 @@ fn parse_range(
 // ---------------------------------------------------------------------------
 
 /// Apply a unified patch string to `original`. Requires exact context match.
-#[neoc_macros::lua_fn(names(orig = "original"))]
+#[neoc_macros::lua_fn]
 #[instrument(name = "diff.apply", target = "lua::lib::diff", skip_all)]
 fn apply(
     _: &Lua,
-    (orig, patch): (mlua::LuaString, mlua::LuaString),
+    (original, patch): (mlua::LuaString, mlua::LuaString),
 ) -> mlua::Result<Fallible<String>> {
-    let orig_s = orig.to_str()?.to_owned();
+    let orig_s = original.to_str()?.to_owned();
     let patch_s = patch.to_str()?.to_owned();
     match apply_inner(&orig_s, &patch_s) {
         Ok(s) => ok(s),
@@ -911,14 +911,14 @@ fn join_apply_lines(lines: &[(String, bool)]) -> String {
 // ---------------------------------------------------------------------------
 
 /// Apply a structured change list directly, validating that the equal + delete lines reconstruct `original` first.
-#[neoc_macros::lua_fn(names(orig = "original"))]
+#[neoc_macros::lua_fn]
 #[instrument(name = "diff.apply_changes", target = "lua::lib::diff", skip_all)]
 fn apply_changes(
     _: &Lua,
-    (orig, changes): (mlua::LuaString, Table),
+    (original, changes): (mlua::LuaString, Table),
 ) -> mlua::Result<Fallible<String>> {
     let prefix = "diff.apply_changes";
-    let orig_s = orig.to_str()?.to_owned();
+    let orig_s = original.to_str()?.to_owned();
     let changes = short_circuit!(lua, read_changes(&changes, prefix));
 
     if let Err(msg) = validate_change_list_reconstructs(&changes, &orig_s, prefix) {
