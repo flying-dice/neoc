@@ -92,6 +92,30 @@ struct Entry {
     doc: String,
 }
 
+/// What the declarations say of one function, as `neoc_macros::lua_fn` reads it from the Rust function that
+/// implements it (`decode::lua()`): hand it to the module with the function, through [`Module::declared`] or one
+/// of the `*_of` registrations, so the name, the parameters and the doc are written once.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FnDecl {
+    /// The name a script calls the function by.
+    pub name: String,
+    /// `(name, recorded type)` of each parameter.
+    pub params: Vec<(String, String)>,
+    /// The recorded return type.
+    pub ret: String,
+    pub doc: String,
+}
+
+impl FnDecl {
+    /// The parameters as the registrations take them.
+    fn borrowed(&self) -> Vec<(&str, &str)> {
+        self.params
+            .iter()
+            .map(|(name, ty)| (name.as_str(), ty.as_str()))
+            .collect()
+    }
+}
+
 /// The recorded name of a trailing variadic parameter. A function that takes
 /// any number of further arguments ends its `params` with
 /// `("...", "LuaValue")`, which the declarations write as `...any`
@@ -120,6 +144,8 @@ struct TypeEntry {
     type_name: String,
     constructors: Vec<Entry>,
     methods: Vec<Entry>,
+    functions: Vec<Entry>,
+    fields: Vec<FieldEntry>,
 }
 
 /// One recorded value that is not a function: a module-level constant (for
@@ -207,6 +233,45 @@ impl<'l> Module<'l> {
             doc: doc.to_string(),
         });
         Ok(self)
+    }
+
+    /// [`Module::func`], with the name, the parameters and the doc read from `f` itself (`#[lua_fn]`).
+    ///
+    /// # Errors
+    /// As [`Module::func`].
+    pub fn func_of<A, R>(
+        &mut self,
+        decl: &FnDecl,
+        f: impl Fn(&Lua, A) -> mlua::Result<R> + Send + 'static,
+    ) -> mlua::Result<&mut Self>
+    where
+        A: FromLuaMulti,
+        R: DeclType + IntoLua,
+    {
+        self.func(&decl.name, &decl.borrowed(), &decl.doc, f)
+    }
+
+    /// Sets `value` (a function made elsewhere, with its own span and its own way of failing) under the name
+    /// `decl` has and records `decl`: [`Module::set`] and [`Module::record_fn`] in one, for a function whose
+    /// declaration is read from its implementation (`#[lua_fn]`).
+    ///
+    /// # Errors
+    /// As [`Module::set`].
+    pub fn declared(&mut self, decl: FnDecl, value: impl IntoLua) -> mlua::Result<&mut Self> {
+        self.table.set(decl.name.as_str(), value)?;
+        Ok(self.record(decl))
+    }
+
+    /// Records `decl` for a function that is set on the table elsewhere: [`Module::record_fn`] with what
+    /// `#[lua_fn]` read of the function in place of a second writing of it.
+    pub fn record(&mut self, decl: FnDecl) -> &mut Self {
+        self.entries.push(Entry {
+            name: decl.name,
+            params: decl.params,
+            ret: decl.ret,
+            doc: decl.doc,
+        });
+        self
     }
 
     /// Registers a fallible function of any arity.
@@ -458,12 +523,16 @@ impl<'l> Module<'l> {
             type_name: type_name.to_string(),
             constructors: Vec::new(),
             methods: Vec::new(),
+            functions: Vec::new(),
+            fields: Vec::new(),
         };
         build(&mut spec)?;
         let entry = TypeEntry {
             type_name: spec.type_name,
             constructors: spec.constructors,
             methods: spec.methods,
+            functions: spec.functions,
+            fields: spec.fields,
         };
         self.table.set(type_name, sub)?;
         self.types.push(entry);
@@ -670,6 +739,18 @@ impl UserDataSpec {
         self
     }
 
+    /// Records one function on the type's sub-table of the module table from what `#[lua_fn]` read of the
+    /// function that implements it: [`UserDataSpec::static_fn`] without the second writing.
+    pub fn static_of(&mut self, decl: FnDecl) -> &mut Self {
+        self.entry.statics.push(Entry {
+            name: decl.name,
+            params: decl.params,
+            ret: decl.ret,
+            doc: decl.doc,
+        });
+        self
+    }
+
     /// Records one constant value on the type's sub-table of the module table
     /// (`Duration.ZERO`).
     pub fn static_const(&mut self, name: &str, ty: &str, doc: &str) -> &mut Self {
@@ -679,6 +760,32 @@ impl UserDataSpec {
             doc: doc.to_string(),
         });
         self
+    }
+}
+
+/// What records the members of a type: a userdata type's recorder ([`UserDataSpec`]) and a constructor-bearing
+/// type's ([`TypeSpec`]). `Type::lua(spec)`, which `neoc_macros::lua_userdata` writes from the type's
+/// `impl UserData`, records through it, so one type is declared the same way under either.
+pub trait Members {
+    /// Records one method: as [`UserDataSpec::method`].
+    fn method(&mut self, name: &str, params: &[(&str, &str)], ret: &str, doc: &str);
+    /// Records one function with no receiver: as [`UserDataSpec::function`].
+    fn function(&mut self, name: &str, params: &[(&str, &str)], ret: &str, doc: &str);
+    /// Records one read-only field: as [`UserDataSpec::field`].
+    fn field(&mut self, name: &str, ty: &str, doc: &str);
+}
+
+impl Members for UserDataSpec {
+    fn method(&mut self, name: &str, params: &[(&str, &str)], ret: &str, doc: &str) {
+        UserDataSpec::method(self, name, params, ret, doc);
+    }
+
+    fn function(&mut self, name: &str, params: &[(&str, &str)], ret: &str, doc: &str) {
+        UserDataSpec::function(self, name, params, ret, doc);
+    }
+
+    fn field(&mut self, name: &str, ty: &str, doc: &str) {
+        UserDataSpec::field(self, name, ty, doc);
     }
 }
 
@@ -697,6 +804,31 @@ pub struct TypeSpec<'l, 't> {
     type_name: String,
     constructors: Vec<Entry>,
     methods: Vec<Entry>,
+    functions: Vec<Entry>,
+    fields: Vec<FieldEntry>,
+}
+
+impl Members for TypeSpec<'_, '_> {
+    fn method(&mut self, name: &str, params: &[(&str, &str)], ret: &str, doc: &str) {
+        TypeSpec::method(self, name, params, ret, doc);
+    }
+
+    fn function(&mut self, name: &str, params: &[(&str, &str)], ret: &str, doc: &str) {
+        self.functions.push(Entry {
+            name: name.to_string(),
+            params: own_params(params),
+            ret: ret.to_string(),
+            doc: doc.to_string(),
+        });
+    }
+
+    fn field(&mut self, name: &str, ty: &str, doc: &str) {
+        self.fields.push(FieldEntry {
+            name: name.to_string(),
+            ty: ty.to_string(),
+            doc: doc.to_string(),
+        });
+    }
 }
 
 impl TypeSpec<'_, '_> {

@@ -244,7 +244,12 @@ fn check_doc(doc: &str) -> Emit<()> {
 /// The aliases of a type with constructors recorded through `Module::type_`: its methods, and the statics.
 fn type_entry(scope: &str, ty: &TypeEntry) -> Emit<[Decl; 2]> {
     Ok([
-        alias(scope, &ty.type_name, &[], &[(&ty.methods, true)])?,
+        alias(
+            scope,
+            &ty.type_name,
+            &ty.fields,
+            &[(&ty.methods, true), (&ty.functions, false)],
+        )?,
         alias(
             scope,
             &statics_name(&ty.type_name),

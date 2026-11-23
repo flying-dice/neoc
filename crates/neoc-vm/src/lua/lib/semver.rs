@@ -15,6 +15,8 @@ use regex::Regex;
 use semver::{BuildMetadata, Prerelease, Version, VersionReq};
 use tracing::instrument;
 
+use neoc_macros::lua_userdata;
+
 use crate::lua::facade::Module;
 use crate::lua::sandbox::{err, ok};
 
@@ -105,23 +107,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     );
 
     m.userdata("Version", |v| {
-        v.field("major", "number", "Major version.");
-        v.field("minor", "number", "Minor version.");
-        v.field("patch", "number", "Patch version.");
-        v.field("pre", "string?", "Pre-release identifiers, or nil when there are none.");
-        v.field("build", "string?", "Build metadata, or nil when there is none.");
-        v.method(
-            "compare",
-            &[("other", "LuaValue")],
-            "number",
-            "Three-way compare returning `-1`, `0`, or `1`. Accepts another `Version` or a string (raises if invalid).",
-        );
-        v.method(
-            "increment",
-            &[("level", "string")],
-            "Version",
-            "Return a new `Version` incremented per `level`. The input is not mutated.",
-        );
+        VersionHandle::lua(v);
         v.static_fn(
             "parse",
             &[("s", "string")],
@@ -131,12 +117,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     });
 
     m.userdata("VersionReq", |r| {
-        r.method(
-            "matches",
-            &[("version", "LuaValue")],
-            "bool",
-            "True when `version` is in the range. Accepts a `Version` or a string (raises if invalid).",
-        );
+        VersionReqHandle::lua(r);
         r.static_fn(
             "parse",
             &[("s", "string")],
@@ -155,11 +136,20 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 #[derive(Clone)]
 pub struct VersionHandle(pub Version);
 
+#[lua_userdata]
 impl UserData for VersionHandle {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
+        /// Major version.
+        #[lua("number")]
         fields.add_field_method_get("major", |_, this| Ok(this.0.major as i64));
+        /// Minor version.
+        #[lua("number")]
         fields.add_field_method_get("minor", |_, this| Ok(this.0.minor as i64));
+        /// Patch version.
+        #[lua("number")]
         fields.add_field_method_get("patch", |_, this| Ok(this.0.patch as i64));
+        /// Pre-release identifiers, or nil when there are none.
+        #[lua("string?")]
         fields.add_field_method_get("pre", |_, this| {
             Ok(if this.0.pre.is_empty() {
                 None
@@ -167,6 +157,8 @@ impl UserData for VersionHandle {
                 Some(this.0.pre.as_str().to_owned())
             })
         });
+        /// Build metadata, or nil when there is none.
+        #[lua("string?")]
         fields.add_field_method_get("build", |_, this| {
             Ok(if this.0.build.is_empty() {
                 None
@@ -177,6 +169,8 @@ impl UserData for VersionHandle {
     }
 
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// Three-way compare returning `-1`, `0`, or `1`. Accepts another `Version` or a string (raises if invalid).
+        #[lua("number")]
         methods.add_method("compare", |_, this, other: Value| {
             let v = coerce_to_version(other, "semver.Version.compare")
                 .map_err(mlua::Error::external)?;
@@ -187,6 +181,8 @@ impl UserData for VersionHandle {
             Ok(ordering_to_i64(this.0.cmp_precedence(&v)))
         });
 
+        /// Return a new `Version` incremented per `level`. The input is not mutated.
+        #[lua("Version")]
         methods.add_method("increment", |_, this, level: String| {
             let v = increment_version(&this.0, &level)
                 .map_err(|m| mlua::Error::external(format!("semver.Version.increment: {m}")))?;
@@ -232,8 +228,11 @@ fn version_parse_method(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
 #[derive(Clone)]
 pub struct VersionReqHandle(pub VersionReq);
 
+#[lua_userdata]
 impl UserData for VersionReqHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        /// True when `version` is in the range. Accepts a `Version` or a string (raises if invalid).
+        #[lua("bool")]
         methods.add_method("matches", |_, this, version: Value| {
             let v = coerce_to_version(version, "semver.VersionReq.matches")
                 .map_err(mlua::Error::external)?;

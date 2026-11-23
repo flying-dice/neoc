@@ -1,0 +1,20 @@
+[package]
+name = "neoc-macros"
+description = "The attributes neoc-vm's modules declare their Lua surface with: the name, the parameters and the doc of a function are read from the Rust function that implements it, so they are not written a second time."
+version.workspace = true
+edition.workspace = true
+publish = false
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }
+
+[lints]
+workspace = true

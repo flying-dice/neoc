@@ -3354,6 +3354,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "neoc-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "neoc-vm"
 version = "0.1.0"
 dependencies = [
@@ -3389,6 +3398,7 @@ dependencies = [
  "mime_guess",
  "mlua",
  "neoc-decl",
+ "neoc-macros",
  "notify",
  "p256",
  "parking_lot 0.13.0",
