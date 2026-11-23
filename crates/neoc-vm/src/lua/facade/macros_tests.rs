@@ -598,18 +598,33 @@ fn a_record_is_a_table_both_ways_and_refuses_what_is_not_one() {
         r#type: "done".to_owned(),
     };
     lua.globals().set("left", left).expect("set");
-    let back: Left = lua
-        .load("assert(left.code == nil and left.type == 'done'); return { code = 3, type = 'x' }")
-        .eval()
-        .expect("a table of the fields is the record");
+    let read = |code: &str| {
+        let value: mlua::Value = lua.load(code).eval().expect("eval");
+        <Left as super::args::Argument>::read(value, &lua).expect("nothing is raised")
+    };
+    let back =
+        read("assert(left.code == nil and left.type == 'done'); return { code = 3, type = 'x' }")
+            .expect("a table of the fields is the record");
     assert_eq!((back.code, back.r#type.as_str()), (Some(3), "x"));
-    let unknown = lua
-        .load("return { type = 'x', kind = 1 }")
-        .eval::<Left>()
-        .map_or_else(|e| e.to_string(), |_| String::new());
-    assert!(unknown.contains("unknown key kind"), "{unknown}");
-    assert!(lua.load("return 7").eval::<Left>().is_err());
-    assert!(lua.load("return { code = 3 }").eval::<Left>().is_err());
+    let refused = |code: &str| read(code).map_or_else(|refused| refused.0, |_| String::new());
+    assert_eq!(
+        refused("return { type = 'x', kind = 1 }"),
+        "unknown option \"kind\" (this function takes: code, type)"
+    );
+    assert_eq!(refused("return 7"), "options must be a table, got integer");
+    assert_eq!(
+        refused("return { code = 3 }"),
+        "option \"type\" must be a string"
+    );
+    assert_eq!(
+        refused("return { code = 1.5, type = 'x' }"),
+        "option \"code\" must be a whole number"
+    );
+    // a table is read raw: an `__index` is not asked
+    assert_eq!(
+        refused("return setmetatable({}, { __index = function() error('ran') end })"),
+        "option \"type\" must be a string"
+    );
 }
 
 /// A type whose member a helper adds: the statement says the name and the parameters, the helper the return.
@@ -694,4 +709,112 @@ fn an_optional_union_is_bracketed_and_nothing_else_is() {
         Option::<super::Declared<super::Map<String, Either>>>::decl_type(),
         r#"{ [string]: "a | b" | number }?"#
     );
+}
+
+/// A type whose methods are real methods: everything the declarations say is their signatures.
+#[derive(Clone)]
+struct Valve(i64);
+
+#[derive(Debug)]
+struct ValveError(String);
+
+impl std::fmt::Display for ValveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "invalid_input: {}", self.0)
+    }
+}
+
+impl From<super::args::Refused> for ValveError {
+    fn from(refused: super::args::Refused) -> Self {
+        Self(refused.0)
+    }
+}
+
+#[neoc_macros::lua_record(from)]
+struct Turn {
+    by: Option<i64>,
+    slowly: Option<bool>,
+}
+
+#[neoc_macros::lua_methods("vnd:typed", "Valve")]
+impl Valve {
+    /// How far it is open.
+    fn opening(&self) -> i64 {
+        self.0
+    }
+
+    /// Turn it, and say where it is now.
+    fn turn(&self, name: String, opts: Option<Turn>) -> Result<i64, ValveError> {
+        let Turn { by, slowly } = opts.unwrap_or(Turn {
+            by: None,
+            slowly: None,
+        });
+        if name.is_empty() {
+            return Err(ValveError("no name".to_owned()));
+        }
+        Ok(self.0 + by.unwrap_or(1) * if slowly == Some(true) { 1 } else { 2 })
+    }
+
+    /// Where it is, later.
+    #[lua(name = "settle")]
+    async fn settled(&self, lua: Lua, by: Option<i64>) -> mlua::Result<i64> {
+        drop(lua);
+        Ok(self.0 + by.unwrap_or(0))
+    }
+
+    #[lua(skip)]
+    fn hidden(&self) {}
+}
+
+#[test]
+fn a_method_block_declares_and_registers_from_its_signatures() {
+    struct Spec(Vec<String>);
+    impl super::Members for Spec {
+        fn method(&mut self, name: &str, params: &[(&str, &str)], ret: &str, doc: &str) {
+            let params: Vec<String> = params.iter().map(|(n, t)| format!("{n}: {t}")).collect();
+            self.0
+                .push(format!("{name}({}) -> {ret} // {doc}", params.join(", ")));
+        }
+        fn function(&mut self, _: &str, _: &[(&str, &str)], _: &str, _: &str) {}
+        fn field(&mut self, _: &str, _: &str, _: &str) {}
+    }
+    let mut spec = Spec(Vec::new());
+    Valve::lua(&mut spec);
+    assert_eq!(
+        spec.0,
+        [
+            "opening() -> number // How far it is open.",
+            "turn(name: string, opts: { by: number?, slowly: bool? }?) -> Result<number, string> // Turn it, and say where it is now.",
+            "settle(by: number?) -> number // Where it is, later.",
+        ]
+    );
+    Valve(1).hidden();
+
+    let lua = Lua::new();
+    lua.globals().set("valve", Valve(10)).expect("set");
+    let run = |code: &str| {
+        lua.load(code)
+            .eval::<(Option<i64>, Option<String>)>()
+            .expect("eval")
+    };
+    assert_eq!(run("return valve:opening()"), (Some(10), None));
+    assert_eq!(run("return valve:turn('a')"), (Some(12), None));
+    assert_eq!(
+        run("return valve:turn('a', { by = 3, slowly = true })"),
+        (Some(13), None)
+    );
+    // the method's own error, and a refused option, are both returned under the method's name
+    assert_eq!(
+        run("return valve:turn('')"),
+        (None, Some("typed.turn: invalid_input: no name".to_owned()))
+    );
+    assert_eq!(
+        run("return valve:turn('a', { fast = true })"),
+        (
+            None,
+            Some("typed.turn: invalid_input: unknown option \"fast\" (this function takes: by, slowly)".to_owned())
+        )
+    );
+    // a plain argument of the wrong Lua type is raised, as for a closure
+    assert!(lua.load("return valve:turn({})").exec().is_err());
 }

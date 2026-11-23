@@ -1485,13 +1485,297 @@ fn lua_module_impl(mut function: ItemFn) -> syn::Result<Tokens> {
     }
 }
 
+/// The methods of a userdata type, each a real method of the type: `#[lua_methods("vnd:bollard", "Client")]`
+/// on an `impl Client { ... }` block. Everything the declarations say of a method is read from its signature:
+///
+/// ```ignore
+/// /// Stop a container.
+/// async fn stop_container(&self, name: String, opts: Option<Stop>) -> Result<bool, BollardError> { ... }
+/// ```
+///
+/// is `stop_container: (self: Client, name: string, opts: { ... }?) -> (boolean?, string?)`. The name is the
+/// method's, the parameters are its own, the doc is its `///` lines, and the return is its type: a
+/// `Result<T, E>` is `(T?, string?)`, with the error returned as `<module>.<method>: <error>`.
+///
+/// Each argument is read by `facade::args::Argument` before the method is called, and for an `async` method
+/// before its future exists. A table of options that is refused is returned as the method's own error
+/// (`E: From<Refused>`). An `async` method is called on a clone of the value, so the type is `Clone`.
+///
+/// The block is the type's `impl UserData`: every method with a `self` receiver is a method a script calls,
+/// unless it says `#[lua(skip)]`. `#[lua(name = "...")]` gives another name, `#[lua(role = Mixed)]` the
+/// `lifecycle::Role` of an `async` method (`Wait` when not said), `#[lua(doc = EXPR)]` a doc that is put
+/// together. A first parameter of type `&Lua` (`Lua` for an `async` method) is the engine, not an argument.
+#[proc_macro_attribute]
+pub fn lua_methods(args: TokenStream, item: TokenStream) -> TokenStream {
+    let named = syn::parse_macro_input!(args as Named);
+    let block = syn::parse_macro_input!(item as ItemImpl);
+    lua_methods_impl(block, &named)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// What one method says above itself.
+#[derive(Default)]
+struct MethodWords {
+    skip: bool,
+    name: Option<LitStr>,
+    role: Option<Ident>,
+    doc: Option<Expr>,
+}
+
+impl MethodWords {
+    fn above(attrs: &mut Vec<Attribute>) -> syn::Result<Self> {
+        let mut words = Self::default();
+        for attr in attrs.iter().filter(|a| a.path().is_ident("lua")) {
+            attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("skip") {
+                    words.skip = true;
+                } else if meta.path.is_ident("name") {
+                    words.name = Some(meta.value()?.parse()?);
+                } else if meta.path.is_ident("role") {
+                    words.role = Some(meta.value()?.parse()?);
+                } else if meta.path.is_ident("doc") {
+                    words.doc = Some(meta.value()?.parse()?);
+                } else {
+                    return Err(meta.error(
+                        "a method says `skip`, `name = \"...\"`, `role = ...` or `doc = ...`",
+                    ));
+                }
+                Ok(())
+            })?;
+        }
+        attrs.retain(|a| !a.path().is_ident("lua"));
+        Ok(words)
+    }
+}
+
+/// How a method's return reaches a script.
+enum Handed<'a> {
+    /// `Result<T, E>`: the value, or `nil` and the error as text.
+    Fallible(&'a Type, &'a Type),
+    /// `mlua::Result<T>`: the value, or the error raised.
+    Raised(&'a Type),
+    /// Anything else: the value.
+    Plain(Tokens),
+}
+
+fn returned(output: &ReturnType) -> Handed<'_> {
+    let ReturnType::Type(_, ty) = output else {
+        return Handed::Plain(quote!(()));
+    };
+    if let Type::Path(path) = &**ty
+        && let Some(last) = path.path.segments.last()
+        && last.ident == "Result"
+        && let PathArguments::AngleBracketed(given) = &last.arguments
+    {
+        let mut types = given.args.iter().filter_map(|arg| match arg {
+            GenericArgument::Type(ty) => Some(ty),
+            _ => None,
+        });
+        match (types.next(), types.next()) {
+            (Some(value), Some(error)) => return Handed::Fallible(value, error),
+            (Some(value), None) => return Handed::Raised(value),
+            _ => {}
+        }
+    }
+    Handed::Plain(ty.to_token_stream())
+}
+
+/// Whether a parameter's type is the engine (`&Lua`, `Lua`) and not an argument.
+fn is_engine(ty: &Type) -> bool {
+    let ty = match ty {
+        Type::Reference(reference) => &*reference.elem,
+        other => other,
+    };
+    matches!(ty, Type::Path(path) if path.path.segments.last().is_some_and(|s| s.ident == "Lua"))
+}
+
+fn lua_methods_impl(mut block: ItemImpl, named: &Named) -> syn::Result<Tokens> {
+    let facade = facade();
+    let Some((module, type_name)) = &named.0 else {
+        return Err(syn::Error::new(
+            block.self_ty.span(),
+            "say the module the type is declared by and its name there: `#[lua_methods(\"std:time\", \"Duration\")]`",
+        ));
+    };
+    let module_key = module.value();
+    let prefix = module_key
+        .split(':')
+        .next_back()
+        .unwrap_or(&module_key)
+        .to_owned();
+    let mut adds = Vec::new();
+    let mut notes = Vec::new();
+    for item in &mut block.items {
+        let ImplItem::Fn(method) = item else { continue };
+        let words = MethodWords::above(&mut method.attrs)?;
+        let Some(FnArg::Receiver(_)) = method.sig.inputs.first() else {
+            continue;
+        };
+        if words.skip {
+            continue;
+        }
+        let ident = &method.sig.ident;
+        let name = words.name.map_or_else(|| ident.to_string(), |n| n.value());
+        let op = format!("{prefix}.{name}");
+        let doc = match (&words.doc, doc_of(&method.attrs)) {
+            (Some(doc), _) => quote!(&::std::string::String::from(#doc)),
+            (None, doc) => quote!(#doc),
+        };
+        let is_async = method.sig.asyncness.is_some();
+        let mut engine = false;
+        let mut params = Vec::new();
+        for (index, input) in method.sig.inputs.iter().enumerate().skip(1) {
+            let FnArg::Typed(typed) = input else { continue };
+            if index == 1 && is_engine(&typed.ty) {
+                engine = true;
+                continue;
+            }
+            let Pat::Ident(binding) = &*typed.pat else {
+                return Err(syn::Error::new(
+                    typed.pat.span(),
+                    "a parameter of a method a script calls has a name: it is the name the script knows it by",
+                ));
+            };
+            params.push((binding.ident.clone(), &*typed.ty));
+        }
+        let names: Vec<&Ident> = params.iter().map(|(name, _)| name).collect();
+        let types: Vec<&Type> = params.iter().map(|(_, ty)| *ty).collect();
+        let texts: Vec<String> = names
+            .iter()
+            .map(|n| n.to_string().trim_start_matches("r#").to_owned())
+            .collect();
+        let returned = returned(&method.sig.output);
+        let refuse = match &returned {
+            Handed::Fallible(_, error) => quote! {
+                return #facade::args::refused(#op, <#error as ::std::convert::From<#facade::args::Refused>>::from(refused))
+            },
+            _ => quote! {
+                return ::std::result::Result::Err(::mlua::Error::runtime(::std::format!("{}: {}", #op, refused)))
+            },
+        };
+        let read = quote! {
+            let mut __args = __args.into_iter();
+            #(let #names = match <#types as #facade::args::Argument>::read(
+                __args.next().unwrap_or(::mlua::Value::Nil),
+                &__lua,
+            )? {
+                ::std::result::Result::Ok(value) => value,
+                ::std::result::Result::Err(refused) => {
+                    return ::std::result::Result::Ok(::std::result::Result::Err(refused));
+                }
+            };)*
+            ::std::result::Result::Ok(::std::result::Result::Ok((#(#names,)*)))
+        };
+        let lua_arg = if engine {
+            quote!(__lua.clone(),)
+        } else {
+            quote!()
+        };
+        let lua_ref = if engine { quote!(__lua,) } else { quote!() };
+        let wait = if is_async { quote!(.await) } else { quote!() };
+        let call = |lua: &Tokens| quote!(__this.#ident(#lua #(#names),*) #wait);
+        let hand = |called: Tokens| match &returned {
+            Handed::Fallible(..) => quote! {
+                match #called {
+                    ::std::result::Result::Ok(value) => crate::lua::sandbox::ok(value),
+                    ::std::result::Result::Err(e) => crate::lua::sandbox::from_err(#op, e),
+                }
+            },
+            Handed::Raised(_) => called,
+            Handed::Plain(_) => quote!(::std::result::Result::Ok(#called)),
+        };
+        let reading = quote! {
+            let __read: ::mlua::Result<::std::result::Result<(#(#types,)*), #facade::args::Refused>> =
+                (|| { #read })();
+        };
+        let taken = quote! {
+            let (#(#names,)*) = match __read? {
+                ::std::result::Result::Ok(read) => read,
+                ::std::result::Result::Err(refused) => { #refuse; }
+            };
+        };
+        adds.push(if is_async {
+            let role = words.role.unwrap_or_else(|| Ident::new("Wait", Span::call_site()));
+            let handed = hand(call(&lua_arg));
+            quote! {
+                crate::lua::lifecycle::async_method(
+                    methods,
+                    #name,
+                    crate::lua::lifecycle::Role::#role,
+                    |__lua: ::mlua::Lua, __this: ::mlua::UserDataRef<Self>, __args: ::mlua::MultiValue| {
+                        #reading
+                        let __this = <Self as ::std::clone::Clone>::clone(&__this);
+                        async move {
+                            #taken
+                            #handed
+                        }
+                    },
+                );
+            }
+        } else {
+            let handed = hand(call(&lua_ref));
+            quote! {
+                methods.add_method(#name, |__lua: &::mlua::Lua, __this: &Self, __args: ::mlua::MultiValue| {
+                    #reading
+                    #taken
+                    #handed
+                });
+            }
+        });
+        let ret = match &returned {
+            Handed::Fallible(value, _) => {
+                quote!(<crate::lua::sandbox::Fallible<#value> as #facade::DeclType>::decl_type())
+            }
+            Handed::Raised(value) => quote!(<#value as #facade::DeclType>::decl_type()),
+            Handed::Plain(value) => quote!(<#value as #facade::DeclType>::decl_type()),
+        };
+        notes.push(quote! {{
+            let params: ::std::vec::Vec<(&str, ::std::string::String)> =
+                ::std::vec![#((#texts, <#types as #facade::DeclType>::decl_type())),*];
+            let params: ::std::vec::Vec<(&str, &str)> = params.iter().map(|(n, t)| (*n, t.as_str())).collect();
+            spec.method(#name, &params, &#ret, #doc);
+        }});
+    }
+    let ty = &block.self_ty;
+    let (generics, _, where_clause) = block.generics.split_for_impl();
+    Ok(quote! {
+        #block
+
+        impl #generics ::mlua::UserData for #ty #where_clause {
+            fn add_methods<M: ::mlua::UserDataMethods<Self>>(methods: &mut M) {
+                #(#adds)*
+            }
+        }
+
+        impl #generics #ty #where_clause {
+            /// What the declarations say of this type's methods: read from their signatures by `lua_methods`.
+            pub(crate) fn lua(spec: &mut impl #facade::Members) {
+                #(#notes)*
+            }
+        }
+
+        impl #generics #facade::DeclType for #ty #where_clause {
+            fn decl_type() -> ::std::string::String {
+                ::std::format!("{}.{}", #facade::luau_decls::scope(#module), #type_name)
+            }
+        }
+
+        impl #generics #facade::Named for #ty #where_clause {
+            const MODULE: &'static str = #module;
+            const NAME: &'static str = #type_name;
+        }
+    })
+}
+
 /// A struct that is a table to a script: `#[lua_record(into)]` for one a function hands a script,
 /// `#[lua_record(from)]` for one a script passes (a table of options), or both. Its fields are the table's
 /// keys, and the declaration is read from them (`{ code: number?, success: bool }`), so a function that
 /// returns or takes the struct says nothing more.
 ///
 /// A record read `from` a script is strict: a value that is not a table is refused, and so is a key that is
-/// not a field. A field that may be left out is an `Option`.
+/// not a field, and a value that is not what its field takes. A field that may be left out is an `Option`. A
+/// refusal is not raised: the function returns it as its own error (`facade::args`).
 ///
 /// `#[lua_record(shape)]` is for a table a module reads by its own rules (its own errors, its own ranges): the
 /// struct is only what the table looks like. It is never built; a parameter is
@@ -1592,44 +1876,41 @@ fn lua_record_impl(args: Tokens, record: &syn::ItemStruct) -> syn::Result<Tokens
     Ok(out)
 }
 
-/// The `FromLua` of a record: a table whose keys are all fields, each read as the field's type.
+/// What reads a record from a script: a table whose keys are all fields, each read as the field's type. A
+/// wrong one is refused, not raised (`facade::args`).
 fn record_from(record: &syn::ItemStruct, keys: &[String], names: &[&Ident]) -> Tokens {
+    let facade = facade();
     let ident = &record.ident;
     let (generics, of, bounds) = record.generics.split_for_impl();
-    let label = ident.to_string();
+    let types = record.fields.iter().map(|f| &f.ty);
     quote! {
-        impl #generics ::mlua::FromLua for #ident #of #bounds {
-            fn from_lua(value: ::mlua::Value, _: &::mlua::Lua) -> ::mlua::Result<Self> {
-                let ::mlua::Value::Table(table) = value else {
-                    return ::std::result::Result::Err(::mlua::Error::FromLuaConversionError {
-                        from: value.type_name(),
-                        to: ::std::string::String::from(#label),
-                        message: ::std::option::Option::Some(::std::string::String::from(
-                            "expected a table",
-                        )),
-                    });
-                };
-                for pair in table.pairs::<::mlua::Value, ::mlua::Value>() {
-                    let (key, _) = pair?;
-                    let known = match &key {
-                        ::mlua::Value::String(key) => [#(#keys),*].iter().any(|k| key == *k),
-                        _ => false,
-                    };
-                    if !known {
-                        return ::std::result::Result::Err(::mlua::Error::FromLuaConversionError {
-                            from: "table",
-                            to: ::std::string::String::from(#label),
-                            message: ::std::option::Option::Some(::std::format!(
-                                "unknown key {}: the keys are {}",
-                                key.to_string()?,
-                                [#(#keys),*].join(", "),
-                            )),
-                        });
-                    }
-                }
+        impl #generics #ident #of #bounds {
+            fn from_options(value: ::mlua::Value) -> ::std::result::Result<Self, #facade::args::Refused> {
+                let table = #facade::args::options(value, <Self as #facade::Shape>::KEYS)?;
                 ::std::result::Result::Ok(Self {
-                    #(#names: table.raw_get(#keys)?,)*
+                    #(#names: <#types as #facade::args::Field>::field(
+                        #keys,
+                        #facade::args::value_of(&table, #keys),
+                    )?,)*
                 })
+            }
+        }
+
+        impl #generics #facade::args::Argument for #ident #of #bounds {
+            fn read(
+                value: ::mlua::Value,
+                _: &::mlua::Lua,
+            ) -> ::mlua::Result<::std::result::Result<Self, #facade::args::Refused>> {
+                ::std::result::Result::Ok(Self::from_options(value))
+            }
+        }
+
+        impl #generics #facade::args::Field for #ident #of #bounds {
+            fn field(
+                _: &str,
+                value: ::mlua::Value,
+            ) -> ::std::result::Result<Self, #facade::args::Refused> {
+                Self::from_options(value)
             }
         }
     }
@@ -1835,10 +2116,13 @@ mod tests {
         );
         assert!(into.contains("\"type\""), "{into}");
         assert!(into.contains("IntoLua for Exit"), "{into}");
-        assert!(!into.contains("FromLua for Exit"), "{into}");
+        assert!(!into.contains("Argument for Exit"), "{into}");
         let from = lua_record_impl(quote!(from), &record).map_or_default(|t| t.to_string());
-        assert!(from.contains("FromLua for Exit"), "{from}");
-        assert!(from.contains("unknown key"), "{from}");
+        assert!(from.contains("args :: Argument for Exit"), "{from}");
+        assert!(
+            from.contains("args :: Field > :: field (\"type\""),
+            "{from}"
+        );
         refuses(
             lua_record_impl(quote!(), &record),
             "say which way the record goes",

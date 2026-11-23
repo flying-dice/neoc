@@ -50,6 +50,7 @@ use tracing_core::callsite::{Callsite, DefaultCallsite, Identifier};
 use tracing_core::field::FieldSet;
 use tracing_core::metadata::{Kind, Metadata};
 
+pub mod args;
 pub mod luau_decls;
 #[cfg(test)]
 mod macros_tests;
