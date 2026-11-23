@@ -23,9 +23,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// byte-identical tracing. `home_dir` and `var` bake their own literal error
 /// messages, `args` raises `mlua::Error` directly, and the platform constants
 /// are plain string values — none fit the facade's regular paths. Each is
-/// recorded via
-/// what `neoc_macros` reads from the implementation /
-/// [`crate::lua::facade::Module::const_`].
+/// read from the implementation by `neoc_macros`, the constants included.
 #[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:env")?;

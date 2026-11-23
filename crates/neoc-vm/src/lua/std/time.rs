@@ -485,13 +485,15 @@ fn instant_now(_: &Lua, (): ()) -> mlua::Result<InstantHandle> {
 /// `func` would add a span and change behaviour. The flat `now` and `sleep`
 /// functions likewise carried no span and are set verbatim. The `Duration` /
 /// `Instant` userdata keep their own `impl UserData` and are recorded here via
-/// [`crate::lua::facade::Module::userdata`]; `now` and `sleep` are recorded via
-/// what `neoc_macros` reads from the implementation.
+/// [`crate::lua::facade::Module::userdata`]; `now` and `sleep` are read by `neoc_macros`
+/// from the implementation.
 #[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:time")?;
 
     let dur = lua.create_table()?;
+    /// The zero-length duration.
+    #[lua("Duration", constant, on(m, "Duration"))]
     dur.set("ZERO", DurationHandle(StdDuration::ZERO))?;
     dur.set("from_secs", lua.create_function(from_secs)?)?;
     dur.set("from_millis", lua.create_function(from_millis)?)?;
@@ -531,8 +533,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     m.userdata("Duration", |d| {
         DurationHandle::lua(d);
-        d.static_const("ZERO", "Duration", "The zero-length duration.")
-            .static_of(from_secs::lua())
+        d.static_of(from_secs::lua())
             .static_of(from_millis::lua())
             .static_of(from_micros::lua())
             .static_of(from_nanos::lua())

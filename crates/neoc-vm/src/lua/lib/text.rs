@@ -30,7 +30,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// bare value. `clip` is among the rest although it refuses a `max` that is
 /// not a count: it raises, as for an argument of the wrong type, so that the
 /// common call is a plain `string` and not a `string?` to unwrap. Their
-/// signatures are recorded via what `neoc_macros` reads from the implementation.
+/// signatures are read by `neoc_macros` from the implementation.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:text")?;
 

@@ -55,8 +55,8 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `#[instrument(name = "sqlx_postgres.open", target = "lua::lib::sqlx_postgres")]`
 /// attribute and bakes the `sqlx_postgres.open` error prefix into its pre-built
 /// `(Value, Value)` return — routing through the facade would add a second span
-/// and double the prefix. Its signature is recorded via
-/// what `neoc_macros` reads from the implementation. The `Database` userdata type
+/// and double the prefix. Its signature is read by `neoc_macros`
+/// from the implementation. The `Database` userdata type
 /// keeps its own `impl UserData` (the async methods and `sqlx_postgres.*` error
 /// prefixes unchanged) and is recorded via
 /// [`crate::lua::facade::Module::userdata`].

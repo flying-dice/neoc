@@ -66,9 +66,9 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// attribute and returns a `WorkerHandle` on success, so routing through the
 /// facade would add a second span. `available_parallelism` carried no span and
 /// returns the core count directly. `parent` / `shared` are dynamically
-/// injected at spawn time (nil at the top level), so they are recorded as
-/// constants via [`crate::lua::facade::Module::const_`]. The `WorkerHandle` and
-/// `Channel` userdata keep their own `impl UserData` and are recorded here.
+/// injected at spawn time (nil at the top level), so they are marked as
+/// constants where they are set. The `WorkerHandle` and `Channel` userdata keep
+/// their own `impl UserData`, which `neoc_macros` reads.
 #[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:thread")?;

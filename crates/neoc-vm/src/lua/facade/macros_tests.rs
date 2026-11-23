@@ -399,3 +399,47 @@ fn a_table_a_function_builds_declares_its_members() {
     let lua = Lua::new();
     assert!(checks(&lua, 0.0).is_ok());
 }
+
+/// A module whose type carries a constant on its own table; `declared` says whether the type is.
+#[neoc_macros::lua_module]
+fn declare_origin(lua: &Lua, declared: bool) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "vnd:origin")?;
+    let counter = lua.create_table()?;
+    /// The counter nothing was added to.
+    #[lua("Counter", constant, on(m, "Counter"))]
+    counter.set("ORIGIN", Counter(0.0))?;
+    m.set("Counter", counter)?;
+    if declared {
+        m.userdata("Counter", Counter::lua);
+    }
+    Ok(m)
+}
+
+#[test]
+fn a_constant_of_a_type_is_declared_on_the_type_where_it_is_set() {
+    let lua = Lua::new();
+    let decls = declare_origin(&lua, true)
+        .expect("declares")
+        .luau_decls()
+        .expect("declarations");
+    says(
+        &decls,
+        "\t--- The counter nothing was added to.\n\tORIGIN: vnd_origin_Counter,\n",
+    );
+}
+
+#[test]
+fn a_constant_of_a_type_the_module_never_declares_is_refused() {
+    let lua = Lua::new();
+    let error = declare_origin(&lua, false)
+        .expect("declares")
+        .luau_decls()
+        .expect_err("the type is never declared")
+        .to_string();
+    assert!(
+        error.contains(
+            "the constant `ORIGIN` is of the type `Counter`, which the module never declares"
+        ),
+        "{error}"
+    );
+}

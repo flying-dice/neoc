@@ -111,6 +111,12 @@ impl Module<'_> {
         for ud in &self.userdata {
             self.check_statics_recorded(ud)?;
         }
+        if let Some((of, constant)) = self.type_consts.first() {
+            return Err(mlua::Error::external(format!(
+                "{}: the constant `{}` is of the type `{of}`, which the module never declares",
+                self.name, constant.name
+            )));
+        }
         self.declarations()
             .map_err(|e| mlua::Error::external(format!("{}: {e}", self.name)))
     }

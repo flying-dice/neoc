@@ -99,8 +99,8 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// synchronous now, would cover the option reading and not the request); `serve` likewise carries its own `#[instrument(name = "hyper.serve")]`
 /// attribute and bakes the `hyper.serve` prefix. Routing any of them through
 /// the facade's marshalling would add a span and reshape the result, so each is
-/// registered byte-for-byte as before and only its signature is recorded via
-/// what `neoc_macros` reads from the implementation. The `ServerHandle` and `Request`
+/// registered byte-for-byte as before and only its signature is read by `neoc_macros`
+/// from the implementation. The `ServerHandle` and `Request`
 /// userdata types keep their own `impl UserData` (fields and methods unchanged)
 /// and have their methods and fields recorded via
 /// [`crate::lua::facade::Module::userdata`].

@@ -10,6 +10,12 @@
 //! its type, with completion and diagnostics. There is no reverse
 //! mapping: the Rust source is the source of truth.
 //!
+//! A module does not write a signature beside its implementation. The attributes of `neoc_macros` (`lua_fn`,
+//! `lua_userdata`, `lua_members`, `lua_module`) read the name, the parameters and the doc from the Rust and
+//! call the recording primitives here (`record_fn`, `const_`, `type_const`, `UserDataSpec::method`,
+//! `static_fn` and the rest). Those primitives stay public to the crate for the generated code and for this
+//! file's own tests; a module that calls one by hand is declaring something twice.
+//!
 //! Three things the facade preserves byte-for-byte versus the hand-written
 //! `module()` functions it replaces:
 //!
@@ -177,6 +183,8 @@ pub struct Module<'l> {
     userdata: Vec<UserDataEntry>,
     types: Vec<TypeEntry>,
     consts: Vec<FieldEntry>,
+    /// Constants set on a type's own table before the type is declared: each waits for its type.
+    type_consts: Vec<(String, FieldEntry)>,
 }
 
 impl<'l> Module<'l> {
@@ -194,6 +202,7 @@ impl<'l> Module<'l> {
             userdata: Vec::new(),
             types: Vec::new(),
             consts: Vec::new(),
+            type_consts: Vec::new(),
         })
     }
 
@@ -494,7 +503,31 @@ impl<'l> Module<'l> {
             },
         };
         build(&mut spec);
+        // the constants said where they were set come first, in the order they were set
+        let (mine, others): (Vec<_>, Vec<_>) = std::mem::take(&mut self.type_consts)
+            .into_iter()
+            .partition(|(of, _)| of == type_name);
+        self.type_consts = others;
+        spec.entry
+            .static_consts
+            .splice(0..0, mine.into_iter().map(|(_, entry)| entry));
         self.userdata.push(spec.entry);
+        self
+    }
+
+    /// Records a constant set on the sub-table of the userdata type `type_name` (`Duration.ZERO`), where it
+    /// is set: `neoc_macros::lua_module` writes this for `#[lua("Duration", constant, on(m, "Duration"))]`.
+    /// The type is declared after it with [`Module::userdata`]; the declarations refuse a constant whose type
+    /// never is.
+    pub fn type_const(&mut self, type_name: &str, name: &str, ty: &str, doc: &str) -> &mut Self {
+        self.type_consts.push((
+            type_name.to_string(),
+            FieldEntry {
+                name: name.to_string(),
+                ty: ty.to_string(),
+                doc: doc.to_string(),
+            },
+        ));
         self
     }
 

@@ -24,6 +24,26 @@
 //! the type of a parameter that is a `Value` or a `Table` in Rust and something narrower to a script
 //! (`types(key = "string | number")`), a parameter a script knows under another name (`names(s = "input")`), and
 //! the whole list where the function takes its arguments as they come (`takes("path: string", "...: LuaValue")`).
+//!
+//! # The words
+//!
+//! Every word goes in `#[lua_fn(...)]`, or in `#[lua(...)]` above a statement. A word that means nothing where
+//! it is said is refused there, and so is one said twice.
+//!
+//! | Word | Says | Where |
+//! | --- | --- | --- |
+//! | `"T"` or `returns = EXPR` | what a script gets: a return, a field's or a constant's type. The first is a literal, the second any expression that gives a `&str` (`returns = RESULT`, `returns = &format!(...)`) | everywhere but a registration, which reads the return itself |
+//! | `name = "..."` | the name a script calls it by | a function, a member said above a statement that hides it |
+//! | `types(binding = EXPR)` | the type of the parameter bound as `binding` in Rust | anything with parameters |
+//! | `names(binding = "...")` | the name a script knows that parameter under | anything with parameters |
+//! | `takes("a: T", name = EXPR)` | the whole parameter list: each entry is `"name: type"`, or a name with an expression that gives its type; `takes()` is no parameters | anything with parameters |
+//! | `doc = EXPR` | the doc, where it is put together and not written (never beside `///` lines) | everywhere but a registration given a function by its path |
+//! | `doc_with = path` | a `fn(&str) -> String` the doc is given to, for an ending several docs share | the same |
+//! | `registered` | that the function is handed to a registration, which reads the return itself | a function |
+//! | `method`, `function`, `field` | what kind of member this is, where the call that adds it does not say | a member |
+//! | `skip` | that a script does not name this member | a member |
+//! | `constant` | that the statement sets a value and not a function | a `set` in a `declare` function |
+//! | `on(m, "Type")` | that the constant is set on the sub-table of the type `Type` of the module `m` (`Duration.ZERO`) | a constant |
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as Tokens};
@@ -96,16 +116,91 @@ struct Said {
     constant: bool,
     /// `registered`: a function handed to a registration, which reads the return from the function's type.
     registered: bool,
+    /// `on(m, "Duration")`: the module and the type a constant set on a type's own table belongs to.
+    on: Option<(Expr, LitStr)>,
+    /// Every word said, with where: what means nothing in a place is refused there, and nothing is said twice.
+    words: Vec<(String, Span)>,
 }
 
+/// What can be said of a function (`lua_fn`).
+const OF_A_FUNCTION: &[&str] = &[
+    "name",
+    "return",
+    "types",
+    "names",
+    "takes",
+    "doc",
+    "doc_with",
+    "registered",
+];
+/// What can be said of a member of a type.
+const OF_A_MEMBER: &[&str] = &[
+    "name", "return", "types", "names", "takes", "doc", "doc_with", "method", "function", "field",
+    "skip",
+];
+/// What can be said of a registration given a closure (a return is refused with its own reason).
+const OF_A_REGISTRATION: &[&str] = &["return", "types", "names", "takes", "doc", "doc_with"];
+/// What can be said of a function set on a module.
+const OF_A_SET: &[&str] = &["return", "types", "names", "takes", "doc", "doc_with"];
+/// What can be said of a constant.
+const OF_A_CONSTANT: &[&str] = &["return", "constant", "doc", "doc_with", "on"];
+
 impl Said {
+    /// Notes a word, and refuses one said before.
+    fn word(&mut self, word: &str, span: Span) -> syn::Result<()> {
+        // a kind is one thing however it is said, and so is a return
+        let word = match word {
+            "returns" => "return",
+            "function" | "field" => "method",
+            other => other,
+        };
+        if self.words.iter().any(|(said, _)| said == word) {
+            return Err(syn::Error::new(span, "this is said twice"));
+        }
+        self.words.push((word.to_owned(), span));
+        Ok(())
+    }
+
+    /// Refuses what means nothing in a place, so that it is not passed over in silence.
+    fn only(&self, place: &str, allowed: &[&str]) -> syn::Result<()> {
+        let allowed = |word: &str| {
+            allowed.contains(&word) || (word == "method" && allowed.contains(&"field"))
+        };
+        match self.words.iter().find(|(word, _)| !allowed(word)) {
+            Some((word, span)) => {
+                let word = if word == "method" {
+                    "a kind"
+                } else {
+                    word.as_str()
+                };
+                Err(syn::Error::new(
+                    *span,
+                    format!("`{word}` means nothing on {place}"),
+                ))
+            }
+            None => Ok(()),
+        }
+    }
+
     fn read(&mut self, input: syn::parse::ParseStream) -> syn::Result<()> {
         while !input.is_empty() {
             if input.peek(LitStr) {
-                self.returns = Some(input.parse()?);
+                let text: LitStr = input.parse()?;
+                self.word("return", text.span())?;
+                self.returns = Some(syn::parse_quote!(#text));
             } else {
                 let word: Ident = input.parse()?;
+                if !matches!(word.to_string().as_str(), "types" | "names") {
+                    self.word(&word.to_string(), word.span())?;
+                }
                 match word.to_string().as_str() {
+                    "on" => {
+                        let inner;
+                        syn::parenthesized!(inner in input);
+                        let module = inner.parse()?;
+                        inner.parse::<Token![,]>()?;
+                        self.on = Some((module, inner.parse()?));
+                    }
                     "skip" => self.skip = true,
                     "method" => self.kind = Some(Member::Method),
                     "function" => self.kind = Some(Member::Function),
@@ -131,9 +226,20 @@ impl Said {
                     "types" | "names" => {
                         let inner;
                         syn::parenthesized!(inner in input);
+                        if !self.words.iter().any(|(said, _)| word == said) {
+                            self.words.push((word.to_string(), word.span()));
+                        }
                         while !inner.is_empty() {
                             let binding: Ident = inner.parse()?;
                             inner.parse::<Token![=]>()?;
+                            let before = if word == "types" {
+                                self.types.iter().any(|(of, _)| *of == binding)
+                            } else {
+                                self.names.iter().any(|(of, _)| *of == binding)
+                            };
+                            if before {
+                                return Err(syn::Error::new(binding.span(), "this is said twice"));
+                            }
                             if word == "types" {
                                 self.types.push((binding, inner.parse()?));
                             } else {
@@ -154,9 +260,9 @@ impl Said {
                     _ => {
                         return Err(syn::Error::new(
                             word.span(),
-                            "expected a return type as a string, `name = \"...\"`, `returns = \"...\"`, \
-                             `types(...)`, `names(...)`, `takes(...)`, `doc = ...`, `doc_with = ...`, `method`, `function`, \
-                 `field`, `constant` or `skip`",
+                            "expected a return type as a string, `name = ...`, `returns = ...`, `types(...)`, `names(...)`, \
+                             `takes(...)`, `doc = ...`, `doc_with = ...`, `method`, `function`, `field`, `constant`, \
+                             `on(...)`, `registered` or `skip`",
                         ));
                     }
                 }
@@ -171,6 +277,12 @@ impl Said {
     /// Reads the `#[lua(...)]` attributes of `attrs` and takes them out (they mean nothing to the compiler).
     fn above(attrs: &mut Vec<Attribute>) -> syn::Result<Self> {
         let mut said = Self::default();
+        if let Some(second) = attrs.iter().filter(|a| a.path().is_ident("lua")).nth(1) {
+            return Err(syn::Error::new(
+                second.span(),
+                "one `#[lua(...)]` says all there is to say of this",
+            ));
+        }
         for attr in attrs.iter().filter(|a| a.path().is_ident("lua")) {
             // a bare `#[lua]` says only that the statement is one to read
             if !matches!(attr.meta, syn::Meta::Path(_)) {
@@ -188,7 +300,7 @@ impl Said {
         inputs: impl Iterator<Item = (&'p Pat, Option<&'p Type>)>,
     ) -> syn::Result<Vec<Tokens>> {
         if let Some(takes) = &self.takes {
-            self.refuse(false, true, false)?;
+            self.no_renames()?;
             return takes
                 .iter()
                 .map(|taken| {
@@ -231,42 +343,37 @@ impl Said {
             .chain(self.names.iter().map(|(of, _)| of))
     }
 
-    /// The doc as the declarations keep it: the `///` lines, given to `doc_with` when one is said.
-    fn doc(&self, lines: &str) -> Tokens {
+    /// The doc as the declarations keep it: the `///` lines or `doc = ...`, given to `doc_with` when one is said.
+    fn doc(&self, lines: &str) -> syn::Result<Tokens> {
+        if let (Some(doc), false) = (&self.doc, lines.is_empty()) {
+            return Err(syn::Error::new(
+                doc.span(),
+                "the doc is said twice: here and in the `///` lines",
+            ));
+        }
         if self.doc.is_none() && self.doc_with.is_none() {
-            return quote!(#lines);
+            return Ok(quote!(#lines));
         }
         let doc = self
             .doc
             .as_ref()
             .map_or_else(|| quote!(#lines), ToTokens::to_token_stream);
-        self.doc_with.as_ref().map_or_else(
+        Ok(self.doc_with.as_ref().map_or_else(
             || quote!(&*::std::string::String::from(#doc)),
             |with| quote!(&*::std::string::String::from(#with(#doc))),
-        )
+        ))
     }
 
-    /// Refuses what means nothing where it is written, so that it is not passed over in silence.
-    fn refuse(&self, name: bool, renames: bool, skip: bool) -> syn::Result<()> {
-        if let (true, Some(said)) = (name, &self.name) {
-            return Err(syn::Error::new(
-                said.span(),
-                "the name is the one in the call: `name` is not for this",
-            ));
-        }
-        if skip && self.skip {
-            return Err(syn::Error::new(
-                Span::call_site(),
-                "`skip` is for a member of a userdata type",
-            ));
-        }
-        if let (true, Some(of)) = (renames, self.renamed().next()) {
-            return Err(syn::Error::new(
+    /// `types(...)` and `names(...)` are for parameters read from the Rust: they mean nothing beside a list
+    /// said whole, or where there is no list.
+    fn no_renames(&self) -> syn::Result<()> {
+        match self.renamed().next() {
+            Some(of) => Err(syn::Error::new(
                 of.span(),
                 "`types(...)` and `names(...)` are for parameters read from the Rust: here the list is said elsewhere",
-            ));
+            )),
+            None => Ok(()),
         }
-        Ok(())
     }
 
     /// What one Rust parameter is to a script: nothing for `_: ()`, one parameter for `name: T`, one each for
@@ -421,18 +528,7 @@ fn returns_of(said: Option<&Expr>, output: &ReturnType) -> syn::Result<Tokens> {
 fn lua_fn_impl(args: Tokens, mut function: ItemFn) -> syn::Result<Tokens> {
     let mut said = Said::default();
     syn::parse::Parser::parse2(|input: syn::parse::ParseStream| said.read(input), args)?;
-    if said.skip {
-        return Err(syn::Error::new(
-            Span::call_site(),
-            "`skip` is for a member of a userdata type",
-        ));
-    }
-    if said.constant {
-        return Err(syn::Error::new(
-            Span::call_site(),
-            "`constant` is for a `set` on a module",
-        ));
-    }
+    said.only("a function", OF_A_FUNCTION)?;
 
     let ident = function.sig.ident.clone();
     let name = said
@@ -467,7 +563,7 @@ fn lua_fn_impl(args: Tokens, mut function: ItemFn) -> syn::Result<Tokens> {
     } else {
         returns_of(said.returns.as_ref(), &function.sig.output)?
     };
-    let doc = said.doc(&doc);
+    let doc = said.doc(&doc)?;
     let facade = facade();
     let visibility = &function.vis;
     Ok(quote! {
@@ -604,13 +700,8 @@ fn record(
     doc: &str,
     params: Option<Vec<Tokens>>,
 ) -> syn::Result<Tokens> {
-    if said.constant {
-        return Err(syn::Error::new(
-            span,
-            "`constant` is for a `set` on a module",
-        ));
-    }
-    let doc = said.doc(doc);
+    said.only("a member of a type", OF_A_MEMBER)?;
+    let doc = said.doc(doc)?;
     let Some(ty) = &said.returns else {
         return Err(syn::Error::new(
             span,
@@ -619,7 +710,7 @@ fn record(
     };
     if kind == Member::Field {
         // a field takes nothing: a word about parameters is a slip
-        said.refuse(false, true, false)?;
+        said.no_renames()?;
         if said.takes.is_some() {
             return Err(syn::Error::new(span, "a field takes no parameters"));
         }
@@ -691,6 +782,12 @@ fn said_members(stmt: &mut Stmt) -> syn::Result<Vec<Tokens>> {
             attrs.push(attr);
         }
     }
+    if let Some(doc) = group.first() {
+        return Err(syn::Error::new(
+            doc.span(),
+            "a doc goes above the `#[lua(...)]` it is the doc of",
+        ));
+    }
     Ok(records)
 }
 
@@ -717,10 +814,13 @@ fn member(stmt: &mut Stmt) -> syn::Result<Vec<Tokens>> {
                     name = Some(text.clone());
                 }
             }
-            Expr::Closure(found) => closure = Some(found),
+            Expr::Closure(found) => {
+                closure.get_or_insert(found);
+            }
             _ => {}
         }
     }
+    said.only("a member of a type", OF_A_MEMBER)?;
     if said.skip {
         return Ok(Vec::new());
     }
@@ -831,6 +931,14 @@ fn lua_members_impl(mut function: ItemFn) -> syn::Result<Tokens> {
 ///
 /// It reads the statements at the top of the function as `lua_userdata` reads those of `add_methods`, and
 /// writes `<name>_members(spec)` beside it: hand that to the module (`m.userdata("Matcher", make_members)`).
+///
+/// - A statement that is a call with a closure in it is a member when the name of what is called has
+///   `function`, `method` or `field` in it (and not `meta`), and that word is its kind: name the helper that
+///   adds a function to the table accordingly (`matcher_function(lua, &t, "to_be", |...| ...)`).
+/// - The member's name is the first string literal among the call's arguments.
+/// - Its parameters are the closure's after `lua` (and after `this` for a method), and `#[lua(...)]` above
+///   the statement says the rest, as for `lua_userdata`.
+/// - It sits beside `#[lua_fn]`, not on top of it: the function that builds the table is not itself declared.
 #[proc_macro_attribute]
 pub fn lua_members(args: TokenStream, item: TokenStream) -> TokenStream {
     if !args.is_empty() {
@@ -877,12 +985,10 @@ fn call_in(stmt: &mut Stmt) -> Option<&mut syn::ExprMethodCall> {
     };
     let call = match expr {
         Expr::Try(tried) => {
-            let above = std::mem::take(&mut tried.attrs);
-            let inner = &mut *tried.expr;
-            if let Expr::MethodCall(call) = inner {
-                call.attrs.extend(above);
+            if let Expr::MethodCall(call) = &mut *tried.expr {
+                call.attrs.extend(std::mem::take(&mut tried.attrs));
             }
-            inner
+            &mut *tried.expr
         }
         other => other,
     };
@@ -910,11 +1016,26 @@ impl Marked {
     /// Reads a statement and takes the marks out of it; `None` when it is not marked.
     fn read(stmt: &mut Stmt) -> syn::Result<Option<Self>> {
         let span = stmt.span();
+        let marked =
+            attrs_of(stmt).is_some_and(|attrs| attrs.iter().any(|a| a.path().is_ident("lua")));
         let Some(call) = call_in(stmt) else {
+            if marked {
+                return Err(syn::Error::new(
+                    span,
+                    "`#[lua]` is for a call of a method on the module: a `set` or a registration",
+                ));
+            }
             return Ok(None);
         };
         if !call.attrs.iter().any(|a| a.path().is_ident("lua")) {
             return Ok(None);
+        }
+        // what is written after the statement names the receiver again: it is a name, not a call to make twice
+        if !matches!(&*call.receiver, Expr::Path(_)) {
+            return Err(syn::Error::new(
+                call.receiver.span(),
+                "`#[lua]` is for a call on the module by its name (`m.set(...)`), not on a chain",
+            ));
         }
         let doc = doc_of(&call.attrs);
         call.attrs.retain(|a| !a.path().is_ident("doc"));
@@ -923,7 +1044,7 @@ impl Marked {
             return Err(syn::Error::new(span, "the first argument is the name"));
         };
         let documented = !doc.is_empty();
-        let doc = said.doc(&doc);
+        let doc = said.doc(&doc)?;
         let closure = call.args.iter().skip(1).find_map(closure_in).cloned();
         let path = match call.args.iter().nth(1) {
             Some(Expr::Path(path)) if said.takes.is_none() => Some(path.clone()),
@@ -968,12 +1089,11 @@ fn with_params(stmt: &mut Stmt, params: &Expr, doc: &Expr) {
 
 /// One statement of a `declare` function marked `#[lua(...)]`, with what the declarations say of it written
 /// in: the parameters and the doc as arguments of a registration, or a `record` after a `set`.
-fn registered(stmt: &mut Stmt) -> syn::Result<Option<Tokens>> {
+fn written(stmt: &mut Stmt) -> syn::Result<Option<Tokens>> {
     let span = stmt.span();
     let Some(marked) = Marked::read(stmt)? else {
         return Ok(None);
     };
-    marked.said.refuse(true, marked.path.is_some(), true)?;
     let facade = facade();
     let (name, doc, receiver) = (&marked.name, &marked.doc, &marked.receiver);
     if marked.kind == "set" {
@@ -984,15 +1104,20 @@ fn registered(stmt: &mut Stmt) -> syn::Result<Option<Tokens>> {
             ));
         };
         if marked.said.constant {
-            marked.said.refuse(false, true, false)?;
-            if marked.said.takes.is_some() {
-                return Err(syn::Error::new(span, "a constant takes no parameters"));
+            marked.said.only("a constant", OF_A_CONSTANT)?;
+            // a constant on a type's own table is the type's: the module is told which
+            if let Some((module, of)) = &marked.said.on {
+                return Ok(Some(quote! {
+                    #stmt
+                    #module.type_const(#of, #name, &::std::string::String::from(#returns), #doc);
+                }));
             }
             return Ok(Some(quote! {
                 #stmt
                 #receiver.const_(#name, &::std::string::String::from(#returns), #doc);
             }));
         }
+        marked.said.only("a function set on a module", OF_A_SET)?;
         let params = marked.params(span)?;
         return Ok(Some(quote! {
             #stmt
@@ -1020,6 +1145,10 @@ fn registered(stmt: &mut Stmt) -> syn::Result<Option<Tokens>> {
         ));
     }
     if let Some(path) = &marked.path {
+        marked.said.only(
+            "a registration given a function by its path: the function says it all",
+            &[],
+        )?;
         if marked.documented {
             return Err(syn::Error::new(
                 span,
@@ -1039,6 +1168,7 @@ fn registered(stmt: &mut Stmt) -> syn::Result<Option<Tokens>> {
             }
         }));
     }
+    marked.said.only("a registration", OF_A_REGISTRATION)?;
     let params = marked.params(span)?;
     with_params(
         stmt,
@@ -1062,7 +1192,7 @@ impl syn::visit_mut::VisitMut for Registrations {
     fn visit_block_mut(&mut self, block: &mut syn::Block) {
         let mut out = Vec::with_capacity(block.stmts.len());
         for mut stmt in std::mem::take(&mut block.stmts) {
-            let written = registered(&mut stmt).and_then(|tokens| {
+            let written = written(&mut stmt).and_then(|tokens| {
                 tokens
                     .map(|t| syn::parse2::<syn::Block>(quote!({ #t })))
                     .transpose()
@@ -1177,7 +1307,7 @@ mod tests {
                     fn f() {}
                 ),
             ),
-            "`skip` is for a member",
+            "`skip` means nothing",
         );
         refuses(
             lua_fn_impl(
@@ -1302,13 +1432,13 @@ mod tests {
             lua_module_impl(declare(
                 quote!(#[lua(name = "other")] m.func("upper", |_, t: String| Ok(t))?;),
             )),
-            "`name` is not for this",
+            "`name` means nothing",
         );
         refuses(
             lua_module_impl(declare(
                 quote!(#[lua(skip)] m.func("upper", |_, t: String| Ok(t))?;),
             )),
-            "`skip` is for a member",
+            "`skip` means nothing",
         );
         refuses(
             lua_module_impl(declare(
@@ -1320,7 +1450,7 @@ mod tests {
             lua_module_impl(declare(
                 quote!(#[lua(names(t = "text"))] m.try_func("parse", parse)?;),
             )),
-            "the list is said elsewhere",
+            "`names` means nothing",
         );
         refuses(
             lua_module_impl(declare(quote!(
@@ -1371,7 +1501,7 @@ mod tests {
             lua_module_impl(declare(
                 quote!(#[lua("string", constant, takes("a: string"))] m.set("os", OS)?;),
             )),
-            "a constant takes no parameters",
+            "`takes` means nothing on a constant",
         );
         refuses(
             lua_fn_impl(
@@ -1380,7 +1510,7 @@ mod tests {
                     fn f() {}
                 ),
             ),
-            "`constant` is for a `set`",
+            "`constant` means nothing",
         );
     }
 
@@ -1496,5 +1626,202 @@ mod tests {
         assert!(text.contains("fn make_members"), "{text}");
         assert!(text.contains("spec . function (\"toBe\""), "{text}");
         assert!(text.contains("from (\"expected\")"), "{text}");
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn in_methods(body: proc_macro2::TokenStream) -> syn::ItemImpl {
+        parse_quote!(impl UserData for X { fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) { #body } })
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn in_declare(body: proc_macro2::TokenStream) -> syn::ItemFn {
+        parse_quote!(fn declare() { #body })
+    }
+
+    #[test]
+    fn a_word_that_means_nothing_where_it_is_written_is_refused() {
+        refuses(
+            lua_fn_impl(
+                quote!(field),
+                parse_quote!(
+                    fn f() {}
+                ),
+            ),
+            "`a kind` means nothing on a function",
+        );
+        refuses(
+            lua_fn_impl(
+                quote!(on(m, "T")),
+                parse_quote!(
+                    fn f() {}
+                ),
+            ),
+            "`on` means nothing on a function",
+        );
+        refuses(
+            lua_userdata_impl(in_methods(
+                quote!(#[lua("number", registered)] methods.add_method("x", |_, this, ()| Ok(1));),
+            )),
+            "`registered` means nothing on a member",
+        );
+        refuses(
+            lua_userdata_impl(in_methods(
+                quote!(#[lua("number", constant)] methods.add_method("x", |_, this, ()| Ok(1));),
+            )),
+            "`constant` means nothing on a member",
+        );
+        refuses(
+            lua_userdata_impl(in_methods(
+                quote!(#[lua("number", name = "x", registered, takes())] helper(methods);),
+            )),
+            "`registered` means nothing on a member",
+        );
+        refuses(
+            lua_module_impl(in_declare(
+                quote!(#[lua("x", registered)] m.set("a", make(|_, ()| Ok(1)))?;),
+            )),
+            "`registered` means nothing on a function set on a module",
+        );
+        refuses(
+            lua_module_impl(in_declare(
+                quote!(#[lua("x", method)] m.set("a", make(|_, ()| Ok(1)))?;),
+            )),
+            "`a kind` means nothing on a function set on a module",
+        );
+        refuses(
+            lua_module_impl(in_declare(
+                quote!(#[lua(function)] m.func("a", |_, ()| Ok(1))?;),
+            )),
+            "`a kind` means nothing on a registration",
+        );
+        refuses(
+            lua_module_impl(in_declare(
+                quote!(#[lua(doc = "x")] m.try_func("parse", parse)?;),
+            )),
+            "`doc` means nothing on a registration given a function by its path",
+        );
+        refuses(
+            lua_module_impl(in_declare(
+                quote!(#[lua(doc_with = waits)] m.try_func("parse", parse)?;),
+            )),
+            "`doc_with` means nothing on a registration given a function by its path",
+        );
+    }
+
+    #[test]
+    fn nothing_is_said_twice() {
+        refuses(
+            lua_fn_impl(
+                quote!("a", returns = "b"),
+                parse_quote!(
+                    fn f() {}
+                ),
+            ),
+            "this is said twice",
+        );
+        refuses(
+            lua_fn_impl(
+                quote!(name = "a", name = "b"),
+                parse_quote!(
+                    fn f() {}
+                ),
+            ),
+            "this is said twice",
+        );
+        refuses(
+            lua_fn_impl(
+                quote!(types(a = "x"), types(a = "y")),
+                parse_quote!(
+                    fn f(a: String) {}
+                ),
+            ),
+            "this is said twice",
+        );
+        refuses(
+            lua_userdata_impl(in_methods(
+                quote!(#[lua("number", method, function, takes())] methods.add_function("x", |_, ()| Ok(1));),
+            )),
+            "this is said twice",
+        );
+        refuses(
+            lua_userdata_impl(in_methods(quote!(
+                #[lua("number")]
+                #[lua(names(a = "b"))]
+                methods.add_method("x", |_, this, a: f64| Ok(a));
+            ))),
+            "one `#[lua(...)]` says all there is to say",
+        );
+        refuses(
+            lua_module_impl(in_declare(quote!(
+                /// A doc.
+                #[lua("number", doc = "Another.")]
+                m.set("a", make(|_, ()| Ok(1)))?;
+            ))),
+            "the doc is said twice",
+        );
+    }
+
+    #[test]
+    fn a_field_takes_nothing() {
+        let in_fields = |body: proc_macro2::TokenStream| -> syn::ItemImpl {
+            parse_quote!(impl UserData for X { fn add_fields<F: UserDataFields<Self>>(fields: &mut F) { #body } })
+        };
+        refuses(
+            lua_userdata_impl(in_fields(
+                quote!(#[lua("number", takes("a: string"))] fields.add_field_method_get("x", |_, this| Ok(1));),
+            )),
+            "a field takes no parameters",
+        );
+        refuses(
+            lua_userdata_impl(in_fields(
+                quote!(#[lua("number", types(a = "string"))] fields.add_field_method_get("x", |_, this| Ok(1));),
+            )),
+            "the list is said elsewhere",
+        );
+    }
+
+    #[test]
+    fn a_mark_is_never_dropped() {
+        refuses(
+            lua_module_impl(in_declare(quote!(#[lua("x", constant)] helper(m, 1)?;))),
+            "`#[lua]` is for a call of a method on the module",
+        );
+        refuses(
+            lua_module_impl(in_declare(quote!(
+                #[lua("x")]
+                for name in NAMES {
+                    m.set(name, 1)?;
+                }
+            ))),
+            "`#[lua]` is for a call of a method on the module",
+        );
+        refuses(
+            lua_module_impl(in_declare(
+                quote!(#[lua("x", constant)] m.set("a", 1)?.set("b", 2)?;),
+            )),
+            "not on a chain",
+        );
+        refuses(
+            lua_userdata_impl(in_methods(quote!(
+                #[lua("number", name = "x", takes())]
+                /// A doc below its mark.
+                helper(methods);
+            ))),
+            "a doc goes above",
+        );
+    }
+
+    #[test]
+    fn a_constant_on_a_type_is_told_its_module_and_its_type() {
+        let out = lua_module_impl(in_declare(quote!(
+            /// Nothing.
+            #[lua("Duration", constant, on(m, "Duration"))]
+            dur.set("ZERO", zero())?;
+        )));
+        let text = out.map_or_default(|t| t.to_string());
+        assert!(
+            text.contains("m . type_const (\"Duration\" , \"ZERO\""),
+            "{text}"
+        );
     }
 }

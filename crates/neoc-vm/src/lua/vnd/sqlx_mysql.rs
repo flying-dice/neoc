@@ -57,8 +57,8 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `#[instrument(name = "sqlx_mysql.open", target = "lua::lib::sqlx_mysql")]`
 /// attribute and bakes the `sqlx_mysql.open` error prefix into its pre-built
 /// `(Value, Value)` return — routing through the facade would add a second span
-/// and double the prefix. Its signature is recorded via
-/// what `neoc_macros` reads from the implementation. The `Database` and `Statement`
+/// and double the prefix. Its signature is read by `neoc_macros`
+/// from the implementation. The `Database` and `Statement`
 /// userdata types keep their own `impl UserData` (the `db_op!` / `stmt_op!`
 /// async methods, error prefixes, and `mysql.statement.*` op tags unchanged)
 /// and are recorded via

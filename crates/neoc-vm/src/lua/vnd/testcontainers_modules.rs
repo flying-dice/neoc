@@ -59,8 +59,8 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `#[instrument(name = "testcontainers_modules.<fn>", target = "lua::lib::testcontainers_modules")]`
 /// attribute and bakes the `testcontainers_modules.<fn>` error prefix into its
 /// pre-built `(Value, Value)` return — routing through the facade would add a
-/// second span and double the prefix. Their signatures are recorded via
-/// what `neoc_macros` reads from the implementation. The `MysqlContainer`,
+/// second span and double the prefix. Their signatures are read by `neoc_macros`
+/// from the implementation. The `MysqlContainer`,
 /// `PostgresContainer`, and `GenericContainer` handle types keep their own
 /// `impl UserData` (the sync accessors and async `stop` unchanged) and are
 /// recorded via [`crate::lua::facade::Module::userdata`]. The `mysql` /

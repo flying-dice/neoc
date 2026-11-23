@@ -40,8 +40,8 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// constructor sub-table (`Map.new()`, `Counter.new(initial?)`, `Mutex.new()`)
 /// whose `new` span (`"<Type>.new"` at `lua::lib::collections`) and registered
 /// Lua surface are byte-identical to the hand-written registration this
-/// replaces; the instance methods stay in each type's `impl UserData` and are
-/// recorded here only.
+/// replaces; the instance methods stay in each type's `impl UserData`, where
+/// `neoc_macros` reads them.
 #[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:collections")?;

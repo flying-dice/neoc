@@ -125,8 +125,8 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// each carries its own `#[instrument]` span and mixes raised `mlua::Error`
 /// (e.g. control-byte rejection) with `(value, error)` returns built directly
 /// from `err` / `from_err`, so neither fits the facade's `func` / `try_func`
-/// return model. Their signatures are recorded via
-/// what `neoc_macros` reads from the implementation.
+/// return model. Their signatures are read by `neoc_macros`
+/// from the implementation.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:ini")?;
 

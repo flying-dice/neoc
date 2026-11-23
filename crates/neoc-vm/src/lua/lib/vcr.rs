@@ -43,8 +43,8 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// carries no span of its own (the mode-specific constructors `passthrough` /
 /// `recording` / `replay` open their own spans), so routing it through the
 /// facade's `func` / `try_func` path would change its behaviour. Its signature
-/// is recorded via
-/// what `neoc_macros` reads from the implementation.
+/// is read by `neoc_macros`
+/// from the implementation.
 #[neoc_macros::lua_module]
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:vcr")?;
