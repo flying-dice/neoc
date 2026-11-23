@@ -21,7 +21,8 @@ pub mod script_env;
 mod span;
 
 pub use engine::{
-    install_runtime_state, load_source, make_bare_engine, make_engine, make_engine_in, prepare_script,
+    WorkerEngineFn, install_runtime_state, load_source, make_bare_engine, make_engine, make_engine_in,
+    prepare_script, set_worker_engine, worker_engine,
 };
 pub use lifecycle::{Life, VM_THREAD_STACK};
 

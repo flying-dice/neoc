@@ -59,12 +59,23 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
     install_with(lua, |_| true)
 }
 
-/// Installs `require` over only the modules named in `allowed`; any other name is unknown.
+/// Installs `require` over only the modules named in `allowed`; any other name is unknown. A `std:thread` worker
+/// the script starts is built with the same subset (this installs the engine's
+/// [worker engine](crate::engine::set_worker_engine); call that afterwards to replace it).
 ///
 /// # Errors
 /// Fails when a module cannot be built.
 pub fn install_allowed(lua: &Lua, allowed: &[&str]) -> mlua::Result<()> {
-    install_with(lua, |name| allowed.contains(&name))
+    install_with(lua, |name| allowed.contains(&name))?;
+    let allowed: Vec<String> = allowed.iter().map(|name| (*name).to_owned()).collect();
+    crate::engine::set_worker_engine(
+        lua,
+        ::std::sync::Arc::new(move |life| {
+            let names: Vec<&str> = allowed.iter().map(String::as_str).collect();
+            crate::engine::make_engine_with(life, &names)
+        }),
+    );
+    Ok(())
 }
 
 fn install_with(lua: &Lua, allowed: impl Fn(&str) -> bool) -> mlua::Result<()> {

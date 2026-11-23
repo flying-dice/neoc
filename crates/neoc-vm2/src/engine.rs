@@ -1,6 +1,8 @@
 //! The engine factory: a Luau state with the curated standard library, the runtime's state and a `require`
 //! over the modules.
 
+use std::sync::Arc;
+
 use mlua::chunk::{AsChunk, Chunk, ChunkMode};
 use mlua::{Lua, StdLib, Value};
 
@@ -50,8 +52,8 @@ pub fn make_engine() -> mlua::Result<Lua> {
     make_engine_in(Life::new())
 }
 
-/// [`make_engine`] whose spawned work registers with `life`: an embedder that unloads the script calls
-/// [`Life::shutdown`].
+/// [`make_engine`] whose spawned work (tasks, workers) registers with `life`: an embedder that unloads the script
+/// calls [`Life::shutdown`], and a `std:thread` worker joins the registry of the engine that started it.
 ///
 /// # Errors
 /// Fails when the engine or a module cannot be set up.
@@ -59,7 +61,40 @@ pub fn make_engine_in(life: Life) -> mlua::Result<Lua> {
     let lua = make_bare_engine()?;
     install_runtime_state(&lua, life);
     modules::install(&lua)?;
+    // a worker of this script is a full engine like it, joining the registry it is given
+    set_worker_engine(&lua, Arc::new(make_engine_in));
     Ok(lua)
+}
+
+/// The engine of a worker script offered only the `allowed` modules: what `std:thread` builds for a worker whose
+/// parent used [`modules::install_allowed`].
+pub(crate) fn make_engine_with(life: Life, allowed: &[&str]) -> mlua::Result<Lua> {
+    let lua = make_bare_engine()?;
+    install_runtime_state(&lua, life);
+    modules::install_allowed(&lua, allowed)?;
+    Ok(lua)
+}
+
+/// How an embedder builds the engine of a `std:thread` worker its script starts: given the script's [`Life`] (the
+/// worker's tasks and workers join it), the engine, offered what the embedder offers its scripts.
+pub type WorkerEngineFn = Arc<dyn Fn(Life) -> mlua::Result<Lua> + Send + Sync>;
+
+struct WorkerEngine(WorkerEngineFn);
+
+/// Install the [`WorkerEngineFn`] of this engine's scripts. [`make_engine_in`] installs one that builds a full
+/// engine and [`modules::install_allowed`] one that builds the same subset. A bare engine ([`make_bare_engine`])
+/// has none, and `std:thread` refuses to start a worker on it until this is called: a worker is never offered more
+/// than its parent without the embedder saying so. An embedder that replaces the `require` of a [`make_engine_in`]
+/// engine with a narrower one must call this too.
+pub fn set_worker_engine(lua: &Lua, factory: WorkerEngineFn) {
+    lua.set_app_data(WorkerEngine(factory));
+}
+
+/// How `std:thread` builds a worker's engine for the script that runs in `lua`, or `None` when the engine has no
+/// [`WorkerEngineFn`] (a bare engine whose embedder did not say how).
+#[must_use]
+pub fn worker_engine(lua: &Lua) -> Option<WorkerEngineFn> {
+    lua.app_data_ref::<WorkerEngine>().map(|factory| factory.0.clone())
 }
 
 /// What the modules keep per engine: the registry of what the script spawns and the `std:task` scheduler over it.
@@ -72,7 +107,10 @@ pub fn install_runtime_state(lua: &Lua, life: Life) {
 
 /// An engine with the curated standard library and nothing else: no modules, no scheduler and no `require`. For an
 /// embedder that offers some of the modules itself ([`modules::build`], after [`install_runtime_state`]) and runs
-/// each script in its own [environment](crate::script_env).
+/// each script in its own [environment](crate::script_env). A script on it cannot start a `std:thread` worker
+/// until the embedder says how to build one ([`set_worker_engine`], which [`modules::install_allowed`] calls). A
+/// worker runs on its engine's globals, not in a script environment: an embedder that keeps a library from its
+/// scripts removes it there too, in every worker engine it builds.
 ///
 /// # Errors
 /// Fails when the engine or a library cannot be set up.
@@ -196,6 +234,38 @@ mod tests {
             (load.as_str(), os.as_str(), close.as_str(), require.as_str()),
             ("nil", "nil", "nil", "function")
         );
+    }
+
+    /// A worker is offered what its parent was: everything for a full engine, the same subset after
+    /// `install_allowed`, and nothing at all (no worker) on a bare engine.
+    #[test]
+    fn a_worker_engine_offers_what_its_parent_was_offered() {
+        let require = |lua: &Lua, name: &str| lua.load(format!("return require({name:?})")).eval::<mlua::Table>();
+
+        let full = make_engine().expect("engine");
+        let worker = worker_engine(&full).expect("a full engine has a worker engine")(Life::new()).expect("worker");
+        assert!(require(&worker, "std:time").is_ok() && require(&worker, "lib:base64").is_ok());
+        assert!(worker_engine(&worker).is_some(), "a worker can start workers of its own");
+
+        let narrow = make_bare_engine().expect("engine");
+        assert!(worker_engine(&narrow).is_none(), "a bare engine has no worker engine");
+        modules::install_allowed(&narrow, &["lib:base64"]).expect("install");
+        let worker = worker_engine(&narrow).expect("install_allowed sets one")(Life::new()).expect("worker");
+        assert!(require(&worker, "lib:base64").is_ok());
+        assert!(require(&worker, "std:time").is_err(), "a worker is not offered more than its parent");
+        let grandchild = worker_engine(&worker).expect("and so on down")(Life::new()).expect("worker");
+        assert!(require(&grandchild, "std:time").is_err());
+    }
+
+    /// The registry a worker engine is given is the one its work joins.
+    #[test]
+    fn a_worker_engine_joins_the_life_it_is_given() {
+        let life = Life::new();
+        let full = make_engine().expect("engine");
+        let worker = worker_engine(&full).expect("worker engine")(life.clone()).expect("worker");
+        life.shutdown();
+        assert!(Life::of(&worker).is_closed());
+        assert!(!Life::of(&full).is_closed());
     }
 
     #[test]
