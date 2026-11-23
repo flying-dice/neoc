@@ -3,6 +3,7 @@
 
 pub mod base64;
 pub mod crypto;
+pub mod csv;
 pub mod diff;
 pub mod hash;
 pub mod hex;
