@@ -3548,6 +3548,7 @@ dependencies = [
  "subtle",
  "tar",
  "tempfile",
+ "tera",
  "thiserror 2.0.21",
  "tokio",
  "toml",

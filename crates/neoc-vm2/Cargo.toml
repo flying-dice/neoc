@@ -88,6 +88,9 @@ tar = "0.4"
 zip = { version = "9", default-features = false, features = ["deflate-flate2", "deflate-zopfli"] }
 # `lib:args`: clap's builder as a run-time argument parser (no derive: that is a binary's concern).
 clap = { version = "4", default-features = false, features = ["std", "help", "usage", "error-context", "string"] }
+# `lib:template`. Without the default features, as in neoc-vm: `builtins` drags chrono and tz data in for `date`.
+# Held at 1.x on purpose: tera 2 rewrites the template language, so moving to it is a deliberate `lib:template` change.
+tera = { version = "1.20", default-features = false }
 
 # `std:process` kills a process's whole group.
 [target.'cfg(unix)'.dependencies]
