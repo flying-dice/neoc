@@ -1,31 +1,15 @@
 --!strict
--- Docker, as this app uses it: the one place that talks to the Docker daemon (through `vnd:bollard`) and turns what
--- Docker says into the app's own shapes. Which Docker is the person's choice (`engine.use`), kept in the app's
--- settings; with none chosen it is this machine's own.
+-- What this app asks of Docker, and what Docker says turned into the app's own shapes. Which Docker, the clients that
+-- talk to it and why a call failed are the container framework's (`vos:docker`).
 --
 -- A function that does something answers with a plain sentence when it could not (the handler and the tool pass it on
 -- as it is) and with nothing when it did what it was asked.
-local app = require("vos:app")
-local bollard = require("vnd:bollard")
+local docker = require("vos:docker")
 local rpc = require("../.app/rpc")
 local stacks = require("./stacks")
-local task = require("std:task")
-local text = require("./text")
 
 local engine = {}
 
--- the setting: where Docker listens; absent for this machine's own
-local HOST = "host"
--- How long a call may wait for Docker's answer, in seconds. Reading is quick or Docker is not answering (a Docker
--- that is starting, or paused, takes the connection and says nothing): the window should hear of that soon. Acting
--- takes as long as the container does: Docker gives one ten seconds to stop before it kills it.
-local READ_TIMEOUT = 5
-local ACT_TIMEOUT = 90
--- how often a Docker that is away is looked for again, in seconds
-local RETRY = 5
--- the most of a container's output that is read and sent, in bytes
-local LOG_LIMIT = 256 * 1024
-local DEFAULT_TAIL = 200
 -- what changes the list of containers; the rest of what Docker reports (every health probe, every `exec`) does not
 local EVENTS = { "create", "start", "die", "destroy", "pause", "unpause", "rename", "health_status" }
 
@@ -39,95 +23,10 @@ local STATES: { [string]: rpc.State } = {
   dead = "dead",
 }
 
--- the clients of the chosen Docker, one to read with and one to act with (they differ in how long they wait), made
--- on first use and again after the choice changes
-type Clients = { reading: vnd_bollard_Client, acting: vnd_bollard_Client }
-local clients: Clients? = nil
--- the events the watcher is reading, so that a change of Docker can end them
-local watched: vnd_bollard_Stream? = nil
--- another Docker was chosen since the watcher last looked: it looks for the new one at once
-local switched = false
+local sentence = docker.sentence
 
-function engine.host(): string
-  local host = app.kv:get(HOST)
-  return if type(host) == "string" then host else ""
-end
-
--- Why a call failed, as a sentence for the person. Docker's own message is one already ("No such container: web");
--- no Docker at all is said in the app's words.
-local function sentence(err: string?): string
-  local kind = bollard.error_kind(err)
-  if kind == "connect" then
-    local host = engine.host()
-    return if host == ""
-      then "Docker is not running on this machine, or cannot be reached."
-      else `Docker cannot be reached at {host}.`
-  elseif kind == "timed_out" then
-    return "Docker is not answering. It may still be starting, or be paused."
-  end
-  -- `bollard.<function>: <kind>: <message>`
-  local message = string.match(err or "", "^bollard%.[%a_]+: [%a_]+: (.*)$")
-  return message or err or "Docker refused, and did not say why."
-end
-
-local function connected(): (Clients?, string?)
-  if clients then
-    return clients, nil
-  end
-  local host = if engine.host() == "" then nil else engine.host()
-  local reading, err = bollard.connect { host = host, timeout = READ_TIMEOUT }
-  if not reading then
-    return nil, sentence(err)
-  end
-  local acting, acting_err = bollard.connect { host = host, timeout = ACT_TIMEOUT }
-  if not acting then
-    return nil, sentence(acting_err)
-  end
-  clients = { reading = reading, acting = acting }
-  return clients, nil
-end
-
--- the client that reads what Docker has
-local function docker(): (vnd_bollard_Client?, string?)
-  local both, problem = connected()
-  return if both then both.reading else nil, problem
-end
-
--- the client that changes it
-local function actor(): (vnd_bollard_Client?, string?)
-  local both, problem = connected()
-  return if both then both.acting else nil, problem
-end
-
--- Choose the Docker this app manages: an address, or empty for this machine's own. The address is only checked for
--- being one (a Docker that is not running there is said by the overview, and may start later).
-function engine.use(host: string): string?
-  host = string.match(host, "^%s*(.-)%s*$") :: string
-  if host ~= "" then
-    if
-      not (string.match(host, "^unix:///") or string.match(host, "^tcp://[^/]") or string.match(host, "^https?://[^/]"))
-    then
-      return "The address must start with unix:///, tcp:// or http://, or be empty for this machine's own Docker."
-    end
-    -- a socket that is not there is a fine choice (Docker may not be running yet): only an address that is none is not
-    local _, err = bollard.connect { host = host }
-    if err and bollard.error_kind(err) ~= "connect" then
-      return sentence(err)
-    end
-  end
-  if host == "" then
-    app.kv:delete(HOST)
-  else
-    app.kv:set(HOST, host)
-  end
-  clients = nil
-  -- the watcher reads the events of the Docker that was chosen before: end them, and it looks for the new one
-  switched = true
-  if watched then
-    watched:close()
-  end
-  return nil
-end
+-- Choose the Docker this app manages: an address, or empty for this machine's own.
+engine.use = docker.use
 
 local function nameOf(names: any): string
   local first = if type(names) == "table" then names[1] else nil
@@ -172,27 +71,22 @@ local function containerOf(summary: any): rpc.Container
   }
 end
 
-local function unreachable(problem: string): rpc.Overview
-  return {
-    engine = { reachable = false, version = "", host = engine.host(), problem = problem },
-    containers = {},
-    stacks = {},
-  }
+local function unreachable(status: vos_DockerStatus, problem: string): rpc.Overview
+  status.reachable = false
+  status.problem = problem
+  return { engine = status, containers = {}, stacks = {} }
 end
 
 -- Whether Docker can be reached, and what it has. Never fails: a Docker that is away is an answer.
 function engine.overview(): rpc.Overview
-  local api, problem = docker()
+  local status = docker.status()
+  local api = if status.reachable then docker.reader() else nil
   if not api then
-    return unreachable(problem or "")
-  end
-  local version, version_err = api:version()
-  if not version then
-    return unreachable(sentence(version_err))
+    return unreachable(status, status.problem)
   end
   local list, list_err = api:list_containers { all = true }
   if not list then
-    return unreachable(sentence(list_err))
+    return unreachable(status, sentence(list_err))
   end
   local containers: { rpc.Container } = {}
   local folders: { [string]: string } = {}
@@ -207,7 +101,7 @@ function engine.overview(): rpc.Overview
     return if a.name == b.name then a.id < b.id else a.name < b.name
   end)
   return {
-    engine = { reachable = true, version = version.Version or "", host = engine.host(), problem = "" },
+    engine = status,
     containers = containers,
     stacks = stacks.summarise(containers, folders),
   }
@@ -232,7 +126,7 @@ local function act(api: vnd_bollard_Client, action: Action, container: string): 
 end
 
 function engine.container(action: Action, container: string): string?
-  local api, problem = actor()
+  local api, problem = docker.actor()
   if not api then
     return problem
   end
@@ -243,7 +137,7 @@ end
 -- removing in the reverse. Removing takes the stack's networks with it, as `docker compose down` does; its volumes
 -- stay. It goes on past a container that fails, and answers with the first failure.
 function engine.stack(action: Action, stack: string): string?
-  local api, problem = actor()
+  local api, problem = docker.actor()
   if not api then
     return problem
   end
@@ -292,7 +186,7 @@ end
 
 -- What a container was made with. The values of its environment are left out: they often hold passwords.
 function engine.details(container: string): (rpc.Details?, string?)
-  local api, problem = docker()
+  local api, problem = docker.reader()
   if not api then
     return nil, problem
   end
@@ -337,62 +231,17 @@ end
 
 -- The end of what a container wrote, its output and its errors together in the order Docker has them.
 function engine.logs(container: string, tail: number?): (rpc.Logs?, string?)
-  local api, problem = docker()
-  if not api then
+  local logs, problem = docker.logs(container, tail)
+  if not logs then
     return nil, problem
   end
-  local lines = tail or DEFAULT_TAIL
-  local stream, err = api:logs(container, { tail = lines })
-  if not stream then
-    return nil, sentence(err)
-  end
-  local pieces: { string } = {}
-  while true do
-    local piece, piece_err = stream:next()
-    if piece_err then
-      return nil, sentence(piece_err)
-    end
-    if not piece then
-      break
-    end
-    table.insert(pieces, piece.data)
-  end
-  local written, cut = text.tail(table.concat(pieces), LOG_LIMIT)
-  local _, breaks = string.gsub(written, "\n", "")
-  return { container = container, text = written, truncated = cut or breaks >= lines }, nil
+  return { container = container, text = logs.text, truncated = logs.truncated }, nil
 end
 
 -- Watch Docker for as long as the app is loaded, and call `changed` whenever what `overview` answers may be
--- different: a container was made, started, stopped or removed, Docker itself came or went, or the watcher was not
--- listening for a while (Docker does not repeat what it reported to nobody). It never returns: run it in a task.
+-- different. It never returns: run it in a task.
 function engine.watch(changed: () -> ())
-  local reachable: boolean? = nil
-  while true do
-    switched = false
-    local api = docker()
-    local events = if api and api:ping() then api:events { filters = { type = "container", event = EVENTS } } else nil
-    if events then
-      reachable = true
-      watched = events
-      -- from here on every change is heard; what happened before this was not
-      changed()
-      -- ends when Docker goes away, and when another Docker is chosen (`engine.use` closes it)
-      while events:next() do
-        changed()
-      end
-      watched = nil
-      events:close()
-      -- whatever ended them, the windows read again: a Docker that went away is said at once
-      changed()
-    elseif reachable ~= false then
-      reachable = false
-      changed()
-    end
-    -- a Docker that is away is looked for again in a while; one that was just chosen, now
-    if not switched then
-      task.wait(RETRY)
-    end
-  end
+  docker.watch({ type = "container", event = EVENTS }, changed)
 end
 
 return engine

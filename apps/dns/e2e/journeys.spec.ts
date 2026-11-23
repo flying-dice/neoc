@@ -1,7 +1,7 @@
 /**
  * DNS key user journeys, end to end: the real shell, the real host, the app's own client in a frame of its window,
  * and its Luau backend, which makes the server's container through `vnd:bollard`. The Docker it reaches is the
- * journeys' own (`./fakeDocker.ts`: the Engine API in this process), which every test first points the app at as a
+ * journeys' own (`@vos/docker/fake-docker`: the Engine API in this process), which every test first points the app at as a
  * person would, in the app's address field. So the journeys need no Docker and no DNS server, and what they look at
  * is what this app is for: the container it asks Docker for, whose arguments are the server's whole configuration.
  *
@@ -11,7 +11,7 @@
 import type { FrameLocator, Locator, Page } from '@playwright/test'
 import { expect, expectNoOverflow, frameOf, openDesktop, openFromHome, resizeWindow, test, windowOf } from '../../../e2e/fixtures'
 import { callTool } from '../../../e2e/host/pair'
-import { startFakeDocker, type FakeDocker } from './fakeDocker'
+import { startFakeDocker, type FakeDocker } from '@vos/docker/fake-docker'
 
 const ID = 'dns'
 const IMAGE = '4km3/dnsmasq:2.90-r3-alpine-3.22'
@@ -19,15 +19,17 @@ const frame = (page: Page): FrameLocator => frameOf(page, ID)
 const part = (page: Page, name: string): Locator => frame(page).getByTestId(`${ID}-${name}`)
 // the kit's text field holds the real input in its shadow tree
 const field = (page: Page, name: string): Locator => part(page, name).locator('input')
-const records = (page: Page): Locator => frame(page).locator(`[data-testid^="${ID}-record-"][data-testid$="-name"]`)
-const cmd = (): string[] => docker.sidecar()?.cmd ?? []
+// the name of each row (`dns-record-<id>-name`), not the form's field for a new one (`dns-record-name`)
+const records = (page: Page): Locator => frame(page).locator(`[data-testid^="${ID}-record-"][data-testid$="-name"]:not([data-testid="${ID}-record-name"])`)
+const NAME = 'vos-dns'
+const cmd = (): string[] => docker.container(NAME)?.cmd ?? []
 
 test.describe.configure({ mode: 'serial' })
 
 let docker: FakeDocker
 
 test.beforeAll(async () => {
-  docker = await startFakeDocker()
+  docker = await startFakeDocker({ startLog: ['dnsmasq: started, version 2.90 cachesize 1000'], logStream: 'stderr' })
 })
 
 test.beforeEach(() => docker.reset())
@@ -100,7 +102,7 @@ test.describe('DNS journeys', () => {
     // the container is the server: dnsmasq, told everything on its command line, on the DNS port for both protocols
     expect(docker.pulled(), 'the image is pulled once, when Docker does not have it').toEqual([IMAGE])
     expect(docker.count()).toBe(1)
-    expect(docker.sidecar()).toMatchObject({
+    expect(docker.container(NAME)).toMatchObject({
       name: 'vos-dns',
       image: IMAGE,
       entrypoint: ['dnsmasq'],
@@ -131,7 +133,7 @@ test.describe('DNS journeys', () => {
     await frame(page).locator(`[data-testid^="${ID}-record-"][data-testid$="-remove"]`).last().click()
     await expect(records(page)).toHaveText(['apps.home and *.apps.home'])
     await expect.poll(cmd).not.toContain('--host-record=nas.home,192.168.1.10')
-    expect(docker.sidecar()?.running).toBe(true)
+    expect(docker.container(NAME)?.running).toBe(true)
   })
 
   test('DN3: a name or an address that is none says so in the footer of the form, Add cannot be pressed, and nothing changes', async ({ page }) => {
@@ -191,7 +193,7 @@ test.describe('DNS journeys', () => {
     await part(page, 'apply').click()
     await expect(part(page, 'state')).toHaveText('Answering on port 53')
     await expect(part(page, 'attention')).toHaveCount(0)
-    expect(docker.sidecar()?.running).toBe(true)
+    expect(docker.container(NAME)?.running).toBe(true)
     expect(cmd()).toContain('--host-record=nas.home,192.168.1.10')
   })
 
@@ -206,7 +208,7 @@ test.describe('DNS journeys', () => {
     await part(page, 'log-queries').click()
     await part(page, 'settings-save').click()
     await expect(part(page, 'state')).toHaveText('Answering on port 5353')
-    await expect.poll(() => docker.sidecar()?.ports).toEqual({ '53/udp': '5353', '53/tcp': '5353' })
+    await expect.poll(() => docker.container(NAME)?.ports).toEqual({ '53/udp': '5353', '53/tcp': '5353' })
     expect(cmd()).toEqual(expect.arrayContaining(['--server=9.9.9.9', '--server=2620:fe::fe', '--log-queries']))
     expect(cmd()).not.toContain('--server=1.1.1.1')
 
@@ -237,10 +239,10 @@ test.describe('DNS journeys', () => {
     await turn(page, true)
     await part(page, 'tab-log').click()
     await expect(part(page, 'log')).toContainText('dnsmasq: started')
-    docker.write('dnsmasq: query[A] nas.home from 192.168.1.7')
+    docker.write(NAME, 'dnsmasq: query[A] nas.home from 192.168.1.7')
     await expect(part(page, 'log')).toContainText('query[A] nas.home')
 
-    docker.stop()
+    docker.stop(NAME)
     await expect(part(page, 'state')).toHaveText('Not running')
     await expect(part(page, 'attention')).toContainText('Its container stopped')
     await part(page, 'apply').click()

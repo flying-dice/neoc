@@ -92,6 +92,7 @@ fn require(offered: &Offered) -> String {
     let mut lines: Vec<String> =
         offered.overloads.iter().map(|(module, ty)| format!("((path: \"{module}\") -> {ty})")).collect();
     lines.push(format!("((path: \"vos:app\") -> {})", named("AppApi")));
+    lines.push(format!("((path: \"vos:docker\") -> {})", named("Docker")));
     lines.extend(
         offered
             .refused
