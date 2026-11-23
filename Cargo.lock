@@ -3537,6 +3537,7 @@ dependencies = [
  "rcgen",
  "regex",
  "rsa",
+ "rusqlite",
  "rust-ini",
  "rustix",
  "rustls-platform-verifier",
