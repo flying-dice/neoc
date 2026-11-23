@@ -78,7 +78,28 @@ pub mod semver {
     use serde::{Deserialize, Serialize};
 
     use super::{bump_prerelease, coerce_version};
-    use crate::modules::std::time::time::Order;
+
+    /// How two versions order, by SemVer's precedence.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Shape)]
+    #[serde(rename_all = "snake_case")]
+    pub enum Order {
+        /// The first comes before the second.
+        Less,
+        /// Neither comes before the other (build metadata takes no part).
+        Equal,
+        /// The first comes after the second.
+        Greater,
+    }
+
+    impl From<std::cmp::Ordering> for Order {
+        fn from(ordering: std::cmp::Ordering) -> Self {
+            match ordering {
+                std::cmp::Ordering::Less => Order::Less,
+                std::cmp::Ordering::Equal => Order::Equal,
+                std::cmp::Ordering::Greater => Order::Greater,
+            }
+        }
+    }
 
     /// Which part of a version `increment` raises.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Shape)]
