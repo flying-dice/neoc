@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dependencies]
 vos-domain = { workspace = true, features = ["codegen"] }
+neoc-decl = { workspace = true }
 serde_json = { workspace = true }
 ts-rs = { workspace = true }
 

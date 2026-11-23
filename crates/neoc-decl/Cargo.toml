@@ -1,0 +1,18 @@
+[package]
+name = "neoc-decl"
+description = "The declarations of a module surface as a tree (the modules, their types, every function's parameters and returns), and that tree as Luau declarations. What neoc-vm records and what a generator for another language reads."
+version.workspace = true
+edition.workspace = true
+publish = false
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"
+
+[lints]
+workspace = true

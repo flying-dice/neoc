@@ -3,8 +3,8 @@
 //!
 //! The file holds, in this order:
 //!
-//! 1. the declarations of the `std:`, `lib:` and `vnd:` modules an app is offered, taken from neoc's own generated
-//!    file (`types/neoc.d.luau`) with the modules in [`vos_domain::NOT_FOR_APPS`] left out ([`neoc`]);
+//! 1. the declarations of the `std:`, `lib:` and `vnd:` modules an app is offered, written from the tree neoc-vm
+//!    recorded (`types/neoc.ast.json`) with the modules in [`vos_domain::NOT_FOR_APPS`] left out ([`neoc`]);
 //! 2. vos's types, named `vos_<Name>` (a definitions file has one flat namespace, and neoc names its types
 //!    `<ns>_<module>_<Type>` for the same reason): the `app` API ([`defs`]);
 //! 3. the globals: `app`, and the ones an app's environment does not have ([`vos_domain::GLOBALS_NOT_FOR_APPS`])

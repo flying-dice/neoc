@@ -14,10 +14,10 @@ fn root() -> &'static Path {
     vos_codegen::repo_root()
 }
 
-/// The app definitions the generator writes now, from neoc's committed declarations.
+/// The app definitions the generator writes now, from the committed tree of neoc's modules.
 fn definitions() -> String {
-    let neoc = fs::read_to_string(root().join(vos_codegen::NEOC_DECLARATIONS)).unwrap();
-    vos_codegen::luau_definitions(&neoc).unwrap()
+    let json = fs::read_to_string(root().join(vos_codegen::NEOC_AST)).unwrap();
+    vos_codegen::luau_definitions(&vos_codegen::neoc_modules(&json).unwrap()).unwrap()
 }
 
 // ---- the generated files ----------------------------------------------------------------------------------
@@ -113,7 +113,8 @@ fn the_modules_an_app_is_not_offered_are_unusable_and_the_others_are_neocs() {
         assert!(defs.contains(&format!("export type {ty} = {{ __not_for_apps: never }}")), "{ty}");
     }
     // every other overload is neoc's own type for the module (`lib:json` -> `lib_json`)
-    let neoc = fs::read_to_string(root().join(vos_codegen::NEOC_DECLARATIONS)).unwrap();
+    // (read from neoc's own Luau declarations, which neoc-vm writes from the same tree)
+    let neoc = fs::read_to_string(root().join("types/neoc.d.luau")).unwrap();
     let theirs = vos_codegen::require_overloads(&neoc);
     assert!(theirs.len() > NOT_FOR_APPS.len() + 20);
     for (name, ty) in &theirs {

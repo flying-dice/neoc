@@ -3346,6 +3346,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "neoc-decl"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "neoc-vm"
 version = "0.1.0"
 dependencies = [
@@ -3380,6 +3388,7 @@ dependencies = [
  "miette",
  "mime_guess",
  "mlua",
+ "neoc-decl",
  "notify",
  "p256",
  "parking_lot 0.13.0",
@@ -6516,6 +6525,7 @@ dependencies = [
 name = "vos-codegen"
 version = "0.1.0"
 dependencies = [
+ "neoc-decl",
  "serde_json",
  "ts-rs",
  "vos-domain",

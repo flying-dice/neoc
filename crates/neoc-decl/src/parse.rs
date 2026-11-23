@@ -1,76 +1,12 @@
-//! Reads the Luau declarations (`types/generated/vos.d.luau`) into a tree: its sections, the `export type` aliases
-//! and `declare`d globals of each, and every type as Luau writes it.
+//! Reads Luau declarations into the tree of this crate: a whole definitions file ([`sections`]: its `-- ===== <name>
+//! =====` sections, the `export type` aliases and `declare`d globals of each), or one type as Luau writes it ([`ty`],
+//! [`ret`]).
 //!
 //! The grammar is the part of Luau's type syntax the declarations use: names, string literals, `T?`, unions and
 //! intersections, `{ T }`, table types with properties and an indexer, function types (generic, variadic, with
 //! several returns) and parentheses. Anything else is an error that names the line, never a declaration left out.
 
-/// A Luau type.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Ty {
-    /// `string`, `nil`, `vos_Actor`, a generic's `T`.
-    Name(String),
-    /// A string literal type, as written with its quotes: `"user"`.
-    Str(String),
-    Bool(bool),
-    /// `T?`
-    Optional(Box<Ty>),
-    Union(Vec<Ty>),
-    Inter(Vec<Ty>),
-    /// `{ T }`
-    Array(Box<Ty>),
-    /// `{ name: T, [K]: V }`
-    Table {
-        props: Vec<Prop>,
-        index: Option<Box<(Ty, Ty)>>,
-    },
-    Func(Box<Func>),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Func {
-    pub generics: Vec<String>,
-    pub params: Vec<Param>,
-    /// `...T` after the parameters.
-    pub rest: Option<Ty>,
-    pub ret: Ret,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Param {
-    pub name: Option<String>,
-    pub ty: Ty,
-}
-
-/// What a function returns: no value (`()`), one, or several, and `...T` after them.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Ret {
-    pub values: Vec<Ty>,
-    pub rest: Option<Ty>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Prop {
-    pub doc: String,
-    pub name: String,
-    pub ty: Ty,
-}
-
-/// `export type <name> = <ty>`, or `declare <name>: <ty>`, with the `---` lines above it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Decl {
-    pub doc: String,
-    pub name: String,
-    pub ty: Ty,
-}
-
-/// What follows one `-- ===== <name> =====` line.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Section {
-    pub name: String,
-    pub aliases: Vec<Decl>,
-    pub globals: Vec<Decl>,
-}
+use crate::{Decl, Func, Param, Prop, Ret, Section, Ty};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Tok {
@@ -84,8 +20,9 @@ enum Tok {
 }
 
 /// Longest first: `...` before `.`, `->` before nothing else that starts with `-`.
-const SYMBOLS: &[&str] =
-    &["...", "->", "(", ")", "{", "}", "[", "]", "<", ">", ",", ";", ":", "|", "&", "?", "=", "."];
+const SYMBOLS: &[&str] = &[
+    "...", "->", "(", ")", "{", "}", "[", "]", "<", ">", ",", ";", ":", "|", "&", "?", "=", ".",
+];
 
 fn lex(text: &str) -> Result<Vec<(Tok, usize)>, String> {
     let mut out: Vec<(Tok, usize)> = Vec::new();
@@ -105,7 +42,10 @@ fn lex(text: &str) -> Result<Vec<(Tok, usize)>, String> {
             }
             continue;
         }
-        if let Some(name) = rest.strip_prefix("-- ===== ").and_then(|r| r.trim_end().strip_suffix(" =====")) {
+        if let Some(name) = rest
+            .strip_prefix("-- ===== ")
+            .and_then(|r| r.trim_end().strip_suffix(" ====="))
+        {
             out.push((Tok::Section(name.to_owned()), line));
             continue;
         }
@@ -117,26 +57,38 @@ fn lex(text: &str) -> Result<Vec<(Tok, usize)>, String> {
             if first.is_whitespace() {
                 rest = rest.trim_start();
             } else if first.is_ascii_alphabetic() || first == '_' {
-                let end = rest.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(rest.len());
+                let end = rest
+                    .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .unwrap_or(rest.len());
                 out.push((Tok::Name(rest[..end].to_owned()), line));
                 rest = &rest[end..];
             } else if first == '"' {
-                let Some(end) = rest[1..].find('"') else {
+                // to the quote that closes it: a backslash takes the character after it with it
+                let mut end = None;
+                let mut escaped = false;
+                for (at, c) in rest.char_indices().skip(1) {
+                    match (escaped, c) {
+                        (true, _) => escaped = false,
+                        (false, '\\') => escaped = true,
+                        (false, '"') => {
+                            end = Some(at);
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+                let Some(end) = end else {
                     return Err(format!("line {line}: a string does not end"));
                 };
-                let literal = &rest[..end + 2];
-                if literal.contains('\\') {
-                    return Err(format!(
-                        "line {line}: an escape in the string {literal}, which is not translated"
-                    ));
-                }
-                out.push((Tok::Str(literal.to_owned()), line));
-                rest = &rest[end + 2..];
+                out.push((Tok::Str(rest[..=end].to_owned()), line));
+                rest = &rest[end + 1..];
             } else if let Some(symbol) = SYMBOLS.iter().find(|s| rest.starts_with(**s)) {
                 out.push((Tok::Sym(symbol), line));
                 rest = &rest[symbol.len()..];
             } else {
-                return Err(format!("line {line}: `{first}` is not part of a declaration"));
+                return Err(format!(
+                    "line {line}: `{first}` is not part of a declaration"
+                ));
             }
         }
     }
@@ -166,7 +118,10 @@ impl Parser {
     }
 
     fn line(&self) -> usize {
-        self.toks.get(self.at).or_else(|| self.toks.last()).map_or(0, |(_, line)| *line)
+        self.toks
+            .get(self.at)
+            .or_else(|| self.toks.last())
+            .map_or(0, |(_, line)| *line)
     }
 
     fn fail<T>(&self, what: &str) -> Parse<T> {
@@ -222,11 +177,23 @@ impl Parser {
         found
     }
 
+    /// Nothing is left to read of `text`.
+    fn end(&self, text: &str) -> Parse<()> {
+        if self.peek().is_some() {
+            return self.fail(&format!("`{text}` goes on after the type"));
+        }
+        Ok(())
+    }
+
     fn sections(&mut self) -> Parse<Vec<Section>> {
         let mut sections: Vec<Section> = Vec::new();
         while self.peek().is_some() {
             if let Some(Tok::Section(name)) = self.peek() {
-                sections.push(Section { name: name.clone(), aliases: Vec::new(), globals: Vec::new() });
+                sections.push(Section {
+                    name: name.clone(),
+                    aliases: Vec::new(),
+                    globals: Vec::new(),
+                });
                 self.at += 1;
                 continue;
             }
@@ -248,7 +215,11 @@ impl Parser {
             };
             let name = self.name()?;
             self.expect(if global { ":" } else { "=" })?;
-            let decl = Decl { doc, name, ty: self.ty(None)? };
+            let decl = Decl {
+                doc,
+                name,
+                ty: self.ty(None)?,
+            };
             let Some(section) = sections.last_mut() else {
                 return Err(format!(
                     "`{}` is declared before the first `-- ===== <name> =====` line",
@@ -271,7 +242,11 @@ impl Parser {
         while self.eat("|") {
             parts.push(self.inter(None)?);
         }
-        Ok(if parts.len() == 1 { parts.remove(0) } else { Ty::Union(parts) })
+        Ok(if parts.len() == 1 {
+            parts.remove(0)
+        } else {
+            Ty::Union(parts)
+        })
     }
 
     fn inter(&mut self, first: Option<Ty>) -> Parse<Ty> {
@@ -279,7 +254,11 @@ impl Parser {
         while self.eat("&") {
             parts.push(self.postfix(None)?);
         }
-        Ok(if parts.len() == 1 { parts.remove(0) } else { Ty::Inter(parts) })
+        Ok(if parts.len() == 1 {
+            parts.remove(0)
+        } else {
+            Ty::Inter(parts)
+        })
     }
 
     fn postfix(&mut self, first: Option<Ty>) -> Parse<Ty> {
@@ -321,12 +300,15 @@ impl Parser {
                 self.expect(">")?;
                 let items = self.items()?;
                 self.expect("->")?;
-                self.func(generics, items).map(|func| Ty::Func(Box::new(func)))
+                self.func(generics, items)
+                    .map(|func| Ty::Func(Box::new(func)))
             }
             Some(Tok::Sym("(")) => {
                 let items = self.items()?;
                 if self.eat("->") {
-                    return self.func(Vec::new(), items).map(|func| Ty::Func(Box::new(func)));
+                    return self
+                        .func(Vec::new(), items)
+                        .map(|func| Ty::Func(Box::new(func)));
                 }
                 self.one(items)
             }
@@ -344,12 +326,21 @@ impl Parser {
             }
             if self.eat("...") {
                 items.push(Item::Rest(self.postfix(None)?));
-            } else if matches!((self.peek(), self.peek_at(1)), (Some(Tok::Name(_)), Some(Tok::Sym(":")))) {
+            } else if matches!(
+                (self.peek(), self.peek_at(1)),
+                (Some(Tok::Name(_)), Some(Tok::Sym(":")))
+            ) {
                 let name = self.name()?;
                 self.expect(":")?;
-                items.push(Item::Value(Param { name: Some(name), ty: self.ty(None)? }));
+                items.push(Item::Value(Param {
+                    name: Some(name),
+                    ty: self.ty(None)?,
+                }));
             } else {
-                items.push(Item::Value(Param { name: None, ty: self.ty(None)? }));
+                items.push(Item::Value(Param {
+                    name: None,
+                    ty: self.ty(None)?,
+                }));
             }
             if !self.eat(",") {
                 break;
@@ -376,32 +367,51 @@ impl Parser {
                 Item::Rest(ty) => rest = Some(ty),
             }
         }
-        Ok(Func { generics, params, rest, ret: self.ret()? })
+        Ok(Func {
+            generics,
+            params,
+            rest,
+            ret: self.ret()?,
+        })
     }
 
     fn ret(&mut self) -> Parse<Ret> {
         if self.eat("...") {
-            return Ok(Ret { values: Vec::new(), rest: Some(self.postfix(None)?) });
+            return Ok(Ret {
+                values: Vec::new(),
+                rest: Some(self.postfix(None)?),
+            });
         }
         if !self.is("(") {
-            return Ok(Ret { values: vec![self.ty(None)?], rest: None });
+            return Ok(Ret {
+                values: vec![self.ty(None)?],
+                rest: None,
+            });
         }
         let items = self.items()?;
         // a function is returned, or a parenthesised type goes on: `(A | B)?`, `(A) -> B`
         if self.eat("->") {
             let func = self.func(Vec::new(), items)?;
-            return Ok(Ret { values: vec![self.ty(Some(Ty::Func(Box::new(func))))?], rest: None });
+            return Ok(Ret {
+                values: vec![self.ty(Some(Ty::Func(Box::new(func))))?],
+                rest: None,
+            });
         }
         if self.is("?") || self.is("|") || self.is("&") {
             let inner = self.one(items)?;
-            return Ok(Ret { values: vec![self.ty(Some(inner))?], rest: None });
+            return Ok(Ret {
+                values: vec![self.ty(Some(inner))?],
+                rest: None,
+            });
         }
         let mut values = Vec::new();
         let mut rest = None;
         for item in items {
             match item {
                 Item::Value(Param { name: None, ty }) => values.push(ty),
-                Item::Value(Param { name: Some(name), .. }) => {
+                Item::Value(Param {
+                    name: Some(name), ..
+                }) => {
                     return self.fail(&format!("a return is named `{name}`"));
                 }
                 Item::Rest(ty) => rest = Some(ty),
@@ -414,7 +424,8 @@ impl Parser {
         self.expect("{")?;
         let keyed = matches!(
             (self.peek(), self.peek_at(1)),
-            (Some(Tok::Doc(_) | Tok::Sym("[" | "}")), _) | (Some(Tok::Name(_)), Some(Tok::Sym(":")))
+            (Some(Tok::Doc(_) | Tok::Sym("[" | "}")), _)
+                | (Some(Tok::Name(_)), Some(Tok::Sym(":")))
         );
         if !keyed {
             let item = self.ty(None)?;
@@ -426,10 +437,16 @@ impl Parser {
         while !self.is("}") {
             let doc = self.doc();
             if self.eat("[") {
-                if let (Some(Tok::Str(text)), Some(Tok::Sym("]"))) = (self.peek().cloned(), self.peek_at(1)) {
+                if let (Some(Tok::Str(text)), Some(Tok::Sym("]"))) =
+                    (self.peek().cloned(), self.peek_at(1))
+                {
                     self.at += 2;
                     self.expect(":")?;
-                    props.push(Prop { doc, name: text.trim_matches('"').to_owned(), ty: self.ty(None)? });
+                    props.push(Prop {
+                        doc,
+                        name: text.trim_matches('"').to_owned(),
+                        ty: self.ty(None)?,
+                    });
                 } else {
                     let key = self.ty(None)?;
                     self.expect("]")?;
@@ -441,7 +458,11 @@ impl Parser {
             } else {
                 let name = self.name()?;
                 self.expect(":")?;
-                props.push(Prop { doc, name, ty: self.ty(None)? });
+                props.push(Prop {
+                    doc,
+                    name,
+                    ty: self.ty(None)?,
+                });
             }
             if !(self.eat(",") || self.eat(";")) {
                 break;
@@ -457,5 +478,37 @@ impl Parser {
 /// # Errors
 /// The text uses what the grammar above does not have. The message names the line.
 pub fn sections(luau: &str) -> Result<Vec<Section>, String> {
-    Parser { toks: lex(luau)?, at: 0 }.sections()
+    Parser {
+        toks: lex(luau)?,
+        at: 0,
+    }
+    .sections()
+}
+
+/// One type, as Luau writes it: `{ [string]: number }?`.
+///
+/// # Errors
+/// As [`sections`], and when anything follows the type.
+pub fn ty(luau: &str) -> Result<Ty, String> {
+    let mut parser = Parser {
+        toks: lex(luau)?,
+        at: 0,
+    };
+    let ty = parser.ty(None)?;
+    parser.end(luau)?;
+    Ok(ty)
+}
+
+/// What a function returns, as Luau writes it after `->`: `()`, `string`, `(string?, string?)`, `...any`.
+///
+/// # Errors
+/// As [`ty`].
+pub fn ret(luau: &str) -> Result<Ret, String> {
+    let mut parser = Parser {
+        toks: lex(luau)?,
+        at: 0,
+    };
+    let ret = parser.ret()?;
+    parser.end(luau)?;
+    Ok(ret)
 }

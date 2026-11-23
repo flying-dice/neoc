@@ -351,6 +351,32 @@ pub fn luau_decl_sections(lua: &Lua) -> mlua::Result<Vec<(String, String)>> {
         .collect()
 }
 
+/// Where the tree of every module's declarations goes, relative to the repository root: what a generator for
+/// another language reads (vos-codegen writes TypeScript's from it), so that it does not read Luau.
+pub const AST_PATH: &str = "types/neoc.ast.json";
+
+/// The declarations of every module as a tree, in registry order: what [`luau_decls()`] writes as Luau.
+///
+/// # Errors
+/// As [`luau_decl_sections`].
+pub fn ast(lua: &Lua) -> mlua::Result<Vec<neoc_decl::Section>> {
+    declared(lua)?.iter().map(Module::ast).collect()
+}
+
+/// [`ast()`] as the JSON of [`AST_PATH`] (`cargo run -p neoc-vm --example luau_decls -- --ast` writes it).
+///
+/// # Errors
+/// As [`ast()`].
+pub fn ast_json(lua: &Lua) -> mlua::Result<String> {
+    // a module to a line: the file is read by generators, and a change is reviewed in the Luau beside it
+    let modules = ast(lua)?
+        .iter()
+        .map(serde_json::to_string)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(mlua::Error::external)?;
+    Ok(format!("[\n{}\n]\n", modules.join(",\n")))
+}
+
 /// The whole Luau definitions file (`cargo run -p neoc-vm --example luau_decls` writes it to
 /// [`LUAU_DECLS_PATH`]): a header, the section of every module in registry order, then the `require`
 /// overloads that make `require("lib:json")` have the type of that module in luau-lsp.

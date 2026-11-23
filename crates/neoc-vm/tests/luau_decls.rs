@@ -29,7 +29,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 use std::{env, fs, thread};
 
-use neoc_vm::lua::modules::{self, LUAU_DECLS_PATH};
+use neoc_vm::lua::modules::{self, AST_PATH, LUAU_DECLS_PATH};
 use neoc_vm::lua::sandbox::make_engine;
 
 /// The luau-lsp release the fixtures are pinned to.
@@ -51,6 +51,33 @@ fn committed_declarations_match_the_modules() {
         current == text,
         "{LUAU_DECLS_PATH} is stale: run `cargo run -p neoc-vm --example luau_decls` and commit the result"
     );
+}
+
+/// The tree a generator for another language reads says what the Luau declarations say: it is current, and
+/// written as Luau, section by section, it is the committed declarations (so the two cannot differ).
+#[test]
+fn the_committed_tree_is_current_and_is_the_declarations() {
+    let lua = make_engine().unwrap();
+    let json = fs::read_to_string(root().join(AST_PATH)).unwrap_or_default();
+    assert!(
+        json == modules::ast_json(&lua).unwrap(),
+        "{AST_PATH} is stale: run `cargo run -p neoc-vm --example luau_decls -- --ast` and commit the result"
+    );
+    let read: Vec<neoc_decl::Section> = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        read,
+        modules::ast(&lua).unwrap(),
+        "the JSON reads back as the tree"
+    );
+    let declarations = fs::read_to_string(root().join(LUAU_DECLS_PATH)).unwrap();
+    for section in &read {
+        let luau = neoc_decl::luau::section(section);
+        assert!(
+            declarations.contains(&luau),
+            "the section of {} is not in {LUAU_DECLS_PATH}",
+            section.name
+        );
+    }
 }
 
 /// A colon is not allowed in a Windows file name: no tracked file may have one, so the repository clones there.
@@ -173,6 +200,29 @@ fn the_example_writes_and_checks() {
 }
 
 /// A file that cannot be written (here: a folder) is exit 1 with the reason, not a panic and not exit 0.
+#[test]
+fn the_example_writes_and_checks_the_tree() {
+    let scratch = Scratch::new("decls-example-ast");
+    let file = scratch.0.join("neoc.ast.json");
+    let file_arg = file.to_str().unwrap();
+
+    let (code, _, stderr) = run_example(&["--ast", "--check", "--out", file_arg]);
+    assert_eq!(code, 1, "{stderr}");
+    assert!(
+        stderr.contains("cargo run -p neoc-vm --example luau_decls -- --ast"),
+        "{stderr}"
+    );
+    let (code, _, stderr) = run_example(&["--ast", "--out", file_arg]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(
+        fs::read_to_string(&file).unwrap(),
+        fs::read_to_string(root().join(AST_PATH)).unwrap()
+    );
+    let (code, stdout, stderr) = run_example(&["--check", "--ast", "--out", file_arg]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("--check OK"), "{stdout}");
+}
+
 #[test]
 fn the_example_reports_a_file_it_cannot_write() {
     let scratch = Scratch::new("decls-unwritable");

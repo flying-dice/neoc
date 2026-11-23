@@ -1,20 +1,24 @@
 //! `types/generated/vos.d.ts`: the TypeScript declarations of what an app's backend is offered, for a backend written
 //! in TypeScript and compiled to Luau by `TypeScriptToLua` (the build of `@vos/vite-plugin`, and editors).
 //!
-//! It is a translation of `types/generated/vos.d.luau`, the Luau declarations this crate writes from neoc's recorded
-//! surface and the `app` API: the same modules, types and documentation, so the two cannot differ, and
-//! `bun run codegen:check` fails when either is stale. [`parse`] reads the Luau text into a tree; [`emit`] writes it
-//! as TypeScript.
+//! It is written from the same tree as `types/generated/vos.d.luau`: neoc's modules as neoc-vm recorded them
+//! (`types/neoc.ast.json`, read as `neoc_decl`'s types), and what vos adds to them, which is written by hand in Luau
+//! (the `app` API) and read into that tree. The same modules, types and documentation, so the two cannot differ, and
+//! `bun run codegen:check` fails when either is stale. [`emit`] writes the tree as TypeScript.
 
 mod emit;
-mod parse;
 
 pub use emit::declarations;
 
 #[cfg(test)]
 mod tests {
-    use super::declarations;
-    use crate::{luau_definitions, require_overloads, NEOC_DECLARATIONS};
+    use super::{declarations, emit::translate};
+    use crate::{luau_definitions, neoc_modules, require_overloads, NEOC_AST};
+
+    /// The TypeScript of a definitions file written in Luau.
+    fn from_luau(luau: &str) -> Result<String, String> {
+        translate(&neoc_decl::parse::sections(luau)?)
+    }
 
     /// A definitions file of one module, `lib:probe`, with `body` as the rest of its section.
     fn file(body: &str) -> String {
@@ -29,7 +33,7 @@ export type vos_NotForApps_print = (__not_for_apps: never) -> never\n\n\
     }
 
     fn translated(body: &str) -> String {
-        declarations(&file(body)).unwrap()
+        from_luau(&file(body)).unwrap()
     }
 
     #[test]
@@ -102,7 +106,7 @@ export type lib_probe = {\n\
 
     #[test]
     fn what_is_not_translated_is_an_error_that_says_where() {
-        let failed = |body: &str| declarations(&file(body)).unwrap_err();
+        let failed = |body: &str| from_luau(&file(body)).unwrap_err();
         let module = "export type lib_probe = {\n\tid: string,\n}\n";
         assert!(failed("export type lib_probe = {\n\tco: thread,\n}\n")
             .contains("the Luau type `thread` has no TypeScript"));
@@ -110,20 +114,23 @@ export type lib_probe = {\n\
             .contains("line 6: `typeof` is not translated"));
         assert!(failed("export type lib_probe = {\n\tco: lib_other.Thing,\n}\n")
             .contains("line 6: `lib_other` is followed by"));
-        assert!(failed("export type lib_probe = {\n\ttext: \"a\\\"b\",\n}\n").contains("line 6: an escape"));
+        assert!(
+            failed("export type lib_probe = {\n\ttext: \"a\\\"b\",\n}\n").contains("an escape in the string")
+        );
         assert!(failed("export type lib_probe = string\n").contains("is not a table of members"));
         assert!(failed(&format!("{module}local x = y\n")).contains("expected `export type` or `declare`"));
         assert!(failed("export type lib_other = {}\n")
             .contains("`lib_probe`, the type of `lib:probe`, is not declared"));
-        assert!(declarations("-- nothing\n").unwrap_err().contains("no `not for apps` section"));
+        assert!(from_luau("-- nothing\n").unwrap_err().contains("no `not for apps` section"));
     }
 
     /// The committed declarations: every module an app is offered is a TypeScript module, and nothing else is.
     #[test]
     fn the_declarations_of_the_repository_translate_whole() {
-        let neoc = std::fs::read_to_string(crate::repo_root().join(NEOC_DECLARATIONS)).unwrap();
-        let luau = luau_definitions(&neoc).unwrap();
-        let ts = declarations(&luau).unwrap();
+        let json = std::fs::read_to_string(crate::repo_root().join(NEOC_AST)).unwrap();
+        let modules = neoc_modules(&json).unwrap();
+        let luau = luau_definitions(&modules).unwrap();
+        let ts = declarations(&modules).unwrap();
         let modules: Vec<&str> =
             ts.lines().filter_map(|l| l.strip_prefix("declare module \"")?.strip_suffix("\" {")).collect();
         let offered: Vec<String> = require_overloads(&luau)

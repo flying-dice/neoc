@@ -9,7 +9,8 @@
  *   application -> domain; external: async-trait, futures-util (its runtime-free `FutureExt::catch_unwind`), parking_lot, serde_json, sha2, thiserror, tracing
  *   adapters    -> application, domain; never each other
  *   lua         -> application, domain, neoc-vm (the one vos crate that may use the Lua VM library)
- *   neoc-vm     -> nothing internal (the Lua VM library; the lua adapter and the `neoc` CLI may depend on it)
+ *   neoc-vm     -> neoc-decl only (the Lua VM library; the lua adapter and the `neoc` CLI may depend on it)
+ *   neoc-decl   -> nothing internal (the tree of a module surface's declarations; the VM writes it, codegen reads it)
  *   neoc        -> neoc-vm only (the CLI over the VM; it never reaches into the vos crates)
  *   host        -> every adapter, never neoc-vm
  *
@@ -33,13 +34,16 @@ const INTERNAL: Record<string, string[]> = {
   // The Lua VM (Luau): a support library, not an adapter. It depends on no other crate here, and among the
   // vos crates only the Lua adapter may depend on it (the one place a script engine is wired to a port), so
   // the VM stays swappable. The `neoc` CLI is its other client.
-  'neoc-vm': [],
+  'neoc-vm': ['neoc-decl'],
+  // The declarations of a module surface as a tree, and that tree as Luau: what the VM records and what a generator
+  // reads. It knows neither the VM nor vos, so a generator does not have to depend on the VM to read its surface.
+  'neoc-decl': [],
   neoc: ['neoc-vm'],
   'vos-sqlite': ['vos-domain', 'vos-application'],
   'vos-fetch': ['vos-application'],
   'vos-mcp': ['vos-domain', 'vos-application'],
   'vos-http': ['vos-domain', 'vos-application'],
-  'vos-codegen': ['vos-domain'],
+  'vos-codegen': ['vos-domain', 'neoc-decl'],
   'vos-host': [
     'vos-domain',
     'vos-application',

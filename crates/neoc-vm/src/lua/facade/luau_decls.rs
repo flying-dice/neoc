@@ -1,6 +1,11 @@
-//! Luau declarations from a module's recorded surface.
+//! The declarations of a module's recorded surface: as a tree, and as Luau.
 //!
-//! [`Module::luau_decls`] writes one section of a luau-lsp definitions file: an `export type` alias per resource type
+//! [`Module::ast`] is the module's declarations as a tree (`neoc_decl`): the recording, with every recorded type
+//! turned into Luau's by the rules below and read into the tree. [`Module::luau_decls`] is that tree written as
+//! Luau by `neoc_decl::luau`, and `types/neoc.ast.json` is the same tree for a generator for another language
+//! (vos-codegen writes TypeScript's from it), so neither is a translation of the other.
+//!
+//! As Luau, a module is one section of a luau-lsp definitions file: an `export type` alias per resource type
 //! (a table type of its methods, `self` first, and its fields), a `<Type>Statics` alias for the sub-table of a
 //! type on its module (`Duration.from_secs`), and one alias for the module table itself, named after the
 //! registry key (`lib:json` is `lib_json`, its `Object` type `lib_json_Object`). [`require_declaration`]
@@ -26,6 +31,8 @@
 //! test-only `grammar` module, which parses the whole generated file with no luau-lsp needed.
 
 use std::fmt::Write as _;
+
+use neoc_decl::{Decl, Func, Param, Prop, Section, Ty};
 
 use super::{Entry, FieldEntry, Module, TypeEntry, VARIADIC, recorded_any};
 
@@ -82,25 +89,35 @@ pub fn require_declaration(keys: &[&str]) -> String {
 
 impl Module<'_> {
     /// Emits this module's section of the Luau declarations: an alias per resource type, a `Statics` alias
-    /// per type with constructors or constants on the module, and the module's own table type.
+    /// per type with constructors or constants on the module, and the module's own table type. It is
+    /// [`Module::ast`] as Luau writes it.
+    ///
+    /// # Errors
+    /// As [`Module::ast`].
+    pub fn luau_decls(&self) -> mlua::Result<String> {
+        Ok(neoc_decl::luau::section(&self.ast()?))
+    }
+
+    /// This module's declarations as a tree: what [`Module::luau_decls`] writes as Luau and what a generator
+    /// for another language reads (`types/neoc.ast.json`).
     ///
     /// # Errors
     /// Fails when the live module table cannot be read, when a type's sub-table on it disagrees with the
     /// recording (a member that was not recorded would be a false alarm for every script that uses it, and a
     /// recorded one that does not exist a call the editor accepts and the VM refuses), or when a record
-    /// cannot be written as Luau (see the module doc).
-    pub fn luau_decls(&self) -> mlua::Result<String> {
+    /// cannot be declared (see the module doc).
+    pub fn ast(&self) -> mlua::Result<Section> {
         for ud in &self.userdata {
             self.check_statics_recorded(ud)?;
         }
-        self.write_decls()
+        self.declarations()
             .map_err(|e| mlua::Error::external(format!("{}: {e}", self.name)))
     }
 
-    fn write_decls(&self) -> Emit<String> {
+    fn declarations(&self) -> Emit<Section> {
         let scope = scope(&self.name);
         check_key(&self.name)?;
-        let mut out = format!("-- ===== {} =====\n\n", self.name);
+        let mut aliases = Vec::new();
         let mut statics = Vec::new();
         check_unique(
             &self.name,
@@ -110,26 +127,24 @@ impl Module<'_> {
                 .chain(self.types.iter().map(|t| t.type_name.as_str())),
         )?;
         for ud in &self.userdata {
-            write_alias(
-                &mut out,
+            aliases.push(alias(
                 &scope,
                 &ud.type_name,
                 &ud.fields,
                 &[(&ud.methods, true), (&ud.functions, false)],
-            )?;
+            )?);
             if recorded_any(ud) {
-                write_alias(
-                    &mut out,
+                aliases.push(alias(
                     &scope,
                     &statics_name(&ud.type_name),
                     &ud.static_consts,
                     &[(&ud.statics, false)],
-                )?;
+                )?);
                 statics.push(&ud.type_name);
             }
         }
         for ty in &self.types {
-            write_type_entry(&mut out, &scope, ty)?;
+            aliases.extend(type_entry(&scope, ty)?);
             statics.push(&ty.type_name);
         }
 
@@ -141,18 +156,27 @@ impl Module<'_> {
                 .chain(self.consts.iter().map(|c| c.name.as_str()))
                 .chain(self.entries.iter().map(|e| e.name.as_str())),
         )?;
-        out.push_str(&format!("export type {scope} = {{\n"));
+        let mut props = Vec::new();
         for name in statics {
-            write_prop(&mut out, "", name, &alias_name(&scope, &statics_name(name)))?;
+            let ty = Ty::Name(alias_name(&scope, &statics_name(name)));
+            props.push(prop("", name, ty)?);
         }
         for c in &self.consts {
-            write_field(&mut out, &scope, c)?;
+            props.push(field(&scope, c)?);
         }
         for e in &self.entries {
-            e.write_fn_prop(&mut out, &scope, None)?;
+            props.push(e.fn_prop(&scope, None)?);
         }
-        out.push_str("}\n\n");
-        Ok(out)
+        aliases.push(Decl {
+            doc: String::new(),
+            name: scope,
+            ty: Ty::Table { props, index: None },
+        });
+        Ok(Section {
+            name: self.name.clone(),
+            aliases,
+            globals: Vec::new(),
+        })
     }
 }
 
@@ -217,27 +241,27 @@ fn check_doc(doc: &str) -> Emit<()> {
     }
 }
 
-/// The alias of a type with constructors recorded through `Module::type_`: its methods, and the statics.
-fn write_type_entry(out: &mut String, scope: &str, ty: &TypeEntry) -> Emit<()> {
-    write_alias(out, scope, &ty.type_name, &[], &[(&ty.methods, true)])?;
-    write_alias(
-        out,
-        scope,
-        &statics_name(&ty.type_name),
-        &[],
-        &[(&ty.constructors, false)],
-    )
+/// The aliases of a type with constructors recorded through `Module::type_`: its methods, and the statics.
+fn type_entry(scope: &str, ty: &TypeEntry) -> Emit<[Decl; 2]> {
+    Ok([
+        alias(scope, &ty.type_name, &[], &[(&ty.methods, true)])?,
+        alias(
+            scope,
+            &statics_name(&ty.type_name),
+            &[],
+            &[(&ty.constructors, false)],
+        )?,
+    ])
 }
 
-/// One `export type <scope>_<name> = { ... }`: the fields, then the functions of each group. A method (`true`)
+/// One `<scope>_<name>`, a table type: the fields, then the functions of each group. A method (`true`)
 /// takes the type itself as `self`, so `value:name(...)` checks and `value.name(...)` does not.
-fn write_alias(
-    out: &mut String,
+fn alias(
     scope: &str,
     name: &str,
     fields: &[FieldEntry],
     groups: &[(&[Entry], bool)],
-) -> Emit<()> {
+) -> Emit<Decl> {
     check_ident("type name", name)?;
     let alias = alias_name(scope, name);
     check_unique(
@@ -248,69 +272,84 @@ fn write_alias(
                 .flat_map(|(entries, _)| entries.iter().map(|e| e.name.as_str())),
         ),
     )?;
-    if fields.is_empty() && groups.iter().all(|(entries, _)| entries.is_empty()) {
-        out.push_str(&format!("export type {alias} = {{}}\n\n"));
-        return Ok(());
-    }
-    out.push_str(&format!("export type {alias} = {{\n"));
-    for field in fields {
-        write_field(out, scope, field)?;
+    let mut props = Vec::new();
+    for f in fields {
+        props.push(field(scope, f)?);
     }
     for (entries, is_method) in groups {
         for entry in *entries {
-            entry.write_fn_prop(out, scope, is_method.then_some(alias.as_str()))?;
+            props.push(entry.fn_prop(scope, is_method.then_some(alias.as_str()))?);
         }
     }
-    out.push_str("}\n\n");
-    Ok(())
+    Ok(Decl {
+        doc: String::new(),
+        name: alias,
+        ty: Ty::Table { props, index: None },
+    })
 }
 
 impl Entry {
-    /// The property line of this function in a table type, with its doc comment above. `receiver` is the
-    /// alias of the type a method belongs to.
-    fn write_fn_prop(&self, out: &mut String, scope: &str, receiver: Option<&str>) -> Emit<()> {
-        let mut params: Vec<String> = receiver
-            .map(|alias| format!("self: {alias}"))
+    /// This function as a property of a table type, with its doc. `receiver` is the alias of the type a
+    /// method belongs to.
+    fn fn_prop(&self, scope: &str, receiver: Option<&str>) -> Emit<Prop> {
+        let mut params: Vec<Param> = receiver
+            .map(|alias| Param {
+                name: Some(neoc_decl::SELF.to_owned()),
+                ty: Ty::Name(alias.to_owned()),
+            })
             .into_iter()
             .collect();
+        let mut rest = None;
         for (i, (name, ty)) in self.params.iter().enumerate() {
             if name == VARIADIC {
                 if i + 1 != self.params.len() {
                     return Err(format!("`{}`: `...` is not its last parameter", self.name));
                 }
-                params.push(format!("...{}", grouped(&luau_type(ty, scope)?)));
+                rest = Some(tree(&luau_type(ty, scope)?)?);
             } else {
                 check_ident("parameter", name)?;
-                params.push(format!("{}: {}", param_ident(name), luau_type(ty, scope)?));
+                params.push(Param {
+                    name: Some(name.clone()),
+                    ty: tree(&luau_type(ty, scope)?)?,
+                });
             }
         }
-        let ty = format!(
-            "({}) -> {}",
-            params.join(", "),
-            luau_returns(&self.ret, scope)?
-        );
-        write_prop(out, &self.doc, &self.name, &ty)
+        let returns = luau_returns(&self.ret, scope)?;
+        let ret = neoc_decl::parse::ret(&returns)
+            .map_err(|e| format!("the return `{returns}` is not read: {e}"))?;
+        let func = Func {
+            generics: Vec::new(),
+            params,
+            rest,
+            ret,
+        };
+        prop(&self.doc, &self.name, Ty::Func(Box::new(func)))
     }
 }
 
-/// One property of a value (a field, a constant) with its doc comment above.
-fn write_field(out: &mut String, scope: &str, field: &FieldEntry) -> Emit<()> {
-    write_prop(out, &field.doc, &field.name, &luau_type(&field.ty, scope)?)
+/// The tree of a type the rules below wrote as Luau.
+fn tree(luau: &str) -> Emit<Ty> {
+    neoc_decl::parse::ty(luau).map_err(|e| format!("the type `{luau}` is not read: {e}"))
 }
 
-/// `\t--- doc` lines, then `\t<name>: <ty>,`.
-fn write_prop(out: &mut String, doc: &str, name: &str, ty: &str) -> Emit<()> {
+/// One property of a value (a field, a constant) with its doc.
+fn field(scope: &str, field: &FieldEntry) -> Emit<Prop> {
+    prop(
+        &field.doc,
+        &field.name,
+        tree(&luau_type(&field.ty, scope)?)?,
+    )
+}
+
+/// A property, once its name and its doc are known to be writable.
+fn prop(doc: &str, name: &str, ty: Ty) -> Emit<Prop> {
     check_ident("name", name)?;
     check_doc(doc)?;
-    for line in doc.lines() {
-        if line.is_empty() {
-            out.push_str("\t---\n");
-        } else {
-            out.push_str(&format!("\t--- {line}\n"));
-        }
-    }
-    out.push_str(&format!("\t{}: {ty},\n", prop_name(name)));
-    Ok(())
+    Ok(Prop {
+        doc: doc.to_owned(),
+        name: name.to_owned(),
+        ty,
+    })
 }
 
 /// A name made safe to write as a parameter name: a reserved word gets a trailing underscore.
@@ -561,16 +600,6 @@ fn return_item(value: &str, scope: &str) -> Emit<String> {
     })
 }
 
-/// `ty` as one type after a prefix such as `...`: a function, a union or an intersection is parenthesised,
-/// so `...(string | number)` is a pack of either and not `...string` joined with `number`.
-fn grouped(ty: &str) -> String {
-    if is_function(ty) || top_level(ty).any(|(_, c)| c == '|' || c == '&') {
-        format!("({ty})")
-    } else {
-        ty.to_string()
-    }
-}
-
 /// `ty` made optional. `nil` and `any` already are, an already optional type stays as it is, and a function
 /// or a union is parenthesised first: a trailing `?` on `(a) -> b` belongs to the return type.
 fn optional(ty: &str) -> String {
@@ -730,7 +759,7 @@ mod tests {
                     "\tget: (self: lib_json_Object, path: any) -> any,\n",
                     "\tlen: (self: lib_json_Object) -> number,\n",
                     "}\n",
-                    "export type lib_json = {\n}\n",
+                    "export type lib_json = {}\n",
                 ]
             ),
             "{decls}"
