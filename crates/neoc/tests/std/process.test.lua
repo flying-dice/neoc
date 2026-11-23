@@ -64,7 +64,7 @@ describe("process", function()
             for _, opts in ipairs({ {}, { args = { "-l" } }, { program = "" } }) do
                 local child, err = process.spawn(opts)
                 expect(child).toBeNil()
-                expect(err).toContain("`program`")
+                expect(err).toContain('"program"')
                 expect(process.error_kind(err)).toBe("invalid_input")
             end
         end)
@@ -79,7 +79,7 @@ describe("process", function()
         test("a stream is piped, null or inherit", function()
             local child, err = process.spawn({ program = "sh", stdout = "pipe" })
             expect(child).toBeNil()
-            expect(err).toContain("`stdout`")
+            expect(err).toContain('"stdout"')
             expect(process.error_kind(err)).toBe("invalid_input")
         end)
 
