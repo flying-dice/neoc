@@ -3,6 +3,7 @@
 
 pub mod collections;
 pub mod env;
+pub mod io;
 pub mod osstr;
 pub mod path;
 pub mod time;
