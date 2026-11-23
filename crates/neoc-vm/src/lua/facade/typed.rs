@@ -9,6 +9,11 @@
 //! The note is taken only while a type's members are being recorded ([`record`]), which runs the type's own
 //! `add_fields` and `add_methods` against a registry that registers nothing. A real registration with mlua
 //! passes through the same functions and notes nothing.
+//!
+//! A member a helper adds for its caller is noted in two halves: the statement says its name and parameters
+//! ([`left`]) and the helper, which knows the type of what it registers, says the return ([`answers`],
+//! [`answering`]). [`record`] panics, with the member's name, when a member is left without an answer; the
+//! declaration check runs every module, so that is caught there.
 
 use std::cell::{OnceCell, RefCell};
 use std::future::Future;
@@ -111,7 +116,7 @@ pub fn left(kind: &str, name: &str, params: impl FnOnce() -> Vec<(String, String
 
 /// Called by a helper that adds a member for the caller (`call(methods, "keyring.entry", ...)`): what the
 /// member returns is `R`, the type the helper is generic over. It answers the first member noted with [`left`]
-/// that has no answer yet: a helper is called once for each member it adds, in the order they are said, so a
+/// that has no answer yet: a helper calls it once for each member it adds, in the order they are said, so a
 /// helper that forgets to answer leaves a member without one, which [`record`] refuses.
 pub fn answers<R: DeclType>() {
     NOTES.with_borrow_mut(|notes| {

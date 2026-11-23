@@ -69,7 +69,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use mlua::{IntoLua, Lua, Table, UserData, UserDataMethods, Value};
 
 use crate::lua::error_text;
-use crate::lua::facade::{DeclType, Declared, Module, Shape};
+use crate::lua::facade::{DeclType, Declared, Module};
 use crate::lua::std::io::{ReaderHandle, WriterHandle};
 use crate::lua::std::osstr;
 
@@ -174,7 +174,7 @@ fn declare_files(m: &mut Module<'_>) -> mlua::Result<()> {
         "set_permissions",
         |_, (path, opts): (Path1, Declared<Permissions, Table>)| {
             let path = path_of(&path)?;
-            let options = read_options(Some(&opts.0), Permissions::KEYS)?;
+            let options = read_options(Some(&opts.0), opts.keys())?;
             let mode = options.count("mode")?;
             let readonly = options.flag("readonly")?;
             let change = match (mode, readonly) {
@@ -228,7 +228,7 @@ fn declare_directories(m: &mut Module<'_>) -> mlua::Result<()> {
     #[lua(doc_with = waits)]
     m.try_async_func("walk", |_, (path, opts): (Path1, Opts<Walk>)| {
         let parsed = path_of(&path).and_then(|path| {
-            let options = read_options(opts.0.as_ref(), Walk::KEYS)?;
+            let options = read_options(opts.0.as_ref(), opts.keys())?;
             let depth = options.count("max_depth")?;
             Ok((
                 path,
@@ -285,7 +285,7 @@ fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
     #[lua]
     m.try_func("remove_file", |_, (path, opts): (Path1, Opts<Removal>)| {
         let path = path_of(&path)?;
-        let missing_ok = read_options(opts.0.as_ref(), Removal::KEYS)?
+        let missing_ok = read_options(opts.0.as_ref(), opts.keys())?
             .flag("missing_ok")?
             .unwrap_or(false);
         ops::remove_file(&path, missing_ok)
@@ -294,7 +294,7 @@ fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
     #[lua]
     m.try_func("remove_dir", |_, (path, opts): (Path1, Opts<Removal>)| {
         let path = path_of(&path)?;
-        let missing_ok = read_options(opts.0.as_ref(), Removal::KEYS)?
+        let missing_ok = read_options(opts.0.as_ref(), opts.keys())?
             .flag("missing_ok")?
             .unwrap_or(false);
         ops::remove_dir(&path, missing_ok)
@@ -305,7 +305,7 @@ fn declare_tree_operations(m: &mut Module<'_>) -> mlua::Result<()> {
         "remove_dir_all",
         |_, (path, opts): (Path1, Opts<Removal>)| {
             let parsed = path_of(&path).and_then(|path| {
-                let missing_ok = read_options(opts.0.as_ref(), Removal::KEYS)?
+                let missing_ok = read_options(opts.0.as_ref(), opts.keys())?
                     .flag("missing_ok")?
                     .unwrap_or(false);
                 Ok((path, missing_ok))
@@ -353,7 +353,7 @@ fn declare_watch(m: &mut Module<'_>) -> mlua::Result<()> {
     #[lua(doc_with = waits)]
     m.try_async_func("watch", |lua, (path, opts): (Path1, Opts<Watch>)| {
         let parsed = path_of(&path).and_then(|path| {
-            let recursive = read_options(opts.0.as_ref(), Watch::KEYS)?
+            let recursive = read_options(opts.0.as_ref(), opts.keys())?
                 .flag("recursive")?
                 .unwrap_or(false);
             Ok((path, recursive))

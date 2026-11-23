@@ -173,11 +173,26 @@ pub trait Shape {
 /// A value a function reads by its own rules, declared as the type `T` it is meant to be:
 /// `opts: Declared<Option<Removal>, Option<Table>>` is `opts: { missing_ok: bool? }?` to a script and the
 /// table as it was passed (`opts.0`) to the function, which says what a wrong one is.
+///
+/// `T` is a declaration only. Nothing checks it against `V` or against what the function reads: a shape's
+/// field types say what a script should pass, and the function's own reader decides what it takes.
 pub struct Declared<T, V = mlua::Value>(pub V, std::marker::PhantomData<fn() -> T>);
 
 impl<T, V: mlua::FromLua> mlua::FromLua for Declared<T, V> {
     fn from_lua(value: mlua::Value, lua: &Lua) -> mlua::Result<Self> {
         Ok(Self(V::from_lua(value, lua)?, std::marker::PhantomData))
+    }
+}
+
+impl<T: Shape> Shape for Option<T> {
+    const KEYS: &'static [&'static str] = T::KEYS;
+}
+
+impl<T: Shape, V> Declared<T, V> {
+    /// The keys of the shape the value is declared as: what its reader allows.
+    #[must_use]
+    pub fn keys(&self) -> &'static [&'static str] {
+        T::KEYS
     }
 }
 

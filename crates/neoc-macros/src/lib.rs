@@ -1494,8 +1494,10 @@ fn lua_module_impl(mut function: ItemFn) -> syn::Result<Tokens> {
 /// not a field. A field that may be left out is an `Option`.
 ///
 /// `#[lua_record(shape)]` is for a table a module reads by its own rules (its own errors, its own ranges): the
-/// struct is only what the table looks like. It is never built; a parameter is `Declared<Shape, Value>`, the
-/// value as it was passed, and the reader takes the keys it allows from the struct (`Shape::KEYS`).
+/// struct is only what the table looks like. It is never built; a parameter is
+/// `Declared<Option<Shape>, Option<Table>>`, the value as it was passed, and the reader takes the keys it
+/// allows from the struct (`opts.keys()`, `Shape::KEYS`). The field types are declarations: nothing checks them
+/// against what the reader takes.
 #[proc_macro_attribute]
 pub fn lua_record(args: TokenStream, item: TokenStream) -> TokenStream {
     let record = syn::parse_macro_input!(item as syn::ItemStruct);
