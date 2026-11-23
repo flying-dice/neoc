@@ -2,6 +2,9 @@
 
 - Prefer strict compiler checking; preserve the project's additional safety checks.
   Enable stricter configuration only within an authorized configuration change.
+- Generated and hand-written declarations (`types/generated/vos.d.ts`) give every member its
+  real shape; `any` or an index signature of `any` is allowed only where the source is genuinely
+  unknown (see "Fully typed APIs" in the styleguide).
 - Use `unknown` for untrusted values and narrow through validation. Type assertions
   do not validate data; avoid `any`, unchecked casts, and non-null assertions as escapes.
 - Model alternatives as discriminated unions, not unrelated optional fields.
