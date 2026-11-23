@@ -21,7 +21,7 @@ serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 tracing = "0.1"
 tracing-core = "0.1"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "net"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "net", "io-util", "process"] }
 parking_lot = "0.13"
 futures = { version = "0.3", default-features = false, features = ["std"] }
 strsim = "0.11"
@@ -73,6 +73,10 @@ notify = "9.0"
 # `std:fs` stages a cross-device move beside its destination; `lib:tempfile` is this crate.
 tempfile = "3"
 globset = "0.4"
+
+# `std:process` kills a process's whole group.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["process"] }
 
 [dev-dependencies]
 neoc-vm = { workspace = true }

@@ -46,9 +46,7 @@ mod tests {
 
         let (published, exit) = watch::channel::<Ended<u8>>(None);
         published.send_replace(Some(Err("no such process".to_owned())));
-        assert!(
-            matches!(ended(exit).await, Err(WaitFailed::Io(message)) if message == "no such process")
-        );
+        assert!(matches!(ended(exit).await, Err(WaitFailed::Io(message)) if message == "no such process"));
     }
 
     #[tokio::test]

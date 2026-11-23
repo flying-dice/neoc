@@ -54,11 +54,12 @@ fn too_many(option: &'static str) -> Refused {
 }
 
 /// The program of a command: a path, or a name looked up in `PATH`. Not empty.
-pub(crate) fn program(option: &'static str, program: &str) -> Result<(), Refused> {
-    if program.is_empty() {
+pub(crate) fn program(option: &'static str, program: &Path) -> Result<(), Refused> {
+    let bytes = program.as_os_str().as_encoded_bytes();
+    if bytes.is_empty() {
         return Err(Refused::must_be(option, "the name or the path of a program"));
     }
-    text(option, program.as_bytes())
+    text(option, bytes)
 }
 
 /// The directory a command starts in. Not empty.
@@ -115,7 +116,7 @@ mod tests {
 
     #[test]
     fn a_command_keeps_its_program_arguments_and_environment() {
-        assert_eq!(program("program", "sh"), Ok(()));
+        assert_eq!(program("program", Path::new("sh")), Ok(()));
         assert_eq!(args("args", &["-c".to_owned(), "echo hi".to_owned(), String::new()]), Ok(()));
         assert_eq!(args("args", &[]), Ok(()));
         let variables = BTreeMap::from([("B".to_owned(), "2".to_owned()), ("A".to_owned(), String::new())]);
@@ -126,10 +127,11 @@ mod tests {
 
     #[test]
     fn what_the_operating_system_would_not_take_is_refused_with_the_option_named() {
-        assert_eq!(refused(program("program", "")), "option \"program\" must be the name or the path of a program");
-        assert!(refused(program("program", "a\0b")).contains("NUL"));
-        assert!(refused(program("program", &"x".repeat(MAX_TEXT + 1))).contains("longer than"));
-        assert_eq!(program("program", &"x".repeat(MAX_TEXT)), Ok(()));
+        let program = |name: &str| program("program", Path::new(name));
+        assert_eq!(refused(program("")), "option \"program\" must be the name or the path of a program");
+        assert!(refused(program("a\0b")).contains("NUL"));
+        assert!(refused(program(&"x".repeat(MAX_TEXT + 1))).contains("longer than"));
+        assert_eq!(program(&"x".repeat(MAX_TEXT)), Ok(()));
 
         assert!(refused(args("args", &["ok".to_owned(), "a\0b".to_owned()])).starts_with("option \"args\""));
         assert!(refused(args("args", &vec![String::new(); MAX_ITEMS + 1])).contains("more than"));
@@ -137,10 +139,14 @@ mod tests {
 
         let one = |name: &str, value: &str| BTreeMap::from([(name.to_owned(), value.to_owned())]);
         for name in ["A=B", "", "A\0"] {
-            assert!(refused(env("env", &one(name, "1"))).starts_with("option \"env\" holds a name"), "{name:?}");
+            assert!(
+                refused(env("env", &one(name, "1"))).starts_with("option \"env\" holds a name"),
+                "{name:?}"
+            );
         }
         assert!(refused(env("env", &one("A", "a\0b"))).contains("NUL"));
-        let many: BTreeMap<String, String> = (0..=MAX_ITEMS).map(|n| (format!("V{n}"), String::new())).collect();
+        let many: BTreeMap<String, String> =
+            (0..=MAX_ITEMS).map(|n| (format!("V{n}"), String::new())).collect();
         assert!(refused(env("env", &many)).contains("more than"));
 
         assert_eq!(refused(dir("cwd", Path::new(""))), "option \"cwd\" must be the path of a directory");
@@ -151,7 +157,9 @@ mod tests {
     fn a_directory_that_is_not_there_is_said_so() {
         assert!(existing_dir(&std::env::temp_dir()).is_ok());
         assert!(
-            existing_dir(Path::new("/nowhere/neoc-no-such-directory")).unwrap_err().contains("does not exist")
+            existing_dir(Path::new("/nowhere/neoc-no-such-directory"))
+                .unwrap_err()
+                .contains("does not exist")
         );
     }
 }

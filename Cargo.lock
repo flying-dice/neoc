@@ -3528,6 +3528,7 @@ dependencies = [
  "regex",
  "rsa",
  "rust-ini",
+ "rustix",
  "semver",
  "serde",
  "serde_json",

@@ -44,6 +44,31 @@ impl serde::Serialize for OsPath {
     }
 }
 
+/// As a field of a record a script gives: the same string [`FromLuaArg`] takes.
+impl<'de> serde::Deserialize<'de> for OsPath {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct PathVisitor;
+
+        impl serde::de::Visitor<'_> for PathVisitor {
+            type Value = OsPath;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a string")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, text: &str) -> Result<OsPath, E> {
+                Ok(OsPath(PathBuf::from(text)))
+            }
+
+            fn visit_bytes<E: serde::de::Error>(self, bytes: &[u8]) -> Result<OsPath, E> {
+                from_bytes(bytes).map(OsPath).map_err(E::custom)
+            }
+        }
+
+        deserializer.deserialize_any(PathVisitor)
+    }
+}
+
 impl Shape for OsPath {
     fn shape(_: &mut Registry) -> Ty {
         Ty::String

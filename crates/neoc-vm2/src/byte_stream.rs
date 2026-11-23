@@ -46,11 +46,7 @@ pub(crate) fn read_size(max: Option<u32>) -> Result<usize, String> {
 
 /// The bytes of one write: at most [`MAX_WRITE`] of them.
 pub(crate) fn write_data(data: Vec<u8>) -> Result<Vec<u8>, String> {
-    if data.len() > MAX_WRITE {
-        Err(format!("one write takes at most {MAX_WRITE} bytes"))
-    } else {
-        Ok(data)
-    }
+    if data.len() > MAX_WRITE { Err(format!("one write takes at most {MAX_WRITE} bytes")) } else { Ok(data) }
 }
 
 /// What is there for a read.
@@ -83,11 +79,7 @@ pub(crate) struct Output {
 impl Output {
     pub(crate) fn new() -> Self {
         Self {
-            state: Mutex::new(OutputState {
-                bytes: VecDeque::new(),
-                ended: None,
-                closed: false,
-            }),
+            state: Mutex::new(OutputState { bytes: VecDeque::new(), ended: None, closed: false }),
             readable: Notify::new(),
             room: Notify::new(),
         }
@@ -116,19 +108,14 @@ impl Output {
     /// stops.
     pub(crate) async fn room(&self) -> bool {
         self.settled(&self.room, |state| {
-            if state.closed {
-                Some(false)
-            } else {
-                (state.bytes.len() < OUTPUT_BUFFER).then_some(true)
-            }
+            if state.closed { Some(false) } else { (state.bytes.len() < OUTPUT_BUFFER).then_some(true) }
         })
         .await
     }
 
     /// For the reader: wait for the close.
     pub(crate) async fn closed(&self) {
-        self.settled(&self.room, |state| state.closed.then_some(()))
-            .await;
+        self.settled(&self.room, |state| state.closed.then_some(())).await;
     }
 
     /// For the reader: add what it read (after [`Output::room`]). Dropped when the stream was closed
@@ -388,10 +375,7 @@ mod tests {
         let writing = tokio::spawn(submit(Some(input.clone()), b"one".to_vec(), closed.clone()));
         let job = jobs.recv().await.expect("the job");
         drop(input);
-        assert!(matches!(
-            tokio::time::timeout(Duration::from_millis(50), jobs.recv()).await,
-            Ok(None)
-        ));
+        assert!(matches!(tokio::time::timeout(Duration::from_millis(50), jobs.recv()).await, Ok(None)));
         job.finish(Ok(()));
         assert!(matches!(writing.await, Ok(Ok(()))));
 
@@ -401,9 +385,6 @@ mod tests {
         let _job = jobs.recv().await.expect("the job");
         closed_tx.send_replace(true);
         assert!(matches!(waiting.await, Ok(Err(WriteFailed::Closed))));
-        assert!(matches!(
-            submit(None, b"four".to_vec(), closed).await,
-            Err(WriteFailed::Closed)
-        ));
+        assert!(matches!(submit(None, b"four".to_vec(), closed).await, Err(WriteFailed::Closed)));
     }
 }
