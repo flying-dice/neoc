@@ -5,6 +5,7 @@ pub mod args;
 pub mod base64;
 pub mod cache;
 pub mod chrono;
+pub mod compress;
 pub mod crypto;
 pub mod csv;
 pub mod diff;
