@@ -1,4 +1,4 @@
--- intentional: a JSON null document reads as nil (there is no json.null sentinel), a failure is a typed error (DecodeError syntax or eof with line and column, EncodeError too_deep), a value that is not plain data (a function, a buffer anywhere inside, a table that contains itself) is refused as an argument where some were returned errors, and from_reader(reader) / to_writer(value, writer) wait for std:io.
+-- intentional: a JSON null document reads as nil (there is no json.null sentinel), a failure is a typed error (DecodeError syntax or eof with line and column, EncodeError too_deep), a value that is not plain data (a function, a buffer anywhere inside, a table that contains itself) is refused as an argument where some were returned errors, and from_reader(reader) / to_writer(value, writer) take std:io's Reader and Writer, refuse anything else as an argument (it was a returned error) and fail with a typed ReadError / WriteError (the kinds above and io).
 local serde_json = require("vnd:serde_json")
 
 -- null is nil, with no error
@@ -6,7 +6,19 @@ local value, none = serde_json.from_str("null")
 assert(value == nil and none == nil)
 local doc = assert(serde_json.from_str('{"gone":null}'))
 assert(doc:get("gone") == nil and doc:kind("gone") == "null" and doc:has("gone"))
-assert(serde_json.from_reader == nil and serde_json.to_writer == nil)
+
+-- a std:io reader
+local io = require("std:io")
+local read_null, read_none = serde_json.from_reader(io.from_string("null"))
+assert(read_null == nil and read_none == nil)
+local nothing, read_syntax = serde_json.from_reader(io.from_string('{"ok": 1,\n bad}'))
+assert(nothing == nil and read_syntax.kind == "syntax" and read_syntax.line == 2 and read_syntax.op == "vnd:serde_json.from_reader")
+local _, read_eof = serde_json.from_reader(io.from_string(""))
+assert(read_eof.kind == "eof")
+local not_reader_ok, not_reader = pcall(serde_json.from_reader, "1")
+assert(not not_reader_ok and tostring(not_reader):find("vnd:serde_json.from_reader: argument #1 'reader': expected a Reader", 1, true))
+local not_writer_ok, not_writer = pcall(serde_json.to_writer, { a = 1 }, io.from_string(""))
+assert(not not_writer_ok and tostring(not_writer):find("vnd:serde_json.to_writer: argument #2 'writer': expected a Writer", 1, true))
 
 -- typed errors
 local _, syntax = serde_json.from_str('{"ok": 1,\n bad}')

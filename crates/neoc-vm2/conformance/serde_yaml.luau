@@ -64,4 +64,10 @@ out.encode_scalars = { serde_yaml.encode(42), serde_yaml.encode(true), serde_yam
 out.encode_list = serde_yaml.encode({ 1, "two", { 3 } })
 out.round_trip = serde_yaml.decode_string((serde_yaml.encode(config)))
 
+-- a std:io reader gives what its text gives (writers come from std:fs, which neoc-vm2 does not have yet)
+local io = require("std:io")
+out.reader = { serde_yaml.decode(io.from_string("name: alice\nnums: [1, 2]\ndb:\n  host: localhost\n")) }
+local read, read_why = serde_yaml.decode(io.from_string("key: [unclosed"))
+out.reader_fails = { read == nil, read_why ~= nil }
+
 return out

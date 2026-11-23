@@ -1,10 +1,12 @@
 //! TOML decode and encode: `vnd:toml` (the `toml` crate).
 //!
-//! | Function               | Rust equivalent          |
-//! |------------------------|--------------------------|
-//! | `decode_string(text)`  | `toml::from_str`         |
-//! | `encode(value)`        | `toml::to_string`        |
-//! | `encode_pretty(value)` | `toml::to_string_pretty` |
+//! | Function                   | Rust equivalent                       |
+//! |----------------------------|---------------------------------------|
+//! | `decode(reader)`           | `toml::from_str` on all of the reader |
+//! | `decode_string(text)`      | `toml::from_str`                      |
+//! | `encode(value)`            | `toml::to_string`                     |
+//! | `encode_pretty(value)`     | `toml::to_string_pretty`              |
+//! | `encode_to(value, writer)` | `toml::to_string`, written out        |
 //!
 //! The `toml` 1.x crate implements TOML 1.1: inline tables may span lines and end with a comma, `\e` is a string
 //! escape, and times may omit seconds (`07:32`).
@@ -15,8 +17,9 @@
 //!   (`unsupported`).
 //! - A document is a table with string keys, so `encode` refuses anything else as an argument (a list, a string, a
 //!   buffer anywhere inside); these were returned errors, and a raised one for the buffer.
-//!
-//! TODO(std:io): `decode(reader)` and `encode_to(value, writer)` wait for `std:io`'s reader and writer handles.
+//! - `decode` and `encode_to` take `std:io`'s `Reader` and `Writer` and refuse anything else as an argument (it
+//!   was a returned error); their failures are `ReadError` and `WriteError`, which add `io` (and `invalid_utf8`)
+//!   to the kinds above.
 
 /// The line and column (both from 1) of byte `offset` in `text`.
 fn place(text: &str, offset: usize) -> (u32, u32) {
@@ -49,6 +52,7 @@ pub mod toml {
     use serde::Serialize;
 
     use super::{place, plain};
+    use crate::modules::std::io::io::{Reader, Writer};
 
     mlua_ir::unknown_reason!(
         /// Why a decoded value has no declared shape.
@@ -85,6 +89,83 @@ pub mod toml {
             /// What the encoder said.
             reason: String,
         },
+    }
+
+    /// Why a reader does not give a TOML document.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error, LuaError)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    pub enum ReadError {
+        /// The reader failed.
+        #[error("{reason}")]
+        Io {
+            /// What the reader said.
+            reason: String,
+        },
+        /// What was read is not UTF-8.
+        #[error("the text is not UTF-8 from byte {offset}")]
+        InvalidUtf8 {
+            /// How many bytes from the start are valid UTF-8.
+            offset: u32,
+        },
+        /// The text breaks TOML's grammar, or says something twice (a key, a table).
+        #[error("line {line}, column {column}: {reason}")]
+        Syntax {
+            /// The line the parser stopped on, counting from 1.
+            line: u32,
+            /// The column, counting from 1.
+            column: u32,
+            /// What is wrong.
+            reason: String,
+        },
+    }
+
+    impl From<DecodeError> for ReadError {
+        fn from(error: DecodeError) -> Self {
+            match error {
+                DecodeError::Syntax { line, column, reason } => ReadError::Syntax { line, column, reason },
+            }
+        }
+    }
+
+    /// Why a value was not written to a writer as TOML.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error, LuaError)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    pub enum WriteError {
+        /// The writer failed.
+        #[error("{reason}")]
+        Io {
+            /// What the writer said.
+            reason: String,
+        },
+        /// The document holds something TOML has no form for (a number that is not finite, say).
+        #[error("{reason}")]
+        Unsupported {
+            /// What the encoder said.
+            reason: String,
+        },
+    }
+
+    impl From<EncodeError> for WriteError {
+        fn from(error: EncodeError) -> Self {
+            match error {
+                EncodeError::Unsupported { reason } => WriteError::Unsupported { reason },
+            }
+        }
+    }
+
+    /// Read `reader` to its end and parse what it gave as a TOML document, as `decode_string` does.
+    ///
+    /// ```luau
+    /// local io = require("std:io")
+    /// local doc = assert(toml.decode(io.from_string('name = "demo"\n')))
+    /// assert(doc.name == "demo")
+    /// ```
+    pub fn decode(reader: Reader) -> Result<BTreeMap<String, Unknown<TomlText>>, ReadError> {
+        let bytes = reader.remaining().map_err(|error| ReadError::Io { reason: error.to_string() })?;
+        let text = String::from_utf8(bytes).map_err(|error| ReadError::InvalidUtf8 {
+            offset: u32::try_from(error.utf8_error().valid_up_to()).unwrap_or(u32::MAX),
+        })?;
+        Ok(decode_string(text)?)
     }
 
     /// Parse a TOML document: its top-level keys, each holding whatever the text gives it. A date or time is its
@@ -125,6 +206,13 @@ pub mod toml {
     /// Write a document (a table with string keys) as TOML, with arrays one item to a line.
     pub fn encode_pretty(value: BTreeMap<String, Unknown<PlainData>>) -> Result<String, EncodeError> {
         ::toml::to_string_pretty(&document(value)).map_err(|e| unsupported(&e))
+    }
+
+    /// Write a document to `writer` as TOML, as `encode` writes it. Nothing is written when the document cannot
+    /// be encoded.
+    pub fn encode_to(value: BTreeMap<String, Unknown<PlainData>>, writer: Writer) -> Result<(), WriteError> {
+        let text = encode(value)?;
+        writer.write_all(text.as_bytes()).map_err(|error| WriteError::Io { reason: error.to_string() })
     }
 }
 
@@ -312,5 +400,97 @@ mod tests {
             "#,
         );
         assert_eq!((kind.as_str(), op.as_str()), ("unsupported", "vnd:toml.encode"));
+    }
+
+    fn with_io<T: mlua::FromLuaMulti>(code: &str) -> (T, String) {
+        let (lua, sink) = crate::modules::std::io::testing::engine("vnd:toml", "toml");
+        let value = lua.load(code).eval().unwrap();
+        (value, sink.text())
+    }
+
+    #[test]
+    fn decode_reads_a_reader_to_its_end() {
+        let (ok, _): (bool, _) = with_io(
+            r#"
+            local reader = io.from_string('skipped\n[server]\nhost = "localhost"\nport = 8080\n')
+            reader:read_line()
+            local doc, err = toml.decode(reader)
+            assert(err == nil and reader:read(1) == nil)
+            return doc.server.host == "localhost" and doc.server.port == 8080 and next(assert(toml.decode(io.from_string("")))) == nil
+            "#,
+        );
+        assert!(ok);
+    }
+
+    #[test]
+    fn what_a_reader_gives_can_fail_three_ways() {
+        let (seen, _): (Vec<String>, _) = with_io(
+            r#"
+            local out = {}
+            local doc, syntax = toml.decode(io.from_string("ok = 1\nbad = [unclosed"))
+            assert(doc == nil and syntax.kind == "syntax" and syntax.line == 2 and syntax.column > 1)
+            local _, utf8 = toml.decode(io.from_string("a = 1\n\255"))
+            assert(utf8.kind == "invalid_utf8" and utf8.offset == 6)
+            local _, failed = toml.decode(broken_reader)
+            assert(failed.kind == "io" and failed.reason == "the pipe is closed")
+            return { syntax.op, tostring(utf8), tostring(failed) }
+            "#,
+        );
+        assert_eq!(
+            seen,
+            [
+                "vnd:toml.decode",
+                "vnd:toml.decode: invalid_utf8: the text is not UTF-8 from byte 6",
+                "vnd:toml.decode: io: the pipe is closed",
+            ]
+        );
+    }
+
+    #[test]
+    fn encode_to_writes_what_encode_gives() {
+        let (ok, written): (bool, String) = with_io(
+            r#"
+            local doc = { name = "bob", server = { port = 3000 } }
+            local ok, err = toml.encode_to(doc, writer)
+            assert(ok == true and err == nil)
+            return toml.encode(doc) == 'name = "bob"\n\n[server]\nport = 3000\n'
+            "#,
+        );
+        assert!(ok);
+        assert_eq!(written, "name = \"bob\"\n\n[server]\nport = 3000\n");
+    }
+
+    #[test]
+    fn encode_to_fails_typed_and_writes_nothing_it_cannot_encode() {
+        let (seen, written): (Vec<String>, String) = with_io(
+            r#"
+            local ok, unsupported = toml.encode_to({ n = 0 / 0 }, writer)
+            assert(ok == nil and unsupported.kind == "unsupported")
+            local _, failed = toml.encode_to({ a = 1 }, broken_writer)
+            assert(failed.kind == "io" and failed.reason == "read-only")
+            local raised, refused = pcall(toml.encode_to, { data = buffer.create(2) }, writer)
+            assert(not raised and not pcall(toml.encode_to, { 1, 2 }, writer))
+            return { unsupported.op, tostring(failed), tostring(refused) }
+            "#,
+        );
+        assert_eq!(written, "", "nothing reaches the writer");
+        assert_eq!(seen[0], "vnd:toml.encode_to");
+        assert_eq!(seen[1], "vnd:toml.encode_to: io: read-only");
+        assert!(seen[2].contains("vnd:toml.encode_to: argument #1 'value'") && seen[2].contains("byte array"), "{seen:#?}");
+    }
+
+    #[test]
+    fn a_reader_is_a_reader_and_a_writer_a_writer() {
+        let (seen, _): (Vec<String>, _) = with_io(
+            r#"
+            local reader = io.from_string("a = 1")
+            local ok1, not_reader = pcall(toml.decode, writer)
+            local ok2, not_writer = pcall(toml.encode_to, { a = 1 }, reader)
+            assert(not ok1 and not ok2 and not pcall(toml.decode, "a = 1") and not pcall(toml.encode_to, { a = 1 }))
+            return { tostring(not_reader), tostring(not_writer) }
+            "#,
+        );
+        assert!(seen[0].contains("vnd:toml.decode: argument #1 'reader': expected a Reader"), "{seen:#?}");
+        assert!(seen[1].contains("vnd:toml.encode_to: argument #2 'writer': expected a Writer"), "{seen:#?}");
     }
 }

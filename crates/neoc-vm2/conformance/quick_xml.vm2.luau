@@ -1,4 +1,4 @@
--- intentional: elements of one name that repeat decode to a list (only the last was kept), encode takes the root's name as an option (it was always root) and a document is a table with string keys (a scalar or a list as the whole value is refused as an argument; a list wrote several roots), an empty element or attribute name is an error (it wrote <>), a failure is a typed error (DecodeError syntax, unexpected_eof, too_deep, invalid_utf8, unsupported; EncodeError unsupported), a value that is not plain data is refused as an argument, and decode(reader) / encode_to(value, writer) wait for std:io.
+-- intentional: elements of one name that repeat decode to a list (only the last was kept), encode takes the root's name as an option (it was always root) and a document is a table with string keys (a scalar or a list as the whole value is refused as an argument; a list wrote several roots), an empty element or attribute name is an error (it wrote <>), a failure is a typed error (DecodeError syntax, unexpected_eof, too_deep, invalid_utf8, unsupported; EncodeError unsupported), a value that is not plain data is refused as an argument, and decode(reader) / encode_to(value, writer, options?) take std:io's Reader and Writer, refuse anything else as an argument (it was a returned error) and fail with a typed ReadError / WriteError (the kinds above and io).
 local quick_xml = require("vnd:quick_xml")
 
 -- repeats are a list, so a list reads back
@@ -7,7 +7,19 @@ assert(#doc.item == 2 and doc.item[1] == "a" and doc.item[2] == "b" and doc.othe
 assert(doc.user[1]["@id"] == "1" and doc.user[2]["@id"] == "2")
 local back = assert(quick_xml.decode_string((assert(quick_xml.encode({ tags = { "a", "b", "c" } })))))
 assert(#back.tags == 3 and back.tags[3] == "c")
-assert(quick_xml.decode == nil and quick_xml.encode_to == nil)
+
+-- a std:io reader
+local io = require("std:io")
+local read = assert(quick_xml.decode(io.from_string("<r><a>1</a><a>2</a></r>")))
+assert(read.a[1] == "1" and read.a[2] == "2")
+local nothing, read_syntax = quick_xml.decode(io.from_string("<a><b></a>"))
+assert(nothing == nil and read_syntax.kind == "syntax" and read_syntax.op == "vnd:quick_xml.decode")
+local _, read_utf8 = quick_xml.decode(io.from_string("<a>\255</a>"))
+assert(read_utf8.kind == "invalid_utf8" and read_utf8.offset == 3)
+local not_reader_ok, not_reader = pcall(quick_xml.decode, "<a/>")
+assert(not not_reader_ok and tostring(not_reader):find("vnd:quick_xml.decode: argument #1 'reader': expected a Reader", 1, true))
+local not_writer_ok, not_writer = pcall(quick_xml.encode_to, { a = "1" }, io.from_string(""))
+assert(not not_writer_ok and tostring(not_writer):find("vnd:quick_xml.encode_to: argument #2 'writer': expected a Writer", 1, true))
 
 -- the root's name
 assert(quick_xml.encode({ name = "ada" }, { root = "user" }) == "<user><name>ada</name></user>")

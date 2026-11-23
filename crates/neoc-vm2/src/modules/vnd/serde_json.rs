@@ -1,10 +1,12 @@
 //! JSON text in and out: `vnd:serde_json` (the `serde_json` crate).
 //!
-//! | Function                  | Rust equivalent                |
-//! |---------------------------|--------------------------------|
-//! | `from_str(text)`          | `serde_json::from_slice`       |
-//! | `to_string(value)`        | `serde_json::to_string`        |
-//! | `to_string_pretty(value)` | `serde_json::to_string_pretty` |
+//! | Function                   | Rust equivalent                               |
+//! |----------------------------|-----------------------------------------------|
+//! | `from_reader(reader)`      | `serde_json::from_slice` on all of the reader |
+//! | `from_str(text)`           | `serde_json::from_slice`                      |
+//! | `to_string(value)`         | `serde_json::to_string`                       |
+//! | `to_string_pretty(value)`  | `serde_json::to_string_pretty`                |
+//! | `to_writer(value, writer)` | `serde_json::to_string`, written out          |
 //!
 //! A parsed document is handed out as `lib:json` does it: an `Object` or `Array` handle for a container, a Lua value
 //! for a scalar. Objects are written with their keys sorted.
@@ -15,8 +17,8 @@
 //!   (`too_deep`).
 //! - A value that is not plain data (a function, a buffer anywhere inside, a table that contains itself, a handle
 //!   nested in a plain table) is refused as an argument; some of these were returned errors.
-//!
-//! TODO(std:io): `from_reader(reader)` and `to_writer(value, writer)` wait for `std:io`'s reader and writer handles.
+//! - `from_reader` and `to_writer` take `std:io`'s `Reader` and `Writer` and refuse anything else as an argument
+//!   (it was a returned error); their failures are `ReadError` and `WriteError`, which add `io` to the kinds above.
 
 /// Where `serde_json` stopped (line and column, both from 1) and why, without the place it ends its text with.
 pub(crate) fn place_and_reason(error: &::serde_json::Error) -> (u32, u32, String) {
@@ -37,6 +39,7 @@ pub mod serde_json {
     use super::place_and_reason;
     use crate::modules::lib::json::deeper_than;
     use crate::modules::lib::json::json::{Input, MAX_DEPTH, Node};
+    use crate::modules::std::io::io::{Reader, Writer};
 
     /// Why a text is not JSON.
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error, LuaError)]
@@ -85,6 +88,85 @@ pub mod serde_json {
         }
     }
 
+    /// Why a reader does not give a JSON document.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error, LuaError)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    pub enum ReadError {
+        /// The reader failed.
+        #[error("{reason}")]
+        Io {
+            /// What the reader said.
+            reason: String,
+        },
+        /// The text breaks JSON's grammar, is not UTF-8, or nests deeper than the parser reads.
+        #[error("line {line}, column {column}: {reason}")]
+        Syntax {
+            /// The line the parser stopped on, counting from 1.
+            line: u32,
+            /// The column (in bytes), counting from 1.
+            column: u32,
+            /// What is wrong.
+            reason: String,
+        },
+        /// The text ends before the document does (an empty text, an unclosed string, array or object).
+        #[error("line {line}, column {column}: {reason}")]
+        Eof {
+            /// The line the text ends on, counting from 1.
+            line: u32,
+            /// The column (in bytes), counting from 1.
+            column: u32,
+            /// What was still expected.
+            reason: String,
+        },
+    }
+
+    impl From<DecodeError> for ReadError {
+        fn from(error: DecodeError) -> Self {
+            match error {
+                DecodeError::Syntax { line, column, reason } => ReadError::Syntax { line, column, reason },
+                DecodeError::Eof { line, column, reason } => ReadError::Eof { line, column, reason },
+            }
+        }
+    }
+
+    /// Why a value was not written to a writer as JSON.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error, LuaError)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    pub enum WriteError {
+        /// The writer failed.
+        #[error("{reason}")]
+        Io {
+            /// What the writer said.
+            reason: String,
+        },
+        /// The value nests deeper than `from_str` reads back.
+        #[error("the value nests more than {max_depth} levels deep")]
+        TooDeep {
+            /// The most levels a document may nest (`lib:json`'s `MAX_DEPTH`).
+            max_depth: u32,
+        },
+    }
+
+    impl From<EncodeError> for WriteError {
+        fn from(error: EncodeError) -> Self {
+            match error {
+                EncodeError::TooDeep { max_depth } => WriteError::TooDeep { max_depth },
+            }
+        }
+    }
+
+    /// Read `reader` to its end and parse what it gave as a JSON text, as `from_str` does.
+    ///
+    /// ```luau
+    /// local io = require("std:io")
+    /// local body = assert(serde_json.from_reader(io.from_string('{"name":"ada"}'))) :: lib_json_Object
+    /// assert(body:get("name") == "ada")
+    /// ```
+    pub fn from_reader(reader: Reader) -> Result<Option<Node>, ReadError> {
+        let bytes = reader.remaining().map_err(|error| ReadError::Io { reason: error.to_string() })?;
+        Ok(from_str(Bytes(bytes))?)
+    }
+
     /// Parse a JSON text. An object or an array comes back as a `lib:json` handle, a string, number or boolean as a
     /// Lua value, and `null` as `nil` (with no error).
     ///
@@ -120,6 +202,13 @@ pub mod serde_json {
     /// Write a value as JSON over several lines, indented by two spaces.
     pub fn to_string_pretty(value: Input) -> Result<String, EncodeError> {
         Ok(format!("{:#}", checked(value)?))
+    }
+
+    /// Write a value to `writer` as compact JSON, as `to_string` writes it. Nothing is written when the value
+    /// cannot be encoded.
+    pub fn to_writer(value: Input, writer: Writer) -> Result<(), WriteError> {
+        let text = to_string(value)?;
+        writer.write_all(text.as_bytes()).map_err(|error| WriteError::Io { reason: error.to_string() })
     }
 }
 
@@ -373,5 +462,106 @@ mod tests {
             "#,
         );
         assert!(refused.contains("vnd:serde_json.to_string: argument #1 'value'"), "got: {refused}");
+    }
+
+    fn with_io<T: mlua::FromLuaMulti>(code: &str) -> (T, String) {
+        let (lua, sink) = crate::modules::std::io::testing::engine("vnd:serde_json", "serde_json");
+        let value = lua.load(code).eval().unwrap();
+        (value, sink.text())
+    }
+
+    #[test]
+    fn from_reader_reads_a_reader_to_its_end() {
+        let (ok, _): (bool, _) = with_io(
+            r#"
+            local reader = io.from_string('skipped\n{"name":"alice","tags":["a","b"]}\n')
+            reader:read_line()
+            local object, err = serde_json.from_reader(reader)
+            assert(err == nil and reader:read(1) == nil)
+            assert(object:get("name") == "alice" and object:at({ "tags", 2 }) == "b")
+            assert(serde_json.from_reader(io.from_string("42")) == 42)
+            assert(assert(serde_json.from_reader(io.from_string("[1,2,3]"))):len() == 3)
+            local null, none = serde_json.from_reader(io.from_string("null"))
+            return null == nil and none == nil
+            "#,
+        );
+        assert!(ok);
+    }
+
+    #[test]
+    fn what_a_reader_gives_can_fail_three_ways() {
+        let (seen, _): (Vec<String>, _) = with_io(
+            r#"
+            local value, syntax = serde_json.from_reader(io.from_string('{"ok": 1,\n bad}'))
+            assert(value == nil and syntax.kind == "syntax" and syntax.line == 2 and syntax.column == 2)
+            local _, eof = serde_json.from_reader(io.from_string(""))
+            assert(eof.kind == "eof" and eof.line == 1)
+            local _, trailing = serde_json.from_reader(io.from_string("1 2"))
+            assert(trailing.kind == "syntax")
+            local _, failed = serde_json.from_reader(broken_reader)
+            assert(failed.kind == "io" and failed.reason == "the pipe is closed")
+            return { tostring(syntax), eof.op, tostring(failed) }
+            "#,
+        );
+        assert_eq!(
+            seen,
+            [
+                "vnd:serde_json.from_reader: syntax: line 2, column 2: key must be a string",
+                "vnd:serde_json.from_reader",
+                "vnd:serde_json.from_reader: io: the pipe is closed",
+            ]
+        );
+    }
+
+    #[test]
+    fn to_writer_writes_what_to_string_gives() {
+        let (ok, written): (bool, String) = with_io(
+            r#"
+            local ok, err = serde_json.to_writer({ result = "ok", list = { 1, 2 } }, writer)
+            assert(ok == true and err == nil)
+            assert(writer:write("\n"))
+            return serde_json.to_writer(assert(serde_json.from_str("[true,null]")), writer)
+            "#,
+        );
+        assert!(ok);
+        assert_eq!(written, "{\"list\":[1,2],\"result\":\"ok\"}\n[true,null]");
+    }
+
+    #[test]
+    fn to_writer_fails_typed_and_writes_nothing_it_cannot_encode() {
+        let (seen, written): (Vec<String>, String) = with_io(
+            r#"
+            local deep = {}
+            for _ = 2, 128 do
+                deep = { deep }
+            end
+            local ok, too_deep = serde_json.to_writer(deep, writer)
+            assert(ok == nil and too_deep.kind == "too_deep" and too_deep.max_depth == 127)
+            local _, failed = serde_json.to_writer({ a = 1 }, broken_writer)
+            assert(failed.kind == "io" and failed.reason == "read-only")
+            local raised, refused = pcall(serde_json.to_writer, { data = buffer.create(2) }, writer)
+            assert(not raised)
+            return { too_deep.op, tostring(failed), tostring(refused) }
+            "#,
+        );
+        assert_eq!(written, "", "nothing reaches the writer");
+        assert_eq!(seen[0], "vnd:serde_json.to_writer");
+        assert_eq!(seen[1], "vnd:serde_json.to_writer: io: read-only");
+        assert!(seen[2].contains("vnd:serde_json.to_writer: argument #1 'value'"), "{seen:#?}");
+    }
+
+    #[test]
+    fn a_reader_is_a_reader_and_a_writer_a_writer() {
+        let (seen, _): (Vec<String>, _) = with_io(
+            r#"
+            local reader = io.from_string("1")
+            local ok1, not_reader = pcall(serde_json.from_reader, writer)
+            local ok2, not_writer = pcall(serde_json.to_writer, { x = 1 }, reader)
+            assert(not ok1 and not ok2 and not pcall(serde_json.from_reader, "1") and not pcall(serde_json.to_writer, 1))
+            return { tostring(not_reader), tostring(not_writer) }
+            "#,
+        );
+        assert!(seen[0].contains("vnd:serde_json.from_reader: argument #1 'reader': expected a Reader"), "{seen:#?}");
+        assert!(seen[1].contains("vnd:serde_json.to_writer: argument #2 'writer': expected a Writer"), "{seen:#?}");
     }
 }

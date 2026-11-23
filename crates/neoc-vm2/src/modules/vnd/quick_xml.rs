@@ -1,9 +1,11 @@
 //! XML decode and encode: `vnd:quick_xml` (the `quick-xml` crate, through serde).
 //!
-//! | Function                   | Rust equivalent                      |
-//! |----------------------------|--------------------------------------|
-//! | `decode_string(text)`      | `quick_xml::de::from_str`            |
-//! | `encode(value, options?)`  | `quick_xml::se::to_string_with_root` |
+//! | Function                             | Rust equivalent                                   |
+//! |--------------------------------------|---------------------------------------------------|
+//! | `decode(reader)`                     | `quick_xml::de::from_str` on all of the reader    |
+//! | `decode_string(text)`                | `quick_xml::de::from_str`                         |
+//! | `encode(value, options?)`            | `quick_xml::se::to_string_with_root`              |
+//! | `encode_to(value, writer, options?)` | `quick_xml::se::to_string_with_root`, written out |
 //!
 //! An element is a table: a child element is a key, an attribute a key that starts with `@`, text beside children
 //! the key `$text`. An element that holds only text is that text, and elements of one name that repeat are a list.
@@ -19,8 +21,8 @@
 //!   `unsupported`) and `EncodeError` (`unsupported`).
 //! - A value that is not plain data (a function, a buffer anywhere inside) is refused as an argument; some of these
 //!   were returned errors.
-//!
-//! TODO(std:io): `decode(reader)` and `encode_to(value, writer)` wait for `std:io`'s reader and writer handles.
+//! - `decode` and `encode_to` take `std:io`'s `Reader` and `Writer` and refuse anything else as an argument (it
+//!   was a returned error); their failures are `ReadError` and `WriteError`, which add `io` to the kinds above.
 
 use serde::de::{Deserialize, Deserializer, MapAccess, Visitor};
 use serde_json::{Map, Value};
@@ -100,6 +102,7 @@ pub mod quick_xml {
     use serde_json::Value;
 
     use super::{Content, has_empty_name};
+    use crate::modules::std::io::io::{Reader, Writer};
 
     mlua_ir::unknown_reason!(
         /// Why a decoded document has no declared shape.
@@ -182,6 +185,96 @@ pub mod quick_xml {
         }
     }
 
+    /// Why a reader does not give an XML document this module reads.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error, LuaError)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    pub enum ReadError {
+        /// The reader failed.
+        #[error("{reason}")]
+        Io {
+            /// What the reader said.
+            reason: String,
+        },
+        /// The text is not well-formed XML: a tag that is not closed, an end tag that does not match, an entity that
+        /// is not known.
+        #[error("{reason}")]
+        Syntax {
+            /// What is wrong.
+            reason: String,
+        },
+        /// The text ends before any element or text.
+        #[error("the text holds no XML element")]
+        UnexpectedEof,
+        /// The elements nest deeper than the parser reads.
+        #[error("the elements nest more than {max_depth} levels deep")]
+        TooDeep {
+            /// The most levels the parser reads.
+            max_depth: u32,
+        },
+        /// The text is not UTF-8.
+        #[error("the text is not UTF-8 from byte {offset}")]
+        InvalidUtf8 {
+            /// How many bytes from the start are valid UTF-8.
+            offset: u32,
+        },
+        /// The text is XML, but holds what plain data cannot.
+        #[error("{reason}")]
+        Unsupported {
+            /// What the parser said.
+            reason: String,
+        },
+    }
+
+    impl From<DecodeError> for ReadError {
+        fn from(error: DecodeError) -> Self {
+            match error {
+                DecodeError::Syntax { reason } => ReadError::Syntax { reason },
+                DecodeError::UnexpectedEof => ReadError::UnexpectedEof,
+                DecodeError::TooDeep { max_depth } => ReadError::TooDeep { max_depth },
+                DecodeError::InvalidUtf8 { offset } => ReadError::InvalidUtf8 { offset },
+                DecodeError::Unsupported { reason } => ReadError::Unsupported { reason },
+            }
+        }
+    }
+
+    /// Why a value was not written to a writer as XML.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error, LuaError)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    pub enum WriteError {
+        /// The writer failed.
+        #[error("{reason}")]
+        Io {
+            /// What the writer said.
+            reason: String,
+        },
+        /// The value holds something XML has no form for: a key (or the root) that is not an XML name, say.
+        #[error("{reason}")]
+        Unsupported {
+            /// What is wrong.
+            reason: String,
+        },
+    }
+
+    impl From<EncodeError> for WriteError {
+        fn from(error: EncodeError) -> Self {
+            match error {
+                EncodeError::Unsupported { reason } => WriteError::Unsupported { reason },
+            }
+        }
+    }
+
+    /// Read `reader` to its end and parse what it gave as an XML document, as `decode_string` does.
+    ///
+    /// ```luau
+    /// local io = require("std:io")
+    /// local doc = assert(quick_xml.decode(io.from_string("<user><name>ada</name></user>"))) :: { name: string }
+    /// assert(doc.name == "ada")
+    /// ```
+    pub fn decode(reader: Reader) -> Result<Unknown<XmlText>, ReadError> {
+        let bytes = reader.remaining().map_err(|error| ReadError::Io { reason: error.to_string() })?;
+        Ok(decode_string(Bytes(bytes))?)
+    }
+
     /// Parse an XML document as plain data: what its root element holds (a table, or the text of a root that holds
     /// only text).
     ///
@@ -222,6 +315,17 @@ pub mod quick_xml {
             }
             other => EncodeError::Unsupported { reason: other.to_string() },
         })
+    }
+
+    /// Write a document to `writer` as XML, as `encode` writes it. Nothing is written when the document cannot be
+    /// encoded.
+    pub fn encode_to(
+        value: BTreeMap<String, Unknown<PlainData>>,
+        writer: Writer,
+        options: Option<EncodeOptions>,
+    ) -> Result<(), WriteError> {
+        let text = encode(value, options)?;
+        writer.write_all(text.as_bytes()).map_err(|error| WriteError::Io { reason: error.to_string() })
     }
 }
 
@@ -457,5 +561,90 @@ mod tests {
                 .all(|e| e.contains("vnd:quick_xml.encode: argument #1 'value'") && e.contains("byte array")),
             "{refused:#?}"
         );
+    }
+
+    fn with_io<T: mlua::FromLuaMulti>(code: &str) -> (T, String) {
+        let (lua, sink) = crate::modules::std::io::testing::engine("vnd:quick_xml", "quick_xml");
+        let value = lua.load(code).eval().unwrap();
+        (value, sink.text())
+    }
+
+    #[test]
+    fn decode_reads_a_reader_to_its_end() {
+        let (ok, _): (bool, _) = with_io(
+            r#"
+            local reader = io.from_string('skipped\n<user id="7"><name>ada</name><tag>a</tag><tag>b</tag></user>')
+            reader:read_line()
+            local doc, err = quick_xml.decode(reader)
+            assert(err == nil and reader:read(1) == nil)
+            return doc["@id"] == "7" and doc.name == "ada" and doc.tag[2] == "b"
+            "#,
+        );
+        assert!(ok);
+    }
+
+    #[test]
+    fn what_a_reader_gives_can_fail_as_a_text_does_or_with_the_reader() {
+        let (seen, _): (Vec<String>, _) = with_io(
+            r#"
+            local doc, syntax = quick_xml.decode(io.from_string("<a><b></a>"))
+            assert(doc == nil and syntax.kind == "syntax" and type(syntax.reason) == "string")
+            local _, eof = quick_xml.decode(io.from_string(""))
+            local _, utf8 = quick_xml.decode(io.from_string("<a>\255</a>"))
+            assert(utf8.offset == 3)
+            local _, failed = quick_xml.decode(broken_reader)
+            assert(failed.reason == "the pipe is closed")
+            return { syntax.op, eof.kind, utf8.kind, tostring(failed) }
+            "#,
+        );
+        assert_eq!(seen, ["vnd:quick_xml.decode", "unexpected_eof", "invalid_utf8", "vnd:quick_xml.decode: io: the pipe is closed"]);
+    }
+
+    #[test]
+    fn encode_to_writes_what_encode_gives() {
+        let (ok, written): (bool, String) = with_io(
+            r#"
+            local ok, err = quick_xml.encode_to({ result = "ok" }, writer)
+            assert(ok == true and err == nil)
+            return quick_xml.encode_to({ ["@id"] = "7", name = "ada" }, writer, { root = "user" })
+            "#,
+        );
+        assert!(ok);
+        assert_eq!(written, "<root><result>ok</result></root><user id=\"7\"><name>ada</name></user>");
+    }
+
+    #[test]
+    fn encode_to_fails_typed_and_writes_nothing_it_cannot_encode() {
+        let (seen, written): (Vec<String>, String) = with_io(
+            r#"
+            local ok, unsupported = quick_xml.encode_to({ [""] = "x" }, writer)
+            assert(ok == nil and unsupported.kind == "unsupported")
+            local _, failed = quick_xml.encode_to({ a = "1" }, broken_writer)
+            assert(failed.kind == "io" and failed.reason == "read-only")
+            local raised, refused = pcall(quick_xml.encode_to, { root = { data = buffer.create(2) } }, writer)
+            assert(not raised and not pcall(quick_xml.encode_to, { 1, 2 }, writer))
+            assert(not pcall(quick_xml.encode_to, { a = "1" }, writer, { unknown = true }))
+            return { unsupported.op, tostring(failed), tostring(refused) }
+            "#,
+        );
+        assert_eq!(written, "", "nothing reaches the writer");
+        assert_eq!(seen[0], "vnd:quick_xml.encode_to");
+        assert_eq!(seen[1], "vnd:quick_xml.encode_to: io: read-only");
+        assert!(seen[2].contains("vnd:quick_xml.encode_to: argument #1 'value'") && seen[2].contains("byte array"), "{seen:#?}");
+    }
+
+    #[test]
+    fn a_reader_is_a_reader_and_a_writer_a_writer() {
+        let (seen, _): (Vec<String>, _) = with_io(
+            r#"
+            local reader = io.from_string("<a/>")
+            local ok1, not_reader = pcall(quick_xml.decode, writer)
+            local ok2, not_writer = pcall(quick_xml.encode_to, { x = "1" }, reader)
+            assert(not ok1 and not ok2 and not pcall(quick_xml.decode, "<a/>") and not pcall(quick_xml.encode_to, { x = "1" }))
+            return { tostring(not_reader), tostring(not_writer) }
+            "#,
+        );
+        assert!(seen[0].contains("vnd:quick_xml.decode: argument #1 'reader': expected a Reader"), "{seen:#?}");
+        assert!(seen[1].contains("vnd:quick_xml.encode_to: argument #2 'writer': expected a Writer"), "{seen:#?}");
     }
 }

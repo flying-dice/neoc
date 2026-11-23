@@ -1,4 +1,4 @@
--- intentional: a YAML null reads as nil (it was mlua's null sentinel, a userdata), a failure is a typed error (DecodeError syntax with line and column or invalid, EncodeError unsupported), a value that is not plain data (a function, a buffer anywhere inside, a table that contains itself) is refused as an argument where some were returned errors, and decode(reader) / encode_to(value, writer) wait for std:io.
+-- intentional: a YAML null reads as nil (it was mlua's null sentinel, a userdata), a failure is a typed error (DecodeError syntax with line and column or invalid, EncodeError unsupported), a value that is not plain data (a function, a buffer anywhere inside, a table that contains itself) is refused as an argument where some were returned errors, and decode(reader) / encode_to(value, writer) take std:io's Reader and Writer, refuse anything else as an argument (it was a returned error) and fail with a typed ReadError / WriteError (the kinds above and io).
 local serde_yaml = require("vnd:serde_yaml")
 
 -- null is nil
@@ -8,7 +8,17 @@ for _, text in { "", "~", "null" } do
 	local value, none = serde_yaml.decode_string(text)
 	assert(value == nil and none == nil)
 end
-assert(serde_yaml.decode == nil and serde_yaml.encode_to == nil)
+
+-- a std:io reader
+local io = require("std:io")
+local read = assert(serde_yaml.decode(io.from_string("key: null\nkept: 1\n")))
+assert(read.key == nil and read.kept == 1)
+local nothing, read_syntax = serde_yaml.decode(io.from_string("key: [unclosed"))
+assert(nothing == nil and read_syntax.kind == "syntax" and read_syntax.op == "vnd:serde_yaml.decode")
+local not_reader_ok, not_reader = pcall(serde_yaml.decode, "a: 1")
+assert(not not_reader_ok and tostring(not_reader):find("vnd:serde_yaml.decode: argument #1 'reader': expected a Reader", 1, true))
+local not_writer_ok, not_writer = pcall(serde_yaml.encode_to, { a = 1 }, io.from_string(""))
+assert(not not_writer_ok and tostring(not_writer):find("vnd:serde_yaml.encode_to: argument #2 'writer': expected a Writer", 1, true))
 
 -- typed errors
 local _, syntax = serde_yaml.decode_string("ok: 1\nkey: *nope")

@@ -1,11 +1,34 @@
--- intentional: what a row is no longer depends on an option (parse / rows give lists, parse_records / records give records keyed by header; they were parse / rows with headers = true), rows / records return a stream (rows was a bare iterator), the header list is a parameter of stringify and writer (it was a required option) and stringify takes positional rows too, failures are typed (CsvError, WriteError), wrong options and rows are refused as arguments, a types entry for a column the header lacks is an error, and csv.reader(handle) waits for std:io.
+-- intentional: what a row is no longer depends on an option (parse / rows give lists, parse_records / records give records keyed by header; they were parse / rows with headers = true), rows / records return a stream (rows was a bare iterator), the header list is a parameter of stringify and writer (it was a required option) and stringify takes positional rows too, failures are typed (CsvError, WriteError), wrong options and rows are refused as arguments, a types entry for a column the header lacks is an error, and csv.reader(handle) has no headers option either (rows gives the rows not read yet as lists, headers reads the next row as the header row, records gives the rows after it keyed by header; a handle that is not a std:io reader is refused as an argument).
 local csv = require("lib:csv")
 
 -- records, typed columns
 local people = assert(csv.parse_records("name,age,admin\nada,36,true\ngrace,,0", { types = { age = "number", admin = "boolean" } }))
 assert(#people == 2 and people[1].name == "ada" and people[1].age == 36 and people[1].admin == true)
 assert(people[2].age == nil and people[2].admin == false)
-assert(csv.reader == nil)
+
+-- a std:io reader, read as it comes
+local io = require("std:io")
+local handle = io.from_string("name,age\nada,36\ngrace,45\n")
+local reader = assert(csv.reader(handle, { types = { age = "number" } }))
+local busy, in_use = csv.reader(handle)
+assert(busy == nil and in_use.kind == "in_use" and in_use.op == "lib:csv.reader")
+assert(table.concat(assert(reader:headers()), "|") == "name|age")
+local ages = 0
+for person in reader:records():items() do
+	ages += person.age :: number
+end
+assert(ages == 81 and reader:rows():next() == nil)
+local lists = assert(csv.reader(io.from_string("a,b\n1,2")))
+local every = {}
+for list in lists:rows():items() do
+	table.insert(every, table.concat(list, "+"))
+end
+assert(table.concat(every, " ") == "a+b 1+2")
+local uneven = assert(csv.reader(io.from_string('a,b\n"x",y,extra\n')))
+local _, mismatch = uneven:records():next()
+assert(mismatch.kind == "unequal_lengths" and mismatch.text == '"x",y,extra' and mismatch.op == "lib:csv.Reader:records")
+local not_a_reader, refused_handle = pcall(csv.reader, "not a handle")
+assert(not not_a_reader and tostring(refused_handle):find("lib:csv.reader: argument #1 'handle': expected a Reader", 1, true))
 
 -- streams
 local seen = {}

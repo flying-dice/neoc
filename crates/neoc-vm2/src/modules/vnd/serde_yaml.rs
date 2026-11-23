@@ -1,9 +1,11 @@
 //! YAML decode and encode: `vnd:serde_yaml` (the `serde_yaml` crate).
 //!
-//! | Function              | Rust equivalent         |
-//! |-----------------------|-------------------------|
-//! | `decode_string(text)` | `serde_yaml::from_slice` |
-//! | `encode(value)`       | `serde_yaml::to_string` |
+//! | Function                   | Rust equivalent                               |
+//! |----------------------------|-----------------------------------------------|
+//! | `decode(reader)`           | `serde_yaml::from_slice` on all of the reader |
+//! | `decode_string(text)`      | `serde_yaml::from_slice`                      |
+//! | `encode(value)`            | `serde_yaml::to_string`                       |
+//! | `encode_to(value, writer)` | `serde_yaml::to_string`, written out          |
 //!
 //! A document is read as plain data: mappings are tables with string keys (a number or boolean key is its text),
 //! an alias is a copy of what its anchor holds, a timestamp is its text, `.nan` and `.inf` are `null`. A tagged
@@ -17,13 +19,15 @@
 //!   (`unsupported`).
 //! - A value that is not plain data (a function, a buffer anywhere inside, a table that contains itself) is refused
 //!   as an argument; some of these were returned errors.
-//!
-//! TODO(std:io): `decode(reader)` and `encode_to(value, writer)` wait for `std:io`'s reader and writer handles.
+//! - `decode` and `encode_to` take `std:io`'s `Reader` and `Writer` and refuse anything else as an argument (it
+//!   was a returned error); their failures are `ReadError` and `WriteError`, which add `io` to the kinds above.
 
 #[mlua_ir::module("vnd:serde_yaml")]
 pub mod serde_yaml {
     use mlua_ir::{Bytes, LuaError, Unknown};
     use serde::Serialize;
+
+    use crate::modules::std::io::io::{Reader, Writer};
 
     mlua_ir::unknown_reason!(
         /// Why a decoded document has no declared shape.
@@ -87,6 +91,82 @@ pub mod serde_yaml {
         DecodeError::Syntax { line, column, reason }
     }
 
+    /// Why a reader does not give a YAML document this module reads.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error, LuaError)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    pub enum ReadError {
+        /// The reader failed.
+        #[error("{reason}")]
+        Io {
+            /// What the reader said.
+            reason: String,
+        },
+        /// The text breaks YAML's grammar at a place, or holds there what plain data cannot (a tagged value, a key
+        /// that is a sequence or a mapping, an alias with no anchor, nesting past the parser's limit).
+        #[error("line {line}, column {column}: {reason}")]
+        Syntax {
+            /// The line the parser stopped on, counting from 1.
+            line: u32,
+            /// The column, counting from 1.
+            column: u32,
+            /// What is wrong.
+            reason: String,
+        },
+        /// The text as a whole is refused: it holds more than one document, say.
+        #[error("{reason}")]
+        Invalid {
+            /// What is wrong.
+            reason: String,
+        },
+    }
+
+    impl From<DecodeError> for ReadError {
+        fn from(error: DecodeError) -> Self {
+            match error {
+                DecodeError::Syntax { line, column, reason } => ReadError::Syntax { line, column, reason },
+                DecodeError::Invalid { reason } => ReadError::Invalid { reason },
+            }
+        }
+    }
+
+    /// Why a value was not written to a writer as YAML.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error, LuaError)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    pub enum WriteError {
+        /// The writer failed.
+        #[error("{reason}")]
+        Io {
+            /// What the writer said.
+            reason: String,
+        },
+        /// The value holds something YAML has no form for.
+        #[error("{reason}")]
+        Unsupported {
+            /// What the encoder said.
+            reason: String,
+        },
+    }
+
+    impl From<EncodeError> for WriteError {
+        fn from(error: EncodeError) -> Self {
+            match error {
+                EncodeError::Unsupported { reason } => WriteError::Unsupported { reason },
+            }
+        }
+    }
+
+    /// Read `reader` to its end and parse what it gave as a YAML document, as `decode_string` does.
+    ///
+    /// ```luau
+    /// local io = require("std:io")
+    /// local doc = assert(serde_yaml.decode(io.from_string("name: alice\n"))) :: { name: string }
+    /// assert(doc.name == "alice")
+    /// ```
+    pub fn decode(reader: Reader) -> Result<Unknown<YamlText>, ReadError> {
+        let bytes = reader.remaining().map_err(|error| ReadError::Io { reason: error.to_string() })?;
+        Ok(decode_string(Bytes(bytes))?)
+    }
+
     /// Parse a YAML document as plain data: whatever the text holds. An empty text and `null` are `nil` (with no
     /// error).
     ///
@@ -110,6 +190,13 @@ pub mod serde_yaml {
     pub fn encode(value: Unknown<PlainData>) -> Result<String, EncodeError> {
         ::serde_yaml::to_string(&value.value)
             .map_err(|error| EncodeError::Unsupported { reason: error.to_string() })
+    }
+
+    /// Write plain data to `writer` as a YAML document, as `encode` writes it. Nothing is written when the value
+    /// cannot be encoded.
+    pub fn encode_to(value: Unknown<PlainData>, writer: Writer) -> Result<(), WriteError> {
+        let text = encode(value)?;
+        writer.write_all(text.as_bytes()).map_err(|error| WriteError::Io { reason: error.to_string() })
     }
 }
 
@@ -302,5 +389,86 @@ mod tests {
             "#,
         );
         assert!(ok);
+    }
+
+    fn with_io<T: mlua::FromLuaMulti>(code: &str) -> (T, String) {
+        let (lua, sink) = crate::modules::std::io::testing::engine("vnd:serde_yaml", "serde_yaml");
+        let value = lua.load(code).eval().unwrap();
+        (value, sink.text())
+    }
+
+    #[test]
+    fn decode_reads_a_reader_to_its_end() {
+        let (ok, _): (bool, _) = with_io(
+            r##"
+            local reader = io.from_string("# skipped\nname: alice\ntags: [a, b]\n")
+            reader:read_line()
+            local doc, err = serde_yaml.decode(reader)
+            assert(err == nil and reader:read(1) == nil)
+            assert(doc.name == "alice" and doc.tags[2] == "b")
+            local empty, none = serde_yaml.decode(io.from_string(""))
+            return empty == nil and none == nil
+            "##,
+        );
+        assert!(ok);
+    }
+
+    #[test]
+    fn what_a_reader_gives_can_fail_three_ways() {
+        let (seen, _): (Vec<String>, _) = with_io(
+            r#"
+            local doc, syntax = serde_yaml.decode(io.from_string("key: [unclosed"))
+            assert(doc == nil and syntax.kind == "syntax" and syntax.line >= 1)
+            local _, invalid = serde_yaml.decode(io.from_string("a: 1\n---\nb: 2\n"))
+            assert(invalid.kind == "invalid")
+            local _, failed = serde_yaml.decode(broken_reader)
+            assert(failed.kind == "io" and failed.reason == "the pipe is closed")
+            return { syntax.op, invalid.op, tostring(failed) }
+            "#,
+        );
+        assert_eq!(seen, ["vnd:serde_yaml.decode", "vnd:serde_yaml.decode", "vnd:serde_yaml.decode: io: the pipe is closed"]);
+    }
+
+    #[test]
+    fn encode_to_writes_what_encode_gives() {
+        let (ok, written): (bool, String) = with_io(
+            r#"
+            local ok, err = serde_yaml.encode_to({ name = "bob", tags = { "a", "b" } }, writer)
+            return ok == true and err == nil
+            "#,
+        );
+        assert!(ok);
+        assert_eq!(written, "name: bob\ntags:\n- a\n- b\n");
+    }
+
+    #[test]
+    fn encode_to_fails_typed_and_refuses_what_is_not_plain_data() {
+        let (seen, written): (Vec<String>, String) = with_io(
+            r#"
+            local ok, failed = serde_yaml.encode_to({ a = 1 }, broken_writer)
+            assert(ok == nil and failed.kind == "io" and failed.reason == "read-only")
+            local raised, refused = pcall(serde_yaml.encode_to, { data = buffer.create(2) }, writer)
+            assert(not raised and not pcall(serde_yaml.encode_to, { f = print }, writer))
+            return { tostring(failed), tostring(refused) }
+            "#,
+        );
+        assert_eq!(written, "", "nothing reaches the writer");
+        assert_eq!(seen[0], "vnd:serde_yaml.encode_to: io: read-only");
+        assert!(seen[1].contains("vnd:serde_yaml.encode_to: argument #1 'value'") && seen[1].contains("byte array"), "{seen:#?}");
+    }
+
+    #[test]
+    fn a_reader_is_a_reader_and_a_writer_a_writer() {
+        let (seen, _): (Vec<String>, _) = with_io(
+            r#"
+            local reader = io.from_string("a: 1")
+            local ok1, not_reader = pcall(serde_yaml.decode, writer)
+            local ok2, not_writer = pcall(serde_yaml.encode_to, { x = 1 }, reader)
+            assert(not ok1 and not ok2 and not pcall(serde_yaml.decode, "a: 1") and not pcall(serde_yaml.encode_to, 1))
+            return { tostring(not_reader), tostring(not_writer) }
+            "#,
+        );
+        assert!(seen[0].contains("vnd:serde_yaml.decode: argument #1 'reader': expected a Reader"), "{seen:#?}");
+        assert!(seen[1].contains("vnd:serde_yaml.encode_to: argument #2 'writer': expected a Writer"), "{seen:#?}");
     }
 }

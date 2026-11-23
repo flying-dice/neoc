@@ -56,4 +56,10 @@ for name, value in { space = { ["bad key"] = 1 }, digit = { ["1"] = 1 } } do
 end
 out.round_trip = quick_xml.decode_string((quick_xml.encode({ name = "eve", age = "42", user = { ["@id"] = "7", city = "x" } })))
 
+-- a std:io reader gives what its text gives (writers come from std:fs, which neoc-vm2 does not have yet)
+local io = require("std:io")
+out.reader = { quick_xml.decode(io.from_string('<user id="7"><name>ada</name><age>36</age></user>')) }
+local read, read_why = quick_xml.decode(io.from_string("<a><b></a>"))
+out.reader_fails = { read == nil, read_why ~= nil }
+
 return out

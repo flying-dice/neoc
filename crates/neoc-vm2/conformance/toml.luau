@@ -62,4 +62,11 @@ out.encode_pretty = { toml.encode_pretty(config) }
 out.encode_empty = toml.encode({})
 out.round_trip = toml.decode_string((toml.encode(config)))
 
+-- a std:io reader gives what its text gives (writers come from std:fs, which neoc-vm2 does not have yet)
+local io = require("std:io")
+out.reader = { toml.decode(io.from_string('title = "demo"\nnums = [1, 2]\n\n[server]\nport = 8080\n')) }
+out.reader_empty = { toml.decode(io.from_string("")) }
+local read, read_why = toml.decode(io.from_string("key = [unclosed"))
+out.reader_fails = { read == nil, read_why ~= nil }
+
 return out

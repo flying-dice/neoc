@@ -79,4 +79,13 @@ end
 local text = serde_json.to_string(nested(127))
 out.deepest = { #text, serde_json.from_str(text) ~= nil }
 
+-- a std:io reader gives what its text gives (writers come from std:fs, which neoc-vm2 does not have yet)
+local io = require("std:io")
+local read = assert(serde_json.from_reader(io.from_string('{"name":"alice","tags":["a","b"]}')))
+out.reader = { read:get("name"), read:get("tags"):get(2), serde_json.from_reader(io.from_string("42")), serde_json.from_reader(io.from_string('"text"')) }
+for name, text in { syntax = "{bad}", empty = "", trailing = "1 2" } do
+	local value, why = serde_json.from_reader(io.from_string(text))
+	out["reader_fails_" .. name] = { value == nil, why ~= nil }
+end
+
 return out

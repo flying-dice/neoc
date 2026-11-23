@@ -2,7 +2,7 @@
 //!
 //! Backed by the `csv` crate. A text is read as rows (lists of fields: `parse`, `rows`) or as records keyed by
 //! its header row (`parse_records`, `records`), all at once or as a stream; it is written from rows or records
-//! (`stringify`, `writer`).
+//! (`stringify`, `writer`). `reader` reads the same from a `std:io` reader, as it comes.
 //!
 //! Ported from neoc-vm's `lib:csv`. What changed on purpose:
 //! - What a row is no longer depends on an option: `parse` / `rows` give lists of strings, `parse_records` /
@@ -16,8 +16,10 @@
 //! - A wrong option (a delimiter of two characters, an unknown column type) or a row that is neither a list nor a
 //!   record is refused as an argument. A `types` entry for a column the header does not have is an error (it was
 //!   ignored).
-//!
-//! TODO(std:io): `csv.reader(handle)` (rows from a `ReaderHandle`, with `:headers()`) waits for `std:io`.
+//! - `reader(handle)` has no `headers` option either: its `rows` gives the rows not read yet as lists, `headers`
+//!   reads the next row as the header row (once), and `records` gives the rows after it keyed by header. A handle
+//!   that is not a `std:io` reader is refused as an argument (it was a returned error), and a failing reader is the
+//!   error `io`.
 
 /// How much of an offending line an error quotes.
 const MAX_QUOTED_BYTES: usize = 80;
@@ -44,10 +46,41 @@ fn wide(n: u64) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
 }
 
+/// How many bytes of a reader's source are kept for quoting a line in an error. Comfortably above any realistic
+/// CSV record; the `csv` crate reads in 8 KiB chunks, so the failing record is still here when its error is made.
+const RECENT_BYTES: usize = 64 * 1024;
+
+/// The most recent bytes read from a source, by their offset in it.
+#[derive(Default)]
+struct Recent {
+    bytes: std::collections::VecDeque<u8>,
+    /// The offset of the first byte kept.
+    base: u64,
+}
+
+impl Recent {
+    fn append(&mut self, bytes: &[u8]) {
+        self.bytes.extend(bytes);
+        let excess = self.bytes.len().saturating_sub(RECENT_BYTES);
+        self.bytes.drain(..excess);
+        self.base += excess as u64;
+    }
+
+    /// The bytes from `start` up to `end`, or nothing when some of them are no longer kept.
+    fn between(&self, start: u64, end: u64) -> Vec<u8> {
+        let kept_to = self.base + self.bytes.len() as u64;
+        if end < start || start < self.base || end > kept_to {
+            return Vec::new();
+        }
+        let at = |offset: u64| usize::try_from(offset - self.base).unwrap_or(usize::MAX);
+        self.bytes.range(at(start)..at(end)).copied().collect()
+    }
+}
+
 #[mlua_ir::module("lib:csv")]
 pub mod csv {
     use std::collections::{BTreeMap, BTreeSet};
-    use std::io::Cursor;
+    use std::io::{Cursor, Read};
     use std::sync::Arc;
 
     use ::csv::ByteRecord;
@@ -55,7 +88,8 @@ pub mod csv {
     use parking_lot::Mutex;
     use serde::{Deserialize, Serialize};
 
-    use super::{MAX_QUOTED_BYTES, truncated, wide, without_terminator};
+    use super::{MAX_QUOTED_BYTES, Recent, truncated, wide, without_terminator};
+    use crate::modules::std::io::io::{Claim, Locking, Reader as Handle};
 
     /// A one-character symbol of the dialect (a delimiter, a quote): a single ASCII character.
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Text)]
@@ -159,12 +193,27 @@ pub mod csv {
             /// Where the bytes stop being UTF-8.
             reason: String,
         },
+        /// The `std:io` reader the text comes from failed.
+        #[error("{reason}")]
+        Io {
+            /// What the reader said.
+            reason: String,
+        },
         /// Anything else the reader refuses.
         #[error("{reason}")]
         Malformed {
             /// What the reader said.
             reason: String,
         },
+    }
+
+    /// Why a `std:io` reader cannot be read as CSV.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error, LuaError)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    pub enum ReaderError {
+        /// Another CSV reader is reading from it; it is free again once that one is no longer used.
+        #[error("the reader is already in use by another CSV reader")]
+        InUse,
     }
 
     /// Why rows could not be written as CSV.
@@ -282,15 +331,59 @@ pub mod csv {
         Keyed(BTreeMap<String, Cell>),
     }
 
-    /// A text being read: the `csv` reader over it, and the text itself for quoting a line in an error.
-    #[derive(Debug)]
+    /// Where CSV text comes from, keeping what an error quotes.
+    enum Input {
+        /// A whole text.
+        Text(Cursor<Vec<u8>>),
+        /// A `std:io` reader, claimed for as long as it is read here.
+        Handle { source: Locking, recent: Recent, _claim: Claim },
+    }
+
+    impl Read for Input {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            match self {
+                Input::Text(text) => text.read(buf),
+                Input::Handle { source, recent, .. } => {
+                    let read = source.read(buf)?;
+                    recent.append(&buf[..read]);
+                    Ok(read)
+                }
+            }
+        }
+    }
+
+    impl Input {
+        /// The source's bytes from `start` up to `end`; nothing when a reader's are no longer kept.
+        fn between(&self, start: u64, end: u64) -> Vec<u8> {
+            match self {
+                Input::Text(text) => {
+                    let text = text.get_ref();
+                    let end = usize::try_from(end).unwrap_or(usize::MAX).min(text.len());
+                    let start = usize::try_from(start).unwrap_or(usize::MAX).min(end);
+                    text[start..end].to_vec()
+                }
+                Input::Handle { recent, .. } => recent.between(start, end),
+            }
+        }
+    }
+
+    /// The header names of a header row, none twice; `quoted` is the row as written.
+    fn unique(headers: Vec<String>, quoted: impl FnOnce() -> String) -> Result<Vec<String>, CsvError> {
+        let mut seen = BTreeSet::new();
+        match headers.iter().find(|header| !seen.insert(header.as_str())) {
+            Some(repeated) => Err(CsvError::DuplicateHeader { header: repeated.clone(), text: quoted() }),
+            None => Ok(headers),
+        }
+    }
+
+    /// CSV being read: the `csv` reader over its input.
     struct Source {
-        reader: ::csv::Reader<Cursor<Vec<u8>>>,
+        reader: ::csv::Reader<Input>,
         done: bool,
     }
 
     impl Source {
-        fn new(text: Vec<u8>, has_headers: bool, delimiter: &Symbol, quote: &Symbol, escape: Option<&Symbol>, comment: Option<&Symbol>) -> Self {
+        fn new(input: Input, has_headers: bool, delimiter: &Symbol, quote: &Symbol, escape: Option<&Symbol>, comment: Option<&Symbol>) -> Self {
             let reader = ::csv::ReaderBuilder::new()
                 .has_headers(has_headers)
                 .delimiter(delimiter.byte())
@@ -298,16 +391,18 @@ pub mod csv {
                 .escape(Some(escape.unwrap_or(quote).byte()))
                 .comment(comment.map(Symbol::byte))
                 .flexible(false)
-                .from_reader(Cursor::new(text));
+                .from_reader(input);
             Self { reader, done: false }
+        }
+
+        fn of_text(text: Bytes, has_headers: bool, delimiter: &Symbol, quote: &Symbol, escape: Option<&Symbol>, comment: Option<&Symbol>) -> Self {
+            Self::new(Input::Text(Cursor::new(text.0)), has_headers, delimiter, quote, escape, comment)
         }
 
         /// The source from byte `start` up to where the reader is, as an error quotes it.
         fn quoted(&self, start: u64) -> String {
-            let text = self.reader.get_ref().get_ref();
-            let end = usize::try_from(self.reader.position().byte()).unwrap_or(usize::MAX).min(text.len());
-            let start = usize::try_from(start).unwrap_or(usize::MAX).min(end);
-            truncated(&String::from_utf8_lossy(without_terminator(&text[start..end])), MAX_QUOTED_BYTES)
+            let written = self.reader.get_ref().between(start, self.reader.position().byte());
+            truncated(&String::from_utf8_lossy(without_terminator(&written)), MAX_QUOTED_BYTES)
         }
 
         fn refused(&self, error: &::csv::Error) -> CsvError {
@@ -321,6 +416,7 @@ pub mod csv {
                 ::csv::ErrorKind::Utf8 { pos, err } => {
                     CsvError::InvalidUtf8 { line: pos.as_ref().map_or(0, |p| wide(p.line())), reason: err.to_string() }
                 }
+                ::csv::ErrorKind::Io(failure) => CsvError::Io { reason: failure.to_string() },
                 _ => CsvError::Malformed { reason: error.to_string() },
             }
         }
@@ -331,11 +427,7 @@ pub mod csv {
                 Ok(record) => record.iter().map(str::to_owned).collect(),
                 Err(error) => return Err(self.refused(&error)),
             };
-            let mut seen = BTreeSet::new();
-            match headers.iter().find(|header| !seen.insert(header.as_str())) {
-                Some(repeated) => Err(CsvError::DuplicateHeader { header: repeated.clone(), text: self.quoted(0) }),
-                None => Ok(headers),
-            }
+            unique(headers, || self.quoted(0))
         }
 
         /// The next row and the line it starts on; `None` at the end, and after an error.
@@ -362,14 +454,13 @@ pub mod csv {
     }
 
     /// The rows of a text, as lists of fields.
-    #[derive(Debug)]
     struct Rows {
         source: Source,
     }
 
     impl Rows {
         fn new(text: Bytes, opts: &ReadOptions) -> Self {
-            let source = Source::new(text.0, false, &opts.delimiter, &opts.quote, opts.escape.as_ref(), opts.comment.as_ref());
+            let source = Source::of_text(text, false, &opts.delimiter, &opts.quote, opts.escape.as_ref(), opts.comment.as_ref());
             Self { source }
         }
     }
@@ -379,12 +470,16 @@ pub mod csv {
 
         fn next(&mut self) -> Option<Self::Item> {
             let row = self.source.next_row()?;
-            Some(row.map(|(record, _)| record.iter().map(|field| Bytes(field.to_vec())).collect()))
+            Some(row.map(|(record, _)| list(&record)))
         }
     }
 
+    /// A row as the list of its fields.
+    fn list(record: &ByteRecord) -> Vec<Bytes> {
+        record.iter().map(|field| Bytes(field.to_vec())).collect()
+    }
+
     /// The rows of a text after its header row, as records.
-    #[derive(Debug)]
     struct Records {
         source: Source,
         /// Read with the first record, so a stream fails where it is read, not where it is made.
@@ -394,30 +489,40 @@ pub mod csv {
 
     impl Records {
         fn new(text: Bytes, opts: RecordOptions) -> Self {
-            let source = Source::new(text.0, true, &opts.delimiter, &opts.quote, opts.escape.as_ref(), opts.comment.as_ref());
+            let source = Source::of_text(text, true, &opts.delimiter, &opts.quote, opts.escape.as_ref(), opts.comment.as_ref());
             Self { source, headers: None, types: opts.types }
         }
 
         fn read_headers(&mut self) -> Result<Vec<String>, CsvError> {
-            let headers = self.source.headers()?;
-            match self.types.keys().find(|column| !headers.contains(column)) {
-                Some(column) => Err(CsvError::UnknownColumn { column: column.clone() }),
-                None => Ok(headers),
-            }
+            typed(self.source.headers()?, &self.types)
         }
+    }
 
-        fn record(&self, headers: &[String], row: &ByteRecord, line: u32) -> Result<BTreeMap<String, Field>, CsvError> {
-            let mut record = BTreeMap::new();
-            for (header, raw) in headers.iter().zip(row.iter()) {
-                let field = match self.types.get(header) {
-                    None => Field::Text(Bytes(raw.to_vec())),
-                    Some(_) if raw.is_empty() => continue,
-                    Some(expected) => coerced(raw, *expected, header, line)?,
-                };
-                record.insert(header.clone(), field);
-            }
-            Ok(record)
+    /// `headers`, when every column `types` names is one of them.
+    fn typed(headers: Vec<String>, types: &BTreeMap<String, ColumnType>) -> Result<Vec<String>, CsvError> {
+        match types.keys().find(|column| !headers.contains(column)) {
+            Some(column) => Err(CsvError::UnknownColumn { column: column.clone() }),
+            None => Ok(headers),
         }
+    }
+
+    /// A row as a record keyed by header, its typed columns read as their types.
+    fn record(
+        types: &BTreeMap<String, ColumnType>,
+        headers: &[String],
+        row: &ByteRecord,
+        line: u32,
+    ) -> Result<BTreeMap<String, Field>, CsvError> {
+        let mut record = BTreeMap::new();
+        for (header, raw) in headers.iter().zip(row.iter()) {
+            let field = match types.get(header) {
+                None => Field::Text(Bytes(raw.to_vec())),
+                Some(_) if raw.is_empty() => continue,
+                Some(expected) => coerced(raw, *expected, header, line)?,
+            };
+            record.insert(header.clone(), field);
+        }
+        Ok(record)
     }
 
     fn coerced(raw: &[u8], expected: ColumnType, column: &str, line: u32) -> Result<Field, CsvError> {
@@ -456,7 +561,7 @@ pub mod csv {
                     }
                 },
             };
-            let item = self.source.next_row()?.and_then(|(row, line)| self.record(&headers, &row, line));
+            let item = self.source.next_row()?.and_then(|(row, line)| record(&self.types, &headers, &row, line));
             self.source.done |= item.is_err();
             self.headers = Some(headers);
             Some(item)
@@ -510,6 +615,102 @@ pub mod csv {
     /// ```
     pub fn records(text: Bytes, opts: RecordOptions) -> Stream<BTreeMap<String, Field>, CsvError> {
         Stream::new(futures::stream::iter(Records::new(text, opts)))
+    }
+
+    /// A `std:io` reader being read as CSV, front to back.
+    struct Reading {
+        source: Source,
+        /// The header row, once it was asked for.
+        headers: Option<Result<Vec<String>, CsvError>>,
+        types: BTreeMap<String, ColumnType>,
+    }
+
+    impl Reading {
+        /// The next row read as the header row: its names, none twice, with every typed column among them.
+        fn read_headers(&mut self) -> Result<Vec<String>, CsvError> {
+            let Some(row) = self.source.next_row() else {
+                return typed(Vec::new(), &self.types);
+            };
+            let (row, line) = row?;
+            let names: Result<Vec<String>, _> = row.iter().map(|name| std::str::from_utf8(name).map(str::to_owned)).collect();
+            let names = names.map_err(|e| CsvError::InvalidUtf8 { line, reason: e.to_string() })?;
+            typed(unique(names, || self.source.quoted(0))?, &self.types)
+        }
+
+        fn headers(&mut self) -> Result<Vec<String>, CsvError> {
+            if self.headers.is_none() {
+                let headers = self.read_headers();
+                // nothing can be read after a header row that is not one
+                self.source.done |= headers.is_err();
+                self.headers = Some(headers);
+            }
+            self.headers.clone().unwrap_or_else(|| Ok(Vec::new()))
+        }
+
+        fn next_list(&mut self) -> Option<Result<Vec<Bytes>, CsvError>> {
+            Some(self.source.next_row()?.map(|(row, _)| list(&row)))
+        }
+
+        fn next_record(&mut self) -> Option<Result<BTreeMap<String, Field>, CsvError>> {
+            let unread = self.headers.is_none();
+            let headers = match self.headers() {
+                Ok(headers) => headers,
+                // the stream that reads the header row is the one that reports it
+                Err(error) => return unread.then_some(Err(error)),
+            };
+            let item = self.source.next_row()?.and_then(|(row, line)| record(&self.types, &headers, &row, line));
+            self.source.done |= item.is_err();
+            Some(item)
+        }
+    }
+
+    /// CSV read from a `std:io` reader as it comes, front to back: `rows` and `records` give what was not read yet.
+    /// It keeps the `std:io` reader to itself until it is no longer used.
+    #[derive(Clone, Object)]
+    pub struct Reader {
+        reading: Arc<Mutex<Reading>>,
+    }
+
+    #[mlua_ir::object]
+    impl Reader {
+        /// The header row: the next row when none was read as one yet (the first row, before anything else is
+        /// read), and the same names from then on.
+        pub fn headers(&self) -> Result<Vec<String>, CsvError> {
+            self.reading.lock().headers()
+        }
+
+        /// The rows not read yet one at a time, each a list of its fields. The stream ends at the first error.
+        pub fn rows(&self) -> Stream<Vec<Bytes>, CsvError> {
+            let reading = self.reading.clone();
+            Stream::new(futures::stream::iter(std::iter::from_fn(move || reading.lock().next_list())))
+        }
+
+        /// The rows not read yet one at a time, each a record keyed by the header row (which is read first when
+        /// `headers` has not). Fields are strings, except those of the columns `opts.types` names. The stream ends
+        /// at the first error.
+        pub fn records(&self) -> Stream<BTreeMap<String, Field>, CsvError> {
+            let reading = self.reading.clone();
+            Stream::new(futures::stream::iter(std::iter::from_fn(move || reading.lock().next_record())))
+        }
+    }
+
+    /// Read CSV from a `std:io` reader as it comes, without holding the whole text.
+    ///
+    /// ```luau
+    /// local io = require("std:io")
+    /// local people = assert(csv.reader(io.from_string("name,age\nada,36\ngrace,45"), { types = { age = "number" } }))
+    /// assert(table.concat(assert(people:headers()), "|") == "name|age")
+    /// local total = 0
+    /// for person in people:records():items() do
+    ///     total += person.age :: number
+    /// end
+    /// assert(total == 81)
+    /// ```
+    pub fn reader(handle: Handle, opts: RecordOptions) -> Result<Reader, ReaderError> {
+        let claim = handle.claim().ok_or(ReaderError::InUse)?;
+        let input = Input::Handle { source: handle.locking(), recent: Recent::default(), _claim: claim };
+        let source = Source::new(input, false, &opts.delimiter, &opts.quote, opts.escape.as_ref(), opts.comment.as_ref());
+        Ok(Reader { reading: Arc::new(Mutex::new(Reading { source, headers: None, types: opts.types })) })
     }
 
     fn cell_text(cell: Cell) -> String {
@@ -989,5 +1190,220 @@ mod tests {
             "#,
         );
         assert_eq!(out, "name,city\nAlice,Sheffield\nBob,Leeds\n");
+    }
+
+    #[test]
+    fn the_recent_bytes_of_a_source_are_kept_by_offset() {
+        let mut recent = super::Recent::default();
+        recent.append(b"abc");
+        recent.append(b"def");
+        assert_eq!(recent.between(1, 4), b"bcd");
+        assert_eq!(recent.between(0, 6), b"abcdef");
+        assert!(recent.between(4, 2).is_empty() && recent.between(0, 7).is_empty());
+        recent.append(&vec![b'x'; super::RECENT_BYTES]);
+        assert!(recent.between(0, 6).is_empty(), "what is no longer kept is not quoted");
+        let end = (super::RECENT_BYTES + 6) as u64;
+        assert_eq!(recent.between(end - 2, end), b"xx");
+    }
+
+    #[test]
+    fn reader_streams_records_from_a_handle() {
+        let (rows, sum): (i64, f64) = eval(
+            r#"
+            local io = require("std:io")
+            local r, err = csv.reader(io.from_string("a,b\n1,2\n3,4\n5,6"), { types = { a = "number", b = "number" } })
+            assert(err == nil)
+            local rows, sum = 0, 0
+            for record in r:records():items() do
+                rows += 1
+                sum += record.a + record.b
+            end
+            return rows, sum
+            "#,
+        );
+        assert_eq!((rows, sum), (3, 21.0));
+    }
+
+    #[test]
+    fn reader_rows_are_every_row_as_a_list() {
+        let rows: Vec<Vec<String>> = eval(
+            r##"
+            local io = require("std:io")
+            local r = assert(csv.reader(io.from_string("a;b\n# skipped\n'x;y';2\n"), { delimiter = ";", quote = "'", comment = "#" }))
+            local out = {}
+            for row in r:rows():items() do
+                table.insert(out, row)
+            end
+            assert(r:rows():next() == nil)
+            return out
+            "##,
+        );
+        assert_eq!(rows, [["a", "b"], ["x;y", "2"]]);
+    }
+
+    #[test]
+    fn reader_headers_are_read_once() {
+        let (first, second, names, after): (Vec<String>, Vec<String>, Vec<String>, Vec<String>) = eval(
+            r#"
+            local io = require("std:io")
+            local r = assert(csv.reader(io.from_string("name,age\nAlice,30\nBob,25")))
+            local first, second = assert(r:headers()), assert(r:headers())
+            local names = {}
+            for record in r:records():items() do
+                table.insert(names, record.name)
+            end
+            return first, second, names, assert(r:headers())
+            "#,
+        );
+        assert_eq!(first, ["name", "age"]);
+        assert_eq!(second, first);
+        assert_eq!(names, ["Alice", "Bob"], "reading the headers does not consume data rows");
+        assert_eq!(after, first);
+    }
+
+    #[test]
+    fn reader_rows_after_headers_are_the_rows_after_them() {
+        let (headers, rows, empty): (Vec<String>, Vec<Vec<String>>, usize) = eval(
+            r#"
+            local io = require("std:io")
+            local r = assert(csv.reader(io.from_string("a,b\n1,2\n3,4")))
+            local headers = assert(r:headers())
+            local rows = {}
+            for row in r:rows():items() do
+                table.insert(rows, row)
+            end
+            local none = assert(csv.reader(io.from_string("")))
+            return headers, rows, #assert(none:headers())
+            "#,
+        );
+        assert_eq!(headers, ["a", "b"]);
+        assert_eq!(rows, [["1", "2"], ["3", "4"]]);
+        assert_eq!(empty, 0, "an empty source has an empty header row");
+    }
+
+    #[test]
+    fn reader_header_errors_are_typed_and_end_the_reader() {
+        let seen: Vec<String> = eval(
+            r#"
+            local io = require("std:io")
+            local out = {}
+            for _, case in {
+                { "a,b,a\n1,2,3", {} },
+                { "a,b\n1,2", { types = { c = "number" } } },
+                { "a,\255\n1,2", {} },
+            } do
+                local r = assert(csv.reader(io.from_string(case[1]), case[2]))
+                local row, err = r:records():next()
+                assert(row == nil and err ~= nil)
+                local headers, again = r:headers()
+                assert(headers == nil and again.kind == err.kind)
+                assert(r:records():next() == nil and r:rows():next() == nil)
+                table.insert(out, tostring(err))
+            end
+            return out
+            "#,
+        );
+        assert_eq!(seen[0], "lib:csv.Reader:records: duplicate_header: line 1: duplicate header \"a\": \"a,b,a\"");
+        assert_eq!(
+            seen[1],
+            "lib:csv.Reader:records: unknown_column: `types` names the column \"c\", which the header row does not have"
+        );
+        assert!(seen[2].starts_with("lib:csv.Reader:records: invalid_utf8: line 1: "), "got: {}", seen[2]);
+    }
+
+    #[test]
+    fn reader_error_preserves_source_quoting() {
+        let (kind, line, found, text, raised): (String, u32, u32, String, String) = eval(
+            r#"
+            local io = require("std:io")
+            local r = assert(csv.reader(io.from_string('a,b\n"x",y,extra\n')))
+            local rows = r:rows()
+            assert(rows:next())
+            local row, err = rows:next()
+            assert(row == nil and rows:next() == nil)
+            local again = assert(csv.reader(io.from_string('a,b\r\n"alpha",beta,extra\r\n')))
+            local ok, raised = pcall(function()
+                for _ in again:records():items() do end
+            end)
+            assert(not ok)
+            return err.kind, err.line, err.found, err.text, tostring(raised)
+            "#,
+        );
+        assert_eq!((kind.as_str(), line, found), ("unequal_lengths", 2, 3));
+        assert_eq!(text, "\"x\",y,extra", "the row as the source has it");
+        assert!(raised.contains("\"alpha\",beta,extra"), "got: {raised}");
+    }
+
+    #[test]
+    fn reader_claims_its_handle() {
+        let (kind, text): (String, String) = eval(
+            r#"
+            local io = require("std:io")
+            local handle = io.from_string("a,b\n1,2")
+            local first = assert(csv.reader(handle))
+            local second, err = csv.reader(handle)
+            assert(second == nil and first ~= nil)
+            return err.kind, tostring(err)
+            "#,
+        );
+        assert_eq!(kind, "in_use");
+        assert_eq!(text, "lib:csv.reader: in_use: the reader is already in use by another CSV reader");
+    }
+
+    #[test]
+    fn reader_claim_is_released_when_the_reader_is_dropped() {
+        let lua = crate::make_engine().expect("engine");
+        lua.load(
+            r#"
+            local csv = require("lib:csv")
+            handle = require("std:io").from_string("a\n1")
+            do
+                local r = assert(csv.reader(handle))
+                local _rows, _records = r:rows(), r:records()
+            end
+            "#,
+        )
+        .exec()
+        .unwrap();
+        // Collect outside the chunk so no live stack slot keeps the reader alive.
+        lua.gc_collect().unwrap();
+        lua.gc_collect().unwrap();
+        let reusable: bool =
+            lua.load(r#"local r, e = require("lib:csv").reader(handle); return r ~= nil and e == nil"#).eval().unwrap();
+        assert!(reusable, "the claim must be released after the reader is collected");
+    }
+
+    #[test]
+    fn reader_argument_must_be_a_std_io_reader() {
+        let refused: String = eval(
+            r#"
+            assert(not pcall(csv.reader) and not pcall(csv.reader, csv.writer({ "a" })))
+            local ok, err = pcall(csv.reader, "not a handle")
+            assert(not ok)
+            return tostring(err)
+            "#,
+        );
+        assert!(refused.contains("lib:csv.reader: argument #1 'handle': expected a Reader"), "got: {refused}");
+    }
+
+    #[test]
+    fn a_failing_handle_is_the_error_io() {
+        let (lua, _) = crate::modules::std::io::testing::engine("lib:csv", "csv");
+        let (kind, text): (String, String) = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(
+                lua.load(
+                    r#"
+                    local r = assert(csv.reader(broken_reader))
+                    local row, err = r:rows():next()
+                    assert(row == nil and r:rows():next() == nil)
+                    return err.kind, tostring(err)
+                    "#,
+                )
+                .eval_async(),
+            )
+            .unwrap();
+        assert_eq!(kind, "io");
+        assert_eq!(text, "lib:csv.Reader:rows: io: the pipe is closed");
     }
 }
