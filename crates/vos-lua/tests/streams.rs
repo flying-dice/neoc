@@ -17,7 +17,6 @@ async fn silent_docker() -> (tokio::net::TcpListener, String) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "mlua-ir's Stream:next is not wrapped by the Host, so the wait is not a leaf and the call keeps the VM's turn"]
 async fn a_task_waiting_for_a_streams_next_item_lends_the_app_to_other_calls() {
     let (listener, host) = silent_docker().await;
     let held = tokio::spawn(async move {
