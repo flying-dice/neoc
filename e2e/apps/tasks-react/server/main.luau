@@ -66,14 +66,14 @@ local handlers: rpc.Handlers = {
     local docs = app.files.documents
     local folder = string.match(params.path, "^(.*)/[^/]+$")
     if folder then
-      local made, why = docs:createDir(folder)
-      if not made then
-        return ctx:fail(`The file could not be written: {why}`)
+      local _, why = docs:createDir(folder)
+      if why then
+        return ctx:fail(`The file could not be written: {why.message}`)
       end
     end
-    local written, why = docs:write(params.path, params.text)
-    if not written then
-      return ctx:fail(`The file could not be written: {why}`)
+    local _, why = docs:write(params.path, params.text)
+    if why then
+      return ctx:fail(`The file could not be written: {why.message}`)
     end
     return true
   end,
