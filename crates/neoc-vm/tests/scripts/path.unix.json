@@ -326,8 +326,8 @@
     "without_extension": "a/b/.."
   },
   "absolute": [
-    "/mnt/c/Users/jonat/Projects/neoc/crates/neoc-vm/x/y",
-    "/mnt/c/Users/jonat/Projects/neoc/crates/neoc-vm/x/y"
+    "x/y",
+    "x/y"
   ],
   "absolute_empty": [
     true,

@@ -1,16 +1,31 @@
 --!strict
--- std:env as a script sees it: its answers, then what it asserts. The answers are a file per platform (env.unix.json,
--- env.windows.json).
+-- std:env as a script sees it: its answers, then what it asserts. The answers are a file per platform family
+-- (env.unix.json, env.windows.json).
 local env = require("std:env")
 local out = {}
 
-out.constants = { env.os, env.arch, env.family, env.exe_suffix, env.dll_prefix, env.dll_suffix }
-out.home_dir = { env.home_dir() }
-out.temp_dir = env.temp_dir()
-out.current_dir = { env.current_dir() }
+-- What depends on the machine (its system and processor, the user's folders, where the test runs) is answered as
+-- what holds on every machine, so the answers are those of any checkout on any machine of the family.
+local path = require("std:path")
+local function one_of(value: string, ...: string): boolean
+  return table.find({ ... }, value) ~= nil
+end
+out.family = { env.family, env.exe_suffix }
+out.constants = {
+  one_of(env.os, "linux", "macos", "windows"),
+  one_of(env.arch, "x86_64", "aarch64"),
+  one_of(env.dll_prefix, "", "lib"),
+  one_of(env.dll_suffix, ".so", ".dylib", ".dll"),
+}
+local home = assert(env.home_dir())
+out.home_dir = path.is_absolute(home)
+out.temp_dir = path.is_absolute(env.temp_dir())
+local current_dir = assert(env.current_dir())
+local here = path.components(current_dir)
+out.current_dir = { here[#here - 1], here[#here] }
 
 local name = if env.family == "windows" then "USERPROFILE" else "HOME"
-out.var = { env.var(name) }
+out.var = env.var(name) == home
 local missing, why = env.var("_NEOC_DEFINITELY_MISSING_XYZ_42")
 out.var_missing = { missing == nil, why ~= nil }
 out.vars = env.vars()[name] == env.var(name)

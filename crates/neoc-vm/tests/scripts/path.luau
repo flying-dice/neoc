@@ -73,7 +73,12 @@ out.strip_prefix = {
   maybe(path.strip_prefix("a/b", "a")),
 }
 
-out.absolute = { path.absolute("x/./y"), path.absolute(path.join("x", "y")) }
+-- an absolute path starts where the test runs, which is another folder on every machine: the answer is the rest
+local here = assert(require("std:env").current_dir())
+out.absolute = {
+  maybe(path.strip_prefix(assert(path.absolute("x/./y")), here)),
+  maybe(path.strip_prefix(assert(path.absolute(path.join("x", "y"))), here)),
+}
 local nothing, why = path.absolute("")
 out.absolute_empty = { nothing == nil, why ~= nil }
 
