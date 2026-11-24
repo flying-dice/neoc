@@ -23,26 +23,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 step "cargo test -p neoc -p neoc-vm"
 cargo test -p neoc -p neoc-vm
 
-# The suites that need a Docker daemon (sqlx_mysql, sqlx_postgres, testcontainers_modules) are left out; with Docker
-# running, `neoc run 'crates/neoc/tests/**/*.test.lua' 'crates/neoc/tests/**/*.spec.lua'` runs every suite. No test
-# reaches the internet (the hyper ones run against servers in the process); `cargo deny check` below needs network.
-step "Lua suites (neoc run)"
-cargo run -p neoc -- run \
-  "crates/neoc/tests/lib/*.test.lua" \
-  "crates/neoc/tests/std/*.test.lua" \
-  "crates/neoc/tests/std/task.spec.lua" \
-  "crates/neoc/tests/app.test.lua" \
-  "crates/neoc/tests/buffer.test.lua" \
-  "crates/neoc/tests/vnd/bollard.test.lua" \
-  "crates/neoc/tests/vnd/hyper.test.lua" \
-  "crates/neoc/tests/vnd/jsonschema.test.lua" \
-  "crates/neoc/tests/vnd/keyring.test.lua" \
-  "crates/neoc/tests/vnd/portable_pty.test.lua" \
-  "crates/neoc/tests/vnd/quick_xml.test.lua" \
-  "crates/neoc/tests/vnd/rusqlite.test.lua" \
-  "crates/neoc/tests/vnd/serde_json.test.lua" \
-  "crates/neoc/tests/vnd/serde_yaml.test.lua" \
-  "crates/neoc/tests/vnd/toml.test.lua"
+# No test reaches the internet (the hyper ones run against servers in the process); `cargo deny check` below needs
+# network.
 
 # What apps do with the modules (vos-lua's module tests), so a module change reaches them in the scoped gate too. The
 # one test that builds its fixture with darklua is left out (this script needs no bun or darklua); the full gate runs

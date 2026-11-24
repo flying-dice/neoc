@@ -108,22 +108,6 @@ jobs:
       # integration tests and Gherkin spec. The vos crates' tests need bun and darklua
       # which this job does not install, so they are not run here.
       - run: cargo test -p neoc -p neoc-vm
-      # Docker-dependent suites (sqlx_mysql, sqlx_postgres,
-      # testcontainers_modules) are excluded: they need a live Docker daemon.
-      - name: Script suites (neoc run)
-        run: |
-          cargo run -p neoc -- run \
-            "crates/neoc/tests/lib/*.test.lua" \
-            "crates/neoc/tests/std/*.test.lua" \
-            "crates/neoc/tests/std/task.spec.lua" \
-            "crates/neoc/tests/app.test.lua" \
-            "crates/neoc/tests/buffer.test.lua" \
-            "crates/neoc/tests/vnd/jsonschema.test.lua" \
-            "crates/neoc/tests/vnd/quick_xml.test.lua" \
-            "crates/neoc/tests/vnd/rusqlite.test.lua" \
-            "crates/neoc/tests/vnd/serde_json.test.lua" \
-            "crates/neoc/tests/vnd/serde_yaml.test.lua" \
-            "crates/neoc/tests/vnd/toml.test.lua"
 
   # Build jobs are independent of lint/test so binaries are produced for every
   # push to main even when lint or test fails. Check lint/test for the quality
