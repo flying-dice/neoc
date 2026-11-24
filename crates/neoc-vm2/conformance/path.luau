@@ -1,5 +1,5 @@
 -- std:path on neoc-vm and neoc-vm2: what both must answer the same. Returns plain values, compared by the harness.
--- `join` with one or several parts, and what an error is, differ on purpose: see path.vm2.luau.
+-- What an error is differs on purpose: see path.vm2.luau.
 local path = require("std:path")
 local out = {}
 
@@ -17,6 +17,11 @@ out.join = {
 	path.join("a", ""),
 	path.join("", "a"),
 	path.join("a\0b", "c"),
+	path.join("a"),
+	path.join("a", "b", "c.txt"),
+	path.join("a", "b", "..", "c", ""),
+	path.join("a", "/b", "c"),
+	path.join("", "", "a"),
 }
 
 local samples = {
@@ -74,6 +79,6 @@ out.absolute_empty = { nothing == nil, why ~= nil }
 local long = string.rep("a/", 50000)
 out.long = { #path.normalize(long), #path.components(long) }
 
-out.wrong_arguments = { (pcall(path.normalize, {})), (pcall(path.parent, nil)), (pcall(path.join)) }
+out.wrong_arguments = { (pcall(path.normalize, {})), (pcall(path.parent, nil)), (pcall(path.join)), (pcall(path.join, "a", {})) }
 
 return out

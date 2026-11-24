@@ -6,7 +6,6 @@
 //! argument; on Unix every string is one.
 //!
 //! Ported from neoc-vm's `std:path`. What changed on purpose:
-//! - `join` takes a base and one part, as `Path::join` does (it took any number of parts).
 //! - `with_extension` returns a typed error for an extension that holds a separator (it raised a string).
 //! - `absolute`'s failure is a typed error (`empty_path`, `current_dir`).
 
@@ -33,7 +32,7 @@ fn normalized(path: &Path) -> PathBuf {
 
 #[mlua_ir::module("std:path")]
 pub mod path {
-    use mlua_ir::LuaError;
+    use mlua_ir::{LuaError, Variadic};
     use serde::Serialize;
 
     use super::normalized;
@@ -67,14 +66,19 @@ pub mod path {
         },
     }
 
-    /// `base` and `part` joined with the platform separator. A `part` that is absolute replaces `base`
-    /// (`join("a", "/b")` is `"/b"`), as `Path::join` does. Does not normalise: `join("a", "..")` is `"a/.."`.
+    /// `base` and each of `parts` joined with the platform separator. A part that is absolute replaces everything
+    /// before it (`join("a", "/b", "c")` is `"/b/c"`), as `Path::join` does. Does not normalise: `join("a", "..")`
+    /// is `"a/.."`. With no parts it is `base`.
     ///
     /// ```luau
-    /// assert(path.join("a", "b.txt") == "a" .. path.separator .. "b.txt")
+    /// assert(path.join("a", "b", "c.txt") == "a" .. path.separator .. "b" .. path.separator .. "c.txt")
     /// ```
-    pub fn join(base: OsPath, part: OsPath) -> OsPath {
-        OsPath(base.0.join(part.0))
+    pub fn join(base: OsPath, parts: Variadic<OsPath>) -> OsPath {
+        let mut joined = base.0;
+        for part in parts.0 {
+            joined.push(part.0);
+        }
+        OsPath(joined)
     }
 
     /// The path cleaned by text alone: `.` and repeated separators are dropped and `x/..` is folded away. A leading
@@ -222,6 +226,9 @@ mod tests {
     fn join_uses_the_separator_and_does_not_normalise() {
         assert_eq!(text("path.join('a', 'b')"), native("a/b"));
         assert_eq!(text("path.join(path.join('a', 'b'), 'c.txt')"), native("a/b/c.txt"));
+        assert_eq!(text("path.join('a', 'b', 'c.txt')"), native("a/b/c.txt"));
+        assert_eq!(text("path.join('a', 'b', 'c', 'd', 'e')"), native("a/b/c/d/e"));
+        assert_eq!(text("path.join('a')"), "a");
         assert_eq!(text("path.join('a', '..')"), native("a/.."));
         assert_eq!(text("path.join('a', '')"), native("a/"));
         assert_eq!(text("path.separator"), std::path::MAIN_SEPARATOR_STR);
@@ -231,6 +238,7 @@ mod tests {
     #[test]
     fn an_absolute_part_wins() {
         assert_eq!(text("path.join('a', '/b')"), "/b");
+        assert_eq!(text("path.join('a', '/b', 'c')"), "/b/c");
     }
 
     #[cfg(windows)]
@@ -238,6 +246,7 @@ mod tests {
     fn an_absolute_part_wins() {
         assert_eq!(text(r"path.join('a', 'C:\\b')"), r"C:\b");
         assert_eq!(text(r"path.join('C:\\a', '\\b')"), r"C:\b");
+        assert_eq!(text(r"path.join('a', 'C:\\b', 'c')"), r"C:\b\c");
     }
 
     #[test]
@@ -317,7 +326,7 @@ mod tests {
         let refused: String =
             eval("(function() local ok, err = pcall(path.join, 'a', '\\255\\254'); assert(not ok); return tostring(err) end)()");
         assert!(
-            refused.contains("std:path.join: argument #2 'part': a path must be valid UTF-8 on this platform"),
+            refused.contains("std:path.join: argument #2 'parts': a path must be valid UTF-8 on this platform"),
             "got: {refused}"
         );
     }
@@ -331,7 +340,7 @@ mod tests {
     #[test]
     fn a_missing_or_wrong_argument_is_a_lua_error_not_a_panic() {
         let lua = make_engine().unwrap();
-        for source in ["join()", "join('a')", "normalize({})", "parent(1)", "components(nil)"] {
+        for source in ["join()", "join('a', nil)", "join('a', 'b', 5)", "normalize({})", "parent(1)", "components(nil)"] {
             let outcome: mlua::Result<mlua::Value> = lua.load(format!("return require('std:path').{source}")).eval();
             assert!(outcome.is_err(), "{source}");
         }
