@@ -1,132 +1,86 @@
-//! `app:openWindow`, `app.log`, `app.notify`, `app.emit`, `app.agents`.
+//! `app.id`, `app.openWindow`, `app.notify`, `app.emit`, `app.agents`.
 
-use crate::{
-    convert::lua_to_json,
-    vm::{Effect, Shared},
-};
-use neoc_vm2::mlua;
-use neoc_vm2::mlua::{Lua, Table, Value as LuaValue, Variadic};
+use super::{json::Json, shared};
+use crate::vm::{Effect, Shared};
+use mlua_ir::{IntoLuaRet, Object, Registry, Shape, Unknown};
+use neoc_vm2::mlua::{self, IntoLua as _, Lua, Value as LuaValue};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::Arc;
-use vos_domain::Notification;
+use std::collections::BTreeMap;
 
-/// A value's type as Luau's `typeof` names it (mlua tells an integer from a number; a script cannot).
-fn luau_type(value: &LuaValue) -> &'static str {
-    match value {
-        LuaValue::Integer(_) => "number",
-        other => other.type_name(),
+/// `app.id`: the id of the app whose VM the module is built in. A module's constant is a value of the Rust
+/// program; this one is read from the VM when the module's table is made, and declared a string.
+#[derive(Clone, Copy, Debug)]
+pub struct ThisApp;
+
+impl Shape for ThisApp {
+    fn shape(reg: &mut Registry) -> mlua_ir::ir::Ty {
+        String::shape(reg)
     }
 }
 
-fn text_field(t: &Table, key: &str, what: &str, required: bool, max: usize) -> mlua::Result<Option<String>> {
-    match t.get::<LuaValue>(key)? {
-        LuaValue::Nil if required => Err(mlua::Error::runtime(format!("{what} needs `{key}`"))),
-        LuaValue::Nil => Ok(None),
-        LuaValue::String(s) => {
-            let s = s.to_string_lossy();
-            if required && (s.chars().count() > max || s.trim().is_empty()) {
-                return Err(mlua::Error::runtime(format!(
-                    "{what}: `{key}` must be 1 to {max} characters, not blank"
-                )));
-            }
-            if s.chars().count() > max {
-                return Err(mlua::Error::runtime(format!(
-                    "{what}: `{key}` must be at most {max} characters"
-                )));
-            }
-            Ok(Some(s))
-        }
-        other => {
-            Err(mlua::Error::runtime(format!("{what}: `{key}` must be a string, got {}", luau_type(&other))))
-        }
+impl IntoLuaRet for ThisApp {
+    fn into_lua_ret(self, lua: &Lua, _: &'static str) -> mlua::Result<LuaValue> {
+        shared(lua)?.app.as_str().into_lua(lua)
     }
 }
 
-/// The table of `app.notify { ... }` or `app:notify { ... }`: the last table given that is not `app` itself, so a
-/// colon call with no table says it takes one instead of reading `app`'s own keys as a notification's.
-fn notification_table(sh: &Shared, args: Variadic<LuaValue>) -> mlua::Result<Table> {
-    let app = sh.app_table.lock().as_ref().map(Table::to_pointer);
-    args.into_iter()
-        .rev()
-        .find_map(|v| match v {
-            LuaValue::Table(t) if Some(t.to_pointer()) != app => Some(t),
-            _ => None,
-        })
-        .ok_or_else(|| mlua::Error::runtime("app.notify takes a table"))
+mlua_ir::unknown_reason!(
+    /// Why the data of a window or an event has no declared shape.
+    PageData = "JSON the app hands its own page: its shape is the app's"
+);
+
+/// What `app.openWindow` hands the page: named JSON values.
+pub type WindowParams = Json<BTreeMap<String, Unknown<PageData>>>;
+
+/// The data of an event: any JSON value.
+pub type EventData = Json<Unknown<PageData>>;
+
+pub(super) fn open_window(sh: &Shared, params: Option<WindowParams>) -> mlua::Result<()> {
+    sh.writable("app.openWindow")?;
+    let params = match params.map(|params| params.value) {
+        None => Value::Null,
+        Some(named @ Value::Object(_)) => named,
+        // an empty table reads as `[]`: no parameters
+        Some(Value::Array(none)) if none.is_empty() => Value::Null,
+        // an app has one window, so there is no name to give: `app.openWindow("settings")` is a mistake
+        Some(_) => return Err(mlua::Error::runtime(
+            "app.openWindow: `params` is a table of named values (an app has one window: it takes no name)",
+        )),
+    };
+    sh.push_effect(Effect::OpenWindow { name: Shared::WINDOW.to_owned(), params })
 }
 
-/// Refuse a key of `t` that is not in `allowed`, so a misspelt or unsupported field raises instead of being
-/// dropped. The keys are read raw (no `__pairs`, no `__index`): what the table holds, not what it pretends to.
-fn only_keys(t: &Table, what: &str, allowed: &[&str]) -> mlua::Result<()> {
-    for pair in t.pairs::<LuaValue, LuaValue>() {
-        let (key, _) = pair?;
-        let known = match &key {
-            LuaValue::String(s) => s.to_str().is_ok_and(|s| allowed.contains(&&*s)),
-            _ => false,
-        };
-        if !known {
-            let expected = allowed.iter().map(|k| format!("`{k}`")).collect::<Vec<_>>().join(", ");
-            let message = match &key {
-                LuaValue::String(s) => format!("unknown key `{}` (it takes {expected})", s.to_string_lossy()),
-                // `f { "text" }`: a value written without a name lands at index 1
-                LuaValue::Integer(i) => format!("unknown positional entry {i} (it takes {expected} by name)"),
-                other => format!("unknown key of type {} (it takes {expected})", luau_type(other)),
-            };
-            return Err(mlua::Error::runtime(format!("{what}: {message}")));
-        }
+/// A notification: a title and an optional body, and no other key. The host adds which app sent it.
+#[derive(Clone, Debug, Serialize, Deserialize, Shape)]
+#[serde(deny_unknown_fields)]
+#[shape(module = "vos:app")]
+pub struct Notification {
+    /// 1 to 200 characters, not blank.
+    pub title: String,
+    /// Up to 2000 characters.
+    pub body: Option<String>,
+}
+
+/// The longest title a notification takes, in characters.
+const MAX_TITLE: usize = 200;
+/// The longest body a notification takes, in characters.
+const MAX_BODY: usize = 2000;
+
+pub(super) fn notify(sh: &Shared, notification: Notification) -> mlua::Result<()> {
+    sh.writable("app.notify")?;
+    let Notification { title, body } = notification;
+    if title.chars().count() > MAX_TITLE || title.trim().is_empty() {
+        return Err(mlua::Error::runtime(format!(
+            "app.notify: `title` must be 1 to {MAX_TITLE} characters, not blank"
+        )));
     }
-    Ok(())
-}
-
-pub(super) fn install(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<()> {
-    // app:openWindow(name?, params?): an app has one window, the frame of its page, so the name may be left out
-    let s = sh.clone();
-    app.set(
-        "openWindow",
-        lua.create_function(
-            move |_, (_this, name, params): (LuaValue, Option<String>, Option<LuaValue>)| {
-                s.writable("app:openWindow")?;
-                if let Some(name) = name.filter(|name| name != Shared::WINDOW) {
-                    return Err(mlua::Error::runtime(format!(
-                        "openWindow: an app has one window, `{}`; leave the name out (got `{name}`)",
-                        Shared::WINDOW
-                    )));
-                }
-                let params = match params {
-                    Some(p) => lua_to_json(&p)?,
-                    None => Value::Null,
-                };
-                s.push_effect(Effect::OpenWindow { name: Shared::WINDOW.to_owned(), params })
-            },
-        )?,
-    )?;
-
-    // app.log(message)
-    let id = sh.app.to_string();
-    app.set(
-        "log",
-        lua.create_function(move |_, msg: Variadic<String>| {
-            tracing::info!(app = %id, "{}", msg.join(" "));
-            Ok(())
-        })?,
-    )?;
-
-    // app.notify { title, body? } and app:notify { ... }: delivered now, to the clients connected now
-    let s = sh.clone();
-    app.set(
-        "notify",
-        lua.create_function(move |_, args: Variadic<LuaValue>| {
-            s.writable("app.notify")?;
-            let t = notification_table(&s, args)?;
-            only_keys(&t, "app.notify", &["title", "body"])?;
-            let title = text_field(&t, "title", "app.notify", true, 200)?.unwrap_or_default();
-            let body = text_field(&t, "body", "app.notify", false, 2000)?;
-            s.push_notification(Notification { app: s.app.clone(), title, body })
-        })?,
-    )?;
-
-    install_emit(lua, sh, app)?;
-    install_agents(lua, sh, app)
+    if body.as_ref().is_some_and(|body| body.chars().count() > MAX_BODY) {
+        return Err(mlua::Error::runtime(format!(
+            "app.notify: `body` must be at most {MAX_BODY} characters"
+        )));
+    }
+    sh.push_notification(vos_domain::Notification { app: sh.app.clone(), title, body })
 }
 
 /// The longest event name `app.emit` takes.
@@ -137,68 +91,77 @@ pub const MAX_EVENT_BYTES: usize = 64 * 1024;
 /// unbounded queue.
 const MAX_QUEUED_EVENTS: usize = 256;
 
-/// `app.emit(name, data?)`: tell the app's open pages something changed outside them (`host.on(name, fn)` in the
-/// page). It is a change to the world like `app.notify`, so a `readOnly` tool may not.
-fn install_emit(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<()> {
-    let s = sh.clone();
-    app.set(
-        "emit",
-        lua.create_function(move |_, (name, data): (String, Option<LuaValue>)| {
-            s.writable("app.emit")?;
-            let valid = !name.is_empty()
-                && name.len() <= MAX_EVENT_NAME
-                && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'-'));
-            if !valid {
-                return Err(mlua::Error::runtime(format!(
-                    "app.emit: an event name is 1 to {MAX_EVENT_NAME} letters, digits, . _ : or -"
-                )));
-            }
-            if name.starts_with("host:") {
-                return Err(mlua::Error::runtime("app.emit: names starting with `host:` are the host's own"));
-            }
-            let data = match data {
-                Some(d) => lua_to_json(&d)?,
-                None => Value::Null,
-            };
-            if data.to_string().len() > MAX_EVENT_BYTES {
-                return Err(mlua::Error::runtime(format!(
-                    "app.emit: the data of an event is at most {MAX_EVENT_BYTES} bytes of JSON"
-                )));
-            }
-            let mut effects = s.effects.lock();
-            let waiting = effects.iter().filter(|e| matches!(e, Effect::Emit { .. })).count();
-            if waiting >= MAX_QUEUED_EVENTS {
-                return Err(mlua::Error::runtime(format!(
-                    "app.emit: {MAX_QUEUED_EVENTS} events are already waiting to be sent"
-                )));
-            }
-            effects.push(Effect::Emit { name, data });
-            Ok(())
-        })?,
-    )
+/// `app.emit(name, data?)`: it is a change to the world like `app.notify`, so a `readOnly` tool may not.
+pub(super) fn emit(sh: &Shared, name: String, data: Option<EventData>) -> mlua::Result<()> {
+    sh.writable("app.emit")?;
+    let valid = !name.is_empty()
+        && name.len() <= MAX_EVENT_NAME
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'-'));
+    if !valid {
+        return Err(mlua::Error::runtime(format!(
+            "app.emit: an event name is 1 to {MAX_EVENT_NAME} letters, digits, . _ : or -"
+        )));
+    }
+    if name.starts_with("host:") {
+        return Err(mlua::Error::runtime("app.emit: names starting with `host:` are the host's own"));
+    }
+    let data = data.map_or(Value::Null, |data| data.value);
+    if data.to_string().len() > MAX_EVENT_BYTES {
+        return Err(mlua::Error::runtime(format!(
+            "app.emit: the data of an event is at most {MAX_EVENT_BYTES} bytes of JSON"
+        )));
+    }
+    let mut effects = sh.effects.lock();
+    let waiting = effects.iter().filter(|e| matches!(e, Effect::Emit { .. })).count();
+    if waiting >= MAX_QUEUED_EVENTS {
+        return Err(mlua::Error::runtime(format!(
+            "app.emit: {MAX_QUEUED_EVENTS} events are already waiting to be sent"
+        )));
+    }
+    effects.push(Effect::Emit { name, data });
+    Ok(())
 }
 
-/// `app.agents:list()`: the agent contacts as `{ id, name, avatar?, role }`. Never grants, tokens or launch
-/// commands.
-fn install_agents(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<()> {
-    let agents = lua.create_table()?;
-    let s = sh.clone();
-    agents.set(
-        "list",
-        lua.create_function(move |lua, _: Variadic<LuaValue>| {
-            let list = lua.create_table()?;
-            for (i, card) in s.roster.cards().into_iter().enumerate() {
-                let row = lua.create_table()?;
-                row.set("id", card.id.0)?;
-                row.set("name", card.name)?;
-                if let Some(avatar) = card.avatar {
-                    row.set("avatar", avatar)?;
-                }
-                row.set("role", card.role)?;
-                list.raw_set(i + 1, row)?;
-            }
-            Ok(list)
-        })?,
-    )?;
-    app.set("agents", agents)
+/// What an app may know of an agent contact: never grants, tokens or launch commands.
+#[derive(Clone, Debug, Serialize, Shape)]
+#[shape(module = "vos:app")]
+pub struct AgentCard {
+    pub id: String,
+    pub name: String,
+    pub avatar: Option<String>,
+    pub role: String,
+}
+
+/// The agent contacts of the host.
+#[derive(Clone, Copy, Debug, Object)]
+#[shape(module = "vos:app")]
+pub struct Agents;
+
+#[mlua_ir::object(module = "vos:app")]
+impl Agents {
+    /// Every agent contact.
+    pub fn list(&self, lua: &Lua) -> mlua::Result<Vec<AgentCard>> {
+        let cards = shared(lua)?.roster.cards();
+        Ok(cards
+            .into_iter()
+            .map(|card| AgentCard { id: card.id.0, name: card.name, avatar: card.avatar, role: card.role })
+            .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mlua_ir::FromLuaArg as _;
+
+    /// `app.id` is declared a string, not a type of its own.
+    #[test]
+    fn the_id_is_declared_a_string() {
+        assert_eq!(ThisApp::shape(&mut Registry::new()), mlua_ir::ir::Ty::String);
+        // and what a notification refuses is refused by its shape: a key it does not have
+        let lua = Lua::new();
+        let table: LuaValue = lua.load("return { title = 'x', at = 'later' }").eval().unwrap();
+        let refused = Notification::from_lua_arg(table, &lua).unwrap_err();
+        assert!(refused.contains("at"), "{refused}");
+    }
 }

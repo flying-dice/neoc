@@ -275,7 +275,7 @@ async fn dev_reload_rebuilds_the_vm_when_the_bundle_changes_and_keeps_the_data()
     // "rebuild" the bundle: a new tool (declared before the entry returns its handlers), a new checksum
     let before = counter.0.load(Ordering::SeqCst);
     let lua = std::fs::read_to_string(pkg.join("app.luau")).unwrap();
-    let extra = "app.tools.register({ name = \"extra\", run = function() return \"v2\" end })";
+    let extra = "app.tool({ name = \"extra\", run = function() return \"v2\" end })";
     let v2 = lua.replacen("\nreturn handlers", &format!("\n{extra}\nreturn handlers"), 1);
     assert_ne!(v2, lua, "the bundle ends by returning its handlers: {lua}");
     std::fs::write(pkg.join("app.luau"), &v2).unwrap();

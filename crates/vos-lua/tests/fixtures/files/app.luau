@@ -10,12 +10,12 @@ local docs = app.files.documents
 type Step = { ok: boolean, value: any?, kind: string? }
 
 -- One call's outcome: whether it worked, what it returned, and the kind of its error.
-local function step(value: any?, err: string?): Step
-  return { ok = value ~= nil, value = value, kind = app.files.errorKind(err) }
+local function step(value: any?, err: vos_app_FileError?): Step
+  return { ok = value ~= nil, value = value, kind = (err and err.kind) }
 end
 
 -- The size of what a read returned (a binary string is not JSON-friendly).
-local function sized(data: string?, err: string?): Step
+local function sized(data: string?, err: vos_app_FileError?): Step
   return step(if data then #data else nil, err)
 end
 

@@ -126,7 +126,7 @@ fn leaf(rng: &mut Rng, n: usize, kind: Kind) -> Leaf {
         Leaf { code: format!("app.kv:set('k1', {n}) wrote('kv')"), idle: false },
         Leaf { code: format!("attempt('state', function() state.v = {n} end)"), idle: false },
         Leaf { code: "attempt('notify', function() app.notify { title = 'chaos' } end)".into(), idle: false },
-        Leaf { code: "attempt('window', function() app:openWindow() end)".into(), idle: false },
+        Leaf { code: "attempt('window', function() app.openWindow() end)".into(), idle: false },
     ];
     if kind == Kind::OwnServer {
         leaves.push(Leaf { code: "hyper.get(OWN)".into(), idle: true });
@@ -348,7 +348,7 @@ local function TX(body)
 end
 
 app.db:migrate { [1] = "create table t(a integer primary key autoincrement, v integer)" }
--- the app's one window is its page's: `app:openWindow()` asks the shell for it
+-- the app's one window is its page's: `app.openWindow()` asks the shell for it
 "#;
 
 const TOOLS: &str = r#"
@@ -391,7 +391,7 @@ app.tool { name = "peek", readOnly = true, run = function()
   refused("kv", function() app.kv:set("k1", 97) end)
   refused("state", function() state.v = 97 end)
   refused("notify", function() app.notify { title = "peek" } end)
-  refused("window", function() app:openWindow() end)
+  refused("window", function() app.openWindow() end)
   refused("tx", function() app.db:tx(function() app.db:exec("insert into t(v) values (96)") end) end)
   steal("a readOnly call")
   resume_scripts()

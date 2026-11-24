@@ -109,13 +109,13 @@ async fn unload_frees_the_vm_and_hot_reload_swaps_in_new_code() {
 async fn one_call_runs_at_a_time_in_a_vm() {
     let src = r#"
         local order = {}
-        app.tools.register { name = "slow", run = function()
+        app.tool { name = "slow", run = function()
             table.insert(order, "a-start")
             app.db:all("select 1")      -- yields to the host
             table.insert(order, "a-end")
             return order
         end }
-        app.tools.register { name = "fast", run = function()
+        app.tool { name = "fast", run = function()
             table.insert(order, "b")
             return order
         end }

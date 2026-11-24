@@ -174,8 +174,8 @@ async fn open_window_asks_for_the_apps_one_window_and_refuses_any_other_name() {
     let src = format!(
         r#"{MANIFEST}
         local function try(f) local ok, err = pcall(f); return {{ ok = ok, err = (not ok) and tostring(err) or nil }} end
-        app.tool {{ name = "main", run = function() app:openWindow("main", {{ a = 1 }}) return true end }}
-        app.tool {{ name = "other", run = function() return try(function() app:openWindow("evil", {{}}) end) end }}"#
+        app.tool {{ name = "main", run = function() app.openWindow({{ a = 1 }}) return true end }}
+        app.tool {{ name = "other", run = function() return try(function() app.openWindow("evil") end) end }}"#
     );
     rig.load("probe", &src).await.unwrap();
     rig.tool("probe", "main").await.unwrap();
@@ -183,7 +183,7 @@ async fn open_window_asks_for_the_apps_one_window_and_refuses_any_other_name() {
     let out = rig.tool("probe", "other").await.unwrap();
     assert_eq!(out["ok"], false);
     let why = out["err"].as_str().unwrap();
-    assert!(why.contains("an app has one window, `main`") && why.contains("got `evil`"), "{why}");
+    assert!(why.contains("an app has one window: it takes no name"), "{why}");
     assert_eq!(rig.shell.windows.lock().unwrap().len(), 1, "nothing was asked of the shell");
 }
 
@@ -193,12 +193,12 @@ const READ_ONLY_APP: &str = r#"
     app.db:migrate { [1] = "create table log(id integer primary key, msg text)" }
     local n = 0
     local function try(f) local ok, err = pcall(f); return { ok = ok, err = (not ok) and tostring(err) or nil } end
-    app.tool { name = "open", readOnly = true, run = function() return try(function() app:openWindow("main") end) end }
+    app.tool { name = "open", readOnly = true, run = function() return try(function() app.openWindow() end) end }
     app.tool { name = "notify", readOnly = true, run = function() return try(function() app.notify { title = "hi" } end) end }
     app.tool { name = "emit", readOnly = true, run = function() return try(function() app.emit("changed") end) end }
     -- not declared readOnly: allowed to do all of it (but the caller may still require a read-only run)
     app.tool { name = "everything", run = function()
-      app:openWindow("main")
+      app.openWindow()
       app.notify { title = "hi" }
       app.emit("changed")
       app.db:exec("insert into log(msg) values ('did everything')")

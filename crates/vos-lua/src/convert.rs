@@ -194,10 +194,10 @@ pub fn json_to_lua(lua: &Lua, v: &Value) -> mlua::Result<LuaValue> {
     })
 }
 
-/// SQL parameters from Lua: `nil` (none), `{ a, b }` (positional) or `{ name = v }` (named binds).
-pub fn lua_to_params(v: Option<LuaValue>) -> mlua::Result<Params> {
-    let Some(v) = v else { return Ok(Params::None) };
-    match lua_to_json(&v)? {
+/// SQL parameters from what a script gave, already JSON: `null` and `[]` (none), an array (positional) or an
+/// object (named binds).
+pub fn json_to_params(v: Value) -> mlua::Result<Params> {
+    match v {
         Value::Null => Ok(Params::None),
         Value::Array(items) if items.is_empty() => Ok(Params::None),
         Value::Array(items) => Ok(Params::Positional(items)),
@@ -292,16 +292,17 @@ mod tests {
     #[test]
     fn sql_params_are_none_positional_or_named() {
         let lua = Lua::new();
-        assert_eq!(lua_to_params(None).unwrap(), Params::None);
-        assert_eq!(lua_to_params(Some(eval(&lua, "return {}"))).unwrap(), Params::None);
+        let lua_to_params = |v: LuaValue| json_to_params(lua_to_json(&v).unwrap());
+        assert_eq!(lua_to_params(LuaValue::Nil).unwrap(), Params::None);
+        assert_eq!(lua_to_params(eval(&lua, "return {}")).unwrap(), Params::None);
         assert_eq!(
-            lua_to_params(Some(eval(&lua, "return {1, 'x'}"))).unwrap(),
+            lua_to_params(eval(&lua, "return {1, 'x'}")).unwrap(),
             Params::Positional(vec![json!(1), json!("x")])
         );
-        let Params::Named(n) = lua_to_params(Some(eval(&lua, "return { id = 7 }"))).unwrap() else {
+        let Params::Named(n) = lua_to_params(eval(&lua, "return { id = 7 }")).unwrap() else {
             panic!("named")
         };
         assert_eq!(n, vec![("id".to_owned(), json!(7))]);
-        assert!(lua_to_params(Some(eval(&lua, "return 5"))).is_err());
+        assert!(lua_to_params(eval(&lua, "return 5")).is_err());
     }
 }

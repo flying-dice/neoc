@@ -1,12 +1,13 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
-//! The app API an app gets is the one `types/generated/vos.d.luau` declares: every key of the live `app` table and
-//! of the tables under it (`app.db`, `app.kv`, `app.files`, `app.agents`, `app.tools`, `app.t`) is
-//! declared, and every declared key is there, so a call that type-checks and then fails (declared, missing) or works
-//! unseen by the checker (present, undeclared) fails here.
+//! The app API an app gets is the one its schema describes and `types/generated/vos.d.luau` declares: every key of the
+//! live `app` table and of `app.t` is declared, every declared key is there, and every declared member of the values
+//! under it (`app.db`, `app.kv`, `app.files`, a location, `app.agents`, a call's `ctx`) is there, so a call that
+//! type-checks and then fails (declared, missing) or works unseen by the checker (present, undeclared) fails here.
 
 mod common;
 
 use common::{agent_ctx, db, id, package};
+use mlua_ir::ir::{Ir, TypeBody};
 use serde_json::{Map, Value};
 use std::{collections::BTreeSet, path::Path};
 use vos_lua::{AppVm, VmConfig};
@@ -74,53 +75,119 @@ fn assert_same(what: &str, live: &BTreeSet<String>, declared: &BTreeSet<String>)
     );
 }
 
-/// The tables of the app API and the type each is declared as.
-const TABLES: [(&str, &str); 7] = [
-    ("app", "vos_AppApi"),
-    ("db", "vos_Db"),
-    ("kv", "vos_KvApi"),
-    ("files", "vos_FilesApi"),
-    ("agents", "vos_AgentsApi"),
-    ("tools", "vos_ToolRegistry"),
-    ("t", "vos_SchemaBuilders"),
+/// The members of an object type of the schema: its getters and its methods.
+fn members(ir: &Ir, name: &str) -> BTreeSet<String> {
+    let def = ir.type_def(name).unwrap_or_else(|| panic!("no type {name} in the schema"));
+    let TypeBody::Object { fields, methods, .. } = &def.body else {
+        panic!("{name} is not an object: {def:?}")
+    };
+    fields.iter().map(|f| f.name.clone()).chain(methods.iter().map(|m| m.name.clone())).collect()
+}
+
+/// The statics of an object type of the schema.
+fn statics(ir: &Ir, name: &str) -> BTreeSet<String> {
+    let def = ir.type_def(name).unwrap_or_else(|| panic!("no type {name} in the schema"));
+    let TypeBody::Object { statics, .. } = &def.body else { panic!("{name} is not an object: {def:?}") };
+    statics.iter().map(|s| s.name.clone()).collect()
+}
+
+/// The values of the app API that are userdata, how an app reaches each, and the type each is declared as. A
+/// userdata has no keys to list, so the app is asked for each declared member by name.
+const OBJECTS: [(&str, &str, &str); 5] = [
+    ("db", "app.db", "vos_app_Db"),
+    ("kv", "app.kv", "vos_app_Kv"),
+    ("files", "app.files", "vos_app_Files"),
+    ("documents", "app.files.documents", "vos_app_Location"),
+    ("agents", "app.agents", "vos_app_Agents"),
 ];
 
-/// An app whose tool lists the keys of `app` and of every table under it.
-const APP: &str = r#"
+/// An app whose tool lists the keys of `app` and of `app.t`, and which of the names it is given each object has.
+fn probe(ir: &Ir) -> String {
+    let asked = OBJECTS
+        .iter()
+        .map(|(key, value, ty)| {
+            let names = members(ir, ty).iter().map(|n| format!("{n:?}")).collect::<Vec<_>>().join(", ");
+            format!("{key} = has({value}, {{ {names} }}),")
+        })
+        .collect::<Vec<_>>()
+        .join(
+            "
+        ",
+        );
+    format!(
+        r#"
     local function keys(t)
-      local out = {}
+      local out = {{}}
       for k in pairs(t) do
         table.insert(out, k)
       end
       return out
     end
-    app.tool { name = "keys", readOnly = true, run = function()
-      return {
-        app = keys(app), db = keys(app.db), kv = keys(app.kv), files = keys(app.files), agents = keys(app.agents),
-        tools = keys(app.tools), t = keys(app.t),
-      }
-    end }
-    return {}
-"#;
+    local function has(value, names)
+      local out = {{}}
+      for _, name in ipairs(names) do
+        if value[name] ~= nil then
+          table.insert(out, name)
+        end
+      end
+      return out
+    end
+    app.tool {{ name = "keys", readOnly = true, run = function(_, ctx)
+      return {{
+        app = keys(app), t = keys(app.t), same = require("vos:app") == app,
+        kinds = {{ db = typeof(app.db), id = typeof(app.id), ctx = typeof(ctx), documents = typeof(app.files.documents) }},
+        ctx = has(ctx, {{ "actor", "now", "fail" }}),
+        {asked}
+      }}
+    end }}
+    return {{}}
+"#
+    )
+}
 
 #[tokio::test]
-async fn the_app_table_and_the_tables_under_it_have_exactly_the_declared_keys() {
+async fn the_app_api_an_app_gets_is_the_one_the_schema_and_the_declarations_describe() {
+    let ir = vos_lua::declarations::schema();
     // the host's config: no test hooks
-    let vm = AppVm::load(&id("probe"), package(APP, &[]), db(), VmConfig::default()).await.unwrap();
+    let vm = AppVm::load(&id("probe"), package(&probe(&ir), &[]), db(), VmConfig::default()).await.unwrap();
     let live = vm.call_tool("keys", Value::Object(Map::new()), &agent_ctx(0), false).await.unwrap();
 
+    // the module: every key of the live table is a constant, an exported type or a function of the schema
+    let module = ir.modules.iter().find(|m| m.name == "vos:app").unwrap();
+    let in_schema: BTreeSet<String> = module
+        .constants
+        .iter()
+        .map(|c| c.name.clone())
+        .chain(module.objects.iter().map(|o| o.name.clone()))
+        .chain(module.functions.iter().map(|f| f.name.clone()))
+        .collect();
+    assert_same("app", &strings(&live["app"]), &in_schema);
+    // and of the committed declarations, which are written from that schema
     let decls = declarations();
-    for (field, ty) in TABLES {
-        assert_same(field, &strings(&live[field]), &declared_keys(&decls, ty));
+    assert_same("vos_app", &strings(&live["app"]), &declared_keys(&decls, "vos_app"));
+    assert_same("t", &strings(&live["t"]), &statics(&ir, "vos_app_t"));
+    assert_same("vos_app_tStatics", &strings(&live["t"]), &declared_keys(&decls, "vos_app_tStatics"));
+    for (key, _, ty) in OBJECTS {
+        assert_same(key, &strings(&live[key]), &members(&ir, ty));
     }
+    assert_same("ctx", &strings(&live["ctx"]), &members(&ir, "vos_app_Context"));
+
     // the whole surface, spelled out: a member that comes back (or one that goes) changes this list
     let app: Vec<String> = strings(&live["app"]).into_iter().collect();
     assert_eq!(
         app,
-        ["agents", "db", "emit", "files", "id", "kv", "log", "notify", "openWindow", "t", "tool", "tools"]
+        ["agents", "db", "emit", "files", "id", "kv", "log", "notify", "openWindow", "t", "tool"]
     );
     let db: Vec<String> = strings(&live["db"]).into_iter().collect();
     assert_eq!(db, ["all", "exec", "migrate", "one", "tx"]);
+    let t: Vec<String> = strings(&live["t"]).into_iter().collect();
+    assert_eq!(t, ["array", "boolean", "enum", "integer", "number", "object", "string"]);
+    // the module and the global are one table; the id is a plain string, the values under `app` are userdata
+    assert_eq!(live["same"], true);
+    assert_eq!(
+        live["kinds"],
+        serde_json::json!({ "db": "userdata", "id": "string", "ctx": "userdata", "documents": "userdata" })
+    );
 }
 
 #[test]

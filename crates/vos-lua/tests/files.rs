@@ -119,7 +119,7 @@ async fn no_path_leaves_the_apps_location() {
         local docs = app.files.documents
         app.tool {{ name = "escapes", run = function()
           local out = {{}}
-          local function try(label, value, err) out[label] = {{ ok = value ~= nil, kind = app.files.errorKind(err), err = err }} end
+          local function try(label, value, err) out[label] = {{ ok = value ~= nil, kind = (err and err.kind), err = err }} end
           local long = string.rep("a", 256)
           try("absolute read", docs:read("{outside_path}"))
           try("absolute write", docs:write("/tmp/vos-escape.txt", "x"))
@@ -200,7 +200,7 @@ async fn no_path_leaves_the_apps_location() {
 const SHARED_NAME: &str = r#"
     local docs = app.files.documents
     hook("write", function(text) return docs:write("shared.txt", text) end)
-    hook("read", function() local text, err = docs:read("shared.txt") return { text = text, kind = app.files.errorKind(err) } end)
+    hook("read", function() local text, err = docs:read("shared.txt") return { text = text, kind = (err and err.kind) } end)
     hook("list", function() return #assert(docs:list()) end)
 "#;
 
@@ -287,22 +287,13 @@ async fn errors_are_values_with_a_stable_kind_and_misuse_raises() {
           local _, root_write = docs:write("", "x")
           return {
             missing = missing,
-            missing_kind = app.files.errorKind(missing),
-            bad_kind = app.files.errorKind(bad),
-            root_kind = app.files.errorKind(root_write),
-            foreign = app.files.errorKind("fs.read: not_found: x: y"),
-            not_text = app.files.errorKind(42),
-            missing_message = app.files.errorMessage(missing),
+            missing_kind = missing and missing.kind,
+            missing_text = tostring(missing),
             bad = bad,
-            -- the method name is not judged: a string in the shape with a known kind is read
-            odd_kind = app.files.errorKind("files.: not_found: x"),
-            odd_message = app.files.errorMessage("files.: not_found: x"),
-            bad_message = app.files.errorMessage(bad),
-            others_have_no_message = app.files.errorMessage("fs.read: not_found: x: y") == nil
-              and app.files.errorMessage("files.read: nonsense: x") == nil
-              and app.files.errorMessage("not_found: x") == nil
-              and app.files.errorMessage(42) == nil
-              and app.files.errorMessage(nil) == nil,
+            bad_kind = bad and bad.kind,
+            root_kind = root_write and root_write.kind,
+            -- `assert` raises the error itself, so what `pcall` catches is still the typed table
+            raised_kind = select(2, pcall(function() return assert(docs:read("nope.txt")) end)).kind,
             bad_option = tostring(select(2, pcall(function() return docs:remove("x", { recrusive = true }) end))),
             bad_type = (pcall(function() return docs:read({} :: any) end)),
           }
@@ -310,22 +301,22 @@ async fn errors_are_values_with_a_stable_kind_and_misuse_raises() {
     "#;
     let vm = load_in(root.path(), "probe", src, &[]).await;
     let out = vm.emit("probe", json!(null)).await.unwrap();
-    assert!(out["missing"].as_str().unwrap().starts_with("files.read: not_found: nope.txt: "), "{out}");
+    // an error is a table: its kind, a message for a person (the path, then the wording), and the call
+    let missing = &out["missing"];
     assert_eq!(
-        (&out["missing_kind"], &out["bad_kind"], &out["root_kind"]),
-        (&json!("not_found"), &json!("invalid_input"), &json!("invalid_input"))
+        (&missing["kind"], &missing["op"]),
+        (&json!("not_found"), &json!("vos:app.Location:read")),
+        "{out}"
     );
-    assert_eq!(out["foreign"], Value::Null, "only a files error has a files kind");
-    assert_eq!(out["not_text"], Value::Null);
-    let missing = out["missing"].as_str().unwrap();
-    assert_eq!(out["missing_message"].as_str(), missing.strip_prefix("files.read: not_found: "), "{out}");
-    assert!(out["missing_message"].as_str().unwrap().starts_with("nope.txt: "), "{out}");
-    assert_eq!((&out["odd_kind"], &out["odd_message"]), (&json!("not_found"), &json!("x")), "{out}");
-    let bad = out["bad"].as_str().unwrap();
-    assert_eq!(out["bad_message"].as_str(), bad.strip_prefix("files.read: invalid_input: "), "{out}");
-    assert!(out["bad_message"].as_str().is_some_and(|m| !m.is_empty()), "{out}");
-    assert_eq!(out["others_have_no_message"], true, "only a files error has a files message: {out}");
-    assert!(out["bad_option"].as_str().unwrap().contains("unknown option `recrusive`"), "{out}");
+    let message = missing["message"].as_str().unwrap();
+    assert!(message.starts_with("nope.txt: "), "{out}");
+    assert_eq!(out["missing_text"], json!(format!("vos:app.Location:read: not_found: {message}")), "{out}");
+    assert_eq!(
+        (&out["missing_kind"], &out["bad_kind"], &out["root_kind"], &out["raised_kind"]),
+        (&json!("not_found"), &json!("invalid_input"), &json!("invalid_input"), &json!("not_found"))
+    );
+    assert!(out["bad"]["message"].as_str().is_some_and(|m| !m.is_empty()), "{out}");
+    assert!(out["bad_option"].as_str().unwrap().contains("recrusive"), "{out}");
     assert_eq!(out["bad_type"], false, "a table is not a path: {out}");
 }
 
@@ -342,7 +333,7 @@ async fn purging_removes_the_apps_files_and_a_host_without_a_data_directory_keep
 
     let none = DiskFiles::new(None);
     let config = VmConfig { files: none.files(&id("probe")), ..common::config() };
-    let src = r#"hook("probe", function() local _, err = app.files.documents:list() return app.files.errorKind(err) end)"#;
+    let src = r#"hook("probe", function() local _, err = app.files.documents:list() return (err and err.kind) end)"#;
     let vm = AppVm::load(&id("probe"), package(&common::backend(src), &[]), db(), config).await.unwrap();
     assert_eq!(vm.emit("probe", json!(null)).await.unwrap(), json!("unsupported"));
     none.purge(&id("probe")).await.unwrap();

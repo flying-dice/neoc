@@ -110,9 +110,9 @@ async fn migrations_are_recorded_ordered_and_a_changed_one_fails_the_load() {
     assert!(e.to_string().contains("edited after being applied"), "{e}");
     let e =
         vos_lua_load(&app(r#"app.db:migrate { [1] = "x", [3] = "y" }"#), shared.clone()).await.err().unwrap();
-    assert!(e.to_string().contains("without gaps"), "{e}");
+    assert!(e.to_string().contains("a list has no holes; item 2 is missing"), "{e}");
     let e = vos_lua_load(&app(r"app.db:migrate { [1] = 5 }"), shared).await.err().unwrap();
-    assert!(e.to_string().contains("[1] must be a SQL string"), "{e}");
+    assert!(e.to_string().contains("item 1: expected a string, got 5"), "{e}");
 }
 
 async fn vos_lua_load(src: &str, db: Arc<vos_sqlite::AppDb>) -> Result<AppVm, VmError> {
@@ -189,7 +189,7 @@ async fn params_with_whole_numbers_bind_as_integers() {
 
 const TOOLS: &str = r#"
     local t = app.t
-    app.tools.register {
+    app.tool {
       name = "search", title = "Search Notes", readOnly = true,
       description = "Find notes",
       input = { query = t.string { description = "text" }, limit = t.integer { default = 10, min = 1, max = 50 }, folder = t.string { optional = true } },
@@ -201,7 +201,7 @@ const TOOLS: &str = r#"
     }
     app.tool { name = "bug", run = function() local x = nil; return x.y end }
     app.tool { name = "nothing", run = function() end }
-    app.tool { name = "raw", input_schema = { type = "object", properties = { n = { type = "integer" } }, required = { "n" } }, run = function(i) return i.n end }
+    app.tool { name = "plain", input = { n = t.integer {} }, run = function(i) return i.n end }
 "#;
 
 #[tokio::test]
@@ -222,7 +222,7 @@ async fn tools_are_registered_with_a_compiled_schema_and_run_as_the_calling_acto
         "defaults filled, optional folder absent"
     );
     assert_eq!(call(&vm, "nothing", json!({})).await.unwrap(), Value::Null);
-    assert_eq!(call(&vm, "raw", json!({"n": 3})).await.unwrap(), json!(3));
+    assert_eq!(call(&vm, "plain", json!({"n": 3})).await.unwrap(), json!(3));
 }
 
 #[tokio::test]
@@ -255,9 +255,9 @@ async fn bad_tool_declarations_fail_the_load() {
         let e = try_load("probe", &app(tool)).await.err().unwrap().to_string();
         assert!(e.contains(needle), "wanted `{needle}` in `{e}`");
     };
-    fails("app.tool { run = function() end }", "needs a `name`").await;
+    fails("app.tool { run = function() end }", "argument #1 'def': name: expected a string, got nil").await;
     fails("app.tool { name = 'bad name', run = function() end }", "invalid tool name").await;
-    fails("app.tool { name = 'x' }", "needs a `run").await;
+    fails("app.tool { name = 'x' }", "run: expected a function, got nil").await;
     fails("app.tool { name = 'x', run = function() end, input = { a = 5 } }", "app.t").await;
     fails("app.tool { name = 'x', run = function() end, readOnly = 'yes' }", "readOnly").await;
     fails(
@@ -265,7 +265,10 @@ async fn bad_tool_declarations_fail_the_load() {
         "already registered",
     )
     .await;
-    fails("app.tool { name = 'x', run = function() end, input = {}, input_schema = {} }", "not both").await;
+    // a key a tool does not have is refused, not dropped: a raw JSON schema is not a way to declare the input
+    fails("app.tool { name = 'x', run = function() end, input_schema = {} }", "unknown key `input_schema`")
+        .await;
+    fails("app.tool('x')", "expected a tool definition (a table)").await;
 }
 
 #[tokio::test]
@@ -304,9 +307,9 @@ async fn a_call_that_is_not_read_only_may_write_data_notify_and_read() {
 async fn notify_emit_and_open_window_become_effects_for_the_host() {
     let src = r#"
         app.notify { title = "Reminder", body = "Call mum" }
-        app:notify { title = "Colon call" }
+        app.notify { title = "No body" }
         app.emit("notes.changed", { id = 12 })
-        app:openWindow("main", { noteId = 12 })
+        app.openWindow({ noteId = 12 })
         return {}
     "#;
     let vm = AppVm::load(&id("probe"), package(src, &[]), db(), VmConfig::default()).await.unwrap();
@@ -317,7 +320,7 @@ async fn notify_emit_and_open_window_become_effects_for_the_host() {
         vm.take_effects(),
         vec![
             n("Reminder", Some("Call mum")),
-            n("Colon call", None),
+            n("No body", None),
             Effect::Emit { name: "notes.changed".into(), data: json!({"id": 12}) },
             Effect::OpenWindow { name: "main".into(), params: json!({"noteId": 12}) },
         ]
@@ -328,12 +331,15 @@ async fn notify_emit_and_open_window_become_effects_for_the_host() {
 #[tokio::test]
 async fn notify_and_emit_are_validated() {
     for (call, needle) in [
-        ("app.notify { body = 'no title' }", "app.notify needs `title`"),
+        (
+            "app.notify { body = 'no title' }",
+            "vos:app.notify: argument #1 'notification': missing field `title`",
+        ),
         ("app.notify { title = '' }", "app.notify: `title` must be 1 to 200 characters, not blank"),
         ("app.notify { title = '   ' }", "not blank"),
         ("app.notify { title = string.rep('t', 201) }", "1 to 200"),
-        ("app.notify { title = 5 }", "app.notify: `title` must be a string, got number"),
-        ("app.notify { title = 't', body = false }", "`body` must be a string, got boolean"),
+        ("app.notify { title = 5 }", "title: expected a string, got 5"),
+        ("app.notify { title = 't', body = false }", "body: expected a string"),
         (
             "app.notify { title = 't', body = string.rep('b', 2001) }",
             "app.notify: `body` must be at most 2000 characters",
@@ -351,30 +357,34 @@ async fn notify_and_emit_are_validated() {
 #[tokio::test]
 async fn notify_refuses_a_key_it_does_not_have() {
     for (call, needle) in [
-        ("app.notify { title = 't', at = '2026-01-01T09:00:00Z' }", "unknown key `at`"),
-        ("app.notify { title = 't', actions = { 'Open' } }", "unknown key `actions`"),
-        ("app.notify { titel = 't' }", "unknown key `titel`"),
-        ("app.notify { title = 't', [true] = 1 }", "unknown key of type boolean"),
+        ("app.notify { title = 't', at = '2026-01-01T09:00:00Z' }", "unknown field `at`"),
+        ("app.notify { title = 't', actions = { 'Open' } }", "unknown field `actions`"),
+        ("app.notify { titel = 't' }", "unknown field `titel`"),
     ] {
         let e = try_load("probe", &app(call)).await.err().unwrap().to_string();
         assert!(e.contains(needle), "wanted `{needle}` in `{e}`");
-        assert!(e.contains("(it takes `title`, `body`)"), "names what it takes: {e}");
+        assert!(e.contains("expected one of title, body"), "names what it takes: {e}");
     }
-    // a value written without a name is a positional entry, the likeliest slip: say so, and how to write it
-    for call in ["app.notify { 'Backup done' }", "app.notify { 'positional', title = 't' }"] {
+    // a value written without a name is a positional entry, the likeliest slip; a key that is not a name
+    for call in [
+        "app.notify { 'Backup done' }",
+        "app.notify { 'positional', title = 't' }",
+        "app.notify { title = 't', [true] = 1 }",
+    ] {
         let e = try_load("probe", &app(call)).await.err().unwrap().to_string();
-        assert!(
-            e.contains("app.notify: unknown positional entry 1 (it takes `title`, `body` by name)"),
-            "{call}: {e}"
-        );
+        assert!(e.contains("vos:app.notify: argument #1 'notification': unknown field"), "{call}: {e}");
     }
     // the longest title and body, and an empty body, are fine
     let vm = load(&app("app.notify { title = string.rep('t', 200), body = string.rep('b', 2000) }\napp.notify { title = 't', body = '' }")).await;
     assert_eq!(vm.take_effects().len(), 2);
-    // a colon call with no table is told it needs one; `app`'s own keys are not read as a notification's
-    for call in ["app:notify()", "app.notify(app)", "app.notify()"] {
+    // it is a function of the module, not a method: a colon call passes `app` first, which is one argument too many
+    for (call, needle) in [
+        ("app.notify()", "argument #1 'notification': expected"),
+        ("app.notify(app)", "argument #1 'notification': "),
+        ("app:notify { title = 't' }", "argument #1 'notification': unknown field"),
+    ] {
         let e = try_load("probe", &app(call)).await.err().unwrap().to_string();
-        assert!(e.contains("app.notify takes a table"), "{call}: {e}");
+        assert!(e.contains(needle), "{call}: {e}");
     }
 }
 

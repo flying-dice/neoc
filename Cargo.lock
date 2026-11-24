@@ -6770,9 +6770,11 @@ name = "vos-lua"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "mlua-ir",
  "neoc-vm2",
  "notify",
  "parking_lot 0.12.5",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",

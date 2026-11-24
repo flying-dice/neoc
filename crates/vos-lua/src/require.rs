@@ -25,12 +25,18 @@ use std::sync::Arc;
 /// offers all of them (`modules::names`).
 pub use vos_domain::NOT_FOR_APPS;
 
+/// Is `name` a module of the VM library (`std:`, `lib:`, `vnd:`)? The registry also lists the modules this crate
+/// declares itself (`vos:app`, which is the app's own table and never a worker's).
+pub(crate) fn is_library(name: &str) -> bool {
+    name.starts_with("std:") || name.starts_with("lib:") || name.starts_with("vnd:")
+}
+
 /// The library modules an app (and a `std:thread` worker it starts) is offered: every one the library has,
 /// less [`NOT_FOR_APPS`] and less `refused` (`VmConfig::refused_modules`, empty in the host). The one place that
 /// rule is written.
 pub(crate) fn offered_modules(refused: &[String]) -> Vec<&'static str> {
     modules::names()
-        .filter(|name| !NOT_FOR_APPS.contains(name) && !refused.iter().any(|r| r == name))
+        .filter(|name| is_library(name) && !NOT_FOR_APPS.contains(name) && !refused.iter().any(|r| r == name))
         .collect()
 }
 
@@ -44,10 +50,10 @@ pub(crate) fn install(lua: &Lua, sh: &Arc<Shared>, env: &mlua::Table) -> mlua::R
 }
 
 fn load(lua: &Lua, sh: &Arc<Shared>, spec: &str) -> mlua::Result<LuaValue> {
-    if spec.starts_with("std:") || spec.starts_with("lib:") || spec.starts_with("vnd:") {
+    if is_library(spec) {
         return library(lua, sh, spec);
     }
-    if spec == "vos:app" {
+    if spec == crate::api::MODULE {
         return sh
             .app_table
             .lock()

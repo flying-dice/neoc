@@ -11,7 +11,7 @@ import { Tally, upTo } from './shapes'
 
 class Refused extends Error {}
 
-db.migrate({ [1]: 'create table words (id integer primary key, word text not null)' })
+db.migrate(['create table words (id integer primary key, word text not null)'])
 
 const handlers: Handlers = {
   probe: () => {

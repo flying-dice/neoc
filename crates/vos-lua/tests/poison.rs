@@ -7,8 +7,8 @@
 //! this host first ran on turned the same recursion into a catchable "C stack overflow" error). On Luau the engine
 //! answers `error in error handling` once, so the value reaches the caller as an ordinary error, whichever path it
 //! takes: the entry chunk, a tool, a handler of the app's page, an event or request handler, a task, a transaction
-//! body, or a field read of a table the app handed over (given to `app.tool` or `app.notify`, or returned from a
-//! handler).
+//! body. A table the app hands over (given to `app.tool` or `app.notify`, or returned from a handler) is read raw,
+//! so its `__index` never runs.
 //!
 //! Each case runs in a child process (this test binary again, `poison_case_child`) so that an abort would kill the
 //! child and not the harness; the case passes when the child exits normally after handling the value as an ordinary
@@ -106,10 +106,15 @@ async fn run_case(name: &str) -> String {
             Ok(_) => panic!("the app loaded"),
             Err(e) => poisoned(&e),
         },
-        // a table handed to `app.tool` raises the value when the host reads a field of it, at install
+        // a table handed to `app.tool` would raise the value if the host ran its `__index`: the definition is
+        // read raw, so the app's code does not run and the table is refused for what it holds (nothing)
         "tool_spec_index" => match try_load("probe", &app("app.tool(booby)")).await {
             Ok(_) => panic!("the app loaded"),
-            Err(e) => poisoned(&e),
+            Err(e) => {
+                let text = e.to_string();
+                assert!(text.contains("name: expected a string, got nil"), "{text}");
+                text
+            }
         },
         // a tool body raises the value
         "tool_body" => {
@@ -186,10 +191,15 @@ async fn run_case(name: &str) -> String {
             );
             out.to_string()
         }
-        // a table handed to `app.notify` raises the value when the host reads a field of it
+        // a table handed to `app.notify` is read raw too: refused for the title it does not hold
         "notify_spec" => {
-            failing_tool("app.tool { name = 'n', run = function() app.notify(booby) return 'ok' end }", "n")
-                .await
+            let vm =
+                load(&app("app.tool { name = 'n', run = function() app.notify(booby) return 'ok' end }"))
+                    .await;
+            let e = vm.call_tool("n", json!({}), &agent_ctx(0), false).await.unwrap_err().to_string();
+            ping(&vm).await;
+            assert!(e.contains("missing field `title`"), "{e}");
+            e
         }
         // the body of a transaction raises the value
         "tx_body" => {
@@ -249,7 +259,7 @@ fn entry_chunk_raising_the_poison_fails_the_load() {
 }
 
 #[test]
-fn a_table_given_to_app_tool_that_raises_the_poison_on_a_field_read_fails_the_load() {
+fn a_table_given_to_app_tool_that_would_raise_the_poison_on_a_field_read_is_read_raw_and_refused() {
     survives("tool_spec_index");
 }
 
@@ -284,7 +294,7 @@ fn a_handler_returning_a_table_that_raises_the_poison_on_a_read() {
 }
 
 #[test]
-fn a_table_given_to_app_notify_that_raises_the_poison_on_a_field_read_fails_the_call() {
+fn a_table_given_to_app_notify_that_would_raise_the_poison_on_a_field_read_is_read_raw_and_refused() {
     survives("notify_spec");
 }
 

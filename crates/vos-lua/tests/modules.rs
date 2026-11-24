@@ -102,6 +102,12 @@ impl Rig {
 
 // ---- the modules ------------------------------------------------------------------------------------------
 
+/// The modules of the VM library: every module linked into the program but the adapter's own (`vos:app`, the `app`
+/// API, which is an mlua-ir module like them and so is in the same registry).
+fn library() -> impl Iterator<Item = &'static str> {
+    modules::names().filter(|name| *name != "vos:app")
+}
+
 /// The `(module, type)` of every `require` overload of the generated app declarations, in order.
 fn declared_overloads() -> Vec<(String, String)> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../types/generated/vos.d.luau");
@@ -128,7 +134,7 @@ fn the_declared_require_offers_exactly_what_the_host_offers() {
         .filter(|(_, ty)| !ty.starts_with("vos_NotForApps_") && ty.as_str() != "any")
         .map(|(module, _)| module.as_str())
         .collect();
-    let mut offered: Vec<&str> = modules::names().filter(|name| !REFUSED.contains(name)).collect();
+    let mut offered: Vec<&str> = library().filter(|name| !REFUSED.contains(name)).collect();
     offered.push("vos:app");
     let mut expected = offered.clone();
     expected.sort_unstable();
@@ -145,10 +151,7 @@ fn the_declared_require_offers_exactly_what_the_host_offers() {
 
     // and the host really does refuse them, and really does give the rest
     for module in REFUSED {
-        assert!(
-            modules::names().any(|name| name == module),
-            "{module} exists in the VM library, and is refused"
-        );
+        assert!(library().any(|name| name == module), "{module} exists in the VM library, and is refused");
     }
 }
 
@@ -201,7 +204,7 @@ fn every_module_the_library_declares_is_linked_into_the_adapter() {
     modules_in_the_source(&source, &mut declared);
     declared.sort();
     assert!(declared.len() >= 46, "{declared:?}");
-    let mut linked: Vec<&str> = modules::names().collect();
+    let mut linked: Vec<&str> = library().collect();
     linked.sort_unstable();
     assert_eq!(linked, declared);
 }
@@ -210,7 +213,7 @@ fn every_module_the_library_declares_is_linked_into_the_adapter() {
 async fn every_library_module_can_be_required_once_per_app_and_cannot_be_patched() {
     // the library offers every module; an app is not offered the ones in `REFUSED`
     assert_eq!(vos_lua::NOT_FOR_APPS, REFUSED);
-    let names: Vec<&str> = modules::names().filter(|n| !REFUSED.contains(n)).collect();
+    let names: Vec<&str> = library().filter(|n| !REFUSED.contains(n)).collect();
     assert!(names.len() >= 46, "{names:?}");
     let list = names.iter().map(|n| format!("{n:?}")).collect::<Vec<_>>().join(", ");
     let src = format!(
@@ -347,7 +350,7 @@ async fn a_worker_gets_the_same_modules_and_lib_log_goes_to_tracing_not_stdout()
 async fn a_worker_is_refused_what_its_app_is_refused() {
     // what is asked for, once: every module the library has. The refused ones must fail and every other one must
     // load, for the app and for its worker alike
-    let asked: Vec<&str> = modules::names().collect();
+    let asked: Vec<&str> = library().collect();
     assert!(
         REFUSED.iter().all(|r| asked.contains(r)),
         "the library no longer has a refused module: {asked:?}"
@@ -375,6 +378,19 @@ async fn a_worker_is_refused_what_its_app_is_refused() {
         .into();
     assert_eq!(out["app"], expected, "{out}");
     assert_eq!(out["worker"], expected, "{out}");
+    vm.shutdown();
+
+    // the `app` API is the app's own: its worker, which runs in another engine, is not offered it
+    let src = r#"
+        local thread = require("std:thread")
+        app.tool { name = "probe", run = function()
+          local worker = assert(thread.spawn([[ return { offered = (pcall(require, "vos:app")) } ]]))
+          return { app = (pcall(require, "vos:app")), worker = assert(worker:await()).offered }
+        end }
+    "#;
+    let vm = load(src).await;
+    let out = vm.call_tool("probe", json!({}), &agent_ctx(0), false).await.unwrap();
+    assert_eq!(out, json!({"app": true, "worker": false}));
     vm.shutdown();
 }
 
@@ -796,11 +812,11 @@ async fn a_read_only_tool_cannot_register_or_change_the_apps_wiring() {
     let src = r#"
         local function try(f) local ok, err = pcall(f) return { ok = ok, err = (not ok) and tostring(err) or nil } end
         app.tool { name = "register", readOnly = true, run = function()
-          return try(function() app.tools.register { name = "late", run = function() end } end) end }
+          return try(function() app.tool { name = "late", run = function() end } end) end }
         app.tool { name = "reads", readOnly = true, run = function()
           return { one = app.db:one("select 1 as n").n } end }
         app.tool { name = "wire", run = function()
-          app.tools.register { name = "late", run = function() return "late" end }
+          app.tool { name = "late", run = function() return "late" end }
           return "wired"
         end }
     "#;

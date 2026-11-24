@@ -11,131 +11,243 @@
 //! docs:move("notes/a.txt", "notes/b.txt")          -- replaces an existing file at the destination
 //! docs:copy("notes", "backup")                     -- a file, or a whole tree to a new path
 //! docs:remove("backup", { recursive = true })
-//! if app.files.errorKind(err) == "not_found" then ... end
-//! print(app.files.errorMessage(err))               -- "notes/a.txt: ...", to show or log as it is
+//! if err and err.kind == "not_found" then ... end  -- a typed error: `kind`, `message`, `op`
 //! ```
 //!
 //! A path is relative to its location, written with `/`; the rules are the use case's (`vos_application::Files`)
-//! and the adapter's (`crate::files`, which says how links and races are handled). A failure returns
-//! `nil, "files.<method>: <kind>: [<path>: ]<message>"` (no path when the path itself was refused, or for
-//! `unsupported`) with the kinds of `std:fs` (`errorKind` reads the kind and `errorMessage` what follows it); a wrong
-//! argument type, an unknown option, and a write inside a `readOnly` tool raise, as everywhere in
-//! `app.*`. A file call holds the app's turn while it runs (`Role::Vm`, like `app.db`): the app's other calls wait
-//! for it, and none of them sees it half done. It does not need `std:fs`: the host does the work.
+//! and the adapter's (`crate::files`, which says how links and races are handled). A failure is returned as
+//! `nil, err`, a [`FileError`] with the kinds of `std:fs`; a wrong argument type, an unknown option, and a write
+//! inside a `readOnly` tool raise, as everywhere in `app.*`. A file call holds the app's turn while it runs
+//! (`Role::Vm`, like `app.db`): the app's other calls wait for it, and none of them sees it half done. It does not
+//! need `std:fs`: the host does the work.
 
-use super::{data::reject_unknown, vm_function, Sh};
-use neoc_vm2::mlua::{self, Lua, LuaString, Table, Value as LuaValue};
+use super::{shared, Sh};
+use mlua_ir::{Bytes, LuaError, Object, Options, Shape};
+use neoc_vm2::mlua::{self, Lua};
+use serde::{Deserialize, Serialize};
 use std::future::Future;
-use vos_application::Files;
-use vos_domain::{FileError, FileErrorKind, FileInfo, FileResult, Location};
+use vos_application::Files as FilesPort;
+use vos_domain::{
+    FileErrorKind, FileInfo as DomainFileInfo, FileKind as DomainFileKind, FileResult, Location as At,
+};
 
-/// `(value, nil)` or `(nil, err)`.
-type Outcome<T> = (Option<T>, Option<String>);
+/// The one list of kinds: [`FileError`] is written from it and held to the domain's [`FileErrorKind`], so neither
+/// can have a kind the other lacks.
+macro_rules! kinds {
+    ($($(#[$doc:meta])* $name:ident,)*) => {
+        /// Why a file call failed. The kinds are the ones `std:fs` uses and mean the same on every platform;
+        /// `message` names the path the failure is about (never a path of the host) and is for a person.
+        #[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error, LuaError)]
+        #[serde(tag = "kind", rename_all = "snake_case")]
+        #[shape(module = "vos:app")]
+        pub enum FileError {
+            $(
+                $(#[$doc])*
+                #[error("{text}")]
+                $name {
+                    #[serde(skip)]
+                    text: String,
+                },
+            )*
+        }
 
-pub(super) fn install(lua: &Lua, sh: &Sh, app: &Table) -> mlua::Result<()> {
-    let files = lua.create_table()?;
-    for at in Location::ALL {
-        files.set(at.as_str(), location(lua, sh, at)?)?;
-    }
-    files.set("errorKind", lua.create_function(|_, err: LuaValue| Ok(error_kind(&err)))?)?;
-    files.set("errorMessage", lua.create_function(|_, err: LuaValue| Ok(error_message(&err)))?)?;
-    app.set("files", files)
+        impl From<vos_domain::FileError> for FileError {
+            fn from(error: vos_domain::FileError) -> Self {
+                let text = error.message;
+                match error.kind {
+                    $(FileErrorKind::$name => FileError::$name { text },)*
+                }
+            }
+        }
+    };
 }
 
-/// The methods of one location's handle (`app.files.documents`).
-fn location(lua: &Lua, sh: &Sh, at: Location) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set(
-        "read",
-        vm_function(lua, sh, move |s, lua, (_this, path): (LuaValue, LuaString)| {
-            let path = text(&path);
-            async move {
-                let out = call(&s, "read", false, |f| async move { f.read(at, &path?).await }).await?;
-                answer(out, |bytes| lua.create_string(bytes))
-            }
-        })?,
-    )?;
-    t.set(
-        "write",
-        vm_function(lua, sh, move |s, _, (_this, path, data): (LuaValue, LuaString, LuaString)| {
-            let (path, data) = (text(&path), data.as_bytes().to_vec());
-            async move {
-                let out = call(&s, "write", true, |f| async move { f.write(at, &path?, data).await }).await?;
-                answer(out, |()| Ok(true))
-            }
-        })?,
-    )?;
-    t.set(
-        "list",
-        vm_function(lua, sh, move |s, lua, (_this, path): (LuaValue, Option<LuaString>)| {
-            let path = path.as_ref().map_or_else(|| Ok(String::new()), text);
-            async move {
-                let out = call(&s, "list", false, |f| async move { f.list(at, &path?).await }).await?;
-                answer(out, |entries| {
-                    let list = lua.create_table()?;
-                    for entry in &entries {
-                        list.raw_push(info_table(&lua, entry)?)?;
-                    }
-                    Ok(list)
-                })
-            }
-        })?,
-    )?;
-    t.set(
-        "info",
-        vm_function(lua, sh, move |s, lua, (_this, path): (LuaValue, LuaString)| {
-            let path = text(&path);
-            async move {
-                let out = call(&s, "info", false, |f| async move { f.info(at, &path?).await }).await?;
-                answer(out, |info| info_table(&lua, &info))
-            }
-        })?,
-    )?;
-    t.set(
-        "createDir",
-        vm_function(lua, sh, move |s, _, (_this, path): (LuaValue, LuaString)| {
-            let path = text(&path);
-            async move {
-                let out =
-                    call(&s, "createDir", true, |f| async move { f.create_dir(at, &path?).await }).await?;
-                answer(out, |()| Ok(true))
-            }
-        })?,
-    )?;
-    t.set(
-        "remove",
-        vm_function(lua, sh, move |s, _, (_this, path, opts): (LuaValue, LuaString, Option<Table>)| {
-            let (path, recursive) = (text(&path), recursive(opts.as_ref()));
-            async move {
-                let recursive = recursive?;
-                let out = call(&s, "remove", true, |f| async move { f.remove(at, &path?, recursive).await })
-                    .await?;
-                answer(out, |()| Ok(true))
-            }
-        })?,
-    )?;
-    t.set(
-        "move",
-        vm_function(lua, sh, move |s, _, (_this, from, to): (LuaValue, LuaString, LuaString)| {
-            let (from, to) = (text(&from), text(&to));
-            async move {
-                let out =
-                    call(&s, "move", true, |f| async move { f.move_to(at, &from?, &to?).await }).await?;
-                answer(out, |()| Ok(true))
-            }
-        })?,
-    )?;
-    t.set(
-        "copy",
-        vm_function(lua, sh, move |s, _, (_this, from, to): (LuaValue, LuaString, LuaString)| {
-            let (from, to) = (text(&from), text(&to));
-            async move {
-                let out = call(&s, "copy", true, |f| async move { f.copy(at, &from?, &to?).await }).await?;
-                answer(out, |()| Ok(true))
-            }
-        })?,
-    )?;
-    Ok(t)
+kinds! {
+    /// The path does not exist.
+    NotFound,
+    /// The host may not do this.
+    PermissionDenied,
+    /// What was to be made is already there.
+    AlreadyExists,
+    /// The directory has entries.
+    NotEmpty,
+    /// The path is a directory where a file was needed.
+    IsDirectory,
+    /// The path, or a parent of it, is not a directory.
+    NotADirectory,
+    /// The two paths are on different filesystems.
+    CrossDevice,
+    /// The path is not one a location takes: absolute, `..`, `:`, a backslash, NUL, or a name over 255 bytes.
+    InvalidInput,
+    /// The filesystem is mounted read-only.
+    ReadOnlyFilesystem,
+    /// The disk or the quota is full.
+    StorageFull,
+    /// The host has no file store for apps, or the platform cannot do this.
+    Unsupported,
+    /// More than fits: a file over 64 MiB.
+    TooLarge,
+    /// Any other failure.
+    Other,
+}
+
+/// What an entry is; a symbolic link is never followed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Shape)]
+#[serde(rename_all = "snake_case")]
+#[shape(module = "vos:app")]
+pub enum FileKind {
+    File,
+    Dir,
+    Symlink,
+    Other,
+}
+
+/// An entry of `app.files`.
+#[derive(Clone, Debug, Serialize, Shape)]
+#[shape(module = "vos:app")]
+pub struct FileInfo {
+    /// The last component of its path.
+    pub name: String,
+    /// What it is; a symbolic link is not followed.
+    pub kind: FileKind,
+    /// Its size in bytes.
+    pub size: u64,
+    /// When it was last modified, in seconds since the Unix epoch; `nil` where the filesystem does not record it.
+    pub modified: Option<f64>,
+}
+
+impl From<DomainFileInfo> for FileInfo {
+    fn from(info: DomainFileInfo) -> Self {
+        let kind = match info.kind {
+            DomainFileKind::File => FileKind::File,
+            DomainFileKind::Dir => FileKind::Dir,
+            DomainFileKind::Symlink => FileKind::Symlink,
+            DomainFileKind::Other => FileKind::Other,
+        };
+        Self { name: info.name, kind, size: info.size, modified: info.modified }
+    }
+}
+
+/// How `remove` treats a directory.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Options)]
+#[serde(default, deny_unknown_fields)]
+#[shape(module = "vos:app")]
+pub struct RemoveOptions {
+    /// Remove a directory with everything in it.
+    pub recursive: bool,
+}
+
+/// The app's managed files: one shared set per app (not per person or device), found from the app's identity.
+/// `documents` for what the person would miss, `cache` for what the app can rebuild, `temp` for scratch files.
+/// All three are deleted when the app's data is deleted (uninstall with purge, "delete data"), and kept otherwise.
+#[derive(Clone, Copy, Debug, Object)]
+#[shape(module = "vos:app")]
+pub struct Files;
+
+#[mlua_ir::object(module = "vos:app")]
+impl Files {
+    /// What the person would miss.
+    #[get]
+    pub fn documents(&self) -> Location {
+        Location { at: At::Documents }
+    }
+
+    /// What the app can rebuild.
+    #[get]
+    pub fn cache(&self) -> Location {
+        Location { at: At::Cache }
+    }
+
+    /// Scratch files.
+    #[get]
+    pub fn temp(&self) -> Location {
+        Location { at: At::Temp }
+    }
+}
+
+/// One managed location of the app (`app.files.documents`, `.cache`, `.temp`). A path is relative to it, written
+/// with `/` (`"notes/a.txt"`; `""` is the location itself); an absolute path, `..`, `:`, a backslash, NUL or a name
+/// over 255 bytes is `invalid_input`, and a symbolic link inside it is never followed. A failure is returned as
+/// `nil, err` with the kinds of `std:fs` (`err.kind`). A write inside a `readOnly` tool raises. A call holds the
+/// app's turn until it ends. Scoped to the app by convention: not a sandbox.
+#[derive(Clone, Copy, Debug, Object)]
+#[shape(module = "vos:app")]
+pub struct Location {
+    at: At,
+}
+
+#[mlua_ir::object(module = "vos:app")]
+#[allow(non_snake_case)] // `createDir` is the script's name
+impl Location {
+    /// The whole file (binary-safe); at most 64 MiB (`too_large`). A directory is `is_directory`.
+    #[host("Vm")]
+    pub async fn read(&self, lua: Lua, path: String) -> mlua::Result<Result<Bytes, FileError>> {
+        let at = self.at;
+        call(&shared(&lua)?, "read", false, |f| async move { f.read(at, &path).await.map(Bytes) }).await
+    }
+
+    /// Create or replace the file in one step (a reader never sees half of it). The parent must exist (`not_found`).
+    #[host("Vm")]
+    pub async fn write(&self, lua: Lua, path: String, data: Bytes) -> mlua::Result<Result<(), FileError>> {
+        let at = self.at;
+        call(&shared(&lua)?, "write", true, |f| async move { f.write(at, &path, data.0).await }).await
+    }
+
+    /// The entries of a directory (default: the location), sorted by name.
+    #[host("Vm")]
+    pub async fn list(
+        &self,
+        lua: Lua,
+        path: Option<String>,
+    ) -> mlua::Result<Result<Vec<FileInfo>, FileError>> {
+        let (at, path) = (self.at, path.unwrap_or_default());
+        call(&shared(&lua)?, "list", false, |f| async move {
+            Ok(f.list(at, &path).await?.into_iter().map(FileInfo::from).collect())
+        })
+        .await
+    }
+
+    /// What `path` is: type, size, modification time.
+    #[host("Vm")]
+    pub async fn info(&self, lua: Lua, path: String) -> mlua::Result<Result<FileInfo, FileError>> {
+        let at = self.at;
+        call(&shared(&lua)?, "info", false, |f| async move { f.info(at, &path).await.map(FileInfo::from) })
+            .await
+    }
+
+    /// Create a directory and the missing ones above it; one already there is not an error.
+    #[host("Vm")]
+    pub async fn createDir(&self, lua: Lua, path: String) -> mlua::Result<Result<(), FileError>> {
+        let at = self.at;
+        call(&shared(&lua)?, "createDir", true, |f| async move { f.create_dir(at, &path).await }).await
+    }
+
+    /// Remove a file, or a directory: empty (`not_empty` otherwise) unless `{ recursive = true }`.
+    #[host("Vm")]
+    pub async fn remove(
+        &self,
+        lua: Lua,
+        path: String,
+        options: RemoveOptions,
+    ) -> mlua::Result<Result<(), FileError>> {
+        let at = self.at;
+        call(&shared(&lua)?, "remove", true, |f| async move { f.remove(at, &path, options.recursive).await })
+            .await
+    }
+
+    /// Rename or move inside the location; an existing file at `to` is replaced.
+    #[host("Vm")]
+    pub async fn r#move(&self, lua: Lua, from: String, to: String) -> mlua::Result<Result<(), FileError>> {
+        let at = self.at;
+        call(&shared(&lua)?, "move", true, |f| async move { f.move_to(at, &from, &to).await }).await
+    }
+
+    /// Copy a file (an existing file at `to` is replaced) or a directory tree (`to` must not exist).
+    #[host("Vm")]
+    pub async fn copy(&self, lua: Lua, from: String, to: String) -> mlua::Result<Result<(), FileError>> {
+        let at = self.at;
+        call(&shared(&lua)?, "copy", true, |f| async move { f.copy(at, &from, &to).await }).await
+    }
 }
 
 /// One file call, holding the turn (`Role::Vm`). A write is refused first inside a `readOnly` call
@@ -144,8 +256,8 @@ async fn call<T, Fut>(
     s: &Sh,
     method: &str,
     write: bool,
-    op: impl FnOnce(Files) -> Fut,
-) -> mlua::Result<Result<T, String>>
+    op: impl FnOnce(FilesPort) -> Fut,
+) -> mlua::Result<Result<T, FileError>>
 where
     Fut: Future<Output = FileResult<T>>,
 {
@@ -161,67 +273,20 @@ where
         done = op(files) => done,
         () = s.life.closed() => return Err(mlua::Error::runtime("the app was unloaded")),
     };
-    Ok(done.map_err(|e| format!("files.{method}: {e}")))
+    Ok(done.map_err(FileError::from))
 }
 
-/// `(value, nil)` or `(nil, err)`, building the value only on success.
-fn answer<T, V>(
-    out: Result<T, String>,
-    value: impl FnOnce(T) -> mlua::Result<V>,
-) -> mlua::Result<Outcome<V>> {
-    match out {
-        Ok(v) => Ok((Some(value(v)?), None)),
-        Err(e) => Ok((None, Some(e))),
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A script matches on the names the domain (and `std:fs`) uses: each kind keeps its name on the way out.
+    #[test]
+    fn every_kind_of_the_domain_is_a_kind_of_the_error_under_the_same_name() {
+        for kind in FileErrorKind::ALL {
+            let error = FileError::from(vos_domain::FileError::new(kind, "notes/a.txt: why"));
+            assert_eq!(error.kind(), kind.as_str());
+            assert_eq!(error.to_string(), "notes/a.txt: why");
+        }
     }
-}
-
-/// A path as text: it must be UTF-8 (a name is the same string on every platform).
-fn text(path: &LuaString) -> FileResult<String> {
-    path.to_str()
-        .map(|s| s.to_owned())
-        .map_err(|_| FileError::new(FileErrorKind::InvalidInput, "a path must be UTF-8 text"))
-}
-
-/// `remove`'s options: `{ recursive = true }`. An unknown option or a wrong type raises.
-fn recursive(opts: Option<&Table>) -> mlua::Result<bool> {
-    let Some(opts) = opts else { return Ok(false) };
-    reject_unknown(opts, &["recursive"], "app.files:remove")?;
-    match opts.get::<LuaValue>("recursive")? {
-        LuaValue::Nil => Ok(false),
-        LuaValue::Boolean(b) => Ok(b),
-        other => Err(mlua::Error::runtime(format!(
-            "app.files:remove: option `recursive` must be a boolean, got {}",
-            other.type_name()
-        ))),
-    }
-}
-
-fn info_table(lua: &Lua, info: &FileInfo) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set("name", info.name.as_str())?;
-    t.set("kind", info.kind.as_str())?;
-    t.set("size", info.size)?;
-    t.set("modified", info.modified)?;
-    Ok(t)
-}
-
-/// The kind in an error a file call returned (`files.read: not_found: ...`), or `nil` for anything else.
-fn error_kind(err: &LuaValue) -> Option<&'static str> {
-    error_parts(err, |kind, _| kind.as_str())
-}
-
-/// The message in an error a file call returned: everything after the kind (`notes/a.txt: no such file`), or `nil`
-/// for anything else.
-fn error_message(err: &LuaValue) -> Option<String> {
-    error_parts(err, |_, message| message.to_owned())
-}
-
-/// Reads the kind and the message of one of our error strings (`files.<method>: <kind>[: <message>]`, written by
-/// [`call`]).
-fn error_parts<T>(err: &LuaValue, take: impl FnOnce(FileErrorKind, &str) -> T) -> Option<T> {
-    let LuaValue::String(err) = err else { return None };
-    let err = err.to_str().ok()?;
-    let (_method, rest) = err.strip_prefix("files.")?.split_once(": ")?;
-    let (kind, message) = rest.split_once(": ").unwrap_or((rest, ""));
-    Some(take(FileErrorKind::parse(kind)?, message))
 }

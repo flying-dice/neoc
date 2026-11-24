@@ -436,12 +436,12 @@ async fn a_panic_on_one_emit_of_a_batch_leaves_the_others_delivered_once_each() 
 
 const OPENER: &str = r#"
 local app = require("vos:app")
-app.tool { name = "open", description = "open", input = {}, run = function() app:openWindow() return {} end }
-app.tool { name = "open_main", description = "open main", input = {}, run = function() app:openWindow("main") return {} end }
-app.tool { name = "open_other", description = "open another", input = {}, run = function() app:openWindow("settings") return {} end }
-app.tool { name = "peek", description = "read only", readOnly = true, input = {}, run = function() app:openWindow() return {} end }
+app.tool { name = "open", description = "open", input = {}, run = function() app.openWindow() return {} end }
+app.tool { name = "open_main", description = "open main", input = {}, run = function() app.openWindow({ tab = "all" }) return {} end }
+app.tool { name = "open_other", description = "open another", input = {}, run = function() app.openWindow("settings") return {} end }
+app.tool { name = "peek", description = "read only", readOnly = true, input = {}, run = function() app.openWindow() return {} end }
 return {
-  show = function() app:openWindow() return "ok" end,
+  show = function() app.openWindow() return "ok" end,
 }
 "#;
 
@@ -470,7 +470,7 @@ async fn an_app_with_a_client_opens_its_one_window_without_naming_it() {
     else {
         panic!("rejected");
     };
-    assert!(message.contains("an app has one window, `main`"), "{message}");
+    assert!(message.contains("an app has one window: it takes no name"), "{message}");
     // nor may a read-only tool ask
     assert!(rig.runtime.call_tool(&id("calc"), "peek", json!({}), agent, false).await.is_err());
     assert_eq!(windows(&rig).len(), 3, "nothing more was asked");

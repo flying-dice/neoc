@@ -11,8 +11,10 @@ vos-domain = { workspace = true }
 vos-application = { workspace = true }
 async-trait = { workspace = true }
 neoc-vm2 = { workspace = true }  # the Lua VM (Luau); mlua is reached through its re-export
+mlua-ir = { workspace = true }   # the `app` API is an mlua-ir module: its declarations are read from its Rust
 notify = { workspace = true }
 parking_lot = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }  # the temporary file a write or a copy is renamed from (app.files)
 thiserror = { workspace = true }

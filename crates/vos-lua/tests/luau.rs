@@ -297,18 +297,18 @@ async fn no_number_a_script_passes_to_a_library_function_panics_the_host() {
 async fn host_calls_that_await_work_inside_pcall_coroutines_and_event_handlers() {
     let src = r#"
         app.db:migrate { [1] = "create table n(id integer primary key, body text)" }
-        app.tools.register { name = "in_pcall", run = function()
+        app.tool { name = "in_pcall", run = function()
           local ok, rows = pcall(function() return app.db:all("select 1 as x") end)
           local failed, why = pcall(function() app.db:exec("insert into nope values (1)") end)
           local nested = select(2, pcall(function() return select(2, pcall(function() app.kv:set("a", 1) return app.kv:get("a") end)) end))
           return { ok = ok, rows = rows, failed = failed, why = tostring(why), nested = nested }
         end }
-        app.tools.register { name = "in_xpcall", run = function()
+        app.tool { name = "in_xpcall", run = function()
           local ok, value = xpcall(function() app.kv:set("k", "v") return app.kv:get("k") end, function(e) return "handled: " .. tostring(e) end)
           local bad, handled = xpcall(function() app.db:exec("select * from nope") end, function(e) return "handled" end)
           return { ok = ok, value = value, bad = bad, handled = handled }
         end }
-        app.tools.register { name = "in_coroutine", run = function()
+        app.tool { name = "in_coroutine", run = function()
           local co = coroutine.create(function()
             local first = app.db:all("select 1 as x")
             coroutine.yield(#first)
@@ -319,7 +319,7 @@ async fn host_calls_that_await_work_inside_pcall_coroutines_and_event_handlers()
           local _, b = coroutine.resume(co)
           return { a = a, b = b, status = coroutine.status(co) }
         end }
-        app.tools.register { name = "in_wrap", run = function()
+        app.tool { name = "in_wrap", run = function()
           local gen = coroutine.wrap(function() for i = 1, 3 do app.kv:set("i", i) coroutine.yield(app.kv:get("i")) end end)
           return { gen(), gen(), gen() }
         end }
@@ -354,7 +354,7 @@ async fn host_calls_that_await_work_inside_pcall_coroutines_and_event_handlers()
 #[tokio::test]
 async fn dropping_a_call_that_waits_inside_coroutines_ends_it_without_running_app_code_again() {
     let src = r#"
-        app.tools.register { name = "spin", run = function()
+        app.tool { name = "spin", run = function()
           while true do
             local gen = coroutine.wrap(function() pcall(function() app.kv:get("k") end) coroutine.yield(1) end)
             gen()
@@ -387,7 +387,7 @@ async fn a_host_call_where_lua_cannot_yield_fails_with_a_clear_error_not_a_hang(
     let src = r#"
         local time = require("std:time")
         local function wait() time.sleep(time.Duration.from_millis(1)) end
-        app.tools.register { name = "limits", run = function()
+        app.tool { name = "limits", run = function()
           local function message(fn) local ok, e = pcall(fn) return ok and "worked" or tostring(e) end
           return {
             gsub = message(function() return (string.gsub("a", "a", function() wait() return "b" end)) end),
@@ -416,7 +416,7 @@ async fn a_host_call_where_lua_cannot_yield_fails_with_a_clear_error_not_a_hang(
 #[tokio::test]
 async fn host_calls_in_iterators_and_call_metamethods_yield() {
     let src = r#"
-        app.tools.register { name = "yields", run = function()
+        app.tool { name = "yields", run = function()
           local callable = setmetatable({}, { __call = function() app.kv:set("k", "call") return app.kv:get("k") end })
           local seen = {}
           for v in function() if #seen < 2 then seen[#seen + 1] = app.kv:get("k") or "iter" return #seen end end do end
@@ -437,14 +437,14 @@ async fn a_host_call_in_an_iterator_or_a_call_metamethod_lends_the_turn_while_it
     let src = r#"
         local time = require("std:time")
         local function nap() time.sleep(time.Duration.from_millis(300)) return "x" end
-        app.tools.register { name = "iterator", run = function()
+        app.tool { name = "iterator", run = function()
           for _ in function() nap() return nil end do end
           return "x"
         end }
-        app.tools.register { name = "call", run = function()
+        app.tool { name = "call", run = function()
           return setmetatable({}, { __call = function() return nap() end })()
         end }
-        app.tools.register { name = "ping", run = function() return "pong" end }
+        app.tool { name = "ping", run = function() return "pong" end }
     "#;
     let vm = load(src).await;
     let ctx = agent_ctx(0);
