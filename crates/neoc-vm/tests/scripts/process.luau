@@ -33,7 +33,6 @@ end
 
 -- the two outputs are apart, and the exit code is the program's own
 local child = sh(if windows then "echo out& echo err 1>&2& exit 7" else "printf out; printf err >&2; exit 7")
-local had_id = type(child:id()) == "number"
 local status = assert(child:wait())
 local out, err = text(read_all(child)), text(read_all(child, "read_stderr"))
 local ended =
@@ -42,6 +41,8 @@ child:close()
 
 -- what is written is the process's input, until it is closed
 local sorter = assert(process.spawn { program = "sort" })
+-- it has an id while it runs: it waits for its input, so it has not ended (the shell above may have, before it is asked)
+local had_id = type(sorter:id()) == "number"
 local wrote =
   { sorter:write("pear\n"), sorter:write("apple\n"), sorter:write(""), sorter:close_stdin(), sorter:close_stdin() }
 local sorted = text(read_all(sorter))
