@@ -17,9 +17,9 @@
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
-use mlua_ir::ir::{Field, Function, Ir, Module, ModuleKind, Param, Returns, Ty, TypeBody, TypeDef};
+use mlua_ir::ir::{Function, Ir, Module, ModuleKind, Returns, Ty, TypeBody, TypeDef};
 use vos_domain::{GLOBALS_NOT_FOR_APPS, NOT_FOR_APPS};
-use vos_lua::declarations::{APP_GLOBAL, APP_MODULE, LANGUAGE_TYPES};
+use vos_lua::declarations::{APP_GLOBAL, APP_MODULE};
 
 /// What an app is offered of a schema.
 #[derive(Debug, Clone, PartialEq)]
@@ -74,7 +74,7 @@ pub fn offered(ir: &Ir, not_for_apps: &[&str]) -> Result<Offered, String> {
     let offered = Ir { version: ir.version.clone(), modules, types };
     let declared: BTreeSet<&str> = offered.types.iter().map(|t| t.name.as_str()).collect();
     for name in references(&offered) {
-        if !declared.contains(name.as_str()) && !LANGUAGE_TYPES.contains(&name.as_str()) {
+        if !declared.contains(name.as_str()) {
             return Err(format!("an offered module uses the type {name}, which no offered module declares"));
         }
     }
@@ -149,7 +149,8 @@ fn in_ty(ty: &Ty, found: &mut BTreeSet<String>) {
         | Ty::Number
         | Ty::String
         | Ty::Unknown { .. }
-        | Ty::Literal { .. } => {}
+        | Ty::Literal { .. }
+        | Ty::Never => {}
         Ty::Optional { inner } => in_ty(inner, found),
         Ty::List { item } => in_ty(item, found),
         Ty::Map { key, value } => {
@@ -344,12 +345,12 @@ pub fn typescript(ir: &Ir) -> Result<String, String> {
 }
 
 fn typescript_of(offered: &Offered) -> String {
-    let ir = typescript_safe(&offered.ir);
+    let ir = &offered.ir;
     let mut out = String::from(TS_HEADER);
-    out.push_str(prelude(&mlua_ir_gen::ts::file(&nothing(&ir))));
+    out.push_str(prelude(&mlua_ir_gen::ts::file(&nothing(ir))));
     for module in &ir.modules {
         out.push('\n');
-        out.push_str(&mlua_ir_gen::ts::module_section(&ir, module));
+        out.push_str(&mlua_ir_gen::ts::module_section(ir, module));
     }
     let _ = write!(
         out,
@@ -359,180 +360,10 @@ declare const {APP_GLOBAL}: typeof import(\"{APP_MODULE}\")\n"
     out
 }
 
-/// Words TypeScript does not take as the name of a parameter.
-const TS_RESERVED: &[&str] = &[
-    "arguments",
-    "await",
-    "break",
-    "case",
-    "catch",
-    "class",
-    "const",
-    "continue",
-    "debugger",
-    "default",
-    "delete",
-    "do",
-    "else",
-    "enum",
-    "eval",
-    "export",
-    "extends",
-    "false",
-    "finally",
-    "for",
-    "function",
-    "if",
-    "implements",
-    "import",
-    "in",
-    "instanceof",
-    "interface",
-    "let",
-    "new",
-    "null",
-    "package",
-    "private",
-    "protected",
-    "public",
-    "return",
-    "static",
-    "super",
-    "switch",
-    "this",
-    "throw",
-    "true",
-    "try",
-    "typeof",
-    "var",
-    "void",
-    "while",
-    "with",
-    "yield",
-];
-
-/// The schema as mlua-ir-gen's TypeScript generator can write it into a file `tsc` reads. Two things in a real
-/// surface are not TypeScript as they stand, and the generator writes both through:
-///
-/// - a parameter named by a word of TypeScript (`diff.lines(old, new)`): it gets a trailing underscore, which
-///   changes nothing for a caller (a parameter's name is not part of a call);
-/// - a doc that holds `*/` (a glob in an example, `"src/**/*.rs"`), which would end the comment it is written in:
-///   it is written `*\/`.
-///
-/// Both belong in the generator; this pass goes when it does them.
-fn typescript_safe(ir: &Ir) -> Ir {
-    let mut ir = ir.clone();
-    for module in &mut ir.modules {
-        safe_doc(&mut module.doc);
-        module.constants.iter_mut().for_each(|c| {
-            safe_doc(&mut c.doc);
-            safe_ty(&mut c.ty);
-        });
-        module.functions.iter_mut().for_each(safe_function);
-    }
-    for def in &mut ir.types {
-        safe_doc(&mut def.doc);
-        match &mut def.body {
-            TypeBody::Record { fields } | TypeBody::Options { fields } => {
-                fields.iter_mut().for_each(safe_field);
-            }
-            TypeBody::StringEnum { variants } => variants.iter_mut().for_each(|v| safe_doc(&mut v.doc)),
-            TypeBody::TaggedUnion { variants, .. } => variants.iter_mut().for_each(|v| {
-                safe_doc(&mut v.doc);
-                v.fields.iter_mut().for_each(safe_field);
-            }),
-            TypeBody::Error { variants, common, .. } => {
-                for variant in variants {
-                    safe_doc(&mut variant.doc);
-                    variant.fields.iter_mut().for_each(safe_field);
-                }
-                common.iter_mut().for_each(safe_field);
-            }
-            TypeBody::Object { fields, methods, statics } => {
-                fields.iter_mut().for_each(safe_field);
-                methods.iter_mut().chain(statics).for_each(safe_function);
-            }
-            TypeBody::Alias { ty } => safe_ty(ty),
-        }
-    }
-    ir
-}
-
-fn safe_doc(doc: &mut Option<String>) {
-    if let Some(text) = doc {
-        if text.contains("*/") {
-            *text = text.replace("*/", "*\\/");
-        }
-    }
-}
-
-fn safe_field(field: &mut Field) {
-    safe_doc(&mut field.doc);
-    safe_ty(&mut field.ty);
-}
-
-fn safe_function(function: &mut Function) {
-    safe_doc(&mut function.doc);
-    safe_params(&mut function.params);
-    safe_returns(&mut function.returns);
-    if let Some(raised) = &mut function.raises {
-        safe_ty(raised);
-    }
-}
-
-fn safe_params(params: &mut [Param]) {
-    for param in params {
-        if TS_RESERVED.contains(&param.name.as_str()) {
-            param.name.push('_');
-        }
-        safe_ty(&mut param.ty);
-    }
-}
-
-fn safe_returns(returns: &mut Returns) {
-    match returns {
-        Returns::None => {}
-        Returns::One { ty } => safe_ty(ty),
-        Returns::Many { tys } => tys.iter_mut().for_each(safe_ty),
-        Returns::Fallible { ok, err } => {
-            safe_ty(ok);
-            safe_ty(err);
-        }
-    }
-}
-
-fn safe_ty(ty: &mut Ty) {
-    match ty {
-        Ty::Nil
-        | Ty::Boolean
-        | Ty::Integer { .. }
-        | Ty::Number
-        | Ty::String
-        | Ty::Unknown { .. }
-        | Ty::Literal { .. }
-        | Ty::Named { .. } => {}
-        Ty::Optional { inner } => safe_ty(inner),
-        Ty::List { item } => safe_ty(item),
-        Ty::Map { key, value } => {
-            safe_ty(key);
-            safe_ty(value);
-        }
-        Ty::Union { members } => members.iter_mut().for_each(safe_ty),
-        Ty::Function { params, returns } => {
-            safe_params(params);
-            safe_returns(returns);
-        }
-        Ty::Stream { item, error } => {
-            safe_ty(item);
-            safe_ty(error);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mlua_ir::ir::{Constant, ObjectExport};
+    use mlua_ir::ir::{Constant, Field, ObjectExport, Param};
 
     fn module(name: &str) -> Module {
         Module {
@@ -647,24 +478,6 @@ mod tests {
             ]
         );
         assert!(luau.trim_end().ends_with("& ((path: string) -> any)"), "{luau}");
-    }
-
-    /// What mlua-ir-gen writes through and `tsc` refuses: a parameter named by a word of TypeScript, and a doc that
-    /// ends its own comment.
-    #[test]
-    fn the_typescript_file_is_typescript_where_the_schema_is_not() {
-        let mut ir = sample();
-        let open = &mut ir.modules[0].functions[0];
-        open.doc = Some("Open `src/**/*.rs`.".to_owned());
-        open.params[0].name = "new".to_owned();
-        let ts = typescript_of(&offered(&ir, &["lib:test"]).unwrap());
-        assert!(ts.contains("  /** Open `src/**\\/*.rs`. */\n  export function open(this: void, new_: string): lib_probe_Thing\n"), "{ts}");
-        // Luau has neither problem: the declarations say what the Rust says
-        let luau = luau_of(&offered(&ir, &["lib:test"]).unwrap());
-        assert!(
-            luau.contains("\t--- Open `src/**/*.rs`.\n\topen: (new: string) -> lib_probe_Thing,\n"),
-            "{luau}"
-        );
     }
 
     #[test]

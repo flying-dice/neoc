@@ -6792,7 +6792,8 @@ declare extern type vos_app_Context with
 	now: string
 	--- End the call with `message`, which the caller is shown as it is: no file or line. A handler's caller is the
 	--- page, whose `rpc` rejects with an application error (-32010) carrying the message; to fail with another
-	--- JSON-RPC code, raise `error("RPC-32602 Title cannot be empty", 0)`. A tool's caller is the agent.
+	--- JSON-RPC code, raise `error("RPC-32602 Title cannot be empty", 0)`. A tool's caller is the agent. It never
+	--- returns (it is declared `never`), so `return ctx:fail(...)` fits a handler whatever its result is.
 	fail: (self: vos_app_Context, message: string) -> never
 end
 

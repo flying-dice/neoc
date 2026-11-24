@@ -1538,7 +1538,7 @@ interface lib_glob_GlobStatics {
    * Compile one pattern.
    *
    * ```luau
-   * local sources = assert(glob.Glob.new("src/**\/*.rs"))
+   * local sources = assert(glob.Glob.new("src/**∕*.rs"))
    * assert(sources:is_match("src/lua/fs.rs") and not sources:is_match("README.md"))
    * local _, err = glob.Glob.new("src/[*.rs")
    * assert(err ~= nil and err.kind == "invalid_pattern")
@@ -1630,7 +1630,7 @@ interface lib_glob_ScanOptions {
   absolute?: boolean
   /** Report at most this many paths: the first ones in sorted order. */
   limit?: number
-  /** Patterns of paths to leave out (`"**\/target/**"`). @default [] */
+  /** Patterns of paths to leave out (`"**∕target/**"`). @default [] */
   ignore?: string[]
   /** Walk into directories that symlinks point at. @default false */
   follow_symlinks?: boolean
@@ -1645,8 +1645,8 @@ declare module "lib:glob" {
    * Compile `pattern` and test whether `path` matches it.
    *
    * ```luau
-   * assert(glob.is_match("src/**\/*.rs", "src/lua/fs.rs") == true)
-   * assert(glob.is_match("**\/*.rs", "src/.cache/foo.rs") == false) -- `.cache` is hidden
+   * assert(glob.is_match("src/**∕*.rs", "src/lua/fs.rs") == true)
+   * assert(glob.is_match("**∕*.rs", "src/.cache/foo.rs") == false) -- `.cache` is hidden
    * ```
    */
   export function is_match(this: void, pattern: string, path: string): LuaMultiReturn<[boolean, undefined] | [undefined, lib_glob_PatternError]>
@@ -1889,7 +1889,7 @@ declare module "lib:http" {
    * then it returns `true`. A server that cannot start returns the error instead.
    *
    * ```luau
-   * local served, err = http.serve_static("screenshots/**\/*.png", { host = "127.0.0.1", port = 8080 })
+   * local served, err = http.serve_static("screenshots/**∕*.png", { host = "127.0.0.1", port = 8080 })
    * if not served and err ~= nil and err.kind == "bind" and err.cause == "addr_in_use" then
    *     print("port 8080 is taken")
    * end
@@ -8075,7 +8075,8 @@ interface vos_app_Context {
   /**
    * End the call with `message`, which the caller is shown as it is: no file or line. A handler's caller is the
    * page, whose `rpc` rejects with an application error (-32010) carrying the message; to fail with another
-   * JSON-RPC code, raise `error("RPC-32602 Title cannot be empty", 0)`. A tool's caller is the agent.
+   * JSON-RPC code, raise `error("RPC-32602 Title cannot be empty", 0)`. A tool's caller is the agent. It never
+   * returns (it is declared `never`), so `return ctx:fail(...)` fits a handler whatever its result is.
    */
   fail(message: string): never
 }

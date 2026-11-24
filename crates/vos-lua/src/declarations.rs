@@ -26,10 +26,6 @@ pub fn context_type() -> String {
     Registry::qualify(Some(APP_MODULE), "Context")
 }
 
-/// The types the schema names that no module declares, because the languages have them: `never`, what a call that
-/// never returns (`ctx:fail`) is declared to give.
-pub const LANGUAGE_TYPES: &[&str] = &[api::context::NEVER];
-
 /// Every module and type, as the IR the generators read.
 #[must_use]
 pub fn schema() -> Ir {
