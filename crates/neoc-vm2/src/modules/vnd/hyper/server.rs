@@ -158,8 +158,11 @@ async fn run(
             }
         }
     }
-    let _ = done.send(true);
+    // Closed first, then the waiters: `wait()` returns on another thread as soon as `done` is set, and the script
+    // it returns to must find the server closed (`addr()`), not still listening. The state held a receiver, so the
+    // value is set whether or not anyone is left to read it.
     *server.state.lock() = State::Closed;
+    done.send_replace(true);
 }
 
 /// Read the request, call the handler with it, and answer what the handler returned. A handler that raises, or
@@ -253,6 +256,38 @@ mod tests {
             parts(response_of(Some(Answer::Reply(reply)))).await,
             (404, vec![("content-type".to_owned(), "text/plain".to_owned())], b"not found".to_vec())
         );
+    }
+
+    /// The accept loop ends on a thread of the runtime, and `wait()` returns as soon as `done` says so: the server
+    /// must be `Closed` before that, or a script that calls `addr()` right after `wait()` may still be given the
+    /// address. The test holds the state's lock, so the loop cannot close the server: `done` must stay unset
+    /// until it can.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_accept_loop_closes_the_server_before_it_wakes_who_waits() {
+        use crate::modules::std::net::net::TcpListener;
+
+        let lua = crate::make_engine().expect("engine");
+        let bound: Value =
+            lua.load(r#"return (require("std:net").TcpListener.bind("127.0.0.1:0"))"#).eval().expect("bind");
+        let listener = TcpListener::from_lua_arg(bound, &lua).expect("a listener");
+        let handler = lua.create_function(|_, ()| Ok(())).expect("handler");
+        let server = Server::start(&lua, listener.slot(), handler).expect("server");
+
+        let mut done = {
+            let mut state = server.state.lock();
+            let State::Listening { shutdown, done, .. } = &mut *state else { panic!("the server is listening") };
+            let done = done.clone();
+            shutdown.take().expect("not closed yet").send(()).expect("the accept loop runs");
+            // long enough for the loop to end and reach the lock
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            assert!(!*done.borrow(), "the waiters were woken while the server still said it was listening");
+            done
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(10), done.wait_for(|done| *done))
+            .await
+            .expect("the accept loop ended")
+            .expect("the accept loop said so");
+        assert!(server.addr().is_none());
     }
 
     /// What hyper cannot build a response from (a status outside 100..=999, a header name that is not one) is a
