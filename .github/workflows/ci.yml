@@ -1,10 +1,10 @@
 name: CI
 
 on:
-  # Runs on every pull request to main, on push to main, and manually (the
-  # repository is public: minutes are not a constraint).
+  # Runs on every pull request (whatever its base: a stacked pull request
+  # too), on push to main, and manually (the repository is public: minutes
+  # are not a constraint).
   pull_request:
-    branches: [main]
   push:
     branches: [main]
     paths-ignore:
