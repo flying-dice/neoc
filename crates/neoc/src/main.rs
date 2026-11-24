@@ -291,10 +291,7 @@ async fn run_embedded(payload: &[u8]) {
 
     let engine = engine_with_args(&user_args);
 
-    if let Err(e) = neoc_vm2::load_source(&engine, payload)
-        .exec_async()
-        .await
-    {
+    if let Err(e) = neoc_vm2::load_source(&engine, payload).exec_async().await {
         report_error(NeocError::Runtime(e.to_string()));
     }
 

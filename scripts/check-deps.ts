@@ -8,13 +8,15 @@
  *   domain      -> nothing internal; external: serde, serde_json, sha2, thiserror (+ ts-rs)
  *   application -> domain; external: async-trait, futures-util (its runtime-free `FutureExt::catch_unwind`), parking_lot, serde_json, sha2, thiserror, tracing
  *   adapters    -> application, domain; never each other
- *   lua         -> application, domain, neoc-vm (the one vos crate that may use the Lua VM library)
- *   neoc-vm     -> neoc-decl and neoc-macros only (the Lua VM library; the lua adapter and the `neoc` CLI may depend on it)
- *   neoc-decl   -> nothing internal (the tree of a module surface's declarations; the VM writes it, codegen reads it)
- *   neoc        -> neoc-vm only (the CLI over the VM; it never reaches into the vos crates)
- *   host        -> every adapter, never neoc-vm
+ *   lua         -> application, domain, neoc-vm2 (the one vos crate that may use the Lua VM library)
+ *   neoc-vm2    -> nothing internal (the Lua VM library, on mlua-ir; the lua adapter and the `neoc` CLI may depend on it)
+ *   neoc-vm     -> neoc-decl and neoc-macros only (the VM neoc-vm2 was ported from: its reference in neoc-vm2's tests
+ *                  until it is deleted, with those two)
+ *   neoc-decl   -> nothing internal (the tree of a module surface's declarations; the old VM writes it, codegen reads it)
+ *   neoc        -> neoc-vm2 only (the CLI over the VM; it never reaches into the vos crates)
+ *   host        -> every adapter, never the VM
  *
- * The workspace holds two products, the vos hexagon and neoc (`neoc-vm` and the `neoc` CLI); the lists below
+ * The workspace holds two products, the vos hexagon and neoc (`neoc-vm2` and the `neoc` CLI); the lists below
  * keep each side's edges inside its own. A crate that is not in INTERNAL fails the gate, so a new crate has to be
  * placed on purpose.
  * `cargo deny` (deny.toml `bans` with `wrappers`) is the second line of defence for the framework crates.
@@ -30,17 +32,19 @@ const INTERNAL: Record<string, string[]> = {
   'vos-domain': [],
   'vos-application': ['vos-domain'],
   // The Lua adapter runs apps (Luau source) on top of the Lua VM library below.
-  'vos-lua': ['vos-domain', 'vos-application', 'neoc-vm'],
-  // The Lua VM (Luau): a support library, not an adapter. Of the crates here it depends only on the two below that say what a module declares, and among the
-  // vos crates only the Lua adapter may depend on it (the one place a script engine is wired to a port), so
-  // the VM stays swappable. The `neoc` CLI is its other client.
+  'vos-lua': ['vos-domain', 'vos-application', 'neoc-vm2'],
+  // The Lua VM (Luau): a support library, not an adapter. It depends on no crate here, and among the vos crates only
+  // the Lua adapter may depend on it (the one place a script engine is wired to a port), so the VM stays swappable.
+  // The `neoc` CLI is its other client.
+  'neoc-vm2': [],
+  // The VM neoc-vm2 was ported from. Nothing depends on it but neoc-vm2's conformance tests (a dev-dependency).
   'neoc-vm': ['neoc-decl', 'neoc-macros'],
   // The attributes a module declares its Lua surface with (a proc-macro crate: it can depend on nothing here).
   'neoc-macros': [],
   // The declarations of a module surface as a tree, and that tree as Luau: what the VM records and what a generator
   // reads. It knows neither the VM nor vos, so a generator does not have to depend on the VM to read its surface.
   'neoc-decl': [],
-  neoc: ['neoc-vm'],
+  neoc: ['neoc-vm2'],
   'vos-sqlite': ['vos-domain', 'vos-application'],
   'vos-fetch': ['vos-application'],
   'vos-mcp': ['vos-domain', 'vos-application'],
@@ -66,16 +70,16 @@ const CORE_EXTERNAL: Record<string, Set<string>> = {
 /**
  * Where each framework crate may be a normal or build dependency. deny.toml `bans` pins the same kind of crates, but its
  * `wrappers` also match dev-dependencies, so that file alone would let one of these move from a test dependency to a
- * runtime one. The two lists differ on purpose: deny.toml also bans `neoc-vm`, `openssl` and `native-tls`, and this table
+ * runtime one. The two lists differ on purpose: deny.toml also bans the VM crates, `openssl` and `native-tls`, and this table
  * names `tonic`, which deny.toml lets use axum but no workspace crate may depend on.
  */
 const FRAMEWORK_HOMES: Record<string, string[]> = {
-  mlua: ['neoc-vm', 'neoc'],
-  rusqlite: ['vos-sqlite', 'neoc-vm'],
+  mlua: ['neoc-vm2', 'neoc-vm', 'neoc'],
+  rusqlite: ['vos-sqlite', 'neoc-vm2', 'neoc-vm'],
   rmcp: ['vos-mcp'],
   axum: ['vos-http', 'vos-mcp', 'vos-host'],
   'axum-server': ['vos-host'],
-  // reached only through neoc-vm's dependencies (deny.toml lets tonic use axum); no workspace crate names it
+  // reached only through the VM's dependencies (deny.toml lets tonic use axum); no workspace crate names it
   tonic: []
 }
 
