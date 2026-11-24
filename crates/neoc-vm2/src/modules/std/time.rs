@@ -611,7 +611,13 @@ mod tests {
         let kind: String = eval(
             r#"
             local time = require("std:time")
-            local _, err = time.now():minus(time.Duration.from_secs(2^53))
+            -- the longest duration there is: 2^53 seconds back is before the clock's start where the clock counts
+            -- from the boot (Windows), but still an instant where its count of seconds is signed (Linux)
+            local longest = time.Duration.from_secs(2^53)
+            for _ = 1, 12 do longest = longest:plus(longest) end
+            local _, err = time.now():minus(longest)
+            local _, past_the_end = time.now():plus(longest)
+            assert(past_the_end.kind == "instant_overflow")
             return err.kind
         "#,
         );

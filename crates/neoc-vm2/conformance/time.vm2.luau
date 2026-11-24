@@ -43,6 +43,11 @@ local later = assert(t0:plus(D.from_millis(250)))
 assert(later:duration_since(t0):as_millis() == 250)
 assert(t0:compare(later) == "less")
 assert(assert(later:minus(D.from_millis(250))):compare(t0) == "equal")
-local _, past = t0:minus(D.from_secs(2 ^ 53))
+-- the longest duration there is (plus saturates): 2^53 seconds back is still an instant on Linux
+local longest = D.from_secs(2 ^ 53)
+for _ = 1, 12 do
+	longest = longest:plus(longest)
+end
+local _, past = t0:minus(longest)
 assert(past ~= nil and past.kind == "instant_overflow")
 assert(tostring(t0) == "Instant")
