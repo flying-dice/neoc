@@ -1,4 +1,4 @@
-//! `neoc_vm2::kill_processes`: what a program does before it ends by `std::process::exit`. It kills every process
+//! `neoc_vm::kill_processes`: what a program does before it ends by `std::process::exit`. It kills every process
 //! any script of the program started, so it has a test binary of its own: beside the tests of `std:process` it
 //! would end their processes too.
 
@@ -40,7 +40,7 @@ async fn every_process_is_killed_before_the_program_exits() {
         assert(held:read())
         return held:id()
     "#;
-    let engines = [neoc_vm2::make_engine().expect("engine"), neoc_vm2::make_engine().expect("engine")];
+    let engines = [neoc_vm::make_engine().expect("engine"), neoc_vm::make_engine().expect("engine")];
     let mut pids = Vec::new();
     for lua in &engines {
         let pid: u32 = lua.load(start).eval_async().await.expect("a process");
@@ -48,7 +48,7 @@ async fn every_process_is_killed_before_the_program_exits() {
         pids.push(pid);
     }
 
-    neoc_vm2::kill_processes();
+    neoc_vm::kill_processes();
 
     let started = Instant::now();
     while pids.iter().any(|pid| alive(*pid)) {

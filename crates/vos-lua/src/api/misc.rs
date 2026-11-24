@@ -3,7 +3,7 @@
 use super::{json::Json, shared};
 use crate::vm::{Effect, Shared};
 use mlua_ir::{IntoLuaRet, Object, Registry, Shape, Unknown};
-use neoc_vm2::mlua::{self, IntoLua as _, Lua, Value as LuaValue};
+use neoc_vm::mlua::{self, IntoLua as _, Lua, Value as LuaValue};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;

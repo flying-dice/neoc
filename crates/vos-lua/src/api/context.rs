@@ -2,7 +2,7 @@
 
 use crate::error::ToolFailure;
 use mlua_ir::{Object, Shape};
-use neoc_vm2::mlua;
+use neoc_vm::mlua;
 use serde::Serialize;
 use std::convert::Infallible;
 use vos_application::ports::CallContext;

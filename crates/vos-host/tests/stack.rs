@@ -3,7 +3,7 @@
 //!
 //! Luau stops a recursion that goes through a C function or a metamethod at 200 C levels with an ordinary error, but
 //! the 200 levels, with a Rust host function in each, must fit the thread's stack: in a debug build a level through a
-//! host function that calls back into the script needs up to 4.5 MiB in all (neoc-vm2's `lifecycle.rs` has the table),
+//! host function that calls back into the script needs up to 4.5 MiB in all (neoc-vm's `lifecycle.rs` has the table),
 //! more than tokio's default 2 MiB (the main thread's stack is whatever the operating system decides, which is why the
 //! top-level future does not run there). The host builds its runtime with
 //! `vos_host::runtime::build` and runs its top-level future on a worker, so every thread that polls a VM has
@@ -12,7 +12,7 @@
 //! The child process (this binary again, `stack_child`) builds that runtime exactly as `main` does, loads an app that
 //! recurses until Luau refuses and checks that the host answers an ordinary error. Tests build in debug, the build that
 //! needs the most stack. The case with a module's host function in every level is `on_evict`: a `lib:cache` whose
-//! eviction callback stores into the cache again (the measured case was `Mutex:with_lock`, which neoc-vm2 does not
+//! eviction callback stores into the cache again (the measured case was `Mutex:with_lock`, which neoc-vm does not
 //! offer; this one has not been measured against tokio's default 2 MiB). The gsub, tostring and index cases
 //! need well under 1 MiB and hold the 200-level error on the host's runtime, through the engine's own machinery. No
 //! host function the adapter registers is in a level any more: the `app` API reads what it is given raw (it was

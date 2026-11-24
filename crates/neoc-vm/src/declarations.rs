@@ -1,7 +1,7 @@
 //! The declarations of the modules this crate links, read from the schema mlua-ir builds from their Rust.
 //!
 //! `declarations::luau()` is the `.d.luau` luau-lsp reads, `declarations::typescript()` the `.d.ts` `TypeScriptToLua`
-//! reads; `cargo run -p neoc-vm2 --example declarations -- <dir>` writes both next to the schema.
+//! reads; `cargo run -p neoc-vm --example declarations -- <dir>` writes both next to the schema.
 
 use mlua_ir::ir::Ir;
 

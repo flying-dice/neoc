@@ -18,8 +18,8 @@ use crate::{
     vm::Shared,
 };
 use mlua_ir::{Callback, Live, Object, Shape, Unknown};
-use neoc_vm2::lifecycle::turn_id;
-use neoc_vm2::mlua::{self, Lua, Value as LuaValue};
+use neoc_vm::lifecycle::turn_id;
+use neoc_vm::mlua::{self, Lua, Value as LuaValue};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;

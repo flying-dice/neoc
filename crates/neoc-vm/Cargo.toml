@@ -1,6 +1,6 @@
 [package]
-name = "neoc-vm2"
-description = "neoc's Lua runtime, rebuilt on mlua-ir: modules written once in Rust, declarations read from the schema"
+name = "neoc-vm"
+description = "neoc's Lua runtime, on mlua-ir: modules written once in Rust, declarations read from the schema"
 version.workspace = true
 edition.workspace = true
 publish = false
@@ -9,7 +9,7 @@ license.workspace = true
 repository.workspace = true
 
 [lib]
-name = "neoc_vm2"
+name = "neoc_vm"
 path = "src/lib.rs"
 
 [dependencies]

@@ -31,8 +31,8 @@ async fn sandbox_blocks_escape_hatches_and_global_mutation() {
     }
     assert_eq!(vm.emit("probe", json!(null)).await.unwrap(), json!(2));
     // a second VM has independent globals
-    let vm2 = try_load("probe2", src).await.unwrap();
-    assert_eq!(vm2.emit("probe", json!(null)).await.unwrap(), json!(2));
+    let second = try_load("probe2", src).await.unwrap();
+    assert_eq!(second.emit("probe", json!(null)).await.unwrap(), json!(2));
 }
 
 #[tokio::test]

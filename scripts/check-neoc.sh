@@ -7,7 +7,7 @@
 # scripts/check-slow.sh (`bun run slow`).
 #
 # NEOC_REQUIRE_LUAU_LSP=1 is set here: a missing luau-lsp fails the strict-mode check of the VM's test scripts
-# (crates/neoc-vm2/tests/strict_luau.rs) instead of skipping it.
+# (crates/neoc-vm/tests/strict_luau.rs) instead of skipping it.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export NEOC_REQUIRE_LUAU_LSP=1
@@ -20,8 +20,8 @@ cargo fmt --check
 step "cargo clippy --workspace --all-targets -- -D warnings"
 cargo clippy --workspace --all-targets -- -D warnings
 
-step "cargo test -p neoc -p neoc-vm2"
-cargo test -p neoc -p neoc-vm2
+step "cargo test -p neoc -p neoc-vm"
+cargo test -p neoc -p neoc-vm
 
 # The suites that need a Docker daemon (sqlx_mysql, sqlx_postgres, testcontainers_modules) are left out; with Docker
 # running, `neoc run 'crates/neoc/tests/**/*.test.lua' 'crates/neoc/tests/**/*.spec.lua'` runs every suite. No test
@@ -57,13 +57,13 @@ scripts/check-toolchain-pin.sh
 step "cargo deny check"
 cargo deny check
 
-# types/generated/vos.d.luau and vos.d.ts are written from the schema of neoc-vm2's modules (and of the `app` API):
+# types/generated/vos.d.luau and vos.d.ts are written from the schema of neoc-vm's modules (and of the `app` API):
 # a module change regenerates them (`cargo run -p vos-codegen`).
 step "vos-codegen --check (generated files current against the Rust schema of the modules)"
 cargo run -q -p vos-codegen -- --check
 
-# neoc and neoc-vm2 never depend on a vos-* crate, not even as a dev-dependency (no vos concept in the runtime).
-step "no vos-* crate in the dependency tree of neoc or neoc-vm2"
+# neoc and neoc-vm never depend on a vos-* crate, not even as a dev-dependency (no vos concept in the runtime).
+step "no vos-* crate in the dependency tree of neoc or neoc-vm"
 scripts/check-no-vos-leak.sh
 
 step "cargo check --workspace --all-targets --locked"

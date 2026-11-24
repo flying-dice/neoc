@@ -7,7 +7,7 @@
 
 use crate::convert::{json_to_lua, lua_to_json};
 use mlua_ir::{FromLuaArg, IntoLuaRet, Registry, Shape};
-use neoc_vm2::mlua::{self, Lua, Value as LuaValue};
+use neoc_vm::mlua::{self, Lua, Value as LuaValue};
 use serde_json::Value;
 use std::marker::PhantomData;
 

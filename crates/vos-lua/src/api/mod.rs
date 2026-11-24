@@ -17,7 +17,7 @@
 //! The module is stateless: every function finds the app it belongs to in its Lua state ([`shared`]), which is one
 //! VM per app.
 
-// What mlua-ir's macros imply (as in neoc-vm2's modules): a script's value is read before the call, so a function
+// What mlua-ir's macros imply (as in neoc-vm's modules): a script's value is read before the call, so a function
 // takes it owned; the macro creates the async functions itself, and the VM library's host runs each as a lifecycle
 // leaf with the role its `#[host("Vm")]` names. A method is one for the script (`app.db:exec(...)`), whether or
 // not its Rust needs the value it is called on: the values under `app` hold nothing, the app is found in the VM.
@@ -38,9 +38,9 @@ mod schema;
 mod tools;
 
 use crate::{require, vm::Shared};
-use neoc_vm2::mlua;
-use neoc_vm2::mlua::{Function, Lua};
-use neoc_vm2::modules;
+use neoc_vm::mlua;
+use neoc_vm::mlua::{Function, Lua};
+use neoc_vm::modules;
 use std::{future::Future, sync::Arc};
 use vos_application::PortError;
 
@@ -64,7 +64,7 @@ pub mod app {
     use super::misc::{self, Agents, EventData, Notification, ThisApp, WindowParams};
     use super::tools::{self, Tool};
     use mlua_ir::Object;
-    use neoc_vm2::mlua::{self, Lua};
+    use neoc_vm::mlua::{self, Lua};
 
     /// The app's id.
     pub const id: ThisApp = ThisApp;

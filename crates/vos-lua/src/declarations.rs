@@ -1,5 +1,5 @@
 //! What a script on this adapter can reach, as data: the schema mlua-ir builds from the Rust of every module this
-//! crate links (neoc-vm2's `std:`, `lib:` and `vnd:` modules, and the `app` API, `vos:app`). The declarations for
+//! crate links (neoc-vm's `std:`, `lib:` and `vnd:` modules, and the `app` API, `vos:app`). The declarations for
 //! app authors (`types/generated/vos.d.luau`, `vos.d.ts`) are written from it by `vos-codegen`, which adds the
 //! host's policy: which of the modules an app is offered.
 
@@ -29,7 +29,7 @@ pub fn context_type() -> String {
 /// Every module and type, as the IR the generators read.
 #[must_use]
 pub fn schema() -> Ir {
-    let mut ir = neoc_vm2::declarations::schema();
+    let mut ir = neoc_vm::declarations::schema();
     // the entry's contract: reached by no function, so the registry of the modules does not have it
     let mut contract = Registry::new();
     api::Handlers::shape(&mut contract);

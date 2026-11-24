@@ -111,7 +111,7 @@ fn every_script_type_checks_in_strict_mode() {
 
     let scratch = tempfile::tempdir().expect("a temporary directory");
     let definitions = scratch.path().join("neoc.d.luau");
-    std::fs::write(&definitions, neoc_vm2::declarations::luau()).expect("the declarations are written");
+    std::fs::write(&definitions, neoc_vm::declarations::luau()).expect("the declarations are written");
 
     let run = Command::new(&tool)
         .current_dir(scripts_dir())

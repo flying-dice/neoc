@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
-//! The engine facts about the VM (`neoc-vm2`, Luau) that apps run on: the sandbox of an app's environment, text-only
+//! The engine facts about the VM (`neoc-vm`, Luau) that apps run on: the sandbox of an app's environment, text-only
 //! loading, the standard libraries, yields. The tests were once PUC Lua 5.1 facts (the apps were Lua 5.1 source);
 //! they hold on Luau, whose yield boundaries are those of PUC 5.1, with these differences, each said where it matters:
 //! a Luau bytecode chunk starts with a version byte (`string.dump` does not exist), `bit` is `bit32`, the pattern
@@ -53,7 +53,7 @@ async fn none_of_the_escape_hatches_exist_in_the_apps_environment() {
 async fn text_only_loading_binary_chunks_never_run() {
     // Luau has no `string.dump`: the fixture is what its compiler writes for `return 7`, which starts with a version
     // byte (never `0`, the compiler's error marker) and not with source text (PUC Lua 5.1: `\x1bLua`)
-    let bytecode = neoc_vm2::mlua::chunk::Compiler::new().set_debug_level(0).compile("return 7").unwrap();
+    let bytecode = neoc_vm::mlua::chunk::Compiler::new().set_debug_level(0).compile("return 7").unwrap();
     assert!(bytecode[0] != 0 && bytecode[0] < b' ', "the fixture must be Luau bytecode: {bytecode:?}");
     let package = vos_application::ports::AppPackage {
         entry: "app.lua".into(),

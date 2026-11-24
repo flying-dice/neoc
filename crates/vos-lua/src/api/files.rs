@@ -23,7 +23,7 @@
 
 use super::{shared, Sh};
 use mlua_ir::{Bytes, LuaError, Object, Options, Shape};
-use neoc_vm2::mlua::{self, Lua};
+use neoc_vm::mlua::{self, Lua};
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 use vos_application::Files as FilesPort;

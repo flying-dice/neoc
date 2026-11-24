@@ -157,13 +157,13 @@ mod tests {
 
     #[test]
     fn var_returns_existing() {
-        unsafe { std::env::set_var("_NEOC_VM2_TEST_VAR", "hello") };
-        let (value, err): (String, mlua::Value) = eval(r#"return env.var("_NEOC_VM2_TEST_VAR")"#);
+        unsafe { std::env::set_var("_NEOC_VM_TEST_VAR", "hello") };
+        let (value, err): (String, mlua::Value) = eval(r#"return env.var("_NEOC_VM_TEST_VAR")"#);
         assert_eq!(value, "hello");
         assert!(err.is_nil());
-        let listed: String = eval(r#"return env.vars()["_NEOC_VM2_TEST_VAR"]"#);
+        let listed: String = eval(r#"return env.vars()["_NEOC_VM_TEST_VAR"]"#);
         assert_eq!(listed, "hello");
-        unsafe { std::env::remove_var("_NEOC_VM2_TEST_VAR") };
+        unsafe { std::env::remove_var("_NEOC_VM_TEST_VAR") };
     }
 
     #[test]

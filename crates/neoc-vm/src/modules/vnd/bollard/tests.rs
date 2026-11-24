@@ -929,7 +929,7 @@ async fn no_call_panics_on_hostile_input() {
 // a real daemon
 // ---------------------------------------------------------------------------
 
-/// Against the Docker daemon of this machine: `cargo test -p neoc-vm2 bollard -- --ignored`.
+/// Against the Docker daemon of this machine: `cargo test -p neoc-vm bollard -- --ignored`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "needs a running Docker daemon"]
 async fn a_real_daemon_answers() {
@@ -955,8 +955,8 @@ async fn a_real_daemon_answers() {
         end
         assert(bridge ~= nil and bridge.Driver == "bridge" and bridge.Scope == "local")
         assert(bridge.Created:match("^%d%d%d%d%-%d%d%-%d%dT"), bridge.Created)
-        assert(#assert(docker:list_networks({ filters = { name = { "neoc-vm2-no-such-network" } } })) == 0)
-        local ghost, no_ghost = docker:inspect_container("neoc-vm2-bollard-no-such-container")
+        assert(#assert(docker:list_networks({ filters = { name = { "neoc-vm-no-such-network" } } })) == 0)
+        local ghost, no_ghost = docker:inspect_container("neoc-vm-bollard-no-such-container")
         assert(ghost == nil and no_ghost == nil, "no such container is (nil, nil)")
         return version.Version, #containers
         "#,
@@ -966,9 +966,9 @@ async fn a_real_daemon_answers() {
     assert!(containers >= 0);
 }
 
-/// A container's whole life against the Docker daemon of this machine: `cargo test -p neoc-vm2 bollard --
+/// A container's whole life against the Docker daemon of this machine: `cargo test -p neoc-vm bollard --
 /// --ignored`. It pulls `alpine:3.19`, and removes the container, the volume and the network it makes
-/// (`neoc-vm2-bollard-*`).
+/// (`neoc-vm-bollard-*`).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "needs a running Docker daemon"]
 async fn a_real_daemon_runs_a_container_from_pull_to_removal() {
@@ -978,7 +978,7 @@ async fn a_real_daemon_runs_a_container_from_pull_to_removal() {
             "",
             r#"
             local docker = assert(require("vnd:bollard").connect())
-            local name, network, volume = "neoc-vm2-bollard-test", "neoc-vm2-bollard-net", "neoc-vm2-bollard-vol"
+            local name, network, volume = "neoc-vm-bollard-test", "neoc-vm-bollard-net", "neoc-vm-bollard-vol"
             -- what an earlier run that failed left behind
             docker:remove_container(name, { force = true })
             docker:remove_network(network)
@@ -1084,7 +1084,7 @@ async fn a_real_daemon_runs_a_container_from_pull_to_removal() {
             assert(docker:remove_network(network))
             local _, no_network = docker:remove_network(network)
             assert(no_network.kind == "not_found", tostring(no_network))
-            local _, no_volume = docker:remove_volume("neoc-vm2-bollard-no-such-volume")
+            local _, no_volume = docker:remove_volume("neoc-vm-bollard-no-such-volume")
             assert(no_volume.kind == "not_found", tostring(no_volume))
             local failing, no_image = docker:pull_image("neoc-no-such-image:0.0.0"), nil
             while no_image == nil do

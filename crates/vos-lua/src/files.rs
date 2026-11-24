@@ -6,7 +6,7 @@
 //! symbolic link there is the operator's choice (another disk, say) and is followed. Purging the app removes
 //! `<app>.files` (a link there is removed, never what it points at).
 //!
-//! **The operations are neoc-vm2's.** Recursive copy, move and remove are `neoc_vm2::modules::std::fs::ops` (the code
+//! **The operations are neoc-vm's.** Recursive copy, move and remove are `neoc_vm::modules::std::fs::ops` (the code
 //! behind `std:fs`), so they keep its rules: a recursive remove is `std::fs::remove_dir_all` (immune to
 //! CVE-2022-21658, a directory swapped for a link while it runs), a tree copy recreates links instead of
 //! following them, a move survives a filesystem boundary. A write, and a file copy, go to a fresh temporary file
@@ -48,7 +48,7 @@
 //! move stops at its next entry and a write is not put in place.
 
 use async_trait::async_trait;
-use neoc_vm2::modules::std::fs::{
+use neoc_vm::modules::std::fs::{
     error::{FsError, Kind},
     ops,
 };

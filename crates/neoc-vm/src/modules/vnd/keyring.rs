@@ -566,14 +566,14 @@ mod tests {
         assert_eq!(refused.to_string(), "NEOC_KEYRING is `memory`: the one value it takes is `mock`");
     }
 
-    /// The real store of this machine: `cargo test -p neoc-vm2 -- --ignored the_platform_store` (macOS may ask to
+    /// The real store of this machine: `cargo test -p neoc-vm -- --ignored the_platform_store` (macOS may ask to
     /// allow the test binary; a Linux machine needs a Secret Service). It makes one credential and deletes it.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[ignore = "writes to the credential store of whoever runs it"]
     async fn the_platform_store_keeps_a_credential() {
         let (kept, deleted, after): (String, bool, Value) = run(r#"
             local store = assert(require("vnd:keyring").store())
-            local entry = assert(store:entry("neoc-vm2.tests", "the_platform_store_keeps_a_credential"))
+            local entry = assert(store:entry("neoc-vm.tests", "the_platform_store_keeps_a_credential"))
             assert(entry:set_password("kept"))
             local kept = assert(entry:get_password())
             local deleted = assert(entry:delete_credential())

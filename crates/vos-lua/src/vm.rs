@@ -1,7 +1,7 @@
 //! One sandboxed Lua VM (Luau, running the app's Luau source) per app.
 //!
-//! The VM is a bare `neoc-vm2` engine with the app's own environment table (see
-//! `neoc_vm2::script_env`): the prelude's polyfills, the `app` capability table and a `require` that
+//! The VM is a bare `neoc-vm` engine with the app's own environment table (see
+//! `neoc_vm::script_env`): the prelude's polyfills, the `app` capability table and a `require` that
 //! knows only `vos:app` and the library's modules. Nothing in it is budgeted (no CPU, memory or time limits: the host is a
 //! homelab's own and apps are meant to do real work); it then runs the app's entry, which returns the app's
 //! handlers. After that the host calls into it: handlers and tools. One call runs in a VM at a time (an app is
@@ -14,8 +14,8 @@ use crate::{
     tx::OpenTx,
 };
 use mlua_ir::IntoLuaRet as _;
-use neoc_vm2::mlua;
-use neoc_vm2::{
+use neoc_vm::mlua;
+use neoc_vm::{
     install_runtime_state,
     lifecycle::{self, set_entry, Baton, BoxFuture, CallEntry, IdleKind, Inherited, Life},
     load_source, make_bare_engine,
@@ -334,7 +334,7 @@ enum Via {
 /// `readOnly` flag are unambiguous. Ending a call, or abandoning it (its caller gave up),
 /// rolls back a transaction it left open, so the database's write gate is free the moment the call is over.
 ///
-/// It is also the call's *baton* (see `neoc_vm2::lifecycle`): at a wait that does not use the VM
+/// It is also the call's *baton* (see `neoc_vm::lifecycle`): at a wait that does not use the VM
 /// (`task.wait`, the network, a worker) the call lets the next call in, then takes the gate back.
 pub(crate) struct Turn {
     id: u64,
@@ -571,7 +571,7 @@ fn app_worker_engine(offered: Arc<Vec<&'static str>>) -> WorkerEngineFn {
         let lua = make_bare_engine()?;
         lua.globals().raw_remove("buffer")?;
         install_runtime_state(&lua, life);
-        neoc_vm2::modules::install_allowed(&lua, &offered)?;
+        neoc_vm::modules::install_allowed(&lua, &offered)?;
         set_worker_engine(&lua, app_worker_engine(offered.clone()));
         Ok(lua)
     })
@@ -724,7 +724,7 @@ impl AppVm {
     /// `read_only`: the call may not change anything (a `readOnly` tool); whatever it starts may not either.
     ///
     /// A panic in a host function the call reached, which the script did not catch, ends the call with
-    /// [`VmError::Panicked`] instead of unwinding into the caller (`neoc_vm2::panics`). It stops the call
+    /// [`VmError::Panicked`] instead of unwinding into the caller (`neoc_vm::panics`). It stops the call
     /// where script code called into Rust, where a caller that gives up may drop the call too, so it leaves what a
     /// dropped call leaves: the turn handed on, a `db:tx` it opened rolled back (the guard of [`Turn`]). The app
     /// stays loaded.

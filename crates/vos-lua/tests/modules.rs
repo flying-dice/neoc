@@ -6,7 +6,7 @@
 mod common;
 
 use common::{agent_ctx, built_package, db, id, load, package};
-use neoc_vm2::modules;
+use neoc_vm::modules;
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 use std::{
@@ -177,7 +177,7 @@ async fn the_globals_the_declarations_refuse_are_absent_from_the_environment() {
     );
 }
 
-/// The module names `neoc-vm2` declares in its source: each `#[mlua_ir::module("<name>")]` that starts a line (a doc
+/// The module names `neoc-vm` declares in its source: each `#[mlua_ir::module("<name>")]` that starts a line (a doc
 /// comment that shows one is not a module).
 fn modules_in_the_source(dir: &std::path::Path, names: &mut Vec<String>) {
     for entry in std::fs::read_dir(dir).unwrap() {
@@ -200,7 +200,7 @@ fn modules_in_the_source(dir: &std::path::Path, names: &mut Vec<String>) {
 #[test]
 fn every_module_the_library_declares_is_linked_into_the_adapter() {
     let mut declared = Vec::new();
-    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../neoc-vm2/src/modules");
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../neoc-vm/src/modules");
     modules_in_the_source(&source, &mut declared);
     declared.sort();
     assert!(declared.len() >= 46, "{declared:?}");

@@ -16,7 +16,7 @@
 
 use super::app::t;
 use mlua_ir::{Object, Options, Registry, Shape};
-use neoc_vm2::mlua;
+use neoc_vm::mlua;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
 use std::collections::BTreeMap;
@@ -180,7 +180,7 @@ impl t {
 mod tests {
     use super::*;
     use mlua_ir::{FromLuaArg as _, ObjectDef as _};
-    use neoc_vm2::mlua::{Lua, Value as LuaValue};
+    use neoc_vm::mlua::{Lua, Value as LuaValue};
     use serde_json::json;
 
     fn engine() -> Lua {

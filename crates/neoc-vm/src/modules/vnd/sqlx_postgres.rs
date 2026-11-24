@@ -467,7 +467,7 @@ mod tests {
     "#;
 
     /// Against a real server: `NEOC_TEST_POSTGRES_URL=postgres://postgres:pw@127.0.0.1:5432/postgres cargo test -p
-    /// neoc-vm2 sqlx_postgres -- --ignored`. The script creates and drops its own tables (`exec_t`, `exec_null`,
+    /// neoc-vm sqlx_postgres -- --ignored`. The script creates and drops its own tables (`exec_t`, `exec_null`,
     /// `q_types`).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[ignore = "needs a Postgres server: set NEOC_TEST_POSTGRES_URL"]
@@ -479,7 +479,7 @@ mod tests {
     }
 
     /// The same script against a Postgres that `vnd:testcontainers_modules` starts for the test and stops after it,
-    /// as neoc's Luau suite ran it: `cargo test -p neoc-vm2 sqlx_postgres -- --ignored`.
+    /// as neoc's Luau suite ran it: `cargo test -p neoc-vm sqlx_postgres -- --ignored`.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[ignore = "needs a running Docker daemon"]
     async fn against_a_container() {

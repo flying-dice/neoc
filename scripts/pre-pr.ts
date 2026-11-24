@@ -2,7 +2,7 @@
 /**
  * `bun run gate`: the one pre-PR command set for the whole repository.
  *
- *   1. the neoc checks (`scripts/check-neoc.sh`: fmt, clippy, the neoc and neoc-vm2 tests, the Lua suites, the
+ *   1. the neoc checks (`scripts/check-neoc.sh`: fmt, clippy, the neoc and neoc-vm tests, the Lua suites, the
  *      toolchain pin, cargo deny, vos-codegen --check, the no-vos-leak dependency check,
  *      `cargo check --workspace --all-targets --locked`);
  *   2. the vos checks: `bun run lint`, `typecheck`, `test`, `test:e2e` (a Mac, for the screenshot baselines).

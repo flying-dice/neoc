@@ -408,7 +408,7 @@ mod tests {
     }
 
     /// neoc's Luau suite for the module, against the Docker daemon of this machine:
-    /// `cargo test -p neoc-vm2 testcontainers_modules -- --ignored`. It pulls `alpine:3.19` and `nginx:1.27-alpine`.
+    /// `cargo test -p neoc-vm testcontainers_modules -- --ignored`. It pulls `alpine:3.19` and `nginx:1.27-alpine`.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[ignore = "needs a running Docker daemon"]
     async fn generic_containers_start_publish_their_ports_and_stop() {
@@ -458,7 +458,7 @@ mod tests {
             .unwrap();
     }
 
-    /// The typed shortcuts, each used through its driver: `cargo test -p neoc-vm2 testcontainers_modules --
+    /// The typed shortcuts, each used through its driver: `cargo test -p neoc-vm testcontainers_modules --
     /// --ignored`. It pulls the MySQL and Postgres images the crate names.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[ignore = "needs a running Docker daemon"]

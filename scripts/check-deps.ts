@@ -9,12 +9,12 @@
  *   application -> domain; external: async-trait, futures-util (its runtime-free `FutureExt::catch_unwind`), parking_lot, serde_json, sha2, thiserror, tracing
  *   adapters    -> application, domain; never each other (but codegen, below)
  *   codegen     -> domain, lua (dev-time: it writes the declarations from the schema of the modules the Lua adapter links)
- *   lua         -> application, domain, neoc-vm2 (the one vos crate that may use the Lua VM library)
- *   neoc-vm2    -> nothing internal (the Lua VM library, on mlua-ir; the lua adapter and the `neoc` CLI may depend on it)
- *   neoc        -> neoc-vm2 only (the CLI over the VM; it never reaches into the vos crates)
+ *   lua         -> application, domain, neoc-vm (the one vos crate that may use the Lua VM library)
+ *   neoc-vm     -> nothing internal (the Lua VM library, on mlua-ir; the lua adapter and the `neoc` CLI may depend on it)
+ *   neoc        -> neoc-vm only (the CLI over the VM; it never reaches into the vos crates)
  *   host        -> every adapter, never the VM
  *
- * The workspace holds two products, the vos hexagon and neoc (`neoc-vm2` and the `neoc` CLI); the lists below
+ * The workspace holds two products, the vos hexagon and neoc (`neoc-vm` and the `neoc` CLI); the lists below
  * keep each side's edges inside its own. A crate that is not in INTERNAL fails the gate, so a new crate has to be
  * placed on purpose.
  * `cargo deny` (deny.toml `bans` with `wrappers`) is the second line of defence for the framework crates.
@@ -30,12 +30,12 @@ const INTERNAL: Record<string, string[]> = {
   'vos-domain': [],
   'vos-application': ['vos-domain'],
   // The Lua adapter runs apps (Luau source) on top of the Lua VM library below.
-  'vos-lua': ['vos-domain', 'vos-application', 'neoc-vm2'],
+  'vos-lua': ['vos-domain', 'vos-application', 'neoc-vm'],
   // The Lua VM (Luau): a support library, not an adapter. It depends on no crate here, and among the vos crates only
   // the Lua adapter may depend on it (the one place a script engine is wired to a port), so the VM stays swappable.
   // The `neoc` CLI is its other client.
-  'neoc-vm2': [],
-  neoc: ['neoc-vm2'],
+  'neoc-vm': [],
+  neoc: ['neoc-vm'],
   'vos-sqlite': ['vos-domain', 'vos-application'],
   'vos-fetch': ['vos-application'],
   'vos-mcp': ['vos-domain', 'vos-application'],
@@ -67,8 +67,8 @@ const CORE_EXTERNAL: Record<string, Set<string>> = {
  * names `tonic`, which deny.toml lets use axum but no workspace crate may depend on.
  */
 const FRAMEWORK_HOMES: Record<string, string[]> = {
-  mlua: ['neoc-vm2', 'neoc'],
-  rusqlite: ['vos-sqlite', 'neoc-vm2'],
+  mlua: ['neoc-vm', 'neoc'],
+  rusqlite: ['vos-sqlite', 'neoc-vm'],
   rmcp: ['vos-mcp'],
   axum: ['vos-http', 'vos-mcp', 'vos-host'],
   'axum-server': ['vos-host'],

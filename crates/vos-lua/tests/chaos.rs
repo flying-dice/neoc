@@ -635,7 +635,7 @@ impl Watchdog {
                 std::thread::sleep(Duration::from_millis(100));
             }
             eprintln!("{test}: still running after {limit:?}: a call is wedged with a worker thread blocked");
-            neoc_vm2::exit(101);
+            neoc_vm::exit(101);
         });
         Self(done)
     }

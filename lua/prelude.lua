@@ -1,4 +1,4 @@
--- The prelude. Apps are Luau, and the app's environment (neoc-vm2's `script_env`) copies only a few things from the
+-- The prelude. Apps are Luau, and the app's environment (neoc-vm's `script_env`) copies only a few things from the
 -- engine: the base functions (`typeof` among them), `string`, `table`, `math`, `coroutine` and `bit32`. One member of
 -- Luau's own standard library is not among them, and apps (and the Luau declarations luau-lsp checks them against)
 -- expect it, so it is provided here: the `utf8` library, with Lua 5.3's semantics.

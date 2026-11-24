@@ -3268,7 +3268,7 @@ dependencies = [
  "globset",
  "miette",
  "mlua",
- "neoc-vm2",
+ "neoc-vm",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -3276,7 +3276,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "neoc-vm2"
+name = "neoc-vm"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
@@ -6443,7 +6443,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "mlua-ir",
- "neoc-vm2",
+ "neoc-vm",
  "notify",
  "parking_lot 0.12.5",
  "serde",

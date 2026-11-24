@@ -12,7 +12,7 @@
 
 use std::path::{Path, PathBuf};
 
-use neoc_vm2::mlua::{LuaSerdeExt, Value};
+use neoc_vm::mlua::{LuaSerdeExt, Value};
 
 /// The platform families a script may have answers of its own for; the first is the one this test runs on.
 const FAMILIES: [&str; 2] = if cfg!(windows) { ["windows", "unix"] } else { ["unix", "windows"] };
@@ -38,7 +38,7 @@ fn scripts() -> Vec<(String, String)> {
 
 /// What the script returned as plain values, `None` when it returned nothing.
 async fn run(code: &str) -> Result<Option<serde_json::Value>, String> {
-    let lua = neoc_vm2::make_engine().map_err(|e| e.to_string())?;
+    let lua = neoc_vm::make_engine().map_err(|e| e.to_string())?;
     let value: Value = lua.load(code).eval_async().await.map_err(|e| e.to_string())?;
     if value.is_nil() {
         return Ok(None);

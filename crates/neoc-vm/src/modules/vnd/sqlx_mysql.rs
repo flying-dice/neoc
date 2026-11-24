@@ -584,7 +584,7 @@ mod tests {
         assert(stmt_closed.kind == "closed")
     "#;
 
-    /// Against a real server: `NEOC_TEST_MYSQL_URL=mysql://root:pw@127.0.0.1:3306/test cargo test -p neoc-vm2
+    /// Against a real server: `NEOC_TEST_MYSQL_URL=mysql://root:pw@127.0.0.1:3306/test cargo test -p neoc-vm
     /// sqlx_mysql -- --ignored`. The script creates and drops its own tables (`exec_t`, `exec_null`, `q_types`,
     /// `p_t`).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -597,7 +597,7 @@ mod tests {
     }
 
     /// The same script against a MySQL that `vnd:testcontainers_modules` starts for the test and stops after it, as
-    /// neoc's Luau suite ran it: `cargo test -p neoc-vm2 sqlx_mysql -- --ignored`.
+    /// neoc's Luau suite ran it: `cargo test -p neoc-vm sqlx_mysql -- --ignored`.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[ignore = "needs a running Docker daemon"]
     async fn against_a_container() {

@@ -9,9 +9,9 @@ function workspace(
   const edges: Record<string, string[]> = {
     "vos-domain": [],
     "vos-application": ["vos-domain"],
-    "vos-lua": ["vos-domain", "vos-application", "neoc-vm2"],
-    "neoc-vm2": ["mlua", "rusqlite"],
-    neoc: ["neoc-vm2", "mlua"],
+    "vos-lua": ["vos-domain", "vos-application", "neoc-vm"],
+    "neoc-vm": ["mlua", "rusqlite"],
+    neoc: ["neoc-vm", "mlua"],
     "vos-sqlite": ["vos-domain", "vos-application", "rusqlite"],
     "vos-fetch": ["vos-application"],
     "vos-mcp": ["vos-domain", "vos-application", "rmcp", "axum"],
@@ -51,21 +51,21 @@ describe("the crate-direction gate", () => {
       findProblems(workspace({ neoc: [{ name: "vos-lua", kind: null }] }))
         .problems,
     ).toEqual([
-      "neoc -> vos-lua: internal edge not allowed (allowed: neoc-vm2)",
+      "neoc -> vos-lua: internal edge not allowed (allowed: neoc-vm)",
     ]);
     expect(
       findProblems(
-        workspace({ "neoc-vm2": [{ name: "vos-domain", kind: null }] }),
+        workspace({ "neoc-vm": [{ name: "vos-domain", kind: null }] }),
       ).problems,
     ).toEqual([
-      "neoc-vm2 -> vos-domain: internal edge not allowed (allowed: none)",
+      "neoc-vm -> vos-domain: internal edge not allowed (allowed: none)",
     ]);
     const host = findProblems(
-      workspace({ "vos-host": [{ name: "neoc-vm2", kind: null }] }),
+      workspace({ "vos-host": [{ name: "neoc-vm", kind: null }] }),
     ).problems;
     expect(host).toHaveLength(1);
     expect(host[0]).toStartWith(
-      "vos-host -> neoc-vm2: internal edge not allowed",
+      "vos-host -> neoc-vm: internal edge not allowed",
     );
   });
 

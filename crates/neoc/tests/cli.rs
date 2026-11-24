@@ -72,7 +72,7 @@ fn annotations_are_not_checked_at_run_time() {
 }
 
 /// LuaJIT's loader skipped a first `#` line and a UTF-8 byte-order mark; Luau's lexer rejects both, so neoc's chunk
-/// loader (`neoc_vm2::load_source`) does it: an executable script and a file saved with a BOM keep running, and an
+/// loader (`neoc_vm::load_source`) does it: an executable script and a file saved with a BOM keep running, and an
 /// error on line 3 of a file with a shebang still says line 3.
 #[test]
 fn run_lua_script_with_a_shebang_or_a_bom_executes_and_keeps_its_line_numbers() {
@@ -114,7 +114,7 @@ fn run_lua_script_with_a_shebang_or_a_bom_executes_and_keeps_its_line_numbers() 
     );
 }
 
-/// `neoc run` builds its runtime with `neoc_vm2::VM_THREAD_STACK` and runs the script on a worker: a script that
+/// `neoc run` builds its runtime with `neoc_vm::VM_THREAD_STACK` and runs the script on a worker: a script that
 /// recurses to Luau's 200-level C limit through Rust host functions ends in an error it can catch, in a debug build
 /// too (on tokio's 2 MiB workers, or the main thread, a `lib:cache` `on_evict` that re-enters the cache aborts the
 /// process there).
@@ -506,7 +506,7 @@ fn a_process_a_script_started_does_not_outlive_the_run() {
     );
 }
 
-/// Every module `neoc-vm2` declares (`#[mlua_ir::module("<name>")]` in its source) is in the built binary. A module
+/// Every module `neoc-vm` declares (`#[mlua_ir::module("<name>")]` in its source) is in the built binary. A module
 /// registers itself when its object code is linked, so a module the linker dropped would be missing from `require`
 /// with nothing else to say so. The names are read from the source, not from the registry of this test binary,
 /// which the same linker built.
@@ -530,7 +530,7 @@ fn the_binary_links_every_module_of_the_runtime() {
     }
     let mut names = Vec::new();
     declared(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../neoc-vm2/src/modules"),
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../neoc-vm/src/modules"),
         &mut names,
     );
     names.sort();
