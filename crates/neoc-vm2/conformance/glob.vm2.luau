@@ -1,3 +1,4 @@
+--!strict
 -- intentional: a failure is a typed error (invalid_pattern with the pattern and why; for a scan also not_found and not_a_directory with the directory), a scan returns one value { paths, errors } (it returned the paths and the unreadable entries as two values, the second where every other function has its error), and a wrong option is refused as a wrong argument with its place (it was a returned string).
 local glob = require("lib:glob")
 local fs = require("std:fs")
@@ -6,19 +7,16 @@ local env = require("std:env")
 local random = require("lib:random")
 
 -- a pattern that is not one
-for _, call in
-	{
-		{ "lib:glob.is_match", function() return glob.is_match("src/[*.rs", "a") end },
-		{ "lib:glob.Glob.new", function() return glob.Glob.new("src/[*.rs") end },
-		{ "lib:glob.GlobSet.new", function() return glob.GlobSet.new({ "ok", "src/[*.rs" }) end },
-		{ "lib:glob.scan", function() return glob.scan("src/[*.rs") end },
-		{ "lib:glob.scan", function() return glob.scan("*", { ignore = { "src/[*.rs" } }) end },
-	} :: { { any } }
-do
-	local value, err = call[2]()
-	assert(value == nil and err.kind == "invalid_pattern" and err.pattern == "src/[*.rs" and err.op == call[1])
-	assert(tostring(err) == call[1] .. ": invalid_pattern: src/[*.rs: " .. err.reason)
+local function invalid(op: string, value: unknown, err: lib_glob_ScanError?)
+	assert(value == nil and err ~= nil)
+	assert(err.kind == "invalid_pattern" and err.pattern == "src/[*.rs" and err.op == op)
+	assert(tostring(err) == op .. ": invalid_pattern: src/[*.rs: " .. err.reason)
 end
+invalid("lib:glob.is_match", glob.is_match("src/[*.rs", "a"))
+invalid("lib:glob.Glob.new", glob.Glob.new("src/[*.rs"))
+invalid("lib:glob.GlobSet.new", glob.GlobSet.new({ "ok", "src/[*.rs" }))
+invalid("lib:glob.scan", glob.scan("src/[*.rs"))
+invalid("lib:glob.scan", glob.scan("*", { ignore = { "src/[*.rs" } }))
 
 -- the bounds: the pattern is cut in the error
 local _, long = glob.Glob.new(string.rep("a", 4097))
@@ -30,7 +28,7 @@ assert(many ~= nil and many.reason:find("more than 256", 1, true))
 
 -- a scan: one value, and typed failures
 local dir = path.join(env.temp_dir(), "neoc-conformance-glob-vm2-" .. random.uuid_v4())
-local function scans()
+local function scans(): ...unknown
 	assert(fs.create_dir(dir))
 	assert(fs.write(path.join(dir, "b.txt"), ""))
 	assert(fs.write(path.join(dir, "a.txt"), ""))
@@ -53,7 +51,9 @@ fs.remove_dir_all(dir, { missing_ok = true })
 assert(ok, failure)
 
 -- a wrong option is a wrong argument
-for _, opts in { { type = "block" }, { limit = -1 }, { limit = 1.5 }, { cwd = 5 }, { ignore = "x" }, { absolut = true } } :: { any } do
-	local refused_ok, refused = pcall(glob.scan, "*", opts)
+for _, opts in { { type = "block" }, { limit = -1 }, { limit = 1.5 }, { cwd = 5 }, { ignore = "x" }, { absolut = true } } :: { any } do -- deliberate refusal test: none is the options
+	local refused_ok, refused = pcall(function()
+		glob.scan("*", opts)
+	end)
 	assert(not refused_ok and tostring(refused):find("lib:glob.scan: argument #2 'opts'", 1, true), tostring(refused))
 end

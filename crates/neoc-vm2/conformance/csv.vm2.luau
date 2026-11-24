@@ -22,7 +22,9 @@ assert(busy == nil and in_use ~= nil and in_use.kind == "in_use" and in_use.op =
 assert(table.concat(assert(reader:headers()), "|") == "name|age")
 local ages = 0
 for person in reader:records():items() do
-	ages += person.age :: number
+	local age = person.age
+	assert(type(age) == "number")
+	ages += age
 end
 assert(ages == 81 and reader:rows():next() == nil)
 local lists = assert(csv.reader(io.from_string("a,b\n1,2")))

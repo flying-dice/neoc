@@ -1,3 +1,4 @@
+--!strict
 -- intentional: a failure is the typed Error (the same kinds; err.kind, err.message, err.op, and matches on ambiguous), so error_kind(err) and error_message(err) are gone; a service, user or password that is not UTF-8 text and a spec that is not text under text are refused as arguments (they were the returned error invalid_input).
 local keyring = require("vnd:keyring")
 
@@ -31,20 +32,20 @@ end
 
 -- what is not text is refused as an argument, before the store
 local ok_service, refused_service = pcall(function()
-	return store:entry("\255", "ada")
+	store:entry("\255", "ada")
 end)
 assert(not ok_service and tostring(refused_service):find("vnd:keyring.Store:entry: argument #1 'service': expected UTF-8 text", 1, true))
 local ok_user, refused_user = pcall(function()
-	return store:entry("example.com", 5 :: any)
+	store:entry("example.com", 5 :: any) -- deliberate refusal test: a number is not a user
 end)
 assert(not ok_user and tostring(refused_user):find("vnd:keyring.Store:entry: argument #2 'user'", 1, true))
 local ok_password, refused_password = pcall(function()
-	return entry:set_password("\255")
+	entry:set_password("\255")
 end)
 assert(not ok_password and tostring(refused_password):find("vnd:keyring.Entry:set_password: argument #1 'password': expected UTF-8 text", 1, true))
 assert(entry:get_secret() == "\255hunter2")
 local ok_spec, refused_spec = pcall(function()
-	return store:search({ service = 1 } :: any)
+	store:search({ service = 1 } :: any) -- deliberate refusal test: a spec is text under text
 end)
 assert(not ok_spec and tostring(refused_spec):find("vnd:keyring.Store:search: argument #1 'spec'", 1, true))
 

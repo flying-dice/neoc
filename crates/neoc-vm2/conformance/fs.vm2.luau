@@ -1,3 +1,4 @@
+--!strict
 -- intentional: an error is a typed FsError (kind, path, to, reason; error_kind and error_message are gone), open(path) reads while create(path) and append(path) write (it was open { path, mode }), Metadata and DirEntry are plain records (meta.len, entry.file_name) instead of objects with a method per field, set_permissions is set_mode and set_readonly, Watcher:receive takes a std:time Duration, and a wrong option is refused as a wrong argument with its place (it was a returned invalid_input).
 local fs = require("std:fs")
 local path = require("std:path")
@@ -13,7 +14,7 @@ local function p(name: string): string
 	return path.join(dir, name)
 end
 
-local function body()
+local function body(): ...unknown
 	assert(fs.create_dir(dir))
 
 	-- a typed error: the kind, the path, the operating system's words
@@ -43,14 +44,19 @@ local function body()
 	assert(io.copy((assert(fs.open(p("w")))), copied) == 3 and copied:flush())
 	local _, no_file = fs.open(p("nope"))
 	assert(no_file ~= nil and no_file.kind == "not_found" and no_file.op == "std:fs.open")
-	assert(not pcall(fs.open, { path = p("f"), mode = "r" }))
+	assert(not pcall(function()
+		fs.open({ path = p("f"), mode = "r" } :: any) -- deliberate refusal test: the table open took
+	end))
 
 	-- a file is a reader for the modules that take one
 	assert(fs.write(p("rows.csv"), "name,age\nada,36\ngrace,45\n"))
-	local people = assert(csv.reader((assert(fs.open(p("rows.csv")))), { types = { age = "number" } }))
+	local types: { [string]: lib_csv_ColumnType } = { age = "number" }
+	local people = assert(csv.reader((assert(fs.open(p("rows.csv")))), { types = types }))
 	local total = 0
 	for person in people:records():items() do
-		total += person.age :: number
+		local age = person.age
+		assert(type(age) == "number")
+		total += age
 	end
 	assert(total == 81)
 
@@ -94,16 +100,16 @@ local function body()
 	assert(missing ~= nil and missing.kind == "not_found" and missing.op == "std:fs.move")
 
 	-- a wrong option is a wrong argument
-	for _, call in
-		{
-			function() return fs.remove_file(p("f"), { missing = true } :: any) end,
-			function() return fs.remove_file(p("f"), { missing_ok = "yes" } :: any) end,
-			function() return fs.walk(dir, { depth = 2 } :: any) end,
-			function() return fs.walk(dir, { max_depth = -1 }) end,
-			function() return fs.walk(dir, { max_depth = 1.5 }) end,
-			function() return fs.watch(dir, { recursive = "yes" } :: any) end,
-		}
-	do
+	-- deliberate refusal tests: the casts are options that do not exist or have the wrong type
+	local wrong: { () -> ...unknown } = {
+		function() return fs.remove_file(p("f"), { missing = true } :: any) end,
+		function() return fs.remove_file(p("f"), { missing_ok = "yes" } :: any) end,
+		function() return fs.walk(dir, { depth = 2 } :: any) end,
+		function() return fs.walk(dir, { max_depth = -1 }) end,
+		function() return fs.walk(dir, { max_depth = 1.5 }) end,
+		function() return fs.watch(dir, { recursive = "yes" } :: any) end,
+	}
+	for _, call in wrong do
 		local ok, refused = pcall(call)
 		assert(not ok and tostring(refused):find("argument #2 'opts'", 1, true), tostring(refused))
 	end
