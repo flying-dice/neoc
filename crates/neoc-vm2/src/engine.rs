@@ -123,7 +123,34 @@ pub fn make_bare_engine() -> mlua::Result<Lua> {
     stash_coroutine_close(&lua)?;
     strip_unsafe_globals(&lua)?;
     lock_string_metatable(&lua)?;
+    install_assert(&lua)?;
     Ok(lua)
+}
+
+/// The global `assert`, as Lua 5.x has it: a falsy first argument raises the second **as it is** (any value;
+/// `"assertion failed!"` when there is none), anything else returns every argument. Luau's own refuses a message
+/// that is not a string, which loses the typed error of `assert(fs.read(path))`: with this one a `pcall` around it
+/// catches the error table, `kind` and fields intact.
+const ASSERT: &str = r##"
+local select, error = select, error
+return function(...)
+    if select("#", ...) == 0 then
+        error("missing argument #1 to 'assert' (value expected)", 2)
+    end
+    local value, message = ...
+    if value then
+        return ...
+    end
+    if message == nil then
+        message = "assertion failed!"
+    end
+    error(message, 0)
+end
+"##;
+
+fn install_assert(lua: &Lua) -> mlua::Result<()> {
+    let assert: mlua::Function = lua.load(ASSERT).set_name("=assert").eval()?;
+    lua.globals().raw_set("assert", assert)
 }
 
 /// Where the registry keeps Luau's own `coroutine.close`, taken out of `coroutine` before the strip: the script
@@ -266,6 +293,51 @@ mod tests {
         life.shutdown();
         assert!(Life::of(&worker).is_closed());
         assert!(!Life::of(&full).is_closed());
+    }
+
+    /// `assert` keeps the typed error of a failed call: the table itself is raised, and `pcall` hands it back.
+    #[test]
+    fn assert_raises_a_typed_error_as_it_is() {
+        let lua = make_engine().expect("engine");
+        let (ok, kind, is_table, op): (bool, String, bool, String) = lua
+            .load(
+                r#"
+                local fs = require("std:fs")
+                local ok, err = pcall(function() return assert(fs.read("no/such/file/anywhere")) end)
+                return ok, err.kind, type(err) == "table", err.op
+                "#,
+            )
+            .eval()
+            .expect("script");
+        assert!(!ok && is_table);
+        assert_eq!((kind.as_str(), op.as_str()), ("not_found", "std:fs.read"));
+    }
+
+    #[test]
+    fn assert_returns_every_argument_and_keeps_string_messages() {
+        let lua = make_engine().expect("engine");
+        let (a, b, c, count): (i64, String, bool, i64) = lua
+            .load(r##"local a, b, c = assert(1, "two", false) return a, b, c, select("#", assert(1, nil, 3))"##)
+            .eval()
+            .expect("script");
+        assert_eq!((a, b.as_str(), c, count), (1, "two", false, 3));
+
+        let (message, default, falsy, none): (String, String, String, bool) = lua
+            .load(
+                r#"
+                local _, message = pcall(assert, false, "it broke")
+                local _, default = pcall(assert, nil)
+                local _, falsy = pcall(assert, false, nil, "ignored")
+                local none = pcall(assert)
+                return message, default, falsy, none
+                "#,
+            )
+            .eval()
+            .expect("script");
+        assert_eq!(message, "it broke", "a string message is raised without a position");
+        assert_eq!(default, "assertion failed!");
+        assert_eq!(falsy, "assertion failed!");
+        assert!(!none, "assert() with no value is refused");
     }
 
     #[test]
