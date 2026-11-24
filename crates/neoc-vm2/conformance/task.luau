@@ -1,5 +1,5 @@
--- std:task: what both VMs offer. A task's body is a function without arguments, and a task that returns one value
--- (what neoc-vm2 keeps of them: task.vm2.luau).
+-- std:task: what both VMs offer. A task's body is a function, and a task that returns one value (what neoc-vm2
+-- keeps of them: task.vm2.luau).
 local task = require("std:task")
 
 local slept = task.wait(0.02)
@@ -40,6 +40,29 @@ local same = task.spawn(function()
 	return shared
 end):await() == shared
 
+-- the arguments after the function are what it is called with, nils and live values included
+local function count(...)
+	return select("#", ...)
+end
+local passed = {
+	task.spawn(function(a, b)
+		return a + b
+	end, 1, 2):await(),
+	task.defer(function(a, b)
+		return a .. b
+	end, "x", "y"):await(),
+	task.delay(0, function(a, b, c)
+		return a * b * c
+	end, 2, 3, 4):await(),
+	task.spawn(count):await(),
+	task.spawn(count, nil):await(),
+	task.defer(count, 1, nil, nil):await(),
+	task.delay(0, count, nil, 2, nil):await(),
+	task.spawn(function(t, f)
+		return t == shared and f == count
+	end, shared, count):await(),
+}
+
 -- cancelling: once, and a cancelled task never runs and has no value
 local ran = false
 local pending = task.delay(60, function()
@@ -79,4 +102,5 @@ return {
 	(pcall(task.spawn, 42)),
 	(pcall(task.defer, nil)),
 	(pcall(task.delay, 0, "body")),
+	passed,
 }

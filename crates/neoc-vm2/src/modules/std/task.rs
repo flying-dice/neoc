@@ -8,8 +8,8 @@
 //! ```
 //!
 //! Ported from neoc-vm's `std:task`. What changed on purpose:
-//! - `spawn`, `defer` and `delay` take a function and nothing else: no arguments to pass on
-//!   (`task.spawn(function() f(a, b) end)`), and no coroutine in the function's place.
+//! - `spawn`, `defer` and `delay` take a function, with the arguments to call it with after it
+//!   (`task.spawn(f, a, b)`), and no coroutine in the function's place.
 //! - `Task:await` gives the task's first return value, as it is (a table is that table), or `nil` and a typed
 //!   [`TaskError`](task::TaskError) (`cancelled`, or `failed` with the `reason`); it was every return value, or
 //!   `nil` and a text.
@@ -19,7 +19,7 @@
 #[mlua_ir::module("std:task")]
 pub mod task {
     use mlua::{Lua, MultiValue, Value};
-    use mlua_ir::{Callback, Live, LuaError, Object};
+    use mlua_ir::{Callback, Live, LuaError, Object, Variadic};
     use serde::Serialize;
 
     use crate::limits::sleep_duration;
@@ -30,9 +30,21 @@ pub mod task {
         TaskResult = "whatever the task's function returned: the script's own value, handed back as it is"
     );
 
-    /// A task's body: a function of the script's, run as a coroutine of its own. What it returns first is what
-    /// `Task:await` gives.
+    mlua_ir::unknown_reason!(
+        /// Why what is passed on to a task's function has no declared shape.
+        TaskArgument = "whatever the script passes on to its own function: handed over as it is"
+    );
+
+    /// A task's body: a function of the script's, run as a coroutine of its own. It is called with the arguments
+    /// given after it; what it returns first is what `Task:await` gives.
+    // TODO(mlua-ir): declared `() -> ()`, so a body that takes the arguments does not type-check; it needs a
+    // callback type with variadic parameters (`(...unknown) -> ()`), or a generic pack tying them to `args`.
     pub type Body = Callback<fn()>;
+
+    /// The arguments for a task's body, as they are (a table is that table, a `nil` is kept).
+    fn passed_on(args: Vec<Live<TaskArgument>>) -> MultiValue {
+        args.into_iter().map(|arg| arg.value).collect()
+    }
 
     /// Why a task has no result.
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error, LuaError)]
@@ -89,8 +101,8 @@ pub mod task {
         }
     }
 
-    /// Start `body` as a task. It runs at once, inside this call, until it first waits; the rest runs alongside
-    /// the caller.
+    /// Start `body` as a task, called with `args`. It runs at once, inside this call, until it first waits; the
+    /// rest runs alongside the caller.
     ///
     /// ```luau
     /// local order = {}
@@ -102,26 +114,26 @@ pub mod task {
     /// table.insert(order, "caller")
     /// assert(t:await() == "done" and order[1] == "task")
     /// ```
-    pub fn spawn(lua: &Lua, body: Body) -> mlua::Result<Task> {
-        scheduler::spawn(lua, Routine::Function(body.into_function()), MultiValue::new()).map(Task::from)
+    pub fn spawn(lua: &Lua, body: Body, args: Variadic<Live<TaskArgument>>) -> mlua::Result<Task> {
+        scheduler::spawn(lua, Routine::Function(body.into_function()), passed_on(args.0)).map(Task::from)
     }
 
-    /// Queue `body` to run after the code that is running now reaches a wait or ends. Deferred tasks run in the
-    /// order they were queued, each after the one before it has ended.
-    pub fn defer(lua: &Lua, body: Body) -> mlua::Result<Task> {
-        scheduler::defer(lua, Routine::Function(body.into_function()), MultiValue::new()).map(Task::from)
+    /// Queue `body`, called with `args`, to run after the code that is running now reaches a wait or ends.
+    /// Deferred tasks run in the order they were queued, each after the one before it has ended.
+    pub fn defer(lua: &Lua, body: Body, args: Variadic<Live<TaskArgument>>) -> mlua::Result<Task> {
+        scheduler::defer(lua, Routine::Function(body.into_function()), passed_on(args.0)).map(Task::from)
     }
 
-    /// Run `body` once `secs` seconds have passed. `secs` is read as `wait` reads it: not a number and negative
-    /// are no delay, and more than 100 years is 100 years.
+    /// Run `body`, called with `args`, once `secs` seconds have passed. `secs` is read as `wait` reads it: not a
+    /// number and negative are no delay, and more than 100 years is 100 years.
     ///
     /// ```luau
     /// local late = task.delay(60, function() end)
     /// assert(late:cancel() and late:is_finished())
     /// ```
-    pub fn delay(lua: &Lua, secs: f64, body: Body) -> mlua::Result<Task> {
+    pub fn delay(lua: &Lua, secs: f64, body: Body, args: Variadic<Live<TaskArgument>>) -> mlua::Result<Task> {
         let after = sleep_duration(secs);
-        scheduler::delay(lua, after, Routine::Function(body.into_function()), MultiValue::new()).map(Task::from)
+        scheduler::delay(lua, after, Routine::Function(body.into_function()), passed_on(args.0)).map(Task::from)
     }
 
     /// Wait `secs` seconds without blocking other tasks; the seconds that actually passed. Not a number and
@@ -263,7 +275,6 @@ mod tests {
                     function() task.wait() end,
                     function() task.spawn(42) end,
                     function() task.delay("1", function() end) end,
-                    function() task.spawn(function() end, 1) end,
                 } do
                     local ok, err = pcall(call)
                     assert(not ok)
@@ -281,7 +292,36 @@ mod tests {
         assert!(refused[3].contains("std:task.wait: argument #1 'secs': expected a number"), "{refused:#?}");
         assert!(refused[4].contains("std:task.spawn: argument #1 'body': expected a function"), "{refused:#?}");
         assert!(refused[5].contains("std:task.delay: argument #1 'secs': expected a number"), "{refused:#?}");
-        assert!(refused[6].contains("std:task.spawn"), "{refused:#?}");
+    }
+
+    /// neoc-vm's varargs: what follows the function is what it is called with, `nil`s and live values included.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_arguments_after_the_body_are_passed_to_it() {
+        let lua = engine();
+        let (sum, deferred, delayed, counts, same): (i64, String, i64, Vec<i64>, bool) = lua
+            .load(
+                r##"
+                local sum = task.spawn(function(a, b) return a + b end, 1, 2):await()
+                local deferred = task.defer(function(a, b) return a .. b end, "x", "y"):await()
+                local delayed = task.delay(0, function(a, b, c) return a * b * c end, 2, 3, 4):await()
+                local function count(...) return select("#", ...) end
+                local counts = {
+                    task.spawn(count):await(),
+                    task.spawn(count, nil):await(),
+                    task.defer(count, 1, nil, nil):await(),
+                    task.delay(0, count, nil, 2, nil):await(),
+                }
+                local t = {}
+                local same = task.spawn(function(a, f) return a == t and f == count end, t, count):await()
+                return sum, deferred, delayed, counts, same
+                "##,
+            )
+            .eval_async()
+            .await
+            .unwrap();
+        assert_eq!((sum, deferred.as_str(), delayed), (3, "xy", 24));
+        assert_eq!(counts, [0, 1, 3, 3]);
+        assert!(same);
     }
 
     /// The error `await` gives: its kinds and what `tostring` says.
