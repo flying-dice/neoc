@@ -3,25 +3,19 @@
 //! | Output | For | How |
 //! |---|---|---|
 //! | `types/generated/vos.ts` | the shell | the wire types of the `/rpc` socket via `ts-rs` (reads the serde attributes of `vos-domain`'s `protocol` and `api`), the version constants and the method table |
-//! | `types/generated/vos.d.luau` | app authors (luau-lsp) | Luau declarations: the `std:`/`lib:`/`vnd:` modules an app is offered (from `types/neoc.ast.json`, the tree neoc-vm records), the `app` API and its global, and the one `declare require` |
-//! | `types/generated/vos.d.ts` | app authors (TypeScript, compiled to Luau by `TypeScriptToLua`) | the same declarations in TypeScript, written from the same tree, so the two say the same |
+//! | `types/generated/vos.d.luau` | app authors (luau-lsp) | Luau declarations of what an app can reach: the `std:`/`lib:`/`vnd:` modules it is offered and the `app` API (`vos:app`, and its global), from the schema mlua-ir reads from their Rust (`vos_lua::declarations::schema`), written by mlua-ir-gen, plus the host's policy ([`apps`]) |
+//! | `types/generated/vos.d.ts` | app authors (TypeScript, compiled to Luau by `TypeScriptToLua`) | the same schema as TypeScript, so the two say the same |
 //!
 //! `bun run codegen` writes them; `bun run codegen:check` (part of `bun run lint`) fails when the committed files
 //! are stale, so drift between the Rust types and a consumer is a build failure.
 
-mod luau;
+pub mod apps;
 mod ts;
-mod tsdecl;
 
-pub use luau::defs::{definitions as luau_definitions, require_overloads};
-pub use luau::neoc::read as neoc_modules;
+pub use apps::require_overloads;
 pub use ts::generate as typescript;
-pub use tsdecl::declarations as typescript_declarations;
 
 use std::{fs, io, path::Path};
-
-/// Where the tree of neoc's modules is: what neoc-vm recorded, and what the app's declarations are written from.
-pub const NEOC_AST: &str = "types/neoc.ast.json";
 
 /// One generated file: its path relative to the repository root and its contents.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -30,28 +24,33 @@ pub struct GeneratedFile {
     pub contents: String,
 }
 
-/// Every generated file. `root` is the repository root, where [`NEOC_AST`] is read.
+/// Where the Luau declarations for app authors are written.
+pub const LUAU_DECLARATIONS: &str = "types/generated/vos.d.luau";
+
+/// Where the TypeScript declarations for app authors are written.
+pub const TYPESCRIPT_DECLARATIONS: &str = "types/generated/vos.d.ts";
+
+/// Every generated file.
 ///
 /// # Errors
-/// neoc's modules are missing, or are not in the shape the generator reads.
-pub fn generate(root: &Path) -> Result<Vec<GeneratedFile>, String> {
-    let json = fs::read_to_string(root.join(NEOC_AST)).map_err(|e| format!("cannot read {NEOC_AST}: {e}"))?;
-    let modules = luau::neoc::read(&json)?;
-    let luau = luau::defs::definitions(&modules)?;
-    let typescript = tsdecl::declarations(&modules).map_err(|e| format!("types/generated/vos.d.ts: {e}"))?;
+/// The schema of the modules is not one the app declarations can be written from whole ([`apps::offered`]).
+pub fn generate() -> Result<Vec<GeneratedFile>, String> {
+    let schema = vos_lua::declarations::schema();
+    let luau = apps::luau(&schema).map_err(|e| format!("{LUAU_DECLARATIONS}: {e}"))?;
+    let typescript = apps::typescript(&schema).map_err(|e| format!("{TYPESCRIPT_DECLARATIONS}: {e}"))?;
     Ok(vec![
         GeneratedFile { path: "types/generated/vos.ts", contents: ts::generate() },
-        GeneratedFile { path: "types/generated/vos.d.luau", contents: luau },
-        GeneratedFile { path: "types/generated/vos.d.ts", contents: typescript },
+        GeneratedFile { path: LUAU_DECLARATIONS, contents: luau },
+        GeneratedFile { path: TYPESCRIPT_DECLARATIONS, contents: typescript },
     ])
 }
 
-/// Write every generated file under `root`.
+/// Write every generated file under `root` (the repository root).
 ///
 /// # Errors
 /// Any I/O error creating a directory or writing a file, or [`generate`] failing.
 pub fn write_all(root: &Path) -> io::Result<()> {
-    for file in generate(root).map_err(io::Error::other)? {
+    for file in generate().map_err(io::Error::other)? {
         let target = root.join(file.path);
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
@@ -73,7 +72,7 @@ const WRITTEN_ELSEWHERE: &[&str] = &["types/generated/prelude.lua"];
 /// files under `types/generated` that no generator writes any more.
 #[must_use]
 pub fn stale(root: &Path) -> Vec<String> {
-    let files = match generate(root) {
+    let files = match generate() {
         Ok(files) => files,
         Err(error) => return vec![format!("every generated file ({error})")],
     };
@@ -123,12 +122,11 @@ pub fn repo_root() -> &'static Path {
 mod tests {
     use super::*;
 
-    /// A copy of the repository's generated files and neoc's declarations, which the tests may edit.
+    /// A scratch root with the generated files written into it, which the tests may edit.
     fn scratch(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("vos-codegen-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("types")).unwrap();
-        fs::copy(repo_root().join(NEOC_AST), dir.join(NEOC_AST)).unwrap();
         write_all(&dir).unwrap();
         dir
     }
@@ -158,25 +156,9 @@ mod tests {
     #[test]
     fn a_missing_or_edited_file_is_stale() {
         let dir = scratch("drift");
-        fs::write(dir.join("types/generated/vos.d.luau"), "-- edited").unwrap();
+        fs::write(dir.join(LUAU_DECLARATIONS), "-- edited").unwrap();
         fs::remove_file(dir.join("types/generated/vos.ts")).unwrap();
-        assert_eq!(stale(&dir), ["types/generated/vos.ts", "types/generated/vos.d.luau"]);
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    /// The app definitions (Luau and TypeScript) are written from neoc's tree: when that changes, the committed
-    /// definitions are stale (`bun run codegen:check` then asks for a regeneration), and a file of another shape is
-    /// an error.
-    #[test]
-    fn the_definitions_follow_neoc_declarations() {
-        let dir = scratch("neoc");
-        let neoc = dir.join(NEOC_AST);
-        let text = fs::read_to_string(&neoc).unwrap();
-        fs::write(&neoc, text.replace("Read a key.", "Read a key (changed).")).unwrap();
-        // both are written from the same tree
-        assert_eq!(stale(&dir), ["types/generated/vos.d.luau", "types/generated/vos.d.ts"]);
-        fs::write(&neoc, "-- nothing\n").unwrap();
-        assert!(stale(&dir)[0].contains("is not the tree of neoc's modules"), "{:?}", stale(&dir));
+        assert_eq!(stale(&dir), ["types/generated/vos.ts", LUAU_DECLARATIONS]);
         fs::remove_dir_all(dir).unwrap();
     }
 }

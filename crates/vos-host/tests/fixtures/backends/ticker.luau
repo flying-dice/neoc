@@ -32,7 +32,7 @@ app.tool {
 }
 
 -- what the page calls
-local handlers: vos_Handlers = {
+local handlers: vos_app_Handlers = {
   state = function()
     return { ticks = ticks, running = running }
   end,

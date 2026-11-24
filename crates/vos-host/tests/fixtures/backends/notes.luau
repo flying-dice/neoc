@@ -22,7 +22,7 @@ local function changed(id: number)
 end
 
 -- tools
-app.tools.register {
+app.tool {
   name = "add_note",
   title = "Add Note",
   description = "Add a note",
@@ -38,7 +38,7 @@ app.tools.register {
   end,
 }
 
-app.tools.register {
+app.tool {
   name = "append",
   title = "Append to Note",
   description = "Append text on a new line at the end of a note",
@@ -57,7 +57,7 @@ app.tools.register {
   end,
 }
 
-app.tools.register {
+app.tool {
   name = "search",
   title = "Search Notes",
   readOnly = true,
@@ -72,7 +72,7 @@ app.tools.register {
 }
 
 -- what the page calls
-local handlers: vos_Handlers = {
+local handlers: vos_app_Handlers = {
   list = function()
     return db:all("select id, substr(body, 1, 60) as title, updated_at from notes order by id")
   end,

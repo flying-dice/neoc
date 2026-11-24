@@ -128,8 +128,9 @@ local _dice: number? = random.random_int(1, 6)
 local _file: string? = fs.read("/tmp/x")
 local _entries = assert(fs.read_dir("/tmp"))
 local _name: string? = path.file_name("/tmp/x")
-local _kind: string? = fs.error_kind("fs.read: not_found: /tmp/x: gone")
-local _message: string? = fs.error_message("fs.read: not_found: /tmp/x: gone")
+local _gone, fsErr = fs.read("/tmp/gone")
+local _kind: std_fs_FsErrorKind? = if fsErr then fsErr.kind else nil
+local _message: string? = if fsErr then fsErr.message else nil
 local _slept: number = task.wait(0)
 
 -- ── the globals an app has: the base library of Luau, `utf8` and `typeof` from the prelude, `bit32` ────────────
@@ -151,18 +152,20 @@ local _tx: number = app.db:tx(function()
 end)
 app.kv:set("k", { 1, 2 })
 local _stored: any = app.kv:get("k")
-local docs: vos_Files = app.files.documents
-local _made: boolean?, _madeErr: string? = docs:createDir("notes")
+local docs: vos_app_Location = app.files.documents
+local _made: boolean?, _madeErr: vos_app_FileError? = docs:createDir("notes")
 local _wrote: boolean? = docs:write("notes/a.txt", "hello")
-local _text: string?, readErr: string? = docs:read("notes/a.txt")
-local _missing: string? = app.files.errorKind(readErr)
-local _why: string? = app.files.errorMessage(readErr)
-local entries: { vos_FileInfo } = docs:list("notes") or {}
+local _text: string?, readErr: vos_app_FileError? = docs:read("notes/a.txt")
+-- a failure is a typed value: its kind is one of a declared set, its message is for a person
+local _missing: boolean = readErr ~= nil and readErr.kind == "not_found"
+local _errorKind: vos_app_FileErrorKind? = if readErr then readErr.kind else nil
+local _why: string? = if readErr then readErr.message else nil
+local entries: { vos_app_FileInfo } = docs:list("notes") or {}
 for _, entry in entries do
   local _entryName: string, _size: number, _modified: number? = entry.name, entry.size, entry.modified
 end
 local _rootEntries = app.files.cache:list()
-local info: vos_FileInfo? = docs:info("notes/a.txt")
+local info: vos_app_FileInfo? = docs:info("notes/a.txt")
 if info and info.kind == "file" then
   docs:move("notes/a.txt", "notes/b.txt")
 end
@@ -170,12 +173,13 @@ docs:copy("notes", "backup")
 docs:remove("backup", { recursive = true })
 app.files.temp:remove("scratch.txt")
 app.notify { title = "hello", body = "world" }
-app:notify { title = "hello" }
+app.notify { title = "hello" }
 app.log("usage")
 app.emit("items.changed", { id = 1 })
 app.emit("items.cleared")
-app:openWindow()
-app:openWindow("main", { item = 1 })
+app.openWindow()
+app.openWindow { item = 1 }
+local _id: string = app.id
 for _, card in ipairs(app.agents:list()) do
   local _name: string = card.name
 end
@@ -195,11 +199,11 @@ app.tool {
 }
 
 -- ── the handlers: what the entry returns, and the app's page calls with `rpc(name, args)` ───────────────────────
-local handlers: vos_Handlers = {
-  list = function(_ctx: vos_HandlerContext)
+local handlers: vos_app_Handlers = {
+  list = function(_ctx: vos_app_Context)
     return app.db:all("select id, name from items order by id")
   end,
-  rename = function(ctx: vos_HandlerContext, args: { id: number, name: string })
+  rename = function(ctx: vos_app_Context, args: { id: number, name: string })
     if args.name == "" then
       return ctx:fail("A name cannot be empty")
     end

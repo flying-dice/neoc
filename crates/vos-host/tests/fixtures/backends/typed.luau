@@ -43,8 +43,8 @@ app.tool {
 }
 
 -- what the page calls: the context and the handlers table are typed by the declarations
-local handlers: vos_Handlers = {
-  greet = function(ctx: vos_HandlerContext, args: { name: string })
+local handlers: vos_app_Handlers = {
+  greet = function(ctx: vos_app_Context, args: { name: string })
     return `Hello {args.name} from a {ctx.actor.kind}`
   end,
 }

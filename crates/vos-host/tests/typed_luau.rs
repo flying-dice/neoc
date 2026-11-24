@@ -19,7 +19,7 @@ async fn a_typed_luau_app_loads_and_runs() {
         !source.contains("type Stats")
             && !source.contains(": number")
             && !source.contains(":: string")
-            && !source.contains("vos_HandlerContext"),
+            && !source.contains("vos_app_Context"),
         "{source}"
     );
     for luau in ["continue", "stats.count += 1", "`{label}: {value}`", "if stats.count > 2 then"] {

@@ -19,7 +19,7 @@ function workspace(
     "vos-fetch": ["vos-application"],
     "vos-mcp": ["vos-domain", "vos-application", "rmcp", "axum"],
     "vos-http": ["vos-domain", "vos-application", "axum"],
-    "vos-codegen": ["vos-domain", "neoc-decl"],
+    "vos-codegen": ["vos-domain", "vos-lua"],
     "vos-host": [
       "vos-domain",
       "vos-application",

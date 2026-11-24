@@ -6682,10 +6682,12 @@ dependencies = [
 name = "vos-codegen"
 version = "0.1.0"
 dependencies = [
- "neoc-decl",
+ "mlua-ir",
+ "mlua-ir-gen",
  "serde_json",
  "ts-rs",
  "vos-domain",
+ "vos-lua",
 ]
 
 [[package]]

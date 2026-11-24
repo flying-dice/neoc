@@ -212,7 +212,7 @@ local json = require("lib:json")
 local _n: number = app.id
 app.nope()
 test.describe("x")
-local handlers: vos_Handlers = {}
+local handlers: vos_app_Handlers = {}
 app.emit("changed", { count = 1 })
 kv:set("count", 1)
 json.object():set("k", 1)
@@ -268,9 +268,7 @@ fn the_language_server_types_the_vos_modules_as_the_editor_starts_it() {
         "{findings:?}"
     );
     assert!(
-        findings
-            .iter()
-            .any(|(line, m)| *line == 7 && m.contains("Key 'nope' not found in table 'vos_AppApi'")),
+        findings.iter().any(|(line, m)| *line == 7 && m.contains("Key 'nope' not found in table 'vos_app'")),
         "{findings:?}"
     );
     assert!(

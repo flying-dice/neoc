@@ -11,7 +11,7 @@
 //!
 //! A program is a few *steps*. A step is one **leaf** (an idle wait, a database or key-value read or write, a
 //! mutex, a write through `state` (an in-memory value whose assignment sends an event to the app's pages), `app.notify` or
-//! `app:openWindow`), put inside a **context** where the host
+//! `app.openWindow`), put inside a **context** where the host
 //! call cannot suspend (or none), and wrapped in **controls** (`pcall`, `xpcall`, coroutines, a plain yield, tasks,
 //! a nested `db:tx`, an error thrown mid-body, a wait left in flight and resumed inside a transaction). It runs as a
 //! tool of one of four kinds: `readOnly`, writable, writable with concurrent second tools, or `readOnly` calling the

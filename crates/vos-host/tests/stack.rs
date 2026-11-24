@@ -13,10 +13,11 @@
 //! recurses until Luau refuses and checks that the host answers an ordinary error. Tests build in debug, the build that
 //! needs the most stack. The case with a module's host function in every level is `on_evict`: a `lib:cache` whose
 //! eviction callback stores into the cache again (the measured case was `Mutex:with_lock`, which neoc-vm2 does not
-//! offer; this one has not been measured against tokio's default 2 MiB). The gsub, tostring, index and notify cases
-//! need well under 1 MiB and hold the 200-level error on the host's runtime, through the engine's own machinery and,
-//! for `notify`, through a host function the adapter registers (`app.notify` reads a field of its argument through a
-//! metatable, whose `__index` calls `app.notify` again). The `run` tests below hold the wrapper's error and panic
+//! offer; this one has not been measured against tokio's default 2 MiB). The gsub, tostring and index cases
+//! need well under 1 MiB and hold the 200-level error on the host's runtime, through the engine's own machinery. No
+//! host function the adapter registers is in a level any more: the `app` API reads what it is given raw (it was
+//! `app.notify` reading a field through a metatable whose `__index` called `app.notify` again), so an app's code
+//! never runs inside one of its calls. The `run` tests below hold the wrapper's error and panic
 //! arms. What no test holds is `main.rs` calling the two functions (two lines).
 
 use serde_json::json;
@@ -63,10 +64,6 @@ const APP: &str = r#"
     probe("index", function(count)
       local t = setmetatable({}, { __index = function(t, k) count() return t[k] end })
       return t.x
-    end)
-    probe("notify", function(count)
-      local t = setmetatable({}, { __index = function(t) count() app.notify(t) end })
-      app.notify(t)
     end)
     return {}
 "#;
@@ -135,11 +132,6 @@ fn recursion_through_a_tostring_metamethod_is_an_error_on_the_hosts_threads() {
 #[test]
 fn recursion_through_an_index_metamethod_is_an_error_on_the_hosts_threads() {
     survives("index");
-}
-
-#[test]
-fn recursion_through_a_host_function_the_adapter_registers_is_an_error_on_the_hosts_threads() {
-    survives("notify");
 }
 
 #[test]

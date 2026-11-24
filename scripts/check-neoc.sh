@@ -69,9 +69,9 @@ cargo run -p neoc-vm --example luau_decls -- --check
 step "The same declarations as a tree: luau_decls --ast --check"
 cargo run -p neoc-vm --example luau_decls -- --ast --check
 
-# types/generated/vos.d.luau and vos.d.ts are built from types/neoc.ast.json: a module change regenerates them
-# (`cargo run -p vos-codegen`).
-step "vos-codegen --check (generated files current against the Rust schema and types/neoc.ast.json)"
+# types/generated/vos.d.luau and vos.d.ts are written from the schema of neoc-vm2's modules (and of the `app` API):
+# a module change regenerates them (`cargo run -p vos-codegen`).
+step "vos-codegen --check (generated files current against the Rust schema of the modules)"
 cargo run -q -p vos-codegen -- --check
 
 # neoc and neoc-vm never depend on a vos-* crate, not even as a dev-dependency (no vos concept in the runtime).

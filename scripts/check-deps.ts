@@ -7,12 +7,13 @@
  *
  *   domain      -> nothing internal; external: serde, serde_json, sha2, thiserror (+ ts-rs)
  *   application -> domain; external: async-trait, futures-util (its runtime-free `FutureExt::catch_unwind`), parking_lot, serde_json, sha2, thiserror, tracing
- *   adapters    -> application, domain; never each other
+ *   adapters    -> application, domain; never each other (but codegen, below)
+ *   codegen     -> domain, lua (dev-time: it writes the declarations from the schema of the modules the Lua adapter links)
  *   lua         -> application, domain, neoc-vm2 (the one vos crate that may use the Lua VM library)
  *   neoc-vm2    -> nothing internal (the Lua VM library, on mlua-ir; the lua adapter and the `neoc` CLI may depend on it)
  *   neoc-vm     -> neoc-decl and neoc-macros only (the VM neoc-vm2 was ported from: its reference in neoc-vm2's tests
  *                  until it is deleted, with those two)
- *   neoc-decl   -> nothing internal (the tree of a module surface's declarations; the old VM writes it, codegen reads it)
+ *   neoc-decl   -> nothing internal (the tree of a module surface's declarations, which the old VM writes; deleted with it)
  *   neoc        -> neoc-vm2 only (the CLI over the VM; it never reaches into the vos crates)
  *   host        -> every adapter, never the VM
  *
@@ -41,15 +42,17 @@ const INTERNAL: Record<string, string[]> = {
   'neoc-vm': ['neoc-decl', 'neoc-macros'],
   // The attributes a module declares its Lua surface with (a proc-macro crate: it can depend on nothing here).
   'neoc-macros': [],
-  // The declarations of a module surface as a tree, and that tree as Luau: what the VM records and what a generator
-  // reads. It knows neither the VM nor vos, so a generator does not have to depend on the VM to read its surface.
+  // The declarations of a module surface as a tree, and that tree as Luau: what the old VM records. Nothing else
+  // reads it any more (the app declarations are written from mlua-ir's schema); it goes with the old VM.
   'neoc-decl': [],
   neoc: ['neoc-vm2'],
   'vos-sqlite': ['vos-domain', 'vos-application'],
   'vos-fetch': ['vos-application'],
   'vos-mcp': ['vos-domain', 'vos-application'],
   'vos-http': ['vos-domain', 'vos-application'],
-  'vos-codegen': ['vos-domain', 'neoc-decl'],
+  // The dev-time generator reads the schema of what a script can reach from the Lua adapter, which links the modules
+  // (the `app` API and the VM library's): the one adapter that depends on another, and it is never linked into the host.
+  'vos-codegen': ['vos-domain', 'vos-lua'],
   'vos-host': [
     'vos-domain',
     'vos-application',

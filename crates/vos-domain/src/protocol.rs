@@ -140,13 +140,13 @@ wire! {
 // ---------------------------------------------------------------------------------------------------------
 
 wire! {
-    /// `window.open`: an app asked for its window (`app:openWindow`, e.g. from an agent's tool call). The shell
+    /// `window.open`: an app asked for its window (`app.openWindow`, e.g. from an agent's tool call). The shell
     /// opens the app's window, or brings its open one forward.
     pub struct WindowOpen {
         pub app: String,
         /// The window kind (`"main"`).
         pub window: String,
-        /// What the app passed to `app:openWindow` for its page.
+        /// What the app passed to `app.openWindow` for its page.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(feature = "codegen", ts(optional))]
         pub params: Option<Map<String, Value>>,
@@ -318,7 +318,7 @@ pub const METHODS: &[MethodSpec] = &[
         kind: MethodKind::Notification,
         params: "WindowOpen",
         result: None,
-        doc: "An app asked for its window (`app:openWindow`): open it, or bring it forward.",
+        doc: "An app asked for its window (`app.openWindow`): open it, or bring it forward.",
     },
     MethodSpec {
         name: "notification.deliver",

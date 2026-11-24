@@ -122,8 +122,8 @@ describe('the second pass (the declarations without their `declare require`)', (
   test('the declarations lose only the require section', () => {
     const bare = withoutRequire(definitions)
     expect(bare.split('\n').some((l) => l.startsWith('declare require'))).toBe(false)
-    expect(bare).toContain('declare app: vos_AppApi')
-    expect(bare).toContain('export type vos_AppApi = {')
+    expect(bare).toContain('declare app: vos_app')
+    expect(bare).toContain('export type vos_app = {')
     expect(definitions.startsWith(bare.trimEnd())).toBe(true)
     expect(() => withoutRequire('-- nothing\n')).toThrow('no `-- ===== require =====` section')
   })

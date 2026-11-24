@@ -117,12 +117,12 @@ describe('what is generated for a backend in TypeScript', () => {
 
   test('the handlers are typed from the definition, as plain functions', () => {
     const types = emitServerTypes(definition, 'openrpc.json')
-    expect(types).toContain('export type Context = vos_HandlerContext')
+    expect(types).toContain('export type Context = vos_app_Context')
     expect(types).toContain('export type Note = { id: number; title: string }')
     expect(types).toContain('export interface AddParams {\n  title: string\n  pinned?: boolean\n}')
     expect(types).toContain('  /** Every title. */\n  list(this: void, ctx: Context): ListResult')
     expect(types).toContain('  add(this: void, ctx: Context, params: AddParams): AddResult')
-    expect(types).toContain('export function router(this: void, handlers: Handlers): vos_Handlers')
+    expect(types).toContain('export function router(this: void, handlers: Handlers): vos_app_Handlers')
   })
 
   test('the router is the one a Luau backend gets', () => {
@@ -203,7 +203,7 @@ describe('compiling a backend in TypeScript', () => {
     expect(bundle).toContain('add = function(ctx, params)')
     // the entry returns the handlers behind the router, which is in the chunk
     expect(bundle).toContain('local ____exports = router(handlers)')
-    expect(bundle).toContain('local function router(implementation: Handlers): vos_Handlers')
+    expect(bundle).toContain('local function router(implementation: Handlers): vos_app_Handlers')
     // an app's environment has no `debug`: the chunk brings what the compiler's Error asks of it
     expect(bundle.startsWith('-- An app\'s environment has no `debug` library')).toBe(true)
   })

@@ -80,7 +80,7 @@ export function emitServerTypes(definition: Definition, source: string): string 
   out.push(`// The backend's side of the app's RPC, in TypeScript: ${lineComment(definition.title)} ${lineComment(definition.version)}.`)
   out.push('')
   out.push("/** What a handler gets: who is calling (the person's own client) and when. */")
-  out.push('export type Context = vos_HandlerContext')
+  out.push('export type Context = vos_app_Context')
   out.push('')
   out.push(...contractTypes(definition))
   out.push('')
@@ -96,7 +96,7 @@ export function emitServerTypes(definition: Definition, source: string): string 
   out.push('}')
   out.push('')
   out.push('/** The handlers behind the checks of the definition: what the backend\'s entry returns to the host. */')
-  out.push('export function router(this: void, handlers: Handlers): vos_Handlers')
+  out.push('export function router(this: void, handlers: Handlers): vos_app_Handlers')
   out.push('')
   return out.join('\n')
 }
@@ -104,7 +104,7 @@ export function emitServerTypes(definition: Definition, source: string): string 
 /**
  * `.app/server/rpc.lua`: the module `rpc.d.ts` declares. TypeScriptToLua puts a `.lua` file that has a declaration file
  * beside it into the bundle as it is; the text is Luau (the host runs nothing else), under the name the compiler looks for.
- * Its type annotations name types (`Handlers`, `vos_Handlers`) that only the Luau backend's `rpc.luau` defines: Luau
+ * Its type annotations name types (`Handlers`, `vos_app_Handlers`) that only the Luau backend's `rpc.luau` defines: Luau
  * compiles them away, and nothing type checks this file (the TypeScript side is checked against `rpc.d.ts`).
  */
 export function emitServerRouter(definition: Definition, source: string): string {

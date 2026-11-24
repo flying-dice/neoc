@@ -102,7 +102,7 @@ export function emitLuau(definition: Definition, source: string): string {
   out.push(`-- The Luau side of the app's RPC: ${lineComment(definition.title)} ${lineComment(definition.version)}.`)
   out.push('')
   out.push('--- What a handler gets: who is calling (the person\'s own client) and when.')
-  out.push('export type Context = vos_HandlerContext')
+  out.push('export type Context = vos_app_Context')
   out.push('')
   for (const [name, schema] of Object.entries(definition.components)) {
     out.push(`${luauDoc(schema.description, '')}export type ${name} = ${luauType(schema)}`)
