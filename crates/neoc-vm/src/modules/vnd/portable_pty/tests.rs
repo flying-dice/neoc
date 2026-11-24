@@ -292,6 +292,23 @@ async fn the_command_gets_its_arguments_directory_and_environment() {
     assert!(output.contains(&expected), "{output:?} lacks {expected:?}");
 }
 
+/// The environment is the engine's, also where the registry says otherwise: every Windows has `OS=Windows_NT` among
+/// the machine's variables, and the crate reads those over the process's own. (The default shell is `ComSpec` of
+/// that same environment, and a bare `program` is looked up in its `PATH`.)
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_variable_of_the_engine_is_not_replaced_by_the_registrys() {
+    // SAFETY: nothing else in this test's process reads or writes `OS` while it is set (nextest runs a test in a
+    // process of its own).
+    unsafe { std::env::set_var("OS", "neoc-pty-test") };
+    let output: String = run(r#"
+        local pty = spawn({ program = "cmd.exe", args = { "/D", "/C", "echo os=%OS%=end" } })
+        return read_all(pty)
+    "#)
+    .await;
+    assert!(output.contains("os=neoc-pty-test=end"), "{output:?}");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn without_a_program_it_is_the_users_shell_in_their_home() {
     // the shell reads the user's own start-up files, so the test asks it for nothing but to leave

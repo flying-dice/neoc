@@ -56,6 +56,10 @@
 //! A terminal emulator the bytes are passed to answers by itself. A script that reads the output itself writes the
 //! answer: the bytes pass as they are in both directions, and this module puts none of its own among them.
 //!
+//! The environment is the engine's, as on Unix: the crate also reads the variables the registry holds for the
+//! machine and the user, and those only fill in what the engine's environment does not say. So `%ComSpec%` (the
+//! default shell, which has to be an executable) and the `PATH` a bare `program` is looked up in are the engine's.
+//!
 //! The API's rules:
 //! - An error is a typed [`PtyError`](portable_pty::PtyError) (`err.kind`, `err.reason`).
 //! - Options of the wrong shape (no table, an unknown key, a value of the wrong type) are raised with their place, as

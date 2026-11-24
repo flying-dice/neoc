@@ -263,6 +263,15 @@ fn builder(command: Command) -> Result<CommandBuilder, PtyError> {
         existing_dir(cwd).map_err(|reason| PtyError::Spawn { reason })?;
         builder.cwd(cwd);
     }
+    // On Windows the crate's builder does not start from the engine's environment alone: it reads the machine's
+    // and the user's variables from the registry and puts them over it, so a variable the engine was started with
+    // (`PATH`, where a bare `program` is looked up; `ComSpec`, the default shell) would be lost to the registry's.
+    // The engine's own go back on top: the process has the engine's environment, as on Unix, and what only the
+    // registry has stays.
+    #[cfg(windows)]
+    for (name, value) in std::env::vars_os() {
+        builder.env(name, value);
+    }
     for (name, value) in &command.env {
         builder.env(name, value);
     }
