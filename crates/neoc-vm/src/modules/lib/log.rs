@@ -602,7 +602,9 @@ mod tests {
 
     #[test]
     fn array_like_table_becomes_json_array() {
-        let line = fields(r#"log.info("m", { items = { 10, 20, 30 }, empty = {}, sparse = { [1] = "a", [3] = "c" } })"#);
+        let line = fields(
+            r#"log.info("m", { items = { 10, 20, 30 }, empty = {}, sparse = { [1] = "a", [3] = "c" } })"#,
+        );
         assert_eq!(line["items"], serde_json::json!([10, 20, 30]));
         assert_eq!(line["empty"], serde_json::json!({}));
         assert_eq!(line["sparse"], serde_json::json!({ "1": "a", "3": "c" }));
@@ -617,7 +619,8 @@ mod tests {
 
     #[test]
     fn reserved_keys_cannot_be_shadowed() {
-        let line = fields(r#"log.info("real", { level = "bogus", ts = "never", msg = "fake", user = "alice" })"#);
+        let line =
+            fields(r#"log.info("real", { level = "bogus", ts = "never", msg = "fake", user = "alice" })"#);
         assert_eq!(line["level"], "info");
         assert_eq!(line["msg"], "real");
         assert_ne!(line["ts"], "never");

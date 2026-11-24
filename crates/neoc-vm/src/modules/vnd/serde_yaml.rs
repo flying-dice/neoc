@@ -426,7 +426,14 @@ mod tests {
             return { syntax.op, invalid.op, tostring(failed) }
             "#,
         );
-        assert_eq!(seen, ["vnd:serde_yaml.decode", "vnd:serde_yaml.decode", "vnd:serde_yaml.decode: io: the pipe is closed"]);
+        assert_eq!(
+            seen,
+            [
+                "vnd:serde_yaml.decode",
+                "vnd:serde_yaml.decode",
+                "vnd:serde_yaml.decode: io: the pipe is closed"
+            ]
+        );
     }
 
     #[test]
@@ -454,7 +461,11 @@ mod tests {
         );
         assert_eq!(written, "", "nothing reaches the writer");
         assert_eq!(seen[0], "vnd:serde_yaml.encode_to: io: read-only");
-        assert!(seen[1].contains("vnd:serde_yaml.encode_to: argument #1 'value'") && seen[1].contains("byte array"), "{seen:#?}");
+        assert!(
+            seen[1].contains("vnd:serde_yaml.encode_to: argument #1 'value'")
+                && seen[1].contains("byte array"),
+            "{seen:#?}"
+        );
     }
 
     #[test]
@@ -468,7 +479,13 @@ mod tests {
             return { tostring(not_reader), tostring(not_writer) }
             "#,
         );
-        assert!(seen[0].contains("vnd:serde_yaml.decode: argument #1 'reader': expected a Reader"), "{seen:#?}");
-        assert!(seen[1].contains("vnd:serde_yaml.encode_to: argument #2 'writer': expected a Writer"), "{seen:#?}");
+        assert!(
+            seen[0].contains("vnd:serde_yaml.decode: argument #1 'reader': expected a Reader"),
+            "{seen:#?}"
+        );
+        assert!(
+            seen[1].contains("vnd:serde_yaml.encode_to: argument #2 'writer': expected a Writer"),
+            "{seen:#?}"
+        );
     }
 }

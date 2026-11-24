@@ -97,10 +97,12 @@ pub mod env {
 
     /// The process's current working directory.
     pub fn current_dir() -> Result<String, CurrentDirError> {
-        std::env::current_dir().map(|dir| dir.to_string_lossy().into_owned()).map_err(|error| match error.kind() {
-            std::io::ErrorKind::NotFound => CurrentDirError::NotFound,
-            std::io::ErrorKind::PermissionDenied => CurrentDirError::PermissionDenied,
-            _ => CurrentDirError::Other { reason: error.to_string() },
+        std::env::current_dir().map(|dir| dir.to_string_lossy().into_owned()).map_err(|error| {
+            match error.kind() {
+                std::io::ErrorKind::NotFound => CurrentDirError::NotFound,
+                std::io::ErrorKind::PermissionDenied => CurrentDirError::PermissionDenied,
+                _ => CurrentDirError::Other { reason: error.to_string() },
+            }
         })
     }
 
@@ -119,7 +121,9 @@ pub mod env {
 
     /// Every environment variable by name, leaving out those whose name or value is not Unicode text.
     pub fn vars() -> BTreeMap<String, String> {
-        std::env::vars_os().filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?))).collect()
+        std::env::vars_os()
+            .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
+            .collect()
     }
 
     /// The command-line arguments given to the script; none when the host passed none.
@@ -127,9 +131,10 @@ pub mod env {
         match lua.globals().get::<Value>("_NEOC_ARGS") {
             // unset, nil or unreadable: no arguments
             Err(_) | Ok(Value::Nil) => Ok(Vec::new()),
-            Ok(Value::Table(table)) => {
-                table.sequence_values::<String>().collect::<mlua::Result<_>>().map_err(|_| Raise(ArgsError::Malformed))
-            }
+            Ok(Value::Table(table)) => table
+                .sequence_values::<String>()
+                .collect::<mlua::Result<_>>()
+                .map_err(|_| Raise(ArgsError::Malformed)),
             Ok(_) => Err(Raise(ArgsError::Malformed)),
         }
     }
@@ -151,7 +156,10 @@ mod tests {
         assert_eq!(os, std::env::consts::OS);
         assert_eq!(arch, std::env::consts::ARCH);
         assert!(family == "unix" || family == "windows");
-        assert_eq!((exe.as_str(), prefix.as_str()), if family == "windows" { (".exe", "") } else { ("", "lib") });
+        assert_eq!(
+            (exe.as_str(), prefix.as_str()),
+            if family == "windows" { (".exe", "") } else { ("", "lib") }
+        );
         assert!(!suffix.is_empty());
     }
 
@@ -176,7 +184,10 @@ mod tests {
             "#,
         );
         assert_eq!((kind.as_str(), name.as_str()), ("not_present", "_NEOC_DEFINITELY_MISSING_VAR_XYZ"));
-        assert_eq!(text, "std:env.var: not_present: _NEOC_DEFINITELY_MISSING_VAR_XYZ: environment variable not found");
+        assert_eq!(
+            text,
+            "std:env.var: not_present: _NEOC_DEFINITELY_MISSING_VAR_XYZ: environment variable not found"
+        );
         // a name no variable can have is unset, not a panic
         let odd: String = eval(r#"local _, err = env.var("a=b\0"); return err.kind"#);
         assert_eq!(odd, "not_present");
@@ -222,7 +233,10 @@ mod tests {
         );
         assert!(none.is_empty());
         assert_eq!(some, ["hello", "world"]);
-        assert!(refused.contains("std:env.args: malformed: _NEOC_ARGS: expected array of strings"), "got: {refused}");
+        assert!(
+            refused.contains("std:env.args: malformed: _NEOC_ARGS: expected array of strings"),
+            "got: {refused}"
+        );
         assert!(not_strings.contains("std:env.args: malformed"), "got: {not_strings}");
     }
 }

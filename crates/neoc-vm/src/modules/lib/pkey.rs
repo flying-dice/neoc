@@ -86,12 +86,12 @@ impl Secret {
 
     fn generate(algorithm: Algorithm) -> Result<Self, PkeyError> {
         Ok(match algorithm {
-            Algorithm::Ed25519 => {
-                Self::Ed25519(ed25519_dalek::SigningKey::try_generate_from_rng(&mut SysRng).map_err(generate_failed)?)
-            }
-            Algorithm::EcdsaP256 => {
-                Self::EcdsaP256(p256::ecdsa::SigningKey::try_generate_from_rng(&mut SysRng).map_err(generate_failed)?)
-            }
+            Algorithm::Ed25519 => Self::Ed25519(
+                ed25519_dalek::SigningKey::try_generate_from_rng(&mut SysRng).map_err(generate_failed)?,
+            ),
+            Algorithm::EcdsaP256 => Self::EcdsaP256(
+                p256::ecdsa::SigningKey::try_generate_from_rng(&mut SysRng).map_err(generate_failed)?,
+            ),
             Algorithm::RsaPss => {
                 Self::RsaPss(rsa::PrivateKey::new(&mut SysRng, RSA_BITS).map_err(generate_failed)?)
             }
@@ -103,19 +103,31 @@ impl Secret {
 
     fn from_pem(algorithm: Algorithm, pem: &str) -> Result<Self, PkeyError> {
         Ok(match algorithm {
-            Algorithm::Ed25519 => Self::Ed25519(ed25519_dalek::SigningKey::from_pkcs8_pem(pem).map_err(invalid_key)?),
-            Algorithm::EcdsaP256 => Self::EcdsaP256(p256::ecdsa::SigningKey::from_pkcs8_pem(pem).map_err(invalid_key)?),
+            Algorithm::Ed25519 => {
+                Self::Ed25519(ed25519_dalek::SigningKey::from_pkcs8_pem(pem).map_err(invalid_key)?)
+            }
+            Algorithm::EcdsaP256 => {
+                Self::EcdsaP256(p256::ecdsa::SigningKey::from_pkcs8_pem(pem).map_err(invalid_key)?)
+            }
             Algorithm::RsaPss => Self::RsaPss(rsa::PrivateKey::from_pkcs8_pem(pem).map_err(invalid_key)?),
-            Algorithm::RsaPkcs1v15 => Self::RsaPkcs1v15(rsa::PrivateKey::from_pkcs8_pem(pem).map_err(invalid_key)?),
+            Algorithm::RsaPkcs1v15 => {
+                Self::RsaPkcs1v15(rsa::PrivateKey::from_pkcs8_pem(pem).map_err(invalid_key)?)
+            }
         })
     }
 
     fn from_der(algorithm: Algorithm, der: &[u8]) -> Result<Self, PkeyError> {
         Ok(match algorithm {
-            Algorithm::Ed25519 => Self::Ed25519(ed25519_dalek::SigningKey::from_pkcs8_der(der).map_err(invalid_key)?),
-            Algorithm::EcdsaP256 => Self::EcdsaP256(p256::ecdsa::SigningKey::from_pkcs8_der(der).map_err(invalid_key)?),
+            Algorithm::Ed25519 => {
+                Self::Ed25519(ed25519_dalek::SigningKey::from_pkcs8_der(der).map_err(invalid_key)?)
+            }
+            Algorithm::EcdsaP256 => {
+                Self::EcdsaP256(p256::ecdsa::SigningKey::from_pkcs8_der(der).map_err(invalid_key)?)
+            }
             Algorithm::RsaPss => Self::RsaPss(rsa::PrivateKey::from_pkcs8_der(der).map_err(invalid_key)?),
-            Algorithm::RsaPkcs1v15 => Self::RsaPkcs1v15(rsa::PrivateKey::from_pkcs8_der(der).map_err(invalid_key)?),
+            Algorithm::RsaPkcs1v15 => {
+                Self::RsaPkcs1v15(rsa::PrivateKey::from_pkcs8_der(der).map_err(invalid_key)?)
+            }
         })
     }
 
@@ -139,9 +151,10 @@ impl Secret {
                 .try_sign_with_rng(&mut SysRng, msg)
                 .map_err(sign_failed)?
                 .to_vec(),
-            Self::RsaPkcs1v15(k) => {
-                rsa::pkcs1v15::SigningKey::<Sha256>::new(k.clone()).try_sign(msg).map_err(sign_failed)?.to_vec()
-            }
+            Self::RsaPkcs1v15(k) => rsa::pkcs1v15::SigningKey::<Sha256>::new(k.clone())
+                .try_sign(msg)
+                .map_err(sign_failed)?
+                .to_vec(),
         })
     }
 
@@ -212,7 +225,9 @@ impl Public {
             Self::Ed25519(k) => {
                 ed25519_dalek::Signature::try_from(sig).is_ok_and(|s| k.verify_strict(msg, &s).is_ok())
             }
-            Self::EcdsaP256(k) => p256::ecdsa::Signature::try_from(sig).is_ok_and(|s| k.verify(msg, &s).is_ok()),
+            Self::EcdsaP256(k) => {
+                p256::ecdsa::Signature::try_from(sig).is_ok_and(|s| k.verify(msg, &s).is_ok())
+            }
             Self::RsaPss(k) => {
                 let key = rsa::pss::VerifyingKey::<Sha256>::new(k.clone());
                 rsa::pss::Signature::try_from(sig).is_ok_and(|s| key.verify(msg, &s).is_ok())
@@ -528,7 +543,8 @@ mod tests {
 
     #[test]
     fn an_unknown_algorithm_is_refused_with_its_place() {
-        let err = engine().load(r#"return pkey.KeyPair.generate("rsa-1024")"#).eval::<mlua::Value>().unwrap_err();
+        let err =
+            engine().load(r#"return pkey.KeyPair.generate("rsa-1024")"#).eval::<mlua::Value>().unwrap_err();
         let err = err.to_string();
         assert!(err.contains("lib:pkey.KeyPair.generate: argument #1 'algorithm'"), "{err}");
         assert!(err.contains("rsa-1024"), "{err}");

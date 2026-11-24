@@ -189,7 +189,11 @@ mod tests {
             let streamed = hex_of(&format!(
                 r#"local m = hmac.Hmac.new("{algo}", "secret") m:update("hello ") m:update("world") return m:digest()"#
             ));
-            assert_eq!(streamed, hex_of(&format!(r#"return hmac.hmac("{algo}", "secret", "hello world")"#)), "{algo}");
+            assert_eq!(
+                streamed,
+                hex_of(&format!(r#"return hmac.hmac("{algo}", "secret", "hello world")"#)),
+                "{algo}"
+            );
         }
     }
 
@@ -226,7 +230,9 @@ mod tests {
 
     #[test]
     fn key_changes_tag() {
-        assert!(eval::<bool>(r#"return hmac.hmac("sha256", "key-a", "msg") ~= hmac.hmac("sha256", "key-b", "msg")"#));
+        assert!(eval::<bool>(
+            r#"return hmac.hmac("sha256", "key-a", "msg") ~= hmac.hmac("sha256", "key-b", "msg")"#
+        ));
     }
 
     #[test]
@@ -279,7 +285,8 @@ mod tests {
 
     #[test]
     fn tostring_and_algorithm_field() {
-        let (text, algo): (String, String) = eval(r#"local m = hmac.Hmac.new("sha512", "k") return tostring(m), m.algorithm"#);
+        let (text, algo): (String, String) =
+            eval(r#"local m = hmac.Hmac.new("sha512", "k") return tostring(m), m.algorithm"#);
         assert_eq!((text.as_str(), algo.as_str()), ("Hmac(sha512)", "sha512"));
     }
 

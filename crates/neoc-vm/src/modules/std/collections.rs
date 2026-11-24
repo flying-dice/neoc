@@ -242,7 +242,10 @@ mod tests {
             "#,
         );
         assert_eq!(refused.len(), 4);
-        assert!(refused.iter().all(|e| e.contains("std:collections.Map:set: argument #2 'value'")), "{refused:#?}");
+        assert!(
+            refused.iter().all(|e| e.contains("std:collections.Map:set: argument #2 'value'")),
+            "{refused:#?}"
+        );
         assert!(refused[0].contains("byte array") && refused[1].contains("byte array"), "{refused:#?}");
     }
 
@@ -296,7 +299,11 @@ mod tests {
             return out
             "#,
         );
-        assert!(refused[0].contains("std:collections.Counter.new: argument #1 'initial': expected a whole number"), "{refused:#?}");
+        assert!(
+            refused[0]
+                .contains("std:collections.Counter.new: argument #1 'initial': expected a whole number"),
+            "{refused:#?}"
+        );
         assert!(refused[1].contains("std:collections.Counter:add: argument #1 'n'"), "{refused:#?}");
         assert!(refused[2].contains("std:collections.Counter:set: argument #1 'n'"), "{refused:#?}");
         assert!(refused[3].contains("std:collections.Counter:set: argument #1 'n'"), "{refused:#?}");

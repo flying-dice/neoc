@@ -446,7 +446,10 @@ mod tests {
         let lines = lines.lock().unwrap();
         assert_eq!(lines.len(), 2, "{lines:?}");
         assert!(lines[0].starts_with("info ") && lines[0].contains("from the parent"), "{lines:?}");
-        assert!(lines[1].starts_with("warn ") && lines[1].contains(r#""msg":"from the worker""#), "{lines:?}");
+        assert!(
+            lines[1].starts_with("warn ") && lines[1].contains(r#""msg":"from the worker""#),
+            "{lines:?}"
+        );
     }
 
     /// A host function that panics in a worker fails the worker: `await` returns the error, and the parent runs on.

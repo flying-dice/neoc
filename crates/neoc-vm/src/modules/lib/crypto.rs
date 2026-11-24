@@ -41,8 +41,12 @@ impl Cipher {
             got: u32::try_from(key.len()).unwrap_or(u32::MAX),
         };
         match algorithm {
-            crypto::Algorithm::Aes128Gcm => Aes128Gcm::new_from_slice(key).map(Self::Aes128Gcm).map_err(|_| wrong()),
-            crypto::Algorithm::Aes256Gcm => Aes256Gcm::new_from_slice(key).map(Self::Aes256Gcm).map_err(|_| wrong()),
+            crypto::Algorithm::Aes128Gcm => {
+                Aes128Gcm::new_from_slice(key).map(Self::Aes128Gcm).map_err(|_| wrong())
+            }
+            crypto::Algorithm::Aes256Gcm => {
+                Aes256Gcm::new_from_slice(key).map(Self::Aes256Gcm).map_err(|_| wrong())
+            }
             crypto::Algorithm::Chacha20Poly1305 => {
                 ChaCha20Poly1305::new_from_slice(key).map(Self::ChaCha20Poly1305).map_err(|_| wrong())
             }
@@ -371,20 +375,24 @@ mod tests {
 
     #[test]
     fn wrong_key_length_is_a_typed_error() {
-        let (kind, op, text) = failure(r#"return crypto.encrypt("aes_256_gcm", "short", ("n"):rep(12), "msg")"#);
+        let (kind, op, text) =
+            failure(r#"return crypto.encrypt("aes_256_gcm", "short", ("n"):rep(12), "msg")"#);
         assert_eq!((kind.as_str(), op.as_str()), ("invalid_key_length", "lib:crypto.encrypt"));
         assert!(text.contains("expected 32-byte key, got 5"), "{text}");
-        let (expected, got): (u32, u32) =
-            eval(r#"local _, e = crypto.encrypt("aes_256_gcm", "short", ("n"):rep(12), "msg") return e.expected, e.got"#);
+        let (expected, got): (u32, u32) = eval(
+            r#"local _, e = crypto.encrypt("aes_256_gcm", "short", ("n"):rep(12), "msg") return e.expected, e.got"#,
+        );
         assert_eq!((expected, got), (32, 5));
     }
 
     #[test]
     fn wrong_nonce_length_is_a_typed_error() {
-        let (kind, _, text) = failure(r#"return crypto.encrypt("aes_256_gcm", ("k"):rep(32), "short", "msg")"#);
+        let (kind, _, text) =
+            failure(r#"return crypto.encrypt("aes_256_gcm", ("k"):rep(32), "short", "msg")"#);
         assert_eq!(kind, "invalid_nonce_length");
         assert!(text.contains("expected 12-byte nonce, got 5"), "{text}");
-        let (kind, _, _) = failure(r#"return crypto.decrypt("aes_256_gcm", ("k"):rep(32), "short", ("c"):rep(20))"#);
+        let (kind, _, _) =
+            failure(r#"return crypto.decrypt("aes_256_gcm", ("k"):rep(32), "short", ("c"):rep(20))"#);
         assert_eq!(kind, "invalid_nonce_length");
     }
 
@@ -392,7 +400,8 @@ mod tests {
     fn truncated_ciphertext_names_the_real_cause() {
         // Shorter than the tag can never be valid; it is rejected before the backend, so the error is not the
         // generic decryption_failed.
-        let (kind, _, text) = failure(r#"return crypto.decrypt("aes_256_gcm", ("k"):rep(32), ("n"):rep(12), "short")"#);
+        let (kind, _, text) =
+            failure(r#"return crypto.decrypt("aes_256_gcm", ("k"):rep(32), ("n"):rep(12), "short")"#);
         assert_eq!(kind, "ciphertext_too_short");
         assert!(text.contains("shorter than the 16-byte tag (got 5)"), "{text}");
     }
@@ -401,7 +410,10 @@ mod tests {
     fn an_unknown_algorithm_is_refused_with_its_place() {
         let lua = engine();
         for (code, place) in [
-            (r#"return crypto.encrypt("aes_512_gcm", "", "", "")"#, "lib:crypto.encrypt: argument #1 'algorithm'"),
+            (
+                r#"return crypto.encrypt("aes_512_gcm", "", "", "")"#,
+                "lib:crypto.encrypt: argument #1 'algorithm'",
+            ),
             (r#"return crypto.key_size("aes_512_gcm")"#, "lib:crypto.key_size: argument #1 'algorithm'"),
             (r#"return crypto.nonce_size("aes_512_gcm")"#, "argument #1 'algorithm'"),
             (r#"return crypto.tag_size("aes_512_gcm")"#, "argument #1 'algorithm'"),

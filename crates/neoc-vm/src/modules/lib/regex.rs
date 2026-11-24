@@ -239,7 +239,12 @@ pub mod regex {
     }
 
     /// Replace the first match. The replacement reads `$0`, `$1` and `${name}` as groups.
-    pub fn replace(pattern: String, text: String, replacement: String, flags: Flags) -> Result<String, RegexError> {
+    pub fn replace(
+        pattern: String,
+        text: String,
+        replacement: String,
+        flags: Flags,
+    ) -> Result<String, RegexError> {
         Ok(compile(&pattern, &flags)?.replace(&text, replacement.as_str()).into_owned())
     }
 
@@ -248,12 +253,22 @@ pub mod regex {
     /// ```luau
     /// assert(assert(regex.replace_all("(\\w+)=(\\w+)", "a=1 b=2", "$2=$1")) == "1=a 2=b")
     /// ```
-    pub fn replace_all(pattern: String, text: String, replacement: String, flags: Flags) -> Result<String, RegexError> {
+    pub fn replace_all(
+        pattern: String,
+        text: String,
+        replacement: String,
+        flags: Flags,
+    ) -> Result<String, RegexError> {
         Ok(compile(&pattern, &flags)?.replace_all(&text, replacement.as_str()).into_owned())
     }
 
     /// Split `text` on every match of `pattern`; `limit` caps the number of parts (`0` or `nil` is no cap).
-    pub fn split(pattern: String, text: String, limit: Option<u32>, flags: Flags) -> Result<Vec<String>, RegexError> {
+    pub fn split(
+        pattern: String,
+        text: String,
+        limit: Option<u32>,
+        flags: Flags,
+    ) -> Result<Vec<String>, RegexError> {
         Ok(parts(&compile(&pattern, &flags)?, &text, limit))
     }
 
@@ -290,9 +305,8 @@ mod tests {
 
     #[test]
     fn invalid_pattern_is_a_typed_error() {
-        let (val, kind, op, text): (Option<bool>, String, String, String) = eval(
-            r#"local v, e = regex.is_match("(abc", "anything") return v, e.kind, e.op, tostring(e)"#,
-        );
+        let (val, kind, op, text): (Option<bool>, String, String, String) =
+            eval(r#"local v, e = regex.is_match("(abc", "anything") return v, e.kind, e.op, tostring(e)"#);
         assert!(val.is_none());
         assert_eq!((kind.as_str(), op.as_str()), ("syntax", "lib:regex.is_match"));
         assert!(text.starts_with("lib:regex.is_match: syntax:"), "{text}");
@@ -305,9 +319,8 @@ mod tests {
 
     #[test]
     fn a_pattern_over_the_size_limit_is_too_big() {
-        let (kind, limit): (String, u64) = eval(
-            r#"local _, e = regex.Pattern.new("(?:(?:a{100}){100}){100}") return e.kind, e.limit"#,
-        );
+        let (kind, limit): (String, u64) =
+            eval(r#"local _, e = regex.Pattern.new("(?:(?:a{100}){100}){100}") return e.kind, e.limit"#);
         assert_eq!(kind, "too_big");
         assert!(limit > 0);
     }
@@ -409,7 +422,9 @@ mod tests {
 
     #[test]
     fn flag_case_insensitive() {
-        assert!(eval::<bool>(r#"return (regex.is_match("hello", "Hello, world!", { case_insensitive = true }))"#));
+        assert!(eval::<bool>(
+            r#"return (regex.is_match("hello", "Hello, world!", { case_insensitive = true }))"#
+        ));
         assert!(!eval::<bool>(r#"return (regex.is_match("hello", "Hello, world!"))"#));
     }
 
@@ -558,7 +573,8 @@ mod tests {
     #[test]
     fn positions_are_byte_offsets() {
         // "caf" is 3 bytes, so the two-byte é is bytes 4 to 5.
-        let (start, finish): (u64, u64) = eval(r#"local m = regex.find("é", "café X") return m.start, m.finish"#);
+        let (start, finish): (u64, u64) =
+            eval(r#"local m = regex.find("é", "café X") return m.start, m.finish"#);
         assert_eq!((start, finish), (4, 5));
     }
 

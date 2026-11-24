@@ -40,8 +40,9 @@ fn network_name(text: &str) -> Result<(), String> {
 /// A name's alphabet plus `/`, `:` and `@` (`registry:5000/team/app:1.2`, `app@sha256:...`), with no empty or
 /// dot-only path part.
 fn image_reference(text: &str) -> Result<(), String> {
-    let chars_ok =
-        text.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-' | b'/' | b':' | b'@'));
+    let chars_ok = text
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-' | b'/' | b':' | b'@'));
     let parts_ok = text.split('/').all(|part| !part.is_empty() && part != "." && part != "..");
     if chars_ok && parts_ok && text.len() <= MAX_NAME {
         Ok(())
@@ -248,7 +249,15 @@ pub struct Logs {
 
 impl Default for Logs {
     fn default() -> Self {
-        Self { follow: false, stdout: true, stderr: true, tail: None, since: None, until: None, timestamps: false }
+        Self {
+            follow: false,
+            stdout: true,
+            stderr: true,
+            tail: None,
+            since: None,
+            until: None,
+            timestamps: false,
+        }
     }
 }
 
@@ -357,7 +366,9 @@ mod tests {
 
     #[test]
     fn an_image_reference_keeps_its_registry_tag_and_digest() {
-        for good in ["nginx", "nginx:1.27", "library/nginx", "registry:5000/team/app:1.2", "app@sha256:abc123"] {
+        for good in
+            ["nginx", "nginx:1.27", "library/nginx", "registry:5000/team/app:1.2", "app@sha256:abc123"]
+        {
             assert_eq!(image_reference(good), Ok(()), "{good:?}");
         }
         for bad in ["", "/nginx", "nginx/", "a//b", "../etc", "a/./b", "a?b", "a b", "a%b"] {
@@ -370,8 +381,14 @@ mod tests {
         let target = |reference: &str| ImageRef(reference.to_owned()).pull_target();
         assert_eq!(target("nginx"), ("nginx".into(), Some("latest".into())));
         assert_eq!(target("nginx:1.27"), ("nginx".into(), Some("1.27".into())));
-        assert_eq!(target("registry:5000/team/app"), ("registry:5000/team/app".into(), Some("latest".into())));
-        assert_eq!(target("registry:5000/team/app:1.2"), ("registry:5000/team/app".into(), Some("1.2".into())));
+        assert_eq!(
+            target("registry:5000/team/app"),
+            ("registry:5000/team/app".into(), Some("latest".into()))
+        );
+        assert_eq!(
+            target("registry:5000/team/app:1.2"),
+            ("registry:5000/team/app".into(), Some("1.2".into()))
+        );
         assert_eq!(target("app@sha256:abc"), ("app@sha256:abc".into(), None));
     }
 
@@ -394,7 +411,8 @@ mod tests {
         assert_eq!(connect.timeout, Some(2.5));
         assert!(read::<ConnectOptions>(&lua, "{ host = true }").is_err());
         // the three files of a TLS client come together
-        let tls = read::<ConnectOptions>(&lua, "{ tls = { ca = 'ca.pem', cert = 'cert.pem', key = 'key.pem' } }");
+        let tls =
+            read::<ConnectOptions>(&lua, "{ tls = { ca = 'ca.pem', cert = 'cert.pem', key = 'key.pem' } }");
         assert_eq!(tls.unwrap().tls.unwrap().key, "key.pem");
         assert!(read::<ConnectOptions>(&lua, "{ tls = { ca = 'ca.pem' } }").is_err());
         assert!(read::<ConnectOptions>(&lua, "{ tls_ca = 'ca.pem' }").is_err());
@@ -404,7 +422,8 @@ mod tests {
     fn filters_are_lists_of_values_by_name() {
         let lua = Lua::new();
         let listed =
-            read::<ListImages>(&lua, "{ filters = { dangling = { 'true' }, label = { 'a=1', 'b' } } }").unwrap();
+            read::<ListImages>(&lua, "{ filters = { dangling = { 'true' }, label = { 'a=1', 'b' } } }")
+                .unwrap();
         let filters = listed.filters.unwrap();
         assert_eq!(filters["dangling"], vec!["true"]);
         assert_eq!(filters["label"], vec!["a=1", "b"]);

@@ -217,7 +217,8 @@ mod tests {
         s.as_bytes().iter().map(|b| format!("{b:02x}")).collect()
     }
 
-    const ALGOS: [&str; 10] = ["sha256", "sha384", "sha512", "sha3_256", "sha3_512", "blake3", "xxh3", "xxh64", "md5", "sha1"];
+    const ALGOS: [&str; 10] =
+        ["sha256", "sha384", "sha512", "sha3_256", "sha3_512", "blake3", "xxh3", "xxh64", "md5", "sha1"];
 
     /// One known vector per algorithm: guards against a crate update changing seeds or parameters.
     #[test]

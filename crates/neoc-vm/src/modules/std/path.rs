@@ -157,7 +157,9 @@ pub mod path {
         if path.0.as_os_str().is_empty() {
             return Err(AbsoluteError::EmptyPath);
         }
-        std::path::absolute(&path.0).map(OsPath).map_err(|error| AbsoluteError::CurrentDir { reason: error.to_string() })
+        std::path::absolute(&path.0)
+            .map(OsPath)
+            .map_err(|error| AbsoluteError::CurrentDir { reason: error.to_string() })
     }
 
     /// The components of a path, as `Path::components` yields them: a root or drive prefix first (`"/"`, `"C:"`),
@@ -272,7 +274,10 @@ mod tests {
             ));
             assert_eq!(value, None, "{extension}");
             assert_eq!(kind, "separator", "{extension}");
-            assert_eq!(shown, "std:path.with_extension: separator: an extension cannot contain a path separator");
+            assert_eq!(
+                shown,
+                "std:path.with_extension: separator: an extension cannot contain a path separator"
+            );
         }
     }
 
@@ -289,12 +294,19 @@ mod tests {
     fn components_and_strip_prefix_work_by_component() {
         assert_eq!(text("table.concat(path.components('a/./b/../c'), '|')"), "a|b|..|c");
         assert_eq!(text("table.concat(path.components('./a/b'), '|')"), ".|a|b");
-        assert_eq!(text("table.concat(path.components('/a'), '|')"), format!("{}|a", std::path::MAIN_SEPARATOR));
+        assert_eq!(
+            text("table.concat(path.components('/a'), '|')"),
+            format!("{}|a", std::path::MAIN_SEPARATOR)
+        );
         assert_eq!(maybe("path.strip_prefix('/a/b/c', '/a/b')").as_deref(), Some("c"));
         assert_eq!(maybe("path.strip_prefix('/a/bc', '/a/b')"), None);
         assert_eq!(maybe("path.strip_prefix('/a', '/a')").as_deref(), Some(""));
         assert!(!eval::<bool>("path.is_absolute('a')"));
-        assert!(eval::<bool>(if cfg!(windows) { r"path.is_absolute('C:\\a')" } else { "path.is_absolute('/a')" }));
+        assert!(eval::<bool>(if cfg!(windows) {
+            r"path.is_absolute('C:\\a')"
+        } else {
+            "path.is_absolute('/a')"
+        }));
     }
 
     #[test]
@@ -323,10 +335,12 @@ mod tests {
     #[cfg(not(unix))]
     #[test]
     fn non_utf8_bytes_are_refused_as_an_argument_where_a_path_is_text() {
-        let refused: String =
-            eval("(function() local ok, err = pcall(path.join, 'a', '\\255\\254'); assert(not ok); return tostring(err) end)()");
+        let refused: String = eval(
+            "(function() local ok, err = pcall(path.join, 'a', '\\255\\254'); assert(not ok); return tostring(err) end)()",
+        );
         assert!(
-            refused.contains("std:path.join: argument #2 'parts': a path must be valid UTF-8 on this platform"),
+            refused
+                .contains("std:path.join: argument #2 'parts': a path must be valid UTF-8 on this platform"),
             "got: {refused}"
         );
     }
@@ -340,8 +354,11 @@ mod tests {
     #[test]
     fn a_missing_or_wrong_argument_is_a_lua_error_not_a_panic() {
         let lua = make_engine().unwrap();
-        for source in ["join()", "join('a', nil)", "join('a', 'b', 5)", "normalize({})", "parent(1)", "components(nil)"] {
-            let outcome: mlua::Result<mlua::Value> = lua.load(format!("return require('std:path').{source}")).eval();
+        for source in
+            ["join()", "join('a', nil)", "join('a', 'b', 5)", "normalize({})", "parent(1)", "components(nil)"]
+        {
+            let outcome: mlua::Result<mlua::Value> =
+                lua.load(format!("return require('std:path').{source}")).eval();
             assert!(outcome.is_err(), "{source}");
         }
     }

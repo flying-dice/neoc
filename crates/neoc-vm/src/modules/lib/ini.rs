@@ -27,11 +27,15 @@ const STAND_INS: [(char, char); 4] = [(':', '\u{2}'), ('=', '\u{3}'), (';', '\u{
 const LAST_CONTROL_BYTE: u8 = 0x08;
 
 fn escape(text: &str) -> String {
-    text.chars().map(|c| STAND_INS.iter().find(|(plain, _)| *plain == c).map_or(c, |(_, stand_in)| *stand_in)).collect()
+    text.chars()
+        .map(|c| STAND_INS.iter().find(|(plain, _)| *plain == c).map_or(c, |(_, stand_in)| *stand_in))
+        .collect()
 }
 
 fn unescape(text: &str) -> String {
-    text.chars().map(|c| STAND_INS.iter().find(|(_, stand_in)| *stand_in == c).map_or(c, |(plain, _)| *plain)).collect()
+    text.chars()
+        .map(|c| STAND_INS.iter().find(|(_, stand_in)| *stand_in == c).map_or(c, |(plain, _)| *plain))
+        .collect()
 }
 
 fn wide(n: usize) -> u32 {
@@ -98,7 +102,11 @@ pub mod ini {
 
     impl Default for ParseOptions {
         fn default() -> Self {
-            Self { comment_symbols: vec![";".to_owned(), "#".to_owned()], delimiters: vec!["=".to_owned()], lowercase_keys: false }
+            Self {
+                comment_symbols: vec![";".to_owned(), "#".to_owned()],
+                delimiters: vec!["=".to_owned()],
+                lowercase_keys: false,
+            }
         }
     }
 
@@ -146,7 +154,11 @@ pub mod ini {
             let line = raw_line.trim();
             if line.is_empty() {
                 // nothing to write
-            } else if opts.comment_symbols.iter().any(|symbol| !symbol.is_empty() && line.starts_with(symbol.as_str())) {
+            } else if opts
+                .comment_symbols
+                .iter()
+                .any(|symbol| !symbol.is_empty() && line.starts_with(symbol.as_str()))
+            {
                 out.push_str(";_");
             } else if let Some(header) = line.strip_prefix('[') {
                 let Some((name, _)) = header.split_once(']') else {
@@ -176,7 +188,10 @@ pub mod ini {
     /// local _, err = ini.parse("[server")
     /// assert(err ~= nil and err.kind == "unclosed_section" and err.line == 1)
     /// ```
-    pub fn parse(text: String, opts: ParseOptions) -> Result<BTreeMap<String, BTreeMap<String, Value>>, ParseError> {
+    pub fn parse(
+        text: String,
+        opts: ParseOptions,
+    ) -> Result<BTreeMap<String, BTreeMap<String, Value>>, ParseError> {
         if let Some((offset, byte)) = text.bytes().enumerate().find(|(_, byte)| *byte <= LAST_CONTROL_BYTE) {
             return Err(ParseError::ControlByte { offset: wide(offset), byte });
         }
@@ -187,7 +202,8 @@ pub mod ini {
             reason: e.msg.to_string(),
         })?;
 
-        let fold = |name: &str| if opts.lowercase_keys { unescape(name).to_lowercase() } else { unescape(name) };
+        let fold =
+            |name: &str| if opts.lowercase_keys { unescape(name).to_lowercase() } else { unescape(name) };
         let mut document: BTreeMap<String, BTreeMap<String, Value>> = BTreeMap::new();
         for (section, properties) in &parsed {
             if section.is_none() && properties.is_empty() {
@@ -272,7 +288,9 @@ mod tests {
 
     /// `(kind, tostring)` of the error `ini.parse(<args>)` returns.
     fn refused(lua: &Lua, args: &str) -> (String, String) {
-        lua.load(format!("local v, e = ini.parse({args}); assert(v == nil); return e.kind, tostring(e)")).eval().unwrap()
+        lua.load(format!("local v, e = ini.parse({args}); assert(v == nil); return e.kind, tostring(e)"))
+            .eval()
+            .unwrap()
     }
 
     #[test]
@@ -406,7 +424,8 @@ mod tests {
             assert_eq!(kind, "control_byte");
             assert!(text.contains("control bytes"), "got: {text}");
         }
-        let (offset, byte): (u32, u8) = lua.load("local _, e = ini.parse(input); return e.offset, e.byte").eval().unwrap();
+        let (offset, byte): (u32, u8) =
+            lua.load("local _, e = ini.parse(input); return e.offset, e.byte").eval().unwrap();
         assert_eq!((offset, byte), (7, 2));
     }
 
@@ -426,25 +445,38 @@ mod tests {
 
     #[test]
     fn stringify_basic() {
-        assert_eq!(eval::<String>(r#"return ini.stringify({ section = { key = "value" } })"#), "[section]\nkey=value\n");
+        assert_eq!(
+            eval::<String>(r#"return ini.stringify({ section = { key = "value" } })"#),
+            "[section]\nkey=value\n"
+        );
     }
 
     #[test]
     fn stringify_bare_key() {
-        assert_eq!(eval::<String>(r#"return ini.stringify({ section = { flag = true } })"#), "[section]\nflag\n");
+        assert_eq!(
+            eval::<String>(r#"return ini.stringify({ section = { flag = true } })"#),
+            "[section]\nflag\n"
+        );
     }
 
     #[test]
     fn stringify_sectionless_keys_first_and_sections_sorted() {
-        let result: String =
-            eval(r#"return ini.stringify({ zeta = { k = "v" }, [""] = { name = "world" }, alpha = { b = "2", a = "1" } })"#);
+        let result: String = eval(
+            r#"return ini.stringify({ zeta = { k = "v" }, [""] = { name = "world" }, alpha = { b = "2", a = "1" } })"#,
+        );
         assert_eq!(result, "name=world\n\n[alpha]\na=1\nb=2\n\n[zeta]\nk=v\n");
     }
 
     #[test]
     fn stringify_spacing() {
-        assert_eq!(eval::<String>(r#"return ini.stringify({ s = { key = "value" } }, { spacing = true })"#), "[s]\nkey = value\n");
-        assert_eq!(eval::<String>(r#"return ini.stringify({ s = { key = "value" } }, { spacing = false })"#), "[s]\nkey=value\n");
+        assert_eq!(
+            eval::<String>(r#"return ini.stringify({ s = { key = "value" } }, { spacing = true })"#),
+            "[s]\nkey = value\n"
+        );
+        assert_eq!(
+            eval::<String>(r#"return ini.stringify({ s = { key = "value" } }, { spacing = false })"#),
+            "[s]\nkey=value\n"
+        );
     }
 
     #[test]

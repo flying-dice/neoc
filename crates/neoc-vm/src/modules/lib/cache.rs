@@ -266,7 +266,11 @@ pub mod cache {
         /// c:set("c", 3) -- b goes
         /// assert(c:get("a") == 1 and c:get("b") == nil and c:len() == 2)
         /// ```
-        pub fn new(max_size: u32, ttl: Option<Duration>, on_evict: Option<OnEvict>) -> Result<Cache, NewError> {
+        pub fn new(
+            max_size: u32,
+            ttl: Option<Duration>,
+            on_evict: Option<OnEvict>,
+        ) -> Result<Cache, NewError> {
             let capacity = usize::try_from(max_size)
                 .ok()
                 .filter(|_| max_size <= MAX_CAPACITY)
@@ -274,7 +278,12 @@ pub mod cache {
                 .ok_or(NewError::OutOfRange { max_size, max: MAX_CAPACITY })?;
             Ok(Cache {
                 inner: Arc::new(Inner {
-                    state: Mutex::new(CacheState { map: LruCache::new(capacity), hits: 0, misses: 0, evictions: 0 }),
+                    state: Mutex::new(CacheState {
+                        map: LruCache::new(capacity),
+                        hits: 0,
+                        misses: 0,
+                        evictions: 0,
+                    }),
                     on_evict,
                     default_ttl: ttl.and_then(positive),
                     max_size: capacity.get(),
@@ -315,7 +324,8 @@ pub mod cache {
             };
             // a deadline past the end of the clock is no deadline
             let expires_at = lifetime.and_then(|lifetime| Instant::now().checked_add(lifetime));
-            let evicted = self.inner.state.lock().insert(key.into(), Entry { value: value.value, expires_at });
+            let evicted =
+                self.inner.state.lock().insert(key.into(), Entry { value: value.value, expires_at });
             self.notify_evicted(evicted)?;
             Ok(Ok(()))
         }
@@ -694,7 +704,10 @@ mod tests {
         );
         assert!(zero.is_nil());
         assert_eq!((kind.as_str(), huge.as_str(), max), ("out_of_range", "out_of_range", 1 << 24));
-        assert_eq!(text, "lib:cache.Cache.new: out_of_range: max_size must be from 1 to 16777216, got 1000000000");
+        assert_eq!(
+            text,
+            "lib:cache.Cache.new: out_of_range: max_size must be from 1 to 16777216, got 1000000000"
+        );
     }
 
     #[test]

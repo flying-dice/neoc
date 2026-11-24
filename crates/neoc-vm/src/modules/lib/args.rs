@@ -47,13 +47,17 @@ impl Flag {
 
     fn short_text(&self) -> Option<&str> {
         match self {
-            Flag::Boolean { short, .. } | Flag::String { short, .. } | Flag::Number { short, .. } => short.as_deref(),
+            Flag::Boolean { short, .. } | Flag::String { short, .. } | Flag::Number { short, .. } => {
+                short.as_deref()
+            }
         }
     }
 
     fn desc(&self) -> Option<&str> {
         match self {
-            Flag::Boolean { desc, .. } | Flag::String { desc, .. } | Flag::Number { desc, .. } => desc.as_deref(),
+            Flag::Boolean { desc, .. } | Flag::String { desc, .. } | Flag::Number { desc, .. } => {
+                desc.as_deref()
+            }
         }
     }
 
@@ -100,7 +104,9 @@ fn validate_flags(flags: &[Flag], command: &str) -> Result<(), ArgsError> {
                 )));
             };
             if short == '-' || short == '=' || short.is_whitespace() {
-                return Err(invalid(format!("{place}: flag '--{name}' short alias {short:?} is not allowed")));
+                return Err(invalid(format!(
+                    "{place}: flag '--{name}' short alias {short:?} is not allowed"
+                )));
             }
             if !shorts.insert(short) {
                 return Err(invalid(format!("{place}: short alias '-{short}' is used by two flags")));
@@ -178,20 +184,21 @@ fn build_command(spec: &CommandSpec, help_disabled: bool) -> Command {
     }
 
     match spec.subcommands {
-        None => command
-            .arg(Arg::new(POSITIONAL_ID).index(1).num_args(0..).action(ArgAction::Append))
-            .arg(
-                Arg::new(REST_ID)
-                    .index(2)
-                    .num_args(0..)
-                    .action(ArgAction::Append)
-                    .last(true)
-                    .allow_hyphen_values(true),
-            ),
+        None => command.arg(Arg::new(POSITIONAL_ID).index(1).num_args(0..).action(ArgAction::Append)).arg(
+            Arg::new(REST_ID)
+                .index(2)
+                .num_args(0..)
+                .action(ArgAction::Append)
+                .last(true)
+                .allow_hyphen_values(true),
+        ),
         Some(subcommands) => {
             command = command.subcommand_required(true);
             for (name, subcommand) in subcommands {
-                command = command.subcommand(build_command(&CommandSpec::sub(name, subcommand), help_disabled || claims_h));
+                command = command.subcommand(build_command(
+                    &CommandSpec::sub(name, subcommand),
+                    help_disabled || claims_h,
+                ));
             }
             command
         }
@@ -206,7 +213,8 @@ fn build_arg(flag: &Flag) -> Arg {
     if let Some(desc) = flag.desc() {
         arg = arg.help(desc.to_owned());
     }
-    let action = |multiple: &Option<bool>| if multiple.unwrap_or(false) { ArgAction::Append } else { ArgAction::Set };
+    let action =
+        |multiple: &Option<bool>| if multiple.unwrap_or(false) { ArgAction::Append } else { ArgAction::Set };
     match flag {
         Flag::Boolean { .. } => arg.action(ArgAction::SetTrue),
         Flag::String { default, required, multiple, .. } => {
@@ -290,7 +298,10 @@ fn parse(argv: Vec<String>, config: &Config) -> Result<Outcome, ArgsError> {
     let matches = match build_command(&spec, false).try_get_matches_from(argv) {
         Ok(matches) => matches,
         Err(error)
-            if matches!(error.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand) =>
+            if matches!(
+                error.kind(),
+                ErrorKind::DisplayHelp | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+            ) =>
         {
             return Ok(Outcome::Help { text: error.render().to_string() });
         }
@@ -307,9 +318,9 @@ fn parse(argv: Vec<String>, config: &Config) -> Result<Outcome, ArgsError> {
     };
     let subcommand = match matches.subcommand() {
         Some((name, sub_matches)) => {
-            let config = subcommands
-                .get(name)
-                .ok_or_else(|| ArgsError::Usage { text: format!("subcommand '{name}' is not in the config") })?;
+            let config = subcommands.get(name).ok_or_else(|| ArgsError::Usage {
+                text: format!("subcommand '{name}' is not in the config"),
+            })?;
             Some(Subcommand {
                 name: name.to_owned(),
                 flags: flag_values(config.flags.as_deref().unwrap_or_default(), sub_matches)?,
@@ -601,7 +612,12 @@ mod tests {
             r#"{name="t",subcommands={a={flags={{name="x",type="string"},{name="x",type="string"}}}}}"#,
         ];
         for config in configs {
-            for call in ["parse({}, CONFIG)", "parse({\"--a\", \"1\"}, CONFIG)", "parse({\"-h\"}, CONFIG)", "help(CONFIG)"] {
+            for call in [
+                "parse({}, CONFIG)",
+                "parse({\"--a\", \"1\"}, CONFIG)",
+                "parse({\"-h\"}, CONFIG)",
+                "help(CONFIG)",
+            ] {
                 let (kind, text) = error(&lua, &call.replace("CONFIG", config));
                 assert_eq!(kind, "invalid_config", "{call} {config}: {text}");
             }
@@ -650,9 +666,11 @@ mod tests {
             run = { description = "run it", flags = {} },
             serve = { description = "serve it", flags = { { name = "hash", short = "h", type = "string" } } },
         } }"#;
-        for (argv, text) in
-            [(r#"{"run","--help"}"#, "run it"), (r#"{"run","-h"}"#, "run it"), (r#"{"serve","--help"}"#, "serve it")]
-        {
+        for (argv, text) in [
+            (r#"{"run","--help"}"#, "run it"),
+            (r#"{"run","-h"}"#, "run it"),
+            (r#"{"serve","--help"}"#, "serve it"),
+        ] {
             let outcome = parsed(&lua, argv, top);
             assert_eq!(outcome.get::<String>("kind").unwrap(), "help", "{argv}");
             assert!(outcome.get::<String>("text").unwrap().contains(text), "{argv}");
@@ -661,8 +679,11 @@ mod tests {
         assert_eq!(serve.get::<String>("name").unwrap(), "serve");
         assert_eq!(serve.get::<Table>("flags").unwrap().get::<String>("hash").unwrap(), "abc");
         // and a flag claiming `-h` does not turn `-h` into a help request
-        let outcome =
-            parsed(&lua, r#"{"-h", "x"}"#, r#"{ name = "t", flags = { { name = "host", short = "h", type = "string" } } }"#);
+        let outcome = parsed(
+            &lua,
+            r#"{"-h", "x"}"#,
+            r#"{ name = "t", flags = { { name = "host", short = "h", type = "string" } } }"#,
+        );
         assert_eq!(outcome.get::<String>("kind").unwrap(), "parsed");
     }
 
@@ -829,7 +850,11 @@ mod tests {
                 .expect_err(config)
                 .to_string();
             assert!(err.contains("lib:args.parse: argument #2 'config'"), "{config}: {err}");
-            let err = lua.load(format!("return args.help({config})")).eval::<Value>().expect_err(config).to_string();
+            let err = lua
+                .load(format!("return args.help({config})"))
+                .eval::<Value>()
+                .expect_err(config)
+                .to_string();
             assert!(err.contains("lib:args.help: argument #1 'config'"), "{config}: {err}");
         }
         // the map form the old VM took: read as a plain list it would be no flags at all
@@ -838,7 +863,10 @@ mod tests {
             .eval::<Value>()
             .expect_err("flags keyed by name")
             .to_string();
-        assert!(err.contains("flags: a list has only the keys 1, 2, 3, ...; found the key `verbose`"), "{err}");
+        assert!(
+            err.contains("flags: a list has only the keys 1, 2, 3, ...; found the key `verbose`"),
+            "{err}"
+        );
         let err = lua
             .load(r#"return args.parse({ "a", 5 }, { name = "t" })"#)
             .eval::<Value>()
@@ -859,7 +887,10 @@ mod tests {
             )
             .eval()
             .unwrap();
-        assert!(text.contains("tool") && text.contains("do work") && text.contains("the last letter"), "{text}");
+        assert!(
+            text.contains("tool") && text.contains("do work") && text.contains("the last letter"),
+            "{text}"
+        );
         assert!(text.contains("-a, --alpha") && text.contains("-h, --help"), "{text}");
         let (zeta, alpha) = (text.find("--zeta").unwrap(), text.find("--alpha").unwrap());
         assert!(zeta < alpha, "the order given, not the alphabet's:\n{text}");

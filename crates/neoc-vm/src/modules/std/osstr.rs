@@ -91,7 +91,9 @@ fn from_bytes(bytes: &[u8]) -> Result<PathBuf, String> {
 
 #[cfg(not(unix))]
 fn from_bytes(bytes: &[u8]) -> Result<PathBuf, String> {
-    std::str::from_utf8(bytes).map(PathBuf::from).map_err(|_| "a path must be valid UTF-8 on this platform".to_owned())
+    std::str::from_utf8(bytes)
+        .map(PathBuf::from)
+        .map_err(|_| "a path must be valid UTF-8 on this platform".to_owned())
 }
 
 impl FromLuaArg for OsPath {

@@ -38,7 +38,10 @@ mod tests {
         assert!(ts.contains("lib:base64") && ts.contains("std:time"), "{ts}");
         // Genuinely unknown data is `any` in Luau (which cannot narrow `unknown`) and `unknown` in TypeScript; so
         // TypeScript shows that nothing else is untyped.
-        assert!(!ts.contains(": any") && !ts.contains("<any>") && !ts.contains("any[]"), "nothing is `any`: {ts}");
+        assert!(
+            !ts.contains(": any") && !ts.contains("<any>") && !ts.contains("any[]"),
+            "nothing is `any`: {ts}"
+        );
     }
 
     #[test]

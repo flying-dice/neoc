@@ -134,13 +134,15 @@ pub mod keyring {
                 Store::TooLong(what, limit) => Error::InvalidInput {
                     reason: format!("`{what}` is longer than the {limit} characters this store keeps"),
                 },
-                Store::NoDefaultStore => {
-                    Error::NoStore { reason: "this machine has no credential store that can be used".to_owned() }
-                }
+                Store::NoDefaultStore => Error::NoStore {
+                    reason: "this machine has no credential store that can be used".to_owned(),
+                },
                 Store::NoStorageAccess(why) => Error::NoAccess { reason: why.to_string() },
                 Store::NoEntry => Error::NotFound,
                 // the entries are left out: their `Debug` is the store's, and names what the script already knows
-                Store::Ambiguous(matches) => Error::Ambiguous { matches: u32::try_from(matches.len()).unwrap_or(u32::MAX) },
+                Store::Ambiguous(matches) => {
+                    Error::Ambiguous { matches: u32::try_from(matches.len()).unwrap_or(u32::MAX) }
+                }
                 // the bytes that came with these two are the secret: dropped
                 Store::BadEncoding(_) => Error::BadEncoding,
                 Store::BadDataFormat(_, why) => {
@@ -280,7 +282,8 @@ pub mod keyring {
             let store = self.inner.clone();
             blocking(move || {
                 let spec = spec.unwrap_or_default();
-                let spec: HashMap<&str, &str> = spec.iter().map(|(key, value)| (key.as_str(), value.as_str())).collect();
+                let spec: HashMap<&str, &str> =
+                    spec.iter().map(|(key, value)| (key.as_str(), value.as_str())).collect();
                 let entries = Credential::search_in_store(&store, &spec)?;
                 Ok(entries.into_iter().map(|entry| Entry { inner: Arc::new(entry) }).collect())
             })
@@ -384,15 +387,21 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn no_credential_is_an_answer_and_not_an_error() {
-        let (password, password_err, secret, secret_err, deleted, delete_err): (Value, Value, Value, Value, bool, Value) =
-            run(r#"
+        let (password, password_err, secret, secret_err, deleted, delete_err): (
+            Value,
+            Value,
+            Value,
+            Value,
+            bool,
+            Value,
+        ) = run(r#"
             local entry = assert(require("vnd:keyring").mock():entry("example.com", "nobody"))
             local password, password_err = entry:get_password()
             local secret, secret_err = entry:get_secret()
             local deleted, delete_err = entry:delete_credential()
             return password, password_err, secret, secret_err, deleted, delete_err
             "#)
-            .await;
+        .await;
         assert!(password.is_nil() && password_err.is_nil());
         assert!(secret.is_nil() && secret_err.is_nil());
         assert!(!deleted, "there was nothing to delete");
@@ -440,8 +449,10 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn an_entry_says_what_it_was_made_from() {
-        let (service, user): (String, String) =
-            run(r#"return assert(require("vnd:keyring").mock():entry("example.com", "ada")):get_specifiers()"#).await;
+        let (service, user): (String, String) = run(
+            r#"return assert(require("vnd:keyring").mock():entry("example.com", "ada")):get_specifiers()"#,
+        )
+        .await;
         assert_eq!((service.as_str(), user.as_str()), ("example.com", "ada"));
     }
 
@@ -477,7 +488,10 @@ mod tests {
             return tostring(service), tostring(password), tostring(spec)
             "#)
         .await;
-        assert!(service.contains("vnd:keyring.Store:entry: argument #1 'service': expected UTF-8 text"), "{service}");
+        assert!(
+            service.contains("vnd:keyring.Store:entry: argument #1 'service': expected UTF-8 text"),
+            "{service}"
+        );
         assert!(
             password.contains("vnd:keyring.Entry:set_password: argument #1 'password': expected UTF-8 text"),
             "{password}"
@@ -488,14 +502,20 @@ mod tests {
     #[test]
     fn a_store_error_maps_to_its_kind() {
         use keyring_core::Error as Store;
-        assert!(matches!(Error::from(Store::Invalid("service".into(), "is empty".into())), Error::InvalidInput { .. }));
+        assert!(matches!(
+            Error::from(Store::Invalid("service".into(), "is empty".into())),
+            Error::InvalidInput { .. }
+        ));
         assert!(matches!(Error::from(Store::TooLong("user".into(), 255)), Error::InvalidInput { .. }));
         assert!(matches!(Error::from(Store::NoDefaultStore), Error::NoStore { .. }));
         assert!(matches!(Error::from(Store::NoStorageAccess("locked".into())), Error::NoAccess { .. }));
         assert!(matches!(Error::from(Store::NoEntry), Error::NotFound));
         assert!(matches!(Error::from(Store::Ambiguous(Vec::new())), Error::Ambiguous { matches: 0 }));
         assert!(matches!(Error::from(Store::BadStoreFormat("truncated".into())), Error::BadData { .. }));
-        assert!(matches!(Error::from(Store::NotSupportedByStore("no search".into())), Error::Unsupported { .. }));
+        assert!(matches!(
+            Error::from(Store::NotSupportedByStore("no search".into())),
+            Error::Unsupported { .. }
+        ));
         assert!(matches!(Error::from(Store::PlatformFailure("-25300".into())), Error::Platform { .. }));
     }
 
@@ -533,7 +553,10 @@ mod tests {
                 "other"
             ]
         );
-        let line = declared.lines().find(|line| line.starts_with("export type vnd_keyring_ErrorKind =")).expect("the kinds");
+        let line = declared
+            .lines()
+            .find(|line| line.starts_with("export type vnd_keyring_ErrorKind ="))
+            .expect("the kinds");
         for kind in &kinds {
             assert!(line.contains(&format!("\"{kind}\"")), "`{kind}` is not declared: {line}");
         }

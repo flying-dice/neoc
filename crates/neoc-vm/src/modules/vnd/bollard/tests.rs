@@ -83,26 +83,18 @@ fn volume() -> Json {
 impl Daemon {
     /// A body that stays open: fed by the receiver a test put in `held_open`.
     fn held_open_body(&self) -> Response<Body> {
-        let pieces = self
-            .held_open
-            .lock()
-            .take()
-            .expect("the test set no held-open body");
+        let pieces = self.held_open.lock().take().expect("the test set no held-open body");
         let stream = futures::stream::unfold(pieces, |mut pieces| async {
-            pieces
-                .recv()
-                .await
-                .map(|piece| (Ok::<_, Infallible>(Frame::data(piece)), pieces))
+            pieces.recv().await.map(|piece| (Ok::<_, Infallible>(Frame::data(piece)), pieces))
         });
         Response::new(BodyExt::boxed(StreamBody::new(stream)))
     }
 
     fn respond(&self, method: &Method, path: &str, query: &str) -> Response<Body> {
         match (method.as_str(), path) {
-            ("GET", "/version") => answer(
-                200,
-                &json!({ "Version": "25.0.3", "ApiVersion": "1.44", "Os": "linux" }),
-            ),
+            ("GET", "/version") => {
+                answer(200, &json!({ "Version": "25.0.3", "ApiVersion": "1.44", "Os": "linux" }))
+            }
             ("GET", "/_ping") => full(200, "OK"),
             ("GET", "/info") => answer(200, &json!({ "Containers": 2, "ServerVersion": "25.0.3" })),
             ("GET", "/containers/json") => answer(
@@ -131,32 +123,25 @@ impl Daemon {
             ("GET", "/containers/ghost/json") | ("POST", "/containers/ghost/start") => {
                 refusal(404, "No such container: ghost")
             }
-            ("POST", "/containers/create") => {
-                answer(201, &json!({ "Id": "ccc333", "Warnings": [] }))
-            }
+            ("POST", "/containers/create") => answer(201, &json!({ "Id": "ccc333", "Warnings": [] })),
             ("POST", "/containers/web/start") => full(304, ""),
-            (
-                "POST",
-                "/containers/web/stop" | "/containers/web/restart" | "/containers/web/kill",
-            ) => full(204, ""),
-            ("DELETE", "/containers/web") if query.contains("force=true") => full(204, ""),
-            ("DELETE", "/containers/web") => refusal(
-                409,
-                "cannot remove container \"/web\": container is running",
-            ),
-            ("GET", "/containers/web/logs") if query.contains("follow=true") => {
-                self.held_open_body()
+            ("POST", "/containers/web/stop" | "/containers/web/restart" | "/containers/web/kill") => {
+                full(204, "")
             }
+            ("DELETE", "/containers/web") if query.contains("force=true") => full(204, ""),
+            ("DELETE", "/containers/web") => {
+                refusal(409, "cannot remove container \"/web\": container is running")
+            }
+            ("GET", "/containers/web/logs") if query.contains("follow=true") => self.held_open_body(),
             ("GET", "/containers/web/logs") => {
                 let mut body = frame(1, "listening on :80\n");
                 body.extend(frame(2, "warn: no config\n"));
                 full(200, body)
             }
             ("GET", "/containers/ghost/logs") => refusal(404, "No such container: ghost"),
-            ("GET", "/containers/web/stats") => answer(
-                200,
-                &json!({ "name": "/web", "memory_stats": { "usage": 1024, "limit": 4096 } }),
-            ),
+            ("GET", "/containers/web/stats") => {
+                answer(200, &json!({ "name": "/web", "memory_stats": { "usage": 1024, "limit": 4096 } }))
+            }
             ("GET", "/images/json") => answer(
                 200,
                 &json!([{
@@ -183,10 +168,9 @@ impl Daemon {
             ("GET", "/volumes") => answer(200, &json!({ "Volumes": [volume()], "Warnings": [] })),
             ("POST", "/volumes/create") => answer(201, &volume()),
             ("DELETE", "/volumes/data") => refusal(409, "volume is in use"),
-            ("GET", "/networks") => answer(
-                200,
-                &json!([{ "Id": "n1", "Name": "bridge", "Driver": "bridge" }]),
-            ),
+            ("GET", "/networks") => {
+                answer(200, &json!([{ "Id": "n1", "Name": "bridge", "Driver": "bridge" }]))
+            }
             ("POST", "/networks/create") => answer(201, &json!({ "Id": "n2", "Warning": "" })),
             ("DELETE", "/networks/backend") => full(204, ""),
             ("GET", "/events") => self.held_open_body(),
@@ -196,12 +180,7 @@ impl Daemon {
 
     /// The requests seen so far, without the version negotiation.
     fn requests(&self) -> Vec<Seen> {
-        self.seen
-            .lock()
-            .iter()
-            .filter(|seen| !seen.target.ends_with("/version"))
-            .cloned()
-            .collect()
+        self.seen.lock().iter().filter(|seen| !seen.target.ends_with("/version")).cloned().collect()
     }
 
     /// The one request to `path` (given without the version prefix or the query).
@@ -209,12 +188,7 @@ impl Daemon {
         let matching: Vec<Seen> = self
             .requests()
             .into_iter()
-            .filter(|seen| {
-                seen.target
-                    .split('?')
-                    .next()
-                    .is_some_and(|p| p.ends_with(path))
-            })
+            .filter(|seen| seen.target.split('?').next().is_some_and(|p| p.ends_with(path)))
             .collect();
         assert_eq!(matching.len(), 1, "requests to {path}: {matching:?}");
         matching[0].clone()
@@ -239,12 +213,7 @@ async fn daemon() -> (Arc<Daemon>, String) {
                     async move {
                         let method = request.method().clone();
                         let target = request.uri().to_string();
-                        let body = request
-                            .into_body()
-                            .collect()
-                            .await
-                            .expect("body")
-                            .to_bytes();
+                        let body = request.into_body().collect().await.expect("body").to_bytes();
                         daemon.seen.lock().push(Seen {
                             method: method.to_string(),
                             target: target.clone(),
@@ -269,7 +238,6 @@ async fn daemon() -> (Arc<Daemon>, String) {
     });
     (daemon, host)
 }
-
 
 /// Run `script` with `host` as its argument, in a new engine.
 async fn run<R: mlua::FromLuaMulti>(host: &str, script: &str) -> R {
@@ -474,14 +442,21 @@ async fn the_daemon_a_containers_use_the_volumes_and_the_networks_are_read() {
     )
     .await;
     let stats = daemon.request_to("/containers/web/stats");
-    assert!(stats.target.contains("stream=false") && stats.target.contains("one-shot=true"), "{}", stats.target);
+    assert!(
+        stats.target.contains("stream=false") && stats.target.contains("one-shot=true"),
+        "{}",
+        stats.target
+    );
     let filters_of = |target: &str| -> Option<Json> {
         let query = target.split_once('?')?.1;
         let (_, filters) = url::form_urlencoded::parse(query.as_bytes()).find(|(key, _)| key == "filters")?;
         serde_json::from_str(&filters).ok()
     };
-    let volumes: Vec<Seen> =
-        daemon.requests().into_iter().filter(|seen| seen.target.split('?').next() == Some("/volumes")).collect();
+    let volumes: Vec<Seen> = daemon
+        .requests()
+        .into_iter()
+        .filter(|seen| seen.target.split('?').next() == Some("/volumes"))
+        .collect();
     assert_eq!(volumes.len(), 2, "{volumes:?}");
     assert_eq!(filters_of(&volumes[0].target), Some(json!({ "label": ["app=web"] })));
     assert_eq!(filters_of(&daemon.request_to("/networks").target), Some(json!({ "driver": ["bridge"] })));
@@ -639,14 +614,20 @@ async fn what_cannot_be_sent_is_refused_before_anything_is_sent() {
     )
     .await;
     assert_eq!(refused.len(), 31);
-    let place = "vnd:bollard.Client:start_container: argument #1 'name': the container must be a name or an id";
+    let place =
+        "vnd:bollard.Client:start_container: argument #1 'name': the container must be a name or an id";
     assert!(refused[0].contains(place), "{}", refused[0]);
     assert!(refused[3].contains("argument #1 'opts': unknown field `al`"), "{}", refused[3]);
     assert!(refused[12].contains("invalid_input: the command must be a list of strings"), "{}", refused[12]);
     assert!(refused[17].contains("argument #1 'body': unknown field `name`"), "{}", refused[17]);
     assert!(refused[18].contains("HostConfig: unknown field `Memroy`"), "{}", refused[18]);
-    assert!(refused[21].contains("vnd:bollard.connect: invalid_input: option \"timeout\""), "{}", refused[21]);
-    let place = "vnd:bollard.Client:inspect_container: argument #1 'name': the container must be a name or an id";
+    assert!(
+        refused[21].contains("vnd:bollard.connect: invalid_input: option \"timeout\""),
+        "{}",
+        refused[21]
+    );
+    let place =
+        "vnd:bollard.Client:inspect_container: argument #1 'name': the container must be a name or an id";
     assert!(refused[25].contains(place), "{}", refused[25]);
     assert!(refused[28].contains("argument #1 'body': unknown field `Lables`"), "{}", refused[28]);
     assert!(refused[30].contains("argument #1 'opts': unknown field `filter`"), "{}", refused[30]);

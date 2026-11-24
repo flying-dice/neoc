@@ -71,7 +71,9 @@ fn check_answers(name: &str, answers: Option<&serde_json::Value>, update: bool) 
         return Ok(());
     }
     let expected = match std::fs::read_to_string(&path) {
-        Ok(text) => Some(serde_json::from_str::<serde_json::Value>(&text).map_err(|e| format!("{file}: {e}"))?),
+        Ok(text) => {
+            Some(serde_json::from_str::<serde_json::Value>(&text).map_err(|e| format!("{file}: {e}"))?)
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(format!("{file}: {e}")),
     };

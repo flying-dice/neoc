@@ -597,7 +597,15 @@ mod tests {
             return { syntax.op, eof.kind, utf8.kind, tostring(failed) }
             "#,
         );
-        assert_eq!(seen, ["vnd:quick_xml.decode", "unexpected_eof", "invalid_utf8", "vnd:quick_xml.decode: io: the pipe is closed"]);
+        assert_eq!(
+            seen,
+            [
+                "vnd:quick_xml.decode",
+                "unexpected_eof",
+                "invalid_utf8",
+                "vnd:quick_xml.decode: io: the pipe is closed"
+            ]
+        );
     }
 
     #[test]
@@ -630,7 +638,11 @@ mod tests {
         assert_eq!(written, "", "nothing reaches the writer");
         assert_eq!(seen[0], "vnd:quick_xml.encode_to");
         assert_eq!(seen[1], "vnd:quick_xml.encode_to: io: read-only");
-        assert!(seen[2].contains("vnd:quick_xml.encode_to: argument #1 'value'") && seen[2].contains("byte array"), "{seen:#?}");
+        assert!(
+            seen[2].contains("vnd:quick_xml.encode_to: argument #1 'value'")
+                && seen[2].contains("byte array"),
+            "{seen:#?}"
+        );
     }
 
     #[test]
@@ -644,7 +656,13 @@ mod tests {
             return { tostring(not_reader), tostring(not_writer) }
             "#,
         );
-        assert!(seen[0].contains("vnd:quick_xml.decode: argument #1 'reader': expected a Reader"), "{seen:#?}");
-        assert!(seen[1].contains("vnd:quick_xml.encode_to: argument #2 'writer': expected a Writer"), "{seen:#?}");
+        assert!(
+            seen[0].contains("vnd:quick_xml.decode: argument #1 'reader': expected a Reader"),
+            "{seen:#?}"
+        );
+        assert!(
+            seen[1].contains("vnd:quick_xml.encode_to: argument #2 'writer': expected a Writer"),
+            "{seen:#?}"
+        );
     }
 }

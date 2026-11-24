@@ -217,7 +217,9 @@ pub mod sqlx_postgres {
             query = match value {
                 None => query.bind(Option::<i64>::None),
                 Some(Param::Boolean(flag)) => query.bind(flag),
-                Some(Param::Number(number)) if number.fract() == 0.0 && (-INT8_END..INT8_END).contains(&number) => {
+                Some(Param::Number(number))
+                    if number.fract() == 0.0 && (-INT8_END..INT8_END).contains(&number) =>
+                {
                     // whole and in range: the cast is exact
                     #[allow(clippy::cast_possible_truncation)]
                     query.bind(number as i64)
@@ -237,7 +239,10 @@ pub mod sqlx_postgres {
         let mut out = Row::with_capacity(columns.len());
         for column in columns {
             let index = column.ordinal();
-            let decode = |error: sqlx::Error| Error::Decode { column: column.name().to_owned(), reason: error.to_string() };
+            let decode = |error: sqlx::Error| Error::Decode {
+                column: column.name().to_owned(),
+                reason: error.to_string(),
+            };
             let raw = row.try_get_raw(index).map_err(decode)?;
             if raw.is_null() {
                 continue;
@@ -253,9 +258,14 @@ pub mod sqlx_postgres {
                 "FLOAT4" => Cell::Number(f64::from(row.try_get::<f32, _>(index).map_err(decode)?)),
                 "FLOAT8" => Cell::Number(row.try_get(index).map_err(decode)?),
                 "BYTEA" => Cell::Text(Bytes(row.try_get(index).map_err(decode)?)),
-                text if is_text_type(text) => Cell::Text(Bytes(row.try_get::<String, _>(index).map_err(decode)?.into_bytes())),
+                text if is_text_type(text) => {
+                    Cell::Text(Bytes(row.try_get::<String, _>(index).map_err(decode)?.into_bytes()))
+                }
                 other => {
-                    return Err(Error::UnsupportedColumn { column: column.name().to_owned(), type_name: other.to_owned() });
+                    return Err(Error::UnsupportedColumn {
+                        column: column.name().to_owned(),
+                        type_name: other.to_owned(),
+                    });
                 }
             };
             out.insert(column.name().to_owned(), cell);
@@ -278,8 +288,8 @@ pub mod sqlx_postgres {
     /// ```
     #[host("Wait")]
     pub async fn open(url: String) -> Result<Database, OpenError> {
-        let options =
-            PgConnectOptions::from_str(&url).map_err(|error| OpenError::InvalidUrl { reason: error.to_string() })?;
+        let options = PgConnectOptions::from_str(&url)
+            .map_err(|error| OpenError::InvalidUrl { reason: error.to_string() })?;
         match PoolOptions::<Postgres>::new().connect_with(options).await {
             Ok(pool) => Ok(Database { pool }),
             Err(error) => Err(OpenError::Connect { reason: error.to_string() }),
@@ -310,7 +320,11 @@ pub mod sqlx_postgres {
         /// Run one SELECT; its first row, or `nil` when it has none. A column of a type with no Lua form is
         /// `unsupported_column`: cast it to text in the SQL.
         #[host("Wait")]
-        pub async fn query_one(&self, sql: String, params: Variadic<Option<Param>>) -> Result<Option<Row>, Error> {
+        pub async fn query_one(
+            &self,
+            sql: String,
+            params: Variadic<Option<Param>>,
+        ) -> Result<Option<Row>, Error> {
             if self.pool.is_closed() {
                 return Err(Error::Closed);
             }
@@ -472,7 +486,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[ignore = "needs a Postgres server: set NEOC_TEST_POSTGRES_URL"]
     async fn against_a_server() {
-        let url = std::env::var("NEOC_TEST_POSTGRES_URL").expect("NEOC_TEST_POSTGRES_URL is the server to test against");
+        let url = std::env::var("NEOC_TEST_POSTGRES_URL")
+            .expect("NEOC_TEST_POSTGRES_URL is the server to test against");
         let lua = make_engine().unwrap();
         lua.globals().set("URL", url).unwrap();
         lua.load(SERVER_SCRIPT).exec_async().await.unwrap();

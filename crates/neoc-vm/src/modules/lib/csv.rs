@@ -383,7 +383,14 @@ pub mod csv {
     }
 
     impl Source {
-        fn new(input: Input, has_headers: bool, delimiter: &Symbol, quote: &Symbol, escape: Option<&Symbol>, comment: Option<&Symbol>) -> Self {
+        fn new(
+            input: Input,
+            has_headers: bool,
+            delimiter: &Symbol,
+            quote: &Symbol,
+            escape: Option<&Symbol>,
+            comment: Option<&Symbol>,
+        ) -> Self {
             let reader = ::csv::ReaderBuilder::new()
                 .has_headers(has_headers)
                 .delimiter(delimiter.byte())
@@ -395,7 +402,14 @@ pub mod csv {
             Self { reader, done: false }
         }
 
-        fn of_text(text: Bytes, has_headers: bool, delimiter: &Symbol, quote: &Symbol, escape: Option<&Symbol>, comment: Option<&Symbol>) -> Self {
+        fn of_text(
+            text: Bytes,
+            has_headers: bool,
+            delimiter: &Symbol,
+            quote: &Symbol,
+            escape: Option<&Symbol>,
+            comment: Option<&Symbol>,
+        ) -> Self {
             Self::new(Input::Text(Cursor::new(text.0)), has_headers, delimiter, quote, escape, comment)
         }
 
@@ -413,9 +427,10 @@ pub mod csv {
                     expected: wide(*expected_len),
                     text: pos.as_ref().map(|p| self.quoted(p.byte())).unwrap_or_default(),
                 },
-                ::csv::ErrorKind::Utf8 { pos, err } => {
-                    CsvError::InvalidUtf8 { line: pos.as_ref().map_or(0, |p| wide(p.line())), reason: err.to_string() }
-                }
+                ::csv::ErrorKind::Utf8 { pos, err } => CsvError::InvalidUtf8 {
+                    line: pos.as_ref().map_or(0, |p| wide(p.line())),
+                    reason: err.to_string(),
+                },
                 ::csv::ErrorKind::Io(failure) => CsvError::Io { reason: failure.to_string() },
                 _ => CsvError::Malformed { reason: error.to_string() },
             }
@@ -460,7 +475,14 @@ pub mod csv {
 
     impl Rows {
         fn new(text: Bytes, opts: &ReadOptions) -> Self {
-            let source = Source::of_text(text, false, &opts.delimiter, &opts.quote, opts.escape.as_ref(), opts.comment.as_ref());
+            let source = Source::of_text(
+                text,
+                false,
+                &opts.delimiter,
+                &opts.quote,
+                opts.escape.as_ref(),
+                opts.comment.as_ref(),
+            );
             Self { source }
         }
     }
@@ -489,7 +511,14 @@ pub mod csv {
 
     impl Records {
         fn new(text: Bytes, opts: RecordOptions) -> Self {
-            let source = Source::of_text(text, true, &opts.delimiter, &opts.quote, opts.escape.as_ref(), opts.comment.as_ref());
+            let source = Source::of_text(
+                text,
+                true,
+                &opts.delimiter,
+                &opts.quote,
+                opts.escape.as_ref(),
+                opts.comment.as_ref(),
+            );
             Self { source, headers: None, types: opts.types }
         }
 
@@ -561,7 +590,8 @@ pub mod csv {
                     }
                 },
             };
-            let item = self.source.next_row()?.and_then(|(row, line)| record(&self.types, &headers, &row, line));
+            let item =
+                self.source.next_row()?.and_then(|(row, line)| record(&self.types, &headers, &row, line));
             self.source.done |= item.is_err();
             self.headers = Some(headers);
             Some(item)
@@ -632,7 +662,8 @@ pub mod csv {
                 return typed(Vec::new(), &self.types);
             };
             let (row, line) = row?;
-            let names: Result<Vec<String>, _> = row.iter().map(|name| std::str::from_utf8(name).map(str::to_owned)).collect();
+            let names: Result<Vec<String>, _> =
+                row.iter().map(|name| std::str::from_utf8(name).map(str::to_owned)).collect();
             let names = names.map_err(|e| CsvError::InvalidUtf8 { line, reason: e.to_string() })?;
             typed(unique(names, || self.source.quoted(0))?, &self.types)
         }
@@ -658,7 +689,8 @@ pub mod csv {
                 // the stream that reads the header row is the one that reports it
                 Err(error) => return unread.then_some(Err(error)),
             };
-            let item = self.source.next_row()?.and_then(|(row, line)| record(&self.types, &headers, &row, line));
+            let item =
+                self.source.next_row()?.and_then(|(row, line)| record(&self.types, &headers, &row, line));
             self.source.done |= item.is_err();
             Some(item)
         }
@@ -709,7 +741,14 @@ pub mod csv {
     pub fn reader(handle: Handle, opts: RecordOptions) -> Result<Reader, ReaderError> {
         let claim = handle.claim().ok_or(ReaderError::InUse)?;
         let input = Input::Handle { source: handle.locking(), recent: Recent::default(), _claim: claim };
-        let source = Source::new(input, false, &opts.delimiter, &opts.quote, opts.escape.as_ref(), opts.comment.as_ref());
+        let source = Source::new(
+            input,
+            false,
+            &opts.delimiter,
+            &opts.quote,
+            opts.escape.as_ref(),
+            opts.comment.as_ref(),
+        );
         Ok(Reader { reading: Arc::new(Mutex::new(Reading { source, headers: None, types: opts.types })) })
     }
 
@@ -726,9 +765,14 @@ pub mod csv {
         let mut keyed = match row {
             // an empty table is a record with every value missing
             Row::Positional(cells) if cells.is_empty() => BTreeMap::new(),
-            Row::Positional(cells) if cells.len() == headers.len() => return Ok(cells.into_iter().map(cell_text).collect()),
+            Row::Positional(cells) if cells.len() == headers.len() => {
+                return Ok(cells.into_iter().map(cell_text).collect());
+            }
             Row::Positional(cells) => {
-                return Err(WriteError::WrongLength { found: wide(cells.len() as u64), expected: wide(headers.len() as u64) });
+                return Err(WriteError::WrongLength {
+                    found: wide(cells.len() as u64),
+                    expected: wide(headers.len() as u64),
+                });
             }
             Row::Keyed(keyed) => keyed,
         };
@@ -885,7 +929,10 @@ mod tests {
     fn parse_duplicate_headers_errors() {
         let (kind, e) = refused(r#"csv.parse_records("name,age,name\nAlice,30,bad")"#);
         assert_eq!(kind, "duplicate_header");
-        assert_eq!(e, r#"lib:csv.parse_records: duplicate_header: line 1: duplicate header "name": "name,age,name""#);
+        assert_eq!(
+            e,
+            r#"lib:csv.parse_records: duplicate_header: line 1: duplicate header "name": "name,age,name""#
+        );
     }
 
     #[test]
@@ -945,7 +992,10 @@ mod tests {
     fn parse_type_coercion_failure_errors() {
         let (kind, e) = refused(r#"csv.parse_records("dur\n1\nabc", { types = { dur = "number" } })"#);
         assert_eq!(kind, "cannot_coerce");
-        assert_eq!(e, r#"lib:csv.parse_records: cannot_coerce: line 3: column "dur" cannot coerce "abc" to number"#);
+        assert_eq!(
+            e,
+            r#"lib:csv.parse_records: cannot_coerce: line 3: column "dur" cannot coerce "abc" to number"#
+        );
         let (kind, e) = refused(r#"csv.parse_records("ok\nmaybe", { types = { ok = "boolean" } })"#);
         assert_eq!(kind, "cannot_coerce");
         assert!(e.ends_with("to boolean"), "got: {e}");
@@ -953,9 +1003,22 @@ mod tests {
 
     #[test]
     fn parse_dialects() {
-        assert_eq!(eval::<String>(r#"local r = csv.parse_records("a\tb\nx\ty", { delimiter = "\t" }) return r[1].b"#), "y");
-        assert_eq!(eval::<String>(r#"local r = csv.parse("'a;b';c", { delimiter = ";", quote = "'" }) return r[1][1]"#), "a;b");
-        assert_eq!(eval::<String>(r#"local r = csv.parse('"a\\"b",c', { escape = "\\" }) return r[1][1]"#), "a\"b");
+        assert_eq!(
+            eval::<String>(
+                r#"local r = csv.parse_records("a\tb\nx\ty", { delimiter = "\t" }) return r[1].b"#
+            ),
+            "y"
+        );
+        assert_eq!(
+            eval::<String>(
+                r#"local r = csv.parse("'a;b';c", { delimiter = ";", quote = "'" }) return r[1][1]"#
+            ),
+            "a;b"
+        );
+        assert_eq!(
+            eval::<String>(r#"local r = csv.parse('"a\\"b",c', { escape = "\\" }) return r[1][1]"#),
+            "a\"b"
+        );
         assert_eq!(eval::<i64>(r##"return #csv.parse("# note\na,b\n# more\n1,2", { comment = "#" })"##), 2);
         assert_eq!(eval::<String>(r#"local r = csv.parse('"say ""hi""",x') return r[1][1]"#), "say \"hi\"");
     }
@@ -978,7 +1041,10 @@ mod tests {
 
     #[test]
     fn parse_handles_quoted_field_with_newline() {
-        assert_eq!(eval::<String>(r#"local r = csv.parse("a,b\n\"line\n1\",\"x\"") return r[2][1]"#), "line\n1");
+        assert_eq!(
+            eval::<String>(r#"local r = csv.parse("a,b\n\"line\n1\",\"x\"") return r[2][1]"#),
+            "line\n1"
+        );
     }
 
     #[test]
@@ -994,7 +1060,8 @@ mod tests {
 
     #[test]
     fn empty_text_has_no_rows() {
-        let counts: Vec<i64> = eval(r#"return { #csv.parse(""), #csv.parse_records(""), #csv.parse_records("a,b\n") }"#);
+        let counts: Vec<i64> =
+            eval(r#"return { #csv.parse(""), #csv.parse_records(""), #csv.parse_records("a,b\n") }"#);
         assert_eq!(counts, [0, 0, 0]);
     }
 
@@ -1037,7 +1104,9 @@ mod tests {
 
     #[test]
     fn a_stream_fails_where_it_is_read() {
-        let raised = try_eval::<i64>(r#"local n = 0; for _ in csv.records("a,b\n1,2\n3"):items() do n += 1 end; return n"#);
+        let raised = try_eval::<i64>(
+            r#"local n = 0; for _ in csv.records("a,b\n1,2\n3"):items() do n += 1 end; return n"#,
+        );
         let message = raised.unwrap_err().to_string();
         assert!(message.contains("lib:csv.records: unequal_lengths: line 3"), "got: {message}");
 
@@ -1085,15 +1154,19 @@ mod tests {
 
     #[test]
     fn stringify_missing_key_emits_empty_and_extra_keys_are_ignored() {
-        let out: String = eval(r#"return (csv.stringify({ { name = "Alice", note = "x" }, {} }, { "name", "age" }))"#);
+        let out: String =
+            eval(r#"return (csv.stringify({ { name = "Alice", note = "x" }, {} }, { "name", "age" }))"#);
         assert_eq!(out, "name,age\nAlice,\n,\n");
     }
 
     #[test]
     fn stringify_takes_positional_rows_and_a_dialect() {
-        let out: String = eval(r#"return (csv.stringify({ { "a b", "c\td" }, { x = "'q'" } }, { "x", "y" }, { delimiter = "\t", quote = "'" }))"#);
+        let out: String = eval(
+            r#"return (csv.stringify({ { "a b", "c\td" }, { x = "'q'" } }, { "x", "y" }, { delimiter = "\t", quote = "'" }))"#,
+        );
         assert_eq!(out, "x\ty\na b\t'c\td'\n'''q'''\t\n");
-        let quoted: String = eval(r#"return (csv.stringify({ { "a,b", 'say "hi"', "two\nlines" } }, { "x", "y", "z" }))"#);
+        let quoted: String =
+            eval(r#"return (csv.stringify({ { "a,b", 'say "hi"', "two\nlines" } }, { "x", "y", "z" }))"#);
         assert_eq!(quoted, "x,y,z\n\"a,b\",\"say \"\"hi\"\"\",\"two\nlines\"\n");
     }
 
@@ -1303,7 +1376,10 @@ mod tests {
             return out
             "#,
         );
-        assert_eq!(seen[0], "lib:csv.Reader:records: duplicate_header: line 1: duplicate header \"a\": \"a,b,a\"");
+        assert_eq!(
+            seen[0],
+            "lib:csv.Reader:records: duplicate_header: line 1: duplicate header \"a\": \"a,b,a\""
+        );
         assert_eq!(
             seen[1],
             "lib:csv.Reader:records: unknown_column: `types` names the column \"c\", which the header row does not have"
@@ -1368,8 +1444,10 @@ mod tests {
         // Collect outside the chunk so no live stack slot keeps the reader alive.
         lua.gc_collect().unwrap();
         lua.gc_collect().unwrap();
-        let reusable: bool =
-            lua.load(r#"local r, e = require("lib:csv").reader(handle); return r ~= nil and e == nil"#).eval().unwrap();
+        let reusable: bool = lua
+            .load(r#"local r, e = require("lib:csv").reader(handle); return r ~= nil and e == nil"#)
+            .eval()
+            .unwrap();
         assert!(reusable, "the claim must be released after the reader is collected");
     }
 
@@ -1383,7 +1461,10 @@ mod tests {
             return tostring(err)
             "#,
         );
-        assert!(refused.contains("lib:csv.reader: argument #1 'handle': expected a Reader"), "got: {refused}");
+        assert!(
+            refused.contains("lib:csv.reader: argument #1 'handle': expected a Reader"),
+            "got: {refused}"
+        );
     }
 
     #[test]

@@ -561,7 +561,13 @@ mod tests {
             return { tostring(not_reader), tostring(not_writer) }
             "#,
         );
-        assert!(seen[0].contains("vnd:serde_json.from_reader: argument #1 'reader': expected a Reader"), "{seen:#?}");
-        assert!(seen[1].contains("vnd:serde_json.to_writer: argument #2 'writer': expected a Writer"), "{seen:#?}");
+        assert!(
+            seen[0].contains("vnd:serde_json.from_reader: argument #1 'reader': expected a Reader"),
+            "{seen:#?}"
+        );
+        assert!(
+            seen[1].contains("vnd:serde_json.to_writer: argument #2 'writer': expected a Writer"),
+            "{seen:#?}"
+        );
     }
 }

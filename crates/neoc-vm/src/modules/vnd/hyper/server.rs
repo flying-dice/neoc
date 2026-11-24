@@ -275,7 +275,9 @@ mod tests {
 
         let mut done = {
             let mut state = server.state.lock();
-            let State::Listening { shutdown, done, .. } = &mut *state else { panic!("the server is listening") };
+            let State::Listening { shutdown, done, .. } = &mut *state else {
+                panic!("the server is listening")
+            };
             let done = done.clone();
             shutdown.take().expect("not closed yet").send(()).expect("the accept loop runs");
             // long enough for the loop to end and reach the lock

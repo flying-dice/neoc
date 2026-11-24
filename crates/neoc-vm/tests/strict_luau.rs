@@ -144,6 +144,9 @@ fn only_type_and_syntax_errors_are_kept_with_their_continuation() {
                   b.luau:1:1: (E0) SyntaxError: Expected identifier\n";
     let found = errors(output);
     assert_eq!(found.len(), 2);
-    assert_eq!(found[0], "a.luau:3:1-4: (W0) TypeError: Expected this to be\n\t'string'\nbut got\n\t'number'");
+    assert_eq!(
+        found[0],
+        "a.luau:3:1-4: (W0) TypeError: Expected this to be\n\t'string'\nbut got\n\t'number'"
+    );
     assert_eq!(found[1], "b.luau:1:1: (E0) SyntaxError: Expected identifier");
 }

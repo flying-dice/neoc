@@ -80,13 +80,20 @@ fn compression_of_magic(bytes: &[u8]) -> Compression {
 
 /// The codec to write `path` with: the option when given, else the extension's. An option that is not what a
 /// compressed extension says is an error.
-fn resolve_create_compression(path: &Path, explicit: Option<Compression>) -> Result<Compression, ArchiveError> {
+fn resolve_create_compression(
+    path: &Path,
+    explicit: Option<Compression>,
+) -> Result<Compression, ArchiveError> {
     let extension = compression_of_extension(path);
     let Some(compression) = explicit else {
         return Ok(extension);
     };
     if extension != Compression::None && extension != compression {
-        return Err(ArchiveError::CompressionMismatch { path: OsPath(path.to_owned()), compression, extension });
+        return Err(ArchiveError::CompressionMismatch {
+            path: OsPath(path.to_owned()),
+            compression,
+            extension,
+        });
     }
     Ok(compression)
 }
@@ -218,7 +225,10 @@ impl<R: Read> Read for LimitReader<R> {
                 0 => Ok(0),
                 _ => {
                     self.cap.passed.set(true);
-                    Err(io::Error::other(format!("output exceeds max_output_size ({} bytes)", self.cap.limit)))
+                    Err(io::Error::other(format!(
+                        "output exceeds max_output_size ({} bytes)",
+                        self.cap.limit
+                    )))
                 }
             };
         }
@@ -251,10 +261,10 @@ fn build_include(patterns: Option<&[String]>) -> Result<Option<GlobSet>, Archive
         let invalid = |reason: String| ArchiveError::InvalidPattern { pattern: pattern.clone(), reason };
         builder.add(super::glob::compile(pattern).map_err(invalid)?);
     }
-    builder
-        .build()
-        .map(Some)
-        .map_err(|error| ArchiveError::InvalidPattern { pattern: patterns[0].clone(), reason: error.to_string() })
+    builder.build().map(Some).map_err(|error| ArchiveError::InvalidPattern {
+        pattern: patterns[0].clone(),
+        reason: error.to_string(),
+    })
 }
 
 /// Howard Hinnant's days-from-civil: a zip's DOS date and time as Unix seconds.
@@ -312,7 +322,9 @@ fn accept_entry(raw: &str, include: Option<&GlobSet>) -> Option<Result<PathBuf, 
     if include.is_some_and(|set| !set.is_match(raw.replace('\\', "/"))) {
         return None;
     }
-    Some(sanitize_entry_name(raw).map_err(|reason| ArchiveError::UnsafeEntry { name: raw.to_owned(), reason }))
+    Some(
+        sanitize_entry_name(raw).map_err(|reason| ArchiveError::UnsafeEntry { name: raw.to_owned(), reason }),
+    )
 }
 
 /// Write a file entry under `dest` at its sanitised path, making the directories above it.
@@ -341,7 +353,10 @@ fn write_link(target: &Path, link: &str, symlink: bool, _name: &str) -> Result<(
 
 #[cfg(not(unix))]
 fn write_link(_target: &Path, _link: &str, _symlink: bool, name: &str) -> Result<(), ArchiveError> {
-    Err(ArchiveError::Unsupported { name: name.to_owned(), reason: "link entries are only extracted on Unix".to_owned() })
+    Err(ArchiveError::Unsupported {
+        name: name.to_owned(),
+        reason: "link entries are only extracted on Unix".to_owned(),
+    })
 }
 
 fn read_file(path: &Path) -> Result<Vec<u8>, ArchiveError> {
@@ -363,7 +378,10 @@ fn tar_sources(entries: &[TarEntry], strip: Option<&str>) -> Result<Vec<(PathBuf
     Ok(out)
 }
 
-fn append_tar<W: Write>(builder: &mut tar::Builder<W>, sources: &[(PathBuf, String)]) -> Result<(), ArchiveError> {
+fn append_tar<W: Write>(
+    builder: &mut tar::Builder<W>,
+    sources: &[(PathBuf, String)],
+) -> Result<(), ArchiveError> {
     for (disk, name) in sources {
         // the writer refuses a name that would leave the destination (`..`), besides what reading `disk` can fail on
         builder
@@ -424,7 +442,12 @@ fn tar_list(bytes: &[u8]) -> Result<Vec<Entry>, ArchiveError> {
     Ok(out)
 }
 
-fn tar_extract(bytes: &[u8], dest: &Path, include: Option<&GlobSet>, cap: &Cap) -> Result<usize, ArchiveError> {
+fn tar_extract(
+    bytes: &[u8],
+    dest: &Path,
+    include: Option<&GlobSet>,
+    cap: &Cap,
+) -> Result<usize, ArchiveError> {
     let mut archive = tar_archive(bytes, cap)?;
     let mut count = 0;
     for entry in archive.entries().map_err(|error| cap.error(error))? {
@@ -480,7 +503,8 @@ fn tar_read(bytes: &[u8], name: &str, cap: &Cap) -> Result<Vec<u8>, ArchiveError
 // ---------------------------------------------------------------------------
 
 fn zip_options(mode: Option<u32>) -> zip::write::SimpleFileOptions {
-    let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
     match mode {
         Some(mode) => options.unix_permissions(mode),
         None => options,
@@ -496,7 +520,9 @@ fn write_failed(error: impl std::fmt::Display) -> ArchiveError {
 }
 
 /// A zip of `entries` (name and content), in memory.
-fn build_zip_bytes<'a>(entries: impl IntoIterator<Item = (&'a String, &'a [u8])>) -> Result<Vec<u8>, ArchiveError> {
+fn build_zip_bytes<'a>(
+    entries: impl IntoIterator<Item = (&'a String, &'a [u8])>,
+) -> Result<Vec<u8>, ArchiveError> {
     let mut writer = zip::ZipWriter::new(io::Cursor::new(Vec::new()));
     for (name, content) in entries {
         writer.start_file(name, zip_options(Some(0o644))).map_err(zip_failed(name))?;
@@ -506,7 +532,11 @@ fn build_zip_bytes<'a>(entries: impl IntoIterator<Item = (&'a String, &'a [u8])>
 }
 
 /// A zip of the files and directories at `paths`, written to `writer`.
-fn build_zip_files<W: Write + io::Seek>(writer: W, paths: &[OsPath], strip: Option<&str>) -> Result<(), ArchiveError> {
+fn build_zip_files<W: Write + io::Seek>(
+    writer: W,
+    paths: &[OsPath],
+    strip: Option<&str>,
+) -> Result<(), ArchiveError> {
     let mut sources = Vec::new();
     for path in paths {
         expand_source(path.as_ref(), &path.0.to_string_lossy(), strip, &mut sources)?;
@@ -555,7 +585,8 @@ fn zip_list(bytes: &[u8]) -> Result<Vec<Entry>, ArchiveError> {
     for index in 0..archive.len() {
         let file = archive.by_index(index).map_err(corrupt)?;
         #[allow(clippy::cast_precision_loss)] // a ratio: the last bits of a size past 2^53 do not show in it
-        let compression_ratio = (file.size() != 0).then(|| file.compressed_size() as f64 / file.size() as f64);
+        let compression_ratio =
+            (file.size() != 0).then(|| file.compressed_size() as f64 / file.size() as f64);
         out.push(Entry {
             name: file.name().map_err(corrupt)?.into_owned(),
             size: file.size(),
@@ -568,7 +599,12 @@ fn zip_list(bytes: &[u8]) -> Result<Vec<Entry>, ArchiveError> {
     Ok(out)
 }
 
-fn zip_extract(bytes: &[u8], dest: &Path, include: Option<&GlobSet>, cap: &Cap) -> Result<usize, ArchiveError> {
+fn zip_extract(
+    bytes: &[u8],
+    dest: &Path,
+    include: Option<&GlobSet>,
+    cap: &Cap,
+) -> Result<usize, ArchiveError> {
     let mut archive = zip_open(bytes)?;
     let mut count = 0;
     for index in 0..archive.len() {
@@ -838,7 +874,11 @@ pub mod archive {
 
         /// Write a tar of the files and directories `entries` name to `path`, compressed as its extension says
         /// (`.tar.gz`, `.tgz`, `.tar.zst`, `.tzst`; not at all otherwise).
-        pub fn create_file(path: OsPath, entries: Vec<TarEntry>, options: TarOptions) -> Result<(), ArchiveError> {
+        pub fn create_file(
+            path: OsPath,
+            entries: Vec<TarEntry>,
+            options: TarOptions,
+        ) -> Result<(), ArchiveError> {
             let compression = resolve_create_compression(path.as_ref(), options.compression)?;
             let sources = tar_sources(&entries, options.strip_prefix.as_deref())?;
             let bytes = build_tar(&sources, compression)?;
@@ -902,7 +942,11 @@ pub mod archive {
 
         /// Write a zip of the files and directories at `paths` to `path`. Each is named in the archive as it is
         /// given, a directory's files under it.
-        pub fn create_file(path: OsPath, paths: Vec<OsPath>, options: ZipOptions) -> Result<(), ArchiveError> {
+        pub fn create_file(
+            path: OsPath,
+            paths: Vec<OsPath>,
+            options: ZipOptions,
+        ) -> Result<(), ArchiveError> {
             let file = fs::File::create(&path).map_err(|error| io_error(path.as_ref(), error))?;
             build_zip_files(file, &paths, options.strip_prefix.as_deref())
         }
@@ -1021,7 +1065,11 @@ mod tests {
         let resolve = |path: &str, explicit| resolve_create_compression(Path::new(path), explicit);
         assert!(matches!(
             resolve("a.tar.gz", Some(Compression::Zstd)),
-            Err(ArchiveError::CompressionMismatch { compression: Compression::Zstd, extension: Compression::Gzip, .. })
+            Err(ArchiveError::CompressionMismatch {
+                compression: Compression::Zstd,
+                extension: Compression::Gzip,
+                ..
+            })
         ));
         assert_eq!(resolve("a.tar.gz", Some(Compression::Gzip)), Ok(Compression::Gzip));
         assert_eq!(resolve("a.tar.gz", None), Ok(Compression::Gzip));
@@ -1058,7 +1106,8 @@ mod tests {
         for ty in [tar::EntryType::symlink(), tar::EntryType::hard_link()] {
             let bytes = tar_with_link("link", "../../etc/passwd", ty);
             let dest = tempfile::tempdir().unwrap();
-            let error = tar_extract(&bytes, dest.path(), None, &Cap::new(None).unwrap()).expect_err("a link out");
+            let error =
+                tar_extract(&bytes, dest.path(), None, &Cap::new(None).unwrap()).expect_err("a link out");
             assert_eq!(
                 error,
                 ArchiveError::UnsafeLink {
@@ -1214,8 +1263,13 @@ mod tests {
             "#,
         );
         assert!(value.is_nil());
-        assert_eq!((kind.as_str(), compression.as_str(), extension.as_str()), ("compression_mismatch", "zstd", "gzip"));
-        assert!(text.starts_with("lib:archive.Tar.create_file: compression_mismatch: compression \"zstd\" conflicts"));
+        assert_eq!(
+            (kind.as_str(), compression.as_str(), extension.as_str()),
+            ("compression_mismatch", "zstd", "gzip")
+        );
+        assert!(text.starts_with(
+            "lib:archive.Tar.create_file: compression_mismatch: compression \"zstd\" conflicts"
+        ));
         assert!(!dir.path().join("x.tar.gz").exists(), "nothing was written");
     }
 
@@ -1256,7 +1310,14 @@ mod tests {
     #[test]
     fn a_zip_entry_that_leaves_the_destination_is_refused_and_one_that_comes_back_is_taken() {
         let (lua, dir) = scratch();
-        let (value, kind, name, reason, count, content): (mlua::Value, String, String, String, usize, String) = eval(
+        let (value, kind, name, reason, count, content): (
+            mlua::Value,
+            String,
+            String,
+            String,
+            usize,
+            String,
+        ) = eval(
             &lua,
             r#"
             local evil = archive.Zip.from_bytes((assert(archive.Zip.create({ ["../../evil.txt"] = "pwned" }))))
@@ -1298,13 +1359,30 @@ mod tests {
             return kinds
             "#,
         );
-        assert_eq!(kinds, ["too_large", "too_large", "max_output_size_zero", "too_large", "too_large", "max_output_size_zero"]);
+        assert_eq!(
+            kinds,
+            [
+                "too_large",
+                "too_large",
+                "max_output_size_zero",
+                "too_large",
+                "too_large",
+                "max_output_size_zero"
+            ]
+        );
     }
 
     #[test]
     fn zip_round_trips_with_a_ratio_for_each_entry() {
         let (lua, _dir) = scratch();
-        let (names, size, small_ratio, content, kind, name): (Vec<String>, u64, bool, String, String, String) = eval(
+        let (names, size, small_ratio, content, kind, name): (
+            Vec<String>,
+            u64,
+            bool,
+            String,
+            String,
+            String,
+        ) = eval(
             &lua,
             r#"
             local zip = archive.Zip.from_bytes((assert(archive.Zip.create({
@@ -1382,17 +1460,41 @@ mod tests {
     fn what_is_not_an_option_or_an_entry_is_refused_as_an_argument() {
         let (lua, _dir) = scratch();
         for (call, place) in [
-            (r#"archive.Tar.create({}, { compression = "lz4" })"#, "lib:archive.Tar.create: argument #2 'options'"),
-            (r#"archive.Tar.create({}, { compresion = "gzip" })"#, "lib:archive.Tar.create: argument #2 'options'"),
-            (r#"archive.Tar.create({ { archive_path = "x" } })"#, "lib:archive.Tar.create: argument #1 'entries'"),
-            (r#"archive.Tar.create({ { path = "x", archive_path = 5 } })"#, "lib:archive.Tar.create: argument #1 'entries'"),
+            (
+                r#"archive.Tar.create({}, { compression = "lz4" })"#,
+                "lib:archive.Tar.create: argument #2 'options'",
+            ),
+            (
+                r#"archive.Tar.create({}, { compresion = "gzip" })"#,
+                "lib:archive.Tar.create: argument #2 'options'",
+            ),
+            (
+                r#"archive.Tar.create({ { archive_path = "x" } })"#,
+                "lib:archive.Tar.create: argument #1 'entries'",
+            ),
+            (
+                r#"archive.Tar.create({ { path = "x", archive_path = 5 } })"#,
+                "lib:archive.Tar.create: argument #1 'entries'",
+            ),
             (r#"archive.Tar.create({ "main.lua" })"#, "lib:archive.Tar.create: argument #1 'entries'"),
             (r#"archive.Zip.create({ "content" })"#, "lib:archive.Zip.create: argument #1 'entries'"),
             (r#"archive.Zip.create({ a = 5 })"#, "lib:archive.Zip.create: argument #1 'entries'"),
-            (r#"archive.Tar.from_bytes(""):extract(root, { max_output_size = -1 })"#, "lib:archive.Tar:extract: argument #2 'options'"),
-            (r#"archive.Tar.from_bytes(""):extract(root, { max_output_size = 1.5 })"#, "lib:archive.Tar:extract: argument #2 'options'"),
-            (r#"archive.Tar.from_bytes(""):extract(root, { include = "*.lua" })"#, "lib:archive.Tar:extract: argument #2 'options'"),
-            (r#"archive.Zip.from_bytes(""):read("x", { include = {} })"#, "lib:archive.Zip:read: argument #2 'options'"),
+            (
+                r#"archive.Tar.from_bytes(""):extract(root, { max_output_size = -1 })"#,
+                "lib:archive.Tar:extract: argument #2 'options'",
+            ),
+            (
+                r#"archive.Tar.from_bytes(""):extract(root, { max_output_size = 1.5 })"#,
+                "lib:archive.Tar:extract: argument #2 'options'",
+            ),
+            (
+                r#"archive.Tar.from_bytes(""):extract(root, { include = "*.lua" })"#,
+                "lib:archive.Tar:extract: argument #2 'options'",
+            ),
+            (
+                r#"archive.Zip.from_bytes(""):read("x", { include = {} })"#,
+                "lib:archive.Zip:read: argument #2 'options'",
+            ),
             (r"archive.Tar.from_bytes({})", "lib:archive.Tar.from_bytes: argument #1 'bytes'"),
         ] {
             let error = lua.load(format!("return {call}")).eval::<mlua::Value>().expect_err(call).to_string();

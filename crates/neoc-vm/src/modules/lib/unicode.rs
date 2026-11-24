@@ -365,7 +365,10 @@ mod tests {
     fn category_refuses_anything_but_one_codepoint() {
         for bad in ["ab", "", "e\\u{0301}"] {
             let err = refused(&format!(r#"return uni.category("{bad}")"#));
-            assert!(err.contains("argument #1 'ch'") && err.contains("expected a single codepoint"), "{bad}: {err}");
+            assert!(
+                err.contains("argument #1 'ch'") && err.contains("expected a single codepoint"),
+                "{bad}: {err}"
+            );
         }
     }
 

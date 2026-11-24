@@ -268,7 +268,10 @@ pub mod url {
 
         /// The query pairs in order, repeated keys included.
         pub fn query_pairs(&self) -> Vec<QueryPair> {
-            self.inner.query_pairs().map(|(key, value)| QueryPair { key: key.into_owned(), value: value.into_owned() }).collect()
+            self.inner
+                .query_pairs()
+                .map(|(key, value)| QueryPair { key: key.into_owned(), value: value.into_owned() })
+                .collect()
         }
 
         /// The query as a map. A repeated key keeps its **last** value (`?a=1&a=2` is `{ a = "2" }`), like
@@ -379,7 +382,9 @@ mod tests {
     #[test]
     fn parse_fields() {
         let lua = engine();
-        lua.load(r#"u = assert(url.parse("https://ada:secret@example.com:8443/a/b?x=1&y=2#frag"))"#).exec().unwrap();
+        lua.load(r#"u = assert(url.parse("https://ada:secret@example.com:8443/a/b?x=1&y=2#frag"))"#)
+            .exec()
+            .unwrap();
         let get = |field: &str| -> mlua::Value { lua.load(format!("return u.{field}")).eval().unwrap() };
         let text = |field: &str| -> String { lua.load(format!("return u.{field}")).eval().unwrap() };
         assert_eq!(text("scheme"), "https");
@@ -405,11 +410,13 @@ mod tests {
 
     #[test]
     fn parse_invalid_is_a_typed_error() {
-        let (value, kind, op, input, text): (mlua::Value, String, String, String, String) = eval(
-            r#"local v, e = url.parse("not a url") return v, e.kind, e.op, e.input, tostring(e)"#,
-        );
+        let (value, kind, op, input, text): (mlua::Value, String, String, String, String) =
+            eval(r#"local v, e = url.parse("not a url") return v, e.kind, e.op, e.input, tostring(e)"#);
         assert!(value.is_nil());
-        assert_eq!((kind.as_str(), op.as_str(), input.as_str()), ("invalid_url", "lib:url.parse", "not a url"));
+        assert_eq!(
+            (kind.as_str(), op.as_str(), input.as_str()),
+            ("invalid_url", "lib:url.parse", "not a url")
+        );
         assert!(text.starts_with("lib:url.parse: invalid_url:"), "{text}");
         assert_eq!(eval::<String>(r#"local _, e = url.Url.parse("x") return e.op"#), "lib:url.Url.parse");
     }
@@ -459,11 +466,15 @@ mod tests {
     #[test]
     fn with_port_sets_and_clears() {
         assert_eq!(
-            eval::<String>(r#"return tostring(assert(assert(url.parse("https://example.com/")):with_port(8443)))"#),
+            eval::<String>(
+                r#"return tostring(assert(assert(url.parse("https://example.com/")):with_port(8443)))"#
+            ),
             "https://example.com:8443/"
         );
         assert_eq!(
-            eval::<String>(r#"return tostring(assert(assert(url.parse("https://example.com:9999/")):with_port(nil)))"#),
+            eval::<String>(
+                r#"return tostring(assert(assert(url.parse("https://example.com:9999/")):with_port(nil)))"#
+            ),
             "https://example.com/"
         );
     }
@@ -471,15 +482,17 @@ mod tests {
     #[test]
     fn with_port_out_of_range_or_fractional_is_refused_as_an_argument() {
         for port in ["99999", "-1", "8080.5", "0/0"] {
-            let err = refused(&format!(r#"return assert(url.parse("https://example.com/")):with_port({port})"#));
+            let err =
+                refused(&format!(r#"return assert(url.parse("https://example.com/")):with_port({port})"#));
             assert!(err.contains("lib:url.Url:with_port: argument #1 'port'"), "{port}: {err}");
         }
     }
 
     #[test]
     fn with_port_on_a_url_without_a_host_is_a_typed_error() {
-        let (kind, op): (String, String) =
-            eval(r#"local _, e = assert(url.parse("mailto:ada@example.com")):with_port(25) return e.kind, e.op"#);
+        let (kind, op): (String, String) = eval(
+            r#"local _, e = assert(url.parse("mailto:ada@example.com")):with_port(25) return e.kind, e.op"#,
+        );
         assert_eq!((kind.as_str(), op.as_str()), ("cannot_set_port", "lib:url.Url:with_port"));
     }
 
@@ -494,11 +507,15 @@ mod tests {
         );
         assert_eq!((kind.as_str(), host.as_str()), ("invalid_host", "exa mple.com"));
         assert_eq!(
-            eval::<String>(r#"return tostring(assert(assert(url.parse("https://example.com/")):with_host("other.org")))"#),
+            eval::<String>(
+                r#"return tostring(assert(assert(url.parse("https://example.com/")):with_host("other.org")))"#
+            ),
             "https://other.org/"
         );
         assert_eq!(
-            eval::<String>(r#"return tostring(assert(assert(url.parse("http://example.com/")):with_scheme("https")))"#),
+            eval::<String>(
+                r#"return tostring(assert(assert(url.parse("http://example.com/")):with_scheme("https")))"#
+            ),
             "https://example.com/"
         );
     }
@@ -637,7 +654,10 @@ mod tests {
 
     #[test]
     fn origin_of_the_special_schemes() {
-        assert_eq!(eval::<String>(r#"return assert(url.parse("https://example.com:8443/a")).origin"#), "https://example.com:8443");
+        assert_eq!(
+            eval::<String>(r#"return assert(url.parse("https://example.com:8443/a")).origin"#),
+            "https://example.com:8443"
+        );
     }
 
     #[test]

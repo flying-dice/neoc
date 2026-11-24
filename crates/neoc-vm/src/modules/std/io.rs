@@ -170,7 +170,8 @@ pub mod io {
         pub fn read(&self, n: u64) -> Result<Option<Bytes>, IoError> {
             let len = usize::try_from(n.min(READ_CHUNK_MAX)).unwrap_or(usize::MAX);
             let mut buf = Vec::new();
-            buf.try_reserve_exact(len).map_err(|e| IoError::OutOfMemory { reason: format!("cannot allocate {len} bytes: {e}") })?;
+            buf.try_reserve_exact(len)
+                .map_err(|e| IoError::OutOfMemory { reason: format!("cannot allocate {len} bytes: {e}") })?;
             buf.resize(len, 0);
             let read = self.source.lock().read(&mut buf)?;
             buf.truncate(read);
@@ -312,7 +313,9 @@ pub(crate) mod testing {
         let globals = lua.globals();
         globals.set("writer", lua.create_userdata(Writer::of(sink.clone())).unwrap()).unwrap();
         globals.set("broken_writer", lua.create_userdata(Writer::of(Broken)).unwrap()).unwrap();
-        globals.set("broken_reader", lua.create_userdata(Reader::of(std::io::BufReader::new(Broken))).unwrap()).unwrap();
+        globals
+            .set("broken_reader", lua.create_userdata(Reader::of(std::io::BufReader::new(Broken))).unwrap())
+            .unwrap();
         let require: mlua::Function = globals.get("require").unwrap();
         globals.set("io", require.call::<mlua::Table>("std:io").unwrap()).unwrap();
         globals.set(global, require.call::<mlua::Table>(name).unwrap()).unwrap();
@@ -370,7 +373,10 @@ mod tests {
             return tostring(err)
             "#,
         );
-        assert!(refused.contains("std:io.Reader:read: argument #1 'n': expected a whole number from 0"), "got: {refused}");
+        assert!(
+            refused.contains("std:io.Reader:read: argument #1 'n': expected a whole number from 0"),
+            "got: {refused}"
+        );
     }
 
     #[test]
@@ -531,9 +537,18 @@ mod tests {
     #[test]
     fn an_error_keeps_the_operating_systems_kind() {
         use std::io::{Error, ErrorKind};
-        assert_eq!(IoError::from(Error::new(ErrorKind::NotFound, "gone")), IoError::NotFound { reason: "gone".into() });
-        assert_eq!(IoError::from(Error::new(ErrorKind::UnexpectedEof, "short")), IoError::UnexpectedEof { reason: "short".into() });
-        assert_eq!(IoError::from(Error::new(ErrorKind::AddrInUse, "busy")), IoError::Other { reason: "busy".into() });
+        assert_eq!(
+            IoError::from(Error::new(ErrorKind::NotFound, "gone")),
+            IoError::NotFound { reason: "gone".into() }
+        );
+        assert_eq!(
+            IoError::from(Error::new(ErrorKind::UnexpectedEof, "short")),
+            IoError::UnexpectedEof { reason: "short".into() }
+        );
+        assert_eq!(
+            IoError::from(Error::new(ErrorKind::AddrInUse, "busy")),
+            IoError::Other { reason: "busy".into() }
+        );
     }
 
     #[test]

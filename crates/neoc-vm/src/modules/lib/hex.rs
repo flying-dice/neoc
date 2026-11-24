@@ -47,7 +47,8 @@ pub mod hex {
     pub fn decode(input: Bytes) -> Result<Bytes, DecodeError> {
         let wide = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
         // (offset in the input, byte) of everything that is not whitespace
-        let kept: Vec<(usize, u8)> = input.iter().copied().enumerate().filter(|(_, b)| !b.is_ascii_whitespace()).collect();
+        let kept: Vec<(usize, u8)> =
+            input.iter().copied().enumerate().filter(|(_, b)| !b.is_ascii_whitespace()).collect();
         let digits: Vec<u8> = kept.iter().map(|&(_, b)| b).collect();
         ::hex::decode(&digits).map(Bytes).map_err(|e| match e {
             ::hex::FromHexError::InvalidHexCharacter { c, index } => DecodeError::InvalidCharacter {
@@ -55,7 +56,9 @@ pub mod hex {
                 offset: wide(kept.get(index).map_or(index, |&(at, _)| at)),
             },
             // `hex` raises this only for fixed-size targets, which `decode` to a Vec never is
-            ::hex::FromHexError::OddLength | ::hex::FromHexError::InvalidStringLength => DecodeError::OddLength,
+            ::hex::FromHexError::OddLength | ::hex::FromHexError::InvalidStringLength => {
+                DecodeError::OddLength
+            }
         })
     }
 }

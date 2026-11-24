@@ -65,7 +65,8 @@ fn encode(format: Format, data: &[u8], level: Option<u32>) -> Result<Vec<u8>, En
         }
         Format::Zstd => {
             // the level is 1 to 22: it fits
-            let mut encoder = zstd::Encoder::new(Vec::new(), i32::try_from(level).unwrap_or(22)).map_err(failed)?;
+            let mut encoder =
+                zstd::Encoder::new(Vec::new(), i32::try_from(level).unwrap_or(22)).map_err(failed)?;
             encoder.write_all(data).map_err(failed)?;
             encoder.finish().map_err(failed)
         }
@@ -311,7 +312,8 @@ mod tests {
 
     #[test]
     fn levels_are_each_formats_own() {
-        for (format, min, max) in [(Format::Gzip, 0, 9), (Format::Zlib, 0, 9), (Format::Zstd, 1, 22), (Format::Brotli, 0, 11)]
+        for (format, min, max) in
+            [(Format::Gzip, 0, 9), (Format::Zlib, 0, 9), (Format::Zstd, 1, 22), (Format::Brotli, 0, 11)]
         {
             for level in [min, max] {
                 let packed = encode(format, b"hello", Some(level)).unwrap();
@@ -360,7 +362,11 @@ mod tests {
             (r#"decode("gzip", "data", { max_size = 1.5 })"#, "lib:compress.decode: argument #3 'options'"),
             (r#"decode("gzip", "data", { max_size = -1 })"#, "lib:compress.decode: argument #3 'options'"),
         ] {
-            let err = lua.load(format!("return compress.{call}")).eval::<mlua::Value>().expect_err(call).to_string();
+            let err = lua
+                .load(format!("return compress.{call}"))
+                .eval::<mlua::Value>()
+                .expect_err(call)
+                .to_string();
             assert!(err.contains(place), "{call}: {err}");
         }
     }
@@ -369,7 +375,10 @@ mod tests {
     fn decode_corrupt_data() {
         for format in FORMATS {
             let result = decode(format, b"not compressed data", None);
-            assert!(matches!(result, Err(DecodeError::Corrupt { format: f, .. }) if f == format), "{format:?}: {result:?}");
+            assert!(
+                matches!(result, Err(DecodeError::Corrupt { format: f, .. }) if f == format),
+                "{format:?}: {result:?}"
+            );
         }
         let (value, kind, format): (mlua::Value, String, String) = eval(
             r#"
@@ -402,8 +411,16 @@ mod tests {
 
         for format in FORMATS {
             let packed = encode(format, &[b'a'; 1000], None).unwrap();
-            assert_eq!(decode(format, &packed, Some(999)), Err(DecodeError::TooLarge { max_size: 999 }), "{format:?}");
-            assert_eq!(decode(format, &packed, Some(1000)).unwrap().len(), 1000, "{format:?}: the limit itself fits");
+            assert_eq!(
+                decode(format, &packed, Some(999)),
+                Err(DecodeError::TooLarge { max_size: 999 }),
+                "{format:?}"
+            );
+            assert_eq!(
+                decode(format, &packed, Some(1000)).unwrap().len(),
+                1000,
+                "{format:?}: the limit itself fits"
+            );
         }
         assert_eq!(decode(Format::Gzip, b"data", Some(0)), Err(DecodeError::MaxSizeZero));
     }
@@ -414,18 +431,66 @@ mod tests {
     fn the_bytes_encode_writes_are_stable() {
         let data = "neoc byte-stability probe 0123456789\n".repeat(20);
         let pinned = [
-            (Format::Gzip, 1, "1f8b08000000000004ffedd2b90900211040d17cab980616bc8f721c994010159dc4eead4330ffd1e735ea197033fd8b13965a78c3981d098454da58e743fc5ef4165cace000a73b00a6e4020000"),
-            (Format::Gzip, 6, "1f8b08000000000000ffedcab90940210c00d0fe4f91053e781fe3184921888aa6717be710ec5fa39e0137d3bf3861a985378cd9914048a58d753ec4af3df4d0bde800a73b00a6e4020000"),
-            (Format::Gzip, 9, "1f8b08000000000002ffedcab90940210c00d0fe4f91053e781fe3184921888aa6717be710ec5fa39e0137d3bf3861a985378cd9914048a58d753ec4af3df4d0bde800a73b00a6e4020000"),
-            (Format::Zlib, 1, "7801edd2b90900211040d17cab980616bc8f721c994010159dc4eead4330ffd1e735ea197033fd8b13965a78c3981d098454da58e743fc5ef4165cace0003d25ee49"),
-            (Format::Zlib, 6, "789cedcab90940210c00d0fe4f91053e781fe3184921888aa6717be710ec5fa39e0137d3bf3861a985378cd9914048a58d753ec4af3df4d0bde8003d25ee49"),
-            (Format::Zlib, 9, "78daedcab90940210c00d0fe4f91053e781fe3184921888aa6717be710ec5fa39e0137d3bf3861a985378cd9914048a58d753ec4af3df4d0bde8003d25ee49"),
-            (Format::Zstd, 1, "28b52ffd004875010054026e656f6320627974652d73746162696c6974792070726f626520303132333435363738390a0100e5852af504"),
-            (Format::Zstd, 3, "28b52ffd005875010054026e656f6320627974652d73746162696c6974792070726f626520303132333435363738390a0100e5852af504"),
-            (Format::Zstd, 19, "28b52ffd006875010054026e656f6320627974652d73746162696c6974792070726f626520303132333435363738390a0100e5852af504"),
-            (Format::Brotli, 1, "8b71010080aaaaaaeaffae97931c2e0ab0ecb7a38a821c0440414541552e0a0770f12b4da4b8c106639e11359b64027e25fb74202fd60fe70a12381f62caa5b66ec6ef18"),
-            (Format::Brotli, 5, "1be30200c4dc467d255d28039fb7d5c9552762b10eaab02c0d9bbe60ff514b9107e7ba1121a65c6aeb630a04"),
-            (Format::Brotli, 11, "1be302f8c5e6469d9208850df46f1577559cb3580735583478838d58ecff411acf736e38582de5525b1f9300"),
+            (
+                Format::Gzip,
+                1,
+                "1f8b08000000000004ffedd2b90900211040d17cab980616bc8f721c994010159dc4eead4330ffd1e735ea197033fd8b13965a78c3981d098454da58e743fc5ef4165cace000a73b00a6e4020000",
+            ),
+            (
+                Format::Gzip,
+                6,
+                "1f8b08000000000000ffedcab90940210c00d0fe4f91053e781fe3184921888aa6717be710ec5fa39e0137d3bf3861a985378cd9914048a58d753ec4af3df4d0bde800a73b00a6e4020000",
+            ),
+            (
+                Format::Gzip,
+                9,
+                "1f8b08000000000002ffedcab90940210c00d0fe4f91053e781fe3184921888aa6717be710ec5fa39e0137d3bf3861a985378cd9914048a58d753ec4af3df4d0bde800a73b00a6e4020000",
+            ),
+            (
+                Format::Zlib,
+                1,
+                "7801edd2b90900211040d17cab980616bc8f721c994010159dc4eead4330ffd1e735ea197033fd8b13965a78c3981d098454da58e743fc5ef4165cace0003d25ee49",
+            ),
+            (
+                Format::Zlib,
+                6,
+                "789cedcab90940210c00d0fe4f91053e781fe3184921888aa6717be710ec5fa39e0137d3bf3861a985378cd9914048a58d753ec4af3df4d0bde8003d25ee49",
+            ),
+            (
+                Format::Zlib,
+                9,
+                "78daedcab90940210c00d0fe4f91053e781fe3184921888aa6717be710ec5fa39e0137d3bf3861a985378cd9914048a58d753ec4af3df4d0bde8003d25ee49",
+            ),
+            (
+                Format::Zstd,
+                1,
+                "28b52ffd004875010054026e656f6320627974652d73746162696c6974792070726f626520303132333435363738390a0100e5852af504",
+            ),
+            (
+                Format::Zstd,
+                3,
+                "28b52ffd005875010054026e656f6320627974652d73746162696c6974792070726f626520303132333435363738390a0100e5852af504",
+            ),
+            (
+                Format::Zstd,
+                19,
+                "28b52ffd006875010054026e656f6320627974652d73746162696c6974792070726f626520303132333435363738390a0100e5852af504",
+            ),
+            (
+                Format::Brotli,
+                1,
+                "8b71010080aaaaaaeaffae97931c2e0ab0ecb7a38a821c0440414541552e0a0770f12b4da4b8c106639e11359b64027e25fb74202fd60fe70a12381f62caa5b66ec6ef18",
+            ),
+            (
+                Format::Brotli,
+                5,
+                "1be30200c4dc467d255d28039fb7d5c9552762b10eaab02c0d9bbe60ff514b9107e7ba1121a65c6aeb630a04",
+            ),
+            (
+                Format::Brotli,
+                11,
+                "1be302f8c5e6469d9208850df46f1577559cb3580735583478838d58ecff411acf736e38582de5525b1f9300",
+            ),
         ];
         for (format, level, expected) in pinned {
             let packed = encode(format, data.as_bytes(), Some(level)).unwrap();

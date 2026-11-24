@@ -156,7 +156,9 @@ pub mod rusqlite {
                 ::rusqlite::Error::MultipleStatement => Error::MultipleStatements,
                 ::rusqlite::Error::Empty => Error::EmptySql,
                 ::rusqlite::Error::SqliteFailure(failure, _) => match failure.code {
-                    ErrorCode::ConstraintViolation => Error::Constraint { reason, code: failure.extended_code },
+                    ErrorCode::ConstraintViolation => {
+                        Error::Constraint { reason, code: failure.extended_code }
+                    }
                     ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked => Error::Busy { reason },
                     _ => Error::Sql { reason, code: failure.extended_code },
                 },
@@ -230,7 +232,9 @@ pub mod rusqlite {
         fn from(param: Param) -> Self {
             match param {
                 Param::Boolean(flag) => SqlValue::Integer(i64::from(flag)),
-                Param::Number(number) if number.fract() == 0.0 && (-INTEGER_END..INTEGER_END).contains(&number) => {
+                Param::Number(number)
+                    if number.fract() == 0.0 && (-INTEGER_END..INTEGER_END).contains(&number) =>
+                {
                     // whole and in range: the cast is exact
                     #[allow(clippy::cast_possible_truncation)]
                     SqlValue::Integer(number as i64)
@@ -258,7 +262,9 @@ pub mod rusqlite {
                 #[allow(clippy::cast_precision_loss)]
                 ValueRef::Integer(number) => Cell::Number(number as f64),
                 ValueRef::Real(number) => Cell::Number(number),
-                ValueRef::Text(text) => Cell::Text(Bytes(String::from_utf8_lossy(text).into_owned().into_bytes())),
+                ValueRef::Text(text) => {
+                    Cell::Text(Bytes(String::from_utf8_lossy(text).into_owned().into_bytes()))
+                }
                 ValueRef::Blob(bytes) => Cell::Text(Bytes(bytes.to_vec())),
             };
             out.insert(name.clone(), cell);

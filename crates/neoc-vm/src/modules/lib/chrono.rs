@@ -192,7 +192,8 @@ pub mod chrono {
 
     /// A number as the calendar type that holds it.
     fn number<T: TryFrom<i64>>(name: &str, value: i64) -> Result<T, ValueError> {
-        T::try_from(value).map_err(|_| ValueError::OutOfRange { reason: format!("{name} {value} is out of range") })
+        T::try_from(value)
+            .map_err(|_| ValueError::OutOfRange { reason: format!("{name} {value} is out of range") })
     }
 
     fn out_of_range(error: &jiff::Error) -> ValueError {
@@ -214,8 +215,10 @@ pub mod chrono {
 
     /// `jiff::fmt::strtime::format` and not `strftime`: the latter's `Display` panics on a pattern it cannot read.
     fn strftime(pattern: &str, value: impl Into<BrokenDownTime>) -> Result<String, FormatError> {
-        jiff::fmt::strtime::format(pattern, value)
-            .map_err(|error| FormatError::InvalidPattern { pattern: pattern.to_owned(), reason: error.to_string() })
+        jiff::fmt::strtime::format(pattern, value).map_err(|error| FormatError::InvalidPattern {
+            pattern: pattern.to_owned(),
+            reason: error.to_string(),
+        })
     }
 
     /// A calendar date, in no zone. `tostring` gives ISO 8601 (`2026-05-20`).
@@ -284,19 +287,34 @@ pub mod chrono {
         /// This date in another year.
         pub fn with_year(&self, year: i64) -> Result<Date, ValueError> {
             let year = number("year", year)?;
-            self.inner.with().year(year).build().map(|inner| Date { inner }).map_err(|error| out_of_range(&error))
+            self.inner
+                .with()
+                .year(year)
+                .build()
+                .map(|inner| Date { inner })
+                .map_err(|error| out_of_range(&error))
         }
 
         /// This date in another month.
         pub fn with_month(&self, month: i64) -> Result<Date, ValueError> {
             let month = number("month", month)?;
-            self.inner.with().month(month).build().map(|inner| Date { inner }).map_err(|error| out_of_range(&error))
+            self.inner
+                .with()
+                .month(month)
+                .build()
+                .map(|inner| Date { inner })
+                .map_err(|error| out_of_range(&error))
         }
 
         /// This date on another day of its month.
         pub fn with_day(&self, day: i64) -> Result<Date, ValueError> {
             let day = number("day", day)?;
-            self.inner.with().day(day).build().map(|inner| Date { inner }).map_err(|error| out_of_range(&error))
+            self.inner
+                .with()
+                .day(day)
+                .build()
+                .map(|inner| Date { inner })
+                .map_err(|error| out_of_range(&error))
         }
 
         /// This date at a time of day.
@@ -316,7 +334,10 @@ pub mod chrono {
             if span_has_sub_day_units(&duration.inner) {
                 return Err(ArithmeticError::SubDayUnits);
             }
-            self.inner.checked_add(duration.inner).map(|inner| Date { inner }).map_err(|error| overflow(&error))
+            self.inner
+                .checked_add(duration.inner)
+                .map(|inner| Date { inner })
+                .map_err(|error| overflow(&error))
         }
 
         /// The date `duration` earlier. The duration counts in days or longer units.
@@ -324,7 +345,10 @@ pub mod chrono {
             if span_has_sub_day_units(&duration.inner) {
                 return Err(ArithmeticError::SubDayUnits);
             }
-            self.inner.checked_sub(duration.inner).map(|inner| Date { inner }).map_err(|error| overflow(&error))
+            self.inner
+                .checked_sub(duration.inner)
+                .map(|inner| Date { inner })
+                .map_err(|error| overflow(&error))
         }
 
         /// The days from this date until `other` (negative when `other` is earlier).
@@ -470,7 +494,9 @@ pub mod chrono {
 
         /// Read an ISO 8601 datetime (`2026-05-20T13:45:30`).
         pub fn parse(text: String) -> Result<DateTime, ParseError> {
-            civil::DateTime::from_str(&text).map(|inner| DateTime { inner }).map_err(|error| invalid(&text, &error))
+            civil::DateTime::from_str(&text)
+                .map(|inner| DateTime { inner })
+                .map_err(|error| invalid(&text, &error))
         }
 
         /// `"date_time"`: what tells this from the other values `parse` gives.
@@ -551,12 +577,18 @@ pub mod chrono {
 
         /// The datetime `duration` later.
         pub fn plus(&self, duration: Duration) -> Result<DateTime, ArithmeticError> {
-            self.inner.checked_add(duration.inner).map(|inner| DateTime { inner }).map_err(|error| overflow(&error))
+            self.inner
+                .checked_add(duration.inner)
+                .map(|inner| DateTime { inner })
+                .map_err(|error| overflow(&error))
         }
 
         /// The datetime `duration` earlier.
         pub fn minus(&self, duration: Duration) -> Result<DateTime, ArithmeticError> {
-            self.inner.checked_sub(duration.inner).map(|inner| DateTime { inner }).map_err(|error| overflow(&error))
+            self.inner
+                .checked_sub(duration.inner)
+                .map(|inner| DateTime { inner })
+                .map_err(|error| overflow(&error))
         }
 
         /// The span from this datetime until `other` (negative when `other` is earlier).
@@ -943,7 +975,9 @@ pub mod chrono {
             }
             // RFC 3339 with `Z` or an offset and no `[zone]`: the instant is known, the zone is not.
             if let Ok(timestamp) = Timestamp::from_str(&text) {
-                return Ok(Temporal::Zoned(ZonedDateTime { inner: timestamp.to_zoned_datetime(TimeZone::UTC) }));
+                return Ok(Temporal::Zoned(ZonedDateTime {
+                    inner: timestamp.to_zoned_datetime(TimeZone::UTC),
+                }));
             }
             if let Ok(inner) = civil::DateTime::from_str(&text) {
                 return Ok(Temporal::DateTime(DateTime { inner }));
@@ -1022,7 +1056,10 @@ mod tests {
         "#,
         );
         assert!(nil.is_nil());
-        assert_eq!((kind.as_str(), text.as_str(), op.as_str()), ("invalid", "not a date", "lib:chrono.Date.parse"));
+        assert_eq!(
+            (kind.as_str(), text.as_str(), op.as_str()),
+            ("invalid", "not a date", "lib:chrono.Date.parse")
+        );
     }
 
     #[test]
@@ -1244,7 +1281,10 @@ mod tests {
             return tostring(z:date()), tostring(z:time()), tostring(z:datetime())
         "#,
         );
-        assert_eq!((date.as_str(), time.as_str(), datetime.as_str()), ("2026-01-20", "16:30:00", "2026-01-20T16:30:00"));
+        assert_eq!(
+            (date.as_str(), time.as_str(), datetime.as_str()),
+            ("2026-01-20", "16:30:00", "2026-01-20T16:30:00")
+        );
     }
 
     #[test]
@@ -1334,7 +1374,10 @@ mod tests {
             return kinds
         "#,
         );
-        assert_eq!(kinds, ["zoned_date_time", "zoned_date_time", "zoned_date_time", "date_time", "date", "time"]);
+        assert_eq!(
+            kinds,
+            ["zoned_date_time", "zoned_date_time", "zoned_date_time", "date_time", "date", "time"]
+        );
     }
 
     #[test]

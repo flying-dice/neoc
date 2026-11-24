@@ -87,8 +87,8 @@ pub mod bollard {
     use bollard::exec::StartExecResults;
     use bollard::models::{
         self, ContainerCreateBody, ContainerCreateResponse, ContainerInspectResponse, ContainerStatsResponse,
-        ContainerSummary, CreateImageInfo, EventMessage, ExecConfig, ImageDeleteResponseItem, ImageSummary, Network,
-        NetworkCreateRequest, NetworkCreateResponse, SystemInfo, SystemVersion, VolumeCreateRequest,
+        ContainerSummary, CreateImageInfo, EventMessage, ExecConfig, ImageDeleteResponseItem, ImageSummary,
+        Network, NetworkCreateRequest, NetworkCreateResponse, SystemInfo, SystemVersion, VolumeCreateRequest,
     };
     use bollard::query_parameters as query;
     use bollard::{API_DEFAULT_VERSION, Docker};
@@ -101,8 +101,8 @@ pub mod bollard {
 
     use super::args::{
         ConnectOptions, ContainerName, CreateContainer, Events, ExecOptions, Filtered, ImageRef, Kill,
-        ListContainers, ListImages, Logs, NetworkName, Pull, RemoveContainer, RemoveImage, RemoveVolume, Stop,
-        VolumeName, clamped,
+        ListContainers, ListImages, Logs, NetworkName, Pull, RemoveContainer, RemoveImage, RemoveVolume,
+        Stop, VolumeName, clamped,
     };
     use super::error::DockerError;
     use super::stream;
@@ -188,7 +188,9 @@ pub mod bollard {
             None => DEFAULT_TIMEOUT,
             Some(secs) if secs.is_finite() && secs > 0.0 => Duration::try_from_secs_f64(secs)
                 .map_err(|_| DockerError::invalid_input("option \"timeout\" is too long"))?,
-            Some(_) => return Err(DockerError::invalid_input("option \"timeout\" must be more than zero seconds")),
+            Some(_) => {
+                return Err(DockerError::invalid_input("option \"timeout\" must be more than zero seconds"));
+            }
         };
         let host = match opts.host {
             Some(host) => host,
@@ -352,11 +354,10 @@ pub mod bollard {
         type Error = DockerError;
 
         fn try_from(volume: models::Volume) -> Result<Self, DockerError> {
-            let created_at = volume
-                .created_at
-                .map(|date| date.format(&Rfc3339))
-                .transpose()
-                .map_err(|e| DockerError::BadResponse { reason: format!("the volume's CreatedAt is no date: {e}") })?;
+            let created_at =
+                volume.created_at.map(|date| date.format(&Rfc3339)).transpose().map_err(|e| {
+                    DockerError::BadResponse { reason: format!("the volume's CreatedAt is no date: {e}") }
+                })?;
             Ok(Self {
                 name: volume.name,
                 driver: volume.driver,
@@ -369,7 +370,9 @@ pub mod bollard {
                     Some(models::VolumeScopeEnum::EMPTY) | None => None,
                 },
                 options: volume.options,
-                usage_data: volume.usage_data.map(|usage| VolumeUsage { size: usage.size, ref_count: usage.ref_count }),
+                usage_data: volume
+                    .usage_data
+                    .map(|usage| VolumeUsage { size: usage.size, ref_count: usage.ref_count }),
             })
         }
     }
@@ -504,8 +507,10 @@ pub mod bollard {
 
         /// Stop a container as `stop_container` does and start it again.
         pub async fn restart_container(&self, name: ContainerName, opts: Stop) -> Result<(), DockerError> {
-            let options =
-                query::RestartContainerOptions { signal: opts.signal.map(|signal| signal.0), t: opts.timeout };
+            let options = query::RestartContainerOptions {
+                signal: opts.signal.map(|signal| signal.0),
+                t: opts.timeout,
+            };
             self.api().await?.restart_container(&name.0, Some(options)).await?;
             Ok(())
         }
@@ -533,7 +538,11 @@ pub mod bollard {
         }
 
         /// Remove a container. A running one is `conflict` unless `force`, which kills it first.
-        pub async fn remove_container(&self, name: ContainerName, opts: RemoveContainer) -> Result<(), DockerError> {
+        pub async fn remove_container(
+            &self,
+            name: ContainerName,
+            opts: RemoveContainer,
+        ) -> Result<(), DockerError> {
             let options = query::RemoveContainerOptions { force: opts.force, v: opts.volumes, link: false };
             self.api().await?.remove_container(&name.0, Some(options)).await?;
             Ok(())
@@ -570,7 +579,10 @@ pub mod bollard {
 
         /// One reading of a container's resource use: Docker's stats (`cpu_stats`, `memory_stats`, `networks`,
         /// `blkio_stats`, ...).
-        pub async fn stats(&self, name: ContainerName) -> Result<Foreign<ContainerStatsResponse>, DockerError> {
+        pub async fn stats(
+            &self,
+            name: ContainerName,
+        ) -> Result<Foreign<ContainerStatsResponse>, DockerError> {
             let options = query::StatsOptions { stream: false, one_shot: true };
             let reading = self.api().await?.stats(&name.0, Some(options)).next().await;
             match reading {

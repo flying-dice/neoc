@@ -151,13 +151,17 @@ mod tests {
     #[test]
     fn a_docker_status_maps_to_its_kind_and_keeps_dockers_message() {
         let not_found = of(404, "No such container: web");
-        assert_eq!((not_found.kind(), not_found.to_string().as_str()), ("not_found", "No such container: web"));
+        assert_eq!(
+            (not_found.kind(), not_found.to_string().as_str()),
+            ("not_found", "No such container: web")
+        );
         assert_eq!(of(409, "name in use").kind(), "conflict");
         assert_eq!(of(400, "bad parameter").kind(), "invalid_input");
         assert_eq!(of(500, "boom"), DockerError::Api { reason: "boom".to_owned(), status: Some(500) });
         assert_eq!(of(500, "boom").to_string(), "boom (status 500)");
         assert_eq!(of(503, "").to_string(), "Docker answered with status 503");
-        let in_a_stream = DockerError::from(Error::DockerStreamError { error: "pull access denied".to_owned() });
+        let in_a_stream =
+            DockerError::from(Error::DockerStreamError { error: "pull access denied".to_owned() });
         assert_eq!(in_a_stream, DockerError::Api { reason: "pull access denied".to_owned(), status: None });
         assert_eq!(in_a_stream.to_string(), "pull access denied");
     }
@@ -177,11 +181,11 @@ mod tests {
         let api = mlua_ir::error_value(&of(500, "boom"), &lua, "vnd:bollard.Client:ping").unwrap();
         lua.globals().set("api", api).unwrap();
         let large = DockerError::TooLarge { limit: 64 };
-        lua.globals().set("large", mlua_ir::error_value(&large, &lua, "vnd:bollard.Client:exec").unwrap()).unwrap();
-        let (kind, reason, status, text, limit): (String, String, u16, String, u64) = lua
-            .load("return api.kind, api.reason, api.status, tostring(api), large.limit")
-            .eval()
+        lua.globals()
+            .set("large", mlua_ir::error_value(&large, &lua, "vnd:bollard.Client:exec").unwrap())
             .unwrap();
+        let (kind, reason, status, text, limit): (String, String, u16, String, u64) =
+            lua.load("return api.kind, api.reason, api.status, tostring(api), large.limit").eval().unwrap();
         assert_eq!((kind.as_str(), reason.as_str(), status, limit), ("api", "boom", 500, 64));
         assert_eq!(text, "vnd:bollard.Client:ping: api: boom (status 500)");
     }

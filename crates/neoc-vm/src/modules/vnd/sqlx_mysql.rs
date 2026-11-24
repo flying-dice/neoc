@@ -84,8 +84,8 @@ pub mod sqlx_mysql {
     use sqlx::pool::{PoolConnection, PoolOptions};
     use sqlx::query::Query;
     use sqlx::{
-        AssertSqlSafe, Column, ConnectOptions, Decode, Either, Executor as _, Row as _, SqlSafeStr as _, Statement as _,
-        TypeInfo, ValueRef,
+        AssertSqlSafe, Column, ConnectOptions, Decode, Either, Executor as _, Row as _, SqlSafeStr as _,
+        Statement as _, TypeInfo, ValueRef,
     };
     use tracing::log::LevelFilter;
 
@@ -267,7 +267,9 @@ pub mod sqlx_mysql {
             query = match value {
                 None => query.bind(Option::<i64>::None),
                 Some(Param::Boolean(flag)) => query.bind(flag),
-                Some(Param::Number(number)) if number.fract() == 0.0 && (-BIGINT_END..BIGINT_END).contains(&number) => {
+                Some(Param::Number(number))
+                    if number.fract() == 0.0 && (-BIGINT_END..BIGINT_END).contains(&number) =>
+                {
                     // whole and in range: the cast is exact
                     #[allow(clippy::cast_possible_truncation)]
                     query.bind(number as i64)
@@ -298,7 +300,11 @@ pub mod sqlx_mysql {
         bound(sql, params).fetch_all(&mut *connection).await?.iter().map(read_row).collect()
     }
 
-    async fn query_one(pool: &MySqlPool, sql: &str, params: Vec<Option<Param>>) -> Result<Option<Row>, Error> {
+    async fn query_one(
+        pool: &MySqlPool,
+        sql: &str,
+        params: Vec<Option<Param>>,
+    ) -> Result<Option<Row>, Error> {
         if pool.is_closed() {
             return Err(Error::Closed);
         }
@@ -311,7 +317,8 @@ pub mod sqlx_mysql {
         let mut out = Row::with_capacity(columns.len());
         for column in columns {
             let decode = |reason: String| Error::Decode { column: column.name().to_owned(), reason };
-            let raw: MySqlValueRef<'_> = row.try_get_raw(column.ordinal()).map_err(|error| decode(error.to_string()))?;
+            let raw: MySqlValueRef<'_> =
+                row.try_get_raw(column.ordinal()).map_err(|error| decode(error.to_string()))?;
             if raw.is_null() {
                 continue;
             }
@@ -349,8 +356,8 @@ pub mod sqlx_mysql {
     /// ```
     #[host("Wait")]
     pub async fn open(url: String) -> Result<Database, OpenError> {
-        let options =
-            MySqlConnectOptions::from_str(&url).map_err(|error| OpenError::InvalidUrl { reason: error.to_string() })?;
+        let options = MySqlConnectOptions::from_str(&url)
+            .map_err(|error| OpenError::InvalidUrl { reason: error.to_string() })?;
         // sqlx logs every statement at INFO by default, which is most of the cost of a hot path: off. The larger
         // statement cache keeps reused SQL prepared.
         let options = options
@@ -379,7 +386,11 @@ pub mod sqlx_mysql {
 
         /// Run one SELECT; its first row, or `nil` when it has none.
         #[host("Wait")]
-        pub async fn query_one(&self, sql: String, params: Variadic<Option<Param>>) -> Result<Option<Row>, Error> {
+        pub async fn query_one(
+            &self,
+            sql: String,
+            params: Variadic<Option<Param>>,
+        ) -> Result<Option<Row>, Error> {
             query_one(&self.pool, &sql, params.0).await
         }
 
@@ -590,7 +601,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[ignore = "needs a MySQL server: set NEOC_TEST_MYSQL_URL"]
     async fn against_a_server() {
-        let url = std::env::var("NEOC_TEST_MYSQL_URL").expect("NEOC_TEST_MYSQL_URL is the server to test against");
+        let url =
+            std::env::var("NEOC_TEST_MYSQL_URL").expect("NEOC_TEST_MYSQL_URL is the server to test against");
         let lua = make_engine().unwrap();
         lua.globals().set("URL", url).unwrap();
         lua.load(SERVER_SCRIPT).exec_async().await.unwrap();

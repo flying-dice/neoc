@@ -177,7 +177,9 @@ mod tests {
         let err =
             lua.load(r#"return require("lib:base46")"#).eval::<Table>().expect_err("unknown").to_string();
         assert!(
-            err.contains(r#"did you mean "lib:base64"?"#) && err.contains("available: lib:") && err.contains(", lib:base64,"),
+            err.contains(r#"did you mean "lib:base64"?"#)
+                && err.contains("available: lib:")
+                && err.contains(", lib:base64,"),
             "{err}"
         );
         let bare = lua.load(r#"return require("base64")"#).eval::<Table>().expect_err("unknown").to_string();

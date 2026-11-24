@@ -267,10 +267,12 @@ mod tests {
     /// `install_allowed`, and nothing at all (no worker) on a bare engine.
     #[test]
     fn a_worker_engine_offers_what_its_parent_was_offered() {
-        let require = |lua: &Lua, name: &str| lua.load(format!("return require({name:?})")).eval::<mlua::Table>();
+        let require =
+            |lua: &Lua, name: &str| lua.load(format!("return require({name:?})")).eval::<mlua::Table>();
 
         let full = make_engine().expect("engine");
-        let worker = worker_engine(&full).expect("a full engine has a worker engine")(Life::new()).expect("worker");
+        let worker =
+            worker_engine(&full).expect("a full engine has a worker engine")(Life::new()).expect("worker");
         assert!(require(&worker, "std:time").is_ok() && require(&worker, "lib:base64").is_ok());
         assert!(worker_engine(&worker).is_some(), "a worker can start workers of its own");
 
@@ -317,7 +319,9 @@ mod tests {
     fn assert_returns_every_argument_and_keeps_string_messages() {
         let lua = make_engine().expect("engine");
         let (a, b, c, count): (i64, String, bool, i64) = lua
-            .load(r##"local a, b, c = assert(1, "two", false) return a, b, c, select("#", assert(1, nil, 3))"##)
+            .load(
+                r##"local a, b, c = assert(1, "two", false) return a, b, c, select("#", assert(1, nil, 3))"##,
+            )
             .eval()
             .expect("script");
         assert_eq!((a, b.as_str(), c, count), (1, "two", false, 3));

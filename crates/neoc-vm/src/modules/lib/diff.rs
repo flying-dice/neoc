@@ -39,9 +39,7 @@ pub mod diff {
     use serde::{Deserialize, Serialize};
     use similar::{ChangeTag, TextDiff};
 
-    use super::{
-        DEFAULT_CONTEXT, MAX_CONTEXT, NO_NEWLINE_MARKER, SimilarAlgorithm, wide,
-    };
+    use super::{DEFAULT_CONTEXT, MAX_CONTEXT, NO_NEWLINE_MARKER, SimilarAlgorithm, wide};
 
     /// What a change does to the old text.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Shape)]
@@ -280,9 +278,7 @@ pub mod diff {
     // Change lists.
 
     fn compute(text: TextDiff<'_, '_, str>) -> Vec<Change> {
-        text.iter_all_changes()
-            .map(|c| Change { op: op_of(c.tag()), value: c.value().to_owned() })
-            .collect()
+        text.iter_all_changes().map(|c| Change { op: op_of(c.tag()), value: c.value().to_owned() }).collect()
     }
 
     fn op_of(tag: ChangeTag) -> Op {
@@ -332,7 +328,10 @@ pub mod diff {
             let (Some(first), Some(last)) = (group.first(), group.last()) else {
                 continue;
             };
-            let (old_range, new_range) = (first.old_range().start..last.old_range().end, first.new_range().start..last.new_range().end);
+            let (old_range, new_range) = (
+                first.old_range().start..last.old_range().end,
+                first.new_range().start..last.new_range().end,
+            );
             let mut lines = Vec::new();
             for op in &group {
                 for change in text.iter_changes(op) {
@@ -569,10 +568,18 @@ pub mod diff {
             let number = wide(index + 1);
             let anchor = decode_anchor(hunk.old_start as usize, hunk.old_count as usize);
             if anchor > original.len() {
-                return Err(ApplyError::StartsPastEnd { hunk: number, line: hunk.old_start, total: wide(original.len()) });
+                return Err(ApplyError::StartsPastEnd {
+                    hunk: number,
+                    line: hunk.old_start,
+                    total: wide(original.len()),
+                });
             }
             if anchor < cursor {
-                return Err(ApplyError::OutOfOrder { hunk: number, line: hunk.old_start, cursor: wide(cursor + 1) });
+                return Err(ApplyError::OutOfOrder {
+                    hunk: number,
+                    line: hunk.old_start,
+                    cursor: wide(cursor + 1),
+                });
             }
             out.extend_from_slice(&original[cursor..anchor]);
             cursor = anchor;
@@ -629,7 +636,10 @@ pub mod diff {
     pub fn apply_changes(original: String, changes: Vec<Change>) -> Result<String, ChangesError> {
         let kept: String = changes.iter().filter(|c| c.op != Op::Insert).map(|c| c.value.as_str()).collect();
         if kept != original {
-            return Err(ChangesError::DoesNotReconstruct { got: kept.len() as u64, expected: original.len() as u64 });
+            return Err(ChangesError::DoesNotReconstruct {
+                got: kept.len() as u64,
+                expected: original.len() as u64,
+            });
         }
         Ok(changes.iter().filter(|c| c.op != Op::Delete).map(|c| c.value.as_str()).collect())
     }
@@ -858,7 +868,10 @@ mod tests {
         "#,
         );
         assert_eq!((a.as_str(), b.as_str()), ("b", "B"));
-        assert_eq!(eval::<String>(r#"return diff.unified("a\nb\n", "a\nB\n").hunks[1].lines[2].value"#), "b\n");
+        assert_eq!(
+            eval::<String>(r#"return diff.unified("a\nb\n", "a\nB\n").hunks[1].lines[2].value"#),
+            "b\n"
+        );
     }
 
     #[test]
@@ -900,7 +913,10 @@ mod tests {
         assert_eq!(parse_error("--- a\\n+++ b\\n@@ not a header @@\\n").0, "invalid_hunk_header");
         assert_eq!(parse_error("--- a\\n+++ b\\n@@@ -1 +1 @@\\n").0, "invalid_hunk_header");
         assert_eq!(parse_error("--- a\\n+++ b\\n@@ -1,1 +1,1 @@\\n?x\\n").0, "invalid_line");
-        assert_eq!(parse_error("--- a\\n+++ b\\n@@ -1,0 +1,0 @@\\n\\\\ No newline at end of file\\n").0, "invalid_marker");
+        assert_eq!(
+            parse_error("--- a\\n+++ b\\n@@ -1,0 +1,0 @@\\n\\\\ No newline at end of file\\n").0,
+            "invalid_marker"
+        );
     }
 
     #[test]
@@ -930,7 +946,10 @@ mod tests {
 
     #[test]
     fn apply_round_trips() {
-        assert_eq!(round_trip("alpha\\nbravo\\ncharlie\\n", "alpha\\nBRAVO\\ncharlie\\n", "nil"), "alpha\nBRAVO\ncharlie\n");
+        assert_eq!(
+            round_trip("alpha\\nbravo\\ncharlie\\n", "alpha\\nBRAVO\\ncharlie\\n", "nil"),
+            "alpha\nBRAVO\ncharlie\n"
+        );
         assert_eq!(round_trip("alpha\\nbravo", "alpha\\nBRAVO", "nil"), "alpha\nBRAVO");
         assert_eq!(round_trip("\\n\\n", "\\n\\n\\n", "nil"), "\n\n\n");
         assert_eq!(round_trip("a", "a\\nb", "nil"), "a\nb");
@@ -956,7 +975,11 @@ mod tests {
     fn both_algorithms_round_trip() {
         for alg in ["patience", "myers"] {
             assert_eq!(
-                round_trip("alpha\\nbravo\\ncharlie\\ndelta\\necho\\n", "alpha\\nBRAVO\\ncharlie\\nDELTA\\necho\\n", &format!(r#"{{ algorithm = "{alg}" }}"#)),
+                round_trip(
+                    "alpha\\nbravo\\ncharlie\\ndelta\\necho\\n",
+                    "alpha\\nBRAVO\\ncharlie\\nDELTA\\necho\\n",
+                    &format!(r#"{{ algorithm = "{alg}" }}"#)
+                ),
                 "alpha\nBRAVO\ncharlie\nDELTA\necho\n"
             );
         }
@@ -969,7 +992,9 @@ mod tests {
         assert_eq!(round_trip("a\\nb\\n", "X\\na\\nb\\n", ctx), "X\na\nb\n");
         assert_eq!(round_trip("a\\nb\\n", "a\\nINSERTED\\nb\\n", ctx), "a\nINSERTED\nb\n");
         assert_eq!(round_trip("a\\nb\\n", "a\\nb\\nZ\\n", ctx), "a\nb\nZ\n");
-        let header: String = eval(r#"return diff.format(diff.unified("a\nb\n", "a\nb\nc\n", { context = 0 })):match("@@[^\n]*")"#);
+        let header: String = eval(
+            r#"return diff.format(diff.unified("a\nb\n", "a\nb\nc\n", { context = 0 })):match("@@[^\n]*")"#,
+        );
         assert_eq!(header, "@@ -2,0 +3,1 @@");
     }
 
@@ -995,7 +1020,15 @@ mod tests {
 
     #[test]
     fn apply_context_mismatch_is_a_typed_error() {
-        let (kind, hunk, line, op, expected, found, text): (String, u32, u32, String, String, String, String) = eval(
+        let (kind, hunk, line, op, expected, found, text): (
+            String,
+            u32,
+            u32,
+            String,
+            String,
+            String,
+            String,
+        ) = eval(
             r#"
             local patch = diff.format(diff.unified("alpha\nbravo\ncharlie\n", "alpha\nBRAVO\ncharlie\n"))
             local out, e = diff.apply("alpha\nBRAVO_NOT\ncharlie\n", patch)
@@ -1074,7 +1107,10 @@ mod tests {
     #[test]
     fn an_invalid_op_is_refused_as_an_argument() {
         let err = refused(r#"return diff.apply_changes("x", { { op = "swap", value = "x" } })"#);
-        assert!(err.contains("lib:diff.apply_changes: argument #2 'changes'") && err.contains("swap"), "{err}");
+        assert!(
+            err.contains("lib:diff.apply_changes: argument #2 'changes'") && err.contains("swap"),
+            "{err}"
+        );
         let err = refused(r#"return diff.apply_changes("x", { { op = "equal" } })"#);
         assert!(err.contains("argument #2 'changes'"), "{err}");
     }

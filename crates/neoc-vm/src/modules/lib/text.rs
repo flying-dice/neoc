@@ -204,7 +204,9 @@ fn fill_char(text: &str) -> Result<(), String> {
 
 #[mlua_ir::module("lib:text")]
 pub mod text {
-    use heck::{ToKebabCase, ToLowerCamelCase, ToShoutySnakeCase, ToSnakeCase, ToTitleCase, ToUpperCamelCase};
+    use heck::{
+        ToKebabCase, ToLowerCamelCase, ToShoutySnakeCase, ToSnakeCase, ToTitleCase, ToUpperCamelCase,
+    };
     use mlua_ir::{Bytes, LuaError, Options, Shape, Text};
     use serde::{Deserialize, Serialize};
 
@@ -392,7 +394,12 @@ pub mod text {
         format!("{prefix}{ELLIPSIS}")
     }
 
-    fn padded(text: String, width: u32, fill: Option<Fill>, split: impl Fn(usize) -> (usize, usize)) -> Result<String, TextError> {
+    fn padded(
+        text: String,
+        width: u32,
+        fill: Option<Fill>,
+        split: impl Fn(usize) -> (usize, usize),
+    ) -> Result<String, TextError> {
         if width > MAX_WIDTH {
             return Err(TextError::TooLarge { requested: width, max: MAX_WIDTH });
         }
@@ -494,7 +501,9 @@ pub mod text {
 
 #[cfg(test)]
 mod tests {
-    use heck::{ToKebabCase, ToLowerCamelCase, ToShoutySnakeCase, ToSnakeCase, ToTitleCase, ToUpperCamelCase};
+    use heck::{
+        ToKebabCase, ToLowerCamelCase, ToShoutySnakeCase, ToSnakeCase, ToTitleCase, ToUpperCamelCase,
+    };
     use mlua::Lua;
 
     use super::*;
@@ -635,7 +644,10 @@ mod tests {
 
     #[test]
     fn truncate_unknown_boundary_is_refused() {
-        assert!(refused(r#"return text.truncate("hello", 3, { boundary = "line" })"#).contains("argument #3 'opts'"));
+        assert!(
+            refused(r#"return text.truncate("hello", 3, { boundary = "line" })"#)
+                .contains("argument #3 'opts'")
+        );
     }
 
     #[test]
@@ -767,6 +779,9 @@ mod tests {
 
     #[test]
     fn a_non_string_argument_is_refused_with_its_place() {
-        assert!(refused("return text.slugify(1)").contains("lib:text.slugify: argument #1 'text': expected a string"));
+        assert!(
+            refused("return text.slugify(1)")
+                .contains("lib:text.slugify: argument #1 'text': expected a string")
+        );
     }
 }

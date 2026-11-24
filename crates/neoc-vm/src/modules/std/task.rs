@@ -135,7 +135,8 @@ pub mod task {
     /// ```
     pub fn delay(lua: &Lua, secs: f64, body: Body, args: Variadic<Live<TaskArgument>>) -> mlua::Result<Task> {
         let after = sleep_duration(secs);
-        scheduler::delay(lua, after, Routine::Function(body.into_function()), passed_on(args.0)).map(Task::from)
+        scheduler::delay(lua, after, Routine::Function(body.into_function()), passed_on(args.0))
+            .map(Task::from)
     }
 
     /// Wait `secs` seconds without blocking other tasks; the seconds that actually passed. Not a number and
@@ -292,7 +293,10 @@ mod tests {
         assert!(refused[1].contains("std:task.cancel: argument #1 'task'"), "{refused:#?}");
         assert!(refused[2].contains("std:task.wait: argument #1 'secs': expected a number"), "{refused:#?}");
         assert!(refused[3].contains("std:task.wait: argument #1 'secs': expected a number"), "{refused:#?}");
-        assert!(refused[4].contains("std:task.spawn: argument #1 'body': expected a function"), "{refused:#?}");
+        assert!(
+            refused[4].contains("std:task.spawn: argument #1 'body': expected a function"),
+            "{refused:#?}"
+        );
         assert!(refused[5].contains("std:task.delay: argument #1 'secs': expected a number"), "{refused:#?}");
     }
 

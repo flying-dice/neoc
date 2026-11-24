@@ -404,7 +404,10 @@ mod tests {
             .eval()
             .unwrap();
         assert_eq!((kind.as_str(), reason.as_str(), port), ("docker", "no daemon", 1234));
-        assert_eq!(text, "vnd:testcontainers_modules.generic: not_exposed: port 1234 was not exposed at start");
+        assert_eq!(
+            text,
+            "vnd:testcontainers_modules.generic: not_exposed: port 1234 was not exposed at start"
+        );
     }
 
     /// neoc's Luau suite for the module, against the Docker daemon of this machine:

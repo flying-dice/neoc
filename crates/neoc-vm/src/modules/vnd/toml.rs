@@ -40,7 +40,9 @@ fn plain(value: ::toml::Value) -> serde_json::Value {
         ::toml::Value::Boolean(flag) => Json::Bool(flag),
         ::toml::Value::Datetime(datetime) => Json::String(datetime.to_string()),
         ::toml::Value::Array(items) => Json::Array(items.into_iter().map(plain).collect()),
-        ::toml::Value::Table(entries) => Json::Object(entries.into_iter().map(|(key, item)| (key, plain(item))).collect()),
+        ::toml::Value::Table(entries) => {
+            Json::Object(entries.into_iter().map(|(key, item)| (key, plain(item))).collect())
+        }
     }
 }
 
@@ -252,7 +254,8 @@ mod tests {
 
     #[test]
     fn an_empty_text_is_an_empty_document() {
-        let ok: bool = eval(r#"local doc, err = toml.decode_string(""); return err == nil and next(doc) == nil"#);
+        let ok: bool =
+            eval(r#"local doc, err = toml.decode_string(""); return err == nil and next(doc) == nil"#);
         assert!(ok);
     }
 
@@ -276,7 +279,10 @@ mod tests {
             return { doc.t, doc.d, doc.at, doc.local_at, doc.list[1] }
             "#,
         );
-        assert_eq!(seen, ["07:32", "1979-05-27", "1979-05-27T07:32:00Z", "1979-05-27T07:32:00.5", "1979-05-27"]);
+        assert_eq!(
+            seen,
+            ["07:32", "1979-05-27", "1979-05-27T07:32:00Z", "1979-05-27T07:32:00.5", "1979-05-27"]
+        );
     }
 
     #[test]
@@ -292,7 +298,8 @@ mod tests {
         assert!(column > 1, "the column is where the parser stopped: {column}");
         assert!(text.starts_with("vnd:toml.decode_string: syntax: line 2, column "), "got: {text}");
 
-        let duplicate: String = eval(r#"local _, err = toml.decode_string("a = 1\na = 2"); return err.reason"#);
+        let duplicate: String =
+            eval(r#"local _, err = toml.decode_string("a = 1\na = 2"); return err.reason"#);
         assert!(duplicate.contains("duplicate key"), "got: {duplicate}");
     }
 
@@ -387,7 +394,10 @@ mod tests {
             "#,
         );
         assert_eq!(refused.len(), 6);
-        assert!(refused.iter().all(|e| e.contains("argument #1 'value'") && e.contains("byte array")), "{refused:#?}");
+        assert!(
+            refused.iter().all(|e| e.contains("argument #1 'value'") && e.contains("byte array")),
+            "{refused:#?}"
+        );
     }
 
     #[test]
@@ -476,7 +486,10 @@ mod tests {
         assert_eq!(written, "", "nothing reaches the writer");
         assert_eq!(seen[0], "vnd:toml.encode_to");
         assert_eq!(seen[1], "vnd:toml.encode_to: io: read-only");
-        assert!(seen[2].contains("vnd:toml.encode_to: argument #1 'value'") && seen[2].contains("byte array"), "{seen:#?}");
+        assert!(
+            seen[2].contains("vnd:toml.encode_to: argument #1 'value'") && seen[2].contains("byte array"),
+            "{seen:#?}"
+        );
     }
 
     #[test]

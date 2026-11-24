@@ -59,7 +59,10 @@ impl SmallDraws {
     }
 
     /// `next_u32` with the entropy source passed in, so a test can inject a failing one.
-    fn next_u32_from(&mut self, fill: &mut dyn FnMut(&mut [u8]) -> Result<(), String>) -> Result<u32, String> {
+    fn next_u32_from(
+        &mut self,
+        fill: &mut dyn FnMut(&mut [u8]) -> Result<(), String>,
+    ) -> Result<u32, String> {
         if self.pos + 4 > self.buf.len() {
             self.buf.resize(self.chunk, 0);
             if let Err(e) = fill(&mut self.buf) {
@@ -70,7 +73,8 @@ impl SmallDraws {
             }
             self.pos = 0;
         }
-        let bytes = [self.buf[self.pos], self.buf[self.pos + 1], self.buf[self.pos + 2], self.buf[self.pos + 3]];
+        let bytes =
+            [self.buf[self.pos], self.buf[self.pos + 1], self.buf[self.pos + 2], self.buf[self.pos + 3]];
         self.pos += 4;
         Ok(u32::from_le_bytes(bytes))
     }
@@ -264,10 +268,10 @@ pub mod random {
 
     /// 16 raw bytes as a canonical hyphenated UUID string.
     pub fn uuid_format(input: Bytes) -> Result<String, UuidError> {
-        let arr: [u8; 16] = input
-            .0.as_slice()
-            .try_into()
-            .map_err(|_| UuidError::WrongLength { length: u32::try_from(input.len()).unwrap_or(u32::MAX) })?;
+        let arr: [u8; 16] =
+            input.0.as_slice().try_into().map_err(|_| UuidError::WrongLength {
+                length: u32::try_from(input.len()).unwrap_or(u32::MAX),
+            })?;
         Ok(Uuid::from_bytes(arr).to_string())
     }
 }
@@ -331,7 +335,10 @@ mod tests {
     #[test]
     fn a_negative_count_is_refused_with_its_place() {
         let err = refused("return rng.random_bytes(-1)");
-        assert!(err.contains("lib:random.random_bytes: argument #1 'n_bytes': expected a whole number from 0 to"), "{err}");
+        assert!(
+            err.contains("lib:random.random_bytes: argument #1 'n_bytes': expected a whole number from 0 to"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -367,7 +374,8 @@ mod tests {
     #[test]
     fn random_int_covers_full_range() {
         let lua = engine();
-        let seen: HashSet<i64> = (0..500).map(|_| lua.load("return rng.random_int(0, 3)").eval().unwrap()).collect();
+        let seen: HashSet<i64> =
+            (0..500).map(|_| lua.load("return rng.random_int(0, 3)").eval().unwrap()).collect();
         for x in 0..=3 {
             assert!(seen.contains(&x), "value {x} never appeared in 500 draws");
         }
