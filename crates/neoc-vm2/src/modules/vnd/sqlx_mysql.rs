@@ -22,7 +22,8 @@
 //! wait for a free one), so one `Database` is safe to share between coroutines that query at once.
 //!
 //! Parameters: the arguments after the SQL (`db:execute(sql, a, b)`; every argument of `stmt:execute(a, b)`) are
-//! the values for the statement's `?` placeholders, in order. A `nil` binds `NULL`, the last one too. A boolean
+//! the values for the statement's `?` placeholders, in order: as many values as placeholders, or the error is
+//! `parameter_count`. A `nil` binds `NULL`, the last one too. A boolean
 //! binds as a boolean, a whole number as BIGINT, any other number as DOUBLE, a string as text when it is UTF-8
 //! and as bytes otherwise.
 //!
@@ -34,7 +35,10 @@
 //! - A parameter that is not a boolean, a number or a string (and SQL that is not a string) is refused as an
 //!   argument; it was a returned error.
 //! - A failure is a typed error: `OpenError` (`invalid_url`, `connect`) and `Error` (`closed`, `constraint`,
-//!   `database`, `connection`, `pool_timed_out`, `decode`, `other`).
+//!   `database`, `parameter_count`, `connection`, `pool_timed_out`, `decode`, `other`).
+//! - A call with more or fewer values than the statement has placeholders is the typed error `parameter_count`
+//!   (`given`, `expected`), and nothing is run: it was the driver's `connection` error, after which `close` waited
+//!   for ever.
 //! - A value that does not decode is the returned error `decode` with its column; it was raised.
 //! - A statement's errors name `vnd:sqlx_mysql.Statement:execute` as their `op` (it was `mysql.statement.execute`).
 
@@ -77,9 +81,12 @@ pub mod sqlx_mysql {
     use serde::{Deserialize, Serialize};
     use sqlx::error::ErrorKind;
     use sqlx::mysql::{MySql, MySqlArguments, MySqlConnectOptions, MySqlPool, MySqlRow, MySqlValueRef};
-    use sqlx::pool::PoolOptions;
+    use sqlx::pool::{PoolConnection, PoolOptions};
     use sqlx::query::Query;
-    use sqlx::{AssertSqlSafe, Column, ConnectOptions, Decode, Row as _, TypeInfo, ValueRef};
+    use sqlx::{
+        AssertSqlSafe, Column, ConnectOptions, Decode, Either, Executor as _, Row as _, SqlSafeStr as _, Statement as _,
+        TypeInfo, ValueRef,
+    };
     use tracing::log::LevelFilter;
 
     use super::{Kind, classify};
@@ -166,13 +173,21 @@ pub mod sqlx_mysql {
             /// The SQLSTATE the server gave (`23000`).
             code: Option<String>,
         },
-        /// The server refused the statement: a syntax error, a missing table, a wrong number of parameters.
+        /// The server refused the statement: a syntax error, a missing table.
         #[error("{reason}")]
         Database {
             /// What the server said.
             reason: String,
             /// The SQLSTATE the server gave (`42000` for a syntax error).
             code: Option<String>,
+        },
+        /// The call gave more or fewer values than the statement has placeholders. Nothing was run.
+        #[error("{given} values were given, the statement has {expected} placeholders")]
+        ParameterCount {
+            /// How many values the call gave.
+            given: u32,
+            /// How many placeholders the statement has.
+            expected: u32,
         },
         /// The connection to the server failed or broke.
         #[error("{reason}")]
@@ -224,6 +239,26 @@ pub mod sqlx_mysql {
         }
     }
 
+    /// A connection with `sql` prepared on it, once `given` values are known to be as many as its placeholders.
+    /// The count is checked here and not left to the driver: what sqlx does with a wrong one differs by server (it
+    /// drops the values past the last placeholder for Postgres; for MySQL it fails in the middle of the exchange,
+    /// and closing the pool then waits for ever). The statement stays prepared on the connection, which is the one
+    /// the caller then runs it on, so the check costs no round trip of its own.
+    async fn prepared(pool: &MySqlPool, sql: &str, given: usize) -> Result<PoolConnection<MySql>, Error> {
+        let mut connection = pool.acquire().await?;
+        let statement = (&mut *connection).prepare(AssertSqlSafe(sql).into_sql_str()).await?;
+        let expected = match statement.parameters() {
+            Some(Either::Left(types)) => types.len(),
+            Some(Either::Right(count)) => count,
+            None => given,
+        };
+        if expected != given {
+            let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+            return Err(Error::ParameterCount { given: count(given), expected: count(expected) });
+        }
+        Ok(connection)
+    }
+
     /// `sql` with `params` bound, a `None` as `NULL`. The SQL is the caller's by design (`AssertSqlSafe`):
     /// running SQL text is what this module is for, and values reach the server only as bound parameters.
     fn bound(sql: &str, params: Vec<Option<Param>>) -> Query<'_, MySql, MySqlArguments> {
@@ -251,21 +286,24 @@ pub mod sqlx_mysql {
         if pool.is_closed() {
             return Err(Error::Closed);
         }
-        Ok(bound(sql, params).execute(pool).await?.rows_affected())
+        let mut connection = prepared(pool, sql, params.len()).await?;
+        Ok(bound(sql, params).execute(&mut *connection).await?.rows_affected())
     }
 
     async fn query(pool: &MySqlPool, sql: &str, params: Vec<Option<Param>>) -> Result<Vec<Row>, Error> {
         if pool.is_closed() {
             return Err(Error::Closed);
         }
-        bound(sql, params).fetch_all(pool).await?.iter().map(read_row).collect()
+        let mut connection = prepared(pool, sql, params.len()).await?;
+        bound(sql, params).fetch_all(&mut *connection).await?.iter().map(read_row).collect()
     }
 
     async fn query_one(pool: &MySqlPool, sql: &str, params: Vec<Option<Param>>) -> Result<Option<Row>, Error> {
         if pool.is_closed() {
             return Err(Error::Closed);
         }
-        bound(sql, params).fetch_optional(pool).await?.as_ref().map(read_row).transpose()
+        let mut connection = prepared(pool, sql, params.len()).await?;
+        bound(sql, params).fetch_optional(&mut *connection).await?.as_ref().map(read_row).transpose()
     }
 
     fn read_row(row: &MySqlRow) -> Result<Row, Error> {
@@ -488,11 +526,16 @@ mod tests {
         local null_rows = assert(db:query("SELECT id, v FROM exec_null ORDER BY id"))
         assert(#null_rows == 2 and null_rows[1].id == 1 and null_rows[1].v == nil)
         assert(null_rows[2].id == 2 and null_rows[2].v == nil)
-        -- fewer or more values than placeholders: the server (or the driver) refuses the statement
+        -- fewer or more values than placeholders: refused before the statement is run
         local short, short_err = db:execute("INSERT INTO exec_null (id, v) VALUES (?, ?)", 3)
-        assert(short == nil and short_err ~= nil)
+        assert(short == nil and short_err.kind == "parameter_count")
+        assert(short_err.given == 1 and short_err.expected == 2)
         local long, long_err = db:execute("INSERT INTO exec_null (id) VALUES (?)", 3, nil)
-        assert(long == nil and long_err ~= nil)
+        assert(long == nil and long_err.kind == "parameter_count")
+        assert(long_err.given == 2 and long_err.expected == 1)
+        local _, none_err = db:query("SELECT id FROM exec_null WHERE id = ?")
+        assert(none_err.kind == "parameter_count" and none_err.given == 0)
+        assert(#assert(db:query("SELECT id FROM exec_null")) == 2, "nothing was run")
 
         -- query
         local rows, query_err = db:query("SELECT id, v FROM exec_t ORDER BY id")
@@ -551,5 +594,21 @@ mod tests {
         let lua = make_engine().unwrap();
         lua.globals().set("URL", url).unwrap();
         lua.load(SERVER_SCRIPT).exec_async().await.unwrap();
+    }
+
+    /// The same script against a MySQL that `vnd:testcontainers_modules` starts for the test and stops after it, as
+    /// neoc's Luau suite ran it: `cargo test -p neoc-vm2 sqlx_mysql -- --ignored`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "needs a running Docker daemon"]
+    async fn against_a_container() {
+        let lua = make_engine().unwrap();
+        let start = r#"
+            container = assert(require("vnd:testcontainers_modules").mysql())
+            URL = container:url()
+        "#;
+        lua.load(start).exec_async().await.unwrap();
+        let ran = lua.load(SERVER_SCRIPT).exec_async().await;
+        lua.load("assert(container:stop())").exec_async().await.unwrap();
+        ran.unwrap();
     }
 }

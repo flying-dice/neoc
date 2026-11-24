@@ -19,7 +19,8 @@
 //! coroutines that query at once.
 //!
 //! Parameters: the arguments after the SQL are the values for the statement's placeholders, in order: the first
-//! binds `$1`. A boolean binds as `BOOL`, a whole number as `INT8`, any other number as `FLOAT8`, a string as
+//! binds `$1`. Fewer values than placeholders is the server's `database` error; a value past the last placeholder
+//! is not used (Postgres takes a parameter a statement does not use). A boolean binds as `BOOL`, a whole number as `INT8`, any other number as `FLOAT8`, a string as
 //! `TEXT` when it is UTF-8 and as `BYTEA` otherwise. A `nil` binds `NULL`, the last one too, as an `INT8`:
 //! Postgres types its parameters, and refuses that `NULL` for a `TEXT` column, so for anything but a number
 //! prefer `NULL` written in the SQL. Casts work as usual: `INSERT ... VALUES ($1::int)`.
@@ -140,8 +141,8 @@ pub mod sqlx_postgres {
             /// The SQLSTATE the server gave (`23505` for a unique violation).
             code: Option<String>,
         },
-        /// The server refused the statement: a syntax error, a missing table, a parameter of the wrong type or a
-        /// wrong number of them.
+        /// The server refused the statement: a syntax error, a missing table, a parameter of the wrong type, fewer
+        /// values than placeholders.
         #[error("{reason}")]
         Database {
             /// What the server said.
@@ -414,11 +415,13 @@ mod tests {
         local null_rows = assert(db:query("SELECT id, v FROM exec_null ORDER BY id"))
         assert(#null_rows == 2 and null_rows[1].id == 1 and null_rows[1].v == nil)
         assert(null_rows[2].id == 2 and null_rows[2].v == nil)
-        -- fewer or more values than placeholders: the server (or the driver) refuses the statement
+        -- fewer values than placeholders: the server refuses the statement
         local short, short_err = db:execute("INSERT INTO exec_null (id, v) VALUES ($1, $2)", 3)
-        assert(short == nil and short_err ~= nil)
-        local long, long_err = db:execute("INSERT INTO exec_null (id) VALUES ($1)", 3, nil)
-        assert(long == nil and long_err ~= nil)
+        assert(short == nil and short_err.kind == "database")
+        -- more values than placeholders: Postgres takes a parameter a statement does not use, so the statement runs
+        -- and the values past its last placeholder are not used
+        assert(db:execute("INSERT INTO exec_null (id) VALUES ($1)", 3, nil) == 1)
+        assert(db:execute("DELETE FROM exec_null WHERE id = $1", 3, "unused") == 1)
 
         -- query
         local rows, query_err = db:query("SELECT id, v FROM exec_t ORDER BY id")
@@ -473,5 +476,21 @@ mod tests {
         let lua = make_engine().unwrap();
         lua.globals().set("URL", url).unwrap();
         lua.load(SERVER_SCRIPT).exec_async().await.unwrap();
+    }
+
+    /// The same script against a Postgres that `vnd:testcontainers_modules` starts for the test and stops after it,
+    /// as neoc's Luau suite ran it: `cargo test -p neoc-vm2 sqlx_postgres -- --ignored`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "needs a running Docker daemon"]
+    async fn against_a_container() {
+        let lua = make_engine().unwrap();
+        let start = r#"
+            container = assert(require("vnd:testcontainers_modules").postgres())
+            URL = container:url()
+        "#;
+        lua.load(start).exec_async().await.unwrap();
+        let ran = lua.load(SERVER_SCRIPT).exec_async().await;
+        lua.load("assert(container:stop())").exec_async().await.unwrap();
+        ran.unwrap();
     }
 }

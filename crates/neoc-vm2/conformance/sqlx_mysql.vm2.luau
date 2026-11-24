@@ -1,5 +1,5 @@
 --!strict
--- intentional: a parameter that is not a boolean, number, string or nil is refused as an argument; a failure is a typed error (OpenError invalid_url, connect; Error closed, constraint with its violation, database, connection, pool_timed_out, decode, other), a value that does not decode is the returned decode error (it was raised), and a statement's op is vnd:sqlx_mysql.Statement:execute.
+-- intentional: a parameter that is not a boolean, number, string or nil is refused as an argument; a failure is a typed error (OpenError invalid_url, connect; Error closed, constraint with its violation, database, connection, pool_timed_out, decode, other), a value that does not decode is the returned decode error (it was raised), and a statement's op is vnd:sqlx_mysql.Statement:execute; a wrong number of values is the typed error parameter_count (given, expected), checked before the statement is run
 local sqlx_mysql = require("vnd:sqlx_mysql")
 
 -- a URL the driver refuses before it connects
