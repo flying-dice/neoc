@@ -287,6 +287,25 @@ pub mod net {
     }
 }
 
+/// Whether `addr` can be bound again, for a test that says a closed listener gave its port back.
+///
+/// The socket is closed by the time the test asks, but on Unix a test running beside it that starts a process
+/// forks this one, and the child holds a copy of every descriptor (the listener's too) until it execs: the port
+/// stays taken for that moment, so the bind is tried again for a short while before the port is said to be held.
+#[cfg(test)]
+pub(crate) fn port_is_free(addr: &str) -> bool {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if std::net::TcpListener::bind(addr).is_ok() {
+            return true;
+        }
+        if !cfg!(unix) || std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -362,7 +381,7 @@ mod tests {
             .collect();
         tokio::time::sleep(Duration::from_millis(50)).await;
         slot.close();
-        assert!(std::net::TcpListener::bind(addr).is_ok(), "the port is free");
+        assert!(port_is_free(&addr.to_string()), "the port is free");
         for task in tasks {
             let ended = tokio::time::timeout(Duration::from_secs(2), task)
                 .await
@@ -459,7 +478,7 @@ mod tests {
                 .unwrap();
             assert!(std::net::TcpListener::bind(&addr).is_err(), "the port is taken");
             stop(&life);
-            assert!(std::net::TcpListener::bind(&addr).is_ok(), "the port is free");
+            assert!(port_is_free(&addr), "the port is free");
             let (value, kind, text): (mlua::Value, String, String) = lua
                 .load("local value, err = held:addr(); return value, err.kind, tostring(err)")
                 .eval()
@@ -475,6 +494,6 @@ mod tests {
             .eval()
             .unwrap();
         lua.gc_collect().unwrap();
-        assert!(std::net::TcpListener::bind(&addr).is_ok(), "a collected listener frees its port");
+        assert!(port_is_free(&addr), "a collected listener frees its port");
     }
 }

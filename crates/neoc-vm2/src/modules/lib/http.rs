@@ -966,7 +966,7 @@ mod tests {
             stop(&life);
             let ended = tokio::time::timeout(Duration::from_secs(10), serving).await.expect("the call ended");
             assert!(ended.expect("task").expect("script"), "a server that was stopped returns true");
-            assert!(std::net::TcpListener::bind(&addr).is_ok(), "the port is free");
+            assert!(crate::modules::std::net::port_is_free(&addr), "the port is free");
         }
     }
 
