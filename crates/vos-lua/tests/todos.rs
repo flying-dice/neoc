@@ -14,6 +14,7 @@ use vos_application::{
 };
 use vos_domain::Notification;
 use vos_lua::LuaRuntime;
+use vos_sqlite::{AppDb, Migration};
 
 const APP: &str = "todos";
 
@@ -33,9 +34,14 @@ struct Todos {
 
 impl Todos {
     async fn open() -> Self {
+        Self::open_on(db()).await
+    }
+
+    /// The app loaded on a database that may already hold its data.
+    async fn open_on(db: Arc<AppDb>) -> Self {
         let shell = Arc::new(RecordingShell::default());
         let rt = LuaRuntime::new(Arc::new(Quiet), shell.clone());
-        let loaded = rt.load(&id(APP), built_project("apps/todos"), db()).await.unwrap();
+        let loaded = rt.load(&id(APP), built_project("apps/todos"), db).await.unwrap();
         Self { rt, shell, loaded }
     }
 
@@ -54,6 +60,24 @@ impl Todos {
 
 fn titles(board: &Value) -> Vec<&str> {
     board["todos"].as_array().unwrap().iter().map(|todo| todo["title"].as_str().unwrap()).collect()
+}
+
+/// Migration 1 as the Luau backend had it, byte for byte: what every Todos database made before the backend was
+/// TypeScript was made from. The database keeps a checksum of these bytes and refuses a migration that differs.
+const LUAU_MIGRATION_1: &str = include_str!("fixtures/todos-migration-1-luau.sql");
+
+#[tokio::test]
+async fn a_database_the_luau_backend_made_opens_with_its_todos() {
+    let db = Arc::new(AppDb::open(None, &[]).unwrap());
+    db.migrate(vec![Migration::new(1, "1", LUAU_MIGRATION_1)]).await.unwrap();
+    db.exec("insert into todos(list_id, title) values (1, 'Kept from before')".to_owned(), vec![])
+        .await
+        .unwrap();
+
+    let todos = Todos::open_on(db).await;
+    let board = todos.call("board", Value::Null).await.unwrap();
+    assert_eq!(titles(&board), ["Kept from before"]);
+    assert_eq!(board["lists"], json!([{ "id": 1, "name": "Reminders", "color": "blue" }]));
 }
 
 #[tokio::test]

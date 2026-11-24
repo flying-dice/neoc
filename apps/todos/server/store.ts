@@ -25,8 +25,9 @@ const COMPLETED_SHOWN = 500
 const TODO = 'select id, list_id, title, notes, due, flagged, done from todos'
 
 db.migrate([
-  `
-    create table lists (
+  // The text starts on the backtick's own line: the database keeps a checksum of a migration's bytes, and these are
+  // the bytes every existing Todos database was made from. A line break after the backtick would be one more.
+  `    create table lists (
       id integer primary key,
       name text not null,
       color text not null
