@@ -31,11 +31,18 @@ impl AsRef<Path> for OsPath {
 }
 
 /// As a field of a record a script is given: the same string [`IntoLuaRet`] gives.
+///
+/// On Unix a path that is UTF-8 is written as text and only one that is not as its raw bytes. Both are the same
+/// Lua string to mlua's serializer, but a typed error's fields go through JSON, where bytes would be an array of
+/// numbers and the error's `path` a table instead of a string.
 impl serde::Serialize for OsPath {
     #[cfg(unix)]
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use std::os::unix::ffi::OsStrExt;
-        serializer.serialize_bytes(self.0.as_os_str().as_bytes())
+        match self.0.to_str() {
+            Some(text) => serializer.serialize_str(text),
+            None => serializer.serialize_bytes(self.0.as_os_str().as_bytes()),
+        }
     }
 
     #[cfg(not(unix))]
