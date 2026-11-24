@@ -1,0 +1,259 @@
+{
+  "claims_h": [
+    {
+      "flags": {
+        "host": "example.org",
+        "port": 80
+      },
+      "positional": {},
+      "rest": {}
+    },
+    {
+      "help": "tool\n\nUsage: t [OPTIONS] [__positional]... [-- [__rest]...]\n\nArguments:\n  [__positional]...  \n  [__rest]...        \n\nOptions:\n  -h, --host <host>  \n  -p, --port <port>  \n      --help         Print help\n"
+    }
+  ],
+  "defaults": {
+    "flags": {
+      "count": "<nil>",
+      "include": {},
+      "output": "stdout",
+      "verbose": false,
+      "weight": {}
+    },
+    "positional": {},
+    "rest": {}
+  },
+  "failures": [
+    {
+      "failed": true
+    },
+    {
+      "failed": true
+    },
+    {
+      "failed": true
+    },
+    {
+      "failed": true
+    },
+    {
+      "failed": true
+    }
+  ],
+  "flags": {
+    "flags": {
+      "count": 42,
+      "include": {},
+      "output": "out.txt",
+      "verbose": true,
+      "weight": {}
+    },
+    "positional": {},
+    "rest": {}
+  },
+  "help": [
+    {
+      "help": "does the work\n\nUsage: mytool [OPTIONS] [__positional]... [-- [__rest]...]\n\nArguments:\n  [__positional]...  \n  [__rest]...        \n\nOptions:\n  -v, --verbose            say more\n  -o, --output <output>    [default: stdout]\n      --count <count>      \n  -I, --include <include>  \n      --weight <weight>    \n  -h, --help               Print help\n"
+    },
+    {
+      "help": "does the work\n\nUsage: mytool [OPTIONS] [__positional]... [-- [__rest]...]\n\nArguments:\n  [__positional]...  \n  [__rest]...        \n\nOptions:\n  -v, --verbose            say more\n  -o, --output <output>    [default: stdout]\n      --count <count>      \n  -I, --include <include>  \n      --weight <weight>    \n  -h, --help               Print help\n"
+    },
+    {
+      "help": "Usage: t --out <out> [__positional]... [-- [__rest]...]\n\nArguments:\n  [__positional]...  \n  [__rest]...        \n\nOptions:\n      --out <out>  \n  -h, --help       Print help\n"
+    },
+    {
+      "help": "Usage: git [OPTIONS] <COMMAND>\n\nCommands:\n  build  build it\n  test   \n  help   Print this message or the help of the given subcommand(s)\n\nOptions:\n      --verbose  \n  -h, --help     Print help\n"
+    },
+    {
+      "help": "build it\n\nUsage: build [OPTIONS] [__positional]... [-- [__rest]...]\n\nArguments:\n  [__positional]...  \n  [__rest]...        \n\nOptions:\n  -r, --release  \n  -h, --help     Print help\n"
+    }
+  ],
+  "help_text": [
+    "does the work\n\nUsage: mytool [OPTIONS] [__positional]... [-- [__rest]...]\n\nArguments:\n  [__positional]...  \n  [__rest]...        \n\nOptions:\n  -v, --verbose            say more\n  -o, --output <output>    [default: stdout]\n      --count <count>      \n  -I, --include <include>  \n      --weight <weight>    \n  -h, --help               Print help\n",
+    "Usage: git [OPTIONS] <COMMAND>\n\nCommands:\n  build  build it\n  test   \n  help   Print this message or the help of the given subcommand(s)\n\nOptions:\n      --verbose  \n  -h, --help     Print help\n",
+    "Usage: bare [__positional]... [-- [__rest]...]\n\nArguments:\n  [__positional]...  \n  [__rest]...        \n\nOptions:\n  -h, --help  Print help\n"
+  ],
+  "hostile_1": [
+    {
+      "failed": true
+    },
+    {
+      "failed": true
+    },
+    true,
+    true
+  ],
+  "hostile_2": [
+    {
+      "failed": true
+    },
+    {
+      "failed": true
+    },
+    true,
+    true
+  ],
+  "hostile_3": [
+    {
+      "failed": true
+    },
+    {
+      "failed": true
+    },
+    true,
+    true
+  ],
+  "hostile_4": [
+    {
+      "failed": true
+    },
+    {
+      "failed": true
+    },
+    true,
+    true
+  ],
+  "hostile_5": [
+    {
+      "failed": true
+    },
+    {
+      "failed": true
+    },
+    true,
+    true
+  ],
+  "hostile_6": [
+    {
+      "failed": true
+    },
+    {
+      "failed": true
+    },
+    true,
+    true
+  ],
+  "hostile_7": [
+    {
+      "failed": true
+    },
+    {
+      "failed": true
+    },
+    true,
+    true
+  ],
+  "hostile_8": [
+    {
+      "failed": true
+    },
+    {
+      "failed": true
+    },
+    true,
+    true
+  ],
+  "negative": {
+    "flags": {
+      "count": -7,
+      "include": {},
+      "output": "stdout",
+      "verbose": false,
+      "weight": [
+        1.5,
+        -2
+      ]
+    },
+    "positional": {},
+    "rest": {}
+  },
+  "positional": {
+    "flags": {
+      "count": "<nil>",
+      "include": {},
+      "output": "stdout",
+      "verbose": true,
+      "weight": {}
+    },
+    "positional": [
+      "a",
+      "b"
+    ],
+    "rest": {}
+  },
+  "rest": {
+    "flags": {
+      "count": "<nil>",
+      "include": {},
+      "output": "stdout",
+      "verbose": false,
+      "weight": {}
+    },
+    "positional": [
+      "x"
+    ],
+    "rest": [
+      "--y",
+      "z"
+    ]
+  },
+  "shorts": {
+    "flags": {
+      "count": "<nil>",
+      "include": [
+        "a",
+        "b"
+      ],
+      "output": "x.txt",
+      "verbose": true,
+      "weight": {}
+    },
+    "positional": {},
+    "rest": {}
+  },
+  "subcommand": {
+    "flags": {
+      "verbose": true
+    },
+    "positional": {},
+    "rest": {},
+    "sub": {
+      "flags": {
+        "release": true
+      },
+      "positional": [
+        "input.txt"
+      ],
+      "rest": [
+        "-x"
+      ]
+    },
+    "subcommand": "build"
+  },
+  "subcommand_failures": [
+    {
+      "failed": true
+    },
+    {
+      "failed": true
+    },
+    {
+      "failed": true
+    }
+  ],
+  "subcommand_other": {
+    "flags": {
+      "verbose": false
+    },
+    "positional": {},
+    "rest": {},
+    "sub": {
+      "flags": {
+        "filter": "fast"
+      },
+      "positional": {},
+      "rest": {}
+    },
+    "subcommand": "test"
+  }
+}

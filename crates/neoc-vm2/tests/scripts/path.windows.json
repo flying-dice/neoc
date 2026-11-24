@@ -1,0 +1,389 @@
+{
+  "": {
+    "components": {},
+    "extension": false,
+    "file_name": false,
+    "file_stem": false,
+    "is_absolute": false,
+    "normalize": ".",
+    "parent": false,
+    "renamed": "c.md",
+    "with_md": "",
+    "without_extension": ""
+  },
+  ".": {
+    "components": [
+      "."
+    ],
+    "extension": false,
+    "file_name": false,
+    "file_stem": false,
+    "is_absolute": false,
+    "normalize": ".",
+    "parent": "",
+    "renamed": ".\\c.md",
+    "with_md": ".",
+    "without_extension": "."
+  },
+  "..": {
+    "components": [
+      ".."
+    ],
+    "extension": false,
+    "file_name": false,
+    "file_stem": false,
+    "is_absolute": false,
+    "normalize": "..",
+    "parent": "",
+    "renamed": "..\\c.md",
+    "with_md": "..",
+    "without_extension": ".."
+  },
+  "../a": {
+    "components": [
+      "..",
+      "a"
+    ],
+    "extension": false,
+    "file_name": "a",
+    "file_stem": "a",
+    "is_absolute": false,
+    "normalize": "..\\a",
+    "parent": "..",
+    "renamed": "..\\c.md",
+    "with_md": "../a.md",
+    "without_extension": "../a"
+  },
+  "./a": {
+    "components": [
+      ".",
+      "a"
+    ],
+    "extension": false,
+    "file_name": "a",
+    "file_stem": "a",
+    "is_absolute": false,
+    "normalize": "a",
+    "parent": ".",
+    "renamed": ".\\c.md",
+    "with_md": "./a.md",
+    "without_extension": "./a"
+  },
+  ".bashrc": {
+    "components": [
+      ".bashrc"
+    ],
+    "extension": false,
+    "file_name": ".bashrc",
+    "file_stem": ".bashrc",
+    "is_absolute": false,
+    "normalize": ".bashrc",
+    "parent": "",
+    "renamed": "c.md",
+    "with_md": ".bashrc.md",
+    "without_extension": ".bashrc"
+  },
+  "/": {
+    "components": [
+      "\\"
+    ],
+    "extension": false,
+    "file_name": false,
+    "file_stem": false,
+    "is_absolute": false,
+    "normalize": "\\",
+    "parent": false,
+    "renamed": "/c.md",
+    "with_md": "/",
+    "without_extension": "/"
+  },
+  "/..": {
+    "components": [
+      "\\",
+      ".."
+    ],
+    "extension": false,
+    "file_name": false,
+    "file_stem": false,
+    "is_absolute": false,
+    "normalize": "\\",
+    "parent": "/",
+    "renamed": "/..\\c.md",
+    "with_md": "/..",
+    "without_extension": "/.."
+  },
+  "/a/../..": {
+    "components": [
+      "\\",
+      "a",
+      "..",
+      ".."
+    ],
+    "extension": false,
+    "file_name": false,
+    "file_stem": false,
+    "is_absolute": false,
+    "normalize": "\\",
+    "parent": "/a/..",
+    "renamed": "/a/../..\\c.md",
+    "with_md": "/a/../..",
+    "without_extension": "/a/../.."
+  },
+  "/a/b/c": {
+    "components": [
+      "\\",
+      "a",
+      "b",
+      "c"
+    ],
+    "extension": false,
+    "file_name": "c",
+    "file_stem": "c",
+    "is_absolute": false,
+    "normalize": "\\a\\b\\c",
+    "parent": "/a/b",
+    "renamed": "/a/b\\c.md",
+    "with_md": "/a/b/c.md",
+    "without_extension": "/a/b/c"
+  },
+  "C:\\dir\\file.txt": {
+    "components": [
+      "C:",
+      "\\",
+      "dir",
+      "file.txt"
+    ],
+    "extension": "txt",
+    "file_name": "file.txt",
+    "file_stem": "file",
+    "is_absolute": true,
+    "normalize": "C:\\dir\\file.txt",
+    "parent": "C:\\dir",
+    "renamed": "C:\\dir\\c.md",
+    "with_md": "C:\\dir\\file.md",
+    "without_extension": "C:\\dir\\file"
+  },
+  "C:relative": {
+    "components": [
+      "C:",
+      "relative"
+    ],
+    "extension": false,
+    "file_name": "relative",
+    "file_stem": "relative",
+    "is_absolute": false,
+    "normalize": "C:relative",
+    "parent": "C:",
+    "renamed": "C:c.md",
+    "with_md": "C:relative.md",
+    "without_extension": "C:relative"
+  },
+  "\\\\server\\share\\x": {
+    "components": [
+      "\\\\server\\share",
+      "\\",
+      "x"
+    ],
+    "extension": false,
+    "file_name": "x",
+    "file_stem": "x",
+    "is_absolute": true,
+    "normalize": "\\\\server\\share\\x",
+    "parent": "\\\\server\\share\\",
+    "renamed": "\\\\server\\share\\c.md",
+    "with_md": "\\\\server\\share\\x.md",
+    "without_extension": "\\\\server\\share\\x"
+  },
+  "a": {
+    "components": [
+      "a"
+    ],
+    "extension": false,
+    "file_name": "a",
+    "file_stem": "a",
+    "is_absolute": false,
+    "normalize": "a",
+    "parent": "",
+    "renamed": "c.md",
+    "with_md": "a.md",
+    "without_extension": "a"
+  },
+  "a/..": {
+    "components": [
+      "a",
+      ".."
+    ],
+    "extension": false,
+    "file_name": false,
+    "file_stem": false,
+    "is_absolute": false,
+    "normalize": ".",
+    "parent": "a",
+    "renamed": "a/..\\c.md",
+    "with_md": "a/..",
+    "without_extension": "a/.."
+  },
+  "a/../..": {
+    "components": [
+      "a",
+      "..",
+      ".."
+    ],
+    "extension": false,
+    "file_name": false,
+    "file_stem": false,
+    "is_absolute": false,
+    "normalize": "..",
+    "parent": "a/..",
+    "renamed": "a/../..\\c.md",
+    "with_md": "a/../..",
+    "without_extension": "a/../.."
+  },
+  "a/./b//c": {
+    "components": [
+      "a",
+      "b",
+      "c"
+    ],
+    "extension": false,
+    "file_name": "c",
+    "file_stem": "c",
+    "is_absolute": false,
+    "normalize": "a\\b\\c",
+    "parent": "a/./b",
+    "renamed": "a/./b\\c.md",
+    "with_md": "a/./b//c.md",
+    "without_extension": "a/./b//c"
+  },
+  "a/.bashrc": {
+    "components": [
+      "a",
+      ".bashrc"
+    ],
+    "extension": false,
+    "file_name": ".bashrc",
+    "file_stem": ".bashrc",
+    "is_absolute": false,
+    "normalize": "a\\.bashrc",
+    "parent": "a",
+    "renamed": "a\\c.md",
+    "with_md": "a/.bashrc.md",
+    "without_extension": "a/.bashrc"
+  },
+  "a/b.": {
+    "components": [
+      "a",
+      "b."
+    ],
+    "extension": "",
+    "file_name": "b.",
+    "file_stem": "b",
+    "is_absolute": false,
+    "normalize": "a\\b.",
+    "parent": "a",
+    "renamed": "a\\c.md",
+    "with_md": "a/b.md",
+    "without_extension": "a/b"
+  },
+  "a/b.tar.gz": {
+    "components": [
+      "a",
+      "b.tar.gz"
+    ],
+    "extension": "gz",
+    "file_name": "b.tar.gz",
+    "file_stem": "b.tar",
+    "is_absolute": false,
+    "normalize": "a\\b.tar.gz",
+    "parent": "a",
+    "renamed": "a\\c.md",
+    "with_md": "a/b.tar.md",
+    "without_extension": "a/b.tar"
+  },
+  "a/b.txt": {
+    "components": [
+      "a",
+      "b.txt"
+    ],
+    "extension": "txt",
+    "file_name": "b.txt",
+    "file_stem": "b",
+    "is_absolute": false,
+    "normalize": "a\\b.txt",
+    "parent": "a",
+    "renamed": "a\\c.md",
+    "with_md": "a/b.md",
+    "without_extension": "a/b"
+  },
+  "a/b/..": {
+    "components": [
+      "a",
+      "b",
+      ".."
+    ],
+    "extension": false,
+    "file_name": false,
+    "file_stem": false,
+    "is_absolute": false,
+    "normalize": "a",
+    "parent": "a/b",
+    "renamed": "a/b/..\\c.md",
+    "with_md": "a/b/..",
+    "without_extension": "a/b/.."
+  },
+  "absolute": [
+    "C:\\Users\\jonat\\Projects\\neoc\\crates\\neoc-vm2\\x\\y",
+    "C:\\Users\\jonat\\Projects\\neoc\\crates\\neoc-vm2\\x\\y"
+  ],
+  "absolute_empty": [
+    true,
+    true
+  ],
+  "dir with space/naïve.txt": {
+    "components": [
+      "dir with space",
+      "naïve.txt"
+    ],
+    "extension": "txt",
+    "file_name": "naïve.txt",
+    "file_stem": "naïve",
+    "is_absolute": false,
+    "normalize": "dir with space\\naïve.txt",
+    "parent": "dir with space",
+    "renamed": "dir with space\\c.md",
+    "with_md": "dir with space/naïve.md",
+    "without_extension": "dir with space/naïve"
+  },
+  "join": [
+    "a\\b",
+    "a\\b\\c.txt",
+    "a\\..",
+    "/b",
+    "a\\",
+    "a",
+    "a\u0000b\\c",
+    "a",
+    "a\\b\\c.txt",
+    "a\\b\\..\\c\\",
+    "/b\\c",
+    "a"
+  ],
+  "long": [
+    99999,
+    50000
+  ],
+  "separator": "\\",
+  "strip_prefix": [
+    "c",
+    false,
+    "",
+    false,
+    "b"
+  ],
+  "wrong_arguments": [
+    false,
+    false,
+    false,
+    false
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "broken_suite": [
+    false,
+    true
+  ],
+  "expect": [
+    true,
+    true,
+    true,
+    true
+  ],
+  "order": [
+    "alone",
+    "suite",
+    "first",
+    "raises",
+    "second",
+    "third"
+  ],
+  "returned": [
+    0,
+    0
+  ],
+  "wrong_arguments": [
+    false,
+    false,
+    false
+  ]
+}

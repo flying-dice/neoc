@@ -1,0 +1,77 @@
+{
+  "absent": [
+    true,
+    true,
+    true,
+    true,
+    ""
+  ],
+  "decode": [
+    "hello world!",
+    "a+b"
+  ],
+  "decode_invalid": [
+    true,
+    true
+  ],
+  "encode": [
+    "hello%20world%21%2F%3F",
+    "a-b_c.d~e",
+    "a%20b%22c%23d",
+    "a%20b%3Fc%7Bd%7D",
+    "a%20b%3Cc%3Ed"
+  ],
+  "fields": [
+    "https",
+    "ada",
+    "secret",
+    "example.com",
+    8443,
+    "/a/b",
+    "x=1&y=2",
+    "frag",
+    "https://example.com:8443",
+    "https://ada:secret@example.com:8443/a/b?x=1&y=2#frag",
+    "https://ada:secret@example.com:8443/a/b?x=1&y=2#frag"
+  ],
+  "invalid": [
+    true,
+    true
+  ],
+  "origins": [
+    "https://example.com:8443",
+    "null",
+    "null",
+    "ws://example.com"
+  ],
+  "query_map": [
+    "3",
+    "2"
+  ],
+  "resolve": [
+    "https://example.com/dir/other",
+    "https://example.com/abs",
+    "https://example.com/dir/page?q=1",
+    "https://example.com/up"
+  ],
+  "static_invalid": [
+    true,
+    true
+  ],
+  "static_parse": "https://example.com/a%20b?x=1#frag",
+  "with": [
+    "https://example.com/new?a=1#here",
+    "https://example.com/old",
+    "https://example.com/",
+    "https://example.com:8443/",
+    "https://example.com/",
+    "https://other.org/",
+    "https://example.com/"
+  ],
+  "with_failures": [
+    true,
+    true,
+    true,
+    true
+  ]
+}

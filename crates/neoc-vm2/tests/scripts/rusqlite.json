@@ -1,0 +1,137 @@
+{
+  "after_delete": 2,
+  "bad_prepared": true,
+  "bad_sql": [
+    true,
+    true,
+    true
+  ],
+  "blob": [
+    4,
+    0,
+    1,
+    254,
+    255
+  ],
+  "closed": [
+    true,
+    true,
+    true,
+    true
+  ],
+  "constraint": [
+    1,
+    1,
+    true
+  ],
+  "created": 0,
+  "deleted_none": 0,
+  "empty": 0,
+  "empty_sql": [
+    true,
+    true
+  ],
+  "first": "x",
+  "inserted": 1,
+  "literals": [
+    1.5,
+    7,
+    "txt"
+  ],
+  "multiple": true,
+  "multiple_ran_nothing": 0,
+  "none": [
+    true,
+    true
+  ],
+  "null_is_absent": true,
+  "opened": true,
+  "param_inserted": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "param_null": 1,
+  "param_prepared": [
+    "one",
+    1
+  ],
+  "param_query": [
+    2,
+    "one"
+  ],
+  "params": [
+    [
+      false,
+      false,
+      false,
+      "integer",
+      "text",
+      "real"
+    ],
+    [
+      false,
+      true,
+      true,
+      "integer",
+      "null",
+      "null"
+    ],
+    [
+      true,
+      false,
+      true,
+      "null",
+      "text",
+      "null"
+    ],
+    [
+      false,
+      false,
+      false,
+      "integer",
+      "blob",
+      "integer"
+    ]
+  ],
+  "prepared": [
+    3,
+    1
+  ],
+  "prepared_execute": 1,
+  "query_ok": true,
+  "rows": [
+    [
+      1,
+      "x",
+      3.25
+    ],
+    [
+      2,
+      "b",
+      2
+    ],
+    [
+      3,
+      "x",
+      -0.5
+    ]
+  ],
+  "select_in_execute": true,
+  "types": [
+    "number",
+    "string",
+    "number",
+    "string",
+    "nil",
+    "blob"
+  ],
+  "updated": 2,
+  "wrong_count": [
+    true,
+    true,
+    true,
+    true
+  ]
+}

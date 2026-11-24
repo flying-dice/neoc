@@ -1,0 +1,71 @@
+{
+  "aes_128_gcm": "42831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e21d514b25466931c7d8f6a5aac84aa051ba30b396a0aac973d58e0915bc94fbc3221a5db94fae95ae7121a47",
+  "algorithms": [
+    "aes_128_gcm",
+    "aes_256_gcm",
+    "chacha20_poly1305"
+  ],
+  "empty": [
+    16,
+    ""
+  ],
+  "fails_aad_mismatch": [
+    true,
+    true
+  ],
+  "fails_short_ciphertext": [
+    true,
+    true
+  ],
+  "fails_short_key": [
+    true,
+    true
+  ],
+  "fails_short_nonce": [
+    true,
+    true
+  ],
+  "fails_wrong_key": [
+    true,
+    true
+  ],
+  "omitted_aad": [
+    true,
+    "msg",
+    "msg"
+  ],
+  "round_trip": {
+    "aes_128_gcm": [
+      "539926ca6c49d9c8de9d7b2da233cdc4d89b990b0dac16e5485a3462",
+      "hello, world",
+      true
+    ],
+    "aes_256_gcm": [
+      "f05e8bdc7e98a5ae2356672033fb05221aeca621fac7f2430d4a4e90",
+      "hello, world",
+      true
+    ],
+    "chacha20_poly1305": [
+      "e69a523eadfe8b6ea1c697525bfa05ce11f58f1ea51f401fa2d1883e",
+      "hello, world",
+      true
+    ]
+  },
+  "sizes": {
+    "aes_128_gcm": [
+      16,
+      12,
+      16
+    ],
+    "aes_256_gcm": [
+      32,
+      12,
+      16
+    ],
+    "chacha20_poly1305": [
+      32,
+      12,
+      16
+    ]
+  }
+}

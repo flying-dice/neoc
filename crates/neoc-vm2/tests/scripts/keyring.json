@@ -1,0 +1,52 @@
+{
+  "absent": [
+    true,
+    true,
+    true,
+    true
+  ],
+  "after_delete": [
+    true,
+    true
+  ],
+  "bad_encoding": true,
+  "deleted": true,
+  "deleted_again": [
+    false,
+    true
+  ],
+  "entry": true,
+  "first": "first",
+  "other_store": true,
+  "password_as_secret": "one",
+  "replaced": [
+    true,
+    "second"
+  ],
+  "search_all": 3,
+  "search_empty_spec": 3,
+  "search_none": 0,
+  "search_one": [
+    1,
+    "g"
+  ],
+  "secret": [
+    8,
+    0,
+    255,
+    98,
+    121,
+    116,
+    101,
+    115,
+    0
+  ],
+  "secret_as_password": "plain",
+  "set": true,
+  "set_secret": true,
+  "shared": "one",
+  "specifiers": [
+    "example.com",
+    "ada"
+  ]
+}

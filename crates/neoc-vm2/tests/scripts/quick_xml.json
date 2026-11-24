@@ -1,0 +1,74 @@
+{
+  "decode": [
+    "\n\n",
+    true
+  ],
+  "empty_root": {},
+  "encode": [
+    "<root><age>25</age><jobs><id>1</id></jobs><jobs><id>2</id></jobs><name>bob</name><note lang=\"en\">hello</note><on>true</on><ratio>1.5</ratio><server port=\"3000\"><host>localhost</host><limits><cpu>2</cpu></limits></server><tags>a</tags><tags>b</tags><text>x &lt; y &amp; \"z\"</text></root>"
+  ],
+  "encode_empty": "<root/>",
+  "fails_bad_entity": [
+    true,
+    true
+  ],
+  "fails_deep": [
+    true,
+    true
+  ],
+  "fails_empty": [
+    true,
+    true
+  ],
+  "fails_mismatched": [
+    true,
+    true
+  ],
+  "fails_missing_end": [
+    true,
+    true
+  ],
+  "fails_not_utf8": [
+    true,
+    true
+  ],
+  "fails_unclosed": [
+    true,
+    true
+  ],
+  "prefixed": {
+    "@xmlns:x": "urn:x",
+    "a": "1"
+  },
+  "reader": [
+    {
+      "@id": "7",
+      "age": "36",
+      "name": "ada"
+    }
+  ],
+  "reader_fails": [
+    true,
+    true
+  ],
+  "refuses_digit": [
+    true,
+    true
+  ],
+  "refuses_space": [
+    true,
+    true
+  ],
+  "round_trip": {
+    "age": "42",
+    "name": "eve",
+    "user": {
+      "@id": "7",
+      "city": "x"
+    }
+  },
+  "text_only": "only text",
+  "unicode": {
+    "キー": "値"
+  }
+}

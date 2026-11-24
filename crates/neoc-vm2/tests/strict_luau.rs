@@ -1,6 +1,7 @@
-//! Every `conformance/<module>.vm2.luau` is written in Luau's strict mode and type-checks against the declarations
-//! neoc-vm2 generates: what a script may write is what the declarations say, so a declaration that goes wrong (or a
-//! script that stops being careful) fails here.
+//! Every `tests/scripts/<module>.luau` is written in Luau's strict mode and type-checks against the declarations
+//! this crate generates: what a script may write is what the declarations say, so a declaration that goes wrong (or
+//! a script that stops being careful) fails here. So does `types/fixtures/syntax.luau`, the typed script
+//! `crates/neoc/tests/cli.rs` runs with `neoc run`.
 //!
 //! luau-lsp does the checking. It is looked for on `PATH`, then at `~/.local/bin/luau-lsp`, as
 //! `packages/vite-plugin/src/luau-tools.ts` does. Where it is not installed the test says it was skipped and passes,
@@ -13,19 +14,26 @@ use std::process::Command;
 /// The first line of every script.
 const STRICT: &str = "--!strict";
 
-fn conformance() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("conformance")
+fn scripts_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("scripts")
 }
 
-/// The names of the vm2 scripts, sorted.
-fn scripts() -> Vec<String> {
-    let mut found: Vec<String> = std::fs::read_dir(conformance())
-        .expect("the conformance directory")
+/// The typed script the `neoc` CLI's tests run.
+fn syntax_fixture() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../types/fixtures/syntax.luau")
+}
+
+/// Every script: the module scripts, sorted, and the syntax fixture.
+fn scripts() -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = std::fs::read_dir(scripts_dir())
+        .expect("the scripts directory")
         .filter_map(Result::ok)
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .filter(|name| name.ends_with(".vm2.luau"))
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "luau"))
         .collect();
     found.sort();
+    assert!(!found.is_empty(), "no tests/scripts/*.luau was found");
+    found.push(syntax_fixture());
     found
 }
 
@@ -46,15 +54,15 @@ fn luau_lsp() -> Option<PathBuf> {
 }
 
 /// The scripts whose first line is not `--!strict`.
-fn not_strict(names: &[String]) -> Vec<String> {
-    names
+fn not_strict(scripts: &[PathBuf]) -> Vec<String> {
+    scripts
         .iter()
-        .filter(|name| {
-            let text = std::fs::read_to_string(conformance().join(name)).expect("a script");
+        .filter(|script| {
+            let text = std::fs::read_to_string(script).expect("a script");
             // a checkout on Windows may end its lines with `\r\n`
             text.lines().next().map(str::trim_end) != Some(STRICT)
         })
-        .cloned()
+        .map(|script| script.display().to_string())
         .collect()
 }
 
@@ -82,15 +90,13 @@ fn errors(output: &str) -> Vec<String> {
 }
 
 #[test]
-fn every_vm2_script_starts_with_strict() {
-    let names = scripts();
-    assert!(!names.is_empty(), "no conformance/*.vm2.luau was found");
-    let loose = not_strict(&names);
+fn every_script_starts_with_strict() {
+    let loose = not_strict(&scripts());
     assert!(loose.is_empty(), "the first line of these scripts is not `{STRICT}`: {}", loose.join(", "));
 }
 
 #[test]
-fn every_vm2_script_type_checks_in_strict_mode() {
+fn every_script_type_checks_in_strict_mode() {
     let Some(tool) = luau_lsp() else {
         let message = "luau-lsp is not installed (looked on PATH and at ~/.local/bin/luau-lsp)";
         assert!(
@@ -98,29 +104,27 @@ fn every_vm2_script_type_checks_in_strict_mode() {
             "{message}, and NEOC_REQUIRE_LUAU_LSP is set: a skipped check is not a pass"
         );
         // written to the stream itself: the harness captures `println!` of a test that passes, and a skip is said
-        let said = format!("strict_luau SKIPPED: {message}; the conformance scripts were not type-checked\n");
+        let said = format!("strict_luau SKIPPED: {message}; the scripts were not type-checked\n");
         std::io::Write::write_all(&mut std::io::stderr(), said.as_bytes()).expect("stderr is written");
         return;
     };
-    let names = scripts();
-    assert!(!names.is_empty(), "no conformance/*.vm2.luau was found");
 
     let scratch = tempfile::tempdir().expect("a temporary directory");
-    let definitions = scratch.path().join("vm2.d.luau");
+    let definitions = scratch.path().join("neoc.d.luau");
     std::fs::write(&definitions, neoc_vm2::declarations::luau()).expect("the declarations are written");
 
     let run = Command::new(&tool)
-        .current_dir(conformance())
+        .current_dir(scripts_dir())
         .args(["analyze", "--formatter=plain", "--platform=standard"])
-        .arg(format!("--definitions:@vm2={}", definitions.display()))
-        .args(&names)
+        .arg(format!("--definitions:@neoc={}", definitions.display()))
+        .args(scripts())
         .output()
         .unwrap_or_else(|error| panic!("{} did not start: {error}", tool.display()));
     let output = format!("{}{}", String::from_utf8_lossy(&run.stdout), String::from_utf8_lossy(&run.stderr));
     let found = errors(&output);
     assert!(
         found.is_empty(),
-        "{} error(s) in strict mode against neoc-vm2's declarations:\n{}",
+        "{} error(s) in strict mode against the generated declarations:\n{}",
         found.len(),
         found.join("\n")
     );
@@ -131,18 +135,15 @@ fn every_vm2_script_type_checks_in_strict_mode() {
 #[test]
 fn only_type_and_syntax_errors_are_kept_with_their_continuation() {
     let output = "[WARN] a note\n\
-                  a.vm2.luau:3:1-4: (W0) TypeError: Expected this to be\n\
+                  a.luau:3:1-4: (W0) TypeError: Expected this to be\n\
                   \t'string'\n\
                   but got\n\
                   \t'number'\n\
-                  a.vm2.luau:9:1-4: (W1) LocalUnused: Variable 'x' is never used\n\
+                  a.luau:9:1-4: (W1) LocalUnused: Variable 'x' is never used\n\
                   \tnot part of an error\n\
-                  b.vm2.luau:1:1: (E0) SyntaxError: Expected identifier\n";
+                  b.luau:1:1: (E0) SyntaxError: Expected identifier\n";
     let found = errors(output);
     assert_eq!(found.len(), 2);
-    assert_eq!(
-        found[0],
-        "a.vm2.luau:3:1-4: (W0) TypeError: Expected this to be\n\t'string'\nbut got\n\t'number'"
-    );
-    assert_eq!(found[1], "b.vm2.luau:1:1: (E0) SyntaxError: Expected identifier");
+    assert_eq!(found[0], "a.luau:3:1-4: (W0) TypeError: Expected this to be\n\t'string'\nbut got\n\t'number'");
+    assert_eq!(found[1], "b.luau:1:1: (E0) SyntaxError: Expected identifier");
 }

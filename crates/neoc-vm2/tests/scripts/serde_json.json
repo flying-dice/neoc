@@ -1,0 +1,135 @@
+{
+  "array": [
+    5,
+    1,
+    "two",
+    false,
+    3,
+    "v"
+  ],
+  "deepest": [
+    254,
+    true
+  ],
+  "fails_bad_key": [
+    true,
+    true
+  ],
+  "fails_deep": [
+    true,
+    true
+  ],
+  "fails_empty": [
+    true,
+    true
+  ],
+  "fails_not_utf8": [
+    true,
+    true
+  ],
+  "fails_trailing": [
+    true,
+    true
+  ],
+  "fails_unclosed": [
+    true,
+    true
+  ],
+  "handle": [
+    "{\"age\":30,\"name\":\"alice\",\"on\":true,\"ratio\":0.5,\"tags\":[\"a\",\"b\",\"c\"],\"user\":{\"id\":7}}",
+    "[\"a\",\"b\",\"c\"]"
+  ],
+  "object": [
+    true,
+    "alice",
+    30,
+    0.5,
+    true,
+    2,
+    "b",
+    7,
+    [
+      "age",
+      "name",
+      "on",
+      "ratio",
+      "tags",
+      "user"
+    ]
+  ],
+  "reader": [
+    "alice",
+    "b",
+    42,
+    "text"
+  ],
+  "reader_fails_empty": [
+    true,
+    true
+  ],
+  "reader_fails_syntax": [
+    true,
+    true
+  ],
+  "reader_fails_trailing": [
+    true,
+    true
+  ],
+  "round_trip": {
+    "age": 25,
+    "empty": {},
+    "name": "bob",
+    "nested": {
+      "deep": {
+        "list": [
+          "x",
+          {
+            "y": 1
+          }
+        ]
+      }
+    },
+    "on": true,
+    "ratio": 1.5,
+    "scores": [
+      1,
+      2,
+      3
+    ],
+    "text": "quote \" and \n newline é"
+  },
+  "scalars": [
+    "hello",
+    42,
+    -1500,
+    true,
+    false,
+    "é\n"
+  ],
+  "scalars_out": [
+    "42",
+    "-0.25",
+    "1e+20",
+    "\"hello\"",
+    "true",
+    "null",
+    "{}",
+    "[1,\"two\"]"
+  ],
+  "to_string": [
+    "{\"age\":25,\"empty\":{},\"name\":\"bob\",\"nested\":{\"deep\":{\"list\":[\"x\",{\"y\":1}]}},\"on\":true,\"ratio\":1.5,\"scores\":[1,2,3],\"text\":\"quote \\\" and \\n newline é\"}"
+  ],
+  "to_string_pretty": [
+    "{\n  \"age\": 25,\n  \"empty\": {},\n  \"name\": \"bob\",\n  \"nested\": {\n    \"deep\": {\n      \"list\": [\n        \"x\",\n        {\n          \"y\": 1\n        }\n      ]\n    }\n  },\n  \"on\": true,\n  \"ratio\": 1.5,\n  \"scores\": [\n    1,\n    2,\n    3\n  ],\n  \"text\": \"quote \\\" and \\n newline é\"\n}"
+  ],
+  "to_table": {
+    "a": [
+      1,
+      2,
+      {
+        "b": "c"
+      }
+    ],
+    "d": "e"
+  }
+}

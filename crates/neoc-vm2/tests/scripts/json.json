@@ -1,0 +1,77 @@
+{
+  "accepted": true,
+  "address": [
+    "Paris",
+    51.5,
+    2
+  ],
+  "array": [
+    4,
+    1,
+    "x",
+    0,
+    0
+  ],
+  "copied": [
+    1,
+    2
+  ],
+  "deep_write": -0.1,
+  "has": [
+    true,
+    false
+  ],
+  "keys": [
+    "active",
+    "address",
+    "age",
+    "empty",
+    "name",
+    "ratio",
+    "tags"
+  ],
+  "len": 7,
+  "list": [
+    "z",
+    "b",
+    "c"
+  ],
+  "missing": true,
+  "overwritten": "thirty-six",
+  "refused": [
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false
+  ],
+  "scalars": [
+    "ada",
+    36,
+    0.5,
+    false,
+    ""
+  ],
+  "stale": [
+    0,
+    0,
+    false,
+    3
+  ],
+  "tags": [
+    3,
+    "z",
+    "c",
+    "c",
+    true
+  ],
+  "to_table": [
+    "ada",
+    "z",
+    3,
+    51.5,
+    false
+  ]
+}

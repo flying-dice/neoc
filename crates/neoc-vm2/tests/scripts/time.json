@@ -1,0 +1,72 @@
+{
+  "as_secs_f64": 1.5,
+  "from_micros": 750,
+  "from_millis": 500,
+  "from_nanos": 250,
+  "from_secs": [
+    2,
+    2000
+  ],
+  "from_secs_f64": 1500,
+  "huge": [
+    true,
+    true,
+    true
+  ],
+  "instant": [
+    "userdata",
+    "userdata",
+    true,
+    true
+  ],
+  "parse": [
+    500,
+    90,
+    1500,
+    3600,
+    500,
+    250,
+    true
+  ],
+  "parse_fails_1": [
+    true,
+    true
+  ],
+  "parse_fails_2": [
+    true,
+    true
+  ],
+  "parse_fails_3": [
+    true,
+    true
+  ],
+  "parse_fails_4": [
+    true,
+    true
+  ],
+  "parse_fails_5": [
+    true,
+    true
+  ],
+  "parse_fails_6": [
+    true,
+    true
+  ],
+  "parse_fails_7": [
+    true,
+    true
+  ],
+  "tostring": [
+    "500ms",
+    "2s",
+    "1m30s",
+    "1.5s",
+    "1h30m0s",
+    "0s",
+    "500ns"
+  ],
+  "zero": [
+    true,
+    false
+  ]
+}

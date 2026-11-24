@@ -128,7 +128,6 @@ testcontainers-modules = { version = "0.15", features = ["mysql", "postgres"] }
 rustix = { version = "1", features = ["process"] }
 
 [dev-dependencies]
-neoc-vm = { workspace = true }
 # a self-signed certificate for the `vnd:hyper` TLS tests
 rcgen = "0.14"
 

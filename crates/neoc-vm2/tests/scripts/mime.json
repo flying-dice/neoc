@@ -1,0 +1,51 @@
+{
+  "detect": [
+    "text/css",
+    "application/gzip",
+    "image/png"
+  ],
+  "from_extension": [
+    "application/json",
+    "text/html",
+    "text/css",
+    "image/png"
+  ],
+  "invalid": [
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ]
+  ],
+  "no_extension": true,
+  "prefs": [
+    ".xhtml",
+    ".json",
+    ".jpg",
+    ".css"
+  ],
+  "to_extension": [
+    ".html",
+    ".jpg",
+    ".json",
+    ".svg",
+    ".js"
+  ],
+  "undetected": [
+    true,
+    true,
+    true
+  ],
+  "unknown_extension": [
+    true,
+    true,
+    true
+  ]
+}

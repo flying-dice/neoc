@@ -1,0 +1,123 @@
+{
+  "after": [
+    "x",
+    "49",
+    "13*12*11*10*9*8*7*6*5*4*3*2*1",
+    "still works",
+    "compiled"
+  ],
+  "autoescape": [
+    "<b>",
+    "&lt;b&gt;",
+    "<b>",
+    "<b>"
+  ],
+  "compiled": [
+    "v=1",
+    "v=two",
+    "v=true",
+    "Template("
+  ],
+  "failures": [
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ]
+  ],
+  "filters": [
+    "LOUD",
+    "core:end",
+    "&lt;b&gt;x&lt;&#x2F;b&gt;",
+    "<b>x</b>",
+    [
+      true,
+      true
+    ],
+    "x!"
+  ],
+  "render": [
+    "Hello, world!",
+    "1,2,3,",
+    "YES",
+    "NO",
+    "SHOUTquiet5",
+    "AB",
+    "ada has 2 tags: a+b",
+    "1,4,7,",
+    "hi 1",
+    "{{ not a tag }}",
+    "no tags at all"
+  ]
+}

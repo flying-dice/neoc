@@ -1,0 +1,146 @@
+{
+  "addr": true,
+  "after_raise": [
+    200,
+    "hello",
+    true
+  ],
+  "at_the_cap": 2000,
+  "bytes": true,
+  "empty": [
+    200,
+    "",
+    true
+  ],
+  "failures": [
+    [
+      true
+    ],
+    [
+      true
+    ],
+    [
+      true
+    ],
+    [
+      "failed",
+      true
+    ],
+    [
+      "failed",
+      true
+    ],
+    [
+      "failed",
+      true
+    ],
+    [
+      "failed",
+      true
+    ],
+    [
+      "failed",
+      true
+    ],
+    [
+      "failed",
+      true
+    ],
+    [
+      "failed",
+      true
+    ],
+    [
+      "failed",
+      true
+    ],
+    [
+      "failed",
+      true
+    ],
+    [
+      "failed",
+      true
+    ]
+  ],
+  "followed_explicitly": 200,
+  "generous": [
+    200,
+    "hello",
+    true
+  ],
+  "hello": [
+    200,
+    "hello",
+    "text/plain",
+    true
+  ],
+  "host_replaced": [
+    200,
+    "GET|pong|pong|nil|nil|0|false",
+    true
+  ],
+  "loop": [
+    "failed",
+    true
+  ],
+  "moved": [
+    200,
+    "hello",
+    true
+  ],
+  "no_content": [
+    204,
+    "",
+    true
+  ],
+  "not_followed": [
+    302,
+    "moved",
+    "/hello",
+    true
+  ],
+  "not_found": [
+    404,
+    "not found",
+    true
+  ],
+  "nothing": [
+    200,
+    "",
+    true
+  ],
+  "other": "other",
+  "over_the_cap": [
+    "failed",
+    true
+  ],
+  "query": [
+    200,
+    "hello",
+    true
+  ],
+  "raise": [
+    500,
+    "handler error",
+    true
+  ],
+  "refused_before_sending": true,
+  "request": [
+    200,
+    "GET|none|none|nil|nil|0|false",
+    true
+  ],
+  "request_with_headers": [
+    200,
+    "GET|ping|ping|nil|nil|0|false",
+    true
+  ],
+  "served_by": "lua",
+  "text": [
+    200,
+    "plain",
+    true
+  ],
+  "waited": true
+}

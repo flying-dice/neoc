@@ -1,0 +1,49 @@
+{
+  "fields_refused": [
+    true,
+    true
+  ],
+  "logger": [
+    "userdata",
+    "function",
+    "function"
+  ],
+  "message_refused": [
+    true,
+    true
+  ],
+  "module": [
+    "function",
+    "function",
+    "function",
+    "function",
+    "function",
+    "function"
+  ],
+  "new": [
+    true,
+    true,
+    true,
+    true,
+    true
+  ],
+  "new_refused": [
+    true,
+    true,
+    true
+  ],
+  "returns": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "with": [
+    "userdata",
+    "userdata",
+    true
+  ]
+}

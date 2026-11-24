@@ -1,0 +1,131 @@
+{
+  "both_delimiters": {
+    "": {
+      "a": "1:2",
+      "b": "3=4"
+    }
+  },
+  "colons": {
+    "a:b": {
+      "bare:key": true,
+      "url": "http://host:80/x"
+    }
+  },
+  "comment_symbols": {
+    "": {
+      "key": "val"
+    }
+  },
+  "crlf": {
+    "s": {
+      "flag": true,
+      "key": "value"
+    }
+  },
+  "delimiters": {
+    "s": {
+      "key": "val",
+      "other": "x:y"
+    }
+  },
+  "duplicates": {
+    "s": {
+      "k": "b",
+      "other": "2"
+    },
+    "t": {
+      "x": "1"
+    }
+  },
+  "empty_section": {
+    "empty": {},
+    "other": {
+      "k": "v"
+    }
+  },
+  "fails_control": [
+    true,
+    true
+  ],
+  "fails_empty_name": [
+    true,
+    true
+  ],
+  "fails_sentinel": [
+    true,
+    true
+  ],
+  "fails_unclosed": [
+    true,
+    true
+  ],
+  "folded": {
+    "foo": {
+      "a": "1",
+      "b": "2"
+    }
+  },
+  "lowercase": {
+    "section": {
+      "flag": true,
+      "key": "Val"
+    }
+  },
+  "no_inline_comments": {
+    "s": {
+      "key": "value ; not a comment"
+    }
+  },
+  "nothing": [
+    {},
+    {}
+  ],
+  "parse": [
+    {
+      "": {
+        "name": "world"
+      },
+      "server": {
+        "empty": "",
+        "host": "localhost",
+        "port": "5432",
+        "verbose": true
+      }
+    },
+    true
+  ],
+  "quoted": {
+    "s": {
+      "a": "quoted value",
+      "b": "single",
+      "c": "plain \"inner\" text"
+    }
+  },
+  "round_trip": "top=1\n\n[db]\nhost=localhost\n",
+  "stringify": [
+    "[section]\nkey=value\n",
+    "[section]\nflag\n",
+    "[section]\noff=false\n",
+    "[section]\nn=42\n",
+    "[section]\nn=1.5\n",
+    "name=world\n\n[section]\nk=v\n",
+    "[section]\nkey = value\n",
+    "[section]\nkey=value\n",
+    ""
+  ],
+  "stringify_refuses": [
+    false,
+    false
+  ],
+  "unicode": {
+    "日本語": {
+      "キー": "値"
+    }
+  },
+  "whitespace": {
+    "s": {
+      "flag": true,
+      "key": "spaced value"
+    }
+  }
+}

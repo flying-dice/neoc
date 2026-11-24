@@ -1,0 +1,80 @@
+{
+  "dir": [
+    true,
+    0,
+    true,
+    true
+  ],
+  "dir_close": [
+    true,
+    true,
+    false
+  ],
+  "empty_options": [
+    true,
+    true,
+    true
+  ],
+  "file": [
+    "string",
+    true,
+    true,
+    true,
+    true,
+    true,
+    true
+  ],
+  "file_closed": [
+    false,
+    true
+  ],
+  "file_content": "content",
+  "keep": [
+    true,
+    true,
+    true,
+    true
+  ],
+  "keep_again": [
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ]
+  ],
+  "missing_parent": [
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ]
+  ],
+  "names": [
+    "neoc-",
+    ".tmp",
+    true,
+    "neoc-",
+    ".d",
+    true
+  ],
+  "parent": [
+    true,
+    true,
+    2
+  ],
+  "parent_after": 0
+}

@@ -1,0 +1,93 @@
+{
+  "empty_match": [
+    1,
+    0
+  ],
+  "escape": [
+    "a\\.b",
+    true
+  ],
+  "find": [
+    "12-34",
+    6,
+    10
+  ],
+  "find_all": [
+    "1",
+    "22",
+    "333",
+    "4444"
+  ],
+  "find_all_none": 0,
+  "inline_flags": [
+    true,
+    true,
+    false,
+    true
+  ],
+  "invalid": [
+    true,
+    true
+  ],
+  "invalid_pattern": [
+    true,
+    true
+  ],
+  "is_match": [
+    true,
+    false
+  ],
+  "like_string_find": true,
+  "miss": [
+    true,
+    true
+  ],
+  "named": [
+    "2026",
+    "05"
+  ],
+  "pattern": [
+    false,
+    3,
+    "123",
+    true,
+    "\\d+"
+  ],
+  "pattern_replace": [
+    "N 2",
+    "N N"
+  ],
+  "pattern_split": [
+    "a",
+    "b,c"
+  ],
+  "replace": [
+    "Xaa",
+    "XXX",
+    "1=a 2=b",
+    "10=x"
+  ],
+  "split": [
+    [
+      "",
+      "one",
+      "two",
+      "three",
+      ""
+    ],
+    [
+      "a",
+      "b,c,d"
+    ],
+    [
+      "a",
+      "b",
+      "c"
+    ]
+  ],
+  "unicode": [
+    true,
+    4,
+    5
+  ]
+}

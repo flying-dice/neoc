@@ -1,0 +1,63 @@
+{
+  "clear": [
+    0,
+    1,
+    true
+  ],
+  "delete": [
+    true,
+    false,
+    true
+  ],
+  "get": [
+    "v",
+    true
+  ],
+  "identity": [
+    true,
+    true,
+    false
+  ],
+  "key_refused": [
+    true,
+    true,
+    true
+  ],
+  "keys": [
+    "string",
+    "one",
+    "one",
+    "yes",
+    "no",
+    "float",
+    "text one",
+    "zero",
+    7
+  ],
+  "len": 2,
+  "lru": [
+    "A",
+    true,
+    "C",
+    2,
+    1
+  ],
+  "nil_value_refused": [
+    true,
+    true
+  ],
+  "overwrite": [
+    "second",
+    0
+  ],
+  "set_returns": 0,
+  "stats": [
+    2,
+    1,
+    1
+  ],
+  "tostring": [
+    "Cache(len=1, max_size=1)",
+    "Cache(len=0, max_size=4)"
+  ]
+}
