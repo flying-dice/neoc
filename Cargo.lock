@@ -3382,8 +3382,9 @@ dependencies = [
  "globset",
  "miette",
  "mlua",
- "neoc-vm",
+ "neoc-vm2",
  "tempfile",
+ "thiserror 2.0.21",
  "tokio",
  "walkdir",
 ]

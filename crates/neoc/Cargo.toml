@@ -10,7 +10,8 @@ repository.workspace = true
 
 [dependencies]
 # The runtime library: engine construction and script execution.
-neoc-vm = { workspace = true }
+neoc-vm2 = { workspace = true }
+thiserror = "2"
 
 # `mlua::Error` surfaces when a script fails; the bin maps it to a plain
 # diagnostic. `miette` renders the runtime's `NeocError`. Both are the runtime's

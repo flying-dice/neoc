@@ -15,6 +15,7 @@ publish = false
 # One place for versions. Crates say `tokio = { workspace = true }` and add features only if they need more.
 [workspace.dependencies]
 neoc-vm = { path = "crates/neoc-vm" }
+neoc-vm2 = { path = "crates/neoc-vm2" }
 neoc-decl = { path = "crates/neoc-decl" }
 neoc-macros = { path = "crates/neoc-macros" }
 # internal (path deps; the arrows in the dependency diagram)

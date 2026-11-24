@@ -25,7 +25,7 @@ Feature: CLI
       """
       local t = require("lib:test")
       t.test("adds", function()
-        t.expect(1 + 2).toBe(3)
+        t.expect(1 + 2):toBe(3)
       end)
       """
     When I run "neoc run ok.test.lua"
@@ -38,7 +38,7 @@ Feature: CLI
       """
       local t = require("lib:test")
       t.test("fails", function()
-        t.expect(1).toBe(2)
+        t.expect(1):toBe(2)
       end)
       """
     When I run "neoc run bad.test.lua"

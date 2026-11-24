@@ -1,7 +1,8 @@
-use neoc_vm::errors::{self, NeocError};
-use neoc_vm::lua;
-use neoc_vm::lua::lib::compile::{TrailerError, detect_embedded_payload_from};
-use neoc_vm::lua::std::workers::ShutdownSignal;
+mod errors;
+
+use errors::NeocError;
+use neoc_vm2::modules::lib::compile::{TrailerError, detect_embedded_payload_from};
+use neoc_vm2::modules::std::workers::workers::ShutdownSignal;
 
 use std::path::Path;
 use std::{env, fs};
@@ -37,7 +38,7 @@ enum Commands {
 
 fn report_error(err: NeocError) -> ! {
     eprintln!("{:?}", miette::Report::new(err));
-    neoc_vm::exit(1);
+    neoc_vm2::exit(1);
 }
 
 /// Reports a runtime fault from a script. A `require` fault takes the dedicated
@@ -47,7 +48,7 @@ fn report_script_error(e: &mlua::Error, source: &str, path: &str) -> ! {
         report_error(neoc_err);
     }
     eprintln!("{e}");
-    neoc_vm::exit(1);
+    neoc_vm2::exit(1);
 }
 
 /// Expand one glob pattern to the matching file paths, walking from its leading
@@ -86,7 +87,7 @@ fn expand_args(args: impl Iterator<Item = String>) -> Vec<String> {
                 Ok(matched) => paths.extend(matched),
                 Err(e) => {
                     eprintln!("error: {e}");
-                    neoc_vm::exit(1);
+                    neoc_vm2::exit(1);
                 }
             }
         } else {
@@ -125,7 +126,7 @@ fn install_shutdown_handler() {
 /// binding `user_args` as the `_NEOC_ARGS` global when any were supplied. Exits
 /// the process on engine-init failure.
 fn engine_with_args(user_args: &[String]) -> mlua::Lua {
-    let engine = lua::sandbox::make_engine().unwrap_or_else(|e| {
+    let engine = neoc_vm2::make_engine().unwrap_or_else(|e| {
         report_error(NeocError::EngineInit(e.to_string()));
     });
     if !user_args.is_empty() {
@@ -141,10 +142,10 @@ fn engine_with_args(user_args: &[String]) -> mlua::Lua {
 /// Drains any tasks spawned via `std:task` that outlive the main script. Exits
 /// with code 1 if any of them errored.
 async fn drain_scheduler(engine: &mlua::Lua) {
-    if let Some(scheduler) = engine.app_data_ref::<lua::std::task::Scheduler>() {
+    if let Some(scheduler) = engine.app_data_ref::<neoc_vm2::scheduler::Scheduler>() {
         scheduler.wait_all();
         if scheduler.had_task_errors() {
-            neoc_vm::exit(1);
+            neoc_vm2::exit(1);
         }
     }
 }
@@ -172,7 +173,7 @@ fn reject_neoc_paths(paths: &[String]) {
                 "error: {path}: `neoc run` runs Lua (`.lua`) scripts only; \
                  `.neoc` source is no longer supported"
             );
-            neoc_vm::exit(1);
+            neoc_vm2::exit(1);
         }
     }
 }
@@ -188,12 +189,12 @@ async fn run(paths: &[String], user_args: &[String]) {
     for path in paths {
         let source = fs::read_to_string(path).unwrap_or_else(|e| {
             eprintln!("error: {path}: {e}");
-            neoc_vm::exit(1);
+            neoc_vm2::exit(1);
         });
 
         let engine = engine_with_args(user_args);
 
-        if let Err(e) = lua::sandbox::load_source(&engine, &source)
+        if let Err(e) = neoc_vm2::load_source(&engine, &source)
             .set_name(path.as_str())
             .exec_async()
             .await
@@ -205,28 +206,21 @@ async fn run(paths: &[String], user_args: &[String]) {
 
         let is_test = path.ends_with(".test.lua") || path.ends_with(".spec.lua");
         if is_test {
-            match lua::lib::test::summary(&engine) {
-                Ok((passed, failed)) => {
-                    total_passed += passed;
-                    total_failed += failed;
-                    if multi {
-                        if failed == 0 {
-                            println!("{} {path} ({passed} passed)", green("✓"));
-                        } else {
-                            println!("{} {path} ({passed} passed, {failed} failed)", red("✗"));
-                        }
-                    } else {
-                        println!();
-                        if failed == 0 {
-                            println!("{}", green(&format!("{passed} passed")));
-                        } else {
-                            println!("{}", red(&format!("{passed} passed, {failed} failed")));
-                        }
-                    }
+            let (passed, failed) = neoc_vm2::modules::lib::test::summary(&engine);
+            total_passed += passed;
+            total_failed += failed;
+            if multi {
+                if failed == 0 {
+                    println!("{} {path} ({passed} passed)", green("✓"));
+                } else {
+                    println!("{} {path} ({passed} passed, {failed} failed)", red("✗"));
                 }
-                Err(e) => {
-                    eprintln!("error reading test state: {e}");
-                    neoc_vm::exit(1);
+            } else {
+                println!();
+                if failed == 0 {
+                    println!("{}", green(&format!("{passed} passed")));
+                } else {
+                    println!("{}", red(&format!("{passed} passed, {failed} failed")));
                 }
             }
         }
@@ -241,10 +235,10 @@ async fn run(paths: &[String], user_args: &[String]) {
                 "{}",
                 red(&format!("{total_passed} passed, {total_failed} failed"))
             );
-            neoc_vm::exit(1);
+            neoc_vm2::exit(1);
         }
     } else if total_failed > 0 {
-        neoc_vm::exit(1);
+        neoc_vm2::exit(1);
     }
 }
 
@@ -255,7 +249,7 @@ async fn run_eval(source: &str, user_args: &[String]) {
 
     let engine = engine_with_args(user_args);
 
-    if let Err(e) = lua::sandbox::load_source(&engine, source)
+    if let Err(e) = neoc_vm2::load_source(&engine, source)
         .set_name("<eval>")
         .exec_async()
         .await
@@ -297,7 +291,7 @@ async fn run_embedded(payload: &[u8]) {
 
     let engine = engine_with_args(&user_args);
 
-    if let Err(e) = lua::sandbox::load_source(&engine, payload)
+    if let Err(e) = neoc_vm2::load_source(&engine, payload)
         .exec_async()
         .await
     {
@@ -315,7 +309,7 @@ async fn run_embedded(payload: &[u8]) {
 fn block_on_runtime<F: std::future::Future<Output = ()> + Send + 'static>(fut: F) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .thread_stack_size(neoc_vm::VM_THREAD_STACK)
+        .thread_stack_size(neoc_vm2::VM_THREAD_STACK)
         .build()
         .unwrap_or_else(|e| report_error(NeocError::EngineInit(e.to_string())));
     runtime.block_on(async move {
@@ -327,7 +321,7 @@ fn block_on_runtime<F: std::future::Future<Output = ()> + Send + 'static>(fut: F
         }
     });
     // an engine that outlives the run (a worker thread still has it) must not leave its processes behind
-    neoc_vm::kill_processes();
+    neoc_vm2::kill_processes();
 }
 
 fn main() {
@@ -347,7 +341,7 @@ fn main() {
                 let resolved = expand_args(paths.into_iter());
                 if resolved.is_empty() {
                     eprintln!("error: no scripts to run");
-                    neoc_vm::exit(1);
+                    neoc_vm2::exit(1);
                 }
                 block_on_runtime(async move { run(&resolved, &args).await });
             }
@@ -399,7 +393,7 @@ mod tests {
         } else {
             "release"
         });
-        p.push("neoc");
+        p.push(format!("neoc{}", std::env::consts::EXE_SUFFIX));
         p
     }
 
@@ -554,31 +548,29 @@ local TcpListener = require("std:net").TcpListener
 local Counter     = require("std:collections").Counter
 local hyper       = require("vnd:hyper")
 
-local listener = TcpListener.bind("127.0.0.1:__PORT__")
+local listener = assert(TcpListener.bind("127.0.0.1:__PORT__"))
 local hits     = Counter.new(0)
 
 for i = 1, 4 do
-    thread.spawn({
-        source = [[
-            local hyper  = require("vnd:hyper")
-            local shared = (require("std:thread")).shared
+    assert(thread.spawn([[
+        local hyper  = require("vnd:hyper")
+        local shared = require("std:thread").shared()
 
-            local server = hyper.serve(shared.listener, function(req)
-                if req.method == "GET" and req.path == "/__readyz" then
-                    return { status = 200, body = "ok" }
-                end
-                if req.method == "GET" and req.path == "/" then
-                    shared.hits:increment()
-                    return "OK"
-                end
-                if req.method == "GET" and req.path == "/hits" then
-                    return { status = 200, body = tostring(shared.hits:get()) }
-                end
-                return { status = 404 }
-            end)
-        ]],
-        shared = { listener = listener, hits = hits },
-    })
+        local server = assert(hyper.serve(shared.listener, function(req)
+            if req.method == "GET" and req.path == "/__readyz" then
+                return { status = 200, body = "ok" }
+            end
+            if req.method == "GET" and req.path == "/" then
+                shared.hits:increment()
+                return "OK"
+            end
+            if req.method == "GET" and req.path == "/hits" then
+                return { status = 200, body = tostring(shared.hits:get()) }
+            end
+            return { status = 404 }
+        end))
+        server:wait()
+    ]], nil, { listener = listener, hits = hits }))
 end
 
 require("std:workers").on_shutdown():wait()
