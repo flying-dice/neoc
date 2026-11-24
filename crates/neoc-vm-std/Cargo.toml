@@ -1,0 +1,45 @@
+[package]
+name = "neoc-vm-std"
+description = "The std:* modules of neoc's Lua runtime"
+version.workspace = true
+edition.workspace = true
+publish = false
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "neoc_vm_std"
+path = "src/lib.rs"
+
+[dependencies]
+neoc-vm-core = { workspace = true }
+mlua-ir = { workspace = true }
+# The engine is Luau.
+mlua = { version = "0.12", features = ["luau", "async", "send", "serialize", "macros"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "net", "io-util", "process", "signal", "fs"] }
+parking_lot = "0.13"
+futures = { version = "0.3", default-features = false, features = ["std"] }
+uuid = { version = "1", features = ["v4", "v7"] }
+# `std:fs`: iterative tree walks, and the operating system's own directory watching (9.0 at least: see
+# `src/fs/watch.rs`).
+walkdir = "2"
+notify = "9.0"
+# `std:fs` stages a cross-device move beside its destination.
+tempfile = "3"
+
+# `std:process` kills a process's whole group.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["process"] }
+
+[features]
+# What the tests of the modules built on `std:io` and `std:net` share (`io::testing`, `net::port_is_free`), for the
+# crates that have such modules to enable in their dev-dependencies.
+testing = []
+
+[lints.cargo]
+missing_lints_inheritance = "allow"

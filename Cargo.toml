@@ -16,6 +16,7 @@ publish = false
 [workspace.dependencies]
 neoc-vm = { path = "crates/neoc-vm" }
 neoc-vm-core = { path = "crates/neoc-vm-core" }
+neoc-vm-std = { path = "crates/neoc-vm-std" }
 # internal (path deps; the arrows in the dependency diagram)
 vos-domain      = { path = "crates/vos-domain" }
 vos-application = { path = "crates/vos-application" }

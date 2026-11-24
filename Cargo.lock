@@ -3359,7 +3359,7 @@ dependencies = [
  "mlua-ir-gen",
  "neoc-agui",
  "neoc-vm-core",
- "notify",
+ "neoc-vm-std",
  "p256",
  "parking_lot 0.13.0",
  "percent-encoding",
@@ -3372,7 +3372,6 @@ dependencies = [
  "rsa",
  "rusqlite",
  "rust-ini",
- "rustix",
  "rustls-platform-verifier",
  "semver",
  "serde",
@@ -3426,6 +3425,27 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-core",
+]
+
+[[package]]
+name = "neoc-vm-std"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "notify",
+ "parking_lot 0.13.0",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "uuid",
+ "walkdir",
 ]
 
 [[package]]

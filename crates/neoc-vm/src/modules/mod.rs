@@ -19,7 +19,10 @@
 )]
 
 pub mod lib;
-pub mod std;
+/// `std:*`: the modules of `neoc-vm-std`, under the paths they had.
+pub mod std {
+    pub use neoc_vm_std::*;
+}
 pub mod vnd;
 
 pub use neoc_vm_core::modules::{build, install, install_allowed, names, unknown_module};

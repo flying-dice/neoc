@@ -253,8 +253,8 @@ pub mod io {
 }
 
 /// What the tests of the modules that take a reader or a writer share.
-#[cfg(test)]
-pub(crate) mod testing {
+#[cfg(any(test, feature = "testing"))]
+pub mod testing {
     use std::sync::Arc;
 
     use parking_lot::Mutex;
@@ -263,9 +263,9 @@ pub(crate) mod testing {
 
     /// A sink a test reads back.
     #[derive(Clone, Default)]
-    pub(crate) struct Sink {
-        pub(crate) bytes: Arc<Mutex<Vec<u8>>>,
-        pub(crate) flushes: Arc<Mutex<u32>>,
+    pub struct Sink {
+        pub bytes: Arc<Mutex<Vec<u8>>>,
+        pub flushes: Arc<Mutex<u32>>,
     }
 
     impl std::io::Write for Sink {
@@ -281,13 +281,13 @@ pub(crate) mod testing {
 
     impl Sink {
         /// What was written, as text.
-        pub(crate) fn text(&self) -> String {
+        pub fn text(&self) -> String {
             String::from_utf8(self.bytes.lock().clone()).expect("UTF-8")
         }
     }
 
     /// A source and a sink that always fail.
-    pub(crate) struct Broken;
+    pub struct Broken;
 
     impl std::io::Read for Broken {
         fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
@@ -306,7 +306,7 @@ pub(crate) mod testing {
 
     /// An engine with `writer` (over the returned sink), `broken_reader` and `broken_writer` as globals, and the
     /// module `name` as the global `global`.
-    pub(crate) fn engine(name: &str, global: &str) -> (mlua::Lua, Sink) {
+    pub fn engine(name: &str, global: &str) -> (mlua::Lua, Sink) {
         use super::io::Reader;
         let lua = neoc_vm_core::make_engine().expect("engine");
         let sink = Sink::default();

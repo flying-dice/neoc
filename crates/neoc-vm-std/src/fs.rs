@@ -116,8 +116,8 @@ pub mod fs {
     use super::ops::{self, Entry, FileKind, Metadata, Permission};
     use super::watch::{self, Event, Watch};
     use super::{blocking, path_of};
-    use crate::modules::std::io::io::{Reader, Writer};
-    use crate::modules::std::time::time::Duration;
+    use crate::io::io::{Reader, Writer};
+    use crate::time::time::Duration;
     use neoc_vm_core::osstr::OsPath;
 
     /// One entry of a `read_dir` or `walk` listing.

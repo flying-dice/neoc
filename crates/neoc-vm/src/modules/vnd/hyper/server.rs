@@ -19,9 +19,9 @@ use tokio::sync::{oneshot, watch};
 
 use super::collect_headers;
 use super::hyper::{Answer, Request, ServerError};
-use crate::modules::std::net::ListenerSlot;
-use crate::modules::std::workers::workers::ShutdownSignal;
 use neoc_vm_core::lifecycle::{Life, idle};
+use neoc_vm_std::net::ListenerSlot;
+use neoc_vm_std::workers::workers::ShutdownSignal;
 
 /// A server: the script's handler, and whether its accept loop is live.
 pub struct Server {
@@ -264,7 +264,7 @@ mod tests {
     /// until it can.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn the_accept_loop_closes_the_server_before_it_wakes_who_waits() {
-        use crate::modules::std::net::net::TcpListener;
+        use neoc_vm_std::net::net::TcpListener;
 
         let lua = neoc_vm_core::make_engine().expect("engine");
         let bound: Value =

@@ -86,7 +86,7 @@ pub mod csv {
     use serde::{Deserialize, Serialize};
 
     use super::{MAX_QUOTED_BYTES, Recent, truncated, wide, without_terminator};
-    use crate::modules::std::io::io::{Claim, Locking, Reader as Handle};
+    use neoc_vm_std::io::io::{Claim, Locking, Reader as Handle};
 
     /// A one-character symbol of the dialect (a delimiter, a quote): a single ASCII character.
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Text)]
@@ -1466,7 +1466,7 @@ mod tests {
 
     #[test]
     fn a_failing_handle_is_the_error_io() {
-        let (lua, _) = crate::modules::std::io::testing::engine("lib:csv", "csv");
+        let (lua, _) = neoc_vm_std::io::testing::engine("lib:csv", "csv");
         let (kind, text): (String, String) = tokio::runtime::Runtime::new()
             .unwrap()
             .block_on(

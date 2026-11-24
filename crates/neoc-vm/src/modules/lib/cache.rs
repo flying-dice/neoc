@@ -138,7 +138,7 @@ pub mod cache {
     use serde::{Deserialize, Serialize};
 
     use super::{CacheKey, CacheState, Entry, MAX_CAPACITY, canonical_num_bits};
-    use crate::modules::std::time::time::Duration;
+    use neoc_vm_std::time::time::Duration;
 
     mlua_ir::unknown_reason!(
         /// Why a stored value has no declared shape.

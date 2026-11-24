@@ -473,7 +473,7 @@ async fn shutting_the_engine_down_closes_its_servers() {
         tokio::time::timeout(std::time::Duration::from_secs(10), waiting).await.expect("the wait ended");
     // the wait ends: with `true`, or with the error of a call the shutdown cut short
     let _ = woken.expect("task");
-    assert!(crate::modules::std::net::port_is_free(&addr), "the port is free");
+    assert!(neoc_vm_std::net::port_is_free(&addr), "the port is free");
     let (closed, listener_closed): (String, String) = lua
         .load(
             r#"

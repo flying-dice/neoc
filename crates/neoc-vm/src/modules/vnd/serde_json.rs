@@ -39,7 +39,7 @@ pub mod serde_json {
     use super::place_and_reason;
     use crate::modules::lib::json::deeper_than;
     use crate::modules::lib::json::json::{Input, MAX_DEPTH, Node};
-    use crate::modules::std::io::io::{Reader, Writer};
+    use neoc_vm_std::io::io::{Reader, Writer};
 
     /// Why a text is not JSON.
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error, LuaError)]
@@ -465,7 +465,7 @@ mod tests {
     }
 
     fn with_io<T: mlua::FromLuaMulti>(code: &str) -> (T, String) {
-        let (lua, sink) = crate::modules::std::io::testing::engine("vnd:serde_json", "serde_json");
+        let (lua, sink) = neoc_vm_std::io::testing::engine("vnd:serde_json", "serde_json");
         let value = lua.load(code).eval().unwrap();
         (value, sink.text())
     }

@@ -72,7 +72,7 @@ fn arm_watchdog(label: &str) -> WatchdogGuard {
                         "    \x1b[2mtimed out after {}s with no result\x1b[0m",
                         test_timeout().as_secs()
                     );
-                    crate::exit(TIMEOUT_EXIT_CODE);
+                    neoc_vm_std::exit(TIMEOUT_EXIT_CODE);
                 }
             }
         });

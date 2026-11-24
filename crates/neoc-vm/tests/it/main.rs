@@ -8,3 +8,4 @@ mod modules;
 mod scheduler;
 mod scripts;
 mod strict_luau;
+mod thread;

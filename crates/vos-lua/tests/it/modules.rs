@@ -178,8 +178,8 @@ async fn the_globals_the_declarations_refuse_are_absent_from_the_environment() {
     );
 }
 
-/// The module names `neoc-vm` declares in its source: each `#[mlua_ir::module("<name>")]` that starts a line (a doc
-/// comment that shows one is not a module).
+/// The module names the runtime declares in the source of `neoc-vm` and of the crates it links: each
+/// `#[mlua_ir::module("<name>")]` that starts a line (a doc comment that shows one is not a module).
 fn modules_in_the_source(dir: &std::path::Path, names: &mut Vec<String>) {
     for entry in std::fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
@@ -201,8 +201,11 @@ fn modules_in_the_source(dir: &std::path::Path, names: &mut Vec<String>) {
 #[test]
 fn every_module_the_library_declares_is_linked_into_the_adapter() {
     let mut declared = Vec::new();
-    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../neoc-vm/src/modules");
-    modules_in_the_source(&source, &mut declared);
+    // the modules of `neoc-vm` and of the crates it links
+    for dir in ["../neoc-vm/src/modules", "../neoc-vm-std/src"] {
+        let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(dir);
+        modules_in_the_source(&source, &mut declared);
+    }
     declared.sort();
     assert!(declared.len() >= 46, "{declared:?}");
     let mut linked: Vec<&str> = library().collect();

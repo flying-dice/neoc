@@ -100,7 +100,7 @@ pub mod quick_xml {
     use serde_json::Value;
 
     use super::{Content, has_empty_name};
-    use crate::modules::std::io::io::{Reader, Writer};
+    use neoc_vm_std::io::io::{Reader, Writer};
 
     mlua_ir::unknown_reason!(
         /// Why a decoded document has no declared shape.
@@ -562,7 +562,7 @@ mod tests {
     }
 
     fn with_io<T: mlua::FromLuaMulti>(code: &str) -> (T, String) {
-        let (lua, sink) = crate::modules::std::io::testing::engine("vnd:quick_xml", "quick_xml");
+        let (lua, sink) = neoc_vm_std::io::testing::engine("vnd:quick_xml", "quick_xml");
         let value = lua.load(code).eval().unwrap();
         (value, sink.text())
     }

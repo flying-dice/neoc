@@ -291,8 +291,8 @@ pub mod net {
 /// The socket is closed by the time the test asks, but on Unix a test running beside it that starts a process
 /// forks this one, and the child holds a copy of every descriptor (the listener's too) until it execs: the port
 /// stays taken for that moment, so the bind is tried again for a short while before the port is said to be held.
-#[cfg(test)]
-pub(crate) fn port_is_free(addr: &str) -> bool {
+#[cfg(any(test, feature = "testing"))]
+pub fn port_is_free(addr: &str) -> bool {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         if std::net::TcpListener::bind(addr).is_ok() {
