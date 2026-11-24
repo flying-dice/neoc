@@ -2,7 +2,7 @@
 -- Luau syntax and types with the module declarations: type annotations, `local x: T`, type aliases that name a
 -- module's resource type (the declarations export them), `continue`, compound assignment, string interpolation,
 -- if-expressions and generic functions, and Luau's `buffer` library. Type-checked in strict mode against the
--- generated declarations (crates/neoc-vm/tests/strict_luau.rs) and RUN by `neoc run` in crates/neoc/tests/cli.rs
+-- generated declarations (crates/neoc-vm/tests/it/strict_luau.rs) and RUN by `neoc run` in crates/neoc/tests/cli.rs
 -- (`run_a_typed_luau_script_with_annotations_interpolation_and_continue`), which asserts its output: edit the two
 -- together.
 local json = require("lib:json")

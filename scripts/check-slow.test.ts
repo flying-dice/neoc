@@ -56,7 +56,7 @@ const SLOW = [
   'vos-domain ui::diff::tests::apply_of_diff_reproduces_the_new_tree_for_unrelated_trees_full'
 ]
 /** Everything nextest lists as ignored in the fixture: the slow: tests and the one on the script's NOT_SLOW list. */
-const IGNORED = [...SLOW, 'vos-lua::baseline calculator_vm_create_time_and_memory']
+const IGNORED = [...SLOW, 'vos-lua::it baseline::calculator_vm_create_time_and_memory']
 
 /**
  * Runs `check-slow.sh --list` (the selection and its cross-check, no slow suite) in a fresh copy of the fixture, with a

@@ -36,7 +36,7 @@ fail() { printf 'check-slow: %s\n' "$*" >&2; exit 1; }
 
 # Ignored for another reason than slow, as `cargo nextest list --message-format oneline` prints them.
 NOT_SLOW=(
-  "vos-lua::baseline calculator_vm_create_time_and_memory" # a measurement, run on demand (AGOS-53)
+  "vos-lua::it baseline::calculator_vm_create_time_and_memory" # a measurement, run on demand (AGOS-53)
   # need a running Docker daemon
   "neoc-vm modules::vnd::bollard::tests::a_real_daemon_answers"
   "neoc-vm modules::vnd::bollard::tests::a_real_daemon_runs_a_container_from_pull_to_removal"

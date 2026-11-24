@@ -1,6 +1,6 @@
 // A backend in TypeScript that tries what the compiler's output needs from an app's environment: its runtime library
 // (classes, Map and Set, generators, string and array methods, Error), the bitwise operators, the host's modules and
-// the `app` API, called as methods and as plain functions. `crates/vos-lua/tests/typescript.rs` builds it with the
+// the `app` API, called as methods and as plain functions. `crates/vos-lua/tests/it/typescript.rs` builds it with the
 // product's own pipeline and runs it in the host's runtime.
 import { db } from 'vos:app'
 import * as base64 from 'lib:base64'

@@ -7,7 +7,7 @@
 # scripts/check-slow.sh (`bun run slow`).
 #
 # NEOC_REQUIRE_LUAU_LSP=1 is set here: a missing luau-lsp fails the strict-mode check of the VM's test scripts
-# (crates/neoc-vm/tests/strict_luau.rs) instead of skipping it.
+# (crates/neoc-vm/tests/it/strict_luau.rs) instead of skipping it.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export NEOC_REQUIRE_LUAU_LSP=1
@@ -29,9 +29,9 @@ cargo test -p neoc -p neoc-vm
 # What apps do with the modules (vos-lua's module tests), so a module change reaches them in the scoped gate too. The
 # one test that builds its fixture with darklua is left out (this script needs no bun or darklua); the full gate runs
 # it in `bun run test`.
-step "vos-lua module tests: cargo nextest run -p vos-lua --test modules"
-cargo nextest run -p vos-lua --test modules \
-  -E 'not test(=an_app_built_by_the_real_pipeline_requires_the_neoc_modules)'
+step "vos-lua module tests: cargo nextest run -p vos-lua --test it (the modules:: tests)"
+cargo nextest run -p vos-lua --test it \
+  -E 'test(/^modules::/) & not test(=modules::an_app_built_by_the_real_pipeline_requires_the_neoc_modules)'
 
 step "scripts/check-toolchain-pin.sh"
 scripts/check-toolchain-pin.sh

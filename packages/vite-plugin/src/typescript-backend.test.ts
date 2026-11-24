@@ -1,7 +1,7 @@
 /**
  * A backend written in TypeScript, through the plugin: what is generated for it, what the compiler makes of it, and a real
  * Vite build of a small project. None of it needs luau-lsp, darklua or StyLua. That the output runs in an app's environment
- * is held where the host's runtime is (`crates/vos-lua/tests/typescript.rs`, `todos.rs`).
+ * is held where the host's runtime is (`crates/vos-lua/tests/it/typescript.rs`, `todos.rs`).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
