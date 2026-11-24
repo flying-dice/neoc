@@ -1,5 +1,5 @@
 --!strict
--- intentional: vnd:bollard returns a typed DockerError (error_kind and error_message are gone); Docker's bodies and answers are bollard's models, typed field by field, so an unknown field is refused; create_container takes the body and then { name, platform }; names, signals and options that are refused are raised with their place; filter values are always lists; TLS is tls = { ca, cert, key }; logs, events and pull_image return the stream itself; info, inspect_container, stats, list_volumes, create_volume and list_networks are not ported yet
+-- intentional: vnd:bollard returns a typed DockerError (error_kind and error_message are gone); Docker's bodies and answers are bollard's models, typed field by field, so an unknown field is refused; create_container takes the body and then { name, platform }; names, signals and options that are refused are raised with their place; filter values are always lists; TLS is tls = { ca, cert, key }; logs, events and pull_image return the stream itself; a volume that is returned (list_volumes, create_volume) is the module's own typed record of Docker's volume, its date as text
 local bollard = require("vnd:bollard")
 
 local function raised(call: () -> ()): string
@@ -32,6 +32,20 @@ if unreachable.kind == "connect" then
 end
 local list, list_err = docker:list_containers({ all = true, filters = { status = { "running" } } })
 assert(list == nil and list_err ~= nil and list_err.kind == "connect")
+-- inspect_container is (nil, nil) only when Docker says there is no such container: no daemon is an error
+local inspected, inspect_err = docker:inspect_container("web")
+assert(inspected == nil and inspect_err ~= nil and inspect_err.kind == "connect")
+assert(inspect_err.op == "vnd:bollard.Client:inspect_container")
+local info, info_err = docker:info()
+assert(info == nil and info_err ~= nil and info_err.kind == "connect")
+local volumes, volumes_err = docker:list_volumes()
+assert(volumes == nil and volumes_err ~= nil and volumes_err.kind == "connect")
+local networks, networks_err = docker:list_networks({ filters = { driver = { "bridge" } } })
+assert(networks == nil and networks_err ~= nil and networks_err.kind == "connect")
+local no_stats, stats_err = docker:stats("web")
+assert(no_stats == nil and stats_err ~= nil and stats_err.kind == "connect")
+local no_volume, volume_err = docker:create_volume({ Name = "data" })
+assert(no_volume == nil and volume_err ~= nil and volume_err.kind == "connect")
 
 -- a stream is returned as it is: the failure is its first next()'s, and then it is over
 local logs = docker:logs("web", { tail = 10 })
@@ -66,6 +80,12 @@ end):find("argument #1 'image': the image must be a reference", 1, true))
 assert(raised(function()
 	docker:kill_container("web", { signal = "HUP; rm" })
 end):find("a signal is its name or its number", 1, true))
+assert(raised(function()
+	docker:inspect_container("web?size=1")
+end):find("vnd:bollard.Client:inspect_container: argument #1 'name': the container must be a name or an id", 1, true))
+assert(raised(function()
+	docker:stats("")
+end):find("argument #1 'name': the container must be a name or an id", 1, true))
 
 -- options are the call's own: an unknown one, a wrong type, a filter that is not a list
 assert(raised(function()
@@ -77,6 +97,12 @@ end):find("filters", 1, true))
 assert(raised(function()
 	docker:logs("web", { tail = -1 })
 end):find("argument #2 'opts'", 1, true))
+assert(raised(function()
+	docker:list_volumes({ filter = { name = { "data" } } } :: any)
+end):find("unknown field `filter`", 1, true))
+assert(raised(function()
+	docker:list_networks({ filters = { name = "bridge" } } :: any)
+end):find("filters", 1, true))
 assert(raised(function()
 	bollard.connect({ tls = { ca = "ca.pem" } } :: any)
 end):find("vnd:bollard.connect: argument #1 'opts'", 1, true))
@@ -100,6 +126,12 @@ end):find("the container must be a name or an id", 1, true))
 assert(raised(function()
 	docker:create_network({ Name = true } :: any)
 end):find("Name: expected a string", 1, true))
+assert(raised(function()
+	docker:create_volume({ Name = true } :: any)
+end):find("Name: expected a string", 1, true))
+assert(raised(function()
+	docker:create_volume({ Name = "data", Lables = {} } :: any)
+end):find("argument #1 'body': unknown field `Lables`", 1, true))
 
 -- an empty command is the call's own refusal
 local ran, no_command = docker:exec("web", {})
@@ -110,9 +142,6 @@ local function _usage()
 	local local_docker = assert(bollard.connect())
 	local version = assert(local_docker:version())
 	local _api: string? = version.ApiVersion
-	-- Docker's map of port bindings has optional values, and luau-lsp does not infer a table literal against an
-	-- optional map of optional values (`{ [string]: T? }?`): it is given its type in a local of its own
-	local ports: { [string]: { vnd_bollard_PortBinding }? } = { ["80/tcp"] = { { HostPort = "8088" } } }
 	local made, create_err = local_docker:create_container({
 		Image = "nginx:1.27",
 		Env = { "A=1" },
@@ -121,7 +150,7 @@ local function _usage()
 		HostConfig = {
 			Memory = 64 * 1024 * 1024,
 			Binds = { "/srv/www:/usr/share/nginx/html:ro" },
-			PortBindings = ports,
+			PortBindings = { ["80/tcp"] = { { HostPort = "8088" } } },
 			RestartPolicy = { Name = "unless-stopped" },
 		},
 	}, { name = "web", platform = "linux/amd64" })
@@ -145,6 +174,31 @@ local function _usage()
 		if names ~= nil then
 			local _first: string = names[1]
 		end
+	end
+	local info = assert(local_docker:info())
+	local _server: string? = info.ServerVersion
+	local _count: number? = info.Containers
+	local _now: string? = info.SystemTime
+	local web, inspect_failed = local_docker:inspect_container("web")
+	if web ~= nil then
+		local _created: string? = web.Created
+		local state = web.State
+		if state ~= nil then
+			local _running: boolean? = state.Running
+			local _started: string? = state.StartedAt
+		end
+		local config = web.Config
+		if config ~= nil then
+			local _labels: { [string]: string }? = config.Labels
+		end
+	elseif inspect_failed ~= nil then
+		local _kind: string = inspect_failed.kind
+	end
+	local stats = assert(local_docker:stats("web"))
+	local _read: string? = stats.read
+	local memory = stats.memory_stats
+	if memory ~= nil then
+		local _usage: number? = memory.usage
 	end
 	local result = assert(local_docker:exec("web", { "nginx", "-t" }, { env = { "A=1" }, user = "root" }))
 	local _code: number? = result.exit_code
@@ -179,6 +233,24 @@ local function _usage()
 	end
 	for _, removed in assert(local_docker:remove_image("nginx:1.27", { force = true, noprune = true })) do
 		local _untagged: string? = removed.Untagged
+	end
+	local data = assert(local_docker:create_volume({ Name = "data", Driver = "local", Labels = { app = "web" } }))
+	local _mountpoint: string = data.Mountpoint
+	local _made: string? = data.CreatedAt
+	local _scope: ("local" | "global")? = data.Scope
+	local volumes = assert(local_docker:list_volumes({ filters = { label = { "app=web" } } }))
+	local _warnings: { string } = volumes.Warnings
+	for _, volume in volumes.Volumes do
+		local _name: string = volume.Name
+		local _labels: { [string]: string } = volume.Labels
+		local usage = volume.UsageData
+		if usage ~= nil then
+			local _size: number = usage.Size
+		end
+	end
+	for _, known in assert(local_docker:list_networks({ filters = { driver = { "bridge" } } })) do
+		local _name: string? = known.Name
+		local _since: string? = known.Created
 	end
 	local network = assert(local_docker:create_network({ Name = "backend", Driver = "bridge", Labels = { app = "web" } }))
 	local _network: string = network.Id

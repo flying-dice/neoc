@@ -73,6 +73,7 @@ fn volume() -> Json {
         "Name": "data",
         "Driver": "local",
         "Mountpoint": "/var/lib/docker/volumes/data/_data",
+        "CreatedAt": "2024-05-01T10:00:00Z",
         "Labels": {},
         "Scope": "local",
         "Options": {},
@@ -419,6 +420,75 @@ async fn the_lifecycle_calls_send_their_options() {
     assert_eq!(network["Driver"], "bridge");
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inspect_is_a_table_with_nil_for_null_and_nil_for_no_such_container() {
+    let (_daemon, host) = daemon().await;
+    let (image, app, health, missing, err): (String, String, mlua::Value, mlua::Value, mlua::Value) = run(
+        &host,
+        r#"
+        local docker = assert(require("vnd:bollard").connect({ host = ... }))
+        local web = assert(docker:inspect_container("web"))
+        assert(web.Id == "aaa111" and web.State.Running == true and web.State.Status == "running")
+        local ghost, err = docker:inspect_container("ghost")
+        return web.Config.Image, web.Config.Labels.app, web.State.Health, ghost, err
+        "#,
+    )
+    .await;
+    assert_eq!((image.as_str(), app.as_str()), ("nginx:1.27", "web"));
+    assert!(health.is_nil(), "a JSON null is nil, got {health:?}");
+    assert!(missing.is_nil() && err.is_nil(), "no such container is (nil, nil)");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_daemon_a_containers_use_the_volumes_and_the_networks_are_read() {
+    let (daemon, host) = daemon().await;
+    let (): () = run(
+        &host,
+        r#"
+        local docker = assert(require("vnd:bollard").connect({ host = ... }))
+        local info = assert(docker:info())
+        assert(info.Containers == 2 and info.ServerVersion == "25.0.3" and info.Images == nil)
+
+        local stats = assert(docker:stats("web"))
+        assert(stats.name == "/web" and stats.memory_stats.usage == 1024 and stats.memory_stats.limit == 4096)
+        local none, no_stats = docker:stats("ghost")
+        assert(none == nil and no_stats.kind == "api" and no_stats.op == "vnd:bollard.Client:stats")
+
+        local listed = assert(docker:list_volumes({ filters = { label = { "app=web" } } }))
+        assert(#listed.Volumes == 1 and #listed.Warnings == 0)
+        local volume = listed.Volumes[1]
+        assert(volume.Name == "data" and volume.Driver == "local" and volume.Scope == "local")
+        assert(volume.Mountpoint == "/var/lib/docker/volumes/data/_data")
+        -- a date is the text Docker sent
+        assert(volume.CreatedAt == "2024-05-01T10:00:00Z", volume.CreatedAt)
+        assert(next(volume.Labels) == nil and next(volume.Options) == nil and volume.UsageData == nil)
+        assert(#assert(docker:list_volumes()).Volumes == 1)
+
+        local made = assert(docker:create_volume({ Name = "data", Driver = "local", Labels = { app = "web" } }))
+        assert(made.Name == "data" and made.CreatedAt == "2024-05-01T10:00:00Z")
+
+        local networks = assert(docker:list_networks({ filters = { driver = { "bridge" } } }))
+        assert(#networks == 1 and networks[1].Name == "bridge" and networks[1].Id == "n1")
+        assert(networks[1].Created == nil)
+        "#,
+    )
+    .await;
+    let stats = daemon.request_to("/containers/web/stats");
+    assert!(stats.target.contains("stream=false") && stats.target.contains("one-shot=true"), "{}", stats.target);
+    let filters_of = |target: &str| -> Option<Json> {
+        let query = target.split_once('?')?.1;
+        let (_, filters) = url::form_urlencoded::parse(query.as_bytes()).find(|(key, _)| key == "filters")?;
+        serde_json::from_str(&filters).ok()
+    };
+    let volumes: Vec<Seen> =
+        daemon.requests().into_iter().filter(|seen| seen.target.split('?').next() == Some("/volumes")).collect();
+    assert_eq!(volumes.len(), 2, "{volumes:?}");
+    assert_eq!(filters_of(&volumes[0].target), Some(json!({ "label": ["app=web"] })));
+    assert_eq!(filters_of(&daemon.request_to("/networks").target), Some(json!({ "driver": ["bridge"] })));
+    let created: Json = serde_json::from_str(&daemon.request_to("/volumes/create").body).expect("JSON");
+    assert_eq!(created, json!({ "Name": "data", "Driver": "local", "Labels": { "app": "web" } }));
+}
+
 // ---------------------------------------------------------------------------
 // errors
 // ---------------------------------------------------------------------------
@@ -558,11 +628,17 @@ async fn what_cannot_be_sent_is_refused_before_anything_is_sent() {
         refuse(function() return bollard.connect({ host = "tcp://127.0.0.1:1", timeout = 0 }) end)
         refuse(function() return bollard.connect({ hots = "tcp://127.0.0.1:1" }) end)
         refuse(function() return bollard.connect({ host = "gopher://127.0.0.1" }) end)
+        refuse(function() return docker:inspect_container("web?size=1") end)
+        refuse(function() return docker:stats("../info") end)
+        refuse(function() return docker:create_volume({ Name = true }) end)
+        refuse(function() return docker:create_volume({ Name = "data", Lables = {} }) end)
+        refuse(function() return docker:list_volumes({ filters = { name = "data" } }) end)
+        refuse(function() return docker:list_networks({ filter = { name = { "bridge" } } }) end)
         return refused
         "#,
     )
     .await;
-    assert_eq!(refused.len(), 25);
+    assert_eq!(refused.len(), 31);
     let place = "vnd:bollard.Client:start_container: argument #1 'name': the container must be a name or an id";
     assert!(refused[0].contains(place), "{}", refused[0]);
     assert!(refused[3].contains("argument #1 'opts': unknown field `al`"), "{}", refused[3]);
@@ -570,6 +646,10 @@ async fn what_cannot_be_sent_is_refused_before_anything_is_sent() {
     assert!(refused[17].contains("argument #1 'body': unknown field `name`"), "{}", refused[17]);
     assert!(refused[18].contains("HostConfig: unknown field `Memroy`"), "{}", refused[18]);
     assert!(refused[21].contains("vnd:bollard.connect: invalid_input: option \"timeout\""), "{}", refused[21]);
+    let place = "vnd:bollard.Client:inspect_container: argument #1 'name': the container must be a name or an id";
+    assert!(refused[25].contains(place), "{}", refused[25]);
+    assert!(refused[28].contains("argument #1 'body': unknown field `Lables`"), "{}", refused[28]);
+    assert!(refused[30].contains("argument #1 'opts': unknown field `filter`"), "{}", refused[30]);
     assert!(daemon.requests().is_empty(), "a refused call reached the daemon: {:?}", daemon.requests());
 }
 
@@ -814,10 +894,11 @@ async fn no_call_panics_on_hostile_input() {
                 try(bollard.connect, a)
             end
             local methods = {
-                "ping", "version", "list_containers", "create_container", "start_container", "stop_container",
-                "restart_container", "kill_container", "pause_container", "unpause_container", "remove_container",
-                "logs", "exec", "list_images", "pull_image", "remove_image", "remove_volume", "create_network",
-                "remove_network", "events",
+                "ping", "version", "info", "list_containers", "inspect_container", "create_container",
+                "start_container", "stop_container", "restart_container", "kill_container", "pause_container",
+                "unpause_container", "remove_container", "logs", "stats", "exec", "list_images", "pull_image",
+                "remove_image", "list_volumes", "create_volume", "remove_volume", "list_networks",
+                "create_network", "remove_network", "events",
             }
             for _, name in methods do
                 local method = docker[name]
@@ -860,6 +941,23 @@ async fn a_real_daemon_answers() {
         local version = assert(docker:version())
         local containers = assert(docker:list_containers({ all = true }))
         assert(docker:list_images())
+        local info = assert(docker:info())
+        assert(type(info.ServerVersion) == "string" and info.ServerVersion == version.Version)
+        assert(type(info.Containers) == "number" and type(info.OperatingSystem) == "string")
+        -- a date in Docker's answer is its text
+        assert(info.SystemTime:match("^%d%d%d%d%-%d%d%-%d%dT"), info.SystemTime)
+        local volumes = assert(docker:list_volumes())
+        assert(type(volumes.Volumes) == "table" and type(volumes.Warnings) == "table")
+        local networks = assert(docker:list_networks())
+        local bridge
+        for _, network in networks do
+            if network.Name == "bridge" then bridge = network end
+        end
+        assert(bridge ~= nil and bridge.Driver == "bridge" and bridge.Scope == "local")
+        assert(bridge.Created:match("^%d%d%d%d%-%d%d%-%d%dT"), bridge.Created)
+        assert(#assert(docker:list_networks({ filters = { name = { "neoc-vm2-no-such-network" } } })) == 0)
+        local ghost, no_ghost = docker:inspect_container("neoc-vm2-bollard-no-such-container")
+        assert(ghost == nil and no_ghost == nil, "no such container is (nil, nil)")
         return version.Version, #containers
         "#,
     )
@@ -869,7 +967,8 @@ async fn a_real_daemon_answers() {
 }
 
 /// A container's whole life against the Docker daemon of this machine: `cargo test -p neoc-vm2 bollard --
-/// --ignored`. It pulls `alpine:3.19`, and removes the container and the network it makes (`neoc-vm2-bollard-*`).
+/// --ignored`. It pulls `alpine:3.19`, and removes the container, the volume and the network it makes
+/// (`neoc-vm2-bollard-*`).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "needs a running Docker daemon"]
 async fn a_real_daemon_runs_a_container_from_pull_to_removal() {
@@ -879,10 +978,24 @@ async fn a_real_daemon_runs_a_container_from_pull_to_removal() {
             "",
             r#"
             local docker = assert(require("vnd:bollard").connect())
-            local name, network = "neoc-vm2-bollard-test", "neoc-vm2-bollard-net"
+            local name, network, volume = "neoc-vm2-bollard-test", "neoc-vm2-bollard-net", "neoc-vm2-bollard-vol"
             -- what an earlier run that failed left behind
             docker:remove_container(name, { force = true })
             docker:remove_network(network)
+            docker:remove_volume(volume, { force = true })
+            local date = "^%d%d%d%d%-%d%d%-%d%dT%d%d:%d%d:%d%d"
+
+            local data = assert(docker:create_volume({ Name = volume, Labels = { ["neoc.test"] = "bollard" } }))
+            assert(data.Name == volume and data.Driver == "local" and data.Scope == "local")
+            assert(data.Labels["neoc.test"] == "bollard" and data.Mountpoint:find(volume, 1, true))
+            assert(data.CreatedAt:match(date), data.CreatedAt)
+            local same = assert(docker:create_volume({ Name = volume }))
+            assert(same.Name == volume and same.CreatedAt == data.CreatedAt, "creating one that exists returns it")
+            local labelled = assert(docker:list_volumes({ filters = { label = { "neoc.test=bollard" } } }))
+            assert(#labelled.Volumes == 1 and labelled.Volumes[1].Name == volume)
+            assert(labelled.Volumes[1].Mountpoint == data.Mountpoint and #labelled.Warnings == 0)
+            local unknown_driver, refused = docker:create_volume({ Name = volume .. "-x", Driver = "neoc-no-such-driver" })
+            assert(unknown_driver == nil and refused ~= nil, "a driver Docker does not have was accepted")
 
             local statuses = 0
             for progress in docker:pull_image("alpine:3.19"):items() do
@@ -899,7 +1012,7 @@ async fn a_real_daemon_runs_a_container_from_pull_to_removal() {
                 Cmd = { "sh", "-c", "echo out; echo err >&2; sleep 300" },
                 Env = { "GREETING=hello" },
                 Labels = { ["neoc.test"] = "bollard" },
-                HostConfig = { Memory = 64 * 1024 * 1024 },
+                HostConfig = { Memory = 64 * 1024 * 1024, Binds = { volume .. ":/data" } },
             }, { name = name }))
             assert(#made.Id == 64)
             local again, in_use = docker:create_container({ Image = "alpine:3.19" }, { name = name })
@@ -916,6 +1029,23 @@ async fn a_real_daemon_runs_a_container_from_pull_to_removal() {
 
             local mine = assert(docker:list_containers({ filters = { label = { "neoc.test=bollard" } } }))
             assert(#mine == 1 and mine[1].Id == made.Id and mine[1].State == "running" and mine[1].Names[1] == "/" .. name)
+
+            local inspected = assert(docker:inspect_container(name))
+            assert(inspected.Id == made.Id and inspected.Name == "/" .. name)
+            assert(inspected.State.Running == true and inspected.State.Status == "running")
+            assert(inspected.Config.Image == "alpine:3.19" and inspected.Config.Labels["neoc.test"] == "bollard")
+            assert(inspected.HostConfig.Memory == 64 * 1024 * 1024)
+            assert(inspected.Mounts[1].Name == volume and inspected.Mounts[1].Destination == "/data")
+            assert(inspected.Created:match(date), inspected.Created)
+            assert(inspected.State.StartedAt:match(date), inspected.State.StartedAt)
+            local in_use_volume = select(2, docker:remove_volume(volume))
+            assert(in_use_volume.kind == "conflict", tostring(in_use_volume))
+
+            local stats = assert(docker:stats(name))
+            assert(stats.name == "/" .. name and stats.id == made.Id)
+            assert(stats.memory_stats.usage > 0 and stats.memory_stats.limit == 64 * 1024 * 1024)
+            assert(stats.cpu_stats.cpu_usage.total_usage >= 0)
+            assert(stats.read:match(date), stats.read)
 
             local ran = assert(docker:exec(name, { "sh", "-c", "echo $GREETING $EXTRA; echo oops >&2; exit 3" }, {
                 env = { "EXTRA=world" },
@@ -939,9 +1069,18 @@ async fn a_real_daemon_runs_a_container_from_pull_to_removal() {
             assert(gone.kind == "not_found", tostring(gone))
             local _, no_logs = docker:logs(name):next()
             assert(no_logs.kind == "not_found", tostring(no_logs))
+            local gone_container, no_inspect = docker:inspect_container(name)
+            assert(gone_container == nil and no_inspect == nil, "no such container is (nil, nil)")
+            local _, no_stats = docker:stats(name)
+            assert(no_stats.kind == "not_found", tostring(no_stats))
+            assert(docker:remove_volume(volume))
+            assert(#assert(docker:list_volumes({ filters = { name = { volume } } })).Volumes == 0)
 
             local net = assert(docker:create_network({ Name = network, Driver = "bridge", Labels = { ["neoc.test"] = "bollard" } }))
             assert(#net.Id > 0)
+            local nets = assert(docker:list_networks({ filters = { name = { network } } }))
+            assert(#nets == 1 and nets[1].Id == net.Id and nets[1].Name == network and nets[1].Driver == "bridge")
+            assert(nets[1].Labels["neoc.test"] == "bollard" and nets[1].Created:match(date), nets[1].Created)
             assert(docker:remove_network(network))
             local _, no_network = docker:remove_network(network)
             assert(no_network.kind == "not_found", tostring(no_network))

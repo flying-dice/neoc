@@ -343,7 +343,7 @@ pub mod time {
     }
 }
 
-use time::ParseError;
+use self::time::ParseError;
 
 /// Parses `<number><unit>` segments (`ns`, `us`/`µs`, `ms`, `s`, `m`, `h`; each number may be fractional); `0` alone
 /// is zero.

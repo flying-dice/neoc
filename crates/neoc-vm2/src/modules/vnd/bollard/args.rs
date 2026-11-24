@@ -309,6 +309,15 @@ pub struct RemoveVolume {
     pub force: bool,
 }
 
+/// The options of `list_volumes` and `list_networks`.
+#[derive(Debug, Default, Serialize, Deserialize, Options)]
+#[serde(default, deny_unknown_fields)]
+#[shape(module = "vnd:bollard")]
+pub struct Filtered {
+    /// Docker's filters: `{ name = { "data" }, label = { "app=web" } }`.
+    pub filters: Option<Filters>,
+}
+
 /// The options of `events`.
 #[derive(Debug, Default, Serialize, Deserialize, Options)]
 #[serde(default, deny_unknown_fields)]

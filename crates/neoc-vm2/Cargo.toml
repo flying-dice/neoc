@@ -116,8 +116,10 @@ keyring-core = "1.1"
 # reader, writer and child wait are blocking, so the module runs each on a thread of its own.
 portable-pty = "0.9"
 # `vnd:bollard`, as in neoc-vm: the Docker Engine API client. Already in the tree through testcontainers (the same
-# version, and the features it turns on: `ssl` is rustls over `ring`), so this only names the dependency.
-bollard = { version = "0.20", features = ["ssl"] }
+# version, and the features it turns on: `ssl` is rustls over `ring`), so this only names the dependency. `time`
+# makes its dates `time::OffsetDateTime` (testcontainers turns it on too), which `time` writes back as RFC 3339.
+bollard = { version = "0.20", features = ["ssl", "time"] }
+time = { version = "0.3", default-features = false, features = ["formatting"] }
 # `vnd:testcontainers_modules`, as in neoc-vm: disposable MySQL, Postgres and any other image, in Docker.
 testcontainers-modules = { version = "0.15", features = ["mysql", "postgres"] }
 
