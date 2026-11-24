@@ -2,21 +2,22 @@
 //! The host's threads have the stack that recursion through an app's host callbacks needs.
 //!
 //! Luau stops a recursion that goes through a C function or a metamethod at 200 C levels with an ordinary error, but
-//! the 200 levels, with a Rust host function in each, must fit the thread's stack: in a debug build a level through
-//! `Mutex:with_lock` needs up to 4.5 MiB in all (neoc-vm's `lifecycle.rs` has the table), more than tokio's default
-//! 2 MiB (the main thread's stack is whatever the operating system decides, which is why the top-level future does not
-//! run there). The host builds its runtime with
+//! the 200 levels, with a Rust host function in each, must fit the thread's stack: in a debug build a level through a
+//! host function that calls back into the script needs up to 4.5 MiB in all (neoc-vm2's `lifecycle.rs` has the table),
+//! more than tokio's default 2 MiB (the main thread's stack is whatever the operating system decides, which is why the
+//! top-level future does not run there). The host builds its runtime with
 //! `vos_host::runtime::build` and runs its top-level future on a worker, so every thread that polls a VM has
 //! `VM_THREAD_STACK`.
 //!
 //! The child process (this binary again, `stack_child`) builds that runtime exactly as `main` does, loads an app that
 //! recurses until Luau refuses and checks that the host answers an ordinary error. Tests build in debug, the build that
-//! needs the most stack. Which cases would notice a runtime on tokio's default 2 MiB: only `with_lock` (measured by
-//! putting 2 MiB in `runtime.rs`: that case aborts, the gsub, tostring, index and notify cases still pass; neoc-vm's
-//! table puts their levels well under 1 MiB). The others hold the 200-level error on the host's runtime, through the
-//! engine's own machinery and, for `notify`, through a host function the adapter registers (`app.notify` reads a field
-//! of its argument through a metatable, whose `__index` calls `app.notify` again). The `run` tests below hold the
-//! wrapper's error and panic arms. What no test holds is `main.rs` calling the two functions (two lines).
+//! needs the most stack. The case with a module's host function in every level is `on_evict`: a `lib:cache` whose
+//! eviction callback stores into the cache again (the measured case was `Mutex:with_lock`, which neoc-vm2 does not
+//! offer; this one has not been measured against tokio's default 2 MiB). The gsub, tostring, index and notify cases
+//! need well under 1 MiB and hold the 200-level error on the host's runtime, through the engine's own machinery and,
+//! for `notify`, through a host function the adapter registers (`app.notify` reads a field of its argument through a
+//! metatable, whose `__index` calls `app.notify` again). The `run` tests below hold the wrapper's error and panic
+//! arms. What no test holds is `main.rs` calling the two functions (two lines).
 
 use serde_json::json;
 use std::{
@@ -31,10 +32,10 @@ use vos_sqlite::AppDb;
 
 const CASE: &str = "STACK_CASE";
 
-/// An app with one tool per recursion: through `Mutex:with_lock`, a `string.gsub` callback, a `__tostring` and a
-/// `__index`. Each reports whether the recursion ended in an error and how deep it got.
+/// An app with one tool per recursion: through a `lib:cache` eviction callback, a `string.gsub` callback, a
+/// `__tostring` and a `__index`. Each reports whether the recursion ended in an error and how deep it got.
 const APP: &str = r#"
-    local Mutex = require("std:collections").Mutex
+    local Cache = require("lib:cache").Cache
     local function probe(name, nest)
       app.tool { name = name, run = function()
         local depth = 0
@@ -42,9 +43,13 @@ const APP: &str = r#"
         return { ok = ok, depth = depth, err = tostring(e) }
       end }
     end
-    probe("with_lock", function(count)
-      local function nest() count() return Mutex.new():with_lock(nest) end
-      return nest()
+    probe("on_evict", function(count)
+      local cache
+      local n = 0
+      -- a cache of one entry: every `set` evicts, and the eviction callback sets again
+      cache = Cache.new(1, nil, function() count() n = n + 1 cache:set("k" .. n, n) end)
+      cache:set("first", 0)
+      cache:set("second", 0)
     end)
     probe("gsub", function(count)
       local function nest() count() return (string.gsub("a", "a", nest)) end
@@ -113,8 +118,8 @@ fn survives(case: &str) {
 }
 
 #[test]
-fn recursion_through_mutex_with_lock_is_an_error_on_the_hosts_threads() {
-    survives("with_lock");
+fn recursion_through_a_modules_callback_is_an_error_on_the_hosts_threads() {
+    survives("on_evict");
 }
 
 #[test]

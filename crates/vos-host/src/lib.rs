@@ -21,7 +21,7 @@
 //! the Origin/Host guard.
 
 // One app's failure stays that app's: a panic in a module an app calls ends that call with an error (`vos_lua`
-// catches it where the host calls into a VM, `neoc_vm::lua::panics` where a task or a request handler runs). Under
+// catches it where the host calls into a VM, `neoc_vm2::panics` where a task or a request handler runs). Under
 // `panic = "abort"` every one of those catches is dead and the first panic ends the host and every app with it
 // (NEOC-125, Decision NEOC-258), so no profile may build the host that way.
 #[cfg(panic = "abort")]
