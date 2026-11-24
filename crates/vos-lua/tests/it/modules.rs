@@ -178,7 +178,7 @@ async fn the_globals_the_declarations_refuse_are_absent_from_the_environment() {
     );
 }
 
-/// The module names the runtime declares in the source of `neoc-vm-std`, `neoc-lib-*` and `neoc-vnd-*`: each
+/// The module names the runtime declares in the source of `neoc-vm-std`, `neoc-vm-lib-*` and `neoc-vm-vnd-*`: each
 /// `#[mlua_ir::module("<name>")]` that starts a line (a doc comment that shows one is not a module).
 fn modules_in_the_source(dir: &std::path::Path, names: &mut Vec<String>) {
     for entry in std::fs::read_dir(dir).unwrap() {
@@ -201,8 +201,8 @@ fn modules_in_the_source(dir: &std::path::Path, names: &mut Vec<String>) {
 #[test]
 fn every_module_the_library_declares_is_linked_into_the_adapter() {
     let mut declared = Vec::new();
-    // the modules of `neoc-vm-std`, of the `neoc-lib-*` crates and of the `neoc-vnd-*` crates
-    for dir in ["../neoc-vm-std/src", "../neoc-lib", "../neoc-vnd"] {
+    // the modules of `neoc-vm-std`, of the `neoc-vm-lib-*` crates and of the `neoc-vm-vnd-*` crates
+    for dir in ["../neoc-vm-std/src", "../neoc-vm-lib", "../neoc-vm-vnd"] {
         let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(dir);
         modules_in_the_source(&source, &mut declared);
     }

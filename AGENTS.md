@@ -5,8 +5,8 @@
 Every runtime module is its own crate, so build and test the smallest crate that holds the change, never the
 workspace:
 
-- `std:*` is `neoc-vm-std`; a `lib:<m>` module is `neoc-lib-<m>` (`crates/neoc-lib/<m>`); a `vnd:<m>` module is
-  `neoc-vnd-<m>` (`crates/neoc-vnd/<m>`); the engine, lifecycle and host are `neoc-vm-core`.
+- `std:*` is `neoc-vm-std`; a `lib:<m>` module is `neoc-vm-lib-<m>` (`crates/neoc-vm-lib/<m>`); a `vnd:<m>` module is
+  `neoc-vm-vnd-<m>` (`crates/neoc-vm-vnd/<m>`); the engine, lifecycle and host are `neoc-vm-core`.
 - While iterating: `cargo check -p <crate> --all-targets`, then `cargo test -p <crate> <test name>` for the one test.
 - Before calling it done: `cargo clippy -p <crate> --all-targets -- -D warnings` and `cargo test -p <crate>`.
 - Once, at the end, the cross-module checks: `cargo test -p neoc-vm` (the scripts suite and the strict-Luau check,

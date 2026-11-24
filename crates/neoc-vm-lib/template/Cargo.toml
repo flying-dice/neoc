@@ -1,0 +1,28 @@
+[package]
+name = "neoc-vm-lib-template"
+description = "lib:template"
+version.workspace = true
+edition.workspace = true
+publish = false
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "neoc_vm_lib_template"
+path = "src/lib.rs"
+
+[dependencies]
+neoc-vm-core = { workspace = true }
+mlua-ir = { workspace = true }
+# The engine is Luau.
+mlua = { version = "0.12", features = ["luau", "async", "send", "serialize", "macros"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+parking_lot = "0.13"
+# `lib:template`. Without the default features: `builtins` drags chrono and tz data in for `date`.
+# Held at 1.x on purpose: tera 2 rewrites the template language, so moving to it is a deliberate `lib:template` change.
+tera = { version = "1.20", default-features = false }
+
+[lints.cargo]
+missing_lints_inheritance = "allow"

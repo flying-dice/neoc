@@ -1,0 +1,29 @@
+[package]
+name = "neoc-vm-lib-compress"
+description = "lib:compress"
+version.workspace = true
+edition.workspace = true
+publish = false
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "neoc_vm_lib_compress"
+path = "src/lib.rs"
+
+[dependencies]
+neoc-vm-core = { workspace = true }
+mlua-ir = { workspace = true }
+# The engine is Luau.
+mlua = { version = "0.12", features = ["luau", "async", "send", "serialize", "macros"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+hex = "0.4"
+# `lib:compress` (and the layers under `lib:archive`'s tarballs).
+flate2 = "1"
+zstd = "0.14"
+brotli = "9"
+
+[lints.cargo]
+missing_lints_inheritance = "allow"

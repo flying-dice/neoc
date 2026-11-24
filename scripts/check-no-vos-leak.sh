@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# neoc and the VM crates (neoc-vm, neoc-vm-core, neoc-vm-std, neoc-lib-*, neoc-vnd-*) never depend on a vos-* crate, not even as a dev-dependency (no vos concept in the runtime).
+# neoc and the VM crates (neoc-vm, neoc-vm-core, neoc-vm-std, neoc-vm-lib-*, neoc-vm-vnd-*) never depend on a vos-* crate, not even as a dev-dependency (no vos concept in the runtime).
 # Run by scripts/check-neoc.sh; tested in scripts/check-no-vos-leak.test.ts with a stub `cargo`.
 #
 # The tree is captured first: a failing `cargo tree` must fail this check, not read as "no leak" (a pipeline inside an

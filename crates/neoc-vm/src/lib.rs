@@ -2,8 +2,8 @@
 //! read from that Rust (`mlua_ir::schema()`), so the declarations cannot drift from the code.
 //!
 //! This crate is the runtime as a whole, and what an embedder depends on: `neoc-vm-core` is the engine, the
-//! lifecycle and the scheduler, and the modules live in `neoc-vm-std` (`std:*`), `neoc-lib-*` (`lib:*`) and
-//! `neoc-vnd-*` (`vnd:*`). This crate depends on them all, so that every module is linked (its `inventory`
+//! lifecycle and the scheduler, and the modules live in `neoc-vm-std` (`std:*`), `neoc-vm-lib-*` (`lib:*`) and
+//! `neoc-vm-vnd-*` (`vnd:*`). This crate depends on them all, so that every module is linked (its `inventory`
 //! registration is in the program) and offers their paths as they were: [`make_engine`], [`modules`], [`lifecycle`]
 //! and the rest of the core, and [`declarations`], which writes the `.d.luau` / `.d.ts` files from the modules
 //! linked.

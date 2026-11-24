@@ -38,29 +38,29 @@ fail() { printf 'check-slow: %s\n' "$*" >&2; exit 1; }
 NOT_SLOW=(
   "vos-lua::it baseline::calculator_vm_create_time_and_memory" # a measurement, run on demand (AGOS-53)
   # need a running Docker daemon
-  "neoc-vnd-bollard tests::a_real_daemon_answers"
-  "neoc-vnd-bollard tests::a_real_daemon_runs_a_container_from_pull_to_removal"
-  "neoc-vnd-sqlx_mysql tests::against_a_container"
-  "neoc-vnd-sqlx_postgres tests::against_a_container"
-  "neoc-vnd-testcontainers_modules tests::generic_containers_start_publish_their_ports_and_stop"
-  "neoc-vnd-testcontainers_modules tests::mysql_and_postgres_containers_answer_their_drivers"
+  "neoc-vm-vnd-bollard tests::a_real_daemon_answers"
+  "neoc-vm-vnd-bollard tests::a_real_daemon_runs_a_container_from_pull_to_removal"
+  "neoc-vm-vnd-sqlx_mysql tests::against_a_container"
+  "neoc-vm-vnd-sqlx_postgres tests::against_a_container"
+  "neoc-vm-vnd-testcontainers_modules tests::generic_containers_start_publish_their_ports_and_stop"
+  "neoc-vm-vnd-testcontainers_modules tests::mysql_and_postgres_containers_answer_their_drivers"
   # need a server: NEOC_TEST_MYSQL_URL, NEOC_TEST_POSTGRES_URL
-  "neoc-vnd-sqlx_mysql tests::against_a_server"
-  "neoc-vnd-sqlx_postgres tests::against_a_server"
+  "neoc-vm-vnd-sqlx_mysql tests::against_a_server"
+  "neoc-vm-vnd-sqlx_postgres tests::against_a_server"
   # writes to the credential store of whoever runs it
-  "neoc-vnd-keyring tests::the_platform_store_keeps_a_credential"
+  "neoc-vm-vnd-keyring tests::the_platform_store_keeps_a_credential"
 )
 
 # The nextest binary id of the test target a source file compiles into: `crates/<dir>/tests/<name>.rs` (a module crate's
-# `<dir>` is `neoc-lib/<module>` or `neoc-vnd/<module>`; or
+# `<dir>` is `neoc-vm-lib/<module>` or `neoc-vm-vnd/<module>`; or
 # `tests/<name>/main.rs`) is `<package>::<name>`, a file under `src/bin/<name>` is `<package>::bin/<name>`, and any other
 # file under `src/` is the library, `<package>`. Prints nothing for any other place (a module shared by test targets).
 binary_id() {
   local file=$1 dir rel package
   rel=${file#crates/}
   case $rel in
-    # the module crates sit one level down: crates/neoc-lib/<module>, crates/neoc-vnd/<module>
-    neoc-lib/*/* | neoc-vnd/*/*) dir=${rel%%/*} && rel=${rel#*/} && dir=$dir/${rel%%/*} && rel=${rel#*/} ;;
+    # the module crates sit one level down: crates/neoc-vm-lib/<module>, crates/neoc-vm-vnd/<module>
+    neoc-vm-lib/*/* | neoc-vm-vnd/*/*) dir=${rel%%/*} && rel=${rel#*/} && dir=$dir/${rel%%/*} && rel=${rel#*/} ;;
     *) dir=${rel%%/*} && rel=${rel#*/} ;;
   esac
   package=$(sed -n -E 's/^name[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "crates/$dir/Cargo.toml" | head -n 1)

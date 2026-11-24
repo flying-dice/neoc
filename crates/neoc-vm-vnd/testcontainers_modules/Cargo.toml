@@ -1,0 +1,27 @@
+[package]
+name = "neoc-vm-vnd-testcontainers_modules"
+description = "vnd:testcontainers_modules"
+version.workspace = true
+edition.workspace = true
+publish = false
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "neoc_vm_vnd_testcontainers_modules"
+path = "src/lib.rs"
+
+[dependencies]
+neoc-vm-core = { workspace = true }
+mlua-ir = { workspace = true }
+# The engine is Luau.
+mlua = { version = "0.12", features = ["luau", "async", "send", "serialize", "macros"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+# `vnd:testcontainers_modules`: disposable MySQL, Postgres and any other image, in Docker.
+testcontainers-modules = { version = "0.15", features = ["mysql", "postgres"] }
+
+[lints.cargo]
+missing_lints_inheritance = "allow"

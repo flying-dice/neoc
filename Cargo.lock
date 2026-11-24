@@ -3323,511 +3323,59 @@ dependencies = [
 ]
 
 [[package]]
-name = "neoc-lib-agui"
-version = "0.1.0"
-dependencies = [
- "futures",
- "mlua",
- "mlua-ir",
- "neoc-agui",
- "neoc-vm-core",
- "neoc-vnd-hyper",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "tokio",
-]
-
-[[package]]
-name = "neoc-lib-archive"
-version = "0.1.0"
-dependencies = [
- "flate2",
- "globset",
- "mlua",
- "mlua-ir",
- "neoc-lib-glob",
- "neoc-vm-core",
- "neoc-vm-std",
- "serde",
- "tar",
- "tempfile",
- "thiserror 2.0.21",
- "walkdir",
- "zip",
- "zstd",
-]
-
-[[package]]
-name = "neoc-lib-args"
-version = "0.1.0"
-dependencies = [
- "clap",
- "mlua",
- "mlua-ir",
- "neoc-vm-core",
- "serde",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "neoc-lib-base64"
-version = "0.1.0"
-dependencies = [
- "base64 0.23.1",
- "mlua",
- "mlua-ir",
- "neoc-vm-core",
- "serde",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "neoc-lib-cache"
-version = "0.1.0"
-dependencies = [
- "lru",
- "mlua",
- "mlua-ir",
- "neoc-vm-core",
- "neoc-vm-std",
- "parking_lot 0.13.0",
- "serde",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "neoc-lib-chrono"
-version = "0.1.0"
-dependencies = [
- "jiff 1.0.1",
- "mlua",
- "mlua-ir",
- "neoc-vm-core",
- "serde",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "neoc-lib-compile"
-version = "0.1.0"
-dependencies = [
- "mlua",
- "mlua-ir",
- "neoc-vm-core",
- "serde",
- "tempfile",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "neoc-lib-compress"
-version = "0.1.0"
-dependencies = [
- "brotli",
- "flate2",
- "hex",
- "mlua",
- "mlua-ir",
- "neoc-vm-core",
- "serde",
- "thiserror 2.0.21",
- "zstd",
-]
-
-[[package]]
-name = "neoc-lib-crypto"
-version = "0.1.0"
-dependencies = [
- "aes-gcm",
- "chacha20poly1305",
- "mlua",
- "mlua-ir",
- "neoc-lib-hex",
- "neoc-lib-random",
- "neoc-vm-core",
- "serde",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "neoc-lib-csv"
-version = "0.1.0"
-dependencies = [
- "csv",
- "futures",
- "mlua",
- "mlua-ir",
- "neoc-vm-core",
- "neoc-vm-std",
- "parking_lot 0.13.0",
- "serde",
- "thiserror 2.0.21",
- "tokio",
-]
-
-[[package]]
-name = "neoc-lib-diff"
-version = "0.1.0"
-dependencies = [
- "mlua",
- "mlua-ir",
- "neoc-vm-core",
- "serde",
- "similar",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "neoc-lib-glob"
-version = "0.1.0"
-dependencies = [
- "globset",
- "mlua",
- "mlua-ir",
- "neoc-vm-core",
- "serde",
- "tempfile",
- "thiserror 2.0.21",
- "walkdir",
-]
-
-[[package]]
-name = "neoc-lib-hash"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "md-5",
- "mlua",
- "mlua-ir",
- "neoc-vm-core",
- "parking_lot 0.13.0",
- "serde",
- "serde_json",
- "sha1 0.11.0",
- "sha2 0.11.1",
- "sha3",
- "xxhash-rust",
-]
-
-[[package]]
-name = "neoc-lib-hex"
-version = "0.1.0"
-dependencies = [
- "hex",
- "mlua",
- "mlua-ir",
- "neoc-vm-core",
- "serde",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "neoc-lib-hmac"
-version = "0.1.0"
-dependencies = [
- "hmac",
- "mlua",
- "mlua-ir",
- "neoc-vm-core",
- "parking_lot 0.13.0",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "subtle",
-]
-
-[[package]]
-name = "neoc-lib-html"
-version = "0.1.0"
-dependencies = [
- "mlua",
- "mlua-ir",
- "neoc-vm-core",
-]
-
-[[package]]
-name = "neoc-lib-http"
-version = "0.1.0"
-dependencies = [
- "globset",
- "mlua",
- "mlua-ir",
- "neoc-lib-glob",
- "neoc-vm-core",
- "neoc-vm-std",
- "serde",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
- "walkdir",
-]
-
-[[package]]
-name = "neoc-lib-ini"
-version = "0.1.0"
-dependencies = [
- "mlua",
- "mlua-ir",
- "neoc-vm-core",
- "rust-ini",
- "serde",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "neoc-lib-json"
-version = "0.1.0"
-dependencies = [
- "mlua",
- "mlua-ir",
- "neoc-vm-core",
- "parking_lot 0.13.0",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "neoc-lib-log"
-version = "0.1.0"
-dependencies = [
- "jiff 1.0.1",
- "mlua",
- "mlua-ir",
- "neoc-vm-core",
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
-name = "neoc-lib-mime"
-version = "0.1.0"
-dependencies = [
- "mime_guess",
- "mlua",
- "mlua-ir",
- "neoc-vm-core",
- "serde",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "neoc-lib-pkey"
-version = "0.1.0"
-dependencies = [
- "ed25519-dalek",
- "mlua",
- "mlua-ir",
- "neoc-vm-core",
- "p256",
- "pkcs8",
- "rand 0.10.4",
- "rsa",
- "serde",
- "sha2 0.11.1",
- "signature",
- "spki",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "neoc-lib-random"
-version = "0.1.0"
-dependencies = [
- "base64 0.23.1",
- "mlua",
- "mlua-ir",
- "neoc-vm-core",
- "serde",
- "thiserror 2.0.21",
- "uuid",
-]
-
-[[package]]
-name = "neoc-lib-regex"
-version = "0.1.0"
-dependencies = [
- "mlua",
- "mlua-ir",
- "neoc-vm-core",
- "regex",
- "serde",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "neoc-lib-semver"
-version = "0.1.0"
-dependencies = [
- "mlua",
- "mlua-ir",
- "neoc-vm-core",
- "regex",
- "semver",
- "serde",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "neoc-lib-tempfile"
-version = "0.1.0"
-dependencies = [
- "mlua",
- "mlua-ir",
- "neoc-vm-core",
- "neoc-vm-std",
- "parking_lot 0.13.0",
- "serde",
- "tempfile",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "neoc-lib-template"
-version = "0.1.0"
-dependencies = [
- "mlua",
- "mlua-ir",
- "neoc-vm-core",
- "parking_lot 0.13.0",
- "serde",
- "tera",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "neoc-lib-test"
-version = "0.1.0"
-dependencies = [
- "mlua",
- "mlua-ir",
- "neoc-vm-core",
- "neoc-vm-std",
- "parking_lot 0.13.0",
- "serde",
- "thiserror 2.0.21",
- "tokio",
-]
-
-[[package]]
-name = "neoc-lib-text"
-version = "0.1.0"
-dependencies = [
- "deunicode",
- "heck",
- "mlua",
- "mlua-ir",
- "neoc-vm-core",
- "serde",
- "strsim",
- "thiserror 2.0.21",
- "unicode-segmentation",
- "unicode-width 0.2.3",
- "vte",
-]
-
-[[package]]
-name = "neoc-lib-unicode"
-version = "0.1.0"
-dependencies = [
- "caseless",
- "mlua",
- "mlua-ir",
- "neoc-vm-core",
- "serde",
- "unicode-normalization",
- "unicode-properties",
- "unicode-segmentation",
- "unicode-width 0.2.3",
-]
-
-[[package]]
-name = "neoc-lib-url"
-version = "0.1.0"
-dependencies = [
- "mlua",
- "mlua-ir",
- "neoc-vm-core",
- "percent-encoding",
- "serde",
- "thiserror 2.0.21",
- "url",
-]
-
-[[package]]
-name = "neoc-lib-vcr"
-version = "0.1.0"
-dependencies = [
- "mlua",
- "mlua-ir",
- "neoc-lib-base64",
- "neoc-vm-core",
- "neoc-vm-std",
- "parking_lot 0.13.0",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
-]
-
-[[package]]
 name = "neoc-vm"
 version = "0.1.0"
 dependencies = [
  "mlua",
  "mlua-ir",
  "mlua-ir-gen",
- "neoc-lib-agui",
- "neoc-lib-archive",
- "neoc-lib-args",
- "neoc-lib-base64",
- "neoc-lib-cache",
- "neoc-lib-chrono",
- "neoc-lib-compile",
- "neoc-lib-compress",
- "neoc-lib-crypto",
- "neoc-lib-csv",
- "neoc-lib-diff",
- "neoc-lib-glob",
- "neoc-lib-hash",
- "neoc-lib-hex",
- "neoc-lib-hmac",
- "neoc-lib-html",
- "neoc-lib-http",
- "neoc-lib-ini",
- "neoc-lib-json",
- "neoc-lib-log",
- "neoc-lib-mime",
- "neoc-lib-pkey",
- "neoc-lib-random",
- "neoc-lib-regex",
- "neoc-lib-semver",
- "neoc-lib-tempfile",
- "neoc-lib-template",
- "neoc-lib-test",
- "neoc-lib-text",
- "neoc-lib-unicode",
- "neoc-lib-url",
- "neoc-lib-vcr",
  "neoc-vm-core",
+ "neoc-vm-lib-agui",
+ "neoc-vm-lib-archive",
+ "neoc-vm-lib-args",
+ "neoc-vm-lib-base64",
+ "neoc-vm-lib-cache",
+ "neoc-vm-lib-chrono",
+ "neoc-vm-lib-compile",
+ "neoc-vm-lib-compress",
+ "neoc-vm-lib-crypto",
+ "neoc-vm-lib-csv",
+ "neoc-vm-lib-diff",
+ "neoc-vm-lib-glob",
+ "neoc-vm-lib-hash",
+ "neoc-vm-lib-hex",
+ "neoc-vm-lib-hmac",
+ "neoc-vm-lib-html",
+ "neoc-vm-lib-http",
+ "neoc-vm-lib-ini",
+ "neoc-vm-lib-json",
+ "neoc-vm-lib-log",
+ "neoc-vm-lib-mime",
+ "neoc-vm-lib-pkey",
+ "neoc-vm-lib-random",
+ "neoc-vm-lib-regex",
+ "neoc-vm-lib-semver",
+ "neoc-vm-lib-tempfile",
+ "neoc-vm-lib-template",
+ "neoc-vm-lib-test",
+ "neoc-vm-lib-text",
+ "neoc-vm-lib-unicode",
+ "neoc-vm-lib-url",
+ "neoc-vm-lib-vcr",
  "neoc-vm-std",
- "neoc-vnd-bollard",
- "neoc-vnd-hyper",
- "neoc-vnd-jsonschema",
- "neoc-vnd-keyring",
- "neoc-vnd-portable_pty",
- "neoc-vnd-quick_xml",
- "neoc-vnd-rusqlite",
- "neoc-vnd-serde_json",
- "neoc-vnd-serde_yaml",
- "neoc-vnd-sqlx_mysql",
- "neoc-vnd-sqlx_postgres",
- "neoc-vnd-testcontainers_modules",
- "neoc-vnd-toml",
+ "neoc-vm-vnd-bollard",
+ "neoc-vm-vnd-hyper",
+ "neoc-vm-vnd-jsonschema",
+ "neoc-vm-vnd-keyring",
+ "neoc-vm-vnd-portable_pty",
+ "neoc-vm-vnd-quick_xml",
+ "neoc-vm-vnd-rusqlite",
+ "neoc-vm-vnd-serde_json",
+ "neoc-vm-vnd-serde_yaml",
+ "neoc-vm-vnd-sqlx_mysql",
+ "neoc-vm-vnd-sqlx_postgres",
+ "neoc-vm-vnd-testcontainers_modules",
+ "neoc-vm-vnd-toml",
  "serde_json",
  "tempfile",
  "tokio",
@@ -3852,6 +3400,458 @@ dependencies = [
 ]
 
 [[package]]
+name = "neoc-vm-lib-agui"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "mlua",
+ "mlua-ir",
+ "neoc-agui",
+ "neoc-vm-core",
+ "neoc-vm-vnd-hyper",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "neoc-vm-lib-archive"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "globset",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vm-lib-glob",
+ "neoc-vm-std",
+ "serde",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.21",
+ "walkdir",
+ "zip",
+ "zstd",
+]
+
+[[package]]
+name = "neoc-vm-lib-args"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-base64"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-cache"
+version = "0.1.0"
+dependencies = [
+ "lru",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vm-std",
+ "parking_lot 0.13.0",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-chrono"
+version = "0.1.0"
+dependencies = [
+ "jiff 1.0.1",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-compile"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-compress"
+version = "0.1.0"
+dependencies = [
+ "brotli",
+ "flate2",
+ "hex",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "thiserror 2.0.21",
+ "zstd",
+]
+
+[[package]]
+name = "neoc-vm-lib-crypto"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "chacha20poly1305",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vm-lib-hex",
+ "neoc-vm-lib-random",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-csv"
+version = "0.1.0"
+dependencies = [
+ "csv",
+ "futures",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vm-std",
+ "parking_lot 0.13.0",
+ "serde",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "neoc-vm-lib-diff"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "similar",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-glob"
+version = "0.1.0"
+dependencies = [
+ "globset",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+ "walkdir",
+]
+
+[[package]]
+name = "neoc-vm-lib-hash"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "md-5",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "parking_lot 0.13.0",
+ "serde",
+ "serde_json",
+ "sha1 0.11.0",
+ "sha2 0.11.1",
+ "sha3",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "neoc-vm-lib-hex"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-hmac"
+version = "0.1.0"
+dependencies = [
+ "hmac",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "parking_lot 0.13.0",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "subtle",
+]
+
+[[package]]
+name = "neoc-vm-lib-html"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+]
+
+[[package]]
+name = "neoc-vm-lib-http"
+version = "0.1.0"
+dependencies = [
+ "globset",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vm-lib-glob",
+ "neoc-vm-std",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "walkdir",
+]
+
+[[package]]
+name = "neoc-vm-lib-ini"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "rust-ini",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-json"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "parking_lot 0.13.0",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-log"
+version = "0.1.0"
+dependencies = [
+ "jiff 1.0.1",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "neoc-vm-lib-mime"
+version = "0.1.0"
+dependencies = [
+ "mime_guess",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-pkey"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "p256",
+ "pkcs8",
+ "rand 0.10.4",
+ "rsa",
+ "serde",
+ "sha2 0.11.1",
+ "signature",
+ "spki",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-random"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "thiserror 2.0.21",
+ "uuid",
+]
+
+[[package]]
+name = "neoc-vm-lib-regex"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "regex",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-semver"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "regex",
+ "semver",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-tempfile"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vm-std",
+ "parking_lot 0.13.0",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-template"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "parking_lot 0.13.0",
+ "serde",
+ "tera",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-test"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vm-std",
+ "parking_lot 0.13.0",
+ "serde",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "neoc-vm-lib-text"
+version = "0.1.0"
+dependencies = [
+ "deunicode",
+ "heck",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "strsim",
+ "thiserror 2.0.21",
+ "unicode-segmentation",
+ "unicode-width 0.2.3",
+ "vte",
+]
+
+[[package]]
+name = "neoc-vm-lib-unicode"
+version = "0.1.0"
+dependencies = [
+ "caseless",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "unicode-normalization",
+ "unicode-properties",
+ "unicode-segmentation",
+ "unicode-width 0.2.3",
+]
+
+[[package]]
+name = "neoc-vm-lib-url"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "percent-encoding",
+ "serde",
+ "thiserror 2.0.21",
+ "url",
+]
+
+[[package]]
+name = "neoc-vm-lib-vcr"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vm-lib-base64",
+ "neoc-vm-std",
+ "parking_lot 0.13.0",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "neoc-vm-std"
 version = "0.1.0"
 dependencies = [
@@ -3873,7 +3873,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "neoc-vnd-bollard"
+name = "neoc-vm-vnd-bollard"
 version = "0.1.0"
 dependencies = [
  "bollard",
@@ -3885,7 +3885,7 @@ dependencies = [
  "mlua",
  "mlua-ir",
  "neoc-vm-core",
- "neoc-vnd-hyper",
+ "neoc-vm-vnd-hyper",
  "parking_lot 0.13.0",
  "serde",
  "serde_json",
@@ -3896,7 +3896,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "neoc-vnd-hyper"
+name = "neoc-vm-vnd-hyper"
 version = "0.1.0"
 dependencies = [
  "bytes",
@@ -3905,8 +3905,8 @@ dependencies = [
  "hyper-util",
  "mlua",
  "mlua-ir",
- "neoc-lib-json",
  "neoc-vm-core",
+ "neoc-vm-lib-json",
  "neoc-vm-std",
  "parking_lot 0.13.0",
  "rcgen",
@@ -3922,22 +3922,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "neoc-vnd-jsonschema"
+name = "neoc-vm-vnd-jsonschema"
 version = "0.1.0"
 dependencies = [
  "jsonschema",
  "mlua",
  "mlua-ir",
- "neoc-lib-json",
  "neoc-vm-core",
- "neoc-vnd-serde_json",
+ "neoc-vm-lib-json",
+ "neoc-vm-vnd-serde_json",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
 ]
 
 [[package]]
-name = "neoc-vnd-keyring"
+name = "neoc-vm-vnd-keyring"
 version = "0.1.0"
 dependencies = [
  "keyring",
@@ -3953,7 +3953,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "neoc-vnd-portable_pty"
+name = "neoc-vm-vnd-portable_pty"
 version = "0.1.0"
 dependencies = [
  "mlua",
@@ -3969,7 +3969,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "neoc-vnd-quick_xml"
+name = "neoc-vm-vnd-quick_xml"
 version = "0.1.0"
 dependencies = [
  "mlua",
@@ -3983,7 +3983,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "neoc-vnd-rusqlite"
+name = "neoc-vm-vnd-rusqlite"
 version = "0.1.0"
 dependencies = [
  "mlua",
@@ -3997,13 +3997,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "neoc-vnd-serde_json"
+name = "neoc-vm-vnd-serde_json"
 version = "0.1.0"
 dependencies = [
  "mlua",
  "mlua-ir",
- "neoc-lib-json",
  "neoc-vm-core",
+ "neoc-vm-lib-json",
  "neoc-vm-std",
  "serde",
  "serde_json",
@@ -4011,7 +4011,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "neoc-vnd-serde_yaml"
+name = "neoc-vm-vnd-serde_yaml"
 version = "0.1.0"
 dependencies = [
  "mlua",
@@ -4025,7 +4025,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "neoc-vnd-sqlx_mysql"
+name = "neoc-vm-vnd-sqlx_mysql"
 version = "0.1.0"
 dependencies = [
  "mlua-ir",
@@ -4038,7 +4038,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "neoc-vnd-sqlx_postgres"
+name = "neoc-vm-vnd-sqlx_postgres"
 version = "0.1.0"
 dependencies = [
  "mlua-ir",
@@ -4050,7 +4050,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "neoc-vnd-testcontainers_modules"
+name = "neoc-vm-vnd-testcontainers_modules"
 version = "0.1.0"
 dependencies = [
  "mlua",
@@ -4063,7 +4063,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "neoc-vnd-toml"
+name = "neoc-vm-vnd-toml"
 version = "0.1.0"
 dependencies = [
  "mlua",

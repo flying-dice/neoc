@@ -1,9 +1,9 @@
 [workspace]
 resolver = "3"
-# The runtime's `lib:*` and `vnd:*` modules are one crate each, in `crates/neoc-lib/<module>` and `crates/neoc-vnd/<module>`:
+# The runtime's `lib:*` and `vnd:*` modules are one crate each, in `crates/neoc-vm-lib/<module>` and `crates/neoc-vm-vnd/<module>`:
 # those folders hold crates and are not crates, so `crates/*` would fail on them, and the patterns name what is directly
 # under `crates/`.
-members = ["crates/neoc", "crates/neoc-agui", "crates/neoc-vm*", "crates/vos-*", "crates/neoc-lib/*", "crates/neoc-vnd/*"]
+members = ["crates/neoc", "crates/neoc-agui", "crates/neoc-vm", "crates/neoc-vm-core", "crates/neoc-vm-std", "crates/vos-*", "crates/neoc-vm-lib/*", "crates/neoc-vm-vnd/*"]
 
 [workspace.package]
 # neoc's crates and vos's crates share the repository. The neoc crates are edition 2024; the vos crates
@@ -21,51 +21,51 @@ neoc-vm = { path = "crates/neoc-vm" }
 neoc-agui = { path = "crates/neoc-agui" }
 neoc-vm-core = { path = "crates/neoc-vm-core" }
 neoc-vm-std = { path = "crates/neoc-vm-std" }
-neoc-vnd-bollard = { path = "crates/neoc-vnd/bollard" }
-neoc-vnd-hyper = { path = "crates/neoc-vnd/hyper" }
-neoc-vnd-jsonschema = { path = "crates/neoc-vnd/jsonschema" }
-neoc-vnd-keyring = { path = "crates/neoc-vnd/keyring" }
-neoc-vnd-portable_pty = { path = "crates/neoc-vnd/portable_pty" }
-neoc-vnd-quick_xml = { path = "crates/neoc-vnd/quick_xml" }
-neoc-vnd-rusqlite = { path = "crates/neoc-vnd/rusqlite" }
-neoc-vnd-serde_json = { path = "crates/neoc-vnd/serde_json" }
-neoc-vnd-serde_yaml = { path = "crates/neoc-vnd/serde_yaml" }
-neoc-vnd-sqlx_mysql = { path = "crates/neoc-vnd/sqlx_mysql" }
-neoc-vnd-sqlx_postgres = { path = "crates/neoc-vnd/sqlx_postgres" }
-neoc-vnd-testcontainers_modules = { path = "crates/neoc-vnd/testcontainers_modules" }
-neoc-vnd-toml = { path = "crates/neoc-vnd/toml" }
-neoc-lib-agui = { path = "crates/neoc-lib/agui" }
-neoc-lib-archive = { path = "crates/neoc-lib/archive" }
-neoc-lib-args = { path = "crates/neoc-lib/args" }
-neoc-lib-base64 = { path = "crates/neoc-lib/base64" }
-neoc-lib-cache = { path = "crates/neoc-lib/cache" }
-neoc-lib-chrono = { path = "crates/neoc-lib/chrono" }
-neoc-lib-compile = { path = "crates/neoc-lib/compile" }
-neoc-lib-compress = { path = "crates/neoc-lib/compress" }
-neoc-lib-crypto = { path = "crates/neoc-lib/crypto" }
-neoc-lib-csv = { path = "crates/neoc-lib/csv" }
-neoc-lib-diff = { path = "crates/neoc-lib/diff" }
-neoc-lib-glob = { path = "crates/neoc-lib/glob" }
-neoc-lib-hash = { path = "crates/neoc-lib/hash" }
-neoc-lib-hex = { path = "crates/neoc-lib/hex" }
-neoc-lib-hmac = { path = "crates/neoc-lib/hmac" }
-neoc-lib-html = { path = "crates/neoc-lib/html" }
-neoc-lib-http = { path = "crates/neoc-lib/http" }
-neoc-lib-ini = { path = "crates/neoc-lib/ini" }
-neoc-lib-json = { path = "crates/neoc-lib/json" }
-neoc-lib-log = { path = "crates/neoc-lib/log" }
-neoc-lib-mime = { path = "crates/neoc-lib/mime" }
-neoc-lib-pkey = { path = "crates/neoc-lib/pkey" }
-neoc-lib-random = { path = "crates/neoc-lib/random" }
-neoc-lib-regex = { path = "crates/neoc-lib/regex" }
-neoc-lib-semver = { path = "crates/neoc-lib/semver" }
-neoc-lib-tempfile = { path = "crates/neoc-lib/tempfile" }
-neoc-lib-template = { path = "crates/neoc-lib/template" }
-neoc-lib-test = { path = "crates/neoc-lib/test" }
-neoc-lib-text = { path = "crates/neoc-lib/text" }
-neoc-lib-unicode = { path = "crates/neoc-lib/unicode" }
-neoc-lib-url = { path = "crates/neoc-lib/url" }
-neoc-lib-vcr = { path = "crates/neoc-lib/vcr" }
+neoc-vm-vnd-bollard = { path = "crates/neoc-vm-vnd/bollard" }
+neoc-vm-vnd-hyper = { path = "crates/neoc-vm-vnd/hyper" }
+neoc-vm-vnd-jsonschema = { path = "crates/neoc-vm-vnd/jsonschema" }
+neoc-vm-vnd-keyring = { path = "crates/neoc-vm-vnd/keyring" }
+neoc-vm-vnd-portable_pty = { path = "crates/neoc-vm-vnd/portable_pty" }
+neoc-vm-vnd-quick_xml = { path = "crates/neoc-vm-vnd/quick_xml" }
+neoc-vm-vnd-rusqlite = { path = "crates/neoc-vm-vnd/rusqlite" }
+neoc-vm-vnd-serde_json = { path = "crates/neoc-vm-vnd/serde_json" }
+neoc-vm-vnd-serde_yaml = { path = "crates/neoc-vm-vnd/serde_yaml" }
+neoc-vm-vnd-sqlx_mysql = { path = "crates/neoc-vm-vnd/sqlx_mysql" }
+neoc-vm-vnd-sqlx_postgres = { path = "crates/neoc-vm-vnd/sqlx_postgres" }
+neoc-vm-vnd-testcontainers_modules = { path = "crates/neoc-vm-vnd/testcontainers_modules" }
+neoc-vm-vnd-toml = { path = "crates/neoc-vm-vnd/toml" }
+neoc-vm-lib-agui = { path = "crates/neoc-vm-lib/agui" }
+neoc-vm-lib-archive = { path = "crates/neoc-vm-lib/archive" }
+neoc-vm-lib-args = { path = "crates/neoc-vm-lib/args" }
+neoc-vm-lib-base64 = { path = "crates/neoc-vm-lib/base64" }
+neoc-vm-lib-cache = { path = "crates/neoc-vm-lib/cache" }
+neoc-vm-lib-chrono = { path = "crates/neoc-vm-lib/chrono" }
+neoc-vm-lib-compile = { path = "crates/neoc-vm-lib/compile" }
+neoc-vm-lib-compress = { path = "crates/neoc-vm-lib/compress" }
+neoc-vm-lib-crypto = { path = "crates/neoc-vm-lib/crypto" }
+neoc-vm-lib-csv = { path = "crates/neoc-vm-lib/csv" }
+neoc-vm-lib-diff = { path = "crates/neoc-vm-lib/diff" }
+neoc-vm-lib-glob = { path = "crates/neoc-vm-lib/glob" }
+neoc-vm-lib-hash = { path = "crates/neoc-vm-lib/hash" }
+neoc-vm-lib-hex = { path = "crates/neoc-vm-lib/hex" }
+neoc-vm-lib-hmac = { path = "crates/neoc-vm-lib/hmac" }
+neoc-vm-lib-html = { path = "crates/neoc-vm-lib/html" }
+neoc-vm-lib-http = { path = "crates/neoc-vm-lib/http" }
+neoc-vm-lib-ini = { path = "crates/neoc-vm-lib/ini" }
+neoc-vm-lib-json = { path = "crates/neoc-vm-lib/json" }
+neoc-vm-lib-log = { path = "crates/neoc-vm-lib/log" }
+neoc-vm-lib-mime = { path = "crates/neoc-vm-lib/mime" }
+neoc-vm-lib-pkey = { path = "crates/neoc-vm-lib/pkey" }
+neoc-vm-lib-random = { path = "crates/neoc-vm-lib/random" }
+neoc-vm-lib-regex = { path = "crates/neoc-vm-lib/regex" }
+neoc-vm-lib-semver = { path = "crates/neoc-vm-lib/semver" }
+neoc-vm-lib-tempfile = { path = "crates/neoc-vm-lib/tempfile" }
+neoc-vm-lib-template = { path = "crates/neoc-vm-lib/template" }
+neoc-vm-lib-test = { path = "crates/neoc-vm-lib/test" }
+neoc-vm-lib-text = { path = "crates/neoc-vm-lib/text" }
+neoc-vm-lib-unicode = { path = "crates/neoc-vm-lib/unicode" }
+neoc-vm-lib-url = { path = "crates/neoc-vm-lib/url" }
+neoc-vm-lib-vcr = { path = "crates/neoc-vm-lib/vcr" }
 # internal (path deps; the arrows in the dependency diagram)
 vos-domain      = { path = "crates/vos-domain" }
 vos-application = { path = "crates/vos-application" }

@@ -1,6 +1,6 @@
 //! The core of neoc's Lua runtime on mlua-ir: the engine, the lifecycle of what a script starts, the scheduler, the
 //! host that makes every module call a traced, lifecycle-aware one, and the helpers the modules share. It declares no
-//! module: `neoc-vm-std`, `neoc-lib-*` and `neoc-vnd-*` do, and `neoc-vm` links them all.
+//! module: `neoc-vm-std`, `neoc-vm-lib-*` and `neoc-vm-vnd-*` do, and `neoc-vm` links them all.
 //!
 //! - [`make_engine`] gives a ready VM; [`modules`] is the `require` registry; [`lifecycle`] is what a script starts
 //!   and who may run its code; [`host`] makes every module call a traced, lifecycle-aware one.

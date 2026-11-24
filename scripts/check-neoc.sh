@@ -20,7 +20,7 @@ cargo fmt --check
 step "cargo clippy --workspace --all-targets -- -D warnings"
 cargo clippy --workspace --all-targets -- -D warnings
 
-# `neoc-*` is the runtime: neoc-vm, neoc-vm-core, neoc-vm-std and the neoc-lib-* and neoc-vnd-* module crates (and neoc-agui).
+# `neoc-*` is the runtime: neoc-vm, neoc-vm-core, neoc-vm-std and the neoc-vm-lib-* and neoc-vm-vnd-* module crates (and neoc-agui).
 step "cargo test -p neoc -p 'neoc-*'"
 cargo test -p neoc -p 'neoc-*'
 
