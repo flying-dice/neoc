@@ -175,8 +175,9 @@ test.describe('Spotlight journeys', () => {
   test('S5: Show Home Screen leaves the windows where they are and shows every app', async ({ page }) => {
     await openDesktop(page, { open: ['files', 'settings'] })
     await page.keyboard.press('ControlOrMeta+K')
+    // search has the keyboard a moment after it opens: what is typed before that goes to the window behind
+    await expect(field(page)).toBeFocused()
     await page.keyboard.type('show home')
-    // the list follows what is typed a moment after the last key: wait for it, not for the list as it was a key ago
     await expect.poll(async () => (await results(page))[0]).toBe('action-home')
     await expect(result(page, 'action-home')).toContainText('Show Home Screen')
     await expect(result(page, 'action-home')).toContainText('Action')

@@ -133,7 +133,8 @@ test.describe('DNS journeys', () => {
     await frame(page).locator(`[data-testid^="${ID}-record-"][data-testid$="-remove"]`).last().click()
     await expect(records(page)).toHaveText(['apps.home and *.apps.home'])
     await expect.poll(cmd).not.toContain('--host-record=nas.home,192.168.1.10')
-    expect(docker.sidecar()?.running).toBe(true)
+    // made again is made, then started: the start comes a moment after the container is there
+    await expect.poll(() => docker.sidecar()?.running).toBe(true)
   })
 
   test('DN3: a name or an address that is none says so in the footer of the form, Add cannot be pressed, and nothing changes', async ({ page }) => {
@@ -193,7 +194,8 @@ test.describe('DNS journeys', () => {
     await part(page, 'apply').click()
     await expect(part(page, 'state')).toHaveText('Answering on port 53')
     await expect(part(page, 'attention')).toHaveCount(0)
-    expect(docker.sidecar()?.running).toBe(true)
+    // made again is made, then started: the start comes a moment after the container is there
+    await expect.poll(() => docker.sidecar()?.running).toBe(true)
     expect(cmd()).toContain('--host-record=nas.home,192.168.1.10')
   })
 

@@ -149,7 +149,8 @@ test.describe('Pages journeys', () => {
     await of(page, 'Wiki', 'remove').click()
     await expect(names(page)).toHaveText(['Blog'])
     await expect.poll(config).not.toContain('wiki.home')
-    expect(docker.sidecar()?.running).toBe(true)
+    // made again is made, then started: the start comes a moment after the container is there
+    await expect.poll(() => docker.sidecar()?.running).toBe(true)
   })
 
   test('PG3: a site that cannot be is refused in words, and nothing changes', async ({ page }) => {
@@ -196,7 +197,8 @@ test.describe('Pages journeys', () => {
     await part(page, 'apply').click()
     await expect(part(page, 'state')).toHaveText('Serving 1 site')
     await expect(part(page, 'attention')).toHaveCount(0)
-    expect(docker.sidecar()?.running).toBe(true)
+    // made again is made, then started: the start comes a moment after the container is there
+    await expect.poll(() => docker.sidecar()?.running).toBe(true)
   })
 
   test('PG5: the shared port is the one Docker publishes for the sites with names', async ({ page }) => {
