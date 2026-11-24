@@ -14,24 +14,27 @@ value, err = task.spawn(function() end):await()
 assert(value == nil and err == nil)
 
 -- the arguments after the function are what it is called with: nils are kept, a table is that table
--- TODO(mlua-ir): a body is declared `() -> ()`, so one that takes the arguments is cast to be passed
-local function add(a: number, b: number): number
-	return a + b
+-- a body is `(...unknown) -> ()`: an untyped one of any arity is accepted, and narrows what it was given
+local function add(a, b)
+	return (a :: number) + (b :: number)
 end
-local function count(...: unknown): number
+local function count(...)
 	return select("#", ...)
 end
-local function same(a: unknown, b: unknown): boolean
+local function same(a, b)
 	return a == t and b == count
 end
-assert(task.spawn(add :: any, 1, 2):await() == 3)
-assert(task.defer(add :: any, 2, 3):await() == 5)
-assert(task.delay(0, add :: any, 3, 4):await() == 7)
-assert(task.spawn(count :: any):await() == 0)
-assert(task.spawn(count :: any, nil):await() == 1)
-assert(task.defer(count :: any, 1, nil, nil):await() == 3)
-assert(task.delay(0, count :: any, nil, 2, nil):await() == 3)
-assert(task.spawn(same :: any, t, count):await() == true)
+assert(task.spawn(add, 1, 2):await() == 3)
+assert(task.defer(add, 2, 3):await() == 5)
+assert(task.delay(0, add, 3, 4):await() == 7)
+assert(task.spawn(count):await() == 0)
+assert(task.spawn(count, nil):await() == 1)
+assert(task.defer(count, 1, nil, nil):await() == 3)
+assert(task.delay(0, count, nil, 2, nil):await() == 3)
+assert(task.spawn(same, t, count):await() == true)
+assert(task.spawn(function(a, b, c)
+	return a == 1 and b == nil and c == "x"
+end, 1, nil, "x"):await() == true)
 -- a body that takes none still closes over what it needs
 assert(task.spawn(function()
 	return add(1, 2)

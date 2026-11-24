@@ -15,6 +15,10 @@
 //!   `nil` and a text.
 //! - `task.cancel` refuses what is not a `Task` as a wrong argument, with its place.
 //! - `task.wait` and `task.delay` take a number only (a numeric string was accepted).
+//!
+//! A body is declared `(...unknown) -> ()`: strict Luau accepts an untyped body of any arity. One whose parameters
+//! are typed (`function(a: number)`) is refused by the checker (tying them to `args` would take generic type packs,
+//! which the declarations do not have): a script annotates them `unknown` and narrows, or closes over the values.
 
 #[mlua_ir::module("std:task")]
 pub mod task {
@@ -37,9 +41,7 @@ pub mod task {
 
     /// A task's body: a function of the script's, run as a coroutine of its own. It is called with the arguments
     /// given after it; what it returns first is what `Task:await` gives.
-    // TODO(mlua-ir): declared `() -> ()`, so a body that takes the arguments does not type-check; it needs a
-    // callback type with variadic parameters (`(...unknown) -> ()`), or a generic pack tying them to `args`.
-    pub type Body = Callback<fn()>;
+    pub type Body = Callback<fn(args: Variadic<Live<TaskArgument>>)>;
 
     /// The arguments for a task's body, as they are (a table is that table, a `nil` is kept).
     fn passed_on(args: Vec<Live<TaskArgument>>) -> MultiValue {
