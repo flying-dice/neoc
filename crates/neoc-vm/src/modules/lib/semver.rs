@@ -7,17 +7,15 @@
 //! Order is SemVer's precedence: build metadata takes no part in it (`1.0.0+a` and `1.0.0+b` are equal), and a
 //! pre-release comes before its release.
 //!
-//! Ported from the old VM's `lib:semver`. What changed on purpose:
-//! - Operators (`<`, `<=`, `==`) are methods: `a:compare(b)` gives `"less" | "equal" | "greater"` (it gave `-1`,
-//!   `0`, `1`), `a:equals(b)` a boolean. `table.sort` takes a comparator: `a:compare(b) == "less"`.
+//! The API's rules:
+//! - There are no operators: `a:compare(b)` gives `"less" | "equal" | "greater"`, `a:equals(b)` a boolean. `table.sort`
+//!   takes a comparator: `a:compare(b) == "less"`.
 //! - Each argument has one type: the methods take objects (`v:compare(other)`, `req:matches(version)`), the module
-//!   functions take text (`compare("1.2.3", "1.2.4")`, `satisfies("1.2.3", "^1")`). Each took either.
-//! - `increment` takes its level as a string enum (a level that does not exist is refused as an argument) and is a
-//!   method only; the functions `increment`, `parse` and `format` are gone (`Version.parse(text):increment(level)`,
-//!   `Version.parse`, `tostring`).
-//! - `coerce` gives `nil` when the text holds no version (it gave `nil` and a message).
-//! - A failure is a typed error: `ParseError` (`invalid_version`, `invalid_range`) and `IncrementError`
-//!   (`overflow`).
+//!   functions take text (`compare("1.2.3", "1.2.4")`, `satisfies("1.2.3", "^1")`).
+//! - `increment` is a method and takes its level as a string enum (a level that does not exist is refused as an
+//!   argument); a version is read with `Version.parse` and written with `tostring`.
+//! - `coerce` gives `nil` when the text holds no version.
+//! - A failure is a typed error: `ParseError` (`invalid_version`, `invalid_range`) and `IncrementError` (`overflow`).
 
 use std::sync::OnceLock;
 

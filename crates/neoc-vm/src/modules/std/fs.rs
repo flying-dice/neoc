@@ -41,19 +41,16 @@
 //! [`ops`] (the operations, free of the Lua state) and [`error`] (their classified errors) are public, so an
 //! embedder that offers files its own way builds on these operations instead of writing its own copy or remove.
 //!
-//! Ported from the old VM's `std:fs`. What changed on purpose:
-//! - An error is a typed `FsError` (`err.kind`, `err.path`, `err.to`, `err.reason`); `error_kind` and
-//!   `error_message`, which read the kind and the message back out of an error string, are gone.
-//! - `open(path)` opens for reading; `create(path)` and `append(path)` open for writing (it was
-//!   `open({ path, mode })`, whose result depended on the mode).
-//! - `Metadata` and `DirEntry` are plain records (`meta.len`, `entry.file_name`), not objects with a method per
-//!   field; `is_file()`, `is_dir()` and `is_symlink()` are `kind == "file"` and so on.
-//! - `set_permissions(path, { mode } | { readonly })` is `set_mode(path, mode)` and `set_readonly(path, readonly)`.
-//! - `move` is `move_path` (see the TODO below).
-//! - `Watcher:receive` takes a `std:time` `Duration` as its timeout (it took seconds as a number).
-//! - A wrong option (an unknown name, a value of the wrong type) is raised as a wrong argument, with its place (it
-//!   was a returned `invalid_input`); `max_depth` is a whole number up to 4294967295.
-//!
+//! The API's rules:
+//! - An error is a typed `FsError` (`err.kind`, `err.path`, `err.to`, `err.reason`).
+//! - `open(path)` opens for reading; `create(path)` and `append(path)` open for writing.
+//! - `Metadata` and `DirEntry` are plain records (`meta.len`, `entry.file_name`); what an entry is is its `kind` (`kind
+//!   == "file"`).
+//! - Permissions are set with `set_mode(path, mode)` and `set_readonly(path, readonly)`.
+//! - A move is `move_path` (see the TODO below).
+//! - `Watcher:receive` takes a `std:time` `Duration` as its timeout.
+//! - A wrong option (an unknown name, a value of the wrong type) is raised as a wrong argument, with its place;
+//!   `max_depth` is a whole number up to 4294967295.
 pub mod error;
 pub mod ops;
 mod watch;

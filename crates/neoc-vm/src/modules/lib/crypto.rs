@@ -10,9 +10,8 @@
 //! A failed tag check is one generic error (`decryption_failed`): which of the key, the nonce, the AAD or the
 //! bytes was wrong is the oracle an attacker wants. Spans never see keys, nonces or plaintext.
 //!
-//! Ported from the old VM's `lib:crypto`. What changed on purpose: the algorithm is a declared union (an unknown
-//! name is a bad argument), `key_size`, `nonce_size` and `tag_size` cannot fail, and every failure is a typed
-//! error table.
+//! The algorithm is a declared union (an unknown name is a bad argument), `key_size`, `nonce_size` and `tag_size`
+//! cannot fail, and every failure is a typed error table.
 
 use aes_gcm::aead::{Aead, Nonce, Payload};
 use aes_gcm::{Aes128Gcm, Aes256Gcm, KeyInit};

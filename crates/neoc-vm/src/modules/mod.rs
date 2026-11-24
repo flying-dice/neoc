@@ -1,6 +1,6 @@
 //! The `require` registry: every module an mlua-ir `#[module]` declares in this crate, by name.
 //!
-//! Three namespaces, as in the old VM: `std:*` mirrors the Rust standard library, `lib:*` is gap-fillers and neoc's
+//! Three namespaces: `std:*` mirrors the Rust standard library, `lib:*` is gap-fillers and neoc's
 //! own modules, `vnd:*` is vendored crates named after the crate. A script reaches a module only through
 //! `require("namespace:name")`; there is no ambient global.
 //!

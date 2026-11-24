@@ -9,14 +9,12 @@
 //! A name that starts with `.` is hidden: a path with a hidden component matches only a pattern that names one
 //! (`.git*`, `**/.cache/*.rs`), as ripgrep and fd do.
 //!
-//! Ported from the old VM's `lib:glob`. What changed on purpose:
+//! The API's rules:
 //! - A failure is a typed error: `invalid_pattern` (with the pattern and why), and for a scan also `not_found` and
 //!   `not_a_directory` (with the directory).
-//! - A scan returns one value, `{ paths, errors }`: the matches, and the entries the walk could not read (it
-//!   returned the two as `(paths, errors)`, in the place every other function has its error).
+//! - A scan returns one value, `{ paths, errors }`: the matches, and the entries the walk could not read.
 //! - A wrong option (an unknown name, a `type` that is not one, a negative `limit`) is refused as a wrong argument,
-//!   with its place (it was a returned string).
-//! - `GlobSet:is_empty()` is new, beside `len()`.
+//!   with its place.
 
 use globset::{Glob as GsGlob, GlobSet as GsSet, GlobSetBuilder};
 

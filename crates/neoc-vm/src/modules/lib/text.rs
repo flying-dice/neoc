@@ -1,11 +1,9 @@
 //! String utilities and case conversion: `lib:text`.
 //!
-//! Ported from the old VM's `lib:text`. What changed on purpose: counts and widths are unsigned integers (a negative
-//! one is refused as an argument, so `clip`'s hand-written check is gone), the options are typed tables
+//! Counts and widths are unsigned integers (a negative one is refused as an argument), the options are typed tables
 //! (`WrapOptions`, `TruncateOptions`, `ClosestOptions`) and `boundary` is a union of literals, the fill character of
-//! the pad family is a validated type (refused as an argument, not returned as an error), `closest` returns an
-//! empty list for no candidates (it was `nil`) and cannot fail, `truncate` cannot fail, and the failures that
-//! remain are typed error tables.
+//! the pad family is a validated type (refused as an argument), `closest` returns an empty list for no candidates and
+//! cannot fail, `truncate` cannot fail, and the failures that remain are typed error tables.
 
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthChar;

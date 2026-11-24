@@ -17,16 +17,15 @@
 //! `include` patterns are `lib:glob`'s (`*` crosses `/`). An entry's `compression_ratio` is its compressed size
 //! over its size for a zip, whose entries are compressed one by one, and `nil` for a tar, which is one stream.
 //!
-//! Ported from the old VM's `lib:archive`. What changed on purpose:
-//! - An archive is an object. `Tar.open(path)` / `Tar.from_bytes(bytes)` with `:list()`, `:extract(dest, options?)`
-//!   and `:read(name, options?)` replace `tar_list`, `tar_list_bytes`, `tar_extract` and `tar_extract_bytes`, whose
-//!   first argument was a path when it named a file that exists and the archive's bytes when it did not. `Zip` is
-//!   the same.
-//! - `Tar.create(entries, options?)` and `Tar.create_file(path, entries, options?)` are `tar_create_bytes` and
-//!   `tar_create`; `Zip.create(entries)` and `Zip.create_file(path, paths, options?)` are `zip_create_bytes` and
-//!   `zip_create`. `Zip.create` writes its entries in the order of their names (it was the table's own order).
-//! - `compression` is a string enum, `max_output_size` a whole number from 0 up, `include` a list of strings, an
-//!   entry `{ path, archive_path? }`: anything else, or an option that does not exist, is refused as an argument.
+//! The API's rules:
+//! - An archive is an object: `Tar.open(path)` / `Tar.from_bytes(bytes)` with `:list()`, `:extract(dest, options?)` and
+//!   `:read(name, options?)`. Whether an archive is a file or bytes is said by the constructor, never guessed from the
+//!   argument. `Zip` is the same.
+//! - `Tar.create(entries, options?)` and `Zip.create(entries)` give the archive's bytes; `Tar.create_file(path,
+//!   entries, options?)` and `Zip.create_file(path, paths, options?)` write a file. `Zip.create` writes its entries in
+//!   the order of their names.
+//! - `compression` is a string enum, `max_output_size` a whole number from 0 up, `include` a list of strings, an entry
+//!   `{ path, archive_path? }`: anything else, or an option that does not exist, is refused as an argument.
 //! - Every failure is the typed `ArchiveError`.
 
 use std::cell::Cell;

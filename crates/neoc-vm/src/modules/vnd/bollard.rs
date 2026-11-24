@@ -48,26 +48,21 @@
 //! **Streams.** Logs, events and the progress of a pull are streams (`stream`): `next()` waits for the next item,
 //! `(nil, nil)` is the end, `items()` iterates. A stream belongs to the script that made it and stops with it.
 //!
-//! Ported from the old VM's `vnd:bollard`. What changed on purpose:
-//! - An error is a typed [`DockerError`](error::DockerError) (`err.kind`, `err.reason`, `err.status`); it was the
-//!   text `bollard.<function>: <kind>: <message>`, and `error_kind` and `error_message`, which took it apart, are
-//!   gone.
-//! - Docker's bodies and answers are typed with bollard's models, so a body with a field Docker does not have, or
-//!   one of the wrong type, is refused as a wrong argument with its path; it was sent as it was, or refused as
-//!   `invalid_input`. An empty table in a body is an empty list or map, which is what the field is: it was left
-//!   out.
-//! - `create_container` takes Docker's body and, after it, the call's own `{ name, platform }`; they were two
-//!   lower-case keys inside the body.
-//! - A name, an image reference, a signal, an option that is refused is raised as a wrong argument with its place;
-//!   it was the returned error `invalid_input`.
-//! - A filter's values are always a list (`status = { "running" }`); one value could be written without it.
-//! - TLS is `tls = { ca, cert, key }`; it was `tls_ca`, `tls_cert` and `tls_key`, all three or an error.
-//! - `logs`, `events` and `pull_image` return the stream itself (they cannot fail before the first `next()`), and
-//!   a stream has `items()`; they returned `(stream, err)`.
-//! - `exec` with an empty command is refused as `invalid_input` (unchanged), and what it returns is a typed table.
-//! - A volume that is returned (`list_volumes`, `create_volume`) is this module's own record of Docker's volume,
-//!   with Docker's field names and its date as text: bollard's model cannot be read field by field yet. It leaves
-//!   out `Status` and `ClusterVolume`.
+//! The API's rules:
+//! - An error is a typed [`DockerError`](error::DockerError) (`err.kind`, `err.reason`, `err.status`).
+//! - Docker's bodies and answers are typed with bollard's models, so a body with a field Docker does not have, or one
+//!   of the wrong type, is refused as a wrong argument with its path. An empty table in a body is an empty list or map,
+//!   which is what the field is.
+//! - `create_container` takes Docker's body and, after it, the call's own `{ name, platform }`.
+//! - A name, an image reference, a signal, an option that is refused is raised as a wrong argument with its place.
+//! - A filter's values are always a list (`status = { "running" }`).
+//! - TLS is `tls = { ca, cert, key }`.
+//! - `logs`, `events` and `pull_image` return the stream itself (they cannot fail before the first `next()`), and a
+//!   stream has `items()`.
+//! - `exec` with an empty command is refused as `invalid_input`, and what it returns is a typed table.
+//! - A volume that is returned (`list_volumes`, `create_volume`) is this module's own record of Docker's volume, with
+//!   Docker's field names and its date as text: bollard's model cannot be read field by field yet. It leaves out
+//!   `Status` and `ClusterVolume`.
 
 pub mod args;
 pub mod error;

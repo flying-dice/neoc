@@ -354,7 +354,7 @@ async fn create_sends_dockers_body_and_the_name_beside_it() {
     assert_eq!(body["HostConfig"]["PortBindings"]["80/tcp"][0]["HostPort"], "8088");
     assert_eq!(body["HostConfig"]["RestartPolicy"]["Name"], "unless-stopped");
     assert!(body.get("name").is_none(), "the call's own `name` is not Docker's");
-    // the field is a list, so an empty table is an empty list (the old VM, which did not know, left it out)
+    // the field is a list, so an empty table is an empty list (it is not left out)
     assert_eq!(body["Cmd"], json!([]));
 }
 

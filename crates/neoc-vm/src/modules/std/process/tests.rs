@@ -1,8 +1,6 @@
 //! `std:process` against real processes. On Unix: `sh` and what every Unix has beside it (`cat`, `sleep`, `head`).
 //! On Windows: `cmd`, `ping` (a process that stays) and PowerShell (a process that reads its input as a script
 //! says). A test whose commands exist on one platform only says so with its `cfg`.
-//!
-//! Ported from the old VM's `std/process/tests.rs`, which ran its processes on Unix alone.
 
 use std::time::{Duration, Instant};
 

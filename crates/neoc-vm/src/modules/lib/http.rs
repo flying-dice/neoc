@@ -11,11 +11,10 @@
 //! are answered; a path with `..` is refused, and an encoded slash stays encoded, so no request reaches a file the
 //! pattern did not match.
 //!
-//! Ported from the old VM's `lib:http`. What changed on purpose:
-//! - A server that cannot start returns `(nil, err)` with a typed `ServeError` (`invalid_glob`, `walk`, `bind` with
-//!   its `cause`); it raised a text. A server that ran and was stopped returns `true`.
-//! - An option that is misspelt or of the wrong type is refused as a wrong argument (it was ignored and the default
-//!   used).
+//! The API's rules:
+//! - A server that cannot start returns `(nil, err)` with a typed `ServeError` (`invalid_glob`, `walk`, `bind` with its
+//!   `cause`). A server that ran and was stopped returns `true`.
+//! - An option that is misspelt or of the wrong type is refused as a wrong argument.
 
 use std::collections::HashMap;
 use std::path::PathBuf;

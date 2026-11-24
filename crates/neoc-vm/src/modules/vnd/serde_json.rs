@@ -11,14 +11,14 @@
 //! A parsed document is handed out as `lib:json` does it: an `Object` or `Array` handle for a container, a Lua value
 //! for a scalar. Objects are written with their keys sorted.
 //!
-//! Ported from the old VM's `vnd:serde_json`. What changed on purpose:
+//! The API's rules:
 //! - A JSON `null` document reads as `nil` (there is no `json.null` sentinel, as in `lib:json`).
 //! - A failure is a typed error: `DecodeError` (`syntax` or `eof`, with the line and column) and `EncodeError`
 //!   (`too_deep`).
 //! - A value that is not plain data (a function, a buffer anywhere inside, a table that contains itself, a handle
-//!   nested in a plain table) is refused as an argument; some of these were returned errors.
-//! - `from_reader` and `to_writer` take `std:io`'s `Reader` and `Writer` and refuse anything else as an argument
-//!   (it was a returned error); their failures are `ReadError` and `WriteError`, which add `io` to the kinds above.
+//!   nested in a plain table) is refused as an argument.
+//! - `from_reader` and `to_writer` take `std:io`'s `Reader` and `Writer` and refuse anything else as an argument; their
+//!   failures are `ReadError` and `WriteError`, which add `io` to the kinds above.
 
 /// Where `serde_json` stopped (line and column, both from 1) and why, without the place it ends its text with.
 pub(crate) fn place_and_reason(error: &::serde_json::Error) -> (u32, u32, String) {

@@ -13,12 +13,10 @@
 //!
 //! A map's values are plain data (held as `serde_json::Value`), so they belong to no single VM.
 //!
-//! Ported from the old VM's `std:collections`. What changed on purpose:
-//! - `Map:set(key, nil)` removes the key (it stored a null that `get` gave back as a sentinel), so `has` and `get`
-//!   agree; `Map:keys()` is sorted.
+//! The API's rules:
+//! - `Map:set(key, nil)` removes the key, so `has` and `get` agree; `Map:keys()` is sorted.
 //! - A value that is not plain data (a buffer, a function) is refused as an argument of `Map:set`, with its place.
 //! - `Counter` takes whole numbers only: `Counter.new(1.5)` is refused.
-//! - `Mutex` is not offered: nothing used it.
 
 #[mlua_ir::module("std:collections")]
 pub mod collections {

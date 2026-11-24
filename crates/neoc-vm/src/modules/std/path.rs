@@ -5,8 +5,8 @@
 //! `separator` says which. On Windows a string that is not valid UTF-8 is not a path and is refused as an
 //! argument; on Unix every string is one.
 //!
-//! Ported from the old VM's `std:path`. What changed on purpose:
-//! - `with_extension` returns a typed error for an extension that holds a separator (it raised a string).
+//! The API's rules:
+//! - `with_extension` returns a typed error for an extension that holds a separator.
 //! - `absolute`'s failure is a typed error (`empty_path`, `current_dir`).
 
 use std::path::{Component, Path, PathBuf};

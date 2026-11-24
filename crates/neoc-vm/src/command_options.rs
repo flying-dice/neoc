@@ -5,9 +5,6 @@
 //! here. What is checked here is what the type does not say and the operating system would not take (an empty
 //! program, a NUL byte) or should not be asked to (a thousand arguments too many). What is refused is a
 //! [`Refused`]: the option and the words for the script, which each module puts in its own `invalid_input` error.
-//!
-//! Ported from the old VM's `command_options.rs`, where each of these was also the reader of its field from a Lua
-//! value.
 
 use std::collections::BTreeMap;
 use std::path::Path;

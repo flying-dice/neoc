@@ -20,13 +20,12 @@
 //! builds nothing. `validate` walks the whole value and says everything that is wrong with it. A value is plain data
 //! or a `lib:json` handle. References to other documents (`$ref` to a URL or a file) are not fetched.
 //!
-//! Ported from the old VM's `vnd:jsonschema`. What changed on purpose:
-//! - `validate` gives `true`, or `nil` and a typed error holding every violation (where in the value, which rule of
-//!   the schema, which keyword, why); it was a `ValidationResult` userdata with `ok()` and `errors()` (strings).
-//! - `compile` fails with a typed error: `syntax` (the text is not JSON, with the line and column) or
-//!   `invalid_schema` (with the place in the schema).
-//! - A value that is not plain data (a function, a buffer anywhere inside) is refused as an argument by both
-//!   methods; `validate` used to report a function as a violation.
+//! The API's rules:
+//! - `validate` gives `true`, or `nil` and a typed error holding every violation (where in the value, which rule of the
+//!   schema, which keyword, why).
+//! - `compile` fails with a typed error: `syntax` (the text is not JSON, with the line and column) or `invalid_schema`
+//!   (with the place in the schema).
+//! - A value that is not plain data (a function, a buffer anywhere inside) is refused as an argument by both methods.
 
 /// One line for a list of violations: the first, and how many more.
 fn summary(violations: &[jsonschema::Violation]) -> String {

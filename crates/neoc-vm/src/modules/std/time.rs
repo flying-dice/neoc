@@ -4,10 +4,9 @@
 //! wall clock: they survive NTP slews, DST jumps and manual clock changes. Arithmetic saturates instead of
 //! panicking, so a script cannot blow up on overflow or a negative result.
 //!
-//! Ported from the old VM's `std:time`. What changed on purpose: operators (`+ - * / < ==`) are methods (`plus`,
-//! `minus`, `times`, `divided_by`, `compare`), `Duration.ZERO` is `Duration.zero()`, the counts (`as_millis`, ...)
-//! saturate at 2^53 (the largest whole number a Lua number holds), a negative count is refused as an argument, and
-//! every failure is a typed error table.
+//! There are no operators: arithmetic and comparison are methods (`plus`, `minus`, `times`, `divided_by`, `compare`).
+//! The zero duration is `Duration.zero()`, the counts (`as_millis`, ...) saturate at 2^53 (the largest whole number a
+//! Lua number holds), a negative count is refused as an argument, and every failure is a typed error table.
 
 use std::time::Duration as StdDuration;
 

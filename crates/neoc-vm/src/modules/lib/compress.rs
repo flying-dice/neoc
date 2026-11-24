@@ -6,13 +6,12 @@
 //!
 //! The bytes `encode` writes are pinned by a test: a dependency upgrade that changes them is seen there first.
 //!
-//! Ported from the old VM's `lib:compress`. What changed on purpose:
-//! - The format is a string enum: one that does not exist is refused as an argument (it was `nil` and
-//!   `unknown format '...'`).
-//! - `level` and `max_size` are whole numbers from 0 up: anything else is refused as an argument with its place
-//!   (each was `nil` and a message). An option that does not exist is refused too.
-//! - Failures are typed: `EncodeError` (`level_out_of_range`, `failed`) and `DecodeError` (`empty`,
-//!   `max_size_zero`, `too_large`, `corrupt`).
+//! The API's rules:
+//! - The format is a string enum: one that does not exist is refused as an argument.
+//! - `level` and `max_size` are whole numbers from 0 up: anything else is refused as an argument with its place. An
+//!   option that does not exist is refused too.
+//! - Failures are typed: `EncodeError` (`level_out_of_range`, `failed`) and `DecodeError` (`empty`, `max_size_zero`,
+//!   `too_large`, `corrupt`).
 
 use std::io::{Read, Write};
 

@@ -4,19 +4,17 @@
 //! zone), `ZonedDateTime` is an instant in a named IANA zone, and `Duration` is a span that keeps its calendar units
 //! (days, months, years) through arithmetic. `now`, `utc_now` and `parse` are the shortcuts.
 //!
-//! Ported from the old VM's `lib:chrono`. What changed on purpose:
-//! - Operators (`==`, `<`, `<=`) are methods: `a:compare(b)` gives `"less" | "equal" | "greater"`, `a:equals(b)` a
-//!   boolean.
-//! - `add` and `sub` are `plus` and `minus`, as in `std:time`.
+//! The API's rules:
+//! - There are no operators: `a:compare(b)` gives `"less" | "equal" | "greater"`, `a:equals(b)` a boolean.
+//! - Arithmetic is `plus` and `minus`, as in `std:time`.
 //! - Every failure is a typed error (`ValueError`, `ParseError`, `ArithmeticError`, `ZoneError`, `FormatError`,
-//!   `TotalError`) instead of a message that starts with the function's name.
-//! - `Duration.of` refuses a unit that is not a whole number and a unit it does not know (it skipped both).
-//! - `Duration.of` raises a unit that is past what a duration holds (it returned `nil` and a message), so its result
-//!   can be passed on as it is: `date:plus(chrono.Duration.of({ days = 10 }))`.
-//! - `Duration:abs` and `ZonedDateTime:to_rfc3339` cannot fail and return their value alone (they returned a
-//!   second `nil`).
-//! - Every date and time value has a `kind` field (`"date"`, `"time"`, `"date_time"`, `"zoned_date_time"`), so a
-//!   script can tell which one `chrono.parse` gave it.
+//!   `TotalError`).
+//! - `Duration.of` refuses a unit that is not a whole number and a unit it does not know.
+//! - `Duration.of` raises a unit that is past what a duration holds, so its result can be passed on as it is:
+//!   `date:plus(chrono.Duration.of({ days = 10 }))`.
+//! - `Duration:abs` and `ZonedDateTime:to_rfc3339` cannot fail and return their value alone.
+//! - Every date and time value has a `kind` field (`"date"`, `"time"`, `"date_time"`, `"zoned_date_time"`), so a script
+//!   can tell which one `chrono.parse` gave it.
 
 use jiff::Span;
 

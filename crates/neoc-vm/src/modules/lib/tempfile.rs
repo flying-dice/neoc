@@ -12,13 +12,11 @@
 //! dir:close()
 //! ```
 //!
-//! Ported from the old VM's `lib:tempfile`. What changed on purpose:
+//! The API's rules:
 //! - A failure is a typed `TempError` (`not_found`, `permission_denied`, `closed`, ...).
-//! - `TempFile.new` and `TempDir.new` are gone: they were `tempfile` and `tempdir` under a second name.
-//!   `gettempdir` is gone too: it is `std:env`'s `temp_dir`.
-//! - `TempFile:close()` reports a failure to remove the file, as `TempDir:close()` always did (it returned
-//!   nothing).
+//! - `TempFile:close()` and `TempDir:close()` report a failure to remove what they made.
 //! - An option that does not exist, or of the wrong type, is refused as a wrong argument, with its place.
+//! - The system's temporary directory is `std:env`'s `temp_dir`.
 
 #[mlua_ir::module("lib:tempfile")]
 pub mod tempfile {

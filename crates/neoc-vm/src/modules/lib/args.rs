@@ -10,19 +10,16 @@
 //! subcommand named `help`. A flag may claim the short `-h` (for `--host`, say): it takes it from the built-in help,
 //! which keeps `--help`.
 //!
-//! Ported from the old VM's `lib:args`. What changed on purpose:
-//! - The result is typed. `parse` gives `{ kind = "parsed", flags, positional, rest, subcommand? }` or, for
-//!   `--help`, `{ kind = "help", text }` (it gave one table with the flags beside `positional`, `rest`, `subcommand`
-//!   and the subcommand's own table under its name, or `{ help = true, help_text }`). A flag's value is under
-//!   `flags`, a subcommand is `subcommand = { name, flags, positional, rest }`.
-//! - Flags are a list of `{ name, type, ... }` in the order the help shows them; the map form (`flags = { verbose =
-//!   { ... } }`), which lost that order, is gone.
+//! The API's rules:
+//! - The result is typed. `parse` gives `{ kind = "parsed", flags, positional, rest, subcommand? }` or, for `--help`,
+//!   `{ kind = "help", text }`. A flag's value is under `flags`, a subcommand is `subcommand = { name, flags,
+//!   positional, rest }`.
+//! - Flags are a list of `{ name, type, ... }` in the order the help shows them.
 //! - A flag is a union on `type`: `default` has the flag's type, and a boolean flag has no `default`, `required` or
-//!   `multiple` (a default that did not match, or `multiple` on a boolean, was an error returned at run time; a
-//!   boolean's `default` and `required` were ignored).
+//!   `multiple`.
 //! - A config of the wrong shape (a missing `name` or `type`, a type that does not exist, a nested subcommand, an
-//!   option that does not exist) is refused as an argument with its place; what only clap's rules forbid is the
-//!   typed `invalid_config`.
+//!   option that does not exist) is refused as an argument with its place; what only clap's rules forbid is the typed
+//!   `invalid_config`.
 //! - Errors are typed by what went wrong (`unknown_argument`, `invalid_value`, `missing_required`,
 //!   `missing_subcommand`, `invalid_subcommand`, `conflict`, `usage`), with clap's text in `text`.
 
@@ -857,7 +854,7 @@ mod tests {
                 .to_string();
             assert!(err.contains("lib:args.help: argument #1 'config'"), "{config}: {err}");
         }
-        // the map form the old VM took: read as a plain list it would be no flags at all
+        // flags keyed by name: read as a plain list it would be no flags at all
         let err = lua
             .load(r#"return args.parse({}, { name = "t", flags = { verbose = { type = "boolean" } } })"#)
             .eval::<Value>()

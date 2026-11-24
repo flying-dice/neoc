@@ -19,16 +19,14 @@
 //! `timeout(1)` does. A thread, because a test that blocks the runtime's thread never reaches an `.await` a timer
 //! could interrupt.
 //!
-//! Ported from the old VM's `lib:test`. What changed on purpose:
-//! - A matcher is a typed object and its assertions are methods: `expect(x):toBe(y)` (it was a table of closures,
-//!   `expect(x).toBe(y)`). The names are Jest's, as they were.
+//! The API's rules:
+//! - A matcher is a typed object and its assertions are methods: `expect(x):toBe(y)`. The names are Jest's.
 //! - A failed expectation raises a typed `ExpectError` (`not_equal`, `not_nil`, `not_truthy`, `not_falsy`,
-//!   `not_contained`, `not_a_container`, `did_not_throw`, `not_a_function`) that carries both values as text; a
-//!   failed test's line shows it whole (`lib:test.Matcher:toBe: not_equal: expected 1 to be 2`).
-//! - Suites nest: a test under `describe("a")` under `describe("b")` is `b > a > name`, and a test after an inner
-//!   suite is still in the outer one (the inner name replaced the outer, and the end of any suite cleared it).
-//! - `it` is gone: it was `test` under a second name, and no script used it.
-//! - `toContain` with an empty string holds for every string (it panicked).
+//!   `not_contained`, `not_a_container`, `did_not_throw`, `not_a_function`) that carries both values as text; a failed
+//!   test's line shows it whole (`lib:test.Matcher:toBe: not_equal: expected 1 to be 2`).
+//! - Suites nest: a test under `describe("a")` under `describe("b")` is `b > a > name`, and a test after an inner suite
+//!   is still in the outer one.
+//! - `toContain` with an empty string holds for every string.
 //! - A body that is not a function, and an argument too many, are refused with their place.
 
 use std::sync::Arc;
@@ -599,7 +597,7 @@ mod tests {
         }
     }
 
-    /// From the old VM's `tests/embedding.rs` and `tests/abort_regressions.rs`: mlua's message handler runs a value's
+    /// mlua's message handler runs a value's
     /// `__tostring` to make the text of an error, and `toThrow` calls the function directly, so an error value
     /// whose `__tostring` fails is caught, not rendered, on a small stack too.
     #[test]
@@ -629,7 +627,7 @@ mod tests {
             .unwrap();
     }
 
-    /// From the old VM's `tests/abort_regressions.rs`: `describe` is an async host function that runs its body, and a
+    /// `describe` is an async host function that runs its body, and a
     /// body that calls `describe` again recurses through the host. Luau stops it at its C-call limit: an error the
     /// script catches, on the stack a VM thread has, not an overflow.
     #[test]

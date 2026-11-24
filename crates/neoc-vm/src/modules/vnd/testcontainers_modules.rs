@@ -29,14 +29,12 @@
 //! that is not stopped is stopped and removed when its handle is collected (the crate does it when the handle is
 //! dropped).
 //!
-//! Ported from the old VM's `vnd:testcontainers_modules`. What changed on purpose:
+//! The API's rules:
 //! - A failure is a typed [`ContainerError`](testcontainers_modules::ContainerError) (`docker`, `not_ready`,
-//!   `not_exposed`, `other`); it was the text `testcontainers_modules.<function>: <message>`.
-//! - What `generic` takes is a typed table: a missing `image`, a key it does not have, a `wait` whose `type` is not
-//!   one of its kinds are refused as a wrong argument, with the place; they were a returned error, and an unknown
-//!   key was ignored.
-//! - `wait = { type = "log" }` is gone: it was another name for `stdout`.
-//! - `stop` returns `true`, or `nil` and the error; a stop that failed was raised.
+//!   `not_exposed`, `other`).
+//! - What `generic` takes is a typed table: a missing `image`, a key it does not have, a `wait` whose `type` is not one
+//!   of its kinds are refused as a wrong argument, with the place.
+//! - `stop` returns `true`, or `nil` and the error.
 //! - `GenericContainer:port` of a port that was not exposed raises a typed `not_exposed` error with the `port`.
 
 #[mlua_ir::module("vnd:testcontainers_modules")]

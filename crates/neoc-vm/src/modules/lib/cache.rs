@@ -14,13 +14,11 @@
 //! doing and count for nothing. `on_evict(key, value)` is called for exactly those drops, after the cache's lock is
 //! released: a callback may use the same cache.
 //!
-//! Ported from the old VM's `lib:cache`. What changed on purpose:
-//! - `Cache.new(max_size, ttl?, on_evict?)` replaces `Cache.new({ max_size, ttl, on_evict })`: the size is required
-//!   and so is not an option, and each part has its type.
-//! - A time to live is a `std:time` `Duration` (it was a number of seconds). `Duration.zero()` is "never expires",
-//!   as a number at or below zero was.
-//! - A size that is not a whole number from 0 up is refused as an argument; 0 and a size past the limit are the
-//!   typed `NewError` (`out_of_range`). A key that is not a string, a number or a boolean is refused as an argument.
+//! The API's rules:
+//! - `Cache.new(max_size, ttl?, on_evict?)`: the size is required and so is not an option, and each part has its type.
+//! - A time to live is a `std:time` `Duration`. `Duration.zero()` is "never expires".
+//! - A size that is not a whole number from 0 up is refused as an argument; 0 and a size past the limit are the typed
+//!   `NewError` (`out_of_range`). A key that is not a string, a number or a boolean is refused as an argument.
 //! - Storing `nil` raises the typed `SetError` (`nil_value`).
 //! - `stats()` is a declared record.
 

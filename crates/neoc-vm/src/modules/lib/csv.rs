@@ -4,22 +4,19 @@
 //! its header row (`parse_records`, `records`), all at once or as a stream; it is written from rows or records
 //! (`stringify`, `writer`). `reader` reads the same from a `std:io` reader, as it comes.
 //!
-//! Ported from the old VM's `lib:csv`. What changed on purpose:
-//! - What a row is no longer depends on an option: `parse` / `rows` give lists of strings, `parse_records` /
-//!   `records` give records keyed by header (they were `parse` / `rows` with `headers = true`), so `types` belongs
-//!   to the record functions only.
-//! - `rows` / `records` return a stream (`:next()`, `:items()`, `:close()`); `rows` was a bare iterator function.
-//! - The header list is a parameter of `stringify` and `writer` (it was a required `headers` option), and
-//!   `stringify` takes positional rows as well as records.
+//! The API's rules:
+//! - What a row is does not depend on an option: `parse` / `rows` give lists of strings, `parse_records` / `records`
+//!   give records keyed by header, so `types` belongs to the record functions only.
+//! - `rows` / `records` return a stream (`:next()`, `:items()`, `:close()`).
+//! - The header list is a parameter of `stringify` and `writer`, and `stringify` takes positional rows as well as
+//!   records.
 //! - Failures are typed: `CsvError` (`unequal_lengths`, `duplicate_header`, `unknown_column`, `cannot_coerce`,
 //!   `invalid_utf8`, `malformed`) and `WriteError` (`no_headers`, `wrong_length`, `finished`, `rejected`).
 //! - A wrong option (a delimiter of two characters, an unknown column type) or a row that is neither a list nor a
-//!   record is refused as an argument. A `types` entry for a column the header does not have is an error (it was
-//!   ignored).
-//! - `reader(handle)` has no `headers` option either: its `rows` gives the rows not read yet as lists, `headers`
-//!   reads the next row as the header row (once), and `records` gives the rows after it keyed by header. A handle
-//!   that is not a `std:io` reader is refused as an argument (it was a returned error), and a failing reader is the
-//!   error `io`.
+//!   record is refused as an argument. A `types` entry for a column the header does not have is an error.
+//! - `reader(handle)` has no `headers` option either: its `rows` gives the rows not read yet as lists, `headers` reads
+//!   the next row as the header row (once), and `records` gives the rows after it keyed by header. A handle that is not
+//!   a `std:io` reader is refused as an argument, and a failing reader is the error `io`.
 
 /// How much of an offending line an error quotes.
 const MAX_QUOTED_BYTES: usize = 80;

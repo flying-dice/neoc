@@ -19,14 +19,13 @@
 //! Each line is also a `tracing` event at target `lua::lib::log` (not when a sink is installed: the sink is where
 //! the embedder routes it).
 //!
-//! Ported from the old VM's `lib:log`. What changed on purpose:
-//! - `level` and `format` are string enums, exactly as written (`"info"`, not `"INFO"`), and an option that is not
-//!   one is refused as an argument with its place (it was `log.new: unknown level ...`).
-//! - Fields are a table with string keys: a key that is not a string is refused as an argument (a number was
-//!   written as text, anything else as `<invalid key>`).
-//! - A string that is not UTF-8 is logged with U+FFFD in place of the bad bytes (it raised).
-//! - The fields table itself is not part of cycle detection: a field that holds the fields table is written one
-//!   level deep before `"<circular>"`.
+//! The API's rules:
+//! - `level` and `format` are string enums, exactly as written (`"info"`, not `"INFO"`), and an option that is not one
+//!   is refused as an argument with its place.
+//! - Fields are a table with string keys: a key that is not a string is refused as an argument.
+//! - A string that is not UTF-8 is logged with U+FFFD in place of the bad bytes.
+//! - The fields table itself is not part of cycle detection: a field that holds the fields table is written one level
+//!   deep before `"<circular>"`.
 
 use std::collections::{BTreeSet, HashSet};
 use std::io::Write;

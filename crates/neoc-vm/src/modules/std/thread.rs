@@ -27,18 +27,16 @@
 //! A worker is registered with the [`Life`](crate::Life) of the script that started it: shutting the script down
 //! aborts the worker, whose VM and tasks go with it. A worker whose handle is dropped is aborted too.
 //!
-//! Ported from the old VM's `std:thread`. What changed on purpose:
-//! - `spawn(source, args?, shared?, options?)` and `spawn_file(path, ...)` replace `spawn({ source | file, name,
-//!   args, shared })`: the source is not an option, and each part has its type.
-//! - `thread.parent()` and `thread.shared()` are functions (they were fields set on the worker's module table, which
-//!   is read-only now). `shared()` is an empty table, not `nil`, when nothing was shared.
-//! - What may be shared is a declared union ([`thread::Shared`]) checked as an argument: the old VM's `Sendable` trait,
-//!   its registry of types and the type-erased `Arc` it rebuilt handles from are gone (a handle is `Clone + Send`
-//!   and is given to the worker as it is). A value that cannot be shared is refused with its place (it was
-//!   `nil, "... not Sendable"`), and so is an argument that is not plain data.
-//! - Every failure is a typed error: `SpawnError`, `ChannelError`, `AwaitError`. `send` still raises when the other
-//!   side has exited.
-//! - `WorkerHandle` is `Worker`.
+//! The API's rules:
+//! - `spawn(source, args?, shared?, options?)` and `spawn_file(path, ...)`: the source is not an option, and each part
+//!   has its type.
+//! - `thread.parent()` and `thread.shared()` are functions (the worker's module table is read-only). `shared()` is an
+//!   empty table, not `nil`, when nothing was shared.
+//! - What may be shared is a declared union ([`thread::Shared`]) checked as an argument: a handle is `Clone + Send` and
+//!   is given to the worker as it is. A value that cannot be shared is refused with its place, and so is an argument
+//!   that is not plain data.
+//! - Every failure is a typed error: `SpawnError`, `ChannelError`, `AwaitError`. `send` raises when the other side has
+//!   exited.
 
 use std::collections::BTreeMap;
 

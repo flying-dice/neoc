@@ -12,12 +12,11 @@
 //! [`ListenerSlot`] is the socket as the rest of the runtime takes it: what serves on a listener waits on the slot
 //! ([`ListenerSlot::accept`]) and holds no socket of its own.
 //!
-//! Ported from the old VM's `std:net`. What changed on purpose:
-//! - A failure to bind is a typed `NetError` whose kind is the operating system's (`addr_in_use`,
-//!   `addr_not_available`, `permission_denied`, ...), with the address.
-//! - `addr()` of a listener the engine has closed returns a typed `closed` error (it raised).
-//! - A listener is handed to a `std:thread` worker as one of `std:thread`'s `Shared` handles (it implemented
-//!   `Sendable`).
+//! The API's rules:
+//! - A failure to bind is a typed `NetError` whose kind is the operating system's (`addr_in_use`, `addr_not_available`,
+//!   `permission_denied`, ...), with the address.
+//! - `addr()` of a listener the engine has closed returns a typed `closed` error.
+//! - A listener is handed to a `std:thread` worker as one of `std:thread`'s `Shared` handles.
 
 use std::net::SocketAddr;
 use std::sync::Arc;

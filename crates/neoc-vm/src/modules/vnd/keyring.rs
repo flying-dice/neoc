@@ -35,14 +35,14 @@
 //! this process have, which on most machines is every credential of the user it runs as. Nothing here narrows
 //! that, as nothing narrows `std:fs`: a script that is given this module is trusted with the user's secrets.
 //!
-//! Ported from the old VM's `vnd:keyring`. What changed on purpose:
-//! - A failure is the typed `Error` (the same kinds: `invalid_input`, `no_store`, `no_access`, `not_found`,
-//!   `ambiguous`, `bad_encoding`, `bad_data`, `unsupported`, `platform`, `other`), so `error_kind(err)` and
-//!   `error_message(err)` are gone: read `err.kind` and `err.message`. `ambiguous` says how many `matches`.
-//! - A service, a user or a password that is not UTF-8 text, and a `spec` that is not text under text, are refused
-//!   as arguments; they were the returned error `invalid_input`.
-//! - `set_password` and `set_secret` still answer `true`; `mock()` still raises in the (unseen) case that the mock
-//!   store cannot be made, now with the typed error.
+//! The API's rules:
+//! - A failure is the typed `Error` (`invalid_input`, `no_store`, `no_access`, `not_found`, `ambiguous`,
+//!   `bad_encoding`, `bad_data`, `unsupported`, `platform`, `other`): a script reads `err.kind` and `err.message`.
+//!   `ambiguous` says how many `matches`.
+//! - A service, a user or a password that is not UTF-8 text, and a `spec` that is not text under text, are refused as
+//!   arguments.
+//! - `set_password` and `set_secret` answer `true`; `mock()` raises the typed error in the (unseen) case that the mock
+//!   store cannot be made.
 
 #[mlua_ir::module("vnd:keyring")]
 pub mod keyring {

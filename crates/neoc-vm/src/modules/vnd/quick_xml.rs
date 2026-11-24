@@ -11,18 +11,16 @@
 //! the key `$text`. An element that holds only text is that text, and elements of one name that repeat are a list.
 //! The root element's name is not kept. All text is text: `<age>30</age>` is `"30"`.
 //!
-//! Ported from the old VM's `vnd:quick_xml`. What changed on purpose:
-//! - Elements of one name that repeat decode to a list (only the last one was kept), so a list that was encoded
-//!   reads back.
-//! - `encode` takes the root element's name as an option (it was always `root`), and a document is a table with
-//!   string keys: a scalar or a list as the whole value is refused as an argument (a list wrote several roots).
-//! - An empty element or attribute name is an error (it wrote `<>`).
-//! - A failure is a typed error: `DecodeError` (`syntax`, `unexpected_eof`, `too_deep`, `invalid_utf8`,
-//!   `unsupported`) and `EncodeError` (`unsupported`).
-//! - A value that is not plain data (a function, a buffer anywhere inside) is refused as an argument; some of these
-//!   were returned errors.
-//! - `decode` and `encode_to` take `std:io`'s `Reader` and `Writer` and refuse anything else as an argument (it
-//!   was a returned error); their failures are `ReadError` and `WriteError`, which add `io` to the kinds above.
+//! The API's rules:
+//! - Elements of one name that repeat decode to a list, so a list that was encoded reads back.
+//! - `encode` takes the root element's name as an option, and a document is a table with string keys: a scalar or a
+//!   list as the whole value is refused as an argument.
+//! - An empty element or attribute name is an error.
+//! - A failure is a typed error: `DecodeError` (`syntax`, `unexpected_eof`, `too_deep`, `invalid_utf8`, `unsupported`)
+//!   and `EncodeError` (`unsupported`).
+//! - A value that is not plain data (a function, a buffer anywhere inside) is refused as an argument.
+//! - `decode` and `encode_to` take `std:io`'s `Reader` and `Writer` and refuse anything else as an argument; their
+//!   failures are `ReadError` and `WriteError`, which add `io` to the kinds above.
 
 use serde::de::{Deserialize, Deserializer, MapAccess, Visitor};
 use serde_json::{Map, Value};

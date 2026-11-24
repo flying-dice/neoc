@@ -6,11 +6,9 @@
 //! design point. Unicode matching is on and cannot be turned off. Flags can also be written inline in the pattern
 //! (`(?i)hello`).
 //!
-//! Ported from the old VM's `lib:regex`. What changed on purpose: the flags are a typed options table
-//! (`{ case_insensitive = true }`, not the letters `"i"`), a compile failure is a typed error (`syntax`, `too_big`)
-//! and a negative split limit is refused as an argument, a `Match` is a typed record whose groups are a union of
-//! `matched` (with its span) and `unmatched` (it was the string, or `false` for a group that did not take part), and
-//! `Pattern` has a `source` field.
+//! The flags are a typed options table (`{ case_insensitive = true }`), a compile failure is a typed error (`syntax`,
+//! `too_big`), a negative split limit is refused as an argument, a `Match` is a typed record whose groups are a union
+//! of `matched` (with its span) and `unmatched`, and `Pattern` has a `source` field.
 
 /// 1-based, inclusive byte positions as `string.find` reports them: an empty match at byte `at` is
 /// `(at + 1, at)`.

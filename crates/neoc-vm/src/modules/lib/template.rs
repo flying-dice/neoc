@@ -42,14 +42,13 @@
 //! `Template:render` would deadlock its thread. `IN_RENDER` is set for the length of a render, and a render inside
 //! one fails with `recursive_render` instead.
 //!
-//! Ported from the old VM's `lib:template`. What changed on purpose:
-//! - Errors are typed: `CompileError` (`syntax`, `too_complex`, `unsupported`), `RenderError` (those three for
-//!   the one-shot `render`, and `failed`, `recursion_limit`, `recursive_render`, `engine_panic`) and `FilterError`
-//!   (`empty_name`); the reason no longer starts with `template too complex: `, which is the kind.
-//! - A context that is not a table of names to plain data, and an option that does not exist or is not a boolean,
-//!   are refused as arguments with their place (they were returned errors).
+//! The API's rules:
+//! - Errors are typed: `CompileError` (`syntax`, `too_complex`, `unsupported`), `RenderError` (those three for the
+//!   one-shot `render`, and `failed`, `recursion_limit`, `recursive_render`, `engine_panic`) and `FilterError`
+//!   (`empty_name`).
+//! - A context that is not a table of names to plain data, and an option that does not exist or is not a boolean, are
+//!   refused as arguments with their place.
 //! - A filter is given `nil` for a null and plain tables for lists (no `null` sentinel, no array metatable).
-//! - `add_filter`'s second parameter is named `filter` (it was `fn`).
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -1670,7 +1669,7 @@ mod tests {
         assert!(e.contains("non-empty"), "got: {e}");
     }
 
-    /// What was a returned error in the old VM is a refused argument, with its place.
+    /// A wrong argument is refused, with its place: it is not a returned error.
     #[test]
     fn arguments_of_the_wrong_shape_are_refused() {
         let lua = engine();
@@ -1844,7 +1843,7 @@ mod tests {
         assert_eq!(kind, "failed");
     }
 
-    // -- from the old VM's `tests/hostile_inputs.rs`: a stack overflow aborts the test binary, so reaching the
+    // -- hostile inputs: a stack overflow aborts the test binary, so reaching the
     // -- assertion is the proof
 
     /// The kind and text of the error rendering `source` gives on a 2 MiB thread.

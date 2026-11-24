@@ -4,7 +4,7 @@
 //! on Windows), so a Lua string that is not valid UTF-8 is not a path and is refused as an argument, and a path that
 //! is not valid Unicode is given to a script with replacement characters.
 //!
-//! Ported from the old VM's `std/osstr.rs`: the two conversions became [`OsPath`]'s argument and return conversions.
+//! The two conversions are [`OsPath`]'s argument and return conversions.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};

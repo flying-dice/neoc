@@ -12,15 +12,14 @@
 //! value (`!Tag x`), a key that is a sequence or a mapping, and a text with several documents are refused.
 //! Mappings are written with their keys sorted.
 //!
-//! Ported from the old VM's `vnd:serde_yaml`. What changed on purpose:
-//! - A YAML `null` reads as `nil` (it was mlua's `null` sentinel, a userdata): a null value in a mapping is a
-//!   missing key.
+//! The API's rules:
+//! - A YAML `null` reads as `nil`: a null value in a mapping is a missing key.
 //! - A failure is a typed error: `DecodeError` (`syntax` with the line and column, `invalid`) and `EncodeError`
 //!   (`unsupported`).
-//! - A value that is not plain data (a function, a buffer anywhere inside, a table that contains itself) is refused
-//!   as an argument; some of these were returned errors.
-//! - `decode` and `encode_to` take `std:io`'s `Reader` and `Writer` and refuse anything else as an argument (it
-//!   was a returned error); their failures are `ReadError` and `WriteError`, which add `io` to the kinds above.
+//! - A value that is not plain data (a function, a buffer anywhere inside, a table that contains itself) is refused as
+//!   an argument.
+//! - `decode` and `encode_to` take `std:io`'s `Reader` and `Writer` and refuse anything else as an argument; their
+//!   failures are `ReadError` and `WriteError`, which add `io` to the kinds above.
 
 #[mlua_ir::module("vnd:serde_yaml")]
 pub mod serde_yaml {

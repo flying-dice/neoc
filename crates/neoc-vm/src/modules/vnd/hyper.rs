@@ -57,20 +57,18 @@
 //! For multi-worker fan-out, share the listener with `std:thread` workers: every worker serves on the same socket
 //! and races on `accept()`.
 //!
-//! Ported from the old VM's `vnd:hyper`. What changed on purpose:
+//! The API's rules:
 //! - A failed request is a typed `HyperError` (`err.kind`, and what the kind carries: `limit` for `timed_out`,
-//!   `max_redirects`, `max_body`, `reason`); `error_kind` and `error_message` are gone.
+//!   `max_redirects`, `max_body`, `reason`).
 //! - `post(url, body?, opts?)` and `request(method, url, body?, opts?)` take the URL, the method and the body as
-//!   arguments (they were keys of one table), so all three functions take the same options.
-//! - An option that is misspelt or of the wrong type is refused as a wrong argument, with its place (it was a
-//!   returned `invalid_input`). What a type cannot say (a timeout of 0, PEM without a certificate, a bad header
-//!   name) still is `invalid_input`.
-//! - `follow_redirects` is a boolean; the limit is `max_redirects` (one option held either).
-//! - A body is a string. A buffer or a number is refused (`buffer.tostring`, `tostring`), and so is a header value
-//!   that is a number.
+//!   arguments, so all three functions take the same options.
+//! - An option that is misspelt or of the wrong type is refused as a wrong argument, with its place. What a type cannot
+//!   say (a timeout of 0, PEM without a certificate, a bad header name) is `invalid_input`.
+//! - `follow_redirects` is a boolean; the limit is `max_redirects`.
+//! - A body is a string. A buffer or a number is refused (`buffer.tostring`, `tostring`), and so is a header value that
+//!   is a number.
 //! - A handler answers with a string, a `Reply` table (`status`, `headers`, `body`, and no other key) or nothing.
-//! - `serve` returns a typed `ServerError`, and `Server:addr()` returns `(nil, err)` once the server is closed (it
-//!   raised). The server type is `Server` (it was `ServerHandle`).
+//! - `serve` returns a typed `ServerError`, and `Server:addr()` returns `(nil, err)` once the server is closed.
 //! - `Request.json` is `lib:json`'s typed node (an `Object`, an `Array` or a scalar).
 
 use std::collections::BTreeMap;

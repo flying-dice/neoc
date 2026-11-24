@@ -3,9 +3,6 @@
 //! `escape` writes the five entities (`&amp;` `&lt;` `&gt;` `&quot;` `&apos;`); `unescape` reads them back, and
 //! numeric character references (`&#65;`, `&#x41;`). An entity that is not one of the five and a malformed
 //! reference pass through unchanged: `unescape` is a string transform, not a validating parser.
-//!
-//! Ported from the old VM's `lib:html`. What changed on purpose: `escape` takes the text alone (it took a second,
-//! ignored options table "for later").
 
 /// The longest body between `&` and `;` that can be an entity is `x10FFFF` (7 bytes). 8 covers a one-byte overshoot
 /// (`x110000`) and bounds the search, so a `&` followed by a long run without `;` stays linear. A longer numeric

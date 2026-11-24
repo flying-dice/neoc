@@ -6,9 +6,6 @@
 //! - [`scheduler`] runs a script's tasks (`std:task`); [`script_env`] is the environment an embedder runs an
 //!   untrusted script in; [`panics`] ends a host function's panic as an error of the call that reached it.
 //! - [`declarations`] writes the `.d.luau` / `.d.ts` files from the modules this crate links.
-//!
-//! It replaced neoc's first VM (bindings written by hand on mlua, with declarations of its own). Where a module
-//! says what it changed from "the old VM", that is the VM it means.
 
 mod byte_stream;
 mod child_exit;

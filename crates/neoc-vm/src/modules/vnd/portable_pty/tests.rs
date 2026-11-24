@@ -1,8 +1,6 @@
 //! `vnd:portable_pty` against real terminals and real processes. On Unix: `sh` and what every Unix has beside it
 //! (`cat`, `sleep`, `stty`). On Windows: `cmd` and PowerShell on a ConPTY pseudo-console. A test whose commands
 //! exist on one platform only says so with its `cfg`; what is refused before anything starts is the same everywhere.
-//!
-//! Ported from the old VM's `vnd/portable_pty/tests.rs`, which ran its processes on Unix alone.
 
 use std::time::{Duration, Instant};
 

@@ -11,15 +11,13 @@
 //! The `toml` 1.x crate implements TOML 1.1: inline tables may span lines and end with a comma, `\e` is a string
 //! escape, and times may omit seconds (`07:32`).
 //!
-//! Ported from the old VM's `vnd:toml`. What changed on purpose:
-//! - A date or time decodes to its text (`"1979-05-27T07:32:00Z"`); it was a table with one private key.
-//! - A failure is a typed error: `DecodeError` (`syntax`, with the line and column) and `EncodeError`
-//!   (`unsupported`).
+//! The API's rules:
+//! - A date or time decodes to its text (`"1979-05-27T07:32:00Z"`).
+//! - A failure is a typed error: `DecodeError` (`syntax`, with the line and column) and `EncodeError` (`unsupported`).
 //! - A document is a table with string keys, so `encode` refuses anything else as an argument (a list, a string, a
-//!   buffer anywhere inside); these were returned errors, and a raised one for the buffer.
-//! - `decode` and `encode_to` take `std:io`'s `Reader` and `Writer` and refuse anything else as an argument (it
-//!   was a returned error); their failures are `ReadError` and `WriteError`, which add `io` (and `invalid_utf8`)
-//!   to the kinds above.
+//!   buffer anywhere inside).
+//! - `decode` and `encode_to` take `std:io`'s `Reader` and `Writer` and refuse anything else as an argument; their
+//!   failures are `ReadError` and `WriteError`, which add `io` (and `invalid_utf8`) to the kinds above.
 
 /// The line and column (both from 1) of byte `offset` in `text`.
 fn place(text: &str, offset: usize) -> (u32, u32) {

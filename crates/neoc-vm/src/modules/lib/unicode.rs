@@ -5,10 +5,9 @@
 //! (`General_Category`) and `unicode-width` (East-Asian display width). Every function is a stateless transform of
 //! a UTF-8 string; text that is not valid UTF-8 is refused as an argument.
 //!
-//! Ported from the old VM's `lib:unicode`. What changed on purpose: the normalisation form is a `"nfc" | "nfd" |
-//! "nfkc" | "nfkd"` union (it was free text, matched case-insensitively, with an error for an unknown one) and
-//! `normalize` cannot fail; the codepoint of `category` is a validated type (exactly one codepoint, refused as an
-//! argument) and its result is a union of the thirty two-letter categories; counts are unsigned integers.
+//! The normalisation form is a `"nfc" | "nfd" | "nfkc" | "nfkd"` union and `normalize` cannot fail; the codepoint of
+//! `category` is a validated type (exactly one codepoint, refused as an argument) and its result is a union of the
+//! thirty two-letter categories; counts are unsigned integers.
 
 use unicode_properties::GeneralCategory as Gc;
 

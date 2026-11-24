@@ -4,10 +4,6 @@
 //! `tostring(err)` is `vnd:hyper.<function>: <kind>: <message>` (`vnd:hyper.get: timed_out: no data for 60s`). The
 //! `kind` is the same on every platform, so a script branches on it (`err.kind == "timed_out"`); the message is for
 //! a log, and a script must not parse it.
-//!
-//! Ported from the old VM's `vnd/hyper/client/error.rs`: the error was one string (`hyper.<function>: <kind>:
-//! <message>`) read back with `hyper.error_kind` and `hyper.error_message`; it is a typed value now, so those two
-//! functions are gone.
 
 use std::io;
 use std::time::Duration;

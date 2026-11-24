@@ -44,15 +44,14 @@
 //! engine shutting down all do the same: the process is killed and its streams are let go of. On Unix the kill
 //! reaches the process's whole group, so what it started goes with it (`child`'s docs say how).
 //!
-//! Ported from the old VM's `std:process`. What changed on purpose:
+//! The API's rules:
 //! - An error is a typed [`ProcessError`](process::ProcessError) (`err.kind`, and `err.cause` of a `spawn` error,
-//!   `err.stream` of a `not_piped` one, `err.what` of a `closed` one); it was the text
-//!   `process.<function>: <kind>: <message>`, read back with `process.error_kind`, which is gone.
+//!   `err.stream` of a `not_piped` one, `err.what` of a `closed` one).
 //! - A command of the wrong shape (no table, an unknown key, a value of the wrong type) is raised with its place, as
-//!   every wrong argument is; it was an `invalid_input` error. What the shape does not say (an empty program, a NUL
-//!   byte, too many arguments) still is one.
-//! - `read` and `read_stderr` take a whole number for `max`: a fraction, a negative number or NaN is raised; 0 and
-//!   more than 65536 are still `invalid_input`.
+//!   every wrong argument is. What the shape does not say (an empty program, a NUL byte, too many arguments) is an
+//!   `invalid_input` error.
+//! - `read` and `read_stderr` take a whole number for `max`: a fraction, a negative number or NaN is raised; 0 and more
+//!   than 65536 are `invalid_input`.
 //! - `program` and `cwd` are paths: on Unix they need not be UTF-8.
 
 mod child;

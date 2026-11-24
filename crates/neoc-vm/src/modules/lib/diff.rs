@@ -11,13 +11,11 @@
 //! "No newline at end of file" follows GNU diff: a line that does not end in `\n` is written with the
 //! `\ No newline at end of file` marker after it, and the parser takes the marker back out.
 //!
-//! Ported from the old VM's `lib:diff`. What changed on purpose: the algorithm is a `"patience" | "myers"` union and the
-//! change `op` a `"equal" | "delete" | "insert"` union (both refused as arguments when anything else), `context` is
-//! an unsigned integer, `unified` returns a plain typed `Patch` record (no `:format()` method; `diff.format(patch)`
-//! writes the text, and works on a patch a script built), a hunk line's `value` is the line as it is in the text
-//! (with its `\n` when it has one; the hidden "no newline" flag is gone), `parse_unified`, `apply` and
-//! `apply_changes` fail with typed errors that carry the line and hunk numbers, and an invalid `op` in a change list
-//! is refused as an argument instead of returned as an error.
+//! The algorithm is a `"patience" | "myers"` union and the change `op` a `"equal" | "delete" | "insert"` union
+//! (anything else is refused as an argument, in a change list too), `context` is an unsigned integer, `unified` returns
+//! a plain typed `Patch` record (`diff.format(patch)` writes the text, and works on a patch a script built), a hunk
+//! line's `value` is the line as it is in the text (with its `\n` when it has one), and `parse_unified`, `apply` and
+//! `apply_changes` fail with typed errors that carry the line and hunk numbers.
 
 use similar::Algorithm as SimilarAlgorithm;
 

@@ -8,13 +8,13 @@
 //! Limits: a document nests at most [`MAX_DEPTH`] levels (what `serde_json` reads back), and `Array:set` pads at
 //! most [`MAX_ARRAY_GAP`] `null`s past the end.
 //!
-//! Ported from the old VM's `lib:json`. What changed on purpose:
+//! The API's rules:
 //! - There is no `json.null` sentinel. JSON `null` reads as `nil` (like a missing key); `kind(key)` tells them apart
 //!   (`"null"` or `nil`), and `set(key, nil)` writes a `null`. `to_table` leaves nulls out.
-//! - `get` takes one key or index; a longer path is `at({ "users", 1, "name" })` (it was a variadic `get`).
+//! - `get` takes one key or index; a longer path is `at({ "users", 1, "name" })`.
 //! - Indices are whole numbers from 1: a negative or fractional one is refused as an argument.
-//! - A failure is a typed `JsonError`, raised (`zero_index`, `stale`, `too_far`, `too_deep`); `json.error_of` reads
-//!   it back from what `pcall` caught.
+//! - A failure is a typed `JsonError`, raised (`zero_index`, `stale`, `too_far`, `too_deep`); `json.error_of` reads it
+//!   back from what `pcall` caught.
 //! - The nesting limit counts the handle's own depth too, so a document cannot be grown past it piece by piece.
 //! - A handle nested inside a plain table is refused (pass the handle itself as the value).
 

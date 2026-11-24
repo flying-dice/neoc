@@ -31,16 +31,14 @@
 //! `DOUBLE` are numbers, the BLOB and BINARY types are strings byte for byte, and everything else (`VARCHAR`,
 //! `TEXT`, `JSON`, `DECIMAL`, dates and times, `ENUM`, `SET`) is its text. `NULL` is `nil` (the key is absent).
 //!
-//! Ported from the old VM's `vnd:sqlx_mysql`. What changed on purpose:
-//! - A parameter that is not a boolean, a number or a string (and SQL that is not a string) is refused as an
-//!   argument; it was a returned error.
+//! The API's rules:
+//! - A parameter that is not a boolean, a number or a string (and SQL that is not a string) is refused as an argument.
 //! - A failure is a typed error: `OpenError` (`invalid_url`, `connect`) and `Error` (`closed`, `constraint`,
 //!   `database`, `parameter_count`, `connection`, `pool_timed_out`, `decode`, `other`).
 //! - A call with more or fewer values than the statement has placeholders is the typed error `parameter_count`
-//!   (`given`, `expected`), and nothing is run: it was the driver's `connection` error, after which `close` waited
-//!   for ever.
-//! - A value that does not decode is the returned error `decode` with its column; it was raised.
-//! - A statement's errors name `vnd:sqlx_mysql.Statement:execute` as their `op` (it was `mysql.statement.execute`).
+//!   (`given`, `expected`), and nothing is run.
+//! - A value that does not decode is the returned error `decode` with its column.
+//! - A statement's errors name `vnd:sqlx_mysql.Statement:execute` as their `op`.
 
 /// What a column's value is read as, worked out once from the type's name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -503,7 +501,7 @@ mod tests {
         assert!(text.contains("vnd:sqlx_mysql.open: argument #1 'url'"), "{text}");
     }
 
-    /// The old VM's `sqlx_mysql.test.lua`, with the errors typed. `URL` is the server.
+    /// The module against a real server. `URL` is the server.
     const SERVER_SCRIPT: &str = r#"
         local sqlx_mysql = require("vnd:sqlx_mysql")
 

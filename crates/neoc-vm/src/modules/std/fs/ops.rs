@@ -1,6 +1,5 @@
 //! The filesystem operations behind `std:fs`, free of the Lua state so they can be tested and reasoned about alone.
-//! Ported from the old VM's `std/fs/ops.rs` unchanged in what they do; [`FileKind`] and [`Metadata`] are also what a
-//! script is given.
+//! [`FileKind`] and [`Metadata`] are also what a script is given.
 //!
 //! The rules every operation here keeps:
 //!

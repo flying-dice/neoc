@@ -4,9 +4,6 @@
 //! script branches on it (`err.kind == "not_found"`); `reason` is the operating system's wording and differs between
 //! platforms, so a script must not parse it. `message` reads `<path>: <reason>`, `<path> -> <to>: <reason>` for an
 //! operation on two paths, or `<reason>` alone when no path is involved.
-//!
-//! Ported from the old VM's `std/fs/error.rs`: the error was one string (`fs.<function>: <kind>: <path>: <message>`)
-//! read back with `fs.error_kind` and `fs.error_message`; it is a typed value now, so those two functions are gone.
 
 use std::fmt;
 use std::io;

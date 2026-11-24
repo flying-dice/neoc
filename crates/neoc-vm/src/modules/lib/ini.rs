@@ -4,16 +4,14 @@
 //! of the caller's choosing, bare keys (a key with no value is a flag), and the characters rust-ini would read its
 //! own way (`:` and `=` as delimiters, `;` and `#` as comments) where the caller's dialect does not.
 //!
-//! Ported from the old VM's `lib:ini`. What changed on purpose:
-//! - A document is typed: sections of keys whose values are a string or `true`; `stringify` takes strings,
-//!   booleans and numbers, and anything else is refused as an argument.
-//! - `stringify` cannot fail, so it returns the text alone, and it writes sections and keys in sorted order (it
-//!   was the table's own order, which changes from run to run).
-//! - A comment symbol or delimiter is the whole string given (it was its first character).
-//! - With symbols of the caller's choosing, `;`, `#` and `=` are plain characters (a line starting with `;` was
-//!   still a comment, and a `=` still split the line).
-//! - A failure is a typed `ParseError` (`control_byte`, `unclosed_section`, `empty_section_name`, `syntax`) with
-//!   the line as a number.
+//! The API's rules:
+//! - A document is typed: sections of keys whose values are a string or `true`; `stringify` takes strings, booleans and
+//!   numbers, and anything else is refused as an argument.
+//! - `stringify` cannot fail, so it returns the text alone, and it writes sections and keys in sorted order.
+//! - A comment symbol or delimiter is the whole string given.
+//! - With symbols of the caller's choosing, `;`, `#` and `=` are plain characters.
+//! - A failure is a typed `ParseError` (`control_byte`, `unclosed_section`, `empty_section_name`, `syntax`) with the
+//!   line as a number.
 
 // Stand-ins the normalising pass writes for rust-ini and takes back out. Safe because `parse` refuses these bytes
 // in its input.

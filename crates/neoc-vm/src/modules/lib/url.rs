@@ -5,10 +5,9 @@
 //! `decode_query`) sit on top of it. Backed by the `url` crate (parsing, building, `form_urlencoded`) and
 //! `percent_encoding` (encoding and decoding against the WHATWG sets).
 //!
-//! Ported from the old VM's `lib:url`. What changed on purpose: `==` is `a:equals(b)` (operators are not supported),
-//! the port is a `u16` (a value out of range or fractional is refused as an argument, not returned as an error), the
-//! percent-encode set is a `"component" | "path" | "query" | "fragment"` union and `encode` cannot fail, query pairs
-//! are `{ key, value }` records (they were `{ key, value }` arrays), `resolve` takes a `Url` or a string as a typed
+//! Equality is `a:equals(b)` (operators are not supported), the port is a `u16` (a value out of range or fractional is
+//! refused as an argument), the percent-encode set is a `"component" | "path" | "query" | "fragment"` union and
+//! `encode` cannot fail, query pairs are `{ key, value }` records, `resolve` takes a `Url` or a string as a typed
 //! union, and every failure is a typed error table.
 
 use percent_encoding::{AsciiSet, CONTROLS, NON_ALPHANUMERIC};

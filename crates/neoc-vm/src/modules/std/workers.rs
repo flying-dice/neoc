@@ -9,9 +9,6 @@
 //! ```
 //!
 //! The program that embeds the runtime fires it: `ShutdownSignal::current().fire()`.
-//!
-//! Ported from the old VM's `std:workers`. What changed on purpose: the deprecated alias `shutdown_signal()` is gone
-//! (it was `on_shutdown()` under an older name).
 
 #[mlua_ir::module("std:workers")]
 pub mod workers {

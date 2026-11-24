@@ -11,11 +11,11 @@
 //! local rest = reader:read_all()    -- "two\n"
 //! ```
 //!
-//! Ported from the old VM's `std:io`. What changed on purpose:
-//! - The types are `Reader` and `Writer` (they were `ReaderHandle` and `WriterHandle`).
+//! The API's rules:
+//! - The types are `Reader` and `Writer`.
 //! - A failure is a typed `IoError` whose kind is the operating system's (`not_found`, `broken_pipe`, ...).
-//! - `read_line` gives the line's bytes whatever they are (a line that is not UTF-8 was an error).
-//! - `copy` refuses a wrong argument as every function does: raised, with its place (it returned a string).
+//! - `read_line` gives the line's bytes whatever they are: a line need not be UTF-8.
+//! - `copy` refuses a wrong argument as every function does: raised, with its place.
 
 /// The most one `read(n)` call returns (16 MiB): the contract is "up to `n` bytes", and a Lua-sized `n` must not
 /// become a Lua-sized allocation.
