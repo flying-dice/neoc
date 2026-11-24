@@ -9,7 +9,7 @@
 //! local sqlx_postgres = require("vnd:sqlx_postgres")
 //! local db = assert(sqlx_postgres.open("postgres://postgres@127.0.0.1/test"))
 //! db:execute("CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
-//! db:execute("INSERT INTO users (id, name) VALUES ($1, $2)", { 1, "alice" })
+//! db:execute("INSERT INTO users (id, name) VALUES ($1, $2)", 1, "alice")
 //! local rows = assert(db:query("SELECT id, name FROM users"))
 //! db:close()
 //! ```
@@ -18,12 +18,11 @@
 //! (sqlx's defaults: at most 10, a 30 second wait for a free one), so one `Database` is safe to share between
 //! coroutines that query at once.
 //!
-//! Parameters: the second argument is the list of values for the statement's placeholders: `params[1]` binds
-//! `$1`. A boolean binds as `BOOL`, a whole number as `INT8`, any other number as `FLOAT8`, a string as `TEXT`
-//! when it is UTF-8 and as `BYTEA` otherwise. A position with no value (`nil`) before the last one given binds
-//! `NULL`, as an `INT8`: Postgres types its parameters, and refuses that `NULL` for a `TEXT` column, so for
-//! anything but a number prefer `NULL` written in the SQL. A trailing `nil` cannot be seen (a Lua list ends at its
-//! last value). Casts work as usual: `INSERT ... VALUES ($1::int)`.
+//! Parameters: the arguments after the SQL are the values for the statement's placeholders, in order: the first
+//! binds `$1`. A boolean binds as `BOOL`, a whole number as `INT8`, any other number as `FLOAT8`, a string as
+//! `TEXT` when it is UTF-8 and as `BYTEA` otherwise. A `nil` binds `NULL`, the last one too, as an `INT8`:
+//! Postgres types its parameters, and refuses that `NULL` for a `TEXT` column, so for anything but a number
+//! prefer `NULL` written in the SQL. Casts work as usual: `INSERT ... VALUES ($1::int)`.
 //!
 //! Rows: a row is a table from column name to value. `BOOL` is a boolean, `INT2` / `INT4` / `INT8` and `FLOAT4` /
 //! `FLOAT8` are numbers, `BYTEA` is a string byte for byte, and `TEXT` / `VARCHAR` / `CHAR(n)` / `NAME` / `citext`
@@ -32,13 +31,10 @@
 //! `JSONB`, `SELECT id::text` for `UUID`).
 //!
 //! Ported from neoc-vm's `vnd:sqlx_postgres`. What changed on purpose:
-//! - Parameters are one list (`db:execute(sql, { a, b })`), not trailing arguments; a trailing `nil` in it does
-//!   not bind (see above), where a trailing `nil` argument bound `NULL`.
 //! - A parameter that is not a boolean, a number or a string (and SQL that is not a string) is refused as an
 //!   argument; it was a returned error.
 //! - A failure is a typed error: `OpenError` (`invalid_url`, `connect`) and `Error` (`closed`,
-//!   `invalid_parameter`, `constraint`, `database`, `connection`, `pool_timed_out`, `unsupported_column`,
-//!   `decode`, `other`).
+//!   `constraint`, `database`, `connection`, `pool_timed_out`, `unsupported_column`, `decode`, `other`).
 //! - A column of an unsupported type, and a value that does not decode, are returned errors
 //!   (`unsupported_column` with the column and its type, `decode`); they were raised.
 
@@ -51,10 +47,10 @@ fn is_text_type(type_name: &str) -> bool {
 
 #[mlua_ir::module("vnd:sqlx_postgres")]
 pub mod sqlx_postgres {
-    use std::collections::{BTreeMap, HashMap};
+    use std::collections::HashMap;
     use std::str::FromStr;
 
-    use mlua_ir::{Bytes, LuaError, Object, OneOf, Shape};
+    use mlua_ir::{Bytes, LuaError, Object, OneOf, Shape, Variadic};
     use serde::{Deserialize, Serialize};
     use sqlx::error::ErrorKind;
     use sqlx::pool::PoolOptions;
@@ -63,7 +59,6 @@ pub mod sqlx_postgres {
     use sqlx::{AssertSqlSafe, Column, Row as _, TypeInfo, ValueRef};
 
     use super::is_text_type;
-    use crate::modules::vnd::by_position;
 
     /// 2^63: the first whole number past what an INT8 holds.
     const INT8_END: f64 = 9_223_372_036_854_775_808.0;
@@ -79,10 +74,6 @@ pub mod sqlx_postgres {
         /// `TEXT` when UTF-8, `BYTEA` otherwise.
         Text(Bytes),
     }
-
-    /// The values for a statement's placeholders: `params[1]` is `$1`. A position with no value before the last
-    /// one given binds `NULL` (as an `INT8`).
-    pub type Params = BTreeMap<u32, Option<Param>>;
 
     /// A value of a row.
     #[derive(Debug, Clone, OneOf)]
@@ -139,12 +130,6 @@ pub mod sqlx_postgres {
         /// `close` was called on this database.
         #[error("database is closed")]
         Closed,
-        /// A value was given at a position no statement has.
-        #[error("parameter positions run from 1 to 65535, got {position}")]
-        InvalidParameter {
-            /// The position the value was given at.
-            position: u32,
-        },
         /// A constraint refused the change.
         #[error("{reason}")]
         Constraint {
@@ -223,12 +208,11 @@ pub mod sqlx_postgres {
         }
     }
 
-    /// `sql` with `params` bound, or why they cannot be. The SQL is the caller's by design (`AssertSqlSafe`):
+    /// `sql` with `params` bound, a `None` as `NULL`. The SQL is the caller's by design (`AssertSqlSafe`):
     /// running SQL text is what this module is for, and values reach the server only as bound parameters.
-    fn bound(sql: &str, params: Option<Params>) -> Result<Query<'_, Postgres, PgArguments>, Error> {
-        let values = by_position(params).map_err(|position| Error::InvalidParameter { position })?;
+    fn bound(sql: &str, params: Vec<Option<Param>>) -> Query<'_, Postgres, PgArguments> {
         let mut query = sqlx::query(AssertSqlSafe(sql));
-        for value in values {
+        for value in params {
             query = match value {
                 None => query.bind(Option::<i64>::None),
                 Some(Param::Boolean(flag)) => query.bind(flag),
@@ -244,7 +228,7 @@ pub mod sqlx_postgres {
                 },
             };
         }
-        Ok(query)
+        query
     }
 
     fn read_row(row: &PgRow) -> Result<Row, Error> {
@@ -305,31 +289,31 @@ pub mod sqlx_postgres {
     impl Database {
         /// Run one statement; how many rows it changed.
         #[host("Wait")]
-        pub async fn execute(&self, sql: String, params: Option<Params>) -> Result<u64, Error> {
+        pub async fn execute(&self, sql: String, params: Variadic<Option<Param>>) -> Result<u64, Error> {
             if self.pool.is_closed() {
                 return Err(Error::Closed);
             }
-            Ok(bound(&sql, params)?.execute(&self.pool).await?.rows_affected())
+            Ok(bound(&sql, params.0).execute(&self.pool).await?.rows_affected())
         }
 
         /// Run one SELECT; every row, in order. A column of a type with no Lua form is `unsupported_column`: cast
         /// it to text in the SQL.
         #[host("Wait")]
-        pub async fn query(&self, sql: String, params: Option<Params>) -> Result<Vec<Row>, Error> {
+        pub async fn query(&self, sql: String, params: Variadic<Option<Param>>) -> Result<Vec<Row>, Error> {
             if self.pool.is_closed() {
                 return Err(Error::Closed);
             }
-            bound(&sql, params)?.fetch_all(&self.pool).await?.iter().map(read_row).collect()
+            bound(&sql, params.0).fetch_all(&self.pool).await?.iter().map(read_row).collect()
         }
 
         /// Run one SELECT; its first row, or `nil` when it has none. A column of a type with no Lua form is
         /// `unsupported_column`: cast it to text in the SQL.
         #[host("Wait")]
-        pub async fn query_one(&self, sql: String, params: Option<Params>) -> Result<Option<Row>, Error> {
+        pub async fn query_one(&self, sql: String, params: Variadic<Option<Param>>) -> Result<Option<Row>, Error> {
             if self.pool.is_closed() {
                 return Err(Error::Closed);
             }
-            bound(&sql, params)?.fetch_optional(&self.pool).await?.as_ref().map(read_row).transpose()
+            bound(&sql, params.0).fetch_optional(&self.pool).await?.as_ref().map(read_row).transpose()
         }
 
         /// Close every connection of the pool, waiting for the ones in use. Later calls on this database fail
@@ -396,7 +380,7 @@ mod tests {
         assert!(text.contains("vnd:sqlx_postgres.open: argument #1 'url'"), "{text}");
     }
 
-    /// neoc-vm's `sqlx_postgres.test.lua`, with the parameters as lists and the errors typed. `URL` is the server.
+    /// neoc-vm's `sqlx_postgres.test.lua`, with the errors typed. `URL` is the server.
     const SERVER_SCRIPT: &str = r#"
         local sqlx_postgres = require("vnd:sqlx_postgres")
 
@@ -408,10 +392,10 @@ mod tests {
         db:execute("DROP TABLE IF EXISTS exec_t")
         local n, err = db:execute("CREATE TABLE exec_t (id INT PRIMARY KEY, v TEXT)")
         assert(err == nil and n == 0)
-        n, err = db:execute("INSERT INTO exec_t (id, v) VALUES ($1, $2)", { 1, "alice" })
+        n, err = db:execute("INSERT INTO exec_t (id, v) VALUES ($1, $2)", 1, "alice")
         assert(err == nil and n == 1)
         assert(db:execute("INSERT INTO exec_t VALUES (2, 'a'), (3, 'b'), (4, 'a')") == 3)
-        assert(db:execute("UPDATE exec_t SET v = $1 WHERE v = $2", { "x", "a" }) == 2)
+        assert(db:execute("UPDATE exec_t SET v = $1 WHERE v = $2", "x", "a") == 2)
 
         -- invalid SQL
         local bad, bad_err = db:execute("NOT VALID SQL")
@@ -419,20 +403,22 @@ mod tests {
         assert(bad_err.code == "42601")
 
         -- a constraint
-        local dup, dup_err = db:execute("INSERT INTO exec_t (id, v) VALUES ($1, $2)", { 1, "again" })
+        local dup, dup_err = db:execute("INSERT INTO exec_t (id, v) VALUES ($1, $2)", 1, "again")
         assert(dup == nil and dup_err.kind == "constraint" and dup_err.violation == "unique" and dup_err.code == "23505")
 
-        -- a position without a value binds NULL, as an INT8: the column must be a number
+        -- nil binds as NULL (an INT8 on Postgres: the column must be a number), the last value too
         db:execute("DROP TABLE IF EXISTS exec_null")
         db:execute("CREATE TABLE exec_null (id INT PRIMARY KEY, v BIGINT)")
-        assert(db:execute("INSERT INTO exec_null (v, id) VALUES ($1, $2)", { nil, 1 }) == 1)
-        local null_row = assert(db:query_one("SELECT id, v FROM exec_null WHERE id = 1"))
-        assert(null_row.id == 1 and null_row.v == nil)
-        -- a trailing nil is not seen: the server counts one parameter too few
-        local short, short_err = db:execute("INSERT INTO exec_null (id, v) VALUES ($1, $2)", { 2, nil })
+        assert(db:execute("INSERT INTO exec_null (id, v) VALUES ($1, $2)", 1, nil) == 1)
+        assert(db:execute("INSERT INTO exec_null (v, id) VALUES ($1, $2)", nil, 2) == 1)
+        local null_rows = assert(db:query("SELECT id, v FROM exec_null ORDER BY id"))
+        assert(#null_rows == 2 and null_rows[1].id == 1 and null_rows[1].v == nil)
+        assert(null_rows[2].id == 2 and null_rows[2].v == nil)
+        -- fewer or more values than placeholders: the server (or the driver) refuses the statement
+        local short, short_err = db:execute("INSERT INTO exec_null (id, v) VALUES ($1, $2)", 3)
         assert(short == nil and short_err ~= nil)
-        local zero, zero_err = db:execute("SELECT $1", { [0] = 1 })
-        assert(zero == nil and zero_err.kind == "invalid_parameter" and zero_err.position == 0)
+        local long, long_err = db:execute("INSERT INTO exec_null (id) VALUES ($1)", 3, nil)
+        assert(long == nil and long_err ~= nil)
 
         -- query
         local rows, query_err = db:query("SELECT id, v FROM exec_t ORDER BY id")
@@ -440,13 +426,13 @@ mod tests {
         assert(rows[1].id == 1 and rows[1].v == "alice")
         assert(rows[2].id == 2 and rows[2].v == "x")
         assert(#assert(db:query("SELECT * FROM exec_t WHERE id > 99")) == 0)
-        local where = assert(db:query("SELECT v FROM exec_t WHERE v = $1", { "b" }))
+        local where = assert(db:query("SELECT v FROM exec_t WHERE v = $1", "b"))
         assert(#where == 1 and where[1].v == "b")
 
         -- the types of values
         db:execute("DROP TABLE IF EXISTS q_types")
         db:execute("CREATE TABLE q_types (id INT PRIMARY KEY, x DOUBLE PRECISION, b BYTEA, f BOOL, c CHAR(3), big BIGINT, s SMALLINT, r REAL)")
-        assert(db:execute("INSERT INTO q_types VALUES (1, $1, $2, $3, 'abc', $4, 7, 0.5)", { 3.14, "\0\1\2\254\255", true, 2 ^ 40 }) == 1)
+        assert(db:execute("INSERT INTO q_types VALUES (1, $1, $2, $3, 'abc', $4, 7, 0.5)", 3.14, "\0\1\2\254\255", true, 2 ^ 40) == 1)
         local typed = assert(db:query_one("SELECT x, b, f, c, big, s, r FROM q_types WHERE id = 1"))
         assert(typed.x == 3.14 and typed.b == "\0\1\2\254\255" and typed.f == true and typed.c == "abc")
         assert(typed.big == 2 ^ 40 and typed.s == 7 and typed.r == 0.5)
@@ -464,9 +450,9 @@ mod tests {
         assert(assert(db:query_one("SELECT 1::numeric::text AS n")).n == "1")
 
         -- query_one
-        local row, one_err = db:query_one("SELECT id, v FROM exec_t WHERE id = $1", { 1 })
+        local row, one_err = db:query_one("SELECT id, v FROM exec_t WHERE id = $1", 1)
         assert(one_err == nil and row.id == 1 and row.v == "alice")
-        local none, none_err = db:query_one("SELECT * FROM exec_t WHERE id = $1", { 999 })
+        local none, none_err = db:query_one("SELECT * FROM exec_t WHERE id = $1", 999)
         assert(none == nil and none_err == nil)
 
         -- close: idempotent, and everything after it fails

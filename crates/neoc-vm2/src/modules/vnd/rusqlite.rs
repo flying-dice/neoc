@@ -4,15 +4,15 @@
 //! local rusqlite = require("vnd:rusqlite")
 //! local db = assert(rusqlite.open(":memory:"))
 //! db:execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
-//! local n, err = db:execute("INSERT INTO users (name) VALUES (?)", { "alice" })
+//! local n, err = db:execute("INSERT INTO users (name) VALUES (?)", "alice")
 //! local rows = assert(db:query("SELECT id, name FROM users"))
 //! -- rows[1].id == 1, rows[1].name == "alice"
-//! local row = db:query_one("SELECT * FROM users WHERE id = ?", { 1 })
+//! local row = db:query_one("SELECT * FROM users WHERE id = ?", 1)
 //!
 //! -- For hot paths, prepare once and reuse:
 //! local insert = db:prepare("INSERT INTO users (name) VALUES (?)")
-//! insert:execute({ "alice" })
-//! insert:execute({ "bob" })
+//! insert:execute("alice")
+//! insert:execute("bob")
 //! db:close()
 //! ```
 //!
@@ -20,10 +20,10 @@
 //! one SQL statement. A second statement is the error `multiple_statements`, and SQL that is empty or only a
 //! comment is `empty_sql`. There is no `execute_batch`: run a script one statement per call.
 //!
-//! Parameters: the second argument is the list of values for the statement's placeholders, by position.
-//! `params[1]` binds the first placeholder. A position with no value (`nil`, or past the end of the list) binds
-//! SQL `NULL`; a position the statement does not have is the error `unknown_parameter`. A boolean binds as 0 or 1,
-//! a whole number as INTEGER, any other number as REAL, a string as TEXT when it is UTF-8 and as BLOB otherwise.
+//! Parameters: the arguments after the SQL (`db:execute(sql, a, b)`; every argument of `stmt:execute(a, b)`) are
+//! the values for the statement's placeholders, in order. A `nil` binds SQL `NULL`, the last one too. As many
+//! values as the statement has placeholders, or the error is `parameter_count`. A boolean binds as 0 or 1, a
+//! whole number as INTEGER, any other number as REAL, a string as TEXT when it is UTF-8 and as BLOB otherwise.
 //!
 //! Rows: a row is a table from column name to value. INTEGER and REAL come back as numbers, TEXT and BLOB as
 //! strings, `NULL` as `nil` (the key is absent).
@@ -43,24 +43,20 @@
 //! path as `db:execute(sql, ...)`; what it saves is passing the SQL text from Lua on each call.
 //!
 //! Ported from neoc-vm's `vnd:rusqlite`. What changed on purpose:
-//! - Parameters are one list (`db:execute(sql, { a, b })`, `stmt:execute({ a, b })`), not trailing arguments.
-//! - A position left without a value binds `NULL`, as a trailing `nil` argument did; a list shorter than the
-//!   statement's placeholders is therefore not an error any more. A value past the placeholders still is
-//!   (`unknown_parameter`).
 //! - A parameter that is not a boolean, a number or a string (and SQL that is not a string) is refused as an
 //!   argument; it was a returned error.
 //! - A failure is a typed error: `OpenError` (`cannot_open`) and `Error` (`closed`, `multiple_statements`,
-//!   `empty_sql`, `unknown_parameter`, `constraint`, `busy`, `sql`, `other`).
+//!   `empty_sql`, `parameter_count`, `constraint`, `busy`, `sql`, `other`).
 //! - A statement's errors name `vnd:rusqlite.Statement:execute` as their `op` (it was `rusqlite.statement.execute`).
 
 #[mlua_ir::module("vnd:rusqlite")]
 pub mod rusqlite {
-    use std::collections::{BTreeMap, HashMap};
+    use std::collections::HashMap;
     use std::sync::Arc;
 
     use ::rusqlite::types::{Value as SqlValue, ValueRef};
     use ::rusqlite::{ErrorCode, OpenFlags};
-    use mlua_ir::{Bytes, LuaError, Object, OneOf};
+    use mlua_ir::{Bytes, LuaError, Object, OneOf, Variadic};
     use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
     use serde::Serialize;
 
@@ -75,9 +71,6 @@ pub mod rusqlite {
         /// TEXT when UTF-8, BLOB otherwise.
         Text(Bytes),
     }
-
-    /// The values for a statement's placeholders, by position from 1. A position with no value binds `NULL`.
-    pub type Params = BTreeMap<u32, Option<Param>>;
 
     /// A value of a row. INTEGER and REAL are numbers, TEXT and BLOB are strings.
     #[derive(Debug, Clone, OneOf)]
@@ -118,13 +111,13 @@ pub mod rusqlite {
         /// The SQL is empty or only a comment.
         #[error("SQL is empty or comment only")]
         EmptySql,
-        /// A value was given for a placeholder the statement does not have.
-        #[error("a value was given for parameter {position}, the statement has {count}")]
-        UnknownParameter {
-            /// The position the value was given at, counting from 1.
-            position: u32,
+        /// The call gave more or fewer values than the statement has placeholders. Nothing was run.
+        #[error("{given} values were given, the statement has {expected} placeholders")]
+        ParameterCount {
+            /// How many values the call gave, `nil`s included.
+            given: u32,
             /// How many placeholders the statement has.
-            count: u32,
+            expected: u32,
         },
         /// A constraint refused the change: UNIQUE, NOT NULL, CHECK, FOREIGN KEY, PRIMARY KEY.
         #[error("{reason}")]
@@ -189,7 +182,7 @@ pub mod rusqlite {
             drop(self.0.lock().take());
         }
 
-        fn execute(&self, sql: &str, params: Option<Params>) -> Result<u64, Error> {
+        fn execute(&self, sql: &str, params: Vec<Option<Param>>) -> Result<u64, Error> {
             let conn = self.lock()?;
             let mut stmt = conn.prepare_cached(sql)?;
             let values = bind(&stmt, params)?;
@@ -197,7 +190,7 @@ pub mod rusqlite {
             Ok(changed as u64)
         }
 
-        fn query(&self, sql: &str, params: Option<Params>) -> Result<Vec<Row>, Error> {
+        fn query(&self, sql: &str, params: Vec<Option<Param>>) -> Result<Vec<Row>, Error> {
             let conn = self.lock()?;
             let mut stmt = conn.prepare_cached(sql)?;
             let names = column_names(&stmt);
@@ -210,7 +203,7 @@ pub mod rusqlite {
             Ok(out)
         }
 
-        fn query_one(&self, sql: &str, params: Option<Params>) -> Result<Option<Row>, Error> {
+        fn query_one(&self, sql: &str, params: Vec<Option<Param>>) -> Result<Option<Row>, Error> {
             let conn = self.lock()?;
             let mut stmt = conn.prepare_cached(sql)?;
             let names = column_names(&stmt);
@@ -220,20 +213,14 @@ pub mod rusqlite {
         }
     }
 
-    /// One value for each of the statement's placeholders: the one given at its position, or `NULL`.
-    fn bind(stmt: &::rusqlite::Statement<'_>, params: Option<Params>) -> Result<Vec<SqlValue>, Error> {
-        let mut values = vec![SqlValue::Null; stmt.parameter_count()];
-        for (position, param) in params.into_iter().flatten() {
-            let slot = usize::try_from(position).ok().and_then(|at| at.checked_sub(1)).and_then(|at| values.get_mut(at));
-            let Some(slot) = slot else {
-                let count = u32::try_from(stmt.parameter_count()).unwrap_or(u32::MAX);
-                return Err(Error::UnknownParameter { position, count });
-            };
-            if let Some(param) = param {
-                *slot = param.into();
-            }
+    /// One value for each of the statement's placeholders, `NULL` for a `nil`.
+    fn bind(stmt: &::rusqlite::Statement<'_>, params: Vec<Option<Param>>) -> Result<Vec<SqlValue>, Error> {
+        let expected = stmt.parameter_count();
+        if params.len() != expected {
+            let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+            return Err(Error::ParameterCount { given: count(params.len()), expected: count(expected) });
         }
-        Ok(values)
+        Ok(params.into_iter().map(|param| param.map_or(SqlValue::Null, SqlValue::from)).collect())
     }
 
     /// 2^63: the first whole number past what an INTEGER holds.
@@ -292,8 +279,8 @@ pub mod rusqlite {
     /// ```luau
     /// local db = assert(rusqlite.open(":memory:"))
     /// assert(db:execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)"))
-    /// assert(db:execute("INSERT INTO t (v) VALUES (?)", { "hello" }) == 1)
-    /// local row = assert(db:query_one("SELECT id, v FROM t WHERE v = ?", { "hello" }))
+    /// assert(db:execute("INSERT INTO t (v) VALUES (?)", "hello") == 1)
+    /// local row = assert(db:query_one("SELECT id, v FROM t WHERE v = ?", "hello"))
     /// assert(row.id == 1 and row.v == "hello")
     /// db:close()
     /// ```
@@ -314,18 +301,18 @@ pub mod rusqlite {
     impl Database {
         /// Run one statement; how many rows it changed (0 for a statement that changes none, such as
         /// `CREATE TABLE`).
-        pub fn execute(&self, sql: String, params: Option<Params>) -> Result<u64, Error> {
-            self.conn.execute(&sql, params)
+        pub fn execute(&self, sql: String, params: Variadic<Option<Param>>) -> Result<u64, Error> {
+            self.conn.execute(&sql, params.0)
         }
 
         /// Run one SELECT; every row, in order.
-        pub fn query(&self, sql: String, params: Option<Params>) -> Result<Vec<Row>, Error> {
-            self.conn.query(&sql, params)
+        pub fn query(&self, sql: String, params: Variadic<Option<Param>>) -> Result<Vec<Row>, Error> {
+            self.conn.query(&sql, params.0)
         }
 
         /// Run one SELECT; its first row, or `nil` when it has none.
-        pub fn query_one(&self, sql: String, params: Option<Params>) -> Result<Option<Row>, Error> {
-            self.conn.query_one(&sql, params)
+        pub fn query_one(&self, sql: String, params: Variadic<Option<Param>>) -> Result<Option<Row>, Error> {
+            self.conn.query_one(&sql, params.0)
         }
 
         /// A statement to run many times on this database's connection. The SQL is not checked here: a mistake
@@ -335,8 +322,8 @@ pub mod rusqlite {
         /// local db = assert(rusqlite.open(":memory:"))
         /// assert(db:execute("CREATE TABLE t (v TEXT)"))
         /// local insert = db:prepare("INSERT INTO t (v) VALUES (?)")
-        /// assert(insert:execute({ "a" }) == 1)
-        /// assert(insert:execute({ "b" }) == 1)
+        /// assert(insert:execute("a") == 1)
+        /// assert(insert:execute("b") == 1)
         /// ```
         pub fn prepare(&self, sql: String) -> Statement {
             Statement { sql: Arc::from(sql), conn: self.conn.clone() }
@@ -359,18 +346,18 @@ pub mod rusqlite {
     #[mlua_ir::object]
     impl Statement {
         /// Run the statement; how many rows it changed.
-        pub fn execute(&self, params: Option<Params>) -> Result<u64, Error> {
-            self.conn.execute(&self.sql, params)
+        pub fn execute(&self, params: Variadic<Option<Param>>) -> Result<u64, Error> {
+            self.conn.execute(&self.sql, params.0)
         }
 
         /// Run the SELECT; every row, in order.
-        pub fn query(&self, params: Option<Params>) -> Result<Vec<Row>, Error> {
-            self.conn.query(&self.sql, params)
+        pub fn query(&self, params: Variadic<Option<Param>>) -> Result<Vec<Row>, Error> {
+            self.conn.query(&self.sql, params.0)
         }
 
         /// Run the SELECT; its first row, or `nil` when it has none.
-        pub fn query_one(&self, params: Option<Params>) -> Result<Option<Row>, Error> {
-            self.conn.query_one(&self.sql, params)
+        pub fn query_one(&self, params: Variadic<Option<Param>>) -> Result<Option<Row>, Error> {
+            self.conn.query_one(&self.sql, params.0)
         }
     }
 }
@@ -455,10 +442,10 @@ mod tests {
             r#"
             local db = assert(rusqlite.open(":memory:"))
             local created = assert(db:execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)"))
-            local inserted = assert(db:execute("INSERT INTO t (v) VALUES (?)", { "a" }))
-            db:execute("INSERT INTO t (v) VALUES (?)", { "b" })
-            db:execute("INSERT INTO t (v) VALUES (?)", { "a" })
-            local updated = assert(db:execute("UPDATE t SET v = ? WHERE v = ?", { "x", "a" }))
+            local inserted = assert(db:execute("INSERT INTO t (v) VALUES (?)", "a"))
+            db:execute("INSERT INTO t (v) VALUES (?)", "b")
+            db:execute("INSERT INTO t (v) VALUES (?)", "a")
+            local updated = assert(db:execute("UPDATE t SET v = ? WHERE v = ?", "x", "a"))
             return created, inserted, updated
         "#,
         );
@@ -531,54 +518,66 @@ mod tests {
     }
 
     #[test]
-    fn a_position_without_a_value_binds_null() {
+    fn nil_binds_null() {
         run(r#"
             local db = assert(rusqlite.open(":memory:"))
             db:execute("CREATE TABLE t (a, b, c)")
-            -- a trailing nil, a hole, and no list at all
-            assert(db:execute("INSERT INTO t VALUES (?, ?, ?)", { 1, nil }) == 1)
-            assert(db:execute("INSERT INTO t VALUES (?, ?, ?)", { nil, 2, nil }) == 1)
-            assert(db:execute("INSERT INTO t VALUES (?, ?, ?)", { [3] = 3 }) == 1)
-            assert(db:execute("INSERT INTO t VALUES (?, ?, ?)") == 1)
+            -- the only value, a trailing nil, a leading and a trailing nil, a nil in the middle
+            assert(db:execute("INSERT INTO t (a) VALUES (?)", nil) == 1)
+            assert(db:execute("INSERT INTO t VALUES (?, ?, ?)", 1, 2, nil) == 1)
+            assert(db:execute("INSERT INTO t VALUES (?, ?, ?)", nil, 2, nil) == 1)
+            assert(db:execute("INSERT INTO t VALUES (?, ?, ?)", 1, nil, 3) == 1)
             local rows = assert(db:query("SELECT a, b, c FROM t ORDER BY rowid"))
-            assert(rows[1].a == 1 and rows[1].b == nil and rows[1].c == nil)
-            assert(rows[2].a == nil and rows[2].b == 2 and rows[2].c == nil)
-            assert(rows[3].a == nil and rows[3].b == nil and rows[3].c == 3)
-            assert(next(rows[4]) == nil)
+            assert(next(rows[1]) == nil)
+            assert(rows[2].a == 1 and rows[2].b == 2 and rows[2].c == nil)
+            assert(rows[3].a == nil and rows[3].b == 2 and rows[3].c == nil)
+            assert(rows[4].a == 1 and rows[4].b == nil and rows[4].c == 3)
+            -- a statement binds the same way
+            local insert = db:prepare("INSERT INTO t VALUES (?, ?, ?)")
+            assert(insert:execute(nil, nil, nil) == 1)
+            assert(assert(db:query_one("SELECT count(*) AS n FROM t WHERE a IS NULL AND b IS NULL AND c IS NULL")).n == 2)
+            assert(assert(db:query_one("SELECT ? IS NULL AS yes", nil)).yes == 1)
         "#);
     }
 
     #[test]
-    fn a_value_past_the_placeholders_is_an_error() {
-        let (kind, position, count, zero): (String, u32, u32, String) = eval(
+    fn a_wrong_number_of_values_is_an_error() {
+        let (kind, given, expected, text): (String, u32, u32, String) = eval(
             r#"
             local db = assert(rusqlite.open(":memory:"))
-            db:execute("CREATE TABLE t (v)")
-            local n, err = db:execute("INSERT INTO t VALUES (?)", { "a", "b" })
+            db:execute("CREATE TABLE t (a, b)")
+            local n, err = db:execute("INSERT INTO t VALUES (?, ?)", "a", "b", nil)
             assert(n == nil)
-            local _, zero = db:execute("INSERT INTO t VALUES (?)", { [0] = "a" })
-            assert(#assert(db:query("SELECT v FROM t")) == 0)
-            return err.kind, err.position, err.count, zero.kind
+            local few, few_err = db:execute("INSERT INTO t VALUES (?, ?)", "a")
+            assert(few == nil and few_err.kind == "parameter_count" and few_err.given == 1 and few_err.expected == 2)
+            local none, none_err = db:prepare("INSERT INTO t VALUES (?, ?)"):execute()
+            assert(none == nil and none_err.kind == "parameter_count" and none_err.given == 0)
+            assert(#assert(db:query("SELECT a FROM t")) == 0)
+            return err.kind, err.given, err.expected, tostring(err)
         "#,
         );
-        assert_eq!((kind.as_str(), position, count), ("unknown_parameter", 2, 1));
-        assert_eq!(zero, "unknown_parameter");
+        assert_eq!((kind.as_str(), given, expected), ("parameter_count", 3, 2));
+        assert_eq!(
+            text,
+            "vnd:rusqlite.Database:execute: parameter_count: 3 values were given, the statement has 2 placeholders"
+        );
     }
 
     #[test]
     fn a_parameter_of_another_type_is_refused_as_an_argument() {
-        let text: String = eval(
+        let (text, second): (String, String) = eval(
             r#"
             local db = assert(rusqlite.open(":memory:"))
-            local ok, refused = pcall(db.execute, db, "SELECT ?", { {} })
+            local ok, refused = pcall(db.execute, db, "SELECT ?", {})
             assert(not ok)
-            local ok2 = pcall(db.execute, db, "SELECT ?", "a")
+            local ok2, refused2 = pcall(db.query, db, "SELECT ?, ?", 1, print)
             local ok3 = pcall(db.execute, db, 5)
             assert(not ok2 and not ok3)
-            return tostring(refused)
+            return tostring(refused), tostring(refused2)
         "#,
         );
         assert!(text.contains("vnd:rusqlite.Database:execute: argument #2 'params'"), "{text}");
+        assert!(second.contains("vnd:rusqlite.Database:query: argument #3 'params'"), "{second}");
     }
 
     #[test]
@@ -586,13 +585,13 @@ mod tests {
         run(r#"
             local db = assert(rusqlite.open(":memory:"))
             db:execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
-            db:execute("INSERT INTO t (v) VALUES (?)", { "a" })
-            db:execute("INSERT INTO t (v) VALUES (?)", { "b" })
+            db:execute("INSERT INTO t (v) VALUES (?)", "a")
+            db:execute("INSERT INTO t (v) VALUES (?)", "b")
             local rows, err = db:query("SELECT id, v FROM t ORDER BY id")
             assert(err == nil and #rows == 2)
             assert(rows[1].id == 1 and rows[1].v == "a")
             assert(rows[2].id == 2 and rows[2].v == "b")
-            local where = assert(db:query("SELECT v FROM t WHERE v = ?", { "b" }))
+            local where = assert(db:query("SELECT v FROM t WHERE v = ?", "b"))
             assert(#where == 1 and where[1].v == "b")
             local none = assert(db:query("SELECT * FROM t WHERE id > 99"))
             assert(#none == 0)
@@ -604,7 +603,7 @@ mod tests {
         run(r#"
             local db = assert(rusqlite.open(":memory:"))
             db:execute("CREATE TABLE t (i, r, s, b, f, big)")
-            db:execute("INSERT INTO t VALUES (?, ?, ?, ?, ?, ?)", { 42, 3.14, "text", "\0\1\2\254\255", true, 2 ^ 70 })
+            db:execute("INSERT INTO t VALUES (?, ?, ?, ?, ?, ?)", 42, 3.14, "text", "\0\1\2\254\255", true, 2 ^ 70)
             local row = assert(db:query_one(
                 "SELECT i, r, s, b, f, big, typeof(i) AS ti, typeof(r) AS tr, typeof(s) AS ts, typeof(b) AS tb, "
                     .. "typeof(f) AS tf, typeof(big) AS tbig FROM t"
@@ -623,13 +622,13 @@ mod tests {
         run(r#"
             local db = assert(rusqlite.open(":memory:"))
             db:execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
-            db:execute("INSERT INTO t (v) VALUES (?)", { "alice" })
-            db:execute("INSERT INTO t (v) VALUES (?)", { "bob" })
-            local row, err = db:query_one("SELECT id, v FROM t WHERE id = ?", { 1 })
+            db:execute("INSERT INTO t (v) VALUES (?)", "alice")
+            db:execute("INSERT INTO t (v) VALUES (?)", "bob")
+            local row, err = db:query_one("SELECT id, v FROM t WHERE id = ?", 1)
             assert(err == nil and row.id == 1 and row.v == "alice")
             local first = assert(db:query_one("SELECT v FROM t ORDER BY id DESC"))
             assert(first.v == "bob")
-            local none, none_err = db:query_one("SELECT * FROM t WHERE id = ?", { 999 })
+            local none, none_err = db:query_one("SELECT * FROM t WHERE id = ?", 999)
             assert(none == nil and none_err == nil)
         "#);
     }
@@ -640,16 +639,16 @@ mod tests {
             local db = assert(rusqlite.open(":memory:"))
             db:execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
             local ins = db:prepare("INSERT INTO t (v) VALUES (?)")
-            assert(ins:execute({ "a" }) == 1)
-            assert(ins:execute({ "b" }) == 1)
+            assert(ins:execute("a") == 1)
+            assert(ins:execute("b") == 1)
             local rows = assert(db:query("SELECT v FROM t ORDER BY id"))
             assert(rows[1].v == "a" and rows[2].v == "b")
             local sel = db:prepare("SELECT id, v FROM t WHERE v = ?")
-            local row = assert(sel:query_one({ "b" }))
+            local row = assert(sel:query_one("b"))
             assert(row.id == 2 and row.v == "b")
-            local many = assert(sel:query({ "a" }))
+            local many = assert(sel:query("a"))
             assert(#many == 1 and many[1].v == "a")
-            assert(sel:query_one({ "zzz" }) == nil)
+            assert(sel:query_one("zzz") == nil)
         "#);
     }
 

@@ -1,6 +1,5 @@
 -- vnd:rusqlite on neoc-vm and neoc-vm2: what both must answer the same. Returns plain values, compared by the harness.
--- Parameters (a list on neoc-vm2, trailing arguments on neoc-vm) and the errors differ on purpose: see
--- rusqlite.vm2.luau. Here every value is written in the SQL.
+-- The errors differ on purpose: see rusqlite.vm2.luau.
 local rusqlite = require("vnd:rusqlite")
 local out = {}
 
@@ -41,6 +40,22 @@ out.prepared = { count:query_one().n, #count:query() }
 out.prepared_execute = db:prepare("DELETE FROM t WHERE v = 'b'"):execute()
 out.after_delete = count:query_one().n
 
+-- parameters: the arguments after the SQL, in order; nil binds NULL, the last one too
+db:execute("CREATE TABLE p (a, b, c)")
+out.param_inserted = {
+	db:execute("INSERT INTO p VALUES (?, ?, ?)", 1, "one", 1.5),
+	db:execute("INSERT INTO p VALUES (?, ?, ?)", 2, nil, nil),
+	db:execute("INSERT INTO p VALUES (?, ?, ?)", nil, "three", nil),
+	db:prepare("INSERT INTO p VALUES (?, ?, ?)"):execute(4, "\0\255", true),
+}
+out.params = {}
+for i, r in db:query("SELECT a, b, c, typeof(a) AS ta, typeof(b) AS tb, typeof(c) AS tc FROM p ORDER BY rowid") do
+	out.params[i] = { r.a == nil, r.b == nil, r.c == nil, r.ta, r.tb, r.tc }
+end
+out.param_query = { #db:query("SELECT a FROM p WHERE a >= ? AND a < ?", 2, 5), db:query_one("SELECT b FROM p WHERE a = ?", 1).b }
+out.param_null = db:query_one("SELECT ? IS NULL AS yes, ? AS two", nil, 2).yes
+out.param_prepared = { db:prepare("SELECT b FROM p WHERE a = ?"):query_one(1).b, #db:prepare("SELECT a FROM p WHERE b IS ?"):query(nil) }
+
 -- failures: nil and an error
 local function fails(value, err)
 	return value == nil and err ~= nil
@@ -52,6 +67,7 @@ out.empty_sql = { fails(db:execute("")), fails(db:execute("-- just a comment")) 
 out.constraint = { db:execute("CREATE TABLE u (v TEXT UNIQUE)"), db:execute("INSERT INTO u VALUES ('k')"), fails(db:execute("INSERT INTO u VALUES ('k')")) }
 out.select_in_execute = fails(db:execute("SELECT 1"))
 out.bad_prepared = fails(db:prepare("NOT VALID SQL"):execute())
+out.wrong_count = { fails(db:execute("INSERT INTO p VALUES (?, ?, ?)", 1)), fails(db:query("SELECT ?", 1, 2)), fails(db:query_one("SELECT ?")), fails(db:prepare("SELECT ?"):query(1, nil)) }
 
 -- close: idempotent, and everything after it fails
 db:close()

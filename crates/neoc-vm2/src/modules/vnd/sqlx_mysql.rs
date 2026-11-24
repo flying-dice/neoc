@@ -8,12 +8,12 @@
 //! local sqlx_mysql = require("vnd:sqlx_mysql")
 //! local db = assert(sqlx_mysql.open("mysql://root@127.0.0.1/test"))
 //! db:execute("CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(64))")
-//! db:execute("INSERT INTO users (id, name) VALUES (?, ?)", { 1, "alice" })
+//! db:execute("INSERT INTO users (id, name) VALUES (?, ?)", 1, "alice")
 //! local rows = assert(db:query("SELECT id, name FROM users"))
 //!
 //! -- Hot paths: prepare once, reuse:
 //! local insert = db:prepare("INSERT INTO users (id, name) VALUES (?, ?)")
-//! insert:execute({ 2, "bob" })
+//! insert:execute(2, "bob")
 //! db:close()
 //! ```
 //!
@@ -21,23 +21,20 @@
 //! for, unlike `vnd:rusqlite`'s sync C calls). Connections are pooled (sqlx's defaults: at most 10, a 30 second
 //! wait for a free one), so one `Database` is safe to share between coroutines that query at once.
 //!
-//! Parameters: the second argument is the list of values for the statement's `?` placeholders, by position.
-//! `params[1]` binds the first. A position with no value (`nil`) before the last one given binds `NULL`. A
-//! trailing `nil` cannot be seen (a Lua list ends at its last value), so a statement whose last parameter may be
-//! `NULL` either writes it in the SQL or places that parameter earlier. A boolean binds as a boolean, a whole
-//! number as BIGINT, any other number as DOUBLE, a string as text when it is UTF-8 and as bytes otherwise.
+//! Parameters: the arguments after the SQL (`db:execute(sql, a, b)`; every argument of `stmt:execute(a, b)`) are
+//! the values for the statement's `?` placeholders, in order. A `nil` binds `NULL`, the last one too. A boolean
+//! binds as a boolean, a whole number as BIGINT, any other number as DOUBLE, a string as text when it is UTF-8
+//! and as bytes otherwise.
 //!
 //! Rows: a row is a table from column name to value. `BOOLEAN` is a boolean, the integer types and `FLOAT` /
 //! `DOUBLE` are numbers, the BLOB and BINARY types are strings byte for byte, and everything else (`VARCHAR`,
 //! `TEXT`, `JSON`, `DECIMAL`, dates and times, `ENUM`, `SET`) is its text. `NULL` is `nil` (the key is absent).
 //!
 //! Ported from neoc-vm's `vnd:sqlx_mysql`. What changed on purpose:
-//! - Parameters are one list (`db:execute(sql, { a, b })`, `stmt:execute({ a, b })`), not trailing arguments; a
-//!   trailing `nil` in it does not bind (see above), where a trailing `nil` argument bound `NULL`.
 //! - A parameter that is not a boolean, a number or a string (and SQL that is not a string) is refused as an
 //!   argument; it was a returned error.
-//! - A failure is a typed error: `OpenError` (`invalid_url`, `connect`) and `Error` (`closed`,
-//!   `invalid_parameter`, `constraint`, `database`, `connection`, `pool_timed_out`, `decode`, `other`).
+//! - A failure is a typed error: `OpenError` (`invalid_url`, `connect`) and `Error` (`closed`, `constraint`,
+//!   `database`, `connection`, `pool_timed_out`, `decode`, `other`).
 //! - A value that does not decode is the returned error `decode` with its column; it was raised.
 //! - A statement's errors name `vnd:sqlx_mysql.Statement:execute` as their `op` (it was `mysql.statement.execute`).
 
@@ -72,11 +69,11 @@ fn classify(type_name: &str) -> Kind {
 
 #[mlua_ir::module("vnd:sqlx_mysql")]
 pub mod sqlx_mysql {
-    use std::collections::{BTreeMap, HashMap};
+    use std::collections::HashMap;
     use std::str::FromStr;
     use std::sync::Arc;
 
-    use mlua_ir::{Bytes, LuaError, Object, OneOf, Shape};
+    use mlua_ir::{Bytes, LuaError, Object, OneOf, Shape, Variadic};
     use serde::{Deserialize, Serialize};
     use sqlx::error::ErrorKind;
     use sqlx::mysql::{MySql, MySqlArguments, MySqlConnectOptions, MySqlPool, MySqlRow, MySqlValueRef};
@@ -86,7 +83,6 @@ pub mod sqlx_mysql {
     use tracing::log::LevelFilter;
 
     use super::{Kind, classify};
-    use crate::modules::vnd::by_position;
 
     /// sqlx keeps this many prepared statements per connection (its default is 100): enough for an application
     /// with more distinct SQL strings than that to never prepare one twice.
@@ -106,10 +102,6 @@ pub mod sqlx_mysql {
         /// Text when UTF-8, bytes otherwise.
         Text(Bytes),
     }
-
-    /// The values for a statement's placeholders, by position from 1. A position with no value before the last
-    /// one given binds `NULL`.
-    pub type Params = BTreeMap<u32, Option<Param>>;
 
     /// A value of a row.
     #[derive(Debug, Clone, OneOf)]
@@ -164,12 +156,6 @@ pub mod sqlx_mysql {
         /// `close` was called on this database.
         #[error("database is closed")]
         Closed,
-        /// A value was given at a position no statement has.
-        #[error("parameter positions run from 1 to 65535, got {position}")]
-        InvalidParameter {
-            /// The position the value was given at.
-            position: u32,
-        },
         /// A constraint refused the change.
         #[error("{reason}")]
         Constraint {
@@ -238,12 +224,11 @@ pub mod sqlx_mysql {
         }
     }
 
-    /// `sql` with `params` bound, or why they cannot be. The SQL is the caller's by design (`AssertSqlSafe`):
+    /// `sql` with `params` bound, a `None` as `NULL`. The SQL is the caller's by design (`AssertSqlSafe`):
     /// running SQL text is what this module is for, and values reach the server only as bound parameters.
-    fn bound(sql: &str, params: Option<Params>) -> Result<Query<'_, MySql, MySqlArguments>, Error> {
-        let values = by_position(params).map_err(|position| Error::InvalidParameter { position })?;
+    fn bound(sql: &str, params: Vec<Option<Param>>) -> Query<'_, MySql, MySqlArguments> {
         let mut query = sqlx::query(AssertSqlSafe(sql));
-        for value in values {
+        for value in params {
             query = match value {
                 None => query.bind(Option::<i64>::None),
                 Some(Param::Boolean(flag)) => query.bind(flag),
@@ -259,28 +244,28 @@ pub mod sqlx_mysql {
                 },
             };
         }
-        Ok(query)
+        query
     }
 
-    async fn execute(pool: &MySqlPool, sql: &str, params: Option<Params>) -> Result<u64, Error> {
+    async fn execute(pool: &MySqlPool, sql: &str, params: Vec<Option<Param>>) -> Result<u64, Error> {
         if pool.is_closed() {
             return Err(Error::Closed);
         }
-        Ok(bound(sql, params)?.execute(pool).await?.rows_affected())
+        Ok(bound(sql, params).execute(pool).await?.rows_affected())
     }
 
-    async fn query(pool: &MySqlPool, sql: &str, params: Option<Params>) -> Result<Vec<Row>, Error> {
+    async fn query(pool: &MySqlPool, sql: &str, params: Vec<Option<Param>>) -> Result<Vec<Row>, Error> {
         if pool.is_closed() {
             return Err(Error::Closed);
         }
-        bound(sql, params)?.fetch_all(pool).await?.iter().map(read_row).collect()
+        bound(sql, params).fetch_all(pool).await?.iter().map(read_row).collect()
     }
 
-    async fn query_one(pool: &MySqlPool, sql: &str, params: Option<Params>) -> Result<Option<Row>, Error> {
+    async fn query_one(pool: &MySqlPool, sql: &str, params: Vec<Option<Param>>) -> Result<Option<Row>, Error> {
         if pool.is_closed() {
             return Err(Error::Closed);
         }
-        bound(sql, params)?.fetch_optional(pool).await?.as_ref().map(read_row).transpose()
+        bound(sql, params).fetch_optional(pool).await?.as_ref().map(read_row).transpose()
     }
 
     fn read_row(row: &MySqlRow) -> Result<Row, Error> {
@@ -344,20 +329,20 @@ pub mod sqlx_mysql {
     impl Database {
         /// Run one statement; how many rows it changed.
         #[host("Wait")]
-        pub async fn execute(&self, sql: String, params: Option<Params>) -> Result<u64, Error> {
-            execute(&self.pool, &sql, params).await
+        pub async fn execute(&self, sql: String, params: Variadic<Option<Param>>) -> Result<u64, Error> {
+            execute(&self.pool, &sql, params.0).await
         }
 
         /// Run one SELECT; every row, in order.
         #[host("Wait")]
-        pub async fn query(&self, sql: String, params: Option<Params>) -> Result<Vec<Row>, Error> {
-            query(&self.pool, &sql, params).await
+        pub async fn query(&self, sql: String, params: Variadic<Option<Param>>) -> Result<Vec<Row>, Error> {
+            query(&self.pool, &sql, params.0).await
         }
 
         /// Run one SELECT; its first row, or `nil` when it has none.
         #[host("Wait")]
-        pub async fn query_one(&self, sql: String, params: Option<Params>) -> Result<Option<Row>, Error> {
-            query_one(&self.pool, &sql, params).await
+        pub async fn query_one(&self, sql: String, params: Variadic<Option<Param>>) -> Result<Option<Row>, Error> {
+            query_one(&self.pool, &sql, params.0).await
         }
 
         /// A statement to run many times on this database's pool. The SQL is not checked here: a mistake in it is
@@ -386,20 +371,20 @@ pub mod sqlx_mysql {
     impl Statement {
         /// Run the statement; how many rows it changed.
         #[host("Wait")]
-        pub async fn execute(&self, params: Option<Params>) -> Result<u64, Error> {
-            execute(&self.pool, &self.sql, params).await
+        pub async fn execute(&self, params: Variadic<Option<Param>>) -> Result<u64, Error> {
+            execute(&self.pool, &self.sql, params.0).await
         }
 
         /// Run the SELECT; every row, in order.
         #[host("Wait")]
-        pub async fn query(&self, params: Option<Params>) -> Result<Vec<Row>, Error> {
-            query(&self.pool, &self.sql, params).await
+        pub async fn query(&self, params: Variadic<Option<Param>>) -> Result<Vec<Row>, Error> {
+            query(&self.pool, &self.sql, params.0).await
         }
 
         /// Run the SELECT; its first row, or `nil` when it has none.
         #[host("Wait")]
-        pub async fn query_one(&self, params: Option<Params>) -> Result<Option<Row>, Error> {
-            query_one(&self.pool, &self.sql, params).await
+        pub async fn query_one(&self, params: Variadic<Option<Param>>) -> Result<Option<Row>, Error> {
+            query_one(&self.pool, &self.sql, params.0).await
         }
     }
 }
@@ -469,7 +454,7 @@ mod tests {
         assert!(text.contains("vnd:sqlx_mysql.open: argument #1 'url'"), "{text}");
     }
 
-    /// neoc-vm's `sqlx_mysql.test.lua`, with the parameters as lists and the errors typed. `URL` is the server.
+    /// neoc-vm's `sqlx_mysql.test.lua`, with the errors typed. `URL` is the server.
     const SERVER_SCRIPT: &str = r#"
         local sqlx_mysql = require("vnd:sqlx_mysql")
 
@@ -481,10 +466,10 @@ mod tests {
         db:execute("DROP TABLE IF EXISTS exec_t")
         local n, err = db:execute("CREATE TABLE exec_t (id INT PRIMARY KEY, v VARCHAR(64))")
         assert(err == nil and n == 0)
-        n, err = db:execute("INSERT INTO exec_t (id, v) VALUES (?, ?)", { 1, "alice" })
+        n, err = db:execute("INSERT INTO exec_t (id, v) VALUES (?, ?)", 1, "alice")
         assert(err == nil and n == 1)
         assert(db:execute("INSERT INTO exec_t VALUES (2, 'a'), (3, 'b'), (4, 'a')") == 3)
-        assert(db:execute("UPDATE exec_t SET v = ? WHERE v = ?", { "x", "a" }) == 2)
+        assert(db:execute("UPDATE exec_t SET v = ? WHERE v = ?", "x", "a") == 2)
 
         -- invalid SQL
         local bad, bad_err = db:execute("NOT VALID SQL")
@@ -492,20 +477,22 @@ mod tests {
         assert(bad_err.code == "42000")
 
         -- a constraint
-        local dup, dup_err = db:execute("INSERT INTO exec_t (id, v) VALUES (?, ?)", { 1, "again" })
+        local dup, dup_err = db:execute("INSERT INTO exec_t (id, v) VALUES (?, ?)", 1, "again")
         assert(dup == nil and dup_err.kind == "constraint" and dup_err.violation == "unique")
 
-        -- a position without a value binds NULL
+        -- nil binds as NULL (an INT8 on Postgres: the column must be a number), the last value too
         db:execute("DROP TABLE IF EXISTS exec_null")
-        db:execute("CREATE TABLE exec_null (v BIGINT, id INT PRIMARY KEY)")
-        assert(db:execute("INSERT INTO exec_null (v, id) VALUES (?, ?)", { nil, 1 }) == 1)
-        local null_row = assert(db:query_one("SELECT id, v FROM exec_null WHERE id = 1"))
-        assert(null_row.id == 1 and null_row.v == nil)
-        -- a trailing nil is not seen: the server counts one parameter too few
-        local short, short_err = db:execute("INSERT INTO exec_null (id, v) VALUES (?, ?)", { 2, nil })
+        db:execute("CREATE TABLE exec_null (id INT PRIMARY KEY, v BIGINT)")
+        assert(db:execute("INSERT INTO exec_null (id, v) VALUES (?, ?)", 1, nil) == 1)
+        assert(db:execute("INSERT INTO exec_null (v, id) VALUES (?, ?)", nil, 2) == 1)
+        local null_rows = assert(db:query("SELECT id, v FROM exec_null ORDER BY id"))
+        assert(#null_rows == 2 and null_rows[1].id == 1 and null_rows[1].v == nil)
+        assert(null_rows[2].id == 2 and null_rows[2].v == nil)
+        -- fewer or more values than placeholders: the server (or the driver) refuses the statement
+        local short, short_err = db:execute("INSERT INTO exec_null (id, v) VALUES (?, ?)", 3)
         assert(short == nil and short_err ~= nil)
-        local zero, zero_err = db:execute("SELECT ?", { [0] = 1 })
-        assert(zero == nil and zero_err.kind == "invalid_parameter" and zero_err.position == 0)
+        local long, long_err = db:execute("INSERT INTO exec_null (id) VALUES (?)", 3, nil)
+        assert(long == nil and long_err ~= nil)
 
         -- query
         local rows, query_err = db:query("SELECT id, v FROM exec_t ORDER BY id")
@@ -513,34 +500,34 @@ mod tests {
         assert(rows[1].id == 1 and rows[1].v == "alice")
         assert(rows[2].id == 2 and rows[2].v == "x")
         assert(#assert(db:query("SELECT * FROM exec_t WHERE id > 99")) == 0)
-        local where = assert(db:query("SELECT v FROM exec_t WHERE v = ?", { "b" }))
+        local where = assert(db:query("SELECT v FROM exec_t WHERE v = ?", "b"))
         assert(#where == 1 and where[1].v == "b")
 
         -- the types of values
         db:execute("DROP TABLE IF EXISTS q_types")
         db:execute("CREATE TABLE q_types (id INT PRIMARY KEY, x DOUBLE, b BLOB, f BOOLEAN, d DECIMAL(6,2), big BIGINT)")
-        assert(db:execute("INSERT INTO q_types VALUES (1, ?, ?, ?, 12.50, ?)", { 3.14, "\0\1\2\254\255", true, 2 ^ 40 }) == 1)
+        assert(db:execute("INSERT INTO q_types VALUES (1, ?, ?, ?, 12.50, ?)", 3.14, "\0\1\2\254\255", true, 2 ^ 40) == 1)
         local typed = assert(db:query_one("SELECT x, b, f, d, big FROM q_types WHERE id = 1"))
         assert(typed.x == 3.14 and typed.b == "\0\1\2\254\255" and typed.f == true)
         assert(typed.d == "12.50" and typed.big == 2 ^ 40)
 
         -- query_one
-        local row, one_err = db:query_one("SELECT id, v FROM exec_t WHERE id = ?", { 1 })
+        local row, one_err = db:query_one("SELECT id, v FROM exec_t WHERE id = ?", 1)
         assert(one_err == nil and row.id == 1 and row.v == "alice")
-        local none, none_err = db:query_one("SELECT * FROM exec_t WHERE id = ?", { 999 })
+        local none, none_err = db:query_one("SELECT * FROM exec_t WHERE id = ?", 999)
         assert(none == nil and none_err == nil)
 
         -- prepare
         db:execute("DROP TABLE IF EXISTS p_t")
         db:execute("CREATE TABLE p_t (id INT PRIMARY KEY, v VARCHAR(64))")
         local ins = db:prepare("INSERT INTO p_t (id, v) VALUES (?, ?)")
-        assert(ins:execute({ 1, "a" }) == 1)
-        assert(ins:execute({ 2, "b" }) == 1)
-        assert(ins:execute({ 3, "a" }) == 1)
+        assert(ins:execute(1, "a") == 1)
+        assert(ins:execute(2, "b") == 1)
+        assert(ins:execute(3, "a") == 1)
         local sel = db:prepare("SELECT id, v FROM p_t WHERE v = ? ORDER BY id")
-        local many = assert(sel:query({ "a" }))
+        local many = assert(sel:query("a"))
         assert(#many == 2 and many[1].id == 1 and many[2].id == 3)
-        assert(assert(sel:query_one({ "b" })).id == 2)
+        assert(assert(sel:query_one("b")).id == 2)
         local _, stmt_err = db:prepare("NOT VALID SQL"):execute()
         assert(stmt_err.kind == "database" and stmt_err.op == "vnd:sqlx_mysql.Statement:execute")
 
@@ -550,7 +537,7 @@ mod tests {
         local closed, closed_err = db:execute("SELECT 1")
         assert(closed == nil and closed_err.kind == "closed")
         assert(tostring(closed_err) == "vnd:sqlx_mysql.Database:execute: closed: database is closed")
-        local _, stmt_closed = sel:query({ "a" })
+        local _, stmt_closed = sel:query("a")
         assert(stmt_closed.kind == "closed")
     "#;
 

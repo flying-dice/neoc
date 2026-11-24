@@ -64,7 +64,8 @@ async fn neoc_vm2_keeps_to_what_it_deliberately_does_differently() {
     let scripts = scripts(".vm2.luau");
     assert!(!scripts.is_empty(), "the intended differences are asserted");
     for (name, code) in &scripts {
-        let first = code.lines().next().unwrap_or_default();
+        // `--!strict` (for luau-lsp) may come before it
+        let first = code.lines().find(|line| *line != "--!strict").unwrap_or_default();
         let reason = first
             .strip_prefix("-- intentional: ")
             .unwrap_or_else(|| panic!("{name}.vm2.luau starts with `-- intentional: <what changed>`"));
