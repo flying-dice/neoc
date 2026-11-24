@@ -105,6 +105,13 @@ rusqlite = { version = "0.43", features = ["bundled"] }
 # `vnd:sqlx_mysql` and `vnd:sqlx_postgres`, as in neoc-vm: pure-Rust drivers, without TLS (only `vnd:hyper` carries a TLS stack).
 # `mysql-rsa` keeps MySQL's `caching_sha2_password` working over a plain connection.
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "mysql", "mysql-rsa", "postgres"] }
+# `vnd:keyring`, as in neoc-vm: the operating system's credential store. `keyring` (its default `v1` feature) picks
+# the platform's store and opens it: Keychain Services on macOS, the Credential Manager on Windows, the Secret
+# Service on the other Unixes (over zbus, with RustCrypto for the session: no libdbus and no OpenSSL to link).
+# `keyring-core` is the crate it is built on, named for what `keyring` does not re-export: entries in a given store,
+# `search`, and the mock store the tests (and `NEOC_KEYRING=mock`) use.
+keyring = "4.2"
+keyring-core = "1.1"
 
 # `std:process` kills a process's whole group.
 [target.'cfg(unix)'.dependencies]
