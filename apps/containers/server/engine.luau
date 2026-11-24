@@ -45,7 +45,7 @@ local STATES: { [string]: rpc.State } = {
 type Clients = { reading: vnd_bollard_Client, acting: vnd_bollard_Client }
 local clients: Clients? = nil
 -- the events the watcher is reading, so that a change of Docker can end them
-local watched: vnd_bollard_Stream? = nil
+local watched: mlua_Stream<vnd_bollard_EventMessage, vnd_bollard_DockerError>? = nil
 -- another Docker was chosen since the watcher last looked: it looks for the new one at once
 local switched = false
 
@@ -56,18 +56,16 @@ end
 
 -- Why a call failed, as a sentence for the person. Docker's own message is one already ("No such container: web");
 -- no Docker at all is said in the app's words.
-local function sentence(err: string?): string
-  local kind = bollard.error_kind(err)
-  if kind == "connect" then
+local function sentence(err: vnd_bollard_DockerError): string
+  if err.kind == "connect" then
     local host = engine.host()
     return if host == ""
       then "Docker is not running on this machine, or cannot be reached."
       else `Docker cannot be reached at {host}.`
-  elseif kind == "timed_out" then
+  elseif err.kind == "timed_out" then
     return "Docker is not answering. It may still be starting, or be paused."
   end
-  local message = bollard.error_message(err)
-  return if message and message ~= "" then message else err or "Docker refused, and did not say why."
+  return if err.message ~= "" then err.message else "Docker refused, and did not say why."
 end
 
 local function connected(): (Clients?, string?)
@@ -76,13 +74,14 @@ local function connected(): (Clients?, string?)
   end
   local host = if engine.host() == "" then nil else engine.host()
   local reading, err = bollard.connect { host = host, timeout = READ_TIMEOUT }
-  if not reading then
+  if err then
     return nil, sentence(err)
   end
   local acting, acting_err = bollard.connect { host = host, timeout = ACT_TIMEOUT }
-  if not acting then
+  if acting_err then
     return nil, sentence(acting_err)
   end
+  assert(reading and acting)
   clients = { reading = reading, acting = acting }
   return clients, nil
 end
@@ -111,7 +110,7 @@ function engine.use(host: string): string?
     end
     -- a socket that is not there is a fine choice (Docker may not be running yet): only an address that is none is not
     local _, err = bollard.connect { host = host }
-    if err and bollard.error_kind(err) ~= "connect" then
+    if err and err.kind ~= "connect" then
       return sentence(err)
     end
   end
@@ -129,21 +128,22 @@ function engine.use(host: string): string?
   return nil
 end
 
-local function nameOf(names: any): string
-  local first = if type(names) == "table" then names[1] else nil
-  return if type(first) == "string" then (string.gsub(first, "^/", "")) else ""
+local function nameOf(names: { string }?): string
+  local first = if names then names[1] else nil
+  return if first then (string.gsub(first, "^/", "")) else ""
 end
 
 -- the published ports, each once (Docker lists one for IPv4 and one for IPv6), in order
-local function portsOf(ports: any): { string }
+local function portsOf(ports: { vnd_bollard_PortSummary }): { string }
   local seen: { [string]: boolean } = {}
   local published: { { host: number, label: string } } = {}
-  for _, port in ports or {} do
-    if port.PublicPort then
-      local label = `{port.PublicPort}:{port.PrivatePort}` .. (if port.Type == "tcp" then "" else `/{port.Type}`)
+  for _, port in ports do
+    local public = port.PublicPort
+    if public then
+      local label = `{public}:{port.PrivatePort}` .. (if port.Type == "tcp" then "" else `/{port.Type or ""}`)
       if not seen[label] then
         seen[label] = true
-        table.insert(published, { host = port.PublicPort, label = label })
+        table.insert(published, { host = public, label = label })
       end
     end
   end
@@ -158,15 +158,15 @@ local function portsOf(ports: any): { string }
 end
 
 -- a container, from an entry of Docker's list
-local function containerOf(summary: any): rpc.Container
+local function containerOf(summary: vnd_bollard_ContainerSummary): rpc.Container
   local stack, service = stacks.of(summary.Labels or {})
   return {
-    id = summary.Id,
+    id = summary.Id or "",
     name = nameOf(summary.Names),
     image = summary.Image or "",
-    state = STATES[summary.State] or "exited",
+    state = STATES[summary.State or ""] or "exited",
     status = summary.Status or "",
-    ports = portsOf(summary.Ports),
+    ports = portsOf(summary.Ports or {}),
     stack = stack,
     service = service,
   }
@@ -187,13 +187,14 @@ function engine.overview(): rpc.Overview
     return unreachable(problem or "")
   end
   local version, version_err = api:version()
-  if not version then
+  if version_err then
     return unreachable(sentence(version_err))
   end
   local list, list_err = api:list_containers { all = true }
-  if not list then
+  if list_err then
     return unreachable(sentence(list_err))
   end
+  assert(version and list)
   local containers: { rpc.Container } = {}
   local folders: { [string]: string } = {}
   for _, summary in list do
@@ -248,16 +249,16 @@ function engine.stack(action: Action, stack: string): string?
     return problem
   end
   local list, err = api:list_containers { all = true, filters = stacks.filter(stack) }
-  if not list then
+  if err then
     return sentence(err)
   end
   local members: { stacks.Member } = {}
-  for _, summary in list do
+  for _, summary in list or {} :: { vnd_bollard_ContainerSummary } do
     local labels = summary.Labels or {}
     local _, service = stacks.of(labels)
     table.insert(
       members,
-      { id = summary.Id, name = nameOf(summary.Names), service = service, needs = stacks.needs(labels) }
+      { id = summary.Id or "", name = nameOf(summary.Names), service = service, needs = stacks.needs(labels) }
     )
   end
   if #members == 0 then
@@ -281,10 +282,12 @@ function engine.stack(action: Action, stack: string): string?
   end
 
   if action == "remove" then
-    local networks = api:list_networks { filters = stacks.filter(stack) }
-    for _, network in networks or {} do
-      local _, network_err = api:remove_network(network.Id)
-      failure = failure or (if network_err then sentence(network_err) else nil)
+    local networks: { vnd_bollard_Network } = api:list_networks { filters = stacks.filter(stack) } or {}
+    for _, network in networks do
+      if network.Id then
+        local _, network_err = api:remove_network(network.Id)
+        failure = failure or (if network_err then sentence(network_err) else nil)
+      end
     end
   end
   return failure
@@ -302,21 +305,26 @@ function engine.details(container: string): (rpc.Details?, string?)
   end
 
   local command = { found.Path or "" }
-  for _, argument in found.Args or {} do
+  local arguments: { string } = found.Args or {}
+  for _, argument in arguments do
     table.insert(command, argument)
   end
   local mounts: { string } = {}
-  for _, mount in found.Mounts or {} do
+  local mounted: { vnd_bollard_MountPoint } = found.Mounts or {}
+  for _, mount in mounted do
     table.insert(mounts, `{mount.Name or mount.Source or ""} -> {mount.Destination or ""}`)
   end
   table.sort(mounts)
   local networks: { string } = {}
-  for name in (found.NetworkSettings and found.NetworkSettings.Networks) or {} do
+  local joined: { [string]: vnd_bollard_EndpointSettings } = (found.NetworkSettings and found.NetworkSettings.Networks)
+    or {}
+  for name in joined do
     table.insert(networks, name)
   end
   table.sort(networks)
   local environment: { string } = {}
-  for _, variable in (found.Config and found.Config.Env) or {} do
+  local variables: { string } = (found.Config and found.Config.Env) or {}
+  for _, variable in variables do
     table.insert(environment, string.match(variable, "^[^=]*") :: string)
   end
   table.sort(environment)
@@ -324,10 +332,10 @@ function engine.details(container: string): (rpc.Details?, string?)
   local policy = found.HostConfig and found.HostConfig.RestartPolicy and found.HostConfig.RestartPolicy.Name
   local health = found.State and found.State.Health and found.State.Health.Status
   return {
-    container = found.Id,
+    container = found.Id or container,
     command = table.concat(command, " "),
-    restart = if type(policy) == "string" and policy ~= "" then policy else "no",
-    health = if type(health) == "string" and health ~= "none" then health else "",
+    restart = if policy and policy ~= "" then policy else "no",
+    health = if health and health ~= "none" then health else "",
     mounts = mounts,
     networks = networks,
     environment = environment,
@@ -342,10 +350,8 @@ function engine.logs(container: string, tail: number?): (rpc.Logs?, string?)
     return nil, problem
   end
   local lines = tail or DEFAULT_TAIL
-  local stream, err = api:logs(container, { tail = lines })
-  if not stream then
-    return nil, sentence(err)
-  end
+  -- a container that is not there (or a Docker that is away) is the stream's first error
+  local stream = api:logs(container, { tail = lines })
   local pieces: { string } = {}
   while true do
     local piece, piece_err = stream:next()
@@ -370,7 +376,9 @@ function engine.watch(changed: () -> ())
   while true do
     switched = false
     local api = docker()
-    local events = if api and api:ping() then api:events { filters = { type = "container", event = EVENTS } } else nil
+    local events = if api and api:ping()
+      then api:events { filters = { type = { "container" }, event = EVENTS } }
+      else nil
     if events then
       reachable = true
       watched = events

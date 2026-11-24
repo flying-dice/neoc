@@ -37,9 +37,9 @@ local function wanted(): (rpc.Settings, { string }, string)
 end
 
 -- this app's containers, as Docker lists them: one, or none (more only if something went wrong half way)
-local function owned(api: engine.Client): ({ any }?, string?)
+local function owned(api: engine.Client): ({ vnd_bollard_ContainerSummary }?, string?)
   local list, err = api:list_containers { all = true, filters = sidecar.FILTER }
-  if not list then
+  if err then
     return nil, engine.sentence(err)
   end
   return list, nil
@@ -79,21 +79,18 @@ end
 -- have the image, pulling it when Docker does not
 local function image(api: engine.Client): string?
   local images, err = api:list_images { filters = { reference = { dnsmasq.IMAGE } } }
-  if not images then
+  if err then
     return engine.sentence(err)
   end
-  if #images > 0 then
+  if images and #images > 0 then
     return nil
   end
   local puller, unreachable = engine.puller()
   if not puller then
     return unreachable
   end
-  local pull, pull_err = puller:pull_image(dnsmasq.IMAGE)
-  if not pull then
-    return engine.sentence(pull_err)
-  end
-  -- the pull runs as its progress is read
+  local pull = puller:pull_image(dnsmasq.IMAGE)
+  -- the pull runs as its progress is read: an image that cannot be pulled is the error of a step
   while true do
     local step, step_err = pull:next()
     if step_err then
@@ -112,8 +109,10 @@ local function removeAll(api: engine.Client): string?
   end
   local failure: string? = nil
   for _, found in list do
-    local _, err = api:remove_container(found.Id, { force = true })
-    failure = failure or (if err then engine.sentence(err) else nil)
+    if found.Id then
+      local _, err = api:remove_container(found.Id, { force = true })
+      failure = failure or (if err then engine.sentence(err) else nil)
+    end
   end
   return failure
 end
@@ -129,9 +128,8 @@ local function make(api: engine.Client): string?
   end
   local settings, arguments, signature = wanted()
   -- the same port for UDP (a question) and TCP (an answer too long for one packet)
-  local published = { { HostPort = tostring(settings.port) } }
-  local made, err = api:create_container {
-    name = NAME,
+  local published: { vnd_bollard_PortBinding } = { { HostPort = tostring(settings.port) } }
+  local made, err = api:create_container({
     Image = dnsmasq.IMAGE,
     Entrypoint = dnsmasq.ENTRYPOINT,
     Cmd = arguments,
@@ -141,10 +139,11 @@ local function make(api: engine.Client): string?
       -- it comes back with Docker, and after a crash; not after it was stopped by hand
       RestartPolicy = { Name = "unless-stopped" },
     },
-  }
-  if not made then
+  }, { name = NAME })
+  if err then
     return engine.sentence(err)
   end
+  assert(made)
   local _, start_err = api:start_container(made.Id)
   return if start_err then engine.sentence(start_err) else nil
 end
@@ -177,14 +176,12 @@ function sidecar.logs(tail: number?): (rpc.Logs?, string?)
   if not list then
     return nil, unlisted
   end
-  if not list[1] then
+  local id = list[1] and list[1].Id
+  if not id then
     return nil, "The server has no container: it is off."
   end
   local lines = tail or DEFAULT_TAIL
-  local stream, err = api:logs(list[1].Id, { tail = lines })
-  if not stream then
-    return nil, engine.sentence(err)
-  end
+  local stream = api:logs(id, { tail = lines })
   local pieces: { string } = {}
   while true do
     local piece, piece_err = stream:next()

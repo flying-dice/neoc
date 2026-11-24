@@ -39,7 +39,7 @@ local function changed()
 end
 
 -- the watcher is the app's own task: it starts at load without holding it up, and stops when the app is unloaded
-task.spawn(engine.watch, { type = "container", label = sidecar.FILTER.label, event = sidecar.EVENTS }, changed)
+task.spawn(engine.watch, { type = { "container" }, label = sidecar.FILTER.label, event = sidecar.EVENTS }, changed)
 
 local function overview(): rpc.Overview
   local version, unreachable = engine.version()

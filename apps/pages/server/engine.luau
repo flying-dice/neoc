@@ -27,7 +27,7 @@ type Clients = { reading: Client, acting: Client, pulling: Client }
 -- the clients of the chosen Docker, made on first use and again after the choice changes
 local clients: Clients? = nil
 -- the events the watcher is reading, so that a change of Docker can end them
-local watched: vnd_bollard_Stream? = nil
+local watched: mlua_Stream<vnd_bollard_EventMessage, vnd_bollard_DockerError>? = nil
 -- another Docker was chosen since the watcher last looked: it looks for the new one at once
 local switched = false
 
@@ -38,18 +38,16 @@ end
 
 -- Why a call failed, as a sentence for the person. Docker's own message is one already ("port is already
 -- allocated"); no Docker at all is said in the app's words.
-function engine.sentence(err: string?): string
-  local kind = bollard.error_kind(err)
-  if kind == "connect" then
+function engine.sentence(err: vnd_bollard_DockerError): string
+  if err.kind == "connect" then
     local host = engine.host()
     return if host == ""
       then "Docker is not running on this machine, or cannot be reached."
       else `Docker cannot be reached at {host}.`
-  elseif kind == "timed_out" then
+  elseif err.kind == "timed_out" then
     return "Docker is not answering. It may still be starting, or be paused."
   end
-  local message = bollard.error_message(err)
-  return if message and message ~= "" then message else err or "Docker refused, and did not say why."
+  return if err.message ~= "" then err.message else "Docker refused, and did not say why."
 end
 
 local function connected(): (Clients?, string?)
@@ -60,10 +58,10 @@ local function connected(): (Clients?, string?)
   local made: { Client } = {}
   for _, timeout in { READ_TIMEOUT, ACT_TIMEOUT, PULL_TIMEOUT } do
     local client, err = bollard.connect { host = host, timeout = timeout }
-    if not client then
+    if err then
       return nil, engine.sentence(err)
     end
-    table.insert(made, client)
+    table.insert(made, client :: Client)
   end
   clients = { reading = made[1], acting = made[2], pulling = made[3] }
   return clients, nil
@@ -94,10 +92,10 @@ function engine.version(): (string?, string?)
     return nil, problem
   end
   local version, err = api:version()
-  if not version then
+  if err then
     return nil, engine.sentence(err)
   end
-  return version.Version or "", nil
+  return (version and version.Version) or "", nil
 end
 
 -- Choose the Docker the server runs in: an address, or empty for this machine's own. The address is only checked
@@ -112,7 +110,7 @@ function engine.use(host: string): string?
     end
     -- a socket that is not there is a fine choice (Docker may not be running yet): only an address that is none is not
     local _, err = bollard.connect { host = host }
-    if err and bollard.error_kind(err) ~= "connect" then
+    if err and err.kind ~= "connect" then
       return engine.sentence(err)
     end
   end
@@ -133,7 +131,7 @@ end
 -- Watch Docker for as long as the app is loaded, and call `changed` whenever what it has of `filters` may be
 -- different: a container was made, started, stopped or removed, Docker itself came or went, or the watcher was not
 -- listening for a while (Docker does not repeat what it reported to nobody). It never returns: run it in a task.
-function engine.watch(filters: { [string]: any }, changed: () -> ())
+function engine.watch(filters: { [string]: { string } }, changed: () -> ())
   local reachable: boolean? = nil
   while true do
     switched = false
