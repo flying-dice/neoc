@@ -1,5 +1,5 @@
 //! What a command may be made of: a program, its arguments, a directory, environment variables. What `std:process`
-//! checks, and what a terminal (neoc-vm's `vnd:portable_pty`) will check with it.
+//! and `vnd:portable_pty` check.
 //!
 //! The shape of a command is its module's own typed table, read by mlua-ir: a field of the wrong type never gets
 //! here. What is checked here is what the type does not say and the operating system would not take (an empty

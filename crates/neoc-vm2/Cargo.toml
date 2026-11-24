@@ -112,6 +112,9 @@ sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio",
 # `search`, and the mock store the tests (and `NEOC_KEYRING=mock`) use.
 keyring = "4.2"
 keyring-core = "1.1"
+# `vnd:portable_pty`, as in neoc-vm: the pseudo-terminal layer of WezTerm (openpty on Unix, ConPTY on Windows). Its
+# reader, writer and child wait are blocking, so the module runs each on a thread of its own.
+portable-pty = "0.9"
 
 # `std:process` kills a process's whole group.
 [target.'cfg(unix)'.dependencies]

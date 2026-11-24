@@ -1,5 +1,4 @@
-//! How a script learns that a process it started has ended: what `std:process` has, and what a terminal
-//! (neoc-vm's `vnd:portable_pty`) will share with it.
+//! How a script learns that a process it started has ended: what `std:process` and `vnd:portable_pty` share.
 //!
 //! One watcher (a task, or a thread) owns the process and publishes how it ended, once, on a watch channel; every
 //! `wait()` of the script reads that channel, so it may be called again and the answer is the same.

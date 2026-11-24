@@ -3534,6 +3534,7 @@ dependencies = [
  "parking_lot 0.13.0",
  "percent-encoding",
  "pkcs8",
+ "portable-pty",
  "quick-xml",
  "rand 0.10.4",
  "rcgen",

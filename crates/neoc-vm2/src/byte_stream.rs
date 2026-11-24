@@ -1,9 +1,8 @@
-//! The byte streams between a script and a process it started: what `std:process` has, and what a terminal
-//! (neoc-vm's `vnd:portable_pty`) will share with it.
+//! The byte streams between a script and a process it started: what `std:process` and `vnd:portable_pty` share.
 //!
 //! - [`Output`] holds what the process wrote and the script has not read yet, up to [`OUTPUT_BUFFER`] bytes. Its
-//!   reader, a task, waits for room ([`Output::room`], then [`Output::push`]), so a script that reads slowly slows
-//!   the process down instead of filling memory.
+//!   reader waits for room, on a thread ([`Output::push_blocking`]) or in a task ([`Output::room`] then
+//!   [`Output::push`]), so a script that reads slowly slows the process down instead of filling memory.
 //! - [`read`] is the body of a method that reads from one: it waits without the VM and takes the bytes with the
 //!   turn held, so a call that is dropped loses none.
 //! - [`Job`] is one piece of input on its way to a writer, and [`submit`] hands one over and waits for it.
@@ -11,12 +10,11 @@
 //! What fails here is said in words ([`Read::Failed`], [`WriteFailed`], a `String`): each module makes its own
 //! typed error of them.
 //!
-//! Ported from neoc-vm's `byte_stream.rs`. Left behind: the reader on a thread (`Output::push_blocking`), which
-//! only the terminal has; it comes with that module.
+//! Ported from neoc-vm's `byte_stream.rs`.
 
 use std::collections::VecDeque;
 
-use parking_lot::Mutex;
+use parking_lot::{Condvar, Mutex};
 use tokio::sync::{Notify, mpsc, oneshot, watch};
 
 use crate::lifecycle::idle;
@@ -72,7 +70,9 @@ pub(crate) struct Output {
     state: Mutex<OutputState>,
     /// Told when there is something for a read: bytes, the end, or a close.
     readable: Notify,
-    /// Where the reader waits for room, or for the close.
+    /// Where a reader on a thread waits for room, or for the close.
+    room_blocking: Condvar,
+    /// Where a reader in a task waits for room, or for the close.
     room: Notify,
 }
 
@@ -81,12 +81,14 @@ impl Output {
         Self {
             state: Mutex::new(OutputState { bytes: VecDeque::new(), ended: None, closed: false }),
             readable: Notify::new(),
+            room_blocking: Condvar::new(),
             room: Notify::new(),
         }
     }
 
-    /// Tell the reader that there is room or that the stream is closed.
+    /// Tell the reader, wherever it waits, that there is room or that the stream is closed.
     fn wake_reader(&self) {
+        self.room_blocking.notify_all();
         self.room.notify_waiters();
     }
 
@@ -104,7 +106,23 @@ impl Output {
         }
     }
 
-    /// For the reader: wait for room for one more chunk. `false` once the stream is closed: the reader
+    /// For a reader on a thread: add what it read, waiting for room first. `false` once the stream is closed: the
+    /// reader stops.
+    pub(crate) fn push_blocking(&self, chunk: &[u8]) -> bool {
+        let mut state = self.state.lock();
+        while state.bytes.len() >= OUTPUT_BUFFER && !state.closed {
+            self.room_blocking.wait(&mut state);
+        }
+        if state.closed {
+            return false;
+        }
+        state.bytes.extend(chunk);
+        drop(state);
+        self.readable.notify_waiters();
+        true
+    }
+
+    /// For a reader in a task: wait for room for one more chunk. `false` once the stream is closed: the reader
     /// stops.
     pub(crate) async fn room(&self) -> bool {
         self.settled(&self.room, |state| {
@@ -113,12 +131,12 @@ impl Output {
         .await
     }
 
-    /// For the reader: wait for the close.
+    /// For a reader in a task: wait for the close.
     pub(crate) async fn closed(&self) {
         self.settled(&self.room, |state| state.closed.then_some(())).await;
     }
 
-    /// For the reader: add what it read (after [`Output::room`]). Dropped when the stream was closed
+    /// For a reader in a task: add what it read (after [`Output::room`]). Dropped when the stream was closed
     /// meanwhile.
     pub(crate) fn push(&self, chunk: &[u8]) {
         {
@@ -274,6 +292,7 @@ pub(crate) async fn submit(
 mod tests {
     use super::*;
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
 
     const TIMEOUT: Duration = Duration::from_secs(10);
@@ -285,6 +304,38 @@ mod tests {
             assert!(started.elapsed() < TIMEOUT, "the reader did not fill it");
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    #[test]
+    fn a_reader_on_a_thread_fills_a_bounded_buffer_and_a_close_frees_it() {
+        let output = Arc::new(Output::new());
+        let pushes = Arc::new(AtomicUsize::new(0));
+        let reader = {
+            let (output, pushes) = (Arc::clone(&output), Arc::clone(&pushes));
+            std::thread::spawn(move || {
+                let chunk = vec![7; READ_CHUNK];
+                while output.push_blocking(&chunk) {
+                    pushes.fetch_add(1, Ordering::SeqCst);
+                }
+            })
+        };
+        // a full buffer stops the reader: it never holds more than one chunk past the limit
+        filled(&output, OUTPUT_BUFFER);
+        assert!(output.held() < OUTPUT_BUFFER + READ_CHUNK);
+        let full = pushes.load(Ordering::SeqCst);
+
+        // a read makes room, and the reader fills it again
+        let Taken::Bytes(bytes) = output.take(100_000) else {
+            panic!("there are bytes to take");
+        };
+        assert_eq!(bytes.len(), 100_000);
+        filled(&output, OUTPUT_BUFFER);
+        assert!(output.held() < OUTPUT_BUFFER + READ_CHUNK);
+        assert!(pushes.load(Ordering::SeqCst) > full);
+
+        output.close();
+        reader.join().expect("the reader ended");
+        assert!(matches!(output.take(10), Taken::End));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
