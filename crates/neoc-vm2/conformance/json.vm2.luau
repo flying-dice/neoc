@@ -2,21 +2,17 @@
 -- intentional: there is no json.null sentinel (a JSON null reads as nil, kind(key) says "null", set(key, nil) writes one, to_table leaves nulls out), get takes one step and a longer path is at({ ... }) (get was variadic), failures are typed JsonError tables that are raised and read back with json.error_of (zero_index, stale, too_far, too_deep), the nesting limit counts the handle's own depth, and a handle nested inside a plain table is refused.
 local json = require("lib:json")
 
--- what a read gives is an array here. Ruling the scalars out leaves `lib_json_Array | lib_json_Object`, and
--- nothing a script can write tells the two handles apart for the checker: the `return` does not type-check
-local function array(node: lib_json_Node?): lib_json_Array
-	assert(node ~= nil and type(node) ~= "string" and type(node) ~= "number" and type(node) ~= "boolean")
-	return node
-end
-
 -- null without a sentinel
 assert((json :: any).null == nil)
 local o = json.object()
 o:set("gone", nil)
 assert(o:get("gone") == nil and o:has("gone") and o:kind("gone") == "null" and o:kind("never") == nil)
-local items: { unknown } = { 1, "two", true, { x = 1 } }
+-- a list of several types is annotated: the checker takes a literal's first item for the type of all
+local items: { any } = { 1, "two", true, { x = 1 } }
 o:set("list", items)
-local list = array(o:get("list"))
+-- what a read gives is told apart by its type's name
+local list = o:get("list")
+assert(typeof(list) == "lib_json_Array")
 list:push(nil)
 assert(list:len() == 5 and list:get(5) == nil and list:kind(5) == "null" and list:kind(6) == nil)
 assert(list:kind(1) == "number" and list:kind(2) == "string" and list:kind(3) == "bool" and list:kind(4) == "object")
@@ -54,7 +50,9 @@ assert(stale ~= nil and stale.kind == "stale" and stale.expected == "array" and 
 local cursor = json.array()
 local levels = 1
 while pcall(cursor.push, cursor, json.array()) do
-	cursor = array(cursor:get(1))
+	local inner = cursor:get(1)
+	assert(typeof(inner) == "lib_json_Array")
+	cursor = inner
 	levels += 1
 end
 assert(levels == json.MAX_DEPTH + 1)

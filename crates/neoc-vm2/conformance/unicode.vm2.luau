@@ -1,12 +1,14 @@
+--!strict
 -- intentional: the normalisation form is a "nfc" | "nfd" | "nfkc" | "nfkd" union (case-sensitive; an unknown form is refused as an argument, `normalize` cannot fail), `category` takes a validated single codepoint (refused as an argument) and returns a union of the two-letter categories without a second value.
 local unicode = require("lib:unicode")
 
 assert(select("#", unicode.normalize("x", "nfc")) == 1, "normalize returns one value")
 assert(select("#", unicode.category("x")) == 1, "category returns one value")
 
-local ok, refused = pcall(unicode.normalize, "x", "NFC")
+-- deliberate refusal tests: neither is a form
+local ok, refused = pcall(unicode.normalize, "x", "NFC" :: any)
 assert(not ok and tostring(refused):find("argument #2 'form'", 1, true))
-local ok2, refused2 = pcall(unicode.normalize, "x", "nfz")
+local ok2, refused2 = pcall(unicode.normalize, "x", "nfz" :: any)
 assert(not ok2 and tostring(refused2):find("lib:unicode.normalize: argument #2 'form'", 1, true))
 
 for _, bad in { "ab", "", "e\u{0301}" } do

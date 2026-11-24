@@ -2,16 +2,10 @@
 -- intentional: level and format are string enums exactly as written ("info", not "INFO") and an option that is not one, or an option that does not exist, is refused as an argument with its place; fields are a table with string keys, so a key that is not a string is refused as an argument (it was written as text or as <invalid key>).
 local log = require("lib:log")
 
--- fields are annotated where they are written: the checker does not take a literal for an optional
--- `{ [string]: unknown }`
-type Fields = { [string]: unknown }
-
 local logger = log.new({ level = "off", format = "text" })
-local hidden: Fields = { method = "GET", status = 200, nested = { ok = true }, cb = function() end }
-logger:info("hidden", hidden)
+logger:info("hidden", { method = "GET", status = 200, nested = { ok = true }, cb = function() end })
 logger:with({ request_id = "abc" }):with({ b = 2 }):error("hidden")
-local below: Fields = { k = "v" }
-log.debug("below the default level", below)
+log.debug("below the default level", { k = "v" })
 
 -- options: the words as written, and only the options there are
 -- deliberate refusal test: none is the options
@@ -37,8 +31,7 @@ end
 
 -- a key that is not a string is still fine below the top
 local odd_keys: { [boolean | number]: string } = { [true] = "x", [1.5] = "y" }
-local nested: Fields = { nested = odd_keys }
-logger:info("msg", nested)
+logger:info("msg", { nested = odd_keys })
 
 -- the message is text
 local ok, refused = pcall(function(): ...unknown

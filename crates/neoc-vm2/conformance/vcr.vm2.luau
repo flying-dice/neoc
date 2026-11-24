@@ -1,3 +1,4 @@
+--!strict
 -- intentional: tape:play(key, function() return f(x) end) replaces tape:wrap(key, f)(x) (mlua-ir has no function that returns a function, nor one of any number of values), so a call's arguments are not written to the cassette; a call returns at most a result and an error (too_many_results past that) and may wait; a key is played once per cassette (it was wrapped once and called any number of times); what is not plain data is refused (not_plain_data: only a buffer was, the rest was recorded as "<function>"); cassette returns a typed CassetteError (not_found, io, malformed; they were raised) and play raises a typed PlayError (duplicate_key, missing_key, too_many_results, not_plain_data, io); a wrong mode, a missing path and an unknown option are refused as arguments; replay gives nil for a recorded null; dump is gone.
 local vcr = require("lib:vcr")
 local base64 = require("lib:base64")
@@ -17,7 +18,7 @@ local function has(text: string, part: string)
 end
 
 local dir = path.join(env.temp_dir(), "neoc-conformance-vcr-vm2-" .. random.uuid_v4())
-local function checks()
+local function checks(): ...unknown
 	assert(fs.create_dir_all(dir))
 	local file = path.join(dir, "tape.json")
 
@@ -40,7 +41,7 @@ local function checks()
 	local failed, failure = rec:play("invalid", function()
 		return base64.decode("not*valid!")
 	end)
-	assert(failed == nil and (failure :: any).kind == "invalid_byte")
+	assert(failed == nil and failure.kind == "invalid_byte")
 	local slow = rec:play("slow", function()
 		time.sleep(time.Duration.from_millis(2))
 		return "after the wait"
@@ -62,7 +63,8 @@ local function checks()
 			return 1, 2, 3
 		end)
 	end), 'lib:vcr.Cassette:play: too_many_results: the call "three" returned 3 values')
-	for key, value in { ["function"] = print :: any, handle = rec, buffer = { buffer.create(2) } } do
+	local not_plain: { [string]: any } = { ["function"] = print, handle = rec, buffer = { buffer.create(2) } }
+	for key, value in not_plain do
 		has(raised(function()
 			return rec:play(key, function()
 				return value
@@ -78,7 +80,7 @@ local function checks()
 	local again, again_err = rep:play("decode", never)
 	assert(again == "hello" and again_err == nil)
 	local replayed, replayed_err = rep:play("invalid", never)
-	assert(replayed == nil and (replayed_err :: any).kind == "invalid_byte" and (replayed_err :: any).op == "lib:base64.decode")
+	assert(replayed == nil and replayed_err.kind == "invalid_byte" and replayed_err.op == "lib:base64.decode")
 	has(raised(function()
 		return rep:play("decode", never)
 	end), 'lib:vcr.Cassette:play: duplicate_key: duplicate key "decode"')
@@ -90,7 +92,7 @@ local function checks()
 	local old = path.join(dir, "old.json")
 	assert(fs.write(old, '{ "call": { "args": ["x", null], "result": [{ "a": null, "b": [1, 2] }, null] } }'))
 	local value, err = assert(vcr.cassette({ mode = "replay", path = old })):play("call", never)
-	assert((value :: any).a == nil and #(value :: any).b == 2 and err == nil)
+	assert(value.a == nil and #value.b == 2 and err == nil)
 
 	-- off: any key any number of times, any value
 	local off = assert(vcr.cassette({ mode = "off" }))
@@ -106,11 +108,11 @@ fs.remove_dir_all(dir, { missing_ok = true })
 assert(ok, tostring(failure))
 
 -- there is no wrap and no dump
-local tape = assert(vcr.cassette({ mode = "off" })) :: any
+local tape = assert(vcr.cassette({ mode = "off" }))
 assert(not pcall(function()
-	return tape:wrap("key", print)
+	return (tape :: any):wrap("key", print)
 end) and not pcall(function()
-	return tape:dump()
+	return (tape :: any):dump()
 end))
 
 -- arguments of the wrong shape are refused, with their place
@@ -120,5 +122,5 @@ for _, config in { { mode = "rewind", path = "x" }, { path = "x" }, { mode = "re
 	end), "lib:vcr.cassette: argument #1 'config'")
 end
 has(raised(function()
-	return (tape :: any):play("key", "not a call")
+	return tape:play("key", "not a call" :: any) -- deliberate refusal test: text is not a call
 end), "lib:vcr.Cassette:play: argument #2 'call'")

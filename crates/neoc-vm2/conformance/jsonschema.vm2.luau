@@ -25,7 +25,7 @@ end
 assert(seen.type.instance_path == "/name" and seen.type.schema_path == "/properties/name/type")
 assert(seen.additionalProperties.instance_path == "" and seen.additionalProperties.schema_path == "/additionalProperties")
 assert(err.message:find("(and 1 more)", 1, true) and tostring(err) == "vnd:jsonschema.Schema:validate: invalid: " .. err.message)
-local users: { unknown } = { { id = 1 }, {} }
+local users: { any } = { { id = 1 }, {} }
 local _, nested = schema:validate({ name = "a", users = users })
 assert(nested ~= nil)
 assert(#nested.violations == 1 and nested.violations[1].instance_path == "/users/1")
@@ -37,19 +37,15 @@ assert(syntax ~= nil and syntax.kind == "syntax" and syntax.line == 2 and syntax
 local _, invalid = jsonschema.compile('{"properties":{"name":{"type":"nonsense"}}}')
 assert(invalid ~= nil and invalid.kind == "invalid_schema" and invalid.path == "/properties/name/type" and type(invalid.reason) == "string")
 
--- a lib:json handle is what it holds. Ruling the scalars out leaves `lib_json_Array | lib_json_Object`, and
--- nothing a script can write tells the two handles apart for the checker: the `return` does not type-check
-local function object(node: lib_json_Node): lib_json_Object
-	assert(type(node) ~= "string" and type(node) ~= "number" and type(node) ~= "boolean")
-	return node
-end
-local body = object((assert(require("vnd:serde_json").from_str('{"name":"ada","users":[{"id":1}]}'))))
+-- a lib:json handle is what it holds
+local body = assert(require("vnd:serde_json").from_str('{"name":"ada","users":[{"id":1}]}'))
+assert(typeof(body) == "lib_json_Object")
 assert(schema:is_valid(body) and schema:validate(body))
 body:set("extra", 1)
 assert(not schema:is_valid(body))
 
 -- what is not plain data is refused as an argument
-local not_data: { unknown } = { print, { f = print }, buffer.create(2), { data = buffer.create(2) } }
+local not_data: { any } = { print, { f = print }, buffer.create(2), { data = buffer.create(2) } }
 for _, value in not_data do
 	local methods: { [string]: () -> ...unknown } = {
 		is_valid = function()

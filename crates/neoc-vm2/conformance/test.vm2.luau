@@ -1,3 +1,4 @@
+--!strict
 -- intentional: a matcher is a typed object whose assertions are methods, expect(x):toBe(y) (it was a table of closures, expect(x).toBe(y)); a failed expectation raises a typed ExpectError (not_equal, not_nil, not_truthy, not_falsy, not_contained, not_a_container, did_not_throw, not_a_function) whose text starts with the matcher (lib:test.Matcher:toBe: not_equal: expected 1 to be 2); suites nest (outer > inner > name, and the end of an inner suite leaves the outer one open); `it` is gone (it was `test` under a second name); toContain("") holds for every string (it panicked); a wrong argument is refused with its place.
 local test = require("lib:test")
 local expect = test.expect
@@ -25,7 +26,7 @@ expect(function()
 end):toThrow()
 
 -- what does not hold raises an error that says which matcher, why, and with what
-local function raised(assertion: () -> ()): string
+local function raised(assertion: () -> ...unknown): string
 	local ok, err = pcall(assertion)
 	assert(not ok, "the expectation held")
 	return tostring(err)
@@ -92,7 +93,7 @@ assert((test :: any).it == nil)
 
 -- arguments of the wrong shape are refused, with their place
 local function refused(place: string, call: () -> ...unknown)
-	starts(raised(call :: any):gsub("^runtime error: ", ""), place)
+	starts(raised(call):gsub("^runtime error: ", ""), place)
 end
 refused("lib:test.test: argument #2 'body': expected a function, got nil", function()
 	return (test.test :: any)("name")

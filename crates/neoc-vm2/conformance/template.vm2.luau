@@ -1,3 +1,4 @@
+--!strict
 -- intentional: errors are typed (compile: syntax, too_complex, unsupported; render: those and failed, recursion_limit, recursive_render, engine_panic; add_filter: empty_name) and a too_complex reason no longer starts with "template too complex: "; a context that is not a table of names to plain data (a number, a list, a buffer inside) and a wrong or unknown option are refused as arguments with their place (they were returned errors); a filter is given nil for a null and plain tables (no null sentinel); add_filter's second parameter is named filter (it was fn).
 local template = require("lib:template")
 
@@ -15,7 +16,7 @@ for _, source in { '{% include "other" %}', '{% extends "base" %}', "{% macro m(
 end
 
 -- the one-shot render has the same three, and its own
-local function render_kind(source: string, context: { [string]: unknown }?): string
+local function render_kind(source: string, context: { [string]: any }?): string
 	local rendered, err = template.render(source, context or {})
 	assert(rendered == nil and err ~= nil and err.op == "lib:template.render", source)
 	return err.kind

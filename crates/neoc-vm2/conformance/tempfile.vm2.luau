@@ -1,3 +1,4 @@
+--!strict
 -- intentional: a failure is a typed TempError (not_found, permission_denied, invalid_input, closed, other), TempFile.new and TempDir.new are gone (they were tempfile and tempdir under a second name) and so is gettempdir (it is std:env's temp_dir), TempFile:close reports a failure to remove the file as TempDir:close always did (it returned nothing), and an option that does not exist or has the wrong type is refused as a wrong argument with its place.
 local tempfile = require("lib:tempfile")
 local fs = require("std:fs")
