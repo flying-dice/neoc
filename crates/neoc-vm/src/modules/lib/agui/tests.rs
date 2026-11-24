@@ -9,7 +9,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 
-use crate::make_engine;
+use neoc_vm_core::make_engine;
 
 async fn listen<F, Fut>(serve: F) -> u16
 where
@@ -329,7 +329,7 @@ async fn closing_a_run_closes_its_connection_and_so_does_shutting_the_engine_dow
     .await;
     assert_eq!(got, "nil nil");
     closed.recv().await.expect("the closed run's connection");
-    crate::lifecycle::Life::of(&lua).shutdown();
+    neoc_vm_core::lifecycle::Life::of(&lua).shutdown();
     closed.recv().await.expect("the held run's connection");
 }
 

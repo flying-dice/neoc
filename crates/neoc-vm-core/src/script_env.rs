@@ -102,7 +102,7 @@ pub fn new_env(lua: &Lua) -> mlua::Result<Table> {
 /// an error) and refuses a bound that has no integer representation.
 fn install_private_random(lua: &Lua, math: &Table) -> mlua::Result<()> {
     let mut seed = [0u8; 8];
-    crate::modules::lib::random::fill_random(&mut seed).map_err(mlua::Error::runtime)?;
+    crate::random::fill_random(&mut seed).map_err(mlua::Error::runtime)?;
     let state = Arc::new(Mutex::new(splitmix(u64::from_le_bytes(seed))));
     let next = |state: &Mutex<u64>| {
         let mut x = state.lock();

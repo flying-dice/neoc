@@ -368,7 +368,7 @@ pub mod cache {
 mod tests {
     use mlua::Lua;
 
-    use crate::make_engine;
+    use neoc_vm_core::make_engine;
 
     const PRELUDE: &str = "local cache = require(\"lib:cache\")\nlocal time = require(\"std:time\")\n";
 

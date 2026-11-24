@@ -36,7 +36,7 @@ pub mod path {
     use serde::Serialize;
 
     use super::normalized;
-    use crate::modules::std::osstr::OsPath;
+    use neoc_vm_core::osstr::OsPath;
 
     /// The platform's preferred path separator: `"/"` on Unix, `"\\"` on Windows.
     #[allow(non_upper_case_globals)]
@@ -179,7 +179,7 @@ pub mod path {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::make_engine;
+    use neoc_vm_core::make_engine;
 
     /// Evaluates a Lua expression with `path` bound to the module.
     fn eval<T: mlua::FromLuaMulti>(source: &str) -> T {

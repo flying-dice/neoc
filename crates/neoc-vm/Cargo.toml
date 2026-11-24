@@ -13,6 +13,7 @@ name = "neoc_vm"
 path = "src/lib.rs"
 
 [dependencies]
+neoc-vm-core = { workspace = true }
 mlua-ir = { workspace = true }
 mlua-ir-gen = { workspace = true }
 # The engine is Luau.
@@ -20,7 +21,6 @@ mlua = { version = "0.12", features = ["luau", "async", "send", "serialize", "ma
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 tracing = "0.1"
-tracing-core = "0.1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "net", "io-util", "process", "signal", "fs"] }
 parking_lot = "0.13"
 futures = { version = "0.3", default-features = false, features = ["std"] }
@@ -132,6 +132,7 @@ neoc-agui = { path = "../neoc-agui" }
 rustix = { version = "1", features = ["process"] }
 
 [dev-dependencies]
+tracing-core = "0.1"
 # a self-signed certificate for the `vnd:hyper` TLS tests
 rcgen = "0.14"
 

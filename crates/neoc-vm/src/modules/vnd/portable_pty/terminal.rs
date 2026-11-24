@@ -40,9 +40,9 @@ use tokio::sync::{mpsc, watch};
 
 use super::options::Command;
 use super::portable_pty::{ExitStatus as Exit, PtyError};
-use crate::byte_stream::{Job, Output, READ_CHUNK, WriteFailed, submit};
-use crate::child_exit::{self, Ended, WaitFailed};
-use crate::command_options::existing_dir;
+use neoc_vm_core::byte_stream::{Job, Output, READ_CHUNK, WriteFailed, submit};
+use neoc_vm_core::child_exit::{self, Ended, WaitFailed};
+use neoc_vm_core::command_options::existing_dir;
 
 /// How long the child's thread sleeps between two looks at a process that gave no sign of ending. The end of the
 /// output wakes it at once (see [`Signal::Look`]), so this is only how late `wait()` learns of a process that ended

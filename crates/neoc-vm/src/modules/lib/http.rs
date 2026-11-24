@@ -481,7 +481,7 @@ pub mod http {
     use tokio::net::TcpListener;
 
     use super::{GlobError, build_index, resolve_glob, serve_loop};
-    use crate::lifecycle::Life;
+    use neoc_vm_core::lifecycle::Life;
 
     /// Where `serve_static` listens.
     #[derive(Debug, Clone, Serialize, Deserialize, Options)]
@@ -618,7 +618,7 @@ mod tests {
     use tokio::net::TcpStream;
 
     use super::*;
-    use crate::lifecycle::Life;
+    use neoc_vm_core::lifecycle::Life;
 
     /// The connections of a static server belong to its serve loop: when the loop is dropped (the call running
     /// it was cancelled) an open connection is closed with it, not left running.
@@ -936,7 +936,7 @@ mod tests {
         for stop in [Life::stop_background, Life::shutdown] {
             let (dir, _, _) = site();
             let life = Life::new();
-            let lua = crate::make_engine_in(life.clone()).unwrap();
+            let lua = neoc_vm_core::make_engine_in(life.clone()).unwrap();
             let port = free_port();
             let addr = format!("127.0.0.1:{port}");
             lua.globals().set("pattern", pattern_in(&dir, "**/*.txt")).unwrap();
@@ -972,7 +972,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_server_that_cannot_start_returns_a_typed_error() {
         let dir = tempfile::tempdir().unwrap();
-        let lua = crate::make_engine().unwrap();
+        let lua = neoc_vm_core::make_engine().unwrap();
         let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         lua.globals().set("dir", dir.path().display().to_string().replace('\\', "/")).unwrap();
         lua.globals().set("taken", taken.local_addr().unwrap().port()).unwrap();

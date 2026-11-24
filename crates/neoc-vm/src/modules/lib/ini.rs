@@ -258,7 +258,7 @@ mod tests {
     use mlua::{Lua, Table};
 
     fn engine() -> Lua {
-        let lua = crate::make_engine().expect("engine");
+        let lua = neoc_vm_core::make_engine().expect("engine");
         let m: Table = lua.load(r#"return require("lib:ini")"#).eval().unwrap();
         lua.globals().set("ini", m).unwrap();
         lua

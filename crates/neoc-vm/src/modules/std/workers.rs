@@ -82,7 +82,7 @@ mod tests {
     use super::workers::ShutdownSignal;
 
     fn engine() -> mlua::Lua {
-        let lua = crate::make_engine().expect("engine");
+        let lua = neoc_vm_core::make_engine().expect("engine");
         let workers: mlua::Table = lua.load(r#"return require("std:workers")"#).eval().unwrap();
         lua.globals().set("workers", workers).unwrap();
         lua

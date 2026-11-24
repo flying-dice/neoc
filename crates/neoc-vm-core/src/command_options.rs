@@ -10,17 +10,17 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 /// The most arguments a command takes, and the most environment variables.
-pub(crate) const MAX_ITEMS: usize = 1024;
+pub const MAX_ITEMS: usize = 1024;
 
 /// The longest program, argument, directory or environment value, in bytes. The operating system has its own limit
 /// on all of them together, and a command past that fails when it is started.
-pub(crate) const MAX_TEXT: usize = 128 * 1024;
+pub const MAX_TEXT: usize = 128 * 1024;
 
 /// An option of a command that was refused, and why: `option "<option>" <reason>`.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct Refused {
-    pub(crate) option: &'static str,
-    pub(crate) reason: String,
+pub struct Refused {
+    pub option: &'static str,
+    pub reason: String,
 }
 
 impl Refused {
@@ -51,7 +51,7 @@ fn too_many(option: &'static str) -> Refused {
 }
 
 /// The program of a command: a path, or a name looked up in `PATH`. Not empty.
-pub(crate) fn program(option: &'static str, program: &Path) -> Result<(), Refused> {
+pub fn program(option: &'static str, program: &Path) -> Result<(), Refused> {
     let bytes = program.as_os_str().as_encoded_bytes();
     if bytes.is_empty() {
         return Err(Refused::must_be(option, "the name or the path of a program"));
@@ -60,7 +60,7 @@ pub(crate) fn program(option: &'static str, program: &Path) -> Result<(), Refuse
 }
 
 /// The directory a command starts in. Not empty.
-pub(crate) fn dir(option: &'static str, dir: &Path) -> Result<(), Refused> {
+pub fn dir(option: &'static str, dir: &Path) -> Result<(), Refused> {
     let bytes = dir.as_os_str().as_encoded_bytes();
     if bytes.is_empty() {
         return Err(Refused::must_be(option, "the path of a directory"));
@@ -69,7 +69,7 @@ pub(crate) fn dir(option: &'static str, dir: &Path) -> Result<(), Refused> {
 }
 
 /// The arguments of a command: at most [`MAX_ITEMS`] of them.
-pub(crate) fn args(option: &'static str, args: &[String]) -> Result<(), Refused> {
+pub fn args(option: &'static str, args: &[String]) -> Result<(), Refused> {
     if args.len() > MAX_ITEMS {
         return Err(too_many(option));
     }
@@ -77,7 +77,7 @@ pub(crate) fn args(option: &'static str, args: &[String]) -> Result<(), Refused>
 }
 
 /// The environment variables a command is given: at most [`MAX_ITEMS`] names, each with a value.
-pub(crate) fn env(option: &'static str, env: &BTreeMap<String, String>) -> Result<(), Refused> {
+pub fn env(option: &'static str, env: &BTreeMap<String, String>) -> Result<(), Refused> {
     if env.len() > MAX_ITEMS {
         return Err(too_many(option));
     }
@@ -95,7 +95,7 @@ pub(crate) fn env(option: &'static str, env: &BTreeMap<String, String>) -> Resul
 
 /// Check that `cwd` is a directory. It is checked here and not left to the start of the command: the operating
 /// system reports a missing directory as if the program were missing.
-pub(crate) fn existing_dir(cwd: &Path) -> Result<(), String> {
+pub fn existing_dir(cwd: &Path) -> Result<(), String> {
     if cwd.is_dir() {
         Ok(())
     } else {

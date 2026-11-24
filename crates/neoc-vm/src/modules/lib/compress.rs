@@ -227,7 +227,7 @@ mod tests {
     use mlua::Lua;
 
     use super::*;
-    use crate::make_engine;
+    use neoc_vm_core::make_engine;
 
     const FORMATS: [Format; 4] = [Format::Gzip, Format::Zlib, Format::Zstd, Format::Brotli];
 

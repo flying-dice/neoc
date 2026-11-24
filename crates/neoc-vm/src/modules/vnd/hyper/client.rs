@@ -13,7 +13,7 @@
 
 use mlua::Lua;
 
-use crate::lifecycle::Life;
+use neoc_vm_core::lifecycle::Life;
 
 mod error;
 mod exchange;

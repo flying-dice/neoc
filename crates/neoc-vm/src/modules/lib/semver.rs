@@ -359,7 +359,7 @@ mod tests {
     use super::{bump_prerelease, coerce_version};
 
     fn eval<T: mlua::FromLuaMulti>(code: &str) -> T {
-        let lua = crate::make_engine().expect("engine");
+        let lua = neoc_vm_core::make_engine().expect("engine");
         let m: mlua::Table = lua.load(r#"return require("lib:semver")"#).eval().unwrap();
         lua.globals().set("semver", m).unwrap();
         lua.load(code).eval().unwrap()
@@ -628,7 +628,7 @@ mod tests {
 
     #[test]
     fn increment_gives_the_next_version() {
-        let lua = crate::make_engine().expect("engine");
+        let lua = neoc_vm_core::make_engine().expect("engine");
         let next: mlua::Function = lua
             .load(
                 r#"

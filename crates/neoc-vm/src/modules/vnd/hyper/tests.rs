@@ -3,8 +3,8 @@
 
 use mlua::Lua;
 
-use crate::lifecycle::Life;
-use crate::{make_engine, make_engine_in};
+use neoc_vm_core::lifecycle::Life;
+use neoc_vm_core::{make_engine, make_engine_in};
 
 const PRELUDE: &str = r#"
 local net = require("std:net")

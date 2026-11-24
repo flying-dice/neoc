@@ -37,7 +37,7 @@ use super::idle::{Fired, IdleIo};
 use super::options::{Limits, Prepared};
 use super::redirect;
 use super::tls::Tls;
-use crate::lifecycle::Life;
+use neoc_vm_core::lifecycle::Life;
 
 /// A finished response: the last one of the redirect chain, its body read in full.
 pub(crate) struct Response {
@@ -389,7 +389,7 @@ where
     let panicked = Arc::clone(&lost);
     let driver = life.spawn(Driver {
         conn: Box::pin(async move {
-            if let Err(message) = crate::panics::caught(conn).await {
+            if let Err(message) = neoc_vm_core::panics::caught(conn).await {
                 panicked.store(true, Ordering::SeqCst);
                 tracing::error!(target: "lua::lib::hyper", "connection driver panicked: {message}");
             }

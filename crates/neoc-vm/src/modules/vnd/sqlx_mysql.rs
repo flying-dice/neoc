@@ -439,7 +439,7 @@ pub mod sqlx_mysql {
 #[cfg(test)]
 mod tests {
     use super::{Kind, classify};
-    use crate::make_engine;
+    use neoc_vm_core::make_engine;
 
     #[test]
     fn column_types_are_classified() {

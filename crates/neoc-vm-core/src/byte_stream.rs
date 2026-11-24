@@ -19,20 +19,20 @@ use crate::lifecycle::idle;
 
 /// The most bytes one read returns, and how many it returns when it is not told: a size that fits in one message
 /// of most transports once it is encoded.
-pub(crate) const MAX_READ: usize = 64 * 1024;
+pub const MAX_READ: usize = 64 * 1024;
 
 /// The most bytes one write takes: far more than a paste or a message, and little enough to copy without a thought.
-pub(crate) const MAX_WRITE: usize = 1024 * 1024;
+pub const MAX_WRITE: usize = 1024 * 1024;
 
 /// The most output held between the process and the script. Past it the reader waits, the operating system's own
 /// buffer fills, and the process waits in its write.
-pub(crate) const OUTPUT_BUFFER: usize = 256 * 1024;
+pub const OUTPUT_BUFFER: usize = 256 * 1024;
 
 /// How much a reader asks the operating system for at a time.
-pub(crate) const READ_CHUNK: usize = 16 * 1024;
+pub const READ_CHUNK: usize = 16 * 1024;
 
 /// A read's `max`: from 1 to [`MAX_READ`] bytes, and [`MAX_READ`] when it is not said.
-pub(crate) fn read_size(max: Option<u32>) -> Result<usize, String> {
+pub fn read_size(max: Option<u32>) -> Result<usize, String> {
     match max.map(usize::try_from) {
         None => Ok(MAX_READ),
         Some(Ok(max)) if (1..=MAX_READ).contains(&max) => Ok(max),
@@ -41,7 +41,7 @@ pub(crate) fn read_size(max: Option<u32>) -> Result<usize, String> {
 }
 
 /// The bytes of one write: at most [`MAX_WRITE`] of them.
-pub(crate) fn write_data(data: Vec<u8>) -> Result<Vec<u8>, String> {
+pub fn write_data(data: Vec<u8>) -> Result<Vec<u8>, String> {
     if data.len() > MAX_WRITE { Err(format!("one write takes at most {MAX_WRITE} bytes")) } else { Ok(data) }
 }
 
@@ -64,7 +64,7 @@ struct OutputState {
 }
 
 /// The output a process wrote and the script has not read yet.
-pub(crate) struct Output {
+pub struct Output {
     state: Mutex<OutputState>,
     /// Told when there is something for a read: bytes, the end, or a close.
     readable: Notify,
@@ -74,8 +74,14 @@ pub(crate) struct Output {
     room: Notify,
 }
 
+impl Default for Output {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Output {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             state: Mutex::new(OutputState { bytes: VecDeque::new(), ended: None, closed: false }),
             readable: Notify::new(),
@@ -106,7 +112,7 @@ impl Output {
 
     /// For a reader on a thread: add what it read, waiting for room first. `false` once the stream is closed: the
     /// reader stops.
-    pub(crate) fn push_blocking(&self, chunk: &[u8]) -> bool {
+    pub fn push_blocking(&self, chunk: &[u8]) -> bool {
         let mut state = self.state.lock();
         while state.bytes.len() >= OUTPUT_BUFFER && !state.closed {
             self.room_blocking.wait(&mut state);
@@ -122,7 +128,7 @@ impl Output {
 
     /// For a reader in a task: wait for room for one more chunk. `false` once the stream is closed: the reader
     /// stops.
-    pub(crate) async fn room(&self) -> bool {
+    pub async fn room(&self) -> bool {
         self.settled(&self.room, |state| {
             if state.closed { Some(false) } else { (state.bytes.len() < OUTPUT_BUFFER).then_some(true) }
         })
@@ -130,13 +136,13 @@ impl Output {
     }
 
     /// For a reader in a task: wait for the close.
-    pub(crate) async fn closed(&self) {
+    pub async fn closed(&self) {
         self.settled(&self.room, |state| state.closed.then_some(())).await;
     }
 
     /// For a reader in a task: add what it read (after [`Output::room`]). Dropped when the stream was closed
     /// meanwhile.
-    pub(crate) fn push(&self, chunk: &[u8]) {
+    pub fn push(&self, chunk: &[u8]) {
         {
             let mut state = self.state.lock();
             if state.closed {
@@ -148,13 +154,13 @@ impl Output {
     }
 
     /// The reader stopped: at the end of the output (`Ok`), or because reading failed.
-    pub(crate) fn finish(&self, end: Result<(), String>) {
+    pub fn finish(&self, end: Result<(), String>) {
         self.state.lock().ended = Some(end);
         self.readable.notify_waiters();
     }
 
     /// Drop what was not read, end every read and free a reader that waits for room.
-    pub(crate) fn close(&self) {
+    pub fn close(&self) {
         {
             let mut state = self.state.lock();
             state.closed = true;
@@ -203,7 +209,7 @@ impl Output {
 }
 
 /// What a read returns.
-pub(crate) enum Read {
+pub enum Read {
     Bytes(Vec<u8>),
     /// The end of the output, or a closed stream.
     End,
@@ -219,7 +225,7 @@ pub(crate) enum Read {
 ///
 /// # Errors
 /// The call cannot wait where it was made.
-pub(crate) async fn read(output: &Output, max: usize) -> mlua::Result<Read> {
+pub async fn read(output: &Output, max: usize) -> mlua::Result<Read> {
     loop {
         idle(output.readable()).await?;
         match output.take(max) {
@@ -232,21 +238,21 @@ pub(crate) async fn read(output: &Output, max: usize) -> mlua::Result<Read> {
 }
 
 /// One piece of input for a writer, and where it says how the write went.
-pub(crate) struct Job {
-    pub(crate) data: Vec<u8>,
+pub struct Job {
+    pub data: Vec<u8>,
     done: oneshot::Sender<Result<(), String>>,
 }
 
 impl Job {
     /// Say how the write went.
-    pub(crate) fn finish(self, written: std::io::Result<()>) {
+    pub fn finish(self, written: std::io::Result<()>) {
         // the call may be gone
         let _ = self.done.send(written.map_err(|e| e.to_string()));
     }
 }
 
 /// Why a write was not made.
-pub(crate) enum WriteFailed {
+pub enum WriteFailed {
     /// The stream was closed, before the write or while it waited.
     Closed,
     /// The operating system refused the bytes, in its words.
@@ -259,7 +265,7 @@ pub(crate) enum WriteFailed {
 /// The queue is let go of as soon as the writer has the job, so a write that waits does not keep the queue open
 /// (dropping the queue is one way a stream's input is ended). A job that is queued is the writer's: a call that
 /// is dropped, or whose task is cancelled, does not take it back.
-pub(crate) async fn submit(
+pub async fn submit(
     input: Option<mpsc::Sender<Job>>,
     data: Vec<u8>,
     mut closed: watch::Receiver<bool>,

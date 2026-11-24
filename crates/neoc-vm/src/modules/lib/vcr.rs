@@ -338,7 +338,7 @@ mod tests {
 
     /// An engine with `vcr`, `base64` and `dir` (a directory of its own, with `/` separators) as globals.
     fn engine() -> (Lua, tempfile::TempDir) {
-        let lua = crate::make_engine().expect("engine");
+        let lua = neoc_vm_core::make_engine().expect("engine");
         let dir = tempfile::tempdir().expect("tempdir");
         lua.load(r#"vcr = require("lib:vcr") base64 = require("lib:base64")"#).exec().unwrap();
         lua.globals().set("dir", dir.path().to_str().expect("utf-8").replace('\\', "/")).unwrap();

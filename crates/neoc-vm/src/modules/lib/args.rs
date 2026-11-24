@@ -551,7 +551,7 @@ pub mod args {
 mod tests {
     use mlua::{Lua, Table, Value};
 
-    use crate::make_engine;
+    use neoc_vm_core::make_engine;
 
     fn lua() -> Lua {
         let lua = make_engine().unwrap();

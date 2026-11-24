@@ -185,9 +185,9 @@ pub mod hyper {
 
     use super::client::{self, HyperError, RequestOptions};
     use super::{Body, RequestParts, server};
-    use crate::lifecycle::Life;
     use crate::modules::lib::json::json::Node;
     use crate::modules::std::net::net::TcpListener;
+    use neoc_vm_core::lifecycle::Life;
 
     /// What a client function hands a script: the last response of the redirect chain, its body read in full. A
     /// 4xx or 5xx status is a response, not an error.

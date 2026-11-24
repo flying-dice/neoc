@@ -10,7 +10,8 @@ function workspace(
     "vos-domain": [],
     "vos-application": ["vos-domain"],
     "vos-lua": ["vos-domain", "vos-application", "neoc-vm"],
-    "neoc-vm": ["neoc-agui", "mlua", "rusqlite"],
+    "neoc-vm": ["neoc-vm-core", "neoc-agui", "mlua", "rusqlite"],
+    "neoc-vm-core": ["mlua"],
     "neoc-agui": [],
     neoc: ["neoc-vm", "mlua"],
     "vos-sqlite": ["vos-domain", "vos-application", "rusqlite"],
@@ -59,7 +60,14 @@ describe("the crate-direction gate", () => {
         workspace({ "neoc-vm": [{ name: "vos-domain", kind: null }] }),
       ).problems,
     ).toEqual([
-      "neoc-vm -> vos-domain: internal edge not allowed (allowed: neoc-agui)",
+      "neoc-vm -> vos-domain: internal edge not allowed (allowed: neoc-agui and the VM crates)",
+    ]);
+    expect(
+      findProblems(
+        workspace({ "neoc-vm-core": [{ name: "vos-domain", kind: null }] }),
+      ).problems,
+    ).toEqual([
+      "neoc-vm-core -> vos-domain: internal edge not allowed (allowed: neoc-agui and the VM crates)",
     ]);
     const host = findProblems(
       workspace({ "vos-host": [{ name: "neoc-vm", kind: null }] }),

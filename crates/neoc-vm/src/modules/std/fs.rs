@@ -61,7 +61,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use error::{FsError, FsResult, Kind};
 
-use crate::modules::std::osstr::OsPath;
+use neoc_vm_core::osstr::OsPath;
 
 /// A script's path as a path: a NUL byte is refused here, on every platform, with a message that says so (the
 /// operating system would call it an invalid argument).
@@ -117,8 +117,8 @@ pub mod fs {
     use super::watch::{self, Event, Watch};
     use super::{blocking, path_of};
     use crate::modules::std::io::io::{Reader, Writer};
-    use crate::modules::std::osstr::OsPath;
     use crate::modules::std::time::time::Duration;
+    use neoc_vm_core::osstr::OsPath;
 
     /// One entry of a `read_dir` or `walk` listing.
     #[derive(Debug, Clone, Serialize, Shape)]

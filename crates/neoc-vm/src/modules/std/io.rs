@@ -308,7 +308,7 @@ pub(crate) mod testing {
     /// module `name` as the global `global`.
     pub(crate) fn engine(name: &str, global: &str) -> (mlua::Lua, Sink) {
         use super::io::Reader;
-        let lua = crate::make_engine().expect("engine");
+        let lua = neoc_vm_core::make_engine().expect("engine");
         let sink = Sink::default();
         let globals = lua.globals();
         globals.set("writer", lua.create_userdata(Writer::of(sink.clone())).unwrap()).unwrap();

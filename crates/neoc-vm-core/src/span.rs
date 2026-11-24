@@ -39,7 +39,7 @@ fn cache() -> &'static Cache {
 }
 
 /// An unentered `INFO` span named `name` at `target`, with no fields.
-pub(crate) fn dyn_span(target: &str, name: &str) -> tracing::Span {
+pub fn dyn_span(target: &str, name: &str) -> tracing::Span {
     let meta = {
         let mut cache = cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         *cache.entry((target.to_owned(), name.to_owned())).or_insert_with(|| {

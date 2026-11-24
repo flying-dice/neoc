@@ -1,6 +1,6 @@
 //! Cooperative tasks: `std:task`.
 //!
-//! The scheduler is [`crate::scheduler`]; this is what a script reaches of it.
+//! The scheduler is [`neoc_vm_core::scheduler`]; this is what a script reaches of it.
 //!
 //! ```lua
 //! local task = require("std:task")
@@ -25,8 +25,8 @@ pub mod task {
     use mlua_ir::{Callback, Live, LuaError, Object, Variadic};
     use serde::Serialize;
 
-    use crate::limits::sleep_duration;
-    use crate::scheduler::{self, Outcome, TaskHandle};
+    use neoc_vm_core::limits::sleep_duration;
+    use neoc_vm_core::scheduler::{self, Outcome, TaskHandle};
 
     mlua_ir::unknown_reason!(
         /// Why what a task returns has no declared shape.
@@ -164,7 +164,7 @@ mod tests {
     use super::task::TaskError;
 
     fn engine() -> Lua {
-        let lua = crate::make_engine().expect("engine");
+        let lua = neoc_vm_core::make_engine().expect("engine");
         let task: mlua::Table = lua.load(r#"return require("std:task")"#).eval().unwrap();
         lua.globals().set("task", task).unwrap();
         lua

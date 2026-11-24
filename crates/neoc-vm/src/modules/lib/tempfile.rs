@@ -28,7 +28,7 @@ pub mod tempfile {
     use parking_lot::Mutex;
     use serde::{Deserialize, Serialize};
 
-    use crate::modules::std::osstr::OsPath;
+    use neoc_vm_core::osstr::OsPath;
 
     /// Why a temporary file or directory could not be made, kept or removed. The kind is the operating system's.
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error, LuaError)]
@@ -217,7 +217,7 @@ mod tests {
     use mlua::{Lua, Table, Value};
 
     fn engine() -> Lua {
-        let lua = crate::make_engine().expect("engine");
+        let lua = neoc_vm_core::make_engine().expect("engine");
         let m: Table = lua.load(r#"return require("lib:tempfile")"#).eval().unwrap();
         lua.globals().set("tempfile", m).unwrap();
         lua

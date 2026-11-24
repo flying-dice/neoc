@@ -20,8 +20,9 @@ cargo fmt --check
 step "cargo clippy --workspace --all-targets -- -D warnings"
 cargo clippy --workspace --all-targets -- -D warnings
 
-step "cargo test -p neoc -p neoc-vm"
-cargo test -p neoc -p neoc-vm
+# `neoc-*` is the runtime: neoc-vm, neoc-vm-core, neoc-vm-std and the neoc-lib-* and neoc-vnd-* module crates (and neoc-agui).
+step "cargo test -p neoc -p 'neoc-*'"
+cargo test -p neoc -p 'neoc-*'
 
 # No test reaches the internet (the hyper ones run against servers in the process); `cargo deny check` below needs
 # network.
@@ -44,8 +45,8 @@ cargo deny check
 step "vos-codegen --check (generated files current against the Rust schema of the modules)"
 cargo run -q -p vos-codegen -- --check
 
-# neoc and neoc-vm never depend on a vos-* crate, not even as a dev-dependency (no vos concept in the runtime).
-step "no vos-* crate in the dependency tree of neoc or neoc-vm"
+# neoc and the VM crates never depend on a vos-* crate, not even as a dev-dependency (no vos concept in the runtime).
+step "no vos-* crate in the dependency tree of neoc or the VM crates"
 scripts/check-no-vos-leak.sh
 
 step "cargo check --workspace --all-targets --locked"

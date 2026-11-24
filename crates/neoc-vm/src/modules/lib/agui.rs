@@ -90,8 +90,8 @@ pub mod agui {
     use serde::{Deserialize, Serialize};
 
     use super::{AgentData, Data, MessageContent};
-    use crate::lifecycle::Life;
     use crate::modules::vnd::hyper::client::{HyperError, Prepared, RequestOptions, Streamed, TimeLimit};
+    use neoc_vm_core::lifecycle::Life;
 
     /// How long a run may send nothing before it is given up, unless `idle_timeout` says otherwise.
     const DEFAULT_IDLE_SECS: f64 = 300.0;

@@ -42,9 +42,9 @@ use tokio::sync::{mpsc, watch};
 use super::process::{
     Closed, Command, ExitStatus as Exit, ProcessError, SpawnCause, Stdio as Stream, Stream as Name,
 };
-use crate::byte_stream::{Job, Output, READ_CHUNK, WriteFailed, submit};
-use crate::child_exit::{self, Ended, WaitFailed};
-use crate::command_options::existing_dir;
+use neoc_vm_core::byte_stream::{Job, Output, READ_CHUNK, WriteFailed, submit};
+use neoc_vm_core::child_exit::{self, Ended, WaitFailed};
+use neoc_vm_core::command_options::existing_dir;
 
 impl From<ExitStatus> for Exit {
     fn from(status: ExitStatus) -> Self {

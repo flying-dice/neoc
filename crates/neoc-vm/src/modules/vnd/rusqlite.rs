@@ -371,7 +371,7 @@ pub mod rusqlite {
 mod tests {
     use mlua::Lua;
 
-    use crate::make_engine;
+    use neoc_vm_core::make_engine;
 
     const PRELUDE: &str = "local rusqlite = require(\"vnd:rusqlite\")\n";
 

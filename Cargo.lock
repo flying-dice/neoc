@@ -3358,6 +3358,7 @@ dependencies = [
  "mlua-ir",
  "mlua-ir-gen",
  "neoc-agui",
+ "neoc-vm-core",
  "notify",
  "p256",
  "parking_lot 0.13.0",
@@ -3409,6 +3410,22 @@ dependencies = [
  "xxhash-rust",
  "zip",
  "zstd",
+]
+
+[[package]]
+name = "neoc-vm-core"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "mlua",
+ "mlua-ir",
+ "parking_lot 0.13.0",
+ "rand 0.10.4",
+ "serde",
+ "strsim",
+ "tokio",
+ "tracing",
+ "tracing-core",
 ]
 
 [[package]]

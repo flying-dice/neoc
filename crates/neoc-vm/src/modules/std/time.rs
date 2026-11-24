@@ -458,7 +458,7 @@ fn format_fraction(nanos: u128, divisor: u128, unit: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::make_engine;
+    use neoc_vm_core::make_engine;
 
     fn rt() -> tokio::runtime::Runtime {
         tokio::runtime::Runtime::new().unwrap()

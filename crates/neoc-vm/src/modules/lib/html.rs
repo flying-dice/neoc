@@ -108,7 +108,7 @@ mod tests {
     use super::{escape_str, unescape_str};
 
     fn eval<T: mlua::FromLuaMulti>(code: &str) -> T {
-        let lua = crate::make_engine().expect("engine");
+        let lua = neoc_vm_core::make_engine().expect("engine");
         let m: mlua::Table = lua.load(r#"return require("lib:html")"#).eval().unwrap();
         lua.globals().set("html", m).unwrap();
         lua.load(code).eval().unwrap()

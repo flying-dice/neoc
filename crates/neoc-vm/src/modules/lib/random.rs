@@ -6,8 +6,7 @@
 //! Counts are `u32` (a negative one is refused as an argument), the alphabet of `random_string` is a `String` (not
 //! valid UTF-8 is refused as an argument), and every failure is a typed error table.
 
-use rand::TryRng;
-use rand::rngs::SysRng;
+use neoc_vm_core::random::fill_random;
 
 /// The largest buffer, counted in bytes or in characters, that one call may size: 1 Gi. A bigger request is an
 /// error rather than an allocation failure that takes the whole process down.
@@ -15,11 +14,6 @@ const MAX_BUFFER: u32 = 1 << 30;
 
 /// The default alphabet of `random_string`: digits, upper and lower case letters (about 5.95 bits a character).
 const DEFAULT_ALPHABET: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-
-/// Fill `buf` from the OS CSPRNG; an entropy-source failure is the reason, as text.
-pub(crate) fn fill_random(buf: &mut [u8]) -> Result<(), String> {
-    SysRng.try_fill_bytes(buf).map_err(|e| e.to_string())
-}
 
 /// Unbiased uniform draw in `[0, span)` by rejection sampling on `u128`. `span` is at least 1.
 fn uniform_u128(span: u128) -> Result<u128, String> {
@@ -284,7 +278,7 @@ mod tests {
     use super::random::{RandomError, random_int};
 
     fn engine() -> Lua {
-        let lua = crate::make_engine().expect("engine");
+        let lua = neoc_vm_core::make_engine().expect("engine");
         let m: mlua::Table = lua.load(r#"return require("lib:random")"#).eval().unwrap();
         lua.globals().set("rng", m).unwrap();
         lua

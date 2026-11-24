@@ -15,6 +15,7 @@ publish = false
 # One place for versions. Crates say `tokio = { workspace = true }` and add features only if they need more.
 [workspace.dependencies]
 neoc-vm = { path = "crates/neoc-vm" }
+neoc-vm-core = { path = "crates/neoc-vm-core" }
 # internal (path deps; the arrows in the dependency diagram)
 vos-domain      = { path = "crates/vos-domain" }
 vos-application = { path = "crates/vos-application" }

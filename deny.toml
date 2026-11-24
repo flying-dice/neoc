@@ -16,7 +16,7 @@ multiple-versions = "allow"
 # `wrappers` = only these crates may depend on the banned crate directly.
 deny = [
   # the Lua adapter reaches mlua through neoc-vm's re-export: it does not depend on it directly
-  { crate = "mlua", wrappers = ["neoc-vm", "mlua-ir", "neoc"], reason = "Lua lives in neoc-vm, written with mlua-ir (the neoc CLI names the error type it surfaces)" },
+  { crate = "mlua", wrappers = ["neoc-vm", "neoc-vm-core", "mlua-ir", "neoc"], reason = "Lua lives in the VM crates (neoc-vm-core, neoc-vm-std and the neoc-lib-* and neoc-vnd-* module crates), written with mlua-ir (the neoc CLI names the error type it surfaces)" },
   { crate = "neoc-vm", wrappers = ["vos-lua", "neoc"], reason = "only the Lua adapter wires the VM library to the AppRuntime port (and the neoc CLI is its own front end)" },
   # the VM exposes SQLite to scripts as `vnd:rusqlite`
   { crate = "rusqlite", wrappers = ["vos-sqlite", "neoc-vm"], reason = "SQLite lives in the sqlite adapter (and the VM's vnd:rusqlite module)" },

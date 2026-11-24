@@ -1,7 +1,7 @@
 //! Worker VMs: `std:thread`.
 //!
 //! `spawn` starts a fresh Lua engine that runs on the same tokio runtime as its parent and is offered the modules
-//! its parent was (see [`set_worker_engine`](crate::engine::set_worker_engine)). Modeled after Node's
+//! its parent was (see [`set_worker_engine`](neoc_vm_core::engine::set_worker_engine)). Modeled after Node's
 //! `worker_threads`: a worker starts from *source* (or a file), takes plain data as its argument, and talks to its
 //! parent through a two-way channel, `thread.parent()`.
 //!
@@ -24,7 +24,7 @@
 //! State is *shared* by handing over handles on it ([`thread::Shared`]): the worker's handle and its parent's are
 //! the same map, counter or socket.
 //!
-//! A worker is registered with the [`Life`](crate::Life) of the script that started it: shutting the script down
+//! A worker is registered with the [`Life`](neoc_vm_core::Life) of the script that started it: shutting the script down
 //! aborts the worker, whose VM and tasks go with it. A worker whose handle is dropped is aborted too.
 //!
 //! The API's rules:
@@ -42,10 +42,10 @@ use std::collections::BTreeMap;
 
 use mlua::Value;
 
-use crate::engine::{WorkerEngineFn, load_source};
-use crate::lifecycle::Life;
-use crate::modules::lib::log::{LogFn, log_sink, set_log_sink};
-use crate::panics;
+use neoc_vm_core::engine::{WorkerEngineFn, load_source};
+use neoc_vm_core::lifecycle::Life;
+use neoc_vm_core::log_sink::{LogFn, log_sink, set_log_sink};
+use neoc_vm_core::panics;
 
 /// What a worker script was started with: its engine's app data.
 struct WorkerContext {
@@ -92,11 +92,11 @@ pub mod thread {
     use tokio::sync::{Mutex as AsyncMutex, mpsc};
 
     use super::{WorkerContext, log_sink, run_worker};
-    use crate::engine::worker_engine;
-    use crate::lifecycle::Life;
     use crate::modules::std::collections::collections::{Counter, Map};
     use crate::modules::std::net::net::TcpListener;
-    use crate::modules::std::osstr::OsPath;
+    use neoc_vm_core::engine::worker_engine;
+    use neoc_vm_core::lifecycle::Life;
+    use neoc_vm_core::osstr::OsPath;
 
     mlua_ir::unknown_reason!(
         /// Why what scripts pass each other has no declared shape.
@@ -358,14 +358,14 @@ pub mod thread {
 mod tests {
     use mlua::{FromLuaMulti, Lua};
 
-    use crate::Life;
+    use neoc_vm_core::Life;
 
     fn engine() -> Lua {
         engine_in(Life::new())
     }
 
     fn engine_in(life: Life) -> Lua {
-        let lua = crate::make_engine_in(life).expect("engine");
+        let lua = neoc_vm_core::make_engine_in(life).expect("engine");
         for (global, module) in [("thread", "std:thread"), ("collections", "std:collections")] {
             let table: mlua::Table = lua.load(format!("return require({module:?})")).eval().unwrap();
             lua.globals().set(global, table).unwrap();
@@ -425,7 +425,7 @@ mod tests {
         let e = engine();
         let lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let kept = lines.clone();
-        crate::modules::lib::log::set_log_sink(
+        neoc_vm_core::log_sink::set_log_sink(
             &e,
             std::sync::Arc::new(move |level, line| kept.lock().unwrap().push(format!("{level} {line}"))),
         );
@@ -455,10 +455,10 @@ mod tests {
     async fn a_host_function_that_panics_in_a_worker_fails_its_await() {
         let e = engine();
         // the worker's engine is a full one with a global `explode()` that panics
-        crate::set_worker_engine(
+        neoc_vm_core::set_worker_engine(
             &e,
             std::sync::Arc::new(|life| {
-                let worker = crate::make_engine_in(life)?;
+                let worker = neoc_vm_core::make_engine_in(life)?;
                 let explode =
                     worker.create_function(|_, ()| -> mlua::Result<()> { panic!("the module broke") })?;
                 worker.globals().set("explode", explode)?;
@@ -755,7 +755,8 @@ mod tests {
     async fn spawn_rejects_bytecode() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("worker.lua");
-        let bytecode = crate::engine::luau_bytecode();
+        let bytecode = mlua::chunk::Compiler::new().set_debug_level(0).compile("return 7").expect("compile");
+        let bytecode = String::from_utf8(bytecode).expect("the bytecode of `return 7` is ASCII");
         std::fs::write(&path, &bytecode).unwrap();
         let e = engine();
         e.globals().set("bytecode", bytecode).unwrap();
@@ -775,9 +776,9 @@ mod tests {
     /// worker is built cannot start one.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_worker_is_not_offered_more_than_its_parent() {
-        let narrow = crate::make_bare_engine().expect("engine");
-        crate::install_runtime_state(&narrow, Life::new());
-        crate::modules::install_allowed(&narrow, &["std:thread", "lib:base64"]).expect("install");
+        let narrow = neoc_vm_core::make_bare_engine().expect("engine");
+        neoc_vm_core::install_runtime_state(&narrow, Life::new());
+        neoc_vm_core::modules::install_allowed(&narrow, &["std:thread", "lib:base64"]).expect("install");
         let (offered, withheld): (String, bool) = eval(
             &narrow,
             r#"
@@ -793,9 +794,9 @@ mod tests {
         assert_eq!(offered, "aGk=");
         assert!(!withheld, "the worker's `require` knows what its parent's does");
 
-        let bare = crate::make_bare_engine().expect("engine");
-        crate::install_runtime_state(&bare, Life::new());
-        let thread = crate::modules::build(&bare, "std:thread").expect("the module").expect("builds");
+        let bare = neoc_vm_core::make_bare_engine().expect("engine");
+        neoc_vm_core::install_runtime_state(&bare, Life::new());
+        let thread = neoc_vm_core::modules::build(&bare, "std:thread").expect("the module").expect("builds");
         bare.globals().set("thread", thread).unwrap();
         let (none, kind): (bool, String) =
             eval(&bare, r#"local w, err = thread.spawn("return 1") return w == nil, err.kind"#).await;

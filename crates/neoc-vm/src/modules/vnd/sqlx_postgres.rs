@@ -342,7 +342,7 @@ pub mod sqlx_postgres {
 #[cfg(test)]
 mod tests {
     use super::is_text_type;
-    use crate::make_engine;
+    use neoc_vm_core::make_engine;
 
     #[test]
     fn text_family_decodes_as_string() {

@@ -4,7 +4,7 @@
 
 use mlua::Lua;
 
-use crate::make_engine;
+use neoc_vm_core::make_engine;
 
 /// Runs `body` as a script with `dir` (a fresh temp directory) and the helpers below in scope.
 async fn run(body: &str) {

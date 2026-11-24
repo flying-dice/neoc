@@ -993,7 +993,7 @@ pub mod chrono {
 
 #[cfg(test)]
 mod tests {
-    use crate::make_engine;
+    use neoc_vm_core::make_engine;
 
     fn eval<T: mlua::FromLuaMulti>(code: &str) -> T {
         let code = format!("local chrono = require(\"lib:chrono\")\n{code}");

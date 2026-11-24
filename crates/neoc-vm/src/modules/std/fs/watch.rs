@@ -44,8 +44,8 @@ use serde::Serialize;
 use tokio::sync::Notify;
 
 use super::error::{FsError, FsResult, Kind};
-use crate::lifecycle::{Life, idle};
-use crate::modules::std::osstr::OsPath;
+use neoc_vm_core::lifecycle::{Life, idle};
+use neoc_vm_core::osstr::OsPath;
 
 /// How many changes wait for `receive` before the rest are reported as one `overflow` (the `fs.watch` doc says 4096).
 pub(super) const CAPACITY: usize = 4096;
@@ -558,7 +558,7 @@ mod tests {
     #[tokio::test]
     async fn a_watch_holds_neither_itself_nor_its_engine() {
         let dir = tempfile::tempdir().unwrap();
-        let lua = crate::make_engine().unwrap();
+        let lua = neoc_vm_core::make_engine().unwrap();
         let handle = register(start(dir.path().to_path_buf(), false).unwrap(), &lua);
         let weak_lua = lua.weak();
         drop(lua);
@@ -577,7 +577,7 @@ mod tests {
     async fn the_engines_shutdown_and_stop_background_close_its_watches() {
         let dir = tempfile::tempdir().unwrap();
         let life = Life::new();
-        let lua = crate::make_engine_in(life.clone()).unwrap();
+        let lua = neoc_vm_core::make_engine_in(life.clone()).unwrap();
         let stopped = register(start(dir.path().to_path_buf(), false).unwrap(), &lua);
         life.stop_background();
         assert!(stopped.watcher.lock().is_none(), "the system watcher is released");

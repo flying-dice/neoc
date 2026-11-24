@@ -176,7 +176,7 @@ pub mod net {
     use serde::Serialize;
 
     use super::ListenerSlot;
-    use crate::lifecycle::Life;
+    use neoc_vm_core::lifecycle::Life;
 
     /// Why a socket could not be bound, or has no address to give. The kind is the operating system's.
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error, LuaError)]
@@ -310,7 +310,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::lifecycle::Life;
+    use neoc_vm_core::lifecycle::Life;
 
     fn slot() -> Arc<ListenerSlot> {
         Arc::new(ListenerSlot::new(bind("127.0.0.1:0").unwrap()))
@@ -391,7 +391,7 @@ mod tests {
     }
 
     fn engine(life: Life) -> mlua::Lua {
-        let lua = crate::make_engine_in(life).unwrap();
+        let lua = neoc_vm_core::make_engine_in(life).unwrap();
         let net: mlua::Table = lua.load(r#"return require("std:net")"#).eval().unwrap();
         lua.globals().set("net", net).unwrap();
         lua

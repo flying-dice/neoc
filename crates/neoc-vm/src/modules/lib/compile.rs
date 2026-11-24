@@ -464,7 +464,7 @@ mod tests {
     // --- Lua API ---
 
     fn engine() -> Lua {
-        let lua = crate::make_engine().expect("engine");
+        let lua = neoc_vm_core::make_engine().expect("engine");
         let m: mlua::Table = lua.load(r#"return require("lib:compile")"#).eval().unwrap();
         lua.globals().set("compile", m).unwrap();
         lua
@@ -508,9 +508,10 @@ mod tests {
     /// offers, and then neither the script nor a module it can reach has it.
     #[test]
     fn an_embedder_can_leave_it_out() {
-        let lua = crate::make_bare_engine().expect("engine");
-        let allowed: Vec<&str> = crate::modules::names().filter(|name| *name != "lib:compile").collect();
-        crate::modules::install_allowed(&lua, &allowed).expect("install");
+        let lua = neoc_vm_core::make_bare_engine().expect("engine");
+        let allowed: Vec<&str> =
+            neoc_vm_core::modules::names().filter(|name| *name != "lib:compile").collect();
+        neoc_vm_core::modules::install_allowed(&lua, &allowed).expect("install");
         let err =
             lua.load(r#"return require("lib:compile")"#).eval::<Value>().expect_err("refused").to_string();
         assert!(err.contains(r#"unknown module "lib:compile""#), "{err}");

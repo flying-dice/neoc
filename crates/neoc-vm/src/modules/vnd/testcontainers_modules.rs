@@ -345,7 +345,7 @@ mod tests {
     use super::testcontainers_modules::ContainerError;
 
     fn engine() -> Lua {
-        crate::make_engine().expect("engine")
+        neoc_vm_core::make_engine().expect("engine")
     }
 
     /// What `generic` cannot start is refused before Docker is asked anything: no daemon is needed to say so.

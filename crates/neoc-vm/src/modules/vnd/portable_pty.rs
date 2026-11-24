@@ -87,10 +87,10 @@ pub mod portable_pty {
 
     use super::options;
     use super::terminal::Terminal;
-    use crate::byte_stream::{self, Read};
-    use crate::command_options::Refused;
-    use crate::lifecycle::{Life, hold};
-    use crate::modules::std::osstr::OsPath;
+    use neoc_vm_core::byte_stream::{self, Read};
+    use neoc_vm_core::command_options::Refused;
+    use neoc_vm_core::lifecycle::{Life, hold};
+    use neoc_vm_core::osstr::OsPath;
 
     /// Why a call of this module failed. The kind is stable; `reason` is the crate's or the operating system's
     /// wording, for a log, and may change.

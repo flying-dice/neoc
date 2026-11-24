@@ -18,7 +18,7 @@ use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 
 use super::error::DockerError;
-use crate::lifecycle::Life;
+use neoc_vm_core::lifecycle::Life;
 
 /// How many items wait between Docker and the script before the reading task waits too.
 const QUEUE: usize = 64;

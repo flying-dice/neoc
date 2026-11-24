@@ -142,7 +142,7 @@ pub mod env {
 #[cfg(test)]
 mod tests {
     fn eval<T: mlua::FromLuaMulti>(code: &str) -> T {
-        let lua = crate::make_engine().expect("engine");
+        let lua = neoc_vm_core::make_engine().expect("engine");
         let m: mlua::Table = lua.load(r#"return require("std:env")"#).eval().unwrap();
         lua.globals().set("env", m).unwrap();
         lua.load(code).eval().unwrap()

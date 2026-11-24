@@ -863,7 +863,7 @@ mod tests {
     }
 
     fn try_eval<T: mlua::FromLuaMulti>(code: &str) -> mlua::Result<T> {
-        let lua = crate::make_engine().expect("engine");
+        let lua = neoc_vm_core::make_engine().expect("engine");
         let m: mlua::Table = lua.load(r#"return require("lib:csv")"#).eval().unwrap();
         lua.globals().set("csv", m).unwrap();
         tokio::runtime::Runtime::new().unwrap().block_on(lua.load(code).eval_async())
@@ -1425,7 +1425,7 @@ mod tests {
 
     #[test]
     fn reader_claim_is_released_when_the_reader_is_dropped() {
-        let lua = crate::make_engine().expect("engine");
+        let lua = neoc_vm_core::make_engine().expect("engine");
         lua.load(
             r#"
             local csv = require("lib:csv")

@@ -19,8 +19,8 @@ use serde_json::{Value as Json, json};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
-use crate::lifecycle::Life;
-use crate::{make_engine, make_engine_in};
+use neoc_vm_core::lifecycle::Life;
+use neoc_vm_core::{make_engine, make_engine_in};
 
 // ---------------------------------------------------------------------------
 // the fake daemon

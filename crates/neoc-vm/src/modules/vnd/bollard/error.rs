@@ -177,7 +177,7 @@ mod tests {
     /// The kinds are the contract: snake_case, and a script reads the variant's own fields beside them.
     #[test]
     fn an_error_is_a_typed_table() {
-        let lua = crate::make_engine().expect("engine");
+        let lua = neoc_vm_core::make_engine().expect("engine");
         let api = mlua_ir::error_value(&of(500, "boom"), &lua, "vnd:bollard.Client:ping").unwrap();
         lua.globals().set("api", api).unwrap();
         let large = DockerError::TooLarge { limit: 64 };

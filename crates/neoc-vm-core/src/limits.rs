@@ -12,11 +12,11 @@ use std::time::Duration;
 
 /// The longest a `task.wait` / `task.delay` sleeps: 100 years. Longer (and infinite) is clamped to this,
 /// which is "never" for a process; `std::time::Duration` itself would panic building `inf`.
-pub(crate) const MAX_SLEEP_SECS: f64 = 100.0 * 365.0 * 24.0 * 3600.0;
+pub const MAX_SLEEP_SECS: f64 = 100.0 * 365.0 * 24.0 * 3600.0;
 
 /// Seconds from a script as a [`Duration`]: NaN and negative are zero, and the result never exceeds
 /// [`MAX_SLEEP_SECS`] (infinity included).
-pub(crate) fn sleep_duration(secs: f64) -> Duration {
+pub fn sleep_duration(secs: f64) -> Duration {
     if secs.is_nan() || secs <= 0.0 {
         Duration::ZERO
     } else {

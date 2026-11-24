@@ -7,10 +7,10 @@ use tokio::sync::watch;
 
 /// What the watcher of a process publishes: `None` while the process runs, then how it ended, or why the operating
 /// system did not say.
-pub(crate) type Ended<T> = Option<Result<T, String>>;
+pub type Ended<T> = Option<Result<T, String>>;
 
 /// Why a wait has no exit status to give.
-pub(crate) enum WaitFailed {
+pub enum WaitFailed {
     /// The operating system did not say how the process ended, in its words.
     Io(String),
     /// The watcher stopped without publishing anything.
@@ -18,7 +18,7 @@ pub(crate) enum WaitFailed {
 }
 
 /// Wait until the watcher behind `exit` says how the process ended.
-pub(crate) async fn ended<T: Clone>(mut exit: watch::Receiver<Ended<T>>) -> Result<T, WaitFailed> {
+pub async fn ended<T: Clone>(mut exit: watch::Receiver<Ended<T>>) -> Result<T, WaitFailed> {
     match exit.wait_for(Option::is_some).await {
         Ok(ended) => match ended.clone() {
             Some(Ok(exit)) => Ok(exit),

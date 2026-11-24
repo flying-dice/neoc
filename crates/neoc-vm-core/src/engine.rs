@@ -68,7 +68,7 @@ pub fn make_engine_in(life: Life) -> mlua::Result<Lua> {
 
 /// The engine of a worker script offered only the `allowed` modules: what `std:thread` builds for a worker whose
 /// parent used [`modules::install_allowed`].
-pub(crate) fn make_engine_with(life: Life, allowed: &[&str]) -> mlua::Result<Lua> {
+pub fn make_engine_with(life: Life, allowed: &[&str]) -> mlua::Result<Lua> {
     let lua = make_bare_engine()?;
     install_runtime_state(&lua, life);
     modules::install_allowed(&lua, allowed)?;
@@ -155,7 +155,7 @@ fn install_assert(lua: &Lua) -> mlua::Result<()> {
 
 /// Where the registry keeps Luau's own `coroutine.close`, taken out of `coroutine` before the strip: the script
 /// environment's `close` (`async_coroutines.lua`) calls it after its ownership check.
-pub(crate) const STASHED_CLOSE: &str = "neoc.coroutine_close";
+pub const STASHED_CLOSE: &str = "neoc.coroutine_close";
 
 fn stash_coroutine_close(lua: &Lua) -> mlua::Result<()> {
     let coroutine: mlua::Table = lua.globals().raw_get("coroutine")?;
@@ -263,29 +263,6 @@ mod tests {
         );
     }
 
-    /// A worker is offered what its parent was: everything for a full engine, the same subset after
-    /// `install_allowed`, and nothing at all (no worker) on a bare engine.
-    #[test]
-    fn a_worker_engine_offers_what_its_parent_was_offered() {
-        let require =
-            |lua: &Lua, name: &str| lua.load(format!("return require({name:?})")).eval::<mlua::Table>();
-
-        let full = make_engine().expect("engine");
-        let worker =
-            worker_engine(&full).expect("a full engine has a worker engine")(Life::new()).expect("worker");
-        assert!(require(&worker, "std:time").is_ok() && require(&worker, "lib:base64").is_ok());
-        assert!(worker_engine(&worker).is_some(), "a worker can start workers of its own");
-
-        let narrow = make_bare_engine().expect("engine");
-        assert!(worker_engine(&narrow).is_none(), "a bare engine has no worker engine");
-        modules::install_allowed(&narrow, &["lib:base64"]).expect("install");
-        let worker = worker_engine(&narrow).expect("install_allowed sets one")(Life::new()).expect("worker");
-        assert!(require(&worker, "lib:base64").is_ok());
-        assert!(require(&worker, "std:time").is_err(), "a worker is not offered more than its parent");
-        let grandchild = worker_engine(&worker).expect("and so on down")(Life::new()).expect("worker");
-        assert!(require(&grandchild, "std:time").is_err());
-    }
-
     /// The registry a worker engine is given is the one its work joins.
     #[test]
     fn a_worker_engine_joins_the_life_it_is_given() {
@@ -295,24 +272,6 @@ mod tests {
         life.shutdown();
         assert!(Life::of(&worker).is_closed());
         assert!(!Life::of(&full).is_closed());
-    }
-
-    /// `assert` keeps the typed error of a failed call: the table itself is raised, and `pcall` hands it back.
-    #[test]
-    fn assert_raises_a_typed_error_as_it_is() {
-        let lua = make_engine().expect("engine");
-        let (ok, kind, is_table, op): (bool, String, bool, String) = lua
-            .load(
-                r#"
-                local fs = require("std:fs")
-                local ok, err = pcall(function() return assert(fs.read("no/such/file/anywhere")) end)
-                return ok, err.kind, type(err) == "table", err.op
-                "#,
-            )
-            .eval()
-            .expect("script");
-        assert!(!ok && is_table);
-        assert_eq!((kind.as_str(), op.as_str()), ("not_found", "std:fs.read"));
     }
 
     #[test]

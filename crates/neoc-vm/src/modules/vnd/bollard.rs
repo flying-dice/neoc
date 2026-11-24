@@ -101,8 +101,8 @@ pub mod bollard {
     };
     use super::error::DockerError;
     use super::stream;
-    use crate::lifecycle::Life;
     use crate::modules::vnd::hyper::Body as RawBytes;
+    use neoc_vm_core::lifecycle::Life;
 
     /// How long a call waits for the daemon's answer when `connect` is given no `timeout`: bollard's own default.
     const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);

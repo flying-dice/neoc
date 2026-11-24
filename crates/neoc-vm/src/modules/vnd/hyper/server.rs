@@ -19,9 +19,9 @@ use tokio::sync::{oneshot, watch};
 
 use super::collect_headers;
 use super::hyper::{Answer, Request, ServerError};
-use crate::lifecycle::{Life, idle};
 use crate::modules::std::net::ListenerSlot;
 use crate::modules::std::workers::workers::ShutdownSignal;
+use neoc_vm_core::lifecycle::{Life, idle};
 
 /// A server: the script's handler, and whether its accept loop is live.
 pub struct Server {
@@ -180,10 +180,10 @@ async fn handle(
         Err(_) => return Ok(error_response(500, "body read failed")),
     };
 
-    let handled = crate::panics::caught(async {
+    let handled = neoc_vm_core::panics::caught(async {
         let request = Request::from_parts(method, path, headers, body);
         // the handler is a call into the VM like any other: it waits for its turn (see `lifecycle`)
-        let raw: Value = crate::lifecycle::request(lua, handler.call_async(request)).await?;
+        let raw: Value = neoc_vm_core::lifecycle::request(lua, handler.call_async(request)).await?;
         Option::<Answer>::from_lua_arg(raw, lua)
             .map_err(|why| mlua::Error::runtime(format!("the handler returned what is not a reply: {why}")))
     })
@@ -191,7 +191,7 @@ async fn handle(
     // a host function the handler reached panicked: that request fails like a handler error, and the connection
     // and the server live on
     let answer: mlua::Result<Option<Answer>> =
-        handled.unwrap_or_else(|message| Err(crate::panics::error(&message)));
+        handled.unwrap_or_else(|message| Err(neoc_vm_core::panics::error(&message)));
 
     match answer {
         Ok(answer) => Ok(response_of(answer)),
@@ -266,7 +266,7 @@ mod tests {
     async fn the_accept_loop_closes_the_server_before_it_wakes_who_waits() {
         use crate::modules::std::net::net::TcpListener;
 
-        let lua = crate::make_engine().expect("engine");
+        let lua = neoc_vm_core::make_engine().expect("engine");
         let bound: Value =
             lua.load(r#"return (require("std:net").TcpListener.bind("127.0.0.1:0"))"#).eval().expect("bind");
         let listener = TcpListener::from_lua_arg(bound, &lua).expect("a listener");

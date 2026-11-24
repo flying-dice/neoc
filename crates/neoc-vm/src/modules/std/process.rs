@@ -70,10 +70,10 @@ pub mod process {
     use serde::{Deserialize, Serialize};
 
     use super::child::Process;
-    use crate::byte_stream::{self, Output, Read};
-    use crate::command_options::{self, Refused};
-    use crate::lifecycle::{Life, hold};
-    use crate::modules::std::osstr::OsPath;
+    use neoc_vm_core::byte_stream::{self, Output, Read};
+    use neoc_vm_core::command_options::{self, Refused};
+    use neoc_vm_core::lifecycle::{Life, hold};
+    use neoc_vm_core::osstr::OsPath;
 
     /// What one of a process's three standard streams is (`std::process::Stdio`).
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Shape)]

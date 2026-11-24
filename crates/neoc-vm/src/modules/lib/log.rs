@@ -29,9 +29,8 @@
 
 use std::collections::{BTreeSet, HashSet};
 use std::io::Write;
-use std::sync::Arc;
 
-use mlua::{Lua, Table, Value};
+use mlua::{Table, Value};
 use serde_json::{Map, Number, Value as Json};
 
 use log::{Format, Level};
@@ -40,21 +39,7 @@ use log::{Format, Level};
 /// headers or parameters and one object in it) and keeps a runaway structure from holding a log call up.
 const DEPTH_LIMIT: u8 = 3;
 
-/// A function that takes a `lib:log` line: the level's name and the formatted line.
-pub type LogFn = Arc<dyn Fn(&str, &str) + Send + Sync>;
-
-/// Where an embedder wants `lib:log` lines instead of stderr.
-struct LogSink(LogFn);
-
-/// Install `sink` as this engine's `lib:log` output. A `std:thread` worker the script starts logs to the same sink.
-pub fn set_log_sink(lua: &Lua, sink: LogFn) {
-    lua.set_app_data(LogSink(sink));
-}
-
-/// The sink [`set_log_sink`] installed in this engine, for a worker the script starts to log to as well.
-pub(crate) fn log_sink(lua: &Lua) -> Option<LogFn> {
-    lua.app_data_ref::<LogSink>().map(|sink| sink.0.clone())
-}
+pub use neoc_vm_core::log_sink::{LogFn, set_log_sink};
 
 impl Level {
     fn as_str(self) -> &'static str {
@@ -205,10 +190,11 @@ pub mod log {
 
     use mlua::Lua;
     use mlua_ir::{Live, Object, Options, Shape};
+    use neoc_vm_core::log_sink::log_sink;
     use serde::{Deserialize, Serialize};
     use serde_json::{Map, Value as Json};
 
-    use super::{DEPTH_LIMIT, LogSink, Write, emit_tracing, format_line, now_rfc3339_millis, value_to_json};
+    use super::{DEPTH_LIMIT, Write, emit_tracing, format_line, now_rfc3339_millis, value_to_json};
 
     mlua_ir::unknown_reason!(
         /// Why a field's value has no declared shape.
@@ -294,8 +280,8 @@ pub mod log {
             let line = format_line(self.format, &now_rfc3339_millis(), level, message, &fields);
             // An embedder's sink takes the line instead of stderr, and the tracing event stands down: the sink is
             // where the embedder routes it.
-            if let Some(sink) = lua.app_data_ref::<LogSink>() {
-                (sink.0)(level.as_str(), &line);
+            if let Some(sink) = log_sink(lua) {
+                sink(level.as_str(), &line);
             } else {
                 // a failed write to stderr is nothing a log call can mend
                 let _ = writeln!(io::stderr(), "{line}");
@@ -389,11 +375,13 @@ pub mod log {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
+
+    use mlua::Lua;
 
     use super::log::Logger;
     use super::*;
-    use crate::make_engine;
+    use neoc_vm_core::make_engine;
 
     /// The lines a sink was given: each level and line.
     type Lines = Arc<Mutex<Vec<(String, String)>>>;

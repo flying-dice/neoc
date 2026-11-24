@@ -183,7 +183,7 @@ mod tests {
     }"#;
 
     fn eval<T: mlua::FromLuaMulti>(code: &str) -> T {
-        let lua = crate::make_engine().expect("engine");
+        let lua = neoc_vm_core::make_engine().expect("engine");
         let m: mlua::Table = lua.load(r#"return require("vnd:jsonschema")"#).eval().unwrap();
         lua.globals().set("jsonschema", m).unwrap();
         lua.globals().set("USER_SCHEMA", USER_SCHEMA).unwrap();

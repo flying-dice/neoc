@@ -228,7 +228,7 @@ mod tests {
     use mlua::Lua;
 
     fn engine() -> Lua {
-        let lua = crate::make_engine().expect("engine");
+        let lua = neoc_vm_core::make_engine().expect("engine");
         let m: mlua::Table = lua.load(r#"return require("lib:crypto")"#).eval().unwrap();
         lua.globals().set("crypto", m).unwrap();
         let hex: mlua::Table = lua.load(r#"return require("lib:hex")"#).eval().unwrap();

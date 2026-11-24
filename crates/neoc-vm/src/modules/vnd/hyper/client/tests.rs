@@ -15,8 +15,8 @@ use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
 use tokio_rustls::rustls::{self, ServerConfig};
 
-use crate::lifecycle::Life;
-use crate::make_engine;
+use neoc_vm_core::lifecycle::Life;
+use neoc_vm_core::make_engine;
 
 // ---------------------------------------------------------------------------
 // servers

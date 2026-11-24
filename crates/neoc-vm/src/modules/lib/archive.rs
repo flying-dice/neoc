@@ -43,7 +43,7 @@ use walkdir::WalkDir;
 
 use archive::{ArchiveError, Compression, Entry, TarEntry};
 
-use crate::modules::std::osstr::OsPath;
+use neoc_vm_core::osstr::OsPath;
 
 /// What an archive may expand to when `max_output_size` is not given: `lib:compress`'s limit.
 const DEFAULT_MAX_OUTPUT: u64 = 256 * 1024 * 1024;
@@ -647,7 +647,7 @@ pub mod archive {
         Cap, build_include, build_tar, build_zip_bytes, build_zip_files, io_error, read_file,
         resolve_create_compression, tar_sources,
     };
-    use crate::modules::std::osstr::OsPath;
+    use neoc_vm_core::osstr::OsPath;
 
     /// How a tar is compressed.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Shape)]
@@ -976,7 +976,7 @@ mod tests {
     use mlua::Lua;
 
     use super::*;
-    use crate::make_engine;
+    use neoc_vm_core::make_engine;
 
     // --- sanitize_entry_name: what extraction refuses, whatever the host ---
 

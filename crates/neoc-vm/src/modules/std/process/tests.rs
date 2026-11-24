@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use mlua::{Lua, Value};
 
-use crate::{Life, make_engine, make_engine_in};
+use neoc_vm_core::{Life, make_engine, make_engine_in};
 
 const TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -786,7 +786,7 @@ async fn a_call_that_cannot_wait_fails_and_does_nothing() {
 #[test]
 fn a_command_is_read_from_a_scripts_table() {
     use super::process::{Command, Stdio};
-    use crate::modules::std::osstr::OsPath;
+    use neoc_vm_core::osstr::OsPath;
 
     let lua = Lua::new();
     let read = |source: &str| -> Result<Command, String> {

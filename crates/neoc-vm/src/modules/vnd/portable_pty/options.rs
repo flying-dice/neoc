@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use super::portable_pty::{PtyError, Spawn};
-use crate::command_options::{self, Refused};
+use neoc_vm_core::command_options::{self, Refused};
 
 /// The size of a terminal the crate opens when none is given: `portable_pty::PtySize::default()`.
 pub(super) const DEFAULT_ROWS: u16 = 24;
@@ -75,8 +75,8 @@ fn dimension(option: &'static str, n: u16) -> Result<u16, Refused> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::command_options::{MAX_ITEMS, MAX_TEXT};
-    use crate::modules::std::osstr::OsPath;
+    use neoc_vm_core::command_options::{MAX_ITEMS, MAX_TEXT};
+    use neoc_vm_core::osstr::OsPath;
 
     fn refused(spawn: Spawn) -> String {
         match command(spawn) {

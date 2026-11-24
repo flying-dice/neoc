@@ -447,7 +447,7 @@ mod tests {
     use mlua::Lua;
 
     fn engine() -> Lua {
-        let lua = crate::make_engine().expect("engine");
+        let lua = neoc_vm_core::make_engine().expect("engine");
         let m: mlua::Table = lua.load(r#"return require("lib:pkey")"#).eval().unwrap();
         lua.globals().set("pkey", m).unwrap();
         lua

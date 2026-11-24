@@ -355,7 +355,7 @@ mod tests {
     use mlua::Value;
 
     use super::keyring::{Error, MOCK, chosen_store, new_mock};
-    use crate::make_engine;
+    use neoc_vm_core::make_engine;
 
     /// Run `script` in a new engine.
     async fn run<R: mlua::FromLuaMulti>(script: &str) -> R {

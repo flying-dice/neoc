@@ -384,7 +384,7 @@ mod tests {
     use super::*;
 
     fn engine() -> Lua {
-        let lua = crate::make_engine().expect("engine");
+        let lua = neoc_vm_core::make_engine().expect("engine");
         let m: mlua::Table = lua.load(r#"return require("lib:test")"#).eval().unwrap();
         lua.globals().set("test", m).unwrap();
         lua
@@ -691,9 +691,9 @@ stack traceback:"
     /// An embedder that runs scripts it does not trust leaves the runner out of what it offers.
     #[test]
     fn an_embedder_can_leave_it_out() {
-        let lua = crate::make_bare_engine().expect("engine");
-        let allowed: Vec<&str> = crate::modules::names().filter(|name| *name != "lib:test").collect();
-        crate::modules::install_allowed(&lua, &allowed).expect("install");
+        let lua = neoc_vm_core::make_bare_engine().expect("engine");
+        let allowed: Vec<&str> = neoc_vm_core::modules::names().filter(|name| *name != "lib:test").collect();
+        neoc_vm_core::modules::install_allowed(&lua, &allowed).expect("install");
         let err = lua.load(r#"return require("lib:test")"#).eval::<Value>().expect_err("refused").to_string();
         assert!(err.contains(r#"unknown module "lib:test""#), "{err}");
     }

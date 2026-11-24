@@ -116,7 +116,8 @@ jobs:
       # neoc's own suite: runtime lib tests plus the `neoc` binary's CLI
       # integration tests and Gherkin spec. The vos crates' tests need bun and darklua
       # which this job does not install, so they are not run here.
-      - run: cargo test -p neoc -p neoc-vm
+      # (`neoc-*`: the runtime's crates, `neoc-vm-core`, `neoc-vm-std`, `neoc-lib-*` and `neoc-vnd-*`, with their tests)
+      - run: cargo test -p neoc -p 'neoc-*'
 
   # The vos checks that need bun: the generated files against the Rust schema,
   # the Luau fixtures against the generated declarations, the type checks and

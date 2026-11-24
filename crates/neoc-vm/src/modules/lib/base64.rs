@@ -115,7 +115,7 @@ mod tests {
     /// keep the inline test bodies short — these tests validate base64
     /// behaviour, not require's plumbing (which has its own coverage).
     fn engine() -> Lua {
-        let lua = crate::make_engine().expect("engine");
+        let lua = neoc_vm_core::make_engine().expect("engine");
         let m: mlua::Table = lua.load(r#"return require("lib:base64")"#).eval().unwrap();
         lua.globals().set("b64", m).unwrap();
         lua

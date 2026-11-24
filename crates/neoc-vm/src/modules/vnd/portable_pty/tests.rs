@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use mlua::{Lua, Value};
 
-use crate::{Life, make_engine, make_engine_in};
+use neoc_vm_core::{Life, make_engine, make_engine_in};
 
 const TIMEOUT: Duration = Duration::from_secs(30);
 
