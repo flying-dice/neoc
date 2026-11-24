@@ -1,7 +1,9 @@
 -- lib:archive on neoc-vm and neoc-vm2: what both must answer the same. The functions were reshaped into archive
 -- objects (archive.vm2.luau), so `api` below is the only place that knows which VM it is on; what an archive holds,
--- what is extracted and what is refused are compared. An entry's timestamp is the time it (or its file on disk) was
--- made, which differs between the two VMs' runs across a second boundary, so it is left out for tar and zip alike.
+-- what is extracted and what is refused are compared: names, sizes of contents, kinds, contents. What depends on the
+-- clock is not: an entry's timestamp is the time it (or its file on disk) was made, which differs between the two VMs'
+-- runs across a second boundary, and a tar holds it in its headers, so a compressed tar's length differs with it. How
+-- an archive is compressed is read from its first bytes (`layer`) instead of from its length.
 local archive = require("lib:archive") :: any
 local fs = require("std:fs")
 local tempfile = require("lib:tempfile")
@@ -71,8 +73,8 @@ local function fails(value, err)
 	return { value == nil, err ~= nil }
 end
 
--- the entries as plain rows, sorted by name
-local function rows(entries, with_timestamp: boolean)
+-- the entries as plain rows, sorted by name (no timestamp: see above)
+local function rows(entries)
 	local list = {}
 	for _, entry in entries do
 		local ratio = entry.compression_ratio
@@ -80,7 +82,6 @@ local function rows(entries, with_timestamp: boolean)
 			entry.name,
 			entry.size,
 			entry.is_dir,
-			if with_timestamp then entry.timestamp else 0,
 			if ratio == nil then "none" else ratio,
 		})
 	end
@@ -88,6 +89,17 @@ local function rows(entries, with_timestamp: boolean)
 		return a[1] < b[1]
 	end)
 	return list
+end
+
+-- which compression wraps the bytes, by their magic number
+local function layer(bytes: string): string
+	local a, b, c, d = string.byte(bytes, 1, 4)
+	if a == 0x1f and b == 0x8b then
+		return "gzip"
+	elseif a == 0x28 and b == 0xb5 and c == 0x2f and d == 0xfd then
+		return "zstd"
+	end
+	return "none"
 end
 
 local scratch = assert(tempfile.tempdir())
@@ -111,8 +123,8 @@ for _, compression in { "none", "gzip", "zstd" } do
 		{ path = root .. "/blob.bin", archive_path = "blob.bin" },
 	}, { compression = compression }))
 	out["tar_" .. compression] = {
-		#bytes,
-		rows(assert(tar.list(bytes)), false),
+		layer(bytes),
+		rows(assert(tar.list(bytes))),
 		tar.read(bytes, "app/main.lua"),
 		tar.read(bytes, "blob.bin") == "\0\1\2\254\255\127\128",
 		fails(tar.read(bytes, "nope")),
@@ -120,12 +132,11 @@ for _, compression in { "none", "gzip", "zstd" } do
 end
 
 -- a directory is every file under it; strip_prefix shortens names
-out.tar_directory = rows(assert(tar.list((assert(tar.create({ { path = root .. "/sub", archive_path = "pkg" } }))))), false)
+out.tar_directory = rows(assert(tar.list((assert(tar.create({ { path = root .. "/sub", archive_path = "pkg" } }))))))
 out.tar_strip = rows(
-	assert(tar.list((assert(tar.create({ { path = root .. "/main.lua", archive_path = "src/main.lua" } }, { strip_prefix = "src/" }))))),
-	true
+	assert(tar.list((assert(tar.create({ { path = root .. "/main.lua", archive_path = "src/main.lua" } }, { strip_prefix = "src/" })))))
 )
-out.tar_no_entries = rows(assert(tar.list((assert(tar.create({}))))), false)
+out.tar_no_entries = rows(assert(tar.list((assert(tar.create({}))))))
 
 -- tar to a file: compressed as its extension says
 for _, name in { "bundle.tar", "bundle.tar.gz", "bundle.tgz", "bundle.tar.zst" } do
@@ -137,8 +148,8 @@ for _, name in { "bundle.tar", "bundle.tar.gz", "bundle.tgz", "bundle.tar.zst" }
 	local to = dest()
 	out["file_" .. name] = {
 		written,
-		#assert(fs.read(path)),
-		rows(assert(tar.list_file(path)), false),
+		layer((assert(fs.read(path)))),
+		rows(assert(tar.list_file(path))),
 		tar.extract_file(path, to),
 		fs.read(to .. "/main.lua"),
 		fs.read(to .. "/Cargo.toml"),
@@ -187,7 +198,7 @@ out.cap = {
 -- zip
 local zipped = assert(zip.create({ ["a.txt"] = string.rep("x", 1000), ["b.txt"] = "small", ["dir/c.bin"] = "\0\255" }))
 out.zip = {
-	rows(assert(zip.list(zipped)), false),
+	rows(assert(zip.list(zipped))),
 	zip.read(zipped, "a.txt") == string.rep("x", 1000),
 	zip.read(zipped, "dir/c.bin") == "\0\255",
 	fails(zip.read(zipped, "nope.txt")),
@@ -199,7 +210,7 @@ local zip_written = zip.create_file(zip_path, { root .. "/main.lua", root .. "/s
 local from_file = dest()
 out.zip_file = {
 	zip_written,
-	rows(assert(zip.list_file(zip_path)), false),
+	rows(assert(zip.list_file(zip_path))),
 	zip.extract_file(zip_path, from_file),
 	fs.read(from_file .. "/sub/deep.txt"),
 }
