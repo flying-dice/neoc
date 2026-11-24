@@ -27,8 +27,8 @@ vos-fetch       = { path = "crates/vos-fetch" }
 vos-mcp         = { path = "crates/vos-mcp" }
 vos-http        = { path = "crates/vos-http" }
 # Lua APIs written once in Rust (the macros in neoc-vm's modules, the schema the declarations are read from)
-mlua-ir     = { git = "https://github.com/flying-dice/mlua-ir.git", rev = "8e39bbb0a8de7338115224c4ae68292ecf3a7bad", features = ["send"] }
-mlua-ir-gen = { git = "https://github.com/flying-dice/mlua-ir.git", rev = "8e39bbb0a8de7338115224c4ae68292ecf3a7bad" }
+mlua-ir     = { git = "https://github.com/flying-dice/mlua-ir.git", rev = "d18a9b2001d89d4e6df2d47c5547ac416c88360c", features = ["send"] }
+mlua-ir-gen = { git = "https://github.com/flying-dice/mlua-ir.git", rev = "d18a9b2001d89d4e6df2d47c5547ac416c88360c" }
 # external
 anyhow      = "1.0"
 async-trait = "0.1"
