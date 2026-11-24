@@ -176,7 +176,8 @@ test.describe('Spotlight journeys', () => {
     await openDesktop(page, { open: ['files', 'settings'] })
     await page.keyboard.press('ControlOrMeta+K')
     await page.keyboard.type('show home')
-    expect((await results(page))[0]).toBe('action-home')
+    // the list follows what is typed a moment after the last key: wait for it, not for the list as it was a key ago
+    await expect.poll(async () => (await results(page))[0]).toBe('action-home')
     await expect(result(page, 'action-home')).toContainText('Show Home Screen')
     await expect(result(page, 'action-home')).toContainText('Action')
     await page.keyboard.press('Enter')
