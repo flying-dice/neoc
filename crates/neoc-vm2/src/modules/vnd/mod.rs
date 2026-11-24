@@ -8,6 +8,7 @@ pub mod rusqlite;
 pub mod serde_json;
 pub mod serde_yaml;
 pub mod sqlx_mysql;
+pub mod sqlx_postgres;
 pub mod toml;
 
 /// The most placeholders a statement of the network databases has (MySQL's and Postgres's protocols count them in

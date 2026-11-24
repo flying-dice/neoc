@@ -102,9 +102,9 @@ rustls-platform-verifier = "0.7"
 bytes = "1"
 # `vnd:rusqlite`, as in neoc-vm: SQLite, with its own libsqlite3 built in.
 rusqlite = { version = "0.43", features = ["bundled"] }
-# `vnd:sqlx_mysql`, as in neoc-vm: a pure-Rust driver, without TLS (only `vnd:hyper` carries a TLS stack).
+# `vnd:sqlx_mysql` and `vnd:sqlx_postgres`, as in neoc-vm: pure-Rust drivers, without TLS (only `vnd:hyper` carries a TLS stack).
 # `mysql-rsa` keeps MySQL's `caching_sha2_password` working over a plain connection.
-sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "mysql", "mysql-rsa"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "mysql", "mysql-rsa", "postgres"] }
 
 # `std:process` kills a process's whole group.
 [target.'cfg(unix)'.dependencies]
