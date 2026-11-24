@@ -14,8 +14,8 @@ local rpc = require("../.app/rpc")
 local vault = {}
 
 -- Why a call failed, as a sentence for the person. The store's own message is kept for what the app has no words for.
-local function sentence(err: string?): string
-  local kind = keyring.error_kind(err)
+local function sentence(err: vnd_keyring_Error): string
+  local kind = err.kind
   if kind == "no_store" then
     return "This machine has no keychain the app can use. On Linux it needs a Secret Service, like GNOME Keyring or KWallet, to be running."
   elseif kind == "no_access" then
@@ -25,17 +25,17 @@ local function sentence(err: string?): string
   elseif kind == "bad_encoding" then
     return "This item's secret is not text, so it cannot be shown."
   end
-  local message = keyring.error_message(err)
-  return if message and message ~= "" then message else err or "The keychain refused, and did not say why."
+  return if err.message ~= "" then err.message else "The keychain refused, and did not say why."
 end
 
 local function entry(service: string, account: string): (vnd_keyring_Entry?, string?)
   local store, storeErr = keyring.store()
-  if not store then
+  if storeErr then
     return nil, sentence(storeErr)
   end
+  assert(store)
   local found, err = store:entry(service, account)
-  if not found then
+  if err then
     return nil, sentence(err)
   end
   return found, nil
@@ -43,8 +43,8 @@ end
 
 -- whether this machine has a keychain that opens, and why not
 function vault.status(): rpc.Keychain
-  local store, err = keyring.store()
-  return { available = store ~= nil, problem = if store then "" else sentence(err) }
+  local _, err = keyring.store()
+  return { available = err == nil, problem = if err then sentence(err) else "" }
 end
 
 -- The password kept for a service and an account. Neither a password nor a sentence: the keychain has no such item.

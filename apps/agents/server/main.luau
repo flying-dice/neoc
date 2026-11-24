@@ -39,7 +39,7 @@ db:migrate {
 db:exec("update messages set done = 1 where done = 0")
 
 -- the turn in progress in each chat: the task asking the agent, and the message its answer goes into
-type Turn = { task: any, message: number }
+type Turn = { task: std_task_Task?, message: number }
 local running: { [string]: Turn } = {}
 
 local TITLE_MAX = 48
@@ -165,7 +165,9 @@ local handlers: rpc.Handlers = {
     local turn = running[params.chat]
     if turn then
       -- a cancelled task does not run again, so its own `finish` never happens: finish for it
-      task.cancel(turn.task)
+      if turn.task then
+        task.cancel(turn.task)
+      end
       finish(params.chat, turn)
     end
     return conversation(params.chat) or ctx:fail("There is no such chat.")

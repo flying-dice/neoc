@@ -97,7 +97,7 @@ local function pump(session: Session)
     local data, err = session.pty:read(CHUNK)
     if not data then
       if err then
-        app.log(`terminal: reading failed: {err}`)
+        app.log(`terminal: reading failed: {err.message}`)
       end
       break
     end
@@ -125,7 +125,7 @@ local function watch(session: Session)
   session.pty:close()
   local exit: rpc.Exit = if status
     then { code = status.exit_code, signal = status.signal }
-    else { code = 1, signal = err or "unknown" }
+    else { code = 1, signal = if err then err.message else "unknown" }
   session.exit = exit
   app.emit("exit", { session = session.id, offset = session.sent, code = exit.code, signal = exit.signal })
 end
@@ -180,7 +180,7 @@ function sessions.start(rows: number, cols: number): (string?, string?)
     env = { TERM = "xterm-256color" },
   }
   if not pty then
-    app.log(`terminal: {err}`)
+    app.log(`terminal: {if err then err.message else "no terminal"}`)
     return nil, "The shell could not be started."
   end
   local session: Session = {
@@ -228,9 +228,7 @@ function sessions.write(id: string, data: string): string?
   end
   local written, err = session.pty:write(bytes)
   if not written then
-    return if portable_pty.error_kind(err) == "closed"
-      then "The shell has exited."
-      else "The shell did not take what was typed."
+    return if err and err.kind == "closed" then "The shell has exited." else "The shell did not take what was typed."
   end
   return nil
 end
