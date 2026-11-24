@@ -842,7 +842,6 @@ async fn run_disturbed(case: &Case, disturbance: Disturbance, after_ms: u64) -> 
 // in the Lua heap, so an engine that is dropped with a call pending (a task asleep at `task.wait`, a request in
 // flight) is never closed, and neither is the database its `app` table holds. About one case in a hundred here ends
 // that way: "(e) a VM, task or transaction of the app still holds the database".
-#[ignore = "mlua-ir keeps a strong Lua across an async call, so an engine dropped with a call pending is never freed"]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_reload_or_unload_in_the_middle_of_a_script_leaves_nothing_wedged() {
     let _watchdog = Watchdog::arm("a_reload_or_unload_in_the_middle_of_a_script_leaves_nothing_wedged");
