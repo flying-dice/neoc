@@ -19,7 +19,7 @@
 import { DefinitionError, parseDefinition } from '../packages/vite-plugin/src/definition.ts'
 import { spawnSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join, relative, resolve } from 'node:path'
+import { basename, join, relative, resolve } from 'node:path'
 import { root } from './luau'
 
 const args = process.argv.slice(2)
@@ -67,7 +67,7 @@ function buildApp(dir: string, target: string, id: string): string[] | undefined
 const appDirs = [join(root, 'apps'), ...extraRoots]
   .flatMap((parent) => readdirSync(parent).map((d) => join(parent, d)))
   .filter(isApp)
-  .filter((d) => only.length === 0 || only.some((id) => d.endsWith(`/${id}`)))
+  .filter((d) => only.length === 0 || only.includes(basename(d)))
 
 if (appDirs.length === 0) {
   console.error(only.length ? `No app named ${only.join(', ')} under apps/` : 'No apps (apps/*/openrpc.json)')

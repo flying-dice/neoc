@@ -27,7 +27,7 @@ const RUN = process.env.VOS_PORT_BASE ? `-${process.env.VOS_PORT_BASE}` : ''
 
 export default defineConfig({
   testDir: '.',
-  testIgnore: ['**/node_modules/**', new RegExp(`^${ROOT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/\\.claude/`)],
+  testIgnore: ['**/node_modules/**', new RegExp(`^${ROOT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\\\/]\\.claude[\\\\/]`)],
   snapshotPathTemplate: '{testFileDir}/__screenshots__/{testFileName}/{arg}-{platform}{ext}',
   outputDir: `test-results/output${RUN}`,
   forbidOnly: !!process.env.CI,

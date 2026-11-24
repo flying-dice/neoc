@@ -13,15 +13,16 @@
  *   3. runs vos-host in the foreground, forwarding SIGTERM so the host shuts down gracefully. The host's own Docker is
  *      one nothing listens at (`DOCKER_HOST`), so the Containers, DNS and Pages apps say "not reachable" on every machine, with
  *      Docker running or not, until their journeys point them at a Docker of their own (apps/containers/e2e, apps/dns/e2e, apps/pages/e2e).
- *      The Terminal app (installed at start too) runs the host's `SHELL`: here a plain `sh` with the prompt `$ ` that reads no
- *      start-up file, so what its window shows is the same on every machine (apps/terminal/e2e, the desktop screenshots).
+ *      The Terminal app (installed at start too) runs the host's default shell (`SHELL`; on Windows `ComSpec`): here a plain
+ *      `sh` (on Windows a plain PowerShell) with the prompt `$ ` that reads no start-up file, so what its window shows is the
+ *      same on every machine of a platform (apps/terminal/e2e, the desktop screenshots).
  *      The keychain the host reaches is a mock one (`NEOC_KEYRING`), so the Keychain app's journeys (apps/keychain/e2e) keep their passwords in the host's
  *      memory and never in the keychain of whoever runs the specs.
  */
 import { spawn, spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { CONFIG, DATA, DIR, FIXTURE_APPS, HIDDEN_APPS, HOST_BIN, PORT, REGISTRY, REGISTRY_APPS, ROOT, fixtureAppRef } from './config'
+import { CONFIG, DATA, DIR, FIXTURE_APPS, HIDDEN_APPS, HOST_BIN, PORT, REGISTRY, REGISTRY_APPS, ROOT, fileUrl, fixtureAppRef, portable } from './config'
 
 const run = (cmd: string, args: string[]): void => {
   const r = spawnSync(cmd, args, { cwd: ROOT, stdio: 'inherit' })
@@ -49,16 +50,17 @@ run('bun', ['scripts/build-apps.ts', ...repoApps, ...REGISTRY_APPS, '--out', joi
 run('bun', ['scripts/build-apps.ts', ...FIXTURE_APPS, ...HIDDEN_APPS, '--out', join(DIR, 'fixtures'), '--root', join(ROOT, 'e2e/apps')])
 
 mkdirSync(DATA, { recursive: true })
+// every path is written with `/` (`portable`): a `\` in a TOML basic string starts an escape
 writeFileSync(
   CONFIG,
   [
-    `data_dir = "${DATA}"`,
+    `data_dir = "${portable(DATA)}"`,
     `bind = "127.0.0.1"`,
     `port = ${PORT}`,
-    `client_dir = "${join(ROOT, 'client/dist')}"`,
-    `registries = ["file://${REGISTRY}"]`,
+    `client_dir = "${portable(join(ROOT, 'client/dist'))}"`,
+    `registries = ["${fileUrl(REGISTRY)}"]`,
     `install = [${[
-      ...['calculator', 'agents', 'todos', 'notes', 'notebooks', 'containers', 'dns', 'keychain', 'pages', 'projects', 'terminal'].map((id) => `file://${join(DIR, `registry/${id}/${versionOf(id)}/app-ref.json`)}`),
+      ...['calculator', 'agents', 'todos', 'notes', 'notebooks', 'containers', 'dns', 'keychain', 'pages', 'projects', 'terminal'].map((id) => fileUrl(join(DIR, 'registry', id, versionOf(id), 'app-ref.json'))),
       ...FIXTURE_APPS.map(fixtureAppRef)
     ]
       .map((url) => `"${url}"`)
@@ -67,11 +69,34 @@ writeFileSync(
   ].join('\n')
 )
 
-// the Terminal app's shell (see the header): the person's own would print their prompt, with the machine's name in it
-const SHELL = join(DIR, 'shell')
-writeFileSync(SHELL, "#!/bin/sh\nPS1='$ ' ENV= exec /bin/sh\n")
-chmodSync(SHELL, 0o755)
+/**
+ * The Terminal app's shell (see the header): the person's own would print their prompt, with the machine's name in it.
+ * The host starts the default shell with no arguments, so the shell is a program that starts the real one with its own:
+ * on Unix `SHELL`, a script for a `sh` that reads no start-up file; on Windows `ComSpec` (what the default shell is
+ * there), which has to be an executable: `shell.rs`, compiled here, which starts a plain Windows PowerShell. Both have
+ * the prompt `$ `.
+ */
+function shellEnv(): Record<string, string> {
+  if (process.platform !== 'win32') {
+    const shell = join(DIR, 'shell')
+    writeFileSync(shell, "#!/bin/sh\nPS1='$ ' ENV= exec /bin/sh\n")
+    chmodSync(shell, 0o755)
+    return { SHELL: shell }
+  }
+  const shell = join(DIR, 'shell.exe')
+  run('rustc', ['--edition', '2021', '-O', '-o', shell, join(import.meta.dirname, 'shell.rs')])
+  return { ComSpec: shell }
+}
 
-const host = spawn(HOST_BIN, ['--config', CONFIG], { cwd: ROOT, stdio: 'inherit', env: { ...process.env, DOCKER_HOST: 'tcp://127.0.0.1:1', NEOC_KEYRING: 'mock', SHELL } })
+// On Windows a variable's name is in whatever case it was set with (`ComSpec`, `COMSPEC`): the one given here replaces it
+const shell = shellEnv()
+const given = new Set(Object.keys(shell).map((name) => name.toLowerCase()))
+const inherited = Object.entries(process.env).filter(([name]) => process.platform !== 'win32' || !given.has(name.toLowerCase()))
+// A Docker nothing listens at, which says so at once: a port of this machine nothing has (a connection is refused); on
+// Windows a pipe that is not there (a refused connection is tried again there for seconds before it is given up)
+const DOCKER_HOST = process.platform === 'win32' ? 'npipe:////./pipe/vos-e2e-no-docker' : 'tcp://127.0.0.1:1'
+const env = { ...Object.fromEntries(inherited), DOCKER_HOST, NEOC_KEYRING: 'mock', ...shell }
+
+const host = spawn(HOST_BIN, ['--config', CONFIG], { cwd: ROOT, stdio: 'inherit', env })
 for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => host.kill('SIGTERM'))
 host.on('exit', (code) => process.exit(code ?? 0))

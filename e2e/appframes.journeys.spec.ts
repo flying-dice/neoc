@@ -11,7 +11,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { type Page } from '@playwright/test'
-import { FIXTURE_APPS, fixtureAppRef, type FixtureApp } from './host/config'
+import { FIXTURE_APPS, fileUrl, fixtureAppRef, type FixtureApp } from './host/config'
 import { callTool } from './host/pair'
 import { chooseLayout, expect, expectRunning, frameOf, openDesktop, openFromHome, settle, test, windowOf } from './fixtures'
 
@@ -501,7 +501,7 @@ test('AF15: a page whose script throws while it loads is reported with its own m
       })
     )
     await openDesktop(page)
-    const url = `file://${join(dir, 'app-ref.json')}`
+    const url = fileUrl(join(dir, 'app-ref.json'))
     const preview = await hostCall<{ sha256: string }>(page, 'app.preview', { url })
     await hostCall(page, 'app.install', { url, sha256: preview.sha256 })
     try {
