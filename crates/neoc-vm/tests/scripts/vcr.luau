@@ -209,11 +209,17 @@ do
       'lib:vcr.Cassette:play: missing_key: no cassette entry for key "three"'
     )
 
-    -- a cassette that also holds each call's args (an earlier format) replays: they are not read, a null inside a table is nil
-    local old = path.join(dir, "old.json")
-    assert(fs.write(old, '{ "call": { "args": ["x", null], "result": [{ "a": null, "b": [1, 2] }, null] } }'))
-    local value, err = assert(vcr.cassette { mode = "replay", path = old }):play("call", never)
+    -- a null inside a table is nil
+    local nulls = path.join(dir, "nulls.json")
+    assert(fs.write(nulls, '{ "call": { "result": [{ "a": null, "b": [1, 2] }, null] } }'))
+    local value, err = assert(vcr.cassette { mode = "replay", path = nulls }):play("call", never)
     assert(value.a == nil and #value.b == 2 and err == nil)
+
+    -- an entry holds its result and nothing else
+    local extra = path.join(dir, "extra.json")
+    assert(fs.write(extra, '{ "call": { "args": ["x"], "result": ["v", null] } }'))
+    local no_tape, extra_err = vcr.cassette { mode = "replay", path = extra }
+    assert(no_tape == nil and extra_err ~= nil and extra_err.kind == "malformed")
 
     -- off: any key any number of times, any value
     local off = assert(vcr.cassette { mode = "off" })
@@ -228,13 +234,7 @@ do
   fs.remove_dir_all(dir, { missing_ok = true })
   assert(ok, tostring(failure))
 
-  -- there is no wrap and no dump
   local tape = assert(vcr.cassette { mode = "off" })
-  assert(not pcall(function()
-    return (tape :: any):wrap("key", print)
-  end) and not pcall(function()
-    return (tape :: any):dump()
-  end))
 
   -- arguments of the wrong shape are refused, with their place
   for _, config in

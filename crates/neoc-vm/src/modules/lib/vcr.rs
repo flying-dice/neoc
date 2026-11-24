@@ -21,26 +21,21 @@
 //! What a call returns is its result and its error: the two values every fallible function of neoc returns. Both
 //! are recorded (as plain data) and both are replayed.
 //!
-//! The file is `{ "<key>": { "result": [<value>, <error>] } }`, written whole after every recorded call. A file
-//! the old VM wrote (which also has the call's `args` under each key) replays.
+//! The file is `{ "<key>": { "result": [<value>, <error>] } }`, written whole after every recorded call. An entry
+//! with any other field is a malformed cassette.
 //!
-//! Ported from the old VM's `lib:vcr`. What changed on purpose:
-//! - `tape:play(key, function() return f(x) end)` replaces `tape:wrap(key, f)(x)`: mlua-ir has no function that
-//!   returns a function, and none that takes or returns any number of values, so the cassette takes the call
-//!   itself. The call's arguments are therefore not written to the file (replay never read them).
-//! - A call returns at most two values (it was any number); a third is the raised `too_many_results`.
-//! - `play` waits for a call that waits (a request, a sleep); a wrapped function was called without that, so it
-//!   could not record one.
-//! - A key is played once per cassette (it was wrapped once, and the function called any number of times, each
-//!   call overwriting the last).
+//! The API's rules:
+//! - The cassette takes the call itself (`tape:play(key, function() return f(x) end)`), so the call's arguments are
+//!   not written to the file.
+//! - A call returns at most two values; a third is the raised `too_many_results`.
+//! - `play` waits for a call that waits (a request, a sleep).
+//! - A key is played once per cassette.
 //! - What cannot be recorded as plain data (a function, a userdata, a buffer, a table that contains itself) is
-//!   the raised `not_plain_data` (only a buffer was refused; anything else was recorded as the text `<function>`,
-//!   `<userdata>`, which replay then returned in its place).
-//! - Errors are typed: `cassette` returns a `CassetteError` (`not_found`, `io`, `malformed`; they were raised),
-//!   `play` raises a `PlayError` (`duplicate_key`, `missing_key`, `too_many_results`, `not_plain_data`, `io`).
+//!   the raised `not_plain_data`.
+//! - Errors are typed: `cassette` returns a `CassetteError` (`not_found`, `io`, `malformed`), `play` raises a
+//!   `PlayError` (`duplicate_key`, `missing_key`, `too_many_results`, `not_plain_data`, `io`).
 //! - The mode is typed: a mode that does not exist, a missing `path`, an unknown option are refused as arguments.
-//! - Replay gives `nil` for a recorded `null` anywhere (inside a table it was mlua's `null` sentinel).
-//! - `dump` is gone: it did nothing.
+//! - Replay gives `nil` for a recorded `null` anywhere.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -58,8 +53,9 @@ fn forced_off() -> bool {
     std::env::var("NEOC_VCR").as_deref() == Ok("off")
 }
 
-/// What one call returned. (the old VM also wrote the call's `args` here; they are not read.)
+/// What one call returned.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Entry {
     result: Vec<Json>,
 }
@@ -481,7 +477,7 @@ mod tests {
         assert_eq!(cassette_file(&dir, "tape.json")["slow"]["result"][0], "after the wait");
     }
 
-    /// From the old VM's `serde_guard` and `vcr.test.lua`: a buffer is never recorded as an array of numbers. Neither
+    /// A buffer is never recorded as an array of numbers. Neither
     /// is anything else replay could not give back.
     #[test]
     fn what_is_not_plain_data_is_refused_and_not_recorded() {
@@ -582,28 +578,21 @@ mod tests {
         );
     }
 
-    /// A cassette the old VM wrote has the call's arguments too, and may hold more results than two.
+    /// The file is what `record` writes and nothing else: an entry with a field of its own is not a cassette.
     #[test]
-    fn a_cassette_of_the_old_vm_replays() {
+    fn an_entry_with_an_unknown_field_is_malformed() {
         let (lua, dir) = engine();
-        let old = r#"{
-          "base64.decode.hello": { "args": ["aGVsbG8="], "result": ["hello", null] },
-          "many": { "args": [], "result": [1, 2, 3] },
-          "nulls": { "args": [null], "result": [{ "a": null, "b": [1, null, 3] }] }
-        }"#;
-        std::fs::write(dir.path().join("old.json"), old).unwrap();
-        let (decoded, err, first, second, a, third): (String, Value, i64, i64, Value, i64) = run(
+        std::fs::write(dir.path().join("extra.json"), r#"{ "k": { "args": [], "result": ["v", null] } }"#)
+            .unwrap();
+        let kind: String = run(
             &lua,
             r#"
-            local rep = assert(vcr.cassette({ path = dir .. "/old.json", mode = "replay" }))
-            local decoded, err = rep:play("base64.decode.hello", function() return "ignored" end)
-            local first, second = rep:play("many", function() return "ignored" end)
-            local nulls = rep:play("nulls", function() return "ignored" end)
-            return decoded, err, first, second, nulls.a, nulls.b[3]
+            local tape, err = vcr.cassette({ path = dir .. "/extra.json", mode = "replay" })
+            assert(tape == nil)
+            return err.kind
             "#,
         );
-        assert_eq!((decoded.as_str(), first, second, third), ("hello", 1, 2, 3));
-        assert!(err.is_nil() && a.is_nil(), "a recorded null is nil");
+        assert_eq!(kind, "malformed");
     }
 
     // --- opening ---
