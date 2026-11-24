@@ -128,7 +128,7 @@ test.describe('Calculator journeys', () => {
     test(`CW6 (${scheme}): open the Calculator on its own page and do a sum`, async ({ page }) => {
       await page.emulateMedia({ colorScheme: scheme })
       await page.goto(`/apps/${ID}`)
-      await expect(page).toHaveTitle('Calculator')
+      await expect(page).toHaveTitle('VOS - Calculator')
       await expect(page.getByTestId('dock')).toHaveCount(0)
       await expect(frame(page).locator('html')).toHaveAttribute('data-theme', scheme)
       // the page gives the app the keyboard once it is ready: a sum typed straight after load, no click first

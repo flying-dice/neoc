@@ -19,7 +19,9 @@ const frame = (page: Page): FrameLocator => frameOf(page, ID)
 const part = (page: Page, name: string): Locator => frame(page).getByTestId(`${ID}-${name}`)
 // the kit's text field holds the real input in its shadow tree
 const field = (page: Page, name: string): Locator => part(page, name).locator('input')
-const records = (page: Page): Locator => frame(page).locator(`[data-testid^="${ID}-record-"][data-testid$="-name"]`)
+// a name in the list (`dns-record-<name>-name`), and not the form's own field for one (`dns-record-name`)
+const records = (page: Page): Locator =>
+  frame(page).locator(`[data-testid^="${ID}-record-"][data-testid$="-name"]:not([data-testid="${ID}-record-name"])`)
 const cmd = (): string[] => docker.sidecar()?.cmd ?? []
 
 test.describe.configure({ mode: 'serial' })

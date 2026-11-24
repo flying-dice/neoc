@@ -28,6 +28,27 @@ const IGNORED_CONSOLE = [
   /WebSocket connection to .* failed/
 ]
 
+/**
+ * Close the Terminal windows a test leaves open, as a person would, so that each ends its shell (the app closes its
+ * session when its window is closed). A page that just goes away, as a test's does, ends nothing: its session stays for
+ * the minutes the app waits for a page to come back, the app keeps 8 at most, and the tests that open a Terminal are
+ * more than 8, one after another: on a fast machine the ninth was told "8 terminals are open already".
+ */
+async function closeTerminals(page: Page): Promise<void> {
+  if (page.isClosed()) return
+  await page
+    .evaluate(async () => {
+      const wm = (window as { __vos?: ShellHandle }).__vos?.wm
+      if (!wm) return
+      const open = (): { id: string }[] => wm.windows.filter((w) => w.appId === 'terminal')
+      for (const w of open()) wm.close(w.id)
+      // the window goes once its app has wrapped up, which the shell does not wait long for
+      for (let waited = 0; open().length > 0 && waited < 5000; waited += 20) await new Promise((r) => setTimeout(r, 20))
+    })
+    // a page that is not the shell's, or is on its way elsewhere, has no window to close
+    .catch(() => undefined)
+}
+
 export const test = base.extend<{ errors: string[] }>({
   errors: [
     async ({ page }, use) => {
@@ -41,7 +62,9 @@ export const test = base.extend<{ errors: string[] }>({
       })
       await page.clock.setFixedTime(FROZEN_TIME)
       await use(errors)
-      expect(errors, 'the page logged errors').toEqual([])
+      const logged = [...errors]
+      await closeTerminals(page)
+      expect(logged, 'the page logged errors').toEqual([])
     },
     { auto: true }
   ]
@@ -59,7 +82,7 @@ export interface DesktopOptions {
 interface ShellHandle {
   host: { phase: string; apps: unknown[] }
   wm: {
-    windows: { id: string }[]
+    windows: { id: string; appId: string }[]
     focused?: { appId: string }
     close(id: string): void
     open(appId: string): void
