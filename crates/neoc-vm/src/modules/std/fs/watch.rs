@@ -757,7 +757,10 @@ mod tests {
     /// `stop()` then spun for ever; 9.0 fixed both. Held here so a downgrade says why it is wrong.
     #[test]
     fn notify_is_a_version_that_takes_paths_that_are_not_utf8() {
-        let lock = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.lock")).unwrap();
+        // A checkout with CRLF line endings (git's `autocrlf`) reads the same.
+        let lock = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.lock"))
+            .unwrap()
+            .replace("\r\n", "\n");
         let versions: Vec<u64> = lock
             .split("[[package]]")
             .filter(|package| package.contains("\nname = \"notify\"\n"))
