@@ -287,8 +287,13 @@ async fn the_command_gets_its_arguments_directory_and_environment() {
         "#,
     )
     .await;
+    // PowerShell says the folder by its long name, and the temporary folder may be given by its short one
+    // (`RUNNER~1` for `runneradmin` on a GitHub runner)
+    let resolved = dir.path().canonicalize().expect("the folder resolves");
+    let resolved = resolved.to_str().expect("utf-8");
+    let resolved = resolved.strip_prefix(r"\\?\").unwrap_or(resolved);
     // a bare name is found in PATH, the environment is the process's own plus `env`
-    let expected = format!("one argument|set here|{}|True|end", dir.path().display());
+    let expected = format!("one argument|set here|{resolved}|True|end");
     assert!(output.contains(&expected), "{output:?} lacks {expected:?}");
 }
 
