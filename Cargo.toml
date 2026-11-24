@@ -70,6 +70,15 @@ must_use_candidate = "allow"
 # `assert_eq!(x, [] as [T; 0])` needs a type annotation on every site
 assert_is_empty = "allow"
 
+# Dev builds keep the line tables (a panic's backtrace still names its file and line), drop the rest of the debug
+# info (type and variable layouts only a debugger reads), and drop it altogether for the dependencies. Less debug info
+# is less to write and to link into every test binary.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 # neoc's release build (the `neoc` CLI): thin LTO, symbols stripped.
 [profile.release]
 lto = "thin"
