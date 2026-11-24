@@ -11,10 +11,11 @@
 # `#[ignore = "slow: run with bun run slow"]` within three lines above its `fn`; nothing here changes.
 #
 # It fails closed. It checks its selection against `cargo nextest list --run-ignored only`: every ignored test must be
-# one of the `slow:` tests found above or on NOT_SLOW below (a test ignored for another reason: today the `vos-lua`
-# baseline, a measurement run on demand), and every `slow:` test must be one nextest ignores. Anything else (another
-# spelling of the attribute, an attribute too far from its `fn`, a new test ignored without a reason) stops the
-# script with a message. `--list` does only that check and prints the selection (a dry run: no slow suite runs).
+# one of the `slow:` tests found above or on NOT_SLOW below (a test ignored for another reason: the `vos-lua`
+# baseline, a measurement run on demand, and the VM's tests that need Docker, a database server or the credential
+# store), and every `slow:` test must be one nextest ignores. Anything else (another spelling of the attribute, an
+# attribute too far from its `fn`, a new test ignored without a reason) stops the script with a message. `--list`
+# does only that check and prints the selection (a dry run: no slow suite runs).
 #
 # What runs today: lib:template's 60 000-macro ring (a wall-clock bound in a debug build).
 #
@@ -36,6 +37,18 @@ fail() { printf 'check-slow: %s\n' "$*" >&2; exit 1; }
 # Ignored for another reason than slow, as `cargo nextest list --message-format oneline` prints them.
 NOT_SLOW=(
   "vos-lua::baseline calculator_vm_create_time_and_memory" # a measurement, run on demand (AGOS-53)
+  # need a running Docker daemon
+  "neoc-vm modules::vnd::bollard::tests::a_real_daemon_answers"
+  "neoc-vm modules::vnd::bollard::tests::a_real_daemon_runs_a_container_from_pull_to_removal"
+  "neoc-vm modules::vnd::sqlx_mysql::tests::against_a_container"
+  "neoc-vm modules::vnd::sqlx_postgres::tests::against_a_container"
+  "neoc-vm modules::vnd::testcontainers_modules::tests::generic_containers_start_publish_their_ports_and_stop"
+  "neoc-vm modules::vnd::testcontainers_modules::tests::mysql_and_postgres_containers_answer_their_drivers"
+  # need a server: NEOC_TEST_MYSQL_URL, NEOC_TEST_POSTGRES_URL
+  "neoc-vm modules::vnd::sqlx_mysql::tests::against_a_server"
+  "neoc-vm modules::vnd::sqlx_postgres::tests::against_a_server"
+  # writes to the credential store of whoever runs it
+  "neoc-vm modules::vnd::keyring::tests::the_platform_store_keeps_a_credential"
 )
 
 # The nextest binary id of the test target a source file compiles into: `crates/<dir>/tests/<name>.rs` (or

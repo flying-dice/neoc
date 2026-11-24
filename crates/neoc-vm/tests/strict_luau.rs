@@ -110,7 +110,7 @@ fn every_script_type_checks_in_strict_mode() {
     };
 
     let scratch = tempfile::tempdir().expect("a temporary directory");
-    let definitions = scratch.path().join("neoc.d.luau");
+    let definitions = scratch.path().join("declarations.d.luau");
     std::fs::write(&definitions, neoc_vm::declarations::luau()).expect("the declarations are written");
 
     let run = Command::new(&tool)

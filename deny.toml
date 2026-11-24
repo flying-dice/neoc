@@ -69,3 +69,6 @@ allow = [
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+# mlua-ir (the macros and the schema neoc-vm's modules are written with) is a git dependency, pinned to a revision
+# in the workspace Cargo.toml.
+allow-git = ["https://github.com/flying-dice/mlua-ir.git"]
