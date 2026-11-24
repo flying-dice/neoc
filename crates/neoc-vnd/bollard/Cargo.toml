@@ -1,0 +1,41 @@
+[package]
+name = "neoc-vnd-bollard"
+description = "vnd:bollard"
+version.workspace = true
+edition.workspace = true
+publish = false
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "neoc_vnd_bollard"
+path = "src/lib.rs"
+
+[dependencies]
+neoc-vm-core = { workspace = true }
+neoc-vnd-hyper = { workspace = true }
+mlua-ir = { workspace = true }
+# The engine is Luau.
+mlua = { version = "0.12", features = ["luau", "async", "send", "serialize", "macros"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "net"] }
+parking_lot = "0.13"
+futures = { version = "0.3", default-features = false, features = ["std"] }
+serde_json = "1"
+url = "2"
+# `vnd:hyper`. `client-legacy` for its `HttpConnector`: name lookup and Happy Eyeballs (RFC 8305)
+# for the client's TCP connect. TLS is rustls over the `ring` provider with the platform certificate verifier.
+hyper = { version = "1", features = ["client", "server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "client-legacy"] }
+http-body-util = "0.1"
+bytes = "1"
+# `vnd:bollard`: the Docker Engine API client. Already in the tree through testcontainers (the same
+# version, and the features it turns on: `ssl` is rustls over `ring`), so this only names the dependency. `time`
+# makes its dates `time::OffsetDateTime` (testcontainers turns it on too), which `time` writes back as RFC 3339.
+bollard = { version = "0.20", features = ["ssl", "time"] }
+time = { version = "0.3", default-features = false, features = ["formatting"] }
+
+[lints.cargo]
+missing_lints_inheritance = "allow"

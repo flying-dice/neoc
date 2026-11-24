@@ -1,0 +1,28 @@
+[package]
+name = "neoc-vnd-rusqlite"
+description = "vnd:rusqlite"
+version.workspace = true
+edition.workspace = true
+publish = false
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "neoc_vnd_rusqlite"
+path = "src/lib.rs"
+
+[dependencies]
+neoc-vm-core = { workspace = true }
+mlua-ir = { workspace = true }
+# The engine is Luau.
+mlua = { version = "0.12", features = ["luau", "async", "send", "serialize", "macros"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+parking_lot = "0.13"
+tempfile = "3"
+# `vnd:rusqlite`: SQLite, with its own libsqlite3 built in.
+rusqlite = { version = "0.43", features = ["bundled"] }
+
+[lints.cargo]
+missing_lints_inheritance = "allow"

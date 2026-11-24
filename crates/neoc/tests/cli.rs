@@ -506,10 +506,10 @@ fn a_process_a_script_started_does_not_outlive_the_run() {
     );
 }
 
-/// Every module the runtime declares (`#[mlua_ir::module("<name>")]` in the source of `neoc-vm` and of the crates it
-/// links) is in the built binary. A module registers itself when its object code is linked, so a module the linker
-/// dropped would be missing from `require` with nothing else to say so. The names are read from the source, not from
-/// the registry of this test binary, which the same linker built.
+/// Every module the runtime declares (`#[mlua_ir::module("<name>")]` in the source of `neoc-vm-std`, `neoc-lib-*` and
+/// `neoc-vnd-*`) is in the built binary. A module registers itself when its object code is linked, so a module the
+/// linker dropped would be missing from `require` with nothing else to say so. The names are read from the source,
+/// not from the registry of this test binary, which the same linker built.
 #[test]
 fn the_binary_links_every_module_of_the_runtime() {
     fn declared(dir: &Path, names: &mut Vec<String>) {
@@ -529,12 +529,8 @@ fn the_binary_links_every_module_of_the_runtime() {
         }
     }
     let mut names = Vec::new();
-    // the modules of `neoc-vm` itself, of `neoc-vm-std` and of the `neoc-lib-*` crates
-    for dir in [
-        "../neoc-vm/src/modules",
-        "../neoc-vm-std/src",
-        "../neoc-lib",
-    ] {
+    // the modules of `neoc-vm-std`, of the `neoc-lib-*` crates and of the `neoc-vnd-*` crates
+    for dir in ["../neoc-vm-std/src", "../neoc-lib", "../neoc-vnd"] {
         declared(&Path::new(env!("CARGO_MANIFEST_DIR")).join(dir), &mut names);
     }
     names.sort();

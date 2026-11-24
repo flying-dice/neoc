@@ -79,7 +79,7 @@ const CORE_EXTERNAL: Record<string, Set<string>> = {
  */
 const FRAMEWORK_HOMES: Record<string, string[]> = {
   mlua: ['neoc-vm', 'neoc-vm-*', 'neoc-lib-*', 'neoc-vnd-*', 'neoc'],
-  rusqlite: ['vos-sqlite', 'neoc-vm'],
+  rusqlite: ['vos-sqlite', 'neoc-vnd-rusqlite'],
   rmcp: ['vos-mcp'],
   axum: ['vos-http', 'vos-mcp', 'vos-host'],
   'axum-server': ['vos-host'],

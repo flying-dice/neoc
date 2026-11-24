@@ -3323,6 +3323,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "neoc-lib-agui"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "mlua",
+ "mlua-ir",
+ "neoc-agui",
+ "neoc-vm-core",
+ "neoc-vnd-hyper",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "neoc-lib-archive"
 version = "0.1.0"
 dependencies = [
@@ -3762,19 +3778,10 @@ dependencies = [
 name = "neoc-vm"
 version = "0.1.0"
 dependencies = [
- "bollard",
- "bytes",
- "futures",
- "http-body-util",
- "hyper",
- "hyper-util",
- "jsonschema",
- "keyring",
- "keyring-core",
  "mlua",
  "mlua-ir",
  "mlua-ir-gen",
- "neoc-agui",
+ "neoc-lib-agui",
  "neoc-lib-archive",
  "neoc-lib-args",
  "neoc-lib-base64",
@@ -3808,27 +3815,24 @@ dependencies = [
  "neoc-lib-vcr",
  "neoc-vm-core",
  "neoc-vm-std",
- "parking_lot 0.13.0",
- "portable-pty",
- "quick-xml",
- "rcgen",
- "rusqlite",
- "rustls-platform-verifier",
- "serde",
+ "neoc-vnd-bollard",
+ "neoc-vnd-hyper",
+ "neoc-vnd-jsonschema",
+ "neoc-vnd-keyring",
+ "neoc-vnd-portable_pty",
+ "neoc-vnd-quick_xml",
+ "neoc-vnd-rusqlite",
+ "neoc-vnd-serde_json",
+ "neoc-vnd-serde_yaml",
+ "neoc-vnd-sqlx_mysql",
+ "neoc-vnd-sqlx_postgres",
+ "neoc-vnd-testcontainers_modules",
+ "neoc-vnd-toml",
  "serde_json",
- "serde_yaml",
- "sqlx",
  "tempfile",
- "testcontainers-modules",
- "thiserror 2.0.21",
- "time",
  "tokio",
- "tokio-rustls",
- "toml",
- "tower-service",
  "tracing",
  "tracing-core",
- "url",
 ]
 
 [[package]]
@@ -3866,6 +3870,210 @@ dependencies = [
  "tracing",
  "uuid",
  "walkdir",
+]
+
+[[package]]
+name = "neoc-vnd-bollard"
+version = "0.1.0"
+dependencies = [
+ "bollard",
+ "bytes",
+ "futures",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vnd-hyper",
+ "parking_lot 0.13.0",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "time",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "neoc-vnd-hyper"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "mlua",
+ "mlua-ir",
+ "neoc-lib-json",
+ "neoc-vm-core",
+ "neoc-vm-std",
+ "parking_lot 0.13.0",
+ "rcgen",
+ "rustls-platform-verifier",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-rustls",
+ "tower-service",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "neoc-vnd-jsonschema"
+version = "0.1.0"
+dependencies = [
+ "jsonschema",
+ "mlua",
+ "mlua-ir",
+ "neoc-lib-json",
+ "neoc-vm-core",
+ "neoc-vnd-serde_json",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vnd-keyring"
+version = "0.1.0"
+dependencies = [
+ "keyring",
+ "keyring-core",
+ "mlua",
+ "mlua-ir",
+ "mlua-ir-gen",
+ "neoc-vm-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "neoc-vnd-portable_pty"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vm-std",
+ "parking_lot 0.13.0",
+ "portable-pty",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "neoc-vnd-quick_xml"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vm-std",
+ "quick-xml",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vnd-rusqlite"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "parking_lot 0.13.0",
+ "rusqlite",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vnd-serde_json"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-lib-json",
+ "neoc-vm-core",
+ "neoc-vm-std",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vnd-serde_yaml"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vm-std",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vnd-sqlx_mysql"
+version = "0.1.0"
+dependencies = [
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "sqlx",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "neoc-vnd-sqlx_postgres"
+version = "0.1.0"
+dependencies = [
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "sqlx",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "neoc-vnd-testcontainers_modules"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "testcontainers-modules",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "neoc-vnd-toml"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vm-std",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "toml",
 ]
 
 [[package]]

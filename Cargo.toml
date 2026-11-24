@@ -1,8 +1,9 @@
 [workspace]
 resolver = "3"
-# The runtime's `lib:*` modules are one crate each, in `crates/neoc-lib/<module>`: that folder holds crates and is not one,
-# so `crates/*` would fail on it, and the patterns name what is directly under `crates/`.
-members = ["crates/neoc", "crates/neoc-agui", "crates/neoc-vm*", "crates/vos-*", "crates/neoc-lib/*"]
+# The runtime's `lib:*` and `vnd:*` modules are one crate each, in `crates/neoc-lib/<module>` and `crates/neoc-vnd/<module>`:
+# those folders hold crates and are not crates, so `crates/*` would fail on them, and the patterns name what is directly
+# under `crates/`.
+members = ["crates/neoc", "crates/neoc-agui", "crates/neoc-vm*", "crates/vos-*", "crates/neoc-lib/*", "crates/neoc-vnd/*"]
 
 [workspace.package]
 # neoc's crates and vos's crates share the repository. The neoc crates are edition 2024; the vos crates
@@ -17,8 +18,23 @@ publish = false
 # One place for versions. Crates say `tokio = { workspace = true }` and add features only if they need more.
 [workspace.dependencies]
 neoc-vm = { path = "crates/neoc-vm" }
+neoc-agui = { path = "crates/neoc-agui" }
 neoc-vm-core = { path = "crates/neoc-vm-core" }
 neoc-vm-std = { path = "crates/neoc-vm-std" }
+neoc-vnd-bollard = { path = "crates/neoc-vnd/bollard" }
+neoc-vnd-hyper = { path = "crates/neoc-vnd/hyper" }
+neoc-vnd-jsonschema = { path = "crates/neoc-vnd/jsonschema" }
+neoc-vnd-keyring = { path = "crates/neoc-vnd/keyring" }
+neoc-vnd-portable_pty = { path = "crates/neoc-vnd/portable_pty" }
+neoc-vnd-quick_xml = { path = "crates/neoc-vnd/quick_xml" }
+neoc-vnd-rusqlite = { path = "crates/neoc-vnd/rusqlite" }
+neoc-vnd-serde_json = { path = "crates/neoc-vnd/serde_json" }
+neoc-vnd-serde_yaml = { path = "crates/neoc-vnd/serde_yaml" }
+neoc-vnd-sqlx_mysql = { path = "crates/neoc-vnd/sqlx_mysql" }
+neoc-vnd-sqlx_postgres = { path = "crates/neoc-vnd/sqlx_postgres" }
+neoc-vnd-testcontainers_modules = { path = "crates/neoc-vnd/testcontainers_modules" }
+neoc-vnd-toml = { path = "crates/neoc-vnd/toml" }
+neoc-lib-agui = { path = "crates/neoc-lib/agui" }
 neoc-lib-archive = { path = "crates/neoc-lib/archive" }
 neoc-lib-args = { path = "crates/neoc-lib/args" }
 neoc-lib-base64 = { path = "crates/neoc-lib/base64" }

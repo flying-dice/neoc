@@ -7,19 +7,9 @@
 //! in this crate is its own crate (`neoc-vm-std`, `neoc-lib-<module>` or `neoc-vnd-<module>`) among the dependencies,
 //! and a `pub use` of it below, which is what links it.
 
-// What mlua-ir's macros imply, for every module below: a script's value is read before the call, so a function
-// takes it owned (`needless_pass_by_value`); a module is named after what it exposes (`module_inception`); and the
-// macro creates async functions itself, which the `host` runs as lifecycle leaves (`disallowed_methods`).
-#![allow(
-    clippy::needless_pass_by_value,
-    clippy::module_inception,
-    clippy::disallowed_methods,
-    clippy::must_use_candidate,
-    clippy::return_self_not_must_use
-)]
-
 /// `lib:*`: the modules of the `neoc-lib-*` crates, under the paths they had.
 pub mod lib {
+    pub use neoc_lib_agui as agui;
     pub use neoc_lib_archive as archive;
     pub use neoc_lib_args as args;
     pub use neoc_lib_base64 as base64;
@@ -51,12 +41,26 @@ pub mod lib {
     pub use neoc_lib_unicode as unicode;
     pub use neoc_lib_url as url;
     pub use neoc_lib_vcr as vcr;
-    pub mod agui;
 }
 /// `std:*`: the modules of `neoc-vm-std`, under the paths they had.
 pub mod std {
     pub use neoc_vm_std::*;
 }
-pub mod vnd;
+/// `vnd:*`: the modules of the `neoc-vnd-*` crates, under the paths they had.
+pub mod vnd {
+    pub use neoc_vnd_bollard as bollard;
+    pub use neoc_vnd_hyper as hyper;
+    pub use neoc_vnd_jsonschema as jsonschema;
+    pub use neoc_vnd_keyring as keyring;
+    pub use neoc_vnd_portable_pty as portable_pty;
+    pub use neoc_vnd_quick_xml as quick_xml;
+    pub use neoc_vnd_rusqlite as rusqlite;
+    pub use neoc_vnd_serde_json as serde_json;
+    pub use neoc_vnd_serde_yaml as serde_yaml;
+    pub use neoc_vnd_sqlx_mysql as sqlx_mysql;
+    pub use neoc_vnd_sqlx_postgres as sqlx_postgres;
+    pub use neoc_vnd_testcontainers_modules as testcontainers_modules;
+    pub use neoc_vnd_toml as toml;
+}
 
 pub use neoc_vm_core::modules::{build, install, install_allowed, names, unknown_module};
