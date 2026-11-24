@@ -159,41 +159,6 @@ async fn a_transaction_body_continued_by_another_call_is_all_or_nothing() {
     assert!(all || b["v"] != json!("tx body done"), "no success without the commit: {b} {rows}");
 }
 
-/// A coroutine that is handed to `task.spawn` belongs to the scheduler: the script resuming it too (two drivers of one
-/// host call) gets Lua's "cannot resume non-suspended coroutine" instead of stealing the call, and no other call is
-/// held up.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_coroutine_with_two_drivers_does_not_hold_up_another_call() {
-    let vm = Arc::new(
-        load(
-            r#"
-            local task = require("std:task")
-            local co
-            app.tool { name = "a", run = function()
-              co = coroutine.create(function()
-                app.db:one("select 1 as x")
-                task.wait(0.5)
-                return "co done"
-              end)
-              task.spawn(co)
-              local r = { coroutine.resume(co) }
-              return { ok = r[1], v = tostring(r[2]) }
-            end }
-            app.tool { name = "b", run = function() return "b ran" end }
-            "#,
-        )
-        .await,
-    );
-    let a = spawn_call(&vm, "a");
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    let started = std::time::Instant::now();
-    assert_eq!(call(&vm, "b").await, json!("b ran"));
-    assert!(started.elapsed() < Duration::from_millis(300), "b was held up: {:?}", started.elapsed());
-    let a = a.await.unwrap();
-    assert_eq!(a["ok"], false, "{a}");
-    assert!(a["v"].as_str().unwrap().contains("non-suspended"), "{a}");
-}
-
 /// A failed wait, then a plain `coroutine.yield()` at the top of a read-only call: the call still holds the VM, so
 /// nothing else runs inside it and it stays read-only.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -303,36 +268,6 @@ async fn a_coroutine_whose_host_call_is_in_flight_cannot_be_resumed_from_elsewhe
     assert!(out["e"].as_str().unwrap().contains("non-suspended"), "{out}");
     assert_eq!(out["wok"], false, "{out}");
     assert!(out["we"].as_str().unwrap().contains("non-suspended"), "{out}");
-}
-
-/// Handing a coroutine to the scheduler while another thread is waiting at its host call is refused: it must not
-/// take the coroutine over (the thread would then resume into a call the scheduler also polls).
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn the_scheduler_does_not_take_a_coroutine_that_is_waiting_at_a_host_call() {
-    let vm = Arc::new(
-        load(
-            r#"
-            local task = require("std:task")
-            local co
-            app.tool { name = "start", run = function()
-              task.spawn(function()
-                co = coroutine.create(function() task.wait(0.1) return "finished" end)
-                coroutine.resume(co)
-              end)
-              return "started"
-            end }
-            app.tool { name = "adopt", run = function()
-              local ok, e = pcall(task.spawn, co)
-              return { ok = ok, e = tostring(e) }
-            end }
-            "#,
-        )
-        .await,
-    );
-    call(&vm, "start").await;
-    let out = call(&vm, "adopt").await;
-    assert_eq!(out["ok"], false, "{out}");
-    assert!(out["e"].as_str().unwrap().contains("already running"), "{out}");
 }
 
 // ---- a thread the script did not make is not the script's to resume -------------------------------------------------------
@@ -591,47 +526,59 @@ async fn a_coroutine_the_script_made_still_resumes_yields_and_waits_through_prot
     assert_eq!(call(&vm, "again").await, json!([false, "cannot resume dead coroutine"]));
 }
 
-/// `task.spawn`, `defer` and `delay` take only coroutines the script made: a thread it reached through
-/// `coroutine.running()` is the host's, and handing it to the scheduler would run another call's code under the
-/// scheduler. A coroutine of the script's own, once scheduled, is the scheduler's.
+/// `task.spawn`, `defer` and `delay` take a function and never a coroutine: not a thread the script reached through
+/// `coroutine.running()` (the host's: scheduling it would run another call's code under the scheduler), not one that
+/// is waiting at a host call, and not one of the script's own. So a coroutine has one driver, the script that resumes
+/// it, and the call whose thread was offered goes on undisturbed.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn the_scheduler_takes_only_coroutines_the_script_made() {
+async fn the_scheduler_takes_no_coroutine() {
     let vm = Arc::new(
         load(
             r#"
             local task = require("std:task")
-            local T, mine
-            app.tool { name = "park", run = function() T = coroutine.running() task.wait(0.3) return "parked" end }
-            app.tool { name = "steal", run = function()
+            local T, waiting
+            app.tool { name = "park", run = function()
+              T = coroutine.running()
+              waiting = coroutine.create(function() task.wait(0.1) return "finished" end)
+              coroutine.resume(waiting)
+              task.wait(0.3)
+              return "parked"
+            end }
+            local function offer(co)
               local out = {}
               for _, kind in ipairs { "spawn", "defer", "delay" } do
-                local ok, e = pcall(function() if kind == "delay" then task.delay(0, T) else task[kind](T) end end)
-                out[kind] = { ok, tostring(e):match("not yours") or tostring(e) }
+                local ok, e = pcall(function() if kind == "delay" then task.delay(0, co) else task[kind](co) end end)
+                out[kind] = { ok, tostring(e):match("expected a function, got thread") or tostring(e) }
               end
               return out
-            end }
+            end
+            app.tool { name = "steal", run = function() return { host = offer(T), waiting = offer(waiting) } end }
             app.tool { name = "own", run = function()
-              mine = coroutine.create(function() task.wait(0.1) return "mine done" end)
-              local h = task.spawn(mine)
-              local ok, e = coroutine.resume(mine)
-              return { ok, tostring(e), h:await() }
+              local mine = coroutine.create(function() coroutine.yield("first") return "mine done" end)
+              local refused = offer(mine)
+              local _, first = coroutine.resume(mine)
+              local _, last = coroutine.resume(mine)
+              return { refused = refused, first = first, last = last }
             end }
             "#,
         )
         .await,
     );
+    let refused = json!([false, "expected a function, got thread"]);
     let parked = spawn_call(&vm, "park");
     tokio::time::sleep(Duration::from_millis(50)).await;
     let steal = call(&vm, "steal").await;
-    for kind in ["spawn", "defer", "delay"] {
-        assert_eq!(steal[kind], json!([false, "not yours"]), "{kind}: {steal}");
+    for whose in ["host", "waiting"] {
+        for kind in ["spawn", "defer", "delay"] {
+            assert_eq!(steal[whose][kind], refused, "{whose} {kind}: {steal}");
+        }
     }
     assert_eq!(parked.await.unwrap(), json!("parked"), "the parked call was not disturbed");
-    assert_eq!(
-        call(&vm, "own").await,
-        json!([false, "cannot resume non-suspended coroutine", "mine done"]),
-        "a scheduled coroutine is the scheduler's"
-    );
+    let own = call(&vm, "own").await;
+    for kind in ["spawn", "defer", "delay"] {
+        assert_eq!(own["refused"][kind], refused, "{kind}: {own}");
+    }
+    assert_eq!((&own["first"], &own["last"]), (&json!("first"), &json!("mine done")), "{own}");
 }
 
 /// A `readOnly` call whose thread another call tried to resume stays read-only: it never runs without the turn, and
@@ -750,8 +697,8 @@ async fn resuming_a_waiting_thread_with_a_value_is_refused_and_does_not_wedge_it
 }
 
 /// Every entry point of the host into script code starts a thread the script cannot resume: a tool, an event
-/// handler, the body of `Mutex:with_lock`, a deferred and a delayed function, and a request handler. Each stashes its
-/// thread and waits; a probe resumes them all.
+/// handler, a deferred and a delayed function, and a request handler. Each stashes its thread and waits; a probe
+/// resumes them all.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn every_entry_point_starts_a_thread_the_script_cannot_resume() {
     let vm = Arc::new(
@@ -760,18 +707,15 @@ async fn every_entry_point_starts_a_thread_the_script_cannot_resume() {
             local task = require("std:task")
             local hyper = require("vnd:hyper")
             local net = require("std:net")
-            local collections = require("std:collections")
-            local mu = collections.Mutex.new()
             local threads = {}
             local function stash(name) threads[name] = coroutine.running() task.wait(0.3) end
-            local server = hyper.serve(net.TcpListener.bind("127.0.0.1:0"), function(req)
+            local server = assert(hyper.serve(assert(net.TcpListener.bind("127.0.0.1:0")), function(req)
               stash("handler")
               return { status = 200, body = "ok" }
-            end)
-            local url = "http://" .. server:addr() .. "/"
+            end))
+            local url = "http://" .. assert(server:addr()) .. "/"
             hook("event", function() stash("event") return "event done" end)
             app.tool { name = "tool", run = function() stash("tool") return "tool done" end }
-            app.tool { name = "lock", run = function() mu:with_lock(function() stash("with_lock") end) return "lock done" end }
             app.tool { name = "later", run = function()
               task.defer(function() stash("defer") end)
               task.delay(0.01, function() stash("delay") end)
@@ -780,7 +724,7 @@ async fn every_entry_point_starts_a_thread_the_script_cannot_resume() {
             end }
             app.tool { name = "probe", run = function()
               local out = {}
-              for _, name in ipairs { "tool", "event", "with_lock", "defer", "delay", "handler" } do
+              for _, name in ipairs { "tool", "event", "defer", "delay", "handler" } do
                 local t = threads[name]
                 if t == nil then
                   out[name] = "never started"
@@ -795,7 +739,7 @@ async fn every_entry_point_starts_a_thread_the_script_cannot_resume() {
         )
         .await,
     );
-    let mut running = vec![spawn_call(&vm, "tool"), spawn_call(&vm, "lock")];
+    let mut running = vec![spawn_call(&vm, "tool")];
     let event = {
         let vm = vm.clone();
         tokio::spawn(async move { vm.emit("event", json!(null)).await.unwrap() })
@@ -803,7 +747,7 @@ async fn every_entry_point_starts_a_thread_the_script_cannot_resume() {
     running.push(spawn_call(&vm, "later"));
     tokio::time::sleep(Duration::from_millis(150)).await;
     let probe = call(&vm, "probe").await;
-    for name in ["tool", "event", "with_lock", "defer", "delay", "handler"] {
+    for name in ["tool", "event", "defer", "delay", "handler"] {
         let said = probe[name].as_str().unwrap();
         assert!(said.starts_with("refused: ") && said.contains("non-suspended"), "{name}: {probe}");
     }

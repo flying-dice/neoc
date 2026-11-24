@@ -6,7 +6,7 @@
 mod common;
 
 use common::{agent_ctx, built_package, db, id, load, package};
-use neoc_vm::lua::modules;
+use neoc_vm2::modules;
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 use std::{
@@ -174,8 +174,40 @@ async fn the_globals_the_declarations_refuse_are_absent_from_the_environment() {
     );
 }
 
+/// The module names `neoc-vm2` declares in its source: each `#[mlua_ir::module("<name>")]` that starts a line (a doc
+/// comment that shows one is not a module).
+fn modules_in_the_source(dir: &std::path::Path, names: &mut Vec<String>) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            modules_in_the_source(&path, names);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            for line in std::fs::read_to_string(&path).unwrap().lines() {
+                if let Some(rest) = line.strip_prefix("#[mlua_ir::module(\"") {
+                    names.push(rest.split('"').next().unwrap().to_owned());
+                }
+            }
+        }
+    }
+}
+
+/// A module registers itself when its object code is linked into the program, so one the linker left out would be
+/// missing from `require` with nothing to say so. What a program that links this adapter gets is every module the
+/// library's source declares (the test below requires each of them from an app).
+#[test]
+fn every_module_the_library_declares_is_linked_into_the_adapter() {
+    let mut declared = Vec::new();
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../neoc-vm2/src/modules");
+    modules_in_the_source(&source, &mut declared);
+    declared.sort();
+    assert!(declared.len() >= 46, "{declared:?}");
+    let mut linked: Vec<&str> = modules::names().collect();
+    linked.sort_unstable();
+    assert_eq!(linked, declared);
+}
+
 #[tokio::test]
-async fn every_library_module_can_be_required_and_is_one_table_per_app() {
+async fn every_library_module_can_be_required_once_per_app_and_cannot_be_patched() {
     // the library offers every module; an app is not offered the ones in `REFUSED`
     assert_eq!(vos_lua::NOT_FOR_APPS, REFUSED);
     let names: Vec<&str> = modules::names().filter(|n| !REFUSED.contains(n)).collect();
@@ -198,11 +230,18 @@ async fn every_library_module_can_be_required_and_is_one_table_per_app() {
     }
     assert_eq!(out["same"], true, "one handle per module, as with Lua's own require");
 
-    // two apps never share a module table: a change one makes is invisible to the other
-    let writer = load(r#"require("lib:json").mine = 1 hook("probe", function() return 1 end)"#).await;
-    drop(writer);
-    let reader = load(r#"hook("probe", function() return require("lib:json").mine == nil end)"#).await;
-    assert_eq!(reader.emit("probe", json!(null)).await.unwrap(), json!(true));
+    // a module table is read-only: an app cannot patch a module, for itself or for anything else
+    let patcher = load(
+        r#"hook("probe", function()
+             local json = require("lib:json")
+             local ok, e = pcall(function() json.mine = 1 end)
+             return { ok = ok, e = tostring(e), mine = json.mine == nil }
+           end)"#,
+    )
+    .await;
+    let out = patcher.emit("probe", json!(null)).await.unwrap();
+    assert_eq!((&out["ok"], &out["mine"]), (&json!(false), &json!(true)), "{out}");
+    assert!(out["e"].as_str().unwrap().contains("readonly"), "{out}");
 }
 
 #[tokio::test]
@@ -245,21 +284,48 @@ async fn the_modules_work_inside_an_app_data_formats_time_hashes_and_the_filesys
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// A module's failure is a typed error: the app branches on its `kind` and fields. One the app raises as it is
+/// (`error(err)`) ends the call with the error's text, as a message does, not with "a value that is not a message".
+#[tokio::test]
+async fn a_modules_typed_error_is_read_by_the_app_and_reaches_the_caller_as_its_text() {
+    let src = r#"
+        local fs = require("std:fs")
+        local missing = "no-such-dir-of-the-modules-test/file.txt"
+        app.tool { name = "read", run = function()
+          local text, err = fs.read(missing)
+          return { text = text == nil, kind = err.kind, op = err.op, said = tostring(err) }
+        end }
+        app.tool { name = "raise", run = function()
+          local text, err = fs.read(missing)
+          if not text then error(err) end
+          return text
+        end }
+    "#;
+    let vm = load(src).await;
+    let out = vm.call_tool("read", json!({}), &agent_ctx(0), false).await.unwrap();
+    assert_eq!(
+        (&out["text"], &out["kind"], &out["op"]),
+        (&json!(true), &json!("not_found"), &json!("std:fs.read"))
+    );
+    let said = out["said"].as_str().unwrap();
+    assert!(said.starts_with("std:fs.read: not_found: "), "{said}");
+    let raised = vm.call_tool("raise", json!({}), &agent_ctx(0), false).await.unwrap_err().to_string();
+    assert!(raised.starts_with("probe/app.lua:10: std:fs.read: not_found: "), "{raised}");
+}
+
 #[tokio::test]
 async fn a_worker_gets_the_same_modules_and_lib_log_goes_to_tracing_not_stdout() {
     let src = r#"
         local thread = require("std:thread")
         app.tool { name = "work", run = function()
-          local worker = thread.spawn {
-            source = [[
-              local json = require("lib:json")
-              local hash, hex = require("lib:hash"), require("lib:hex")
-              local hyper = require("vnd:hyper")
-              require("lib:log").info("from a worker")
-              return { sha = hex.encode((hash.hash("sha256", "abc"))), hyper = type(hyper.serve), json = type(json) }
-            ]],
-          }
-          return worker:await()
+          local worker = assert(thread.spawn([[
+            local json = require("lib:json")
+            local hash, hex = require("lib:hash"), require("lib:hex")
+            local hyper = require("vnd:hyper")
+            require("lib:log").info("from a worker")
+            return { sha = hex.encode((hash.hash("sha256", "abc"))), hyper = type(hyper.serve), json = type(json) }
+          ]]))
+          return assert(worker:await())
         end }
         app.tool { name = "log", run = function()
           require("lib:log").info("hello from the app", { k = 1 })
@@ -295,8 +361,8 @@ async fn a_worker_is_refused_what_its_app_is_refused() {
         local thread = require("std:thread")
         app.tool {{ name = "probe", run = function()
           local app_side = (function() {probe} end)()
-          local worker = thread.spawn {{ source = [[ {probe} ]] }}
-          return {{ app = app_side, worker = worker:await() }}
+          local worker = assert(thread.spawn([[ {probe} ]]))
+          return {{ app = app_side, worker = assert(worker:await()) }}
         end }}
     "#
     );
@@ -320,11 +386,11 @@ async fn an_app_and_its_workers_are_not_offered_buffer_yet() {
     let src = r#"
         local thread = require("std:thread")
         app.tool { name = "probe", run = function()
-          local worker = thread.spawn { source = [[
-            local inner = require("std:thread").spawn { source = "return type(buffer)" }
-            return { type(buffer), inner:await() }
-          ]] }
-          local out = worker:await()
+          local worker = assert(thread.spawn([[
+            local inner = assert(require("std:thread").spawn("return type(buffer)"))
+            return { type(buffer), (assert(inner:await())) }
+          ]]))
+          local out = assert(worker:await())
           return { app = type(buffer), worker = out[1], nested = out[2] }
         end }
     "#;
@@ -584,11 +650,11 @@ async fn unloading_an_app_closes_its_listener_and_stops_its_tasks_and_workers() 
           local n = 0
           while true do n = n + 1 fs.write({task:?}, tostring(n)) task.wait(0.01) end
         end)
-        local worker = thread.spawn {{ source = [[
+        local worker = assert(thread.spawn([[
           local fs, task = require("std:fs"), require("std:task")
           local n = 0
           while true do n = n + 1 fs.write({worker:?}, tostring(n)) task.wait(0.01) end
-        ]] }}
+        ]]))
         "#,
         task = task_file.display().to_string(),
         worker = worker_file.display().to_string(),

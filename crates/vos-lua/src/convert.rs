@@ -8,8 +8,8 @@
 //!   level (`for i = 1, 30 do t = { t, t } end`, 2^30 paths to the leaves) or a huge string repeated is an
 //!   error instead of gigabytes of JSON that no Lua table accounts for.
 
-use neoc_vm::mlua;
-use neoc_vm::mlua::{Lua, Table, Value as LuaValue};
+use neoc_vm2::mlua;
+use neoc_vm2::mlua::{Lua, Table, Value as LuaValue};
 use serde_json::{Map, Number, Value};
 use std::collections::HashSet;
 use vos_application::data::Params;

@@ -6,7 +6,7 @@
 //! symbolic link there is the operator's choice (another disk, say) and is followed. Purging the app removes
 //! `<app>.files` (a link there is removed, never what it points at).
 //!
-//! **The operations are neoc-vm's.** Recursive copy, move and remove are `neoc_vm::lua::std::fs::ops` (the code
+//! **The operations are neoc-vm2's.** Recursive copy, move and remove are `neoc_vm2::modules::std::fs::ops` (the code
 //! behind `std:fs`), so they keep its rules: a recursive remove is `std::fs::remove_dir_all` (immune to
 //! CVE-2022-21658, a directory swapped for a link while it runs), a tree copy recreates links instead of
 //! following them, a move survives a filesystem boundary. A write, and a file copy, go to a fresh temporary file
@@ -48,7 +48,7 @@
 //! move stops at its next entry and a write is not put in place.
 
 use async_trait::async_trait;
-use neoc_vm::lua::std::fs::{
+use neoc_vm2::modules::std::fs::{
     error::{FsError, Kind},
     ops,
 };
@@ -460,14 +460,14 @@ async fn blocking<T: Send + 'static>(
 
 // ---- what the app sees ----------------------------------------------------------------------------------------
 
-fn file_info(name: String, meta: &ops::Meta) -> FileInfo {
+fn file_info(name: String, meta: &ops::Metadata) -> FileInfo {
     let kind = match meta.kind {
         ops::FileKind::File => FileKind::File,
         ops::FileKind::Dir => FileKind::Dir,
         ops::FileKind::Symlink => FileKind::Symlink,
         ops::FileKind::Other => FileKind::Other,
     };
-    FileInfo { name, kind, size: meta.size, modified: meta.modified }
+    FileInfo { name, kind, size: meta.len, modified: meta.modified }
 }
 
 /// The path as the app wrote it (`.` for the location itself): what every message names.
@@ -559,6 +559,21 @@ fn describe(kind: FileErrorKind) -> &'static str {
     }
 }
 
+/// `std:fs`'s kind as `app.files` names it. A file call has no time limit, so `TimedOut` has no kind of its own.
 fn kind_of(kind: Kind) -> FileErrorKind {
-    FileErrorKind::parse(kind.as_str()).unwrap_or(FileErrorKind::Other)
+    match kind {
+        Kind::NotFound => FileErrorKind::NotFound,
+        Kind::PermissionDenied => FileErrorKind::PermissionDenied,
+        Kind::AlreadyExists => FileErrorKind::AlreadyExists,
+        Kind::NotEmpty => FileErrorKind::NotEmpty,
+        Kind::IsDirectory => FileErrorKind::IsDirectory,
+        Kind::NotADirectory => FileErrorKind::NotADirectory,
+        Kind::CrossDevice => FileErrorKind::CrossDevice,
+        Kind::InvalidInput => FileErrorKind::InvalidInput,
+        Kind::ReadOnlyFilesystem => FileErrorKind::ReadOnlyFilesystem,
+        Kind::StorageFull => FileErrorKind::StorageFull,
+        Kind::Unsupported => FileErrorKind::Unsupported,
+        Kind::TooLarge => FileErrorKind::TooLarge,
+        Kind::TimedOut | Kind::Other => FileErrorKind::Other,
+    }
 }

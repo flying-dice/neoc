@@ -4,8 +4,8 @@ use crate::{
     convert::lua_to_json,
     vm::{Effect, Shared},
 };
-use neoc_vm::mlua;
-use neoc_vm::mlua::{Lua, Table, Value as LuaValue, Variadic};
+use neoc_vm2::mlua;
+use neoc_vm2::mlua::{Lua, Table, Value as LuaValue, Variadic};
 use serde_json::Value;
 use std::sync::Arc;
 use vos_domain::Notification;

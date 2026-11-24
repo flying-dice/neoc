@@ -5,7 +5,7 @@
 //!
 //! - `require("vos:app")` is the `app` table, the only `vos:` name there is.
 //! - `require("std:<name>")`, `require("lib:<name>")` and `require("vnd:<name>")` are the library modules of
-//!   `neoc-vm` (neoc's own spelling: `std:task`, `lib:json`, `vnd:hyper`, ...). Each is built for the app
+//!   `neoc-vm2` (neoc's own spelling: `std:task`, `lib:json`, `vnd:hyper`, ...). Each is built for the app
 //!   on first use in the app's VM and cached, so every `require` of one module in an app sees one table and
 //!   two apps never share one.
 //!
@@ -14,9 +14,9 @@
 //! `require` is a plain (synchronous) function: a module only builds tables, so it never has to suspend.
 
 use crate::vm::Shared;
-use neoc_vm::{
-    lua::modules,
+use neoc_vm2::{
     mlua::{self, Lua, Value as LuaValue},
+    modules,
 };
 use std::sync::Arc;
 

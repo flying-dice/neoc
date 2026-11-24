@@ -24,8 +24,7 @@
 //! for it, and none of them sees it half done. It does not need `std:fs`: the host does the work.
 
 use super::{data::reject_unknown, vm_function, Sh};
-use neoc_vm::lua::error_text::ErrorText;
-use neoc_vm::mlua::{self, Lua, LuaString, Table, Value as LuaValue};
+use neoc_vm2::mlua::{self, Lua, LuaString, Table, Value as LuaValue};
 use std::future::Future;
 use vos_application::Files;
 use vos_domain::{FileError, FileErrorKind, FileInfo, FileResult, Location};
@@ -217,10 +216,12 @@ fn error_message(err: &LuaValue) -> Option<String> {
     error_parts(err, |_, message| message.to_owned())
 }
 
-/// Reads the kind and the message of one of our error strings; the shape is `neoc-vm`'s, read by its reader.
+/// Reads the kind and the message of one of our error strings (`files.<method>: <kind>[: <message>]`, written by
+/// [`call`]).
 fn error_parts<T>(err: &LuaValue, take: impl FnOnce(FileErrorKind, &str) -> T) -> Option<T> {
     let LuaValue::String(err) = err else { return None };
     let err = err.to_str().ok()?;
-    let text = ErrorText::parse("files", &err)?;
-    Some(take(FileErrorKind::parse(text.kind)?, text.message))
+    let (_method, rest) = err.strip_prefix("files.")?.split_once(": ")?;
+    let (kind, message) = rest.split_once(": ").unwrap_or((rest, ""));
+    Some(take(FileErrorKind::parse(kind)?, message))
 }

@@ -1,4 +1,4 @@
-//! Driven adapter: Luau apps (mlua, on `neoc-vm`) behind the `AppRuntime` port.
+//! Driven adapter: Luau apps (mlua, on `neoc-vm2`) behind the `AppRuntime` port.
 //!
 //! One VM per app, with the host-provided `app` table (see [`api`]), a `require` for `vos:app`
 //! and every `std:`/`lib:`/`vnd:` module of the VM library except [`NOT_FOR_APPS`], one call at a time per VM
@@ -7,7 +7,7 @@
 //!
 //! It also implements the `FileStore` port ([`DiskFiles`]: each app's `app.files` on disk) and the `HostFiles` port
 //! ([`LocalFiles`]: the machine's own file system, for the Files page), next to it: the adapter of the host's disk, because the hardened
-//! filesystem operations it is built on are `neoc-vm`'s (`std:fs`), which only this crate may use.
+//! filesystem operations it is built on are `neoc-vm2`'s (`std:fs`), which only this crate may use.
 
 mod api;
 mod convert;
@@ -24,9 +24,9 @@ pub use convert::{json_to_lua, lua_to_json};
 pub use error::{ScriptError, ToolFailure};
 pub use files::DiskFiles;
 pub use host_files::LocalFiles;
-/// The stack every thread that polls an app's VM needs (neoc-vm's constant, re-exported so that the host, which may not
-/// depend on neoc-vm, can build its runtime with it).
-pub use neoc_vm::VM_THREAD_STACK;
+/// The stack every thread that polls an app's VM needs (neoc-vm2's constant, re-exported so that the host, which may
+/// not depend on neoc-vm2, can build its runtime with it).
+pub use neoc_vm2::VM_THREAD_STACK;
 pub use require::NOT_FOR_APPS;
 pub use runtime::LuaRuntime;
 pub use vm::{AppVm, Effect, Result, VmConfig, VmError, MAX_QUEUED_NOTIFICATIONS};

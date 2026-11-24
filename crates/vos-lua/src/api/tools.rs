@@ -5,8 +5,8 @@ use crate::{
     error::ToolFailure,
     vm::{Shared, ToolDecl},
 };
-use neoc_vm::mlua;
-use neoc_vm::mlua::{Function, Lua, Table, Value as LuaValue};
+use neoc_vm2::mlua;
+use neoc_vm2::mlua::{Function, Lua, Table, Value as LuaValue};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use vos_domain::{tool_schema, QualifiedToolName, ToolSpec};

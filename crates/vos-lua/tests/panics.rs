@@ -52,7 +52,7 @@ app.tool { name = "in_task", run = function()
   local task = require("std:task")
   local h = task.spawn(function() task.wait(0) return app.agents:list() end)
   local r, err = h:await()
-  return { returned = r ~= nil, err = err }
+  return { returned = r ~= nil, kind = err and err.kind, reason = err and err.reason }
 end }
 app.tool { name = "write", run = function() db:exec("insert into t values (4)") return count() end }
 -- the app's own server: a request to it carries no origin, so it runs read-only while a read-only call is active
@@ -128,8 +128,9 @@ async fn a_panic_in_a_task_fails_the_task_and_its_await_returns() {
     let vm = panicking_app().await;
     let out = timed_tool(&vm, "in_task", 10).await.unwrap();
     assert_eq!(out["returned"], json!(false), "{out}");
-    let err = out["err"].as_str().unwrap();
-    assert!(err.contains("a host function panicked: the roster broke"), "{err}");
+    assert_eq!(out["kind"], json!("failed"), "{out}");
+    let reason = out["reason"].as_str().unwrap();
+    assert!(reason.contains("a host function panicked: the roster broke"), "{reason}");
     assert_eq!(timed_tool(&vm, "write", 10).await.unwrap(), json!(1), "the gate is free");
 }
 

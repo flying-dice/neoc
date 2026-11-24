@@ -1,6 +1,6 @@
 [package]
 name = "vos-lua"
-description = "Adapter: apps (Luau, run on neoc-vm) implementing the AppRuntime port, one VM per app."
+description = "Adapter: apps (Luau, run on neoc-vm2) implementing the AppRuntime port, one VM per app."
 version.workspace = true
 edition = "2021"
 rust-version.workspace = true
@@ -10,7 +10,7 @@ publish.workspace = true
 vos-domain = { workspace = true }
 vos-application = { workspace = true }
 async-trait = { workspace = true }
-neoc-vm = { workspace = true }  # the Lua VM (Luau); mlua is reached through its re-export
+neoc-vm2 = { workspace = true }  # the Lua VM (Luau); mlua is reached through its re-export
 notify = { workspace = true }
 parking_lot = { workspace = true }
 serde_json = { workspace = true }

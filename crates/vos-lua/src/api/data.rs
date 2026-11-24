@@ -15,9 +15,9 @@ use crate::{
     tx::{answer, OpenTx, Reply},
     vm::Shared,
 };
-use neoc_vm::lua::lifecycle::turn_id;
-use neoc_vm::mlua;
-use neoc_vm::mlua::{Function, Lua, Table, Value as LuaValue};
+use neoc_vm2::lifecycle::turn_id;
+use neoc_vm2::mlua;
+use neoc_vm2::mlua::{Function, Lua, Table, Value as LuaValue};
 use serde_json::{json, Value};
 use vos_application::data::{ExecOutcome, Params, SqlMigration};
 

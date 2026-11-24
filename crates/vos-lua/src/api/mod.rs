@@ -20,9 +20,9 @@ mod schema;
 mod tools;
 
 use crate::{require, vm::Shared};
-use neoc_vm::lua::lifecycle::{async_function, Role};
-use neoc_vm::mlua;
-use neoc_vm::mlua::{FromLuaMulti, Function, IntoLuaMulti, Lua};
+use neoc_vm2::lifecycle::{async_function, Role};
+use neoc_vm2::mlua;
+use neoc_vm2::mlua::{FromLuaMulti, Function, IntoLuaMulti, Lua};
 use std::{future::Future, sync::Arc};
 use vos_application::PortError;
 
