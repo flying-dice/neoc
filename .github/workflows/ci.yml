@@ -1,8 +1,10 @@
 name: CI
 
 on:
-  # CI minutes are limited: no pull_request or feature-branch triggers.
-  # Runs on push to main and manually.
+  # Runs on every pull request to main, on push to main, and manually (the
+  # repository is public: minutes are not a constraint).
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
     paths-ignore:
@@ -81,14 +83,21 @@ jobs:
       - run: cargo-deny check advisories
 
   test:
-    name: test
+    name: test (${{ matrix.os }})
     needs: [lint]
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
     # Hard cap so a hanging test (NEOC-27) fails the job instead of burning
     # the 6 h default.
     timeout-minutes: 60
     env:
       CLEAN_ARGS: ""
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7
       - name: Install pinned toolchain
@@ -109,11 +118,67 @@ jobs:
       # which this job does not install, so they are not run here.
       - run: cargo test -p neoc -p neoc-vm
 
+  # The vos checks that need bun: the generated files against the Rust schema,
+  # the Luau fixtures against the generated declarations, the type checks and
+  # the bun tests (the lists are package.json's: `codegen:check`, `lint:luau`,
+  # `typecheck`, and the bun half of `test`). Not here: the rest of
+  # `bun run lint`, `cargo nextest` over the vos crates, and `test:e2e`.
+  js:
+    name: js
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CLEAN_ARGS: ""
+      BUN_VERSION: "1.4.5"
+      # The versions the repository pins: LUAU_LSP_VERSION and DARKLUA_VERSION
+      # in packages/vite-plugin/src (luau-tools.ts, backend.ts).
+      LUAU_LSP_VERSION: "1.70.1"
+      LUAU_LSP_SHA256: "1a2ea1ae4f98f8946cefd970a4b54853e11ab4775e6932faa7f60cf920346567"
+      DARKLUA_VERSION: "0.18.0"
+      DARKLUA_SHA256: "3826cd216ec1e1e055dbb6e546cff1e3f35a3a6203279d3fa462229182d85957"
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install pinned toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: js
+          key: ${{ github.ref }}
+          save-if: true
+      - name: Clean workspace crates
+        run: |
+          crates=$(cargo tree --workspace --depth 0 --prefix none | awk 'NF {print $1}')
+          test -n "$crates"
+          cargo clean $(printf -- '-p %s ' $crates) $CLEAN_ARGS
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install luau-lsp and darklua (pinned, sha256-verified)
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL -o /tmp/luau-lsp.zip             "https://github.com/JohnnyMorganz/luau-lsp/releases/download/${LUAU_LSP_VERSION}/luau-lsp-linux-x86_64.zip"
+          curl -fsSL -o /tmp/darklua.zip             "https://github.com/seaofvoices/darklua/releases/download/v${DARKLUA_VERSION}/darklua-linux-x86_64.zip"
+          sha256sum -c - <<EOF
+          ${LUAU_LSP_SHA256}  /tmp/luau-lsp.zip
+          ${DARKLUA_SHA256}  /tmp/darklua.zip
+          EOF
+          unzip -q /tmp/luau-lsp.zip -d "$HOME/.local/bin"
+          unzip -q /tmp/darklua.zip -d "$HOME/.local/bin"
+          chmod +x "$HOME/.local/bin/luau-lsp" "$HOME/.local/bin/darklua"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: bun install --frozen-lockfile
+      - run: bun run codegen:check
+      - run: bun run lint:luau
+      - run: bun run typecheck
+      - run: bun test types scripts
+      - run: bun run --filter '*' test
+
   # Build jobs are independent of lint/test so binaries are produced for every
   # push to main even when lint or test fails. Check lint/test for the quality
-  # signal.
+  # signal. Not on pull requests: nobody downloads a binary of one.
   build-linux-x86_64:
     name: build:linux-x86_64
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -148,6 +213,7 @@ jobs:
   # Windows x86_64, cross-compiled via MinGW.
   build-windows-x86_64:
     name: build:windows-x86_64
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -184,7 +250,8 @@ jobs:
 
   # Builds the Dockerfile (no push) and smoke-runs the image. Gated to commits
   # that touch image inputs (Dockerfile, .dockerignore, Cargo.toml/.lock,
-  # rust-toolchain.toml, crate manifests); a manual dispatch always builds.
+  # rust-toolchain.toml, crate manifests), on a pull request to its changes
+  # against the base; a manual dispatch always builds.
   # A manifest target whose path `.dockerignore` drops fails here (NEOC-26).
   docker:
     name: docker:build
@@ -197,9 +264,9 @@ jobs:
       - name: Detect image-input changes
         id: changes
         env:
-          BEFORE: ${{ github.event.before }}
+          BEFORE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
-          if [ "$GITHUB_EVENT_NAME" != "push" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
             echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
           # Capture first: `grep -q` closing the pipe early trips pipefail.
