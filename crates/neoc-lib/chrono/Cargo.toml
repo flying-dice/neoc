@@ -1,0 +1,26 @@
+[package]
+name = "neoc-lib-chrono"
+description = "lib:chrono"
+version.workspace = true
+edition.workspace = true
+publish = false
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "neoc_lib_chrono"
+path = "src/lib.rs"
+
+[dependencies]
+neoc-vm-core = { workspace = true }
+mlua-ir = { workspace = true }
+# The engine is Luau.
+mlua = { version = "0.12", features = ["luau", "async", "send", "serialize", "macros"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+# `lib:chrono`: civil dates, IANA zones, RFC 3339 and strftime (the default features bundle the tzdb on Windows).
+jiff = "1.0"
+
+[lints.cargo]
+missing_lints_inheritance = "allow"

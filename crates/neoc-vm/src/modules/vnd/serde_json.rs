@@ -37,8 +37,8 @@ pub mod serde_json {
     use serde::Serialize;
 
     use super::place_and_reason;
-    use crate::modules::lib::json::deeper_than;
-    use crate::modules::lib::json::json::{Input, MAX_DEPTH, Node};
+    use neoc_lib_json::deeper_than;
+    use neoc_lib_json::json::{Input, MAX_DEPTH, Node};
     use neoc_vm_std::io::io::{Reader, Writer};
 
     /// Why a text is not JSON.

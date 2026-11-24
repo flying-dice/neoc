@@ -529,8 +529,12 @@ fn the_binary_links_every_module_of_the_runtime() {
         }
     }
     let mut names = Vec::new();
-    // `neoc-vm` links the modules of `neoc-vm-std` and (below `modules`) the rest of them
-    for dir in ["../neoc-vm/src/modules", "../neoc-vm-std/src"] {
+    // the modules of `neoc-vm` itself, of `neoc-vm-std` and of the `neoc-lib-*` crates
+    for dir in [
+        "../neoc-vm/src/modules",
+        "../neoc-vm-std/src",
+        "../neoc-lib",
+    ] {
         declared(&Path::new(env!("CARGO_MANIFEST_DIR")).join(dir), &mut names);
     }
     names.sort();

@@ -202,7 +202,7 @@ fn modules_in_the_source(dir: &std::path::Path, names: &mut Vec<String>) {
 fn every_module_the_library_declares_is_linked_into_the_adapter() {
     let mut declared = Vec::new();
     // the modules of `neoc-vm` and of the crates it links
-    for dir in ["../neoc-vm/src/modules", "../neoc-vm-std/src"] {
+    for dir in ["../neoc-vm/src/modules", "../neoc-vm-std/src", "../neoc-lib"] {
         let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(dir);
         modules_in_the_source(&source, &mut declared);
     }

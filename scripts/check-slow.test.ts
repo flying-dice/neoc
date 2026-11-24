@@ -34,6 +34,16 @@ const FIXTURE: Record<string, string> = {
     '}',
     ''
   ].join('\n'),
+  // a module crate sits one level down, in `crates/neoc-lib/<module>`
+  'crates/neoc-lib/template/Cargo.toml': '[package]\nname = "neoc-lib-template"\n',
+  'crates/neoc-lib/template/src/lib.rs': [
+    'mod tests {',
+    '    #[test]',
+    '    #[ignore = "slow: a ring of macros"]',
+    '    fn a_ring_is_planned_in_linear_time() {}',
+    '}',
+    ''
+  ].join('\n'),
   'crates/vos-domain/Cargo.toml': '[package]\nname = "vos-domain"\n',
   'crates/vos-domain/src/ui/diff_tests.rs': [
     '#[test]',
@@ -49,6 +59,7 @@ const FIXTURE: Record<string, string> = {
 
 /** The fixture's slow: tests, as `cargo nextest list --run-ignored only --message-format oneline` prints them. */
 const SLOW = [
+  'neoc-lib-template tests::a_ring_is_planned_in_linear_time',
   'neoc-vm lua::serde_guard::tests::a_wide_value_is_walked_whole',
   'neoc-vm::hostile_inputs a_ring_of_sixty_thousand_macros_is_planned_in_linear_time',
   'neoc-vm::hostile_inputs no_module_function_panics_on_hostile_input',
@@ -113,6 +124,7 @@ describe.skipIf(process.platform === 'win32')('the slow-suite selection', () => 
       '(binary_id(=vos-domain) & test(=ui::diff::tests::apply_of_diff_reproduces_the_new_tree_for_edited_trees_full))'
     )
     expect(r.stdout).toContain('(binary_id(=neoc-vm) & test(=lua::serde_guard::tests::a_wide_value_is_walked_whole))')
+    expect(r.stdout).toContain('(binary_id(=neoc-lib-template) & test(=tests::a_ring_is_planned_in_linear_time))')
     expect(r.stdout).not.toContain('test(/')
   })
 

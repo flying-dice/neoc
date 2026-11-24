@@ -51,13 +51,18 @@ NOT_SLOW=(
   "neoc-vm modules::vnd::keyring::tests::the_platform_store_keeps_a_credential"
 )
 
-# The nextest binary id of the test target a source file compiles into: `crates/<dir>/tests/<name>.rs` (or
+# The nextest binary id of the test target a source file compiles into: `crates/<dir>/tests/<name>.rs` (a module crate's
+# `<dir>` is `neoc-lib/<module>` or `neoc-vnd/<module>`; or
 # `tests/<name>/main.rs`) is `<package>::<name>`, a file under `src/bin/<name>` is `<package>::bin/<name>`, and any other
 # file under `src/` is the library, `<package>`. Prints nothing for any other place (a module shared by test targets).
 binary_id() {
   local file=$1 dir rel package
-  dir=${file#crates/} && dir=${dir%%/*}
-  rel=${file#crates/"$dir"/}
+  rel=${file#crates/}
+  case $rel in
+    # the module crates sit one level down: crates/neoc-lib/<module>, crates/neoc-vnd/<module>
+    neoc-lib/*/* | neoc-vnd/*/*) dir=${rel%%/*} && rel=${rel#*/} && dir=$dir/${rel%%/*} && rel=${rel#*/} ;;
+    *) dir=${rel%%/*} && rel=${rel#*/} ;;
+  esac
   package=$(sed -n -E 's/^name[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "crates/$dir/Cargo.toml" | head -n 1)
   [ -n "$package" ] || return 0
   case $rel in

@@ -185,7 +185,7 @@ pub mod hyper {
 
     use super::client::{self, HyperError, RequestOptions};
     use super::{Body, RequestParts, server};
-    use crate::modules::lib::json::json::Node;
+    use neoc_lib_json::json::Node;
     use neoc_vm_core::lifecycle::Life;
     use neoc_vm_std::net::net::TcpListener;
 

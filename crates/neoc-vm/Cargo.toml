@@ -15,6 +15,37 @@ path = "src/lib.rs"
 [dependencies]
 neoc-vm-core = { workspace = true }
 neoc-vm-std = { workspace = true }
+neoc-lib-archive = { workspace = true }
+neoc-lib-args = { workspace = true }
+neoc-lib-base64 = { workspace = true }
+neoc-lib-cache = { workspace = true }
+neoc-lib-chrono = { workspace = true }
+neoc-lib-compile = { workspace = true }
+neoc-lib-compress = { workspace = true }
+neoc-lib-crypto = { workspace = true }
+neoc-lib-csv = { workspace = true }
+neoc-lib-diff = { workspace = true }
+neoc-lib-glob = { workspace = true }
+neoc-lib-hash = { workspace = true }
+neoc-lib-hex = { workspace = true }
+neoc-lib-hmac = { workspace = true }
+neoc-lib-html = { workspace = true }
+neoc-lib-http = { workspace = true }
+neoc-lib-ini = { workspace = true }
+neoc-lib-json = { workspace = true }
+neoc-lib-log = { workspace = true }
+neoc-lib-mime = { workspace = true }
+neoc-lib-pkey = { workspace = true }
+neoc-lib-random = { workspace = true }
+neoc-lib-regex = { workspace = true }
+neoc-lib-semver = { workspace = true }
+neoc-lib-tempfile = { workspace = true }
+neoc-lib-template = { workspace = true }
+neoc-lib-test = { workspace = true }
+neoc-lib-text = { workspace = true }
+neoc-lib-unicode = { workspace = true }
+neoc-lib-url = { workspace = true }
+neoc-lib-vcr = { workspace = true }
 mlua-ir = { workspace = true }
 mlua-ir-gen = { workspace = true }
 # The engine is Luau.
@@ -25,71 +56,14 @@ tracing = "0.1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "net", "io-util", "process", "signal", "fs"] }
 parking_lot = "0.13"
 futures = { version = "0.3", default-features = false, features = ["std"] }
-strsim = "0.11"
-base64 = "0.23"
-hex = "0.4"
-sha2 = "0.11"
-sha3 = "0.12"
-blake3 = "1"
-md-5 = "0.11"
-sha1 = "0.11"
-ed25519-dalek = { version = "3", features = ["pkcs8", "pem", "rand_core", "digest"] }
-p256 = { version = "0.14", features = ["pem"] }
-rsa = { version = "0.10", features = ["pkcs1v15"] }
-signature = "3"
-pkcs8 = { version = "0.11", features = ["pem", "std"] }
-spki = { version = "0.8", features = ["pem", "std"] }
-aes-gcm = "0.11"
-chacha20poly1305 = "0.11"
-rand = "0.10"
-uuid = { version = "1", features = ["v4", "v7"] }
-hmac = "0.13"
-subtle = "2"
-xxhash-rust = { version = "0.8", features = ["xxh3", "xxh64"] }
 serde_json = "1"
 serde_yaml = "0.9"
 quick-xml = { version = "0.42", features = ["serialize"] }
 jsonschema = { version = "0.61", default-features = false, features = ["idna"] }
-heck = "0.5"
-unicode-width = "0.2"
-deunicode = "1"
-vte = "0.14"
-unicode-normalization = "0.1"
-unicode-segmentation = "1"
-unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
-caseless = "0.2"
-regex = "1"
-semver = "1"
-mime_guess = "2"
-similar = "3"
-rust-ini = "0.21"
-csv = "1"
 toml = { version = "1.2", features = ["parse", "display"] }
 url = "2"
-percent-encoding = "2"
-# `lib:archive`, `lib:glob` and `lib:http`: iterative tree walks.
-walkdir = "2"
 # `std:fs` stages a cross-device move beside its destination; `lib:tempfile` is this crate.
 tempfile = "3"
-globset = "0.4"
-# `lib:chrono`: civil dates, IANA zones, RFC 3339 and strftime (the default features bundle the tzdb on Windows).
-jiff = "1.0"
-# `lib:cache`: the bounded least-recently-used map.
-lru = "0.19"
-# `lib:compress` (and the layers under `lib:archive`'s tarballs).
-flate2 = "1"
-zstd = "0.14"
-brotli = "9"
-# `lib:archive`. zip without its default features: DEFLATE alone, through the flate2 already here. Its `deflate`
-# feature would add flate2's zlib-rs backend and, by feature unification, change the bytes `lib:compress` writes; it
-# is named by its two parts without zlib-rs.
-tar = "0.4"
-zip = { version = "9", default-features = false, features = ["deflate-flate2", "deflate-zopfli"] }
-# `lib:args`: clap's builder as a run-time argument parser (no derive: that is a binary's concern).
-clap = { version = "4", default-features = false, features = ["std", "help", "usage", "error-context", "string"] }
-# `lib:template`. Without the default features: `builtins` drags chrono and tz data in for `date`.
-# Held at 1.x on purpose: tera 2 rewrites the template language, so moving to it is a deliberate `lib:template` change.
-tera = { version = "1.20", default-features = false }
 # `vnd:hyper`. `client-legacy` for its `HttpConnector`: name lookup and Happy Eyeballs (RFC 8305)
 # for the client's TCP connect. TLS is rustls over the `ring` provider with the platform certificate verifier.
 hyper = { version = "1", features = ["client", "server", "http1"] }

@@ -47,8 +47,8 @@ pub mod jsonschema {
     use serde::Serialize;
 
     use super::summary;
-    use crate::modules::lib::json::json::Input;
     use crate::modules::vnd::serde_json::place_and_reason;
+    use neoc_lib_json::json::Input;
 
     /// Why a text is not a schema.
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error, LuaError)]

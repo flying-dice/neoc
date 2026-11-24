@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+# The runtime's `lib:*` modules are one crate each, in `crates/neoc-lib/<module>`: that folder holds crates and is not one,
+# so `crates/*` would fail on it, and the patterns name what is directly under `crates/`.
+members = ["crates/neoc", "crates/neoc-agui", "crates/neoc-vm*", "crates/vos-*", "crates/neoc-lib/*"]
 
 [workspace.package]
 # neoc's crates and vos's crates share the repository. The neoc crates are edition 2024; the vos crates
@@ -17,6 +19,37 @@ publish = false
 neoc-vm = { path = "crates/neoc-vm" }
 neoc-vm-core = { path = "crates/neoc-vm-core" }
 neoc-vm-std = { path = "crates/neoc-vm-std" }
+neoc-lib-archive = { path = "crates/neoc-lib/archive" }
+neoc-lib-args = { path = "crates/neoc-lib/args" }
+neoc-lib-base64 = { path = "crates/neoc-lib/base64" }
+neoc-lib-cache = { path = "crates/neoc-lib/cache" }
+neoc-lib-chrono = { path = "crates/neoc-lib/chrono" }
+neoc-lib-compile = { path = "crates/neoc-lib/compile" }
+neoc-lib-compress = { path = "crates/neoc-lib/compress" }
+neoc-lib-crypto = { path = "crates/neoc-lib/crypto" }
+neoc-lib-csv = { path = "crates/neoc-lib/csv" }
+neoc-lib-diff = { path = "crates/neoc-lib/diff" }
+neoc-lib-glob = { path = "crates/neoc-lib/glob" }
+neoc-lib-hash = { path = "crates/neoc-lib/hash" }
+neoc-lib-hex = { path = "crates/neoc-lib/hex" }
+neoc-lib-hmac = { path = "crates/neoc-lib/hmac" }
+neoc-lib-html = { path = "crates/neoc-lib/html" }
+neoc-lib-http = { path = "crates/neoc-lib/http" }
+neoc-lib-ini = { path = "crates/neoc-lib/ini" }
+neoc-lib-json = { path = "crates/neoc-lib/json" }
+neoc-lib-log = { path = "crates/neoc-lib/log" }
+neoc-lib-mime = { path = "crates/neoc-lib/mime" }
+neoc-lib-pkey = { path = "crates/neoc-lib/pkey" }
+neoc-lib-random = { path = "crates/neoc-lib/random" }
+neoc-lib-regex = { path = "crates/neoc-lib/regex" }
+neoc-lib-semver = { path = "crates/neoc-lib/semver" }
+neoc-lib-tempfile = { path = "crates/neoc-lib/tempfile" }
+neoc-lib-template = { path = "crates/neoc-lib/template" }
+neoc-lib-test = { path = "crates/neoc-lib/test" }
+neoc-lib-text = { path = "crates/neoc-lib/text" }
+neoc-lib-unicode = { path = "crates/neoc-lib/unicode" }
+neoc-lib-url = { path = "crates/neoc-lib/url" }
+neoc-lib-vcr = { path = "crates/neoc-lib/vcr" }
 # internal (path deps; the arrows in the dependency diagram)
 vos-domain      = { path = "crates/vos-domain" }
 vos-application = { path = "crates/vos-application" }
