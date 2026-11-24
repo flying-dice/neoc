@@ -318,6 +318,43 @@ async fn drive_thread(thread: Thread, args: MultiValue) -> Outcome {
     Outcome::Returned(last.unwrap_or_default())
 }
 
+/// Run a task that was queued ([`defer`], [`delay`]) now that its time has come, unless it was cancelled meanwhile
+/// (`None`: its outcome is the cancellation).
+///
+/// Aborting the tokio task is not enough to cancel it: an abort lands at an `.await`, and a queued task whose time
+/// came while the script was running is not at one. It is blocked inside the first resume, on the VM's lock, and
+/// runs the body as soon as the script reaches a wait, although the script cancelled it before that
+/// (`local t = task.delay(0, f); task.cancel(t)` ran `f` now and then). So the cancellation is read here, once the
+/// script's running batch can no longer be about to cancel:
+/// - with a call entry, this runs inside the task's turn ([`Entrance::inbound`]): the call that queued it, and
+///   could cancel it, has handed the turn over;
+/// - without one, the VM's lock is probed first. `thread.status()` takes it, so it blocks until the running batch
+///   reaches a wait; a cancel in that batch ran before that, and `is_finished()` shows it once `status()` returns.
+///
+/// [`Entrance::inbound`]: crate::lifecycle::Entrance::inbound
+async fn started_unless_cancelled(
+    entrance: &crate::lifecycle::Entrance,
+    task: &TaskInner,
+    thread: Thread,
+    args: MultiValue,
+) -> Option<Outcome> {
+    if !entrance.is_set() {
+        // on a current-thread runtime nothing runs beside the script's batch: there is no lock to wait for, and
+        // `block_in_place` would panic
+        let multi_thread = tokio::runtime::Handle::try_current()
+            .is_ok_and(|handle| handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread);
+        if multi_thread {
+            tokio::task::block_in_place(|| {
+                let _ = thread.status();
+            });
+        }
+    }
+    if task.is_finished() {
+        return None;
+    }
+    Some(drive_thread(thread, args).await)
+}
+
 /// Start `routine` as a task, called with `args`. Its first synchronous slice runs inside this call; when it stops
 /// at a wait or a yield, the rest runs as a separate task.
 ///
@@ -390,25 +427,7 @@ pub fn defer(lua: &Lua, routine: Routine, args: MultiValue) -> mlua::Result<Task
             previous.finished().await;
         }
 
-        // Without a call entry: probe the Lua VM lock before checking cancellation. `thread.status()` acquires
-        // the VM's mutex, so it blocks until the current synchronous Lua batch yields. A cancel runs
-        // synchronously before that yield, so `is_finished()` reflects it once `status()` returns.
-        if !entrance.is_set() {
-            tokio::task::block_in_place(|| {
-                let _ = thread.status();
-            });
-        }
-
-        // With one, the turn is taken first (the spawner's call has ended by then) and cancellation is checked
-        // inside it.
-        let outcome = entrance
-            .inbound(from, async {
-                if task.is_finished() {
-                    return None;
-                }
-                Some(drive_thread(thread, args).await)
-            })
-            .await;
+        let outcome = entrance.inbound(from, started_unless_cancelled(&entrance, &task, thread, args)).await;
         if let Some(outcome) = outcome {
             task.complete(outcome);
         }
@@ -434,8 +453,10 @@ pub fn delay(lua: &Lua, after: Duration, routine: Routine, args: MultiValue) -> 
     let entrance = entrance(lua);
     let abort = scheduler.spawn_task(async move {
         tokio::time::sleep(after).await;
-        let outcome = entrance.inbound(from, drive_thread(thread, args)).await;
-        task.complete(outcome);
+        let outcome = entrance.inbound(from, started_unless_cancelled(&entrance, &task, thread, args)).await;
+        if let Some(outcome) = outcome {
+            task.complete(outcome);
+        }
     });
 
     *inner.abort.lock() = Some(abort);
@@ -703,6 +724,43 @@ pub(crate) mod tests {
                 .expect("cancel_delay");
             assert!(!ran, "delayed task should have been cancelled");
             assert!(first && !second, "only the first cancel is the one that cancelled");
+        });
+    }
+
+    /// A delayed or deferred task whose time came while the script was still running, and which the script then
+    /// cancelled in the same breath, never runs. The pause gives the task's time to come: it is then blocked on the
+    /// VM's lock, where an abort does not reach it.
+    #[test]
+    fn a_task_cancelled_after_its_time_came_but_before_the_script_waited_never_runs() {
+        rt().block_on(async {
+            let e = engine();
+            let pause = e.create_function(|_, ()| {
+                std::thread::sleep(Duration::from_millis(30));
+                Ok(())
+            });
+            e.globals().set("pause", pause.unwrap()).unwrap();
+            let (ran, kinds): (Vec<String>, Vec<String>) = e
+                .load(
+                    r#"
+                    local ran = {}
+                    local delayed = delay(0, function() table.insert(ran, "delayed") end)
+                    local later = delay(0.01, function() table.insert(ran, "later") end)
+                    local deferred = defer(function() table.insert(ran, "deferred") end)
+                    pause()
+                    assert(delayed:cancel() and later:cancel() and deferred:cancel())
+                    wait(0.05)
+                    local kinds = {}
+                    for _, t in { delayed, later, deferred } do
+                        table.insert(kinds, select(2, await(t)).kind)
+                    end
+                    return ran, kinds
+                "#,
+                )
+                .eval_async()
+                .await
+                .expect("cancelled");
+            assert!(ran.is_empty(), "cancelled tasks ran: {ran:?}");
+            assert_eq!(kinds, ["cancelled", "cancelled", "cancelled"]);
         });
     }
 
