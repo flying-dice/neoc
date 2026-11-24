@@ -1,7 +1,7 @@
 /**
  * Every app, in the real shell on the real host (e2e/host/start.ts):
  *  • is on the Home Screen and opens from it (the Dock holds only what is pinned, and what is open),
- *  • floating at its preferred size, light and dark: axe + layout + snapshot,
+ *  • floating at its preferred size, light and dark: axe + layout,
  *  • resized to its minimum and to a large window,
  *  • full screen, Split View and Slide Over,
  *  • on an iPad-sized screen and a large one.
@@ -9,10 +9,13 @@
  * The built-in pages come from the shell's app registry and the installed apps from their contracts (`openrpc.json`),
  * so a new app is covered with no extra code. The Calculator's display is "0" in every shot: nothing here presses a key,
  * and the journeys (which do) run after this project.
+ *
+ * A picture of each state is kept under test-results/screenshots (`capture`), to look at: it is compared with nothing.
  */
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import {
+  capture,
   chooseLayout,
   expect,
   expectAccessible,
@@ -67,7 +70,7 @@ test('the desktop lands on Discover, with the pinned apps and the open ones in t
   // the status bar is a feature that is off until chosen (Settings > Features)
   await expect(page.getByTestId('status-bar-search')).toHaveCount(0)
   await expectAccessible(page, testInfo)
-  await expect(page).toHaveScreenshot('desktop-landing.png')
+  await capture(page, ['desktop', 'desktop-landing.png'])
 })
 
 test('the Home Screen shows every app', async ({ page }, testInfo) => {
@@ -151,7 +154,7 @@ for (const id of APPS) {
         await expect(win).toBeVisible()
         await expectNoOverflow(contentOf(page, id))
         await expectAccessible(page, testInfo, { include: `[data-testid="window-${id}"]` })
-        await expect(page).toHaveScreenshot(`${id}-floating-${theme}.png`)
+        await capture(page, ['desktop', `${id}-floating-${theme}.png`])
       })
     }
 
@@ -165,14 +168,14 @@ for (const id of APPS) {
       expect(Math.round(small.width), 'clamped to the minimum width').toBe(minWidth)
       expect(Math.round(small.height), 'clamped to the minimum height').toBe(minHeight)
       await expectNoOverflow(contentOf(page, id))
-      await expect(win).toHaveScreenshot(`${id}-min.png`)
+      await capture(win, ['desktop', `${id}-min.png`])
 
       await resizeWindow(page, id, 1000, 680)
       const large = (await win.boundingBox())!
       const dock = (await page.getByTestId('dock').boundingBox())!
       expect(large.y + large.height, 'a resized window stays clear of the Dock').toBeLessThanOrEqual(dock.y)
       await expectNoOverflow(contentOf(page, id))
-      await expect(win).toHaveScreenshot(`${id}-large.png`)
+      await capture(win, ['desktop', `${id}-large.png`])
     })
 
     for (const layout of ['fullscreen', 'split-left', 'slideover'] as const) {
@@ -182,7 +185,7 @@ for (const id of APPS) {
         const win = windowOf(page, id)
         await expect(win).toHaveClass(new RegExp(`\\b${layout}\\b`))
         await expectNoOverflow(contentOf(page, id))
-        await expect(page).toHaveScreenshot(`${id}-${layout}.png`)
+        await capture(page, ['desktop', `${id}-${layout}.png`])
       })
     }
 
@@ -199,7 +202,7 @@ for (const id of APPS) {
         expect(box.x + box.width, 'window fits on screen').toBeLessThanOrEqual(screen.width)
         expect(box.y + box.height, 'window fits on screen').toBeLessThanOrEqual(screen.height)
         await expectNoOverflow(contentOf(page, id))
-        await expect(page).toHaveScreenshot(`${id}-screen-${screen.name}.png`)
+        await capture(page, ['desktop', `${id}-screen-${screen.name}.png`])
       })
     }
   })

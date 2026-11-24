@@ -25,6 +25,9 @@ storybook-static
 *storybook.log
 test-results
 playwright-report
+# Screenshots are never kept in the repository: the specs write theirs under test-results/screenshots, as evidence of a
+# run, and nothing compares against them (no baselines)
+__screenshots__
 
 # Per-developer Claude Code settings (project skills/workflows are committed)
 .claude/settings.local.json

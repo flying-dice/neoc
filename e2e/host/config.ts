@@ -59,6 +59,12 @@ export const TICKER_APP_REF = appRef('fixtures', 'ticker')
 export const NOTIFIER_APP_REF = appRef('fixtures', 'notifier')
 /** Memos, as the test registry lists it: what the Discover journeys paste to add an app by URL. */
 export const MEMOS_APP_REF = appRef('registry', 'memos')
+/**
+ * Where the specs write the screenshots they take (`capture` of e2e/fixtures.ts): pictures of what a run drew, to look at.
+ * Nothing compares them with anything, and the folder is git-ignored with the rest of test-results. A run on ports of
+ * its own (`VOS_PORT_BASE`) has a folder of its own, like its host.
+ */
+export const SCREENSHOTS = join(ROOT, process.env.VOS_PORT_BASE ? `test-results/screenshots-${process.env.VOS_PORT_BASE}` : 'test-results/screenshots')
 /** The paired browser the specs share (a Playwright storage state). */
 export const STATE = join(DIR, 'paired.json')
 /**

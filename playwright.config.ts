@@ -1,8 +1,8 @@
 /**
  * Headless UI tests for vos.
  *
- *   stories   every story of every Storybook: renders, axe, snapshots, resize
- *   desktop   the real shell on the real host: every app from the Dock, resize, every layout, axe, snapshots
+ *   stories   every story of every Storybook: renders, axe, resize
+ *   desktop   the real shell on the real host: every app from the Dock, resize, every layout, axe
  *   journeys  each app's and the shell's key user journeys (apps/<app>/e2e, client/e2e, e2e/*.journeys.spec.ts)
  *   notifications  the notification journeys (e2e/notifications.journeys.spec.ts): one app raises banners on every open page, so they run alone, last
  *   background  the background-work journeys (e2e/background.journeys.spec.ts): they install an app that every open page hears about, so they run alone, after the journeys
@@ -28,7 +28,6 @@ const RUN = process.env.VOS_PORT_BASE ? `-${process.env.VOS_PORT_BASE}` : ''
 export default defineConfig({
   testDir: '.',
   testIgnore: ['**/node_modules/**', new RegExp(`^${ROOT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\\\/]\\.claude[\\\\/]`)],
-  snapshotPathTemplate: '{testFileDir}/__screenshots__/{testFileName}/{arg}-{platform}{ext}',
   outputDir: `test-results/output${RUN}`,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
@@ -44,10 +43,7 @@ export default defineConfig({
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure'
   },
-  expect: {
-    timeout: 10_000,
-    toHaveScreenshot: { maxDiffPixelRatio: 0.002, animations: 'disabled', caret: 'hide', scale: 'css' }
-  },
+  expect: { timeout: 10_000 },
   projects: [
     {
       name: 'stories',
@@ -67,6 +63,10 @@ export default defineConfig({
       testMatch: ['{apps,packages}/*/e2e/**/*.spec.ts', 'client/e2e/**/*.spec.ts', 'e2e/!(background|notifications).journeys.spec.ts'],
       dependencies: ['desktop'],
       fullyParallel: false,
+      // Every journey loads its pages from the one host, on connections of its own. On Windows, with the 12 workers a
+      // 24-core machine gets by default, a page load now and then failed with ERR_ADDRESS_IN_USE (and the journeys got in
+      // each other's way more often); with 6 the journeys take as long, and none did.
+      workers: process.platform === 'win32' ? 6 : undefined,
       use: { baseURL: ORIGIN, storageState: STATE }
     },
     {

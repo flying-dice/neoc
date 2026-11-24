@@ -473,7 +473,7 @@ test('AS5: an app’s page opened straight from its static address is contained,
 })
 
 test('AF15: a page whose script throws while it loads is reported with its own message', async ({ page, errors }) => {
-  // a hand-built app package (not one of the fixtures, so no other journey or baseline meets it): its page throws at load
+  // a hand-built app package (not one of the fixtures, so no other journey meets it): its page throws at load
   const id = 'brokenapp'
   const dir = mkdtempSync(join(tmpdir(), 'vos-broken-'))
   try {

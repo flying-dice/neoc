@@ -7,9 +7,19 @@
  * uncaught exceptions. Locate things with `getByTestId` only.
  */
 import AxeBuilder from '@axe-core/playwright'
+import { join } from 'node:path'
 import { test as base, expect, type FrameLocator, type Locator, type Page, type TestInfo } from '@playwright/test'
+import { SCREENSHOTS } from './host/config'
 
 export { expect }
+
+/**
+ * Keep a picture of the page (or of one element) as a run drew it, under `SCREENSHOTS` (git-ignored): something to look
+ * at, written over by the next run. It is compared with nothing and fails no test.
+ */
+export async function capture(target: Page | Locator, name: string[], options: { fullPage?: boolean } = {}): Promise<void> {
+  await target.screenshot({ ...options, path: join(SCREENSHOTS, ...name), animations: 'disabled', caret: 'hide', scale: 'css' })
+}
 
 /** 09:41 on a Tuesday, the way Apple likes it. */
 export const FROZEN_TIME = new Date('2026-06-09T09:41:00+01:00')

@@ -5,7 +5,7 @@
  *   1. the neoc checks (`scripts/check-neoc.sh`: fmt, clippy, the neoc and neoc-vm tests, the
  *      toolchain pin, cargo deny, vos-codegen --check, the no-vos-leak dependency check,
  *      `cargo check --workspace --all-targets --locked`);
- *   2. the vos checks: `bun run lint`, `typecheck`, `test`, `test:e2e` (a Mac, for the screenshot baselines).
+ *   2. the vos checks: `bun run lint`, `typecheck`, `test`, `test:e2e`.
  *
  * It is fast on purpose (iteration speed is a requirement). The slow suites are not in it: `bun run slow`
  * (`scripts/check-slow.sh`). `--no-e2e` is for a change that touches no `vos-*` crate, `apps/`, `client/` or `packages/`.

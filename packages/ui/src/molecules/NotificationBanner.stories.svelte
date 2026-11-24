@@ -87,7 +87,7 @@
 />
 
 <!-- By keyboard: Tab reaches the banner, Enter opens the app, Escape dismisses it. It ends with the keys on the
-     banner (the ring is the state this one's baseline shows). -->
+     banner (the ring is the state this one shows). -->
 <Story
   name="Keyboard"
   tags={['keep-focus']}

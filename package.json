@@ -31,7 +31,6 @@
     "lint:boundaries": "bun scripts/check-boundaries.ts",
     "test": "cargo nextest run --workspace --exclude neoc --exclude neoc-vm && bun test types scripts && bun run --filter '*' test",
     "test:e2e": "bun scripts/storybooks.ts build && playwright test",
-    "test:e2e:update": "bun scripts/storybooks.ts build && playwright test --update-snapshots",
     "storybooks": "bun scripts/storybooks.ts",
     "gate": "bun scripts/pre-pr.ts",
     "gate:neoc": "bash scripts/check-neoc.sh",
