@@ -11,4 +11,5 @@ pub mod serde_json;
 pub mod serde_yaml;
 pub mod sqlx_mysql;
 pub mod sqlx_postgres;
+pub mod testcontainers_modules;
 pub mod toml;

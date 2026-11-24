@@ -115,6 +115,11 @@ keyring-core = "1.1"
 # `vnd:portable_pty`, as in neoc-vm: the pseudo-terminal layer of WezTerm (openpty on Unix, ConPTY on Windows). Its
 # reader, writer and child wait are blocking, so the module runs each on a thread of its own.
 portable-pty = "0.9"
+# `vnd:bollard`, as in neoc-vm: the Docker Engine API client. Already in the tree through testcontainers (the same
+# version, and the features it turns on: `ssl` is rustls over `ring`), so this only names the dependency.
+bollard = { version = "0.20", features = ["ssl"] }
+# `vnd:testcontainers_modules`, as in neoc-vm: disposable MySQL, Postgres and any other image, in Docker.
+testcontainers-modules = { version = "0.15", features = ["mysql", "postgres"] }
 
 # `std:process` kills a process's whole group.
 [target.'cfg(unix)'.dependencies]
