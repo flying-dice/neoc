@@ -1,7 +1,7 @@
 //! `vnd:hyper` as a script uses it: a server in the engine, and the client against it. The client's own behaviour
 //! (timeouts, redirects, the body cap, TLS) is tested against hand-written servers in `client/tests.rs`.
 //!
-//! Ported from neoc-vm's `vnd/hyper.rs` test and from `crates/neoc/tests/vnd/hyper.test.lua`.
+//! Ported from the old VM's `vnd/hyper.rs` test and from `crates/neoc/tests/vnd/hyper.test.lua`.
 
 use mlua::Lua;
 

@@ -9,7 +9,7 @@
 //! A name that starts with `.` is hidden: a path with a hidden component matches only a pattern that names one
 //! (`.git*`, `**/.cache/*.rs`), as ripgrep and fd do.
 //!
-//! Ported from neoc-vm's `lib:glob`. What changed on purpose:
+//! Ported from the old VM's `lib:glob`. What changed on purpose:
 //! - A failure is a typed error: `invalid_pattern` (with the pattern and why), and for a scan also `not_found` and
 //!   `not_a_directory` (with the directory).
 //! - A scan returns one value, `{ paths, errors }`: the matches, and the entries the walk could not read (it

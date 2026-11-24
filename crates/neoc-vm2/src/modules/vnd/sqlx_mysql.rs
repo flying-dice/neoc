@@ -31,7 +31,7 @@
 //! `DOUBLE` are numbers, the BLOB and BINARY types are strings byte for byte, and everything else (`VARCHAR`,
 //! `TEXT`, `JSON`, `DECIMAL`, dates and times, `ENUM`, `SET`) is its text. `NULL` is `nil` (the key is absent).
 //!
-//! Ported from neoc-vm's `vnd:sqlx_mysql`. What changed on purpose:
+//! Ported from the old VM's `vnd:sqlx_mysql`. What changed on purpose:
 //! - A parameter that is not a boolean, a number or a string (and SQL that is not a string) is refused as an
 //!   argument; it was a returned error.
 //! - A failure is a typed error: `OpenError` (`invalid_url`, `connect`) and `Error` (`closed`, `constraint`,
@@ -492,7 +492,7 @@ mod tests {
         assert!(text.contains("vnd:sqlx_mysql.open: argument #1 'url'"), "{text}");
     }
 
-    /// neoc-vm's `sqlx_mysql.test.lua`, with the errors typed. `URL` is the server.
+    /// The old VM's `sqlx_mysql.test.lua`, with the errors typed. `URL` is the server.
     const SERVER_SCRIPT: &str = r#"
         local sqlx_mysql = require("vnd:sqlx_mysql")
 

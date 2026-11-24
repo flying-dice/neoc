@@ -11,7 +11,7 @@
 //! The `toml` 1.x crate implements TOML 1.1: inline tables may span lines and end with a comma, `\e` is a string
 //! escape, and times may omit seconds (`07:32`).
 //!
-//! Ported from neoc-vm's `vnd:toml`. What changed on purpose:
+//! Ported from the old VM's `vnd:toml`. What changed on purpose:
 //! - A date or time decodes to its text (`"1979-05-27T07:32:00Z"`); it was a table with one private key.
 //! - A failure is a typed error: `DecodeError` (`syntax`, with the line and column) and `EncodeError`
 //!   (`unsupported`).

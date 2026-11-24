@@ -7,7 +7,8 @@
 //!   untrusted script in; [`panics`] ends a host function's panic as an error of the call that reached it.
 //! - [`declarations`] writes the `.d.luau` / `.d.ts` files from the modules this crate links.
 //!
-//! neoc-vm is the reference this crate is ported from, module by module.
+//! It replaced neoc's first VM (bindings written by hand on mlua, with declarations of its own). Where a module
+//! says what it changed from "the old VM", that is the VM it means.
 
 mod byte_stream;
 mod child_exit;

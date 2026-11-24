@@ -30,7 +30,7 @@
 //! and it kills the process as it goes (`KillWithTask`). A program that ends by
 //! `std::process::exit` drops nothing: it calls [`kill_all`] first ([`crate::exit`] does).
 //!
-//! Ported from neoc-vm's `std/process/child.rs`: the same tasks and the same rules, with the module's typed error.
+//! Ported from the old VM's `std/process/child.rs`: the same tasks and the same rules, with the module's typed error.
 
 use std::future::Future;
 use std::process::{ExitStatus, Stdio};

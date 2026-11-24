@@ -31,7 +31,7 @@
 //! `unsupported_column`: cast it to text in the SQL (`SELECT created_at::text`, `SELECT data::text` for `JSON` /
 //! `JSONB`, `SELECT id::text` for `UUID`).
 //!
-//! Ported from neoc-vm's `vnd:sqlx_postgres`. What changed on purpose:
+//! Ported from the old VM's `vnd:sqlx_postgres`. What changed on purpose:
 //! - A parameter that is not a boolean, a number or a string (and SQL that is not a string) is refused as an
 //!   argument; it was a returned error.
 //! - A failure is a typed error: `OpenError` (`invalid_url`, `connect`) and `Error` (`closed`,
@@ -381,7 +381,7 @@ mod tests {
         assert!(text.contains("vnd:sqlx_postgres.open: argument #1 'url'"), "{text}");
     }
 
-    /// neoc-vm's `sqlx_postgres.test.lua`, with the errors typed. `URL` is the server.
+    /// The old VM's `sqlx_postgres.test.lua`, with the errors typed. `URL` is the server.
     const SERVER_SCRIPT: &str = r#"
         local sqlx_postgres = require("vnd:sqlx_postgres")
 

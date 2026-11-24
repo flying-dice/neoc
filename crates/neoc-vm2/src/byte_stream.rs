@@ -10,7 +10,7 @@
 //! What fails here is said in words ([`Read::Failed`], [`WriteFailed`], a `String`): each module makes its own
 //! typed error of them.
 //!
-//! Ported from neoc-vm's `byte_stream.rs`.
+//! Ported from the old VM's `byte_stream.rs`.
 
 use std::collections::VecDeque;
 

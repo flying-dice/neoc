@@ -5,7 +5,7 @@
 //! seconds a script gave `task.wait` / `task.delay` into a [`Duration`]: NaN and negatives are zero, anything past
 //! [`MAX_SLEEP_SECS`] is clamped.
 //!
-//! Ported from neoc-vm's `limits.rs`. Its buffer sizes (`size`, `zeroed`, `string_with_capacity`) are not here: on
+//! Ported from the old VM's `limits.rs`. Its buffer sizes (`size`, `zeroed`, `string_with_capacity`) are not here: on
 //! mlua-ir a size is an unsigned integer argument, and the modules that allocate from one bound it themselves.
 
 use std::time::Duration;

@@ -11,7 +11,7 @@
 //! A parsed document is handed out as `lib:json` does it: an `Object` or `Array` handle for a container, a Lua value
 //! for a scalar. Objects are written with their keys sorted.
 //!
-//! Ported from neoc-vm's `vnd:serde_json`. What changed on purpose:
+//! Ported from the old VM's `vnd:serde_json`. What changed on purpose:
 //! - A JSON `null` document reads as `nil` (there is no `json.null` sentinel, as in `lib:json`).
 //! - A failure is a typed error: `DecodeError` (`syntax` or `eof`, with the line and column) and `EncodeError`
 //!   (`too_deep`).

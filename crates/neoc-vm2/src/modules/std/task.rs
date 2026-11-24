@@ -7,7 +7,7 @@
 //! local slept = task.wait(0.2) -- seconds; other tasks run meanwhile
 //! ```
 //!
-//! Ported from neoc-vm's `std:task`. What changed on purpose:
+//! Ported from the old VM's `std:task`. What changed on purpose:
 //! - `spawn`, `defer` and `delay` take a function, with the arguments to call it with after it
 //!   (`task.spawn(f, a, b)`), and no coroutine in the function's place.
 //! - `Task:await` gives the task's first return value, as it is (a table is that table), or `nil` and a typed
@@ -296,7 +296,7 @@ mod tests {
         assert!(refused[5].contains("std:task.delay: argument #1 'secs': expected a number"), "{refused:#?}");
     }
 
-    /// neoc-vm's varargs: what follows the function is what it is called with, `nil`s and live values included.
+    /// The old VM's varargs: what follows the function is what it is called with, `nil`s and live values included.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn the_arguments_after_the_body_are_passed_to_it() {
         let lua = engine();

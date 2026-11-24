@@ -14,7 +14,7 @@
 //! doing and count for nothing. `on_evict(key, value)` is called for exactly those drops, after the cache's lock is
 //! released: a callback may use the same cache.
 //!
-//! Ported from neoc-vm's `lib:cache`. What changed on purpose:
+//! Ported from the old VM's `lib:cache`. What changed on purpose:
 //! - `Cache.new(max_size, ttl?, on_evict?)` replaces `Cache.new({ max_size, ttl, on_evict })`: the size is required
 //!   and so is not an option, and each part has its type.
 //! - A time to live is a `std:time` `Duration` (it was a number of seconds). `Duration.zero()` is "never expires",

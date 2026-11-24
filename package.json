@@ -29,7 +29,7 @@
     "lint:atomic": "bun scripts/check-atomic.ts",
     "lint:testids": "bun scripts/check-testids.ts",
     "lint:boundaries": "bun scripts/check-boundaries.ts",
-    "test": "cargo nextest run --workspace --exclude neoc --exclude neoc-vm && bun test types scripts && bun run --filter '*' test",
+    "test": "cargo nextest run --workspace --exclude neoc --exclude neoc-vm2 && bun test types scripts && bun run --filter '*' test",
     "test:e2e": "bun scripts/storybooks.ts build && playwright test",
     "test:e2e:update": "bun scripts/storybooks.ts build && playwright test --update-snapshots",
     "storybooks": "bun scripts/storybooks.ts",

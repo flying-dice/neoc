@@ -4,7 +4,7 @@
 FROM rust:1.100.0-bookworm AS builder
 WORKDIR /src
 
-# The whole workspace is needed: the `neoc` bin pulls neoc-vm.
+# The whole workspace is needed: the `neoc` bin pulls neoc-vm2.
 # `crates/neoc/Cargo.toml` declares a `[[test]]` target, so
 # `crates/neoc/tests` must stay in the context. `.dockerignore` keeps
 # target/ and .git out. BuildKit cache mounts give dep + incremental

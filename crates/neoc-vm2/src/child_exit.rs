@@ -3,7 +3,7 @@
 //! One watcher (a task, or a thread) owns the process and publishes how it ended, once, on a watch channel; every
 //! `wait()` of the script reads that channel, so it may be called again and the answer is the same.
 //!
-//! Ported from neoc-vm's `child_exit.rs`, as it was.
+//! Ported from the old VM's `child_exit.rs`, as it was.
 
 use tokio::sync::watch;
 

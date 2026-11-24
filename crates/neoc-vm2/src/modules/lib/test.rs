@@ -19,7 +19,7 @@
 //! `timeout(1)` does. A thread, because a test that blocks the runtime's thread never reaches an `.await` a timer
 //! could interrupt.
 //!
-//! Ported from neoc-vm's `lib:test`. What changed on purpose:
+//! Ported from the old VM's `lib:test`. What changed on purpose:
 //! - A matcher is a typed object and its assertions are methods: `expect(x):toBe(y)` (it was a table of closures,
 //!   `expect(x).toBe(y)`). The names are Jest's, as they were.
 //! - A failed expectation raises a typed `ExpectError` (`not_equal`, `not_nil`, `not_truthy`, `not_falsy`,
@@ -599,7 +599,7 @@ mod tests {
         }
     }
 
-    /// From neoc-vm's `tests/embedding.rs` and `tests/abort_regressions.rs`: mlua's message handler runs a value's
+    /// From the old VM's `tests/embedding.rs` and `tests/abort_regressions.rs`: mlua's message handler runs a value's
     /// `__tostring` to make the text of an error, and `toThrow` calls the function directly, so an error value
     /// whose `__tostring` fails is caught, not rendered, on a small stack too.
     #[test]
@@ -629,7 +629,7 @@ mod tests {
             .unwrap();
     }
 
-    /// From neoc-vm's `tests/abort_regressions.rs`: `describe` is an async host function that runs its body, and a
+    /// From the old VM's `tests/abort_regressions.rs`: `describe` is an async host function that runs its body, and a
     /// body that calls `describe` again recurses through the host. Luau stops it at its C-call limit: an error the
     /// script catches, on the stack a VM thread has, not an overflow.
     #[test]

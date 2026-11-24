@@ -19,7 +19,7 @@
 //! Each line is also a `tracing` event at target `lua::lib::log` (not when a sink is installed: the sink is where
 //! the embedder routes it).
 //!
-//! Ported from neoc-vm's `lib:log`. What changed on purpose:
+//! Ported from the old VM's `lib:log`. What changed on purpose:
 //! - `level` and `format` are string enums, exactly as written (`"info"`, not `"INFO"`), and an option that is not
 //!   one is refused as an argument with its place (it was `log.new: unknown level ...`).
 //! - Fields are a table with string keys: a key that is not a string is refused as an argument (a number was

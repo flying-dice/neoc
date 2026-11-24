@@ -1,6 +1,6 @@
 //! MIME type detection: the extension to MIME mapping and filename-based detection, `lib:mime`.
 //!
-//! Ported from neoc-vm's `lib:mime`. What changed on purpose: a type or extension that is not known is normal
+//! Ported from the old VM's `lib:mime`. What changed on purpose: a type or extension that is not known is normal
 //! absence, so `from_extension`, `detect` and `to_extension` return `nil` for it (they returned `(nil, "unknown
 //! ...")`); the only error left is text that is not a MIME type (`invalid_mime`), and the preference map is a typed
 //! `{ [string]: string }`.

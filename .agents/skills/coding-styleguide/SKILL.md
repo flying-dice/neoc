@@ -28,7 +28,7 @@ Every API surface MUST be fully typed: every parameter, option, body, return val
 and error kind gets its real shape in the declarations (`types/generated/vos.d.luau`, `vos.d.ts`)
 and in the code that produces them. This is not a preference; an untyped surface is a defect.
 
-- `any`, `unknown`, `{ [key: string]: any }`, `Value::decl_type()`, an erased `serde_json::Value`
+- `any`, `unknown`, `{ [key: string]: any }`, `mlua_ir::Unknown`, an erased `serde_json::Value`
   or an equivalent "anything" type is banned on a surface, unless the underlying API is
   **genuinely unknown**: its shape is decided at run time by data no one controls (what
   `json.decode` parses, what a script stored in `kv`, a user's own row). Where it is, say so
@@ -38,7 +38,7 @@ and in the code that produces them. This is not a preference; an untyped surface
   serialize them to JSON and erase them. If the type system cannot yet express them, extend the
   declaration machinery: that work is part of the change, not a follow-up.
 - Types are read from the code, never written as strings beside it. A hand-written type string
-  in an attribute or declaration helper (`#[lua(takes("err: string?"))]`, a literal Luau/TS type
+  in an attribute or declaration helper (a literal Luau/TS type
   passed to a macro) is banned: it is a second source that drifts from the implementation. Give
   the Rust function real typed parameters and returns and let the declarations derive from them;
   if the machinery cannot read a case yet, extend it as part of the change.

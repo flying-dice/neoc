@@ -11,9 +11,6 @@
  *   codegen     -> domain, lua (dev-time: it writes the declarations from the schema of the modules the Lua adapter links)
  *   lua         -> application, domain, neoc-vm2 (the one vos crate that may use the Lua VM library)
  *   neoc-vm2    -> nothing internal (the Lua VM library, on mlua-ir; the lua adapter and the `neoc` CLI may depend on it)
- *   neoc-vm     -> neoc-decl and neoc-macros only (the VM neoc-vm2 was ported from: its reference in neoc-vm2's tests
- *                  until it is deleted, with those two)
- *   neoc-decl   -> nothing internal (the tree of a module surface's declarations, which the old VM writes; deleted with it)
  *   neoc        -> neoc-vm2 only (the CLI over the VM; it never reaches into the vos crates)
  *   host        -> every adapter, never the VM
  *
@@ -38,13 +35,6 @@ const INTERNAL: Record<string, string[]> = {
   // the Lua adapter may depend on it (the one place a script engine is wired to a port), so the VM stays swappable.
   // The `neoc` CLI is its other client.
   'neoc-vm2': [],
-  // The VM neoc-vm2 was ported from. Nothing depends on it but neoc-vm2's conformance tests (a dev-dependency).
-  'neoc-vm': ['neoc-decl', 'neoc-macros'],
-  // The attributes a module declares its Lua surface with (a proc-macro crate: it can depend on nothing here).
-  'neoc-macros': [],
-  // The declarations of a module surface as a tree, and that tree as Luau: what the old VM records. Nothing else
-  // reads it any more (the app declarations are written from mlua-ir's schema); it goes with the old VM.
-  'neoc-decl': [],
   neoc: ['neoc-vm2'],
   'vos-sqlite': ['vos-domain', 'vos-application'],
   'vos-fetch': ['vos-application'],
@@ -77,8 +67,8 @@ const CORE_EXTERNAL: Record<string, Set<string>> = {
  * names `tonic`, which deny.toml lets use axum but no workspace crate may depend on.
  */
 const FRAMEWORK_HOMES: Record<string, string[]> = {
-  mlua: ['neoc-vm2', 'neoc-vm', 'neoc'],
-  rusqlite: ['vos-sqlite', 'neoc-vm2', 'neoc-vm'],
+  mlua: ['neoc-vm2', 'neoc'],
+  rusqlite: ['vos-sqlite', 'neoc-vm2'],
   rmcp: ['vos-mcp'],
   axum: ['vos-http', 'vos-mcp', 'vos-host'],
   'axum-server': ['vos-host'],

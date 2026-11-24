@@ -28,7 +28,7 @@
 //!   where notify 8's FSEvents callback panicked on them.
 //! - *Start.* FSEvents may also report a change made just before the watch started.
 //!
-//! Ported from neoc-vm's `std/fs/watch.rs`; the `Watcher` a script holds is in `std/fs.rs`.
+//! Ported from the old VM's `std/fs/watch.rs`; the `Watcher` a script holds is in `std/fs.rs`.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};

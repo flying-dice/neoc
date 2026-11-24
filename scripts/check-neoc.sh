@@ -4,11 +4,10 @@
 # it first, then the vos checks. Every step must pass exactly as written; the first failure stops the run.
 #
 # It is fast on purpose (iteration speed is a requirement): what takes minutes is not here but in
-# scripts/check-slow.sh (`bun run slow`): the full hostile-input sweep, the release-build abort regressions, the bench
-# bodies and the full generated-case counts.
+# scripts/check-slow.sh (`bun run slow`).
 #
-# NEOC_REQUIRE_LUAU_LSP=1 is set here: a missing or other-version luau-lsp fails the Luau declaration tests instead of
-# skipping them.
+# NEOC_REQUIRE_LUAU_LSP=1 is set here: a missing luau-lsp fails the strict-mode check of the VM's test scripts
+# (crates/neoc-vm2/tests/strict_luau.rs) instead of skipping it.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export NEOC_REQUIRE_LUAU_LSP=1
@@ -21,8 +20,8 @@ cargo fmt --check
 step "cargo clippy --workspace --all-targets -- -D warnings"
 cargo clippy --workspace --all-targets -- -D warnings
 
-step "cargo test -p neoc -p neoc-vm -p neoc-decl -p neoc-macros"
-cargo test -p neoc -p neoc-vm -p neoc-decl -p neoc-macros
+step "cargo test -p neoc -p neoc-vm2"
+cargo test -p neoc -p neoc-vm2
 
 # The suites that need a Docker daemon (sqlx_mysql, sqlx_postgres, testcontainers_modules) are left out; with Docker
 # running, `neoc run 'crates/neoc/tests/**/*.test.lua' 'crates/neoc/tests/**/*.spec.lua'` runs every suite. No test
@@ -52,30 +51,19 @@ step "vos-lua module tests: cargo nextest run -p vos-lua --test modules"
 cargo nextest run -p vos-lua --test modules \
   -E 'not test(=an_app_built_by_the_real_pipeline_requires_the_neoc_modules)'
 
-# The benches must keep compiling; running their bodies and the release-build abort regressions are in `bun run slow`.
-step "cargo check -p neoc-vm --features bench --benches --locked"
-cargo check -p neoc-vm --features bench --benches --locked
-
 step "scripts/check-toolchain-pin.sh"
 scripts/check-toolchain-pin.sh
 
 step "cargo deny check"
 cargo deny check
 
-# The luau-lsp fixture tests (crates/neoc-vm/tests/luau_decls.rs) ran in `cargo test -p neoc -p neoc-vm` above, under
-# NEOC_REQUIRE_LUAU_LSP=1; this checks that the committed types/neoc.d.luau is what the modules record.
-step "Luau declarations: luau_decls --check"
-cargo run -p neoc-vm --example luau_decls -- --check
-step "The same declarations as a tree: luau_decls --ast --check"
-cargo run -p neoc-vm --example luau_decls -- --ast --check
-
 # types/generated/vos.d.luau and vos.d.ts are written from the schema of neoc-vm2's modules (and of the `app` API):
 # a module change regenerates them (`cargo run -p vos-codegen`).
 step "vos-codegen --check (generated files current against the Rust schema of the modules)"
 cargo run -q -p vos-codegen -- --check
 
-# neoc and neoc-vm never depend on a vos-* crate, not even as a dev-dependency (no vos concept in the runtime).
-step "no vos-* crate in the dependency tree of neoc or neoc-vm"
+# neoc and neoc-vm2 never depend on a vos-* crate, not even as a dev-dependency (no vos concept in the runtime).
+step "no vos-* crate in the dependency tree of neoc or neoc-vm2"
 scripts/check-no-vos-leak.sh
 
 step "cargo check --workspace --all-targets --locked"

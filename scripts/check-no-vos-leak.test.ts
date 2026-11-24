@@ -24,17 +24,17 @@ afterAll(() => {
 // the script is bash and its stub `cargo` a shell script first on a `:` PATH: Unix only (on Windows `bash` is WSL's)
 describe.skipIf(process.platform === 'win32')('the no-vos-leak check', () => {
   test('passes on a tree without a vos crate', () => {
-    expect(run('neoc v0.1.0\nneoc-vm v0.1.0\nmlua v0.12.2', 0).status).toBe(0)
+    expect(run('neoc v0.1.0\nneoc-vm2 v0.1.0\nmlua v0.12.2', 0).status).toBe(0)
   })
 
   test('fails when a vos crate is in the tree', () => {
-    const r = run('neoc v0.1.0\nneoc-vm v0.1.0\nvos-domain v0.1.0', 0)
+    const r = run('neoc v0.1.0\nneoc-vm2 v0.1.0\nvos-domain v0.1.0', 0)
     expect(r.status).toBe(1)
     expect(r.stderr).toContain('must not depend on a vos-* crate')
   })
 
   test('fails when cargo tree itself fails, even if it printed a clean-looking tree', () => {
-    const r = run('neoc v0.1.0\nneoc-vm v0.1.0', 101)
+    const r = run('neoc v0.1.0\nneoc-vm2 v0.1.0', 101)
     expect(r.status).toBe(1)
     expect(r.stderr).toContain('cargo tree failed')
   })
@@ -42,6 +42,6 @@ describe.skipIf(process.platform === 'win32')('the no-vos-leak check', () => {
   test('fails on an empty tree rather than reading it as "no leak"', () => {
     const r = run('', 0)
     expect(r.status).toBe(1)
-    expect(r.stderr).toContain('did not list neoc-vm')
+    expect(r.stderr).toContain('did not list neoc-vm2')
   })
 })

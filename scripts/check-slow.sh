@@ -7,8 +7,7 @@
 # script runs those tests and no other ignored one. It finds them by that reason: the function after each
 # `ignore = "slow:` under `crates/` (any spacing, plain or inside a `cfg_attr`, tracked by git or not), in the test
 # binary its file compiles into, and runs each by binary id and full test path. The `neoc` crate is left out: its
-# cucumber harness takes no libtest flags and has no ignored test. The two things that are not tests of their own, a
-# release build of the abort regressions and the bench bodies, are steps below. Add a new slow test with
+# cucumber harness takes no libtest flags and has no ignored test. Add a new slow test with
 # `#[ignore = "slow: run with bun run slow"]` within three lines above its `fn`; nothing here changes.
 #
 # It fails closed. It checks its selection against `cargo nextest list --run-ignored only`: every ignored test must be
@@ -17,14 +16,10 @@
 # spelling of the attribute, an attribute too far from its `fn`, a new test ignored without a reason) stops the
 # script with a message. `--list` does only that check and prints the selection (a dry run: no slow suite runs).
 #
-# What runs:
-#   - hostile_inputs: the full sweep (about two million hostile calls over every module) and the 60 000-macro
-#     ring (a wall-clock bound in a debug build);
-#   - abort_regressions in a release build: proves a default 2 MiB thread survives (the debug run is in the gate);
-#   - the bench bodies, each once (the gate only compiles them).
+# What runs today: lib:template's 60 000-macro ring (a wall-clock bound in a debug build).
 #
 # The first failure stops the run. Needs the pinned Rust toolchain and cargo-nextest; not bun, darklua or
-# luau-lsp (none of the steps builds an app or checks the Luau declarations).
+# luau-lsp (no step builds an app or type-checks a script).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -119,11 +114,5 @@ fi
 
 step "slow tests ($count): cargo nextest run --workspace --exclude neoc --run-ignored only -E '$filter'"
 cargo nextest run --workspace --exclude neoc --run-ignored only --no-fail-fast -E "$filter"
-
-step "cargo test --release -p neoc-vm --test abort_regressions"
-cargo test --release -p neoc-vm --test abort_regressions
-
-step "bench bodies, each once"
-cargo bench -p neoc-vm --features bench --bench lib --bench vnd -- --test
 
 printf '\nslow suites passed\n'

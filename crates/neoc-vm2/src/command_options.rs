@@ -6,7 +6,7 @@
 //! program, a NUL byte) or should not be asked to (a thousand arguments too many). What is refused is a
 //! [`Refused`]: the option and the words for the script, which each module puts in its own `invalid_input` error.
 //!
-//! Ported from neoc-vm's `command_options.rs`, where each of these was also the reader of its field from a Lua
+//! Ported from the old VM's `command_options.rs`, where each of these was also the reader of its field from a Lua
 //! value.
 
 use std::collections::BTreeMap;

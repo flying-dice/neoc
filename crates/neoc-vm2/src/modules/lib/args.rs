@@ -10,7 +10,7 @@
 //! subcommand named `help`. A flag may claim the short `-h` (for `--host`, say): it takes it from the built-in help,
 //! which keeps `--help`.
 //!
-//! Ported from neoc-vm's `lib:args`. What changed on purpose:
+//! Ported from the old VM's `lib:args`. What changed on purpose:
 //! - The result is typed. `parse` gives `{ kind = "parsed", flags, positional, rest, subcommand? }` or, for
 //!   `--help`, `{ kind = "help", text }` (it gave one table with the flags beside `positional`, `rest`, `subcommand`
 //!   and the subcommand's own table under its name, or `{ help = true, help_text }`). A flag's value is under
@@ -832,7 +832,7 @@ mod tests {
             let err = lua.load(format!("return args.help({config})")).eval::<Value>().expect_err(config).to_string();
             assert!(err.contains("lib:args.help: argument #1 'config'"), "{config}: {err}");
         }
-        // the map form neoc-vm took: read as a plain list it would be no flags at all
+        // the map form the old VM took: read as a plain list it would be no flags at all
         let err = lua
             .load(r#"return args.parse({}, { name = "t", flags = { verbose = { type = "boolean" } } })"#)
             .eval::<Value>()

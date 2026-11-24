@@ -22,9 +22,9 @@
 //! are recorded (as plain data) and both are replayed.
 //!
 //! The file is `{ "<key>": { "result": [<value>, <error>] } }`, written whole after every recorded call. A file
-//! neoc-vm wrote (which also has the call's `args` under each key) replays.
+//! the old VM wrote (which also has the call's `args` under each key) replays.
 //!
-//! Ported from neoc-vm's `lib:vcr`. What changed on purpose:
+//! Ported from the old VM's `lib:vcr`. What changed on purpose:
 //! - `tape:play(key, function() return f(x) end)` replaces `tape:wrap(key, f)(x)`: mlua-ir has no function that
 //!   returns a function, and none that takes or returns any number of values, so the cassette takes the call
 //!   itself. The call's arguments are therefore not written to the file (replay never read them).
@@ -58,7 +58,7 @@ fn forced_off() -> bool {
     std::env::var("NEOC_VCR").as_deref() == Ok("off")
 }
 
-/// What one call returned. (neoc-vm also wrote the call's `args` here; they are not read.)
+/// What one call returned. (the old VM also wrote the call's `args` here; they are not read.)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct Entry {
     result: Vec<Json>,
@@ -481,7 +481,7 @@ mod tests {
         assert_eq!(cassette_file(&dir, "tape.json")["slow"]["result"][0], "after the wait");
     }
 
-    /// From neoc-vm's `serde_guard` and `vcr.test.lua`: a buffer is never recorded as an array of numbers. Neither
+    /// From the old VM's `serde_guard` and `vcr.test.lua`: a buffer is never recorded as an array of numbers. Neither
     /// is anything else replay could not give back.
     #[test]
     fn what_is_not_plain_data_is_refused_and_not_recorded() {
@@ -582,9 +582,9 @@ mod tests {
         );
     }
 
-    /// A cassette neoc-vm wrote has the call's arguments too, and may hold more results than two.
+    /// A cassette the old VM wrote has the call's arguments too, and may hold more results than two.
     #[test]
-    fn a_cassette_of_neoc_vm_replays() {
+    fn a_cassette_of_the_old_vm_replays() {
         let (lua, dir) = engine();
         let old = r#"{
           "base64.decode.hello": { "args": ["aGVsbG8="], "result": ["hello", null] },

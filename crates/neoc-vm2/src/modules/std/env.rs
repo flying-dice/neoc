@@ -1,6 +1,6 @@
 //! Environment, platform constants and well-known directories: `std:env` (mirrors `std::env`).
 //!
-//! Ported from neoc-vm's `std:env`. What changed on purpose: every failure is a typed error (`var` tells an unset
+//! Ported from the old VM's `std:env`. What changed on purpose: every failure is a typed error (`var` tells an unset
 //! variable from one that is not Unicode, `current_dir` says why), and a malformed `_NEOC_ARGS` raises a typed
 //! error.
 

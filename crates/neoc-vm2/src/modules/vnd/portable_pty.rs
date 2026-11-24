@@ -56,7 +56,7 @@
 //! A terminal emulator the bytes are passed to answers by itself. A script that reads the output itself writes the
 //! answer: the bytes pass as they are in both directions, and this module puts none of its own among them.
 //!
-//! Ported from neoc-vm's `vnd:portable_pty`. What changed on purpose:
+//! Ported from the old VM's `vnd:portable_pty`. What changed on purpose:
 //! - An error is a typed [`PtyError`](portable_pty::PtyError) (`err.kind`, `err.reason`); it was the text
 //!   `portable_pty.<function>: <kind>: <message>`, read back with `error_kind` and `error_message`, which are gone.
 //! - Options of the wrong shape (no table, an unknown key, a value of the wrong type) are raised with their place,
@@ -65,7 +65,7 @@
 //! - `read`'s `max` and the rows and columns of `resize` are whole numbers: a fraction, a negative number or NaN is
 //!   raised; a `max` of 0 or past 65536 and a size of 0 or past 32767 are still `invalid_input`.
 //! - `program` and `cwd` are paths: on Unix they need not be UTF-8.
-//! - On Windows the output ends when the process does (see above); neoc-vm's never ended before `close()`.
+//! - On Windows the output ends when the process does (see above); the old VM's never ended before `close()`.
 
 mod options;
 mod terminal;

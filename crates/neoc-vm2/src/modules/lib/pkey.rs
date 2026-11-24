@@ -25,7 +25,7 @@
 //! Key bytes never reach the log: nothing here is traced with its arguments. RSA private-key operations go through
 //! `rsa` 0.10, the constant-time rewrite, so RUSTSEC-2023-0071 (the Marvin timing attack on 0.9.x) does not apply.
 //!
-//! Ported from neoc-vm's `lib:pkey`. What changed on purpose: the algorithm is a declared union (an unknown name
+//! Ported from the old VM's `lib:pkey`. What changed on purpose: the algorithm is a declared union (an unknown name
 //! is a bad argument), `algorithm` is a field, and every failure is a typed error table.
 
 use std::fmt::Display;

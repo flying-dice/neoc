@@ -42,7 +42,7 @@
 //! A `Statement` holds its SQL and shares the database's connection. Its calls take the same `prepare_cached`
 //! path as `db:execute(sql, ...)`; what it saves is passing the SQL text from Lua on each call.
 //!
-//! Ported from neoc-vm's `vnd:rusqlite`. What changed on purpose:
+//! Ported from the old VM's `vnd:rusqlite`. What changed on purpose:
 //! - A parameter that is not a boolean, a number or a string (and SQL that is not a string) is refused as an
 //!   argument; it was a returned error.
 //! - A failure is a typed error: `OpenError` (`cannot_open`) and `Error` (`closed`, `multiple_statements`,

@@ -4,7 +4,7 @@
 //! its header row (`parse_records`, `records`), all at once or as a stream; it is written from rows or records
 //! (`stringify`, `writer`). `reader` reads the same from a `std:io` reader, as it comes.
 //!
-//! Ported from neoc-vm's `lib:csv`. What changed on purpose:
+//! Ported from the old VM's `lib:csv`. What changed on purpose:
 //! - What a row is no longer depends on an option: `parse` / `rows` give lists of strings, `parse_records` /
 //!   `records` give records keyed by header (they were `parse` / `rows` with `headers = true`), so `types` belongs
 //!   to the record functions only.

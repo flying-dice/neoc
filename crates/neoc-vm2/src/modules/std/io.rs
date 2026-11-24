@@ -11,7 +11,7 @@
 //! local rest = reader:read_all()    -- "two\n"
 //! ```
 //!
-//! Ported from neoc-vm's `std:io`. What changed on purpose:
+//! Ported from the old VM's `std:io`. What changed on purpose:
 //! - The types are `Reader` and `Writer` (they were `ReaderHandle` and `WriterHandle`).
 //! - A failure is a typed `IoError` whose kind is the operating system's (`not_found`, `broken_pipe`, ...).
 //! - `read_line` gives the line's bytes whatever they are (a line that is not UTF-8 was an error).

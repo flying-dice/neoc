@@ -11,7 +11,7 @@
 //! the key `$text`. An element that holds only text is that text, and elements of one name that repeat are a list.
 //! The root element's name is not kept. All text is text: `<age>30</age>` is `"30"`.
 //!
-//! Ported from neoc-vm's `vnd:quick_xml`. What changed on purpose:
+//! Ported from the old VM's `vnd:quick_xml`. What changed on purpose:
 //! - Elements of one name that repeat decode to a list (only the last one was kept), so a list that was encoded
 //!   reads back.
 //! - `encode` takes the root element's name as an option (it was always `root`), and a document is a table with

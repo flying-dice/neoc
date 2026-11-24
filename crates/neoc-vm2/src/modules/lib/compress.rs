@@ -6,7 +6,7 @@
 //!
 //! The bytes `encode` writes are pinned by a test: a dependency upgrade that changes them is seen there first.
 //!
-//! Ported from neoc-vm's `lib:compress`. What changed on purpose:
+//! Ported from the old VM's `lib:compress`. What changed on purpose:
 //! - The format is a string enum: one that does not exist is refused as an argument (it was `nil` and
 //!   `unknown format '...'`).
 //! - `level` and `max_size` are whole numbers from 0 up: anything else is refused as an argument with its place

@@ -2,7 +2,7 @@ name: CI
 
 on:
   # CI minutes are limited: no pull_request or feature-branch triggers.
-  # Runs on push to main, manually, and on the weekly schedule.
+  # Runs on push to main and manually.
   push:
     branches: [main]
     paths-ignore:
@@ -10,9 +10,6 @@ on:
       - "CODEOWNERS"
       - ".claude/**"
   workflow_dispatch:
-  schedule:
-    # Weekly bench run, Mondays 04:00 UTC.
-    - cron: "0 4 * * 1"
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
@@ -38,7 +35,6 @@ env:
 jobs:
   lint:
     name: lint
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -64,7 +60,6 @@ jobs:
 
   deny:
     name: deny
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -87,7 +82,6 @@ jobs:
 
   test:
     name: test
-    if: github.event_name != 'schedule'
     needs: [lint]
     runs-on: ubuntu-latest
     # Hard cap so a hanging test (NEOC-27) fails the job instead of burning
@@ -113,7 +107,7 @@ jobs:
       # neoc's own suite: runtime lib tests plus the `neoc` binary's CLI
       # integration tests and Gherkin spec. The vos crates' tests need bun and darklua
       # which this job does not install, so they are not run here.
-      - run: cargo test -p neoc -p neoc-vm -p neoc-decl -p neoc-macros
+      - run: cargo test -p neoc -p neoc-vm2
       # Docker-dependent suites (sqlx_mysql, sqlx_postgres,
       # testcontainers_modules) are excluded: they need a live Docker daemon.
       - name: Script suites (neoc run)
@@ -131,80 +125,11 @@ jobs:
             "crates/neoc/tests/vnd/serde_yaml.test.lua" \
             "crates/neoc/tests/vnd/toml.test.lua"
 
-  # Criterion benches for neoc-vm. Informational only: no baseline comparison,
-  # no gating. Manual dispatch or the weekly schedule, never per push/PR.
-  # target/criterion is wiped so criterion never compares against estimates
-  # restored from a cache.
-  bench:
-    name: bench
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    env:
-      CLEAN_ARGS: --release
-    steps:
-      - uses: actions/checkout@v7
-      - name: Install pinned toolchain
-        run: rustup show
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: bench
-          key: ${{ github.ref }}
-      - name: Clean workspace crates
-        run: |
-          crates=$(cargo tree --workspace --depth 0 --prefix none | awk 'NF {print $1}')
-          test -n "$crates"
-          cargo clean $(printf -- '-p %s ' $crates) $CLEAN_ARGS
-      - run: rm -rf target/criterion
-      - run: cargo bench -p neoc-vm --bench lib --features bench -- --noplot | tee bench-lib.txt
-        shell: bash
-      - run: cargo bench -p neoc-vm --bench vnd --features bench -- --noplot | tee bench-vnd.txt
-        shell: bash
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: bench-${{ github.sha }}
-          path: |
-            bench-lib.txt
-            bench-vnd.txt
-          retention-days: 30
-
-  # Smoke check for bench code (NEOC-32): compiles every bench under
-  # `--features bench` and runs each bench body once (criterion `--test`), no
-  # timing. Catches stale bench inputs that lint/test never build. Blocking;
-  # follows the workflow triggers (push to main, manual dispatch), not
-  # the schedule, and has no PR trigger because CI minutes are limited. Names
-  # the two bench targets so the lib unit tests are not built or run.
-  bench-smoke:
-    name: bench:smoke
-    if: github.event_name != 'schedule'
-    needs: [lint]
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      CLEAN_ARGS: --release
-    steps:
-      - uses: actions/checkout@v7
-      - name: Install pinned toolchain
-        run: rustup show
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: bench-smoke
-          key: ${{ github.ref }}
-          save-if: true
-      - name: Clean workspace crates
-        run: |
-          crates=$(cargo tree --workspace --depth 0 --prefix none | awk 'NF {print $1}')
-          test -n "$crates"
-          cargo clean $(printf -- '-p %s ' $crates) $CLEAN_ARGS
-      - run: cargo bench -p neoc-vm --features bench --bench lib --bench vnd -- --test
-
   # Build jobs are independent of lint/test so binaries are produced for every
   # push to main even when lint or test fails. Check lint/test for the quality
   # signal.
   build-linux-x86_64:
     name: build:linux-x86_64
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -239,7 +164,6 @@ jobs:
   # Windows x86_64, cross-compiled via MinGW.
   build-windows-x86_64:
     name: build:windows-x86_64
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -280,7 +204,6 @@ jobs:
   # A manifest target whose path `.dockerignore` drops fails here (NEOC-26).
   docker:
     name: docker:build
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

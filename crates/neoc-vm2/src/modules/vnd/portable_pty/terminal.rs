@@ -28,8 +28,8 @@
 //! closed reads on to the end of the pipe and throws it away, because the pseudo-console's host cannot go while
 //! output it wrote is unread.
 //!
-//! Ported from neoc-vm's `vnd/portable_pty/terminal.rs`: the same threads and the same rules, with the module's
-//! typed error, and the two Windows rules above (neoc-vm's output never ended on Windows before `close()`).
+//! Ported from the old VM's `vnd/portable_pty/terminal.rs`: the same threads and the same rules, with the module's
+//! typed error, and the two Windows rules above (the old VM's output never ended on Windows before `close()`).
 
 use std::future::Future;
 use std::io::{Read, Write};

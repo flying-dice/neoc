@@ -11,7 +11,7 @@
 //! "No newline at end of file" follows GNU diff: a line that does not end in `\n` is written with the
 //! `\ No newline at end of file` marker after it, and the parser takes the marker back out.
 //!
-//! Ported from neoc-vm's `lib:diff`. What changed on purpose: the algorithm is a `"patience" | "myers"` union and the
+//! Ported from the old VM's `lib:diff`. What changed on purpose: the algorithm is a `"patience" | "myers"` union and the
 //! change `op` a `"equal" | "delete" | "insert"` union (both refused as arguments when anything else), `context` is
 //! an unsigned integer, `unified` returns a plain typed `Patch` record (no `:format()` method; `diff.format(patch)`
 //! writes the text, and works on a patch a script built), a hunk line's `value` is the line as it is in the text

@@ -3,7 +3,7 @@
 //! All randomness comes from `SysRng` (the OS entropy source via `rand`), never from the seedable `math.random`.
 //! UUIDs use the `uuid` crate's v4 (random) and v7 (timestamp-ordered) generators, which draw from the same source.
 //!
-//! Ported from neoc-vm's `lib:random`. What changed on purpose: counts are `u32` (a negative one is refused as an
+//! Ported from the old VM's `lib:random`. What changed on purpose: counts are `u32` (a negative one is refused as an
 //! argument), the alphabet of `random_string` is a `String` (not valid UTF-8 is refused as an argument), and every
 //! failure is a typed error table.
 

@@ -35,7 +35,7 @@
 //! this process have, which on most machines is every credential of the user it runs as. Nothing here narrows
 //! that, as nothing narrows `std:fs`: a script that is given this module is trusted with the user's secrets.
 //!
-//! Ported from neoc-vm's `vnd:keyring`. What changed on purpose:
+//! Ported from the old VM's `vnd:keyring`. What changed on purpose:
 //! - A failure is the typed `Error` (the same kinds: `invalid_input`, `no_store`, `no_access`, `not_found`,
 //!   `ambiguous`, `bad_encoding`, `bad_data`, `unsupported`, `platform`, `other`), so `error_kind(err)` and
 //!   `error_message(err)` are gone: read `err.kind` and `err.message`. `ambiguous` says how many `matches`.

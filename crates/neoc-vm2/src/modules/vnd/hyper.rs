@@ -57,7 +57,7 @@
 //! For multi-worker fan-out, share the listener with `std:thread` workers: every worker serves on the same socket
 //! and races on `accept()`.
 //!
-//! Ported from neoc-vm's `vnd:hyper`. What changed on purpose:
+//! Ported from the old VM's `vnd:hyper`. What changed on purpose:
 //! - A failed request is a typed `HyperError` (`err.kind`, and what the kind carries: `limit` for `timed_out`,
 //!   `max_redirects`, `max_body`, `reason`); `error_kind` and `error_message` are gone.
 //! - `post(url, body?, opts?)` and `request(method, url, body?, opts?)` take the URL, the method and the body as

@@ -2,7 +2,7 @@
 //! options that refuse typos) and each function used the way a script uses it. The operations themselves are tested
 //! one level down, in `ops.rs`.
 //!
-//! Ported from neoc-vm's `std/fs/tests.rs`. The tests that drove a call from a `std:task` task are not here yet:
+//! Ported from the old VM's `std/fs/tests.rs`. The tests that drove a call from a `std:task` task are not here yet:
 //! `std:task` is not ported.
 
 use mlua::Lua;

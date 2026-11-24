@@ -12,7 +12,7 @@
 //! value (`!Tag x`), a key that is a sequence or a mapping, and a text with several documents are refused.
 //! Mappings are written with their keys sorted.
 //!
-//! Ported from neoc-vm's `vnd:serde_yaml`. What changed on purpose:
+//! Ported from the old VM's `vnd:serde_yaml`. What changed on purpose:
 //! - A YAML `null` reads as `nil` (it was mlua's `null` sentinel, a userdata): a null value in a mapping is a
 //!   missing key.
 //! - A failure is a typed error: `DecodeError` (`syntax` with the line and column, `invalid`) and `EncodeError`

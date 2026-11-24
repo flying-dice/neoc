@@ -1336,7 +1336,7 @@ async fn a_bad_option_value_is_an_invalid_input_error_that_names_it() {
 }
 
 /// What is not an option, or not of an option's type, is not a request at all: the call is refused as a wrong
-/// argument that names it, and a misspelt option is never dropped. (neoc-vm returned these as `invalid_input`.)
+/// argument that names it, and a misspelt option is never dropped. (the old VM returned these as `invalid_input`.)
 #[tokio::test]
 async fn an_unknown_or_wrongly_typed_option_is_refused_as_an_argument() {
     let (port, log) = http_server(|_| response("200 OK", &[], b"ok")).await;

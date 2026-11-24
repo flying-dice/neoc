@@ -4,7 +4,7 @@
 //! zone), `ZonedDateTime` is an instant in a named IANA zone, and `Duration` is a span that keeps its calendar units
 //! (days, months, years) through arithmetic. `now`, `utc_now` and `parse` are the shortcuts.
 //!
-//! Ported from neoc-vm's `lib:chrono`. What changed on purpose:
+//! Ported from the old VM's `lib:chrono`. What changed on purpose:
 //! - Operators (`==`, `<`, `<=`) are methods: `a:compare(b)` gives `"less" | "equal" | "greater"`, `a:equals(b)` a
 //!   boolean.
 //! - `add` and `sub` are `plus` and `minus`, as in `std:time`.

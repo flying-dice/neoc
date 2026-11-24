@@ -12,7 +12,7 @@
 //! dir:close()
 //! ```
 //!
-//! Ported from neoc-vm's `lib:tempfile`. What changed on purpose:
+//! Ported from the old VM's `lib:tempfile`. What changed on purpose:
 //! - A failure is a typed `TempError` (`not_found`, `permission_denied`, `closed`, ...).
 //! - `TempFile.new` and `TempDir.new` are gone: they were `tempfile` and `tempdir` under a second name.
 //!   `gettempdir` is gone too: it is `std:env`'s `temp_dir`.

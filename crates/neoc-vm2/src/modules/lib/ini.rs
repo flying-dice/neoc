@@ -4,7 +4,7 @@
 //! of the caller's choosing, bare keys (a key with no value is a flag), and the characters rust-ini would read its
 //! own way (`:` and `=` as delimiters, `;` and `#` as comments) where the caller's dialect does not.
 //!
-//! Ported from neoc-vm's `lib:ini`. What changed on purpose:
+//! Ported from the old VM's `lib:ini`. What changed on purpose:
 //! - A document is typed: sections of keys whose values are a string or `true`; `stringify` takes strings,
 //!   booleans and numbers, and anything else is refused as an argument.
 //! - `stringify` cannot fail, so it returns the text alone, and it writes sections and keys in sorted order (it

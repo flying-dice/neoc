@@ -7,7 +7,7 @@
 //! Order is SemVer's precedence: build metadata takes no part in it (`1.0.0+a` and `1.0.0+b` are equal), and a
 //! pre-release comes before its release.
 //!
-//! Ported from neoc-vm's `lib:semver`. What changed on purpose:
+//! Ported from the old VM's `lib:semver`. What changed on purpose:
 //! - Operators (`<`, `<=`, `==`) are methods: `a:compare(b)` gives `"less" | "equal" | "greater"` (it gave `-1`,
 //!   `0`, `1`), `a:equals(b)` a boolean. `table.sort` takes a comparator: `a:compare(b) == "less"`.
 //! - Each argument has one type: the methods take objects (`v:compare(other)`, `req:matches(version)`), the module

@@ -15,7 +15,7 @@ path = "src/lib.rs"
 [dependencies]
 mlua-ir = { workspace = true }
 mlua-ir-gen = { workspace = true }
-# The engine is Luau, as in neoc-vm; the same features.
+# The engine is Luau.
 mlua = { version = "0.12", features = ["luau", "async", "send", "serialize", "macros"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
@@ -88,10 +88,10 @@ tar = "0.4"
 zip = { version = "9", default-features = false, features = ["deflate-flate2", "deflate-zopfli"] }
 # `lib:args`: clap's builder as a run-time argument parser (no derive: that is a binary's concern).
 clap = { version = "4", default-features = false, features = ["std", "help", "usage", "error-context", "string"] }
-# `lib:template`. Without the default features, as in neoc-vm: `builtins` drags chrono and tz data in for `date`.
+# `lib:template`. Without the default features: `builtins` drags chrono and tz data in for `date`.
 # Held at 1.x on purpose: tera 2 rewrites the template language, so moving to it is a deliberate `lib:template` change.
 tera = { version = "1.20", default-features = false }
-# `vnd:hyper`, as in neoc-vm. `client-legacy` for its `HttpConnector`: name lookup and Happy Eyeballs (RFC 8305)
+# `vnd:hyper`. `client-legacy` for its `HttpConnector`: name lookup and Happy Eyeballs (RFC 8305)
 # for the client's TCP connect. TLS is rustls over the `ring` provider with the platform certificate verifier.
 hyper = { version = "1", features = ["client", "server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio", "client-legacy"] }
@@ -100,27 +100,27 @@ http-body-util = "0.1"
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
 rustls-platform-verifier = "0.7"
 bytes = "1"
-# `vnd:rusqlite`, as in neoc-vm: SQLite, with its own libsqlite3 built in.
+# `vnd:rusqlite`: SQLite, with its own libsqlite3 built in.
 rusqlite = { version = "0.43", features = ["bundled"] }
-# `vnd:sqlx_mysql` and `vnd:sqlx_postgres`, as in neoc-vm: pure-Rust drivers, without TLS (only `vnd:hyper` carries a TLS stack).
+# `vnd:sqlx_mysql` and `vnd:sqlx_postgres`: pure-Rust drivers, without TLS (only `vnd:hyper` carries a TLS stack).
 # `mysql-rsa` keeps MySQL's `caching_sha2_password` working over a plain connection.
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "mysql", "mysql-rsa", "postgres"] }
-# `vnd:keyring`, as in neoc-vm: the operating system's credential store. `keyring` (its default `v1` feature) picks
+# `vnd:keyring`: the operating system's credential store. `keyring` (its default `v1` feature) picks
 # the platform's store and opens it: Keychain Services on macOS, the Credential Manager on Windows, the Secret
 # Service on the other Unixes (over zbus, with RustCrypto for the session: no libdbus and no OpenSSL to link).
 # `keyring-core` is the crate it is built on, named for what `keyring` does not re-export: entries in a given store,
 # `search`, and the mock store the tests (and `NEOC_KEYRING=mock`) use.
 keyring = "4.2"
 keyring-core = "1.1"
-# `vnd:portable_pty`, as in neoc-vm: the pseudo-terminal layer of WezTerm (openpty on Unix, ConPTY on Windows). Its
+# `vnd:portable_pty`: the pseudo-terminal layer of WezTerm (openpty on Unix, ConPTY on Windows). Its
 # reader, writer and child wait are blocking, so the module runs each on a thread of its own.
 portable-pty = "0.9"
-# `vnd:bollard`, as in neoc-vm: the Docker Engine API client. Already in the tree through testcontainers (the same
+# `vnd:bollard`: the Docker Engine API client. Already in the tree through testcontainers (the same
 # version, and the features it turns on: `ssl` is rustls over `ring`), so this only names the dependency. `time`
 # makes its dates `time::OffsetDateTime` (testcontainers turns it on too), which `time` writes back as RFC 3339.
 bollard = { version = "0.20", features = ["ssl", "time"] }
 time = { version = "0.3", default-features = false, features = ["formatting"] }
-# `vnd:testcontainers_modules`, as in neoc-vm: disposable MySQL, Postgres and any other image, in Docker.
+# `vnd:testcontainers_modules`: disposable MySQL, Postgres and any other image, in Docker.
 testcontainers-modules = { version = "0.15", features = ["mysql", "postgres"] }
 
 # `std:process` kills a process's whole group.

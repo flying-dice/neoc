@@ -15,9 +15,9 @@
 //! Total: 20 bytes, the last 20 of the file.
 //!
 //! The module reads and writes whatever paths it is given: an embedder that runs scripts it does not trust leaves
-//! it out of what it offers (`modules::install_allowed`), as it does in neoc-vm.
+//! it out of what it offers (`modules::install_allowed`), as it does in the old VM.
 //!
-//! Ported from neoc-vm's `lib:compile`. What changed on purpose:
+//! Ported from the old VM's `lib:compile`. What changed on purpose:
 //! - A failure is a typed `BundleError` (`entrypoint_unreadable`, `stub_unreadable`, `too_large`,
 //!   `output_unwritable`) with the path and the operating system's reason.
 //! - A field that does not exist is refused with the other wrong arguments (it was ignored).

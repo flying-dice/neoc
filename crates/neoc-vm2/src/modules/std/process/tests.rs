@@ -2,7 +2,7 @@
 //! On Windows: `cmd`, `ping` (a process that stays) and PowerShell (a process that reads its input as a script
 //! says). A test whose commands exist on one platform only says so with its `cfg`.
 //!
-//! Ported from neoc-vm's `std/process/tests.rs`, which ran its processes on Unix alone.
+//! Ported from the old VM's `std/process/tests.rs`, which ran its processes on Unix alone.
 
 use std::time::{Duration, Instant};
 

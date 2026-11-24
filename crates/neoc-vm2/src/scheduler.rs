@@ -14,7 +14,7 @@
 //! A host function that panics inside a task fails that task like an error does ([`Outcome::Failed`] with
 //! "a host function panicked: ..."): nobody else is above a task to hand the panic to (see [`crate::panics`]).
 //!
-//! Ported from the scheduler half of neoc-vm's `std/task.rs`: the same rules, as a Rust API that names what it takes
+//! Ported from the scheduler half of the old VM's `std/task.rs`: the same rules, as a Rust API that names what it takes
 //! ([`Routine`]) and what a task ends with ([`Outcome`]) instead of reading and building Lua values itself.
 
 use std::sync::Arc;
@@ -465,7 +465,7 @@ pub fn delay(lua: &Lua, after: Duration, routine: Routine, args: MultiValue) -> 
 
 #[cfg(test)]
 pub(crate) mod tests {
-    //! neoc-vm's `std:task` tests, through `std:task` itself. [`install_task_functions`] spells it as the scripts
+    //! The old VM's `std:task` tests, through `std:task` itself. [`install_task_functions`] spells it as the scripts
     //! here do, and adds what the scheduler takes that the module does not offer: a coroutine in a function's
     //! place, and arguments to call it with.
 

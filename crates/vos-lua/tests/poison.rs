@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
 //! An app must not be able to take the host down with the value it raises or hands over.
 //!
-//! The probe is the one neoc-vm's own `abort_regressions.rs` uses: an error value whose `__tostring` makes a protected
+//! The probe is an error value whose `__tostring` makes a protected
 //! call and then fails (`mt.__tostring = function() pcall(error, "x") error(setmetatable({}, mt)) end`). On LuaJIT the
 //! engine's message handler recursed on it until the stack overflowed, which aborted the process (the PUC Lua 5.1 VM
 //! this host first ran on turned the same recursion into a catchable "C stack overflow" error). On Luau the engine

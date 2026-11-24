@@ -17,7 +17,7 @@
 //! `include` patterns are `lib:glob`'s (`*` crosses `/`). An entry's `compression_ratio` is its compressed size
 //! over its size for a zip, whose entries are compressed one by one, and `nil` for a tar, which is one stream.
 //!
-//! Ported from neoc-vm's `lib:archive`. What changed on purpose:
+//! Ported from the old VM's `lib:archive`. What changed on purpose:
 //! - An archive is an object. `Tar.open(path)` / `Tar.from_bytes(bytes)` with `:list()`, `:extract(dest, options?)`
 //!   and `:read(name, options?)` replace `tar_list`, `tar_list_bytes`, `tar_extract` and `tar_extract_bytes`, whose
 //!   first argument was a path when it named a file that exists and the archive's bytes when it did not. `Zip` is

@@ -48,7 +48,7 @@
 //! **Streams.** Logs, events and the progress of a pull are streams (`stream`): `next()` waits for the next item,
 //! `(nil, nil)` is the end, `items()` iterates. A stream belongs to the script that made it and stops with it.
 //!
-//! Ported from neoc-vm's `vnd:bollard`. What changed on purpose:
+//! Ported from the old VM's `vnd:bollard`. What changed on purpose:
 //! - An error is a typed [`DockerError`](error::DockerError) (`err.kind`, `err.reason`, `err.status`); it was the
 //!   text `bollard.<function>: <kind>: <message>`, and `error_kind` and `error_message`, which took it apart, are
 //!   gone.

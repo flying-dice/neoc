@@ -28,7 +28,7 @@
 //! The string metatable is a different matter: it is shared by every string in the engine, and
 //! [`make_bare_engine`](crate::engine::make_bare_engine) locks it.
 //!
-//! Ported from neoc-vm's `script_env.rs`, unchanged.
+//! Ported from the old VM's `script_env.rs`, unchanged.
 
 use std::sync::Arc;
 

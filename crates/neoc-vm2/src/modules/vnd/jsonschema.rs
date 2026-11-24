@@ -20,7 +20,7 @@
 //! builds nothing. `validate` walks the whole value and says everything that is wrong with it. A value is plain data
 //! or a `lib:json` handle. References to other documents (`$ref` to a URL or a file) are not fetched.
 //!
-//! Ported from neoc-vm's `vnd:jsonschema`. What changed on purpose:
+//! Ported from the old VM's `vnd:jsonschema`. What changed on purpose:
 //! - `validate` gives `true`, or `nil` and a typed error holding every violation (where in the value, which rule of
 //!   the schema, which keyword, why); it was a `ValidationResult` userdata with `ok()` and `errors()` (strings).
 //! - `compile` fails with a typed error: `syntax` (the text is not JSON, with the line and column) or

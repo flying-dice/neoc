@@ -1,6 +1,6 @@
 //! String utilities and case conversion: `lib:text`.
 //!
-//! Ported from neoc-vm's `lib:text`. What changed on purpose: counts and widths are unsigned integers (a negative
+//! Ported from the old VM's `lib:text`. What changed on purpose: counts and widths are unsigned integers (a negative
 //! one is refused as an argument, so `clip`'s hand-written check is gone), the options are typed tables
 //! (`WrapOptions`, `TruncateOptions`, `ClosestOptions`) and `boundary` is a union of literals, the fill character of
 //! the pad family is a validated type (refused as an argument, not returned as an error), `closest` returns an

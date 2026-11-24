@@ -44,7 +44,7 @@
 //! engine shutting down all do the same: the process is killed and its streams are let go of. On Unix the kill
 //! reaches the process's whole group, so what it started goes with it (`child`'s docs say how).
 //!
-//! Ported from neoc-vm's `std:process`. What changed on purpose:
+//! Ported from the old VM's `std:process`. What changed on purpose:
 //! - An error is a typed [`ProcessError`](process::ProcessError) (`err.kind`, and `err.cause` of a `spawn` error,
 //!   `err.stream` of a `not_piped` one, `err.what` of a `closed` one); it was the text
 //!   `process.<function>: <kind>: <message>`, read back with `process.error_kind`, which is gone.

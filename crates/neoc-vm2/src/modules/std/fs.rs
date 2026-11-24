@@ -41,7 +41,7 @@
 //! [`ops`] (the operations, free of the Lua state) and [`error`] (their classified errors) are public, so an
 //! embedder that offers files its own way builds on these operations instead of writing its own copy or remove.
 //!
-//! Ported from neoc-vm's `std:fs`. What changed on purpose:
+//! Ported from the old VM's `std:fs`. What changed on purpose:
 //! - An error is a typed `FsError` (`err.kind`, `err.path`, `err.to`, `err.reason`); `error_kind` and
 //!   `error_message`, which read the kind and the message back out of an error string, are gone.
 //! - `open(path)` opens for reading; `create(path)` and `append(path)` open for writing (it was
