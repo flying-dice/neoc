@@ -47,7 +47,9 @@ tool({
     list: t.string({ optional: true, description: 'The name of a list; every list when left out' }),
     completed: t.boolean({ optional: true, description: 'True for the completed todos instead of the open ones' })
   },
-  run: (input: { list?: string; completed?: boolean }, ctx) => {
+  // the host checks what an agent sent against `input` before `run`: the declarations cannot know its shape, the tool says it
+  run: (given, ctx) => {
+    const input = given as { list?: string; completed?: boolean }
     const names = new Map(store.lists().map((list) => [list.id, list.name]))
     let only: number | undefined
     if (input.list !== undefined) {
@@ -83,7 +85,8 @@ tool({
     due: t.string({ optional: true, description: 'The day it is due, as 2026-06-09' }),
     flagged: t.boolean({ optional: true, description: 'True to flag it' })
   },
-  run: (input: { title: string; list?: string; notes?: string; due?: string; flagged?: boolean }, ctx) => {
+  run: (given, ctx) => {
+    const input = given as { title: string; list?: string; notes?: string; due?: string; flagged?: boolean }
     const list = input.list !== undefined ? store.listNamed(input.list) : store.lists()[0]
     if (list === undefined) return ctx.fail(`There is no list called ${input.list ?? ''}.`)
     const added = store.add(list.id, input.title, { notes: input.notes, due: input.due, flagged: input.flagged })
@@ -98,7 +101,8 @@ tool({
   title: 'Complete a todo',
   description: 'Tick a todo off, by its id (`list_todos` gives the ids).',
   input: { id: t.integer({ description: 'The id of the todo' }) },
-  run: (input: { id: number }, ctx) => {
+  run: (given, ctx) => {
+    const input = given as { id: number }
     const todo = store.todo(input.id)
     if (todo === undefined) return ctx.fail('There is no such todo.')
     const problem = store.complete(todo.id, true)

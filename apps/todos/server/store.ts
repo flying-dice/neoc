@@ -15,15 +15,17 @@ export interface Changes {
   flagged?: boolean
 }
 
-type Row = { [key: string]: any }
+// A row of the database is whatever the statement selected: the declarations say `unknown`, and each statement's
+// reader says what its columns are.
+type Row = { [column: string]: unknown }
 
 // completed todos are kept, but a board carries only the most recent of them
 const COMPLETED_SHOWN = 500
 
 const TODO = 'select id, list_id, title, notes, due, flagged, done from todos'
 
-db.migrate({
-  [1]: `
+db.migrate([
+  `
     create table lists (
       id integer primary key,
       name text not null,
@@ -43,7 +45,7 @@ db.migrate({
     create index todos_by_completion on todos(done, completed_at desc, id desc);
     insert into lists(name, color) values ('Reminders', 'blue');
   `
-})
+])
 
 // `[0-9]`, not `\\d`: the host's patterns are Unicode ones, where `\\d` is a digit of any script
 const DAY = pattern('^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$')
@@ -51,7 +53,7 @@ const DAY = pattern('^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$')
 /** A pattern of the app's own: one that does not compile is a mistake here, found when the app loads. */
 function pattern(source: string): Pattern {
   const [compiled, problem] = Pattern.new(source)
-  if (compiled === undefined) throw new Error(`the pattern ${source} does not compile: ${problem}`)
+  if (compiled === undefined) throw new Error(`the pattern ${source} does not compile: ${problem?.message}`)
   return compiled
 }
 
@@ -62,18 +64,22 @@ function isDay(text: string): boolean {
 
 function todoOf(row: Row): Todo {
   return {
-    id: row.id,
-    list: row.list_id,
-    title: row.title,
-    notes: row.notes,
-    due: row.due,
+    id: row.id as number,
+    list: row.list_id as number,
+    title: row.title as string,
+    notes: row.notes as string,
+    due: row.due as string,
     flagged: row.flagged === 1,
     done: row.done === 1
   }
 }
 
+function listOf(row: Row): List {
+  return { id: row.id as number, name: row.name as string, color: row.color as Color }
+}
+
 export function lists(): List[] {
-  return db.all('select id, name, color from lists order by id').map((row) => ({ id: row.id, name: row.name, color: row.color }))
+  return db.all('select id, name, color from lists order by id').map(listOf)
 }
 
 /** The list called `name`, whatever its capitals: how an agent names a list. */
@@ -111,7 +117,7 @@ export function addList(name: string, color: Color): string | undefined {
 export function removeList(id: number): string | undefined {
   if (db.one('select id from lists where id = :id', { id }) === undefined) return 'There is no such list.'
   const count = db.one('select count(*) as n from lists')
-  if (count === undefined || count.n <= 1) return 'The last list cannot be deleted.'
+  if (count === undefined || (count.n as number) <= 1) return 'The last list cannot be deleted.'
   db.tx(() => {
     db.exec('delete from todos where list_id = :id', { id })
     db.exec('delete from lists where id = :id', { id })
