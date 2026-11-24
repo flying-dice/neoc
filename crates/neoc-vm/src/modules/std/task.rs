@@ -7,14 +7,13 @@
 //! local slept = task.wait(0.2) -- seconds; other tasks run meanwhile
 //! ```
 //!
-//! Ported from the old VM's `std:task`. What changed on purpose:
-//! - `spawn`, `defer` and `delay` take a function, with the arguments to call it with after it
-//!   (`task.spawn(f, a, b)`), and no coroutine in the function's place.
+//! The API's rules:
+//! - `spawn`, `defer` and `delay` take a function, with the arguments to call it with after it (`task.spawn(f, a, b)`),
+//!   and no coroutine in the function's place.
 //! - `Task:await` gives the task's first return value, as it is (a table is that table), or `nil` and a typed
-//!   [`TaskError`](task::TaskError) (`cancelled`, or `failed` with the `reason`); it was every return value, or
-//!   `nil` and a text.
+//!   [`TaskError`](task::TaskError) (`cancelled`, or `failed` with the `reason`).
 //! - `task.cancel` refuses what is not a `Task` as a wrong argument, with its place.
-//! - `task.wait` and `task.delay` take a number only (a numeric string was accepted).
+//! - `task.wait` and `task.delay` take a number only: a numeric string is refused.
 //!
 //! A body is declared `(...unknown) -> ()`: strict Luau accepts an untyped body of any arity. One whose parameters
 //! are typed (`function(a: number)`) is refused by the checker (tying them to `args` would take generic type packs,
@@ -27,7 +26,7 @@ pub mod task {
     use serde::Serialize;
 
     use crate::limits::sleep_duration;
-    use crate::scheduler::{self, Outcome, Routine, TaskHandle};
+    use crate::scheduler::{self, Outcome, TaskHandle};
 
     mlua_ir::unknown_reason!(
         /// Why what a task returns has no declared shape.
@@ -117,13 +116,13 @@ pub mod task {
     /// assert(t:await() == "done" and order[1] == "task")
     /// ```
     pub fn spawn(lua: &Lua, body: Body, args: Variadic<Live<TaskArgument>>) -> mlua::Result<Task> {
-        scheduler::spawn(lua, Routine::Function(body.into_function()), passed_on(args.0)).map(Task::from)
+        scheduler::spawn(lua, body.into_function(), passed_on(args.0)).map(Task::from)
     }
 
     /// Queue `body`, called with `args`, to run after the code that is running now reaches a wait or ends.
     /// Deferred tasks run in the order they were queued, each after the one before it has ended.
     pub fn defer(lua: &Lua, body: Body, args: Variadic<Live<TaskArgument>>) -> mlua::Result<Task> {
-        scheduler::defer(lua, Routine::Function(body.into_function()), passed_on(args.0)).map(Task::from)
+        scheduler::defer(lua, body.into_function(), passed_on(args.0)).map(Task::from)
     }
 
     /// Run `body`, called with `args`, once `secs` seconds have passed. `secs` is read as `wait` reads it: not a
@@ -135,8 +134,7 @@ pub mod task {
     /// ```
     pub fn delay(lua: &Lua, secs: f64, body: Body, args: Variadic<Live<TaskArgument>>) -> mlua::Result<Task> {
         let after = sleep_duration(secs);
-        scheduler::delay(lua, after, Routine::Function(body.into_function()), passed_on(args.0))
-            .map(Task::from)
+        scheduler::delay(lua, after, body.into_function(), passed_on(args.0)).map(Task::from)
     }
 
     /// Wait `secs` seconds without blocking other tasks; the seconds that actually passed. Not a number and
@@ -300,7 +298,7 @@ mod tests {
         assert!(refused[5].contains("std:task.delay: argument #1 'secs': expected a number"), "{refused:#?}");
     }
 
-    /// The old VM's varargs: what follows the function is what it is called with, `nil`s and live values included.
+    /// Varargs: what follows the function is what it is called with, `nil`s and live values included.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn the_arguments_after_the_body_are_passed_to_it() {
         let lua = engine();

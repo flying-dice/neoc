@@ -1,11 +1,11 @@
 //! The cooperative task scheduler behind `std:task`.
 //!
-//! [`spawn`], [`defer`] and [`delay`] start a script function (or a coroutine the script made) as a task and give
+//! [`spawn`], [`defer`] and [`delay`] start a script function as a task and give
 //! back its [`TaskHandle`], which mirrors `tokio::task::JoinHandle`: [`cancel`](TaskHandle::cancel),
 //! [`is_finished`](TaskHandle::is_finished) and [`outcome`](TaskHandle::outcome).
 //!
 //! Per-VM scheduling: each engine gets its own [`Scheduler`] as app data
-//! ([`install_runtime_state`](crate::install_runtime_state)). Spawned coroutines run as separate tokio tasks on the
+//! ([`install_runtime_state`](crate::install_runtime_state)). Spawned tasks run as separate tokio tasks on the
 //! same executor, registered with the engine's [`Life`] (so shutting the script down aborts them). When the embedder
 //! serialises calls into the VM (see [`crate::lifecycle`]), a task's slices are calls like any other: it takes its
 //! turn before it runs and hands the turn back while it waits; otherwise the Lua VM's internal mutex serialises the
@@ -13,9 +13,6 @@
 //!
 //! A host function that panics inside a task fails that task like an error does ([`Outcome::Failed`] with
 //! "a host function panicked: ..."): nobody else is above a task to hand the panic to (see [`crate::panics`]).
-//!
-//! Ported from the scheduler half of the old VM's `std/task.rs`: the same rules, as a Rust API that names what it takes
-//! ([`Routine`]) and what a task ends with ([`Outcome`]) instead of reading and building Lua values itself.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -29,7 +26,6 @@ use tokio::sync::Notify;
 
 use crate::lifecycle::{Life, Pruned, entrance, first_slice, inherited};
 use crate::panics;
-use crate::script_env::mark_driven;
 
 /// How a task ended.
 #[derive(Clone, Debug)]
@@ -245,36 +241,6 @@ impl Scheduler {
     }
 }
 
-/// What a script hands the scheduler to run.
-pub enum Routine {
-    /// A function: the task runs it in a thread of the host's, which the script holds no handle to.
-    Function(Function),
-    /// A coroutine the script made: the scheduler drives it from here on, so the script may not resume it too.
-    Coroutine(Thread),
-}
-
-impl Routine {
-    /// The thread the task runs in.
-    fn into_thread(self, lua: &Lua) -> mlua::Result<Thread> {
-        match self {
-            Self::Function(function) => lua.create_thread(function),
-            Self::Coroutine(thread) => {
-                match thread.status() {
-                    ThreadStatus::Finished | ThreadStatus::Error => {
-                        return Err(mlua::Error::runtime("cannot schedule a dead coroutine"));
-                    }
-                    ThreadStatus::Running | ThreadStatus::Normal => {
-                        return Err(mlua::Error::runtime("cannot schedule a running coroutine"));
-                    }
-                    ThreadStatus::Resumable => {}
-                }
-                mark_driven(lua, &thread)?;
-                Ok(thread)
-            }
-        }
-    }
-}
-
 /// A task that is not running yet, and the scheduler it joins; `Err` holds the handle of a task that was cancelled
 /// on the spot because the script was shut down.
 struct Admitted<'lua> {
@@ -283,8 +249,9 @@ struct Admitted<'lua> {
     inner: Arc<TaskInner>,
 }
 
-fn admit(lua: &Lua, routine: Routine) -> mlua::Result<Result<Admitted<'_>, TaskHandle>> {
-    let thread = routine.into_thread(lua)?;
+fn admit(lua: &Lua, body: Function) -> mlua::Result<Result<Admitted<'_>, TaskHandle>> {
+    // the task runs in a thread of the host's, which the script holds no handle to
+    let thread = lua.create_thread(body)?;
     let inner = Arc::new(TaskInner::new());
     let scheduler = lua
         .app_data_ref::<Scheduler>()
@@ -355,13 +322,13 @@ async fn started_unless_cancelled(
     Some(drive_thread(thread, args).await)
 }
 
-/// Start `routine` as a task, called with `args`. Its first synchronous slice runs inside this call; when it stops
+/// Start `body` as a task, called with `args`. Its first synchronous slice runs inside this call; when it stops
 /// at a wait or a yield, the rest runs as a separate task.
 ///
 /// # Errors
-/// The coroutine is dead, running, already driven or not the script's own; or the engine has no scheduler.
-pub fn spawn(lua: &Lua, routine: Routine, args: MultiValue) -> mlua::Result<TaskHandle> {
-    let Admitted { scheduler, thread, inner } = match admit(lua, routine)? {
+/// The engine has no scheduler.
+pub fn spawn(lua: &Lua, body: Function, args: MultiValue) -> mlua::Result<TaskHandle> {
+    let Admitted { scheduler, thread, inner } = match admit(lua, body)? {
         Ok(admitted) => admitted,
         Err(cancelled) => return Ok(cancelled),
     };
@@ -407,13 +374,13 @@ pub fn spawn(lua: &Lua, routine: Routine, args: MultiValue) -> mlua::Result<Task
     Ok(TaskHandle { inner })
 }
 
-/// Queue `routine` to run, called with `args`, after the current synchronous batch. Deferred tasks run in the
+/// Queue `body` to run, called with `args`, after the current synchronous batch. Deferred tasks run in the
 /// order they were queued: each waits for the one before it to end.
 ///
 /// # Errors
 /// As [`spawn`].
-pub fn defer(lua: &Lua, routine: Routine, args: MultiValue) -> mlua::Result<TaskHandle> {
-    let Admitted { scheduler, thread, inner } = match admit(lua, routine)? {
+pub fn defer(lua: &Lua, body: Function, args: MultiValue) -> mlua::Result<TaskHandle> {
+    let Admitted { scheduler, thread, inner } = match admit(lua, body)? {
         Ok(admitted) => admitted,
         Err(cancelled) => return Ok(cancelled),
     };
@@ -438,12 +405,12 @@ pub fn defer(lua: &Lua, routine: Routine, args: MultiValue) -> mlua::Result<Task
     Ok(TaskHandle { inner })
 }
 
-/// Run `routine`, called with `args`, once `after` has passed.
+/// Run `body`, called with `args`, once `after` has passed.
 ///
 /// # Errors
 /// As [`spawn`].
-pub fn delay(lua: &Lua, after: Duration, routine: Routine, args: MultiValue) -> mlua::Result<TaskHandle> {
-    let Admitted { scheduler, thread, inner } = match admit(lua, routine)? {
+pub fn delay(lua: &Lua, after: Duration, body: Function, args: MultiValue) -> mlua::Result<TaskHandle> {
+    let Admitted { scheduler, thread, inner } = match admit(lua, body)? {
         Ok(admitted) => admitted,
         Err(cancelled) => return Ok(cancelled),
     };
@@ -465,28 +432,13 @@ pub fn delay(lua: &Lua, after: Duration, routine: Routine, args: MultiValue) -> 
 
 #[cfg(test)]
 pub(crate) mod tests {
-    //! The old VM's `std:task` tests, through `std:task` itself. [`install_task_functions`] spells it as the scripts
-    //! here do, and adds what the scheduler takes that the module does not offer: a coroutine in a function's
-    //! place, and arguments to call it with.
+    //! `std:task` on the scheduler. [`install_task_functions`] spells it as the scripts here do.
 
-    use mlua::{Lua, MultiValue, Value};
+    use mlua::{Lua, Value};
 
-    use std::time::Duration;
+    use super::Scheduler;
 
-    use super::{Routine, Scheduler, TaskHandle};
-    use crate::modules::std::task::task::Task;
-
-    fn routine(value: Value) -> mlua::Result<Routine> {
-        match value {
-            Value::Function(function) => Ok(Routine::Function(function)),
-            Value::Thread(thread) => Ok(Routine::Coroutine(thread)),
-            _ => Err(mlua::Error::runtime("expected a function or a thread")),
-        }
-    }
-
-    /// Globals `spawn`, `defer`, `delay` and `wait` (those of `std:task`) and `await(task)` (`task:await()`); and
-    /// `spawn_with`, `defer_with` and `delay_with`, the scheduler's own entry points, which also take a coroutine
-    /// and the arguments to call it with.
+    /// Globals `spawn`, `defer`, `delay` and `wait` (those of `std:task`) and `await(task)` (`task:await()`).
     pub(crate) fn install_task_functions(lua: &Lua) {
         let globals = lua.globals();
         let task = crate::modules::build(lua, "std:task").expect("std:task").unwrap();
@@ -495,20 +447,6 @@ pub(crate) mod tests {
         }
         let wait: Value = lua.load("return function(task) return task:await() end").eval().unwrap();
         globals.set("await", wait).unwrap();
-
-        let task_of = |handle: TaskHandle| Task::from(handle);
-        let spawn = lua.create_function(move |lua, (f, args): (Value, MultiValue)| {
-            super::spawn(lua, routine(f)?, args).map(task_of)
-        });
-        globals.set("spawn_with", spawn.unwrap()).unwrap();
-        let defer = lua.create_function(move |lua, (f, args): (Value, MultiValue)| {
-            super::defer(lua, routine(f)?, args).map(task_of)
-        });
-        globals.set("defer_with", defer.unwrap()).unwrap();
-        let delay = lua.create_function(move |lua, (secs, f, args): (f64, Value, MultiValue)| {
-            super::delay(lua, Duration::from_secs_f64(secs), routine(f)?, args).map(task_of)
-        });
-        globals.set("delay_with", delay.unwrap()).unwrap();
     }
 
     fn rt() -> tokio::runtime::Runtime {
@@ -572,10 +510,10 @@ pub(crate) mod tests {
                     assert(order[1] == "spawned" and order[2] == "caller")
 
                     assert(await(spawn(function(...) return select("#", ...) end)) == 0)
-                    local got = await(spawn_with(function(...) return { n = select("#", ...), ... } end, 1, nil, 3))
+                    local got = await(spawn(function(...) return { n = select("#", ...), ... } end, 1, nil, 3))
                     assert(got[1] == 1 and got[2] == nil and got[3] == 3 and got.n == 3)
-                    assert(await(defer_with(function(x, y) return x .. y end, "x", "y")) == "xy")
-                    assert(await(delay_with(0, function(x) return x end, 42)) == 42)
+                    assert(await(defer(function(x, y) return x .. y end, "x", "y")) == "xy")
+                    assert(await(delay(0, function(x) return x end, 42)) == 42)
 
                     local done = spawn(function() return "done" end)
                     assert(await(done) == "done" and await(done) == "done" and done:is_finished())
@@ -653,50 +591,20 @@ pub(crate) mod tests {
     fn what_cannot_run_is_refused() {
         rt().block_on(async {
             let e = engine();
-            let (dead, running, number): (String, String, String) = e
+            let number: String = e
                 .load(
                     r#"
-                    local co = coroutine.create(function() end)
-                    coroutine.resume(co)
-                    local _, dead = pcall(spawn_with, co)
-                    local _, running = pcall(spawn_with, coroutine.running())
                     local _, number = pcall(defer, 42)
-                    -- `std:task` itself takes a function only
+                    -- a coroutine is not a function
                     local _, thread = pcall(spawn, coroutine.create(function() end))
                     assert(tostring(thread):find("std:task.spawn: argument #1 'body': expected a function", 1, true))
-                    return tostring(dead), tostring(running), tostring(number)
+                    return tostring(number)
                 "#,
                 )
                 .eval_async()
                 .await
                 .expect("refusals");
-            assert!(dead.contains("cannot schedule a dead coroutine"), "{dead}");
-            assert!(running.contains("cannot schedule a running coroutine"), "{running}");
             assert!(number.contains("std:task.defer: argument #1 'body': expected a function"), "{number}");
-        });
-    }
-
-    /// A coroutine the script made runs as a task from where it stopped.
-    #[test]
-    fn a_suspended_coroutine_is_scheduled_from_where_it_stopped() {
-        rt().block_on(async {
-            let e = engine();
-            let out: String = e
-                .load(
-                    r#"
-                    local co = coroutine.create(function(a)
-                        local b = coroutine.yield(a .. "1")
-                        wait(0)
-                        return a .. b
-                    end)
-                    local _, first = coroutine.resume(co, "x")
-                    return first .. await(spawn_with(co, "y"))
-                "#,
-                )
-                .eval_async()
-                .await
-                .expect("coroutine");
-            assert_eq!(out, "x1xy");
         });
     }
 
@@ -735,7 +643,7 @@ pub(crate) mod tests {
         rt().block_on(async {
             let e = engine();
             let pause = e.create_function(|_, ()| {
-                std::thread::sleep(Duration::from_millis(30));
+                std::thread::sleep(std::time::Duration::from_millis(30));
                 Ok(())
             });
             e.globals().set("pause", pause.unwrap()).unwrap();
@@ -955,40 +863,6 @@ pub(crate) mod tests {
             assert!(h1_nil);
             assert!(h1_err_contains);
             assert_eq!(h2_ok, "ok");
-        });
-    }
-
-    /// In a script environment a coroutine handed to the scheduler is the scheduler's: the script may not resume
-    /// it too, and one it did not make is refused.
-    #[test]
-    fn in_a_script_environment_a_scheduled_coroutine_is_no_longer_the_scripts_to_resume() {
-        rt().block_on(async {
-            let lua = crate::make_bare_engine().expect("engine");
-            crate::install_runtime_state(&lua, crate::Life::new());
-            install_task_functions(&lua);
-            let env = crate::script_env::new_env(&lua).expect("env");
-            for name in ["spawn_with", "await", "wait"] {
-                env.set(name, lua.globals().get::<Value>(name).unwrap()).unwrap();
-            }
-            crate::script_env::freeze(&lua, &env).expect("freeze");
-            let (resumed, why, foreign, value): (bool, String, String, String) = crate::load_source(
-                &lua,
-                r#"
-                local co = coroutine.create(function() wait(0.05) return "ran" end)
-                local h = spawn_with(co)
-                local resumed, why = coroutine.resume(co)
-                local _, foreign = pcall(spawn_with, coroutine.running())
-                return resumed, why, tostring(foreign), (await(h))
-                "#,
-            )
-            .set_environment(env)
-            .eval_async()
-            .await
-            .expect("the script");
-            assert!(!resumed, "the scheduler drives it");
-            assert!(why.contains("cannot resume non-suspended coroutine"), "{why}");
-            assert!(foreign.contains("cannot schedule a running coroutine"), "{foreign}");
-            assert_eq!(value, "ran");
         });
     }
 }

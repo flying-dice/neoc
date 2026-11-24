@@ -27,8 +27,6 @@
 //!
 //! The string metatable is a different matter: it is shared by every string in the engine, and
 //! [`make_bare_engine`](crate::engine::make_bare_engine) locks it.
-//!
-//! Ported from the old VM's `script_env.rs`, unchanged.
 
 use std::sync::Arc;
 
@@ -180,14 +178,11 @@ fn splitmix(x: u64) -> u64 {
 /// make (see `async_coroutines.lua`).
 fn install_async_coroutines(lua: &Lua, copy: &Table, raw: &Table) -> mlua::Result<()> {
     let pending = Value::LightUserData(Lua::poll_pending());
-    // the coroutines the script made, and those whose driver is somewhere else (which the task scheduler shares:
-    // [`mark_driven`]). Both are keyed weakly, so a coroutine is not kept alive by being listed; `driven`
-    // is also valued weakly, so a driver thread nobody refers to any more (its call was dropped) clears the entry
+    // the coroutines the script made, and those whose driver is somewhere else. Both are keyed weakly, so a
+    // coroutine is not kept alive by being listed; `driven` is also valued weakly, so a driver thread nobody refers to any more (its call was dropped) clears the entry
     // instead of refusing the coroutine for ever (see `async_coroutines.lua`)
     let owned = weak_table(lua, "k")?;
     let driven = weak_table(lua, "kv")?;
-    lua.set_named_registry_value(OWNED, owned.clone())?;
-    lua.set_named_registry_value(DRIVEN, driven.clone())?;
     let close: Value = lua.named_registry_value(crate::engine::STASHED_CLOSE)?;
     let wrappers: Table = load_source(lua, include_str!("async_coroutines.lua"))
         .set_name("=async_coroutines")
@@ -205,54 +200,6 @@ fn weak_table(lua: &Lua, mode: &str) -> mlua::Result<Table> {
     meta.raw_set("__mode", mode)?;
     table.set_metatable(Some(meta))?;
     Ok(table)
-}
-
-/// Where the Lua registry keeps the table of coroutines the script made (`async_coroutines.lua`): the only ones it may
-/// resume.
-const OWNED: &str = "neoc.owned_coroutines";
-
-/// Where the Lua registry keeps the table of coroutines whose driver is somewhere else (`async_coroutines.lua`).
-const DRIVEN: &str = "neoc.driven_coroutines";
-
-/// A table of the script environment kept in the registry (the ones [`new_env`] installs); `None` outside it (a worker, a test), which has no such tables.
-fn environment_table(lua: &Lua, name: &str) -> mlua::Result<Option<mlua::Table>> {
-    match lua.named_registry_value::<mlua::Value>(name)? {
-        mlua::Value::Nil => Ok(None),
-        mlua::Value::Table(table) => Ok(Some(table)),
-        other => Err(mlua::Error::runtime(format!(
-            "the registry entry `{name}` is a {}, not a table",
-            other.type_name()
-        ))),
-    }
-}
-
-/// A coroutine the script made and handed to the task scheduler (`task.spawn`, `task.defer`, `task.delay`): the
-/// scheduler drives it from here on, and the script may no longer resume it itself, as with a coroutine that is
-/// running; two drivers of one coroutine would fight over the host call it is waiting at. Without a script environment
-/// (the registry tables it keeps are missing: a worker, a test, `neoc run`) it does nothing.
-///
-/// # Errors
-/// The coroutine is not one the script made (a thread it reached through `coroutine.running()`: the host's own),
-/// or it is already being driven (a thread is waiting at its host call, or the scheduler has it).
-pub fn mark_driven(lua: &Lua, thread: &mlua::Thread) -> mlua::Result<()> {
-    let (Some(owned), Some(driven)) = (environment_table(lua, OWNED)?, environment_table(lua, DRIVEN)?)
-    else {
-        return Ok(());
-    };
-    if !owned.raw_get::<bool>(thread.clone()).unwrap_or(false) {
-        return Err(mlua::Error::runtime(
-            "cannot schedule a coroutine that is not yours: only one made by coroutine.create or coroutine.wrap",
-        ));
-    }
-    let live = match driven.raw_get::<mlua::Value>(thread.clone())? {
-        mlua::Value::Boolean(true) => true,
-        mlua::Value::Thread(driver) => driver.status() == mlua::thread::ThreadStatus::Resumable,
-        _ => false,
-    };
-    if live {
-        return Err(mlua::Error::runtime("cannot schedule a coroutine that is already running"));
-    }
-    driven.raw_set(thread.clone(), true)
 }
 
 /// Seal `env`: every table in it other than `_G` becomes read-only. Call it after the host's own additions and

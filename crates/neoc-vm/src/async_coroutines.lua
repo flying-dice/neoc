@@ -38,10 +38,9 @@ local select, unpack, error, type = select, unpack, error, type
 local create, resume, yield, status, running = raw.create, raw.resume, raw.yield, raw.status, raw.running
 
 -- A coroutine whose host call is in flight is *running*, as far as the script can tell: the thread that resumed it
--- waits for it. `driven` (a table with weak keys *and* weak values, shared with the task scheduler) maps such a
+-- waits for it. `driven` (a table with weak keys *and* weak values) maps such a
 -- coroutine to that thread; a script that resumes it from somewhere else (a task, another call) gets Lua's own
--- "cannot resume non-suspended coroutine" instead of stealing the call from the thread that is waiting for it. A
--- coroutine handed to `task.spawn`, `task.defer` or `task.delay` is the scheduler's: its entry is `true`. A thread's
+-- "cannot resume non-suspended coroutine" instead of stealing the call from the thread that is waiting for it. A thread's
 -- entry means something only while that thread is suspended: if its yield failed (it was inside a C boundary) the
 -- thread went on, and the coroutine is merely left behind.
 --
@@ -56,7 +55,7 @@ local function is_driven(co)
   if driver == nil then
     return false
   end
-  if driver == true or status(driver) == "suspended" then
+  if status(driver) == "suspended" then
     return true
   end
   driven[co] = nil

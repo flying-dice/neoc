@@ -66,9 +66,8 @@
 //!      first takes the turn, and does not run script code until it has it. A call resumed anywhere else (at a plain
 //!      yield, or into a leaf that is gone) therefore queues for the turn instead of running in someone else's.
 //!   6. **A script resumes (and closes) only the coroutines it made, and only while nobody else drives them.** This
-//!      rule is kept by the script environment (not ported to this crate yet) (its `coroutine` library); a script that runs on
-//!      the engine's own `coroutine` (`make_engine_in` and no environment) is not held to it, and `mark_driven`
-//!      accepts every coroutine there.
+//!      rule is kept by the script environment (its `coroutine` library); a script that runs on
+//!      the engine's own `coroutine` (`make_engine_in` and no environment) is not held to it.
 //!      `coroutine.create` and `coroutine.wrap` record their coroutine in a weak-keyed *owned* set
 //!      (`async_coroutines.lua`); `coroutine.resume` of any other thread is refused with "cannot resume non-suspended
 //!      coroutine", as for a coroutine that is running, and `coroutine.close` of one is refused with "cannot close a coroutine
@@ -77,8 +76,7 @@
 //!      the top-level thread of a call, a task's thread), but the refusal is the default, so there is no list of host
 //!      threads to keep complete. (On Luau a `pcall` or `xpcall` runs in the thread that called it, so inside a
 //!      coroutine the script made `coroutine.running()` is that coroutine, which it may resume.) A coroutine of its own is
-//!      refused too while someone else drives it: a thread is waiting at its host call, or `mark_driven` gave it to
-//!      the task scheduler (`task.spawn`, `defer` and `delay` take only coroutines the script made).
+//!      refused too while someone else drives it: a thread is waiting at its host call.
 //!      A coroutine whose resumer's call was dropped while it waited is released when the collector clears the dead
 //!      thread from `driven` (a weak-valued table): the call is never resumed, so nothing can drive the coroutine
 //!      meanwhile, and a later resume finds its host call abandoned (rule 3).
