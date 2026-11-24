@@ -197,3 +197,32 @@ async fn an_agent_reads_adds_and_completes_todos() {
         PortError::Rejected("There is no such todo.".into())
     );
 }
+
+/// A database the Luau backend made (`fixtures/todos-luau/store.luau`: its migration and a todo kept its way) is
+/// the same database to today's backend. The database records a hash of each migration's bytes and refuses a step
+/// that no longer matches what it ran, so the migration must be sent exactly as the Luau backend sent it. A fresh
+/// database cannot show this: it has recorded nothing.
+#[tokio::test]
+async fn a_database_of_the_luau_backend_opens_with_its_todos() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("todos.db");
+    let open = || Arc::new(vos_sqlite::AppDb::open(Some(&file), &[]).unwrap());
+
+    let before = include_str!("fixtures/todos-luau/store.luau");
+    drop(common::try_load_with(APP, before, open()).await.unwrap());
+
+    let shell = Arc::new(RecordingShell::default());
+    let rt = LuaRuntime::new(Arc::new(Quiet), shell.clone());
+    let loaded = rt.load(&id(APP), built_project("apps/todos"), open()).await.unwrap();
+    let todos = Todos { rt, shell, loaded };
+
+    let board = todos.call("board", Value::Null).await.unwrap();
+    assert_eq!(board["lists"], json!([{ "id": 1, "name": "Reminders", "color": "blue" }]));
+    assert_eq!(
+        board["todos"],
+        json!([{ "id": 1, "list": 1, "title": "Kept since the Luau backend", "notes": "", "due": "2026-06-09", "flagged": true, "done": false }])
+    );
+    // and it is a working app on that database: the next todo follows the kept one
+    let board = todos.call("add", json!({ "list": 1, "title": "Added since" })).await.unwrap();
+    assert_eq!(titles(&board), ["Kept since the Luau backend", "Added since"]);
+}
