@@ -2,18 +2,19 @@
 /**
  * `vos`: what an app project's scripts call.
  *
- *   vos generate       write .app/ (the typed client, and the router and types of the backend's language) from openrpc.json
+ *   vos generate       write .app/ (the typed client, and the router and types of the backend's language) from openrpc.json;
+ *                      in a package apps build on, which has no openrpc.json, only the kit's editor types
  *   vos typecheck      generate, then check the backend: luau-lsp over the Luau (strict, against the host's declarations),
  *                      or the TypeScript compiler over a backend in TypeScript
  *   vos lint           the same, and StyLua is satisfied
  *   vos format         StyLua over the Luau
  *   vos bundle <out>   generate, then write the backend as the build bundles it (the app's `app.luau`) to <out>
  */
-import { writeFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { existsSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { backendBundle } from '../src/backend.ts'
 import { DefinitionError } from '../src/definition.ts'
-import { generate, isTypeScript, removeOtherBackend, resolveOptions, write } from '../src/generate.ts'
+import { generate, isTypeScript, kitDeclarations, removeOtherBackend, resolveOptions, write } from '../src/generate.ts'
 import { analyze, stylua } from '../src/luau-tools.ts'
 
 const [command, argument] = process.argv.slice(2)
@@ -21,6 +22,11 @@ const project = resolve(process.cwd())
 const settings = resolveOptions(project)
 
 function generated(): void {
+  // a package of components apps build on (`@vos/docker`) has no contract: only the kit's editor types are made for it
+  if (!existsSync(join(project, settings.definition))) {
+    write(project, kitDeclarations(project, settings.generated))
+    return
+  }
   const written = write(project, generate(project, settings))
   removeOtherBackend(project, settings)
   if (command === 'generate') console.log(written.length > 0 ? `wrote ${written.join(', ')}` : 'the generated files are up to date')

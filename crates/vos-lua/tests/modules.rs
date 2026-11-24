@@ -124,8 +124,8 @@ fn declared_overloads() -> Vec<(String, String)> {
 }
 
 /// What luau-lsp checks an app against (`types/generated/vos.d.luau`) and what the host gives it are one list: every
-/// module the VM library has, less `NOT_FOR_APPS`, is typed by its own type, `vos:app` is the one
-/// host module, and every refused module is typed as unusable; nothing else is declared.
+/// module the VM library has, less `NOT_FOR_APPS`, is typed by its own type, `vos:app` and `vos:docker` are the
+/// host's own, and every refused module is typed as unusable; nothing else is declared.
 #[test]
 fn the_declared_require_offers_exactly_what_the_host_offers() {
     let declared = declared_overloads();
@@ -136,6 +136,7 @@ fn the_declared_require_offers_exactly_what_the_host_offers() {
         .collect();
     let mut offered: Vec<&str> = library().filter(|name| !REFUSED.contains(name)).collect();
     offered.push("vos:app");
+    offered.push("vos:docker");
     let mut expected = offered.clone();
     expected.sort_unstable();
     let mut got = typed.clone();

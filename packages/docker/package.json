@@ -1,0 +1,40 @@
+{
+  "name": "@vos/docker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The page half of the container framework (the backend half is the host's `vos:docker`): the connection form, the engine-down screen, the state dot and the log view (src/, Svelte on the kit), and a fake Docker for the journeys of an app that runs on Docker (e2e/).",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "svelte": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./fake-docker": "./e2e/fakeDocker.ts"
+  },
+  "scripts": {
+    "typecheck": "vos generate && svelte-check --tsconfig ./tsconfig.json",
+    "storybook": "storybook dev -p 6021 --no-open",
+    "build-storybook": "storybook build -o storybook-static --quiet"
+  },
+  "peerDependencies": {
+    "svelte": "^5.0.0"
+  },
+  "devDependencies": {
+    "@storybook/addon-a11y": "10.6.7",
+    "@storybook/addon-docs": "10.6.7",
+    "@storybook/addon-svelte-csf": "5.1.6",
+    "@storybook/addon-themes": "10.6.7",
+    "@storybook/svelte-vite": "10.6.7",
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@types/bun": "1.4.4",
+    "@vos/kit": "workspace:*",
+    "@vos/storybook": "workspace:*",
+    "@vos/vite-plugin": "workspace:*",
+    "storybook": "10.6.7",
+    "svelte": "^5.57.2",
+    "svelte-check": "^4.7.6",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.4"
+  }
+}

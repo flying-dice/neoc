@@ -6,6 +6,7 @@
 //! app.db / app.kv                 data (migrations, statements, transactions) and a small key-value store
 //! app.files.documents:read(path)  the app's managed files (documents, cache, temp)
 //! app.tool { ... }                an agent tool
+//! app.tools.all() / .call(...)    the tools of every running app, for an agent of the app's own
 //! app.t.string { ... } ...        input schema builders
 //! app.notify { ... }              a notification
 //! app.emit(name, data)            an event for the app's open pages
@@ -62,7 +63,7 @@ pub mod app {
     use super::data::{Db, Kv};
     use super::files::Files;
     use super::misc::{self, Agents, EventData, Notification, ThisApp, WindowParams};
-    use super::tools::{self, Tool};
+    use super::tools::{self as registry, Tool};
     use mlua_ir::Object;
     use neoc_vm::mlua::{self, Lua};
 
@@ -85,11 +86,16 @@ pub mod app {
     #[derive(Clone, Copy, Debug, Object)]
     pub struct t;
 
+    /// The tools of every running app, for an app that offers them to an agent of its own: `app.tools.all()` and
+    /// `app.tools.call(name, agent, args)`.
+    #[derive(Clone, Copy, Debug, Object)]
+    pub struct tools;
+
     /// Declare a tool an agent can call: `app.tool { name = "search", input = { ... }, run = function(input, ctx) ... end }`.
     /// Raises when the definition is refused (a name that is not `[a-z][a-z0-9_]*`, one already registered) and
     /// inside a `readOnly` tool.
     pub fn tool(lua: &Lua, def: Tool) -> mlua::Result<()> {
-        tools::register(&*super::shared(lua)?, def)
+        registry::register(&*super::shared(lua)?, def)
     }
 
     /// Open the app's window on the person's screen, or bring it forward if it is open (every connected shell is

@@ -1,0 +1,55 @@
+{
+  "accept": "text/event-stream",
+  "activity": [
+    "PLAN",
+    true
+  ],
+  "after_the_end": {},
+  "body": "{\"threadId\":\"t\",\"runId\":\"r\",\"state\":null,\"messages\":[{\"role\":\"user\",\"id\":\"u1\",\"content\":\"hello\"}],\"tools\":[],\"context\":[],\"forwardedProps\":{}}",
+  "broken": [
+    "s",
+    "protocol",
+    2
+  ],
+  "closed": {},
+  "input_tokens": 3,
+  "no_patch": 1,
+  "patch_failures": [
+    "failed",
+    "failed",
+    "invalid_patch"
+  ],
+  "patched": [
+    "read",
+    "write"
+  ],
+  "run_failures": [
+    "invalid_url",
+    "invalid_input",
+    "invalid_input",
+    "invalid_input"
+  ],
+  "status": [
+    404,
+    "no such agent",
+    "lib:agui.run: status: the endpoint answered 404: no such agent"
+  ],
+  "text": "Hi there",
+  "token": "Bearer k",
+  "types": [
+    "RUN_STARTED",
+    "TEXT_MESSAGE_START",
+    "TEXT_MESSAGE_CONTENT",
+    "TEXT_MESSAGE_CONTENT",
+    "TEXT_MESSAGE_END",
+    "RUN_FINISHED"
+  ],
+  "unpatched": [
+    "read"
+  ],
+  "wrong": [
+    "runtime error: lib:agui.run: argument #2 'input': missing field `run_id`",
+    "runtime error: lib:agui.run: argument #2 'input': messages[1]: `role` must be one of \"developer\", \"system\", \"assistant\", \"user\", \"tool\", \"activity\", \"reasoning\"",
+    "runtime error: lib:agui.run: argument #3 'opts': unknown field `follow_redirects`, expected one of headers, ca_pem, connect_timeout, idle_timeout, timeout, max_event"
+  ]
+}

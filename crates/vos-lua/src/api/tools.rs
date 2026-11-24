@@ -1,14 +1,16 @@
 //! `app.tool { ... }`: an agent tool, and the types of an app's entry ([`Handlers`]).
 
-use super::{context::Context, json::Json, schema::Schema};
+use super::{app::tools, context::Context, json::Json, schema::Schema, shared};
 use crate::vm::{Shared, ToolDecl};
 use mlua_ir::ir::{Field, Ty, TypeBody};
-use mlua_ir::{expected, Callback, Definition, FromLuaArg, Registry, Shape, Unknown};
+use mlua_ir::{expected, Callback, Definition, FromLuaArg, LuaError, Registry, Shape, Unknown};
 use neoc_vm::mlua;
 use neoc_vm::mlua::{Lua, Table, Value as LuaValue};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
-use vos_domain::{tool_schema, QualifiedToolName, ToolSpec};
+use vos_application::PortError;
+use vos_domain::{tool_schema, Actor, QualifiedToolName, ToolSpec};
 
 mlua_ir::unknown_reason!(
     /// Why a tool's input has no declared shape here.
@@ -183,12 +185,154 @@ pub(super) fn register(sh: &Shared, def: Tool) -> mlua::Result<()> {
         read_only: read_only.unwrap_or(false),
         name: name.clone(),
     };
-    let mut tools = sh.tools.lock();
-    if tools.iter().any(|t| t.spec.name == name) {
+    let mut registered = sh.tools.lock();
+    if registered.iter().any(|t| t.spec.name == name) {
         return Err(mlua::Error::runtime(format!("tool `{name}` is already registered")));
     }
-    tools.push(ToolDecl { spec, run: run.into_function() });
+    registered.push(ToolDecl { spec, run: run.into_function() });
     Ok(())
+}
+
+mlua_ir::unknown_reason!(
+    /// Why a part of a tool's input schema has no declared shape.
+    JsonSchema = "a JSON Schema: its keywords are the schema's own"
+);
+
+/// The JSON Schema of a tool's input, as a field of a record: an object of keywords.
+#[derive(Clone, Debug, Serialize)]
+#[serde(transparent)]
+pub struct InputSchema(Value);
+
+impl Shape for InputSchema {
+    fn shape(reg: &mut Registry) -> Ty {
+        BTreeMap::<String, Unknown<JsonSchema>>::shape(reg)
+    }
+}
+
+/// A tool of a running app, as an agent is shown it.
+#[derive(Clone, Debug, Serialize, Shape)]
+#[shape(module = "vos:app")]
+pub struct HostTool {
+    /// `<appId>__<tool>`: what `app.tools.call` takes.
+    pub name: String,
+    /// The app it belongs to.
+    pub app: String,
+    /// The name a person is shown.
+    pub title: Option<String>,
+    /// What the tool does.
+    pub description: String,
+    /// The JSON Schema of its input.
+    pub input_schema: InputSchema,
+    /// It changes nothing: it runs with every write refused.
+    pub read_only: bool,
+}
+
+/// The agent of the app's own a tool is called for: who the tool is told called it (its `ctx.actor`).
+#[derive(Clone, Debug, Deserialize, Shape)]
+#[serde(deny_unknown_fields)]
+#[shape(module = "vos:app")]
+pub struct Caller {
+    /// The app's own id for its agent, 1 to 200 bytes.
+    pub id: String,
+    /// The agent's name, 1 to 200 bytes.
+    pub name: String,
+}
+
+/// Why a tool of a running app gave no result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error, LuaError)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[shape(module = "vos:app")]
+pub enum ToolCallError {
+    /// No running app has the tool: it does not exist, or its app is not running.
+    #[error("{text}")]
+    NotFound {
+        #[serde(skip)]
+        text: String,
+    },
+    /// The tool failed: it refused its input, raised, or said it could not (`ctx:fail`).
+    #[error("{text}")]
+    Failed {
+        #[serde(skip)]
+        text: String,
+    },
+    /// The host could not run it.
+    #[error("{text}")]
+    Internal {
+        #[serde(skip)]
+        text: String,
+    },
+}
+
+impl From<PortError> for ToolCallError {
+    fn from(error: PortError) -> Self {
+        let text = error.to_string();
+        match error {
+            PortError::NotFound(_) => Self::NotFound { text },
+            PortError::Rejected(_) | PortError::Rpc { .. } => Self::Failed { text },
+            PortError::Internal(_) => Self::Internal { text },
+        }
+    }
+}
+
+/// The named arguments a tool is called with.
+pub type ToolArgs = Json<BTreeMap<String, Unknown<ToolInput>>>;
+
+/// The longest id or name of the agent a tool call is made for.
+const MAX_CALLER: usize = 200;
+
+#[mlua_ir::object(module = "vos:app")]
+impl tools {
+    /// Every tool of every running app (this one's too), in name order.
+    pub fn all(lua: &Lua) -> mlua::Result<Vec<HostTool>> {
+        let sh = shared(lua)?;
+        Ok(sh
+            .host_tools
+            .all()
+            .into_iter()
+            .map(|(name, spec)| HostTool {
+                app: name.app().to_string(),
+                name: name.to_string(),
+                title: spec.title,
+                description: spec.description,
+                input_schema: InputSchema(spec.input_schema),
+                read_only: spec.read_only,
+            })
+            .collect())
+    }
+
+    /// Run a tool of a running app for an agent of this app's own, with `args` (none when left out): `agent` is who
+    /// the tool is told called it (its `ctx.actor`). Nothing checks what that agent may call: the app decides whom it offers the tools to. The
+    /// result is `(result, nil)`, or `(nil, err)` when the tool failed, does not exist or its app is not running.
+    /// Raises for a name that is not `<appId>__<tool>`, an agent whose `id` or `name` is not 1 to 200 bytes, and
+    /// inside a `readOnly` tool. It waits without the app's turn: the tool runs in another app's VM, or in this
+    /// one's as any other call.
+    #[host("Wait")]
+    pub async fn call(
+        lua: Lua,
+        name: String,
+        agent: Caller,
+        args: Option<ToolArgs>,
+    ) -> mlua::Result<Result<Json<Unknown<ToolOutput>>, ToolCallError>> {
+        let sh = shared(&lua)?;
+        sh.writable("app.tools.call")?;
+        let name = QualifiedToolName::parse(&name).map_err(|e| mlua::Error::runtime(e.to_string()))?;
+        for (key, value) in [("id", &agent.id), ("name", &agent.name)] {
+            if value.is_empty() || value.len() > MAX_CALLER {
+                return Err(mlua::Error::runtime(format!(
+                    "app.tools.call: the agent needs `{key}`, a string of 1 to {MAX_CALLER} bytes"
+                )));
+            }
+        }
+        // the id is the app's own for its agent: under the app's name, it is never the id of an agent the person
+        // connected to this machine, nor of another app's
+        let caller = Actor::agent(&format!("{}:{}", sh.app, agent.id), &agent.name);
+        let args = match args.map(|args| args.value) {
+            Some(args @ Value::Object(_)) => args,
+            // none given, or an empty table (which reads as `[]`): no arguments
+            _ => json!({}),
+        };
+        Ok(sh.host_tools.call(caller, &name, args).await.map(Json::new).map_err(ToolCallError::from))
+    }
 }
 
 #[cfg(test)]

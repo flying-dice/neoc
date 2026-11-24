@@ -22,7 +22,7 @@
 - Reserve bare `error("...")` and failing `assert` for bugs and violated invariants.
   An `assert` that only narrows a type the code above has already established is fine.
 - Do not introduce Result wrapper tables.
-- Only require a relative path, `vos:app`, `vos:ui`, or a module the generated
+- Only require a relative path, `vos:app`, `vos:ui`, `vos:docker`, or a module the generated
   declarations offer (`types/generated/vos.d.luau`). Format with StyLua
   (`bun run lint:stylua`).
 

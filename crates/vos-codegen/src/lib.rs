@@ -66,7 +66,7 @@ pub fn write_all(root: &Path) -> io::Result<()> {
 const GENERATED_DIR: &str = "types/generated";
 
 /// Files under [`GENERATED_DIR`] that another generator writes (`bun run codegen` runs all of them).
-const WRITTEN_ELSEWHERE: &[&str] = &["types/generated/prelude.lua"];
+const WRITTEN_ELSEWHERE: &[&str] = &["types/generated/prelude.lua", "types/generated/docker.luau"];
 
 /// The generated files under `root` that are missing or differ from what the generator would write now, and the
 /// files under `types/generated` that no generator writes any more.

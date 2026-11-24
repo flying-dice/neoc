@@ -6,8 +6,6 @@
 --
 -- Nothing here talks to Docker or keeps anything: this is where a hostname is checked, and where the configuration
 -- is written.
-local hash = require("lib:hash")
-local hex = require("lib:hex")
 local rpc = require("../.app/rpc")
 local trim = require("lib:text").trim
 
@@ -115,19 +113,6 @@ function nginx.plan(settings: rpc.Settings, sites: { rpc.Site }): Plan
     "",
   }, "\n")
   return { config = config, ports = ports, mounts = mounts }
-end
-
--- What a container is made from, as one short word: two containers with the same signature are the same server.
-function nginx.signature(plan: Plan): string
-  local parts = { nginx.IMAGE, plan.config }
-  for _, port in plan.ports do
-    table.insert(parts, tostring(port))
-  end
-  for _, mount in plan.mounts do
-    table.insert(parts, `{mount.source}\0{mount.target}`)
-  end
-  local digest = hash.hash("sha256", table.concat(parts, "\n"))
-  return hex.encode(digest or "")
 end
 
 return nginx

@@ -5,8 +5,6 @@
 --
 -- Nothing here talks to Docker or keeps anything: this is where a name and an address are checked, and where the
 -- arguments are written.
-local hash = require("lib:hash")
-local hex = require("lib:hex")
 local rpc = require("../.app/rpc")
 local trim = require("lib:text").trim
 
@@ -126,12 +124,6 @@ function dnsmasq.arguments(settings: rpc.Settings, records: { rpc.Record }): { s
     )
   end
   return arguments
-end
-
--- What a container is made from, as one short word: two containers with the same signature are the same server.
-function dnsmasq.signature(port: number, arguments: { string }): string
-  local digest = hash.hash("sha256", table.concat({ dnsmasq.IMAGE, tostring(port), table.unpack(arguments) }, "\n"))
-  return hex.encode(digest or "")
 end
 
 return dnsmasq

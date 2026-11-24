@@ -2,7 +2,8 @@
 //!
 //! The VM is a bare `neoc-vm` engine with the app's own environment table (see
 //! `neoc_vm::script_env`): the prelude's polyfills, the `app` capability table and a `require` that
-//! knows only `vos:app` and the library's modules. Nothing in it is budgeted (no CPU, memory or time limits: the host is a
+//! knows only `vos:app`, the framework the host carries (`vos:docker`) and the library's modules. Nothing in it is
+//! budgeted (no CPU, memory or time limits: the host is a
 //! homelab's own and apps are meant to do real work); it then runs the app's entry, which returns the app's
 //! handlers. After that the host calls into it: handlers and tools. One call runs in a VM at a time (an app is
 //! single-threaded by design); the VM lives as long as its `AppVm`.
@@ -36,10 +37,10 @@ use std::{
 };
 use tokio::sync::Notify;
 use vos_application::{
-    ports::{AgentCard, AgentRoster, AppData, AppPackage, CallContext},
+    ports::{AgentCard, AgentRoster, AppData, AppPackage, AppTools, CallContext, PortResult},
     AppFiles, Files, NoFiles,
 };
-use vos_domain::{tool_schema, AppId, Notification, ToolSpec};
+use vos_domain::{tool_schema, Actor, AppId, Notification, QualifiedToolName, ToolSpec};
 
 /// The prelude (`lua/prelude.lua`, copied by `bun run codegen`): `utf8`, which Luau has and the app's
 /// environment does not copy from the engine. Run once in each app's environment before the app.
@@ -117,6 +118,8 @@ pub struct VmConfig {
     pub roster: Arc<dyn AgentRoster>,
     /// The app's managed files (`app.files`); every call is `unsupported` unless the host gives a store.
     pub files: Arc<dyn AppFiles>,
+    /// The tools of every running app (`app.tools.all`, `app.tools.call`); none unless the host gives them.
+    pub host_tools: Arc<dyn AppTools>,
     /// Library modules this VM does not offer, on top of [`crate::NOT_FOR_APPS`] (its `std:thread` workers neither).
     /// The host leaves it empty and there is no setting for it: a test uses it to show that a capability works
     /// for an app that cannot `require` a module (`app.files` without `std:fs`).
@@ -141,11 +144,24 @@ impl AgentRoster for NoRoster {
     }
 }
 
+/// No tools: what an app sees when the host gives none (tests of other things).
+struct NoTools;
+#[async_trait::async_trait]
+impl AppTools for NoTools {
+    fn all(&self) -> Vec<(QualifiedToolName, ToolSpec)> {
+        vec![]
+    }
+    async fn call(&self, _caller: Actor, name: &QualifiedToolName, _args: Value) -> PortResult<Value> {
+        Err(vos_application::PortError::NotFound(format!("tool `{name}`")))
+    }
+}
+
 impl Default for VmConfig {
     fn default() -> Self {
         Self {
             roster: Arc::new(NoRoster),
             files: Arc::new(NoFiles),
+            host_tools: Arc::new(NoTools),
             refused_modules: Vec::new(),
             test_hooks: false,
         }
@@ -188,6 +204,8 @@ pub(crate) struct Shared {
     /// The library modules this app is offered (see [`crate::require::offered_modules`]).
     pub offered: Arc<Vec<&'static str>>,
     pub roster: Arc<dyn AgentRoster>,
+    /// Every running app's tools: what `app.tools.all` lists and `app.tools.call` runs.
+    pub host_tools: Arc<dyn AppTools>,
     pub tools: Mutex<Vec<ToolDecl>>,
     /// What `hook(name, fn)` registered (only with [`VmConfig::test_hooks`]).
     pub handlers: Mutex<HashMap<String, Function>>,
@@ -596,7 +614,7 @@ impl AppVm {
         db: Arc<dyn AppData>,
         config: VmConfig,
     ) -> Result<Self> {
-        let VmConfig { roster, files, refused_modules, test_hooks } = config;
+        let VmConfig { roster, files, host_tools, refused_modules, test_hooks } = config;
         let offered = Arc::new(crate::require::offered_modules(&refused_modules));
         let load_err =
             |e: &mlua::Error| VmError::Load { app: app.to_string(), error: ScriptError::from_lua(e) };
@@ -627,6 +645,7 @@ impl AppVm {
             files: Files::new(files),
             offered,
             roster,
+            host_tools,
             tools: Mutex::default(),
             handlers: Mutex::default(),
             rpc_handlers: Mutex::default(),

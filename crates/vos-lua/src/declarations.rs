@@ -1,14 +1,18 @@
 //! What a script on this adapter can reach, as data: the schema mlua-ir builds from the Rust of every module this
-//! crate links (neoc-vm's `std:`, `lib:` and `vnd:` modules, and the `app` API, `vos:app`). The declarations for
+//! crate links (neoc-vm's `std:`, `lib:` and `vnd:` modules, and the `app` API, `vos:app`), and of the framework
+//! it carries as Luau (`vos:docker`, declared in [`crate::docker`]). The declarations for
 //! app authors (`types/generated/vos.d.luau`, `vos.d.ts`) are written from it by `vos-codegen`, which adds the
 //! host's policy: which of the modules an app is offered.
 
-use crate::api;
+use crate::{api, docker};
 use mlua_ir::ir::Ir;
 use mlua_ir::{Registry, Shape};
 
 /// The module the `app` API is: `require("vos:app")`, and the global `app`.
 pub const APP_MODULE: &str = api::MODULE;
+
+/// The module the container framework is: `require("vos:docker")`.
+pub const DOCKER_MODULE: &str = docker::MODULE;
 
 /// The global the `app` API also is.
 pub const APP_GLOBAL: &str = "app";
@@ -38,6 +42,7 @@ pub fn schema() -> Ir {
             ir.types.push(def);
         }
     }
+    docker::declare(&mut ir);
     ir.types.sort_by(|a, b| a.name.cmp(&b.name));
     ir
 }
@@ -62,7 +67,20 @@ mod tests {
         members.sort_unstable();
         assert_eq!(
             members,
-            ["agents", "db", "emit", "files", "id", "kv", "log", "notify", "openWindow", "t", "tool"]
+            [
+                "agents",
+                "db",
+                "emit",
+                "files",
+                "id",
+                "kv",
+                "log",
+                "notify",
+                "openWindow",
+                "t",
+                "tool",
+                "tools"
+            ]
         );
         assert!(
             ir.modules.iter().any(|m| m.name == "std:fs") && ir.modules.iter().any(|m| m.name == "lib:json")

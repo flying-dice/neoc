@@ -134,7 +134,7 @@ fn probe(ir: &Ir) -> String {
     end
     app.tool {{ name = "keys", readOnly = true, run = function(_, ctx)
       return {{
-        app = keys(app), t = keys(app.t), same = require("vos:app") == app,
+        app = keys(app), t = keys(app.t), tools = keys(app.tools), same = require("vos:app") == app,
         kinds = {{ db = typeof(app.db), id = typeof(app.id), ctx = typeof(ctx), documents = typeof(app.files.documents) }},
         ctx = has(ctx, {{ "actor", "now", "fail" }}),
         {asked}
@@ -167,6 +167,12 @@ async fn the_app_api_an_app_gets_is_the_one_the_schema_and_the_declarations_desc
     assert_same("vos_app", &strings(&live["app"]), &declared_keys(&decls, "vos_app"));
     assert_same("t", &strings(&live["t"]), &statics(&ir, "vos_app_t"));
     assert_same("vos_app_tStatics", &strings(&live["t"]), &declared_keys(&decls, "vos_app_tStatics"));
+    assert_same("tools", &strings(&live["tools"]), &statics(&ir, "vos_app_tools"));
+    assert_same(
+        "vos_app_toolsStatics",
+        &strings(&live["tools"]),
+        &declared_keys(&decls, "vos_app_toolsStatics"),
+    );
     for (key, _, ty) in OBJECTS {
         assert_same(key, &strings(&live[key]), &members(&ir, ty));
     }
@@ -176,7 +182,7 @@ async fn the_app_api_an_app_gets_is_the_one_the_schema_and_the_declarations_desc
     let app: Vec<String> = strings(&live["app"]).into_iter().collect();
     assert_eq!(
         app,
-        ["agents", "db", "emit", "files", "id", "kv", "log", "notify", "openWindow", "t", "tool"]
+        ["agents", "db", "emit", "files", "id", "kv", "log", "notify", "openWindow", "t", "tool", "tools"]
     );
     let db: Vec<String> = strings(&live["db"]).into_iter().collect();
     assert_eq!(db, ["all", "exec", "migrate", "one", "tx"]);

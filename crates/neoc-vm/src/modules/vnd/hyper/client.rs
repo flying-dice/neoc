@@ -27,6 +27,9 @@ mod tests;
 
 pub use error::{HyperError, TimeLimit};
 pub(super) use exchange::Response;
+// what a module that reads a response as a stream needs (`lib:agui`): the same request, connection and errors
+pub(crate) use exchange::Streamed;
+pub(crate) use options::Prepared;
 pub use options::RequestOptions;
 
 /// Send `method url` with `body` as `opts` says, and read the response. The connections it opens belong to the

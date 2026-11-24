@@ -66,6 +66,22 @@ pub(crate) async fn run(prepared: Prepared, life: Life) -> Result<Response, Hype
 }
 
 async fn exchange(prepared: Prepared, life: Life) -> Result<Response, HyperError> {
+    let max_body = prepared.limits.max_body;
+    let Head { resp, conn, url } = head(prepared, life).await?;
+    let status = resp.status().as_u16();
+    let status_headers = super::super::collect_headers(resp.headers());
+    let body = read_body(resp, max_body, &conn).await?;
+    Ok(Response { status, headers: status_headers, body, url: url.to_string() })
+}
+
+/// The response the request ends at (the last of the redirect chain), its body not read yet, on its connection.
+struct Head {
+    resp: HyperResponse<Incoming>,
+    conn: Connection,
+    url: Url,
+}
+
+async fn head(prepared: Prepared, life: Life) -> Result<Head, HyperError> {
     let Prepared { mut method, url, mut headers, mut body, ca_pem, limits } = prepared;
     let mut url = Url::parse(&url).map_err(|e| HyperError::invalid_url(e.to_string()))?;
     let mut tls = Tls::new(ca_pem);
@@ -94,9 +110,64 @@ async fn exchange(prepared: Prepared, life: Life) -> Result<Response, HyperError
             // `resp` and `conn` drop here: the redirect's body is never read and its connection closes
             continue;
         }
-        let status_headers = super::super::collect_headers(resp.headers());
-        let body = read_body(resp, limits.max_body, &conn).await?;
-        return Ok(Response { status, headers: status_headers, body, url: url.to_string() });
+        return Ok(Head { resp, conn, url });
+    }
+}
+
+/// A response whose body is read a piece at a time, for a module that reads a stream (`lib:agui`). The connection
+/// is the same one a whole response is read on: it closes when this is dropped, with the engine's `Life`, and after
+/// `idle_timeout` without data. `timeout`, when the request has one, bounds the stream to its end, not only its
+/// head; `max_body` does not apply (the reader bounds what it keeps).
+pub(crate) struct Streamed {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    body: Incoming,
+    conn: Connection,
+    deadline: Option<(tokio::time::Instant, Duration)>,
+}
+
+impl Streamed {
+    /// Send the request and read the head of its response.
+    pub(crate) async fn open(prepared: Prepared, life: Life) -> Result<Self, HyperError> {
+        let deadline = prepared.limits.total.map(|limit| (tokio::time::Instant::now() + limit, limit));
+        let Head { resp, conn, .. } = within(deadline, head(prepared, life)).await?;
+        Ok(Self {
+            status: resp.status().as_u16(),
+            headers: super::super::collect_headers(resp.headers()),
+            body: resp.into_body(),
+            conn,
+            deadline,
+        })
+    }
+
+    /// The next piece of the body, or `None` at its end. A body cut short is an error, never an end.
+    pub(crate) async fn chunk(&mut self) -> Result<Option<Bytes>, HyperError> {
+        loop {
+            let Some(frame) = within(self.deadline, async { Ok(self.body.frame().await) }).await? else {
+                self.conn.ended_early()?;
+                return Ok(None);
+            };
+            let frame = frame.map_err(|e| HyperError::from_hyper(&e, self.conn.fired.after()))?;
+            if let Ok(data) = frame.into_data() {
+                return Ok(Some(data));
+            }
+        }
+    }
+}
+
+/// `work`, given up at the request's `timeout` when it has one.
+async fn within<T>(
+    deadline: Option<(tokio::time::Instant, Duration)>,
+    work: impl Future<Output = Result<T, HyperError>>,
+) -> Result<T, HyperError> {
+    match deadline {
+        None => work.await,
+        Some((at, limit)) => tokio::time::timeout_at(at, work).await.unwrap_or_else(|_| {
+            Err(HyperError::timed_out(
+                TimeLimit::Timeout,
+                format!("the request took longer than {}s", secs(limit)),
+            ))
+        }),
     }
 }
 

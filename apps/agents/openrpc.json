@@ -2,14 +2,14 @@
   "openrpc": "1.3.2",
   "info": {
     "title": "Agents",
-    "version": "0.2.0",
-    "description": "Chat with agents: pick one, write to it, and read its answer as it comes."
+    "version": "0.3.0",
+    "description": "Chat with agents: add one by its AG-UI endpoint, write to it, and watch what it answers and does."
   },
   "x-app": {
     "id": "agents",
     "icon": "sparkles",
     "tint": "orange",
-    "description": "Chat with agents: pick one, write to it, and read its answer as it comes.",
+    "description": "Chat with agents: add one by its AG-UI endpoint, write to it, and watch what it answers and does.",
     "window": {
       "w": 960,
       "h": 640,
@@ -20,7 +20,7 @@
   "methods": [
     {
       "name": "agents",
-      "summary": "The agents a chat can be started with.",
+      "summary": "The agents a chat can be started with, by name.",
       "params": [],
       "result": {
         "name": "agents",
@@ -31,6 +31,146 @@
           }
         }
       }
+    },
+    {
+      "name": "addAgent",
+      "summary": "Add an agent. Its token, when it has one, is kept in this machine's keychain.",
+      "params": [
+        {
+          "name": "name",
+          "required": true,
+          "description": "What the agent is called. Blank is refused with a message.",
+          "schema": {
+            "type": "string",
+            "maxLength": 80
+          }
+        },
+        {
+          "name": "url",
+          "required": true,
+          "description": "The agent's AG-UI endpoint: an `http` or `https` URL that takes the POST of a run and answers with an event stream.",
+          "schema": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        },
+        {
+          "name": "token",
+          "description": "A bearer token the endpoint wants, sent as `Authorization: Bearer <token>`. Blank or absent: none.",
+          "schema": {
+            "type": "string",
+            "maxLength": 4000
+          }
+        }
+      ],
+      "result": {
+        "name": "agents",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Agent"
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "The name is blank, the URL is not an http or https URL, or the keychain did not take the token."
+        }
+      ]
+    },
+    {
+      "name": "updateAgent",
+      "summary": "Change an agent's name, endpoint or token.",
+      "params": [
+        {
+          "name": "agent",
+          "required": true,
+          "description": "The id of one of `agents`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        {
+          "name": "name",
+          "required": true,
+          "description": "What the agent is called. Blank is refused with a message.",
+          "schema": {
+            "type": "string",
+            "maxLength": 80
+          }
+        },
+        {
+          "name": "url",
+          "required": true,
+          "description": "The agent's AG-UI endpoint: an `http` or `https` URL that takes the POST of a run and answers with an event stream.",
+          "schema": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        },
+        {
+          "name": "token",
+          "description": "A new bearer token. Absent: the token stays as it is.",
+          "schema": {
+            "type": "string",
+            "maxLength": 4000
+          }
+        },
+        {
+          "name": "forget",
+          "description": "Forget the token the agent has.",
+          "schema": {
+            "type": "boolean"
+          }
+        }
+      ],
+      "result": {
+        "name": "agents",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Agent"
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such agent, the name is blank, the URL is not an http or https URL, or the keychain refused."
+        }
+      ]
+    },
+    {
+      "name": "removeAgent",
+      "summary": "Remove an agent and its token. Its chats stay, and can be read.",
+      "params": [
+        {
+          "name": "agent",
+          "required": true,
+          "description": "The id of one of `agents`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 64
+          }
+        }
+      ],
+      "result": {
+        "name": "agents",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Agent"
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such agent, or it is answering in a chat."
+        }
+      ]
     },
     {
       "name": "chats",
@@ -75,7 +215,7 @@
     },
     {
       "name": "open",
-      "summary": "A chat and everything said in it so far.",
+      "summary": "A chat and everything said and done in it so far.",
       "params": [
         {
           "name": "chat",
@@ -101,7 +241,7 @@
     },
     {
       "name": "send",
-      "summary": "Say something in a chat. Answers at once with the chat as it now stands; the agent's answer follows as `message` events and ends with a `turn` event.",
+      "summary": "Say something in a chat. Answers at once with the chat as it now stands; what the agent says and does follows as `item` and `piece` events and ends with a `turn` event.",
       "params": [
         {
           "name": "chat",
@@ -130,7 +270,99 @@
       "errors": [
         {
           "code": -32010,
-          "message": "There is no such chat, the message is blank, or the agent is still answering."
+          "message": "There is no such chat, the message is blank, the agent is still answering or is waiting for an answer, or the agent was removed."
+        }
+      ]
+    },
+    {
+      "name": "answer",
+      "summary": "Answer a question the agent stopped at (an interrupt), or decline it. When every open question of the chat has its answer the agent goes on, as after `send`.",
+      "params": [
+        {
+          "name": "chat",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        {
+          "name": "item",
+          "required": true,
+          "description": "The id of the `interrupt` item.",
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "decline",
+          "description": "Decline to answer: the agent is told the question was cancelled.",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "payload",
+          "description": "The answer as JSON text, of the shape the question asked for (`response_schema` in the item's data). Absent: no payload.",
+          "schema": {
+            "type": "string",
+            "maxLength": 200000
+          }
+        }
+      ],
+      "result": {
+        "name": "conversation",
+        "schema": {
+          "$ref": "#/components/schemas/Conversation"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such chat or question, it has its answer already, or the agent is still answering."
+        }
+      ]
+    },
+    {
+      "name": "act",
+      "summary": "Tell the agent what the person did on a surface it drew (an A2UI action: a button pressed). The agent goes on, as after `send`.",
+      "params": [
+        {
+          "name": "chat",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        {
+          "name": "item",
+          "required": true,
+          "description": "The id of the `activity` item the surface is in.",
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "action",
+          "required": true,
+          "description": "The A2UI action as JSON text: its `name`, the `surfaceId`, the `sourceComponentId` and its `context`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 200000
+          }
+        }
+      ],
+      "result": {
+        "name": "conversation",
+        "schema": {
+          "$ref": "#/components/schemas/Conversation"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such chat or surface, or the agent is still answering."
         }
       ]
     },
@@ -159,6 +391,35 @@
           "message": "There is no such chat."
         }
       ]
+    },
+    {
+      "name": "removeChat",
+      "summary": "Delete a chat and everything in it.",
+      "params": [
+        {
+          "name": "chat",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "maxLength": 64
+          }
+        }
+      ],
+      "result": {
+        "name": "chats",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Chat"
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such chat."
+        }
+      ]
     }
   ],
   "components": {
@@ -172,20 +433,20 @@
           "name": {
             "type": "string"
           },
-          "role": {
+          "url": {
             "type": "string",
-            "description": "One line on what the agent does."
+            "description": "Its AG-UI endpoint."
           },
-          "icon": {
-            "type": "string",
-            "description": "A glyph from the icon set."
+          "token": {
+            "type": "boolean",
+            "description": "Whether a bearer token is kept for it. The token itself never leaves the keychain."
           }
         },
         "required": [
           "id",
           "name",
-          "role",
-          "icon"
+          "url",
+          "token"
         ]
       },
       "Chat": {
@@ -214,8 +475,9 @@
           "updated"
         ]
       },
-      "Message": {
+      "Item": {
         "type": "object",
+        "description": "One thing said or done in a chat, in the order it happened.",
         "properties": {
           "id": {
             "type": "integer"
@@ -223,26 +485,46 @@
           "chat": {
             "type": "string"
           },
-          "role": {
+          "kind": {
             "type": "string",
             "enum": [
               "user",
-              "agent"
-            ]
+              "assistant",
+              "reasoning",
+              "tool",
+              "activity",
+              "step",
+              "subagent",
+              "custom",
+              "interrupt",
+              "error"
+            ],
+            "description": "`user`: what the person said. `assistant`: what the agent said. `reasoning`: what it thought. `tool`: a tool it used. `activity`: something it is doing, drawn from `data` (an A2UI surface when `name` is `a2ui-surface`). `step`, `subagent`: a part of its work. `custom`: an event of its own. `interrupt`: a question it stopped at. `error`: a run that failed."
           },
           "text": {
-            "type": "string"
+            "type": "string",
+            "description": "`user`, `assistant`, `reasoning`, `error`: the text. `tool`: its arguments, JSON text. `interrupt`: the question. `subagent`: what it is for."
+          },
+          "name": {
+            "type": "string",
+            "description": "`tool`: the tool. `activity`: the activity type. `step`, `subagent`, `custom`: its name. `error`: the agent's code for it."
+          },
+          "data": {
+            "type": "string",
+            "description": "JSON text, or empty. `tool`: `{ result?, error?, ours }` (`ours`: a vos tool this app ran). `activity`: its content. `custom`: its value. `interrupt`: `{ reason?, response_schema?, status }` with status `open`, `resolved` or `cancelled`. `subagent`: `{ error? }`."
           },
           "done": {
             "type": "boolean",
-            "description": "False while an agent's answer is still coming."
+            "description": "False while it is still coming or still running."
           }
         },
         "required": [
           "id",
           "chat",
-          "role",
+          "kind",
           "text",
+          "name",
+          "data",
           "done"
         ]
       },
@@ -252,21 +534,31 @@
           "chat": {
             "$ref": "#/components/schemas/Chat"
           },
-          "messages": {
+          "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Message"
+              "$ref": "#/components/schemas/Item"
             }
           },
           "busy": {
             "type": "boolean",
             "description": "The agent is answering."
+          },
+          "waiting": {
+            "type": "boolean",
+            "description": "The agent stopped at a question that has no answer yet."
+          },
+          "state": {
+            "type": "string",
+            "description": "The state the agent shares with the chat (AG-UI state) as JSON text; empty when it has none."
           }
         },
         "required": [
           "chat",
-          "messages",
-          "busy"
+          "items",
+          "busy",
+          "waiting",
+          "state"
         ]
       }
     }

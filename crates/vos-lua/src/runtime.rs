@@ -13,11 +13,12 @@ use std::{collections::HashMap, sync::Arc};
 use vos_application::{
     panics,
     ports::{
-        AgentRoster, AppData, AppPackage, AppRuntime, CallContext, LoadedApp, Notifier, PortResult, Shell,
+        AgentRoster, AppData, AppPackage, AppRuntime, AppTools, CallContext, LoadedApp, Notifier, PortResult,
+        Shell,
     },
     FileStore, NoFiles, PortError,
 };
-use vos_domain::AppId;
+use vos_domain::{Actor, AppId, QualifiedToolName, ToolSpec};
 
 pub struct LuaRuntime {
     vms: RwLock<HashMap<AppId, Arc<AppVm>>>,
@@ -26,11 +27,46 @@ pub struct LuaRuntime {
     roster: Option<Arc<dyn AgentRoster>>,
     /// Where each app's `app.files` live (none unless the host gives a store).
     files: Arc<dyn FileStore>,
+    /// Every running app's tools, for `app.tools.all` and `app.tools.call` (none until the host binds them).
+    tools: Arc<LateTools>,
+}
+
+/// The tools port, bound after the runtime is built: the use case that implements it is built on the runtime. Held
+/// weakly, so the two do not keep each other alive; until it is bound (and in a runtime nothing binds) there are no
+/// tools.
+#[derive(Default)]
+struct LateTools(std::sync::OnceLock<std::sync::Weak<dyn AppTools>>);
+
+impl LateTools {
+    fn bound(&self) -> Option<Arc<dyn AppTools>> {
+        self.0.get().and_then(std::sync::Weak::upgrade)
+    }
+}
+
+#[async_trait]
+impl AppTools for LateTools {
+    fn all(&self) -> Vec<(QualifiedToolName, ToolSpec)> {
+        self.bound().map_or_else(Vec::new, |tools| tools.all())
+    }
+
+    async fn call(&self, caller: Actor, name: &QualifiedToolName, args: Value) -> PortResult<Value> {
+        match self.bound() {
+            Some(tools) => tools.call(caller, name, args).await,
+            None => Err(PortError::NotFound(format!("tool `{name}`"))),
+        }
+    }
 }
 
 impl LuaRuntime {
     pub fn new(notifier: Arc<dyn Notifier>, shell: Arc<dyn Shell>) -> Self {
-        Self { vms: RwLock::default(), notifier, shell, roster: None, files: Arc::new(NoFiles) }
+        Self {
+            vms: RwLock::default(),
+            notifier,
+            shell,
+            roster: None,
+            files: Arc::new(NoFiles),
+            tools: Arc::default(),
+        }
     }
 
     /// The agent contacts `app.agents:list()` shows to every app.
@@ -38,6 +74,12 @@ impl LuaRuntime {
     pub fn with_roster(mut self, roster: Arc<dyn AgentRoster>) -> Self {
         self.roster = Some(roster);
         self
+    }
+
+    /// Give every app the tools of every running app (`app.tools.all`, `app.tools.call`). Once: a second call is
+    /// ignored.
+    pub fn bind_tools(&self, tools: std::sync::Weak<dyn AppTools>) {
+        let _ = self.tools.0.set(tools);
     }
 
     /// Where every app's managed files (`app.files`) live: the same store the application purges them from.
@@ -148,6 +190,7 @@ impl AppRuntime for LuaRuntime {
         let config = VmConfig {
             roster: self.roster.clone().unwrap_or_else(|| VmConfig::default().roster),
             files: self.files.files(app),
+            host_tools: self.tools.clone(),
             refused_modules: Vec::new(),
             test_hooks: false,
         };

@@ -34,12 +34,12 @@ async fn require_gives_the_app_table_and_one_table_per_library_module() {
     assert_eq!(vm.emit("t", json!(null)).await.unwrap(), json!({"app": true, "same": true, "t": "table"}));
 }
 
-/// `vos:app` is the only `vos:` name an app can require: there is no other host module, and no way to register one.
+/// `vos:app` and `vos:docker` are the only `vos:` names an app can require: there is no way to register another.
 #[tokio::test]
-async fn the_host_offers_no_vos_module_but_the_app_table() {
+async fn the_host_offers_no_vos_module_but_its_own() {
     let e = try_load("probe", "local ui = require('vos:ui')").await.err().unwrap().to_string();
     assert!(e.contains("unknown host module \"vos:ui\""), "{e}");
-    assert!(e.contains("only \"vos:app\" and the std:, lib: and vnd: modules"), "{e}");
+    assert!(e.contains("only \"vos:app\", \"vos:docker\" and the std:, lib: and vnd: modules"), "{e}");
 }
 
 #[tokio::test]
@@ -547,4 +547,54 @@ async fn a_read_only_tool_cannot_write_by_any_route_and_a_normal_tool_still_can(
     // the VM is writable again for the next, non-readOnly call (even after the failures above)
     assert_eq!(call(&vm, "add", json!({})).await.unwrap(), json!({"n": 2}));
     assert_eq!(call(&vm, "count", json!({})).await.unwrap(), json!({"n": 2}));
+}
+
+/// `vos:docker` is Luau the host carries, run in the app's own VM: one table per app, which keeps the app's choice of
+/// Docker in the app's own settings. A Docker that is not there is an answer, and nothing an app passes is an error.
+#[tokio::test]
+async fn the_container_framework_is_required_like_the_app_table_and_answers_without_a_docker() {
+    let src = r#"
+        local docker, again = require("vos:docker"), require("vos:docker")
+        hook("t", function()
+            local server = docker.container("vos-probe")
+            local out = { same = docker == again, first = docker.host() }
+            out.not_an_address = docker.use("nas.local:2375")
+            out.too_long = docker.use("tcp://" .. string.rep("a", 400))
+            out.not_a_string = docker.use(7)
+            out.taken = docker.use("  tcp://127.0.0.1:1 ") == nil
+            out.host, out.kept = docker.host(), app.kv:get("host")
+            local status = docker.status()
+            out.reachable, out.problem = status.reachable, status.problem
+            out.absent = server:status({ image = "nginx" }).state
+            out.applied = server:apply({ image = "nginx" })
+            out.undeclared = server:status(nil).problem
+            local logs, why = docker.logs("vos-probe", 0 / 0)
+            out.logs, out.why = logs == nil, why
+            out.filter = server.filters.label[1]
+            out.back = docker.use("") == nil and docker.host() == "" and app.kv:get("host") == nil
+            return out
+        end)
+        return {}
+    "#;
+    let vm = AppVm::load(&id("probe"), package(src, &[]), db(), common::config()).await.unwrap();
+    let out = vm.emit("t", json!(null)).await.unwrap();
+    // an address every platform takes (a Unix socket is none on Windows), where nothing listens
+    let away = "Docker cannot be reached at tcp://127.0.0.1:1.";
+    assert_eq!(out["same"], json!(true), "{out}");
+    assert_eq!(out["first"], json!(""), "{out}");
+    assert!(out["not_an_address"].as_str().unwrap().starts_with("The address must start with"), "{out}");
+    assert_eq!(out["too_long"], json!("That is not an address of a Docker."), "{out}");
+    assert_eq!(out["not_a_string"], json!("That is not an address of a Docker."), "{out}");
+    assert_eq!(out["taken"], json!(true), "{out}");
+    assert_eq!(out["host"], json!("tcp://127.0.0.1:1"), "{out}");
+    assert_eq!(out["kept"], out["host"], "{out}");
+    assert_eq!(out["reachable"], json!(false), "{out}");
+    assert_eq!(out["problem"], json!(away), "{out}");
+    assert_eq!(out["absent"], json!("absent"), "{out}");
+    assert_eq!(out["applied"], json!(away), "{out}");
+    assert_eq!(out["undeclared"], json!(away), "what Docker refused is kept for the status: {out}");
+    assert_eq!(out["logs"], json!(true), "{out}");
+    assert_eq!(out["why"], json!(away), "{out}");
+    assert_eq!(out["filter"], json!("vos.app=probe"), "{out}");
+    assert_eq!(out["back"], json!(true), "{out}");
 }

@@ -1,7 +1,7 @@
 <!-- @organism SettingsForm — how the sites are served: the port the ones with hostnames share; and under it which Docker the server runs in, with the field that chooses another -->
 <script lang="ts">
   import type { Engine, Server } from 'app:rpc'
-  import ConnectionForm from '../molecules/ConnectionForm.svelte'
+  import { ConnectionForm } from '@vos/docker'
 
   interface Props {
     /** The shared port as it is typed. */
@@ -69,7 +69,7 @@
       The server is nginx, in a container this app makes and keeps (<code data-testid="pages-image">{server.image}</code>). It reads the folders
       of the sites and changes nothing in them. It is removed when no site is on, and made again when something here changes.
     </p>
-    <ConnectionForm draft={hostDraft} host={engine.host} ondraft={onhostdraft} {onconnect} />
+    <ConnectionForm draft={hostDraft} host={engine.host} ondraft={onhostdraft} {onconnect} testid="pages" />
   </div>
 </section>
 

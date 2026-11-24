@@ -196,3 +196,80 @@ async fn agents_and_their_grants_and_tokens_survive_a_restart() {
     assert_eq!(tool_names(&agent).await.len(), 3, "the persistent token still works (it is stored hashed)");
     r.stop().await;
 }
+
+/// An app that offers the other apps' tools to an agent of its own.
+const BROKER: &str = r#"
+local function names()
+  local out = {}
+  for _, tool in app.tools.all() do
+    table.insert(out, tool.name .. (if tool.read_only then " (read)" else ""))
+  end
+  return out
+end
+return {
+  names = function() return names() end,
+  call = function(_, args)
+    local result, err = app.tools.call(args.tool, { id = "ada", name = "Ada" }, args.input)
+    return { result = result, err = err and err.message, kind = err and err.kind }
+  end,
+  bad = function(_, args)
+    return { raised = not pcall(app.tools.call, args.tool, args.agent, {}) }
+  end,
+}
+"#;
+
+#[tokio::test]
+async fn an_app_lists_and_calls_the_tools_of_the_running_apps_for_an_agent_of_its_own() {
+    let r = start(|_| {}).await;
+    install_ledger(&r).await;
+    let url = common::publish_package(
+        &common::temp("broker").join("pkg"),
+        "broker",
+        "app.luau",
+        &[("app.luau", BROKER.as_bytes().to_vec())],
+    );
+    r.host.service.install_from_url(&url).await.unwrap();
+    let broker = AppId::parse("broker").unwrap();
+    let ask = |method: &'static str, args: Value| {
+        let service = r.host.service.clone();
+        let broker = broker.clone();
+        async move { service.call_handler(&broker, method, args).await.unwrap() }
+    };
+
+    // no grant is asked of the app's agent: every tool of every running app, in name order
+    assert_eq!(
+        ask("names", json!({})).await,
+        json!(["ledger__add", "ledger__peek (read)", "ledger__sneaky (read)"])
+    );
+
+    // the tool is told who called: the agent the app named, under the app's own id, so no app can speak as another's
+    let added = ask("call", json!({ "tool": "ledger__add", "input": {} })).await;
+    assert_eq!(added, json!({ "result": { "count": 1 } }));
+    assert_eq!(who(&r).await, json!(["agent:broker:ada:Ada"]));
+
+    // a readOnly tool still cannot write, whoever asks for it
+    let sneaky = ask("call", json!({ "tool": "ledger__sneaky", "input": {} })).await;
+    assert_eq!(sneaky["result"]["count"], 1, "{sneaky}");
+
+    // a tool that is not there, and one of an app that is not running, are errors the app can read
+    let missing = ask("call", json!({ "tool": "ledger__nope", "input": {} })).await;
+    assert!(missing["err"].as_str().is_some_and(|e| !e.is_empty()), "{missing}");
+    let nowhere = ask("call", json!({ "tool": "ghost__add", "input": {} })).await;
+    assert!(nowhere["err"].as_str().unwrap().contains("not installed"), "{nowhere}");
+
+    // a name that is not `<app>__<tool>` and an agent without a name are the app's own mistakes
+    assert_eq!(
+        ask("bad", json!({ "tool": "nope", "agent": { "id": "a", "name": "A" } })).await,
+        json!({ "raised": true })
+    );
+    assert_eq!(
+        ask("bad", json!({ "tool": "ledger__add", "agent": { "id": "a" } })).await,
+        json!({ "raised": true })
+    );
+    assert_eq!(
+        who(&r).await,
+        json!(["agent:broker:ada:Ada"]),
+        "nothing was written by a call that was refused"
+    );
+    r.stop().await;
+}

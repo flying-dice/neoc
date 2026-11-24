@@ -1,7 +1,7 @@
 <!-- @organism ContainerInspector — one container looked at: how it is doing, the buttons that start, stop, restart and remove it, and its logs (kept scrolled to the newest) or what it was made with -->
 <script lang="ts">
   import type { Container, Details, Logs } from 'app:rpc'
-  import StateDot from '../atoms/StateDot.svelte'
+  import { StateDot } from '@vos/docker'
   import type { Action, Tab } from '../lib/containers.svelte'
   import { imageLabel, isUp, stateLabel, toneOf } from '../lib/format'
 

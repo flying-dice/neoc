@@ -1,9 +1,13 @@
-//! `require`: the `app` table and the library's modules, and nothing from the package.
+//! `require`: the `app` table, the framework the host carries and the library's modules, and nothing from the
+//! package.
 //!
 //! An app is built into one self-contained Luau file (its own modules are bundled in at build time), so at
-//! run time there is nothing to resolve in the package and no filesystem. Two kinds of name resolve:
+//! run time there is nothing to resolve in the package and no filesystem. Three kinds of name resolve:
 //!
-//! - `require("vos:app")` is the `app` table, the only `vos:` name there is.
+//! - `require("vos:app")` is the `app` table.
+//! - `require("vos:docker")` is the container framework: Luau the host carries (`lua/docker/`, bundled into
+//!   `types/generated/docker.luau` by `bun run codegen`), run in the app's own VM the first time the app requires it and
+//!   cached. It is written against `vos:app` and `vnd:bollard` as an app would be, and has nothing an app has not.
 //! - `require("std:<name>")`, `require("lib:<name>")` and `require("vnd:<name>")` are the library modules of
 //!   `neoc-vm` (neoc's own spelling: `std:task`, `lib:json`, `vnd:hyper`, ...). Each is built for the app
 //!   on first use in the app's VM and cached, so every `require` of one module in an app sees one table and
@@ -13,8 +17,9 @@
 //!
 //! `require` is a plain (synchronous) function: a module only builds tables, so it never has to suspend.
 
-use crate::vm::Shared;
+use crate::{docker, vm::Shared};
 use neoc_vm::{
+    load_source,
     mlua::{self, Lua, Value as LuaValue},
     modules,
 };
@@ -26,7 +31,8 @@ use std::sync::Arc;
 pub use vos_domain::NOT_FOR_APPS;
 
 /// Is `name` a module of the VM library (`std:`, `lib:`, `vnd:`)? The registry also lists the modules this crate
-/// declares itself (`vos:app`, which is the app's own table and never a worker's).
+/// declares itself (`vos:app`, which is the app's own table and never a worker's) and the framework it carries
+/// (`vos:docker`).
 pub(crate) fn is_library(name: &str) -> bool {
     name.starts_with("std:") || name.starts_with("lib:") || name.starts_with("vnd:")
 }
@@ -41,15 +47,34 @@ pub(crate) fn offered_modules(refused: &[String]) -> Vec<&'static str> {
 }
 
 /// What a `require` may name, for the error message of one that names something else.
-const ALLOWED: &str = "\"vos:app\" and the std:, lib: and vnd: modules";
+const ALLOWED: &str = "\"vos:app\", \"vos:docker\" and the std:, lib: and vnd: modules";
 
 pub(crate) fn install(lua: &Lua, sh: &Arc<Shared>, env: &mlua::Table) -> mlua::Result<()> {
     let sh = sh.clone();
-    let require = lua.create_function(move |lua, spec: String| load(lua, &sh, &spec))?;
+    let app_env = env.clone();
+    let require = lua.create_function(move |lua, spec: String| load(lua, &sh, &app_env, &spec))?;
     env.set("require", require)
 }
 
-fn load(lua: &Lua, sh: &Arc<Shared>, spec: &str) -> mlua::Result<LuaValue> {
+/// A module the host carries as Luau, run in the app's environment the first time it is required. It only builds
+/// tables (what it waits for, it waits for when the app calls it), so it loads without suspending.
+fn carried(
+    lua: &Lua,
+    sh: &Arc<Shared>,
+    env: &mlua::Table,
+    spec: &str,
+    source: &str,
+) -> mlua::Result<LuaValue> {
+    if let Some(done) = sh.modules.lock().get(spec) {
+        return Ok(done.clone());
+    }
+    let value: LuaValue =
+        load_source(lua, source).set_name(format!("={spec}")).set_environment(env.clone()).call(())?;
+    sh.modules.lock().insert(spec.to_owned(), value.clone());
+    Ok(value)
+}
+
+fn load(lua: &Lua, sh: &Arc<Shared>, env: &mlua::Table, spec: &str) -> mlua::Result<LuaValue> {
     if is_library(spec) {
         return library(lua, sh, spec);
     }
@@ -60,6 +85,9 @@ fn load(lua: &Lua, sh: &Arc<Shared>, spec: &str) -> mlua::Result<LuaValue> {
             .clone()
             .map(LuaValue::Table)
             .ok_or_else(|| mlua::Error::runtime("the app table is gone (the app was unloaded)"));
+    }
+    if spec == docker::MODULE {
+        return carried(lua, sh, env, spec, docker::SOURCE);
     }
     if let Some(name) = spec.strip_prefix("vos:") {
         return Err(mlua::Error::runtime(format!(

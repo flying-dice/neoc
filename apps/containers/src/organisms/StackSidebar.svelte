@@ -1,9 +1,9 @@
 <!-- @organism StackSidebar — what there is to show: every container, or one Compose stack with how much of it runs; and under them which Docker this is, with the field that chooses another -->
 <script lang="ts">
   import type { Engine, Stack } from 'app:rpc'
-  import ConnectionForm from '../molecules/ConnectionForm.svelte'
+  import { ConnectionForm, type Tone } from '@vos/docker'
   import { ALL, sameScope, stackScope, type Scope } from '../lib/containers.svelte'
-  import { stackSummary, stackTone, type Tone } from '../lib/format'
+  import { stackSummary, stackTone } from '../lib/format'
 
   interface Props {
     engine: Engine
@@ -90,7 +90,7 @@
     </div>
     <!-- while Docker cannot be reached the same field is in the middle of the window, with why -->
     {#if choosing && engine.reachable}
-      <ConnectionForm {draft} host={engine.host} {ondraft} {onconnect} />
+      <ConnectionForm {draft} host={engine.host} {ondraft} {onconnect} testid="containers" />
     {/if}
   </div>
 </nav>

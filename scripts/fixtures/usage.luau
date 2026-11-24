@@ -7,6 +7,7 @@
 -- The check also requires every module an app is offered to be `require`d here (a line of the form
 -- `= require("lib:json")`), so a new module needs a line in this file.
 local app = require("vos:app")
+local docker = require("vos:docker")
 local collections = require("std:collections")
 local env = require("std:env")
 local fs = require("std:fs")
@@ -17,6 +18,7 @@ local process = require("std:process")
 local task = require("std:task")
 local thread = require("std:thread")
 local time = require("std:time")
+local agui = require("lib:agui")
 local archive = require("lib:archive")
 local args = require("lib:args")
 local base64 = require("lib:base64")
@@ -67,6 +69,7 @@ local _modules: { any } = {
   net,
   process,
   thread,
+  agui,
   archive,
   args,
   cache,
@@ -212,5 +215,20 @@ local handlers: vos_app_Handlers = {
     return changed.changes
   end,
 }
+
+-- vos:docker: which Docker, one container the app owns, and its log
+local server = docker.container("vos-usage")
+local declared: vos_docker_Declaration = {
+  image = "nginx:1.30.0-alpine",
+  ports = { { host = 8081, container = 80 }, { host = 5353, container = 53, udp = true } },
+  mounts = { { source = "/srv/site", target = "/site" } },
+}
+local refused: string? = docker.use("tcp://nas.local:2375") or server:apply(declared, true)
+local reachable: boolean = docker.status().reachable and server:status(declared).current
+local written = server:logs(50)
+local shown: string = if written then written.text else refused or docker.sentence(nil)
+task.spawn(docker.watch, server.filters, function()
+  app.emit("changed", { reachable = reachable, shown = shown, host = docker.host() })
+end)
 
 return handlers

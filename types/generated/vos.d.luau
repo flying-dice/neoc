@@ -19,6 +19,357 @@ export type mlua_Stream<T, E> = {
 	close: (self: mlua_Stream<T, E>) -> (),
 }
 
+-- ===== lib:agui =====
+
+--- One part of a message's content, told apart by its `type`.
+export type lib_agui_ContentPart =
+	--- Text.
+	{ type: "text", text: string, id: string?, metadata: any? }
+	--- An image.
+	| { type: "image", source: lib_agui_PartSource, id: string?, metadata: any? }
+	--- Sound.
+	| { type: "audio", source: lib_agui_PartSource, id: string?, metadata: any? }
+	--- A video.
+	| { type: "video", source: lib_agui_PartSource, id: string?, metadata: any? }
+	--- A document.
+	| { type: "document", source: lib_agui_PartSource, id: string?, metadata: any? }
+	--- Deprecated in the SDK for the four kinds above; still read and written.
+	| { type: "binary", mime_type: string, id: string?, url: string?, data: string?, filename: string? }
+
+--- Something the agent should know.
+export type lib_agui_Context = {
+	--- What the value is.
+	description: string,
+	--- The value.
+	value: string,
+}
+
+--- One event of a run, told apart by its `type`. Data inside an event (`snapshot`, `content`,
+--- `raw_event`, `value`) is as the agent sent it, with JSON `null` as `nil`.
+export type lib_agui_Event =
+	--- A message of the agent begins.
+	{ type: "TEXT_MESSAGE_START", message_id: string, role: string, name: string?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- The next piece of a message's text.
+	| { type: "TEXT_MESSAGE_CONTENT", message_id: string, delta: string, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- A message is complete.
+	| { type: "TEXT_MESSAGE_END", message_id: string, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- A start, a content and an end in one: the first chunk of a message carries its id.
+	| { type: "TEXT_MESSAGE_CHUNK", message_id: string?, role: string?, delta: string?, name: string?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- The agent asks for a tool.
+	| { type: "TOOL_CALL_START", tool_call_id: string, tool_call_name: string, parent_message_id: string?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- A piece of a call's arguments, which are JSON text once joined.
+	| { type: "TOOL_CALL_ARGS", tool_call_id: string, delta: string, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- A call's arguments are complete.
+	| { type: "TOOL_CALL_END", tool_call_id: string, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- A start, arguments and an end in one: the first chunk of a call carries its id and the tool's name.
+	| { type: "TOOL_CALL_CHUNK", tool_call_id: string?, tool_call_name: string?, parent_message_id: string?, delta: string?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- The result of a tool the agent ran itself.
+	| { type: "TOOL_CALL_RESULT", message_id: string, tool_call_id: string, content: string, role: string?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- The whole state.
+	| { type: "STATE_SNAPSHOT", snapshot: any?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- A change to the state.
+	| { type: "STATE_DELTA", delta: { any }, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- The whole conversation as the agent has it.
+	| { type: "MESSAGES_SNAPSHOT", messages: { lib_agui_Message }, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- An activity message, whole.
+	| { type: "ACTIVITY_SNAPSHOT", message_id: string, activity_type: string, content: any?, replace: boolean, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- A change to the content of an activity message.
+	| { type: "ACTIVITY_DELTA", message_id: string, activity_type: string, patch: { any }, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- An event of the agent's own framework.
+	| { type: "RAW", event: any?, source: string?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- An event of the application's own.
+	| { type: "CUSTOM", name: string, value: any?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- The run began.
+	| { type: "RUN_STARTED", thread_id: string, run_id: string, protocol_version: string?, parent_run_id: string?, input: lib_agui_RunAgentInput?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- The run ended as the agent meant it to.
+	| { type: "RUN_FINISHED", thread_id: string?, run_id: string?, result: any?, outcome: lib_agui_RunOutcome?, usage: { lib_agui_TokenUsage }?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- The run failed.
+	| { type: "RUN_ERROR", message: string, code: string?, usage: { lib_agui_TokenUsage }?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- A step of the run began.
+	| { type: "STEP_STARTED", step_name: string, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- A step of the run ended.
+	| { type: "STEP_FINISHED", step_name: string, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- The agent begins to reason.
+	| { type: "REASONING_START", message_id: string, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- A reasoning message begins.
+	| { type: "REASONING_MESSAGE_START", message_id: string, role: string, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- The next piece of the reasoning's text.
+	| { type: "REASONING_MESSAGE_CONTENT", message_id: string, delta: string, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- A reasoning message is complete.
+	| { type: "REASONING_MESSAGE_END", message_id: string, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- A start, a content and an end of reasoning in one.
+	| { type: "REASONING_MESSAGE_CHUNK", message_id: string?, delta: string?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- The agent stops reasoning.
+	| { type: "REASONING_END", message_id: string, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- The provider's opaque form of a message's or a tool call's reasoning.
+	| { type: "REASONING_ENCRYPTED_VALUE", subtype: string, entity_id: string, encrypted_value: string, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- A subagent began.
+	| { type: "SUBAGENT_STARTED", name: string, description: string?, parent_subagent_run_id: string?, parent_tool_call_id: string?, parent_message_id: string?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- A subagent ended as it meant to.
+	| { type: "SUBAGENT_FINISHED", result: any?, outcome: lib_agui_SubagentOutcome?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- A subagent failed.
+	| { type: "SUBAGENT_ERROR", message: string, code: string?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- Deprecated in the SDK for `REASONING_START`; agents still send it.
+	| { type: "THINKING_START", title: string?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- Deprecated in the SDK for `REASONING_END`.
+	| { type: "THINKING_END", timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- Deprecated in the SDK for `REASONING_MESSAGE_START`.
+	| { type: "THINKING_TEXT_MESSAGE_START", timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- Deprecated in the SDK for `REASONING_MESSAGE_CONTENT`.
+	| { type: "THINKING_TEXT_MESSAGE_CONTENT", delta: string, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+	--- Deprecated in the SDK for `REASONING_MESSAGE_END`.
+	| { type: "THINKING_TEXT_MESSAGE_END", timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
+
+--- The tool a call names, and what it is called with.
+export type lib_agui_FunctionCall = {
+	--- The tool's name.
+	name: string,
+	--- The arguments, as JSON text.
+	arguments: string,
+}
+
+--- A question a run stopped at: the next run answers it with a `ResumeEntry`.
+export type lib_agui_Interrupt = {
+	--- What a resume entry's `interrupt_id` names.
+	id: string,
+	--- Why the run stopped, in the agent's own word (`tool_approval`, ...).
+	reason: string?,
+	--- The question, for the person.
+	message: string?,
+	--- The tool call the question is about.
+	tool_call_id: string?,
+	--- The JSON Schema the answer's `payload` must fit.
+	response_schema: any?,
+	--- When the question stops being answerable.
+	expires_at: string?,
+	--- The sender's own annotations.
+	metadata: any?,
+	--- The subagent that asked.
+	subagent_run_id: string?,
+}
+
+--- One message of the conversation, told apart by its `role`.
+export type lib_agui_Message =
+	--- Instructions from whoever built the program in front of the agent.
+	{ role: "developer", id: string, content: string, name: string?, metadata: any? }
+	--- The system prompt.
+	| { role: "system", id: string, content: string, name: string?, metadata: any? }
+	--- What the agent said, and the tools it asked for.
+	| { role: "assistant", id: string, content: string?, tool_calls: { lib_agui_ToolCall }?, name: string?, metadata: any? }
+	--- What the person said.
+	| { role: "user", id: string, content: string | { lib_agui_ContentPart }, name: string?, metadata: any? }
+	--- The result of a tool call.
+	| { role: "tool", id: string, content: string | { lib_agui_ContentPart }, tool_call_id: string, error: string?, encrypted_value: string?, metadata: any? }
+	--- Something the agent is doing, shown between the messages; never sent back to an agent.
+	| { role: "activity", id: string, activity_type: string, content: any, metadata: any? }
+	--- The agent's reasoning.
+	| { role: "reasoning", id: string, content: string, encrypted_value: string?, metadata: any? }
+
+--- Where the bytes of a part are, told apart by its `type`.
+export type lib_agui_PartSource =
+	--- Inline.
+	{ type: "data", value: string, mime_type: string }
+	--- At a URL.
+	| { type: "url", value: string, mime_type: string? }
+	--- A file the provider already holds.
+	| { type: "file", value: string, provider: string?, mime_type: string? }
+
+--- The kinds of `lib_agui_PatchError`.
+export type lib_agui_PatchErrorKind = "invalid_patch" | "failed" | "too_large"
+
+--- Why a JSON Patch was not applied.
+export type lib_agui_PatchError =
+	--- The patch is not a list of RFC 6902 operations.
+	{ kind: "invalid_patch", reason: string, message: string, op: string }
+	--- An operation could not be applied: a path that is not there, a failed `test`.
+	| { kind: "failed", reason: string, message: string, op: string }
+	--- The patch has more operations than one may, or would grow the document past what one may be.
+	| { kind: "too_large", reason: string, message: string, op: string }
+
+--- The answer to one interrupt.
+export type lib_agui_ResumeEntry = {
+	--- The interrupt's `id`.
+	interrupt_id: string,
+	--- `resolved` or `cancelled`.
+	status: string,
+	--- The answer: what the interrupt's `response_schema` describes.
+	payload: any?,
+	--- The sender's own annotations.
+	metadata: any?,
+}
+
+--- The body of the POST that starts a run.
+export type lib_agui_RunAgentInput = {
+	--- The conversation the run belongs to.
+	thread_id: string,
+	--- This run's own id.
+	run_id: string,
+	--- The run this one continues or branches from.
+	parent_run_id: string?,
+	--- The whole conversation so far. Activity messages are not sent back to an agent: leave them out.
+	messages: { lib_agui_Message }?,
+	--- The tools the caller offers: the agent asks for one with a tool call, the run ends, and the caller
+	--- answers with a `tool` message in the next run.
+	tools: { lib_agui_Tool }?,
+	--- Things the agent should know, each a description and a value.
+	context: { lib_agui_Context }?,
+	--- The state the agent starts from.
+	state: any?,
+	--- Anything else for the agent, passed through as it is.
+	forwarded_props: any?,
+	--- The answers to the interrupts the last run ended with.
+	resume: { lib_agui_ResumeEntry }?,
+}
+
+--- The kinds of `lib_agui_RunError`.
+export type lib_agui_RunErrorKind = "invalid_input" | "invalid_url" | "connect" | "tls" | "timed_out" | "too_large" | "connection_lost" | "bad_response" | "status" | "protocol" | "other"
+
+--- Why a run could not start, or ended before the agent ended it. The transport's kinds mean what they mean in
+--- `vnd:hyper`; `reason` is for a person or a log.
+export type lib_agui_RunError =
+	--- An option, a header or the input was refused before anything was sent.
+	{ kind: "invalid_input", reason: string, message: string, op: string }
+	--- The URL is not an `http` or `https` URL with a host.
+	| { kind: "invalid_url", reason: string, message: string, op: string }
+	--- No connection could be made: the name did not resolve, or the host refused or could not be reached.
+	| { kind: "connect", reason: string, message: string, op: string }
+	--- The TLS handshake failed, usually over the certificate.
+	| { kind: "tls", reason: string, message: string, op: string }
+	--- A time limit passed: connecting, no data arriving, or the whole run.
+	| { kind: "timed_out", limit: vnd_hyper_TimeLimit, reason: string, message: string, op: string }
+	--- One event is longer than `max_event`.
+	| { kind: "too_large", max_event: number, message: string, op: string }
+	--- The connection ended or failed before the stream did.
+	| { kind: "connection_lost", reason: string, message: string, op: string }
+	--- The endpoint answered with something that is not valid HTTP.
+	| { kind: "bad_response", reason: string, message: string, op: string }
+	--- The endpoint answered, and not with 2xx (a 3xx too: redirects are not followed).
+	| { kind: "status", status: number, body: string, message: string, op: string }
+	--- The answer is not an event stream, or an event in it is not an AG-UI event (a field missing or of the
+	--- wrong type).
+	| { kind: "protocol", reason: string, message: string, op: string }
+	--- Anything else, reported and never hidden.
+	| { kind: "other", reason: string, message: string, op: string }
+
+--- What a run's request sends besides the input, and the limits it keeps to.
+export type lib_agui_RunOptions = {
+	--- Headers to add to the request (`Authorization` for an endpoint that wants a token).
+	--- `Content-Type: application/json` and `Accept: text/event-stream` are sent unless given. Default: `{}`.
+	headers: { [string]: string }?,
+	--- PEM certificates to trust instead of the platform's.
+	ca_pem: string?,
+	--- Seconds the TCP connect and the TLS handshake may take. Default: `10.0`.
+	connect_timeout: number?,
+	--- Seconds without data: an agent that is thinking sends nothing, so this is longer than `vnd:hyper`'s. Default: `300.0`.
+	idle_timeout: number?,
+	--- Seconds the whole run may take. No limit when not given.
+	timeout: number?,
+	--- The most bytes one event may take; a longer one ends the run with `too_large`. It bounds one event,
+	--- not the run. Default: `8388608`.
+	max_event: number?,
+}
+
+--- How a run ended.
+export type lib_agui_RunOutcome = {
+	--- `success`, or `interrupt`.
+	type: string,
+	--- The questions the run stopped at: the next run answers every one of them in its input's `resume`.
+	interrupts: { lib_agui_Interrupt }?,
+}
+
+--- How a subagent ended.
+export type lib_agui_SubagentOutcome = {
+	--- `success`, or `suspended`.
+	type: string,
+	--- The interrupts of the run it is suspended at.
+	interrupt_ids: { string }?,
+}
+
+--- The tokens one model call of a run used.
+export type lib_agui_TokenUsage = {
+	--- Whose model it was.
+	provider: string?,
+	--- The model.
+	model: string?,
+	--- The tokens read.
+	input_tokens: number?,
+	--- The tokens written.
+	output_tokens: number?,
+	--- Both together.
+	total_tokens: number?,
+	--- The tokens of the output that were reasoning.
+	reasoning_tokens: number?,
+	--- The tokens of the input that were read from a cache.
+	cached_input_tokens: number?,
+	--- The tokens of the input that were written to a cache.
+	cache_write_input_tokens: number?,
+}
+
+--- A tool the caller offers.
+export type lib_agui_Tool = {
+	--- The tool's name.
+	name: string,
+	--- What it does, for the model.
+	description: string,
+	--- The JSON Schema of its arguments; an object with no properties when left out.
+	parameters: any?,
+}
+
+--- A tool the agent asked for.
+export type lib_agui_ToolCall = {
+	--- The call's id: a `tool` message answers it by this.
+	id: string,
+	--- Always `function`; that when left out.
+	type: string?,
+	--- The tool asked for, and its arguments.
+	["function"]: lib_agui_FunctionCall,
+	--- The provider's opaque form, to be sent back as it is.
+	encrypted_value: string?,
+	--- The sender's own annotations.
+	metadata: any?,
+}
+
+export type lib_agui = {
+	--- Start a run: POST `input` to the agent's AG-UI endpoint at `url` (`http` or `https`) and read its answer as
+	--- a stream of events. Returns when the endpoint has answered: a stream whose `next()` gives the events.
+	---
+	--- `next()` is `(event, nil)`, `(nil, nil)` when the stream has ended (the agent closed it, which after a
+	--- `RUN_FINISHED` or a `RUN_ERROR` is the end of the run and before one is a run cut short), or `(nil, err)`
+	--- when the stream failed (the connection was lost, nothing arrived for `idle_timeout`, an event is not an
+	--- AG-UI event or is over `max_event`); nothing follows an error. An event of a type the module does not know
+	--- is skipped. `close()` stops the run: the connection closes, which is how an agent is told to stop, and
+	--- `next()` returns `(nil, nil)` from then on.
+	---
+	--- Redirects are not followed: a 3xx, like any answer that is not 2xx, is a `status` error that quotes the
+	--- start of the body. An answer that is not `text/event-stream` is `protocol`. The connection belongs to the
+	--- script: it closes when the run is closed or collected and when the script stops.
+	---
+	--- ```luau
+	--- local run, err = agui.run("http://127.0.0.1:1/agent", {
+	---     thread_id = "t1",
+	---     run_id = "r1",
+	---     messages = { { id = "m1", role = "user", content = "hello" } },
+	--- }, { headers = { authorization = "Bearer token" }, connect_timeout = 2 })
+	--- if run == nil then
+	---     assert(err ~= nil and (err.kind == "connect" or err.kind == "timed_out"))
+	--- end
+	--- ```
+	---
+	--- Yields the calling coroutine while it waits.
+	run: (url: string, input: lib_agui_RunAgentInput, opts: lib_agui_RunOptions?) -> (mlua_Stream<lib_agui_Event, lib_agui_RunError>?, lib_agui_RunError?),
+	--- Apply a JSON Patch (RFC 6902: what `STATE_DELTA.delta` and `ACTIVITY_DELTA.patch` are) to `document` and
+	--- return the new document; `document` itself is not changed. All of the patch applies or none of it. A table
+	--- with no entries is an empty list; JSON `null` is `nil`, so a patch cannot store one in an array.
+	---
+	--- ```luau
+	--- local state = { steps = { "read" } }
+	--- local next = assert(agui.apply_patch(state, { { op = "add", path = "/steps/-", value = "write" } }))
+	--- local none, err = agui.apply_patch(state, { { op = "remove", path = "/missing" } })
+	--- assert(none == nil and err ~= nil and err.kind == "failed")
+	--- ```
+	apply_patch: (document: any, patch: { any }) -> (any, lib_agui_PatchError?),
+}
+
 -- ===== lib:archive =====
 
 --- The kinds of `lib_archive_ArchiveError`.
@@ -6784,6 +7135,14 @@ declare extern type vos_app_Agents with
 	list: (self: vos_app_Agents) -> { vos_app_AgentCard }
 end
 
+--- The agent of the app's own a tool is called for: who the tool is told called it (its `ctx.actor`).
+export type vos_app_Caller = {
+	--- The app's own id for its agent, 1 to 200 bytes.
+	id: string,
+	--- The agent's name, 1 to 200 bytes.
+	name: string,
+}
+
 --- What a handler of the app's backend, or a tool's `run`, is called with: who is calling and when.
 declare extern type vos_app_Context with
 	--- Who is calling. From the app's page it is the person (`kind` is `"user"`). Read-only.
@@ -6896,6 +7255,22 @@ end
 --- app with nothing to call returns `{}`.
 export type vos_app_Handlers = { [string]: (ctx: vos_app_Context, args: any) -> any }
 
+--- A tool of a running app, as an agent is shown it.
+export type vos_app_HostTool = {
+	--- `<appId>__<tool>`: what `app.tools.call` takes.
+	name: string,
+	--- The app it belongs to.
+	app: string,
+	--- The name a person is shown.
+	title: string?,
+	--- What the tool does.
+	description: string,
+	--- The JSON Schema of its input.
+	input_schema: { [string]: any },
+	--- It changes nothing: it runs with every write refused.
+	read_only: boolean,
+}
+
 --- JSON values in the app's database, by key: for a setting or a cursor, not for records (use `app.db`).
 declare extern type vos_app_Kv with
 	--- The value stored under `key`, or `nil`.
@@ -7005,6 +7380,18 @@ export type vos_app_Tool = {
 	run: (input: any, ctx: vos_app_Context) -> any,
 }
 
+--- The kinds of `vos_app_ToolCallError`.
+export type vos_app_ToolCallErrorKind = "not_found" | "failed" | "internal"
+
+--- Why a tool of a running app gave no result.
+export type vos_app_ToolCallError =
+	--- No running app has the tool: it does not exist, or its app is not running.
+	{ kind: "not_found", message: string, op: string }
+	--- The tool failed: it refused its input, raised, or said it could not (`ctx:fail`).
+	| { kind: "failed", message: string, op: string }
+	--- The host could not run it.
+	| { kind: "internal", message: string, op: string }
+
 --- The builders of a tool's input fields: `app.t.string { description = "..." }`. Each returns a `Schema`.
 declare extern type vos_app_t with
 end
@@ -7027,6 +7414,26 @@ export type vos_app_tStatics = {
 	enum: (values: { string }, options: vos_app_SchemaOptions?) -> vos_app_Schema,
 }
 
+--- The tools of every running app, for an app that offers them to an agent of its own: `app.tools.all()` and
+--- `app.tools.call(name, agent, args)`.
+declare extern type vos_app_tools with
+end
+
+--- The statics of `vos_app_tools`.
+export type vos_app_toolsStatics = {
+	--- Every tool of every running app (this one's too), in name order.
+	all: () -> { vos_app_HostTool },
+	--- Run a tool of a running app for an agent of this app's own, with `args` (none when left out): `agent` is who
+	--- the tool is told called it (its `ctx.actor`). Nothing checks what that agent may call: the app decides whom it offers the tools to. The
+	--- result is `(result, nil)`, or `(nil, err)` when the tool failed, does not exist or its app is not running.
+	--- Raises for a name that is not `<appId>__<tool>`, an agent whose `id` or `name` is not 1 to 200 bytes, and
+	--- inside a `readOnly` tool. It waits without the app's turn: the tool runs in another app's VM, or in this
+	--- one's as any other call.
+	---
+	--- Yields the calling coroutine while it waits.
+	call: (name: string, agent: vos_app_Caller, args: { [string]: any }?) -> (any, vos_app_ToolCallError?),
+}
+
 --- The `app` API.
 ---
 --- `local app = require("vos:app")` in an app's backend; it is also the global `app`. The host provides it (one VM
@@ -7043,6 +7450,7 @@ export type vos_app = {
 	--- The agent contacts.
 	agents: vos_app_Agents,
 	t: vos_app_tStatics,
+	tools: vos_app_toolsStatics,
 	--- Declare a tool an agent can call: `app.tool { name = "search", input = { ... }, run = function(input, ctx) ... end }`.
 	--- Raises when the definition is refused (a name that is not `[a-z][a-z0-9_]*`, one already registered) and
 	--- inside a `readOnly` tool.
@@ -7073,6 +7481,139 @@ export type vos_app = {
 	--- agent's tool changed data, or from a background task. `name` is 1 to 64 letters, digits and `. _ : -` (not
 	--- `host:...`), `data` is JSON of at most 64 KiB. A change to the world like `notify`: a `readOnly` tool may not.
 	emit: (name: string, data: any?) -> (),
+}
+
+-- ===== vos:docker =====
+
+--- One container the app owns, found by a label that carries the app's id (`vos.app=<app.id>`), never
+--- by its name alone.
+export type vos_docker_Container = {
+	--- Docker's filters for what happens to the container, for `docker.watch`.
+	filters: { [string]: { string } },
+	--- How the container is doing, and whether it is what `declared` says (never, for none). With
+	--- Docker away it is `absent`.
+	status: (self: vos_docker_Container, declared: vos_docker_Declaration?) -> vos_docker_ContainerStatus,
+	--- Have the container be what `declared` says: its image pulled when Docker has none, made and
+	--- started; removed for none. One that is that already, and runs, is left running unless
+	--- `always`. It is never changed: a change of the declaration is the container removed and made
+	--- again. Answers with why it could not, as a sentence (a declaration that is not one is refused
+	--- before Docker hears of it), and with nothing when it did.
+	apply: (self: vos_docker_Container, declared: vos_docker_Declaration?, always: boolean?) -> string?,
+	--- The end of what the container wrote (`docker.logs`). Nothing, and no reason, when there is no
+	--- container.
+	logs: (self: vos_docker_Container, tail: number?) -> (vos_docker_Logs?, string?),
+}
+
+--- What an owned container is doing.
+--- - `absent`: There is none (or Docker is away).
+--- - `running`: It runs.
+--- - `restarting`: Docker is starting it again.
+--- - `stopped`: It is there and does not run.
+export type vos_docker_ContainerState = "absent" | "running" | "restarting" | "stopped"
+
+--- How an owned container is doing.
+export type vos_docker_ContainerStatus = {
+	--- What it is doing.
+	state: vos_docker_ContainerState,
+	--- Docker's own words for it (`Up 2 hours`).
+	status: string,
+	--- It was made from the declaration it was compared with.
+	current: boolean,
+	--- Why it could not be made or started the last time that was tried; empty when it could.
+	problem: string,
+}
+
+--- What a container an app owns is made from. Everything it gets of the machine is here: nothing is published or
+--- mounted that is not declared.
+export type vos_docker_Declaration = {
+	--- The image it runs.
+	image: string,
+	--- What the image starts with, in place of its own.
+	entrypoint: { string }?,
+	--- What that is given, in place of the image's own.
+	command: { string }?,
+	--- `NAME=value`, each.
+	environment: { string }?,
+	--- The ports it publishes.
+	ports: { vos_docker_Port }?,
+	--- The folders it may read.
+	mounts: { vos_docker_Mount }?,
+}
+
+--- The end of what a container wrote, as text fit to show.
+export type vos_docker_Logs = {
+	--- Valid UTF-8, without a terminal's colour sequences and control characters.
+	text: string,
+	--- There was more before it.
+	truncated: boolean,
+}
+
+--- A folder of the machine the container may read. It is never writable.
+export type vos_docker_Mount = {
+	--- The folder on the machine, a whole path.
+	source: string,
+	--- Where the container finds it.
+	target: string,
+}
+
+--- A port of the container, published on the machine.
+export type vos_docker_Port = {
+	--- The machine's port.
+	host: number,
+	--- The container's port.
+	container: number,
+	--- UDP; TCP when left out.
+	udp: boolean?,
+}
+
+--- Whether Docker can be reached, as a page shows it.
+export type vos_docker_Status = {
+	--- Docker answered.
+	reachable: boolean,
+	--- Its version, when it can be reached; empty when not.
+	version: string,
+	--- The chosen address; empty for this machine's own Docker.
+	host: string,
+	--- Why it cannot be reached, as a sentence; empty when it can.
+	problem: string,
+}
+
+--- The container framework, over `vnd:bollard`.
+---
+--- `local docker = require("vos:docker")` in the backend of an app that runs on Docker: which Docker (the
+--- person's choice, kept in the app's settings), the clients that reach it, the watch for changes, and one
+--- container the app owns, kept as its declaration says. The host carries it and runs it in the app's own
+--- VM, so the Docker an app chose is that app's alone.
+export type vos_docker = {
+	--- The chosen Docker's address; empty for this machine's own.
+	host: () -> string,
+	--- Choose the Docker the app uses: `unix:///...`, `tcp://...`, `http://...` or `https://...`, or empty for
+	--- this machine's own. Answers with why the address was refused, and with nothing when it was taken (a
+	--- Docker that is not running there is a fine choice: `status` says so, and it may start later).
+	use: (host: string) -> string?,
+	--- Whether Docker can be reached. Never fails: a Docker that is away is an answer.
+	status: () -> vos_docker_Status,
+	--- Why a `vnd:bollard` call failed, as a sentence for the person: Docker's own message when it has one,
+	--- the framework's words when Docker cannot be reached or is not answering.
+	sentence: (err: vnd_bollard_DockerError?) -> string,
+	--- The client that reads what Docker has (it waits 5 seconds for an answer), or why there is none, as a
+	--- sentence.
+	reader: () -> (vnd_bollard_Client?, string?),
+	--- The client that changes it (90 seconds).
+	actor: () -> (vnd_bollard_Client?, string?),
+	--- The client that pulls an image (10 minutes).
+	puller: () -> (vnd_bollard_Client?, string?),
+	--- The end of what a container wrote, by id or name: its output and its errors together, at most 256 KiB,
+	--- as valid UTF-8 without a terminal's colour sequences and control characters. `tail` is how many lines
+	--- from the end (200 when left out, at most 10000).
+	logs: (container: string, tail: number?) -> (vos_docker_Logs?, string?),
+	--- Watch Docker for as long as the app is loaded, and call `changed` whenever what it has of `filters`
+	--- (Docker's own, for its events) may be different: something happened to a container, Docker came or
+	--- went, or another Docker was chosen. A Docker that is away is looked for again every 5 seconds. It
+	--- never returns: `task.spawn(docker.watch, filters, changed)`.
+	watch: (filters: { [string]: { string } }, changed: () -> ()) -> (),
+	--- The container named `name` (a new one is given that name) that is this app's.
+	container: (name: string) -> vos_docker_Container,
 }
 
 -- ===== not for apps =====
@@ -7155,7 +7696,8 @@ declare vector: vos_NotForApps_vector
 -- ===== require =====
 
 declare require: 
-	((path: "lib:archive") -> lib_archive)
+	((path: "lib:agui") -> lib_agui)
+	& ((path: "lib:archive") -> lib_archive)
 	& ((path: "lib:args") -> lib_args)
 	& ((path: "lib:base64") -> lib_base64)
 	& ((path: "lib:cache") -> lib_cache)
@@ -7208,6 +7750,7 @@ declare require:
 	& ((path: "vnd:testcontainers_modules") -> vnd_testcontainers_modules)
 	& ((path: "vnd:toml") -> vnd_toml)
 	& ((path: "vos:app") -> vos_app)
+	& ((path: "vos:docker") -> vos_docker)
 	& ((path: "lib:test") -> vos_NotForApps_lib_test)
 	& ((path: "lib:compile") -> vos_NotForApps_lib_compile)
 	& ((path: "std:workers") -> vos_NotForApps_std_workers)

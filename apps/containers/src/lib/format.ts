@@ -1,7 +1,5 @@
 import type { Container, Stack, State } from 'app:rpc'
-
-/** How a state reads at a glance: going, not going, or in between and worth a look. */
-export type Tone = 'on' | 'off' | 'busy' | 'bad'
+import type { Tone } from '@vos/docker'
 
 const TONES: Readonly<Record<State, Tone>> = {
   running: 'on',

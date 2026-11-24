@@ -123,6 +123,10 @@ time = { version = "0.3", default-features = false, features = ["formatting"] }
 # `vnd:testcontainers_modules`: disposable MySQL, Postgres and any other image, in Docker.
 testcontainers-modules = { version = "0.15", features = ["mysql", "postgres"] }
 
+# `lib:agui`: the AG-UI protocol (its types, the events of a run read from an SSE stream, JSON Patch). Our own crate
+# (`crates/neoc-agui`), with no I/O: the request is `vnd:hyper`'s client.
+neoc-agui = { path = "../neoc-agui" }
+
 # `std:process` kills a process's whole group.
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["process"] }

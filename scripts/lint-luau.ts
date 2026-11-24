@@ -6,7 +6,8 @@
  * and `vos typecheck` (against its generated router), so nothing under `apps/` is checked here.
  *
  *  1. Positive: every `.luau` file of a fixture (`crates/<crate>/tests/fixtures/`,
- *     `scripts/fixtures/` outside `negative/`) starts with `--!strict` and checks clean: no type error, no lint
+ *     `scripts/fixtures/` outside `negative/`) and of the Luau the host carries (`crates/vos-lua/lua/`: `vos:docker`,
+ *     written against the same declarations as an app) starts with `--!strict` and checks clean: no type error, no lint
  *     warning. `scripts/fixtures/usage.luau` also requires every module an app is offered (read from the
  *     declarations), so a module that stops loading is flagged there.
  *  2. Negative: every file in a `negative/` folder marks the lines that must be flagged with
@@ -61,7 +62,7 @@ export const NEGATIVE_MARKERS: Record<string, number> = {
 }
 
 /** Where the fixtures live. */
-const SOURCES = ['crates/*/tests/fixtures/**/*.luau', 'scripts/fixtures/**/*.luau']
+const SOURCES = ['crates/*/tests/fixtures/**/*.luau', 'scripts/fixtures/**/*.luau', 'crates/vos-lua/lua/**/*.luau']
 const SKIP = /node_modules|\.claude|\/target\//
 
 /** One finding of `luau-lsp analyze`: the 1-based line, the message up to its `caused by:` lines, the whole message. */

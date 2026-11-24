@@ -1,7 +1,7 @@
 //! Driven adapter: Luau apps (mlua, on `neoc-vm`) behind the `AppRuntime` port.
 //!
-//! One VM per app, with the host-provided `app` table (the mlua-ir module `vos:app`, see `api`), a `require` for `vos:app`
-//! and every `std:`/`lib:`/`vnd:` module of the VM library except [`NOT_FOR_APPS`], one call at a time per VM
+//! One VM per app, with the host-provided `app` table (the mlua-ir module `vos:app`, see `api`), a `require` for
+//! `vos:app`, the framework the host carries (`vos:docker`, see `docker`) and every `std:`/`lib:`/`vnd:` module of the VM library except [`NOT_FOR_APPS`], one call at a time per VM
 //! (including the callbacks the app's own servers and tasks make), and errors reported with the app's file and
 //! line. Nothing is budgeted and there are no permissions; what an app starts is stopped when it is unloaded.
 //!
@@ -12,6 +12,7 @@
 mod api;
 mod convert;
 pub mod declarations;
+pub mod docker;
 mod error;
 mod files;
 mod host_files;

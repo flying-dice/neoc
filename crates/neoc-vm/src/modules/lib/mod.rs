@@ -1,6 +1,7 @@
 //! `lib:*` modules: gap-fillers and neoc's own. A module is a `#[mlua_ir::module("lib:<name>")]` inside its file;
 //! its `pub mod` line here is what compiles and links it.
 
+pub mod agui;
 pub mod archive;
 pub mod args;
 pub mod base64;
