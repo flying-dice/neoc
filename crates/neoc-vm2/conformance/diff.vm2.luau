@@ -1,3 +1,4 @@
+--!strict
 -- intentional: unified returns a plain Patch record and diff.format(patch) writes the text (no :format() method; it works on a patch a script built), the algorithm and change op are string unions and context an unsigned integer (refused as arguments), and parse_unified, apply and apply_changes fail with typed errors (not_unified, truncated, invalid_hunk_header, invalid_line, invalid_marker, count_mismatch; malformed_patch, starts_past_end, out_of_order, overrun, mismatch; does_not_reconstruct) that carry line and hunk numbers.
 local diff = require("lib:diff")
 
@@ -10,7 +11,7 @@ assert(diff.format(diff.unified("alpha\nbravo", "alpha\nBRAVO")):find("\\ No new
 assert(diff.format(diff.unified("a\nb\n", "a\nb\nc\n", { context = 0 })):find("@@ -2,0 +3,1 @@", 1, true))
 
 -- a patch a script built formats and applies
-local built = { old_label = "a", new_label = "b", hunks = { { old_start = 1, old_count = 1, new_start = 1, new_count = 1, lines = { { op = "delete", value = "x\n" }, { op = "insert", value = "y\n" } } } } }
+local built: lib_diff_Patch = { old_label = "a", new_label = "b", hunks = { { old_start = 1, old_count = 1, new_start = 1, new_count = 1, lines = { { op = "delete", value = "x\n" }, { op = "insert", value = "y\n" } } } } }
 assert(assert(diff.apply("x\n", diff.format(built))) == "y\n")
 
 -- round trips through the text
@@ -19,21 +20,21 @@ for _, case in { { "alpha\nbravo\n", "alpha\nBRAVO\n" }, { "alpha\nbravo", "alph
 end
 
 -- typed errors
-local function failure(patch_text, original)
+local function failure(patch_text: string, original: string?): lib_diff_ApplyError
 	local value, err = diff.apply(original or "a\n", patch_text)
-	assert(value == nil)
+	assert(value == nil and err ~= nil)
 	return err
 end
 local _, not_unified = diff.parse_unified("just some text\n")
-assert(not_unified.kind == "not_unified" and tostring(not_unified):find("lib:diff.parse_unified: not_unified:", 1, true))
+assert(not_unified ~= nil and not_unified.kind == "not_unified" and tostring(not_unified):find("lib:diff.parse_unified: not_unified:", 1, true))
 local _, truncated = diff.parse_unified("--- a\n+++ b\n")
-assert(truncated.kind == "truncated")
+assert(truncated ~= nil and truncated.kind == "truncated")
 local _, header = diff.parse_unified("--- a\n+++ b\n@@ not a header @@\n")
-assert(header.kind == "invalid_hunk_header" and header.line == 3)
+assert(header ~= nil and header.kind == "invalid_hunk_header" and header.line == 3)
 local _, counts = diff.parse_unified("--- a\n+++ b\n@@ -1,2 +1,2 @@\n a\n+b\n")
-assert(counts.kind == "count_mismatch" and counts.field == "old_count" and counts.declared == 2 and counts.observed == 1)
+assert(counts ~= nil and counts.kind == "count_mismatch" and counts.field == "old_count" and counts.declared == 2 and counts.observed == 1)
 local _, bad_line = diff.parse_unified("--- a\n+++ b\n@@ -1,1 +1,1 @@\n a\nstray")
-assert(bad_line.kind == "invalid_line" and bad_line.line == 5 and bad_line.text == "stray")
+assert(bad_line ~= nil and bad_line.kind == "invalid_line" and bad_line.line == 5 and bad_line.text == "stray")
 
 local patch_text = diff.format(diff.unified("alpha\nbravo\ncharlie\n", "alpha\nBRAVO\ncharlie\n"))
 local mismatch = failure(patch_text, "alpha\nNOT\ncharlie\n")
@@ -46,12 +47,15 @@ local malformed = failure("this isn't a patch\n")
 assert(malformed.kind == "malformed_patch" and malformed.reason:find("not a unified diff", 1, true))
 
 local _, reconstruct = diff.apply_changes("alpha\n", { { op = "equal", value = "wrong\n" } })
-assert(reconstruct.kind == "does_not_reconstruct" and reconstruct.got == 6 and reconstruct.expected == 6)
+assert(reconstruct ~= nil and reconstruct.kind == "does_not_reconstruct" and reconstruct.got == 6 and reconstruct.expected == 6)
 
 -- unions and counts are refused as arguments
-local ok, refused = pcall(diff.lines, "a", "b", { algorithm = "wagner" })
+-- deliberate refusal tests: an algorithm and an op that do not exist
+local ok, refused = pcall(diff.lines, "a", "b", { algorithm = "wagner" :: any })
 assert(not ok and tostring(refused):find("lib:diff.lines: argument #3 'opts'", 1, true))
-local ok2, refused2 = pcall(diff.apply_changes, "x", { { op = "swap", value = "x" } })
+local ok2, refused2 = pcall(function()
+	diff.apply_changes("x", { { op = "swap" :: any, value = "x" } })
+end)
 assert(not ok2 and tostring(refused2):find("argument #2 'changes'", 1, true))
 local ok3, refused3 = pcall(diff.unified, "a", "b", { context = -1 })
 assert(not ok3 and tostring(refused3):find("argument #3 'opts'", 1, true))

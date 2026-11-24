@@ -1,3 +1,4 @@
+--!strict
 -- intentional: an archive is an object: Tar.open(path) / Tar.from_bytes(bytes) with :list(), :extract(dest, options?) and :read(name, options?) replace tar_list, tar_list_bytes, tar_extract and tar_extract_bytes, whose first argument was a path or the archive's bytes by whether a file of that name existed (Zip is the same); Tar.create / Tar.create_file and Zip.create / Zip.create_file are tar_create_bytes / tar_create and zip_create_bytes / zip_create; Zip.create writes its entries in the order of their names; an option or an entry of the wrong shape is refused as an argument; every failure is the typed ArchiveError (io, not_a_file_or_directory, invalid_name, write_failed, compression_mismatch, invalid_pattern, max_output_size_zero, corrupt, unsafe_entry, unsafe_link, too_large, not_found, unsupported).
 local archive = require("lib:archive")
 local fs = require("std:fs")

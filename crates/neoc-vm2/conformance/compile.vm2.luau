@@ -1,3 +1,4 @@
+--!strict
 -- intentional: a failure is a typed BundleError (entrypoint_unreadable with the path, stub_unreadable, too_large, output_unwritable with the path) where it was a string; a field that does not exist is refused with the other wrong arguments (it was ignored).
 local compile = require("lib:compile")
 local path = require("std:path")
@@ -24,10 +25,10 @@ for _, bundle in
 		{ entrypoint = "main.lua", output = 5 },
 		{ entrypoint = "main.lua", output = "app", minify = true },
 		"main.lua",
-	} :: { any }
+	} :: { any } -- deliberate refusal test: none is a bundle
 do
 	local ok, refused = pcall(function()
-		return compile.bundle(bundle)
+		compile.bundle(bundle)
 	end)
 	assert(not ok and tostring(refused):find("lib:compile.bundle: argument #1 'bundle'", 1, true), tostring(refused))
 end

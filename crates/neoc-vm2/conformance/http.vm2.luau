@@ -1,3 +1,4 @@
+--!strict
 -- intentional: lib:http's serve_static returns (nil, err) with a typed ServeError (invalid_glob with the pattern, walk with the path, bind with the address and its cause) when the server cannot start, where it raised a text, and true once a server that ran was stopped; an option that is misspelt or of the wrong type is refused as a wrong argument (it was ignored)
 local http = require("lib:http")
 local net = require("std:net")

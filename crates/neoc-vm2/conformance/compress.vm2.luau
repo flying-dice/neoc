@@ -1,3 +1,4 @@
+--!strict
 -- intentional: the format is a string enum, so one that does not exist is refused as an argument (it was nil and "unknown format"); level and max_size are whole numbers from 0 up and anything else, or an option that does not exist, is refused as an argument (each was nil and a message); failures are typed: EncodeError (level_out_of_range, failed) and DecodeError (empty, max_size_zero, too_large, corrupt).
 local compress = require("lib:compress")
 
@@ -24,7 +25,8 @@ if large.kind == "too_large" then
 	assert(large.max_size == 10)
 end
 assert(tostring(large) == "lib:compress.decode: too_large: output exceeds max_size (10 bytes)")
-for _, format in { "gzip", "zlib", "zstd", "brotli" } :: { lib_compress_Format } do
+local formats: { lib_compress_Format } = { "gzip", "zlib", "zstd", "brotli" }
+for _, format: lib_compress_Format in formats do
 	local _, corrupt = compress.decode(format, "not compressed data")
 	assert(corrupt ~= nil and corrupt.kind == "corrupt")
 	if corrupt.kind == "corrupt" then

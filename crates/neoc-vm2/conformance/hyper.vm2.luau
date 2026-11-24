@@ -1,3 +1,4 @@
+--!strict
 -- intentional: vnd:hyper's errors are typed (HyperError: err.kind, limit, max_redirects, max_body, reason; error_kind and error_message are gone); post(url, body?, opts?) and request(method, url, body?, opts?) take the URL, method and body as arguments; follow_redirects is a boolean and max_redirects the limit; a misspelt or wrongly typed option, a buffer or number body and a number header value are refused as wrong arguments; a handler returns a string, a Reply or nothing; serve returns a typed ServerError and Server:addr() returns (nil, err) once closed
 local net = require("std:net")
 local hyper = require("vnd:hyper")

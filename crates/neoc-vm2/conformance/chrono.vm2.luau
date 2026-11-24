@@ -1,3 +1,4 @@
+--!strict
 -- intentional: operators (== < <=) are methods (a:compare(b) gives "less" | "equal" | "greater", a:equals(b)); add and sub are plus and minus; every failure is a typed error (out_of_range, invalid, unrecognised, sub_day_units, overflow, unknown_timezone, invalid_pattern, calendar_units); Duration.of refuses a unit it does not know or that is not a whole number and raises one that is too large, so its result is passed on as it is; Duration:abs and ZonedDateTime:to_rfc3339 return one value; every date and time value has a kind field that says which one chrono.parse gave.
 local chrono = require("lib:chrono")
 
@@ -17,8 +18,8 @@ assert(early:compare(late) == "less" and early:equals((assert(chrono.Time.new(1,
 
 -- plus and minus
 local ten = chrono.Duration.of({ days = 10 })
-assert(tostring(assert(a:plus(ten))) == "2026-05-30")
-assert(tostring(assert(a:minus(ten))) == "2026-05-10")
+assert(tostring((assert(a:plus(ten)))) == "2026-05-30")
+assert(tostring((assert(a:minus(ten)))) == "2026-05-10")
 assert(assert(a:plus(ten)):equals(b))
 local _, sub_day = a:plus(chrono.Duration.of({ hours = 25 }))
 assert(sub_day ~= nil and sub_day.kind == "sub_day_units" and sub_day.op == "lib:chrono.Date:plus")
