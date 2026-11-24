@@ -182,11 +182,14 @@ async fn the_app_api_an_app_gets_is_the_one_the_schema_and_the_declarations_desc
     assert_eq!(db, ["all", "exec", "migrate", "one", "tx"]);
     let t: Vec<String> = strings(&live["t"]).into_iter().collect();
     assert_eq!(t, ["array", "boolean", "enum", "integer", "number", "object", "string"]);
-    // the module and the global are one table; the id is a plain string, the values under `app` are userdata
+    // the module and the global are one table; the id is a plain string, the values under `app` are userdata, which
+    // `typeof` names as the declarations do (what narrows a Luau extern type)
     assert_eq!(live["same"], true);
     assert_eq!(
         live["kinds"],
-        serde_json::json!({ "db": "userdata", "id": "string", "ctx": "userdata", "documents": "userdata" })
+        serde_json::json!({
+            "db": "vos_app_Db", "id": "string", "ctx": "vos_app_Context", "documents": "vos_app_Location"
+        })
     );
 }
 

@@ -1,6 +1,6 @@
 -- Compares the prelude's polyfills with the native implementations of a Lua 5.3+ interpreter:
 --   lua scripts/prelude-polyfill-check.lua <prelude.lua>
--- The prelude runs in a fresh globals table that lacks utf8 and typeof (the app environment copies neither from the
+-- The prelude runs in a fresh globals table that lacks utf8 (the app environment does not copy it from the
 -- engine), then each call is made on both and the results must agree (an error must be an error on
 -- both; messages differ). Exits 0 and prints "ok <n> comparisons", or raises with the first difference.
 
@@ -10,7 +10,7 @@ local env = {}
 for name, value in pairs(_G) do
   env[name] = value
 end
-env.utf8, env.typeof = nil, nil
+env.utf8 = nil
 env.unpack = table.unpack
 
 local source = assert(io.open(arg[1], "rb")):read("a")
@@ -143,7 +143,5 @@ for _, text in ipairs { "h\xc3\xa9llo", "\xe6\x97\xa5\xe6\x9c\xac", "a\xf0\x9f\x
   end
   assert(same(a, b), "charpattern splits " .. text .. " differently")
 end
-
-assert(env.typeof(1) == "number" and env.typeof {} == "table" and env.typeof(nil) == "nil")
 
 print("ok " .. comparisons .. " comparisons")

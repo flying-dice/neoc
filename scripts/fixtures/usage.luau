@@ -133,7 +133,7 @@ local _kind: std_fs_FsErrorKind? = if fsErr then fsErr.kind else nil
 local _message: string? = if fsErr then fsErr.message else nil
 local _slept: number = task.wait(0)
 
--- ── the globals an app has: the base library of Luau, `utf8` and `typeof` from the prelude, `bit32` ────────────
+-- ── the globals an app has: the base library of Luau, `typeof`, `utf8` from the prelude, `bit32` ────────────
 local _chars: number? = utf8.len("é")
 local _same: boolean = typeof("a") == "string"
 local _cloned = table.clone { 1, 2, 3 }

@@ -8,8 +8,9 @@
 //!
 //! - the **base functions** a script may call are copied in one by one (an allow-list: a function a Luau
 //!   upgrade adds is not available until someone adds it here): no `load*`, `dofile`, `getfenv`,
-//!   `setfenv`, `newproxy`, `collectgarbage`, `require`, `print` (it writes to the process's stdout), no `typeof`
-//!   (it names the host's userdata types, where `type` says `userdata`) and no `os`/`debug`/`buffer`/`vector`/`utf8`;
+//!   `setfenv`, `newproxy`, `collectgarbage`, `require`, `print` (it writes to the process's stdout) and no `os`/`debug`/`buffer`/`vector`/`utf8`.
+//!   `typeof` is there: it names a module's userdata type as the declarations do (`typeof(db) == "vos_app_Db"`,
+//!   where `type` says `userdata`), which is what narrows a Luau extern type;
 //! - the **libraries** (`string`, `table`, `math`, `coroutine`, `bit32`) are private copies (`coroutine.create`,
 //!   `resume`, `wrap` and `close` are versions that let an async host call run inside a coroutine of the script's own
 //!   and let a script resume or close only the coroutines it made, see `async_coroutines.lua`; `neoc run`'s engine has
@@ -54,6 +55,7 @@ const BASE_FUNCTIONS: &[&str] = &[
     "tonumber",
     "tostring",
     "type",
+    "typeof",
     "unpack",
     "xpcall",
 ];
@@ -484,6 +486,7 @@ mod tests {
                 "tonumber",
                 "tostring",
                 "type",
+                "typeof",
                 "unpack",
                 "xpcall"
             ]

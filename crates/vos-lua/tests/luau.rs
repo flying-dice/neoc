@@ -168,7 +168,7 @@ async fn the_preludes_polyfills_are_there_and_sealed() {
     let vm = load(src).await;
     assert_eq!(
         emit(&vm, "t").await.unwrap(),
-        json!({"typeof": "string", "typeof_table": "table", "typeof_nil": "nil", "typeof_userdata": "userdata", "utf8": 5, "clone": 2, "pack": 3, "moved": "1,1,2,3", "writable": false})
+        json!({"typeof": "string", "typeof_table": "table", "typeof_nil": "nil", "typeof_userdata": "lib_json_Object", "utf8": 5, "clone": 2, "pack": 3, "moved": "1,1,2,3", "writable": false})
     );
 }
 

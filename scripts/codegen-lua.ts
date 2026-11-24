@@ -2,7 +2,7 @@
 /**
  * The prelude the host embeds, copied next to the other generated files:
  *
- *   types/generated/prelude.lua  <- lua/prelude.lua   (`typeof` and `utf8`, which the app environment does not copy from Luau)
+ *   types/generated/prelude.lua  <- lua/prelude.lua   (`utf8`, which the app environment does not copy from Luau)
  *
  *   bun scripts/codegen-lua.ts          write it (part of `bun run codegen`)
  *   bun scripts/codegen-lua.ts --check  exit 1 when it is missing or stale (part of `bun run codegen:check`)

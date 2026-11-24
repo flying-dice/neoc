@@ -41,7 +41,7 @@ use vos_application::{
 };
 use vos_domain::{tool_schema, AppId, Notification, ToolSpec};
 
-/// The prelude (`lua/prelude.lua`, copied by `bun run codegen`): `typeof` and `utf8`, which Luau has and the app's
+/// The prelude (`lua/prelude.lua`, copied by `bun run codegen`): `utf8`, which Luau has and the app's
 /// environment does not copy from the engine. Run once in each app's environment before the app.
 const PRELUDE: &str = include_str!("../../../types/generated/prelude.lua");
 
