@@ -17,10 +17,14 @@ async function until(done: () => boolean): Promise<void> {
   expect(done()).toBe(true)
 }
 
-const POSTGRES = { pid: 812, startTime: program(812, '').startTime }
-const SSHD = { pid: 702, startTime: program(702, '').startTime }
-const SERVER = { pid: 1204, startTime: program(1204, '').startTime }
-const RUST = { pid: 3051, startTime: program(3051, '').startTime }
+const refOf = (pid: number): { pid: number; startTime: number; observation: number } => {
+  const { startTime, observation } = program(pid, '')
+  return { pid, startTime, observation }
+}
+const POSTGRES = refOf(812)
+const SSHD = refOf(702)
+const SERVER = refOf(1204)
+const RUST = refOf(3051)
 const names = (processes: Processes): string[] => processes.rows.map((row) => row.name)
 
 describe('a window that has just opened', () => {
@@ -153,14 +157,16 @@ describe('the list of processes', () => {
   })
 
   test('is all of them for a search of blanks', () => {
-    const rows = PROGRAMS.map((p) => ({ pid: p.pid, startTime: p.startTime, name: p.name, memory: p.memory }))
+    const rows = PROGRAMS.map((p) => ({ pid: p.pid, startTime: p.startTime, observation: p.observation, name: p.name, memory: p.memory }))
     expect(matching(rows, '   ')).toBe(rows)
   })
 
   test('says which processes are the same: a PID is not enough', () => {
-    expect(same({ pid: 1, startTime: 5 }, { pid: 1, startTime: 5 })).toBe(true)
-    expect(same({ pid: 1, startTime: 5 }, { pid: 1, startTime: 6 })).toBe(false)
-    expect(same(null, { pid: 1, startTime: 5 })).toBe(false)
+    expect(same({ pid: 1, startTime: 5, observation: 1 }, { pid: 1, startTime: 5, observation: 1 })).toBe(true)
+    expect(same({ pid: 1, startTime: 5, observation: 1 }, { pid: 1, startTime: 6, observation: 1 })).toBe(false)
+    // the same second, another sighting of the PID: another process
+    expect(same({ pid: 1, startTime: 5, observation: 1 }, { pid: 1, startTime: 5, observation: 2 })).toBe(false)
+    expect(same(null, { pid: 1, startTime: 5, observation: 1 })).toBe(false)
   })
 })
 
@@ -356,6 +362,22 @@ describe('ending a process', () => {
     expect(backend.signals()).toEqual([])
   })
 
+  test('does not choose a process that took the PID of the one in the list in the same second', async () => {
+    const backend = createFakeBackend()
+    const processes = await opened(backend)
+    const listed = processes.rows.find((row) => row.pid === 812)!
+    // the listed process exits and another starts with its PID in the same second: only the backend's number tells them apart
+    backend.reuse(812, program(812, 'innocent'))
+    await processes.refresh()
+    const now = processes.rows.find((row) => row.pid === 812)!
+    expect(now.startTime).toBe(listed.startTime)
+    expect(now.observation).not.toBe(listed.observation)
+    expect(await processes.choose(listed)).toBe(false)
+    expect(processes.failure).toBe('That program has quit.')
+    expect(backend.held()).toEqual([])
+    expect(backend.signals()).toEqual([])
+  })
+
   test('does not end a process that has taken the PID of the one that was chosen', async () => {
     const backend = createFakeBackend()
     const processes = await opened(backend)
@@ -441,7 +463,7 @@ describe('ending a process', () => {
       programs: [program(900, 'wininit', { user: 'SYSTEM', blocked: 'permission' }), program(901, 'idle', { startTime: 0, blocked: 'unknown' })]
     })
     const processes = await opened(backend)
-    expect(await processes.choose({ pid: 900, startTime: program(900, '').startTime })).toBe(true)
+    expect(await processes.choose(refOf(900))).toBe(true)
     expect(processes.detail?.name).toBe('wininit')
     expect(processes.detail?.user).toBe('SYSTEM')
     expect(processes.endable).toBe(false)
@@ -449,7 +471,7 @@ describe('ending a process', () => {
     processes.ask('force')
     expect(processes.asking).toBeNull()
 
-    expect(await processes.choose({ pid: 901, startTime: 0 })).toBe(true)
+    expect(await processes.choose({ ...refOf(901), startTime: 0 })).toBe(true)
     expect(processes.detail?.name).toBe('idle')
     expect(processes.endable).toBe(false)
     expect(processes.unavailable).toMatch(/cannot tell idle apart/)

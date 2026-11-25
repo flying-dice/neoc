@@ -8381,6 +8381,12 @@ interface vnd_sysinfo_Process {
    * another that is given its PID, so a script should not signal it.
    */
   readonly start_time: number
+  /**
+   * Which sighting of this PID it is: a number the module issues when it first meets a process, and again when
+   * the PID turns out to be another process (even one that started in the same second). A reference kept
+   * outside the module carries it with the PID and start time, and a process with another number is not it.
+   */
+  readonly observation: number
   /** Its name when it was observed: still here when it has exited. */
   readonly name: string
   /** Is it still there as of the last refresh, with this PID and this start time. */

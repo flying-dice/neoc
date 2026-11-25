@@ -251,11 +251,15 @@ test.describe('Processes journeys', () => {
     await body.evaluate(() => {
       const bridge = (globalThis as unknown as { vos: { call: (method: string, params?: unknown) => Promise<unknown> } }).vos
       const call = bridge.call.bind(bridge)
-      const seen = globalThis as unknown as { __ids: string[] }
+      const seen = globalThis as unknown as { __ids: string[]; __chosen: unknown[] }
       seen.__ids = []
+      seen.__chosen = []
       bridge.call = async (method, params) => {
         const answer = await call(method, params)
-        if (method === 'select') seen.__ids.push((answer as { selection: string }).selection)
+        if (method === 'select') {
+          seen.__ids.push((answer as { selection: string }).selection)
+          seen.__chosen.push((params as { process: unknown }).process)
+        }
         return answer
       }
     })
@@ -279,6 +283,21 @@ test.describe('Processes journeys', () => {
     await expect(part(page, 'detail-state')).toContainText(`PID ${second}`)
     await expect.poll(async () => (await ids()).length).toBe(2)
     const [letGo, held] = await ids()
+
+    // the list still shows a process that is not the one with its PID now (a PID given to another process, even in the
+    // same second): the same PID and start time with another sighting is refused, and nothing is held for it
+    const refused = await body.evaluate(async () => {
+      const bridge = (globalThis as unknown as { vos: { call: (method: string, params?: unknown) => Promise<unknown> } }).vos
+      const chosen = (globalThis as unknown as { __chosen: { observation: number }[] }).__chosen.at(-1)!
+      try {
+        await bridge.call('select', { process: { ...chosen, observation: chosen.observation + 1000 } })
+        return 'chosen'
+      } catch (e) {
+        return (e as Error).message
+      }
+    })
+    expect(refused).toBe('That program has quit.')
+    expect(await ids()).toHaveLength(2)
 
     // an id the backend never issued
     expect(await terminate('made-up')).toContain('no longer holds it')

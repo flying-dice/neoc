@@ -80,7 +80,7 @@
           header={query.trim() === '' ? processesSummary(total) : `${rows.length} of ${processesSummary(total)}`}
           footer={overview.cpu.sampled ? 'CPU is a share of one core, so it can pass 100%.' : 'CPU needs two readings. It appears after the next refresh.'}
         >
-          {#each rows as row (`${row.pid}:${row.startTime}`)}
+          {#each rows as row (`${row.pid}:${row.startTime}:${row.observation}`)}
             <ProcessRowItem process={row} selected={same(row, selected)} onpress={() => onopen(row)} />
           {/each}
         </ui-section>

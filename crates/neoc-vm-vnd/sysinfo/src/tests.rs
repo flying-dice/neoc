@@ -11,7 +11,7 @@ use neoc_vm_core::make_engine;
 use parking_lot::Mutex;
 
 use super::native;
-use super::sysinfo::{Clock, Error, MIN_CPU_INTERVAL_MS, Process, State, disk_kind, rate};
+use super::sysinfo::{Clock, Error, MIN_CPU_INTERVAL_MS, Process, State, disk_kind, meet, rate};
 
 /// A child that is stopped when the test ends, however it ends.
 struct Guard(Child);
@@ -609,6 +609,72 @@ async fn on_linux_a_pid_reused_in_the_same_second_is_told_apart() {
         assert(pinned ~= nil and pinned.kind == "pid_reused", "pin must be refused")
         local _, killed = lookalike:kill()
         assert(killed ~= nil and killed.kind == "pid_reused", "kill must be refused")
+        "#,
+        (),
+    )
+    .await;
+    assert!(children.lock()[0].0.try_wait().expect("status").is_none(), "the real process was left alone");
+}
+
+#[test]
+fn a_pid_that_turns_out_to_be_another_process_is_a_new_sighting() {
+    let mut issued = 0;
+    let first = meet(None, 100, Some(5_000), &mut issued);
+    assert_eq!((first.generation, first.samples), (1, 1));
+    // the same process, met again: the same sighting, one sample more
+    let again = meet(Some(&first), 100, Some(5_000), &mut issued);
+    assert_eq!((again.generation, again.samples), (1, 2));
+    // the same second, another finer time: another process has the PID, and the reference to the first is not it
+    let same_second = meet(Some(&again), 100, Some(5_001), &mut issued);
+    assert_eq!((same_second.generation, same_second.samples), (2, 1));
+    // another start time
+    let later = meet(Some(&same_second), 101, Some(5_001), &mut issued);
+    assert_eq!((later.generation, later.samples), (3, 1));
+    // a finer time that cannot be read now is not the one that was: it is not told apart, so it is not the same
+    let unreadable = meet(Some(&later), 101, None, &mut issued);
+    assert_eq!((unreadable.generation, unreadable.samples), (4, 1));
+    // a process met for the first time on a platform with no finer time is one sighting, however often it is met
+    let coarse = meet(None, 7, None, &mut issued);
+    assert_eq!(meet(Some(&coarse), 7, None, &mut issued).generation, coarse.generation);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_process_keeps_its_observation_across_refreshes_and_each_process_has_its_own() {
+    let () = run(r#"
+        local system = assert(require("vnd:sysinfo").system())
+        local first = launch()
+        local second = launch()
+        pause(300)
+        assert(system:refresh_processes())
+        local a = assert(system:process(first))
+        local b = assert(system:process(second))
+        assert(a.observation > 0 and b.observation > 0 and a.observation ~= b.observation, "each process has its own sighting")
+        pause(300)
+        assert(system:refresh_processes())
+        local again = assert(system:process(first))
+        assert(again.observation == a.observation, "the same process, met again, is the same sighting")
+        assert(a:alive(), "a handle from before the refresh still reads it")
+        "#)
+    .await;
+}
+
+#[cfg(any(target_os = "linux", windows))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn where_the_platform_has_a_finer_start_time_a_process_without_one_is_not_signalled() {
+    let (lua, children) = engine();
+    let pid = start(sleeper(), &children);
+    let real = start_time_of(pid);
+    let state = Arc::new(Mutex::new(State::new()));
+    // observed with the right second, and with the finer time not read: it cannot be told from a replacement
+    let unread = Process::forged_without_fine(&state, pid, real, "unread");
+    lua.globals().set("unread", unread).expect("a handle");
+    let () = run_with(
+        &lua,
+        r#"
+        local _, pinned = unread:pin()
+        assert(pinned ~= nil and pinned.kind == "unknown_identity", "pin must be refused")
+        local _, killed = unread:kill()
+        assert(killed ~= nil and killed.kind == "unknown_identity", "kill must be refused")
         "#,
         (),
     )

@@ -31,11 +31,14 @@ export const LOST = 'Processes no longer holds this program. Choose it again to 
 
 const NO_ROWS: readonly ProcessRow[] = []
 
-/** Whether two references name the same process: the PID alone does not, a PID is reused. */
+/**
+ * Whether two references name the same process: the PID alone does not (a PID is reused), nor does the PID with when it
+ * started (the same second), so the backend's number for which sighting of the PID it is counts too.
+ */
 export const same = (a: ProcessRef | null | undefined, b: ProcessRef | null | undefined): boolean =>
-  !!a && !!b && a.pid === b.pid && a.startTime === b.startTime
+  !!a && !!b && a.pid === b.pid && a.startTime === b.startTime && a.observation === b.observation
 
-const refOf = ({ pid, startTime }: ProcessRef): ProcessRef => ({ pid, startTime })
+const refOf = ({ pid, startTime, observation }: ProcessRef): ProcessRef => ({ pid, startTime, observation })
 
 /** A value that may be missing sorts after every one that is there. */
 const byDescending = (a: number | undefined, b: number | undefined): number =>

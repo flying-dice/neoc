@@ -58,6 +58,11 @@ pub(crate) fn live_start_time(pid: u32) -> Option<u64> {
     system.process(pid).map(::sysinfo::Process::start_time)
 }
 
+/// This platform gives a finer start time than `sysinfo`'s whole seconds (Linux, Windows). Where it does, a process
+/// whose finer time was not read when it was observed has no identity to bind a signal to: the callers refuse it
+/// rather than fall back to the seconds.
+pub(crate) const FINE_START: bool = cfg!(any(target_os = "linux", windows));
+
 /// The finer start time of the process that has this PID right now (clock ticks since boot on Linux, the creation
 /// time in 100 ns on Windows), or `None` when no process has it or the platform gives none. It is only ever compared
 /// with another read the same way.

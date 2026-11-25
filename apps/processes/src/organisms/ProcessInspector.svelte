@@ -131,7 +131,7 @@
       {/if}
       {#if detail.children.length > 0}
         <ui-section header="Children">
-          {#each detail.children as child (`${child.pid}:${child.startTime}`)}
+          {#each detail.children as child (`${child.pid}:${child.startTime}:${child.observation}`)}
             <ui-row tappable chevron heading={child.name} subheading="PID {child.pid}" onpress={() => onfollow(child)} data-testid="processes-child-{child.pid}"></ui-row>
           {/each}
         </ui-section>

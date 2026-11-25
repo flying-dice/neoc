@@ -59,7 +59,7 @@
   }}
 />
 
-<Story name="One is shown on the right" args={{ selected: { pid: 812, startTime: 1_700_000_812 } }} />
+<Story name="One is shown on the right" args={{ selected: { pid: 812, startTime: 1_700_000_812, observation: 812 } }} />
 
 <Story name="With the way back" args={{ back: true }} />
 

@@ -23,9 +23,10 @@ export const FIRST_READING: Overview = {
   networks: MACHINE.networks.map(({ name }) => ({ name }))
 }
 
-export const ROWS: readonly ProcessRow[] = PROGRAMS.map(({ pid, startTime, name, user, cpu, memory, status }) => ({
+export const ROWS: readonly ProcessRow[] = PROGRAMS.map(({ pid, startTime, observation, name, user, cpu, memory, status }) => ({
   pid,
   startTime,
+  observation,
   name,
   ...(user === undefined ? {} : { user }),
   ...(cpu === undefined ? {} : { cpu }),
@@ -39,6 +40,7 @@ const postgres = PROGRAMS.find((p) => p.pid === 812)!
 export const POSTGRES: Detail = {
   pid: postgres.pid,
   startTime: postgres.startTime,
+  observation: postgres.observation,
   name: postgres.name,
   alive: true,
   control: { available: true },
@@ -50,9 +52,9 @@ export const POSTGRES: Detail = {
   runTimeSecs: 3 * 3600 + 20 * 60,
   command: postgres.command ?? [],
   exe: postgres.exe!,
-  parent: { pid: 1, startTime: 1_700_000_001, name: 'systemd', user: 'root' },
+  parent: { pid: 1, startTime: 1_700_000_001, observation: 1, name: 'systemd', user: 'root' },
   children: [
-    { pid: 841, startTime: 1_700_000_841, name: 'postgres: checkpointer', user: 'postgres' },
-    { pid: 842, startTime: 1_700_000_842, name: 'postgres: background writer', user: 'postgres' }
+    { pid: 841, startTime: 1_700_000_841, observation: 841, name: 'postgres: checkpointer', user: 'postgres' },
+    { pid: 842, startTime: 1_700_000_842, observation: 842, name: 'postgres: background writer', user: 'postgres' }
   ]
 }

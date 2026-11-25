@@ -113,6 +113,7 @@ local function rowOf(process: vnd_sysinfo_Process): rpc.ProcessRow
   return {
     pid = process.pid,
     startTime = process.start_time,
+    observation = process.observation,
     name = process.name,
     user = process:user(),
     cpu = process:cpu_usage(),
@@ -122,7 +123,13 @@ local function rowOf(process: vnd_sysinfo_Process): rpc.ProcessRow
 end
 
 local function relatedOf(process: vnd_sysinfo_Process): rpc.Related
-  return { pid = process.pid, startTime = process.start_time, name = process.name, user = process:user() }
+  return {
+    pid = process.pid,
+    startTime = process.start_time,
+    observation = process.observation,
+    name = process.name,
+    user = process:user(),
+  }
 end
 
 -- One process in full. One that has exited is what it was when it was last seen: its name, and nothing else.
@@ -141,6 +148,7 @@ function monitor.detail(process: vnd_sysinfo_Process, control: rpc.Control): rpc
   return {
     pid = process.pid,
     startTime = process.start_time,
+    observation = process.observation,
     name = process.name,
     alive = process:alive(),
     control = control,
@@ -166,10 +174,11 @@ function monitor.read(current: vnd_sysinfo_System): (rpc.Overview, { rpc.Process
   return overviewOf(current, #rows), rows
 end
 
--- The process a window named, if it is still the one running with that PID.
+-- The process a window named, if it is still the one it saw: the PID, when it started, and which sighting of the PID it
+-- is (a PID that was given to another process since, even in the same second, has another number).
 function monitor.find(current: vnd_sysinfo_System, ref: rpc.ProcessRef): vnd_sysinfo_Process?
   local process = current:process(ref.pid)
-  if process and process.start_time == ref.startTime then
+  if process and process.start_time == ref.startTime and process.observation == ref.observation then
     return process
   end
   return nil

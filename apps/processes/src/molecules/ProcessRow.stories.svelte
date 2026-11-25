@@ -17,7 +17,7 @@
     title: 'Molecules/ProcessRow',
     component: ProcessRowItem,
     tags: ['autodocs'],
-    args: { process: { pid: 2310, startTime: 1, name: 'luau-runtime', user: 'vos', cpu: 38.2, memory: 612 * 1024 ** 2 }, selected: false, onpress },
+    args: { process: { pid: 2310, startTime: 1, observation: 2310, name: 'luau-runtime', user: 'vos', cpu: 38.2, memory: 612 * 1024 ** 2 }, selected: false, onpress },
     beforeEach: () => onpress.mockClear(),
     render: template
   })
@@ -27,7 +27,7 @@
   <ui-list variant="insetGrouped" selection="single" label="Processes" style="width:420px">
     <ui-section header="Processes">
       <ProcessRowItem {...args} />
-      <ProcessRowItem process={{ pid: 702, startTime: 2, name: 'sshd', user: 'root', cpu: 0.4, memory: 14 * 1024 ** 2 }} onpress={() => {}} />
+      <ProcessRowItem process={{ pid: 702, startTime: 2, observation: 702, name: 'sshd', user: 'root', cpu: 0.4, memory: 14 * 1024 ** 2 }} onpress={() => {}} />
     </ui-section>
   </ui-list>
 {/snippet}
@@ -43,4 +43,4 @@
 <Story name="Shown on the right" args={{ selected: true }} />
 
 <!-- The CPU of a process needs two readings: until then it is a dash. -->
-<Story name="No CPU yet" args={{ process: { pid: 2310, startTime: 1, name: 'luau-runtime', memory: 612 * 1024 ** 2 } }} />
+<Story name="No CPU yet" args={{ process: { pid: 2310, startTime: 1, observation: 2310, name: 'luau-runtime', memory: 612 * 1024 ** 2 } }} />

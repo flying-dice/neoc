@@ -109,7 +109,7 @@
 <!-- It exited: what is shown is what it was, and nothing can be done to it. -->
 <Story
   name="Has quit"
-  args={{ detail: { pid: 812, startTime: 1_700_000_812, name: 'postgres', alive: false, control: { available: false, reason: 'postgres has quit.' }, command: [], children: [] }, endable: false }}
+  args={{ detail: { pid: 812, startTime: 1_700_000_812, observation: 812, name: 'postgres', alive: false, control: { available: false, reason: 'postgres has quit.' }, command: [], children: [] }, endable: false }}
   play={async ({ canvas }) => {
     await expect(canvas.getByTestId('processes-quit')).toBeVisible()
     await expect(canvas.getByTestId('processes-force')).toHaveAttribute('disabled')

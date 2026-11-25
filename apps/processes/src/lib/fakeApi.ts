@@ -82,6 +82,7 @@ const MB = 1024 ** 2
 export const program = (pid: number, name: string, extra: Partial<Program> = {}): Program => ({
   pid,
   startTime: BASE + pid,
+  observation: pid,
   name,
   user: 'vos',
   memory: 50 * MB,
@@ -146,6 +147,8 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
   let selections = new Map<string, ProcessRef>()
   let run = 1
   let issued = 0
+  // the sightings the fake backend has numbered beyond the programs it started with
+  let sightings = 1_000_000
   const signals: string[] = []
   let readings = 0
   const listeners = new Map<string, Set<(data: unknown) => void>>()
@@ -162,25 +165,28 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
       }, pace)
     )
 
-  const find = (ref: ProcessRef): Program | undefined => programs.find((p) => p.pid === ref.pid && p.startTime === ref.startTime)
+  const find = (ref: ProcessRef): Program | undefined =>
+    programs.find((p) => p.pid === ref.pid && p.startTime === ref.startTime && p.observation === ref.observation)
   // a process that was chosen and has exited is still known to the backend, as it was
   const known = new Map<string, Program>()
-  const keyOf = (ref: ProcessRef): string => `${ref.pid}:${ref.startTime}`
+  const keyOf = (ref: ProcessRef): string => `${ref.pid}:${ref.startTime}:${ref.observation}`
 
   // rates and loads need two readings: the first has none
   const sampled = (): boolean => readings >= 2
   const rowOf = (p: Program): ProcessRow => ({
     pid: p.pid,
     startTime: p.startTime,
+    observation: p.observation,
     name: p.name,
     ...(p.user === undefined ? {} : { user: p.user }),
     ...(sampled() && p.cpu !== undefined ? { cpu: p.cpu } : {}),
     memory: p.memory,
     ...(p.status === undefined ? {} : { status: p.status })
   })
-  const related = (p: Program): { pid: number; startTime: number; name: string; user?: string } => ({
+  const related = (p: Program): { pid: number; startTime: number; observation: number; name: string; user?: string } => ({
     pid: p.pid,
     startTime: p.startTime,
+    observation: p.observation,
     name: p.name,
     ...(p.user === undefined ? {} : { user: p.user })
   })
@@ -193,13 +199,14 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
     if (!p) {
       const was = known.get(keyOf(ref))
       return was
-        ? { pid: was.pid, startTime: was.startTime, name: was.name, alive: false, control: { available: false, reason: `${was.name} has quit.` }, command: [], children: [] }
+        ? { pid: was.pid, startTime: was.startTime, observation: was.observation, name: was.name, alive: false, control: { available: false, reason: `${was.name} has quit.` }, command: [], children: [] }
         : undefined
     }
     const parent = programs.find((q) => q.pid === p.parent)
     return {
       pid: p.pid,
       startTime: p.startTime,
+      observation: p.observation,
       name: p.name,
       alive: true,
       control: p.blocked ? { available: false, reason: BLOCKED[p.blocked](p.name) } : { available: true },
@@ -254,7 +261,7 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
         if (!p) throw new Refused('That program has quit.')
         issued += 1
         const selection = `run${run}:${issued}`
-        selections.set(selection, { pid: process.pid, startTime: process.startTime })
+        selections.set(selection, { pid: process.pid, startTime: process.startTime, observation: process.observation })
         remember(p)
         return { selection, detail: detailOf(process) as Detail }
       }),
@@ -306,7 +313,9 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
     reuse(pid, next) {
       const p = programs.find((q) => q.pid === pid)
       if (p) remember(p)
-      programs = [...programs.filter((q) => q.pid !== pid), { ...next, pid }]
+      // the PID has another sighting now, as the backend numbers them: a reference to the one before is not this
+      sightings += 1
+      programs = [...programs.filter((q) => q.pid !== pid), { ...next, pid, observation: sightings }]
     },
     start(next) {
       programs = [...programs, { ...next }]

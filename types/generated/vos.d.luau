@@ -7082,6 +7082,10 @@ declare extern type vnd_sysinfo_Process with
 	--- the platform does not say (some system processes on macOS and Windows): such a process is not told apart from
 	--- another that is given its PID, so a script should not signal it. Read-only.
 	start_time: number
+	--- Which sighting of this PID it is: a number the module issues when it first meets a process, and again when
+	--- the PID turns out to be another process (even one that started in the same second). A reference kept
+	--- outside the module carries it with the PID and start time, and a process with another number is not it. Read-only.
+	observation: number
 	--- Its name when it was observed: still here when it has exited. Read-only.
 	name: string
 	--- Is it still there as of the last refresh, with this PID and this start time.

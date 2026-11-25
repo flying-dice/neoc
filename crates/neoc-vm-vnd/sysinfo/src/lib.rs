@@ -45,8 +45,11 @@
 //! (`pidfd`, `process_handle` or `start_time`). The start time is compared in whole seconds, as `sysinfo` reads it;
 //! where the platform gives a finer one (Linux: the start in clock ticks; Windows: the creation time) it is taken when
 //! the process is *first observed* and compared again when the handle is acquired, so a PID reused in the same second
-//! is told apart there, and not on macOS (the residual). A process whose start time is not known (0) has nothing to
-//! bind a signal to: `pin`, `terminate` and `kill` refuse it (`unknown_identity`). `process:release()` finishes the
+//! is told apart there, and not on macOS (the residual). The finer time is read at every refresh: a PID whose finer
+//! time changed is another process, and `process.observation` (a number issued at each first sighting) says which
+//! sighting a handle is, so a reference kept outside the module (a row a window drew) can be checked against the
+//! process it is resolved to. A process whose start time is not known (0), or whose finer time was not read where the
+//! platform gives one, has nothing to bind a signal to: `pin`, `terminate` and `kill` refuse it (`unknown_identity`). `process:release()` finishes the
 //! handle (`process:released()`): it signals nothing afterwards and is not pinned again, so a late signal cannot take a
 //! new reference. Nothing in this module signals a PID after an identity or permission failure.
 //!
@@ -385,11 +388,30 @@ pub mod sysinfo {
     }
 
     /// A process, as the refreshes have met it: when it started, and in how many refreshes in a row.
-    struct Seen {
-        start_time: u64,
+    #[derive(Clone, Copy)]
+    pub(super) struct Seen {
+        pub(super) start_time: u64,
         /// The finer start time the platform gave when the process was first observed (see `native`).
-        fine: Option<u64>,
-        samples: u32,
+        pub(super) fine: Option<u64>,
+        /// Which sighting this is: a number issued when the process is first met, and again when the PID turns out to
+        /// be another process (a different start time, or the same second and a different finer one). A reference to
+        /// the process carries it, so that a reference to an earlier process with this PID is not this one.
+        pub(super) generation: u64,
+        pub(super) samples: u32,
+    }
+
+    /// What a refresh makes of a process it has met before (or not): the same one, seen once more, or a new one.
+    pub(super) fn meet(before: Option<&Seen>, start_time: u64, fine: Option<u64>, issued: &mut u64) -> Seen {
+        match before {
+            Some(seen) if seen.start_time == start_time && seen.fine == fine => {
+                Seen { samples: seen.samples.saturating_add(1), ..*seen }
+            }
+            // another process has the PID: it starts again, with no load, and is not the one a reference named
+            _ => {
+                *issued += 1;
+                Seen { start_time, fine, generation: *issued, samples: 1 }
+            }
+        }
     }
 
     /// A network interface's counters at one refresh.
@@ -420,6 +442,8 @@ pub mod sysinfo {
         users: si::Users,
         load: Clock,
         seen: HashMap<u32, Seen>,
+        /// The last generation issued (see `Seen`).
+        issued: u64,
         meters: HashMap<String, Meter>,
     }
 
@@ -444,6 +468,7 @@ pub mod sysinfo {
                 users: si::Users::new_with_refreshed_list(),
                 load: Clock::default(),
                 seen: HashMap::new(),
+                issued: 0,
                 meters: HashMap::new(),
             };
             state.system.refresh_memory();
@@ -466,22 +491,16 @@ pub mod sysinfo {
             let processes = self.system.processes();
             self.seen.retain(|pid, _| processes.contains_key(&si::Pid::from_u32(*pid)));
             for (pid, process) in processes {
-                let start_time = process.start_time();
-                self.seen
-                    .entry(pid.as_u32())
-                    .and_modify(|seen| {
-                        if seen.start_time == start_time {
-                            seen.samples = seen.samples.saturating_add(1);
-                        } else {
-                            // the PID is another process now: it starts again, with no load
-                            *seen = Seen { start_time, fine: native::fine_start(pid.as_u32()), samples: 1 };
-                        }
-                    })
-                    .or_insert_with(|| Seen {
-                        start_time,
-                        fine: native::fine_start(pid.as_u32()),
-                        samples: 1,
-                    });
+                let pid = pid.as_u32();
+                // read after the refresh, for every process every time: a PID that has another process now, in the same
+                // second as the one before it, shows as another finer time
+                let seen = meet(
+                    self.seen.get(&pid),
+                    process.start_time(),
+                    native::fine_start(pid),
+                    &mut self.issued,
+                );
+                self.seen.insert(pid, seen);
             }
         }
 
@@ -527,9 +546,12 @@ pub mod sysinfo {
             self.disk_meters = meters;
         }
 
-        /// A live process by its identity.
-        fn find(&self, pid: u32, start_time: u64) -> Option<&si::Process> {
-            self.system.process(si::Pid::from_u32(pid)).filter(|process| process.start_time() == start_time)
+        /// A live process by its identity: the one that was observed, not another that has its PID.
+        fn find(&self, pid: u32, start_time: u64, generation: u64) -> Option<&si::Process> {
+            self.system
+                .process(si::Pid::from_u32(pid))
+                .filter(|process| process.start_time() == start_time)
+                .filter(|_| self.seen.get(&pid).is_some_and(|seen| seen.generation == generation))
         }
     }
 
@@ -856,6 +878,8 @@ pub mod sysinfo {
         start_time: u64,
         /// The finer start time taken when it was first observed, where the platform gives one.
         fine: Option<u64>,
+        /// Which sighting of this PID it is (see `Seen`): the process observed, not a later one with the same PID.
+        generation: u64,
         name: String,
         /// The native reference to it, once pinned, and whether it was let go. Clones share it.
         held: Arc<Mutex<Hold>>,
@@ -873,15 +897,13 @@ pub mod sysinfo {
         pub(super) fn observed(state: &Arc<Mutex<State>>, locked: &State, process: &si::Process) -> Self {
             let pid = process.pid().as_u32();
             let start_time = process.start_time();
+            let seen = locked.seen.get(&pid).filter(|seen| seen.start_time == start_time);
             Self {
                 state: state.clone(),
                 pid,
                 start_time,
-                fine: locked
-                    .seen
-                    .get(&pid)
-                    .filter(|seen| seen.start_time == start_time)
-                    .and_then(|seen| seen.fine),
+                fine: seen.and_then(|seen| seen.fine),
+                generation: seen.map_or(0, |seen| seen.generation),
                 name: text(process.name()),
                 held: Arc::new(Mutex::new(Hold::Never)),
             }
@@ -894,7 +916,9 @@ pub mod sysinfo {
                 state: state.clone(),
                 pid,
                 start_time,
-                fine: None,
+                // what a real observation of this PID would have taken
+                fine: native::fine_start(pid),
+                generation: 0,
                 name: name.to_owned(),
                 held: Arc::new(Mutex::new(Hold::Never)),
             }
@@ -912,22 +936,42 @@ pub mod sysinfo {
             Self { fine: Some(fine), ..Self::forged(state, pid, start_time, name) }
         }
 
+        /// A handle whose finer start time was not read when it was observed.
+        #[cfg(all(test, any(target_os = "linux", windows)))]
+        pub(super) fn forged_without_fine(
+            state: &Arc<Mutex<State>>,
+            pid: u32,
+            start_time: u64,
+            name: &str,
+        ) -> Self {
+            Self { fine: None, ..Self::forged(state, pid, start_time, name) }
+        }
+
         fn read<R>(&self, f: impl FnOnce(&State, &si::Process) -> R) -> Option<R> {
             let state = self.state.lock();
-            let process = state.find(self.pid, self.start_time)?;
+            let process = state.find(self.pid, self.start_time, self.generation)?;
             Some(f(&state, process))
+        }
+
+        /// Whether this handle names a process that can be told apart from another that is given its PID: its start
+        /// time is known and, where the platform gives a finer one, it was read when the process was observed. Without
+        /// that no signal is sent and no reference is taken (nothing falls back to the whole seconds).
+        fn identified(&self) -> Result<(), Error> {
+            if self.start_time == 0 || (native::FINE_START && self.fine.is_none()) {
+                return Err(Error::UnknownIdentity);
+            }
+            Ok(())
         }
 
         /// Send the signal to the observed process (and nothing else), on the blocking pool.
         async fn signal(&self, sig: Sig) -> Result<(), Error> {
             let (pid, start_time, fine, held) = (self.pid, self.start_time, self.fine, self.held.clone());
+            let identified = self.identified();
             blocking(move || {
                 if pid == std::process::id() {
                     return Err(Error::OwnProcess);
                 }
-                if start_time == 0 {
-                    return Err(Error::UnknownIdentity);
-                }
+                identified?;
                 if sig == Sig::Terminate && !native::capability().terminate {
                     return Err(Error::Unsupported {
                         reason: "this platform has no request to stop a process: only `kill` is available"
@@ -966,6 +1010,14 @@ pub mod sysinfo {
             self.start_time
         }
 
+        /// Which sighting of this PID it is: a number the module issues when it first meets a process, and again when
+        /// the PID turns out to be another process (even one that started in the same second). A reference kept
+        /// outside the module carries it with the PID and start time, and a process with another number is not it.
+        #[get]
+        pub fn observation(&self) -> u64 {
+            self.generation
+        }
+
         /// Its name when it was observed: still here when it has exited.
         #[get]
         pub fn name(&self) -> String {
@@ -986,7 +1038,7 @@ pub mod sysinfo {
         /// reused).
         pub fn parent(&self) -> Option<Process> {
             let state = self.state.lock();
-            let process = state.find(self.pid, self.start_time)?;
+            let process = state.find(self.pid, self.start_time, self.generation)?;
             let parent = state.system.process(process.parent()?)?;
             (parent.start_time() <= process.start_time())
                 .then(|| Process::observed(&self.state, &state, parent))
@@ -995,7 +1047,7 @@ pub mod sysinfo {
         /// The processes whose parent it is, as last measured.
         pub fn children(&self) -> Vec<Process> {
             let state = self.state.lock();
-            if state.find(self.pid, self.start_time).is_none() {
+            if state.find(self.pid, self.start_time, self.generation).is_none() {
                 return Vec::new();
             }
             let me = si::Pid::from_u32(self.pid);
@@ -1039,7 +1091,7 @@ pub mod sysinfo {
         pub fn cpu_usage(&self) -> Option<f64> {
             self.read(|state, process| {
                 let samples =
-                    state.seen.get(&self.pid).filter(|seen| seen.start_time == self.start_time)?.samples;
+                    state.seen.get(&self.pid).filter(|seen| seen.generation == self.generation)?.samples;
                 (samples >= 2).then(|| f64::from(process.cpu_usage().max(0.0)))
             })
             .flatten()
@@ -1089,10 +1141,9 @@ pub mod sysinfo {
         #[host("Wait")]
         pub async fn pin(&self) -> Result<Binding, Error> {
             let (pid, start_time, fine, held) = (self.pid, self.start_time, self.fine, self.held.clone());
+            let identified = self.identified();
             blocking(move || {
-                if start_time == 0 {
-                    return Err(Error::UnknownIdentity);
-                }
+                identified?;
                 let mut hold = held.lock();
                 match &*hold {
                     Hold::Released => return Err(Error::Released),
