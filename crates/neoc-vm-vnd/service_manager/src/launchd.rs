@@ -4,8 +4,8 @@
 //! define the jobs that load into it. Discovery reads those directories (the definitions) and asks the domain itself
 //! (`launchctl print <domain>`) which jobs are loaded and running, including loaded jobs that have no property list;
 //! when the domain cannot be asked the state is `unknown`, never a guess. Registering, removing, starting and stopping
-//! go through the `service-manager` crate. A change rewrites only the keys it is about in the property list, in place
-//! (so its owner, mode and ACLs stay), and applies when the service is next loaded, which is what `restart` does.
+//! go through the `service-manager` crate. A change rewrites only the keys it is about in the property list (staged
+//! beside it and moved over it whole, with its mode and owner kept), and applies when the service is next loaded, which is what `restart` does.
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -401,24 +401,70 @@ impl Backend for Launchd {
     }
 }
 
-/// Replace the contents of a file and nothing else about it: written in place, so its owner, group, mode, ACLs and
-/// extended attributes stay as they were (a new file renamed over it would have none of them). If the write fails
-/// half way the old contents are put back.
+/// Replace the contents of a property list and nothing else about it. The complete new file is staged beside the old
+/// one, given the old one's mode, owner and group, and only then moved over it in one step: until that step the old
+/// file is untouched, and a failure at any point leaves it byte for byte as it was. What cannot be given to the new
+/// file (an owner this process may not hand out, an ACL or extended attributes) refuses the change before anything
+/// is written.
 fn rewrite(path: &Path, bytes: &[u8]) -> Result<(), Error> {
-    let original = std::fs::read(path).map_err(|e| io_error("configure", &e))?;
-    let write = |contents: &[u8]| -> std::io::Result<()> {
-        let mut file = std::fs::OpenOptions::new().write(true).open(path)?;
-        file.set_len(0)?;
-        file.write_all(contents)?;
-        file.sync_all()
-    };
-    match write(bytes) {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            let _ = write(&original);
-            Err(io_error("configure", &e))
-        }
+    replace(path, bytes, |staged, target| staged.persist(target).map(|_| ()).map_err(|e| e.error))
+}
+
+/// [`rewrite`] with the final step given, so a failure of it can be tried.
+fn replace(
+    path: &Path,
+    bytes: &[u8],
+    commit: impl FnOnce(tempfile::NamedTempFile, &Path) -> std::io::Result<()>,
+) -> Result<(), Error> {
+    let dir =
+        path.parent().ok_or_else(|| Error::Other { reason: "a property list has a directory".to_owned() })?;
+    let original = std::fs::metadata(path).map_err(|e| io_error("configure", &e))?;
+    refuse_extended_metadata(path)?;
+    let mut staged = tempfile::NamedTempFile::new_in(dir).map_err(|e| io_error("configure", &e))?;
+    staged.write_all(bytes).map_err(|e| io_error("configure", &e))?;
+    staged.flush().map_err(|e| io_error("configure", &e))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        std::os::unix::fs::chown(staged.path(), Some(original.uid()), Some(original.gid())).map_err(|e| {
+            Error::Unsupported {
+                option: None,
+                reason: format!("the owner of {} cannot be kept on a rewritten file ({e})", path.display()),
+            }
+        })?;
     }
+    staged.as_file().set_permissions(original.permissions()).map_err(|e| io_error("configure", &e))?;
+    staged.as_file().sync_all().map_err(|e| io_error("configure", &e))?;
+    // the staged file is removed by its own drop when this fails: nothing is left beside the original
+    commit(staged, path).map_err(|e| io_error("configure", &e))
+}
+
+/// An ACL or an extended attribute lives beside the contents and a new file would not have it: say so, do not drop it.
+#[cfg(target_os = "macos")]
+fn refuse_extended_metadata(path: &Path) -> Result<(), Error> {
+    let output = run(Path::new("ls"), &["-ldeO@", &path.display().to_string()])?;
+    if has_extended_metadata(&String::from_utf8_lossy(&output.stdout)) {
+        return Err(Error::Unsupported {
+            option: None,
+            reason: format!(
+                "{} has an ACL or extended attributes that a rewritten file would lose: it is not changed",
+                path.display()
+            ),
+        });
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn refuse_extended_metadata(_path: &Path) -> Result<(), Error> {
+    Ok(())
+}
+
+/// Whether `ls -ldeO@` printed anything after the file's own line: an ACL entry (` 0: user:...`) or an attribute
+/// (a tab, its name and size). The `@` after the mode is a hint that there is something, not the evidence.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn has_extended_metadata(listing: &str) -> bool {
+    listing.lines().filter(|line| !line.trim().is_empty()).count() > 1
 }
 
 #[cfg(test)]
@@ -488,7 +534,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn a_change_keeps_the_mode_and_the_file_of_the_property_list() {
+    fn a_change_keeps_the_mode_and_the_owner_of_the_property_list() {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("org.example.app.plist");
@@ -506,10 +552,40 @@ mod tests {
         launchd.configure("org.example.app", &patch).expect("configure");
         let after = std::fs::metadata(&path).expect("meta");
         assert_eq!(after.permissions().mode() & 0o777, 0o600, "a restrictive mode stays restrictive");
-        assert_eq!(after.ino(), before.ino(), "it is the same file");
+        assert_eq!((after.uid(), after.gid()), (before.uid(), before.gid()), "the owner stays");
         let (_, changed) = launchd.definition("org.example.app").expect("read").expect("found");
         assert_eq!(changed.get("RunAtLoad").and_then(Value::as_boolean), Some(false));
         assert_eq!(changed.get("StandardOutPath").and_then(Value::as_string), Some("/var/log/app.log"));
+    }
+
+    #[test]
+    fn a_failed_commit_leaves_the_original_byte_for_byte_and_nothing_beside_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("org.example.app.plist");
+        std::fs::write(&path, PLIST).expect("write");
+        let before = std::fs::read(&path).expect("read");
+        let failed = replace(&path, b"<plist>a whole new file</plist>", |_staged, _target| {
+            Err(std::io::Error::other("the disk is full"))
+        });
+        assert!(matches!(failed, Err(Error::Failed { .. })), "{failed:?}");
+        assert_eq!(std::fs::read(&path).expect("read"), before, "the original is intact");
+        let left: Vec<_> = std::fs::read_dir(dir.path()).expect("dir").flatten().collect();
+        assert_eq!(left.len(), 1, "the staged file is gone: {left:?}");
+        // and the real commit replaces it whole
+        replace(&path, b"new", |staged, target| staged.persist(target).map(|_| ()).map_err(|e| e.error))
+            .expect("replace");
+        assert_eq!(std::fs::read(&path).expect("read"), b"new");
+    }
+
+    #[test]
+    fn an_acl_or_an_extended_attribute_is_seen_in_the_listing() {
+        assert!(!has_extended_metadata("-rw-r--r--  1 root  wheel  - 1 Jan  1 00:00 /a.plist\n"));
+        assert!(has_extended_metadata(
+            "-rw-r--r--+ 1 root  wheel  - 1 Jan  1 00:00 /a.plist\n 0: user:x allow read\n"
+        ));
+        assert!(has_extended_metadata(
+            "-rw-r--r--@ 1 root  wheel  - 1 Jan  1 00:00 /a.plist\n\tcom.apple.quarantine\t 20\n"
+        ));
     }
 
     #[test]

@@ -74,6 +74,19 @@ impl Systemd {
         Ok(unit_names(&files).into_iter().chain(unit_names(&units)).collect())
     }
 
+    /// `systemctl` reads `*`, `?` and `[` in a unit name as a pattern and acts on every unit that matches, so a name
+    /// that holds one is not a name: it is refused before `systemctl` sees it.
+    fn exact(label: &str) -> Result<(), Error> {
+        if label.contains(['*', '?', '[', ']']) {
+            return Err(Error::InvalidInput {
+                reason: format!(
+                    "{label:?} holds a pattern character (`* ? [ ]`): a service is named exactly"
+                ),
+            });
+        }
+        Ok(())
+    }
+
     fn show(&self, labels: &[String]) -> Result<Vec<Service>, Error> {
         let mut found = Vec::new();
         for chunk in labels.chunks(100) {
@@ -98,10 +111,10 @@ impl Systemd {
     fn read_dropin(&self, label: &str) -> Result<DropIn, Error> {
         let path = self.dropin_path(label);
         match std::fs::read_to_string(&path) {
-            Ok(text) => DropIn::parse(&text).ok_or_else(|| Error::Failed {
+            Ok(text) => DropIn::parse_exact(&text).ok_or_else(|| Error::Failed {
                 operation: "configure".to_owned(),
                 reason: format!(
-                    "{} exists and was not written by this module: it is not replaced",
+                    "{} was not written by this module or has been edited since: it is not replaced",
                     path.display()
                 ),
             }),
@@ -114,7 +127,7 @@ impl Systemd {
     /// is not ours, and is never removed.
     pub(super) fn owns_dropin(&self, label: &str) -> Result<bool, Error> {
         match std::fs::read_to_string(self.dropin_path(label)) {
-            Ok(text) => Ok(DropIn::parse(&text).is_some()),
+            Ok(text) => Ok(DropIn::parse_exact(&text).is_some()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
             Err(e) => Err(io_error("uninstall", &e)),
         }
@@ -400,6 +413,13 @@ impl DropIn {
         serde_json::from_str(json).ok()
     }
 
+    /// The state of a drop-in whose directives are still exactly what this module wrote for that state. A file that
+    /// carries the mark but was edited since is not read as ours: regenerating it from the mark would discard the edit.
+    fn parse_exact(text: &str) -> Option<Self> {
+        let parsed = Self::parse(text)?;
+        (parsed.render() == text).then_some(parsed)
+    }
+
     fn render(&self) -> String {
         let mut out =
             String::from("# Settings changed through vos. The unit's own file is left as it was.\n");
@@ -510,7 +530,9 @@ impl Backend for Systemd {
     }
 
     fn get(&self, label: &str) -> Result<Option<Service>, Error> {
-        Ok(self.show(&[label.to_owned()])?.into_iter().next())
+        Self::exact(label)?;
+        // the unit that answers must be the one that was asked for
+        Ok(self.show(&[label.to_owned()])?.into_iter().find(|s| s.label == label))
     }
 
     fn install(&self, spec: &Spec) -> Result<(), Error> {
@@ -550,18 +572,22 @@ impl Backend for Systemd {
     }
 
     fn start(&self, label: &str) -> Result<(), Error> {
+        Self::exact(label)?;
         self.ctl_ok("start", Some(label), &["start", &Self::unit(label)]).map(|_| ())
     }
 
     fn stop(&self, label: &str) -> Result<(), Error> {
+        Self::exact(label)?;
         self.ctl_ok("stop", Some(label), &["stop", &Self::unit(label)]).map(|_| ())
     }
 
     fn restart(&self, label: &str) -> Result<(), Error> {
+        Self::exact(label)?;
         self.ctl_ok("restart", Some(label), &["restart", &Self::unit(label)]).map(|_| ())
     }
 
     fn configure(&self, label: &str, patch: &Patch) -> Result<(), Error> {
+        Self::exact(label)?;
         self.get(label)?.ok_or_else(|| Error::NotFound { label: label.to_owned() })?;
         let unit = Self::unit(label);
         let mut dropin = self.read_dropin(label)?;

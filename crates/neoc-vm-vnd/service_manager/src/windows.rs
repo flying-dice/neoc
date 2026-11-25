@@ -16,8 +16,18 @@ use service_manager::ServiceManagerKind;
 use super::backend::{Backend, checked, crate_install, crate_start, crate_stop, crate_uninstall, run};
 use super::service_manager::{Capabilities, Error, Level, Patch, Service, Spec, State};
 
-const LIST: &str = "Get-CimInstance Win32_Service | Select-Object Name,Description,State,StartMode,PathName,StartName,ExitCode | ConvertTo-Json -Compress";
-const GET: &str = "Get-CimInstance Win32_Service -Filter \"Name='$($env:NEOC_SERVICE)'\" | Select-Object Name,Description,State,StartMode,PathName,StartName,ExitCode | ConvertTo-Json -Compress";
+/// Every script stops at its first error (`Stop`): a query that failed is an error, never an empty answer.
+const LIST: &str = "$ErrorActionPreference = 'Stop'; Get-CimInstance Win32_Service | Select-Object Name,Description,State,StartMode,PathName,StartName,ExitCode | ConvertTo-Json -Compress";
+/// The name arrives escaped for a WQL string in `NEOC_SERVICE_WQL` and as it is in `NEOC_SERVICE`; the answer must be
+/// the service of exactly that name, whatever the filter matched.
+const GET: &str = "$ErrorActionPreference = 'Stop'; Get-CimInstance Win32_Service -Filter \"Name='$($env:NEOC_SERVICE_WQL)'\" | Where-Object { $_.Name -eq $env:NEOC_SERVICE } | Select-Object Name,Description,State,StartMode,PathName,StartName,ExitCode | ConvertTo-Json -Compress";
+/// One service controller made from the exact name (`Restart-Service -Name` reads `*`, `?` and `[` as a pattern).
+const RESTART: &str = "$ErrorActionPreference = 'Stop'; $s = New-Object System.ServiceProcess.ServiceController($env:NEOC_SERVICE); Restart-Service -InputObject $s";
+
+/// A name as a WQL string literal: the backslash and the quote are escaped.
+fn wql_literal(name: &str) -> String {
+    name.replace('\\', "\\\\").replace('\'', "\\'")
+}
 
 pub(super) struct Windows {
     powershell: PathBuf,
@@ -51,13 +61,13 @@ impl Windows {
         let mut command = std::process::Command::new(&self.powershell);
         command.args(["-NoProfile", "-NonInteractive", "-Command", script]);
         if let Some(label) = label {
-            command.env("NEOC_SERVICE", label);
+            command.env("NEOC_SERVICE", label).env("NEOC_SERVICE_WQL", wql_literal(label));
         }
         let output = command
             .stdin(std::process::Stdio::null())
             .output()
             .map_err(|e| super::backend::io_error("powershell.exe", &e))?;
-        let output = checked("list services", None, output)?;
+        let output = checked("inspect services", label, output)?;
         parse_cim(&String::from_utf8_lossy(&output.stdout))
     }
 }
@@ -155,12 +165,7 @@ impl Backend for Windows {
     fn restart(&self, label: &str) -> Result<(), Error> {
         let mut command = std::process::Command::new(&self.powershell);
         command
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                "Restart-Service -Name $env:NEOC_SERVICE -ErrorAction Stop",
-            ])
+            .args(["-NoProfile", "-NonInteractive", "-Command", RESTART])
             .env("NEOC_SERVICE", label)
             .stdin(std::process::Stdio::null());
         let output = command.output().map_err(|e| super::backend::io_error("powershell.exe", &e))?;
@@ -182,6 +187,31 @@ impl Backend for Windows {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_name_is_escaped_for_a_wql_string() {
+        assert_eq!(wql_literal("Spooler"), "Spooler");
+        assert_eq!(wql_literal("Bob's [Service]"), "Bob\\'s [Service]");
+        assert_eq!(wql_literal("a\\b' OR Name LIKE '%"), "a\\\\b\\' OR Name LIKE \\'%");
+    }
+
+    #[test]
+    fn the_scripts_stop_at_an_error_and_choose_one_exact_service() {
+        for script in [LIST, GET, RESTART] {
+            assert!(script.starts_with("$ErrorActionPreference = 'Stop';"), "{script}");
+        }
+        assert!(GET.contains("Where-Object { $_.Name -eq $env:NEOC_SERVICE }"));
+        assert!(RESTART.contains("-InputObject $s") && !RESTART.contains("-Name"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_query_is_an_error_and_not_an_empty_answer() {
+        // `false` stands for a powershell that answers with a failure and nothing else
+        let windows = Windows { powershell: PathBuf::from("false"), sc: PathBuf::from("false") };
+        assert!(matches!(windows.get("Bob's Service"), Err(Error::Failed { .. })));
+        assert!(matches!(windows.list(), Err(Error::Failed { .. })));
+    }
 
     #[test]
     fn one_service_and_several_are_both_read() {

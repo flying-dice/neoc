@@ -492,6 +492,41 @@ esac
     }
 
     #[test]
+    fn a_pattern_is_not_a_name_and_cannot_reach_more_than_one_service() {
+        let rig = rig();
+        for pattern in ["*", "w?b", "[wd]*", "web*"] {
+            for what in [Control::Start, Control::Stop, Control::Restart] {
+                let refused = ops::control(&rig.manager, pattern, what).unwrap_err();
+                assert!(matches!(refused, Error::InvalidInput { .. }), "{pattern:?}: {refused:?}");
+            }
+            assert!(matches!(ops::get(&rig.manager, pattern), Err(Error::InvalidInput { .. })));
+            let patch = Patch { autostart: Some(true), ..Patch::default() };
+            assert!(matches!(ops::configure(&rig.manager, pattern, patch), Err(Error::InvalidInput { .. })));
+        }
+        assert!(!rig.path.join("log").exists(), "systemctl was never asked to change anything");
+        // the exact name still works
+        assert_eq!(ops::control(&rig.manager, "web", Control::Start).unwrap().state, State::Running);
+        assert_eq!(ops::get(&rig.manager, "db").unwrap().unwrap().state, State::Stopped);
+    }
+
+    #[test]
+    fn a_drop_in_edited_since_it_was_written_is_not_regenerated_over() {
+        let rig = rig();
+        let restart = Patch { restart: Some(Restart::Always), ..Patch::default() };
+        ops::configure(&rig.manager, "web", restart).expect("configure");
+        let file = rig.dropins.join("web.service.d/90-vos.conf");
+        // an administrator adds a directive and leaves the mark where it was
+        let text = std::fs::read_to_string(&file).unwrap();
+        let edited = format!("{text}[Service]\nNice=5\n");
+        std::fs::write(&file, &edited).unwrap();
+        let description = Patch { description: Some("Unrelated".to_owned()), ..Patch::default() };
+        let refused = ops::configure(&rig.manager, "web", description).unwrap_err();
+        assert!(matches!(refused, Error::Failed { .. }), "{refused:?}");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), edited, "the edit is still there");
+        assert!(!rig.manager.owns_dropin("web").unwrap(), "an edited file is not removed as ours");
+    }
+
+    #[test]
     fn a_file_that_is_not_ours_is_not_replaced_and_an_unknown_unit_is_not_found() {
         let rig = rig();
         let dir = rig.dropins.join("web.service.d");
