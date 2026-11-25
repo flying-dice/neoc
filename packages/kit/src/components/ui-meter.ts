@@ -1,4 +1,5 @@
 import { LitElement, css, html, type TemplateResult } from 'lit'
+import { ifDefined } from 'lit/directives/if-defined.js'
 import { define } from '../define'
 import { base } from '../styles'
 
@@ -98,11 +99,11 @@ export class UiMeter extends LitElement {
       class="track"
       part="track"
       role=${percent === undefined ? 'presentation' : 'meter'}
-      aria-label=${percent === undefined || !this.label ? null : this.label}
-      aria-valuemin=${percent === undefined ? null : '0'}
-      aria-valuemax=${percent === undefined ? null : '100'}
-      aria-valuenow=${percent === undefined ? null : String(Math.round(percent))}
-      aria-valuetext=${percent === undefined ? null : `${Math.round(percent)} percent`}
+      aria-label=${ifDefined(percent === undefined || !this.label ? undefined : this.label)}
+      aria-valuemin=${ifDefined(percent === undefined ? undefined : '0')}
+      aria-valuemax=${ifDefined(percent === undefined ? undefined : '100')}
+      aria-valuenow=${ifDefined(percent === undefined ? undefined : String(Math.round(percent)))}
+      aria-valuetext=${ifDefined(percent === undefined ? undefined : `${Math.round(percent)} percent`)}
     >
       ${percent === undefined ? '' : html`<div class="fill" part="fill" style=${fill}></div>`}
     </div>`

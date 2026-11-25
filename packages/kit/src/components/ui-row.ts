@@ -211,6 +211,11 @@ export class UiRow extends LitElement {
       :host([selected]:not([multi])) .title {
         color: #fff;
       }
+      /* what a row holds in its slots (a value pair) reads on the selection's fill too */
+      :host([selected]:not([multi])) {
+        --ui-value-main: #fff;
+        --ui-value-secondary: rgb(255 255 255 / 0.92);
+      }
       .subtitle {
         font: var(--type-subheadline);
         letter-spacing: var(--tracking-subheadline);

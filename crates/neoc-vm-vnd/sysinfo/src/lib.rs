@@ -433,18 +433,22 @@ pub mod sysinfo {
                 meters: HashMap::new(),
             };
             state.system.refresh_memory();
-            state.refresh_load_unchecked(Instant::now());
+            state.refresh_load_unchecked();
             state.measure_networks(Instant::now());
             state.measure_disks(Instant::now());
             state
         }
 
         /// The CPU load and every process: one measurement over one interval.
-        fn refresh_load_unchecked(&mut self, now: Instant) {
+        ///
+        /// The interval is counted from when the measurement ended, as `sysinfo` counts it (its own minimum is from the
+        /// last refresh of the CPU): on a platform where reading every process takes a while, counting from when it
+        /// began would let the next measurement through at once.
+        fn refresh_load_unchecked(&mut self) {
             self.system
                 .refresh_cpu_specifics(si::CpuRefreshKind::nothing().with_cpu_usage().with_frequency());
             self.system.refresh_processes_specifics(si::ProcessesToUpdate::All, true, process_kind());
-            self.load.tick(now);
+            self.load.tick(Instant::now());
             let processes = self.system.processes();
             self.seen.retain(|pid, _| processes.contains_key(&si::Pid::from_u32(*pid)));
             for (pid, process) in processes {
@@ -466,7 +470,7 @@ pub mod sysinfo {
         fn refresh_load(&mut self) -> Result<(), Error> {
             let now = Instant::now();
             self.load.check(now)?;
-            self.refresh_load_unchecked(now);
+            self.refresh_load_unchecked();
             Ok(())
         }
 

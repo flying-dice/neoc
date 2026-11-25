@@ -44,16 +44,16 @@ export class UiValuePair extends LitElement {
         min-width: 56px;
         font: var(--type-headline);
         letter-spacing: var(--tracking-body);
-        color: var(--label);
+        color: var(--ui-value-main, var(--label));
       }
       .main.none {
-        color: var(--label-secondary);
+        color: var(--ui-value-secondary, var(--label-secondary));
       }
       .secondary {
         min-width: 64px;
         font: var(--type-subheadline);
         letter-spacing: var(--tracking-subheadline);
-        color: var(--label-secondary);
+        color: var(--ui-value-secondary, var(--label-secondary));
       }
       :host([layout='stacked']) .main,
       :host([layout='stacked']) .secondary {

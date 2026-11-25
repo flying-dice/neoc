@@ -177,6 +177,26 @@
         "vite": "^8.3.4",
       },
     },
+    "apps/processes": {
+      "name": "@vos-apps/processes",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@storybook/addon-a11y": "10.6.7",
+        "@storybook/addon-docs": "10.6.7",
+        "@storybook/addon-svelte-csf": "5.1.6",
+        "@storybook/addon-themes": "10.6.7",
+        "@storybook/svelte-vite": "10.6.7",
+        "@sveltejs/vite-plugin-svelte": "^7.3.1",
+        "@types/bun": "1.4.4",
+        "@vos/storybook": "workspace:*",
+        "@vos/vite-plugin": "workspace:*",
+        "storybook": "10.6.7",
+        "svelte": "^5.57.2",
+        "svelte-check": "^4.7.6",
+        "typescript": "^5.9.3",
+        "vite": "^8.3.4",
+      },
+    },
     "apps/projects": {
       "name": "@vos-apps/projects",
       "version": "0.1.0",
@@ -821,6 +841,8 @@
     "@vos-apps/notes": ["@vos-apps/notes@workspace:apps/notes"],
 
     "@vos-apps/pages": ["@vos-apps/pages@workspace:apps/pages"],
+
+    "@vos-apps/processes": ["@vos-apps/processes@workspace:apps/processes"],
 
     "@vos-apps/projects": ["@vos-apps/projects@workspace:apps/projects"],
 

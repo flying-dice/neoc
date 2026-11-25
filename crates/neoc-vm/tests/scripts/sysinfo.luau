@@ -5,19 +5,21 @@ local sysinfo = require("vnd:sysinfo")
 
 local capabilities = sysinfo.capabilities()
 assert(capabilities.kill)
-assert(capabilities.binding == "pidfd" or capabilities.binding == "process_handle" or capabilities.binding == "start_time")
+assert(
+  capabilities.binding == "pidfd" or capabilities.binding == "process_handle" or capabilities.binding == "start_time"
+)
 
 local system = assert(sysinfo.system())
 
 -- a first reading has the things that are read, and no load: a load needs two measurements
 local cpu = system:cpu()
-assert(cpu.sampled == false and cpu.usage == nil)
-assert(cpu.logical_cores >= 1 and #cpu.cores == cpu.logical_cores)
+assert(cpu.sampled == false and cpu.usage == nil, "the first reading has no load")
+assert(cpu.logical_cores >= 1 and #cpu.cores == cpu.logical_cores, "a core is listed for each logical core")
 
 local memory = system:memory()
-assert(memory.total > 0 and memory.used <= memory.total)
-assert(system:host().uptime_secs > 0)
-assert(#system:processes() > 0)
+assert(memory.total > 0 and memory.used <= memory.total, "memory is read")
+assert(system:host().uptime_secs > 0, "the machine has been up")
+assert(#system:processes() > 0, "processes are read")
 
 -- the process list holds this process, and a process is read from its handle
 local found: { [number]: boolean } = {}
@@ -29,10 +31,10 @@ assert(next(found) ~= nil)
 
 -- a refresh too soon after the last is refused, with how long to wait, and measures nothing
 local ok, err = system:refresh_processes()
-assert(ok == nil and err ~= nil and err.kind == "too_soon")
+assert(ok == nil and err ~= nil and err.kind == "too_soon", "a refresh right after the last is too soon")
 if err ~= nil and err.kind == "too_soon" then
   assert(err.retry_after_ms > 0 and err.retry_after_ms <= sysinfo.MIN_CPU_INTERVAL_MS + 1)
 end
 
 -- a PID no process has is not a handle
-assert(system:process(4294967295) == nil)
+assert(system:process(4294967295) == nil, "a PID no process has is not a handle")
