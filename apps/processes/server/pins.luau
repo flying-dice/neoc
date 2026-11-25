@@ -61,6 +61,27 @@ function pins.hold(process: vnd_sysinfo_Process): (Selection?, vnd_sysinfo_Error
   return selection, nil
 end
 
+-- A process that was only just seen cannot be told apart from another that is given its PID until the refresh after it
+-- (`unknown_identity`): the selection can be looked at at once, and ends up holding the process when a later reading
+-- has confirmed it. `find` looks the same process up in the current measurement (nil if it is another or gone).
+function pins.confirm(selection: Selection, find: (vnd_sysinfo_Process) -> vnd_sysinfo_Process?)
+  local blocked = selection.blocked
+  if not blocked or blocked.kind ~= "unknown_identity" then
+    return
+  end
+  local again = find(selection.process)
+  if not again then
+    return
+  end
+  local _, err = again:pin()
+  -- still not confirmed, or not the process that was chosen any more: the selection stays as it is
+  if err and (err.kind == "unknown_identity" or err.kind == "process_gone" or err.kind == "pid_reused") then
+    return
+  end
+  selection.process = again
+  selection.blocked = err
+end
+
 function pins.get(id: string): Selection?
   return held[id]
 end

@@ -118,6 +118,8 @@ test.describe('Processes journeys', () => {
     const pid = await launch(true)
     await find(page, pid)
     await row(page, pid).click()
+    // a program only just started is read-only until the next reading confirms it
+    await expect(part(page, 'force')).toHaveJSProperty('disabled', false)
     await part(page, 'terminate').click()
     await part(page, 'confirm-confirm').click()
     await expect(part(page, 'notice')).toContainText('to quit')
@@ -138,6 +140,8 @@ test.describe('Processes journeys', () => {
     const pid = await launch()
     await find(page, pid)
     await row(page, pid).click()
+    // a program only just started is read-only until the next reading confirms it
+    await expect(part(page, 'force')).toHaveJSProperty('disabled', false)
     if (WINDOWS) await expect(part(page, 'terminate')).toHaveCount(0)
     await part(page, 'force').click()
     await part(page, 'confirm-cancel').click()
@@ -281,6 +285,8 @@ test.describe('Processes journeys', () => {
     await field(page, 'search').fill(String(second))
     await row(page, second).click()
     await expect(part(page, 'detail-state')).toContainText(`PID ${second}`)
+    // only just started: held for ending once the next reading has confirmed it
+    await expect(part(page, 'force')).toHaveJSProperty('disabled', false)
     await expect.poll(async () => (await ids()).length).toBe(2)
     const [letGo, held] = await ids()
 

@@ -22,7 +22,7 @@ local function sentence(err: vnd_sysinfo_Error, name: string, force: boolean): s
   elseif kind == "own_process" then
     return "Processes runs inside this program, so it cannot stop it."
   elseif kind == "unknown_identity" then
-    return `Processes cannot tell {name} apart from another program that is given its number, so it will not stop it.`
+    return `Processes cannot tell {name} apart from another program that is given its number (yet, if it only just started), so it will not stop it. Choose it again in a moment.`
   elseif kind == "released" then
     return "Choose the program again: Processes no longer holds it."
   elseif kind == "permission_denied" then
@@ -68,6 +68,12 @@ local handlers: rpc.Handlers = {
       -- the process as the window chose it, even after it has quit; an id that is not held is said so, and never looked up by PID
       local selection = pins.get(selected)
       if selection then
+        pins.confirm(selection, function(before)
+          return monitor.find(
+            current,
+            { pid = before.pid, startTime = before.start_time, observation = before.observation }
+          )
+        end)
         snapshot.detail = detailOf(selection)
       else
         snapshot.selectionLost = true

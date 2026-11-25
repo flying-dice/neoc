@@ -346,6 +346,9 @@ async fn terminate_asks_and_kill_stops_and_a_platform_without_the_request_says_s
         local forced = launch()
         pause(300)
         assert(system:refresh_processes())
+        -- a first sighting is read-only until a second refresh confirms it
+        pause(300)
+        assert(system:refresh_processes())
         local can = sysinfo.capabilities()
         assert(can.kill)
 
@@ -391,6 +394,9 @@ async fn terminate_is_never_turned_into_kill() {
         local pid = launch_stubborn()
         pause(300)
         assert(system:refresh_processes())
+        -- a first sighting is read-only until a second refresh confirms it
+        pause(300)
+        assert(system:refresh_processes())
         local stubborn = assert(system:process(pid))
         assert(stubborn:terminate())
         pause(700)
@@ -413,6 +419,9 @@ async fn a_handle_to_a_process_that_has_exited_is_gone() {
         r#"
         local system = assert(require("vnd:sysinfo").system())
         local pid = launch()
+        pause(300)
+        assert(system:refresh_processes())
+        -- a first sighting is read-only until a second refresh confirms it
         pause(300)
         assert(system:refresh_processes())
         local stale = assert(system:process(pid))
@@ -470,6 +479,9 @@ async fn a_pinned_process_is_held_until_it_is_released_and_a_signal_goes_through
         local sysinfo = require("vnd:sysinfo")
         local system = assert(sysinfo.system())
         local pid = launch()
+        pause(300)
+        assert(system:refresh_processes())
+        -- a first sighting is read-only until a second refresh confirms it
         pause(300)
         assert(system:refresh_processes())
         local process = assert(system:process(pid))
@@ -535,6 +547,9 @@ async fn on_linux_a_pinned_process_is_held_by_a_pidfd() {
     let () = run(r#"
         local system = assert(require("vnd:sysinfo").system())
         local pid = launch()
+        pause(300)
+        assert(system:refresh_processes())
+        -- a first sighting is read-only until a second refresh confirms it
         pause(300)
         assert(system:refresh_processes())
         local process = assert(system:process(pid))
@@ -633,6 +648,14 @@ fn a_pid_that_turns_out_to_be_another_process_is_a_new_sighting() {
     // a finer time that cannot be read now is not the one that was: it is not told apart, so it is not the same
     let unreadable = meet(Some(&later), 101, None, &mut issued);
     assert_eq!((unreadable.generation, unreadable.samples), (4, 1));
+    // a first sighting can be inspected but not acted on until it is met again with the identity it had; one met
+    // again as another is a first sighting once more
+    if native::FINE_START {
+        assert!(!first.confirmed && again.confirmed);
+        assert!(!same_second.confirmed && !later.confirmed && !unreadable.confirmed);
+    } else {
+        assert!(first.confirmed && same_second.confirmed, "nothing to confirm without a finer identity");
+    }
     // a process met for the first time on a platform with no finer time is one sighting, however often it is met
     let coarse = meet(None, 7, None, &mut issued);
     assert_eq!(meet(Some(&coarse), 7, None, &mut issued).generation, coarse.generation);
@@ -644,6 +667,9 @@ async fn a_process_keeps_its_observation_across_refreshes_and_each_process_has_i
         local system = assert(require("vnd:sysinfo").system())
         local first = launch()
         local second = launch()
+        pause(300)
+        assert(system:refresh_processes())
+        -- a first sighting is read-only until a second refresh confirms it
         pause(300)
         assert(system:refresh_processes())
         local a = assert(system:process(first))
@@ -680,4 +706,49 @@ async fn where_the_platform_has_a_finer_start_time_a_process_without_one_is_not_
     )
     .await;
     assert!(children.lock()[0].0.try_wait().expect("status").is_none(), "the real process was left alone");
+}
+
+/// A process replaced by another with its PID between the sample of it and the read of its identity (the finer time
+/// read is another than the one recorded) is not confirmed: it can be listed but nothing is sent to it.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_process_replaced_between_the_sample_and_the_identity_read_is_not_acted_on() {
+    let (lua, children) = engine();
+    let pid = start(sleeper(), &children);
+    let mut state = State::new();
+    state.system.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::Some(&[sysinfo::Pid::from_u32(pid)]),
+        true,
+        sysinfo::ProcessRefreshKind::nothing(),
+    );
+    let real = |p: u32| native::fine_start(p);
+    state.record(real);
+    state.record(real);
+    let key = &state.seen[&pid];
+    assert!(key.confirmed, "met twice with one identity");
+    let before = key.generation;
+    // the sample described the sleeper; by the time the identity was read the PID had another process (a later tick)
+    state.record(|p| real(p).map(|fine| fine + 1));
+    let after = state.seen[&pid];
+    assert!(after.generation > before && !after.confirmed, "a mixed sample is a new sighting, unconfirmed");
+    let state = Arc::new(Mutex::new(state));
+    let observed = {
+        let locked = state.lock();
+        let si_process = locked.system.process(sysinfo::Pid::from_u32(pid)).expect("sampled");
+        Process::observed(&state, &locked, si_process)
+    };
+    lua.globals().set("observed", observed).expect("a handle");
+    let () = run_with(
+        &lua,
+        r#"
+        assert(observed.name ~= "", "it can still be read")
+        local _, killed = observed:kill()
+        assert(killed ~= nil and killed.kind == "unknown_identity", "kill must be refused")
+        local _, pinned = observed:pin()
+        assert(pinned ~= nil and pinned.kind == "unknown_identity", "pin must be refused")
+        "#,
+        (),
+    )
+    .await;
+    assert!(children.lock()[0].0.try_wait().expect("status").is_none(), "the process was left alone");
 }

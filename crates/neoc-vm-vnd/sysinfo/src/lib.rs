@@ -49,7 +49,10 @@
 //! time changed is another process, and `process.observation` (a number issued at each first sighting) says which
 //! sighting a handle is, so a reference kept outside the module (a row a window drew) can be checked against the
 //! process it is resolved to. A process whose start time is not known (0), or whose finer time was not read where the
-//! platform gives one, has nothing to bind a signal to: `pin`, `terminate` and `kill` refuse it (`unknown_identity`). `process:release()` finishes the
+//! platform gives one, has nothing to bind a signal to: `pin`, `terminate` and `kill` refuse it (`unknown_identity`). So does
+//! a process seen for the first time (or as another one): the sample of it and the read of its finer time are two reads, and
+//! a process may have been replaced between them, so a handle is acted on only once a later refresh has found the finer
+//! time it recorded (a handle from that refresh onwards). It can be read meanwhile. `process:release()` finishes the
 //! handle (`process:released()`): it signals nothing afterwards and is not pinned again, so a late signal cannot take a
 //! new reference. Nothing in this module signals a PID after an identity or permission failure.
 //!
@@ -398,18 +401,24 @@ pub mod sysinfo {
         /// the process carries it, so that a reference to an earlier process with this PID is not this one.
         pub(super) generation: u64,
         pub(super) samples: u32,
+        /// Whether the sample that described this process is known to have described one process: a process met
+        /// before, with the same identity read before and after the sample (the earlier read brackets it on one side,
+        /// this one on the other). A process met for the first time, or as another one, has no earlier read to compare
+        /// with, so it can be inspected but not acted on until the next refresh confirms it. Where the platform gives
+        /// no finer identity (see `native::FINE_START`) there is nothing to confirm and it is always true.
+        pub(super) confirmed: bool,
     }
 
     /// What a refresh makes of a process it has met before (or not): the same one, seen once more, or a new one.
     pub(super) fn meet(before: Option<&Seen>, start_time: u64, fine: Option<u64>, issued: &mut u64) -> Seen {
         match before {
             Some(seen) if seen.start_time == start_time && seen.fine == fine => {
-                Seen { samples: seen.samples.saturating_add(1), ..*seen }
+                Seen { samples: seen.samples.saturating_add(1), confirmed: true, ..*seen }
             }
             // another process has the PID: it starts again, with no load, and is not the one a reference named
             _ => {
                 *issued += 1;
-                Seen { start_time, fine, generation: *issued, samples: 1 }
+                Seen { start_time, fine, generation: *issued, samples: 1, confirmed: !native::FINE_START }
             }
         }
     }
@@ -435,13 +444,13 @@ pub mod sysinfo {
     }
 
     pub(super) struct State {
-        system: si::System,
+        pub(super) system: si::System,
         disks: si::Disks,
         disk_meters: HashMap<String, Meter>,
         networks: si::Networks,
         users: si::Users,
         load: Clock,
-        seen: HashMap<u32, Seen>,
+        pub(super) seen: HashMap<u32, Seen>,
         /// The last generation issued (see `Seen`).
         issued: u64,
         meters: HashMap<String, Meter>,
@@ -488,18 +497,20 @@ pub mod sysinfo {
                 .refresh_cpu_specifics(si::CpuRefreshKind::nothing().with_cpu_usage().with_frequency());
             self.system.refresh_processes_specifics(si::ProcessesToUpdate::All, true, process_kind());
             self.load.tick(Instant::now());
+            self.record(native::fine_start);
+        }
+
+        /// What the last sample of the processes is taken to be. `fine` reads a process's finer identity, after the
+        /// sample: a process whose identity is the one recorded at the refresh before has the same one at both ends
+        /// of this sample, and is confirmed; a process met for the first time, or whose identity differs (it was
+        /// replaced between the sample and the read, or since the refresh before), is a new sighting that cannot be
+        /// acted on until a refresh confirms it.
+        pub(super) fn record(&mut self, fine: impl Fn(u32) -> Option<u64>) {
             let processes = self.system.processes();
             self.seen.retain(|pid, _| processes.contains_key(&si::Pid::from_u32(*pid)));
             for (pid, process) in processes {
                 let pid = pid.as_u32();
-                // read after the refresh, for every process every time: a PID that has another process now, in the same
-                // second as the one before it, shows as another finer time
-                let seen = meet(
-                    self.seen.get(&pid),
-                    process.start_time(),
-                    native::fine_start(pid),
-                    &mut self.issued,
-                );
+                let seen = meet(self.seen.get(&pid), process.start_time(), fine(pid), &mut self.issued);
                 self.seen.insert(pid, seen);
             }
         }
@@ -880,6 +891,8 @@ pub mod sysinfo {
         fine: Option<u64>,
         /// Which sighting of this PID it is (see `Seen`): the process observed, not a later one with the same PID.
         generation: u64,
+        /// Whether the sample that described it was confirmed as one process (see `Seen`).
+        confirmed: bool,
         name: String,
         /// The native reference to it, once pinned, and whether it was let go. Clones share it.
         held: Arc<Mutex<Hold>>,
@@ -904,6 +917,7 @@ pub mod sysinfo {
                 start_time,
                 fine: seen.and_then(|seen| seen.fine),
                 generation: seen.map_or(0, |seen| seen.generation),
+                confirmed: seen.is_some_and(|seen| seen.confirmed),
                 name: text(process.name()),
                 held: Arc::new(Mutex::new(Hold::Never)),
             }
@@ -919,6 +933,7 @@ pub mod sysinfo {
                 // what a real observation of this PID would have taken
                 fine: native::fine_start(pid),
                 generation: 0,
+                confirmed: true,
                 name: name.to_owned(),
                 held: Arc::new(Mutex::new(Hold::Never)),
             }
@@ -954,10 +969,12 @@ pub mod sysinfo {
         }
 
         /// Whether this handle names a process that can be told apart from another that is given its PID: its start
-        /// time is known and, where the platform gives a finer one, it was read when the process was observed. Without
+        /// time is known and, where the platform gives a finer one, it was read when the process was observed and the
+        /// sample that described it was confirmed as one process (a first sighting is read-only until the next
+        /// refresh, as the process may have been replaced between the sample and the identity read). Without
         /// that no signal is sent and no reference is taken (nothing falls back to the whole seconds).
         fn identified(&self) -> Result<(), Error> {
-            if self.start_time == 0 || (native::FINE_START && self.fine.is_none()) {
+            if self.start_time == 0 || !self.confirmed || (native::FINE_START && self.fine.is_none()) {
                 return Err(Error::UnknownIdentity);
             }
             Ok(())

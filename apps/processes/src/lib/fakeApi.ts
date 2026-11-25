@@ -192,7 +192,7 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
   })
   const BLOCKED: Record<NonNullable<Program['blocked']>, (name: string) => string> = {
     permission: (name) => `This system did not let Processes stop ${name}. It belongs to a user with more rights than yours: ask an administrator.`,
-    unknown: (name) => `Processes cannot tell ${name} apart from another program that is given its number, so it will not stop it.`
+    unknown: (name) => `Processes cannot tell ${name} apart from another program that is given its number (yet, if it only just started), so it will not stop it. Choose it again in a moment.`
   }
   const detailOf = (ref: ProcessRef): Detail | undefined => {
     const p = find(ref)
