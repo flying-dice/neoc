@@ -1,13 +1,15 @@
 //! launchd (macOS): LaunchDaemons at the system level, the user's LaunchAgents at the user level.
 //!
-//! Discovery reads the property lists of the level's directory (the definitions) and asks `launchctl list` which are
-//! loaded and running. Registering, removing, starting and stopping go through the `service-manager` crate. A change
-//! rewrites only the keys it is about in the property list and keeps every other key as it was; it applies when the
-//! service is next loaded, which is what `restart` does.
+//! Each level has a launchd *domain* (`system`, or `gui/<uid>` for the user) and the directories whose property lists
+//! define the jobs that load into it. Discovery reads those directories (the definitions) and asks the domain itself
+//! (`launchctl print <domain>`) which jobs are loaded and running, including loaded jobs that have no property list;
+//! when the domain cannot be asked the state is `unknown`, never a guess. Registering, removing, starting and stopping
+//! go through the `service-manager` crate. A change rewrites only the keys it is about in the property list, in place
+//! (so its owner, mode and ACLs stay), and applies when the service is next loaded, which is what `restart` does.
 
 use std::collections::BTreeMap;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use plist::{Dictionary, Value};
 use service_manager::ServiceManagerKind;
@@ -17,50 +19,80 @@ use super::backend::{
 };
 use super::service_manager::{Capabilities, Error, Level, Patch, Restart, Service, Spec, State};
 
+/// Label to (process id, last exit status) of the jobs a domain has loaded.
+type Loaded = BTreeMap<String, (Option<u32>, i32)>;
+
 pub(super) struct Launchd {
     level: Level,
+    /// Where this module writes the property lists it registers.
     dir: PathBuf,
+    /// Every directory whose property lists define jobs of the domain (the first one that has a label wins).
+    dirs: Vec<PathBuf>,
+    /// `system`, or `gui/<uid>`.
+    domain: String,
     launchctl: PathBuf,
 }
 
 impl Launchd {
     pub(super) fn native(level: Level) -> Result<Self, Error> {
-        let dir = match level {
-            Level::System => PathBuf::from("/Library/LaunchDaemons"),
+        let (dir, dirs, domain) = match level {
+            Level::System => (
+                PathBuf::from("/Library/LaunchDaemons"),
+                vec![PathBuf::from("/Library/LaunchDaemons"), PathBuf::from("/System/Library/LaunchDaemons")],
+                "system".to_owned(),
+            ),
             Level::User => {
                 let home =
                     std::env::var_os("HOME").filter(|h| !h.is_empty()).ok_or_else(|| Error::Unavailable {
                         reason: "the user level needs HOME to find the LaunchAgents".to_owned(),
                     })?;
-                PathBuf::from(home).join("Library/LaunchAgents")
+                let own = PathBuf::from(home).join("Library/LaunchAgents");
+                let uid = checked("find the user", None, run(Path::new("id"), &["-u"])?)?;
+                let uid = String::from_utf8_lossy(&uid.stdout).trim().to_owned();
+                (
+                    own.clone(),
+                    vec![
+                        own,
+                        PathBuf::from("/Library/LaunchAgents"),
+                        PathBuf::from("/System/Library/LaunchAgents"),
+                    ],
+                    format!("gui/{uid}"),
+                )
             }
         };
-        Ok(Self { level, dir, launchctl: PathBuf::from("launchctl") })
+        Ok(Self { level, dir, dirs, domain, launchctl: PathBuf::from("launchctl") })
     }
 
-    /// Which services are loaded: label to (process id, last exit status).
-    fn loaded(&self) -> Result<BTreeMap<String, (Option<u32>, i32)>, Error> {
-        let output = checked("list loaded services", None, run(&self.launchctl, &["list"])?)?;
-        Ok(parse_loaded(&String::from_utf8_lossy(&output.stdout)))
+    /// The jobs the domain has loaded, or `None` when it cannot be asked (no right to, an older `launchctl`).
+    fn loaded(&self) -> Result<Option<Loaded>, Error> {
+        let output = run(&self.launchctl, &["print", &self.domain])?;
+        if !output.status.success() {
+            return Ok(None);
+        }
+        Ok(Some(parse_print(&String::from_utf8_lossy(&output.stdout))))
     }
 
     fn definitions(&self) -> Result<Vec<(PathBuf, Dictionary)>, Error> {
-        let entries = match std::fs::read_dir(&self.dir) {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(e) => return Err(io_error("list services", &e)),
-        };
-        let mut found = Vec::new();
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("plist") {
-                continue;
-            }
-            // a property list that cannot be read (binary of another kind, damaged) is left out, not fatal
-            if let Ok(Value::Dictionary(dict)) = Value::from_file(&path)
-                && dict.get("Label").and_then(Value::as_string).is_some()
-            {
-                found.push((path, dict));
+        let mut found: Vec<(PathBuf, Dictionary)> = Vec::new();
+        for dir in &self.dirs {
+            let entries = match std::fs::read_dir(dir) {
+                Ok(entries) => entries,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(io_error("list services", &e)),
+            };
+            let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+            paths.sort();
+            for path in paths {
+                if path.extension().and_then(|e| e.to_str()) != Some("plist") {
+                    continue;
+                }
+                // a property list that cannot be read (binary of another kind, damaged) is left out, not fatal
+                if let Ok(Value::Dictionary(dict)) = Value::from_file(&path)
+                    && let Some(label) = dict.get("Label").and_then(Value::as_string)
+                    && !found.iter().any(|(_, d)| d.get("Label").and_then(Value::as_string) == Some(label))
+                {
+                    found.push((path, dict));
+                }
             }
         }
         Ok(found)
@@ -72,26 +104,58 @@ impl Launchd {
             .into_iter()
             .find(|(_, d)| d.get("Label").and_then(Value::as_string) == Some(label)))
     }
-}
 
-fn parse_loaded(text: &str) -> BTreeMap<String, (Option<u32>, i32)> {
-    text.lines()
-        .skip(1)
-        .filter_map(|line| {
-            let mut cols = line.split('\t');
-            let pid = cols.next()?.trim();
-            let status = cols.next()?.trim();
-            let label = cols.next()?.trim();
-            Some((label.to_owned(), (pid.parse().ok(), status.parse().unwrap_or(0))))
+    /// A job the domain has loaded that no property list in the directories defines.
+    fn loaded_only(label: &str, loaded: Option<&Loaded>) -> Option<Service> {
+        let (pid, status) = loaded?.get(label)?;
+        Some(Service {
+            label: label.to_owned(),
+            description: None,
+            state: if pid.is_some() { State::Running } else { State::Stopped },
+            state_detail: exit_detail(*pid, *status),
+            autostart: None,
+            program: None,
+            args: None,
+            command_line: None,
+            working_directory: None,
+            environment: None,
+            restart: None,
+            restart_delay_secs: None,
+            user: None,
+            path: None,
         })
-        .collect()
+    }
 }
 
-fn service_from(
-    path: &std::path::Path,
-    dict: &Dictionary,
-    loaded: &BTreeMap<String, (Option<u32>, i32)>,
-) -> Option<Service> {
+fn exit_detail(pid: Option<u32>, status: i32) -> Option<String> {
+    if pid.is_none() && status != 0 { Some(format!("last exit status {status}")) } else { None }
+}
+
+/// The `services = { ... }` block of `launchctl print <domain>`: one `pid status label` line a job (`-` for no pid).
+fn parse_print(text: &str) -> Loaded {
+    let mut jobs = Loaded::new();
+    let mut inside = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if !inside {
+            inside = line == "services = {";
+            continue;
+        }
+        if line == "}" {
+            break;
+        }
+        let mut cols = line.split_whitespace();
+        let (Some(pid), Some(status)) = (cols.next(), cols.next()) else { continue };
+        let label = cols.collect::<Vec<_>>().join(" ");
+        if label.is_empty() {
+            continue;
+        }
+        jobs.insert(label, (pid.parse().ok(), status.parse().unwrap_or(0)));
+    }
+    jobs
+}
+
+fn service_from(path: &std::path::Path, dict: &Dictionary, loaded: Option<&Loaded>) -> Option<Service> {
     let label = dict.get("Label")?.as_string()?.to_owned();
     let arguments: Vec<String> = dict
         .get("ProgramArguments")
@@ -104,10 +168,15 @@ fn service_from(
         .map(str::to_owned)
         .or_else(|| arguments.first().cloned());
     let args = if arguments.is_empty() { None } else { Some(arguments[1..].to_vec()) };
-    let (state, detail) = match loaded.get(&label) {
-        Some((Some(_), _)) => (State::Running, None),
-        Some((None, status)) if *status != 0 => (State::Stopped, Some(format!("last exit status {status}"))),
-        _ => (State::Stopped, None),
+    let (state, detail) = match loaded {
+        // the domain could not be asked: what is known is the definition, not whether it runs
+        None => (State::Unknown, None),
+        Some(jobs) => match jobs.get(&label) {
+            Some((pid, status)) => {
+                (if pid.is_some() { State::Running } else { State::Stopped }, exit_detail(*pid, *status))
+            }
+            None => (State::Stopped, None),
+        },
     };
     let restart = match dict.get("KeepAlive") {
         Some(Value::Boolean(true)) => Some(Restart::Always),
@@ -146,27 +215,37 @@ fn patched(mut dict: Dictionary, patch: &Patch) -> Result<Dictionary, Error> {
         dict.insert("RunAtLoad".to_owned(), Value::Boolean(v));
     }
     if patch.program.is_some() || patch.args.is_some() {
+        // `Program` is the executable when it is there and `ProgramArguments[0]` is then only argv[0] (the name the
+        // program is told it has); without `Program` the first of `ProgramArguments` is the executable. Both keep
+        // their own meaning.
         let current: Vec<String> = dict
             .get("ProgramArguments")
             .and_then(Value::as_array)
             .map(|a| a.iter().filter_map(|v| v.as_string().map(str::to_owned)).collect())
             .unwrap_or_default();
-        let program = patch
-            .program
-            .clone()
-            .or_else(|| current.first().cloned())
-            .or_else(|| dict.get("Program").and_then(Value::as_string).map(str::to_owned))
-            .ok_or_else(|| Error::InvalidInput {
-                reason: "the service has no program: give `program` too".to_owned(),
-            })?;
-        let args = patch.args.clone().unwrap_or_else(|| current.iter().skip(1).cloned().collect());
-        let mut all = vec![program];
-        all.extend(args);
-        dict.remove("Program");
-        dict.insert(
-            "ProgramArguments".to_owned(),
-            Value::Array(all.into_iter().map(Value::String).collect()),
-        );
+        let separate = dict.get("Program").and_then(Value::as_string).map(str::to_owned);
+        let no_program =
+            || Error::InvalidInput { reason: "the service has no program: give `program` too".to_owned() };
+        let all = if let Some(separate) = separate {
+            if let Some(program) = &patch.program {
+                dict.insert("Program".to_owned(), Value::String(program.clone()));
+            }
+            patch.args.as_ref().map(|args| {
+                let argv0 = current.first().cloned().unwrap_or(separate);
+                std::iter::once(argv0).chain(args.iter().cloned()).collect::<Vec<_>>()
+            })
+        } else {
+            let program =
+                patch.program.clone().or_else(|| current.first().cloned()).ok_or_else(no_program)?;
+            let args = patch.args.clone().unwrap_or_else(|| current.iter().skip(1).cloned().collect());
+            Some(std::iter::once(program).chain(args).collect::<Vec<_>>())
+        };
+        if let Some(all) = all {
+            dict.insert(
+                "ProgramArguments".to_owned(),
+                Value::Array(all.into_iter().map(Value::String).collect()),
+            );
+        }
     }
     if let Some(v) = &patch.working_directory {
         dict.insert("WorkingDirectory".to_owned(), Value::String(v.clone()));
@@ -242,12 +321,29 @@ impl Backend for Launchd {
 
     fn list(&self) -> Result<Vec<Service>, Error> {
         let loaded = self.loaded()?;
-        Ok(self.definitions()?.iter().filter_map(|(path, dict)| service_from(path, dict, &loaded)).collect())
+        let mut services: Vec<Service> = self
+            .definitions()?
+            .iter()
+            .filter_map(|(path, dict)| service_from(path, dict, loaded.as_ref()))
+            .collect();
+        if let Some(jobs) = &loaded {
+            for label in jobs.keys() {
+                if !services.iter().any(|s| &s.label == label)
+                    && let Some(job) = Self::loaded_only(label, loaded.as_ref())
+                {
+                    services.push(job);
+                }
+            }
+        }
+        Ok(services)
     }
 
     fn get(&self, label: &str) -> Result<Option<Service>, Error> {
         let loaded = self.loaded()?;
-        Ok(self.definition(label)?.and_then(|(path, dict)| service_from(&path, &dict, &loaded)))
+        Ok(match self.definition(label)? {
+            Some((path, dict)) => service_from(&path, &dict, loaded.as_ref()),
+            None => Self::loaded_only(label, loaded.as_ref()),
+        })
     }
 
     fn install(&self, spec: &Spec) -> Result<(), Error> {
@@ -255,6 +351,18 @@ impl Backend for Launchd {
     }
 
     fn uninstall(&self, label: &str) -> Result<(), Error> {
+        let service = self.get(label)?.ok_or_else(|| Error::NotFound { label: label.to_owned() })?;
+        let own = service.path.as_deref().is_some_and(|p| Path::new(p).parent() == Some(self.dir.as_path()));
+        if !own {
+            return Err(Error::Unsupported {
+                option: None,
+                reason: format!(
+                    "{label:?} ({}) is not a property list in {}, where services are registered: it can be stopped, not removed",
+                    service.path.as_deref().unwrap_or("loaded without a property list"),
+                    self.dir.display()
+                ),
+            });
+        }
         crate_uninstall(ServiceManagerKind::Launchd, self.level, label)
     }
 
@@ -272,25 +380,44 @@ impl Backend for Launchd {
     }
 
     fn configure(&self, label: &str, patch: &Patch) -> Result<(), Error> {
-        let (path, dict) =
-            self.definition(label)?.ok_or_else(|| Error::NotFound { label: label.to_owned() })?;
-        let dict = patched(dict, patch)?;
-        let dir = path
-            .parent()
-            .ok_or_else(|| Error::Other { reason: "a property list has a directory".to_owned() })?;
-        let mut file = tempfile::NamedTempFile::new_in(dir).map_err(|e| io_error("configure", &e))?;
-        plist::to_writer_xml(&mut file, &Value::Dictionary(dict))
-            .map_err(|e| Error::Failed { operation: "configure".to_owned(), reason: e.to_string() })?;
-        file.flush().map_err(|e| io_error("configure", &e))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            file.as_file()
-                .set_permissions(std::fs::Permissions::from_mode(0o644))
-                .map_err(|e| io_error("configure", &e))?;
+        let (path, dict) = self.definition(label)?.ok_or_else(|| {
+            // loaded without a property list, there is nothing to change
+            Error::NotFound { label: label.to_owned() }
+        })?;
+        if path.starts_with("/System") {
+            return Err(Error::Unsupported {
+                option: None,
+                reason: format!(
+                    "{label:?} ({}) is part of the system: its definition is not changed",
+                    path.display()
+                ),
+            });
         }
-        file.persist(&path).map_err(|e| io_error("configure", &e.error))?;
-        Ok(())
+        let dict = patched(dict, patch)?;
+        let mut bytes = Vec::new();
+        plist::to_writer_xml(&mut bytes, &Value::Dictionary(dict))
+            .map_err(|e| Error::Failed { operation: "configure".to_owned(), reason: e.to_string() })?;
+        rewrite(&path, &bytes)
+    }
+}
+
+/// Replace the contents of a file and nothing else about it: written in place, so its owner, group, mode, ACLs and
+/// extended attributes stay as they were (a new file renamed over it would have none of them). If the write fails
+/// half way the old contents are put back.
+fn rewrite(path: &Path, bytes: &[u8]) -> Result<(), Error> {
+    let original = std::fs::read(path).map_err(|e| io_error("configure", &e))?;
+    let write = |contents: &[u8]| -> std::io::Result<()> {
+        let mut file = std::fs::OpenOptions::new().write(true).open(path)?;
+        file.set_len(0)?;
+        file.write_all(contents)?;
+        file.sync_all()
+    };
+    match write(bytes) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = write(&original);
+            Err(io_error("configure", &e))
+        }
     }
 }
 
@@ -312,11 +439,98 @@ mod tests {
 <key>ThrottleInterval</key><integer>7</integer>
 </dict></plist>"#;
 
+    const PRINT: &str = "system = {\n\ttype = system\n\tservices = {\n\t\t   123      0 org.example.app\n\t\t     -     78 org.example.other\n\t\t     -      0 com.apple.loaded.without.plist\n\t}\n\n\tunrelated = {\n\t\t1 2 x\n\t}\n}\n";
+
+    #[test]
+    fn the_domain_is_asked_for_its_jobs_and_a_job_without_a_property_list_is_listed() {
+        let loaded = parse_print(PRINT);
+        assert_eq!(loaded.len(), 3, "only the services block is read");
+        assert_eq!(loaded["org.example.app"], (Some(123), 0));
+        assert_eq!(loaded["org.example.other"], (None, 78));
+        let bare = Launchd::loaded_only("org.example.other", Some(&loaded)).expect("a job");
+        assert_eq!(bare.state, State::Stopped);
+        assert_eq!(bare.state_detail.as_deref(), Some("last exit status 78"));
+        assert_eq!(bare.path, None);
+        assert!(Launchd::loaded_only("org.example.nothing", Some(&loaded)).is_none());
+        // a domain that cannot be asked says nothing about running
+        let unknown = service_from(std::path::Path::new("/a.plist"), &dict(PLIST), None).expect("a service");
+        assert_eq!(unknown.state, State::Unknown);
+    }
+
+    #[test]
+    fn a_program_and_its_argv0_keep_their_own_meaning() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>Label</key><string>org.example.named</string>
+<key>Program</key><string>/usr/bin/example</string>
+<key>ProgramArguments</key><array><string>custom-name</string><string>--old</string></array>
+</dict></plist>"#;
+        let only_args = Patch { args: Some(vec!["--new".to_owned()]), ..Patch::default() };
+        let changed = patched(dict(xml), &only_args).expect("patched");
+        assert_eq!(changed.get("Program").and_then(Value::as_string), Some("/usr/bin/example"));
+        let all: Vec<&str> = changed
+            .get("ProgramArguments")
+            .and_then(Value::as_array)
+            .expect("array")
+            .iter()
+            .filter_map(Value::as_string)
+            .collect();
+        assert_eq!(all, ["custom-name", "--new"], "argv[0] is not the executable");
+        let only_program = Patch { program: Some("/usr/bin/other".to_owned()), ..Patch::default() };
+        let changed = patched(dict(xml), &only_program).expect("patched");
+        assert_eq!(changed.get("Program").and_then(Value::as_string), Some("/usr/bin/other"));
+        assert_eq!(
+            changed.get("ProgramArguments").and_then(Value::as_array).map(Vec::len),
+            Some(2),
+            "the arguments are untouched"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_change_keeps_the_mode_and_the_file_of_the_property_list() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("org.example.app.plist");
+        std::fs::write(&path, PLIST).expect("write");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+        let before = std::fs::metadata(&path).expect("meta");
+        let launchd = Launchd {
+            level: Level::User,
+            dir: dir.path().to_path_buf(),
+            dirs: vec![dir.path().to_path_buf()],
+            domain: "gui/501".to_owned(),
+            launchctl: PathBuf::from("/nowhere/launchctl"),
+        };
+        let patch = Patch { autostart: Some(false), ..Patch::default() };
+        launchd.configure("org.example.app", &patch).expect("configure");
+        let after = std::fs::metadata(&path).expect("meta");
+        assert_eq!(after.permissions().mode() & 0o777, 0o600, "a restrictive mode stays restrictive");
+        assert_eq!(after.ino(), before.ino(), "it is the same file");
+        let (_, changed) = launchd.definition("org.example.app").expect("read").expect("found");
+        assert_eq!(changed.get("RunAtLoad").and_then(Value::as_boolean), Some(false));
+        assert_eq!(changed.get("StandardOutPath").and_then(Value::as_string), Some("/var/log/app.log"));
+    }
+
+    #[test]
+    fn a_job_of_the_system_is_not_changed() {
+        let launchd = Launchd {
+            level: Level::System,
+            dir: PathBuf::from("/nowhere"),
+            dirs: vec![],
+            domain: "system".to_owned(),
+            launchctl: PathBuf::from("/nowhere/launchctl"),
+        };
+        // no definition found: not found rather than a guess
+        let patch = Patch { autostart: Some(true), ..Patch::default() };
+        assert!(matches!(launchd.configure("ghost", &patch), Err(Error::NotFound { .. })));
+    }
+
     #[test]
     fn a_service_is_read_from_its_property_list_and_launchctl() {
-        let loaded = parse_loaded("PID\tStatus\tLabel\n123\t0\torg.example.app\n-\t78\torg.example.other\n");
+        let loaded = parse_print(PRINT);
         let service =
-            service_from(std::path::Path::new("/Library/LaunchDaemons/a.plist"), &dict(PLIST), &loaded)
+            service_from(std::path::Path::new("/Library/LaunchDaemons/a.plist"), &dict(PLIST), Some(&loaded))
                 .expect("a service");
         assert_eq!(service.label, "org.example.app");
         assert_eq!(service.state, State::Running);

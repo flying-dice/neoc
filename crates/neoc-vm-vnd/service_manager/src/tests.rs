@@ -239,6 +239,17 @@ async fn the_environment_chooses_the_shared_mock_manager() {
 
 // -- systemd against a fake systemctl --------------------------------------------------------------------------------
 
+#[test]
+fn a_name_with_spaces_round_trips_through_the_mock() {
+    let manager = Mock::seeded(vec![seed("Print Spooler")]);
+    let found = ops::get(&manager, "Print Spooler").expect("get").expect("there");
+    assert_eq!(found.label, "Print Spooler");
+    assert_eq!(ops::control(&manager, "Print Spooler", Control::Start).expect("start").state, State::Running);
+    // a new service is held to the stricter policy
+    let spec = Spec { label: "New Service".to_owned(), program: "/bin/sh".to_owned(), ..Spec::default() };
+    assert!(matches!(ops::install(&manager, spec), Err(Error::InvalidInput { .. })));
+}
+
 #[cfg(unix)]
 mod fake_systemd {
     use std::os::unix::fs::PermissionsExt;
@@ -361,6 +372,7 @@ esac
             Patch {
                 autostart: Some(true),
                 restart: Some(Restart::Always),
+                program: Some("/bin/sh".to_owned()),
                 args: Some(vec!["--verbose".to_owned()]),
                 ..Patch::default()
             },
@@ -369,8 +381,7 @@ esac
         assert_eq!(changed.autostart, Some(true), "enabled through systemctl");
         let text =
             std::fs::read_to_string(rig.dropins.join("web.service.d/90-vos.conf")).expect("the drop-in");
-        // the program stays: only the arguments were given
-        assert!(text.contains("ExecStart=\nExecStart=\"/usr/sbin/web\" \"--verbose\"\n"), "{text}");
+        assert!(text.contains("ExecStart=\nExecStart=\"/bin/sh\" \"--verbose\"\n"), "{text}");
         assert!(text.contains("Restart=always\n"));
         assert!(!text.contains("Description"), "what was not given is not written: {text}");
         // a second change adds to the first and forgets nothing
@@ -395,6 +406,89 @@ esac
             unit_before
         );
         assert!(std::fs::read_to_string(rig.path.join("log")).unwrap().contains("reload"));
+    }
+
+    #[test]
+    fn a_command_is_rewritten_only_when_that_loses_nothing() {
+        let rig = rig();
+        // the arguments are shown joined by spaces: `--name` `hello world` cannot be told from three arguments
+        std::fs::write(
+            rig.path.join("spaced.show"),
+            "Id=spaced.service\nLoadState=loaded\nActiveState=inactive\nSubState=dead\nUnitFileState=disabled\nFragmentPath=/usr/lib/systemd/system/spaced.service\nExecStart={ path=/usr/sbin/spaced ; argv[]=/usr/sbin/spaced --name hello world ; ignore_errors=no }\n",
+        )
+        .unwrap();
+        let program_only = Patch { program: Some("/bin/sh".to_owned()), ..Patch::default() };
+        let refused = ops::configure(&rig.manager, "spaced", program_only).unwrap_err();
+        assert!(
+            matches!(&refused, Error::Unsupported { option: Some(o), .. } if o == "program"),
+            "{refused:?}"
+        );
+        let args_only = Patch { args: Some(vec!["-x".to_owned()]), ..Patch::default() };
+        assert!(matches!(ops::configure(&rig.manager, "spaced", args_only), Err(Error::Unsupported { .. })));
+        assert!(!rig.dropins.join("spaced.service.d").exists(), "nothing was written");
+        // a command given whole is not a guess
+        let whole = Patch {
+            program: Some("/bin/sh".to_owned()),
+            args: Some(vec!["--name".to_owned(), "hello world".to_owned()]),
+            ..Patch::default()
+        };
+        ops::configure(&rig.manager, "spaced", whole).expect("a whole command");
+        let text = std::fs::read_to_string(rig.dropins.join("spaced.service.d/90-vos.conf")).unwrap();
+        assert!(text.contains("\"--name\" \"hello world\"\n"), "{text}");
+        // once this module wrote it, the arguments are known exactly and the program alone can change
+        let again = Patch { program: Some("/bin/true".to_owned()), ..Patch::default() };
+        ops::configure(&rig.manager, "spaced", again).expect("the program alone");
+        let text = std::fs::read_to_string(rig.dropins.join("spaced.service.d/90-vos.conf")).unwrap();
+        assert!(text.contains("\"/bin/true\" \"--name\" \"hello world\"\n"), "{text}");
+    }
+
+    #[test]
+    fn a_unit_with_several_commands_is_not_rewritten_as_one() {
+        let rig = rig();
+        std::fs::write(
+            rig.path.join("multi.show"),
+            "Id=multi.service\nLoadState=loaded\nActiveState=inactive\nSubState=dead\nUnitFileState=disabled\nFragmentPath=/usr/lib/systemd/system/multi.service\nExecStart={ path=/bin/a ; argv[]=/bin/a ; ignore_errors=no }\nExecStart={ path=/bin/b ; argv[]=/bin/b ; ignore_errors=no }\n",
+        )
+        .unwrap();
+        let whole = Patch { program: Some("/bin/sh".to_owned()), args: Some(vec![]), ..Patch::default() };
+        let refused = ops::configure(&rig.manager, "multi", whole).unwrap_err();
+        assert!(matches!(&refused, Error::Unsupported { .. }), "{refused:?}");
+        assert!(!rig.dropins.join("multi.service.d").exists(), "nothing was written");
+        // the other settings of such a unit can still change
+        let restart = Patch { restart: Some(Restart::Always), ..Patch::default() };
+        ops::configure(&rig.manager, "multi", restart).expect("a setting that is not the command");
+    }
+
+    #[test]
+    fn only_a_drop_in_this_module_wrote_is_removed() {
+        let rig = rig();
+        let dir = rig.dropins.join("web.service.d");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("90-vos.conf"), "[Service]\nRestart=no\n").unwrap();
+        assert!(!rig.manager.owns_dropin("web").unwrap(), "an unrelated file is not ours");
+        assert!(rig.dropins.join("web.service.d/90-vos.conf").exists());
+        ops::configure(&rig.manager, "db", Patch { restart: Some(Restart::Always), ..Patch::default() })
+            .expect("configure");
+        assert!(rig.manager.owns_dropin("db").unwrap());
+        std::fs::write(rig.dropins.join("db.service.d/10-other.conf"), "[Service]\n").unwrap();
+        rig.manager.remove_dropin("db").expect("remove");
+        assert!(!rig.dropins.join("db.service.d/90-vos.conf").exists());
+        assert!(rig.dropins.join("db.service.d/10-other.conf").exists(), "other drop-ins stay");
+    }
+
+    #[test]
+    fn a_name_the_manager_made_can_be_managed_whatever_it_holds() {
+        let rig = rig();
+        // an escaped instance name, as `systemd-escape` makes them
+        let escaped = "app\\x2dname@a";
+        unit(&rig.path, escaped);
+        assert_eq!(ops::get(&rig.manager, escaped).expect("get").map(|s| s.label), Some(escaped.to_owned()));
+        let started = ops::control(&rig.manager, escaped, Control::Start).expect("start");
+        assert_eq!(started.state, State::Running);
+        // what could be read as an option or a path is refused
+        for bad in ["-rf", "../etc", "a/b", "a\nb", ""] {
+            assert!(matches!(ops::get(&rig.manager, bad), Err(Error::InvalidInput { .. })), "{bad:?}");
+        }
     }
 
     #[test]

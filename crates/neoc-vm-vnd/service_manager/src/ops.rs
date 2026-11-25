@@ -74,13 +74,13 @@ pub(super) fn list(backend: &dyn Backend) -> Result<Vec<Service>, Error> {
 }
 
 pub(super) fn get(backend: &dyn Backend, label: &str) -> Result<Option<Service>, Error> {
-    validate::label(label)?;
+    validate::existing(label)?;
     backend.get(label)
 }
 
 /// The service, which the manager must have.
 fn existing(backend: &dyn Backend, label: &str) -> Result<Service, Error> {
-    validate::label(label)?;
+    validate::existing(label)?;
     backend.get(label)?.ok_or_else(|| Error::NotFound { label: label.to_owned() })
 }
 
@@ -135,7 +135,7 @@ pub(super) fn control(backend: &dyn Backend, label: &str, what: Control) -> Resu
 }
 
 pub(super) fn configure(backend: &dyn Backend, label: &str, patch: Patch) -> Result<Service, Error> {
-    validate::label(label)?;
+    validate::existing(label)?;
     validate::patch(&patch)?;
     let capabilities = backend.capabilities();
     supported(&capabilities, &patch.supplied(), &capabilities.configurable, "configure")?;

@@ -1,4 +1,4 @@
-<!-- @organism RegisterForm — the next service as it is typed, as a form of iPadOS is: a row each for its name, the program, the arguments, what it is for, the directory it starts in, whether it starts by itself and what happens when it ends; what the operating system refused in the footer; settings the manager does not keep are said so -->
+<!-- @organism RegisterForm — the next service as it is typed, as a form of iPadOS is: a row each for its name, the program, the arguments, what it is for, the directory it starts in, whether it starts by itself and what happens when it ends and how long it waits; what the operating system refused in the footer; settings the manager does not keep are said so -->
 <script lang="ts">
   import type { Manager, Restart } from 'app:rpc'
   import type { Draft, Notice } from '../lib/services.svelte'
@@ -78,6 +78,14 @@
             <ui-text-field variant="bare" label="Working directory" placeholder="/var/lib/my-app" autocomplete="off" autocapitalize="off" maxlength={4000} value={draft.workingDirectory} oninput={(e: Event) => ondraft({ workingDirectory: valueOf(e) })} data-testid="services-form-directory"></ui-text-field>
           </ui-row>
         {/if}
+        {#if keeps('environment')}
+          <ui-row>
+            <span class="key">Environment</span>
+            <ui-text-area variant="bare" label="Environment, NAME=value one a line" placeholder="NAME=value, one a line" rows={2} value={draft.environment} oninput={(e: Event) => ondraft({ environment: valueOf(e) })} data-testid="services-form-environment"></ui-text-area>
+          </ui-row>
+        {:else}
+          <ui-row heading="Environment" value="Not Supported" data-testid="services-form-environment-unsupported"></ui-row>
+        {/if}
         {#if keeps('autostart')}
           <ui-row heading="Start automatically">
             <ui-toggle slot="trailing" label="Start automatically" hit checked={draft.autostart} onchange={(e: Event) => ondraft({ autostart: (e.currentTarget as unknown as { checked: boolean }).checked })} data-testid="services-form-autostart"></ui-toggle>
@@ -86,6 +94,12 @@
         {#if keeps('restart')}
           <ui-row heading="Restart">
             <ui-segmented slot="trailing" options={RESTARTS} value={draft.restart} label="Restart" hit onchange={(e: Event) => ondraft({ restart: valueOf(e) as Restart | '' })} data-testid="services-form-restart"></ui-segmented>
+          </ui-row>
+        {/if}
+        {#if keeps('restart_delay_secs')}
+          <ui-row>
+            <span class="key">Restart delay</span>
+            <ui-text-field variant="bare" label="Restart delay in seconds" placeholder="Seconds" inputmode="numeric" autocomplete="off" maxlength={5} value={draft.restartDelay} oninput={(e: Event) => ondraft({ restartDelay: valueOf(e) })} data-testid="services-form-restart-delay"></ui-text-field>
           </ui-row>
         {/if}
       </ui-section>

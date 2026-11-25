@@ -20,6 +20,8 @@ use super::service_manager::{Capabilities, Error, Level, Patch, Restart, Service
 const PROPERTIES: &str = "Id,Description,LoadState,ActiveState,SubState,UnitFileState,FragmentPath,WorkingDirectory,Environment,Restart,RestartUSec,User,ExecStart,Result";
 const DROPIN: &str = "90-vos.conf";
 const STATE_MARK: &str = "# neoc-state: ";
+/// The key `parse_show` sets for a unit that runs several commands.
+const MULTIPLE: &str = "ExecStart#several";
 
 pub(super) struct Systemd {
     level: Level,
@@ -108,6 +110,31 @@ impl Systemd {
         }
     }
 
+    /// Whether the drop-in of the unit is there and was written by this module. An unrelated file of the same name
+    /// is not ours, and is never removed.
+    pub(super) fn owns_dropin(&self, label: &str) -> Result<bool, Error> {
+        match std::fs::read_to_string(self.dropin_path(label)) {
+            Ok(text) => Ok(DropIn::parse(&text).is_some()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(io_error("uninstall", &e)),
+        }
+    }
+
+    /// Remove the drop-in this module wrote, and its directory when nothing else is in it. A failure is reported.
+    pub(super) fn remove_dropin(&self, label: &str) -> Result<(), Error> {
+        let dropin = self.dropin_path(label);
+        std::fs::remove_file(&dropin).map_err(|e| io_error("remove the drop-in of", &e))?;
+        if let Some(dir) = dropin.parent() {
+            match std::fs::remove_dir(dir) {
+                Ok(()) => {}
+                // the directory may hold other drop-ins: it stays
+                Err(e) if e.kind() == std::io::ErrorKind::DirectoryNotEmpty => {}
+                Err(e) => return Err(io_error("remove the drop-in directory of", &e)),
+            }
+        }
+        Ok(())
+    }
+
     fn write_dropin(&self, label: &str, dropin: &DropIn) -> Result<(), Error> {
         let path = self.dropin_path(label);
         let dir =
@@ -123,6 +150,47 @@ impl Systemd {
                 .map_err(|e| io_error("configure", &e))?;
         }
         file.persist(&path).map_err(|e| io_error("configure", &e.error))?;
+        Ok(())
+    }
+
+    /// Put a change of the command into the drop-in without changing what is not asked for. `systemctl show` prints
+    /// the arguments joined by spaces, which cannot be told from an argument that holds one, and a drop-in replaces
+    /// every `ExecStart=` of the unit. So a command is rewritten only when that loses nothing: it is given whole
+    /// (program and arguments), or this module wrote it before, and the unit runs one command. Anything else is
+    /// refused before a file is written.
+    fn command_change(&self, label: &str, patch: &Patch, dropin: &mut DropIn) -> Result<(), Error> {
+        let blocks = {
+            let text = self.ctl_ok(
+                "inspect",
+                Some(label),
+                &["show", &format!("--property={PROPERTIES}"), &Self::unit(label)],
+            )?;
+            parse_show(&text)
+        };
+        if blocks.first().is_some_and(|b| b.contains_key(MULTIPLE)) {
+            return Err(Error::Unsupported {
+                option: Some(if patch.program.is_some() { "program" } else { "args" }.to_owned()),
+                reason: format!(
+                    "{label:?} runs several commands (several `ExecStart=`): they cannot be replaced by one without losing the others"
+                ),
+            });
+        }
+        let given = patch.program.is_some() && patch.args.is_some();
+        let kept = dropin.program.is_some() && dropin.args.is_some();
+        if !given && !kept {
+            return Err(Error::Unsupported {
+                option: Some(if patch.program.is_some() { "program" } else { "args" }.to_owned()),
+                reason: format!(
+                    "the arguments of {label:?} are not known exactly (the service manager shows them joined by spaces): give `program` and `args` together"
+                ),
+            });
+        }
+        if let Some(program) = &patch.program {
+            dropin.program = Some(program.clone());
+        }
+        if let Some(args) = &patch.args {
+            dropin.args = Some(args.clone());
+        }
         Ok(())
     }
 
@@ -153,7 +221,14 @@ fn parse_show(text: &str) -> Vec<BTreeMap<String, String>> {
                 blocks.push(std::mem::take(&mut block));
             }
         } else if let Some((key, value)) = line.split_once('=') {
-            block.entry(key.to_owned()).or_insert_with(|| value.to_owned());
+            if block.contains_key(key) {
+                // a second `ExecStart=` (a oneshot with several commands) is kept as a mark, not as a value
+                if key == "ExecStart" {
+                    block.insert(MULTIPLE.to_owned(), "yes".to_owned());
+                }
+            } else {
+                block.insert(key.to_owned(), value.to_owned());
+            }
         }
     }
     if !block.is_empty() {
@@ -465,15 +540,11 @@ impl Backend for Systemd {
                 ),
             });
         }
+        let ours = self.owns_dropin(label)?;
         let _ = self.ctl(&["stop", &Self::unit(label)]);
         crate_uninstall(ServiceManagerKind::Systemd, self.level, label)?;
-        // the drop-in is this module's too
-        let dropin = self.dropin_path(label);
-        if dropin.exists() {
-            let _ = std::fs::remove_file(&dropin);
-            if let Some(dir) = dropin.parent() {
-                let _ = std::fs::remove_dir(dir);
-            }
+        if ours {
+            self.remove_dropin(label)?;
         }
         self.reload()
     }
@@ -491,7 +562,7 @@ impl Backend for Systemd {
     }
 
     fn configure(&self, label: &str, patch: &Patch) -> Result<(), Error> {
-        let current = self.get(label)?.ok_or_else(|| Error::NotFound { label: label.to_owned() })?;
+        self.get(label)?.ok_or_else(|| Error::NotFound { label: label.to_owned() })?;
         let unit = Self::unit(label);
         let mut dropin = self.read_dropin(label)?;
         let mut changed = false;
@@ -500,16 +571,7 @@ impl Backend for Systemd {
             changed = true;
         }
         if patch.program.is_some() || patch.args.is_some() {
-            let program =
-                patch.program.clone().or_else(|| dropin.program.clone()).or_else(|| current.program.clone());
-            let args = patch.args.clone().or_else(|| dropin.args.clone()).or_else(|| current.args.clone());
-            let Some(program) = program else {
-                return Err(Error::InvalidInput {
-                    reason: "the service has no program: give `program` too".to_owned(),
-                });
-            };
-            dropin.program = Some(program);
-            dropin.args = Some(args.unwrap_or_default());
+            self.command_change(label, patch, &mut dropin)?;
             changed = true;
         }
         if let Some(dir) = &patch.working_directory {

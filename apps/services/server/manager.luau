@@ -7,7 +7,8 @@
 -- manager, so a service another program registered, started or removed is seen at the next call.
 --
 -- The app never raises its own rights. A change the operating system refuses for want of rights is `denied`, said in
--- a sentence, and nothing changed.
+-- a sentence. A change made of several steps may have done some of them before the refusal, so what is said is what
+-- the machine has now (the overview that comes with every outcome), not that nothing happened.
 --
 -- A function that changes something answers with an outcome: a status, a sentence for what the person needs to know,
 -- and the overview as it now stands, so the window that asked draws what the machine has.
@@ -20,7 +21,7 @@ local manager = {}
 local function sentence(err: vnd_service_manager_Error): (rpc.Status, string)
   if err.kind == "permission_denied" then
     return "denied",
-      "The operating system did not allow this. Changing a service needs administrator rights, which this app does not raise on its own: nothing was changed."
+      "The operating system did not allow this. Changing a service needs administrator rights, which this app does not raise on its own."
   elseif err.kind == "unsupported" then
     return "unsupported", "This machine's service manager cannot do that: " .. err.reason
   elseif err.kind == "invalid_input" then
@@ -177,7 +178,16 @@ function manager.configure(
     restart = change.restart,
     restart_delay_secs = nil,
   })
-  return if err then failure(err) else outcome("done", "")
+  if err then
+    local status, message = sentence(err)
+    -- the settings are written one after the other: a refusal or a failure may come after the first was made (what is
+    -- invalid or unsupported is refused before anything is written)
+    if status == "denied" or status == "failed" then
+      message ..= " Part of the change may already have been made; the details show what the machine has now."
+    end
+    return outcome(status :: rpc.Status, message)
+  end
+  return outcome("done", "")
 end
 
 function manager.register(spec: vnd_service_manager_Spec): rpc.Outcome

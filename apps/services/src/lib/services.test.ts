@@ -197,6 +197,30 @@ describe('registering a service', () => {
     expect(services.draft.label).toBe('')
   })
 
+  test('the environment and the restart settings typed are registered and read back', async () => {
+    const services = await opened()
+    services.openForm()
+    services.edit({ label: 'env-app', program: '/bin/env-app', environment: 'A=1\nB=two words=ok\n', restart: 'always', restartDelay: '7' })
+    expect(await services.register()).toBe(true)
+    expect(named(services, 'env-app')).toMatchObject({
+      environment: [{ name: 'A', value: '1' }, { name: 'B', value: 'two words=ok' }],
+      restart: 'always',
+      restartDelaySecs: 7
+    })
+  })
+
+  test('a line of the environment that is not NAME=value is refused at the form, before anything is sent', async () => {
+    const services = await opened()
+    services.openForm()
+    services.edit({ label: 'env-app', program: '/bin/env-app', environment: 'A=1\nnot a variable' })
+    expect(await services.register()).toBe(false)
+    expect(services.notice).toMatchObject({ status: 'invalid', label: '' })
+    expect(services.notice?.message).toContain('not a variable')
+    services.edit({ environment: 'A=1', restartDelay: 'soon' })
+    expect(await services.register()).toBe(false)
+    expect(services.notice?.message).toContain('whole number')
+  })
+
   test('what the operating system refused is said at the form and what was typed stays', async () => {
     const services = await opened()
     services.openForm()

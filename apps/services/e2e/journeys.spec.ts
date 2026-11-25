@@ -66,9 +66,17 @@ test.describe('Services journeys', () => {
 
   test('SV2: register a service, start it, look at it, stop it and unregister it', async ({ page }) => {
     await openServices(page)
-    await register(page, 'e2e-app', PROGRAM)
+    await part(page, 'register').click()
+    await field(page, 'form-label').fill('e2e-app')
+    await field(page, 'form-program').fill(PROGRAM)
+    await part(page, 'form-environment').locator('textarea').fill('GREETING=hello world\nMODE=e2e')
+    await field(page, 'form-restart-delay').fill('3')
+    await part(page, 'form-register').click()
+    await expect(part(page, 'form-busy')).toHaveCount(0)
     // registered and looked at, and not started
     await expect(part(page, 'detail-name')).toHaveText('e2e-app')
+    // what was typed is what the manager has
+    await expect(part(page, 'detail-environment')).toHaveJSProperty('value', 'GREETING=hello world MODE=e2e')
     await expect(part(page, 'detail-state')).toContainText('Stopped')
     await expect(part(page, 'detail-program')).toHaveJSProperty('value', PROGRAM)
 

@@ -36,14 +36,24 @@ local handlers: rpc.Handlers = {
   end,
 
   register = function(_ctx, params)
+    local environment: { [string]: string }? = nil
+    if params.environment ~= nil then
+      local map: { [string]: string } = {}
+      for _, variable in params.environment do
+        map[variable.name] = variable.value
+      end
+      environment = map
+    end
     return manager.register {
       label = params.label,
       program = params.program,
       args = params.args,
       description = params.description,
       working_directory = params.workingDirectory,
+      environment = environment,
       autostart = params.autostart,
       restart = params.restart,
+      restart_delay_secs = params.restartDelaySecs,
     }
   end,
 

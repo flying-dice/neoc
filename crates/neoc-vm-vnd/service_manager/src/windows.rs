@@ -2,7 +2,9 @@
 //!
 //! Discovery and inspection read `Win32_Service` through PowerShell (its property names do not depend on the
 //! language of the machine). Registering, removing, starting and stopping go through the `service-manager` crate;
-//! restarting is `Restart-Service`, which waits for the stop (a stop request alone answers before the service ended).
+//! restarting is `Restart-Service`, which waits for the stop (a stop request alone answers before the service ended)
+//! and never forces the services that depend on this one to stop: when some are running the answer is the native
+//! dependency error.
 //! The startup type and the description are changed with `sc.exe`. The program of a service must itself speak the
 //! service dispatcher protocol; this module controls services and does not run a program as one.
 
@@ -157,7 +159,7 @@ impl Backend for Windows {
                 "-NoProfile",
                 "-NonInteractive",
                 "-Command",
-                "Restart-Service -Name $env:NEOC_SERVICE -Force -ErrorAction Stop",
+                "Restart-Service -Name $env:NEOC_SERVICE -ErrorAction Stop",
             ])
             .env("NEOC_SERVICE", label)
             .stdin(std::process::Stdio::null());

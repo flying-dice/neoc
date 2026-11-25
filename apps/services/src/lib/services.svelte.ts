@@ -16,10 +16,26 @@ export interface Draft {
   args: string
   description: string
   workingDirectory: string
+  /** One `NAME=value` a line. */
+  environment: string
   autostart: boolean
   restart: Restart | ''
+  /** Seconds, as typed; empty for the manager's own. */
+  restartDelay: string
 }
-const NO_DRAFT: Draft = { label: '', program: '', args: '', description: '', workingDirectory: '', autostart: false, restart: '' }
+const NO_DRAFT: Draft = { label: '', program: '', args: '', description: '', workingDirectory: '', environment: '', autostart: false, restart: '', restartDelay: '' }
+
+/** The variables of a typed `NAME=value` list, or the line that is not one. */
+export function parseEnvironment(text: string): { variables: { name: string; value: string }[] } | { bad: string } {
+  const variables: { name: string; value: string }[] = []
+  for (const line of text.split('\n')) {
+    if (line.trim() === '') continue
+    const at = line.indexOf('=')
+    if (at < 1) return { bad: line.trim() }
+    variables.push({ name: line.slice(0, at).trim(), value: line.slice(at + 1) })
+  }
+  return { variables }
+}
 
 /** What a call that changed something ended in, for the person: the sentence, and which of the designed states it is. */
 export interface Notice {
@@ -203,6 +219,16 @@ export class Services {
     if (!this.ready || this.adding) return false
     const sent = this.#draft
     const args = sent.args.split('\n').map((line) => line.trim()).filter((line) => line !== '')
+    const environment = parseEnvironment(sent.environment)
+    if ('bad' in environment) {
+      this.#notice = { status: 'invalid', message: `"${environment.bad}" is not a variable: write NAME=value, one to a line.`, label: '' }
+      return false
+    }
+    const delay = sent.restartDelay.trim()
+    if (delay !== '' && !/^\d{1,5}$/.test(delay)) {
+      this.#notice = { status: 'invalid', message: 'The restart delay is a whole number of seconds.', label: '' }
+      return false
+    }
     const done = await this.#change('', () =>
       this.#rpc.register({
         label: sent.label.trim(),
@@ -210,8 +236,10 @@ export class Services {
         ...(args.length > 0 ? { args } : {}),
         ...(sent.description.trim() !== '' ? { description: sent.description.trim() } : {}),
         ...(sent.workingDirectory.trim() !== '' ? { workingDirectory: sent.workingDirectory.trim() } : {}),
+        ...(environment.variables.length > 0 ? { environment: environment.variables } : {}),
         ...(sent.autostart ? { autostart: true } : {}),
-        ...(sent.restart !== '' ? { restart: sent.restart } : {})
+        ...(sent.restart !== '' ? { restart: sent.restart } : {}),
+        ...(delay !== '' ? { restartDelaySecs: Number(delay) } : {})
       })
     )
     if (done) {

@@ -26,7 +26,7 @@
     },
     {
       "name": "start",
-      "summary": "Start a service. Answers with what happened and the overview as it now stands. Needs the rights of the host process: when the operating system refuses, `status` is `denied` and nothing changed.",
+      "summary": "Start a service. Answers with what happened and the overview as it now stands. Needs the rights of the host process: when the operating system refuses, `status` is `denied`. A change made of several steps (`configure`) may have done some of them before the refusal: the overview in the answer shows what the machine has.",
       "params": [{ "name": "label", "required": true, "description": "The `label` of a service of `overview`.", "schema": { "type": "string", "maxLength": 200 } }],
       "result": { "name": "outcome", "schema": { "$ref": "#/components/schemas/Outcome" } }
     },
@@ -63,7 +63,9 @@
         { "name": "description", "required": false, "description": "What the service is for.", "schema": { "type": "string", "maxLength": 1000 } },
         { "name": "workingDirectory", "required": false, "description": "The absolute path of a directory the program starts in.", "schema": { "type": "string", "maxLength": 4000 } },
         { "name": "autostart", "required": false, "description": "Start by itself.", "schema": { "type": "boolean" } },
-        { "name": "restart", "required": false, "description": "When the manager starts it again after it ended.", "schema": { "$ref": "#/components/schemas/Restart" } }
+        { "name": "environment", "required": false, "description": "The variables the program starts with.", "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Variable" } } },
+        { "name": "restart", "required": false, "description": "When the manager starts it again after it ended.", "schema": { "$ref": "#/components/schemas/Restart" } },
+        { "name": "restartDelaySecs", "required": false, "description": "Seconds the manager waits before it starts the program again.", "schema": { "type": "integer", "minimum": 0, "maximum": 86400 } }
       ],
       "result": { "name": "outcome", "schema": { "$ref": "#/components/schemas/Outcome" } }
     },

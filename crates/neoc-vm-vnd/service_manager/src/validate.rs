@@ -15,8 +15,9 @@ fn invalid(reason: String) -> Error {
     Error::InvalidInput { reason }
 }
 
-/// A label is the manager's own name for a service: letters, digits and `_ . - @ :`, starting with a letter, a digit
-/// or `_` (so it can never be read as an option of a command).
+/// The name of a service to register, which is the policy for a new one (see [`existing`] for one that is there
+/// already): letters, digits and `_ . - @ :`, starting with a letter, a digit or `_` (so it can never be read as an
+/// option of a command).
 pub(super) fn label(label: &str) -> Result<(), Error> {
     let first_ok = label.chars().next().is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
     let rest_ok =
@@ -24,6 +25,23 @@ pub(super) fn label(label: &str) -> Result<(), Error> {
     if label.is_empty() || label.len() > MAX_LABEL || !first_ok || !rest_ok {
         return Err(invalid(format!(
             "label {label:?} must be 1 to {MAX_LABEL} letters, digits or `_ . - @ :`, starting with a letter, a digit or `_`"
+        )));
+    }
+    Ok(())
+}
+
+/// The name of a service that is already there, as the manager itself spelled it: a Windows service may hold spaces,
+/// a systemd instance an escape (`app\x2dname`). Only what could change the meaning of a command or a path is
+/// refused: nothing, a control character, a leading `-` (an option), a path separator. The name is always passed as
+/// one argument, never through a shell.
+pub(super) fn existing(label: &str) -> Result<(), Error> {
+    if label.is_empty()
+        || label.len() > 255
+        || label.starts_with('-')
+        || label.chars().any(|c| c.is_control() || c == '/')
+    {
+        return Err(invalid(format!(
+            "{label:?} is not the name of a service: it is empty, over 255 bytes, starts with `-` or holds a control character or `/`"
         )));
     }
     Ok(())

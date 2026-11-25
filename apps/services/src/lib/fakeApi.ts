@@ -76,7 +76,7 @@ export const SERVICES: readonly Service[] = [
 export const NO_MANAGER = 'This machine has no service manager the app can use: systemd is not running on this machine.'
 
 /** The backend answered no, in its own words. */
-const denied = 'The operating system did not allow this. Changing a service needs administrator rights, which this app does not raise on its own: nothing was changed.'
+const denied = 'The operating system did not allow this. Changing a service needs administrator rights, which this app does not raise on its own.'
 
 export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
   let services: Service[] = (options.services ?? SERVICES).map((s) => ({ ...s }))
@@ -142,14 +142,15 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
         if (description !== undefined) s.description = description
         if (restart !== undefined) s.restart = restart as Restart
       }),
-    register: ({ label, program, args, description, workingDirectory, autostart, restart }) => {
+    register: ({ label, program, args, description, workingDirectory, environment, autostart, restart, restartDelaySecs }) => {
       calls.push(`register ${label}`)
       return later(() => {
         if (!/^[A-Za-z0-9_][A-Za-z0-9_.@:-]{0,199}$/.test(label)) return outcome('invalid', `label "${label}" must be 1 to 200 letters, digits or \`_ . - @ :\`, starting with a letter, a digit or \`_\``)
         if (!program.startsWith('/')) return outcome('invalid', `option "program" must be an absolute path, not "${program}"`)
         if (find(label)) return outcome('invalid', `A service called ${label} is there already.`)
         if (description !== undefined && !manager.installOptions.includes('description')) return outcome('unsupported', 'This machine\'s service manager cannot do that: it does not keep the option "description"')
-        services.push(service(label, { program, args: args ?? [], description, workingDirectory, autostart: autostart ?? false, restart }))
+        if (environment !== undefined && !manager.installOptions.includes('environment')) return outcome('unsupported', 'This machine\'s service manager cannot do that: it does not keep the option "environment"')
+        services.push(service(label, { program, args: args ?? [], description, workingDirectory, environment, autostart: autostart ?? false, restart, restartDelaySecs }))
         return outcome('done')
       })
     },
