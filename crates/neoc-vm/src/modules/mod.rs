@@ -56,8 +56,8 @@ pub mod vnd {
     pub use neoc_vm_vnd_quick_xml as quick_xml;
     pub use neoc_vm_vnd_rusqlite as rusqlite;
     pub use neoc_vm_vnd_serde_json as serde_json;
-    pub use neoc_vm_vnd_service_manager as service_manager;
     pub use neoc_vm_vnd_serde_yaml as serde_yaml;
+    pub use neoc_vm_vnd_service_manager as service_manager;
     pub use neoc_vm_vnd_sqlx_mysql as sqlx_mysql;
     pub use neoc_vm_vnd_sqlx_postgres as sqlx_postgres;
     pub use neoc_vm_vnd_testcontainers_modules as testcontainers_modules;

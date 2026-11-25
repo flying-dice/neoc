@@ -425,9 +425,11 @@ esac
 }
 
 /// The real manager of a Linux machine that runs systemd, at the user level (no rights needed): the round trip the
-/// Services app makes. It skips itself where there is no systemd user manager to talk to.
+/// Services app makes. It is ignored (it writes to the user's own systemd: `bun run slow` runs it) and skips itself where
+/// there is no systemd user manager to talk to.
 #[cfg(target_os = "linux")]
 #[test]
+#[ignore = "registers and removes a service of the user systemd of whoever runs it"]
 fn native_systemd_user_round_trip() {
     let manager = match ops::open(None, Some(Level::User)) {
         Ok(manager) => manager,

@@ -49,6 +49,8 @@ NOT_SLOW=(
   "neoc-vm-vnd-sqlx_postgres tests::against_a_server"
   # writes to the credential store of whoever runs it
   "neoc-vm-vnd-keyring tests::the_platform_store_keeps_a_credential"
+  # registers and removes a service of the user systemd of whoever runs it
+  "neoc-vm-vnd-service_manager tests::native_systemd_user_round_trip"
 )
 
 # The nextest binary id of the test target a source file compiles into: `crates/<dir>/tests/<name>.rs` (a module crate's
