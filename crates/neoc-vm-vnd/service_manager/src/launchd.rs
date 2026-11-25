@@ -387,33 +387,13 @@ impl Backend for Launchd {
         let target = format!("{}/{label}", self.domain);
         let is_loaded = |loaded: Option<Loaded>| loaded.is_some_and(|jobs| jobs.contains_key(label));
         if !is_loaded(self.loaded()?) {
+            // a property list registered without autostart says `Disabled`, which launchd refuses to load
+            // (`Bootstrap failed: 5`): starting is the explicit ask, so enable the job first
+            checked("start", Some(label), run(&self.launchctl, &["enable", &target])?)?;
             let output = run(&self.launchctl, &["bootstrap", &self.domain, &path.display().to_string()])?;
             // another caller may have loaded it between the question and the request
             if !output.status.success() && !is_loaded(self.loaded()?) {
-                // DIAGNOSTIC (temporary): what launchd saw
-                let p = path.display().to_string();
-                let more = ["ls -leO@d", "plutil -p", "id"]
-                    .iter()
-                    .map(|c| {
-                        let mut it = c.split(' ');
-                        let bin = it.next().unwrap_or_default();
-                        let mut args: Vec<&str> = it.collect();
-                        if bin != "id" {
-                            args.push(&p);
-                        }
-                        std::process::Command::new(bin)
-                            .args(args)
-                            .output()
-                            .map(|o| String::from_utf8_lossy(&[o.stdout, o.stderr].concat()).into_owned())
-                            .unwrap_or_default()
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" | ");
-                return Err(super::backend::classify(
-                    "start",
-                    Some(label),
-                    &format!("{} [{more}]", said(&output)),
-                ));
+                return Err(super::backend::classify("start", Some(label), &said(&output)));
             }
         }
         for _ in 0..20 {
