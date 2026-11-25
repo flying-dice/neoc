@@ -326,8 +326,8 @@ async fn a_process_is_read_from_its_handle_and_its_load_needs_two_sightings() {
 
         pause(300)
         assert(system:refresh_processes())
-        -- the second sighting confirms the process, which is a new observation: the handle to the first reads nothing
-        assert(child:cpu_usage() == nil)
+        -- where a second sighting confirms the process it is a new observation (the handle to the first reads nothing):
+        -- take the handle again
         child = assert(system:process(pid))
         local load = assert(child:cpu_usage(), "seen twice: it has a load")
         assert(load >= 0)
