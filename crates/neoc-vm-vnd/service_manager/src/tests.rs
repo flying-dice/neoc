@@ -267,6 +267,7 @@ mod fake_systemd {
 D='{dir}'
 while [ "$1" = "--user" ] || [ "$1" = "--no-pager" ] || [ "$1" = "--no-ask-password" ]; do shift; done
 cmd="$1"; shift
+edit() {{ sed "$1" "$2" > "$2.tmp" && mv "$2.tmp" "$2"; }}
 mutating() {{ if [ -e "$D/deny" ]; then echo "Interactive authentication required." >&2; exit 1; fi; }}
 case "$cmd" in
   list-unit-files) for f in "$D"/*.show; do n=$(basename "$f" .show); echo "$n.service enabled enabled"; done ;;
@@ -280,10 +281,10 @@ case "$cmd" in
       if [ -e "$D/$n.show" ]; then cat "$D/$n.show"; else printf 'Id=%s\nLoadState=not-found\nActiveState=inactive\n' "$u"; fi
       echo
     done ;;
-  start|restart) mutating; sed -i 's/^ActiveState=.*/ActiveState=active/;s/^SubState=.*/SubState=running/' "$D/${{1%.service}}.show"; echo "$cmd $1" >> "$D/log" ;;
-  stop) mutating; sed -i 's/^ActiveState=.*/ActiveState=inactive/;s/^SubState=.*/SubState=dead/' "$D/${{1%.service}}.show"; echo "stop $1" >> "$D/log" ;;
-  enable) mutating; sed -i 's/^UnitFileState=.*/UnitFileState=enabled/' "$D/${{1%.service}}.show"; echo "enable $1" >> "$D/log" ;;
-  disable) mutating; sed -i 's/^UnitFileState=.*/UnitFileState=disabled/' "$D/${{1%.service}}.show"; echo "disable $1" >> "$D/log" ;;
+  start|restart) mutating; edit 's/^ActiveState=.*/ActiveState=active/;s/^SubState=.*/SubState=running/' "$D/${{1%.service}}.show"; echo "$cmd $1" >> "$D/log" ;;
+  stop) mutating; edit 's/^ActiveState=.*/ActiveState=inactive/;s/^SubState=.*/SubState=dead/' "$D/${{1%.service}}.show"; echo "stop $1" >> "$D/log" ;;
+  enable) mutating; edit 's/^UnitFileState=.*/UnitFileState=enabled/' "$D/${{1%.service}}.show"; echo "enable $1" >> "$D/log" ;;
+  disable) mutating; edit 's/^UnitFileState=.*/UnitFileState=disabled/' "$D/${{1%.service}}.show"; echo "disable $1" >> "$D/log" ;;
   *) echo "unknown $cmd" >&2; exit 2 ;;
 esac
 "#,
