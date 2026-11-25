@@ -17,7 +17,8 @@
  *      `sh` (on Windows a plain PowerShell) with the prompt `$ ` that reads no start-up file, so what its window shows is the
  *      same on every machine of a platform (apps/terminal/e2e, the desktop screenshots).
  *      The keychain the host reaches is a mock one (`NEOC_KEYRING`), so the Keychain app's journeys (apps/keychain/e2e) keep their passwords in the host's
- *      memory and never in the keychain of whoever runs the specs.
+ *      memory and never in the keychain of whoever runs the specs. The service manager is a mock one too (`NEOC_SERVICE_MANAGER`): the Services
+ *      app's journeys (apps/services/e2e) start, stop and remove services of the host's memory, never of the machine that runs the specs.
  */
 import { spawn, spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -60,7 +61,7 @@ writeFileSync(
     `client_dir = "${portable(join(ROOT, 'client/dist'))}"`,
     `registries = ["${fileUrl(REGISTRY)}"]`,
     `install = [${[
-      ...['calculator', 'agents', 'todos', 'notes', 'notebooks', 'containers', 'dns', 'keychain', 'pages', 'processes', 'projects', 'terminal'].map((id) => fileUrl(join(DIR, 'registry', id, versionOf(id), 'app-ref.json'))),
+      ...['calculator', 'agents', 'todos', 'notes', 'notebooks', 'containers', 'dns', 'keychain', 'services', 'pages', 'processes', 'projects', 'terminal'].map((id) => fileUrl(join(DIR, 'registry', id, versionOf(id), 'app-ref.json'))),
       ...FIXTURE_APPS.map(fixtureAppRef)
     ]
       .map((url) => `"${url}"`)
@@ -95,7 +96,7 @@ const inherited = Object.entries(process.env).filter(([name]) => process.platfor
 // A Docker nothing listens at, which says so at once: a port of this machine nothing has (a connection is refused); on
 // Windows a pipe that is not there (a refused connection is tried again there for seconds before it is given up)
 const DOCKER_HOST = process.platform === 'win32' ? 'npipe:////./pipe/vos-e2e-no-docker' : 'tcp://127.0.0.1:1'
-const env = { ...Object.fromEntries(inherited), DOCKER_HOST, NEOC_KEYRING: 'mock', ...shell }
+const env = { ...Object.fromEntries(inherited), DOCKER_HOST, NEOC_KEYRING: 'mock', NEOC_SERVICE_MANAGER: 'mock', ...shell }
 
 const host = spawn(HOST_BIN, ['--config', CONFIG], { cwd: ROOT, stdio: 'inherit', env })
 for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => host.kill('SIGTERM'))

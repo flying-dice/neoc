@@ -1,0 +1,37 @@
+[package]
+name = "neoc-vm-vnd-service_manager"
+description = "vnd:service_manager"
+version.workspace = true
+edition.workspace = true
+publish = false
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "neoc_vm_vnd_service_manager"
+path = "src/lib.rs"
+
+[dependencies]
+mlua-ir = { workspace = true }
+# The engine is Luau.
+mlua = { version = "0.12", features = ["luau", "async", "send", "serialize", "macros"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+# `vnd:service_manager`: the operating system's service manager. `service-manager` registers, removes, starts, stops
+# and reads the status of a service on systemd, launchd and the Windows Service Control Manager. It cannot list
+# services, restart one or change one, so those parts (discovery, inspection, configuration) are this crate's own, per
+# manager, and the operating system stays the source of truth.
+service-manager = "0.11"
+tempfile = "3"
+shlex = "1"
+plist = "1"
+
+[dev-dependencies]
+neoc-vm-core = { workspace = true }
+mlua-ir-gen = { workspace = true }
+
+[lints.cargo]
+missing_lints_inheritance = "allow"

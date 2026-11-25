@@ -1,0 +1,154 @@
+{
+  "openrpc": "1.3.2",
+  "info": {
+    "title": "Services",
+    "version": "0.1.0",
+    "description": "The background services of this machine, as its own service manager has them: look at them, start and stop them, register a new one, remove one."
+  },
+  "x-app": {
+    "id": "services",
+    "icon": "gearshape.2",
+    "tint": "gray",
+    "description": "The background services of this machine, as its own service manager has them: look at them, start and stop them, register a new one, remove one.",
+    "window": {
+      "w": 980,
+      "h": 640,
+      "minW": 360,
+      "minH": 480
+    }
+  },
+  "methods": [
+    {
+      "name": "overview",
+      "summary": "Whether this machine has a service manager the app can use, what it can do, and every service it has, whoever registered it. Asked of the operating system on every call: nothing is kept. A machine without a manager is an answer (`manager.available` is false and says why), not an error.",
+      "params": [],
+      "result": { "name": "overview", "schema": { "$ref": "#/components/schemas/Overview" } }
+    },
+    {
+      "name": "start",
+      "summary": "Start a service. Answers with what happened and the overview as it now stands. Needs the rights of the host process: when the operating system refuses, `status` is `denied`. A change made of several steps (`configure`) may have done some of them before the refusal: the overview in the answer shows what the machine has.",
+      "params": [{ "name": "label", "required": true, "description": "The `label` of a service of `overview`.", "schema": { "type": "string", "maxLength": 200 } }],
+      "result": { "name": "outcome", "schema": { "$ref": "#/components/schemas/Outcome" } }
+    },
+    {
+      "name": "stop",
+      "summary": "Stop a service. Answers like `start`.",
+      "params": [{ "name": "label", "required": true, "description": "The `label` of a service of `overview`.", "schema": { "type": "string", "maxLength": 200 } }],
+      "result": { "name": "outcome", "schema": { "$ref": "#/components/schemas/Outcome" } }
+    },
+    {
+      "name": "restart",
+      "summary": "Stop a service and start it again; a change that is applied on a start is applied. Answers like `start`.",
+      "params": [{ "name": "label", "required": true, "description": "The `label` of a service of `overview`.", "schema": { "type": "string", "maxLength": 200 } }],
+      "result": { "name": "outcome", "schema": { "$ref": "#/components/schemas/Outcome" } }
+    },
+    {
+      "name": "configure",
+      "summary": "Change what the service manager keeps of a service: only the settings given change, the rest of its definition is left as it was. A setting the manager cannot change answers `unsupported`. Answers like `start`.",
+      "params": [
+        { "name": "label", "required": true, "description": "The `label` of a service of `overview`.", "schema": { "type": "string", "maxLength": 200 } },
+        { "name": "autostart", "required": false, "description": "Start by itself.", "schema": { "type": "boolean" } },
+        { "name": "description", "required": false, "description": "What the service is for.", "schema": { "type": "string", "maxLength": 1000 } },
+        { "name": "restart", "required": false, "description": "When the manager starts it again after it ended.", "schema": { "$ref": "#/components/schemas/Restart" } }
+      ],
+      "result": { "name": "outcome", "schema": { "$ref": "#/components/schemas/Outcome" } }
+    },
+    {
+      "name": "register",
+      "summary": "Register a new service with the service manager. It is not started. The program must be the absolute path of an executable file. Answers like `start`; `invalid` says what was wrong with what was typed.",
+      "params": [
+        { "name": "label", "required": true, "description": "The name of the new service: letters, digits and `_ . - @ :`.", "schema": { "type": "string", "maxLength": 200 } },
+        { "name": "program", "required": true, "description": "The absolute path of an executable file.", "schema": { "type": "string", "maxLength": 4000 } },
+        { "name": "args", "required": false, "description": "The program's arguments.", "schema": { "type": "array", "items": { "type": "string", "maxLength": 4000 } } },
+        { "name": "description", "required": false, "description": "What the service is for.", "schema": { "type": "string", "maxLength": 1000 } },
+        { "name": "workingDirectory", "required": false, "description": "The absolute path of a directory the program starts in.", "schema": { "type": "string", "maxLength": 4000 } },
+        { "name": "autostart", "required": false, "description": "Start by itself.", "schema": { "type": "boolean" } },
+        { "name": "environment", "required": false, "description": "The variables the program starts with.", "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Variable" } } },
+        { "name": "restart", "required": false, "description": "When the manager starts it again after it ended.", "schema": { "$ref": "#/components/schemas/Restart" } },
+        { "name": "restartDelaySecs", "required": false, "description": "Seconds the manager waits before it starts the program again.", "schema": { "type": "integer", "minimum": 0, "maximum": 86400 } }
+      ],
+      "result": { "name": "outcome", "schema": { "$ref": "#/components/schemas/Outcome" } }
+    },
+    {
+      "name": "unregister",
+      "summary": "Remove a service from the service manager, whoever registered it. The program it ran is kept. Answers like `start`.",
+      "params": [{ "name": "label", "required": true, "description": "The `label` of a service of `overview`.", "schema": { "type": "string", "maxLength": 200 } }],
+      "result": { "name": "outcome", "schema": { "$ref": "#/components/schemas/Outcome" } }
+    }
+  ],
+  "components": {
+    "schemas": {
+      "State": {
+        "type": "string",
+        "enum": ["running", "stopped", "failed", "starting", "stopping", "paused", "unknown"],
+        "description": "What a service is doing now."
+      },
+      "Restart": {
+        "type": "string",
+        "enum": ["never", "on_failure", "always"],
+        "description": "When the manager starts a service again after it ended."
+      },
+      "Status": {
+        "type": "string",
+        "enum": ["done", "denied", "failed", "unsupported", "invalid", "missing"],
+        "description": "How a change ended: done; refused by the operating system for want of rights (`denied`); failed; asked of a manager that cannot do it (`unsupported`); the input was wrong (`invalid`); the service is gone (`missing`)."
+      },
+      "Manager": {
+        "type": "object",
+        "properties": {
+          "available": { "type": "boolean", "description": "This machine has a service manager, and it could be opened." },
+          "problem": { "type": "string", "description": "Why it is not available, as a sentence; empty when it is." },
+          "kind": { "type": "string", "description": "`systemd`, `launchd`, `windows` or `mock`; empty when not available." },
+          "level": { "type": "string", "enum": ["system", "user"] },
+          "installOptions": { "type": "array", "description": "What a service can be registered with.", "items": { "type": "string" } },
+          "configurable": { "type": "array", "description": "What can be changed of a service.", "items": { "type": "string" } },
+          "reported": { "type": "array", "description": "What the manager says of a service; the rest is not available.", "items": { "type": "string" } }
+        },
+        "required": ["available", "problem", "kind", "level", "installOptions", "configurable", "reported"]
+      },
+      "Variable": {
+        "type": "object",
+        "properties": { "name": { "type": "string" }, "value": { "type": "string" } },
+        "required": ["name", "value"]
+      },
+      "Service": {
+        "type": "object",
+        "description": "A service as the manager has it. A setting the manager does not say is left out.",
+        "properties": {
+          "label": { "type": "string", "description": "The manager's own name for the service." },
+          "description": { "type": "string" },
+          "state": { "$ref": "#/components/schemas/State" },
+          "stateDetail": { "type": "string", "description": "The manager's own words about the state." },
+          "autostart": { "type": "boolean", "description": "Starts by itself." },
+          "program": { "type": "string" },
+          "args": { "type": "array", "items": { "type": "string" } },
+          "commandLine": { "type": "string", "description": "The whole command, when the manager keeps one string." },
+          "workingDirectory": { "type": "string" },
+          "environment": { "type": "array", "items": { "$ref": "#/components/schemas/Variable" } },
+          "restart": { "$ref": "#/components/schemas/Restart" },
+          "restartDelaySecs": { "type": "integer" },
+          "user": { "type": "string" },
+          "path": { "type": "string", "description": "The file the manager keeps the definition in." }
+        },
+        "required": ["label", "state"]
+      },
+      "Overview": {
+        "type": "object",
+        "properties": {
+          "manager": { "$ref": "#/components/schemas/Manager" },
+          "services": { "type": "array", "description": "By label.", "items": { "$ref": "#/components/schemas/Service" } }
+        },
+        "required": ["manager", "services"]
+      },
+      "Outcome": {
+        "type": "object",
+        "properties": {
+          "status": { "$ref": "#/components/schemas/Status" },
+          "message": { "type": "string", "description": "What happened, as a sentence for the person; empty when it is done." },
+          "overview": { "$ref": "#/components/schemas/Overview" }
+        },
+        "required": ["status", "message", "overview"]
+      }
+    }
+  }
+}

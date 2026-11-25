@@ -1,0 +1,53 @@
+{
+  "absent": [
+    true,
+    true
+  ],
+  "configured": [
+    false,
+    "A web server",
+    "/usr/sbin/nginx",
+    "always",
+    2
+  ],
+  "denied": "permission_denied",
+  "exists": "already_exists",
+  "failed": "failed",
+  "install_options": [
+    "args",
+    "description",
+    "working_directory",
+    "environment",
+    "autostart",
+    "restart",
+    "restart_delay_secs"
+  ],
+  "installed": [
+    "stopped",
+    true,
+    "Mine"
+  ],
+  "kind": "mock",
+  "labels": [
+    "broken",
+    "locked",
+    "nginx"
+  ],
+  "level": "system",
+  "missing": "not_found",
+  "nginx": [
+    "running",
+    true,
+    "/usr/sbin/nginx",
+    [
+      "-g",
+      "daemon off;"
+    ],
+    "always",
+    2
+  ],
+  "restarted": "running",
+  "started": "running",
+  "stopped": "stopped",
+  "uninstalled": true
+}

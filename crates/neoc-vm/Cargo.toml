@@ -23,6 +23,7 @@ neoc-vm-vnd-portable_pty = { workspace = true }
 neoc-vm-vnd-quick_xml = { workspace = true }
 neoc-vm-vnd-rusqlite = { workspace = true }
 neoc-vm-vnd-serde_json = { workspace = true }
+neoc-vm-vnd-service_manager = { workspace = true }
 neoc-vm-vnd-serde_yaml = { workspace = true }
 neoc-vm-vnd-sqlx_mysql = { workspace = true }
 neoc-vm-vnd-sysinfo = { workspace = true }
