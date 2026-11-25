@@ -436,10 +436,10 @@ esac
         let text = std::fs::read_to_string(rig.dropins.join("spaced.service.d/90-vos.conf")).unwrap();
         assert!(text.contains("\"--name\" \"hello world\"\n"), "{text}");
         // once this module wrote it, the arguments are known exactly and the program alone can change
-        let again = Patch { program: Some("/bin/true".to_owned()), ..Patch::default() };
+        let again = Patch { program: Some("/bin/ls".to_owned()), ..Patch::default() };
         ops::configure(&rig.manager, "spaced", again).expect("the program alone");
         let text = std::fs::read_to_string(rig.dropins.join("spaced.service.d/90-vos.conf")).unwrap();
-        assert!(text.contains("\"/bin/true\" \"--name\" \"hello world\"\n"), "{text}");
+        assert!(text.contains("\"/bin/ls\" \"--name\" \"hello world\"\n"), "{text}");
     }
 
     #[test]
