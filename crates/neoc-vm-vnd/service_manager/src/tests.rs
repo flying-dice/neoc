@@ -665,6 +665,20 @@ fn native_round_trip() {
     } else {
         assert_eq!(ops::control(backend, &label, Control::Start).expect("start").state, State::Running);
         assert_eq!(ops::control(backend, &label, Control::Restart).expect("restart").state, State::Running);
+        // starting and restarting do not change what boot does: a service registered without autostart stays disabled
+        #[cfg(target_os = "macos")]
+        {
+            let out = std::process::Command::new("launchctl")
+                .args(["print-disabled", "system"])
+                .output()
+                .expect("run");
+            let text = String::from_utf8_lossy(&out.stdout);
+            let line = text.lines().find(|l| l.contains(&format!("\"{label}\""))).unwrap_or_default();
+            assert!(
+                line.contains("disabled") || line.contains("true"),
+                "still disabled after start and restart: {text}"
+            );
+        }
     }
 
     // a change keeps everything it does not mention

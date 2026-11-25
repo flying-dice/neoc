@@ -70,6 +70,14 @@ impl Launchd {
         Ok(Some(parse_print(&String::from_utf8_lossy(&output.stdout))))
     }
 
+    /// Whether launchd keeps an override that disables (`Some(true)`) or enables (`Some(false)`) the job, as
+    /// `launchctl enable` and `disable` leave it; `None` when it keeps none.
+    fn disabled_override(&self, label: &str) -> Result<Option<bool>, Error> {
+        let output = run(&self.launchctl, &["print-disabled", &self.domain])?;
+        let output = checked("read what is disabled", None, output)?;
+        Ok(parse_print_disabled(&String::from_utf8_lossy(&output.stdout), label))
+    }
+
     fn definitions(&self) -> Result<Vec<(PathBuf, Dictionary)>, Error> {
         let mut found: Vec<(PathBuf, Dictionary)> = Vec::new();
         for dir in &self.dirs {
@@ -381,29 +389,50 @@ impl Backend for Launchd {
     }
 
     /// Load the job into its domain if it is not there (the property list is read now, so a change made since is
-    /// applied) and make sure it runs.
+    /// applied) and make sure it runs. Whether the job starts at boot is not touched: a job that is disabled is
+    /// enabled only for as long as it takes to load it, then disabled again as it was.
     fn start(&self, label: &str) -> Result<(), Error> {
-        let (path, _) = self.definition(label)?.ok_or_else(|| Error::NotFound { label: label.to_owned() })?;
+        let (path, dict) =
+            self.definition(label)?.ok_or_else(|| Error::NotFound { label: label.to_owned() })?;
         let target = format!("{}/{label}", self.domain);
         let is_loaded = |loaded: Option<Loaded>| loaded.is_some_and(|jobs| jobs.contains_key(label));
-        if !is_loaded(self.loaded()?) {
-            // a property list registered without autostart says `Disabled`, which launchd refuses to load
-            // (`Bootstrap failed: 5`): starting is the explicit ask, so enable the job first
-            checked("start", Some(label), run(&self.launchctl, &["enable", &target])?)?;
+        let load = || -> Result<(), Error> {
             let output = run(&self.launchctl, &["bootstrap", &self.domain, &path.display().to_string()])?;
             // another caller may have loaded it between the question and the request
             if !output.status.success() && !is_loaded(self.loaded()?) {
                 return Err(super::backend::classify("start", Some(label), &said(&output)));
             }
-        }
-        for _ in 0..20 {
-            if self.loaded()?.is_some_and(|jobs| jobs.get(label).is_some_and(|(pid, _)| pid.is_some())) {
-                return Ok(());
+            Ok(())
+        };
+        let run_job = || -> Result<(), Error> {
+            for _ in 0..20 {
+                if self.loaded()?.is_some_and(|jobs| jobs.get(label).is_some_and(|(pid, _)| pid.is_some())) {
+                    return Ok(());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
             }
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            // loaded and not running (it does not start at load): ask for it
+            checked("start", Some(label), run(&self.launchctl, &["kickstart", &target])?).map(|_| ())
+        };
+        if is_loaded(self.loaded()?) {
+            return run_job();
         }
-        // loaded and not running (it does not start at load): ask for it
-        checked("start", Some(label), run(&self.launchctl, &["kickstart", &target])?).map(|_| ())
+        // a property list registered without autostart says `Disabled`, which launchd refuses to load
+        // (`Bootstrap failed: 5`); the override launchd keeps for the job, when there is one, says it instead
+        let disabled = match self.disabled_override(label)? {
+            Some(disabled) => disabled,
+            None => dict.get("Disabled").and_then(Value::as_boolean).unwrap_or(false),
+        };
+        if !disabled {
+            load()?;
+            return run_job();
+        }
+        checked("start", Some(label), run(&self.launchctl, &["enable", &target])?)?;
+        let started = load().and_then(|()| run_job());
+        // back to how it was, whatever happened: the ask was to start the job, not to change what boot does
+        let restored = checked("start", Some(label), run(&self.launchctl, &["disable", &target])?);
+        started?;
+        restored.map(|_| ())
     }
 
     /// Unload the job from its domain: its process ends and `KeepAlive` cannot bring it back (`launchctl stop` only
@@ -426,6 +455,18 @@ impl Backend for Launchd {
     }
 
     fn restart(&self, label: &str) -> Result<(), Error> {
+        if self.definition(label)?.is_none() {
+            // loaded without a property list: once unloaded it could not be loaded again, so it is restarted where
+            // it is, and a job that is not even loaded is not there
+            return match self.loaded()? {
+                Some(jobs) if jobs.contains_key(label) => {
+                    let target = format!("{}/{label}", self.domain);
+                    checked("restart", Some(label), run(&self.launchctl, &["kickstart", "-k", &target])?)
+                        .map(|_| ())
+                }
+                _ => Err(Error::NotFound { label: label.to_owned() }),
+            };
+        }
         self.stop(label)?;
         self.start(label)
     }
@@ -490,10 +531,44 @@ fn replace(
     commit(staged, path).map_err(|e| io_error("configure", &e))
 }
 
+/// What `launchctl print-disabled` says of a job: `"label" => disabled` (or `true`) and `"label" => enabled` (or
+/// `false`), one per job that has an override.
+fn parse_print_disabled(text: &str, label: &str) -> Option<bool> {
+    let quoted = format!("\"{label}\"");
+    text.lines().find_map(|line| {
+        let (name, value) = line.split_once("=>")?;
+        if name.trim() != quoted {
+            return None;
+        }
+        match value.trim().trim_end_matches(';') {
+            "disabled" | "true" => Some(true),
+            "enabled" | "false" => Some(false),
+            _ => None,
+        }
+    })
+}
+
 /// An ACL or an extended attribute lives beside the contents and a new file would not have it: say so, do not drop it.
 #[cfg(target_os = "macos")]
 fn refuse_extended_metadata(path: &Path) -> Result<(), Error> {
     let output = run(Path::new("ls"), &["-ldeO@", &path.display().to_string()])?;
+    refuse_unless_plain(path, &output)
+}
+
+/// What `ls` said of a file, as a verdict: a listing that could not be made says nothing about the file, so it is
+/// not read as the file having nothing.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn refuse_unless_plain(path: &Path, output: &std::process::Output) -> Result<(), Error> {
+    if !output.status.success() {
+        return Err(Error::Failed {
+            operation: "configure".to_owned(),
+            reason: format!(
+                "could not tell whether {} has an ACL or extended attributes ({}): it is not changed",
+                path.display(),
+                said(output)
+            ),
+        });
+    }
     if has_extended_metadata(&String::from_utf8_lossy(&output.stdout)) {
         return Err(Error::Unsupported {
             option: None,
@@ -637,6 +712,86 @@ mod tests {
         assert!(has_extended_metadata(
             "-rw-r--r--@ 1 root  wheel  - 1 Jan  1 00:00 /a.plist\n\tcom.apple.quarantine\t 20\n"
         ));
+    }
+
+    #[test]
+    fn what_is_disabled_is_read_from_print_disabled() {
+        let text = "disabled services = {\n\t\"org.a\" => disabled\n\t\"org.b\" => enabled\n\t\"org.c\" => true\n\t\"org.d\" => false\n}\n";
+        assert_eq!(parse_print_disabled(text, "org.a"), Some(true));
+        assert_eq!(parse_print_disabled(text, "org.b"), Some(false));
+        assert_eq!(parse_print_disabled(text, "org.c"), Some(true));
+        assert_eq!(parse_print_disabled(text, "org.d"), Some(false));
+        assert_eq!(parse_print_disabled(text, "org"), None, "a label is matched whole");
+        assert_eq!(parse_print_disabled(text, "org.e"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_listing_that_failed_is_not_an_empty_one() {
+        use std::os::unix::process::ExitStatusExt;
+        let failed = std::process::Output {
+            status: std::process::ExitStatus::from_raw(1 << 8),
+            stdout: Vec::new(),
+            stderr: b"ls: Operation not permitted".to_vec(),
+        };
+        let err = refuse_unless_plain(Path::new("/a.plist"), &failed).unwrap_err();
+        assert!(matches!(err, Error::Failed { .. }), "{err:?}");
+        let plain = std::process::Output {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: b"-rw-r--r--  1 root  wheel  - 1 Jan  1 00:00 /a.plist\n".to_vec(),
+            stderr: Vec::new(),
+        };
+        refuse_unless_plain(Path::new("/a.plist"), &plain).expect("a plain file");
+    }
+
+    /// A `launchctl` that lists `org.example.bare` (loaded, with no property list) and records what else it is asked.
+    #[cfg(unix)]
+    fn recording_launchctl(dir: &Path) -> (PathBuf, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let log = dir.join("calls");
+        let script = dir.join("launchctl");
+        let body = format!(
+            "#!/bin/sh\nif [ \"$1\" = print ]; then printf 'system = {{\\n\\tservices = {{\\n\\t\\t     -      0 org.example.bare\\n\\t}}\\n}}\\n'; exit 0; fi\necho \"$@\" >> '{}'\n",
+            log.display()
+        );
+        std::fs::write(&script, body).expect("write");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        // a program that was just written can be refused while another thread's fork still holds the file open
+        for _ in 0..100 {
+            match std::process::Command::new(&script).arg("warm-up").output() {
+                Err(e) if e.raw_os_error() == Some(26) => {
+                    std::thread::sleep(std::time::Duration::from_millis(20))
+                }
+                _ => break,
+            }
+        }
+        std::fs::write(&log, "").expect("reset");
+        (script, log)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_loaded_job_without_a_property_list_is_restarted_where_it_is_not_unloaded() {
+        let dir = tempfile::tempdir().expect("dir");
+        let (launchctl, log) = recording_launchctl(dir.path());
+        let launchd = Launchd {
+            level: Level::System,
+            dir: dir.path().join("none"),
+            dirs: vec![dir.path().join("none")],
+            domain: "system".to_owned(),
+            launchctl,
+        };
+        launchd.restart("org.example.bare").expect("restart");
+        let calls = std::fs::read_to_string(&log).expect("log");
+        assert_eq!(
+            calls.trim(),
+            "kickstart -k system/org.example.bare",
+            "restarted in place, never unloaded"
+        );
+        // a job that is not loaded and has no property list is not there, and nothing is asked of launchd
+        std::fs::write(&log, "").expect("reset");
+        assert!(matches!(launchd.restart("org.example.ghost"), Err(Error::NotFound { .. })));
+        assert_eq!(std::fs::read_to_string(&log).expect("log"), "");
     }
 
     #[test]
