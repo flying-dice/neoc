@@ -392,14 +392,28 @@ impl Backend for Launchd {
             if !output.status.success() && !is_loaded(self.loaded()?) {
                 // DIAGNOSTIC (temporary): what launchd saw
                 let p = path.display().to_string();
-                let more = ["ls -leO@d", "plutil -p", "id"].iter().map(|c| {
-                    let mut it = c.split(' ');
-                    let bin = it.next().unwrap_or_default();
-                    let mut args: Vec<&str> = it.collect();
-                    if bin != "id" { args.push(&p); }
-                    std::process::Command::new(bin).args(args).output().map(|o| String::from_utf8_lossy(&[o.stdout, o.stderr].concat()).into_owned()).unwrap_or_default()
-                }).collect::<Vec<_>>().join(" | ");
-                return Err(super::backend::classify("start", Some(label), &format!("{} [{more}]", said(&output))));
+                let more = ["ls -leO@d", "plutil -p", "id"]
+                    .iter()
+                    .map(|c| {
+                        let mut it = c.split(' ');
+                        let bin = it.next().unwrap_or_default();
+                        let mut args: Vec<&str> = it.collect();
+                        if bin != "id" {
+                            args.push(&p);
+                        }
+                        std::process::Command::new(bin)
+                            .args(args)
+                            .output()
+                            .map(|o| String::from_utf8_lossy(&[o.stdout, o.stderr].concat()).into_owned())
+                            .unwrap_or_default()
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                return Err(super::backend::classify(
+                    "start",
+                    Some(label),
+                    &format!("{} [{more}]", said(&output)),
+                ));
             }
         }
         for _ in 0..20 {
