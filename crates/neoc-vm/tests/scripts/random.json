@@ -1,0 +1,57 @@
+{
+  "bytes": [
+    32,
+    0,
+    true
+  ],
+  "fails_bad_uuid": [
+    true,
+    true
+  ],
+  "fails_empty_alphabet": [
+    true,
+    true
+  ],
+  "fails_min_over_max": [
+    true,
+    true
+  ],
+  "fails_short_uuid": [
+    true,
+    true
+  ],
+  "int": [
+    true,
+    7,
+    -5
+  ],
+  "multibyte": 128,
+  "parse_forms": [
+    "550e8400-e29b-41d4-a716-446655440000",
+    "550e8400-e29b-41d4-a716-446655440000"
+  ],
+  "round_trip": [
+    16,
+    true,
+    true
+  ],
+  "string": [
+    20,
+    true,
+    "",
+    true
+  ],
+  "token": [
+    43,
+    true,
+    ""
+  ],
+  "uuid": [
+    36,
+    "4",
+    36,
+    "7",
+    true,
+    true
+  ]
+}

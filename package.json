@@ -15,7 +15,7 @@
     "build": "bun run build:kit && bun run --filter @vos/client build",
     "start": "cargo run --profile release-host -p vos-host --",
     "build:apps": "bun scripts/build-apps.ts",
-    "typecheck": "cargo check --workspace --all-targets --locked && tsc --noEmit -p types/tsconfig.json && bun run --filter '*' typecheck",
+    "typecheck": "cargo check --workspace --all-targets --locked && tsc --noEmit -p types/tsconfig.json && tsc --noEmit -p types/backend/tsconfig.json && bun run --filter '*' typecheck",
     "lint": "bun run lint:conflicts && bun run lint:atomic && bun run lint:testids && bun run lint:boundaries && bun run lint:rust && bun run lint:luau && bun run lint:stylua && bun run codegen:check && bun run --filter '*' lint",
     "format": "bun run --filter '*' format && cargo fmt --all && bun scripts/stylua.ts format",
     "lint:rust": "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && bun run lint:deps && cargo deny check",
@@ -29,9 +29,8 @@
     "lint:atomic": "bun scripts/check-atomic.ts",
     "lint:testids": "bun scripts/check-testids.ts",
     "lint:boundaries": "bun scripts/check-boundaries.ts",
-    "test": "cargo nextest run --workspace --exclude neoc --exclude neoc-vm && bun test types scripts && bun run --filter '*' test",
+    "test": "cargo nextest run --workspace --exclude neoc --exclude neoc-vm --exclude neoc-vm-core --exclude neoc-vm-std --exclude 'neoc-vm-lib-*' --exclude 'neoc-vm-vnd-*' && bun test types scripts && bun run --filter '*' test",
     "test:e2e": "bun scripts/storybooks.ts build && playwright test",
-    "test:e2e:update": "bun scripts/storybooks.ts build && playwright test --update-snapshots",
     "storybooks": "bun scripts/storybooks.ts",
     "gate": "bun scripts/pre-pr.ts",
     "gate:neoc": "bash scripts/check-neoc.sh",
@@ -44,6 +43,7 @@
     "@axe-core/playwright": "^4.14.0",
     "@playwright/test": "^1.65.1",
     "@types/bun": "1.4.4",
+    "@typescript-to-lua/language-extensions": "1.19.0",
     "concurrently": "^10.0.7",
     "typescript": "^5.9.3"
   }

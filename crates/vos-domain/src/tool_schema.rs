@@ -1,4 +1,4 @@
-//! Tool input schemas: compile `app.tools.register { input = { name = t.string {} } }` into a JSON
+//! Tool input schemas: compile `app.tool { input = { name = t.string {} } }` into a JSON
 //! Schema object, and validate an agent's arguments against it (filling defaults) before any app code runs.
 //!
 //! Only the subset the `app.t` builders can express is supported: `string`, `integer`, `number`,

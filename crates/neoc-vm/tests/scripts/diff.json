@@ -1,0 +1,136 @@
+{
+  "apply": [
+    "alpha\nBRAVO\ncharlie\n",
+    "alpha\nBRAVO",
+    "a\nb\nc\n",
+    "X\na\nb\n"
+  ],
+  "apply_changes": [
+    "alpha BETA gamma",
+    "sitting",
+    "alpha\nBRAVO\n"
+  ],
+  "apply_malformed": [
+    true,
+    true
+  ],
+  "apply_mismatch": [
+    true,
+    true
+  ],
+  "chars": [
+    "delete:k",
+    "insert:s",
+    "equal:i",
+    "equal:t",
+    "equal:t",
+    "equal:e",
+    "equal:n"
+  ],
+  "context": [
+    2,
+    8
+  ],
+  "line_values": [
+    "b",
+    "b\n"
+  ],
+  "lines": [
+    "equal:a\n",
+    "delete:b\n",
+    "insert:B\n",
+    "equal:c\n"
+  ],
+  "lines_empty": [
+    [
+      "insert:a\n",
+      "insert:b\n"
+    ],
+    [
+      "delete:a\n",
+      "delete:b\n"
+    ]
+  ],
+  "lines_myers": [
+    "equal:1\n",
+    "equal:2\n",
+    "delete:3\n",
+    "insert:X\n",
+    "equal:4\n",
+    "equal:5\n"
+  ],
+  "misaligned": [
+    true,
+    true
+  ],
+  "parse": [
+    "x.txt",
+    "y.txt",
+    [
+      [
+        1,
+        3,
+        1,
+        3,
+        4
+      ]
+    ],
+    "b\n"
+  ],
+  "parse_errors": [
+    true,
+    true,
+    true,
+    true,
+    true
+  ],
+  "parse_no_newline": "x",
+  "similarity": [
+    1,
+    1,
+    0,
+    0,
+    true,
+    true
+  ],
+  "unified": [
+    "old.txt",
+    "new.txt",
+    [
+      [
+        1,
+        3,
+        1,
+        3,
+        4
+      ]
+    ]
+  ],
+  "unified_defaults": [
+    "a",
+    "b"
+  ],
+  "unified_same": [
+    0,
+    0
+  ],
+  "words": [
+    "equal:the",
+    "equal: ",
+    "delete:quick",
+    "insert:slow",
+    "equal: ",
+    "equal:brown",
+    "equal: ",
+    "equal:fox"
+  ],
+  "zero_context": [
+    [
+      2,
+      0,
+      3,
+      1,
+      1
+    ]
+  ]
+}

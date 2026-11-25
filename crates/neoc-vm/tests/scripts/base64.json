@@ -1,0 +1,42 @@
+{
+  "decode_no_pad": [
+    "hi",
+    true
+  ],
+  "encode": "aGVsbG8=",
+  "encode_empty": "",
+  "fails_decode": [
+    true,
+    true
+  ],
+  "fails_decode_no_pad": [
+    true,
+    true
+  ],
+  "fails_decode_url_safe": [
+    true,
+    true
+  ],
+  "fails_decode_url_safe_no_pad": [
+    true,
+    true
+  ],
+  "padding": [
+    "aGk=",
+    "aGk"
+  ],
+  "round_trip": [
+    true,
+    true,
+    5
+  ],
+  "round_trip_url": [
+    true,
+    true
+  ],
+  "url_safe": [
+    "+//+",
+    "-__-",
+    "-__-"
+  ]
+}

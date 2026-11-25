@@ -1,6 +1,6 @@
 --!strict
 -- A representative file workflow through `app.files` alone, with no `std:fs`: create, list, read, write, move,
--- copy, inspect and delete. `crates/vos-lua/tests/files.rs` runs it, also in a VM that refuses `std:fs`, and
+-- copy, inspect and delete. `crates/vos-lua/tests/it/files.rs` runs it, also in a VM that refuses `std:fs`, and
 -- checks what each step returned. The test loads it followed by `return {}` (and, in one case, by one more tool
 -- first): the handlers a backend returns, here none.
 local app = require("vos:app")
@@ -10,12 +10,12 @@ local docs = app.files.documents
 type Step = { ok: boolean, value: any?, kind: string? }
 
 -- One call's outcome: whether it worked, what it returned, and the kind of its error.
-local function step(value: any?, err: string?): Step
-  return { ok = value ~= nil, value = value, kind = app.files.errorKind(err) }
+local function step(value: any?, err: vos_app_FileError?): Step
+  return { ok = value ~= nil, value = value, kind = (err and err.kind) }
 end
 
 -- The size of what a read returned (a binary string is not JSON-friendly).
-local function sized(data: string?, err: string?): Step
+local function sized(data: string?, err: vos_app_FileError?): Step
   return step(if data then #data else nil, err)
 end
 

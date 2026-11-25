@@ -19,8 +19,8 @@ end
 
 describe("a declaration", function()
   test("that says what the container is made from is taken", function()
-    expect(declaration.refused(nginx())).toBeNil()
-    expect(declaration.refused { image = "nginx" }).toBeNil()
+    expect(declaration.refused(nginx())):toBeNil()
+    expect(declaration.refused { image = "nginx" }):toBeNil()
   end)
 
   test("is refused with a sentence, never an error, whatever it is given", function()
@@ -55,7 +55,7 @@ describe("a declaration", function()
     }
     for index, declared in wrong do
       local ok, sentence = pcall(declaration.refused, declared)
-      expect(ok).toBe(true)
+      expect(ok):toBe(true)
       if type(sentence) ~= "string" or sentence == "" then
         error(`declaration {index} was taken`)
       end
@@ -64,29 +64,29 @@ describe("a declaration", function()
 
   test("more than a container is declared with is refused", function()
     local words = table.create(5000, "x")
-    expect(type(declaration.refused { image = "nginx", command = words })).toBe("string")
+    expect(type(declaration.refused { image = "nginx", command = words })):toBe("string")
     local ports = table.create(300, { host = 80, container = 80 })
-    expect(type(declaration.refused { image = "nginx", ports = ports })).toBe("string")
+    expect(type(declaration.refused { image = "nginx", ports = ports })):toBe("string")
   end)
 
   test("a list with a key that is no place in it is refused", function()
     local environment: any = { "A=b", extra = "X=y" }
-    expect(type(declaration.refused { image = "nginx", environment = environment })).toBe("string")
+    expect(type(declaration.refused { image = "nginx", environment = environment })):toBe("string")
     local ports: any = { { host = 80, container = 80 }, more = { host = 81, container = 81 } }
-    expect(type(declaration.refused { image = "nginx", ports = ports })).toBe("string")
+    expect(type(declaration.refused { image = "nginx", ports = ports })):toBe("string")
   end)
 end)
 
 describe("what Docker is asked for", function()
   test("is what was declared, under the name and the labels given", function()
     local body = declaration.body(nginx(), "vos-pages", { ["vos.app"] = "pages" })
-    expect(body.name).toBe("vos-pages")
-    expect(body.Image).toBe("nginx:1.30.0-alpine")
-    expect(body.Entrypoint[3]).toBe("exec nginx")
-    expect(body.Cmd).toBeNil()
-    expect(body.Env[1]).toBe("CONF=worker_processes auto;")
-    expect(body.Labels["vos.app"]).toBe("pages")
-    expect(body.HostConfig.RestartPolicy.Name).toBe("unless-stopped")
+    expect(body.name):toBe("vos-pages")
+    expect(body.Image):toBe("nginx:1.30.0-alpine")
+    expect(body.Entrypoint[3]):toBe("exec nginx")
+    expect(body.Cmd):toBeNil()
+    expect(body.Env[1]):toBe("CONF=worker_processes auto;")
+    expect(body.Labels["vos.app"]):toBe("pages")
+    expect(body.HostConfig.RestartPolicy.Name):toBe("unless-stopped")
   end)
 
   test("publishes the declared ports and no other, TCP unless UDP is said", function()
@@ -96,25 +96,25 @@ describe("what Docker is asked for", function()
       table.insert(keys, key)
     end
     table.sort(keys)
-    expect(table.concat(keys, " ")).toBe("53/udp 80/tcp")
-    expect(bindings["80/tcp"][1].HostPort).toBe("8081")
-    expect(bindings["53/udp"][1].HostPort).toBe("5353")
+    expect(table.concat(keys, " ")):toBe("53/udp 80/tcp")
+    expect(bindings["80/tcp"][1].HostPort):toBe("8081")
+    expect(bindings["53/udp"][1].HostPort):toBe("5353")
   end)
 
   test("gives the declared folders and no other, each only to read", function()
     local host = declaration.body(nginx(), "c", {}).HostConfig
-    expect(#host.Mounts).toBe(1)
-    expect(host.Mounts[1].Type).toBe("bind")
-    expect(host.Mounts[1].Source).toBe("/srv/sites/blog")
-    expect(host.Mounts[1].Target).toBe("/sites/1")
-    expect(host.Mounts[1].ReadOnly).toBe(true)
+    expect(#host.Mounts):toBe(1)
+    expect(host.Mounts[1].Type):toBe("bind")
+    expect(host.Mounts[1].Source):toBe("/srv/sites/blog")
+    expect(host.Mounts[1].Target):toBe("/sites/1")
+    expect(host.Mounts[1].ReadOnly):toBe(true)
     -- nothing else of the machine is asked for
     for key in host do
       if key ~= "PortBindings" and key ~= "Mounts" and key ~= "RestartPolicy" then
         error(`the container was given {key}`)
       end
     end
-    expect(#declaration.body({ image = "nginx" }, "c", {}).HostConfig.Mounts).toBe(0)
+    expect(#declaration.body({ image = "nginx" }, "c", {}).HostConfig.Mounts):toBe(0)
   end)
 end)
 
@@ -122,9 +122,9 @@ describe("a signature", function()
   test("is the same for the same declaration, whatever order its ports are written in", function()
     local one, other = nginx(), nginx()
     other.ports = { other.ports[2], other.ports[1] }
-    expect(declaration.signature(one)).toBe(declaration.signature(nginx()))
-    expect(declaration.signature(one)).toBe(declaration.signature(other))
-    expect(#declaration.signature(one)).toBe(64)
+    expect(declaration.signature(one)):toBe(declaration.signature(nginx()))
+    expect(declaration.signature(one)):toBe(declaration.signature(other))
+    expect(#declaration.signature(one)):toBe(64)
   end)
 
   test("is another for any change of what the container is made from", function()
@@ -173,8 +173,8 @@ describe("a signature", function()
   test("does not take two words for one", function()
     local joined = declaration.signature { image = "i", command = { "a b" } }
     local apart = declaration.signature { image = "i", command = { "a", "b" } }
-    expect(joined == apart).toBe(false)
+    expect(joined == apart):toBe(false)
     local moved = declaration.signature { image = "i", entrypoint = { "a" }, command = {} }
-    expect(moved == declaration.signature { image = "i", entrypoint = {}, command = { "a" } }).toBe(false)
+    expect(moved == declaration.signature { image = "i", entrypoint = {}, command = { "a" } }):toBe(false)
   end)
 end)

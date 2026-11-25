@@ -18,7 +18,7 @@ local container = docker.container("vos-dns")
 sidecar.FILTERS = container.filters
 
 -- what the container is made from now
-local function declared(): vos_DockerDeclaration
+local function declared(): vos_docker_Declaration
   local settings = config.settings()
   return {
     image = dnsmasq.IMAGE,
@@ -57,7 +57,7 @@ function sidecar.remove(): string?
 end
 
 -- The end of what the server wrote, its output and its errors together in the order Docker has them.
-function sidecar.logs(tail: number?): (vos_DockerLogs?, string?)
+function sidecar.logs(tail: number?): (vos_docker_Logs?, string?)
   local logs, refused = container:logs(tail)
   return logs, if logs then nil else refused or "The server has no container: it is off."
 end

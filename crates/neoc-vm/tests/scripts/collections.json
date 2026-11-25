@@ -1,0 +1,68 @@
+{
+  "buffer": [
+    false,
+    false,
+    false
+  ],
+  "cleared": [
+    0,
+    false
+  ],
+  "copy": "alice",
+  "counter": [
+    0,
+    42,
+    1,
+    2,
+    2,
+    41,
+    46,
+    44
+  ],
+  "counter_set": -7,
+  "delete": [
+    true,
+    false,
+    false,
+    true,
+    5
+  ],
+  "empty": [
+    0,
+    false,
+    true,
+    0
+  ],
+  "independent": true,
+  "keys": [
+    "b",
+    "f",
+    "list",
+    "n",
+    "s",
+    "user"
+  ],
+  "replaced": "replaced",
+  "size": 6,
+  "values": [
+    "hello",
+    42,
+    1.5,
+    false,
+    [
+      1,
+      2,
+      3
+    ],
+    {
+      "age": 30,
+      "name": "alice",
+      "tags": [
+        "admin",
+        "ops"
+      ]
+    }
+  ],
+  "wraps_down": 9.223372036854776e+18,
+  "wraps_up": -9223372036854775808
+}

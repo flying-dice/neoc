@@ -1,6 +1,6 @@
 [package]
 name = "vos-codegen"
-description = "Adapter (dev-time): generates the shell's TypeScript wire types (ts-rs) and the Luau declarations for app authors (the `app` API, neoc's modules less the refused ones)."
+description = "Adapter (dev-time): generates the shell's TypeScript wire types (ts-rs) and the Luau and TypeScript declarations for app authors, from the schema of what an app can reach (the `app` API, the VM library's modules less the refused ones)."
 version.workspace = true
 edition = "2021"
 rust-version.workspace = true
@@ -8,6 +8,9 @@ publish.workspace = true
 
 [dependencies]
 vos-domain = { workspace = true, features = ["codegen"] }
+vos-lua = { workspace = true }      # the schema of what a script can reach: the modules it links, read from their Rust
+mlua-ir = { workspace = true }      # the schema's types
+mlua-ir-gen = { workspace = true }  # the Luau and TypeScript generators
 serde_json = { workspace = true }
 ts-rs = { workspace = true }
 

@@ -1,0 +1,33 @@
+[package]
+name = "neoc-vm-vnd-portable_pty"
+description = "vnd:portable_pty"
+version.workspace = true
+edition.workspace = true
+publish = false
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "neoc_vm_vnd_portable_pty"
+path = "src/lib.rs"
+
+[dependencies]
+neoc-vm-core = { workspace = true }
+mlua-ir = { workspace = true }
+# The engine is Luau.
+mlua = { version = "0.12", features = ["luau", "async", "send", "serialize", "macros"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+parking_lot = "0.13"
+tempfile = "3"
+# `vnd:portable_pty`: the pseudo-terminal layer of WezTerm (openpty on Unix, ConPTY on Windows). Its
+# reader, writer and child wait are blocking, so the module runs each on a thread of its own.
+portable-pty = "0.9"
+
+[dev-dependencies]
+neoc-vm-std = { workspace = true }
+
+[lints.cargo]
+missing_lints_inheritance = "allow"

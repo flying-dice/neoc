@@ -29,7 +29,7 @@ export type WindowOpen = { app: string,
  */
 window: string, 
 /**
- * What the app passed to `app:openWindow` for its page.
+ * What the app passed to `app.openWindow` for its page.
  */
 params?: { [key in string]: JsonValue }, };
 export type AppNotification = { app: string, 

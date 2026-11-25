@@ -1,7 +1,7 @@
 //! Driven adapter: Luau apps (mlua, on `neoc-vm`) behind the `AppRuntime` port.
 //!
-//! One VM per app, with the host-provided `app` table (see [`api`]), a `require` for `vos:app`, the frameworks the host carries (`vos:docker`)
-//! and every `std:`/`lib:`/`vnd:` module of the VM library except [`NOT_FOR_APPS`], one call at a time per VM
+//! One VM per app, with the host-provided `app` table (the mlua-ir module `vos:app`, see `api`), a `require` for
+//! `vos:app`, the framework the host carries (`vos:docker`, see `docker`) and every `std:`/`lib:`/`vnd:` module of the VM library except [`NOT_FOR_APPS`], one call at a time per VM
 //! (including the callbacks the app's own servers and tasks make), and errors reported with the app's file and
 //! line. Nothing is budgeted and there are no permissions; what an app starts is stopped when it is unloaded.
 //!
@@ -11,6 +11,8 @@
 
 mod api;
 mod convert;
+pub mod declarations;
+pub mod docker;
 mod error;
 mod files;
 mod host_files;
@@ -24,8 +26,8 @@ pub use convert::{json_to_lua, lua_to_json};
 pub use error::{ScriptError, ToolFailure};
 pub use files::DiskFiles;
 pub use host_files::LocalFiles;
-/// The stack every thread that polls an app's VM needs (neoc-vm's constant, re-exported so that the host, which may not
-/// depend on neoc-vm, can build its runtime with it).
+/// The stack every thread that polls an app's VM needs (neoc-vm's constant, re-exported so that the host, which may
+/// not depend on neoc-vm, can build its runtime with it).
 pub use neoc_vm::VM_THREAD_STACK;
 pub use require::NOT_FOR_APPS;
 pub use runtime::LuaRuntime;

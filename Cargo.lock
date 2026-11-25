@@ -91,15 +91,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "alloca"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5a7d05ea6aea7e9e64d25b9156ba2fee3fdd659e34e41063cd2fc7cd020d7f4"
-dependencies = [
- "cc",
-]
-
-[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -113,12 +104,6 @@ checksum = "ae221649c9976a6f6c56ae1facf410f3ddb33cc661c4b7b61020a912d4237fbc"
 dependencies = [
  "libc",
 ]
-
-[[package]]
-name = "anes"
-version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b46cbb362ab8752921c97e041f5e366ee6297bd428a31275b9fcf1e380f7299"
 
 [[package]]
 name = "anstream"
@@ -836,12 +821,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cast"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
-
-[[package]]
 name = "cbc"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -914,33 +893,6 @@ dependencies = [
  "num-traits",
  "serde",
  "windows-link",
-]
-
-[[package]]
-name = "ciborium"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42e69ffd6f0917f5c029256a24d0161db17cea3997d185db0d35926308770f0e"
-dependencies = [
- "ciborium-io",
- "ciborium-ll",
- "serde",
-]
-
-[[package]]
-name = "ciborium-io"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05afea1e0a06c9be33d539b876f1ce3692f4afea2cb41f740e7743225ed1c757"
-
-[[package]]
-name = "ciborium-ll"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57663b653d948a338bfb3eeba9bb2fd5fcfaecb9e199e87e1eda4d9e8b240fd9"
-dependencies = [
- "ciborium-io",
- "half",
 ]
 
 [[package]]
@@ -1159,41 +1111,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b929dd2a135771f40afabd1073f85eed59c800b7c61901e5c254270497dad64"
 dependencies = [
  "cfg-if",
-]
-
-[[package]]
-name = "criterion"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "950046b2aa2492f9a536f5f4f9a3de7b9e2476e575e05bd6c333371add4d98f3"
-dependencies = [
- "alloca",
- "anes",
- "cast",
- "ciborium",
- "clap",
- "criterion-plot",
- "itertools 0.13.0",
- "num-traits",
- "oorandom",
- "page_size",
- "plotters",
- "rayon",
- "regex",
- "serde",
- "serde_json",
- "tinytemplate",
- "walkdir",
-]
-
-[[package]]
-name = "criterion-plot"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8d80a2f4f5b554395e47b5d8305bc3d27813bacb73493eb1001e8f76dae29ea"
-dependencies = [
- "cast",
- "itertools 0.13.0",
 ]
 
 [[package]]
@@ -1710,6 +1627,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "00d174d5400e5e8fd687ad1049e2f578285fa914201b1af7e8b112a4546bd826"
 
 [[package]]
+name = "erased-discriminant"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1a6df962265a53221f29081896c412ef325c17fa7d638cd9578febe53d3c82c"
+dependencies = [
+ "typeid",
+]
+
+[[package]]
 name = "erased-serde"
 version = "0.4.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1874,17 +1800,6 @@ dependencies = [
  "borrow-or-share",
  "ref-cast",
  "serde",
-]
-
-[[package]]
-name = "flume"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e139bc46ca777eb5efaf62df0ab8cc5fd400866427e56c68b22e414e53bd3be"
-dependencies = [
- "futures-core",
- "futures-sink",
- "spin",
 ]
 
 [[package]]
@@ -2191,17 +2106,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
-]
-
-[[package]]
-name = "half"
-version = "2.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ea2d84b969582b4b1864a92dc5d27cd2b77b622a8d79306834f1be5ba20d84b"
-dependencies = [
- "cfg-if",
- "crunchy",
- "zerocopy",
 ]
 
 [[package]]
@@ -2763,15 +2667,6 @@ name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
-
-[[package]]
-name = "itertools"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
-dependencies = [
- "either",
-]
 
 [[package]]
 name = "itertools"
@@ -3339,6 +3234,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "mlua-ir"
+version = "0.1.0"
+source = "git+https://github.com/flying-dice/mlua-ir.git?rev=66fbbb7cdc23fe94a41dacf755ec4e53dca270c5#66fbbb7cdc23fe94a41dacf755ec4e53dca270c5"
+dependencies = [
+ "futures",
+ "inventory",
+ "mlua",
+ "mlua-ir-macros",
+ "serde",
+ "serde-reflection",
+ "serde_json",
+]
+
+[[package]]
+name = "mlua-ir-gen"
+version = "0.1.0"
+source = "git+https://github.com/flying-dice/mlua-ir.git?rev=66fbbb7cdc23fe94a41dacf755ec4e53dca270c5#66fbbb7cdc23fe94a41dacf755ec4e53dca270c5"
+dependencies = [
+ "mlua-ir",
+ "serde_json",
+]
+
+[[package]]
+name = "mlua-ir-macros"
+version = "0.1.0"
+source = "git+https://github.com/flying-dice/mlua-ir.git?rev=66fbbb7cdc23fe94a41dacf755ec4e53dca270c5#66fbbb7cdc23fe94a41dacf755ec4e53dca270c5"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "mlua-sys"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3374,6 +3303,7 @@ dependencies = [
  "mlua",
  "neoc-vm",
  "tempfile",
+ "thiserror 2.0.21",
  "tokio",
  "walkdir",
 ]
@@ -3396,88 +3326,754 @@ dependencies = [
 name = "neoc-vm"
 version = "0.1.0"
 dependencies = [
- "aes-gcm",
- "base64 0.23.1",
- "blake3",
- "bollard",
- "brotli",
- "bytes",
- "caseless",
- "chacha20poly1305",
- "clap",
- "criterion",
- "csv",
- "deunicode",
- "ed25519-dalek",
- "flate2",
- "futures",
- "globset",
- "heck",
- "hex",
- "hmac",
- "http-body-util",
- "hyper",
- "hyper-util",
- "jiff 1.0.1",
- "jsonschema",
- "keyring",
- "keyring-core",
- "lru",
- "md-5",
- "miette",
- "mime_guess",
  "mlua",
- "neoc-agui",
- "notify",
- "p256",
+ "mlua-ir",
+ "mlua-ir-gen",
+ "neoc-vm-core",
+ "neoc-vm-lib-agui",
+ "neoc-vm-lib-archive",
+ "neoc-vm-lib-args",
+ "neoc-vm-lib-base64",
+ "neoc-vm-lib-cache",
+ "neoc-vm-lib-chrono",
+ "neoc-vm-lib-compile",
+ "neoc-vm-lib-compress",
+ "neoc-vm-lib-crypto",
+ "neoc-vm-lib-csv",
+ "neoc-vm-lib-diff",
+ "neoc-vm-lib-glob",
+ "neoc-vm-lib-hash",
+ "neoc-vm-lib-hex",
+ "neoc-vm-lib-hmac",
+ "neoc-vm-lib-html",
+ "neoc-vm-lib-http",
+ "neoc-vm-lib-ini",
+ "neoc-vm-lib-json",
+ "neoc-vm-lib-log",
+ "neoc-vm-lib-mime",
+ "neoc-vm-lib-pkey",
+ "neoc-vm-lib-random",
+ "neoc-vm-lib-regex",
+ "neoc-vm-lib-semver",
+ "neoc-vm-lib-tempfile",
+ "neoc-vm-lib-template",
+ "neoc-vm-lib-test",
+ "neoc-vm-lib-text",
+ "neoc-vm-lib-unicode",
+ "neoc-vm-lib-url",
+ "neoc-vm-lib-vcr",
+ "neoc-vm-std",
+ "neoc-vm-vnd-bollard",
+ "neoc-vm-vnd-hyper",
+ "neoc-vm-vnd-jsonschema",
+ "neoc-vm-vnd-keyring",
+ "neoc-vm-vnd-portable_pty",
+ "neoc-vm-vnd-quick_xml",
+ "neoc-vm-vnd-rusqlite",
+ "neoc-vm-vnd-serde_json",
+ "neoc-vm-vnd-serde_yaml",
+ "neoc-vm-vnd-sqlx_mysql",
+ "neoc-vm-vnd-sqlx_postgres",
+ "neoc-vm-vnd-testcontainers_modules",
+ "neoc-vm-vnd-toml",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-core",
+]
+
+[[package]]
+name = "neoc-vm-core"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "mlua",
+ "mlua-ir",
  "parking_lot 0.13.0",
- "percent-encoding",
- "pkcs8",
- "portable-pty",
- "quick-xml",
  "rand 0.10.4",
- "rcgen",
- "regex",
- "rsa",
- "rusqlite",
- "rust-ini",
- "rustix",
- "rustls-platform-verifier",
- "semver",
+ "serde",
+ "strsim",
+ "tokio",
+ "tracing",
+ "tracing-core",
+]
+
+[[package]]
+name = "neoc-vm-lib-agui"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "mlua",
+ "mlua-ir",
+ "neoc-agui",
+ "neoc-vm-core",
+ "neoc-vm-vnd-hyper",
  "serde",
  "serde_json",
- "serde_yaml",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "neoc-vm-lib-archive"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "globset",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vm-lib-glob",
+ "neoc-vm-std",
+ "serde",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.21",
+ "walkdir",
+ "zip",
+ "zstd",
+]
+
+[[package]]
+name = "neoc-vm-lib-args"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-base64"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-cache"
+version = "0.1.0"
+dependencies = [
+ "lru",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vm-std",
+ "parking_lot 0.13.0",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-chrono"
+version = "0.1.0"
+dependencies = [
+ "jiff 1.0.1",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-compile"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-compress"
+version = "0.1.0"
+dependencies = [
+ "brotli",
+ "flate2",
+ "hex",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "thiserror 2.0.21",
+ "zstd",
+]
+
+[[package]]
+name = "neoc-vm-lib-crypto"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "chacha20poly1305",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vm-lib-hex",
+ "neoc-vm-lib-random",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-csv"
+version = "0.1.0"
+dependencies = [
+ "csv",
+ "futures",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vm-std",
+ "parking_lot 0.13.0",
+ "serde",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "neoc-vm-lib-diff"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "similar",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-glob"
+version = "0.1.0"
+dependencies = [
+ "globset",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+ "walkdir",
+]
+
+[[package]]
+name = "neoc-vm-lib-hash"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "md-5",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "parking_lot 0.13.0",
+ "serde",
+ "serde_json",
  "sha1 0.11.0",
  "sha2 0.11.1",
  "sha3",
- "signature",
- "similar",
- "spki",
- "sqlx",
- "strsim",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "neoc-vm-lib-hex"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-hmac"
+version = "0.1.0"
+dependencies = [
+ "hmac",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "parking_lot 0.13.0",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
  "subtle",
- "tar",
+]
+
+[[package]]
+name = "neoc-vm-lib-html"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+]
+
+[[package]]
+name = "neoc-vm-lib-http"
+version = "0.1.0"
+dependencies = [
+ "globset",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vm-lib-glob",
+ "neoc-vm-std",
+ "serde",
  "tempfile",
- "tera",
- "testcontainers-modules",
  "thiserror 2.0.21",
  "tokio",
- "tokio-rustls",
- "toml",
- "tower-service",
  "tracing",
- "tracing-core",
+ "walkdir",
+]
+
+[[package]]
+name = "neoc-vm-lib-ini"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "rust-ini",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-json"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "parking_lot 0.13.0",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-log"
+version = "0.1.0"
+dependencies = [
+ "jiff 1.0.1",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "neoc-vm-lib-mime"
+version = "0.1.0"
+dependencies = [
+ "mime_guess",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-pkey"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "p256",
+ "pkcs8",
+ "rand 0.10.4",
+ "rsa",
+ "serde",
+ "sha2 0.11.1",
+ "signature",
+ "spki",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-random"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "thiserror 2.0.21",
+ "uuid",
+]
+
+[[package]]
+name = "neoc-vm-lib-regex"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "regex",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-semver"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "regex",
+ "semver",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-tempfile"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vm-std",
+ "parking_lot 0.13.0",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-template"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "parking_lot 0.13.0",
+ "serde",
+ "tera",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-lib-test"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vm-std",
+ "parking_lot 0.13.0",
+ "serde",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "neoc-vm-lib-text"
+version = "0.1.0"
+dependencies = [
+ "deunicode",
+ "heck",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "strsim",
+ "thiserror 2.0.21",
+ "unicode-segmentation",
+ "unicode-width 0.2.3",
+ "vte",
+]
+
+[[package]]
+name = "neoc-vm-lib-unicode"
+version = "0.1.0"
+dependencies = [
+ "caseless",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
  "unicode-normalization",
  "unicode-properties",
  "unicode-segmentation",
  "unicode-width 0.2.3",
+]
+
+[[package]]
+name = "neoc-vm-lib-url"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "percent-encoding",
+ "serde",
+ "thiserror 2.0.21",
  "url",
+]
+
+[[package]]
+name = "neoc-vm-lib-vcr"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vm-lib-base64",
+ "neoc-vm-std",
+ "parking_lot 0.13.0",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "neoc-vm-std"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "notify",
+ "parking_lot 0.13.0",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
  "uuid",
- "vte",
  "walkdir",
- "xxhash-rust",
- "zip",
- "zstd",
+]
+
+[[package]]
+name = "neoc-vm-vnd-bollard"
+version = "0.1.0"
+dependencies = [
+ "bollard",
+ "bytes",
+ "futures",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vm-vnd-hyper",
+ "parking_lot 0.13.0",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "time",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "neoc-vm-vnd-hyper"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vm-lib-json",
+ "neoc-vm-std",
+ "parking_lot 0.13.0",
+ "rcgen",
+ "rustls-platform-verifier",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-rustls",
+ "tower-service",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "neoc-vm-vnd-jsonschema"
+version = "0.1.0"
+dependencies = [
+ "jsonschema",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vm-lib-json",
+ "neoc-vm-vnd-serde_json",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-vnd-keyring"
+version = "0.1.0"
+dependencies = [
+ "keyring",
+ "keyring-core",
+ "mlua",
+ "mlua-ir",
+ "mlua-ir-gen",
+ "neoc-vm-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "neoc-vm-vnd-portable_pty"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vm-std",
+ "parking_lot 0.13.0",
+ "portable-pty",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "neoc-vm-vnd-quick_xml"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vm-std",
+ "quick-xml",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-vnd-rusqlite"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "parking_lot 0.13.0",
+ "rusqlite",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-vnd-serde_json"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vm-lib-json",
+ "neoc-vm-std",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-vnd-serde_yaml"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vm-std",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "neoc-vm-vnd-sqlx_mysql"
+version = "0.1.0"
+dependencies = [
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "sqlx",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "neoc-vm-vnd-sqlx_postgres"
+version = "0.1.0"
+dependencies = [
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "sqlx",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "neoc-vm-vnd-testcontainers_modules"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "serde",
+ "testcontainers-modules",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "neoc-vm-vnd-toml"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "neoc-vm-std",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "toml",
 ]
 
 [[package]]
@@ -3724,12 +4320,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
-name = "oorandom"
-version = "11.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
-
-[[package]]
 name = "openssl-probe"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3787,16 +4377,6 @@ dependencies = [
  "primefield",
  "primeorder",
  "sha2 0.11.1",
-]
-
-[[package]]
-name = "page_size"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30d5b2194ed13191c1999ae0704b7839fb18384fa22e49b57eeaa97d79ce40da"
-dependencies = [
- "libc",
- "winapi",
 ]
 
 [[package]]
@@ -4048,34 +4628,6 @@ name = "pkg-config"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
-
-[[package]]
-name = "plotters"
-version = "0.3.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5aeb6f403d7a4911efb1e33402027fc44f29b5bf6def3effcc22d7bb75f2b747"
-dependencies = [
- "num-traits",
- "plotters-backend",
- "plotters-svg",
- "wasm-bindgen",
- "web-sys",
-]
-
-[[package]]
-name = "plotters-backend"
-version = "0.3.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df42e13c12958a16b3f7f4386b9ab1f3e7933914ecea48da7139435263a4172a"
-
-[[package]]
-name = "plotters-svg"
-version = "0.3.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51bae2ac328883f7acdfea3d66a7c35751187f870bc81f94563733a154d7a670"
-dependencies = [
- "plotters-backend",
-]
 
 [[package]]
 name = "polling"
@@ -4402,26 +4954,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "caa0f4137e1c0a72f4c651489402276c8e8e1cf081f3b0ba156d2cbeef09e86a"
 dependencies = [
  "rand_core 0.10.1",
-]
-
-[[package]]
-name = "rayon"
-version = "1.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb39b166781f92d482534ef4b4b1b2568f42613b53e5b6c160e24cfbfa30926d"
-dependencies = [
- "either",
- "rayon-core",
-]
-
-[[package]]
-name = "rayon-core"
-version = "1.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
-dependencies = [
- "crossbeam-deque",
- "crossbeam-utils",
 ]
 
 [[package]]
@@ -4971,6 +5503,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-reflection"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68fb2363ca88876b3e16442b02dde5305646fd50df297c79a4b54fc5f5cf51d4"
+dependencies = [
+ "erased-discriminant",
+ "once_cell",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "typeid",
+]
+
+[[package]]
 name = "serde-value"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5315,15 +5861,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "spin"
-version = "0.9.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3763264f6b73151db08c50ff20d7d8a0b8796e021cdea7ceedad07b80155fa0e"
-dependencies = [
- "lock_api 0.4.14",
-]
-
-[[package]]
 name = "spki"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5359,7 +5896,6 @@ dependencies = [
  "sqlx-macros",
  "sqlx-mysql",
  "sqlx-postgres",
- "sqlx-sqlite",
 ]
 
 [[package]]
@@ -5428,7 +5964,6 @@ dependencies = [
  "sqlx-core",
  "sqlx-mysql",
  "sqlx-postgres",
- "sqlx-sqlite",
  "syn 2.0.119",
  "tokio",
  "url",
@@ -5495,30 +6030,6 @@ dependencies = [
  "thiserror 2.0.21",
  "tracing",
  "whoami",
-]
-
-[[package]]
-name = "sqlx-sqlite"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88b6b78a34ddcb1db4046d462db8f79cee811019d7297b99fca8fac5de26672e"
-dependencies = [
- "atoi",
- "flume",
- "form_urlencoded",
- "futures-channel",
- "futures-core",
- "futures-executor",
- "futures-intrusive",
- "futures-util",
- "libsqlite3-sys",
- "log",
- "percent-encoding",
- "serde",
- "sqlx-core",
- "thiserror 2.0.21",
- "tracing",
- "url",
 ]
 
 [[package]]
@@ -5934,16 +6445,6 @@ dependencies = [
  "displaydoc",
  "serde_core",
  "zerovec",
-]
-
-[[package]]
-name = "tinytemplate"
-version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be4d6b5f19ff7664e8c98d03e2139cb510db9b0a60b55f8e8709b689d939b6bc"
-dependencies = [
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -6564,9 +7065,12 @@ dependencies = [
 name = "vos-codegen"
 version = "0.1.0"
 dependencies = [
+ "mlua-ir",
+ "mlua-ir-gen",
  "serde_json",
  "ts-rs",
  "vos-domain",
+ "vos-lua",
 ]
 
 [[package]]
@@ -6651,9 +7155,11 @@ name = "vos-lua"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "mlua-ir",
  "neoc-vm",
  "notify",
  "parking_lot 0.12.5",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",

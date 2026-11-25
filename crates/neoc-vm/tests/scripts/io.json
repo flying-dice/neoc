@@ -1,0 +1,94 @@
+{
+  "mixed": [
+    [
+      "head",
+      true
+    ],
+    [
+      "body",
+      true
+    ],
+    [
+      " bytes",
+      true
+    ]
+  ],
+  "read": [
+    [
+      "hello",
+      true
+    ],
+    [
+      " ",
+      true
+    ],
+    [
+      "world",
+      true
+    ],
+    [
+      false,
+      true
+    ],
+    [
+      false,
+      true
+    ]
+  ],
+  "read_all": [
+    [
+      "world",
+      true
+    ],
+    [
+      "",
+      true
+    ],
+    [
+      "",
+      true
+    ]
+  ],
+  "read_all_binary": true,
+  "read_binary": true,
+  "read_clamped": 16777216,
+  "read_empty": [
+    false,
+    true
+  ],
+  "read_huge": [
+    "hello",
+    true
+  ],
+  "read_line": [
+    [
+      "foo",
+      true
+    ],
+    [
+      "bar",
+      true
+    ],
+    [
+      "",
+      true
+    ],
+    [
+      "last",
+      true
+    ],
+    [
+      false,
+      true
+    ]
+  ],
+  "read_line_unicode": [
+    "naïve 値",
+    true
+  ],
+  "wrong_arguments": [
+    false,
+    false,
+    false
+  ]
+}

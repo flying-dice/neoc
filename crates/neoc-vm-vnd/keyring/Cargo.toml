@@ -1,0 +1,36 @@
+[package]
+name = "neoc-vm-vnd-keyring"
+description = "vnd:keyring"
+version.workspace = true
+edition.workspace = true
+publish = false
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "neoc_vm_vnd_keyring"
+path = "src/lib.rs"
+
+[dependencies]
+neoc-vm-core = { workspace = true }
+mlua-ir = { workspace = true }
+# The engine is Luau.
+mlua = { version = "0.12", features = ["luau", "async", "send", "serialize", "macros"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+serde_json = "1"
+# `vnd:keyring`: the operating system's credential store. `keyring` (its default `v1` feature) picks
+# the platform's store and opens it: Keychain Services on macOS, the Credential Manager on Windows, the Secret
+# Service on the other Unixes (over zbus, with RustCrypto for the session: no libdbus and no OpenSSL to link).
+# `keyring-core` is the crate it is built on, named for what `keyring` does not re-export: entries in a given store,
+# `search`, and the mock store the tests (and `NEOC_KEYRING=mock`) use.
+keyring = "4.2"
+keyring-core = "1.1"
+
+[dev-dependencies]
+mlua-ir-gen = { workspace = true }
+
+[lints.cargo]
+missing_lints_inheritance = "allow"

@@ -1,0 +1,54 @@
+{
+  "after_close_the_answer_stays": 7,
+  "closed": [
+    true,
+    true,
+    true,
+    true,
+    true,
+    true
+  ],
+  "command": [
+    true,
+    true,
+    7,
+    false,
+    true,
+    true,
+    7
+  ],
+  "default": [
+    true,
+    false
+  ],
+  "echo": true,
+  "empty_write": true,
+  "killed": [
+    false,
+    1,
+    true,
+    true
+  ],
+  "limits": [
+    true,
+    true,
+    true,
+    true,
+    true
+  ],
+  "ready": true,
+  "refused": [
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true
+  ],
+  "resize": true,
+  "write": true
+}

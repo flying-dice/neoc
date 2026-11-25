@@ -58,7 +58,9 @@ function config.sites(): { rpc.Site }
 end
 
 local function keep(sites: { rpc.Site })
-  local kept: { any } = {}
+  -- a site as it is kept: what the person chose, without what is worked out each time (`problem`)
+  type Kept = { id: number, name: string, folder: string, port: number, hostnames: { string }, enabled: boolean }
+  local kept: { Kept } = {}
   for _, site in sites do
     table.insert(kept, {
       id = site.id,

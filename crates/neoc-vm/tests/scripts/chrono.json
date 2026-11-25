@@ -1,0 +1,222 @@
+{
+  "date_diff": 10,
+  "date_fields": [
+    2026,
+    5,
+    20,
+    3,
+    140,
+    4,
+    1
+  ],
+  "date_format": "2026/05/20",
+  "date_format_invalid": [
+    true,
+    true
+  ],
+  "date_invalid": [
+    true,
+    true
+  ],
+  "date_parse_invalid": [
+    true,
+    true
+  ],
+  "date_too_large": [
+    true,
+    true
+  ],
+  "date_tostring": [
+    "2026-05-20",
+    "2026-05-20"
+  ],
+  "date_with": [
+    "2030-05-20",
+    "2026-01-20",
+    "2026-05-01"
+  ],
+  "date_with_invalid": [
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ]
+  ],
+  "datetime_at": "2026-05-20T13:45:30",
+  "datetime_diff": 12,
+  "datetime_fields": [
+    2026,
+    5,
+    20,
+    13,
+    45,
+    30,
+    0
+  ],
+  "datetime_format": "2026 13",
+  "datetime_format_invalid": [
+    true,
+    true
+  ],
+  "datetime_new": "2026-05-20T13:45:30",
+  "datetime_new_invalid": [
+    true,
+    true
+  ],
+  "datetime_parse_invalid": [
+    true,
+    true
+  ],
+  "datetime_parts": [
+    "2026-05-20",
+    "13:45:30"
+  ],
+  "duration_fields": [
+    0,
+    0,
+    0,
+    0,
+    1,
+    30,
+    0,
+    0,
+    0,
+    0
+  ],
+  "duration_negate": [
+    -1,
+    -30,
+    1
+  ],
+  "duration_parse_invalid": [
+    true,
+    true
+  ],
+  "duration_tostring": [
+    "PT1H30M",
+    "PT1H30M",
+    "PT1H30M"
+  ],
+  "duration_total": 5400,
+  "duration_total_calendar": [
+    true,
+    true
+  ],
+  "duration_units_stay": 36,
+  "in_zone": [
+    "2026-05-20T12:00:00+00:00[UTC]",
+    "UTC",
+    0
+  ],
+  "in_zone_gap": [
+    3,
+    30,
+    -14400
+  ],
+  "in_zone_unknown": [
+    true,
+    true
+  ],
+  "now": [
+    true,
+    "UTC",
+    0
+  ],
+  "parse_date": "2026-05-20",
+  "parse_datetime": "2026-05-20T13:45:30",
+  "parse_offset": "2026-05-20T16:30:00+00:00[UTC]",
+  "parse_time": "13:45:30",
+  "parse_unknown": [
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ]
+  ],
+  "parse_utc": "2026-05-20T16:30:00+00:00[UTC]",
+  "parse_utc_fields": [
+    "UTC",
+    0,
+    16
+  ],
+  "parse_zoned": "2026-01-20T16:30:00-05:00[America/New_York]",
+  "time_fields": [
+    13,
+    45,
+    30,
+    0,
+    400
+  ],
+  "time_format": "13.45",
+  "time_format_invalid": [
+    true,
+    true
+  ],
+  "time_invalid": [
+    true,
+    true
+  ],
+  "time_on": "2026-05-20T13:45:30",
+  "time_parse_invalid": [
+    true,
+    true
+  ],
+  "time_tostring": [
+    "13:45:30",
+    "13:45:30"
+  ],
+  "zoned": [
+    "2026-01-20T16:30:00-05:00[America/New_York]",
+    "America/New_York",
+    -18000,
+    1768944600,
+    "2026-01-20T21:30:00Z"
+  ],
+  "zoned_diff": 0,
+  "zoned_fields": [
+    2026,
+    1,
+    20,
+    16,
+    30,
+    0,
+    0
+  ],
+  "zoned_format": "2026-01-20T16:30:00-05:00",
+  "zoned_format_invalid": [
+    true,
+    true
+  ],
+  "zoned_in_zone": [
+    "UTC",
+    true,
+    21
+  ],
+  "zoned_in_zone_unknown": [
+    true,
+    true
+  ],
+  "zoned_parse_invalid": [
+    true,
+    true
+  ],
+  "zoned_parts": [
+    "2026-01-20",
+    "16:30:00",
+    "2026-01-20T16:30:00"
+  ]
+}

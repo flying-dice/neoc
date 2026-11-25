@@ -1,0 +1,135 @@
+{
+  "comment_only": {},
+  "decode": [
+    {
+      "count": 30,
+      "enabled": true,
+      "jobs": [
+        {
+          "id": 1
+        },
+        {
+          "id": 2,
+          "tags": [
+            "x"
+          ]
+        }
+      ],
+      "literal": "C:\\path",
+      "mixed": [
+        "a",
+        1,
+        true,
+        [
+          2,
+          3
+        ]
+      ],
+      "multi": "two\nlines",
+      "negative": -7,
+      "nums": [
+        1,
+        2,
+        3
+      ],
+      "point": {
+        "x": 1,
+        "y": 2
+      },
+      "ratio": 0.5,
+      "server": {
+        "host": "localhost",
+        "port": 8080,
+        "tls": {
+          "enabled": false
+        }
+      },
+      "title": "demo"
+    },
+    true
+  ],
+  "empty": [
+    {}
+  ],
+  "encode": [
+    "age = 25\nname = \"bob\"\non = true\nratio = 1.5\ntags = [\"a\", \"b\"]\n\n[[jobs]]\nid = 1\n\n[[jobs]]\nid = 2\n\n[server]\nhost = \"localhost\"\nport = 3000\n\n[server.limits]\ncpu = 2\n"
+  ],
+  "encode_empty": "",
+  "encode_pretty": [
+    "age = 25\nname = \"bob\"\non = true\nratio = 1.5\ntags = [\n    \"a\",\n    \"b\",\n]\n\n[[jobs]]\nid = 1\n\n[[jobs]]\nid = 2\n\n[server]\nhost = \"localhost\"\nport = 3000\n\n[server.limits]\ncpu = 2\n"
+  ],
+  "fails_deep": [
+    true,
+    true
+  ],
+  "fails_duplicate": [
+    true,
+    true
+  ],
+  "fails_no_value": [
+    true,
+    true
+  ],
+  "fails_unclosed": [
+    true,
+    true
+  ],
+  "reader": [
+    {
+      "nums": [
+        1,
+        2
+      ],
+      "server": {
+        "port": 8080
+      },
+      "title": "demo"
+    }
+  ],
+  "reader_empty": [
+    {}
+  ],
+  "reader_fails": [
+    true,
+    true
+  ],
+  "round_trip": {
+    "age": 25,
+    "jobs": [
+      {
+        "id": 1
+      },
+      {
+        "id": 2
+      }
+    ],
+    "name": "bob",
+    "on": true,
+    "ratio": 1.5,
+    "server": {
+      "host": "localhost",
+      "limits": {
+        "cpu": 2
+      },
+      "port": 3000
+    },
+    "tags": [
+      "a",
+      "b"
+    ]
+  },
+  "toml_1_1": [
+    {
+      "x": {
+        "a": 1,
+        "b": 2
+      }
+    },
+    {
+      "x": "\u001b"
+    }
+  ],
+  "unicode": {
+    "キー": "値"
+  }
+}

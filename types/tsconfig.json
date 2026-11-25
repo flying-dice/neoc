@@ -13,5 +13,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["generated/**/*.ts", "tests/**/*.ts"]
+  "include": ["generated/vos.ts", "tests/**/*.ts"]
 }

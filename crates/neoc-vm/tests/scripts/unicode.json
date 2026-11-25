@@ -1,0 +1,52 @@
+{
+  "alphabetic": [
+    true,
+    false,
+    false
+  ],
+  "caseless": [
+    true,
+    false
+  ],
+  "categories": [
+    "Lu",
+    "Ll",
+    "Nd",
+    "Zs",
+    "Pd",
+    "Sc",
+    "Sm",
+    "Cc",
+    "Nl",
+    "Lo"
+  ],
+  "fold": [
+    "masse",
+    true
+  ],
+  "grapheme_count": [
+    3,
+    0
+  ],
+  "graphemes": [
+    3,
+    "a",
+    "b"
+  ],
+  "nfc": true,
+  "nfd": 3,
+  "nfkc": "fi",
+  "nfkd": "1",
+  "numeric": [
+    true,
+    false,
+    false,
+    false
+  ],
+  "width": [
+    3,
+    4,
+    0,
+    1
+  ]
+}

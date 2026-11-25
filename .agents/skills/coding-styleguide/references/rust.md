@@ -15,6 +15,13 @@
   for fallible ones. Choose loops when clearer than iterator chains.
 - Follow ecosystem naming and visibility conventions; expose APIs deliberately and
   document meaningful contracts. Avoid needless lifetime parameters and abstractions.
+- A Lua surface (a module of the runtime, in `neoc-vm-std`, `neoc-vm-lib-*` or `neoc-vm-vnd-*`: `#[mlua_ir::module]`,
+  `#[mlua_ir::object]`) declares real
+  types for every argument, option, return, stream item and error kind: mlua-ir reads them from
+  the Rust signature. Never return an erased `serde_json::Value` wrapper or `mlua_ir::Unknown` for
+  data whose shape a Rust type already knows; give it that type (see "Fully typed APIs" in the
+  styleguide). Never hand-write a type string for the declarations: the parameter's Rust type is
+  the declaration.
 - Use the project's formatter, Clippy configuration, and relevant Cargo tests.
   Address applicable warnings without unrelated lint churn or blanket allowances.
 

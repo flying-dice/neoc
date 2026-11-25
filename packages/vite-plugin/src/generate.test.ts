@@ -183,7 +183,7 @@ describe('the Luau side', () => {
     expect(luau).toContain('export type Handlers = {')
     expect(luau).toContain('list: (ctx: Context) -> ListResult,')
     expect(luau).toContain('add_note: (ctx: Context, params: AddNoteParams) -> AddNoteResult,')
-    expect(luau).toContain('local function router(implementation: Handlers): vos_Handlers')
+    expect(luau).toContain('local function router(implementation: Handlers): vos_app_Handlers')
     expect(luau.trimEnd().endsWith('return { router = router }')).toBe(true)
     expect(emitLuauEntry()).toContain('return rpc.router(handlers)')
     expect(luau).toContain('error("RPC-32602 Invalid params: " .. problem, 0)')

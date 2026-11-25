@@ -1,0 +1,45 @@
+{
+  "recorded": {
+    "buffer": false,
+    "created": [
+      true,
+      true
+    ],
+    "missing": [
+      false,
+      false,
+      false
+    ],
+    "off": [
+      "aGVsbG8=",
+      "YWdhaW4=",
+      false
+    ],
+    "raises": false,
+    "record": [
+      "aGVsbG8=",
+      "hello",
+      true,
+      true,
+      true,
+      42,
+      true
+    ],
+    "replay": [
+      "aGVsbG8=",
+      "hello",
+      true,
+      true,
+      42,
+      "x",
+      3,
+      true,
+      false
+    ]
+  },
+  "wrong_arguments": [
+    false,
+    false,
+    false
+  ]
+}

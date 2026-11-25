@@ -57,8 +57,13 @@
     waitFor(() => expect(canvas.getByTestId(id)).toHaveProperty('value', String(count)))
   const says = (canvas: Canvas, text: string): Promise<void> => waitFor(() => expect(textArea(canvas.getByTestId('notes-text'))).toHaveValue(text))
 
-  /** A narrow window shows one column at a time: step back until the folders are in front. In a wide one there is no way back to take. */
+  /**
+   * A narrow window shows one column at a time: step back until the folders are in front. In a wide one there is no way back to take.
+   * The page hears that its window is narrow once the window has been laid out (the split view measures itself), which is
+   * a frame after a story is drawn: until then there is no way back to see, so this waits for that frame first.
+   */
   async function toFolders(canvas: Canvas, user: User): Promise<void> {
+    await new Promise((laidOut) => requestAnimationFrame(() => requestAnimationFrame(laidOut)))
     for (const id of ['notes-back-to-list', 'notes-back']) {
       const back = canvas.queryByTestId(id)
       if (back?.checkVisibility()) await user.click(back)

@@ -29,7 +29,7 @@ function stacks.folder(labels: Labels): string
 end
 
 -- Docker's filter for what belongs to a stack: its containers, and its networks
-function stacks.filter(stack: string): { [string]: any }
+function stacks.filter(stack: string): { [string]: { string } }
   return { label = { `{PROJECT}={stack}` } }
 end
 

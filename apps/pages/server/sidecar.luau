@@ -29,7 +29,7 @@ local function unusable(site: rpc.Site): string
   if not found then
     return "The folder is not there."
   end
-  return if found:is_dir() then "" else "That is a file, not a folder."
+  return if found.kind == "dir" then "" else "That is a file, not a folder."
 end
 
 -- Every site, each with what is known to be wrong with it when it is on.
@@ -42,7 +42,7 @@ function sidecar.sites(): { rpc.Site }
 end
 
 -- What the container is made from now; nothing when there is no site to serve.
-local function declared(): vos_DockerDeclaration?
+local function declared(): vos_docker_Declaration?
   local served: { rpc.Site } = {}
   for _, site in sidecar.sites() do
     if site.enabled and site.problem == "" then
@@ -54,7 +54,7 @@ local function declared(): vos_DockerDeclaration?
     return nil
   end
   -- every port nginx listens on, published under its own number
-  local ports: { vos_DockerPort } = {}
+  local ports: { vos_docker_Port } = {}
   for _, port in plan.ports do
     table.insert(ports, { host = port, container = port })
   end
@@ -98,7 +98,7 @@ function sidecar.apply(always: boolean): string?
 end
 
 -- The end of what the server wrote, its output and its errors together in the order Docker has them.
-function sidecar.logs(tail: number?): (vos_DockerLogs?, string?)
+function sidecar.logs(tail: number?): (vos_docker_Logs?, string?)
   local logs, refused = container:logs(tail)
   return logs, if logs then nil else refused or "The server has no container: no site is on."
 end

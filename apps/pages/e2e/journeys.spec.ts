@@ -9,6 +9,7 @@
  * The app's configuration is kept on the shared host: the tests run one after another, each starting from no sites,
  * and the last thing done is to choose this machine's own Docker again.
  */
+import { sep } from 'node:path'
 import type { FrameLocator, Locator, Page } from '@playwright/test'
 import { expect, expectNoOverflow, frameOf, openDesktop, openFromHome, resizeWindow, test, windowOf } from '../../../e2e/fixtures'
 import { callTool } from '../../../e2e/host/pair'
@@ -150,7 +151,8 @@ test.describe('Pages journeys', () => {
     await of(page, 'Wiki', 'remove').click()
     await expect(names(page)).toHaveText(['Blog'])
     await expect.poll(config).not.toContain('wiki.home')
-    expect(docker.container(NAME)?.running).toBe(true)
+    // made again is made, then started: the start comes a moment after the container is there
+    await expect.poll(() => docker.container(NAME)?.running).toBe(true)
   })
 
   test('PG3: a site that cannot be is refused in words, and nothing changes', async ({ page }) => {
@@ -197,7 +199,8 @@ test.describe('Pages journeys', () => {
     await part(page, 'apply').click()
     await expect(part(page, 'state')).toHaveText('Serving 1 site')
     await expect(part(page, 'attention')).toHaveCount(0)
-    expect(docker.container(NAME)?.running).toBe(true)
+    // made again is made, then started: the start comes a moment after the container is there
+    await expect.poll(() => docker.container(NAME)?.running).toBe(true)
   })
 
   test('PG5: the shared port is the one Docker publishes for the sites with names', async ({ page }) => {
@@ -292,7 +295,10 @@ test.describe('Pages journeys', () => {
     await choose(page, '')
     await expect(part(page, 'down')).toBeVisible()
     await callTool(`${ID}__add_site`, { name: 'Lost', folder: '/no/such/folder/anywhere', port: 8086 })
-    await callTool(`${ID}__add_site`, { name: 'Found', folder: process.cwd(), port: 8087 })
+    // The app takes a folder as a path from `/`. On Windows that is this folder without its drive, with `/` between the
+    // names: a path of the drive the host runs on, which is this checkout's.
+    const here = process.platform === 'win32' ? process.cwd().replace(/^[A-Za-z]:/, '').replaceAll(sep, '/') : process.cwd()
+    await callTool(`${ID}__add_site`, { name: 'Found', folder: here, port: 8087 })
     const listed = JSON.parse(await callTool(`${ID}__list_sites`, {})) as { sites: { name: string; problem: string }[] }
     expect(listed.sites.map((site) => [site.name, site.problem])).toEqual([
       ['Found', ''],

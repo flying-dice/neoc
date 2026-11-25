@@ -33,10 +33,9 @@ function roster.find(id: string): Agent?
   return if row then agentOf(row) else nil
 end
 
--- the keychain's own message, without the module's prefix
-local function sentence(err: string?): string
-  local message = keyring.error_message(err)
-  return `The keychain did not take the token: {message or err or "it did not say why"}`
+-- the keychain's own message
+local function sentence(err: vnd_keyring_Error?): string
+  return `The keychain did not take the token: {if err then err.message else "it did not say why"}`
 end
 
 local function entry(id: string): (vnd_keyring_Entry?, string?)

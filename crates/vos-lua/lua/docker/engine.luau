@@ -30,16 +30,17 @@ local HOST_LIMIT = 300
 
 export type Client = vnd_bollard_Client
 type Clients = { reading: Client, acting: Client, pulling: Client }
+type Events = mlua_Stream<vnd_bollard_EventMessage, vnd_bollard_DockerError>
 
 -- Whether Docker can be reached, as a page shows it: its version when it can, why not (`problem`) when it cannot.
-export type Status = { reachable: boolean, version: string, host: string, problem: string }
+export type Status = vos_docker_Status
 -- The end of what a container wrote. `truncated`: there was more before it.
-export type Logs = { text: string, truncated: boolean }
+export type Logs = vos_docker_Logs
 
 -- the clients of the chosen Docker, made on first use and again after the choice changes
 local clients: Clients? = nil
 -- the events the watchers are reading, so that a change of Docker can end them
-local watched: { [vnd_bollard_Stream]: true } = {}
+local watched: { [Events]: true } = {}
 -- counts the choices of a Docker: a watcher that sees it move looks for the new one at once
 local chosen = 0
 
@@ -50,18 +51,19 @@ end
 
 -- Why a call failed, as a sentence for the person. Docker's own message is one already ("port is already
 -- allocated"); no Docker at all is said in the framework's words.
-function engine.sentence(err: string?): string
-  local kind = bollard.error_kind(err)
-  if kind == "connect" then
+function engine.sentence(err: vnd_bollard_DockerError?): string
+  if not err then
+    return "Docker refused, and did not say why."
+  end
+  if err.kind == "connect" then
     local host = engine.host()
     return if host == ""
       then "Docker is not running on this machine, or cannot be reached."
       else `Docker cannot be reached at {host}.`
-  elseif kind == "timed_out" then
+  elseif err.kind == "timed_out" then
     return "Docker is not answering. It may still be starting, or be paused."
   end
-  local message = bollard.error_message(err)
-  return if message and message ~= "" then message else err or "Docker refused, and did not say why."
+  return if err.message ~= "" then err.message else "Docker refused, and did not say why."
 end
 
 local function connected(): (Clients?, string?)
@@ -113,7 +115,7 @@ function engine.status(): Status
     return status
   end
   status.reachable = true
-  status.version = if type(version.Version) == "string" then version.Version else ""
+  status.version = version.Version or ""
   return status
 end
 
@@ -133,7 +135,7 @@ function engine.use(host: string): string?
     end
     -- a socket that is not there is a fine choice (Docker may not be running yet): only an address that is none is not
     local _, err = bollard.connect { host = host }
-    if err and bollard.error_kind(err) ~= "connect" then
+    if err and err.kind ~= "connect" then
       return engine.sentence(err)
     end
   end
@@ -162,10 +164,8 @@ function engine.logs(container: string, tail: number?): (Logs?, string?)
   -- a number that is none (NaN) is no number of lines
   local asked = if type(tail) == "number" and tail == tail then tail else DEFAULT_TAIL
   local lines = math.clamp(math.floor(asked), 1, MAX_TAIL)
-  local stream, err = api:logs(container, { tail = lines })
-  if not stream then
-    return nil, engine.sentence(err)
-  end
+  -- the request is made as the stream is read: a container that is not there is the error of its first piece
+  local stream = api:logs(container, { tail = lines })
   local pieces: { string } = {}
   local read = 0
   while true do
@@ -189,11 +189,11 @@ function engine.logs(container: string, tail: number?): (Logs?, string?)
 end
 
 -- Watch Docker for as long as the app is loaded, and call `changed` whenever what it has of `filters` (Docker's own,
--- for its events: `{ type = "container", event = { "start", "die" } }`) may be different: a container was made,
+-- for its events: `{ type = { "container" }, event = { "start", "die" } }`) may be different: a container was made,
 -- started, stopped or removed, Docker itself came or went, another Docker was chosen, or the watcher was not listening
 -- for a while (Docker does not repeat what it reported to nobody). A Docker that is away is looked for again without
 -- the app's doing. It never returns: run it in a task (`task.spawn(engine.watch, filters, changed)`).
-function engine.watch(filters: { [string]: any }, changed: () -> ())
+function engine.watch(filters: { [string]: { string } }, changed: () -> ())
   local reachable: boolean? = nil
   while true do
     local choice = chosen

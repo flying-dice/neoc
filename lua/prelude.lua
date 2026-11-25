@@ -1,7 +1,7 @@
 -- The prelude. Apps are Luau, and the app's environment (neoc-vm's `script_env`) copies only a few things from the
--- engine: the base functions, `string`, `table`, `math`, `coroutine` and `bit32`. Two members of Luau's own standard
--- library are not among them, and apps (and the Luau declarations luau-lsp checks them against) expect both, so
--- they are provided here: `typeof` and the `utf8` library, with Lua 5.3's semantics.
+-- engine: the base functions (`typeof` among them), `string`, `table`, `math`, `coroutine` and `bit32`. One member of
+-- Luau's own standard library is not among them, and apps (and the Luau declarations luau-lsp checks them against)
+-- expect it, so it is provided here: the `utf8` library, with Lua 5.3's semantics.
 --
 -- What it used to polyfill for Lua 5.1 source and no longer does: `table.pack`, `table.clone`, `table.move` and
 -- `table.unpack`. They are Luau's own and the environment's copy of `table` has them (these definitions were
@@ -22,11 +22,6 @@ local function define(library, name, value)
     library[name] = value
   end
 end
-
--- `typeof` is Luau's, for code written against Luau. Here it is `type`: the library modules return userdata (a JSON
--- `Object`, a `Duration`, a `TcpListener`, ...), and every one of them is `"userdata"`, because their metatables
--- are locked and name no type. Tell them apart by what they do, not by `typeof`.
-define(env, "typeof", type)
 
 local function argError(position, name, message)
   return error("bad argument #" .. position .. " to '" .. name .. "' (" .. message .. ")", 3)

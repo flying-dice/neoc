@@ -26,21 +26,13 @@ local EVENTS = { "create", "start", "die", "destroy", "pause", "unpause", "resta
 -- How long an `apply` that says nothing is waited for, in seconds: more than Docker is given to act
 -- (`engine.actor`). A pull says it goes on with every step of its progress.
 local BUSY_LIMIT = 180
-export type Port = declaration.Port
-export type Mount = declaration.Mount
 export type Declaration = declaration.Declaration
-export type State = "absent" | "running" | "restarting" | "stopped"
 -- How the container is doing. `current`: it was made from the declaration it is compared with. `problem`: why it
 -- could not be made or started the last time that was tried; empty when it could.
-export type Status = { state: State, status: string, current: boolean, problem: string }
-
-export type Container = {
-  -- Docker's filters for what happens to the app's containers, for `engine.watch`
-  filters: { [string]: any },
-  status: (self: Container, declared: Declaration?) -> Status,
-  apply: (self: Container, declared: Declaration?, always: boolean?) -> string?,
-  logs: (self: Container, tail: number?) -> (engine.Logs?, string?),
-}
+export type Status = vos_docker_ContainerStatus
+-- The container: its filters (Docker's, for what happens to the app's containers, for `engine.watch`) and what is
+-- asked of it.
+export type Container = vos_docker_Container
 
 -- The container named `name` (a new one is given that name) that is this app's.
 function owned.container(name: string): Container
@@ -56,15 +48,14 @@ function owned.container(name: string): Container
   local turn = 0
 
   -- this app's containers of this name, as Docker lists them: one, or none
-  local function list(api: engine.Client): ({ any }?, string?)
+  local function list(api: engine.Client): ({ vnd_bollard_ContainerSummary }?, string?)
     local found, err = api:list_containers { all = true, filters = { label = filter } }
     if not found then
       return nil, engine.sentence(err)
     end
-    local named: { any } = {}
+    local named: { vnd_bollard_ContainerSummary } = {}
     for _, summary in found do
-      local names: any = summary.Names
-      if type(names) == "table" and table.find(names, `/{name}`) then
+      if summary.Names and table.find(summary.Names, `/{name}`) then
         table.insert(named, summary)
       end
     end
@@ -78,8 +69,10 @@ function owned.container(name: string): Container
     end
     local failure: string? = nil
     for _, summary in found do
-      local _, err = api:remove_container(summary.Id, { force = true })
-      failure = failure or (if err then engine.sentence(err) else nil)
+      if summary.Id then
+        local _, err = api:remove_container(summary.Id, { force = true })
+        failure = failure or (if err then engine.sentence(err) else nil)
+      end
     end
     return failure
   end
@@ -97,11 +90,8 @@ function owned.container(name: string): Container
     if not puller then
       return unreachable
     end
-    local pull, pull_err = puller:pull_image(image)
-    if not pull then
-      return engine.sentence(pull_err)
-    end
-    -- the pull runs as its progress is read
+    local pull = puller:pull_image(image)
+    -- the pull runs as its progress is read: an image that cannot be pulled is the error of a step
     while true do
       local step, step_err = pull:next()
       -- the pull goes on: whoever waits for this `apply` waits on
@@ -149,7 +139,7 @@ function owned.container(name: string): Container
   end
 
   local container = {} :: Container
-  container.filters = { type = "container", label = filter, event = EVENTS }
+  container.filters = { type = { "container" }, label = filter, event = EVENTS }
 
   -- How the container is doing, and whether it is what `declaration` says (never, for none). With Docker away there
   -- is nothing to say of it: it is absent.
@@ -210,10 +200,11 @@ function owned.container(name: string): Container
     if not found then
       return nil, unlisted
     end
-    if not found[1] then
+    local id = found[1] and found[1].Id
+    if not id then
       return nil, nil
     end
-    return engine.logs(found[1].Id, tail)
+    return engine.logs(id, tail)
   end
 
   return container

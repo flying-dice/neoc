@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "version": "0.1.0",
-  "description": "Todos: lists of things to do, a Svelte client on the kit, the lists and their todos in Luau, with tools for agents. `bun run build` writes the app ref (dist/app-ref.json, app.luau, static/).",
+  "description": "Todos: lists of things to do, a Svelte client on the kit, the lists and their todos in TypeScript (the build makes the Luau), with tools for agents. `bun run build` writes the app ref (dist/app-ref.json, app.luau, static/).",
   "scripts": {
     "generate": "vos generate",
     "build": "vite build",

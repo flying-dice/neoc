@@ -8,7 +8,8 @@
 local engine = require("./engine")
 local owned = require("./owned")
 
-return {
+-- held to what an app is told of it: the module's declared type (crates/vos-lua/src/docker.rs)
+local docker: vos_docker = {
   host = engine.host,
   use = engine.use,
   status = engine.status,
@@ -20,3 +21,5 @@ return {
   watch = engine.watch,
   container = owned.container,
 }
+
+return docker

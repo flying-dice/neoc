@@ -12,11 +12,12 @@
  * Discover journeys install and remove is not used: they run while these do.) Each journey works in a folder of its
  * own and removes it at the end, so the journeys do not see each other's files and the app is left as it was found.
  */
+import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { type Locator, type Page } from '@playwright/test'
 import { expect, expectAccessible, expectNoOverflow, openDesktop, resizeWindow, settle, test, windowOf } from './fixtures'
-import { FILES_DIR, ORIGIN } from './host/config'
+import { FILES_DIR, ORIGIN, portable } from './host/config'
 
 const APP = 'tasks-react'
 
@@ -80,11 +81,27 @@ async function openOwnDirectory(page: Page, files: Record<string, string> = {}):
   return dir
 }
 
-/** Type a path into the path field and go there. */
-async function goTo(page: Page, path: string): Promise<void> {
-  await page.getByTestId('files-path').fill(path)
+/**
+ * A directory of the disk as the Files page and the host say it: from `/`, with `/` between the names, on every platform.
+ * On Unix that is the path itself; on Windows the drive is the first name (`C:\Users\me` is `/C:/Users/me`).
+ */
+const shown = (path: string): string => (process.platform === 'win32' ? `/${portable(path)}` : path)
+
+/**
+ * Take from this user the right to open a directory, or give it back. On Unix its mode says that; on Windows a mode says
+ * nothing of the kind, and an entry of the directory's access list does: one that denies everyone the reading of it.
+ */
+function lock(dir: string, locked: boolean): void {
+  if (process.platform !== 'win32') return chmodSync(dir, locked ? 0o000 : 0o700)
+  const everyone = '*S-1-1-0'
+  execFileSync('icacls', locked ? [dir, '/deny', `${everyone}:(RD)`] : [dir, '/remove:d', everyone], { stdio: 'ignore' })
+}
+
+/** Type a directory of the disk into the path field and go there. */
+async function goTo(page: Page, dir: string): Promise<void> {
+  await page.getByTestId('files-path').fill(shown(dir))
   await page.getByTestId('files-path').press('Enter')
-  await expect(page.getByTestId('files-nav')).toContainText(path.split('/').at(-1)!)
+  await expect(page.getByTestId('files-nav')).toContainText(basename(dir))
 }
 
 test.describe('Files journeys: an app’s documents', () => {
@@ -218,7 +235,7 @@ test.describe('Files journeys: an app’s documents', () => {
     writeFileSync(join(dir, 'private.txt'), 'on the disk')
     // no cookies of its own: the project's paired storage state is not this stranger's
     const stranger = await playwright.request.newContext({ baseURL: ORIGIN, storageState: { cookies: [], origins: [] } })
-    for (const url of [`/files/app/${APP}/${folder}/private.txt`, `/files/host${dir}/private.txt`]) {
+    for (const url of [`/files/app/${APP}/${folder}/private.txt`, `/files/host${shown(dir)}/private.txt`]) {
       const read = await stranger.get(url)
       expect(read.status(), url).toBe(401)
       expect(await read.text()).not.toMatch(/paired devices only|on the disk/)
@@ -228,7 +245,7 @@ test.describe('Files journeys: an app’s documents', () => {
     expect(existsSync(join(dir, 'planted.txt'))).toBe(false)
     // the paired one can
     expect(await (await page.request.get(`/files/app/${APP}/${folder}/private.txt`)).text()).toBe('for paired devices only')
-    expect(await (await page.request.get(`/files/host${dir}/private.txt`)).text()).toBe('on the disk')
+    expect(await (await page.request.get(`/files/host${shown(dir)}/private.txt`)).text()).toBe('on the disk')
     await removeAppFolder(page, folder)
     rmSync(dir, { recursive: true })
   })
@@ -240,8 +257,10 @@ test.describe('Files journeys: this computer', () => {
     const elsewhere = join(FILES_DIR, ownName())
     mkdirSync(elsewhere)
     writeFileSync(join(elsewhere, 'far.txt'), 'far away')
-    symlinkSync(elsewhere, join(dir, 'shortcut'))
-    symlinkSync(join(dir, 'gone'), join(dir, 'broken'))
+    // On Windows a link to a folder that anyone may make is a junction (a symbolic link needs a right most accounts lack)
+    const link = process.platform === 'win32' ? 'junction' : undefined
+    symlinkSync(elsewhere, join(dir, 'shortcut'), link)
+    symlinkSync(join(dir, 'gone'), join(dir, 'broken'), link)
     await page.getByTestId('files-path').press('Enter') // read the folder again
 
     await expect(entry(page, 'readme.txt')).toContainText('10 bytes')
@@ -254,12 +273,12 @@ test.describe('Files journeys: this computer', () => {
 
     await entry(page, 'photos').click()
     await expect(entry(page, 'cat.jpg')).toBeVisible()
-    await expect(page.getByTestId('files-path')).toHaveValue(join(dir, 'photos'))
+    await expect(page.getByTestId('files-path')).toHaveValue(shown(join(dir, 'photos')))
     // Back goes up the disk, a folder at a time
     await page.getByTestId('files-nav-back').click()
     await expect(entry(page, 'readme.txt')).toBeVisible()
     await page.getByTestId('files-nav-back').click()
-    await expect(page.getByTestId('files-path')).toHaveValue(FILES_DIR)
+    await expect(page.getByTestId('files-path')).toHaveValue(shown(FILES_DIR))
     // a path that is not one is said, and nothing moves
     await page.getByTestId('files-path').fill('not/a/path')
     await page.getByTestId('files-path').press('Enter')
@@ -302,6 +321,9 @@ test.describe('Files journeys: this computer', () => {
     const pick = (text: string) => page.getByTestId('files-upload-input').setInputFiles([{ name: 'report.csv', mimeType: 'text/csv', buffer: Buffer.from(text) }])
     const alert = page.getByTestId('files-conflict-alert')
 
+    // the folder has been read: the page asks about a name it sees (before that it sends the file, and the host's refusal,
+    // which the browser logs as an error, is what makes it ask)
+    await expect(entry(page, 'report.csv')).toBeVisible()
     await pick('a new one')
     await expect(alert).toContainText('“report.csv” is already here')
     expect(readFileSync(join(dir, 'report.csv'), 'utf8'), 'nothing is replaced while the question is open').toBe('the old one')
@@ -361,7 +383,7 @@ test.describe('Files journeys: this computer', () => {
 
   test('F12: a folder this user may not open says so, and the rest of the page goes on working', async ({ page }, testInfo) => {
     const dir = await openOwnDirectory(page, { 'locked/': '', 'open.txt': 'x' })
-    chmodSync(join(dir, 'locked'), 0o000)
+    lock(join(dir, 'locked'), true)
     try {
       test.skip(process.getuid?.() === 0, 'root may open anything')
       await entry(page, 'locked').click()
@@ -371,7 +393,7 @@ test.describe('Files journeys: this computer', () => {
       await expect(entry(page, 'open.txt')).toBeVisible()
       await expect(page.getByTestId('files-error')).toHaveCount(0)
     } finally {
-      chmodSync(join(dir, 'locked'), 0o700)
+      lock(join(dir, 'locked'), false)
       rmSync(dir, { recursive: true })
     }
   })

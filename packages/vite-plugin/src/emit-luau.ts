@@ -102,7 +102,7 @@ export function emitLuau(definition: Definition, source: string): string {
   out.push(`-- The Luau side of the app's RPC: ${lineComment(definition.title)} ${lineComment(definition.version)}.`)
   out.push('')
   out.push('--- What a handler gets: who is calling (the person\'s own client) and when.')
-  out.push('export type Context = vos_HandlerContext')
+  out.push('export type Context = vos_app_Context')
   out.push('')
   for (const [name, schema] of Object.entries(definition.components)) {
     out.push(`${luauDoc(schema.description, '')}export type ${name} = ${luauType(schema)}`)
@@ -125,6 +125,17 @@ export function emitLuau(definition: Definition, source: string): string {
   }
   out.push('}')
   out.push('')
+  out.push(emitLuauRouter(definition))
+  return out.join('\n')
+}
+
+/**
+ * The part of `rpc.luau` that runs: the schemas of the definition as tables, then the checker and `router(handlers)`, and
+ * the module's `return { router = router }`. A backend written in TypeScript gets the same text as its `rpc` module
+ * (`typescript-backend.ts`), so both languages are held to the definition by one router.
+ */
+export function emitLuauRouter(definition: Definition): string {
+  const out: string[] = []
   out.push('local COMPONENTS: { [string]: any } = {')
   for (const [name, schema] of Object.entries(definition.components)) out.push(`  ${name} = ${luauSchema(schema)},`)
   out.push('}')

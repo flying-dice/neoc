@@ -1,0 +1,26 @@
+[package]
+name = "neoc-vm-vnd-sqlx_postgres"
+description = "vnd:sqlx_postgres"
+version.workspace = true
+edition.workspace = true
+publish = false
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "neoc_vm_vnd_sqlx_postgres"
+path = "src/lib.rs"
+
+[dependencies]
+neoc-vm-core = { workspace = true }
+mlua-ir = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+# `vnd:sqlx_mysql` and `vnd:sqlx_postgres`: pure-Rust drivers, without TLS (only `vnd:hyper` carries a TLS stack).
+# `mysql-rsa` keeps MySQL's `caching_sha2_password` working over a plain connection.
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "mysql", "mysql-rsa", "postgres"] }
+
+[lints.cargo]
+missing_lints_inheritance = "allow"

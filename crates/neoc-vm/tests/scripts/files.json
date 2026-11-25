@@ -1,0 +1,193 @@
+{
+  "big": 100000,
+  "binary": true,
+  "copied": [
+    [
+      "from a string",
+      true
+    ],
+    100000,
+    [
+      "two\n\nlast",
+      true
+    ]
+  ],
+  "copy_file": [
+    100000,
+    true
+  ],
+  "copy_rest": [
+    [
+      9,
+      true
+    ],
+    [
+      0,
+      true
+    ]
+  ],
+  "copy_string": [
+    13,
+    true
+  ],
+  "created_empty": [
+    "",
+    true
+  ],
+  "json_file": true,
+  "json_from_reader": {
+    "debug": true,
+    "name": "neoc",
+    "port": 8080,
+    "server": {
+      "host": "localhost"
+    },
+    "tags": [
+      "a",
+      "b"
+    ]
+  },
+  "json_to_writer": [
+    true,
+    true
+  ],
+  "order": [
+    [
+      "12",
+      true
+    ],
+    [
+      "ab",
+      true
+    ]
+  ],
+  "read": [
+    [
+      "one",
+      true
+    ],
+    [
+      "\r\n",
+      true
+    ],
+    [
+      "two\n\nlast",
+      true
+    ],
+    [
+      false,
+      true
+    ],
+    [
+      "",
+      true
+    ]
+  ],
+  "read_big": 100000,
+  "read_line": [
+    [
+      "one",
+      true
+    ],
+    [
+      "two",
+      true
+    ],
+    [
+      "",
+      true
+    ],
+    [
+      "last",
+      true
+    ],
+    [
+      false,
+      true
+    ]
+  ],
+  "toml_decode": {
+    "debug": true,
+    "name": "neoc",
+    "port": 8080,
+    "server": {
+      "host": "localhost"
+    },
+    "tags": [
+      "a",
+      "b"
+    ]
+  },
+  "toml_encode_to": [
+    true,
+    true
+  ],
+  "toml_file": true,
+  "truncate_and_append": [
+    [
+      "xyz",
+      true
+    ],
+    [
+      "new",
+      true
+    ]
+  ],
+  "write": [
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ],
+    [
+      true,
+      true
+    ]
+  ],
+  "written": [
+    "hello world\n",
+    true
+  ],
+  "xml_decode": {
+    "config": {
+      "name": "neoc",
+      "server": {
+        "@port": "8080",
+        "host": "localhost"
+      }
+    }
+  },
+  "xml_encode_to": [
+    true,
+    true
+  ],
+  "xml_file": true,
+  "yaml_decode": {
+    "debug": true,
+    "name": "neoc",
+    "port": 8080,
+    "server": {
+      "host": "localhost"
+    },
+    "tags": [
+      "a",
+      "b"
+    ]
+  },
+  "yaml_encode_to": [
+    true,
+    true
+  ],
+  "yaml_file": true
+}

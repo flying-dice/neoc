@@ -1,8 +1,9 @@
 //! One sandboxed Lua VM (Luau, running the app's Luau source) per app.
 //!
 //! The VM is a bare `neoc-vm` engine with the app's own environment table (see
-//! `neoc_vm::lua::script_env`): the prelude's polyfills, the `app` capability table and a `require` that
-//! knows only `vos:app`, the frameworks the host carries (`vos:docker`) and the library's modules. Nothing in it is budgeted (no CPU, memory or time limits: the host is a
+//! `neoc_vm::script_env`): the prelude's polyfills, the `app` capability table and a `require` that
+//! knows only `vos:app`, the framework the host carries (`vos:docker`) and the library's modules. Nothing in it is
+//! budgeted (no CPU, memory or time limits: the host is a
 //! homelab's own and apps are meant to do real work); it then runs the app's entry, which returns the app's
 //! handlers. After that the host calls into it: handlers and tools. One call runs in a VM at a time (an app is
 //! single-threaded by design); the VM lives as long as its `AppVm`.
@@ -13,16 +14,15 @@ use crate::{
     error::{rpc_failure, ScriptError, ToolFailure},
     tx::OpenTx,
 };
+use mlua_ir::IntoLuaRet as _;
 use neoc_vm::mlua;
 use neoc_vm::{
-    lua::{
-        lib::log::set_log_sink,
-        lifecycle::{self, set_entry, Baton, BoxFuture, CallEntry, IdleKind, Inherited, Life},
-        panics,
-        sandbox::{install_runtime_state, load_source, make_bare_engine, set_worker_engine, WorkerEngineFn},
-        script_env,
-    },
+    install_runtime_state,
+    lifecycle::{self, set_entry, Baton, BoxFuture, CallEntry, IdleKind, Inherited, Life},
+    load_source, make_bare_engine,
     mlua::{Function, Lua, Table, Value as LuaValue},
+    modules::lib::log::set_log_sink,
+    panics, script_env, set_worker_engine, WorkerEngineFn,
 };
 use parking_lot::Mutex;
 use serde_json::Value;
@@ -40,9 +40,9 @@ use vos_application::{
     ports::{AgentCard, AgentRoster, AppData, AppPackage, AppTools, CallContext, PortResult},
     AppFiles, Files, NoFiles,
 };
-use vos_domain::{time, tool_schema, Actor, AppId, Notification, QualifiedToolName, ToolSpec};
+use vos_domain::{tool_schema, Actor, AppId, Notification, QualifiedToolName, ToolSpec};
 
-/// The prelude (`lua/prelude.lua`, copied by `bun run codegen`): `typeof` and `utf8`, which Luau has and the app's
+/// The prelude (`lua/prelude.lua`, copied by `bun run codegen`): `utf8`, which Luau has and the app's
 /// environment does not copy from the engine. Run once in each app's environment before the app.
 const PRELUDE: &str = include_str!("../../../types/generated/prelude.lua");
 
@@ -177,7 +177,7 @@ pub const MAX_QUEUED_NOTIFICATIONS: usize = 64;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Effect {
     Notify(Notification),
-    /// `app:openWindow(name?, params?)`.
+    /// `app.openWindow(params?)`.
     OpenWindow {
         name: String,
         params: Value,
@@ -219,7 +219,6 @@ pub(crate) struct Shared {
     /// The library modules the app has required, built once each (see [`crate::require`]).
     pub modules: Mutex<HashMap<String, LuaValue>>,
     pub app_table: Mutex<Option<Table>>,
-    pub fail: Mutex<Option<Function>>,
     /// The open `db:tx(fn)` transaction, if any. It belongs to the turn that opened it (see [`crate::tx`]);
     /// nothing holds it across an await, so a call that was cut off cannot wedge the next one.
     pub tx: Mutex<Option<OpenTx>>,
@@ -245,7 +244,7 @@ pub(crate) struct Shared {
     pub life: Life,
     /// Woken when a call that nobody made through the host (a request to the app's own server, a task's next
     /// slice) ends or pauses at a wait, and when any call that has raised a notification pauses at a wait, so the
-    /// runtime forwards the effects it queued (`app.notify`, `app.emit`, `app:openWindow`).
+    /// runtime forwards the effects it queued (`app.notify`, `app.emit`, `app.openWindow`).
     pub effects_signal: Arc<Notify>,
     /// The app's background work has been stopped (a reload began, or the app is being unloaded): its listeners are
     /// gone, so what still reaches its own server is a straggler of work that was cut off, and a straggler whose
@@ -311,7 +310,7 @@ impl Shared {
         Ok(())
     }
 
-    /// The window `app:openWindow` asks the shell for. An app has one window, the frame that shows its page: it is
+    /// The window `app.openWindow` asks the shell for. An app has one window, the frame that shows its page: it is
     /// called `main`, and that is the only name the shell is ever asked for.
     pub const WINDOW: &'static str = "main";
 
@@ -326,7 +325,6 @@ impl Shared {
         self.rpc_handlers.lock().clear();
         self.modules.lock().clear();
         *self.app_table.lock() = None;
-        *self.fail.lock() = None;
     }
 }
 
@@ -354,7 +352,7 @@ enum Via {
 /// `readOnly` flag are unambiguous. Ending a call, or abandoning it (its caller gave up),
 /// rolls back a transaction it left open, so the database's write gate is free the moment the call is over.
 ///
-/// It is also the call's *baton* (see `neoc_vm::lua::lifecycle`): at a wait that does not use the VM
+/// It is also the call's *baton* (see `neoc_vm::lifecycle`): at a wait that does not use the VM
 /// (`task.wait`, the network, a worker) the call lets the next call in, then takes the gate back.
 pub(crate) struct Turn {
     id: u64,
@@ -591,7 +589,7 @@ fn app_worker_engine(offered: Arc<Vec<&'static str>>) -> WorkerEngineFn {
         let lua = make_bare_engine()?;
         lua.globals().raw_remove("buffer")?;
         install_runtime_state(&lua, life);
-        neoc_vm::lua::modules::install_allowed(&lua, &offered)?;
+        neoc_vm::modules::install_allowed(&lua, &offered)?;
         set_worker_engine(&lua, app_worker_engine(offered.clone()));
         Ok(lua)
     })
@@ -656,7 +654,6 @@ impl AppVm {
             queued_notifications: Mutex::default(),
             modules: Mutex::default(),
             app_table: Mutex::default(),
-            fail: Mutex::default(),
             tx: Mutex::new(None),
             read_only,
             read_only_active: AtomicUsize::new(0),
@@ -746,7 +743,7 @@ impl AppVm {
     /// `read_only`: the call may not change anything (a `readOnly` tool); whatever it starts may not either.
     ///
     /// A panic in a host function the call reached, which the script did not catch, ends the call with
-    /// [`VmError::Panicked`] instead of unwinding into the caller (`neoc_vm::lua::panics`). It stops the call
+    /// [`VmError::Panicked`] instead of unwinding into the caller (`neoc_vm::panics`). It stops the call
     /// where script code called into Rust, where a caller that gives up may drop the call too, so it leaves what a
     /// dropped call leaves: the turn handed on, a `db:tx` it opened rolled back (the guard of [`Turn`]). The app
     /// stays loaded.
@@ -777,21 +774,12 @@ impl AppVm {
 
     // ---- calls into the app -----------------------------------------------------------------------------
 
-    fn ctx_table(&self, ctx: &CallContext) -> mlua::Result<Table> {
-        let t = self.lua.create_table()?;
-        let actor = self.lua.create_table()?;
-        actor.set("kind", ctx.actor.kind.as_str())?;
-        actor.set("id", ctx.actor.id.as_str())?;
-        actor.set("name", ctx.actor.name.as_str())?;
-        t.set("actor", actor)?;
-        t.set("now", time::iso8601_utc(ctx.now_ms))?;
-        if let Some(fail) = self.shared.fail.lock().clone() {
-            t.set("fail", fail)?;
-        }
-        Ok(t)
+    /// What a handler or a tool's `run` is called with: `ctx.actor`, `ctx.now`, `ctx:fail(message)`.
+    fn ctx_value(&self, ctx: &CallContext) -> mlua::Result<LuaValue> {
+        api::Context::new(ctx).into_lua_ret(&self.lua, "vos:app.Context")
     }
 
-    /// `app.tools.register`'s `run(input, ctx)`. Arguments are validated against the tool's schema first.
+    /// `app.tool`'s `run(input, ctx)`. Arguments are validated against the tool's schema first.
     ///
     /// The call is read-only when the tool is declared `readOnly` or when the caller requires it
     /// (`require_read_only`, from the `AppRuntime` port): the caller can only tighten, never loosen.
@@ -814,7 +802,7 @@ impl AppVm {
         self.in_call(read_only, async {
             let convert = |e: mlua::Error| VmError::BadValue(e.to_string());
             let arg = json_to_lua(&self.lua, &input).map_err(convert)?;
-            let ctx = self.ctx_table(ctx).map_err(convert)?;
+            let ctx = self.ctx_value(ctx).map_err(convert)?;
             let out: LuaValue = run.call_async((arg, ctx)).await.map_err(|e| script(&e))?;
             lua_to_json(&out).map_err(|e| VmError::BadValue(e.to_string()))
         })
@@ -835,7 +823,7 @@ impl AppVm {
         self.in_call(false, async {
             let convert = |e: mlua::Error| VmError::BadValue(e.to_string());
             let arg = json_to_lua(&self.lua, &args).map_err(convert)?;
-            let ctx = self.ctx_table(ctx).map_err(convert)?;
+            let ctx = self.ctx_value(ctx).map_err(convert)?;
             let out: LuaValue = handler.call_async((ctx, arg)).await.map_err(|e| script(&e))?;
             lua_to_json(&out).map_err(|e| VmError::BadValue(e.to_string()))
         })

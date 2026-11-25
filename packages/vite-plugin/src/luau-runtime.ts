@@ -122,11 +122,11 @@ check = function(value: any, schema: any, path: string): string?
   return nil
 end
 
-local function router(implementation: Handlers): vos_Handlers
+local function router(implementation: Handlers): vos_app_Handlers
   local provided: { [string]: any } = implementation :: any
   -- only the declared methods are ever dispatched: a function in the table that the definition does not declare is never
   -- called (a misspelt handler leaves its method without one, which is the error below)
-  local handlers: vos_Handlers = {}
+  local handlers: vos_app_Handlers = {}
   for name, method in METHODS do
     local handler = provided[name]
     if type(handler) ~= "function" then

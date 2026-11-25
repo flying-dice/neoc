@@ -12,7 +12,7 @@ fn main() -> ExitCode {
     match std::env::args().nth(1).as_deref() {
         None => match vos_codegen::write_all(root) {
             Ok(()) => {
-                for file in vos_codegen::generate(root).unwrap_or_default() {
+                for file in vos_codegen::generate().unwrap_or_default() {
                     println!("wrote {}", file.path);
                 }
                 ExitCode::SUCCESS
@@ -27,7 +27,7 @@ fn main() -> ExitCode {
             if stale.is_empty() {
                 println!(
                     "codegen:check OK ({} generated files up to date)",
-                    vos_codegen::generate(root).map_or(0, |files| files.len())
+                    vos_codegen::generate().map_or(0, |files| files.len())
                 );
                 ExitCode::SUCCESS
             } else {

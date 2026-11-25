@@ -1,0 +1,27 @@
+{
+  "decode": [
+    "hi",
+    "",
+    true
+  ],
+  "encode": [
+    "ffab",
+    "FFAB",
+    "",
+    ""
+  ],
+  "fails_non_hex": [
+    true,
+    true
+  ],
+  "fails_odd": [
+    true,
+    true
+  ],
+  "round_trip": [
+    true,
+    true,
+    5
+  ],
+  "whitespace": true
+}

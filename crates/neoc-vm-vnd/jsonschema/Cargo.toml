@@ -1,0 +1,28 @@
+[package]
+name = "neoc-vm-vnd-jsonschema"
+description = "vnd:jsonschema"
+version.workspace = true
+edition.workspace = true
+publish = false
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "neoc_vm_vnd_jsonschema"
+path = "src/lib.rs"
+
+[dependencies]
+neoc-vm-core = { workspace = true }
+neoc-vm-vnd-serde_json = { workspace = true }
+neoc-vm-lib-json = { workspace = true }
+mlua-ir = { workspace = true }
+# The engine is Luau.
+mlua = { version = "0.12", features = ["luau", "async", "send", "serialize", "macros"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+serde_json = "1"
+jsonschema = { version = "0.61", default-features = false, features = ["idna"] }
+
+[lints.cargo]
+missing_lints_inheritance = "allow"

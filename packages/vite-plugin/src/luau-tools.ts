@@ -159,10 +159,11 @@ export function analyze(project: string, mode: 'exit' | 'throw' = 'exit'): { fil
 
 /** StyLua over the project's own Luau (not the generated files in `.app/`). `write` formats, else it checks. */
 export function stylua(project: string, write: boolean): boolean {
-  const tool = findTool('stylua',join(homedir(), '.cargo/bin/stylua'))
-  if (!tool) missing('stylua', 'stylua not found (cargo install stylua --features luau)')
+  // a project with no Luau of its own (a backend in TypeScript) has nothing to format, and needs no StyLua
   const files = luauFiles(project).filter((f) => !f.startsWith('.app/'))
   if (files.length === 0) return true
+  const tool = findTool('stylua',join(homedir(), '.cargo/bin/stylua'))
+  if (!tool) missing('stylua', 'stylua not found (cargo install stylua --features luau)')
   const run = spawnSync(tool, ['--search-parent-directories', ...(write ? [] : ['--check']), ...files], { cwd: project, encoding: 'utf8' })
   if (run.status !== 0) console.error(`${run.stdout}${run.stderr}`.trim())
   return run.status === 0

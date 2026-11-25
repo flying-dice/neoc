@@ -1,0 +1,55 @@
+{
+  "escape": [
+    "&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;",
+    "it&apos;s",
+    "",
+    "hello",
+    "café",
+    "🦀",
+    "&amp;amp;",
+    "a &amp; b &lt; c &gt; d"
+  ],
+  "refused": [
+    false,
+    false,
+    false
+  ],
+  "round_trip": [
+    true,
+    true,
+    true,
+    true,
+    true,
+    true
+  ],
+  "two_passes": "<",
+  "unescape": [
+    "&<>\"'",
+    "<b>bold</b>",
+    "&notareal;",
+    "&copy;",
+    "&amp",
+    "& amp;",
+    "foo&",
+    "A",
+    "A",
+    "A",
+    "AA",
+    "&#0;",
+    "&#xD800;",
+    "&#1114112;",
+    "󴈿",
+    "􏿿",
+    "&#x110000;",
+    "&#;",
+    "&#x;",
+    "&#xGG;",
+    "&#+5;",
+    "&#x+5;",
+    "&abcdefghijk;",
+    "&ÜÜÜÜÜÜÜÜ;",
+    "AT&T Ünïcödé 🦀🦀🦀 & 🦀",
+    "&lt;",
+    ""
+  ]
+}

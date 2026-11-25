@@ -1,6 +1,6 @@
 ---
 name: coding-styleguide
-description: Write or review ecosystem-idiomatic code with strong types, strict checks, explicit expected-error handling, and DDD/hexagonal boundaries. Includes language-specific references.
+description: Write or review ecosystem-idiomatic code with strong types (every API surface fully typed, no `any` unless the source is genuinely unknown), strict checks, explicit expected-error handling, and DDD/hexagonal boundaries. Includes language-specific references.
 ---
 
 # Coding Styleguide
@@ -21,6 +21,36 @@ and avoid unrelated API migrations, dependency additions, or configuration churn
 - At dependency boundaries, translate known exceptions into expected outcomes with
   useful context and causes. Let unknown bugs escape; preserve cancellation and cleanup.
 - Verify success, relevant expected failures, and propagation using existing checks.
+
+## Fully typed APIs
+
+Every API surface MUST be fully typed: every parameter, option, body, return value, stream item
+and error kind gets its real shape in the declarations (`types/generated/vos.d.luau`, `vos.d.ts`)
+and in the code that produces them. This is not a preference; an untyped surface is a defect.
+
+- `any`, `unknown`, `{ [key: string]: any }`, `mlua_ir::Unknown`, an erased `serde_json::Value`
+  or an equivalent "anything" type is banned on a surface, unless the underlying API is
+  **genuinely unknown**: its shape is decided at run time by data no one controls (what
+  `json.decode` parses, what a script stored in `kv`, a user's own row). Where it is, say so
+  in a comment on that line naming why no shape exists.
+- A shape the upstream library already knows is not unknown. When a dependency has typed models
+  (`bollard::models::ContainerSummary`, a generated OpenAPI type), expose those types; do not
+  serialize them to JSON and erase them. If the type system cannot yet express them, extend the
+  declaration machinery: that work is part of the change, not a follow-up.
+- Types are read from the code, never written as strings beside it. A hand-written type string
+  in an attribute or declaration helper (a literal Luau/TS type
+  passed to a macro) is banned: it is a second source that drifts from the implementation. Give
+  the Rust function real typed parameters and returns and let the declarations derive from them;
+  if the machinery cannot read a case yet, extend it as part of the change.
+- Shapes are never described in prose instead of types. A doc comment listing fields
+  (`` `Id`, `Names`, `State`, ... ``) in place of a typed return is the defect this rule exists for.
+- Errors are typed too: their kinds are a declared union of string literals (or a typed error
+  value), not kinds listed only in a doc comment, and the success value is narrowed separately.
+- Distinguish list from map, required from optional, and alternatives as unions of literals or
+  discriminated unions. A request body is read through its Rust type, so the type decides an
+  ambiguous value (an empty table is a list where the field is a `Vec`).
+- In review, treat each untyped surface as blocking. Do not add a new one to match neighbors;
+  when touching one, type it or record why its source is genuinely unknown.
 
 ## Architecture
 

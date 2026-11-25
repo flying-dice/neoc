@@ -2,26 +2,28 @@
 //!
 //! ```lua
 //! local db = app.db
-//! db:migrate { [1] = "create table notes(...)" }
+//! db:migrate { "create table notes(...)" }
 //! db:exec("insert into notes(body) values (:b)", { b = "hi" })     -- { changes, last_insert_id }
 //! local rows = db:all("select * from notes where id > :n", { n = 3 })
 //! local row  = db:one("select * from notes where id = :id", { id = 7 })
 //! db:tx(function() db:exec(...); db:exec(...) end)                -- one commit
 //! ```
+//!
+//! Every function takes the app's turn before its body runs (`#[host("Vm")]`, `lifecycle::Role::Vm`).
 
-use super::{host, vm_function};
+use super::{host, json::Json, shared};
 use crate::{
-    convert::{json_to_lua, lua_to_json, lua_to_params},
+    convert::json_to_params,
     tx::{answer, OpenTx, Reply},
     vm::Shared,
 };
-use neoc_vm::lua::lifecycle::turn_id;
-use neoc_vm::mlua;
-use neoc_vm::mlua::{Function, Lua, Table, Value as LuaValue};
+use mlua_ir::{Callback, Live, Object, Shape, Unknown};
+use neoc_vm::lifecycle::turn_id;
+use neoc_vm::mlua::{self, Lua, Value as LuaValue};
+use serde::Serialize;
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use vos_application::data::{ExecOutcome, Params, SqlMigration};
-
-use super::Sh;
 
 impl Shared {
     /// The gate every write passes: the call is not a `readOnly` tool (the host's read-only handle would
@@ -68,144 +70,134 @@ async fn await_reply<T>(sh: &Shared, reply: Reply<T>) -> mlua::Result<T> {
     host(sh, answer(reply)).await
 }
 
-pub(super) fn reject_unknown(opts: &Table, allowed: &[&str], what: &str) -> mlua::Result<()> {
-    for pair in opts.pairs::<String, LuaValue>() {
-        let (k, _) = pair?;
-        if !allowed.contains(&k.as_str()) {
-            return Err(mlua::Error::runtime(format!(
-                "{what}: unknown option `{k}` (known: {})",
-                allowed.join(", ")
-            )));
+mlua_ir::unknown_reason!(
+    /// Why a bound value has no declared shape.
+    SqlValue = "a value bound to a statement: whatever the column takes (a table is stored as JSON text)"
+);
+mlua_ir::unknown_reason!(
+    /// Why a column's value has no declared shape.
+    Column = "a column's value: its type is the table's, which the app's own migrations define"
+);
+mlua_ir::unknown_reason!(
+    /// Why a transaction's result has no declared shape.
+    TxResult = "whatever the body of the transaction returned"
+);
+mlua_ir::unknown_reason!(
+    /// Why a stored value has no declared shape.
+    Stored = "whatever JSON value the app stored under the key"
+);
+
+/// The named binds of a statement: `{ id = 7 }` binds `:id`.
+pub type SqlParams = Json<BTreeMap<String, Unknown<SqlValue>>>;
+
+/// A row: its columns by name.
+pub type Row = Json<BTreeMap<String, Unknown<Column>>>;
+
+/// What a write did.
+#[derive(Clone, Copy, Debug, Serialize, Shape)]
+#[shape(module = "vos:app")]
+pub struct ExecResult {
+    /// How many rows the statement changed.
+    pub changes: u64,
+    /// The row id of the last insert.
+    pub last_insert_id: i64,
+}
+
+fn params(given: Option<SqlParams>) -> mlua::Result<Params> {
+    given.map_or(Ok(Params::None), |given| json_to_params(given.value))
+}
+
+/// The app's database (SQLite), its own and no other app's.
+#[derive(Clone, Copy, Debug, Object)]
+#[shape(module = "vos:app")]
+pub struct Db;
+
+#[mlua_ir::object(module = "vos:app")]
+impl Db {
+    /// Bring the schema up to date: `steps` are SQL scripts in order, each run once, ever (`steps[3]` is version
+    /// 3). Add a step to change the schema; never edit one that has run. Raises inside `db:tx`.
+    #[host("Vm")]
+    pub async fn migrate(&self, lua: Lua, steps: Vec<String>) -> mlua::Result<()> {
+        let s = shared(&lua)?;
+        s.require_write("db:migrate")?;
+        if s.tx.lock().is_some() {
+            // the transaction holds the database's write gate, and a migration waits for that same gate
+            return Err(mlua::Error::runtime(
+                "db:migrate cannot run inside db:tx: migrate before the transaction starts",
+            ));
+        }
+        let mut migrations = Vec::with_capacity(steps.len());
+        for (version, sql) in (1_u32..).zip(steps) {
+            migrations.push(SqlMigration { version, name: format!("migration {version}"), sql });
+        }
+        host(&s, s.db.migrate(migrations)).await
+    }
+
+    /// Run a statement that writes. Raises when the statement fails, and inside a `readOnly` tool.
+    #[host("Vm")]
+    pub async fn exec(&self, lua: Lua, sql: String, params: Option<SqlParams>) -> mlua::Result<ExecResult> {
+        let s = shared(&lua)?;
+        s.require_write("db:exec")?;
+        let out = s.run_exec(sql, self::params(params)?).await?;
+        Ok(ExecResult { changes: out.changes, last_insert_id: out.last_insert_id })
+    }
+
+    /// Every row of a query.
+    #[host("Vm")]
+    pub async fn all(
+        &self,
+        lua: Lua,
+        sql: String,
+        params: Option<SqlParams>,
+    ) -> mlua::Result<Json<Vec<Row>>> {
+        let s = shared(&lua)?;
+        let rows = s.run_query(sql, self::params(params)?).await?;
+        Ok(Json::new(Value::Array(rows)))
+    }
+
+    /// The first row of a query, or `nil` when there is none.
+    #[host("Vm")]
+    pub async fn one(&self, lua: Lua, sql: String, params: Option<SqlParams>) -> mlua::Result<Option<Row>> {
+        let s = shared(&lua)?;
+        let mut rows = s.run_query(sql, self::params(params)?).await?;
+        rows.truncate(1);
+        Ok(rows.pop().map(Json::new))
+    }
+
+    /// Run `body` in a transaction: the statements inside commit together or not at all (an error raised in the
+    /// body rolls them back and is raised again). Returns what the body returned. Cannot be nested.
+    #[host("Vm")]
+    pub async fn tx(&self, lua: Lua, body: Callback<fn() -> Live<TxResult>>) -> mlua::Result<Live<TxResult>> {
+        let s = shared(&lua)?;
+        // the call holds the turn here (`Role::Vm`): the checks below, the transaction and the `readOnly`
+        // flag `database()` reads belong to it (a task started inside another `db:tx` waited for it)
+        if s.tx.lock().is_some() {
+            return Err(mlua::Error::runtime("db:tx cannot be nested"));
+        }
+        let begun = host(&s, s.database().begin()).await?;
+        // the call that finishes beginning (the same one, unless the host call was left in flight) owns it
+        let owner = turn_id().ok_or_else(|| mlua::Error::runtime("db:tx needs a call to belong to"))?;
+        *s.tx.lock() = Some(OpenTx::start(&s.life, begun, owner));
+        let mut guard = TxGuard { shared: &s, owner: Some(owner) };
+        let result = body.function().call_async::<LuaValue>(()).await;
+        // whatever the body left in flight is queued ahead of the end, in the transaction
+        match (result, guard.release()) {
+            (Ok(value), Some(tx)) => {
+                await_reply(&s, tx.end(true)).await?;
+                Ok(Live::new(value))
+            }
+            (Err(e), Some(tx)) => {
+                if let Err(rollback) = await_reply(&s, tx.end(false)).await {
+                    tracing::warn!(app = %s.app, error = %rollback, "rolling back a failed db:tx failed");
+                }
+                Err(e)
+            }
+            (Ok(_), None) => Err(mlua::Error::runtime(
+                "transaction lost: the call that opened it ended before the body finished, so it was rolled back",
+            )),
+            (Err(e), None) => Err(e),
         }
     }
-    Ok(())
-}
-
-pub(super) fn install(lua: &Lua, sh: &Sh, app: &Table) -> mlua::Result<()> {
-    let db = lua.create_table()?;
-    install_statements(lua, sh, &db)?;
-    app.set("db", db)?;
-    install_kv(lua, sh, app)
-}
-
-/// `db:migrate`, `db:exec`, `db:all`, `db:one`, `db:tx`.
-#[allow(clippy::too_many_lines)] // a flat table of host functions: splitting it would only scatter them
-fn install_statements(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
-    // db:migrate { [1] = sql, [2] = sql }
-    db.set(
-        "migrate",
-        vm_function(lua, sh, |s, _, (_this, steps): (LuaValue, Table)| async move {
-            s.require_write("db:migrate")?;
-            if s.tx.lock().is_some() {
-                // the transaction holds the database's write gate, and a migration waits for that same gate
-                return Err(mlua::Error::runtime(
-                    "db:migrate cannot run inside db:tx: migrate before the transaction starts",
-                ));
-            }
-            let len = steps.raw_len();
-            // not presized: `#steps` is whatever border Lua finds, so a forged table can report 2^30
-            let mut migrations = Vec::new();
-            for version in 1..=len {
-                let LuaValue::String(sql) = steps.raw_get::<LuaValue>(version)? else {
-                    return Err(mlua::Error::runtime(format!(
-                        "db:migrate: step [{version}] must be a SQL string"
-                    )));
-                };
-                let sql = sql.to_string_lossy();
-                migrations.push(SqlMigration {
-                    version: u32::try_from(version).map_err(mlua::Error::external)?,
-                    name: format!("migration {version}"),
-                    sql,
-                });
-            }
-            let keys = steps.pairs::<LuaValue, LuaValue>().count();
-            if keys != len {
-                return Err(mlua::Error::runtime(
-                    "db:migrate takes steps numbered 1..N without gaps: db:migrate { [1] = ..., [2] = ... }",
-                ));
-            }
-            host(&s, s.db.migrate(migrations)).await
-        })?,
-    )?;
-
-    // db:exec(sql, params) -> { changes, last_insert_id }
-    db.set(
-        "exec",
-        vm_function(
-            lua,
-            sh,
-            |s, lua, (_this, sql, params): (LuaValue, String, Option<LuaValue>)| async move {
-                s.require_write("db:exec")?;
-                let out = s.run_exec(sql, lua_to_params(params)?).await?;
-                json_to_lua(&lua, &json!({"changes": out.changes, "last_insert_id": out.last_insert_id}))
-            },
-        )?,
-    )?;
-
-    // db:all(sql, params) -> rows ; db:one(sql, params) -> row | nil
-    db.set(
-        "all",
-        vm_function(
-            lua,
-            sh,
-            |s, lua, (_this, sql, params): (LuaValue, String, Option<LuaValue>)| async move {
-                let rows = s.run_query(sql, lua_to_params(params)?).await?;
-                json_to_lua(&lua, &Value::Array(rows))
-            },
-        )?,
-    )?;
-    db.set(
-        "one",
-        vm_function(
-            lua,
-            sh,
-            |s, lua, (_this, sql, params): (LuaValue, String, Option<LuaValue>)| async move {
-                let mut rows = s.run_query(sql, lua_to_params(params)?).await?;
-                rows.truncate(1);
-                match rows.pop() {
-                    Some(row) => json_to_lua(&lua, &row),
-                    None => Ok(LuaValue::Nil),
-                }
-            },
-        )?,
-    )?;
-
-    // db:tx(fn): the statements inside commit together or not at all
-    db.set(
-        "tx",
-        vm_function(lua, sh, |s, _, (_this, body): (LuaValue, Function)| async move {
-            // the call holds the turn here (`Role::Vm`): the checks below, the transaction and the `readOnly`
-            // flag `database()` reads belong to it (a task started inside another `db:tx` waited for it)
-            if s.tx.lock().is_some() {
-                return Err(mlua::Error::runtime("db:tx cannot be nested"));
-            }
-            let begun = host(&s, s.database().begin()).await?;
-            // the call that finishes beginning (the same one, unless the host call was left in flight) owns it
-            let owner = turn_id().ok_or_else(|| mlua::Error::runtime("db:tx needs a call to belong to"))?;
-            *s.tx.lock() = Some(OpenTx::start(&s.life, begun, owner));
-            let mut guard = TxGuard { shared: &s, owner: Some(owner) };
-            let result = body.call_async::<mlua::MultiValue>(()).await;
-            // whatever the body left in flight is queued ahead of the end, in the transaction
-            match (result, guard.release()) {
-                (Ok(values), Some(tx)) => {
-                    await_reply(&s, tx.end(true)).await?;
-                    Ok(values)
-                }
-                (Err(e), Some(tx)) => {
-                    if let Err(rollback) = await_reply(&s, tx.end(false)).await {
-                        tracing::warn!(app = %s.app, error = %rollback, "rolling back a failed db:tx failed");
-                    }
-                    Err(e)
-                }
-                (Ok(_), None) => Err(mlua::Error::runtime(
-                    "transaction lost: the call that opened it ended before the body finished, so it was rolled back",
-                )),
-                (Err(e), None) => Err(e),
-            }
-        })?,
-    )?;
-
-    Ok(())
 }
 
 /// The open `db:tx` of a host call: if the call is dropped (abandoned) before it ends the transaction, the
@@ -234,51 +226,49 @@ impl Drop for TxGuard<'_> {
     }
 }
 
-/// `app.kv:get(key)`, `:set(key, value)`, `:delete(key)`: JSON values in the app's `_kv` table.
-fn install_kv(lua: &Lua, sh: &Sh, app: &Table) -> mlua::Result<()> {
-    let kv = lua.create_table()?;
+/// JSON values in the app's database, by key: for a setting or a cursor, not for records (use `app.db`).
+#[derive(Clone, Copy, Debug, Object)]
+#[shape(module = "vos:app")]
+pub struct Kv;
 
-    kv.set(
-        "get",
-        vm_function(lua, sh, |s, lua, (_this, key): (LuaValue, String)| async move {
-            let rows = s
-                .run_query("select value from _kv where key = :k".into(), Params::named([("k", json!(key))]))
-                .await?;
-            match rows.first().and_then(|r| r["value"].as_str()) {
-                Some(text) => {
-                    let v: Value = serde_json::from_str(text).map_err(mlua::Error::external)?;
-                    json_to_lua(&lua, &v)
-                }
-                None => Ok(LuaValue::Nil),
-            }
-        })?,
-    )?;
+#[mlua_ir::object(module = "vos:app")]
+impl Kv {
+    /// The value stored under `key`, or `nil`.
+    #[host("Vm")]
+    pub async fn get(&self, lua: Lua, key: String) -> mlua::Result<Option<Json<Unknown<Stored>>>> {
+        let s = shared(&lua)?;
+        let rows = s
+            .run_query("select value from _kv where key = :k".into(), Params::named([("k", json!(key))]))
+            .await?;
+        match rows.first().and_then(|r| r["value"].as_str()) {
+            Some(text) => Ok(Some(Json::new(serde_json::from_str(text).map_err(mlua::Error::external)?))),
+            None => Ok(None),
+        }
+    }
 
-    kv.set(
-        "set",
-        vm_function(lua, sh, |s, _, (_this, key, value): (LuaValue, String, LuaValue)| async move {
-            s.require_write("app.kv:set")?;
-            let json = lua_to_json(&value)?;
-            if json.is_null() {
-                s.run_exec("delete from _kv where key = :k".into(), Params::named([("k", json!(key))])).await?;
-            } else {
-                s.run_exec(
-                    "insert into _kv(key, value) values(:k, :v) on conflict(key) do update set value = excluded.value".into(),
-                    Params::named([("k", json!(key)), ("v", json!(json.to_string()))]),
-                )
-                .await?;
-            }
-            Ok(())
-        })?,
-    )?;
-
-    kv.set(
-        "delete",
-        vm_function(lua, sh, |s, _, (_this, key): (LuaValue, String)| async move {
-            s.require_write("app.kv:delete")?;
+    /// Store `value` (any JSON value) under `key`; `nil` deletes the key. Raises inside a `readOnly` tool.
+    #[host("Vm")]
+    pub async fn set(&self, lua: Lua, key: String, value: Json<Unknown<Stored>>) -> mlua::Result<()> {
+        let s = shared(&lua)?;
+        s.require_write("app.kv:set")?;
+        if value.value.is_null() {
             s.run_exec("delete from _kv where key = :k".into(), Params::named([("k", json!(key))])).await?;
-            Ok(())
-        })?,
-    )?;
-    app.set("kv", kv)
+        } else {
+            s.run_exec(
+                "insert into _kv(key, value) values(:k, :v) on conflict(key) do update set value = excluded.value".into(),
+                Params::named([("k", json!(key)), ("v", json!(value.value.to_string()))]),
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// Delete `key`. Raises inside a `readOnly` tool.
+    #[host("Vm")]
+    pub async fn delete(&self, lua: Lua, key: String) -> mlua::Result<()> {
+        let s = shared(&lua)?;
+        s.require_write("app.kv:delete")?;
+        s.run_exec("delete from _kv where key = :k".into(), Params::named([("k", json!(key))])).await?;
+        Ok(())
+    }
 }

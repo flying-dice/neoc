@@ -1,7 +1,8 @@
-//! `require`: the `app` table and the library's modules, and nothing from the package.
+//! `require`: the `app` table, the framework the host carries and the library's modules, and nothing from the
+//! package.
 //!
 //! An app is built into one self-contained Luau file (its own modules are bundled in at build time), so at
-//! run time there is nothing to resolve in the package and no filesystem. Two kinds of name resolve:
+//! run time there is nothing to resolve in the package and no filesystem. Three kinds of name resolve:
 //!
 //! - `require("vos:app")` is the `app` table.
 //! - `require("vos:docker")` is the container framework: Luau the host carries (`lua/docker/`, bundled into
@@ -16,10 +17,11 @@
 //!
 //! `require` is a plain (synchronous) function: a module only builds tables, so it never has to suspend.
 
-use crate::vm::Shared;
+use crate::{docker, vm::Shared};
 use neoc_vm::{
-    lua::{modules, sandbox::load_source},
+    load_source,
     mlua::{self, Lua, Value as LuaValue},
+    modules,
 };
 use std::sync::Arc;
 
@@ -28,20 +30,24 @@ use std::sync::Arc;
 /// offers all of them (`modules::names`).
 pub use vos_domain::NOT_FOR_APPS;
 
+/// Is `name` a module of the VM library (`std:`, `lib:`, `vnd:`)? The registry also lists the modules this crate
+/// declares itself (`vos:app`, which is the app's own table and never a worker's) and the framework it carries
+/// (`vos:docker`).
+pub(crate) fn is_library(name: &str) -> bool {
+    name.starts_with("std:") || name.starts_with("lib:") || name.starts_with("vnd:")
+}
+
 /// The library modules an app (and a `std:thread` worker it starts) is offered: every one the library has,
 /// less [`NOT_FOR_APPS`] and less `refused` (`VmConfig::refused_modules`, empty in the host). The one place that
 /// rule is written.
 pub(crate) fn offered_modules(refused: &[String]) -> Vec<&'static str> {
     modules::names()
-        .filter(|name| !NOT_FOR_APPS.contains(name) && !refused.iter().any(|r| r == name))
+        .filter(|name| is_library(name) && !NOT_FOR_APPS.contains(name) && !refused.iter().any(|r| r == name))
         .collect()
 }
 
 /// What a `require` may name, for the error message of one that names something else.
 const ALLOWED: &str = "\"vos:app\", \"vos:docker\" and the std:, lib: and vnd: modules";
-
-/// `vos:docker`, as the host carries it.
-const DOCKER: &str = include_str!("../../../types/generated/docker.luau");
 
 pub(crate) fn install(lua: &Lua, sh: &Arc<Shared>, env: &mlua::Table) -> mlua::Result<()> {
     let sh = sh.clone();
@@ -69,10 +75,10 @@ fn carried(
 }
 
 fn load(lua: &Lua, sh: &Arc<Shared>, env: &mlua::Table, spec: &str) -> mlua::Result<LuaValue> {
-    if spec.starts_with("std:") || spec.starts_with("lib:") || spec.starts_with("vnd:") {
+    if is_library(spec) {
         return library(lua, sh, spec);
     }
-    if spec == "vos:app" {
+    if spec == crate::api::MODULE {
         return sh
             .app_table
             .lock()
@@ -80,8 +86,8 @@ fn load(lua: &Lua, sh: &Arc<Shared>, env: &mlua::Table, spec: &str) -> mlua::Res
             .map(LuaValue::Table)
             .ok_or_else(|| mlua::Error::runtime("the app table is gone (the app was unloaded)"));
     }
-    if spec == "vos:docker" {
-        return carried(lua, sh, env, spec, DOCKER);
+    if spec == docker::MODULE {
+        return carried(lua, sh, env, spec, docker::SOURCE);
     }
     if let Some(name) = spec.strip_prefix("vos:") {
         return Err(mlua::Error::runtime(format!(

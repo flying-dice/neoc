@@ -1,0 +1,155 @@
+{
+  "decode": [
+    {
+      "count": 30,
+      "enabled": true,
+      "folded": "one line\n",
+      "jobs": [
+        {
+          "id": 1
+        },
+        {
+          "id": 2,
+          "tags": [
+            "x"
+          ]
+        }
+      ],
+      "mixed": [
+        "a",
+        1,
+        true,
+        [
+          2,
+          3
+        ]
+      ],
+      "multi": "two\nlines\n",
+      "negative": -7,
+      "nums": [
+        1,
+        2,
+        3
+      ],
+      "point": {
+        "x": 1,
+        "y": 2
+      },
+      "quoted": "tab\there",
+      "ratio": 0.5,
+      "server": {
+        "host": "localhost",
+        "port": 8080,
+        "tls": {
+          "enabled": false
+        }
+      },
+      "title": "demo"
+    },
+    true
+  ],
+  "encode": [
+    "age: 25\njobs:\n- id: 1\n- id: 2\nname: bob\non: true\nratio: 1.5\nserver:\n  host: localhost\n  limits:\n    cpu: 2\n  port: 3000\ntags:\n- a\n- b\ntext: |-\n  two\n  lines\n"
+  ],
+  "encode_list": "- 1\n- two\n- - 3\n",
+  "encode_scalars": [
+    "42\n",
+    "true\n",
+    "hello\n",
+    "null\n"
+  ],
+  "fails_bad_indent": [
+    true,
+    true
+  ],
+  "fails_deep": [
+    true,
+    true
+  ],
+  "fails_no_anchor": [
+    true,
+    true
+  ],
+  "fails_not_utf8": [
+    true,
+    true
+  ],
+  "fails_several": [
+    true,
+    true
+  ],
+  "fails_tagged": [
+    true,
+    true
+  ],
+  "fails_unclosed": [
+    true,
+    true
+  ],
+  "flattened": {
+    "1": "one",
+    "at": "2001-12-14t21:59:43.10-05:00",
+    "base": [
+      1
+    ],
+    "copy": [
+      1
+    ],
+    "hex": 16,
+    "true": "yes"
+  },
+  "reader": [
+    {
+      "db": {
+        "host": "localhost"
+      },
+      "name": "alice",
+      "nums": [
+        1,
+        2
+      ]
+    }
+  ],
+  "reader_fails": [
+    true,
+    true
+  ],
+  "round_trip": {
+    "age": 25,
+    "jobs": [
+      {
+        "id": 1
+      },
+      {
+        "id": 2
+      }
+    ],
+    "name": "bob",
+    "on": true,
+    "ratio": 1.5,
+    "server": {
+      "host": "localhost",
+      "limits": {
+        "cpu": 2
+      },
+      "port": 3000
+    },
+    "tags": [
+      "a",
+      "b"
+    ],
+    "text": "two\nlines"
+  },
+  "scalars": [
+    "hello",
+    true,
+    42
+  ],
+  "sequence": [
+    "a",
+    "b"
+  ],
+  "unicode": {
+    "キー": "値"
+  }
+}

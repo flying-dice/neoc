@@ -1,0 +1,64 @@
+{
+  "ansi": [
+    "red",
+    "a\nb\tc",
+    "a\nb"
+  ],
+  "camel": "helloWorld",
+  "clip": [
+    "hello...",
+    "hi",
+    "ab",
+    ""
+  ],
+  "closest": [
+    "tea",
+    "ten",
+    "the",
+    1,
+    2
+  ],
+  "closest_limit": 2,
+  "constant": "HELLO_WORLD",
+  "kebab": "hello-world",
+  "levenshtein": 3,
+  "pad": [
+    "   42",
+    "00042",
+    "name      ",
+    "   title   ",
+    " ab  ",
+    "..世"
+  ],
+  "pascal": "HelloWorld",
+  "slug": "cafe-resume",
+  "snake": "https_connection",
+  "title": "Hello World",
+  "trim": [
+    "a b",
+    "a ",
+    "  a"
+  ],
+  "truncate": [
+    "hello...",
+    "hello..."
+  ],
+  "truncate_short": [
+    "hi",
+    "he",
+    "..."
+  ],
+  "valid": [
+    true,
+    "fine"
+  ],
+  "wrap": "hello\nworld",
+  "wrap_break": "abcde\nfghij",
+  "wrap_flat": "line1 line2",
+  "wrap_overflow": "abcdefghij",
+  "wrap_wide": "世界\n你",
+  "wrap_zero": [
+    true,
+    true
+  ]
+}

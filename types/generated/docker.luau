@@ -22,22 +22,6 @@ local __DARKLUA_BUNDLE_MODULES={cache={}}do do local function __modImpl()
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 local strings = require("lib:text")
 
 local text = {}
@@ -99,6 +83,7 @@ local HOST_LIMIT = 300
 
 
 
+
 local clients= nil
 
 local watched= {}
@@ -113,17 +98,18 @@ end
 
 
 function engine.sentence(err)  
-local kind = bollard.error_kind(err)
-  if kind == "connect" then
+if not err then
+    return "Docker refused, and did not say why."
+  end
+  if err.kind == "connect" then
     local host = engine.host()
     return if host == ""
       then "Docker is not running on this machine, or cannot be reached."
       else `Docker cannot be reached at {host}.`
-  elseif kind == "timed_out" then
+  elseif err.kind == "timed_out" then
     return "Docker is not answering. It may still be starting, or be paused."
   end
-  local message = bollard.error_message(err)
-  return if message and message ~= "" then message else err or "Docker refused, and did not say why."
+  return if err.message ~= "" then err.message else "Docker refused, and did not say why."
 end
 
 local function connected()  
@@ -175,7 +161,7 @@ local status= { reachable = false, version = "", host = engine.host(), problem =
     return status
   end
   status.reachable = true
-  status.version = if type(version.Version) == "string" then version.Version else ""
+  status.version = version.Version or ""
   return status
 end
 
@@ -195,7 +181,7 @@ if host ~= "" then
     end
     
     local _, err = bollard.connect { host = host }
-    if err and bollard.error_kind(err) ~= "connect" then
+    if err and err.kind ~= "connect" then
       return engine.sentence(err)
     end
   end
@@ -224,10 +210,8 @@ local api, problem = engine.reader()
   
   local asked = if type(tail) == "number" and tail == tail then tail else DEFAULT_TAIL
   local lines = math.clamp(math.floor(asked), 1, MAX_TAIL)
-  local stream, err = api:logs(container, { tail = lines })
-  if not stream then
-    return nil, engine.sentence(err)
-  end
+  
+  local stream = api:logs(container, { tail = lines })
   local pieces= {}
   local read = 0
   while true do
@@ -307,14 +291,6 @@ local MADE = "1"
 local MAX_WORDS = 4096
 local MAX_PORTS = 256
 local MAX_MOUNTS = 256
-
-
-
-
-
-
-
-
 
 
 
@@ -454,7 +430,7 @@ local parts= {}
   for _, mount in folders do
     add("mount", { mount.source, mount.target })
   end
-  return hex.encode(hash.hash("sha256", table.concat(parts, "\n")) or "")
+  return hex.encode(hash.hash("sha256", table.concat(parts, "\n")))
 end
 
 
@@ -522,14 +498,6 @@ local BUSY_LIMIT = 180
 
 
 
-
-
-
-
-
-
-
-
 function owned.container(name)  
 local filter = { `{OWNER}={app.id}` }
   
@@ -550,8 +518,7 @@ local found, err = api:list_containers { all = true, filters = { label = filter 
     end
     local named= {}
     for _, summary in found do
-      local names= summary.Names
-      if type(names) == "table" and table.find(names, `/{name}`) then
+      if summary.Names and table.find(summary.Names, `/{name}`) then
         table.insert(named, summary)
       end
     end
@@ -565,8 +532,10 @@ local found, unlisted = list(api)
     end
     local failure= nil
     for _, summary in found do
-      local _, err = api:remove_container(summary.Id, { force = true })
-      failure = failure or (if err then engine.sentence(err) else nil)
+      if summary.Id then
+        local _, err = api:remove_container(summary.Id, { force = true })
+        failure = failure or (if err then engine.sentence(err) else nil)
+      end
     end
     return failure
   end
@@ -584,10 +553,7 @@ local images, err = api:list_images { filters = { reference = { image } } }
     if not puller then
       return unreachable
     end
-    local pull, pull_err = puller:pull_image(image)
-    if not pull then
-      return engine.sentence(pull_err)
-    end
+    local pull = puller:pull_image(image)
     
     while true do
       local step, step_err = pull:next()
@@ -636,7 +602,7 @@ local wrong = declaration.refused(declared)
   end
 
   local container = {}   
-container.filters = { type = "container", label = filter, event = EVENTS }
+container.filters = { type = { "container" }, label = filter, event = EVENTS }
 
   
   
@@ -697,10 +663,11 @@ local api, unreachable = engine.reader()
     if not found then
       return nil, unlisted
     end
-    if not found[1] then
+    local id = found[1] and found[1].Id
+    if not id then
       return nil, nil
     end
-    return engine.logs(found[1].Id, tail)
+    return engine.logs(id, tail)
   end
 
   return container
@@ -718,7 +685,8 @@ end function __DARKLUA_BUNDLE_MODULES.d()local v=__DARKLUA_BUNDLE_MODULES.cache.
 local engine = __DARKLUA_BUNDLE_MODULES.b()
 local owned = __DARKLUA_BUNDLE_MODULES.d()
 
-return {
+
+local docker= {
   host = engine.host,
   use = engine.use,
   status = engine.status,
@@ -730,5 +698,7 @@ return {
   watch = engine.watch,
   container = owned.container,
 }
+
+return docker
 
 -- GENERATED by scripts/codegen-lua.ts: crates/vos-lua/lua/docker/main.luau, bundled. Do not edit.

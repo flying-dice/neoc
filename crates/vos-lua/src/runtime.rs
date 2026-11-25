@@ -5,7 +5,7 @@
 
 use crate::vm::{AppVm, Effect, VmConfig, VmError};
 use async_trait::async_trait;
-use neoc_vm::lua::lifecycle::Life;
+use neoc_vm::lifecycle::Life;
 use parking_lot::RwLock;
 use serde_json::{Map, Value};
 use std::future::Future;

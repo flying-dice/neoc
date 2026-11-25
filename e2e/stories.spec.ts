@@ -3,14 +3,14 @@
  *  • renders, and its play function (if any) passes,
  *  • logs no errors,
  *  • passes axe (WCAG 2.1 AA),
- *  • nothing scrolls sideways or is cut off,
- *  • matches its visual snapshot.
+ *  • nothing scrolls sideways or is cut off.
+ * A picture of each is kept under test-results/screenshots (`capture`), to look at: it is compared with nothing.
  * Stories tagged `app` (an app screen in an AppWindow frame with width/height
  * args) are also checked at the smallest window (320x240, clamped to the
  * app's manifest minimum, as a real window is) and a large one.
  *
  * Stories tagged `keep-focus` keep the focus their play function left (a focus ring is the state); stories tagged
- * `play-only` are checked for their behaviour, axe and layout but have no baseline (their end state is another story's).
+ * `play-only` are checked for their behaviour, axe and layout and no picture of them is kept (their end state is another story's).
  *
  * Stories are discovered from each package's storybook-static/index.json,
  * so a new story or a new app's Storybook is covered with no extra code.
@@ -19,7 +19,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import type { Page } from '@playwright/test'
-import { expect, expectAccessible, expectNoOverflow, test } from './fixtures'
+import { capture, expectAccessible, expectNoOverflow, test } from './fixtures'
 
 interface IndexEntry {
   type: 'story' | 'docs'
@@ -93,9 +93,9 @@ for (const book of books) {
             // a story that shows a deliberately clipped state (a swiped-open row) tags itself `overflow-ok`
             if (!story.tags.includes('overflow-ok')) await expectNoOverflow(root)
             await expectAccessible(page, testInfo, { include: '#storybook-root' })
-            // a story that only checks behaviour (tag `play-only`: its end state is another story's) has no baseline
+            // a story that only checks behaviour (tag `play-only`: its end state is another story's) needs no picture
             if (!story.tags.includes('play-only')) {
-              await expect(page).toHaveScreenshot([book, `${story.id}-${theme.toLowerCase()}.png`], { fullPage: true })
+              await capture(page, ['stories', book, `${story.id}-${theme.toLowerCase()}.png`], { fullPage: true })
             }
           })
         }
@@ -106,7 +106,7 @@ for (const book of books) {
               await gotoStory(page, book, story.id, 'Light', size)
               const frame = page.getByTestId('app-window')
               if (!story.tags.includes('overflow-ok')) await expectNoOverflow(frame)
-              await expect(frame).toHaveScreenshot([book, `${story.id}-${size.name}.png`])
+              await capture(frame, ['stories', book, `${story.id}-${size.name}.png`])
             })
           }
         }

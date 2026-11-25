@@ -60,7 +60,7 @@ applies to the script blocks and `.svelte.ts` modules.
   app's manifest minimum size and tag it `app`, so the stories spec measures overflow
   and runs its resize checks.
 - Stories are tests: `bun run test:e2e` builds every Storybook and runs the stories
-  spec (accessibility, overflow, screenshots) over each story. Make sure
+  spec (accessibility, overflow) over each story. Make sure
   `scripts/storybooks.ts` discovers the app's Storybook; add its glob if it does not.
 
 Reference: [Svelte runes](https://svelte.dev/docs/svelte/what-are-runes).

@@ -1,0 +1,150 @@
+//! The `require` registry: every module an mlua-ir `#[module]` declares in a crate the program links, by name.
+//!
+//! Three namespaces: `std:*` mirrors the Rust standard library, `lib:*` is gap-fillers and neoc's
+//! own modules, `vnd:*` is vendored crates named after the crate. A script reaches a module only through
+//! `require("namespace:name")`; there is no ambient global.
+//!
+//! A module appears here by existing: writing `#[mlua_ir::module("lib:base64")] pub mod base64 { ... }` registers it
+//! (the macro submits it to `mlua_ir::modules()`), wherever the crate that declares it is, as long as the program
+//! links that crate. `neoc-vm` links every module of the runtime.
+
+use ::std::cmp::max;
+use ::std::collections::HashMap;
+
+use mlua::{Lua, Table};
+use mlua_ir::ModuleEntry;
+use mlua_ir::ir::ModuleKind;
+use strsim::levenshtein;
+
+/// Soft cap on how many namespace members a `require` error inlines before it truncates with a `(+N more)` tail.
+const MAX_AVAILABLE_LIST: usize = 50;
+
+fn entries() -> impl Iterator<Item = &'static ModuleEntry> {
+    mlua_ir::modules().into_iter().filter(|entry| entry.kind == ModuleKind::Require)
+}
+
+/// The module names (`"lib:json"`, ...), sorted.
+pub fn names() -> impl Iterator<Item = &'static str> {
+    entries().map(|entry| entry.name)
+}
+
+/// Builds the module `name` in `lua`, or `None` when there is no such module. Each call builds a new table: the
+/// caller caches it so that every `require` of one module sees the same table. This is the seam for an embedder that
+/// wants its own `require` over the subset of [`names`] it offers.
+#[must_use]
+pub fn build(lua: &Lua, name: &str) -> Option<mlua::Result<Table>> {
+    entries().find(|entry| entry.name == name).map(|entry| (entry.install)(lua))
+}
+
+/// Installs `require` over every module.
+///
+/// # Errors
+/// Fails when a module cannot be built.
+pub fn install(lua: &Lua) -> mlua::Result<()> {
+    install_with(lua, |_| true)
+}
+
+/// Installs `require` over only the modules named in `allowed`; any other name is unknown. A `std:thread` worker
+/// the script starts is built with the same subset (this installs the engine's
+/// [worker engine](crate::engine::set_worker_engine); call that afterwards to replace it).
+///
+/// # Errors
+/// Fails when a module cannot be built.
+pub fn install_allowed(lua: &Lua, allowed: &[&str]) -> mlua::Result<()> {
+    install_with(lua, |name| allowed.contains(&name))?;
+    let allowed: Vec<String> = allowed.iter().map(|name| (*name).to_owned()).collect();
+    crate::engine::set_worker_engine(
+        lua,
+        ::std::sync::Arc::new(move |life| {
+            let names: Vec<&str> = allowed.iter().map(String::as_str).collect();
+            crate::engine::make_engine_with(life, &names)
+        }),
+    );
+    Ok(())
+}
+
+fn install_with(lua: &Lua, allowed: impl Fn(&str) -> bool) -> mlua::Result<()> {
+    let mut modules: HashMap<String, Table> = HashMap::new();
+    for entry in entries().filter(|entry| allowed(entry.name)) {
+        modules.insert(entry.name.to_owned(), (entry.install)(lua)?);
+    }
+    let known: Vec<String> = modules.keys().cloned().collect();
+    let require = lua.create_function(move |_, name: String| -> mlua::Result<Table> {
+        modules.get(&name).cloned().ok_or_else(|| {
+            let known: Vec<&str> = known.iter().map(String::as_str).collect();
+            unknown_module(&name, &known)
+        })
+    })?;
+    lua.globals().set("require", require)
+}
+
+fn find_closest<'a>(requested: &str, candidates: &[&'a str], threshold: usize) -> Option<&'a str> {
+    candidates
+        .iter()
+        .filter(|c| **c != requested)
+        .map(|c| (*c, levenshtein(requested, c)))
+        .filter(|(_, d)| *d <= threshold)
+        .min_by(|(a, da), (b, db)| da.cmp(db).then_with(|| a.cmp(b)))
+        .map(|(c, _)| c)
+}
+
+/// `"json"` matches `"lib:json"`: the shortest candidate with that suffix, ties broken alphabetically.
+fn find_by_suffix<'a>(name: &str, candidates: &[&'a str]) -> Option<&'a str> {
+    if name.is_empty() {
+        return None;
+    }
+    let suffix = format!(":{name}");
+    candidates
+        .iter()
+        .filter(|c| c.ends_with(&suffix))
+        .min_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)))
+        .copied()
+}
+
+fn truncate_list(members: &[&str], cap: usize) -> String {
+    match members.split_at(members.len().min(cap)) {
+        (shown, []) => shown.join(", "),
+        (shown, rest) => format!("{} (+{} more)", shown.join(", "), rest.len()),
+    }
+}
+
+/// The error `require(name)` raises for a name that is not a module: what was meant, and what exists.
+#[must_use]
+pub fn unknown_module(name: &str, known: &[&str]) -> mlua::Error {
+    let namespace = name.find(':').map(|pos| &name[..pos]);
+    let suggestion = if namespace.is_some() {
+        find_closest(name, known, max(1, name.len() / 3))
+    } else {
+        find_by_suffix(name, known)
+    };
+    let mut message = format!("require: unknown module {name:?}");
+    if let Some(suggestion) = suggestion {
+        message.push_str(&format!(" — did you mean {suggestion:?}?"));
+    }
+    let available = match namespace {
+        Some(namespace) => {
+            let prefix = format!("{namespace}:");
+            let mut members: Vec<&str> = known.iter().filter(|k| k.starts_with(&prefix)).copied().collect();
+            members.sort_unstable();
+            (!members.is_empty()).then(|| truncate_list(&members, MAX_AVAILABLE_LIST))
+        }
+        None if suggestion.is_none() => Some("std:<name>, lib:<name>, vnd:<name>".to_owned()),
+        None => None,
+    };
+    if let Some(list) = available {
+        message.push_str(&format!(" available: {list}"));
+    }
+    mlua::Error::external(message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_closest_name_wins_and_ties_break_alphabetically() {
+        assert_eq!(find_closest("lib:jsn", &["lib:json", "lib:base64"], 2), Some("lib:json"));
+        assert_eq!(find_closest("lib:json", &["lib:json"], 2), None);
+        assert_eq!(find_closest("lib:zzz", &["lib:bbb", "lib:aaa"], 3), Some("lib:aaa"));
+    }
+}

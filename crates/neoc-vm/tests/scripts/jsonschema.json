@@ -1,0 +1,104 @@
+{
+  "any_of": [
+    true,
+    true,
+    false
+  ],
+  "compiles": [
+    true,
+    true
+  ],
+  "const_and_not": [
+    true,
+    false
+  ],
+  "definitions": [
+    true,
+    false,
+    false
+  ],
+  "draft_07": [
+    true,
+    false
+  ],
+  "enum": [
+    true,
+    true,
+    false,
+    false
+  ],
+  "fails_bad_pattern": [
+    true,
+    true
+  ],
+  "fails_bad_type": [
+    true,
+    true
+  ],
+  "fails_empty": [
+    true,
+    true
+  ],
+  "fails_not_json": [
+    true,
+    true
+  ],
+  "fails_remote_ref": [
+    true,
+    true
+  ],
+  "idn_email": [
+    true,
+    true,
+    false,
+    false
+  ],
+  "idn_hostname": [
+    true,
+    true,
+    false,
+    false,
+    false,
+    false
+  ],
+  "integer": [
+    true,
+    true,
+    true,
+    false,
+    false,
+    false,
+    false
+  ],
+  "number": [
+    true,
+    true,
+    false,
+    false
+  ],
+  "raises": [
+    false,
+    false
+  ],
+  "string": [
+    true,
+    false,
+    false,
+    false
+  ],
+  "user": [
+    true,
+    true,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false
+  ]
+}

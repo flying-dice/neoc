@@ -7,24 +7,20 @@
 # script runs those tests and no other ignored one. It finds them by that reason: the function after each
 # `ignore = "slow:` under `crates/` (any spacing, plain or inside a `cfg_attr`, tracked by git or not), in the test
 # binary its file compiles into, and runs each by binary id and full test path. The `neoc` crate is left out: its
-# cucumber harness takes no libtest flags and has no ignored test. The two things that are not tests of their own, a
-# release build of the abort regressions and the bench bodies, are steps below. Add a new slow test with
+# cucumber harness takes no libtest flags and has no ignored test. Add a new slow test with
 # `#[ignore = "slow: run with bun run slow"]` within three lines above its `fn`; nothing here changes.
 #
 # It fails closed. It checks its selection against `cargo nextest list --run-ignored only`: every ignored test must be
-# one of the `slow:` tests found above or on NOT_SLOW below (a test ignored for another reason: today the `vos-lua`
-# baseline, a measurement run on demand), and every `slow:` test must be one nextest ignores. Anything else (another
-# spelling of the attribute, an attribute too far from its `fn`, a new test ignored without a reason) stops the
-# script with a message. `--list` does only that check and prints the selection (a dry run: no slow suite runs).
+# one of the `slow:` tests found above or on NOT_SLOW below (a test ignored for another reason: the `vos-lua`
+# baseline, a measurement run on demand, and the VM's tests that need Docker, a database server or the credential
+# store), and every `slow:` test must be one nextest ignores. Anything else (another spelling of the attribute, an
+# attribute too far from its `fn`, a new test ignored without a reason) stops the script with a message. `--list`
+# does only that check and prints the selection (a dry run: no slow suite runs).
 #
-# What runs:
-#   - hostile_inputs: the full sweep (about two million hostile calls over every module) and the 60 000-macro
-#     ring (a wall-clock bound in a debug build);
-#   - abort_regressions in a release build: proves a default 2 MiB thread survives (the debug run is in the gate);
-#   - the bench bodies, each once (the gate only compiles them).
+# What runs today: lib:template's 60 000-macro ring (a wall-clock bound in a debug build).
 #
 # The first failure stops the run. Needs the pinned Rust toolchain and cargo-nextest; not bun, darklua or
-# luau-lsp (none of the steps builds an app or checks the Luau declarations).
+# luau-lsp (no step builds an app or type-checks a script).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -40,16 +36,33 @@ fail() { printf 'check-slow: %s\n' "$*" >&2; exit 1; }
 
 # Ignored for another reason than slow, as `cargo nextest list --message-format oneline` prints them.
 NOT_SLOW=(
-  "vos-lua::baseline calculator_vm_create_time_and_memory" # a measurement, run on demand (AGOS-53)
+  "vos-lua::it baseline::calculator_vm_create_time_and_memory" # a measurement, run on demand (AGOS-53)
+  # need a running Docker daemon
+  "neoc-vm-vnd-bollard tests::a_real_daemon_answers"
+  "neoc-vm-vnd-bollard tests::a_real_daemon_runs_a_container_from_pull_to_removal"
+  "neoc-vm-vnd-sqlx_mysql tests::against_a_container"
+  "neoc-vm-vnd-sqlx_postgres tests::against_a_container"
+  "neoc-vm-vnd-testcontainers_modules tests::generic_containers_start_publish_their_ports_and_stop"
+  "neoc-vm-vnd-testcontainers_modules tests::mysql_and_postgres_containers_answer_their_drivers"
+  # need a server: NEOC_TEST_MYSQL_URL, NEOC_TEST_POSTGRES_URL
+  "neoc-vm-vnd-sqlx_mysql tests::against_a_server"
+  "neoc-vm-vnd-sqlx_postgres tests::against_a_server"
+  # writes to the credential store of whoever runs it
+  "neoc-vm-vnd-keyring tests::the_platform_store_keeps_a_credential"
 )
 
-# The nextest binary id of the test target a source file compiles into: `crates/<dir>/tests/<name>.rs` (or
+# The nextest binary id of the test target a source file compiles into: `crates/<dir>/tests/<name>.rs` (a module crate's
+# `<dir>` is `neoc-vm-lib/<module>` or `neoc-vm-vnd/<module>`; or
 # `tests/<name>/main.rs`) is `<package>::<name>`, a file under `src/bin/<name>` is `<package>::bin/<name>`, and any other
 # file under `src/` is the library, `<package>`. Prints nothing for any other place (a module shared by test targets).
 binary_id() {
   local file=$1 dir rel package
-  dir=${file#crates/} && dir=${dir%%/*}
-  rel=${file#crates/"$dir"/}
+  rel=${file#crates/}
+  case $rel in
+    # the module crates sit one level down: crates/neoc-vm-lib/<module>, crates/neoc-vm-vnd/<module>
+    neoc-vm-lib/*/* | neoc-vm-vnd/*/*) dir=${rel%%/*} && rel=${rel#*/} && dir=$dir/${rel%%/*} && rel=${rel#*/} ;;
+    *) dir=${rel%%/*} && rel=${rel#*/} ;;
+  esac
   package=$(sed -n -E 's/^name[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "crates/$dir/Cargo.toml" | head -n 1)
   [ -n "$package" ] || return 0
   case $rel in
@@ -119,11 +132,5 @@ fi
 
 step "slow tests ($count): cargo nextest run --workspace --exclude neoc --run-ignored only -E '$filter'"
 cargo nextest run --workspace --exclude neoc --run-ignored only --no-fail-fast -E "$filter"
-
-step "cargo test --release -p neoc-vm --test abort_regressions"
-cargo test --release -p neoc-vm --test abort_regressions
-
-step "bench bodies, each once"
-cargo bench -p neoc-vm --features bench --bench lib --bench vnd -- --test
 
 printf '\nslow suites passed\n'

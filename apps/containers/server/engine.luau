@@ -28,21 +28,22 @@ local sentence = docker.sentence
 -- Choose the Docker this app manages: an address, or empty for this machine's own.
 engine.use = docker.use
 
-local function nameOf(names: any): string
-  local first = if type(names) == "table" then names[1] else nil
-  return if type(first) == "string" then (string.gsub(first, "^/", "")) else ""
+local function nameOf(names: { string }?): string
+  local first = if names then names[1] else nil
+  return if first then (string.gsub(first, "^/", "")) else ""
 end
 
 -- the published ports, each once (Docker lists one for IPv4 and one for IPv6), in order
-local function portsOf(ports: any): { string }
+local function portsOf(ports: { vnd_bollard_PortSummary }): { string }
   local seen: { [string]: boolean } = {}
   local published: { { host: number, label: string } } = {}
-  for _, port in ports or {} do
-    if port.PublicPort then
-      local label = `{port.PublicPort}:{port.PrivatePort}` .. (if port.Type == "tcp" then "" else `/{port.Type}`)
+  for _, port in ports do
+    local public = port.PublicPort
+    if public then
+      local label = `{public}:{port.PrivatePort}` .. (if port.Type == "tcp" then "" else `/{port.Type or ""}`)
       if not seen[label] then
         seen[label] = true
-        table.insert(published, { host = port.PublicPort, label = label })
+        table.insert(published, { host = public, label = label })
       end
     end
   end
@@ -57,21 +58,21 @@ local function portsOf(ports: any): { string }
 end
 
 -- a container, from an entry of Docker's list
-local function containerOf(summary: any): rpc.Container
+local function containerOf(summary: vnd_bollard_ContainerSummary): rpc.Container
   local stack, service = stacks.of(summary.Labels or {})
   return {
-    id = summary.Id,
+    id = summary.Id or "",
     name = nameOf(summary.Names),
     image = summary.Image or "",
-    state = STATES[summary.State] or "exited",
+    state = STATES[summary.State or ""] or "exited",
     status = summary.Status or "",
-    ports = portsOf(summary.Ports),
+    ports = portsOf(summary.Ports or {}),
     stack = stack,
     service = service,
   }
 end
 
-local function unreachable(status: vos_DockerStatus, problem: string): rpc.Overview
+local function unreachable(status: vos_docker_Status, problem: string): rpc.Overview
   status.reachable = false
   status.version = ""
   status.problem = problem
@@ -152,7 +153,7 @@ function engine.stack(action: Action, stack: string): string?
     local _, service = stacks.of(labels)
     table.insert(
       members,
-      { id = summary.Id, name = nameOf(summary.Names), service = service, needs = stacks.needs(labels) }
+      { id = summary.Id or "", name = nameOf(summary.Names), service = service, needs = stacks.needs(labels) }
     )
   end
   if #members == 0 then
@@ -176,10 +177,12 @@ function engine.stack(action: Action, stack: string): string?
   end
 
   if action == "remove" then
-    local networks = api:list_networks { filters = stacks.filter(stack) }
-    for _, network in networks or {} do
-      local _, network_err = api:remove_network(network.Id)
-      failure = failure or (if network_err then sentence(network_err) else nil)
+    local networks: { vnd_bollard_Network } = api:list_networks { filters = stacks.filter(stack) } or {}
+    for _, network in networks do
+      if network.Id then
+        local _, network_err = api:remove_network(network.Id)
+        failure = failure or (if network_err then sentence(network_err) else nil)
+      end
     end
   end
   return failure
@@ -197,21 +200,26 @@ function engine.details(container: string): (rpc.Details?, string?)
   end
 
   local command = { found.Path or "" }
-  for _, argument in found.Args or {} do
+  local arguments: { string } = found.Args or {}
+  for _, argument in arguments do
     table.insert(command, argument)
   end
   local mounts: { string } = {}
-  for _, mount in found.Mounts or {} do
+  local mounted: { vnd_bollard_MountPoint } = found.Mounts or {}
+  for _, mount in mounted do
     table.insert(mounts, `{mount.Name or mount.Source or ""} -> {mount.Destination or ""}`)
   end
   table.sort(mounts)
   local networks: { string } = {}
-  for name in (found.NetworkSettings and found.NetworkSettings.Networks) or {} do
+  local joined: { [string]: vnd_bollard_EndpointSettings } = (found.NetworkSettings and found.NetworkSettings.Networks)
+    or {}
+  for name in joined do
     table.insert(networks, name)
   end
   table.sort(networks)
   local environment: { string } = {}
-  for _, variable in (found.Config and found.Config.Env) or {} do
+  local variables: { string } = (found.Config and found.Config.Env) or {}
+  for _, variable in variables do
     table.insert(environment, string.match(variable, "^[^=]*") :: string)
   end
   table.sort(environment)
@@ -219,10 +227,10 @@ function engine.details(container: string): (rpc.Details?, string?)
   local policy = found.HostConfig and found.HostConfig.RestartPolicy and found.HostConfig.RestartPolicy.Name
   local health = found.State and found.State.Health and found.State.Health.Status
   return {
-    container = found.Id,
+    container = found.Id or container,
     command = table.concat(command, " "),
-    restart = if type(policy) == "string" and policy ~= "" then policy else "no",
-    health = if type(health) == "string" and health ~= "none" then health else "",
+    restart = if policy and policy ~= "" then policy else "no",
+    health = if health and health ~= "none" then health else "",
     mounts = mounts,
     networks = networks,
     environment = environment,
@@ -242,7 +250,7 @@ end
 -- Watch Docker for as long as the app is loaded, and call `changed` whenever what `overview` answers may be
 -- different. It never returns: run it in a task.
 function engine.watch(changed: () -> ())
-  docker.watch({ type = "container", event = EVENTS }, changed)
+  docker.watch({ type = { "container" }, event = EVENTS }, changed)
 end
 
 return engine

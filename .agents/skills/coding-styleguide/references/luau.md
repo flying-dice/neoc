@@ -5,7 +5,9 @@
   module tables; avoid accidental globals and coercion-dependent logic.
 - Type the module's surface: exported functions, state tables and unions of string
   literals for alternatives. Do not reach for `any` or a `::` cast to quiet the
-  checker; where a cast is unavoidable, say why on the line above.
+  checker; where a cast is unavoidable, say why on the line above. A host declaration
+  that returns `any` for data with a known shape is a bug in the declarations: fix it
+  there, do not cast around it (see "Fully typed APIs" in the styleguide).
 - Types enforce nothing at runtime. Validate values that cross a boundary (tool
   arguments, RPC payloads, stored rows, file contents) before trusting their type.
 - Host and library calls that can fail return `(value, err)`, both optional. Check

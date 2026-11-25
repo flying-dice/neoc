@@ -91,7 +91,8 @@ test.describe('Settings journeys', () => {
       accent: 'green',
       textScale: 85,
       reduceTransparency: true,
-      banners: true
+      banners: true,
+      statusBar: false
     })
 
     // a reload: the document has them before any window is open, and the controls show them
@@ -123,7 +124,8 @@ test.describe('Settings journeys', () => {
       accent: 'blue',
       textScale: 100,
       reduceTransparency: false,
-      banners: true
+      banners: true,
+      statusBar: false
     })
   })
 

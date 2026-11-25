@@ -30,7 +30,7 @@ fn run_lua_script_executes() {
 }
 
 /// The authoring language, end to end: `types/fixtures/syntax.luau` is type-checked in strict mode against the
-/// generated declarations (`crates/neoc-vm/tests/luau_decls.rs`) and is run here by `neoc run`, with type annotations, a
+/// generated declarations and is run here by `neoc run`, with type annotations, a
 /// type alias, a generic function, `continue`, compound assignment, string interpolation and an `if` expression, and
 /// typed values of the modules it requires (`std:time`, `lib:url`, `lib:semver`, `lib:json`).
 #[test]
@@ -45,8 +45,9 @@ fn run_a_typed_luau_script_with_annotations_interpolation_and_continue() {
     // `continue` skips "a"; `total += #word * index` is 2 * 2 + 3 * 3; the string is interpolated; the version,
     // the host and the 30 second budget come from typed module values; the buffer holds 258 little-endian (its
     // second byte is 1) and then "neoc"
+    // (`print` writes the platform's line ending)
     assert_eq!(
-        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n"),
         "total 13 is big\nexample.com\tv1.2.3\t30\n8\t1\tneoc\n"
     );
 }
@@ -71,7 +72,7 @@ fn annotations_are_not_checked_at_run_time() {
 }
 
 /// LuaJIT's loader skipped a first `#` line and a UTF-8 byte-order mark; Luau's lexer rejects both, so neoc's chunk
-/// loader (`sandbox::load_source`) does it: an executable script and a file saved with a BOM keep running, and an
+/// loader (`neoc_vm::load_source`) does it: an executable script and a file saved with a BOM keep running, and an
 /// error on line 3 of a file with a shebang still says line 3.
 #[test]
 fn run_lua_script_with_a_shebang_or_a_bom_executes_and_keeps_its_line_numbers() {
@@ -113,27 +114,22 @@ fn run_lua_script_with_a_shebang_or_a_bom_executes_and_keeps_its_line_numbers() 
     );
 }
 
-/// `neoc run` builds its runtime with `neoc_vm::VM_THREAD_STACK` and runs the script on a worker: a script that recurses
-/// to Luau's 200-level C limit through Rust host functions ends in an error it can catch, in a debug build too (on
-/// tokio's 2 MiB workers, or the main thread, a nested `Mutex:with_lock` and a `lib:cache` `on_evict` that re-enters the
-/// cache abort the process there).
+/// `neoc run` builds its runtime with `neoc_vm::VM_THREAD_STACK` and runs the script on a worker: a script that
+/// recurses to Luau's 200-level C limit through Rust host functions ends in an error it can catch, in a debug build
+/// too (on tokio's 2 MiB workers, or the main thread, a `lib:cache` `on_evict` that re-enters the cache aborts the
+/// process there).
 #[test]
 fn run_survives_recursion_through_rust_host_functions_on_its_own_threads() {
     let dir = tempdir().unwrap();
     let src = write(
         dir.path(),
         "nest.lua",
-        r#"local Mutex = require("std:collections").Mutex
-local depth = 0
-local function nest() depth = depth + 1 return Mutex.new():with_lock(nest) end
-local ok = pcall(nest)
-print("with_lock", ok, depth > 100)
-local cache
+        r#"local cache
 local evicted = 0
-cache = require("lib:cache").Cache.new { max_size = 1, on_evict = function() evicted = evicted + 1 cache:set("k" .. evicted, evicted) end }
+cache = require("lib:cache").Cache.new(1, nil, function() evicted = evicted + 1 cache:set("k" .. evicted, evicted) end)
 cache:set("a", 1)
-local ok2 = pcall(function() cache:set("b", 2) end)
-print("on_evict", ok2, evicted > 100)
+local ok = pcall(function() cache:set("b", 2) end)
+print("on_evict", ok, evicted > 100)
 "#,
     );
     let out = Command::new(BIN).arg("run").arg(&src).output().unwrap();
@@ -144,7 +140,6 @@ print("on_evict", ok2, evicted > 100)
         out.status,
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(stdout.contains("with_lock\tfalse\ttrue"), "{stdout}");
     assert!(stdout.contains("on_evict\tfalse\ttrue"), "{stdout}");
 }
 
@@ -385,7 +380,7 @@ fn run_lua_file_rejects_bytecode() {
     assert!(stderr.contains("binary"), "got: {stderr}");
 }
 
-const FAILING_TEST: &str = "local _t = require(\"lib:test\")\n_t.test(\"fails\", function()\n  _t.expect(1).toBe(2)\nend)\n";
+const FAILING_TEST: &str = "local _t = require(\"lib:test\")\n_t.test(\"fails\", function()\n  _t.expect(1):toBe(2)\nend)\n";
 
 #[test]
 fn run_test_lua_with_failing_expect_reports_and_exits_nonzero() {
@@ -501,7 +496,7 @@ fn a_process_a_script_started_does_not_outlive_the_run() {
     assert_no_process_outlives("raises.lua", "error(\"boom\")", 1);
     assert_no_process_outlives(
         "fails.test.lua",
-        "local t = require(\"lib:test\")\nt.test(\"fails\", function() t.expect(1).toBe(2) end)",
+        "local t = require(\"lib:test\")\nt.test(\"fails\", function() t.expect(1):toBe(2) end)",
         1,
     );
     assert_no_process_outlives(
@@ -509,4 +504,59 @@ fn a_process_a_script_started_does_not_outlive_the_run() {
         "local t = require(\"lib:test\")\nt.test(\"spins\", function() while true do end end)",
         124,
     );
+}
+
+/// Every module the runtime declares (`#[mlua_ir::module("<name>")]` in the source of `neoc-vm-std`, `neoc-vm-lib-*` and
+/// `neoc-vm-vnd-*`) is in the built binary. A module registers itself when its object code is linked, so a module the
+/// linker dropped would be missing from `require` with nothing else to say so. The names are read from the source,
+/// not from the registry of this test binary, which the same linker built.
+#[test]
+fn the_binary_links_every_module_of_the_runtime() {
+    fn declared(dir: &Path, names: &mut Vec<String>) {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                declared(&path, names);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                let source = fs::read_to_string(&path).unwrap();
+                // the attribute itself, at the start of a line: a doc comment that shows one is not a module
+                for line in source.lines() {
+                    if let Some(rest) = line.strip_prefix("#[mlua_ir::module(\"") {
+                        names.push(rest.split('"').next().unwrap().to_owned());
+                    }
+                }
+            }
+        }
+    }
+    let mut names = Vec::new();
+    // the modules of `neoc-vm-std`, of the `neoc-vm-lib-*` crates and of the `neoc-vm-vnd-*` crates
+    for dir in ["../neoc-vm-std/src", "../neoc-vm-lib", "../neoc-vm-vnd"] {
+        declared(&Path::new(env!("CARGO_MANIFEST_DIR")).join(dir), &mut names);
+    }
+    names.sort();
+    assert!(
+        names.len() > 50 && names.iter().any(|n| n == "vnd:hyper"),
+        "{names:?}"
+    );
+
+    let dir = tempdir().unwrap();
+    let list = names
+        .iter()
+        .map(|n| format!("{n:?}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let src = write(
+        dir.path(),
+        "all.lua",
+        &format!(
+            "for _, name in {{ {list} }} do assert(type(require(name)) == \"table\", name) end\nprint(\"all\")\n"
+        ),
+    );
+    let out = Command::new(BIN).arg("run").arg(&src).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "all");
 }

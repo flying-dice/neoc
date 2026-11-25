@@ -1,6 +1,7 @@
 /**
- * The vos Vite plugin. An app is one Vite project: its client in any framework, its Luau backend beside it, and one
- * contract (`openrpc.json`: OpenRPC, JSON-RPC 2.0) that both sides are generated from.
+ * The vos Vite plugin. An app is one Vite project: its client in any framework, its backend beside it (Luau, or TypeScript
+ * that the build compiles to Luau: `typescript-backend.ts`), and one contract (`openrpc.json`: OpenRPC, JSON-RPC 2.0) that
+ * both sides are generated from.
  *
  *     // vite.config.ts
  *     import { vos } from '@vos/vite-plugin'
@@ -19,7 +20,9 @@
  *   - puts the host's tags first in `index.html`'s head at build time: the kit's stylesheet and script (`/kit/tokens.css`,
  *     `/kit/kit.js`) and the bridge (`/apps/bridge.js`), one copy each served by the host, never bundled (`hostTags`);
  *   - writes the kit's editor types for the framework the project depends on (`.app/kit-svelte.d.ts`, `.app/kit-react.d.ts`);
- *   - bundles the Luau backend into `dist/app.luau` and writes `dist/app-ref.json`, the app ref the host installs: the
+ *   - for a backend in TypeScript (`server/main.ts`), generates `.app/server/` instead of the two Luau files (the host's
+ *     declarations, the types and the router of the contract, the entry) and compiles it: a type error fails the build;
+ *   - bundles the backend into `dist/app.luau` and writes `dist/app-ref.json`, the app ref the host installs: the
  *     manifest, the backend, and every file of `dist/static/` with its sha256.
  *
  * Everything it generates is a list of `{ path, contents }` (`generate.ts`).
@@ -27,8 +30,8 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { HtmlTagDescriptor, Logger, Plugin } from 'vite'
-import { promote, writeApp } from './backend.ts'
-import { DEFAULTS, generate, readDefinition, write, type Options } from './generate.ts'
+import { backendBundle, promote, writeApp } from './backend.ts'
+import { DEFAULTS, TYPESCRIPT_BACKEND, generate, isTypeScript, readDefinition, removeOtherBackend, resolveOptions, write, type Options } from './generate.ts'
 import { analyze, ToolMissing } from './luau-tools.ts'
 
 export type { Options } from './generate.ts'
@@ -76,17 +79,18 @@ export function withoutHostTags(html: string): { page: string; removed: string[]
   return { page, removed }
 }
 
-/** Every `.luau` file under `dir` (the backend's modules: the build bundles them, so a change to one rebuilds). */
-function luauUnder(dir: string): string[] {
+/** Every `.luau` and `.ts` file under `dir` (the backend's modules: the build bundles them, so a change to one rebuilds). */
+function sourcesUnder(dir: string): string[] {
   if (!existsSync(dir)) return []
   return readdirSync(dir).flatMap((name) => {
     const path = join(dir, name)
-    return statSync(path).isDirectory() ? luauUnder(path) : name.endsWith('.luau') ? [path] : []
+    return statSync(path).isDirectory() ? sourcesUnder(path) : name.endsWith('.luau') || name.endsWith('.ts') ? [path] : []
   })
 }
 
 export function vos(options: Partial<Options> = {}): Plugin {
-  const settings: Options = { ...DEFAULTS, ...options }
+  // the backend's language is read from the project once its root is known (`config`)
+  let settings: Options = { ...DEFAULTS, ...options }
   let root = process.cwd()
   let distDir = resolve(process.cwd(), 'dist')
   /**
@@ -98,17 +102,30 @@ export function vos(options: Partial<Options> = {}): Plugin {
   // a build that failed must not write an app ref: the one on disk (if any) is the last build that worked
   let failed = false
   let logger: Logger | undefined
+  /** A TypeScript backend as this build compiled it when it started (the compiler runs once per build). */
+  let compiled: string | undefined
 
   /**
-   * Generate, and check the backend against the contract. The check is the Luau type checker's, not a pattern over the
+   * Generate, and check the backend against the contract. The check is a type checker's (luau-lsp for a backend in Luau,
+   * the TypeScript compiler for one in TypeScript, whose compiled bundle is kept in `compiled`), not a pattern over the
    * source: the generated `Handlers` type has one function per declared method, so a missing handler, a handler of the
-   * wrong shape, or one that is not declared is a type error in `server/main.luau`, and valid code of any shape (a handler
-   * defined in a required module, assigned from a local function, added to the table later) never fails.
+   * wrong shape, or one that is not declared is a type error in the backend, and valid code of any shape (a handler
+   * defined in another module, assigned from a local function, added to the table later) never fails.
    */
   const regenerate = (): void => {
     write(root, generate(root, settings))
+    removeOtherBackend(root, settings)
     const backend = resolve(root, settings.backend)
-    if (!existsSync(backend)) throw new Error(`${settings.backend} not found: the backend returns one handler per method of ${settings.definition}`)
+    if (!existsSync(backend)) {
+      const either = options.backend === undefined ? ` (or ${TYPESCRIPT_BACKEND}, for a backend in TypeScript)` : ''
+      throw new Error(`${settings.backend}${either} not found: the backend returns one handler per method of ${settings.definition}`)
+    }
+    // a backend in TypeScript is checked by compiling it: the generated entry passes its handlers to the router, whose
+    // parameter is the `Handlers` of the definition. What it compiles to is kept for the end of the build.
+    if (isTypeScript(settings)) {
+      compiled = backendBundle(root, settings)
+      return
+    }
     if (!settings.check) return
     let result: ReturnType<typeof analyze>
     try {
@@ -136,6 +153,7 @@ export function vos(options: Partial<Options> = {}): Plugin {
     },
     config(config) {
       root = resolve(config.root ?? process.cwd())
+      settings = resolveOptions(root, options)
       distDir = resolve(root, config.build?.outDir ?? 'dist')
       mkdirSync(resolve(root, settings.generated), { recursive: true })
       staging = mkdtempSync(join(resolve(root, settings.generated), 'build-'))
@@ -168,12 +186,16 @@ export function vos(options: Partial<Options> = {}): Plugin {
     },
     buildStart() {
       failed = false
+      compiled = undefined
       rmSync(staging, { recursive: true, force: true })
       // a build that does not check the backend says so, every time: nothing else will
-      if (!settings.check) this.warn(`vos: the check is off (check: false): nothing verifies that ${settings.backend} implements every method of ${settings.definition}`)
-      regenerate()
+      if (!settings.check && !isTypeScript(settings)) this.warn(`vos: the check is off (check: false): nothing verifies that ${settings.backend} implements every method of ${settings.definition}`)
+      if (options.backend === undefined && !isTypeScript(settings) && existsSync(resolve(root, TYPESCRIPT_BACKEND)))
+        this.warn(`vos: ${settings.backend} and ${TYPESCRIPT_BACKEND} are both there: the backend is ${settings.backend}, and ${TYPESCRIPT_BACKEND} is not built or checked`)
+      // watched before anything can fail: a watching build whose first run stops on an error is rebuilt by the fix
       this.addWatchFile(resolve(root, settings.definition))
-      for (const file of luauUnder(resolve(root, settings.backend, '..'))) this.addWatchFile(file)
+      for (const file of sourcesUnder(resolve(root, settings.backend, '..'))) this.addWatchFile(file)
+      regenerate()
     },
     buildEnd(error) {
       if (error) failed = true
@@ -183,7 +205,7 @@ export function vos(options: Partial<Options> = {}): Plugin {
         const staticDir = join(staging, STATIC_DIR)
         // a build that failed has no page: its own error is the one to read
         if (failed || !existsSync(join(staticDir, 'index.html'))) return
-        writeApp(root, staging, readDefinition(root, settings), `${settings.generated}/entry.luau`, STATIC_DIR)
+        writeApp(root, staging, readDefinition(root, settings), compiled ?? backendBundle(root, settings), STATIC_DIR)
         promote(staging, distDir)
       } finally {
         // whatever happened, nothing of this build stays behind in the generated folder

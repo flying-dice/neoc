@@ -2,7 +2,7 @@
 /**
  * The Lua the host embeds, written next to the other generated files:
  *
- *   types/generated/prelude.lua  <- lua/prelude.lua   (`typeof` and `utf8`, which the app environment does not copy from Luau)
+ *   types/generated/prelude.lua  <- lua/prelude.lua   (`utf8`, which the app environment does not copy from Luau)
  *   types/generated/docker.luau  <- crates/vos-lua/lua/docker/main.luau, bundled with what it requires as an app's
  *                                   backend is (darklua: scripts/luau.ts). It is `vos:docker`, the container framework.
  *

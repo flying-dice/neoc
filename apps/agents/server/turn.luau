@@ -33,7 +33,7 @@ local MAX_STATE = 1024 * 1024
 -- the person did on a surface.
 export type Extra = { resume: { any }?, forwarded: any }
 -- The turn in progress in a chat: `stream` is the run being read, closed to stop it.
-export type Turn = { stream: lib_agui_Run?, stopped: boolean }
+export type Turn = { stream: mlua_Stream<lib_agui_Event, lib_agui_RunError>?, stopped: boolean }
 
 local turn = {}
 
@@ -224,10 +224,11 @@ local function reconcile(run: Run, messages: { any })
 end
 
 -- One event of a run. Every event type of the protocol is here: what it does to the chat, or why it does nothing.
-local handle: { [string]: (run: Run, event: lib_agui_Event) -> () } = {
+local function handle(run: Run, event: lib_agui_Event)
   -- lifecycle
-  RUN_STARTED = function() end, -- the turn began when the person wrote
-  RUN_FINISHED = function(run, event)
+  if event.type == "RUN_STARTED" then
+    -- the turn began when the person wrote
+  elseif event.type == "RUN_FINISHED" then
     run.ended = true
     local outcome = event.outcome
     if outcome and outcome.type == "interrupt" then
@@ -248,56 +249,44 @@ local handle: { [string]: (run: Run, event: lib_agui_Event) -> () } = {
         })
       end
     end
-  end,
-  RUN_ERROR = function(run, event)
+  elseif event.type == "RUN_ERROR" then
     run.ended = true
     run.halted = true
     timeline.add(run.chat, "error", { text = event.message or "The run failed.", name = event.code or "" })
-  end,
-  STEP_STARTED = function(run, event)
+  elseif event.type == "STEP_STARTED" then
     timeline.add(run.chat, "step", { key = event.step_name or "", name = event.step_name or "", done = false })
-  end,
-  STEP_FINISHED = function(run, event)
+  elseif event.type == "STEP_FINISHED" then
     finish(run, "step", event.step_name)
-  end,
 
   -- what the agent says
-  TEXT_MESSAGE_START = function(run, event)
+  elseif event.type == "TEXT_MESSAGE_START" then
     -- only an assistant's words are the agent's answer; a message of another role is shown as one all the same
     run.textChunk = event.message_id or run.textChunk
     ensure(run, "assistant", event.message_id or "", { name = event.name or "" })
-  end,
-  TEXT_MESSAGE_CONTENT = function(run, event)
+  elseif event.type == "TEXT_MESSAGE_CONTENT" then
     timeline.append(run.chat, ensure(run, "assistant", event.message_id or ""), event.delta or "")
-  end,
-  TEXT_MESSAGE_END = function(run, event)
+  elseif event.type == "TEXT_MESSAGE_END" then
     finish(run, "assistant", event.message_id)
-  end,
-  TEXT_MESSAGE_CHUNK = function(run, event)
+  elseif event.type == "TEXT_MESSAGE_CHUNK" then
     run.textChunk = event.message_id or run.textChunk
     if run.textChunk then
       timeline.append(run.chat, ensure(run, "assistant", run.textChunk, { name = event.name or "" }), event.delta or "")
     end
-  end,
 
   -- the tools it uses
-  TOOL_CALL_START = function(run, event)
+  elseif event.type == "TOOL_CALL_START" then
     run.toolChunk = event.tool_call_id or run.toolChunk
     toolItem(run, event.tool_call_id or "", event.tool_call_name)
-  end,
-  TOOL_CALL_ARGS = function(run, event)
+  elseif event.type == "TOOL_CALL_ARGS" then
     timeline.append(run.chat, toolItem(run, event.tool_call_id or "", nil), event.delta or "")
-  end,
-  TOOL_CALL_END = function(run, event)
+  elseif event.type == "TOOL_CALL_END" then
     -- the arguments are whole; the call itself is done when it has a result
-  end,
-  TOOL_CALL_CHUNK = function(run, event)
+  elseif event.type == "TOOL_CALL_CHUNK" then
     run.toolChunk = event.tool_call_id or run.toolChunk
     if run.toolChunk then
       timeline.append(run.chat, toolItem(run, run.toolChunk, event.tool_call_name), event.delta or "")
     end
-  end,
-  TOOL_CALL_RESULT = function(run, event)
+  elseif event.type == "TOOL_CALL_RESULT" then
     -- the result of a call of this run, or of one an earlier run left open
     local key = event.tool_call_id or ""
     local earlier = if timeline.find(run.chat, "tool", key, run.since)
@@ -308,67 +297,57 @@ local handle: { [string]: (run: Run, event: lib_agui_Event) -> () } = {
       data.result = event.content or ""
     end)
     timeline.set(run.chat, id, { done = true })
-  end,
 
   -- what it thinks
-  REASONING_START = function(run, event)
+  elseif event.type == "REASONING_START" then
     ensure(run, "reasoning", event.message_id or "")
-  end,
-  REASONING_MESSAGE_START = function(run, event)
+  elseif event.type == "REASONING_MESSAGE_START" then
     run.reasoningChunk = event.message_id or run.reasoningChunk
     ensure(run, "reasoning", event.message_id or "")
-  end,
-  REASONING_MESSAGE_CONTENT = function(run, event)
+  elseif event.type == "REASONING_MESSAGE_CONTENT" then
     timeline.append(run.chat, ensure(run, "reasoning", event.message_id or ""), event.delta or "")
-  end,
-  REASONING_MESSAGE_END = function() end, -- more messages may follow in the same reasoning: REASONING_END ends it
-  REASONING_MESSAGE_CHUNK = function(run, event)
+  elseif event.type == "REASONING_MESSAGE_END" then
+    -- more messages may follow in the same reasoning: REASONING_END ends it
+  elseif event.type == "REASONING_MESSAGE_CHUNK" then
     run.reasoningChunk = event.message_id or run.reasoningChunk
     if run.reasoningChunk then
       timeline.append(run.chat, ensure(run, "reasoning", run.reasoningChunk), event.delta or "")
     end
-  end,
-  REASONING_END = function(run, event)
+  elseif event.type == "REASONING_END" then
     finish(run, "reasoning", event.message_id)
-  end,
-  REASONING_ENCRYPTED_VALUE = function() end, -- a provider's opaque form of its reasoning: nothing to show
-  -- the same, as agents sent it before the REASONING events
-  THINKING_START = function(run, event)
+  elseif event.type == "REASONING_ENCRYPTED_VALUE" then
+    -- a provider's opaque form of its reasoning: nothing to show
+    -- the same, as agents sent it before the REASONING events
+  elseif event.type == "THINKING_START" then
     run.thinking = timeline.add(run.chat, "reasoning", { name = event.title or "", done = false })
-  end,
-  THINKING_TEXT_MESSAGE_START = function(run)
+  elseif event.type == "THINKING_TEXT_MESSAGE_START" then
     run.thinking = run.thinking or timeline.add(run.chat, "reasoning", { done = false })
-  end,
-  THINKING_TEXT_MESSAGE_CONTENT = function(run, event)
+  elseif event.type == "THINKING_TEXT_MESSAGE_CONTENT" then
     run.thinking = run.thinking or timeline.add(run.chat, "reasoning", { done = false })
     timeline.append(run.chat, run.thinking :: number, event.delta or "")
-  end,
-  THINKING_TEXT_MESSAGE_END = function() end,
-  THINKING_END = function(run)
+  elseif event.type == "THINKING_TEXT_MESSAGE_END" then
+    -- nothing to do
+  elseif event.type == "THINKING_END" then
     if run.thinking then
       timeline.set(run.chat, run.thinking, { done = true })
       run.thinking = nil
     end
-  end,
 
   -- the state it shares, and the conversation as it has it
-  STATE_SNAPSHOT = function(run, event)
+  elseif event.type == "STATE_SNAPSHOT" then
     saveState(run.chat, event.snapshot)
-  end,
-  STATE_DELTA = function(run, event)
+  elseif event.type == "STATE_DELTA" then
     local state, problem = agui.apply_patch(loadState(run.chat) or {}, event.delta or {})
     if problem then
       -- a patch that does not fit the state we have: the state is as it was, and the next snapshot sets it right
       return
     end
     saveState(run.chat, state)
-  end,
-  MESSAGES_SNAPSHOT = function(run, event)
+  elseif event.type == "MESSAGES_SNAPSHOT" then
     reconcile(run, event.messages or {})
-  end,
 
   -- what it is doing
-  ACTIVITY_SNAPSHOT = function(run, event)
+  elseif event.type == "ACTIVITY_SNAPSHOT" then
     local found = timeline.find(run.chat, "activity", event.message_id or "")
     if found and event.replace == false then
       return
@@ -380,8 +359,7 @@ local handle: { [string]: (run: Run, event: lib_agui_Event) -> () } = {
       fields.key = event.message_id or ""
       timeline.add(run.chat, "activity", fields)
     end
-  end,
-  ACTIVITY_DELTA = function(run, event)
+  elseif event.type == "ACTIVITY_DELTA" then
     local found = timeline.find(run.chat, "activity", event.message_id or "")
     if not found then
       return -- a patch to an activity that was never drawn
@@ -390,26 +368,23 @@ local handle: { [string]: (run: Run, event: lib_agui_Event) -> () } = {
     if content ~= nil then
       timeline.set(run.chat, found.id, { data = codec.encode(content) })
     end
-  end,
-  SUBAGENT_STARTED = function(run, event)
+  elseif event.type == "SUBAGENT_STARTED" then
     ensure(run, "subagent", event.subagent_run_id or "", { name = event.name or "", text = event.description or "" })
-  end,
-  SUBAGENT_FINISHED = function(run, event)
+  elseif event.type == "SUBAGENT_FINISHED" then
     finish(run, "subagent", event.subagent_run_id)
-  end,
-  SUBAGENT_ERROR = function(run, event)
+  elseif event.type == "SUBAGENT_ERROR" then
     local found = timeline.find(run.chat, "subagent", event.subagent_run_id or "", run.since)
     if found then
       timeline.set(run.chat, found.id, { data = codec.encode { error = event.message }, done = true })
     end
-  end,
 
   -- its own events
-  CUSTOM = function(run, event)
+  elseif event.type == "CUSTOM" then
     timeline.add(run.chat, "custom", { name = event.name or "", data = codec.encode(event.value) })
-  end,
-  RAW = function() end, -- an event of the agent's own framework, passed through for whoever knows it: not shown
-}
+  elseif event.type == "RAW" then
+    -- an event of the agent's own framework, passed through for whoever knows it: not shown
+  end
+end
 
 -- the arguments of a tool call as a table; text that is not a JSON object is a problem
 local function arguments(text: string): ({ [string]: any }?, string?)
@@ -449,7 +424,8 @@ local function runTools(
       elseif budget.spent > MAX_TURN then
         problem = "The turn already holds as much as it may (8 MB); this tool was not run."
       elseif args then
-        result, problem = app.tools.call(row.name, args, { id = agent.id, name = agent.name })
+        local answer, failure = app.tools.call(row.name, { id = agent.id, name = agent.name }, args)
+        result, problem = answer, if failure then failure.message else nil
       end
       data.ours = true
       local text = if problem then "" else codec.encode(result)
@@ -474,9 +450,11 @@ local function runTools(
 end
 
 -- the person's words for a failure of `lib:agui`
-local function sentence(err: string): string
-  local kind = agui.error_kind(err)
-  local message = agui.error_message(err) or err
+local function sentence(err: lib_agui_RunError?): string
+  if not err then
+    return "The run failed."
+  end
+  local kind, message = err.kind, err.message
   if kind == "connect" then
     return `The agent's endpoint could not be reached: {message}`
   elseif kind == "status" then
@@ -513,23 +491,21 @@ local function once(
     return stopped
   end
   local since = timeline.last(chat)
-  local stream, err = agui.run {
-    url = agent.url,
+  local stream, err = agui.run(agent.url, {
+    thread_id = chat,
+    run_id = random.uuid_v4(),
+    messages = history(chat),
+    tools = tools.tools,
+    context = {},
+    state = loadState(chat),
+    forwarded_props = extra.forwarded,
+    resume = extra.resume,
+  }, {
     headers = if token then { Authorization = `Bearer {token}` } else nil,
     timeout = RUN_TIMEOUT,
-    input = {
-      thread_id = chat,
-      run_id = random.uuid_v4(),
-      messages = history(chat),
-      tools = tools.tools,
-      context = {},
-      state = loadState(chat),
-      forwarded_props = extra.forwarded,
-      resume = extra.resume,
-    },
-  }
+  })
   if not stream then
-    timeline.add(chat, "error", { text = sentence(err or "") })
+    timeline.add(chat, "error", { text = sentence(err) })
     return stopped
   end
   current.stream = stream
@@ -555,10 +531,7 @@ local function once(
       timeline.add(chat, "error", { text = "The agent sent more than a turn may hold (8 MB), and was stopped." })
       return stopped
     end
-    local work = handle[event.type]
-    if work then
-      work(run, event)
-    end
+    handle(run, event)
   end
   stream:close()
   current.stream = nil

@@ -16,20 +16,12 @@ local MAX_PORTS = 256
 local MAX_MOUNTS = 256
 
 -- A port of the container, published on the machine's `host` port: TCP, or UDP when `udp`.
-export type Port = { host: number, container: number, udp: boolean? }
+export type Port = vos_docker_Port
 -- A folder of the machine (`source`, an absolute path) the container may read at `target`. It is never writable.
-export type Mount = { source: string, target: string }
+export type Mount = vos_docker_Mount
 -- What the container is made from. Everything it gets of the machine is here: nothing is published or mounted that
 -- is not declared.
-export type Declaration = {
-  image: string,
-  entrypoint: { string }?,
-  command: { string }?,
-  -- `NAME=value`, each
-  environment: { string }?,
-  ports: { Port }?,
-  mounts: { Mount }?,
-}
+export type Declaration = vos_docker_Declaration
 -- Whether `list` is a list of at most `limit`: a table with any other key is not one, and Docker would be sent it
 -- as something else than was declared.
 local function listed(list: any, limit: number): boolean
@@ -161,7 +153,7 @@ function declaration.signature(declared: Declaration): string
   for _, mount in folders do
     add("mount", { mount.source, mount.target })
   end
-  return hex.encode(hash.hash("sha256", table.concat(parts, "\n")) or "")
+  return hex.encode(hash.hash("sha256", table.concat(parts, "\n")))
 end
 
 -- Docker's create body for the container: what was declared and nothing else. Every folder is read-only, and
