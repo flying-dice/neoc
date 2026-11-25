@@ -345,7 +345,20 @@ impl Backend for Launchd {
     }
 
     fn install(&self, spec: &Spec) -> Result<(), Error> {
-        crate_install(ServiceManagerKind::Launchd, self.level, spec)
+        crate_install(ServiceManagerKind::Launchd, self.level, spec)?;
+        // launchd refuses to load a property list that anyone but its owner can write (`Bootstrap failed: 5`), and
+        // the file is created with the caller's umask: set the mode it must have, and for a daemon the owner
+        let path = self.dir.join(format!("{}.plist", spec.label));
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+                .map_err(|e| io_error("set the mode of the property list", &e))?;
+        }
+        if self.level == Level::System {
+            std::os::unix::fs::chown(&path, Some(0), Some(0))
+                .map_err(|e| io_error("set the owner of the property list", &e))?;
+        }
+        Ok(())
     }
 
     fn uninstall(&self, label: &str) -> Result<(), Error> {
