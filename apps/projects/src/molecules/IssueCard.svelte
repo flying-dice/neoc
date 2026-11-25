@@ -1,6 +1,6 @@
 <!-- @molecule IssueCard — one issue on the board: its title, the kind of work it is, its key and its priority; a tap opens it, it can be dragged to another column, and a button moves it one column on -->
 <script lang="ts">
-  import type { Issue } from 'app:rpc'
+  import type { Issue } from '@projects/rpc'
   import { priorityOf, typeOf } from '../lib/catalog'
 
   interface Props {

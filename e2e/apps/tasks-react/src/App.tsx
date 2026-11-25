@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, host, type Task } from 'app:rpc'
+import { api, type Task } from '@tasks-react/rpc'
+import { host } from '@vos/host'
 
 const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 

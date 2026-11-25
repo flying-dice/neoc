@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { api, host, type NotifyParams } from 'app:rpc'
+  import { api, type NotifyParams } from '@notifier/rpc'
+  import { host } from '@vos/host'
 
   let sent = $state(0)
 

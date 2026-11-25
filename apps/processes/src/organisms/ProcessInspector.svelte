@@ -1,6 +1,6 @@
 <!-- @organism ProcessInspector — one process in full: its name and state, the two ways to end it (each asks first), why it was not ended, and what it uses, who runs it, how it was started, and the processes it is next to -->
 <script lang="ts">
-  import type { Detail, Related } from 'app:rpc'
+  import type { Detail, Related } from '@processes/rpc'
   import { bytes, commandLine, duration, percent, started, statusLabel } from '../lib/format'
   import type { Ending, Refusal } from '../lib/processes.svelte'
 

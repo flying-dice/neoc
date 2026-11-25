@@ -2,7 +2,7 @@
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
   import { alertButton, alertDialog } from '@vos/storybook/kit'
-  import type { Folder, Note } from 'app:rpc'
+  import type { Folder, Note } from '@notes/rpc'
   import NoteList from './NoteList.svelte'
   import { listed, note } from '../lib/fakeApi'
   import { sections, type Section } from '../lib/views'

@@ -3,7 +3,7 @@
   import { expect, fn } from 'storybook/test'
   import { alertButton, textArea } from '@vos/storybook/kit'
   import IssueDetail from './IssueDetail.svelte'
-  import type { Issue } from 'app:rpc'
+  import type { Issue } from '@projects/rpc'
   import { ISSUES } from '../lib/samples'
   import type { IssueChanges } from '../lib/projects.svelte'
 

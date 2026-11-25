@@ -25,6 +25,7 @@ import { dirname, join, resolve } from 'node:path'
 import ts from 'typescript'
 import { DefinitionError, LUAU_KEYWORDS, parseDefinition, type Definition } from './definition.ts'
 import { emitDeclarations, emitModule } from './emit-client.ts'
+import { emitHostDeclarations, emitHostModule } from './emit-host.ts'
 import { emitLuau, emitLuauEntry } from './emit-luau.ts'
 import { write } from './generate.ts'
 import { JS_WORDS } from './names.ts'
@@ -121,8 +122,10 @@ function compile(dts: string, usage: string): string[] {
   const dir = mkdtempSync(join(tmpdir(), 'vos-names-'))
   try {
     writeFileSync(join(dir, 'rpc.d.ts'), dts)
+    // the app's client names its one builtin from `@vos/host`, which the plugin generates beside it
+    writeFileSync(join(dir, 'host.d.ts'), emitHostDeclarations())
     writeFileSync(join(dir, 'usage.ts'), usage)
-    const program = ts.createProgram([join(dir, 'rpc.d.ts'), join(dir, 'usage.ts')], {
+    const program = ts.createProgram([join(dir, 'rpc.d.ts'), join(dir, 'host.d.ts'), join(dir, 'usage.ts')], {
       strict: true,
       noEmit: true,
       target: ts.ScriptTarget.ES2022,
@@ -146,12 +149,12 @@ describe('awkward names, at every position', () => {
     const schemas = together('schema', accepted('schema'))
     const dtsSchemas = emitDeclarations(parse(schemas.contract) as Definition, 'openrpc.json')
     const usageSchemas = [
-      "import type * as R from 'app:rpc'",
+      "import type * as R from '@names/rpc'",
       ...schemas.used.map((n, i) => `declare const s${i}: R[${JSON.stringify(n)}]\nconst t${i}: string = s${i}`)
     ].join('\n')
     // `R[...]` indexes values, not types: use a type-level lookup
     const typeUsage = [
-      ...schemas.used.map((n, i) => `type T${i} = import('app:rpc').${n}`),
+      ...schemas.used.map((n, i) => `type T${i} = import('@names/rpc').${n}`),
       ...schemas.used.map((_, i) => `declare const v${i}: T${i}\nexport const w${i}: string = v${i}`)
     ].join('\n')
     expect(usageSchemas.length).toBeGreaterThan(0)
@@ -162,7 +165,7 @@ describe('awkward names, at every position', () => {
     const methods = together('method', accepted('method'))
     const dtsMethods = emitDeclarations(parse(methods.contract) as Definition, 'openrpc.json')
     const methodUsage = [
-      "import { api } from 'app:rpc'",
+      "import { api } from '@names/rpc'",
       ...methods.used.map((n, i) => `export const m${i}: Promise<null> = api[${JSON.stringify(n)}]({ p: 'x' })`),
       ...methods.used.map((n, i) => `export const k${i}: (params?: { p?: string }) => Promise<null> = api[${JSON.stringify(n)}]`)
     ].join('\n')
@@ -190,8 +193,8 @@ describe('awkward names, at every position', () => {
       const literal = `{ ${set.used.map((n) => `${JSON.stringify(n)}: 'x'`).join(', ')} }`
       const usage =
         position === 'param'
-          ? `import { api } from 'app:rpc'\nexport const call: Promise<null> = api.go(${literal})`
-          : `import type { Thing } from 'app:rpc'\nexport const thing: Thing = ${literal}`
+          ? `import { api } from '@names/rpc'\nexport const call: Promise<null> = api.go(${literal})`
+          : `import type { Thing } from '@names/rpc'\nexport const thing: Thing = ${literal}`
       expect(compile(dts, usage), `${position} names`).toEqual([])
       expect(set.used.length).toBeGreaterThan(20)
     }
@@ -203,7 +206,9 @@ describe('awkward names, at every position', () => {
     const dir = mkdtempSync(join(tmpdir(), 'vos-names-js-'))
     try {
       const file = join(dir, 'rpc.js')
-      writeFileSync(file, emitModule(definition, 'openrpc.json'))
+      // `@vos/host` is the plugin's to resolve; here it is the file beside the module
+      writeFileSync(file, emitModule(definition, 'openrpc.json').replace("from '@vos/host'", "from './host.js'"))
+      writeFileSync(join(dir, 'host.js'), emitHostModule())
       const calls: string[] = []
       ;(globalThis as { vos?: unknown }).vos = {
         call: async (method: string) => {

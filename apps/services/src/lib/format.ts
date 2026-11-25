@@ -1,4 +1,4 @@
-import type { Manager, Restart, Service, State } from 'app:rpc'
+import type { Manager, Restart, Service, State } from '@services/rpc'
 
 /** What a person reads of a state: words, never colour alone. */
 export const stateLabel = (state: State): string =>

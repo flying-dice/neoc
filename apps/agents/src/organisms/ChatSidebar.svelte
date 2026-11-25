@@ -1,6 +1,6 @@
 <!-- @organism ChatSidebar — who can be chatted with, and the chats so far; a tap on an agent starts a chat, on a chat opens it -->
 <script lang="ts">
-  import type { Agent, Chat } from 'app:rpc'
+  import type { Agent, Chat } from '@agents/rpc'
 
   interface Props {
     agents: readonly Agent[]

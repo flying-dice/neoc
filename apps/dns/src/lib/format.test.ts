@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { Server, Settings } from 'app:rpc'
+import type { Server, Settings } from '@dns/rpc'
 import { attentionOf, isServing, portOf, recordsSummary, serverLabel, serverTone, upstreamsOf } from './format'
 
 const SETTINGS: Settings = { port: 53, upstreams: ['1.1.1.1'], logQueries: false }

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { api, host, type Task } from 'app:rpc'
+  import { api, type Task } from '@tasks-svelte/rpc'
+  import { host } from '@vos/host'
 
   // the journeys reach the backend with calls the screen has no control for (`hang`, `release`)
   ;(window as unknown as { __rpc: (method: string, args?: unknown) => Promise<unknown> }).__rpc = (method, args) =>

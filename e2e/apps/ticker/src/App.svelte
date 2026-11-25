@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { api, host, type Count } from 'app:rpc'
+  import { api, type Count } from '@ticker/rpc'
+  import { host } from '@vos/host'
 
   let count = $state<Count | null>(null)
   let notice = $state<string | null>(null)

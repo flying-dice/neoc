@@ -3,7 +3,7 @@
  * the page, with no host and no operating system. It follows the backend's rules (server/items.luau): a password the
  * keychain has already is not replaced, and an item without a password must be one the keychain has.
  */
-import type { Item, Overview } from 'app:rpc'
+import type { Item, Overview } from '@keychain/rpc'
 import type { KeychainEvents, KeychainRpc } from './keychain.svelte'
 
 export interface FakeBackend {

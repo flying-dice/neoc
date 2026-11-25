@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { api, host } from 'app:rpc'
+  import { api } from '@notebooks/rpc'
+  import { host } from '@vos/host'
   import { Notebooks } from './lib/notebooks.svelte'
   import NotebooksPage from './pages/NotebooksPage.svelte'
 

@@ -3,7 +3,7 @@
   import { expect, fn } from 'storybook/test'
   import { alertButton, alertDialog, pickerSelect } from '@vos/storybook/kit'
   import type { ComponentProps } from 'svelte'
-  import type { Summary } from 'app:rpc'
+  import type { Summary } from '@notebooks/rpc'
   import Sidebar from './Sidebar.svelte'
   import { NOTEBOOK } from '../lib/fakeApi'
 

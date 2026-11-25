@@ -1,6 +1,6 @@
 <!-- @organism StackSidebar — what there is to show: every container, or one Compose stack with how much of it runs; and under them which Docker this is, with the field that chooses another -->
 <script lang="ts">
-  import type { Engine, Stack } from 'app:rpc'
+  import type { Engine, Stack } from '@containers/rpc'
   import { ConnectionForm, type Tone } from '@vos/docker'
   import { ALL, sameScope, stackScope, type Scope } from '../lib/containers.svelte'
   import { stackSummary, stackTone } from '../lib/format'

@@ -1,6 +1,6 @@
 <!-- @molecule TodoRow — one todo: the check that ticks it off, its title (typed over to rename it), when it is due, its flag, and its details (notes, the day, delete) when they are open -->
 <script lang="ts">
-  import type { Todo } from 'app:rpc'
+  import type { Todo } from '@todos/rpc'
   import { dueLabel, isOverdue } from '../lib/dates'
 
   interface Props {

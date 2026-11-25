@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, type Note } from 'app:rpc'
+  import { api, type Note } from '@memos/rpc'
 
   let notes = $state<Note[]>([])
   let body = $state('')

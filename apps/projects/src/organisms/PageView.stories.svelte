@@ -3,7 +3,7 @@
   import { expect, fn } from 'storybook/test'
   import { textArea } from '@vos/storybook/kit'
   import PageView from './PageView.svelte'
-  import type { Page } from 'app:rpc'
+  import type { Page } from '@projects/rpc'
   import { tree, type Leaf } from '../lib/catalog'
   import { BODIES, PAGES } from '../lib/samples'
   import type { PageDraft } from '../lib/projects.svelte'

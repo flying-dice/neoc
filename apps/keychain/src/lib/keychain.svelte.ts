@@ -1,4 +1,5 @@
-import type { Api, Host, Item, Keychain as Store, Overview } from 'app:rpc'
+import type { Api, Item, Keychain as Store, Overview } from '@keychain/rpc'
+import type { Host } from '@vos/host'
 
 /** What the window needs of the backend: the overview, the two ways of changing it, and one password at a time. */
 export type KeychainRpc = Pick<Api, 'overview' | 'add' | 'reveal' | 'remove'>

@@ -537,6 +537,8 @@ function appMeta(value: Json): AppMeta {
   only(value, ['id', 'icon', 'tint', 'description', 'window', 'requires', 'migrations', 'csp', 'permissions'], path)
   const id = text(value.id, `${path}.id`)
   if (!/^[a-z0-9][a-z0-9-]{2,39}$/.test(id)) fail(`${path}.id`, 'must be 3 to 40 characters: lowercase letters, digits and dashes')
+  // a page imports an app's modules as `@<id>/...` and the framework's as `@vos/...`: no app may take the framework's scope
+  if (id === 'vos') fail(`${path}.id`, "`vos` is the app framework's own scope (`@vos/*`): pick another id")
   const meta: AppMeta = { id }
   const icon = optionalText(value.icon, `${path}.icon`)
   if (icon !== undefined) {

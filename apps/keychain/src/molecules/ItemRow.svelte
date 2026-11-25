@@ -1,6 +1,6 @@
 <!-- @molecule ItemRow — one item in the list: what the password is for, whose it is, the password once the person asks to see it (or why it cannot be shown), and the buttons that show or hide it and delete the item -->
 <script lang="ts">
-  import type { Item } from 'app:rpc'
+  import type { Item } from '@keychain/rpc'
 
   interface Props {
     item: Item

@@ -1,4 +1,5 @@
-import type { Agent, Api, Chat, Conversation, Host, Item } from 'app:rpc'
+import type { Agent, Api, Chat, Conversation, Item } from '@agents/rpc'
+import type { Host } from '@vos/host'
 
 /** What the window needs of the backend: the agents, the chats, and a turn in one of them. */
 export type AgentsRpc = Pick<

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { api, host } from 'app:rpc'
+  import { api } from '@dns/rpc'
+  import { host } from '@vos/host'
   import { Dns } from './lib/dns.svelte'
   import DnsPage from './pages/DnsPage.svelte'
 

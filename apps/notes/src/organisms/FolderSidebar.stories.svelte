@@ -1,7 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
-  import type { Folder } from 'app:rpc'
+  import type { Folder } from '@notes/rpc'
   import FolderSidebar from './FolderSidebar.svelte'
   import { ALL, folderView, type View } from '../lib/views'
 

@@ -1,6 +1,6 @@
 <!-- @organism ServerHeader — the server at the top of the window: how it is doing, the switch that turns it on and off, and, when it is wanted on and is not answering, why and the button that tries again -->
 <script lang="ts">
-  import type { Server, Settings } from 'app:rpc'
+  import type { Server, Settings } from '@dns/rpc'
   import { StateDot } from '@vos/docker'
   import { attentionOf, serverLabel, serverTone } from '../lib/format'
 

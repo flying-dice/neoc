@@ -3,7 +3,7 @@
   import { expect, fn } from 'storybook/test'
   import { alertButton, alertDialog } from '@vos/storybook/kit'
   import ProjectHeader from './ProjectHeader.svelte'
-  import type { Project } from 'app:rpc'
+  import type { Project } from '@projects/rpc'
   import { WEBSITE } from '../lib/fakeApi'
   import type { Tab } from '../lib/catalog'
 

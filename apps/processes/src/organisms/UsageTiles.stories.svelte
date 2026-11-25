@@ -1,7 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect } from 'storybook/test'
-  import type { Overview } from 'app:rpc'
+  import type { Overview } from '@processes/rpc'
   import UsageTiles from './UsageTiles.svelte'
   import { FIRST_READING, OVERVIEW } from './storyData'
 

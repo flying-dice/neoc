@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { api, host } from 'app:rpc'
+  import { api } from '@keychain/rpc'
+  import { host } from '@vos/host'
   import { Keychain } from './lib/keychain.svelte'
   import KeychainPage from './pages/KeychainPage.svelte'
 

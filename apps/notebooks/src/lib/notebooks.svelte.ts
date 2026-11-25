@@ -1,4 +1,5 @@
-import type { Api, Backlink, Hit, Host, Library, Note, Notebook, Opened, Summary } from 'app:rpc'
+import type { Api, Backlink, Hit, Library, Note, Notebook, Opened, Summary } from '@notebooks/rpc'
+import type { Host } from '@vos/host'
 import { dayOf } from './dates'
 import type { GraphLink, GraphNode } from './graph'
 import { listed, named, tagCounts, type TagCount } from './library'

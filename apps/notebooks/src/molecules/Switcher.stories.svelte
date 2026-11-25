@@ -1,7 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn, waitFor } from 'storybook/test'
-  import type { Summary } from 'app:rpc'
+  import type { Summary } from '@notebooks/rpc'
   import Switcher from './Switcher.svelte'
 
   interface Args {

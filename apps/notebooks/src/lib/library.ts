@@ -2,7 +2,7 @@
  * What the window shows of a library: the notes of one notebook in the order the sidebar lists them, the tags they
  * have, and the notes a typed name could mean (the quick switcher). All of it is worked out from what the backend sent.
  */
-import type { Summary } from 'app:rpc'
+import type { Summary } from '@notebooks/rpc'
 import { keyOf } from './wiki'
 
 export interface TagCount {

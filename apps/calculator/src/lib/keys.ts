@@ -1,4 +1,4 @@
-import type { PressParams, Screen } from 'app:rpc'
+import type { PressParams, Screen } from '@calculator/rpc'
 
 /** A key of the keypad, as `press` takes it. */
 export type Key = PressParams['key']

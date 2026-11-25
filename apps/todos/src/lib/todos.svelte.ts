@@ -1,4 +1,5 @@
-import type { Api, Board, Host, List, Todo } from 'app:rpc'
+import type { Api, Board, List, Todo } from '@todos/rpc'
+import type { Host } from '@vos/host'
 import { dayOf } from './dates'
 import { COLORS, SMART, listView, sameView, shown, smart, type SmartId, type View } from './views'
 

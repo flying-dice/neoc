@@ -43,8 +43,9 @@ const definition = parseDefinition(
 describe('the typed client', () => {
   const dts = emitDeclarations(definition, 'openrpc.json')
   const js = emitModule(definition, 'openrpc.json')
-  test('declares the app:rpc module with one typed function per method', () => {
-    expect(dts).toContain("declare module 'app:rpc' {")
+  test('declares the app’s @<id>/rpc module with one typed function per method', () => {
+    expect(dts).toContain("declare module '@notes/rpc' {")
+    expect(dts).not.toContain('app:rpc')
     expect(dts).toContain('export type Note = { id: number; title: string; tag?: string | null }')
     expect(dts).toContain('list(): __vos_Reply<ListResult>')
     expect(dts).toContain('add_note(params: AddNoteParams): __vos_Reply<AddNoteResult>')
@@ -54,22 +55,33 @@ describe('the typed client', () => {
     // every param optional: the params may be left out
     expect(dts).toContain('ping(params?: PingParams): __vos_Reply<PingResult>')
     expect(dts).toContain('export const api: Api')
-    expect(dts).toContain('export const host: Host')
-    expect(dts).toContain('export class RpcError extends Error')
+    // the host page and the error are the framework's (`@vos/host`), not the app's
+    expect(dts).toContain("import type { Reply as __vos_Reply } from '@vos/host'")
+    expect(dts).not.toContain('export const host')
+    expect(dts).not.toContain('class RpcError')
   })
   test('the module reads the host’s bridge, which the page loads before it, and fails in words without one', () => {
     expect(js).toContain('globalThis.vos')
     expect(js).toContain('"add_note": (params) => request("add_note", params),')
     expect(js).toContain('"list": () => request("list", undefined),')
+    expect(js).toContain("import { RpcError } from '@vos/host'")
     expect(js).toContain('new RpcError(')
     expect(js).toContain('This page has no host: open the app through vos')
     expect(js).not.toContain('mount')
   })
-  test('the host object offers the dialect’s services and the honest capability checks', () => {
+  test('@vos/host offers the dialect’s services, the honest capability checks and the error a call rejects with', async () => {
+    const { emitHostDeclarations, emitHostModule } = await import('./emit-host.ts')
+    const hostDts = emitHostDeclarations()
+    const hostJs = emitHostModule()
+    expect(hostDts).toContain("declare module '@vos/host' {")
     for (const name of ['onContext', 'onTeardown', 'openLink', 'requestDisplayMode', 'hosted', 'capabilities', 'ready'])
-      expect(dts).toContain(name)
-    expect(js).toContain("request('ui/open-link', { url })")
-    expect(js).toContain("request('ui/request-display-mode', { mode })")
+      expect(hostDts).toContain(name)
+    expect(hostDts).toContain('export const host: Host')
+    expect(hostDts).toContain('export class RpcError extends Error')
+    expect(hostDts).toContain('export type Reply<T> = Promise<T>')
+    expect(hostJs).toContain("request('ui/open-link', { url })")
+    expect(hostJs).toContain("request('ui/request-display-mode', { mode })")
+    expect([...new Bun.Transpiler({ loader: 'js' }).scan(hostJs).exports].sort()).toEqual(['RpcError', 'host'])
   })
   test('is the same every time', () => expect(emitDeclarations(definition, 'openrpc.json')).toBe(dts))
 })
@@ -153,7 +165,7 @@ describe('a hostile contract cannot write code into the generated files', () => 
       const js = emitModule(contract, 'openrpc.json')
       // the generated JavaScript is still one module whose only exports are the ones the generator writes
       const exports = [...new Bun.Transpiler({ loader: 'js' }).scan(js).exports]
-      expect(exports.sort(), JSON.stringify(nasty)).toEqual(['RpcError', 'api', 'host'].sort())
+      expect(exports, JSON.stringify(nasty)).toEqual(['api'])
       for (const line of js.split(/\r\n|[\r\n\u2028\u2029]/)) if (line.includes('pwned')) expect(line.trimStart().startsWith('//'), line).toBe(true)
       for (const line of dts.split(/\r\n|[\r\n\u2028\u2029]/)) {
         if (line.includes('pwned')) expect(/^\s*(\/\/|\/\*\*|\*)|^\s*kind\??: /.test(line), line).toBe(true)
@@ -202,7 +214,7 @@ describe('the fixtures', () => {
       const project = join(apps, name)
       const files = generate(project, DEFAULTS)
       const kit = name === 'tasks-svelte' ? '.app/kit-svelte.d.ts' : '.app/kit-react.d.ts'
-      expect(files.map((f) => f.path)).toEqual(['.app/rpc.d.ts', '.app/rpc.js', '.app/rpc.luau', '.app/entry.luau', kit])
+      expect(files.map((f) => f.path)).toEqual(['.app/rpc.d.ts', '.app/rpc.js', '.app/host.d.ts', '.app/host.js', '.app/tracing.d.ts', '.app/tracing.js', '.app/rpc.luau', '.app/entry.luau', kit])
       const text = readFileSync(join(project, 'openrpc.json'), 'utf8')
       const contract = parseDefinition(text)
       expect(contract.app.id).toBe(name)
@@ -359,6 +371,18 @@ describe("the kit's editor types", () => {
       expect(react!.contents).not.toContain('onChange?:')
     } finally {
       rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('@vos/tracing', () => {
+  test('is generated next to the app’s client, the same for every app', async () => {
+    const { emitTracingDeclarations, emitTracingModule } = await import('./emit-tracing.ts')
+    const dts = emitTracingDeclarations()
+    expect(dts).toContain("declare module '@vos/tracing'")
+    for (const name of ['span', 'instrument', 'trace', 'debug', 'info', 'warn', 'error']) {
+      expect(dts).toContain(`export function ${name}`)
+      expect(emitTracingModule()).toContain(`export const ${name} =`)
     }
   })
 })

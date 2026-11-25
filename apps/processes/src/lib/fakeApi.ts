@@ -6,7 +6,7 @@
  * longer held is refused and never made again, a process that cannot be held for ending can still be looked at,
  * asking it to quit is not forcing it, and the system may refuse.
  */
-import type { Cpu, Detail, Disk, Machine, Memory, Network, Overview, ProcessRef, ProcessRow, Snapshot, Swap } from 'app:rpc'
+import type { Cpu, Detail, Disk, Machine, Memory, Network, Overview, ProcessRef, ProcessRow, Snapshot, Swap } from '@processes/rpc'
 import type { ProcessesEvents, ProcessesRpc } from './processes.svelte'
 
 /** What the fake machine knows of one process, beyond what a row shows. */

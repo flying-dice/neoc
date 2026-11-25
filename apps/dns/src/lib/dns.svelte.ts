@@ -1,4 +1,5 @@
-import type { Api, Engine, Host, Logs, Overview, Record as DnsRecord, Server, Settings } from 'app:rpc'
+import type { Api, Engine, Logs, Overview, Record as DnsRecord, Server, Settings } from '@dns/rpc'
+import type { Host } from '@vos/host'
 import { portOf, upstreamsOf } from './format'
 import { addressProblem, nameProblem, portProblem, upstreamsProblem } from './validate'
 

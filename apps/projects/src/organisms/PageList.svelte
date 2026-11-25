@@ -1,6 +1,6 @@
 <!-- @organism PageList — a project's pages, each followed by the pages under it and saying what it is under, and the field the next one is named in; a tap opens a page -->
 <script lang="ts">
-  import type { Page } from 'app:rpc'
+  import type { Page } from '@projects/rpc'
   import Composer from '../molecules/Composer.svelte'
   import type { Leaf } from '../lib/catalog'
 

@@ -5,7 +5,7 @@
  * show an answer on its way without racing it), `tool` uses a tool, `ask` stops at a question, `surface` draws an
  * A2UI surface with a button, and anything else is echoed, a piece at a time.
  */
-import type { Agent, Chat, Conversation, Item } from 'app:rpc'
+import type { Agent, Chat, Conversation, Item } from '@agents/rpc'
 import type { AgentsEvents, AgentsRpc } from './agents.svelte'
 
 export const SCRIPTED: Agent = { id: 'scripted', name: 'Scripted agent', url: 'http://localhost:4000/agent', token: false }

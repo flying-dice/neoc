@@ -1,7 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
-  import type { Item } from 'app:rpc'
+  import type { Item } from '@keychain/rpc'
   import ItemList from './ItemList.svelte'
   import { ITEMS } from '../lib/fakeApi'
   import type { ItemDraft } from '../lib/keychain.svelte'

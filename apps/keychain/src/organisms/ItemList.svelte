@@ -1,6 +1,6 @@
 <!-- @organism ItemList — the items of the keychain the app shows: the form that adds one, and each item with the buttons that show its password and delete it -->
 <script lang="ts">
-  import type { Item } from 'app:rpc'
+  import type { Item } from '@keychain/rpc'
   import ItemForm from '../molecules/ItemForm.svelte'
   import ItemRow from '../molecules/ItemRow.svelte'
   import { itemsSummary } from '../lib/format'

@@ -1,4 +1,4 @@
-import type { Container, Stack, State } from 'app:rpc'
+import type { Container, Stack, State } from '@containers/rpc'
 import type { Tone } from '@vos/docker'
 
 const TONES: Readonly<Record<State, Tone>> = {

@@ -9,11 +9,13 @@
  *
  * The client is a normal Vite app: an `index.html` at the project root, its scripts, styles and assets, built into
  * `dist/static/` with relative URLs (code splitting works as in any Vite app). There is no `mount(el)`: the page starts
- * itself, and `import { api, host } from 'app:rpc'` talks to the host page that holds it.
+ * itself: `import { api } from '@<app id>/rpc'` is the app's backend, and `import { host } from '@vos/host'` the host page that
+ * holds it.
  *
  * What the plugin does:
  *   - generates `.app/` from the contract when the build starts (and whenever the contract changes, in watch mode):
- *     `rpc.d.ts` and `rpc.js` (the `app:rpc` module), `rpc.luau` (the types, the `Handlers` interface the developer
+ *     `rpc.d.ts` and `rpc.js` (the `@<app id>/rpc` module), `host.d.ts` and `host.js` (the `@vos/host` module), `tracing.d.ts` and `tracing.js` (the `@vos/tracing` module: spans
+ *     and events, after Rust's `tracing`), `rpc.luau` (the types, the `Handlers` interface the developer
  *     implements, the router) and `entry.luau` (the backend's entry: the handlers behind the router);
  *   - fails the build when `server/main.luau` does not implement the generated `Handlers` interface (a declared method with
  *     no handler, or one of the wrong shape): luau-lsp's strict check of the backend, so valid Luau of any shape passes;
@@ -31,6 +33,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } fro
 import { join, resolve } from 'node:path'
 import type { HtmlTagDescriptor, Logger, Plugin } from 'vite'
 import { backendBundle, promote, writeApp } from './backend.ts'
+import { rpcModule } from './emit-client.ts'
 import { DEFAULTS, TYPESCRIPT_BACKEND, generate, isTypeScript, readDefinition, removeOtherBackend, resolveOptions, write, type Options } from './generate.ts'
 import { analyze, ToolMissing } from './luau-tools.ts'
 
@@ -104,6 +107,8 @@ export function vos(options: Partial<Options> = {}): Plugin {
   let logger: Logger | undefined
   /** A TypeScript backend as this build compiled it when it started (the compiler runs once per build). */
   let compiled: string | undefined
+  /** The name this app's typed client is imported by (`@<app id>/rpc`), once the contract has been read. */
+  let ownRpc: string | undefined
 
   /**
    * Generate, and check the backend against the contract. The check is a type checker's (luau-lsp for a backend in Luau,
@@ -182,7 +187,11 @@ export function vos(options: Partial<Options> = {}): Plugin {
       }
     },
     resolveId(id) {
-      return id === 'app:rpc' ? resolve(root, settings.generated, 'rpc.js') : null
+      // the app's own typed client: `@<its id>/rpc`, read from the contract once
+      ownRpc ??= rpcModule(readDefinition(root, settings).app.id)
+      if (id === ownRpc) return resolve(root, settings.generated, 'rpc.js')
+      if (id === '@vos/host') return resolve(root, settings.generated, 'host.js')
+      return id === '@vos/tracing' ? resolve(root, settings.generated, 'tracing.js') : null
     },
     buildStart() {
       failed = false

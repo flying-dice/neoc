@@ -1,4 +1,5 @@
-import type { Api, Detail, Host, Overview, ProcessRef, ProcessRow, Snapshot } from 'app:rpc'
+import type { Api, Detail, Overview, ProcessRef, ProcessRow, Snapshot } from '@processes/rpc'
+import type { Host } from '@vos/host'
 
 /** What the window needs of the backend: a reading, choosing a process, letting it go, and ending it. */
 export type ProcessesRpc = Pick<Api, 'snapshot' | 'select' | 'release' | 'terminate'>

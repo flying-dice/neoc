@@ -1,6 +1,6 @@
 <!-- @molecule ServiceRow — one service in a list: how it is doing in words and a dot, its name and what it is for, and the button that starts or stops it; a tap on the rest looks at it -->
 <script lang="ts">
-  import type { Service } from 'app:rpc'
+  import type { Service } from '@services/rpc'
   import StatusDot from '../atoms/StatusDot.svelte'
   import { isUp, stateLabel, toneOf } from '../lib/format'
 

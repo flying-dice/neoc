@@ -13,4 +13,5 @@ mod files;
 mod pairing;
 mod rpc_params;
 mod stack;
+mod telemetry;
 mod typed_luau;

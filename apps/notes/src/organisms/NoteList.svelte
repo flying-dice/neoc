@@ -1,6 +1,6 @@
 <!-- @organism NoteList — the notes of what is shown, under their headings (Pinned, Today, Yesterday, ...), with the search field and the button that starts a note; a folder of the person's own can be deleted from here, after an alert asks -->
 <script lang="ts">
-  import type { Folder, Note } from 'app:rpc'
+  import type { Folder, Note } from '@notes/rpc'
   import { stamp } from '../lib/dates'
   import { NO_PREVIEW, UNTITLED, type Section } from '../lib/views'
 

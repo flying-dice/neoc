@@ -3,7 +3,7 @@
  * page, with no host and no Docker. It checks a name and an address as the backend does, makes its container again
  * on every change while the server is on, and writes a line of log for each.
  */
-import type { Logs, Overview, Record as DnsRecord, Server, ServerState, Settings } from 'app:rpc'
+import type { Logs, Overview, Record as DnsRecord, Server, ServerState, Settings } from '@dns/rpc'
 import type { DnsEvents, DnsRpc } from './dns.svelte'
 import { isAddress, nameProblem } from './validate'
 

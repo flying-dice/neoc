@@ -11,6 +11,8 @@
  *   any other method                the app's own backend call: forwarded as `app.call` for the frame's own app
  *   `vos/failed`                    the page could not start
  *   `vos/shortcut`                  the shell's search chord was pressed in the frame
+ *   `vos/telemetry`                 what the frame recorded (its calls' spans, its errors): passed on as `host.telemetry.ingest`
+ *   `vos/telemetry/query`           the Telemetry app reads what was recorded (that app's frame only)
  *
  * and to the frame: `ui/notifications/host-context-changed` (a change of the host context), `vos/event` (what the
  * app's backend sent with `app.emit`) and the request `ui/resource-teardown` (the frame is about to go).
@@ -47,8 +49,11 @@ const MAX_ARGS_DEPTH = 100
 const id = z.union([z.number().int().nonnegative(), z.string().max(64)])
 const method = z.string()
 
+/** A call's trace context (NEOC-521 POC): `{ traceparent }`, next to `params` so the app's arguments stay its own. */
+const meta = z.object({ traceparent: z.string().max(64).optional() }).optional()
+
 const message = z.union([
-  z.object({ jsonrpc: z.literal('2.0'), id, method, params: z.unknown().optional() }),
+  z.object({ jsonrpc: z.literal('2.0'), id, method, params: z.unknown().optional(), _meta: meta }),
   z.object({ jsonrpc: z.literal('2.0'), method, params: z.unknown().optional() }),
   z
     .object({
@@ -134,6 +139,12 @@ const METHOD_NOT_FOUND = -32601
 const INVALID_PARAMS = -32602
 const INTERNAL_ERROR = -32603
 
+/** The app whose frame may read what was recorded (`vos/telemetry/query`): what covers every app is not every app's to read. */
+export const TELEMETRY_APP = 'telemetry'
+/** The most a frame's `vos/telemetry` batch may weigh as JSON, in bytes; a heavier one is dropped. */
+const MAX_TELEMETRY_BYTES = 256_000
+const TRACEPARENT = /^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/
+
 /** The nesting depth of a JSON text: arrays and objects opened and not yet closed, outside strings. */
 export function jsonDepth(text: string): number {
   let depth = 0
@@ -212,7 +223,12 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
       )
   }
 
-  const request = (callId: number | string, name: string, params: unknown): void => {
+  const request = (
+    callId: number | string,
+    name: string,
+    params: unknown,
+    traceparent?: string
+  ): void => {
     if (name.length < 1 || name.length > MAX_METHOD) {
       post({
         jsonrpc: '2.0',
@@ -249,6 +265,14 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
     }
     if (name === 'ping') {
       post({ jsonrpc: '2.0', id: callId, result: {} })
+      return
+    }
+    if (name === 'vos/telemetry/query' && appId === TELEMETRY_APP) {
+      const p = (typeof params === 'object' && params !== null ? params : {}) as Record<string, unknown>
+      const { kind, ...rest } = p
+      answer(callId, () =>
+        options.call(kind === 'traces' ? 'host.telemetry.traces' : 'host.telemetry.query', rest)
+      )
       return
     }
     const service = services.get(name)
@@ -291,7 +315,12 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
         options
           .call(
             'app.call',
-            { app: appId, method: name, args: params ?? null },
+            {
+              app: appId,
+              method: name,
+              args: params ?? null,
+              ...(traceparent && TRACEPARENT.test(traceparent) ? { traceparent } : {})
+            },
             { timeoutMs: 0, signal: running.signal }
           )
           .then(
@@ -312,6 +341,15 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
       options.onFailed?.(
         typeof text === 'string' ? text.slice(0, 1000) : 'The app could not start.'
       )
+    } else if (name === 'vos/telemetry') {
+      // what the frame recorded: passed on for this frame's app; a batch that is not one, or too heavy, is dropped
+      const batch = typeof params === 'object' && params !== null ? (params as Record<string, unknown>) : null
+      if (!batch || JSON.stringify(batch).length > MAX_TELEMETRY_BYTES) return
+      const spans = Array.isArray(batch.spans) ? batch.spans : []
+      const logs = Array.isArray(batch.logs) ? batch.logs : []
+      if (spans.length + logs.length === 0) return
+      // a failure to record is never the app's problem
+      options.call('host.telemetry.ingest', { app: appId, spans, logs }).catch(() => {})
     } else if (name === 'vos/shortcut') {
       const chord =
         typeof params === 'object' && params !== null ? (params as Record<string, unknown>) : {}
@@ -350,7 +388,7 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
       }
       const m = parsed.data
       if ('method' in m) {
-        if ('id' in m) request(m.id, m.method, m.params)
+        if ('id' in m) request(m.id, m.method, m.params, '_meta' in m ? m._meta?.traceparent : undefined)
         else notification(m.method, m.params)
       } else {
         // an answer to a request the host made (`ui/resource-teardown`)

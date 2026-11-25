@@ -1,7 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
-  import type { Detail, Related } from 'app:rpc'
+  import type { Detail, Related } from '@processes/rpc'
   import ProcessInspector from './ProcessInspector.svelte'
   import { POSTGRES } from './storyData'
   import type { Ending, Refusal } from '../lib/processes.svelte'

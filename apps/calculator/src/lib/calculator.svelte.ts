@@ -1,4 +1,4 @@
-import type { Api, Screen } from 'app:rpc'
+import type { Api, Screen } from '@calculator/rpc'
 import { keyTyped, type ClearLabel, type Key, type Operator } from './keys'
 
 /** What the keypad needs of the backend: `press`, which answers each key with the next screen. */

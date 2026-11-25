@@ -1,6 +1,6 @@
 <!-- @organism IssueList — every issue of a project in the order they were added, each with its key, the kind of work it is, its priority and the column it is in, and the field the next one is typed in; a tap opens an issue -->
 <script lang="ts">
-  import type { Issue } from 'app:rpc'
+  import type { Issue } from '@projects/rpc'
   import Composer from '../molecules/Composer.svelte'
   import { priorityOf, statusOf, typeOf } from '../lib/catalog'
 

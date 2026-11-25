@@ -1,6 +1,6 @@
 <!-- @organism ServerHeader — the web server at the top of the window: how it is doing, and, when it has sites to serve and is not serving them, why and the button that tries again -->
 <script lang="ts">
-  import type { Server, Site } from 'app:rpc'
+  import type { Server, Site } from '@pages/rpc'
   import { StateDot } from '@vos/docker'
   import { attentionOf, serverLabel, serverTone } from '../lib/format'
 

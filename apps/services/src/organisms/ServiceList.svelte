@@ -1,6 +1,6 @@
 <!-- @organism ServiceList — the services that are shown, each with the button that starts or stops it; the search that narrows them and the button that opens the form to register a new one -->
 <script lang="ts">
-  import type { Service } from 'app:rpc'
+  import type { Service } from '@services/rpc'
   import ServiceRow from '../molecules/ServiceRow.svelte'
   import { summary } from '../lib/format'
 

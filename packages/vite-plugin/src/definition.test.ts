@@ -66,6 +66,8 @@ describe('parseDefinition', () => {
   test('the app\'s metadata is part of the contract: x-app names it, and a version is major.minor.patch', () => {
     expect(problem(doc({ 'x-app': undefined }))).toContain('x-app: is required')
     expect(problem(doc({ 'x-app': { id: 'No' } }))).toContain('x-app.id: must be 3 to 40 characters')
+    // a page imports the framework as `@vos/*` and an app as `@<id>/*`: no app takes the framework's scope
+    expect(problem(doc({ 'x-app': { id: 'vos' } }))).toContain("x-app.id: `vos` is the app framework's own scope")
     expect(problem(doc({ 'x-app': { id: 'notes', colour: 'red' } }))).toContain('x-app.colour: is not supported')
     expect(problem(doc({ 'x-app': { id: 'notes', window: { w: 1, h: 1, minW: 0, minH: 1 } } }))).toContain('x-app.window.minW')
     expect(problem(doc({ info: { title: 'Notes', version: '1' } }))).toContain('info.version: must be major.minor.patch')

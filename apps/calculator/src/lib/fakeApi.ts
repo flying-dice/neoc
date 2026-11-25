@@ -4,7 +4,7 @@
  * operators with their precedence, =, AC and C, ±, %, backspace, and the failure of a division by zero. The real
  * arithmetic (rounding, exponents, the caption's ellipsis) is the backend's, and the journeys exercise it.
  */
-import type { Keypad, Screen } from 'app:rpc'
+import type { Keypad, Screen } from '@calculator/rpc'
 import type { CalculatorRpc } from './calculator.svelte'
 import type { Key, Operator } from './keys'
 

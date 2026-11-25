@@ -1,4 +1,5 @@
-import type { Api, Container, Details, Engine, Host, Logs, Overview, Stack } from 'app:rpc'
+import type { Api, Container, Details, Engine, Logs, Overview, Stack } from '@containers/rpc'
+import type { Host } from '@vos/host'
 
 /** What the window needs of the backend: the overview, each way of changing it, and a container's details and logs. */
 export type ContainersRpc = Pick<

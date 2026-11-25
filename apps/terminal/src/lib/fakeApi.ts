@@ -4,7 +4,7 @@
  * knows `echo <text>`, `stty size`, `exit [code]` and nothing else. Like the backend it numbers its output, keeps it for
  * `replay`, and can be told to lose an event, to stop answering, or to forget a session.
  */
-import type { Exit } from 'app:rpc'
+import type { Exit } from '@terminal/rpc'
 import { fromBase64, toBase64, type TerminalEvents, type TerminalRpc } from './terminal.svelte'
 
 export interface FakeBackend {

@@ -5,7 +5,7 @@
  * Recently Deleted; a deleted note cannot be changed; a note with nothing in it is deleted for good; and a board lists
  * the notes by title and preview, the most recently edited first.
  */
-import type { Board, Folder, Note } from 'app:rpc'
+import type { Board, Folder, Note } from '@notes/rpc'
 import type { NotesEvents, NotesRpc } from './notes.svelte'
 
 export interface FakeBackend {

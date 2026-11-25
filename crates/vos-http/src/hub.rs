@@ -11,6 +11,7 @@ use std::{
     sync::{Arc, OnceLock},
     time::Duration,
 };
+use tracing::Instrument;
 use vos_application::{
     ports::{EventSink, Notifier, PortResult, ServerEvent, Shell},
     AgentError, AgentPatch, AgentService, AppError, AppInfo, AppService, AppStatus, DeviceService,
@@ -217,6 +218,9 @@ impl RpcHub {
     async fn host_request(&self, peer: &RpcPeer, method: &str, params: Value) -> Result<Value, RpcError> {
         if method.starts_with("host.files.") {
             return self.files_request(method, params).await;
+        }
+        if method.starts_with("host.telemetry.") {
+            return telemetry_request(method, params);
         }
         let Some(devices) = self.devices.get() else { return Err(not_ready()) };
         match method {
@@ -467,6 +471,35 @@ struct FileRenameParams {
     from: String,
     to: String,
 }
+/// `host.telemetry.*` (NEOC-521 POC): what was recorded, read by a paired client; `ingest` is the shell passing on what
+/// a frame of `app` recorded (the shell names the app, never the frame).
+fn telemetry_request(method: &str, params: Value) -> Result<Value, RpcError> {
+    use crate::telemetry;
+    match method {
+        "host.telemetry.query" => encode(&telemetry::query(&parse(params)?)),
+        "host.telemetry.traces" => {
+            let p: TracesParams = parse(params)?;
+            encode(&telemetry::traces(p.app.as_deref(), p.limit))
+        }
+        "host.telemetry.ingest" => {
+            let p: IngestParams = parse(params)?;
+            Ok(json!({ "kept": telemetry::ingest(p.app.as_str(), p.batch) }))
+        }
+        _ => Err(method_not_found(method)),
+    }
+}
+#[derive(Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+struct TracesParams {
+    app: Option<String>,
+    limit: Option<usize>,
+}
+#[derive(Deserialize)]
+struct IngestParams {
+    app: AppId,
+    #[serde(flatten)]
+    batch: crate::telemetry::Batch,
+}
 /// `app.call`: the shell forwards an app page's `rpc(method, args)`. `app` is the app of the frame the message
 /// came from (the shell decides it, never the page); `args` is whatever JSON the page sent.
 #[derive(Deserialize)]
@@ -476,6 +509,9 @@ struct CallParams {
     method: String,
     #[serde(default)]
     args: Value,
+    /// The W3C trace context of the page's call (NEOC-521 POC): the handler's span joins the page's trace.
+    #[serde(default)]
+    traceparent: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -549,7 +585,27 @@ impl RpcHandler for RpcHub {
             }
             "app.call" => {
                 let p: CallParams = parse(params)?;
-                app.call_handler(&p.app, &p.method, p.args).await.map_err(|e| handler_err(&e))
+                let (trace_id, parent) =
+                    p.traceparent.as_deref().and_then(crate::telemetry::parse_traceparent).unzip();
+                let span = tracing::info_span!(
+                    "app.call",
+                    app = %p.app,
+                    method = %p.method,
+                    trace_id = trace_id.as_deref().unwrap_or(""),
+                    parent_span_id = parent.as_deref().unwrap_or(""),
+                    outcome = tracing::field::Empty,
+                    error = tracing::field::Empty,
+                );
+                let out = app
+                    .call_handler(&p.app, &p.method, p.args)
+                    .instrument(span.clone())
+                    .await
+                    .map_err(|e| handler_err(&e));
+                match &out {
+                    Ok(_) => span.record("outcome", "ok"),
+                    Err(e) => span.record("outcome", "error").record("error", e.message.as_str()),
+                };
+                out
             }
             "app.enable" | "app.disable" | "app.deleteData" | "app.reload" => {
                 let p: AppParams = parse(params)?;

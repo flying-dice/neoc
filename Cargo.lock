@@ -3431,6 +3431,7 @@ dependencies = [
  "neoc-vm-lib-template",
  "neoc-vm-lib-test",
  "neoc-vm-lib-text",
+ "neoc-vm-lib-tracing",
  "neoc-vm-lib-unicode",
  "neoc-vm-lib-url",
  "neoc-vm-lib-vcr",
@@ -3878,6 +3879,22 @@ dependencies = [
  "unicode-segmentation",
  "unicode-width 0.2.3",
  "vte",
+]
+
+[[package]]
+name = "neoc-vm-lib-tracing"
+version = "0.1.0"
+dependencies = [
+ "jiff 1.0.1",
+ "mlua",
+ "mlua-ir",
+ "neoc-vm-core",
+ "parking_lot 0.13.0",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -7336,6 +7353,7 @@ dependencies = [
  "axum",
  "futures-util",
  "gethostname",
+ "getrandom 0.4.3",
  "if-addrs",
  "parking_lot 0.12.5",
  "serde",

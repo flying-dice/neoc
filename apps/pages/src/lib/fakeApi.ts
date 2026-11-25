@@ -3,7 +3,7 @@
  * page, with no host and no Docker. It checks a site as the backend does, makes its container again on every change
  * that makes a difference, and writes a line of log for each.
  */
-import type { Logs, Overview, Server, ServerState, Settings, Site } from 'app:rpc'
+import type { Logs, Overview, Server, ServerState, Settings, Site } from '@pages/rpc'
 import type { PagesHost, PagesRpc } from './pages.svelte'
 
 export interface FakeBackend {

@@ -1,6 +1,6 @@
 <!-- @organism FilterSidebar — which services to show: all of them, or those running, stopped, failed or starting by themselves, each with how many; and under them which service manager this is -->
 <script lang="ts">
-  import type { Manager } from 'app:rpc'
+  import type { Manager } from '@services/rpc'
   import { FILTERS, type Filter } from '../lib/format'
 
   interface Props {

@@ -8,6 +8,8 @@ import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { parseDefinition, type Definition } from './definition.ts'
 import { emitDeclarations, emitModule } from './emit-client.ts'
+import { emitHostDeclarations, emitHostModule } from './emit-host.ts'
+import { emitTracingDeclarations, emitTracingModule } from './emit-tracing.ts'
 import { emitLuau, emitLuauEntry } from './emit-luau.ts'
 import { frameworksOf, kitTypes, type Manifest } from './kit-types.ts'
 import { SERVER_DIR, serverFiles } from './typescript-backend.ts'
@@ -96,6 +98,10 @@ export function generate(project: string, options: Options): GeneratedFile[] {
   return [
     { path: `${dir}/rpc.d.ts`, contents: emitDeclarations(definition, options.definition) },
     { path: `${dir}/rpc.js`, contents: emitModule(definition, options.definition) },
+    { path: `${dir}/host.d.ts`, contents: emitHostDeclarations() },
+    { path: `${dir}/host.js`, contents: emitHostModule() },
+    { path: `${dir}/tracing.d.ts`, contents: emitTracingDeclarations() },
+    { path: `${dir}/tracing.js`, contents: emitTracingModule() },
     ...backend,
     ...kitDeclarations(project, dir)
   ]

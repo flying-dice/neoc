@@ -1,4 +1,5 @@
-import type { Api, Board, Folder, Host, Note } from 'app:rpc'
+import type { Api, Board, Folder, Note } from '@notes/rpc'
+import type { Host } from '@vos/host'
 import { folderProblem } from './folders'
 import { ALL, DELETED, UNTITLED, folderView, sameView, sections, shown, type Section, type View } from './views'
 

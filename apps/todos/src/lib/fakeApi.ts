@@ -4,7 +4,7 @@
  * refused with the same sentences, a new board starts with one list called Reminders, the last list cannot be deleted,
  * and a board lists the open todos in the order they were added, then the completed ones, the latest first.
  */
-import type { Board, List, Todo } from 'app:rpc'
+import type { Board, List, Todo } from '@todos/rpc'
 import type { TodosEvents, TodosRpc } from './todos.svelte'
 
 export interface FakeBackend {

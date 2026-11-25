@@ -1,4 +1,5 @@
-import type { Api, Exit, Host } from 'app:rpc'
+import type { Api, Exit } from '@terminal/rpc'
+import type { Host } from '@vos/host'
 
 /** What the window needs of the backend: a session, what is typed into it, and what it missed. */
 export type TerminalRpc = Pick<Api, 'open' | 'write' | 'resize' | 'ack' | 'replay' | 'close'>

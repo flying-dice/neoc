@@ -2,7 +2,7 @@
  * What an issue can be, and how each of those reads: the columns of the board, the kinds of work, the priorities. Which
  * issues a column holds and the order a project's pages are listed in are decided here, from the workspace.
  */
-import type { Color, Issue, IssueType, Page, Priority, Status } from 'app:rpc'
+import type { Color, Issue, IssueType, Page, Priority, Status } from '@projects/rpc'
 
 /** The columns of the board, left to right. `color` is a palette role. */
 export const STATUSES = [

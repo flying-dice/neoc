@@ -4,7 +4,7 @@
  * notebook, whatever its capitals; a note's links, tags and first line are read from its text; renaming a note rewrites
  * the links to it; a new library has one notebook called Notebook, and the last notebook cannot be deleted.
  */
-import type { Hit, Library, Note, Notebook, Summary } from 'app:rpc'
+import type { Hit, Library, Note, Notebook, Summary } from '@notebooks/rpc'
 import type { NotebooksEvents, NotebooksRpc } from './notebooks.svelte'
 import { excerptOf, keyOf, lineWith, linksOf, mentionOf, retarget, tagsOf, titleProblem } from './wiki'
 

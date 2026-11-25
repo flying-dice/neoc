@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { PressParams, Screen } from 'app:rpc'
+import type { PressParams, Screen } from '@calculator/rpc'
 import { Calculator, type CalculatorRpc, type KeyStroke } from './calculator.svelte'
 import { createFailingApi, createFakeApi } from './fakeApi'
 

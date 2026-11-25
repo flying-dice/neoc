@@ -1,4 +1,5 @@
-import type { Api, Engine, Host, Logs, Overview, Server, Settings, Site } from 'app:rpc'
+import type { Api, Engine, Logs, Overview, Server, Settings, Site } from '@pages/rpc'
+import type { Host } from '@vos/host'
 import { hostnamesOf, portOf } from './format'
 
 /** What the window needs of the backend: the overview, each way of changing it, and the server's log. */

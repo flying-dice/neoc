@@ -3522,6 +3522,99 @@ declare module "lib:text" {
   export type WrapOptions = lib_text_WrapOptions
 }
 
+// ===== lib:tracing =====
+
+/**
+ * How detailed an event or a span is, finest first. The host keeps what its filter lets through (`info` and
+ * above unless it was told otherwise).
+ * - `trace`: The finest detail.
+ * - `debug`: Detail for whoever debugs it.
+ * - `info`: Normal operation.
+ * - `warn`: Something to look at.
+ * - `error`: Something failed.
+ */
+type lib_tracing_Level = "trace" | "debug" | "info" | "warn" | "error"
+
+/**
+ * A span: a named stretch of the script's work, with fields, in the span it was opened in. Run work in it with
+ * `in_scope`; record more on it with `record`.
+ */
+interface lib_tracing_Span {
+  /**
+   * Record `value` under `key` on the span, as `tracing`'s `Span::record` does. Nothing happens once the span
+   * has ended.
+   *
+   * ```luau
+   * local span = tracing.span("import")
+   * span:in_scope(function()
+   *     span:record("rows", 10)
+   * end)
+   * ```
+   */
+  record(key: string, value: unknown): void
+  /**
+   * Run `body` in the span and end the span: what `body` does (the events it writes, the spans it opens, the
+   * tasks it starts) is in this span. Gives what `body` returned; what it raises is recorded as the span's
+   * failure and raised again. A span is put in scope once: a second call runs `body` outside any span of its
+   * own.
+   *
+   * ```luau
+   * local units = tracing.span("list units", { scope = "system" }):in_scope(function()
+   *     return listUnits()
+   * end)
+   * ```
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  in_scope(body: (this: void) => unknown): unknown
+}
+
+/** How a span is opened. */
+interface lib_tracing_SpanOptions {
+  /** How detailed it is. When not given: `info`. */
+  level?: lib_tracing_Level
+}
+
+declare module "lib:tracing" {
+  /**
+   * Open a span named `name` with `fields`, in the span the script is in now. It starts now; put work in it with
+   * `in_scope`.
+   *
+   * ```luau
+   * local parsed = tracing.span("parse units", { n = #raw }):in_scope(function()
+   *     return parse(raw)
+   * end)
+   * ```
+   */
+  export function span(this: void, name: string, fields?: { [key: string]: unknown }, options?: lib_tracing_SpanOptions): lib_tracing_Span
+  /** Write a `trace` event in the span the script is in now. */
+  export function trace(this: void, message: string, fields?: { [key: string]: unknown }): void
+  /** Write a `debug` event in the span the script is in now. */
+  export function debug(this: void, message: string, fields?: { [key: string]: unknown }): void
+  /**
+   * Write an `info` event in the span the script is in now.
+   *
+   * ```luau
+   * tracing.info("read the overview", { units = 212 })
+   * ```
+   */
+  export function info(this: void, message: string, fields?: { [key: string]: unknown }): void
+  /** Write a `warn` event in the span the script is in now. */
+  export function warn(this: void, message: string, fields?: { [key: string]: unknown }): void
+  /**
+   * Write an `error` event in the span the script is in now.
+   *
+   * ```luau
+   * local ok, err = pcall(restart, unit)
+   * if not ok then tracing.error("restart failed", { unit = unit, error = tostring(err) }) end
+   * ```
+   */
+  export function error(this: void, message: string, fields?: { [key: string]: unknown }): void
+  export type Level = lib_tracing_Level
+  export type Span = lib_tracing_Span
+  export type SpanOptions = lib_tracing_SpanOptions
+}
+
 // ===== lib:unicode =====
 
 /**

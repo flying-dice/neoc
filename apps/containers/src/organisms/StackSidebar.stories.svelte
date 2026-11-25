@@ -1,7 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
-  import type { Engine, Stack } from 'app:rpc'
+  import type { Engine, Stack } from '@containers/rpc'
   import StackSidebar from './StackSidebar.svelte'
   import { ALL, stackScope, type Scope } from '../lib/containers.svelte'
   import { CONTAINERS, stacksOf } from '../lib/fakeApi'

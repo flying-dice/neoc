@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api } from 'app:rpc'
+  import { api } from '@calculator/rpc'
   import { Calculator } from './lib/calculator.svelte'
   import CalculatorPage from './pages/CalculatorPage.svelte'
 

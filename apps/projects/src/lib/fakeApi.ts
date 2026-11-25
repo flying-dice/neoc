@@ -5,7 +5,7 @@
  * of its project; a workspace lists the issues in the order they were added and the pages by title; a page goes with
  * the pages under it.
  */
-import type { Issue, Page, Project, Workspace } from 'app:rpc'
+import type { Issue, Page, Project, Workspace } from '@projects/rpc'
 import type { ProjectsEvents, ProjectsRpc } from './projects.svelte'
 
 export interface FakeBackend {

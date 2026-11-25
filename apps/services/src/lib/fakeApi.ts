@@ -4,7 +4,7 @@
  * a service it keeps for another user, it cannot start one whose program exits at once, and it can be changed behind
  * the app's back, as a terminal would change the real one.
  */
-import type { Manager, Outcome, Overview, Restart, Service, Status } from 'app:rpc'
+import type { Manager, Outcome, Overview, Restart, Service, Status } from '@services/rpc'
 import type { ServicesEvents, ServicesRpc } from './services.svelte'
 
 export interface FakeBackend {

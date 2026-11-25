@@ -1,6 +1,6 @@
 <!-- @organism TodoList — one list: its name, its todos, and the field the next one is typed in; a list of the person's own can be deleted from here, after an alert asks -->
 <script lang="ts">
-  import type { List, Todo } from 'app:rpc'
+  import type { List, Todo } from '@todos/rpc'
   import Composer from '../molecules/Composer.svelte'
   import TodoRow from '../molecules/TodoRow.svelte'
 

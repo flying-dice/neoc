@@ -9,6 +9,7 @@ mod guard;
 mod hub;
 mod rpc;
 mod session;
+pub mod telemetry;
 
 pub use apps::{app_routes, page_csp, AppRoutes};
 pub use files::files_router;

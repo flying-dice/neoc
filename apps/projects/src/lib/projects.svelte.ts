@@ -1,4 +1,5 @@
-import type { Api, Host, Issue, IssueType, Page, Priority, Project, Status, Workspace } from 'app:rpc'
+import type { Api, Issue, IssueType, Page, Priority, Project, Status, Workspace } from '@projects/rpc'
+import type { Host } from '@vos/host'
 import { COLORS, column, suggestKey, tree, type Leaf, type Tab } from './catalog'
 import { keyProblem, nameProblem } from './validate'
 

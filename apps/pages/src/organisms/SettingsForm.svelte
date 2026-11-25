@@ -1,6 +1,6 @@
 <!-- @organism SettingsForm — how the sites are served: the port the ones with hostnames share; and under it which Docker the server runs in, with the field that chooses another -->
 <script lang="ts">
-  import type { Engine, Server } from 'app:rpc'
+  import type { Engine, Server } from '@pages/rpc'
   import { ConnectionForm } from '@vos/docker'
 
   interface Props {

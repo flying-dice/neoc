@@ -1,4 +1,4 @@
-import type { Server, Settings } from 'app:rpc'
+import type { Server, Settings } from '@dns/rpc'
 import type { Tone } from '@vos/docker'
 
 /** The server answers, with the settings and the names as they stand. */

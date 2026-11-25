@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { api, host } from 'app:rpc'
+  import { api } from '@terminal/rpc'
+  import { host } from '@vos/host'
   import { Terminal } from './lib/terminal.svelte'
   import TerminalPage from './pages/TerminalPage.svelte'
 

@@ -1,4 +1,5 @@
-import type { Api, Host, Outcome, Overview, Restart, Service, Status } from 'app:rpc'
+import type { Api, Outcome, Overview, Restart, Service, Status } from '@services/rpc'
+import type { Host } from '@vos/host'
 import { matches, search, type Filter } from './format'
 
 /** What the window needs of the backend. */

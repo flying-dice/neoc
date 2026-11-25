@@ -1,7 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
-  import type { Record as DnsRecord } from 'app:rpc'
+  import type { Record as DnsRecord } from '@dns/rpc'
   import RecordList from './RecordList.svelte'
   import type { Problems, RecordDraft } from '../lib/dns.svelte'
   import { RECORDS } from '../lib/fakeApi'

@@ -77,10 +77,15 @@ async fn run_cli() -> anyhow::Result<()> {
         print!("{HELP}");
         return Ok(());
     };
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
-        .with_writer(std::io::stderr)
-        .init();
+    {
+        use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+        // the journal as before, and the same spans and events kept for `host.telemetry.*` (NEOC-521 POC)
+        tracing_subscriber::registry()
+            .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(vos_http::telemetry::TelemetryLayer)
+            .init();
+    }
 
     // the old environment variable names are no longer read: stop rather than start with different settings
     reject_legacy_env(std::env::vars_os().filter_map(|(name, _)| name.into_string().ok()))?;

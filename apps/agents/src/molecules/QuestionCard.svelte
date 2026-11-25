@@ -1,6 +1,6 @@
 <!-- @molecule QuestionCard — a question an agent stopped at (an interrupt): what it asks, and the answer or the refusal the person gives -->
 <script lang="ts">
-  import type { Item } from 'app:rpc'
+  import type { Item } from '@agents/rpc'
   import { questionStatus } from '../lib/items'
 
   interface Props {
