@@ -437,7 +437,20 @@ impl Backend for Launchd {
 
     /// Unload the job from its domain: its process ends and `KeepAlive` cannot bring it back (`launchctl stop` only
     /// ends the process, which a job that is to be kept alive replaces at once). A job that is not loaded is stopped.
+    /// A job loaded without a property list is refused: it could not be loaded again.
     fn stop(&self, label: &str) -> Result<(), Error> {
+        if self.definition(label)?.is_none() {
+            // loaded without a property list: unloading it would remove a job that cannot be loaded again
+            return match self.loaded()? {
+                Some(jobs) if jobs.contains_key(label) => Err(Error::Unsupported {
+                    option: None,
+                    reason: format!(
+                        "{label:?} is loaded without a property list: stopping it would unload it for good, so it can be restarted but not stopped"
+                    ),
+                }),
+                _ => Err(Error::NotFound { label: label.to_owned() }),
+            };
+        }
         let target = format!("{}/{label}", self.domain);
         let output = run(&self.launchctl, &["bootout", &target])?;
         if output.status.success() {
@@ -792,6 +805,15 @@ mod tests {
         std::fs::write(&log, "").expect("reset");
         assert!(matches!(launchd.restart("org.example.ghost"), Err(Error::NotFound { .. })));
         assert_eq!(std::fs::read_to_string(&log).expect("log"), "");
+        // and it is not stopped either: that would unload a job that cannot be loaded again
+        let refused = launchd.stop("org.example.bare").unwrap_err();
+        assert!(matches!(refused, Error::Unsupported { .. }), "{refused:?}");
+        assert!(matches!(launchd.stop("org.example.ghost"), Err(Error::NotFound { .. })));
+        assert_eq!(
+            std::fs::read_to_string(&log).expect("log"),
+            "",
+            "launchd was not asked to unload anything"
+        );
     }
 
     #[test]
