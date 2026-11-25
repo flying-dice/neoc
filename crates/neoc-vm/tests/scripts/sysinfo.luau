@@ -25,7 +25,8 @@ assert(#system:processes() > 0, "processes are read")
 local found: { [number]: boolean } = {}
 for _, process in system:processes() do
   found[process.pid] = true
-  assert(process.start_time > 0)
+  -- a platform may not say when a process started (macOS and Windows for some system processes): it is 0 then
+  assert(process.start_time >= 0, "a start time is not negative")
 end
 assert(next(found) ~= nil)
 

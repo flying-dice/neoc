@@ -59,6 +59,12 @@ local handlers: rpc.Handlers = {
     if not process then
       return ctx:fail("That program has quit.")
     end
+    -- a start time the platform did not give (some system processes) cannot tell this process from one that is given its PID
+    if process.start_time == 0 then
+      return ctx:fail(
+        `Processes cannot tell {process.name} apart from another program that is given its number, so it will not stop it.`
+      )
+    end
     local err = pins.hold(process)
     if err then
       return ctx:fail(sentence(err, process.name, false))

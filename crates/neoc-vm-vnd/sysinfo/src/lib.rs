@@ -906,7 +906,9 @@ pub mod sysinfo {
             self.pid
         }
 
-        /// When it started, in seconds since the Unix epoch. With the PID, it is what makes it this process.
+        /// When it started, in seconds since the Unix epoch. With the PID, it is what makes it this process. It is 0 when
+        /// the platform does not say (some system processes on macOS and Windows): such a process is not told apart from
+        /// another that is given its PID, so a script should not signal it.
         #[get]
         pub fn start_time(&self) -> u64 {
             self.start_time
