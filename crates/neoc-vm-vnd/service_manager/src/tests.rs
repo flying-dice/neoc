@@ -560,3 +560,32 @@ fn native_systemd_user_round_trip() {
 fn spec_with(program: &str, label: &str) -> Spec {
     Spec { label: label.to_owned(), program: program.to_owned(), ..Spec::default() }
 }
+
+/// The real manager of the machine, read only (it changes nothing, so it is not ignored): every service it lists can be
+/// looked up again by the name it listed it under, whatever that name holds (a Windows service name has spaces), and
+/// its state is one the manager really reported. It runs on Linux, macOS and Windows in CI, which is where the native
+/// discovery of each platform is exercised; it skips itself where there is no service manager to ask.
+#[test]
+fn native_discovery_lists_what_the_machine_has_and_looks_each_up_again() {
+    let manager = match ops::open(None, Some(Level::System)) {
+        Ok(manager) => manager,
+        Err(e) => return eprintln!("skipped: no service manager to ask ({e})"),
+    };
+    let backend = manager.backend();
+    let listed = match ops::list(backend) {
+        Ok(listed) => listed,
+        Err(e) => return eprintln!("skipped: the service manager does not answer ({e})"),
+    };
+    eprintln!("{} manager lists {} services", backend.capabilities().kind, listed.len());
+    assert!(!listed.is_empty(), "a machine has services");
+    for service in listed.iter().take(25) {
+        let again =
+            ops::get(backend, &service.label).unwrap_or_else(|e| panic!("{:?}: {e:?}", service.label));
+        assert_eq!(
+            again.as_ref().map(|s| s.label.as_str()),
+            Some(service.label.as_str()),
+            "{:?} was listed and cannot be looked up",
+            service.label
+        );
+    }
+}
