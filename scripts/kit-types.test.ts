@@ -31,8 +31,8 @@ describe('the Custom Elements Manifest', () => {
   test('describes every tag the kit defines, with its attributes, events and slots', () => {
     const tags = elementsOf(manifest).map((e) => e.tagName)
     expect(tags).toEqual([
-      'ui-alert', 'ui-banner', 'ui-button', 'ui-check', 'ui-empty-state', 'ui-icon', 'ui-list', 'ui-picker', 'ui-row', 'ui-section',
-      'ui-segmented', 'ui-spinner', 'ui-split-view', 'ui-text-area', 'ui-text-field', 'ui-toggle'
+      'ui-alert', 'ui-banner', 'ui-button', 'ui-check', 'ui-empty-state', 'ui-icon', 'ui-list', 'ui-meter', 'ui-picker', 'ui-row', 'ui-section',
+      'ui-segmented', 'ui-spinner', 'ui-split-view', 'ui-text-area', 'ui-text-field', 'ui-tile', 'ui-toggle', 'ui-value-pair'
     ].sort((a, b) => a.localeCompare(b)))
     const byTag = Object.fromEntries(elementsOf(manifest).map((e) => [e.tagName, e]))
     expect(byTag['ui-button']!.attributes!.map((a) => a.name)).toContain('variant')
