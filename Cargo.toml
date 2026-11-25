@@ -29,6 +29,7 @@ neoc-vm-vnd-portable_pty = { path = "crates/neoc-vm-vnd/portable_pty" }
 neoc-vm-vnd-quick_xml = { path = "crates/neoc-vm-vnd/quick_xml" }
 neoc-vm-vnd-rusqlite = { path = "crates/neoc-vm-vnd/rusqlite" }
 neoc-vm-vnd-serde_json = { path = "crates/neoc-vm-vnd/serde_json" }
+neoc-vm-vnd-service_manager = { path = "crates/neoc-vm-vnd/service_manager" }
 neoc-vm-vnd-serde_yaml = { path = "crates/neoc-vm-vnd/serde_yaml" }
 neoc-vm-vnd-sqlx_mysql = { path = "crates/neoc-vm-vnd/sqlx_mysql" }
 neoc-vm-vnd-sqlx_postgres = { path = "crates/neoc-vm-vnd/sqlx_postgres" }

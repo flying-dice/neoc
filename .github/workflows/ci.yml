@@ -118,6 +118,24 @@ jobs:
       # which this job does not install, so they are not run here.
       # (`neoc-*`: the runtime's crates, `neoc-vm-core`, `neoc-vm-std`, `neoc-vm-lib-*` and `neoc-vm-vnd-*`, with their tests)
       - run: cargo test -p neoc -p 'neoc-*'
+      # The native service manager tests (NEOC-378) register, start, change and remove a real service, which is fine on
+      # a throwaway runner and is why they run only where NEOC_NATIVE_SERVICE_TESTS=1: systemd on Linux, launchd on
+      # macOS (both as root, the way a system service is managed) and the Service Control Manager on Windows (the
+      # runner is the administrator). The refusal without rights runs first, as the runner user.
+      - name: Native service manager (systemd, launchd, Service Control Manager)
+        env:
+          NEOC_NATIVE_SERVICE_TESTS: "1"
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cargo test -p neoc-vm-vnd-service_manager --lib -- --test-threads=1 --nocapture native_round_trip native_discovery
+          else
+            cargo test -p neoc-vm-vnd-service_manager --lib -- --test-threads=1 --nocapture native_system_level native_discovery
+            bin=$(cargo test -p neoc-vm-vnd-service_manager --lib --no-run --message-format=json \
+              | jq -r 'select(.reason == "compiler-artifact" and .profile.test == true and (.target.name | test("service_manager"))) | .executable' \
+              | head -n 1)
+            test -n "$bin"
+            sudo -E "$bin" --test-threads=1 --nocapture native_round_trip
+          fi
 
   # The vos checks that need bun: the generated files against the Rust schema,
   # the Luau fixtures against the generated declarations, the type checks and

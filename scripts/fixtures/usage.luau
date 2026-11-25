@@ -57,6 +57,7 @@ local quick_xml = require("vnd:quick_xml")
 local rusqlite = require("vnd:rusqlite")
 local serde_json = require("vnd:serde_json")
 local serde_yaml = require("vnd:serde_yaml")
+local service_manager = require("vnd:service_manager")
 local sqlx_mysql = require("vnd:sqlx_mysql")
 local sqlx_postgres = require("vnd:sqlx_postgres")
 local testcontainers_modules = require("vnd:testcontainers_modules")
@@ -100,6 +101,7 @@ local _modules: { any } = {
   quick_xml,
   serde_json,
   serde_yaml,
+  service_manager,
   sqlx_mysql,
   sqlx_postgres,
   testcontainers_modules,
