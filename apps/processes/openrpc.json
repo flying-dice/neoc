@@ -1,0 +1,616 @@
+{
+  "openrpc": "1.3.2",
+  "info": {
+    "title": "Processes",
+    "version": "0.1.0",
+    "description": "How busy this machine is, and the programs running on it: look at one, and stop it."
+  },
+  "x-app": {
+    "id": "processes",
+    "icon": "cpu",
+    "tint": "indigo",
+    "description": "How busy this machine is, and the programs running on it: look at one, and stop it.",
+    "window": {
+      "w": 960,
+      "h": 640,
+      "minW": 360,
+      "minH": 420
+    }
+  },
+  "methods": [
+    {
+      "name": "snapshot",
+      "summary": "Measure the machine again and read it: the processor, memory, disks and network, and every process. Rates need two readings, so the first is without them. When another window measured less than 200 ms ago, that reading is given again. With `selected`, the answer also holds that selection's process in full (`detail`); a process that has gone is shown as it was, with `alive` false. A selection that is not held any more is `selectionLost`.",
+      "params": [
+        {
+          "name": "selected",
+          "required": false,
+          "description": "The selection (from `select`) whose process is wanted in full too.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "snapshot",
+        "schema": {
+          "$ref": "#/components/schemas/Snapshot"
+        }
+      }
+    },
+    {
+      "name": "select",
+      "summary": "Choose a process to look at, and to act on where the system allows. The backend issues an id for this choice and holds a reference to the process that outlives a reused pid, so that what the person ends is the process they looked at and no other. A process that has gone cannot be chosen. A process that cannot be ended (no right to, or an identity that is not known) can still be looked at: `detail.control` says why not.",
+      "params": [
+        {
+          "name": "process",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/ProcessRef"
+          }
+        }
+      ],
+      "result": {
+        "name": "selection",
+        "schema": {
+          "$ref": "#/components/schemas/Selection"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "The process has exited, its pid belongs to another process now, it is the program this app runs in, the operating system refused (the message says to whom the person would have to ask), or this platform cannot do it."
+        }
+      ]
+    },
+    {
+      "name": "release",
+      "summary": "Stop looking at a process: the backend lets go of this choice and its reference. Other windows' choices of the same process are theirs.",
+      "params": [
+        {
+          "name": "selection",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "released",
+        "schema": {
+          "$ref": "#/components/schemas/Released"
+        }
+      }
+    },
+    {
+      "name": "terminate",
+      "summary": "Ask a process to stop (`force` false: it may handle the request or ignore it) or stop it at once (`force` true: it cannot save its work). Only the process this selection holds is ever signalled, and a selection that is not held (released, evicted, a backend that started afresh) is refused: the process is never chosen again on the way.",
+      "params": [
+        {
+          "name": "selection",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "force",
+          "required": true,
+          "schema": {
+            "type": "boolean"
+          }
+        }
+      ],
+      "result": {
+        "name": "sent",
+        "schema": {
+          "$ref": "#/components/schemas/Sent"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "The process has exited, its pid belongs to another process now, it is the program this app runs in, the operating system refused (the message says to whom the person would have to ask), or this platform cannot do it."
+        }
+      ]
+    }
+  ],
+  "components": {
+    "schemas": {
+      "ProcessRef": {
+        "type": "object",
+        "description": "A process, named so that no other can be taken for it: its pid, when it started, and which sighting of the pid it is.",
+        "properties": {
+          "pid": {
+            "type": "integer",
+            "description": "The process id."
+          },
+          "startTime": {
+            "type": "integer",
+            "description": "When it started, in seconds since the Unix epoch. With the pid it is what makes it this process: a pid is reused when a process exits."
+          },
+          "observation": {
+            "type": "integer",
+            "description": "Which sighting of this pid it is: a number the backend issues when it first meets a process, and again when the pid turns out to be another process, even one that started in the same second. A reference to a process is resolved only to the process with this number."
+          }
+        },
+        "required": [
+          "pid",
+          "startTime",
+          "observation"
+        ]
+      },
+      "Core": {
+        "type": "object",
+        "properties": {
+          "usage": {
+            "type": "number",
+            "description": "Percent of the core that was busy between the last two readings; left out until there are two."
+          }
+        },
+        "required": []
+      },
+      "LoadAverage": {
+        "type": "object",
+        "description": "The load of the last 1, 5 and 15 minutes.",
+        "properties": {
+          "one": {
+            "type": "number"
+          },
+          "five": {
+            "type": "number"
+          },
+          "fifteen": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "one",
+          "five",
+          "fifteen"
+        ]
+      },
+      "Cpu": {
+        "type": "object",
+        "properties": {
+          "sampled": {
+            "type": "boolean",
+            "description": "`usage` is a measurement: there have been two readings."
+          },
+          "usage": {
+            "type": "number",
+            "description": "Percent of the whole processor, 0 to 100; left out until there are two readings."
+          },
+          "cores": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Core"
+            },
+            "description": "Every logical core."
+          },
+          "logicalCores": {
+            "type": "integer"
+          },
+          "physicalCores": {
+            "type": "integer",
+            "description": "Left out when the platform does not say."
+          },
+          "brand": {
+            "type": "string",
+            "description": "The processor's name, when the platform says."
+          },
+          "loadAverage": {
+            "$ref": "#/components/schemas/LoadAverage"
+          }
+        },
+        "required": [
+          "sampled",
+          "cores",
+          "logicalCores"
+        ]
+      },
+      "Memory": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "number",
+            "description": "Bytes."
+          },
+          "used": {
+            "type": "number",
+            "description": "Bytes programs use."
+          },
+          "available": {
+            "type": "number",
+            "description": "Bytes a program could still get."
+          }
+        },
+        "required": [
+          "total",
+          "used",
+          "available"
+        ]
+      },
+      "Swap": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "number",
+            "description": "Bytes; 0 on a machine with none."
+          },
+          "used": {
+            "type": "number",
+            "description": "Bytes."
+          }
+        },
+        "required": [
+          "total",
+          "used"
+        ]
+      },
+      "Disk": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "mountPoint": {
+            "type": "string"
+          },
+          "fileSystem": {
+            "type": "string"
+          },
+          "totalBytes": {
+            "type": "number"
+          },
+          "availableBytes": {
+            "type": "number"
+          },
+          "readRate": {
+            "type": "number",
+            "description": "Bytes per second since the last reading; left out until there are two."
+          },
+          "writeRate": {
+            "type": "number",
+            "description": "Bytes per second written, the same way."
+          }
+        },
+        "required": [
+          "name",
+          "mountPoint",
+          "fileSystem",
+          "totalBytes",
+          "availableBytes"
+        ]
+      },
+      "Network": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "receiveRate": {
+            "type": "number",
+            "description": "Bytes per second received since the last reading; left out until there are two."
+          },
+          "transmitRate": {
+            "type": "number",
+            "description": "Bytes per second sent, the same way."
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "Machine": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "osName": {
+            "type": "string"
+          },
+          "osVersion": {
+            "type": "string"
+          },
+          "uptimeSecs": {
+            "type": "integer"
+          },
+          "arch": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "uptimeSecs",
+          "arch"
+        ]
+      },
+      "Overview": {
+        "type": "object",
+        "properties": {
+          "cpu": {
+            "$ref": "#/components/schemas/Cpu"
+          },
+          "memory": {
+            "$ref": "#/components/schemas/Memory"
+          },
+          "swap": {
+            "$ref": "#/components/schemas/Swap"
+          },
+          "disks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Disk"
+            }
+          },
+          "networks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Network"
+            }
+          },
+          "machine": {
+            "$ref": "#/components/schemas/Machine"
+          },
+          "unsupported": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Readings this platform does not have at all (`loadAverage` on Windows)."
+          },
+          "processCount": {
+            "type": "integer"
+          },
+          "canTerminate": {
+            "type": "boolean",
+            "description": "This platform can ask a process to stop (`Terminate`). Windows cannot: only `Force Terminate` is offered there."
+          }
+        },
+        "required": [
+          "cpu",
+          "memory",
+          "swap",
+          "disks",
+          "networks",
+          "machine",
+          "unsupported",
+          "processCount",
+          "canTerminate"
+        ]
+      },
+      "ProcessRow": {
+        "type": "object",
+        "properties": {
+          "pid": {
+            "type": "integer"
+          },
+          "startTime": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "user": {
+            "type": "string",
+            "description": "Left out when the platform does not say."
+          },
+          "cpu": {
+            "type": "number",
+            "description": "Percent of one core: 100 is a whole core, and a process of several threads passes it. Left out until it has been read twice."
+          },
+          "memory": {
+            "type": "number",
+            "description": "Bytes held in RAM."
+          },
+          "status": {
+            "type": "string",
+            "description": "`run`, `sleep`, `stop`, `zombie`\u2026"
+          },
+          "observation": {
+            "type": "integer",
+            "description": "Which sighting of this pid it is: a number the backend issues when it first meets a process, and again when the pid turns out to be another process, even one that started in the same second. A reference to a process is resolved only to the process with this number."
+          }
+        },
+        "required": [
+          "pid",
+          "startTime",
+          "name",
+          "memory",
+          "observation"
+        ]
+      },
+      "Related": {
+        "type": "object",
+        "description": "The parent or a child of a process.",
+        "properties": {
+          "pid": {
+            "type": "integer"
+          },
+          "startTime": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "user": {
+            "type": "string"
+          },
+          "observation": {
+            "type": "integer",
+            "description": "Which sighting of this pid it is: a number the backend issues when it first meets a process, and again when the pid turns out to be another process, even one that started in the same second. A reference to a process is resolved only to the process with this number."
+          }
+        },
+        "required": [
+          "pid",
+          "startTime",
+          "name",
+          "observation"
+        ]
+      },
+      "Detail": {
+        "type": "object",
+        "properties": {
+          "pid": {
+            "type": "integer"
+          },
+          "startTime": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "alive": {
+            "type": "boolean",
+            "description": "The process is still there as of this reading. A process that has exited is shown as it was, and nothing can be done to it."
+          },
+          "status": {
+            "type": "string"
+          },
+          "user": {
+            "type": "string"
+          },
+          "cpu": {
+            "type": "number"
+          },
+          "memory": {
+            "type": "number",
+            "description": "Bytes in RAM."
+          },
+          "virtualMemory": {
+            "type": "number",
+            "description": "Bytes mapped."
+          },
+          "runTimeSecs": {
+            "type": "integer"
+          },
+          "command": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "One entry per argument; empty when the platform does not say."
+          },
+          "exe": {
+            "type": "string"
+          },
+          "parent": {
+            "$ref": "#/components/schemas/Related"
+          },
+          "children": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Related"
+            }
+          },
+          "control": {
+            "$ref": "#/components/schemas/Control"
+          },
+          "observation": {
+            "type": "integer",
+            "description": "Which sighting of this pid it is: a number the backend issues when it first meets a process, and again when the pid turns out to be another process, even one that started in the same second. A reference to a process is resolved only to the process with this number."
+          }
+        },
+        "required": [
+          "pid",
+          "startTime",
+          "name",
+          "alive",
+          "command",
+          "children",
+          "control",
+          "observation"
+        ]
+      },
+      "Snapshot": {
+        "type": "object",
+        "description": "One reading of the machine.",
+        "properties": {
+          "overview": {
+            "$ref": "#/components/schemas/Overview"
+          },
+          "processes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProcessRow"
+            },
+            "description": "Every process, in the order of their pids."
+          },
+          "detail": {
+            "$ref": "#/components/schemas/Detail"
+          },
+          "selectionLost": {
+            "type": "boolean",
+            "description": "The `selected` id is not held any more (it was released, evicted, or the backend started afresh): `detail` is absent, and the process cannot be ended until it is chosen again."
+          }
+        },
+        "required": [
+          "overview",
+          "processes"
+        ]
+      },
+      "Released": {
+        "type": "object",
+        "properties": {
+          "released": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "released"
+        ]
+      },
+      "Sent": {
+        "type": "object",
+        "properties": {
+          "sent": {
+            "type": "boolean",
+            "description": "The request or the force was delivered to that process."
+          },
+          "force": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sent",
+          "force"
+        ]
+      },
+      "Control": {
+        "type": "object",
+        "description": "Whether this window may end the process, and if not, why. Looking at a process never needs the right to end it.",
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "description": "Terminate and Force Terminate may be asked for."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why not, in a sentence for the person (the process has quit, the system would not let Processes hold it for ending, its identity is unknown, or Processes no longer holds it)."
+          }
+        },
+        "required": [
+          "available"
+        ]
+      },
+      "Selection": {
+        "type": "object",
+        "description": "A process chosen by one window: the backend's own id for that choice, and the process in full.",
+        "properties": {
+          "selection": {
+            "type": "string",
+            "description": "The backend's id for this choice. Only the window that chose can end the process with it; it stops being valid when released, evicted, or when the backend starts afresh."
+          },
+          "detail": {
+            "$ref": "#/components/schemas/Detail"
+          }
+        },
+        "required": [
+          "selection",
+          "detail"
+        ]
+      }
+    }
+  }
+}

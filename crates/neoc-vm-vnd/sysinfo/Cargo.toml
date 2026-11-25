@@ -1,0 +1,39 @@
+[package]
+name = "neoc-vm-vnd-sysinfo"
+description = "vnd:sysinfo"
+version.workspace = true
+edition.workspace = true
+publish = false
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "neoc_vm_vnd_sysinfo"
+path = "src/lib.rs"
+
+[dependencies]
+mlua-ir = { workspace = true }
+# The engine is Luau.
+mlua = { version = "0.12", features = ["luau", "async", "send", "serialize", "macros"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+parking_lot = "0.13"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+# `vnd:sysinfo`: what `sysinfo` reports about the machine and its processes. Monitoring is `sysinfo`'s; the
+# process's identity and its signals are the platform's own (pidfd on Linux, a process handle on Windows).
+sysinfo = { version = "0.38", default-features = false, features = ["system", "disk", "network", "user"] }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["process", "event"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
+[dev-dependencies]
+neoc-vm-core = { workspace = true }
+mlua-ir-gen = { workspace = true }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+
+[lints.cargo]
+missing_lints_inheritance = "allow"

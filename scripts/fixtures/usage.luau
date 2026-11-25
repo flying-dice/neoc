@@ -60,6 +60,7 @@ local serde_yaml = require("vnd:serde_yaml")
 local service_manager = require("vnd:service_manager")
 local sqlx_mysql = require("vnd:sqlx_mysql")
 local sqlx_postgres = require("vnd:sqlx_postgres")
+local sysinfo = require("vnd:sysinfo")
 local testcontainers_modules = require("vnd:testcontainers_modules")
 local toml = require("vnd:toml")
 
@@ -104,6 +105,7 @@ local _modules: { any } = {
   service_manager,
   sqlx_mysql,
   sqlx_postgres,
+  sysinfo,
   testcontainers_modules,
   toml,
 }

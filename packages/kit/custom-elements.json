@@ -2327,6 +2327,118 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/ui-meter.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "How full something is: a track with a fill from the start (a usage gauge, as in Settings › Storage). It is a\nhorizontal bar, or with `orientation=\"vertical\"` a column that fills from the bottom, for a row of them side by side.\n\nWithout a `value` the track is empty, for a reading that has not been taken yet. With one it is a `meter`: it\nsays its value as a percentage to a screen reader, under `label`.",
+          "name": "UiMeter",
+          "cssParts": [
+            {
+              "description": "The empty track.",
+              "name": "track"
+            },
+            {
+              "description": "The filled part.",
+              "name": "fill"
+            }
+          ],
+          "members": [
+            {
+              "kind": "field",
+              "name": "value",
+              "privacy": "public",
+              "type": {
+                "text": "number | undefined"
+              },
+              "description": "How full, from 0 to 100. Left out, the track is empty and the meter is not announced.",
+              "default": "undefined",
+              "attribute": "value"
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "The accessible name: what is measured (`Memory`).",
+              "default": "''",
+              "attribute": "label"
+            },
+            {
+              "kind": "field",
+              "name": "orientation",
+              "privacy": "public",
+              "type": {
+                "text": "'horizontal' | 'vertical'"
+              },
+              "description": "`horizontal` (default) or `vertical`, which fills from the bottom and takes the height it is given.",
+              "default": "'horizontal'",
+              "attribute": "orientation",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "percent",
+              "type": {
+                "text": "number | undefined"
+              },
+              "privacy": "private",
+              "description": "The value as the fill shows it: whole, and kept between empty and full.",
+              "readonly": true
+            }
+          ],
+          "attributes": [
+            {
+              "name": "value",
+              "type": {
+                "text": "number | undefined"
+              },
+              "description": "How full, from 0 to 100. Left out, the track is empty and the meter is not announced.",
+              "default": "undefined",
+              "fieldName": "value"
+            },
+            {
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "description": "The accessible name: what is measured (`Memory`).",
+              "default": "''",
+              "fieldName": "label"
+            },
+            {
+              "name": "orientation",
+              "type": {
+                "text": "'horizontal' | 'vertical'"
+              },
+              "description": "`horizontal` (default) or `vertical`, which fills from the bottom and takes the height it is given.",
+              "default": "'horizontal'",
+              "fieldName": "orientation"
+            }
+          ],
+          "superclass": {
+            "name": "LitElement",
+            "package": "lit"
+          },
+          "tagName": "ui-meter",
+          "customElement": true
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "UiMeter",
+          "declaration": {
+            "name": "UiMeter",
+            "module": "src/components/ui-meter.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/ui-picker.ts",
       "declarations": [
         {
@@ -6235,6 +6347,73 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/ui-tile.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "A summary tile: a small label over one headline value, with room under it for a `ui-meter` or a note. A grid of\nthem is the top of a monitor, like the tiles of the Health summary.",
+          "name": "UiTile",
+          "cssParts": [
+            {
+              "description": "The tile's box.",
+              "name": "tile"
+            }
+          ],
+          "slots": [
+            {
+              "description": "The headline value: a big number with its unit.",
+              "name": ""
+            },
+            {
+              "description": "What goes under the value: a `ui-meter`, a note.",
+              "name": "footer"
+            }
+          ],
+          "members": [
+            {
+              "kind": "field",
+              "name": "heading",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "What the tile is about (`CPU`).",
+              "default": "''",
+              "attribute": "heading"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "heading",
+              "type": {
+                "text": "string"
+              },
+              "description": "What the tile is about (`CPU`).",
+              "default": "''",
+              "fieldName": "heading"
+            }
+          ],
+          "superclass": {
+            "name": "LitElement",
+            "package": "lit"
+          },
+          "tagName": "ui-tile",
+          "customElement": true
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "UiTile",
+          "declaration": {
+            "name": "UiTile",
+            "module": "src/components/ui-tile.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/ui-toggle.ts",
       "declarations": [
         {
@@ -6931,6 +7110,128 @@
           "declaration": {
             "name": "UiToggle",
             "module": "src/components/ui-toggle.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/components/ui-value-pair.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "Two values at the end of a `ui-row`, right-aligned in fixed columns so that the rows of a list line up: a main\nvalue in headline type and a secondary one in muted type (a process's CPU and memory, a name and its size). With\n`layout=\"stacked\"` the secondary value sits under the main one, for a narrow window.",
+          "name": "UiValuePair",
+          "cssParts": [
+            {
+              "description": "The main value.",
+              "name": "main"
+            },
+            {
+              "description": "The secondary value.",
+              "name": "secondary"
+            }
+          ],
+          "members": [
+            {
+              "kind": "field",
+              "name": "main",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "The main value. A dash (`—`) says it is not there yet, and is muted.",
+              "default": "''",
+              "attribute": "main"
+            },
+            {
+              "kind": "field",
+              "name": "secondary",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "The secondary value.",
+              "default": "''",
+              "attribute": "secondary"
+            },
+            {
+              "kind": "field",
+              "name": "layout",
+              "privacy": "public",
+              "type": {
+                "text": "'inline' | 'stacked'"
+              },
+              "description": "`inline` (default): side by side in columns. `stacked`: one under the other.",
+              "default": "'inline'",
+              "attribute": "layout",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "The accessible name for the two together when it should differ from reading them in turn.",
+              "default": "''",
+              "attribute": "label"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "main",
+              "type": {
+                "text": "string"
+              },
+              "description": "The main value. A dash (`—`) says it is not there yet, and is muted.",
+              "default": "''",
+              "fieldName": "main"
+            },
+            {
+              "name": "secondary",
+              "type": {
+                "text": "string"
+              },
+              "description": "The secondary value.",
+              "default": "''",
+              "fieldName": "secondary"
+            },
+            {
+              "name": "layout",
+              "type": {
+                "text": "'inline' | 'stacked'"
+              },
+              "description": "`inline` (default): side by side in columns. `stacked`: one under the other.",
+              "default": "'inline'",
+              "fieldName": "layout"
+            },
+            {
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "description": "The accessible name for the two together when it should differ from reading them in turn.",
+              "default": "''",
+              "fieldName": "label"
+            }
+          ],
+          "superclass": {
+            "name": "LitElement",
+            "package": "lit"
+          },
+          "tagName": "ui-value-pair",
+          "customElement": true
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "UiValuePair",
+          "declaration": {
+            "name": "UiValuePair",
+            "module": "src/components/ui-value-pair.ts"
           }
         }
       ]

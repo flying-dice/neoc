@@ -30,6 +30,7 @@ test('the kit runs in a sandboxed frame under the frame policy and answers the k
       'ui-empty-state',
       'ui-icon',
       'ui-list',
+      'ui-meter',
       'ui-picker',
       'ui-row',
       'ui-section',
@@ -38,7 +39,9 @@ test('the kit runs in a sandboxed frame under the frame policy and answers the k
       'ui-split-view',
       'ui-text-area',
       'ui-text-field',
-      'ui-toggle'
+      'ui-tile',
+      'ui-toggle',
+      'ui-value-pair'
     ].filter((tag) => !customElements.get(tag))
   )
   expect(tags, 'tags the kit did not define').toEqual([])

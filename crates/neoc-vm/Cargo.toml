@@ -26,6 +26,7 @@ neoc-vm-vnd-serde_json = { workspace = true }
 neoc-vm-vnd-service_manager = { workspace = true }
 neoc-vm-vnd-serde_yaml = { workspace = true }
 neoc-vm-vnd-sqlx_mysql = { workspace = true }
+neoc-vm-vnd-sysinfo = { workspace = true }
 neoc-vm-vnd-sqlx_postgres = { workspace = true }
 neoc-vm-vnd-testcontainers_modules = { workspace = true }
 neoc-vm-vnd-toml = { workspace = true }
