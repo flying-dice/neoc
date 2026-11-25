@@ -61,7 +61,7 @@ writeFileSync(
     `client_dir = "${portable(join(ROOT, 'client/dist'))}"`,
     `registries = ["${fileUrl(REGISTRY)}"]`,
     `install = [${[
-      ...['calculator', 'agents', 'todos', 'notes', 'notebooks', 'containers', 'dns', 'keychain', 'services', 'pages', 'processes', 'projects', 'terminal'].map((id) => fileUrl(join(DIR, 'registry', id, versionOf(id), 'app-ref.json'))),
+      ...['calculator', 'agents', 'todos', 'notes', 'notebooks', 'containers', 'dns', 'keychain', 'services', 'pages', 'processes', 'projects', 'terminal', 'example'].map((id) => fileUrl(join(DIR, 'registry', id, versionOf(id), 'app-ref.json'))),
       ...FIXTURE_APPS.map(fixtureAppRef)
     ]
       .map((url) => `"${url}"`)

@@ -1,0 +1,69 @@
+{
+  "openrpc": "1.3.2",
+  "info": {
+    "title": "Example",
+    "version": "0.1.0",
+    "description": "The smallest whole vos app: what an app is made of, and a greeting from its backend. A starting point to copy."
+  },
+  "x-app": {
+    "id": "example",
+    "icon": "star",
+    "tint": "blue",
+    "description": "The smallest whole vos app: what an app is made of, and a greeting from its backend. A starting point to copy.",
+    "window": {
+      "w": 860,
+      "h": 580,
+      "minW": 360,
+      "minH": 420
+    }
+  },
+  "methods": [
+    {
+      "name": "parts",
+      "summary": "The parts a vos app is made of, each with a few facts about it, in the order they are read. The backend keeps them; nothing is stored.",
+      "params": [],
+      "result": { "name": "parts", "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Part" } } }
+    },
+    {
+      "name": "greet",
+      "summary": "Greet someone by name: the backend trims the name and answers with a sentence. A name that is only spaces is refused.",
+      "params": [
+        { "name": "name", "required": true, "description": "Who to greet.", "schema": { "type": "string", "maxLength": 100 } }
+      ],
+      "result": { "name": "greeting", "schema": { "$ref": "#/components/schemas/Greeting" } },
+      "errors": [{ "code": -32010, "message": "The name is empty once its spaces are taken off." }]
+    }
+  ],
+  "components": {
+    "schemas": {
+      "Fact": {
+        "type": "object",
+        "description": "One row of a part: a label and its value.",
+        "properties": {
+          "label": { "type": "string" },
+          "value": { "type": "string" }
+        },
+        "required": ["label", "value"]
+      },
+      "Part": {
+        "type": "object",
+        "description": "One part of a vos app.",
+        "properties": {
+          "id": { "type": "string", "description": "Stable, for selection and test ids." },
+          "title": { "type": "string" },
+          "icon": { "type": "string", "description": "The kit icon shown beside it." },
+          "summary": { "type": "string", "description": "What the part is for, in a sentence." },
+          "facts": { "type": "array", "items": { "$ref": "#/components/schemas/Fact" } }
+        },
+        "required": ["id", "title", "icon", "summary", "facts"]
+      },
+      "Greeting": {
+        "type": "object",
+        "properties": {
+          "message": { "type": "string" }
+        },
+        "required": ["message"]
+      }
+    }
+  }
+}
