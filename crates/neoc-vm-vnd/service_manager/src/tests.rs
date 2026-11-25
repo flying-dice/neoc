@@ -291,7 +291,12 @@ esac
         .expect("write a unit");
     }
 
+    /// Writing an executable while another test forks leaks its write handle into the child (`ETXTBSY` on exec), so
+    /// the rigs take turns.
+    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     struct Rig {
+        _serial: std::sync::MutexGuard<'static, ()>,
         _dir: tempfile::TempDir,
         path: std::path::PathBuf,
         dropins: std::path::PathBuf,
@@ -299,13 +304,14 @@ esac
     }
 
     fn rig() -> Rig {
+        let serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().to_path_buf();
         let dropins = path.join("dropins");
         unit(&path, "web");
         unit(&path, "db");
         let manager = Systemd::with(Level::System, fake(&path), dropins.clone());
-        Rig { _dir: dir, path, dropins, manager }
+        Rig { _serial: serial, _dir: dir, path, dropins, manager }
     }
 
     #[test]
