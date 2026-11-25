@@ -6719,6 +6719,255 @@ export type vnd_serde_yaml = {
 	encode_to: (value: any, writer: std_io_Writer) -> (boolean?, vnd_serde_yaml_WriteError?),
 }
 
+-- ===== vnd:service_manager =====
+
+--- What a manager reports and changes. Read it before offering an option to a person.
+export type vnd_service_manager_Capabilities = {
+	--- Which manager: `systemd`, `launchd`, `windows` or `mock`.
+	kind: string,
+	--- Where its services are.
+	level: vnd_service_manager_Level,
+	--- The options of `install` the manager keeps; any other given is `unsupported`.
+	install_options: { string },
+	--- The options of `configure` the manager can change; any other given is `unsupported`.
+	configurable: { string },
+	--- The fields of a `Service` the manager reports; the others are always `nil`.
+	reported: { string },
+}
+
+--- The kinds of `vnd_service_manager_Error`.
+export type vnd_service_manager_ErrorKind = "invalid_input" | "unavailable" | "not_found" | "already_exists" | "permission_denied" | "unsupported" | "failed" | "other"
+
+--- Why a call failed. The kind is stable; `reason` is the manager's wording, for a log.
+export type vnd_service_manager_Error =
+	--- An argument or option was refused before any manager was asked: a label that is not a name, a program
+	--- that is not an executable file, a value with a line break.
+	{ kind: "invalid_input", reason: string, message: string, op: string }
+	--- This machine has no service manager that can be used (`systemctl` missing or systemd not running, a
+	--- platform with none), or the one asked for is not this platform's.
+	| { kind: "unavailable", reason: string, message: string, op: string }
+	--- The manager has no service by that label.
+	| { kind: "not_found", label: string, message: string, op: string }
+	--- The manager has a service by that label already.
+	| { kind: "already_exists", label: string, message: string, op: string }
+	--- The operating system refused for want of rights. Nothing was changed. This module does not raise its
+	--- own rights: the host process needs them.
+	| { kind: "permission_denied", operation: string, reason: string, message: string, op: string }
+	--- This manager cannot do what was asked: an option it does not keep (`option` names it) or an operation
+	--- it has no way to do. Nothing was changed.
+	| { kind: "unsupported", option: string?, reason: string, message: string, op: string }
+	--- The manager refused or the operation failed (a program that exits at once, a service that cannot be
+	--- started).
+	| { kind: "failed", operation: string, reason: string, message: string, op: string }
+	--- Anything else, reported and never hidden.
+	| { kind: "other", reason: string, message: string, op: string }
+
+--- Where a manager keeps its services: for everyone on the machine, or for one user.
+--- - `system`: Services of the machine (systemd system units, LaunchDaemons, Windows services). Changing them needs
+--- administrator rights.
+--- - `user`: Services of the user the host runs as (systemd user units, LaunchAgents).
+export type vnd_service_manager_Level = "system" | "user"
+
+--- A service manager: the machine's, or a mock. Copies of the handle are the same manager.
+declare extern type vnd_service_manager_Manager with
+	--- What this manager reports and changes.
+	capabilities: (self: vnd_service_manager_Manager) -> vnd_service_manager_Capabilities
+	--- Every service the manager has registered, whoever registered it, by label. Asked of the operating
+	--- system on every call.
+	---
+	--- Yields the calling coroutine while it waits.
+	list: (self: vnd_service_manager_Manager) -> ({ vnd_service_manager_Service }?, vnd_service_manager_Error?)
+	--- One service as the manager has it now, or `(nil, nil)` when it has none by that label.
+	---
+	--- Yields the calling coroutine while it waits.
+	get: (self: vnd_service_manager_Manager, label: string) -> (vnd_service_manager_Service?, vnd_service_manager_Error?)
+	--- Register a new service and answer it as the manager now has it. It is not started. A label the manager
+	--- has is `already_exists`; an option the manager does not keep is `unsupported`; a program that is not an
+	--- absolute path of an executable file is `invalid_input`. Needs the rights of the level
+	--- (`permission_denied` without them).
+	---
+	--- Yields the calling coroutine while it waits.
+	install: (self: vnd_service_manager_Manager, spec: vnd_service_manager_Spec?) -> (vnd_service_manager_Service?, vnd_service_manager_Error?)
+	--- Remove the registration of a service, whoever made it. The program it ran is left where it is. A
+	--- service whose definition the manager keeps as part of the system (a vendor unit) is `unsupported`.
+	---
+	--- Yields the calling coroutine while it waits.
+	uninstall: (self: vnd_service_manager_Manager, label: string) -> (boolean?, vnd_service_manager_Error?)
+	--- Start a service and answer it as it now is. A service that is running is started already.
+	---
+	--- Yields the calling coroutine while it waits.
+	start: (self: vnd_service_manager_Manager, label: string) -> (vnd_service_manager_Service?, vnd_service_manager_Error?)
+	--- Stop a service and answer it as it now is.
+	---
+	--- Yields the calling coroutine while it waits.
+	stop: (self: vnd_service_manager_Manager, label: string) -> (vnd_service_manager_Service?, vnd_service_manager_Error?)
+	--- Stop a service and start it again, and answer it as it now is. Changes a manager applies on a start
+	--- are applied by it.
+	---
+	--- Yields the calling coroutine while it waits.
+	restart: (self: vnd_service_manager_Manager, label: string) -> (vnd_service_manager_Service?, vnd_service_manager_Error?)
+	--- Change what the manager keeps of a service, whoever registered it, and answer it as the manager now
+	--- has it. Only the options given change; the rest of the definition, whatever the manager keeps in it, is
+	--- left as it was. An option the manager cannot change is `unsupported` (see `capabilities`).
+	---
+	--- Yields the calling coroutine while it waits.
+	configure: (self: vnd_service_manager_Manager, label: string, patch: vnd_service_manager_Patch?) -> (vnd_service_manager_Service?, vnd_service_manager_Error?)
+end
+
+--- Which manager `manager` opens.
+export type vnd_service_manager_ManagerOptions = {
+	--- `"system"` (the default) or `"user"`: where the services are. Windows has only the system level.
+	level: vnd_service_manager_Level?,
+}
+
+--- What `configure` changes: the options that are given, and nothing else of the service.
+export type vnd_service_manager_Patch = {
+	--- Start by itself, or not.
+	autostart: boolean?,
+	--- What the service is for.
+	description: string?,
+	--- The absolute path of an executable file. The arguments stay unless `args` is given.
+	program: string?,
+	--- The program's arguments; the whole list is replaced.
+	args: { string }?,
+	--- The absolute path of a directory the program starts in.
+	working_directory: string?,
+	--- The variables the manager sets, replacing the ones it has (a file of variables is left alone).
+	environment: { [string]: string }?,
+	--- When to start it again after it ended.
+	restart: vnd_service_manager_Restart?,
+	--- Seconds to wait before starting it again.
+	restart_delay_secs: number?,
+}
+
+--- When the manager starts a service again after it ended.
+--- - `never`: Never.
+--- - `always`: Whenever it ends.
+--- - `on_failure`: When it ends with a failure.
+export type vnd_service_manager_Restart = "never" | "always" | "on_failure"
+
+--- A service for `mock` to start with, as if another program had registered it.
+export type vnd_service_manager_Seed = {
+	--- The label. Default: `""`.
+	label: string?,
+	--- What it is for.
+	description: string?,
+	--- Its state: stopped when not given.
+	state: vnd_service_manager_State?,
+	--- Starts by itself: `false` when not given.
+	autostart: boolean?,
+	--- The program.
+	program: string?,
+	--- The arguments.
+	args: { string }?,
+	--- The directory it starts in.
+	working_directory: string?,
+	--- Its variables.
+	environment: { [string]: string }?,
+	--- When it starts again.
+	restart: vnd_service_manager_Restart?,
+	--- Seconds before it starts again.
+	restart_delay_secs: number?,
+	--- The mock refuses every change of it with `permission_denied`, as a system service of another user.
+	locked: boolean?,
+	--- The mock fails to start it, as a program that exits at once.
+	broken: boolean?,
+}
+
+--- A service as the manager has it now. A field the manager does not report is `nil`.
+export type vnd_service_manager_Service = {
+	--- The manager's own name for the service: the systemd unit without `.service`, the launchd label, the
+	--- Windows service name. Use it as the label of every other call.
+	label: string,
+	--- What the manager says the service is for.
+	description: string?,
+	--- What the service is doing now.
+	state: vnd_service_manager_State,
+	--- The manager's own words about the state, when it has some (a result, a last exit status).
+	state_detail: string?,
+	--- Whether the service starts by itself (at boot, or at login for a user level service). `nil` when the
+	--- manager has no setting for it (a systemd unit that is `static`).
+	autostart: boolean?,
+	--- The program the service runs, as the manager has it.
+	program: string?,
+	--- The program's arguments. systemd reports them joined by spaces: one that holds a space is shown split.
+	args: { string }?,
+	--- The whole command line when the manager keeps one string (Windows).
+	command_line: string?,
+	--- The directory the program starts in.
+	working_directory: string?,
+	--- Variables the manager sets for the program.
+	environment: { [string]: string }?,
+	--- When the service is started again after it ended.
+	restart: vnd_service_manager_Restart?,
+	--- Seconds the manager waits before it starts the service again.
+	restart_delay_secs: number?,
+	--- The user the program runs as.
+	user: string?,
+	--- The file the manager keeps the definition in, when it is one.
+	path: string?,
+}
+
+--- What `install` registers.
+export type vnd_service_manager_Spec = {
+	--- The name of the new service (see `Service.label`): letters, digits and `_ . - @ :`. Default: `""`.
+	label: string?,
+	--- The absolute path of an executable file. Default: `""`.
+	program: string?,
+	--- The program's arguments.
+	args: { string }?,
+	--- What the service is for (not kept by every manager).
+	description: string?,
+	--- The absolute path of a directory the program starts in.
+	working_directory: string?,
+	--- Variables for the program: letters, digits and `_`.
+	environment: { [string]: string }?,
+	--- Start by itself: `false` when not given.
+	autostart: boolean?,
+	--- When to start it again after it ended: the manager's default when not given.
+	restart: vnd_service_manager_Restart?,
+	--- Seconds to wait before starting it again.
+	restart_delay_secs: number?,
+	--- The user the program runs as: the account the manager runs services as when not given (root or
+	--- Administrator at system level).
+	user: string?,
+}
+
+--- What a service is doing now.
+--- - `running`: Running.
+--- - `stopped`: Registered and not running.
+--- - `failed`: Ended with a failure, and has not been started since.
+--- - `starting`: Being started.
+--- - `stopping`: Being stopped.
+--- - `paused`: Paused (Windows).
+--- - `unknown`: The manager did not say.
+export type vnd_service_manager_State = "running" | "stopped" | "failed" | "starting" | "stopping" | "paused" | "unknown"
+
+export type vnd_service_manager = {
+	--- The manager of this machine (systemd on Linux, launchd on macOS, the Service Control Manager on Windows),
+	--- at the system level unless `level` says `"user"`. A machine whose manager is not there is `unavailable`.
+	--- With `NEOC_SERVICE_MANAGER=mock` in the environment it is the process's one mock manager instead, with a
+	--- few services of "another program" in it (`mock-nginx`, `mock-cups`, `mock-locked`, `mock-broken`).
+	---
+	--- ```luau
+	--- local manager = assert(service_manager.manager())
+	--- print(manager:capabilities().kind)
+	--- ```
+	---
+	--- Yields the calling coroutine while it waits.
+	manager: (options: vnd_service_manager_ManagerOptions?) -> (vnd_service_manager_Manager?, vnd_service_manager_Error?),
+	--- A new mock manager, for tests: in memory, its own, and gone with the process. It starts with `seeds` as if
+	--- other programs had registered them, and it keeps every option, so it is the one to try a script against.
+	---
+	--- ```luau
+	--- local manager = service_manager.mock({ { label = "nginx", state = "running", autostart = true } })
+	--- assert(manager:get("nginx").state == "running")
+	--- assert(manager:stop("nginx"))
+	--- assert(manager:get("nginx").state == "stopped")
+	--- ```
+	mock: (seeds: { vnd_service_manager_Seed }?) -> vnd_service_manager_Manager,
+}
+
 -- ===== vnd:sqlx_mysql =====
 
 --- A value of a row.
@@ -7745,6 +7994,7 @@ declare require:
 	& ((path: "vnd:rusqlite") -> vnd_rusqlite)
 	& ((path: "vnd:serde_json") -> vnd_serde_json)
 	& ((path: "vnd:serde_yaml") -> vnd_serde_yaml)
+	& ((path: "vnd:service_manager") -> vnd_service_manager)
 	& ((path: "vnd:sqlx_mysql") -> vnd_sqlx_mysql)
 	& ((path: "vnd:sqlx_postgres") -> vnd_sqlx_postgres)
 	& ((path: "vnd:testcontainers_modules") -> vnd_testcontainers_modules)

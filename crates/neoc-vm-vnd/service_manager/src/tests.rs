@@ -1,0 +1,460 @@
+//! The module without a real manager: the operations against the in-memory one (which stands in for an operating
+//! system whose services others made), a script's view of it, and the systemd manager against a fake `systemctl`.
+//! Native integration against the real manager of the machine is `native_systemd_user_round_trip`, which skips
+//! itself where there is no systemd to talk to.
+
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use mlua::Value;
+use neoc_vm_core::make_engine;
+
+use super::mock::Mock;
+use super::ops::{self, Control};
+use super::service_manager::{Error, Level, Patch, Restart, Seed, Spec, State};
+
+fn seed(label: &str) -> Seed {
+    Seed { label: label.to_owned(), ..Seed::default() }
+}
+
+/// A program that passes the checks of `install`: an absolute path of an executable file.
+fn program() -> String {
+    std::env::current_exe().expect("the test binary").display().to_string()
+}
+
+fn spec(label: &str) -> Spec {
+    Spec { label: label.to_owned(), program: program(), ..Spec::default() }
+}
+
+fn mock_with_external() -> Mock {
+    Mock::seeded(vec![
+        Seed {
+            label: "nginx".to_owned(),
+            description: Some("A web server".to_owned()),
+            state: Some(State::Running),
+            autostart: Some(true),
+            program: Some("/usr/sbin/nginx".to_owned()),
+            args: Some(vec!["-g".to_owned(), "daemon off;".to_owned()]),
+            environment: Some(BTreeMap::from([("LANG".to_owned(), "C".to_owned())])),
+            restart: Some(Restart::Always),
+            restart_delay_secs: Some(2),
+            ..seed("nginx")
+        },
+        Seed { locked: Some(true), ..seed("locked") },
+        Seed { broken: Some(true), ..seed("broken") },
+    ])
+}
+
+#[test]
+fn services_registered_by_others_are_listed_and_inspected() {
+    let mock = mock_with_external();
+    let services = ops::list(&mock).expect("list");
+    assert_eq!(services.iter().map(|s| s.label.as_str()).collect::<Vec<_>>(), ["broken", "locked", "nginx"]);
+    let nginx = ops::get(&mock, "nginx").expect("get").expect("a service");
+    assert_eq!(nginx.state, State::Running);
+    assert_eq!(nginx.autostart, Some(true));
+    assert_eq!(nginx.program.as_deref(), Some("/usr/sbin/nginx"));
+    assert_eq!(nginx.restart, Some(Restart::Always));
+    assert_eq!(ops::get(&mock, "nothing").expect("get"), None);
+}
+
+#[test]
+fn a_change_made_behind_the_managers_back_is_seen_at_the_next_call() {
+    let mock = mock_with_external();
+    mock.externally("nginx", |s| s.state = State::Stopped);
+    assert_eq!(ops::get(&mock, "nginx").unwrap().unwrap().state, State::Stopped);
+    mock.externally("newcomer", |s| s.state = State::Running);
+    assert!(ops::list(&mock).unwrap().iter().any(|s| s.label == "newcomer"));
+    mock.externally_removed("nginx");
+    assert_eq!(ops::get(&mock, "nginx").unwrap(), None);
+    assert_eq!(
+        ops::control(&mock, "nginx", Control::Start),
+        Err(Error::NotFound { label: "nginx".to_owned() })
+    );
+}
+
+#[test]
+fn configure_changes_what_is_given_and_keeps_the_rest() {
+    let mock = mock_with_external();
+    let before = ops::get(&mock, "nginx").unwrap().unwrap();
+    let changed =
+        ops::configure(&mock, "nginx", Patch { autostart: Some(false), ..Patch::default() }).unwrap();
+    assert_eq!(changed.autostart, Some(false));
+    let mut expected = before.clone();
+    expected.autostart = Some(false);
+    assert_eq!(changed, expected, "nothing but the autostart changed");
+    let changed =
+        ops::configure(&mock, "nginx", Patch { restart_delay_secs: Some(9), ..Patch::default() }).unwrap();
+    expected.restart_delay_secs = Some(9);
+    assert_eq!(changed, expected);
+}
+
+#[test]
+fn an_option_the_manager_does_not_keep_is_refused_by_name() {
+    let mock = Mock::seeded(vec![]);
+    let refused = ops::install(&mock, Spec { user: Some("daemon".to_owned()), ..spec("app") }).unwrap_err();
+    assert!(matches!(&refused, Error::Unsupported { option: Some(o), .. } if o == "user"), "{refused:?}");
+    assert_eq!(ops::get(&mock, "app").unwrap(), None, "nothing was registered");
+}
+
+#[test]
+fn the_life_of_a_service_is_install_start_inspect_stop_uninstall() {
+    let mock = Mock::seeded(vec![]);
+    let installed = ops::install(
+        &mock,
+        Spec { autostart: Some(true), description: Some("Mine".to_owned()), ..spec("app") },
+    )
+    .unwrap();
+    assert_eq!(installed.state, State::Stopped);
+    assert_eq!(installed.autostart, Some(true));
+    assert_eq!(ops::install(&mock, spec("app")), Err(Error::AlreadyExists { label: "app".to_owned() }));
+    assert_eq!(ops::control(&mock, "app", Control::Start).unwrap().state, State::Running);
+    assert_eq!(ops::control(&mock, "app", Control::Restart).unwrap().state, State::Running);
+    assert_eq!(ops::control(&mock, "app", Control::Stop).unwrap().state, State::Stopped);
+    ops::uninstall(&mock, "app").unwrap();
+    assert_eq!(ops::get(&mock, "app").unwrap(), None);
+    assert_eq!(ops::uninstall(&mock, "app"), Err(Error::NotFound { label: "app".to_owned() }));
+}
+
+#[test]
+fn a_refusal_of_the_system_and_a_failed_start_are_typed() {
+    let mock = mock_with_external();
+    for result in [
+        ops::control(&mock, "locked", Control::Stop),
+        ops::configure(&mock, "locked", Patch { autostart: Some(false), ..Patch::default() }),
+    ] {
+        assert!(matches!(result, Err(Error::PermissionDenied { .. })), "{result:?}");
+    }
+    assert!(matches!(ops::uninstall(&mock, "locked"), Err(Error::PermissionDenied { .. })));
+    assert_eq!(
+        ops::get(&mock, "locked").unwrap().unwrap().state,
+        State::Stopped,
+        "a refused change changed nothing"
+    );
+    let failed = ops::control(&mock, "broken", Control::Start).unwrap_err();
+    assert!(matches!(&failed, Error::Failed { operation, .. } if operation == "start"), "{failed:?}");
+    assert_eq!(ops::get(&mock, "broken").unwrap().unwrap().state, State::Failed);
+}
+
+#[test]
+fn what_cannot_be_a_service_is_invalid_input() {
+    let mock = Mock::seeded(vec![]);
+    fn invalid<T>(result: Result<T, Error>) -> bool {
+        matches!(result, Err(Error::InvalidInput { .. }))
+    }
+    assert!(
+        invalid(ops::install(&mock, Spec { label: "-rf".to_owned(), ..spec("x") })),
+        "a label cannot look like an option"
+    );
+    assert!(invalid(ops::install(&mock, Spec { label: "a b".to_owned(), ..spec("x") })));
+    assert!(invalid(ops::install(&mock, Spec { program: "relative/program".to_owned(), ..spec("x") })));
+    assert!(invalid(ops::install(
+        &mock,
+        Spec { program: "/nowhere/neoc-no-such-program".to_owned(), ..spec("x") }
+    )));
+    assert!(
+        invalid(ops::install(&mock, Spec { program: "/".to_owned(), ..spec("x") })),
+        "a directory is not a program"
+    );
+    assert!(invalid(ops::install(
+        &mock,
+        Spec { description: Some("a\nExecStart=/bin/evil".to_owned()), ..spec("x") }
+    )));
+    assert!(invalid(ops::install(&mock, Spec { args: Some(vec!["a\nb".to_owned()]), ..spec("x") })));
+    assert!(invalid(ops::install(
+        &mock,
+        Spec { working_directory: Some("/nowhere/at/all".to_owned()), ..spec("x") }
+    )));
+    assert!(invalid(ops::install(
+        &mock,
+        Spec { environment: Some(BTreeMap::from([("A B".to_owned(), String::new())])), ..spec("x") }
+    )));
+    assert!(invalid(ops::configure(&mock, "x", Patch::default())), "a change sets something");
+    assert!(invalid(ops::get(&mock, "")));
+    assert_eq!(ops::list(&mock).unwrap(), vec![], "none of them was registered");
+}
+
+// -- a script's view -----------------------------------------------------------------------------------------------
+
+async fn run<R: mlua::FromLuaMulti>(script: &str) -> R {
+    make_engine()
+        .expect("engine")
+        .load(script)
+        .call_async(())
+        .await
+        .unwrap_or_else(|e| panic!("the script failed: {e}"))
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_script_manages_a_service_it_did_not_register() {
+    let (state_after_stop, autostart, kind, err_kind): (String, bool, String, String) = run(r#"
+        local sm = require("vnd:service_manager")
+        local manager = sm.mock({ { label = "nginx", state = "running", autostart = true }, { label = "locked", locked = true } })
+        assert(manager:get("nginx").state == "running")
+        local stopped = assert(manager:stop("nginx"))
+        local configured = assert(manager:configure("nginx", { autostart = false }))
+        local _, err = manager:stop("locked")
+        local missing, none = manager:get("absent")
+        assert(missing == nil and none == nil)
+        return stopped.state, configured.autostart, manager:capabilities().kind, err.kind
+        "#)
+    .await;
+    assert_eq!(state_after_stop, "stopped");
+    assert!(!autostart);
+    assert_eq!(kind, "mock");
+    assert_eq!(err_kind, "permission_denied");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_script_sees_typed_errors_and_refused_options() {
+    let (invalid, unsupported, exists, text): (String, String, String, String) = run(&format!(r#"
+        local sm = require("vnd:service_manager")
+        local manager = sm.mock()
+        local _, invalid = manager:install({{ label = "bad label", program = "/bin/sh" }})
+        local _, unsupported = manager:install({{ label = "a", program = "{program}", user = "daemon" }})
+        assert(manager:install({{ label = "b", program = "{program}" }}))
+        local _, exists = manager:install({{ label = "b", program = "{program}" }})
+        local ok, refused = pcall(manager.install, manager, {{ label = "c", program = "{program}", nonsense = true }})
+        assert(not ok)
+        return invalid.kind, unsupported.kind .. ":" .. tostring(unsupported.option), exists.kind, tostring(refused)
+        "#, program = program().replace('\\', "\\\\")))
+    .await;
+    assert_eq!(invalid, "invalid_input");
+    assert_eq!(unsupported, "unsupported:user");
+    assert_eq!(exists, "already_exists");
+    assert!(text.contains("nonsense"), "an unknown option is refused and named: {text}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_environment_chooses_the_shared_mock_manager() {
+    let manager = super::ops::open(Some("mock"), None).expect("the shared mock");
+    let again = super::ops::open(Some("mock"), None).expect("the shared mock");
+    let first = manager.capabilities().kind;
+    assert_eq!(first, "mock");
+    let value: Value = run(r#"return require("vnd:service_manager").mock() ~= nil"#).await;
+    assert_eq!(value, Value::Boolean(true));
+    assert_eq!(again.capabilities().kind, "mock");
+    assert!(matches!(super::ops::open(Some("nonsense"), None), Err(Error::InvalidInput { .. })));
+}
+
+// -- systemd against a fake systemctl --------------------------------------------------------------------------------
+
+#[cfg(unix)]
+mod fake_systemd {
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
+
+    use super::*;
+    use crate::systemd::Systemd;
+
+    /// A `systemctl` made of a shell script over a directory: `<unit>.show` holds what `show` prints. It answers
+    /// `Interactive authentication required.` when the directory has a `deny` file.
+    fn fake(dir: &Path) -> std::path::PathBuf {
+        let script = dir.join("systemctl");
+        let body = format!(
+            r#"#!/bin/sh
+D='{dir}'
+while [ "$1" = "--user" ] || [ "$1" = "--no-pager" ] || [ "$1" = "--no-ask-password" ]; do shift; done
+cmd="$1"; shift
+mutating() {{ if [ -e "$D/deny" ]; then echo "Interactive authentication required." >&2; exit 1; fi; }}
+case "$cmd" in
+  list-unit-files) for f in "$D"/*.show; do n=$(basename "$f" .show); echo "$n.service enabled enabled"; done ;;
+  list-units) ;;
+  is-system-running) echo running ;;
+  daemon-reload) mutating; echo reload >> "$D/log" ;;
+  show)
+    shift
+    for u in "$@"; do
+      n="${{u%.service}}"
+      if [ -e "$D/$n.show" ]; then cat "$D/$n.show"; else printf 'Id=%s\nLoadState=not-found\nActiveState=inactive\n' "$u"; fi
+      echo
+    done ;;
+  start|restart) mutating; sed -i 's/^ActiveState=.*/ActiveState=active/;s/^SubState=.*/SubState=running/' "$D/${{1%.service}}.show"; echo "$cmd $1" >> "$D/log" ;;
+  stop) mutating; sed -i 's/^ActiveState=.*/ActiveState=inactive/;s/^SubState=.*/SubState=dead/' "$D/${{1%.service}}.show"; echo "stop $1" >> "$D/log" ;;
+  enable) mutating; sed -i 's/^UnitFileState=.*/UnitFileState=enabled/' "$D/${{1%.service}}.show"; echo "enable $1" >> "$D/log" ;;
+  disable) mutating; sed -i 's/^UnitFileState=.*/UnitFileState=disabled/' "$D/${{1%.service}}.show"; echo "disable $1" >> "$D/log" ;;
+  *) echo "unknown $cmd" >&2; exit 2 ;;
+esac
+"#,
+            dir = dir.display()
+        );
+        std::fs::write(&script, body).expect("write the fake");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        script
+    }
+
+    fn unit(dir: &Path, name: &str) {
+        std::fs::write(
+            dir.join(format!("{name}.show")),
+            format!("Id={name}.service\nDescription=The {name} service\nLoadState=loaded\nActiveState=inactive\nSubState=dead\nUnitFileState=disabled\nFragmentPath=/usr/lib/systemd/system/{name}.service\nRestart=on-failure\nRestartUSec=100ms\nExecStart={{ path=/usr/sbin/{name} ; argv[]=/usr/sbin/{name} -f /etc/{name}.conf ; ignore_errors=no }}\nResult=success\n"),
+        )
+        .expect("write a unit");
+    }
+
+    struct Rig {
+        _dir: tempfile::TempDir,
+        path: std::path::PathBuf,
+        dropins: std::path::PathBuf,
+        manager: Systemd,
+    }
+
+    fn rig() -> Rig {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().to_path_buf();
+        let dropins = path.join("dropins");
+        unit(&path, "web");
+        unit(&path, "db");
+        let manager = Systemd::with(Level::System, fake(&path), dropins.clone());
+        Rig { _dir: dir, path, dropins, manager }
+    }
+
+    #[test]
+    fn units_of_the_manager_are_listed_and_controlled_whoever_made_them() {
+        let rig = rig();
+        let all = ops::list(&rig.manager).expect("list");
+        assert_eq!(all.iter().map(|s| s.label.as_str()).collect::<Vec<_>>(), ["db", "web"]);
+        assert_eq!(all[1].args.as_deref(), Some(&["-f".to_owned(), "/etc/web.conf".to_owned()][..]));
+        assert_eq!(ops::get(&rig.manager, "ghost").expect("get"), None);
+        assert_eq!(ops::control(&rig.manager, "web", Control::Start).expect("start").state, State::Running);
+        assert_eq!(ops::control(&rig.manager, "web", Control::Stop).expect("stop").state, State::Stopped);
+        // another program started it: the next call sees that, nothing was remembered
+        std::fs::write(
+            rig.path.join("web.show"),
+            std::fs::read_to_string(rig.path.join("web.show"))
+                .unwrap()
+                .replace("ActiveState=inactive", "ActiveState=failed"),
+        )
+        .unwrap();
+        assert_eq!(ops::get(&rig.manager, "web").unwrap().unwrap().state, State::Failed);
+        assert!(ops::control(&rig.manager, "ghost", Control::Start).is_err());
+    }
+
+    #[test]
+    fn a_refusal_of_the_system_is_permission_denied_and_changes_nothing() {
+        let rig = rig();
+        std::fs::write(rig.path.join("deny"), "").unwrap();
+        let started = ops::control(&rig.manager, "web", Control::Start).unwrap_err();
+        assert!(matches!(started, Error::PermissionDenied { .. }), "{started:?}");
+        let configured = ops::configure(
+            &rig.manager,
+            "web",
+            Patch { description: Some("x".to_owned()), ..Patch::default() },
+        )
+        .unwrap_err();
+        assert!(matches!(configured, Error::PermissionDenied { .. }), "{configured:?}");
+        assert_eq!(ops::get(&rig.manager, "web").unwrap().unwrap().state, State::Stopped);
+    }
+
+    #[test]
+    fn configure_writes_a_drop_in_and_leaves_the_units_own_settings_alone() {
+        let rig = rig();
+        let unit_before = std::fs::read_to_string(rig.path.join("web.show")).unwrap();
+        let changed = ops::configure(
+            &rig.manager,
+            "web",
+            Patch {
+                autostart: Some(true),
+                restart: Some(Restart::Always),
+                args: Some(vec!["--verbose".to_owned()]),
+                ..Patch::default()
+            },
+        )
+        .expect("configure");
+        assert_eq!(changed.autostart, Some(true), "enabled through systemctl");
+        let text =
+            std::fs::read_to_string(rig.dropins.join("web.service.d/90-vos.conf")).expect("the drop-in");
+        // the program stays: only the arguments were given
+        assert!(text.contains("ExecStart=\nExecStart=\"/usr/sbin/web\" \"--verbose\"\n"), "{text}");
+        assert!(text.contains("Restart=always\n"));
+        assert!(!text.contains("Description"), "what was not given is not written: {text}");
+        // a second change adds to the first and forgets nothing
+        ops::configure(
+            &rig.manager,
+            "web",
+            Patch { description: Some("Mine".to_owned()), ..Patch::default() },
+        )
+        .expect("configure");
+        let text = std::fs::read_to_string(rig.dropins.join("web.service.d/90-vos.conf")).unwrap();
+        assert!(
+            text.contains("Description=Mine\n")
+                && text.contains("Restart=always\n")
+                && text.contains("\"--verbose\""),
+            "{text}"
+        );
+        // the unit's own definition was never written to
+        assert_eq!(
+            std::fs::read_to_string(rig.path.join("web.show"))
+                .unwrap()
+                .replace("UnitFileState=enabled", "UnitFileState=disabled"),
+            unit_before
+        );
+        assert!(std::fs::read_to_string(rig.path.join("log")).unwrap().contains("reload"));
+    }
+
+    #[test]
+    fn a_file_that_is_not_ours_is_not_replaced_and_an_unknown_unit_is_not_found() {
+        let rig = rig();
+        let dir = rig.dropins.join("web.service.d");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("90-vos.conf"), "[Service]\nRestart=no\n").unwrap();
+        let refused =
+            ops::configure(&rig.manager, "web", Patch { restart: Some(Restart::Always), ..Patch::default() })
+                .unwrap_err();
+        assert!(matches!(refused, Error::Failed { .. }), "{refused:?}");
+        assert_eq!(std::fs::read_to_string(dir.join("90-vos.conf")).unwrap(), "[Service]\nRestart=no\n");
+        let missing =
+            ops::configure(&rig.manager, "ghost", Patch { autostart: Some(true), ..Patch::default() })
+                .unwrap_err();
+        assert_eq!(missing, Error::NotFound { label: "ghost".to_owned() });
+    }
+
+    #[test]
+    fn a_unit_of_the_system_cannot_be_unregistered() {
+        let rig = rig();
+        let refused = ops::uninstall(&rig.manager, "web").unwrap_err();
+        assert!(matches!(&refused, Error::Unsupported { .. }), "{refused:?}");
+        assert!(ops::get(&rig.manager, "web").unwrap().is_some());
+    }
+
+    #[test]
+    fn a_machine_without_systemctl_is_unavailable() {
+        let manager = Systemd::with(Level::System, "/nowhere/systemctl".into(), "/tmp".into());
+        assert!(matches!(ops::list(&manager), Err(Error::Unavailable { .. })));
+        let _ = Arc::new(manager);
+    }
+}
+
+/// The real manager of a Linux machine that runs systemd, at the user level (no rights needed): the round trip the
+/// Services app makes. It skips itself where there is no systemd user manager to talk to.
+#[cfg(target_os = "linux")]
+#[test]
+fn native_systemd_user_round_trip() {
+    let manager = match ops::open(None, Some(Level::User)) {
+        Ok(manager) => manager,
+        Err(e) => return eprintln!("skipped: no systemd to talk to ({e})"),
+    };
+    let backend = manager.backend();
+    if backend.list().is_err() {
+        return eprintln!("skipped: the user manager does not answer");
+    }
+    let label = format!("neoc-test-{}", std::process::id());
+    let installed = ops::install(
+        backend,
+        Spec {
+            description: Some("neoc native test".to_owned()),
+            args: Some(vec!["60".to_owned()]),
+            ..spec_with("/bin/sleep", &label)
+        },
+    )
+    .expect("install");
+    assert_eq!(installed.state, State::Stopped);
+    assert_eq!(ops::control(backend, &label, Control::Start).expect("start").state, State::Running);
+    assert_eq!(ops::control(backend, &label, Control::Stop).expect("stop").state, State::Stopped);
+    ops::uninstall(backend, &label).expect("uninstall");
+    assert_eq!(ops::get(backend, &label).unwrap(), None);
+}
+
+#[cfg(target_os = "linux")]
+fn spec_with(program: &str, label: &str) -> Spec {
+    Spec { label: label.to_owned(), program: program.to_owned(), ..Spec::default() }
+}
