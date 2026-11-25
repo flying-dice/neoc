@@ -4,7 +4,6 @@
 //! itself where there is no systemd to talk to.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 use mlua::Value;
 use neoc_vm_core::make_engine;
@@ -521,7 +520,6 @@ esac
     fn a_machine_without_systemctl_is_unavailable() {
         let manager = Systemd::with(Level::System, "/nowhere/systemctl".into(), "/tmp".into());
         assert!(matches!(ops::list(&manager), Err(Error::Unavailable { .. })));
-        let _ = Arc::new(manager);
     }
 }
 
