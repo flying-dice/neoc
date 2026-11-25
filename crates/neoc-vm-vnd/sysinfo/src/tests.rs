@@ -326,6 +326,9 @@ async fn a_process_is_read_from_its_handle_and_its_load_needs_two_sightings() {
 
         pause(300)
         assert(system:refresh_processes())
+        -- the second sighting confirms the process, which is a new observation: the handle to the first reads nothing
+        assert(child:cpu_usage() == nil)
+        child = assert(system:process(pid))
         local load = assert(child:cpu_usage(), "seen twice: it has a load")
         assert(load >= 0)
         "#,
@@ -636,29 +639,36 @@ fn a_pid_that_turns_out_to_be_another_process_is_a_new_sighting() {
     let mut issued = 0;
     let first = meet(None, 100, Some(5_000), &mut issued);
     assert_eq!((first.generation, first.samples), (1, 1));
-    // the same process, met again: the same sighting, one sample more
+    // met again with the identity it had: where there is a finer identity this confirms the sighting, and a
+    // confirmed sighting has a number of its own (a reference to the ambiguous one never names the confirmed process)
     let again = meet(Some(&first), 100, Some(5_000), &mut issued);
-    assert_eq!((again.generation, again.samples), (1, 2));
-    // the same second, another finer time: another process has the PID, and the reference to the first is not it
-    let same_second = meet(Some(&again), 100, Some(5_001), &mut issued);
-    assert_eq!((same_second.generation, same_second.samples), (2, 1));
-    // another start time
-    let later = meet(Some(&same_second), 101, Some(5_001), &mut issued);
-    assert_eq!((later.generation, later.samples), (3, 1));
-    // a finer time that cannot be read now is not the one that was: it is not told apart, so it is not the same
-    let unreadable = meet(Some(&later), 101, None, &mut issued);
-    assert_eq!((unreadable.generation, unreadable.samples), (4, 1));
-    // a first sighting can be inspected but not acted on until it is met again with the identity it had; one met
-    // again as another is a first sighting once more
     if native::FINE_START {
         assert!(!first.confirmed && again.confirmed);
-        assert!(!same_second.confirmed && !later.confirmed && !unreadable.confirmed);
+        assert_eq!((again.generation, again.samples), (2, 2));
     } else {
-        assert!(first.confirmed && same_second.confirmed, "nothing to confirm without a finer identity");
+        assert!(first.confirmed && again.confirmed, "nothing to confirm without a finer identity");
+        assert_eq!((again.generation, again.samples), (1, 2));
+    }
+    // a confirmed process met once more is the same sighting
+    let steady = meet(Some(&again), 100, Some(5_000), &mut issued);
+    assert_eq!((steady.generation, steady.samples), (again.generation, again.samples + 1));
+    // the same second, another finer time: another process has the PID, and the reference to the first is not it
+    let same_second = meet(Some(&steady), 100, Some(5_001), &mut issued);
+    assert!(same_second.generation > steady.generation && same_second.samples == 1);
+    // another start time
+    let later = meet(Some(&same_second), 101, Some(5_001), &mut issued);
+    assert!(later.generation > same_second.generation && later.samples == 1);
+    // a finer time that cannot be read now is not the one that was: it is not told apart, so it is not the same
+    let unreadable = meet(Some(&later), 101, None, &mut issued);
+    assert!(unreadable.generation > later.generation && unreadable.samples == 1);
+    if native::FINE_START {
+        assert!(!same_second.confirmed && !later.confirmed && !unreadable.confirmed);
     }
     // a process met for the first time on a platform with no finer time is one sighting, however often it is met
-    let coarse = meet(None, 7, None, &mut issued);
-    assert_eq!(meet(Some(&coarse), 7, None, &mut issued).generation, coarse.generation);
+    if !native::FINE_START {
+        let coarse = meet(None, 7, None, &mut issued);
+        assert_eq!(meet(Some(&coarse), 7, None, &mut issued).generation, coarse.generation);
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -731,21 +741,44 @@ async fn a_process_replaced_between_the_sample_and_the_identity_read_is_not_acte
     state.record(|p| real(p).map(|fine| fine + 1));
     let after = state.seen[&pid];
     assert!(after.generation > before && !after.confirmed, "a mixed sample is a new sighting, unconfirmed");
+    // a row or selection from the ambiguous sample
     let state = Arc::new(Mutex::new(state));
-    let observed = {
+    let observe = |state: &Arc<Mutex<State>>| {
         let locked = state.lock();
         let si_process = locked.system.process(sysinfo::Pid::from_u32(pid)).expect("sampled");
-        Process::observed(&state, &locked, si_process)
+        Process::observed(state, &locked, si_process)
     };
-    lua.globals().set("observed", observed).expect("a handle");
+    let old = observe(&state);
+    // the next sample describes the process that has the PID now and its identity matches the one recorded: that
+    // confirms it, with a generation of its own
+    let ambiguous = state.lock().seen[&pid].generation;
+    state.lock().record(|p| real(p).map(|fine| fine + 1));
+    let (confirmed, start) = {
+        let locked = state.lock();
+        (locked.seen[&pid], locked.seen[&pid].start_time)
+    };
+    assert!(confirmed.confirmed && confirmed.generation > ambiguous, "confirmation issues a new observation");
+    {
+        let locked = state.lock();
+        assert!(locked.find(pid, start, ambiguous).is_none(), "the ambiguous observation names nothing now");
+        assert!(
+            locked.find(pid, start, confirmed.generation).is_some(),
+            "the confirmed one names the process"
+        );
+    }
+    let fresh = observe(&state);
+    lua.globals().set("old", old).expect("a handle");
+    lua.globals().set("fresh", fresh).expect("a handle");
     let () = run_with(
         &lua,
         r#"
-        assert(observed.name ~= "", "it can still be read")
-        local _, killed = observed:kill()
+        assert(old.name ~= "")
+        local _, killed = old:kill()
         assert(killed ~= nil and killed.kind == "unknown_identity", "kill must be refused")
-        local _, pinned = observed:pin()
+        local _, pinned = old:pin()
         assert(pinned ~= nil and pinned.kind == "unknown_identity", "pin must be refused")
+        assert(not old:alive(), "the ambiguous observation reads as nothing: it is not the confirmed process")
+        assert(fresh:alive() and fresh.observation ~= old.observation, "the confirmed one is a new observation")
         "#,
         (),
     )

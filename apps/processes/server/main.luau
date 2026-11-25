@@ -50,8 +50,19 @@ local function controlOf(selection: pins.Selection): rpc.Control
   return { available = true }
 end
 
-local function detailOf(selection: pins.Selection): rpc.Detail
-  return monitor.detail(selection.process, controlOf(selection))
+-- What is shown of a choice. A program only just seen is shown as it is, but not held (`unknown_identity`): once a later
+-- reading has told it apart, the reading has another observation than the one the person chose, so what is shown is
+-- that program, read, and it still cannot be ended through this choice: the person chooses it again.
+local function detailOf(selection: pins.Selection, current: vnd_sysinfo_System): rpc.Detail
+  local process = selection.process
+  local blocked = selection.blocked
+  if blocked and blocked.kind == "unknown_identity" and not process:alive() then
+    local live = current:process(process.pid)
+    if live and live.start_time == process.start_time then
+      return monitor.detail(live, { available = false, reason = sentence(blocked, live.name, true) })
+    end
+  end
+  return monitor.detail(process, controlOf(selection))
 end
 
 local handlers: rpc.Handlers = {
@@ -68,13 +79,7 @@ local handlers: rpc.Handlers = {
       -- the process as the window chose it, even after it has quit; an id that is not held is said so, and never looked up by PID
       local selection = pins.get(selected)
       if selection then
-        pins.confirm(selection, function(before)
-          return monitor.find(
-            current,
-            { pid = before.pid, startTime = before.start_time, observation = before.observation }
-          )
-        end)
-        snapshot.detail = detailOf(selection)
+        snapshot.detail = detailOf(selection, current)
       else
         snapshot.selectionLost = true
       end
@@ -95,7 +100,7 @@ local handlers: rpc.Handlers = {
     if not selection then
       return ctx:fail(sentence(err :: vnd_sysinfo_Error, process.name, false))
     end
-    return { selection = selection.id, detail = detailOf(selection) }
+    return { selection = selection.id, detail = detailOf(selection, current) }
   end,
 
   release = function(_ctx, params)

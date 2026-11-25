@@ -36,6 +36,18 @@ async function launch(stubborn = false): Promise<number> {
   return child.pid
 }
 
+/**
+ * Choose a program and wait until it can be ended. A program only just started is shown but not held until a later
+ * reading has told it apart from another that is given its PID, and that reading is another observation of it: the
+ * choice is made again, as a person would.
+ */
+async function choose(page: Page, pid: number): Promise<void> {
+  await expect(async () => {
+    await row(page, pid).click()
+    await expect(part(page, 'force')).toHaveJSProperty('disabled', false, { timeout: 1500 })
+  }).toPass({ timeout: 25_000 })
+}
+
 /** Whether a process is still there (a signal of 0 only asks). */
 function running(pid: number): boolean {
   try {
@@ -92,7 +104,7 @@ test.describe('Processes journeys', () => {
     test.skip(WINDOWS, 'Windows has no request to quit: only Force Terminate is offered there')
     const pid = await launch()
     await find(page, pid)
-    await row(page, pid).click()
+    await choose(page, pid)
     await expect(part(page, 'terminate')).toHaveJSProperty('disabled', false)
 
     await part(page, 'terminate').click()
@@ -117,9 +129,7 @@ test.describe('Processes journeys', () => {
     test.skip(WINDOWS, 'Windows has no request to quit to ignore')
     const pid = await launch(true)
     await find(page, pid)
-    await row(page, pid).click()
-    // a program only just started is read-only until the next reading confirms it
-    await expect(part(page, 'force')).toHaveJSProperty('disabled', false)
+    await choose(page, pid)
     await part(page, 'terminate').click()
     await part(page, 'confirm-confirm').click()
     await expect(part(page, 'notice')).toContainText('to quit')
@@ -139,9 +149,7 @@ test.describe('Processes journeys', () => {
   test('PR5: Force Terminate stops a program on every platform, after asking', async ({ page }) => {
     const pid = await launch()
     await find(page, pid)
-    await row(page, pid).click()
-    // a program only just started is read-only until the next reading confirms it
-    await expect(part(page, 'force')).toHaveJSProperty('disabled', false)
+    await choose(page, pid)
     if (WINDOWS) await expect(part(page, 'terminate')).toHaveCount(0)
     await part(page, 'force').click()
     await part(page, 'confirm-cancel').click()
@@ -285,10 +293,12 @@ test.describe('Processes journeys', () => {
     await field(page, 'search').fill(String(second))
     await row(page, second).click()
     await expect(part(page, 'detail-state')).toContainText(`PID ${second}`)
-    // only just started: held for ending once the next reading has confirmed it
-    await expect(part(page, 'force')).toHaveJSProperty('disabled', false)
-    await expect.poll(async () => (await ids()).length).toBe(2)
-    const [letGo, held] = await ids()
+    // only just started: a choice made before the next reading has confirmed it cannot end it, so it is chosen again
+    await choose(page, second)
+    await expect.poll(async () => (await ids()).length).toBeGreaterThanOrEqual(2)
+    const all = await ids()
+    const letGo = all[0]
+    const held = all[all.length - 1]
 
     // the list still shows a process that is not the one with its PID now (a PID given to another process, even in the
     // same second): the same PID and start time with another sighting is refused, and nothing is held for it
@@ -303,7 +313,7 @@ test.describe('Processes journeys', () => {
       }
     })
     expect(refused).toBe('That program has quit.')
-    expect(await ids()).toHaveLength(2)
+    expect(await ids()).toHaveLength(all.length)
 
     // an id the backend never issued
     expect(await terminate('made-up')).toContain('no longer holds it')

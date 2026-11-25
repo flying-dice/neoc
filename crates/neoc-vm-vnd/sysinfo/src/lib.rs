@@ -52,7 +52,8 @@
 //! platform gives one, has nothing to bind a signal to: `pin`, `terminate` and `kill` refuse it (`unknown_identity`). So does
 //! a process seen for the first time (or as another one): the sample of it and the read of its finer time are two reads, and
 //! a process may have been replaced between them, so a handle is acted on only once a later refresh has found the finer
-//! time it recorded (a handle from that refresh onwards). It can be read meanwhile. `process:release()` finishes the
+//! time it recorded, and that refresh gives the process a new `observation`: a handle or row from the ambiguous sample
+//! never becomes the confirmed process (take the new one). It can be read meanwhile. `process:release()` finishes the
 //! handle (`process:released()`): it signals nothing afterwards and is not pinned again, so a late signal cannot take a
 //! new reference. Nothing in this module signals a PID after an identity or permission failure.
 //!
@@ -404,7 +405,8 @@ pub mod sysinfo {
         /// Whether the sample that described this process is known to have described one process: a process met
         /// before, with the same identity read before and after the sample (the earlier read brackets it on one side,
         /// this one on the other). A process met for the first time, or as another one, has no earlier read to compare
-        /// with, so it can be inspected but not acted on until the next refresh confirms it. Where the platform gives
+        /// with, so it can be inspected but not acted on. The refresh that confirms it issues a new `generation`: a
+        /// reference from the ambiguous sample never names the confirmed process. Where the platform gives
         /// no finer identity (see `native::FINE_START`) there is nothing to confirm and it is always true.
         pub(super) confirmed: bool,
     }
@@ -412,8 +414,19 @@ pub mod sysinfo {
     /// What a refresh makes of a process it has met before (or not): the same one, seen once more, or a new one.
     pub(super) fn meet(before: Option<&Seen>, start_time: u64, fine: Option<u64>, issued: &mut u64) -> Seen {
         match before {
+            // confirmed by this sample: a reference to the sighting before it (a row drawn from the sample that was
+            // ambiguous) is not this one, so it has a number of its own and the process is chosen again to be acted on
+            Some(seen) if seen.start_time == start_time && seen.fine == fine && !seen.confirmed => {
+                *issued += 1;
+                Seen {
+                    samples: seen.samples.saturating_add(1),
+                    generation: *issued,
+                    confirmed: true,
+                    ..*seen
+                }
+            }
             Some(seen) if seen.start_time == start_time && seen.fine == fine => {
-                Seen { samples: seen.samples.saturating_add(1), confirmed: true, ..*seen }
+                Seen { samples: seen.samples.saturating_add(1), ..*seen }
             }
             // another process has the PID: it starts again, with no load, and is not the one a reference named
             _ => {
@@ -558,7 +571,7 @@ pub mod sysinfo {
         }
 
         /// A live process by its identity: the one that was observed, not another that has its PID.
-        fn find(&self, pid: u32, start_time: u64, generation: u64) -> Option<&si::Process> {
+        pub(super) fn find(&self, pid: u32, start_time: u64, generation: u64) -> Option<&si::Process> {
             self.system
                 .process(si::Pid::from_u32(pid))
                 .filter(|process| process.start_time() == start_time)
