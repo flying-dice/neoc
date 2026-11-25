@@ -54,7 +54,9 @@ pub(crate) fn live_start_time(pid: u32) -> Option<u64> {
     system.process(pid).map(::sysinfo::Process::start_time)
 }
 
-/// The start time of the process a native handle holds is `observed`, or why not.
+/// The start time of the process a native handle holds is `observed`, or why not. Windows binds by handle, so
+/// only the unix backends use it.
+#[cfg(unix)]
 fn check_identity(pid: u32, observed: u64) -> Result<(), Error> {
     match live_start_time(pid) {
         None => Err(Error::ProcessGone),
