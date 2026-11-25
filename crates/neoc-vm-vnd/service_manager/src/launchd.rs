@@ -14,9 +14,7 @@ use std::path::{Path, PathBuf};
 use plist::{Dictionary, Value};
 use service_manager::ServiceManagerKind;
 
-use super::backend::{
-    Backend, checked, crate_install, crate_start, crate_stop, crate_uninstall, io_error, run,
-};
+use super::backend::{Backend, checked, crate_install, crate_uninstall, io_error, run, said};
 use super::service_manager::{Capabilities, Error, Level, Patch, Restart, Service, Spec, State};
 
 /// Label to (process id, last exit status) of the jobs a domain has loaded.
@@ -366,12 +364,46 @@ impl Backend for Launchd {
         crate_uninstall(ServiceManagerKind::Launchd, self.level, label)
     }
 
+    /// Load the job into its domain if it is not there (the property list is read now, so a change made since is
+    /// applied) and make sure it runs.
     fn start(&self, label: &str) -> Result<(), Error> {
-        crate_start(ServiceManagerKind::Launchd, self.level, label)
+        let (path, _) = self.definition(label)?.ok_or_else(|| Error::NotFound { label: label.to_owned() })?;
+        let target = format!("{}/{label}", self.domain);
+        let is_loaded = |loaded: Option<Loaded>| loaded.is_some_and(|jobs| jobs.contains_key(label));
+        if !is_loaded(self.loaded()?) {
+            let output = run(&self.launchctl, &["bootstrap", &self.domain, &path.display().to_string()])?;
+            // another caller may have loaded it between the question and the request
+            if !output.status.success() && !is_loaded(self.loaded()?) {
+                return Err(super::backend::classify("start", Some(label), &said(&output)));
+            }
+        }
+        for _ in 0..20 {
+            if self.loaded()?.is_some_and(|jobs| jobs.get(label).is_some_and(|(pid, _)| pid.is_some())) {
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        // loaded and not running (it does not start at load): ask for it
+        checked("start", Some(label), run(&self.launchctl, &["kickstart", &target])?).map(|_| ())
     }
 
+    /// Unload the job from its domain: its process ends and `KeepAlive` cannot bring it back (`launchctl stop` only
+    /// ends the process, which a job that is to be kept alive replaces at once). A job that is not loaded is stopped.
     fn stop(&self, label: &str) -> Result<(), Error> {
-        crate_stop(ServiceManagerKind::Launchd, self.level, label)
+        let target = format!("{}/{label}", self.domain);
+        let output = run(&self.launchctl, &["bootout", &target])?;
+        if output.status.success() {
+            return Ok(());
+        }
+        let text = said(&output);
+        let lower = text.to_lowercase();
+        if lower.contains("no such process")
+            || lower.contains("could not find")
+            || lower.contains("not found")
+        {
+            return Ok(());
+        }
+        Err(super::backend::classify("stop", Some(label), &text))
     }
 
     fn restart(&self, label: &str) -> Result<(), Error> {
