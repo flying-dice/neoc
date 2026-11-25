@@ -6907,6 +6907,323 @@ export type vnd_sqlx_postgres = {
 	open: (url: string) -> (vnd_sqlx_postgres_Database?, vnd_sqlx_postgres_OpenError?),
 }
 
+-- ===== vnd:sysinfo =====
+
+--- What holds a process's identity when it is signalled.
+--- - `pidfd`: A `pidfd` (Linux): it names one process for good.
+--- - `process_handle`: A process handle (Windows): it keeps the PID reserved for its process.
+--- - `start_time`: The start time observed, checked again just before the signal: there is a gap between the check and the
+--- signal, in which a reused PID would be signalled.
+export type vnd_sysinfo_Binding = "pidfd" | "process_handle" | "start_time"
+
+--- What this platform can do with a process.
+export type vnd_sysinfo_Capabilities = {
+	--- `terminate()` (the request to stop) exists. It does not on Windows.
+	terminate: boolean,
+	--- `kill()` (the forced stop) exists.
+	kill: boolean,
+	--- How a signal is bound to the process that was observed, where the platform can (a kernel older than 5.3
+	--- has no `pidfd`: `process:binding()` says what a particular handle got).
+	binding: vnd_sysinfo_Binding,
+}
+
+--- One logical core.
+export type vnd_sysinfo_Core = {
+	--- The platform's name for it (`cpu0`, `CPU 0`).
+	name: string,
+	--- How busy it was between the last two refreshes, in percent of the core (0 to 100); `nil` until there
+	--- are two.
+	usage: number?,
+	--- Its clock, in MHz, when the platform says.
+	frequency_mhz: number?,
+}
+
+--- The processor, as last measured.
+export type vnd_sysinfo_CpuStatus = {
+	--- How busy the whole processor was between the last two refreshes, in percent (0 to 100); `nil` until there
+	--- are two.
+	usage: number?,
+	--- `usage` is a measurement: there have been two refreshes.
+	sampled: boolean,
+	--- Every logical core.
+	cores: { vnd_sysinfo_Core },
+	--- The number of logical cores.
+	logical_cores: number,
+	--- The number of physical cores, when the platform says.
+	physical_cores: number?,
+	--- The processor's name, when the platform says.
+	brand: string?,
+	--- The processor's architecture (`x86_64`, `arm64`).
+	arch: string,
+	--- The load average, where the platform has one.
+	load_average: vnd_sysinfo_LoadAverage?,
+}
+
+--- A mounted disk.
+export type vnd_sysinfo_DiskInfo = {
+	--- Its name.
+	name: string,
+	--- Where it is mounted.
+	mount_point: string,
+	--- Its file system (`ext4`, `NTFS`, `apfs`).
+	file_system: string,
+	--- What kind of disk.
+	kind: vnd_sysinfo_DiskKind,
+	--- Its size, in bytes.
+	total_bytes: number,
+	--- What is free, in bytes.
+	available_bytes: number,
+	--- It can be taken out.
+	removable: boolean,
+	--- It is mounted read-only.
+	read_only: boolean,
+	--- Bytes per second read from it between the last two refreshes, over the time that really passed; `nil`
+	--- until there are two, and where the platform does not count them.
+	read_rate: number?,
+	--- Bytes per second written to it, the same way.
+	write_rate: number?,
+}
+
+--- What kind of disk.
+--- - `hdd`: A hard disk.
+--- - `ssd`: A solid-state disk.
+--- - `unknown`: The platform does not say.
+export type vnd_sysinfo_DiskKind = "hdd" | "ssd" | "unknown"
+
+--- The kinds of `vnd_sysinfo_Error`.
+export type vnd_sysinfo_ErrorKind = "too_soon" | "process_gone" | "pid_reused" | "own_process" | "permission_denied" | "unsupported" | "failed"
+
+--- Why a call failed.
+export type vnd_sysinfo_Error =
+	--- The CPU load was measured less than `MIN_CPU_INTERVAL_MS` ago: refresh again after `retry_after_ms`.
+	{ kind: "too_soon", retry_after_ms: number, message: string, op: string }
+	--- The process has exited.
+	| { kind: "process_gone", message: string, op: string }
+	--- The PID belongs to another process now: the one observed has exited and its PID was reused.
+	| { kind: "pid_reused", message: string, op: string }
+	--- The process is the one this script runs in: it is not signalled from inside it.
+	| { kind: "own_process", message: string, op: string }
+	--- The operating system refused the signal, and said so.
+	| { kind: "permission_denied", reason: string, message: string, op: string }
+	--- The platform does not do this (`terminate` on Windows).
+	| { kind: "unsupported", reason: string, message: string, op: string }
+	--- The platform failed in a way it does not say more about, or in a way that is none of the above.
+	| { kind: "failed", reason: string, message: string, op: string }
+
+--- The machine.
+export type vnd_sysinfo_Host = {
+	--- Its name on the network.
+	name: string?,
+	--- The operating system (`Ubuntu`, `Windows`, `Darwin`).
+	os_name: string?,
+	--- Its version.
+	os_version: string?,
+	--- The kernel's version.
+	kernel_version: string?,
+	--- The architecture.
+	arch: string,
+	--- Seconds since it started.
+	uptime_secs: number,
+	--- When it started, in seconds since the Unix epoch.
+	boot_time: number,
+}
+
+--- The load average of the last 1, 5 and 15 minutes (not on Windows).
+export type vnd_sysinfo_LoadAverage = {
+	--- The last minute.
+	one: number,
+	--- The last five minutes.
+	five: number,
+	--- The last fifteen minutes.
+	fifteen: number,
+}
+
+--- Memory, in bytes.
+export type vnd_sysinfo_Memory = {
+	--- All of it.
+	total: number,
+	--- What programs use.
+	used: number,
+	--- What a program could still get (free, and what the system can take back).
+	available: number,
+	--- What nothing holds at all.
+	free: number,
+}
+
+--- A network interface.
+export type vnd_sysinfo_NetworkInterface = {
+	--- Its name.
+	name: string,
+	--- Its hardware address, when it has one.
+	mac_address: string?,
+	--- Bytes received since the machine started (or the counter was reset).
+	received_bytes: number,
+	--- Bytes sent since the machine started (or the counter was reset).
+	transmitted_bytes: number,
+	--- Bytes per second received between the last two refreshes, over the time that really passed between them;
+	--- `nil` until there are two, and when the counter went back.
+	receive_rate: number?,
+	--- Bytes per second sent, the same way.
+	transmit_rate: number?,
+}
+
+--- A process as observed: its PID and its start time. It reads that process from the last refresh, and acts on
+--- it and on no other.
+declare extern type vnd_sysinfo_Process with
+	--- Its PID. Read-only.
+	pid: number
+	--- When it started, in seconds since the Unix epoch. With the PID, it is what makes it this process. Read-only.
+	start_time: number
+	--- Its name when it was observed: still here when it has exited. Read-only.
+	name: string
+	--- Is it still there as of the last refresh, with this PID and this start time.
+	alive: (self: vnd_sysinfo_Process) -> boolean
+	--- Its parent's PID, when it has one and the platform says; `nil` when it is gone.
+	parent_pid: (self: vnd_sysinfo_Process) -> number?
+	--- Its parent, as last measured, or `nil`. A parent that started after it is not its parent (a PID that was
+	--- reused).
+	parent: (self: vnd_sysinfo_Process) -> vnd_sysinfo_Process?
+	--- The processes whose parent it is, as last measured.
+	children: (self: vnd_sysinfo_Process) -> { vnd_sysinfo_Process }
+	--- Its executable's path, when the platform says (and the person running this may see it).
+	exe: (self: vnd_sysinfo_Process) -> string?
+	--- Its command line, one entry per argument; empty when the platform does not say, `nil` when it is gone.
+	command: (self: vnd_sysinfo_Process) -> { string }?
+	--- The name of the user it runs as, when the platform says and the user is known to the machine.
+	user: (self: vnd_sysinfo_Process) -> string?
+	--- What state it is in.
+	status: (self: vnd_sysinfo_Process) -> vnd_sysinfo_Status?
+	--- How much of a core it used between the last two refreshes, in percent: 100 is one whole core, and a
+	--- process of several threads passes it. `nil` until it has been in two refreshes, and when it is gone.
+	cpu_usage: (self: vnd_sysinfo_Process) -> number?
+	--- The memory it holds in RAM, in bytes.
+	memory: (self: vnd_sysinfo_Process) -> number?
+	--- The memory it has mapped, in bytes.
+	virtual_memory: (self: vnd_sysinfo_Process) -> number?
+	--- How long it has been running, in seconds, as of the last refresh.
+	run_time: (self: vnd_sysinfo_Process) -> number?
+	--- What binds a signal to this process: `pidfd`, `process_handle` or `start_time`. Pinned or not, it is the
+	--- one that applies to this handle.
+	binding: (self: vnd_sysinfo_Process) -> vnd_sysinfo_Binding
+	--- Is a native reference to the process held (`pin` was called, and `release` was not).
+	pinned: (self: vnd_sysinfo_Process) -> boolean
+	--- Hold a native reference to the process now, after checking it is the one observed, so that a later
+	--- `terminate` or `kill` can only reach it, even if its PID is reused in between. It is the binding that
+	--- applies, and `start_time` on a platform that has no native reference (then nothing is held). A process
+	--- that is gone or whose PID was reused is `process_gone` or `pid_reused`. Hold one only for a process a
+	--- person has selected: a reference is a descriptor or a handle, and it stays until `release`.
+	---
+	--- Yields the calling coroutine while it waits.
+	pin: (self: vnd_sysinfo_Process) -> (vnd_sysinfo_Binding?, vnd_sysinfo_Error?)
+	--- Let go of the native reference, if one is held.
+	release: (self: vnd_sysinfo_Process) -> ()
+	--- Ask it to stop (`SIGTERM`): it may handle the request, or ignore it. Never `kill`. `unsupported` on
+	--- Windows. `process_gone`, `pid_reused` and `permission_denied` as described in the module.
+	---
+	--- Yields the calling coroutine while it waits.
+	terminate: (self: vnd_sysinfo_Process) -> (boolean?, vnd_sysinfo_Error?)
+	--- Stop it, forced (`SIGKILL`, `TerminateProcess`): it is not asked.
+	---
+	--- Yields the calling coroutine while it waits.
+	kill: (self: vnd_sysinfo_Process) -> (boolean?, vnd_sysinfo_Error?)
+end
+
+--- How a process is doing.
+--- - `idle`: Being created (macOS, FreeBSD), or an idle kernel thread (Linux).
+--- - `run`: Running.
+--- - `sleep`: Sleeping, until something wakes it.
+--- - `stop`: Stopped, by a signal or a debugger.
+--- - `zombie`: Exited, and not yet reaped by its parent.
+--- - `tracing`: Being traced.
+--- - `dead`: Dead.
+--- - `wakekill`: Wakekill (Linux).
+--- - `waking`: Waking (Linux).
+--- - `parked`: Parked (Linux).
+--- - `lock_blocked`: Blocked on a lock (BSD).
+--- - `uninterruptible_disk_sleep`: Waiting on a disk, and not interruptible.
+--- - `suspended`: Suspended (Windows).
+--- - `unknown`: The platform's state is none of these.
+export type vnd_sysinfo_Status = "idle" | "run" | "sleep" | "stop" | "zombie" | "tracing" | "dead" | "wakekill" | "waking" | "parked" | "lock_blocked" | "uninterruptible_disk_sleep" | "suspended" | "unknown"
+
+--- Swap, in bytes. A machine with none is all zeros.
+export type vnd_sysinfo_Swap = {
+	--- All of it.
+	total: number,
+	--- What is in use.
+	used: number,
+	--- What is not.
+	free: number,
+}
+
+--- The machine as last measured. Clones share what is measured.
+declare extern type vnd_sysinfo_System with
+	--- Measure the CPU load (of the machine, of each core and of each process) and the process list, together:
+	--- they are one measurement over one interval. `too_soon` if the last was less than `MIN_CPU_INTERVAL_MS`
+	--- ago; nothing is measured then.
+	---
+	--- Yields the calling coroutine while it waits.
+	refresh_processes: (self: vnd_sysinfo_System) -> (boolean?, vnd_sysinfo_Error?)
+	--- Measure memory and swap.
+	---
+	--- Yields the calling coroutine while it waits.
+	refresh_memory: (self: vnd_sysinfo_System) -> (boolean?, vnd_sysinfo_Error?)
+	--- Measure the disks: the list, the space on each, and what each read and wrote since the last refresh.
+	---
+	--- Yields the calling coroutine while it waits.
+	refresh_disks: (self: vnd_sysinfo_System) -> (boolean?, vnd_sysinfo_Error?)
+	--- Measure the network interfaces: their counters, and the rate since the last refresh over the time that
+	--- really passed.
+	---
+	--- Yields the calling coroutine while it waits.
+	refresh_networks: (self: vnd_sysinfo_System) -> (boolean?, vnd_sysinfo_Error?)
+	--- Measure everything. `too_soon` is as for `refresh_processes`, and nothing is measured then.
+	---
+	--- Yields the calling coroutine while it waits.
+	refresh: (self: vnd_sysinfo_System) -> (boolean?, vnd_sysinfo_Error?)
+	--- The processor as last measured. `usage` (and each core's) is `nil` until two refreshes of
+	--- `refresh_processes` make a difference.
+	cpu: (self: vnd_sysinfo_System) -> vnd_sysinfo_CpuStatus
+	--- Memory as last measured, in bytes.
+	memory: (self: vnd_sysinfo_System) -> vnd_sysinfo_Memory
+	--- Swap as last measured, in bytes.
+	swap: (self: vnd_sysinfo_System) -> vnd_sysinfo_Swap
+	--- The disks as last measured, by mount point.
+	disks: (self: vnd_sysinfo_System) -> { vnd_sysinfo_DiskInfo }
+	--- The network interfaces as last measured, by name. A rate is `nil` for an interface that has been seen in
+	--- one refresh only.
+	networks: (self: vnd_sysinfo_System) -> { vnd_sysinfo_NetworkInterface }
+	--- The machine: names, versions and how long it has been up. Uptime is read when asked.
+	host: (self: vnd_sysinfo_System) -> vnd_sysinfo_Host
+	--- The readings this platform does not have at all, by name: they are `nil` (`load_average` is the one a
+	--- platform may lack, on Windows).
+	unsupported: (self: vnd_sysinfo_System) -> { string }
+	--- The process with this PID, as last measured, or `nil` when there is none. The handle names the process
+	--- that has the PID now, by its start time too.
+	process: (self: vnd_sysinfo_System, pid: number) -> vnd_sysinfo_Process?
+	--- Every process as last measured, in the order of their PIDs.
+	processes: (self: vnd_sysinfo_System) -> { vnd_sysinfo_Process }
+end
+
+export type vnd_sysinfo = {
+	--- The shortest time between two measurements of the CPU load, in milliseconds: a refresh sooner than this is
+	--- `too_soon`. It is `sysinfo`'s own minimum (a load over less is noise).
+	MIN_CPU_INTERVAL_MS: number,
+	--- What this platform can do with a process.
+	---
+	--- ```luau
+	--- local can = sysinfo.capabilities()
+	--- assert(can.kill)
+	--- -- `terminate` is `false` on Windows, which has no request to stop an arbitrary process
+	--- assert(can.binding == "pidfd" or can.binding == "process_handle" or can.binding == "start_time")
+	--- ```
+	capabilities: () -> vnd_sysinfo_Capabilities,
+	--- A new `System`: measured once, so memory, disks, networks and the process list are there to read and the loads
+	--- are `nil` until the next refresh (after `MIN_CPU_INTERVAL_MS`).
+	---
+	--- Yields the calling coroutine while it waits.
+	system: () -> (vnd_sysinfo_System?, vnd_sysinfo_Error?),
+}
+
 -- ===== vnd:testcontainers_modules =====
 
 --- The kinds of `vnd_testcontainers_modules_ContainerError`.
@@ -7747,6 +8064,7 @@ declare require:
 	& ((path: "vnd:serde_yaml") -> vnd_serde_yaml)
 	& ((path: "vnd:sqlx_mysql") -> vnd_sqlx_mysql)
 	& ((path: "vnd:sqlx_postgres") -> vnd_sqlx_postgres)
+	& ((path: "vnd:sysinfo") -> vnd_sysinfo)
 	& ((path: "vnd:testcontainers_modules") -> vnd_testcontainers_modules)
 	& ((path: "vnd:toml") -> vnd_toml)
 	& ((path: "vos:app") -> vos_app)
