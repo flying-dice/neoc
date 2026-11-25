@@ -42,10 +42,14 @@ local function read_until(pty: vnd_portable_pty_Pty, needle: string): boolean
   return true
 end
 
--- a command: what it wrote, and the exit code is its own
-local pty = sh(if windows then "echo out& exit 7" else "printf out; exit 7", { rows = 30, cols = 100 })
+-- a command: what it wrote, and the exit code is its own. A process that has ended has no id, so on Unix the shell
+-- waits for a line before it exits: the id is read while it surely runs (a `printf out; exit 7` could end first).
+local pty = sh(if windows then "echo out& exit 7" else "printf out; read _; exit 7", { rows = 30, cols = 100 })
 local had_id = type(pty:process_id()) == "number"
 local wrote = read_until(pty, "out")
+if not windows then
+  assert(pty:write(enter))
+end
 local status = assert(pty:wait())
 out.command = {
   had_id,
