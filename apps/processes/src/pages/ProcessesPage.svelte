@@ -1,5 +1,6 @@
 <!-- @page ProcessesPage — the whole app: the views and how often the machine is read beside the processes (or the machine as a whole), the process that was picked looked at in the next column, and the question before one is ended; driven by one window's Processes state -->
 <script lang="ts">
+  import { untrack } from 'svelte'
   import OverviewPane from '../organisms/OverviewPane.svelte'
   import ProcessInspector from '../organisms/ProcessInspector.svelte'
   import ProcessList from '../organisms/ProcessList.svelte'
@@ -16,14 +17,29 @@
 
   // in a window too narrow for all the columns, the split view shows one: the kit says when, the same for every app
   let narrow = $state(false)
-  // whether the page is in front (a hidden one is not read, and is read as soon as it is back)
-  let showing = $state(!document.hidden)
+  // whether the page is in front: the browser's own tab is showing it (`document.hidden`) and the shell has it on the
+  // stage. A window the shell minimizes or sends away is not `document.hidden` (its frame is kept, with `display: none`),
+  // but it has no box on screen, which is what the observer says
+  let root = $state<HTMLElement>()
+  let tabShowing = $state(!document.hidden)
+  let onStage = $state(true)
+  const showing = $derived(tabShowing && onStage)
   const overview = $derived(processes.overview)
   const detail = $derived(processes.detail)
 
   $effect(() => {
-    void processes.load()
+    untrack(() => void processes.load())
     return processes.listen()
+  })
+
+  // the window's choice is the backend's to hold only while the window is here: it is let go when the window closes
+  $effect(() => {
+    const leaving = (): void => processes.close()
+    window.addEventListener('pagehide', leaving)
+    return () => {
+      window.removeEventListener('pagehide', leaving)
+      leaving()
+    }
   })
 
   // the machine is read again as often as the person chose, while the window is in front: a hidden window reads nothing
@@ -34,19 +50,34 @@
     return () => clearInterval(timer)
   })
 
+  // what happened while the window was away is read as soon as it is back
+  let wasShowing = true
+  $effect(() => {
+    const now = showing
+    if (now && !wasShowing) untrack(() => void processes.refresh())
+    wasShowing = now
+  })
+
   $effect(() => {
     const changed = (): void => {
-      const now = !document.hidden
-      // what happened while the window was hidden is read as soon as it is back
-      if (now && !showing) void processes.refresh()
-      showing = now
+      tabShowing = !document.hidden
     }
     document.addEventListener('visibilitychange', changed)
     return () => document.removeEventListener('visibilitychange', changed)
   })
+
+  $effect(() => {
+    if (!root || typeof IntersectionObserver === 'undefined') return
+    const watcher = new IntersectionObserver((entries) => {
+      const latest = entries.at(-1)
+      if (latest) onStage = latest.isIntersecting
+    })
+    watcher.observe(root)
+    return () => watcher.disconnect()
+  })
 </script>
 
-<main class="app" data-testid="processes-app">
+<main class="app" bind:this={root} data-testid="processes-app" data-showing={showing}>
   <ui-split-view column={processes.pane} oncollapsedchange={(e) => (narrow = e.detail.collapsed)}>
     <div slot="sidebar">
       <ViewSidebar
@@ -91,6 +122,7 @@
           {detail}
           canTerminate={overview.canTerminate}
           endable={processes.endable}
+          unavailable={processes.unavailable}
           ending={processes.ending}
           asking={processes.asking}
           refused={processes.refused}

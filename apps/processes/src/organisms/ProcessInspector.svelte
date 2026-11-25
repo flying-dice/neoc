@@ -10,6 +10,8 @@
     canTerminate: boolean
     /** The process is still there and no call to end it is on its way. */
     endable: boolean
+    /** Why a process that is there cannot be ended, when it cannot (it can still be looked at). */
+    unavailable?: string | null
     /** The process is being ended. */
     ending?: boolean
     /** The question being asked before it is ended. */
@@ -27,7 +29,7 @@
     onfollow: (related: Related) => void
   }
 
-  let { detail, canTerminate, endable, ending = false, asking = null, refused = null, notice = null, back = false, onback, onask, onconfirm, onkeep, onfollow }: Props = $props()
+  let { detail, canTerminate, endable, unavailable = null, ending = false, asking = null, refused = null, notice = null, back = false, onback, onask, onconfirm, onkeep, onfollow }: Props = $props()
 
   const state = $derived(detail.alive ? statusLabel(detail.status) : 'Quit')
   const command = $derived(commandLine(detail.command))
@@ -67,6 +69,9 @@
       <p class="ios-footnote ios-secondary note">
         {canTerminate ? 'Terminate asks it to quit. Force Terminate stops it at once.' : 'This system cannot ask a program to quit. Force Terminate stops it at once.'}
       </p>
+      {#if unavailable}
+        <ui-banner tone="warning" data-testid="processes-unavailable">{unavailable}</ui-banner>
+      {/if}
       {#if refused}
         <ui-banner tone="error" data-testid="processes-refused">
           <strong>Can’t Terminate {refused.name}</strong>

@@ -483,9 +483,19 @@ async fn a_pinned_process_is_held_until_it_is_released_and_a_signal_goes_through
 
         process:release()
         assert(not process:pinned() and process:binding() == "start_time")
+        assert(process:released())
 
-        assert(assert(process:pin()))
-        assert(process:kill())
+        -- a released handle is finished: it neither signals nor takes a new reference
+        local _, late = process:kill()
+        assert(late ~= nil and late.kind == "released", "a late signal must not reacquire")
+        local _, again = process:pin()
+        assert(again ~= nil and again.kind == "released", "a released handle is not pinned again")
+        assert(process:alive(), "the process itself was left alone")
+
+        local fresh = assert(system:process(pid))
+        assert(not fresh:released())
+        assert(assert(fresh:pin()))
+        assert(fresh:kill())
         "#,
         (),
     )
@@ -533,4 +543,75 @@ async fn on_linux_a_pinned_process_is_held_by_a_pidfd() {
         assert(process:kill())
         "#)
     .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_process_whose_start_time_is_not_known_is_neither_pinned_nor_signalled() {
+    let (lua, children) = engine();
+    let pid = start(sleeper(), &children);
+    let state = Arc::new(Mutex::new(State::new()));
+    // a start time of 0 is what the platform gives for some system processes
+    let unknown = Process::forged(&state, pid, 0, "system");
+    lua.globals().set("unknown", unknown).expect("a handle");
+    let () = run_with(
+        &lua,
+        r#"
+        local _, pinned = unknown:pin()
+        assert(pinned ~= nil and pinned.kind == "unknown_identity", "pin must be refused")
+        assert(not unknown:pinned())
+        local _, killed = unknown:kill()
+        assert(killed ~= nil and killed.kind == "unknown_identity", "kill must be refused")
+        local _, asked = unknown:terminate()
+        assert(asked ~= nil and (asked.kind == "unknown_identity" or asked.kind == "unsupported"))
+        "#,
+        (),
+    )
+    .await;
+    assert!(children.lock()[0].0.try_wait().expect("status").is_none(), "the real process was left alone");
+}
+
+#[test]
+fn identity_is_the_start_time_and_the_finer_one_where_there_is_one() {
+    assert!(native::same_identity(10, None, Some(10), None).is_ok());
+    assert!(matches!(native::same_identity(10, None, None, None), Err(Error::ProcessGone)));
+    assert!(matches!(native::same_identity(10, None, Some(11), None), Err(Error::PidReused)));
+    // the same second, and the finer time says it is another process
+    assert!(native::same_identity(10, Some(500), Some(10), Some(500)).is_ok());
+    assert!(matches!(native::same_identity(10, Some(500), Some(10), Some(501)), Err(Error::PidReused)));
+    // a finer time that was taken and cannot be read now: not the process that was observed
+    assert!(matches!(native::same_identity(10, Some(500), Some(10), None), Err(Error::ProcessGone)));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn on_linux_the_finer_start_time_is_read_from_the_process_itself() {
+    let me = std::process::id();
+    let first = native::fine_start(me).expect("this process has a start in ticks");
+    assert_eq!(native::fine_start(me), Some(first), "it does not change while the process lives");
+    assert_eq!(native::fine_start(u32::MAX), None, "no such process");
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn on_linux_a_pid_reused_in_the_same_second_is_told_apart() {
+    let (lua, children) = engine();
+    let pid = start(sleeper(), &children);
+    let real = start_time_of(pid);
+    let fine = native::fine_start(pid).expect("a running child has one");
+    let state = Arc::new(Mutex::new(State::new()));
+    // observed in the same second as the process that has the PID now, but not at the same tick
+    let lookalike = Process::forged_fine(&state, pid, real, fine + 1, "lookalike");
+    lua.globals().set("lookalike", lookalike).expect("a handle");
+    let () = run_with(
+        &lua,
+        r#"
+        local _, pinned = lookalike:pin()
+        assert(pinned ~= nil and pinned.kind == "pid_reused", "pin must be refused")
+        local _, killed = lookalike:kill()
+        assert(killed ~= nil and killed.kind == "pid_reused", "kill must be refused")
+        "#,
+        (),
+    )
+    .await;
+    assert!(children.lock()[0].0.try_wait().expect("status").is_none(), "the real process was left alone");
 }

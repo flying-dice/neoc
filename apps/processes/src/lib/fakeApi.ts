@@ -1,8 +1,10 @@
 /**
  * A stand-in for the Processes app's backend, for stories and unit tests: a machine kept in the page, with no host and
  * no operating system. It follows the backend's rules (server/main.luau): a rate has no value until the second reading,
- * a process is chosen before it can be ended, only the process that was chosen is ever signalled (a PID that was
- * reused is another process), asking it to quit is not forcing it, and the system may refuse.
+ * a process is chosen before it can be ended (the backend issues an id for each choice, and only that id acts), only
+ * the process that was chosen is ever signalled (a PID that was reused is another process), a choice that is no
+ * longer held is refused and never made again, a process that cannot be held for ending can still be looked at,
+ * asking it to quit is not forcing it, and the system may refuse.
  */
 import type { Cpu, Detail, Disk, Machine, Memory, Network, Overview, ProcessRef, ProcessRow, Snapshot, Swap } from 'app:rpc'
 import type { ProcessesEvents, ProcessesRpc } from './processes.svelte'
@@ -20,8 +22,13 @@ export interface Program extends ProcessRef {
   parent?: number
   /** It handles the request to quit and carries on: only a forced stop ends it. */
   stubborn?: boolean
-  /** The system refuses to let this window end it (it belongs to another user). */
+  /** The system refuses the signal (it belongs to another user): the window may ask, and is told no. */
   protected?: boolean
+  /**
+   * It can be looked at but not held for ending: the system would not let Processes hold it with the right to end it
+   * (`permission`), or the platform does not know which process it is (`unknown`, a start time of 0).
+   */
+  blocked?: 'permission' | 'unknown'
   /** It is the program the app runs in. */
   own?: boolean
 }
@@ -39,12 +46,16 @@ export interface FakeBackend {
   start(program: Program): void
   /** The signals sent, in order: `terminate 812` or `kill 812`. */
   signals(): readonly string[]
-  /** The processes the backend holds a reference to. */
+  /** The processes the backend holds a choice of, one per choice. */
   held(): readonly ProcessRef[]
+  /** The ids of the choices the backend holds. */
+  ids(): readonly string[]
   /** How many readings were taken. */
   readings(): number
-  /** The backend loses what it held (it started afresh). */
+  /** The backend loses what it held (it started afresh): ids it issued before are not its own any more. */
   restart(): void
+  /** The backend lets go of one choice (more were held than any real use needs). */
+  evict(selection: string): void
 }
 
 export interface FakeOptions {
@@ -131,7 +142,10 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
   const pace = options.pace ?? 0
   const canTerminate = !options.cannotTerminate
   let programs: Program[] = (options.programs ?? PROGRAMS).map((p) => ({ ...p }))
-  let pins: ProcessRef[] = []
+  // the choices the backend holds, by the id it issued, and which run of the backend issued them
+  let selections = new Map<string, ProcessRef>()
+  let run = 1
+  let issued = 0
   const signals: string[] = []
   let readings = 0
   const listeners = new Map<string, Set<(data: unknown) => void>>()
@@ -149,7 +163,6 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
     )
 
   const find = (ref: ProcessRef): Program | undefined => programs.find((p) => p.pid === ref.pid && p.startTime === ref.startTime)
-  const held = (ref: ProcessRef): boolean => pins.some((p) => p.pid === ref.pid && p.startTime === ref.startTime)
   // a process that was chosen and has exited is still known to the backend, as it was
   const known = new Map<string, Program>()
   const keyOf = (ref: ProcessRef): string => `${ref.pid}:${ref.startTime}`
@@ -171,11 +184,17 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
     name: p.name,
     ...(p.user === undefined ? {} : { user: p.user })
   })
+  const BLOCKED: Record<NonNullable<Program['blocked']>, (name: string) => string> = {
+    permission: (name) => `This system did not let Processes stop ${name}. It belongs to a user with more rights than yours: ask an administrator.`,
+    unknown: (name) => `Processes cannot tell ${name} apart from another program that is given its number, so it will not stop it.`
+  }
   const detailOf = (ref: ProcessRef): Detail | undefined => {
     const p = find(ref)
     if (!p) {
       const was = known.get(keyOf(ref))
-      return was ? { pid: was.pid, startTime: was.startTime, name: was.name, alive: false, command: [], children: [] } : undefined
+      return was
+        ? { pid: was.pid, startTime: was.startTime, name: was.name, alive: false, control: { available: false, reason: `${was.name} has quit.` }, command: [], children: [] }
+        : undefined
     }
     const parent = programs.find((q) => q.pid === p.parent)
     return {
@@ -183,6 +202,7 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
       startTime: p.startTime,
       name: p.name,
       alive: true,
+      control: p.blocked ? { available: false, reason: BLOCKED[p.blocked](p.name) } : { available: true },
       ...(p.status === undefined ? {} : { status: p.status }),
       ...(p.user === undefined ? {} : { user: p.user }),
       ...(sampled() && p.cpu !== undefined ? { cpu: p.cpu } : {}),
@@ -221,8 +241,10 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
         const snapshot: Snapshot = { overview: overview(), processes: programs.map(rowOf) }
         const selected = params?.selected
         if (selected) {
-          const detail = held(selected) || find(selected) ? detailOf(selected) : undefined
+          const ref = selections.get(selected)
+          const detail = ref ? detailOf(ref) : undefined
           if (detail) snapshot.detail = detail
+          else snapshot.selectionLost = true
         }
         return snapshot
       }),
@@ -230,18 +252,22 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
       answered(() => {
         const p = find(process)
         if (!p) throw new Refused('That program has quit.')
-        if (!held(process)) pins = [...pins, { pid: process.pid, startTime: process.startTime }]
+        issued += 1
+        const selection = `run${run}:${issued}`
+        selections.set(selection, { pid: process.pid, startTime: process.startTime })
         remember(p)
-        return detailOf(process) as Detail
+        return { selection, detail: detailOf(process) as Detail }
       }),
-    release: ({ process }) =>
+    release: ({ selection }) =>
       answered(() => {
-        pins = pins.filter((p) => !(p.pid === process.pid && p.startTime === process.startTime))
+        selections.delete(selection)
         return { released: true }
       }),
-    terminate: ({ process, force }) =>
+    terminate: ({ selection, force }) =>
       answered(() => {
-        if (!held(process)) throw new Refused('Choose the program again: Processes no longer holds it.')
+        // only what this window chose and the backend still holds: nothing is chosen again on the way
+        const process = selections.get(selection)
+        if (!process) throw new Refused('Choose the program again: Processes no longer holds it.')
         const p = find(process)
         const was = known.get(keyOf(process))
         const name = p?.name ?? was?.name ?? 'The program'
@@ -249,11 +275,10 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
           const reused = programs.some((q) => q.pid === process.pid)
           throw new Refused(reused ? `${name} has quit, and another program has its number now. Nothing was stopped.` : `${name} has already quit. Nothing was stopped.`)
         }
+        if (p.blocked) throw new Refused(BLOCKED[p.blocked](name))
         if (p.own) throw new Refused('Processes runs inside this program, so it cannot stop it.')
         if (!force && !canTerminate) throw new Refused('This system cannot ask a program to quit. Use Force Terminate.')
-        if (p.protected) {
-          throw new Refused(`This system did not let Processes stop ${name}. It belongs to a user with more rights than yours: ask an administrator.`)
-        }
+        if (p.protected) throw new Refused(BLOCKED.permission(name))
         signals.push(`${force ? 'kill' : 'terminate'} ${p.pid}`)
         if (force || !p.stubborn) programs = programs.filter((q) => q !== p)
         return { sent: true, force }
@@ -287,10 +312,15 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
       programs = [...programs, { ...next }]
     },
     signals: () => signals,
-    held: () => pins,
+    held: () => [...selections.values()],
+    ids: () => [...selections.keys()],
     readings: () => readings,
     restart() {
-      pins = []
+      selections = new Map()
+      run += 1
+    },
+    evict(selection) {
+      selections.delete(selection)
     }
   }
 }
@@ -307,7 +337,9 @@ export function createFailingBackend(message: string): FakeBackend {
     start: () => {},
     signals: () => [],
     held: () => [],
+    ids: () => [],
     readings: () => 0,
-    restart: () => {}
+    restart: () => {},
+    evict: () => {}
   }
 }

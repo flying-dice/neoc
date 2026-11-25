@@ -42,9 +42,13 @@
 //! selection kept by a person is bound at the moment they made it; an unpinned process is bound for the one call. A
 //! platform that has no such reference (macOS, or a Linux kernel older than 5.3) checks the start time again
 //! immediately before the signal, and the gap that is left there is real: `process:binding()` says which applies
-//! (`pidfd`, `process_handle` or `start_time`). The start time is compared in whole seconds, as `sysinfo` reads it, so
-//! a PID reused by a process that started in the same second as the previous one is not told apart on any platform.
-//! Nothing in this module signals a PID after an identity or permission failure.
+//! (`pidfd`, `process_handle` or `start_time`). The start time is compared in whole seconds, as `sysinfo` reads it;
+//! where the platform gives a finer one (Linux: the start in clock ticks; Windows: the creation time) it is taken when
+//! the process is *first observed* and compared again when the handle is acquired, so a PID reused in the same second
+//! is told apart there, and not on macOS (the residual). A process whose start time is not known (0) has nothing to
+//! bind a signal to: `pin`, `terminate` and `kill` refuse it (`unknown_identity`). `process:release()` finishes the
+//! handle (`process:released()`): it signals nothing afterwards and is not pinned again, so a late signal cannot take a
+//! new reference. Nothing in this module signals a PID after an identity or permission failure.
 //!
 //! **Signals.** `terminate()` asks the process to stop (`SIGTERM`) and is never turned into `kill()`. Windows has no
 //! such request for a process in general, so there it is `unsupported`, and `capabilities().terminate` is `false`.
@@ -59,7 +63,7 @@
 //!
 //! The API's rules:
 //! - A failure is the typed `Error` (`too_soon`, `process_gone`, `pid_reused`, `own_process`, `permission_denied`,
-//!   `unsupported`, `failed`): a script reads `err.kind`, and for `too_soon` how long to wait.
+//!   `unknown_identity`, `released`, `unsupported`, `failed`): a script reads `err.kind`, and for `too_soon` how long to wait.
 //! - A reading that is not there (not sampled yet, not reported by the platform, a process that is gone) is `nil`,
 //!   never `0` and never an error.
 
@@ -119,6 +123,14 @@ pub mod sysinfo {
             /// What the system said.
             reason: String,
         },
+        /// The process's start time is not known (0: some system processes on macOS and Windows), so nothing tells it
+        /// apart from another that is given its PID: no signal is sent to it, and it is not pinned.
+        #[error("the process's start time is not known, so it cannot be told apart from another process")]
+        UnknownIdentity,
+        /// The native reference to the process was released: this handle signals nothing any more. Take a handle
+        /// from the system again.
+        #[error("the reference to the process was released")]
+        Released,
         /// The platform does not do this (`terminate` on Windows).
         #[error("not supported: {reason}")]
         Unsupported {
@@ -375,6 +387,8 @@ pub mod sysinfo {
     /// A process, as the refreshes have met it: when it started, and in how many refreshes in a row.
     struct Seen {
         start_time: u64,
+        /// The finer start time the platform gave when the process was first observed (see `native`).
+        fine: Option<u64>,
         samples: u32,
     }
 
@@ -460,10 +474,14 @@ pub mod sysinfo {
                             seen.samples = seen.samples.saturating_add(1);
                         } else {
                             // the PID is another process now: it starts again, with no load
-                            *seen = Seen { start_time, samples: 1 };
+                            *seen = Seen { start_time, fine: native::fine_start(pid.as_u32()), samples: 1 };
                         }
                     })
-                    .or_insert(Seen { start_time, samples: 1 });
+                    .or_insert_with(|| Seen {
+                        start_time,
+                        fine: native::fine_start(pid.as_u32()),
+                        samples: 1,
+                    });
             }
         }
 
@@ -787,7 +805,7 @@ pub mod sysinfo {
             state
                 .system
                 .process(si::Pid::from_u32(pid))
-                .map(|process| Process::observed(&self.state, process))
+                .map(|process| Process::observed(&self.state, &state, process))
         }
 
         /// Every process as last measured, in the order of their PIDs.
@@ -797,7 +815,7 @@ pub mod sysinfo {
                 .system
                 .processes()
                 .values()
-                .map(|process| Process::observed(&self.state, process))
+                .map(|process| Process::observed(&self.state, &state, process))
                 .collect::<Vec<_>>();
             processes.sort_by_key(|process| process.pid);
             processes
@@ -836,19 +854,36 @@ pub mod sysinfo {
         state: Arc<Mutex<State>>,
         pid: u32,
         start_time: u64,
+        /// The finer start time taken when it was first observed, where the platform gives one.
+        fine: Option<u64>,
         name: String,
-        /// The native reference to it, once pinned. Clones share it.
-        held: Arc<Mutex<Option<native::Held>>>,
+        /// The native reference to it, once pinned, and whether it was let go. Clones share it.
+        held: Arc<Mutex<Hold>>,
+    }
+
+    /// Where a process's native reference is: not asked for yet (a signal then binds for the one call), held, or
+    /// released. A released handle is finished: it does not take a new reference (take another handle from the system).
+    enum Hold {
+        Never,
+        Held(Option<native::Held>),
+        Released,
     }
 
     impl Process {
-        pub(super) fn observed(state: &Arc<Mutex<State>>, process: &si::Process) -> Self {
+        pub(super) fn observed(state: &Arc<Mutex<State>>, locked: &State, process: &si::Process) -> Self {
+            let pid = process.pid().as_u32();
+            let start_time = process.start_time();
             Self {
                 state: state.clone(),
-                pid: process.pid().as_u32(),
-                start_time: process.start_time(),
+                pid,
+                start_time,
+                fine: locked
+                    .seen
+                    .get(&pid)
+                    .filter(|seen| seen.start_time == start_time)
+                    .and_then(|seen| seen.fine),
                 name: text(process.name()),
-                held: Arc::new(Mutex::new(None)),
+                held: Arc::new(Mutex::new(Hold::Never)),
             }
         }
 
@@ -859,9 +894,22 @@ pub mod sysinfo {
                 state: state.clone(),
                 pid,
                 start_time,
+                fine: None,
                 name: name.to_owned(),
-                held: Arc::new(Mutex::new(None)),
+                held: Arc::new(Mutex::new(Hold::Never)),
             }
+        }
+
+        /// A handle that observed a finer start time than the process has: the same second, another process.
+        #[cfg(all(test, target_os = "linux"))]
+        pub(super) fn forged_fine(
+            state: &Arc<Mutex<State>>,
+            pid: u32,
+            start_time: u64,
+            fine: u64,
+            name: &str,
+        ) -> Self {
+            Self { fine: Some(fine), ..Self::forged(state, pid, start_time, name) }
         }
 
         fn read<R>(&self, f: impl FnOnce(&State, &si::Process) -> R) -> Option<R> {
@@ -872,10 +920,13 @@ pub mod sysinfo {
 
         /// Send the signal to the observed process (and nothing else), on the blocking pool.
         async fn signal(&self, sig: Sig) -> Result<(), Error> {
-            let (pid, start_time, held) = (self.pid, self.start_time, self.held.clone());
+            let (pid, start_time, fine, held) = (self.pid, self.start_time, self.fine, self.held.clone());
             blocking(move || {
                 if pid == std::process::id() {
                     return Err(Error::OwnProcess);
+                }
+                if start_time == 0 {
+                    return Err(Error::UnknownIdentity);
                 }
                 if sig == Sig::Terminate && !native::capability().terminate {
                     return Err(Error::Unsupported {
@@ -883,14 +934,15 @@ pub mod sysinfo {
                             .to_owned(),
                     });
                 }
-                let held = held.lock();
-                match held.as_ref() {
+                match &*held.lock() {
+                    // a reference that was let go signals nothing, and is not taken again
+                    Hold::Released => Err(Error::Released),
                     // bound when it was pinned
-                    Some(held) => native::send(pid, start_time, Some(held), sig),
+                    Hold::Held(held) => native::send(pid, start_time, fine, held.as_ref(), sig),
                     // bound for this one call
-                    None => {
-                        let once = native::acquire(pid, start_time)?;
-                        native::send(pid, start_time, once.as_ref(), sig)
+                    Hold::Never => {
+                        let once = native::acquire(pid, start_time, fine)?;
+                        native::send(pid, start_time, fine, once.as_ref(), sig)
                     }
                 }
             })
@@ -936,7 +988,8 @@ pub mod sysinfo {
             let state = self.state.lock();
             let process = state.find(self.pid, self.start_time)?;
             let parent = state.system.process(process.parent()?)?;
-            (parent.start_time() <= process.start_time()).then(|| Process::observed(&self.state, parent))
+            (parent.start_time() <= process.start_time())
+                .then(|| Process::observed(&self.state, &state, parent))
         }
 
         /// The processes whose parent it is, as last measured.
@@ -951,7 +1004,7 @@ pub mod sysinfo {
                 .processes()
                 .values()
                 .filter(|child| child.parent() == Some(me) && child.start_time() >= self.start_time)
-                .map(|child| Process::observed(&self.state, child))
+                .map(|child| Process::observed(&self.state, &state, child))
                 .collect::<Vec<_>>();
             children.sort_by_key(|child| child.pid);
             children
@@ -1010,35 +1063,57 @@ pub mod sysinfo {
         /// What binds a signal to this process: `pidfd`, `process_handle` or `start_time`. Pinned or not, it is the
         /// one that applies to this handle.
         pub fn binding(&self) -> Binding {
-            native::binding_of(self.held.lock().as_ref())
+            match &*self.held.lock() {
+                Hold::Held(held) => native::binding_of(held.as_ref()),
+                Hold::Never | Hold::Released => Binding::StartTime,
+            }
         }
 
         /// Is a native reference to the process held (`pin` was called, and `release` was not).
         pub fn pinned(&self) -> bool {
-            self.held.lock().is_some()
+            matches!(&*self.held.lock(), Hold::Held(Some(_)))
+        }
+
+        /// Was its reference let go (`release` after `pin`). Such a handle signals nothing and cannot be pinned again:
+        /// the process has to be taken from the system again.
+        pub fn released(&self) -> bool {
+            matches!(&*self.held.lock(), Hold::Released)
         }
 
         /// Hold a native reference to the process now, after checking it is the one observed, so that a later
         /// `terminate` or `kill` can only reach it, even if its PID is reused in between. It is the binding that
         /// applies, and `start_time` on a platform that has no native reference (then nothing is held). A process
         /// that is gone or whose PID was reused is `process_gone` or `pid_reused`. Hold one only for a process a
-        /// person has selected: a reference is a descriptor or a handle, and it stays until `release`.
+        /// person has selected: a reference is a descriptor or a handle, and it stays until `release`. A process whose
+        /// start time is not known is `unknown_identity`; a handle that was released is `released`.
         #[host("Wait")]
         pub async fn pin(&self) -> Result<Binding, Error> {
-            let (pid, start_time, held) = (self.pid, self.start_time, self.held.clone());
+            let (pid, start_time, fine, held) = (self.pid, self.start_time, self.fine, self.held.clone());
             blocking(move || {
-                let mut held = held.lock();
-                if held.is_none() {
-                    *held = native::acquire(pid, start_time)?;
+                if start_time == 0 {
+                    return Err(Error::UnknownIdentity);
                 }
-                Ok(native::binding_of(held.as_ref()))
+                let mut hold = held.lock();
+                match &*hold {
+                    Hold::Released => return Err(Error::Released),
+                    Hold::Held(_) => {}
+                    Hold::Never => *hold = Hold::Held(native::acquire(pid, start_time, fine)?),
+                }
+                Ok(match &*hold {
+                    Hold::Held(held) => native::binding_of(held.as_ref()),
+                    Hold::Never | Hold::Released => Binding::StartTime,
+                })
             })
             .await
         }
 
-        /// Let go of the native reference, if one is held.
+        /// Let go of the native reference, if one is held. The handle is finished then: it signals nothing and is not
+        /// pinned again (`released()` says so), so a signal that comes late cannot take a new reference.
         pub fn release(&self) {
-            *self.held.lock() = None;
+            let mut hold = self.held.lock();
+            if matches!(&*hold, Hold::Held(_)) {
+                *hold = Hold::Released;
+            }
         }
 
         /// Ask it to stop (`SIGTERM`): it may handle the request, or ignore it. Never `kill`. `unsupported` on

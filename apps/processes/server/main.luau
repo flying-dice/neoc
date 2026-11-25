@@ -4,9 +4,10 @@
 -- person lets them (every second, two, five, or not at all), and every answer is the whole reading, so what a window
 -- draws is what the backend has.
 --
--- Ending a program is the one thing here that can do harm, so it is narrow: it is only ever the program the person
--- chose, held by a reference that a reused PID cannot move; asking it to quit (`terminate`) is never turned into
--- forcing it; and what the operating system refused is told to the person in a sentence.
+-- Ending a program is the one thing here that can do harm, so it is narrow: it is only ever the program a window chose,
+-- through the id the backend issued for that choice, held by a reference that a reused PID cannot move; a choice that
+-- is no longer held is refused, never made again; asking it to quit (`terminate`) is never turned into forcing it; and
+-- what the operating system refused is told to the person in a sentence.
 local monitor = require("./monitor")
 local pins = require("./pins")
 local rpc = require("../.app/rpc")
@@ -20,6 +21,10 @@ local function sentence(err: vnd_sysinfo_Error, name: string, force: boolean): s
     return `{name} has quit, and another program has its number now. Nothing was stopped.`
   elseif kind == "own_process" then
     return "Processes runs inside this program, so it cannot stop it."
+  elseif kind == "unknown_identity" then
+    return `Processes cannot tell {name} apart from another program that is given its number, so it will not stop it.`
+  elseif kind == "released" then
+    return "Choose the program again: Processes no longer holds it."
   elseif kind == "permission_denied" then
     return `This system did not let Processes stop {name}. It belongs to a user with more rights than yours: ask an administrator.`
   elseif kind == "unsupported" then
@@ -28,6 +33,25 @@ local function sentence(err: vnd_sysinfo_Error, name: string, force: boolean): s
       else "This system cannot ask a program to quit. Use Force Terminate."
   end
   return if err.message ~= "" then err.message else `{name} could not be stopped, and the system did not say why.`
+end
+
+local LOST = "Choose the program again: Processes no longer holds it."
+
+-- Whether the window may offer to end the program, and if not, why: looking at a program never needs the right to end it.
+local function controlOf(selection: pins.Selection): rpc.Control
+  local process = selection.process
+  if not process:alive() then
+    return { available = false, reason = `{process.name} has quit.` }
+  end
+  local blocked = selection.blocked
+  if blocked then
+    return { available = false, reason = sentence(blocked, process.name, true) }
+  end
+  return { available = true }
+end
+
+local function detailOf(selection: pins.Selection): rpc.Detail
+  return monitor.detail(selection.process, controlOf(selection))
 end
 
 local handlers: rpc.Handlers = {
@@ -41,10 +65,12 @@ local handlers: rpc.Handlers = {
     local snapshot: rpc.Snapshot = { overview = overview, processes = processes }
     local selected = params.selected
     if selected then
-      -- the process as the person chose it, even after it has quit; one that was not chosen, as it is now if it is
-      local process = pins.get(selected) or monitor.find(current, selected)
-      if process then
-        snapshot.detail = monitor.detail(process)
+      -- the process as the window chose it, even after it has quit; an id that is not held is said so, and never looked up by PID
+      local selection = pins.get(selected)
+      if selection then
+        snapshot.detail = detailOf(selection)
+      else
+        snapshot.selectionLost = true
       end
     end
     return snapshot
@@ -59,28 +85,28 @@ local handlers: rpc.Handlers = {
     if not process then
       return ctx:fail("That program has quit.")
     end
-    -- a start time the platform did not give (some system processes) cannot tell this process from one that is given its PID
-    if process.start_time == 0 then
-      return ctx:fail(
-        `Processes cannot tell {process.name} apart from another program that is given its number, so it will not stop it.`
-      )
+    local selection, err = pins.hold(process)
+    if not selection then
+      return ctx:fail(sentence(err :: vnd_sysinfo_Error, process.name, false))
     end
-    local err = pins.hold(process)
-    if err then
-      return ctx:fail(sentence(err, process.name, false))
-    end
-    return monitor.detail(process)
+    return { selection = selection.id, detail = detailOf(selection) }
   end,
 
   release = function(_ctx, params)
-    pins.release(params.process)
+    pins.release(params.selection)
     return { released = true }
   end,
 
   terminate = function(ctx, params)
-    local process = pins.get(params.process)
-    if not process then
-      return ctx:fail("Choose the program again: Processes no longer holds it.")
+    -- only what this window chose, and still holds: nothing is chosen again on the way
+    local selection = pins.get(params.selection)
+    if not selection then
+      return ctx:fail(LOST)
+    end
+    local process = selection.process
+    local blocked = selection.blocked
+    if blocked then
+      return ctx:fail(sentence(blocked, process.name, params.force))
     end
     local err
     if params.force then

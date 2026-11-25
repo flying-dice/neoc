@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { createFailingBackend, createFakeBackend, program, PROGRAMS, type FakeBackend } from './fakeApi'
-import { matching, Processes, same, sorted } from './processes.svelte'
+import { LOST, matching, Processes, same, sorted } from './processes.svelte'
 
 /** A window on a fake backend, listening, with two readings taken (the first has no rates). */
 async function opened(backend: FakeBackend = createFakeBackend()): Promise<Processes> {
@@ -365,22 +365,95 @@ describe('ending a process', () => {
     backend.reuse(812, program(812, 'innocent', { startTime: 1_800_000_000 }))
     expect(await processes.confirm()).toBe(false)
     expect(backend.signals()).toEqual([])
-    expect(processes.refused?.message).toBe('That program has quit.')
+    expect(processes.refused?.message).toBe('postgres has quit, and another program has its number now. Nothing was stopped.')
     // the reading that follows the answer
     await until(() => processes.processes.find((row) => row.pid === 812)?.name === 'innocent')
     await until(() => processes.detail?.alive === false)
     expect(processes.detail?.name).toBe('postgres')
   })
 
-  test('chooses the process again for a backend that started afresh, so that it holds the one that is ended', async () => {
+  test('does not choose the process again for a backend that started afresh: the choice is refused and nothing is signalled', async () => {
     const backend = createFakeBackend()
     const processes = await opened(backend)
     await processes.choose(POSTGRES)
     backend.restart()
     expect(backend.held()).toEqual([])
     processes.ask('terminate')
+    expect(await processes.confirm()).toBe(false)
+    expect(processes.refused?.message).toBe('Choose the program again: Processes no longer holds it.')
+    expect(backend.signals()).toEqual([])
+    // nothing was chosen on the way
+    expect(backend.held()).toEqual([])
+  })
+
+  test('says so when the backend no longer holds the choice, keeps what it showed, and offers no ending until it is chosen again', async () => {
+    const backend = createFakeBackend()
+    const processes = await opened(backend)
+    await processes.choose(POSTGRES)
+    expect(processes.endable).toBe(true)
+    backend.restart()
+    await processes.refresh()
+    expect(processes.detail?.name).toBe('postgres')
+    expect(processes.detail?.alive).toBe(true)
+    expect(processes.endable).toBe(false)
+    expect(processes.unavailable).toBe(LOST)
+    processes.ask('force')
+    expect(processes.asking).toBeNull()
+    // chosen again, it can be ended
+    expect(await processes.choose(POSTGRES)).toBe(true)
+    expect(processes.endable).toBe(true)
+    processes.ask('force')
     expect(await processes.confirm()).toBe(true)
-    expect(backend.signals()).toEqual(['terminate 812'])
+    expect(backend.signals()).toEqual(['kill 812'])
+  })
+
+  test('a choice the backend let go of cannot end a process, even one that is still running', async () => {
+    const backend = createFakeBackend()
+    const processes = await opened(backend)
+    await processes.choose(POSTGRES)
+    const [id] = backend.ids()
+    expect(id).toBeDefined()
+    backend.evict(id as string)
+    processes.ask('force')
+    expect(await processes.confirm()).toBe(false)
+    expect(processes.refused?.message).toBe('Choose the program again: Processes no longer holds it.')
+    expect(backend.signals()).toEqual([])
+  })
+
+  test('two windows that look at the same process each hold their own choice: one closing does not take the other\'s', async () => {
+    const backend = createFakeBackend()
+    const first = await opened(backend)
+    const second = await opened(backend)
+    await first.choose(POSTGRES)
+    await second.choose(POSTGRES)
+    expect(backend.ids()).toHaveLength(2)
+    first.close()
+    await until(() => backend.ids().length === 1)
+    await second.refresh()
+    expect(second.endable).toBe(true)
+    second.ask('force')
+    expect(await second.confirm()).toBe(true)
+    expect(backend.signals()).toEqual(['kill 812'])
+  })
+
+  test('looks at a process that cannot be held for ending, says why, and offers no ending', async () => {
+    const backend = createFakeBackend({
+      programs: [program(900, 'wininit', { user: 'SYSTEM', blocked: 'permission' }), program(901, 'idle', { startTime: 0, blocked: 'unknown' })]
+    })
+    const processes = await opened(backend)
+    expect(await processes.choose({ pid: 900, startTime: program(900, '').startTime })).toBe(true)
+    expect(processes.detail?.name).toBe('wininit')
+    expect(processes.detail?.user).toBe('SYSTEM')
+    expect(processes.endable).toBe(false)
+    expect(processes.unavailable).toMatch(/did not let Processes stop wininit/)
+    processes.ask('force')
+    expect(processes.asking).toBeNull()
+
+    expect(await processes.choose({ pid: 901, startTime: 0 })).toBe(true)
+    expect(processes.detail?.name).toBe('idle')
+    expect(processes.endable).toBe(false)
+    expect(processes.unavailable).toMatch(/cannot tell idle apart/)
+    expect(backend.signals()).toEqual([])
   })
 
   test('says when this system cannot ask a program to quit, as Windows', async () => {

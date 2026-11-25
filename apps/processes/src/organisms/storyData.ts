@@ -41,6 +41,7 @@ export const POSTGRES: Detail = {
   startTime: postgres.startTime,
   name: postgres.name,
   alive: true,
+  control: { available: true },
   status: 'run',
   user: 'postgres',
   cpu: 6.1,

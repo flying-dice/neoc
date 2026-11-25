@@ -14,9 +14,13 @@
 //!   signal, and that check and the signal are two steps: a PID that is reused between them is signalled. This is the
 //!   residual race, and `Binding::StartTime` is how a script finds out it is the one that applies.
 //!
-//! "The same process" is "the process whose start time is the one observed" in every case, and the start time is
-//! read the way `sysinfo` reads it (whole seconds). A PID reused by a process started in the same second as the
-//! one before it is not told apart. That is the second residual, shared by every platform.
+//! "The same process" is "the process whose start time is the one observed" in every case. The start time is read the
+//! way `sysinfo` reads it (whole seconds), and where the platform gives a finer one it is taken too, *when the process
+//! is first observed*, and compared again when a handle is acquired: the process's start in clock ticks on Linux
+//! (`/proc/<pid>/stat`), its creation time (100 ns) on Windows. So a PID reused by a process started in the same
+//! second is told apart there. Where there is no finer time (macOS) it is not: that is the residual, and it is stated
+//! at `Binding::StartTime`. A process whose start time is not known (0) has no identity to bind a signal to, and the
+//! callers refuse it (`unknown_identity`).
 //!
 //! A held handle is checked once, when it is acquired, and never again: acquiring is not a second look at a PID.
 //! No path in here falls back to a PID-only signal after an identity or permission failure.
@@ -54,15 +58,40 @@ pub(crate) fn live_start_time(pid: u32) -> Option<u64> {
     system.process(pid).map(::sysinfo::Process::start_time)
 }
 
-/// The start time of the process a native handle holds is `observed`, or why not. Windows binds by handle, so
-/// only the unix backends use it.
-#[cfg(unix)]
-fn check_identity(pid: u32, observed: u64) -> Result<(), Error> {
-    match live_start_time(pid) {
+/// The finer start time of the process that has this PID right now (clock ticks since boot on Linux, the creation
+/// time in 100 ns on Windows), or `None` when no process has it or the platform gives none. It is only ever compared
+/// with another read the same way.
+pub(crate) fn fine_start(pid: u32) -> Option<u64> {
+    imp::fine_start(pid)
+}
+
+/// Is the process that has the PID now the one observed? `live` and `live_fine` are what is read of it now; `fine`
+/// is the finer time taken when it was first observed, when the platform gave one.
+pub(crate) fn same_identity(
+    observed: u64,
+    fine: Option<u64>,
+    live: Option<u64>,
+    live_fine: Option<u64>,
+) -> Result<(), Error> {
+    match live {
         None => Err(Error::ProcessGone),
-        Some(live) if live == observed => Ok(()),
-        Some(_) => Err(Error::PidReused),
+        Some(live) if live != observed => Err(Error::PidReused),
+        Some(_) => match fine {
+            None => Ok(()),
+            Some(want) => match live_fine {
+                None => Err(Error::ProcessGone),
+                Some(now) if now == want => Ok(()),
+                Some(_) => Err(Error::PidReused),
+            },
+        },
     }
+}
+
+/// The process that has the PID now is the one observed, or why not. Windows binds by handle, so only the unix
+/// backends use it.
+#[cfg(unix)]
+fn check_identity(pid: u32, observed: u64, fine: Option<u64>) -> Result<(), Error> {
+    same_identity(observed, fine, live_start_time(pid), fine.and_then(|_| fine_start(pid)))
 }
 
 /// What an error number from a signal call means: only the numbers that say so are `process_gone` and
@@ -84,13 +113,19 @@ pub(crate) fn capability() -> Capability {
 
 /// Bind the process `pid`, observed to have started at `observed`, to what the platform can hold, after checking it is
 /// that process. `Ok(None)` is a platform with nothing to hold (the binding is the start time).
-pub(crate) fn acquire(pid: u32, observed: u64) -> Result<Option<Held>, Error> {
-    imp::acquire(pid, observed)
+pub(crate) fn acquire(pid: u32, observed: u64, fine: Option<u64>) -> Result<Option<Held>, Error> {
+    imp::acquire(pid, observed, fine)
 }
 
 /// Signal the process: through `held` if there is one, and otherwise after checking `observed` once more.
-pub(crate) fn send(pid: u32, observed: u64, held: Option<&Held>, sig: Sig) -> Result<(), Error> {
-    imp::send(pid, observed, held, sig)
+pub(crate) fn send(
+    pid: u32,
+    observed: u64,
+    fine: Option<u64>,
+    held: Option<&Held>,
+    sig: Sig,
+) -> Result<(), Error> {
+    imp::send(pid, observed, fine, held, sig)
 }
 
 /// The binding a `held` handle (or the lack of one) stands for.
@@ -146,37 +181,49 @@ mod imp {
         }
     }
 
-    pub(super) fn acquire(pid: u32, observed: u64) -> Result<Option<Held>, Error> {
+    /// When the process started, in clock ticks since boot: the 22nd field of `/proc/<pid>/stat`, which comes after
+    /// the name (in parentheses, and the name may hold parentheses itself).
+    pub(super) fn fine_start(pid: u32) -> Option<u64> {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        let after = stat.get(stat.rfind(')')? + 1..)?;
+        after.split_whitespace().nth(19)?.parse().ok()
+    }
+
+    pub(super) fn acquire(pid: u32, observed: u64, fine: Option<u64>) -> Result<Option<Held>, Error> {
         let raw = raw_pid(pid)?;
         match pidfd_open(raw, PidfdFlags::empty()) {
             Ok(fd) => {
                 // The descriptor names one process. Which one it is: what has this PID now, and has that process
                 // not gone since (a PID reused between the two steps would show as an exit of this one).
                 let live = super::live_start_time(pid);
+                let live_fine = fine.and_then(|_| fine_start(pid));
                 if exited(&fd)? {
                     return Err(Error::ProcessGone);
                 }
-                match live {
-                    None => Err(Error::ProcessGone),
-                    Some(live) if live == observed => Ok(Some(Held(fd))),
-                    Some(_) => Err(Error::PidReused),
-                }
+                super::same_identity(observed, fine, live, live_fine)?;
+                Ok(Some(Held(fd)))
             }
             Err(Errno::SRCH) => Err(Error::ProcessGone),
             // A kernel older than 5.3: no descriptor to hold. The one fall back, and the binding says so.
             Err(Errno::NOSYS) => {
-                check_identity(pid, observed)?;
+                check_identity(pid, observed, fine)?;
                 Ok(None)
             }
             Err(why) => Err(from_errno(why)),
         }
     }
 
-    pub(super) fn send(pid: u32, observed: u64, held: Option<&Held>, sig: Sig) -> Result<(), Error> {
+    pub(super) fn send(
+        pid: u32,
+        observed: u64,
+        fine: Option<u64>,
+        held: Option<&Held>,
+        sig: Sig,
+    ) -> Result<(), Error> {
         match held {
             Some(Held(fd)) => pidfd_send_signal(fd, signal(sig)).map_err(from_errno),
             None => {
-                check_identity(pid, observed)?;
+                check_identity(pid, observed, fine)?;
                 rustix::process::kill_process(raw_pid(pid)?, signal(sig)).map_err(from_errno)
             }
         }
@@ -201,17 +248,28 @@ mod imp {
         Capability { terminate: true, binding: Binding::StartTime }
     }
 
-    pub(super) fn acquire(pid: u32, observed: u64) -> Result<Option<Held>, Error> {
-        check_identity(pid, observed)?;
+    /// No finer start time here: the one `sysinfo` reads, in whole seconds, is all there is.
+    pub(super) fn fine_start(_pid: u32) -> Option<u64> {
+        None
+    }
+
+    pub(super) fn acquire(pid: u32, observed: u64, fine: Option<u64>) -> Result<Option<Held>, Error> {
+        check_identity(pid, observed, fine)?;
         Ok(None)
     }
 
-    pub(super) fn send(pid: u32, observed: u64, _held: Option<&Held>, sig: Sig) -> Result<(), Error> {
+    pub(super) fn send(
+        pid: u32,
+        observed: u64,
+        fine: Option<u64>,
+        _held: Option<&Held>,
+        sig: Sig,
+    ) -> Result<(), Error> {
         let raw = i32::try_from(pid).ok().and_then(Pid::from_raw).ok_or_else(|| Error::Unsupported {
             reason: format!("{pid} is not a process id that can be signalled"),
         })?;
         // The check and the signal are two steps here: the residual race, documented in this file's header.
-        check_identity(pid, observed)?;
+        check_identity(pid, observed, fine)?;
         let signal = match sig {
             Sig::Terminate => Signal::TERM,
             Sig::Kill => Signal::KILL,
@@ -227,11 +285,12 @@ mod imp {
 #[cfg(windows)]
 mod imp {
     use windows_sys::Win32::Foundation::{
-        CloseHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, GetLastError, HANDLE, WAIT_OBJECT_0,
+        CloseHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, FILETIME, GetLastError, HANDLE,
+        WAIT_OBJECT_0,
     };
     use windows_sys::Win32::System::Threading::{
-        OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
-        TerminateProcess, WaitForSingleObject,
+        GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+        PROCESS_TERMINATE, TerminateProcess, WaitForSingleObject,
     };
 
     use super::{Capability, Sig};
@@ -259,6 +318,32 @@ mod imp {
             // SAFETY: `self.0` is an open handle with `SYNCHRONIZE`.
             unsafe { WaitForSingleObject(self.0, 0) == WAIT_OBJECT_0 }
         }
+
+        /// When the process this handle holds was created, in 100 ns ticks (`FILETIME`), or `None` when the system
+        /// would not say.
+        fn created(&self) -> Option<u64> {
+            let mut times = [FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 }; 4];
+            let [creation, exit, kernel, user] = &mut times;
+            // SAFETY: `self.0` is an open handle with query rights, and each pointer is to a `FILETIME` that lives
+            // through the call.
+            let read = unsafe { GetProcessTimes(self.0, creation, exit, kernel, user) };
+            (read != 0)
+                .then(|| (u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime))
+        }
+    }
+
+    /// When the process that has this PID now was created, or `None` (no such process, or the system would not let
+    /// it be asked).
+    pub(super) fn fine_start(pid: u32) -> Option<u64> {
+        if pid == 0 {
+            return None;
+        }
+        // SAFETY: plain call; the handle (if any) is owned by `Held` from here, which closes it.
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if handle.is_null() {
+            return None;
+        }
+        Held(handle).created()
     }
 
     pub(super) fn capability() -> Capability {
@@ -267,7 +352,7 @@ mod imp {
         Capability { terminate: false, binding: Binding::ProcessHandle }
     }
 
-    pub(super) fn acquire(pid: u32, observed: u64) -> Result<Option<Held>, Error> {
+    pub(super) fn acquire(pid: u32, observed: u64, fine: Option<u64>) -> Result<Option<Held>, Error> {
         if pid == 0 {
             return Err(Error::Unsupported { reason: "process 0 is the system idle process".to_owned() });
         }
@@ -290,17 +375,21 @@ mod imp {
         // The PID stays this process's while the handle is open, so what has the PID now is the process the handle
         // holds: unless it has exited, which is `exited`.
         let live = super::live_start_time(pid);
+        let live_fine = held.created();
         if held.exited() {
             return Err(Error::ProcessGone);
         }
-        match live {
-            None => Err(Error::ProcessGone),
-            Some(live) if live == observed => Ok(Some(held)),
-            Some(_) => Err(Error::PidReused),
-        }
+        super::same_identity(observed, fine, live, live_fine)?;
+        Ok(Some(held))
     }
 
-    pub(super) fn send(pid: u32, observed: u64, held: Option<&Held>, sig: Sig) -> Result<(), Error> {
+    pub(super) fn send(
+        pid: u32,
+        observed: u64,
+        fine: Option<u64>,
+        held: Option<&Held>,
+        sig: Sig,
+    ) -> Result<(), Error> {
         if sig == Sig::Terminate {
             return Err(Error::Unsupported {
                 reason: "Windows has no request to stop an arbitrary process: only `kill` is available"
@@ -312,7 +401,7 @@ mod imp {
         let held = match held {
             Some(held) => held,
             None => {
-                opened = acquire(pid, observed)?
+                opened = acquire(pid, observed, fine)?
                     .ok_or_else(|| Error::Failed { reason: "no process handle could be held".to_owned() })?;
                 &opened
             }
@@ -350,11 +439,21 @@ mod imp {
         Capability { terminate: false, binding: Binding::StartTime }
     }
 
-    pub(super) fn acquire(_pid: u32, _observed: u64) -> Result<Option<Held>, Error> {
+    pub(super) fn fine_start(_pid: u32) -> Option<u64> {
+        None
+    }
+
+    pub(super) fn acquire(_pid: u32, _observed: u64, _fine: Option<u64>) -> Result<Option<Held>, Error> {
         Err(Error::Unsupported { reason: "this platform has no process signals".to_owned() })
     }
 
-    pub(super) fn send(_pid: u32, _observed: u64, _held: Option<&Held>, _sig: Sig) -> Result<(), Error> {
+    pub(super) fn send(
+        _pid: u32,
+        _observed: u64,
+        _fine: Option<u64>,
+        _held: Option<&Held>,
+        _sig: Sig,
+    ) -> Result<(), Error> {
         Err(Error::Unsupported { reason: "this platform has no process signals".to_owned() })
     }
 }

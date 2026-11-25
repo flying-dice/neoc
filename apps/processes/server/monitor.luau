@@ -126,7 +126,7 @@ local function relatedOf(process: vnd_sysinfo_Process): rpc.Related
 end
 
 -- One process in full. One that has exited is what it was when it was last seen: its name, and nothing else.
-function monitor.detail(process: vnd_sysinfo_Process): rpc.Detail
+function monitor.detail(process: vnd_sysinfo_Process, control: rpc.Control): rpc.Detail
   local parent = process:parent()
   local children: { rpc.Related } = {}
   for _, child in process:children() do
@@ -143,6 +143,7 @@ function monitor.detail(process: vnd_sysinfo_Process): rpc.Detail
     startTime = process.start_time,
     name = process.name,
     alive = process:alive(),
+    control = control,
     status = process:status(),
     user = process:user(),
     cpu = process:cpu_usage(),

@@ -10,6 +10,7 @@
     detail: Detail
     canTerminate: boolean
     endable: boolean
+    unavailable: string | null
     ending: boolean
     asking: Ending | null
     refused: Refusal | null
@@ -37,6 +38,7 @@
       detail: POSTGRES,
       canTerminate: true,
       endable: true,
+      unavailable: null,
       ending: false,
       asking: null,
       refused: null,
@@ -87,12 +89,27 @@
 
 <Story name="Not ended" args={{ refused: { name: 'postgres', message: 'This system did not let Processes stop postgres. It belongs to a user with more rights than yours: ask an administrator.' } }} />
 
+<!-- Looked at, not ended: the system would not let Processes hold it with the right to end it. -->
+<Story
+  name="Cannot be ended"
+  args={{
+    detail: { ...POSTGRES, name: 'wininit', control: { available: false, reason: 'This system did not let Processes stop wininit. It belongs to a user with more rights than yours: ask an administrator.' } },
+    endable: false,
+    unavailable: 'This system did not let Processes stop wininit. It belongs to a user with more rights than yours: ask an administrator.'
+  }}
+  play={async ({ canvas }) => {
+    await expect(canvas.getByTestId('processes-unavailable')).toBeVisible()
+    await expect(canvas.getByTestId('processes-detail-cpu')).toBeVisible()
+    await expect(canvas.getByTestId('processes-force')).toHaveAttribute('disabled')
+  }}
+/>
+
 <Story name="Asked to quit" args={{ notice: 'Asked postgres to quit.' }} />
 
 <!-- It exited: what is shown is what it was, and nothing can be done to it. -->
 <Story
   name="Has quit"
-  args={{ detail: { pid: 812, startTime: 1_700_000_812, name: 'postgres', alive: false, command: [], children: [] }, endable: false }}
+  args={{ detail: { pid: 812, startTime: 1_700_000_812, name: 'postgres', alive: false, control: { available: false, reason: 'postgres has quit.' }, command: [], children: [] }, endable: false }}
   play={async ({ canvas }) => {
     await expect(canvas.getByTestId('processes-quit')).toBeVisible()
     await expect(canvas.getByTestId('processes-force')).toHaveAttribute('disabled')

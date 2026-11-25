@@ -26,6 +26,9 @@ const messageOf = (e: unknown): string => (e instanceof Error ? e.message : Stri
 /** The backend looked at what was asked and said no (`ctx:fail`): the message is about that, not about the call. */
 const isRefusal = (e: unknown): boolean => (e as { code?: unknown } | null)?.code === -32010
 
+/** What the window says when the backend no longer holds the choice (it was let go, or the backend started afresh). */
+export const LOST = 'Processes no longer holds this program. Choose it again to end it.'
+
 const NO_ROWS: readonly ProcessRow[] = []
 
 /** Whether two references name the same process: the PID alone does not, a PID is reused. */
@@ -73,6 +76,10 @@ export class Processes {
   #interval = $state<Interval>(2)
   // the process the person chose, and everything the backend said of it in the last reading
   #selected = $state.raw<ProcessRef | null>(null)
+  // the backend's id for this window's choice: the only way to act on the process, and none other is made up here
+  #selection = $state<string | null>(null)
+  // the backend said it no longer holds that id: the process is still shown, as it was, and is chosen again to be ended
+  #lostHold = $state(false)
   #detail = $state.raw<Detail | null>(null)
   // the process a call to choose is in flight for
   #choosing = $state.raw<ProcessRef | null>(null)
@@ -159,8 +166,13 @@ export class Processes {
   /** The processes that match the search, in the order chosen. */
   readonly rows: readonly ProcessRow[] = $derived(sorted(matching(this.processes, this.#query), this.#sort))
 
-  /** The chosen process can be ended: it is still there. */
-  readonly endable: boolean = $derived(this.#detail?.alive === true && !this.#ending)
+  /** The chosen process can be ended: it is still there, the backend holds it for ending, and no call to end it is on its way. */
+  readonly endable: boolean = $derived(this.#detail?.alive === true && this.#detail.control.available && !this.#ending)
+
+  /** Why the chosen process, which is there, cannot be ended: it can still be looked at. */
+  readonly unavailable: string | null = $derived(
+    this.#detail?.alive === true && !this.#detail.control.available ? (this.#detail.control.reason ?? null) : null
+  )
 
   /**
    * Read the machine. Never rejects: a failure is kept, to be shown. Readings do not overlap: one asked for while
@@ -170,13 +182,17 @@ export class Processes {
     if (this.#reading) return
     this.#reading = true
     const asked = this.#selected
+    const selection = this.#selection
     try {
-      const snapshot = await this.#rpc.snapshot(asked ? { selected: refOf(asked) } : undefined)
+      const snapshot = await this.#rpc.snapshot(selection ? { selected: selection } : undefined)
       this.#snapshot = snapshot
       this.#updatedAt = this.#now()
       this.#failure = null
       // the person may have chosen another process, or none, while the backend measured: that answer is not for them
-      if (same(this.#selected, asked) && asked) this.#detail = snapshot.detail ?? this.#gone()
+      if (asked && selection && this.#selection === selection) {
+        this.#lostHold = snapshot.selectionLost === true
+        this.#detail = snapshot.detail ?? (snapshot.selectionLost ? this.#lost() : this.#gone())
+      }
     } catch (e) {
       this.#failure = messageOf(e)
     } finally {
@@ -187,7 +203,15 @@ export class Processes {
   /** The chosen process as it was last seen, now that the backend does not know it any more. */
   #gone(): Detail | null {
     const last = this.#detail
-    return last ? { ...last, alive: false, parent: undefined, children: [] } : null
+    return last
+      ? { ...last, alive: false, parent: undefined, children: [], control: { available: false, reason: `${last.name} has quit.` } }
+      : null
+  }
+
+  /** The chosen process as it was last seen, now that the backend does not hold the choice: it cannot be ended. */
+  #lost(): Detail | null {
+    const last = this.#detail
+    return last ? { ...last, control: { available: false, reason: LOST } } : null
   }
 
   /** Read for the first time. */
@@ -237,7 +261,7 @@ export class Processes {
    * chosen before is let go. A process that has quit since the list was read is said so, and the list is read again.
    */
   async choose(row: ProcessRef): Promise<boolean> {
-    if (same(this.#selected, row) && this.#detail) {
+    if (same(this.#selected, row) && this.#detail && !this.#lostHold) {
       this.#pane = 'detail'
       return true
     }
@@ -245,14 +269,16 @@ export class Processes {
     this.#choosing = ref
     this.#pane = 'detail'
     try {
-      const detail = await this.#rpc.select({ process: ref })
+      const { selection, detail } = await this.#rpc.select({ process: ref })
       if (!same(this.#choosing, ref)) {
         // another was chosen while this was asked for: this one is not wanted
-        void this.#rpc.release({ process: ref }).catch(() => {})
+        void this.#rpc.release({ selection }).catch(() => {})
         return false
       }
       this.#letGo()
       this.#selected = ref
+      this.#selection = selection
+      this.#lostHold = false
       this.#detail = detail
       this.#asking = null
       this.#refused = null
@@ -274,9 +300,11 @@ export class Processes {
 
   /** Let the chosen process go: the backend lets go of its reference. */
   #letGo(): void {
-    const held = this.#selected
-    if (held) void this.#rpc.release({ process: held }).catch(() => {})
+    const held = this.#selection
+    if (held) void this.#rpc.release({ selection: held }).catch(() => {})
     this.#selected = null
+    this.#selection = null
+    this.#lostHold = false
     this.#detail = null
   }
 
@@ -291,7 +319,7 @@ export class Processes {
 
   /** Ask before the chosen process is ended: once it is stopped there is no taking it back. */
   ask(ending: Ending): void {
-    if (this.#detail?.alive) {
+    if (this.#detail?.alive && this.#detail.control.available) {
       this.#asking = ending
       this.#refused = null
     }
@@ -303,23 +331,24 @@ export class Processes {
   }
 
   /**
-   * The answer was to go ahead: end the chosen process the way that was asked about. The process is chosen again
-   * first (a no-op for the backend if it still holds it), so that a backend that started afresh cannot be asked to
-   * end something it never chose. What the system refused is said at the process; the rest is the window's.
+   * The answer was to go ahead: end the chosen process the way that was asked about, through the id the backend
+   * issued for this window's choice. The process is never chosen again on the way: a backend that no longer holds the
+   * choice (it let it go, or started afresh) refuses, and the person chooses the program again. What the system
+   * refused is said at the process; the rest is the window's.
    */
   async confirm(): Promise<boolean> {
     const ending = this.#asking
     const process = this.#selected
+    const selection = this.#selection
     const detail = this.#detail
     this.#asking = null
-    if (ending === null || process === null || detail === null) return false
+    if (ending === null || process === null || selection === null || detail === null) return false
     const name = detail.name
     this.#ending = true
     this.#refused = null
     this.#notice = null
     try {
-      await this.#rpc.select({ process })
-      await this.#rpc.terminate({ process, force: ending === 'force' })
+      await this.#rpc.terminate({ selection, force: ending === 'force' })
       if (same(this.#selected, process)) this.#notice = ending === 'force' ? `Stopped ${name}.` : `Asked ${name} to quit.`
       this.#failure = null
       return true

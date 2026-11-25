@@ -20,14 +20,14 @@
   "methods": [
     {
       "name": "snapshot",
-      "summary": "Measure the machine again and read it: the processor, memory, disks and network, and every process. Rates need two readings, so the first is without them. When another window measured less than 200 ms ago, that reading is given again. With `selected`, the answer also holds that process in full (`detail`); a process that has gone is shown as it was, with `alive` false.",
+      "summary": "Measure the machine again and read it: the processor, memory, disks and network, and every process. Rates need two readings, so the first is without them. When another window measured less than 200 ms ago, that reading is given again. With `selected`, the answer also holds that selection's process in full (`detail`); a process that has gone is shown as it was, with `alive` false. A selection that is not held any more is `selectionLost`.",
       "params": [
         {
           "name": "selected",
           "required": false,
-          "description": "The process whose details are wanted too.",
+          "description": "The selection (from `select`) whose process is wanted in full too.",
           "schema": {
-            "$ref": "#/components/schemas/ProcessRef"
+            "type": "string"
           }
         }
       ],
@@ -40,7 +40,7 @@
     },
     {
       "name": "select",
-      "summary": "Choose a process to look at and to act on. The backend holds a reference to it that outlives a reused pid, so that what the person ends is the process they looked at and no other. A process that has gone cannot be chosen.",
+      "summary": "Choose a process to look at, and to act on where the system allows. The backend issues an id for this choice and holds a reference to the process that outlives a reused pid, so that what the person ends is the process they looked at and no other. A process that has gone cannot be chosen. A process that cannot be ended (no right to, or an identity that is not known) can still be looked at: `detail.control` says why not.",
       "params": [
         {
           "name": "process",
@@ -51,9 +51,9 @@
         }
       ],
       "result": {
-        "name": "detail",
+        "name": "selection",
         "schema": {
-          "$ref": "#/components/schemas/Detail"
+          "$ref": "#/components/schemas/Selection"
         }
       },
       "errors": [
@@ -65,13 +65,13 @@
     },
     {
       "name": "release",
-      "summary": "Stop looking at a process: the backend lets go of its reference.",
+      "summary": "Stop looking at a process: the backend lets go of this choice and its reference. Other windows' choices of the same process are theirs.",
       "params": [
         {
-          "name": "process",
+          "name": "selection",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/ProcessRef"
+            "type": "string"
           }
         }
       ],
@@ -84,13 +84,13 @@
     },
     {
       "name": "terminate",
-      "summary": "Ask a process to stop (`force` false: it may handle the request or ignore it) or stop it at once (`force` true: it cannot save its work). The process must have been chosen with `select`; only that process is ever signalled.",
+      "summary": "Ask a process to stop (`force` false: it may handle the request or ignore it) or stop it at once (`force` true: it cannot save its work). Only the process this selection holds is ever signalled, and a selection that is not held (released, evicted, a backend that started afresh) is refused: the process is never chosen again on the way.",
       "params": [
         {
-          "name": "process",
+          "name": "selection",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/ProcessRef"
+            "type": "string"
           }
         },
         {
@@ -488,6 +488,9 @@
             "items": {
               "$ref": "#/components/schemas/Related"
             }
+          },
+          "control": {
+            "$ref": "#/components/schemas/Control"
           }
         },
         "required": [
@@ -496,7 +499,8 @@
           "name",
           "alive",
           "command",
-          "children"
+          "children",
+          "control"
         ]
       },
       "Snapshot": {
@@ -515,6 +519,10 @@
           },
           "detail": {
             "$ref": "#/components/schemas/Detail"
+          },
+          "selectionLost": {
+            "type": "boolean",
+            "description": "The `selected` id is not held any more (it was released, evicted, or the backend started afresh): `detail` is absent, and the process cannot be ended until it is chosen again."
           }
         },
         "required": [
@@ -547,6 +555,40 @@
         "required": [
           "sent",
           "force"
+        ]
+      },
+      "Control": {
+        "type": "object",
+        "description": "Whether this window may end the process, and if not, why. Looking at a process never needs the right to end it.",
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "description": "Terminate and Force Terminate may be asked for."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why not, in a sentence for the person (the process has quit, the system would not let Processes hold it for ending, its identity is unknown, or Processes no longer holds it)."
+          }
+        },
+        "required": [
+          "available"
+        ]
+      },
+      "Selection": {
+        "type": "object",
+        "description": "A process chosen by one window: the backend's own id for that choice, and the process in full.",
+        "properties": {
+          "selection": {
+            "type": "string",
+            "description": "The backend's id for this choice. Only the window that chose can end the process with it; it stops being valid when released, evicted, or when the backend starts afresh."
+          },
+          "detail": {
+            "$ref": "#/components/schemas/Detail"
+          }
+        },
+        "required": [
+          "selection",
+          "detail"
         ]
       }
     }

@@ -153,6 +153,21 @@
   }}
 />
 
+<!-- The system would not let Processes hold it for ending: it can still be looked at, and the window says why it cannot be ended. -->
+<Story
+  name="A process that cannot be ended"
+  args={{ backend: () => lab({ programs: PROGRAMS.filter((p) => [1, 702, 812].includes(p.pid)).map((p) => (p.pid === 702 ? { ...p, blocked: 'permission' as const } : p)) }) }}
+  play={async ({ canvas, userEvent }) => {
+    await appears(canvas, 'processes-row-702')
+    await userEvent.click(canvas.getByTestId('processes-row-702'))
+    await says(canvas, 'processes-detail-name', 'sshd')
+    await appears(canvas, 'processes-unavailable')
+    await expect(canvas.getByTestId('processes-unavailable')).toHaveTextContent('ask an administrator')
+    await expect(canvas.getByTestId('processes-detail-memory')).toBeVisible()
+    await expect(canvas.getByTestId('processes-force')).toHaveAttribute('disabled')
+  }}
+/>
+
 <!-- A system with no way to ask a program to quit (Windows): only the forced stop is offered. -->
 <Story
   name="No request to quit"

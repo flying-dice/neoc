@@ -6991,7 +6991,7 @@ export type vnd_sysinfo_DiskInfo = {
 export type vnd_sysinfo_DiskKind = "hdd" | "ssd" | "unknown"
 
 --- The kinds of `vnd_sysinfo_Error`.
-export type vnd_sysinfo_ErrorKind = "too_soon" | "process_gone" | "pid_reused" | "own_process" | "permission_denied" | "unsupported" | "failed"
+export type vnd_sysinfo_ErrorKind = "too_soon" | "process_gone" | "pid_reused" | "own_process" | "permission_denied" | "unknown_identity" | "released" | "unsupported" | "failed"
 
 --- Why a call failed.
 export type vnd_sysinfo_Error =
@@ -7005,6 +7005,12 @@ export type vnd_sysinfo_Error =
 	| { kind: "own_process", message: string, op: string }
 	--- The operating system refused the signal, and said so.
 	| { kind: "permission_denied", reason: string, message: string, op: string }
+	--- The process's start time is not known (0: some system processes on macOS and Windows), so nothing tells it
+	--- apart from another that is given its PID: no signal is sent to it, and it is not pinned.
+	| { kind: "unknown_identity", message: string, op: string }
+	--- The native reference to the process was released: this handle signals nothing any more. Take a handle
+	--- from the system again.
+	| { kind: "released", message: string, op: string }
 	--- The platform does not do this (`terminate` on Windows).
 	| { kind: "unsupported", reason: string, message: string, op: string }
 	--- The platform failed in a way it does not say more about, or in a way that is none of the above.
@@ -7109,15 +7115,20 @@ declare extern type vnd_sysinfo_Process with
 	binding: (self: vnd_sysinfo_Process) -> vnd_sysinfo_Binding
 	--- Is a native reference to the process held (`pin` was called, and `release` was not).
 	pinned: (self: vnd_sysinfo_Process) -> boolean
+	--- Was its reference let go (`release` after `pin`). Such a handle signals nothing and cannot be pinned again:
+	--- the process has to be taken from the system again.
+	released: (self: vnd_sysinfo_Process) -> boolean
 	--- Hold a native reference to the process now, after checking it is the one observed, so that a later
 	--- `terminate` or `kill` can only reach it, even if its PID is reused in between. It is the binding that
 	--- applies, and `start_time` on a platform that has no native reference (then nothing is held). A process
 	--- that is gone or whose PID was reused is `process_gone` or `pid_reused`. Hold one only for a process a
-	--- person has selected: a reference is a descriptor or a handle, and it stays until `release`.
+	--- person has selected: a reference is a descriptor or a handle, and it stays until `release`. A process whose
+	--- start time is not known is `unknown_identity`; a handle that was released is `released`.
 	---
 	--- Yields the calling coroutine while it waits.
 	pin: (self: vnd_sysinfo_Process) -> (vnd_sysinfo_Binding?, vnd_sysinfo_Error?)
-	--- Let go of the native reference, if one is held.
+	--- Let go of the native reference, if one is held. The handle is finished then: it signals nothing and is not
+	--- pinned again (`released()` says so), so a signal that comes late cannot take a new reference.
 	release: (self: vnd_sysinfo_Process) -> ()
 	--- Ask it to stop (`SIGTERM`): it may handle the request, or ignore it. Never `kill`. `unsupported` on
 	--- Windows. `process_gone`, `pid_reused` and `permission_denied` as described in the module.

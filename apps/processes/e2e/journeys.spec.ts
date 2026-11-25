@@ -8,7 +8,7 @@
  */
 import { spawn, type ChildProcess } from 'node:child_process'
 import type { FrameLocator, Locator, Page } from '@playwright/test'
-import { expect, expectNoOverflow, frameOf, openDesktop, openFromHome, resizeWindow, test } from '../../../e2e/fixtures'
+import { chooseLayout, expect, expectNoOverflow, frameOf, openDesktop, openFromHome, resizeWindow, test, windowOf } from '../../../e2e/fixtures'
 
 const ID = 'processes'
 const frame = (page: Page): FrameLocator => frameOf(page, ID)
@@ -188,5 +188,107 @@ test.describe('Processes journeys', () => {
     await expect(part(page, 'tiles')).toBeVisible()
     await part(page, 'back').click()
     await expect(part(page, 'view-overview')).toBeVisible()
+  })
+
+  test('PR9: a system process can be looked at without the right to end it, and nothing is signalled', async ({ page }) => {
+    // the first process of the machine: it belongs to the system, and this journey never asks to end it
+    const pid = WINDOWS ? 4 : 1
+    await openDesktop(page, { open: [ID] })
+    await expect(part(page, 'tiles')).toBeVisible()
+    await field(page, 'search').fill(String(pid))
+    await expect(row(page, pid)).toBeVisible()
+    await row(page, pid).click()
+    await expect(part(page, 'detail-state')).toContainText(`PID ${pid}`)
+    await expect(part(page, 'detail-memory')).toBeVisible()
+    // whether it may be ended is the backend's to say: when it may not, the window says why instead of failing at the click
+    if ((await part(page, 'force').evaluate((button) => (button as HTMLButtonElement & { disabled: boolean }).disabled)) === true) {
+      await expect(part(page, 'unavailable')).toBeVisible()
+    }
+    await expect(part(page, 'failure')).toHaveCount(0)
+  })
+
+  test('PR10: a window the shell has put away is not read, and is read again when it is back', async ({ page }) => {
+    await openDesktop(page, { open: [ID] })
+    await expect(part(page, 'tiles')).toBeVisible()
+    // count the readings the window asks the backend for
+    const body = frame(page).locator('body')
+    await body.evaluate(() => {
+      const bridge = (globalThis as unknown as { vos: { call: (method: string, params?: unknown) => Promise<unknown> } }).vos
+      const call = bridge.call.bind(bridge)
+      const counted = globalThis as unknown as { __readings: number }
+      counted.__readings = 0
+      bridge.call = (method, params) => {
+        if (method === 'snapshot') counted.__readings += 1
+        return call(method, params)
+      }
+    })
+    const readings = (): Promise<number> => body.evaluate(() => (globalThis as unknown as { __readings: number }).__readings)
+    await expect.poll(readings, { timeout: 15_000 }).toBeGreaterThanOrEqual(2)
+    await expect(part(page, 'app')).toHaveAttribute('data-showing', 'true')
+
+    // put away: the shell keeps the frame (so it is not `document.hidden`), and the window stops reading
+    await chooseLayout(page, ID, 'minimize')
+    await expect(part(page, 'app')).toHaveAttribute('data-showing', 'false')
+    const away = await readings()
+    await page.waitForTimeout(5000)
+    // a reading that was already on its way may land: no more than one
+    expect(await readings()).toBeLessThanOrEqual(away + 1)
+
+    // back on the stage: it is read at once, and again on its timer
+    await page.getByTestId(`dock-${ID}`).click()
+    await expect(windowOf(page, ID)).toBeVisible()
+    await expect(part(page, 'app')).toHaveAttribute('data-showing', 'true')
+    await expect.poll(readings, { timeout: 15_000 }).toBeGreaterThan(away + 1)
+  })
+
+  test('PR11: only a choice the backend still holds can end a program: a made-up id, and one that was let go, end nothing', async ({ page }) => {
+    const first = await launch()
+    const second = await launch()
+    await openDesktop(page, { open: [ID] })
+    await expect(part(page, 'tiles')).toBeVisible()
+    const body = frame(page).locator('body')
+    // the ids the backend issues, as the window receives them
+    await body.evaluate(() => {
+      const bridge = (globalThis as unknown as { vos: { call: (method: string, params?: unknown) => Promise<unknown> } }).vos
+      const call = bridge.call.bind(bridge)
+      const seen = globalThis as unknown as { __ids: string[] }
+      seen.__ids = []
+      bridge.call = async (method, params) => {
+        const answer = await call(method, params)
+        if (method === 'select') seen.__ids.push((answer as { selection: string }).selection)
+        return answer
+      }
+    })
+    const ids = (): Promise<string[]> => body.evaluate(() => (globalThis as unknown as { __ids: string[] }).__ids)
+    const terminate = (selection: string): Promise<string> =>
+      body.evaluate(async (_body, id) => {
+        const bridge = (globalThis as unknown as { vos: { call: (method: string, params?: unknown) => Promise<unknown> } }).vos
+        try {
+          await bridge.call('terminate', { selection: id, force: true })
+          return 'sent'
+        } catch (e) {
+          return (e as Error).message
+        }
+      }, selection)
+
+    await field(page, 'search').fill(String(first))
+    await row(page, first).click()
+    await expect(part(page, 'detail-state')).toContainText(`PID ${first}`)
+    await field(page, 'search').fill(String(second))
+    await row(page, second).click()
+    await expect(part(page, 'detail-state')).toContainText(`PID ${second}`)
+    await expect.poll(async () => (await ids()).length).toBe(2)
+    const [letGo, held] = await ids()
+
+    // an id the backend never issued
+    expect(await terminate('made-up')).toContain('no longer holds it')
+    // the choice of the first program was let go when the second was chosen: it ends nothing, and is not made again
+    expect(await terminate(letGo as string)).toContain('no longer holds it')
+    expect(running(first)).toBe(true)
+    expect(running(second)).toBe(true)
+    // the choice that is held ends its own program, and only that
+    expect(await terminate(held as string)).toBe('sent')
+    await expect.poll(() => running(second)).toBe(false)
+    expect(running(first)).toBe(true)
   })
 })
