@@ -1,7 +1,9 @@
 //! The module without a real manager: the operations against the in-memory one (which stands in for an operating
 //! system whose services others made), a script's view of it, and the systemd manager against a fake `systemctl`.
-//! Native integration against the real manager of the machine is `native_systemd_user_round_trip`, which skips
-//! itself where there is no systemd to talk to.
+//! The real manager of the machine is exercised by `native_round_trip` and
+//! `native_system_level_without_rights_is_permission_denied` (they change services, so they run only where
+//! `NEOC_NATIVE_SERVICE_TESTS=1` says the machine may be changed: the CI runners) and by the read-only
+//! `native_discovery_lists_what_the_machine_has_and_looks_each_up_again`.
 
 use std::collections::BTreeMap;
 
@@ -558,41 +560,174 @@ esac
     }
 }
 
-/// The real manager of a Linux machine that runs systemd, at the user level (no rights needed): the round trip the
-/// Services app makes. It is ignored (it writes to the user's own systemd: `bun run slow` runs it) and skips itself where
-/// there is no systemd user manager to talk to.
-#[cfg(target_os = "linux")]
-#[test]
-#[ignore = "registers and removes a service of the user systemd of whoever runs it"]
-fn native_systemd_user_round_trip() {
-    let manager = match ops::open(None, Some(Level::User)) {
-        Ok(manager) => manager,
-        Err(e) => return eprintln!("skipped: no systemd to talk to ({e})"),
-    };
-    let backend = manager.backend();
-    if backend.list().is_err() {
-        return eprintln!("skipped: the user manager does not answer");
-    }
-    let label = format!("neoc-test-{}", std::process::id());
-    let installed = ops::install(
-        backend,
-        Spec {
-            description: Some("neoc native test".to_owned()),
-            args: Some(vec!["60".to_owned()]),
-            ..spec_with("/bin/sleep", &label)
-        },
-    )
-    .expect("install");
-    assert_eq!(installed.state, State::Stopped);
-    assert_eq!(ops::control(backend, &label, Control::Start).expect("start").state, State::Running);
-    assert_eq!(ops::control(backend, &label, Control::Stop).expect("stop").state, State::Stopped);
-    ops::uninstall(backend, &label).expect("uninstall");
-    assert_eq!(ops::get(backend, &label).unwrap(), None);
+// -- the real manager of the machine, changed ------------------------------------------------------------------------
+//
+// These register, start, change and remove a service of the machine they run on, so they run only where
+// `NEOC_NATIVE_SERVICE_TESTS=1` says the machine may be changed: the CI runners, which are fresh virtual machines
+// (see `.github/workflows/ci.yml`, which runs them as root on Linux and macOS and as the administrator on Windows).
+// Set it, and a manager that cannot be reached is a failure, not a skip: the point is to run.
+
+const NATIVE: &str = "NEOC_NATIVE_SERVICE_TESTS";
+
+fn native_allowed() -> bool {
+    std::env::var(NATIVE).as_deref() == Ok("1")
 }
 
-#[cfg(target_os = "linux")]
+/// Whether this process may change services of the whole machine: root on Unix, and the administrator of a CI runner
+/// on Windows.
+fn privileged() -> bool {
+    if cfg!(windows) {
+        return true;
+    }
+    std::process::Command::new("id")
+        .arg("-u")
+        .output()
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim() == "0")
+        .unwrap_or(false)
+}
+
+#[cfg(unix)]
+const LONG_RUNNING: (&str, &[&str]) = ("/bin/sleep", &["300"]);
+#[cfg(windows)]
+const LONG_RUNNING: (&str, &[&str]) = ("C:\\Windows\\System32\\cmd.exe", &[]);
+
 fn spec_with(program: &str, label: &str) -> Spec {
     Spec { label: label.to_owned(), program: program.to_owned(), ..Spec::default() }
+}
+
+/// Removes the service when the test ends, whichever way it ends.
+struct Registered<'a> {
+    backend: &'a dyn super::backend::Backend,
+    label: String,
+}
+
+impl Drop for Registered<'_> {
+    fn drop(&mut self) {
+        let _ = self.backend.stop(&self.label);
+        let _ = self.backend.uninstall(&self.label);
+    }
+}
+
+/// register, inspect, start, restart, change, stop and unregister on the real manager, with what the manager can do
+/// read from its own capabilities: what it cannot keep is refused by name, what it can is kept and read back, and what
+/// a change did not mention stays.
+#[test]
+fn native_round_trip() {
+    if !native_allowed() {
+        return eprintln!("skipped: set {NATIVE}=1 to change services of this machine");
+    }
+    let level = if privileged() { Level::System } else { Level::User };
+    let manager =
+        ops::open(None, Some(level)).unwrap_or_else(|e| panic!("the manager of the machine: {e:?}"));
+    let backend = manager.backend();
+    let caps = backend.capabilities();
+    eprintln!("{} at the {:?} level", caps.kind, caps.level);
+    let installs = |option: &str| caps.install_options.iter().any(|o| o == option);
+    let configurable = |option: &str| caps.configurable.iter().any(|o| o == option);
+    let reported = |option: &str| caps.reported.iter().any(|o| o == option);
+
+    let label = format!("neoc-ci-{}", std::process::id());
+    let (program, args) = LONG_RUNNING;
+    let mut spec = spec_with(program, &label);
+    if installs("args") && !args.is_empty() {
+        spec.args = Some(args.iter().map(|a| (*a).to_owned()).collect());
+    }
+    if installs("description") {
+        spec.description = Some("neoc native test".to_owned());
+    }
+    if installs("environment") {
+        spec.environment = Some(BTreeMap::from([("NEOC_TEST".to_owned(), "a value".to_owned())]));
+    }
+    let installed = ops::install(backend, spec).unwrap_or_else(|e| panic!("install: {e:?}"));
+    let _cleanup = Registered { backend, label: label.clone() };
+    assert_ne!(installed.state, State::Running, "a registered service is not started");
+
+    // what was registered is what the manager reports
+    if reported("program") {
+        assert_eq!(installed.program.as_deref(), Some(program));
+    }
+    if reported("description") && installs("description") {
+        assert_eq!(installed.description.as_deref(), Some("neoc native test"));
+    }
+    if reported("environment") && installs("environment") {
+        let env = installed.environment.as_ref().expect("the environment is reported");
+        assert_eq!(env.get("NEOC_TEST").map(String::as_str), Some("a value"));
+    }
+    // registered by this call, listed like any other service
+    assert!(ops::list(backend).expect("list").iter().any(|s| s.label == label));
+    // a second registration of the label is refused
+    assert!(matches!(ops::install(backend, spec_with(program, &label)), Err(Error::AlreadyExists { .. })));
+
+    if caps.kind == "windows" {
+        // `cmd.exe` does not speak the service protocol: the manager's refusal to start it is a typed failure
+        let refused = ops::control(backend, &label, Control::Start).unwrap_err();
+        assert!(!matches!(refused, Error::NotFound { .. }), "{refused:?}");
+    } else {
+        assert_eq!(ops::control(backend, &label, Control::Start).expect("start").state, State::Running);
+        assert_eq!(ops::control(backend, &label, Control::Restart).expect("restart").state, State::Running);
+    }
+
+    // a change keeps everything it does not mention
+    if configurable("autostart") {
+        let patch = Patch { autostart: Some(true), ..Patch::default() };
+        let changed = ops::configure(backend, &label, patch).expect("configure autostart");
+        assert_eq!(changed.autostart, Some(true));
+    }
+    if configurable("restart") {
+        let patch = Patch { restart: Some(Restart::Always), ..Patch::default() };
+        let changed = ops::configure(backend, &label, patch).expect("configure restart");
+        assert_eq!(changed.restart, Some(Restart::Always));
+        if reported("program") {
+            assert_eq!(changed.program.as_deref(), Some(program), "the program stays");
+        }
+        if reported("environment") && installs("environment") {
+            assert!(changed.environment.as_ref().is_some_and(|e| e.contains_key("NEOC_TEST")));
+        }
+    }
+    if configurable("description") {
+        let patch = Patch { description: Some("changed by the test".to_owned()), ..Patch::default() };
+        let changed = ops::configure(backend, &label, patch).expect("configure description");
+        assert_eq!(changed.description.as_deref(), Some("changed by the test"));
+        assert_eq!(changed.autostart.is_some(), configurable("autostart") || reported("autostart"));
+    }
+    // an option the manager does not keep is refused by name
+    if let Some(option) = ["restart", "program"].into_iter().find(|o| !configurable(o)) {
+        let patch = match option {
+            "restart" => Patch { restart: Some(Restart::Always), ..Patch::default() },
+            _ => Patch { program: Some(program.to_owned()), ..Patch::default() },
+        };
+        let refused = ops::configure(backend, &label, patch).unwrap_err();
+        assert!(matches!(&refused, Error::Unsupported { option: Some(o), .. } if o == option), "{refused:?}");
+    }
+
+    if caps.kind != "windows" {
+        assert_eq!(ops::control(backend, &label, Control::Stop).expect("stop").state, State::Stopped);
+    }
+    ops::uninstall(backend, &label).expect("uninstall");
+    assert_eq!(ops::get(backend, &label).expect("get"), None);
+    assert!(matches!(ops::uninstall(backend, &label), Err(Error::NotFound { .. })));
+}
+
+/// Without the rights to change services of the machine, the system level answers with a typed refusal and changes
+/// nothing: no escalation is attempted. It runs where the test is not root (the first CI step, before the one that
+/// runs `native_round_trip` as root).
+#[cfg(unix)]
+#[test]
+fn native_system_level_without_rights_is_permission_denied() {
+    if !native_allowed() {
+        return eprintln!("skipped: set {NATIVE}=1 to try services of this machine");
+    }
+    if privileged() {
+        return eprintln!("skipped: this process has the rights, so there is nothing to be denied");
+    }
+    let manager =
+        ops::open(None, Some(Level::System)).unwrap_or_else(|e| panic!("the manager of the machine: {e:?}"));
+    let backend = manager.backend();
+    let label = format!("neoc-denied-{}", std::process::id());
+    let _cleanup = Registered { backend, label: label.clone() };
+    let refused = ops::install(backend, spec_with("/bin/sleep", &label)).unwrap_err();
+    assert!(matches!(refused, Error::PermissionDenied { .. }), "{refused:?}");
+    assert_eq!(ops::get(backend, &label).expect("get"), None, "nothing was registered");
 }
 
 /// The real manager of the machine, read only (it changes nothing, so it is not ignored): every service it lists can be
