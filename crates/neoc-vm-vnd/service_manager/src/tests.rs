@@ -328,6 +328,15 @@ esac
     }
 
     #[test]
+    fn unit_aliases_are_listed_once_under_the_canonical_id() {
+        let rig = rig();
+        std::fs::hard_link(rig.path.join("web.show"), rig.path.join("httpd.show")).expect("add a unit alias");
+
+        let all = ops::list(&rig.manager).expect("list");
+        assert_eq!(all.iter().map(|s| s.label.as_str()).collect::<Vec<_>>(), ["db", "web"]);
+    }
+
+    #[test]
     fn units_of_the_manager_are_listed_and_controlled_whoever_made_them() {
         let rig = rig();
         let all = ops::list(&rig.manager).expect("list");
