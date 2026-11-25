@@ -87,15 +87,23 @@ impl Systemd {
         Ok(())
     }
 
+    /// The services of the units, each once. An alias answers with the `Id` of the unit it names, so two names can
+    /// be one service: the first seen is kept.
     fn show(&self, labels: &[String]) -> Result<Vec<Service>, Error> {
         let mut found = Vec::new();
+        let mut seen = BTreeSet::new();
         for chunk in labels.chunks(100) {
             let property = format!("--property={PROPERTIES}");
             let units: Vec<String> = chunk.iter().map(|l| format!("{l}.service")).collect();
             let mut args: Vec<&str> = vec!["show", &property];
             args.extend(units.iter().map(String::as_str));
             let text = self.ctl_ok("inspect services", None, &args)?;
-            found.extend(parse_show(&text).iter().filter_map(service_from_show));
+            found.extend(
+                parse_show(&text)
+                    .iter()
+                    .filter_map(service_from_show)
+                    .filter(|service| seen.insert(service.label.clone())),
+            );
         }
         Ok(found)
     }
