@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration tests
-//! Todos (`apps/todos`, a Vite project on the v2 plugin whose backend is written in TypeScript) under the real runtime:
+//! Todos (`apps/todos`, a Vite project on the vos plugin whose backend is written in TypeScript) under the real runtime:
 //! the page's private methods (`_board`, `_add_list`, ...) and the agent's public ones (`list_todos`, `add_todo`,
 //! `complete_todo`) on the bus, held to the app's contract (`openrpc.json`). The backend is compiled as the app's own
 //! build compiles it.

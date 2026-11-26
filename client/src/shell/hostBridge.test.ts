@@ -89,6 +89,10 @@ const request = (
   ...(params === undefined ? {} : { params })
 })
 
+/** A call of one of the frame's own app's methods, the way a page makes it: on the bus, `vos/request`. */
+const bus = (id: number | string, method: string, params?: unknown): ReturnType<typeof request> =>
+  request(id, 'vos/request', { app: 'notes', method, ...(params === undefined ? {} : { params }) })
+
 describe('the handshake', () => {
   test('ui/initialize is answered with the host’s capabilities, info and context', async () => {
     const { bridge, posted, flush } = rig()
@@ -206,22 +210,27 @@ describe('the page on the RPC bus', () => {
 })
 
 describe('the app’s own calls', () => {
-  test('a method of the app’s backend becomes an app.call for the frame’s own app', async () => {
+  test('a plain method name is refused: a page reaches its backend through the bus (vos/request)', async () => {
     const { bridge, posted, calls, flush } = rig(async () => ({ items: [1, 2] }))
     bridge.receive({ source: FRAME, data: request(7, 'list', { limit: 2 }) })
     await flush()
-    expect(calls).toEqual([
-      { method: 'app.call', params: { app: 'notes', method: 'list', args: { limit: 2 } } }
+    expect(calls).toEqual([])
+    expect(posted).toEqual([
+      { jsonrpc: '2.0', id: 7, error: { code: -32601, message: 'This host does not offer list' } }
     ])
-    expect(posted).toEqual([{ jsonrpc: '2.0', id: 7, result: { items: [1, 2] } }])
   })
 
-  test('an app named in the message is not read: the call is for the frame’s app', async () => {
+  test('an app named in the message envelope is not read: vos/request names the app in its params only', async () => {
     const { bridge, calls, flush } = rig()
-    bridge.receive({ source: FRAME, data: { ...request(1, 'list', {}), app: 'agents' } })
-    bridge.receive({ source: FRAME, data: request(2, 'list', { app: 'agents' }) })
+    bridge.receive({
+      source: FRAME,
+      data: {
+        ...request(1, 'vos/request', { app: 'notes', method: 'list', params: {} }),
+        app: 'agents'
+      }
+    })
     await flush()
-    expect(calls.map((c) => c.params.app)).toEqual(['notes', 'notes'])
+    expect(calls.map((c) => c.params.app)).toEqual(['notes'])
   })
 
   test('a JSON-RPC error of the host comes back with its code, message and data', async () => {
@@ -230,7 +239,10 @@ describe('the app’s own calls', () => {
         new HostError(-32602, 'Invalid params: params.title is required', { field: 'title' })
       )
     )
-    bridge.receive({ source: FRAME, data: request(3, 'add', {}) })
+    bridge.receive({
+      source: FRAME,
+      data: request(3, 'vos/request', { app: 'notes', method: 'add', params: {} })
+    })
     await flush()
     expect(posted).toEqual([
       {
@@ -247,7 +259,10 @@ describe('the app’s own calls', () => {
 
   test('any other failure is an internal error with its message', async () => {
     const { bridge, posted, flush } = rig(() => Promise.reject(new Error('socket closed')))
-    bridge.receive({ source: FRAME, data: request(4, 'add', {}) })
+    bridge.receive({
+      source: FRAME,
+      data: request(4, 'vos/request', { app: 'notes', method: 'add', params: {} })
+    })
     await flush()
     expect(posted).toEqual([
       { jsonrpc: '2.0', id: 4, error: { code: -32603, message: 'socket closed' } }
@@ -256,25 +271,22 @@ describe('the app’s own calls', () => {
 })
 
 describe('what the host does not offer is refused in words', () => {
-  test('a ui/ or vos/ method no service registered answers "does not offer"', async () => {
+  test('a method no service registered (a ui/ or vos/ one, or a plain name) answers "does not offer"', async () => {
     const { bridge, posted, calls } = rig()
-    for (const name of [
+    const names = [
       'ui/message',
       'ui/update-model-context',
       'vos/toast',
       'tools/call',
-      'resources/read'
-    ]) {
+      'resources/read',
+      'press'
+    ]
+    for (const name of names) {
       bridge.receive({ source: FRAME, data: request(name, name, {}) })
     }
     expect(calls).toEqual([])
     expect(posted.map((m) => (m as { error: { code: number; message: string } }).error)).toEqual(
-      ['ui/message', 'ui/update-model-context', 'vos/toast', 'tools/call', 'resources/read'].map(
-        (name) => ({
-          code: -32601,
-          message: `This host does not offer ${name}`
-        })
-      )
+      names.map((name) => ({ code: -32601, message: `This host does not offer ${name}` }))
     )
   })
 
@@ -371,12 +383,12 @@ describe('the services both host pages offer', () => {
 describe('what comes from the page and what goes into the frame', () => {
   test('a message from another window is ignored', async () => {
     const { bridge, calls, posted, events, flush } = rig()
-    bridge.receive({ source: { other: true }, data: request(1, 'list', {}) })
+    bridge.receive({ source: { other: true }, data: bus(1, 'list', {}) })
     bridge.receive({
       source: { other: true },
       data: { jsonrpc: '2.0', method: 'ui/notifications/initialized' }
     })
-    bridge.receive({ source: null, data: request(1, 'list') })
+    bridge.receive({ source: null, data: bus(1, 'list') })
     await flush()
     expect(calls).toEqual([])
     expect(posted).toEqual([])
@@ -430,14 +442,14 @@ describe('what comes from the page and what goes into the frame', () => {
     const { bridge, posted, calls, flush } = rig()
     bridge.receive({
       source: FRAME,
-      data: request(1, 'add', { title: 'x'.repeat(2 * 1024 * 1024) })
+      data: bus(1, 'add', { title: 'x'.repeat(2 * 1024 * 1024) })
     })
     let deep: unknown = 1
     for (let i = 0; i < 150; i++) deep = [deep]
-    bridge.receive({ source: FRAME, data: request(2, 'add', deep) })
+    bridge.receive({ source: FRAME, data: bus(2, 'add', deep) })
     const cyclic: Record<string, unknown> = {}
     cyclic.self = cyclic
-    bridge.receive({ source: FRAME, data: request(3, 'add', cyclic) })
+    bridge.receive({ source: FRAME, data: bus(3, 'add', cyclic) })
     await flush()
     expect(calls, 'nothing reached the host connection').toEqual([])
     expect(posted.map((m) => (m as { error: { code: number; message: string } }).error)).toEqual([
@@ -451,7 +463,7 @@ describe('what comes from the page and what goes into the frame', () => {
     const { bridge, calls, flush } = rig()
     bridge.receive({
       source: FRAME,
-      data: request(1, 'add', { title: 'x'.repeat(MAX_ARGS_BYTES - 100) })
+      data: bus(1, 'add', { title: 'x'.repeat(MAX_ARGS_BYTES - 100) })
     })
     await flush()
     expect(calls.length).toBe(1)
@@ -522,7 +534,7 @@ describe('what comes from the page and what goes into the frame', () => {
       return 'ok'
     })
     for (let id = 0; id < 200; id++)
-      bridge.receive({ source: FRAME, data: request(id, 'echo', {}) })
+      bridge.receive({ source: FRAME, data: bus(id, 'echo', {}) })
     for (let i = 0; i < 200 && posted.length < 200; i++) await new Promise((r) => setTimeout(r, 5))
     expect(posted.length).toBe(200)
     expect(posted.every((m) => 'result' in m)).toBe(true)
@@ -548,10 +560,10 @@ describe('what comes from the page and what goes into the frame', () => {
     const { bridge, posted, calls, flush } = rig(
       () => new Promise((r) => setTimeout(() => r('late'), 20))
     )
-    bridge.receive({ source: FRAME, data: request(1, 'list') })
+    bridge.receive({ source: FRAME, data: bus(1, 'list') })
     await flush()
     bridge.dispose()
-    bridge.receive({ source: FRAME, data: request(2, 'list') })
+    bridge.receive({ source: FRAME, data: bus(2, 'list') })
     bridge.event('changed', null)
     await new Promise((r) => setTimeout(r, 40))
     expect(calls.length).toBe(1)
@@ -639,7 +651,7 @@ describe('eventFor', () => {
       context: () => context,
       gate: createCallGate({ total: 1, perFrame: 1, maxWaiting: 1 })
     })
-    for (const id of [1, 2, 3]) bridge.receive({ source: FRAME, data: request(id, 'list', {}) })
+    for (const id of [1, 2, 3]) bridge.receive({ source: FRAME, data: bus(id, 'list', {}) })
     await new Promise((r) => setTimeout(r, 0))
     const refused = posted.filter((m) => 'error' in m)
     expect(refused).toHaveLength(1) // the first runs, the second waits, the third is refused

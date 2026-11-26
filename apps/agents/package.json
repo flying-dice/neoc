@@ -33,7 +33,7 @@
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@types/bun": "1.4.4",
     "@vos/storybook": "workspace:*",
-    "@vos/vite-plugin-v2": "workspace:*",
+    "@vos/vite-plugin": "workspace:*",
     "storybook": "10.6.7",
     "svelte": "^5.57.2",
     "svelte-check": "^4.7.6",

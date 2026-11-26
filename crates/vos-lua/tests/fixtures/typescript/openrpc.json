@@ -1,22 +1,21 @@
 {
-  "openrpc": "1.3.2",
+  "openrpc": "1.4.0",
   "info": { "title": "TypeScript probe", "version": "0.1.0" },
-  "x-app": { "id": "typescript" },
   "methods": [
     {
-      "name": "probe",
+      "name": "_probe",
       "summary": "What the compiled TypeScript answers, one line per thing tried.",
       "params": [],
       "result": { "name": "lines", "schema": { "type": "array", "items": { "type": "string" } } }
     },
     {
-      "name": "raise",
+      "name": "_raise",
       "summary": "Fail the call in the way named.",
       "params": [{ "name": "how", "required": true, "schema": { "type": "string", "enum": ["error", "subclass", "coded", "fail"] } }],
       "result": { "name": "nothing", "schema": { "type": "null" } }
     },
     {
-      "name": "remember",
+      "name": "_remember",
       "summary": "Keep a word in the app's database and answer with every word kept, in order.",
       "params": [{ "name": "word", "required": true, "schema": { "type": "string" } }],
       "result": { "name": "words", "schema": { "type": "array", "items": { "type": "string" } } }

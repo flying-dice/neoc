@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration tests
-//! The Calculator (`apps/calculator`, a Vite project on the v2 plugin) under the real runtime: its keypad on the bus
+//! The Calculator (`apps/calculator`, a Vite project on the vos plugin) under the real runtime: its keypad on the bus
 //! (`_press`, private to the page: each call carries the keypad's state and answers with the next one), and its agent
 //! tool (`calculate`, a public read-only method), both held to the app's contract (`openrpc.json`).
 

@@ -22,7 +22,7 @@
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
-    "@vos/vite-plugin-v2": "workspace:*",
+    "@vos/vite-plugin": "workspace:*",
     "svelte": "^5.57.2",
     "svelte-check": "^4.7.6",
     "typescript": "^5.9.3",

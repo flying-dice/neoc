@@ -4,8 +4,8 @@
  *
  *   bun run build:apps [ids…] [--out <dir>] [--root <dir>]...
  *
- * An app is a Vite project: an `openrpc.json` (its contract and only descriptor) and a `vite.config.ts` using the vos
- * plugin (`packages/vite-plugin`). Its own `bun run build` writes the whole app ref into its `dist/`: the backend as ONE
+ * An app is a Vite project: a `package.json` (what the app is), an `openrpc.json` (its contract) and a `vite.config.ts`
+ * using the vos plugin (`packages/vite-plugin`). Its own `bun run build` writes the whole app ref into its `dist/`: the backend as ONE
  * Luau file (`app.luau`, bundled by darklua with types and comments stripped), the page's static files, the SQL migrations
  * and `app-ref.json` ({ manifest, files: [{ path, url, sha256 }] }, file URLs relative to the app ref). This script runs
  * that build for every app and copies the folder under <out>/<id>/<version>/ (default out: dist/apps), then writes one
@@ -16,8 +16,7 @@
  * The host's default registry is dist/apps/registry.json over file://;
  * with `dev_reload` it rebuilds an app's VM when its files change, so `bun run build:apps` is the dev loop.
  */
-import { DefinitionError, parseDefinition } from '../packages/vite-plugin/src/definition.ts'
-import { AppError, parseApp } from '../packages/vite-plugin-v2/src/app.ts'
+import { AppError, parseApp } from '../packages/vite-plugin/src/app.ts'
 import { spawnSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join, relative, resolve } from 'node:path'
@@ -29,25 +28,19 @@ const outDir = resolve(root, outFlag >= 0 ? (args[outFlag + 1] ?? '') : 'dist/ap
 const extraRoots = args.flatMap((a, i) => (a === '--root' ? [resolve(root, args[i + 1] ?? '')] : []))
 const only = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--out' && args[i - 1] !== '--root')
 
-/** An app is a Vite project: its contract, `openrpc.json`, is its only descriptor. */
+/** An app is a Vite project with a contract, `openrpc.json`, beside its `package.json`. */
 const isApp = (dir: string): boolean => existsSync(join(dir, 'openrpc.json'))
 
 /**
- * The id and version of an app, read with its plugin's own parser so that they are the validated ones (an id and a
- * version become directory names under the output folder): a v2 app's from its `package.json` (its contract has no
- * `x-app`), a v1 app's from `x-app.id` and `info.version` of its contract.
+ * The id and version of an app, read with the plugin's own parser so that they are the validated ones (an id and a
+ * version become directory names under the output folder): from its `package.json`.
  */
 function appIdentity(dir: string): { id: string; version: string } {
   try {
-    const contract = JSON.parse(readFileSync(join(dir, 'openrpc.json'), 'utf8')) as Record<string, unknown>
-    if (contract['x-app'] === undefined) {
-      const app = parseApp(readFileSync(join(dir, 'package.json'), 'utf8'), `${relative(root, dir)}/package.json`)
-      return { id: app.id, version: app.version }
-    }
-    const definition = parseDefinition(readFileSync(join(dir, 'openrpc.json'), 'utf8'), `${relative(root, dir)}/openrpc.json`)
-    return { id: definition.app.id, version: definition.version }
+    const app = parseApp(readFileSync(join(dir, 'package.json'), 'utf8'), `${relative(root, dir)}/package.json`)
+    return { id: app.id, version: app.version }
   } catch (error) {
-    if (!(error instanceof DefinitionError) && !(error instanceof AppError)) throw error
+    if (!(error instanceof AppError)) throw error
     console.error(`✗ ${error.message}`)
     process.exit(1)
   }

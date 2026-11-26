@@ -3,7 +3,7 @@
 // Regenerate with `bun run codegen`; `bun run codegen:check` fails when this file is stale.
 //
 // TypeScript declarations for a backend written in TypeScript and compiled to Luau by TypeScriptToLua (the build of
-// `@vos/vite-plugin` copies this file into an app's `.app/server/`). Never loaded by the host. What it declares: every
+// `@vos/vite-plugin` writes it typed per app into an app's `types/vos.backend.d.ts`). Never loaded by the host. What it declares: every
 // type of the Luau declarations under the same name, a module for every `require` an app is offered
 // (`import * as fs from "std:fs"`), and the global `app`. A function that takes `this: void` is called with `.`, a
 // method of an interface with `:`. A module or a global an app is not offered is not declared.

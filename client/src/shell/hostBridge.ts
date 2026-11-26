@@ -7,14 +7,14 @@
  *
  *   `ui/initialize`                 the handshake: answered with `hostCapabilities`, `hostInfo` and `hostContext`
  *   `ui/notifications/initialized`  the page is up (the host's cue to show it)
- *   `ui/...`, `vos/...`             a host service of the registry, if the host offers it; else "method not found"
- *   any other method                the app's own backend call: forwarded as `app.call` for the frame's own app
+ *   `ui/...`, `vos/...`             a host service of the registry, if the host offers it
+ *   any other method                "method not found": a page reaches its backend through the bus, `vos/request`
  *   `vos/request`                   a request to another app's backend (`{ app, method, params }`): forwarded as
  *                                   `app.call` for that app, held to the same limits as the frame's own calls
  *   `vos/failed`                    the page could not start
  *   `vos/shortcut`                  the shell's search chord was pressed in the frame
  *   `vos/telemetry`                 what the frame recorded (its calls' spans, its errors): passed on as `host.telemetry.ingest`
- *   `vos/telemetry/query`           the Telemetry app reads what was recorded (that app's frame only)
+ *   `vos/telemetry/query`           the Telemetry app reads what was recorded (that app's frame only; `vos.tracing.query`)
  *   `vos/subscribe`                 the page listens to another app's public notifications (`{ app }`)
  *   `vos/handle`, `vos/unhandle`    the page serves (or stops serving) one of its app's methods on the RPC bus
  *   `vos/answer`                    the page's answer to a request of the bus (`{ call, result }` or `{ call, error }`):
@@ -316,16 +316,13 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
       answer(callId, () => service(params, { appId }))
       return
     }
-    if (name.includes('/')) {
-      // MCP's and the dialect's own names are never an app's: this host does not offer this one
-      post({
-        jsonrpc: '2.0',
-        id: callId,
-        error: { code: METHOD_NOT_FOUND, message: `This host does not offer ${name}` }
-      })
-      return
-    }
-    forward(callId, appId, name, params, traceparent)
+    // anything else is not this host's: MCP's and the dialect's own names are never an app's, and a page reaches its
+    // backend (and another app's) through the bus, `vos/request`
+    post({
+      jsonrpc: '2.0',
+      id: callId,
+      error: { code: METHOD_NOT_FOUND, message: `This host does not offer ${name}` }
+    })
   }
 
   /** The page's side of the RPC bus: its handlers, its answers and its notifications, always for its own app. */

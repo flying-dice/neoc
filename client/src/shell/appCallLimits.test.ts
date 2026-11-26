@@ -140,9 +140,13 @@ function frameOf(
   return {
     posted,
     bridge,
+    // a call of the frame's own app's method, the way a page makes it: on the bus (`vos/request`)
     rpc: (method: string): number => {
       const n = ++id
-      bridge.receive({ source: FRAME, data: { jsonrpc: '2.0', id: n, method, params: {} } })
+      bridge.receive({
+        source: FRAME,
+        data: { jsonrpc: '2.0', id: n, method: 'vos/request', params: { app, method, params: {} } }
+      })
       return n
     },
     answered: (n: number): ToFrame | undefined => posted.find((m) => 'id' in m && m.id === n),

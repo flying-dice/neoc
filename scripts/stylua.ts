@@ -12,7 +12,7 @@
 import { spawnSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { findTool } from '../packages/vite-plugin/src/find-tool.ts'
+import { findTool } from './find-tool.ts'
 import { skipTool } from './gate'
 
 const root = resolve(import.meta.dir, '..')

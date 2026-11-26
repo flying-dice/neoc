@@ -3,7 +3,7 @@
  * Checks every Luau fixture with `luau-lsp analyze` in strict mode against the generated declarations
  * (types/generated/vos.d.luau: the `app` API, the std:/lib:/vnd: modules an app is offered, and the one
  * `declare require`; written by vos-codegen), and every app's backend against its own `types/vos.d.luau` (the same
- * declarations with the global `RPC` typed for that app and its dependencies, written by `@vos/vite-plugin-v2`).
+ * declarations with the global `RPC` typed for that app and its dependencies, written by `@vos/vite-plugin`).
  *
  *  1. Positive: every `.luau` file of a fixture (`crates/<crate>/tests/fixtures/`,
  *     `scripts/fixtures/` outside `negative/`) and of the Luau the host carries (`crates/vos-lua/lua/`: `vos:docker`,
@@ -45,7 +45,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
-import { findTool } from '../packages/vite-plugin/src/find-tool.ts'
+import { findTool } from './find-tool.ts'
 import { skipTool } from './gate'
 
 const root = resolve(import.meta.dir, '..')
@@ -69,7 +69,7 @@ export const NEGATIVE_MARKERS: Record<string, number> = {
 
 /** Where the fixtures live. */
 const SOURCES = ['crates/*/tests/fixtures/**/*.luau', 'scripts/fixtures/**/*.luau', 'crates/vos-lua/lua/**/*.luau']
-const SKIP = /node_modules|\.claude|\/target\//
+const SKIP = /node_modules|\.claude|\/target\/|\/dist\//
 
 /** One finding of `luau-lsp analyze`: the 1-based line, the message up to its `caused by:` lines, the whole message. */
 export interface Finding {

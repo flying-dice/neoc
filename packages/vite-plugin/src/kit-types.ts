@@ -1,6 +1,6 @@
 /**
  * Editor types for the kit's tags, generated from its Custom Elements Manifest (`packages/kit/custom-elements.json`,
- * written by `bun run build:kit` and committed; the plugin writes them into an app's `.app/` on every generate). An app that writes `<ui-button varient="x">` or `onchange={...}` with the wrong
+ * written by `bun run build:kit` and committed; the plugin writes them into an app's `types/` on every build). An app that writes `<ui-button varient="x">` or `onchange={...}` with the wrong
  * payload is flagged by its editor and its type check, in Svelte (svelte-check) and in React (tsc).
  *
  * Types only: nothing here is shipped to a frame, and the app's bundle never contains a second copy of the kit

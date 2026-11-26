@@ -4,7 +4,7 @@ Status: plan, not started. Branch `plan/unified-rpc`.
 
 ## Proof of concept on this branch
 
-- `packages/vite-plugin-v2`: the plugin of this plan, beside v1. package.json is the app, `openrpc.json` (1.4) its API;
+- `packages/vite-plugin`: the plugin of this plan (the v1 plugin is deleted). package.json is the app, `openrpc.json` (1.4) its API;
   it writes types only (below). The sections after this one are the plan as it was written, with its earlier names
   (`sendRequest`, a generated `rpc` per app); what is built is this section.
 - `apps/app1` acts (add, clear) and notifies (`added`, `cleared` public; `_saved` private); `apps/app2` depends on it
@@ -121,7 +121,7 @@ app's contract is one that app sends.
 }
 ```
 
-Rules the generator enforces (`packages/vite-plugin-v2/src/contract.ts`):
+Rules the generator enforces (`packages/vite-plugin/src/contract.ts`):
 
 - `params` is required, as OpenRPC says (`[]` for none); params are by name.
 - `x-readOnly: true` on a request replaces `app.tool { readOnly = true }`: MCP `readOnlyHint`, and the runtime runs it
@@ -278,103 +278,28 @@ Pre-release, so no compatibility shims: each step lands with the old path remove
 
 ## Migrating a v1 app
 
-`@vos/vite-plugin` (v1: the generated `@<id>/rpc`, `@vos/host`, `@vos/tracing` and `.app/rpc`, and the `vos` CLI) is
-deprecated. Keychain (`apps/keychain`, commit `26724ea6`) is the worked example. Behaviour stays the same: agents see
-the same tools under the same names, and the person sees the same app.
-
-**package.json and the contract**
-
-- `x-app` leaves `openrpc.json` for package.json: its `description` becomes the package `description`, and `vos`
-  gets `{ title: info.title, icon, tint, window }`, and `csp` and `permissions` when the app declared them. The package name without its scope must be the old `x-app.id`.
-- `openrpc` becomes `"1.4.0"`. Drop `info.description` if it only repeated `x-app.description`.
-- Each v1 page method (a key of the `Handlers` table the entry returned) becomes **private**, in snake case: `foo` → `_foo`, `addFolder` → `_add_folder` (the house style; one that would be the twin of a tool, `_add_record` beside `add_record`, takes another name). A public
-  method is an agent tool, so a page method left public would hand agents what only the person had (Keychain's
-  `reveal`).
-- Each `app.tool { name, title, description, input, readOnly, run }` becomes a **public** request of the same `name`:
-  `summary` = title, `description` = description, `params` from `input` (each `t.*` builder as a JSON Schema, with
-  `required` as the builder had it), `"x-readOnly": true` for `readOnly`. Write the `result` schema from what `run`
-  returns: the bus checks answers against it.
-- Each `app.emit(name, data)` becomes a notification (a method without `result`) of the same name, with `data`'s
-  fields as `params` (`[]` for none). A name that is not `[a-z][a-zA-Z0-9_]*` is renamed to snake case.
-- Scripts: drop `generate`, `lint`, `format` (the root `lint:luau`, `lint:stylua` and `format` cover the app);
-  `typecheck` is `vite build && svelte-check --tsconfig ./tsconfig.json`. `@vos/vite-plugin` → `@vos/vite-plugin-v2`.
-  `.gitignore`: `types` and `dist` (no `.app`); delete the `.app/` folder. `tsconfig.json` includes
-  `"types/**/*.d.ts"` instead of `".app/*.d.ts"`. `vite.config.ts` imports from `@vos/vite-plugin-v2`.
-
-**Backend (`server/`)**
-
-- No `require("vos:app")` or `require("../.app/rpc")`: `app` and `RPC` are globals.
-- Each handler: `RPC.on_request("_foo", function(params: <id>_FooParams, ctx: vos_app_Context): <id>_FooResult ... end)`
-  (v1 was `(ctx, args)`: the order swaps). A method without params takes `_params: {}` or nothing.
-- Each tool: `RPC.on_request("<name>", function(params, ctx) ... end)` with the body of `run`.
-- `app.emit(name, data)` → `RPC.send_notification(name, data)`. The entry returns nothing.
-- Types: `rpc.Foo` → `<id>_Foo` (the id with `-` as `_`): every component and every `<Method>Params`/`<Method>Result`.
-- `ctx:fail(message)`, `app.db`, `app.kv`, `app.files`, `app.notify`, `app.log`, `app.tools` stay as they are.
-- `bun run lint:luau` checks it (strict, both passes) against the app's own `types/vos.d.luau`.
-- A backend that is TypeScript stays TypeScript (`server/main.ts`, not both): the same globals, the same handlers
-  (`RPC.on_request('_foo', (params, ctx) => ...)`), types as the globals `<id>_Foo`, `vos_app_Context` for `ctx`. The plugin
-  writes `types/vos.backend.d.ts` (the host's `vos.d.ts` with `RPC` typed per app and method) and
-  `types/tsconfig.backend.json`; `server/tsconfig.json` is `{ "extends": "../types/tsconfig.backend.json" }`, the page's
-  `tsconfig.json` excludes `types/vos.backend.d.ts`, and `vite build` compiles the backend with TypeScriptToLua, so a
-  wrong method, params or result is a failed build. Todos (`apps/todos`) is the example.
-
-**Page (`src/`)**
-
-- `import type { Foo } from '@<id>/rpc'` → `type Foo = VosApp.<Ns>.Foo` (`<Ns>` is the id in PascalCase).
-- The generated `Api` type goes: the state module declares the interface it needs (same method names as before,
-  typed from `VosApp.<Ns>.*`), so its fakes, tests and stories do not change. `App.svelte` (the composition root) is the
-  one place that meets the bus: `foo: (params) => RPC.send_request('<id>', '_foo', params)`.
-- `host.on(name, fn)` for a backend event → `RPC.on_notification('<id>', name, fn)`; `host:...` events stay on
-  `vos.host.on`. `import { host } from '@vos/host'` → the global `vos.host` (`on_context`, `on_teardown`, `open_link`,
-  `request_display_mode`); the `Host` type → `VosHost`. `RpcError` → `RPC.RpcError` (type `VosRpcError`).
-- `@vos/tracing` → the global `vos.tracing` (`span(...).in_scope(fn)`).
-- Stories read the window from package.json (`import pkg from '../../package.json'`, `pkg.vos.window`, `pkg.vos.title`)
-  instead of `definition['x-app']`.
-- Tests, e2e journeys and agent tool names (`<id>__<tool>`) do not change; a journey that named a page method
-  directly follows its rename.
-
-**Done when** `vite build`, `svelte-check`, `bun test ./src`, `bun run lint:luau` and `bun scripts/stylua.ts check` pass,
-and `grep -rn "@<id>/rpc\|@vos/host\|@vos/tracing\|\.app/\|x-app\|app\.tool\|app\.emit\|app\.t\b" src server` is empty.
+Done: v1 (`@vos/vite-plugin` as it was, with its generated `@<id>/rpc`, `@vos/host` and `@vos/tracing` modules and the
+`vos` CLI) is deleted and the plugin of this plan took its name (`packages/vite-plugin`). The recipe for moving an app (package.json
+and contract, backend, page) lived here; it is in this file at commit `3c47b172`, with Keychain (`apps/keychain`,
+commit `26724ea6`) as the worked example.
 
 ## Retiring the `vos` CLI
 
-`@vos/vite-plugin` grew a Luau toolchain it was never meant to be: the `vos` bin (`packages/vite-plugin/bin/vos.ts`)
-drives luau-lsp and StyLua (`luau-tools.ts`, `find-tool.ts`). This work deletes it. vos is the Vite plugin, and the
-plugin's job is to generate the Luau and TypeScript client code and build the app ref. What each command did, and
-where it goes:
+Done: the `vos` bin (`bin/vos.ts`, `luau-tools.ts`) went with v1. vos is the Vite plugin, and the plugin's job is to
+generate the Luau and TypeScript client code and build the app ref. What each command became:
 
-| Command | Used by | Replaced by |
-| --- | --- | --- |
-| `vos generate` | every app's `generate` script; `packages/docker`'s `typecheck` (kit editor types only) | the plugin, on any Vite run (it already generates in `buildStart`); `packages/docker` writes the kit's types with the plugin's `writeKitTypes` in its `typecheck` |
-| `vos typecheck`, Luau backend | every app's `typecheck` | the repo's `bun run lint:luau` (`scripts/lint-luau.ts`), widened to `apps/*/server`, each checked with its generated `types/vos.d.luau` as definitions; it skips `apps/` today only because `vos` covered it |
-| `vos typecheck`, TypeScript backend | the same | `vite build`: compiling the backend with TypeScriptToLua is the check, and the build already does it |
-| `vos lint` (typecheck + StyLua check) | every app's `lint` | `bun run lint:luau` + `bun run lint:stylua` (`scripts/stylua.ts`, which already covers `apps/`) |
-| `vos format` | every app's `format` | root `bun run format` (already runs `scripts/stylua.ts format`) |
-| `vos bundle <out>` | `crates/vos-lua/tests/it/common/mod.rs:160` (compiles the TypeScript fixture) | the test imports the plugin's `backendBundle` through a one-line `bun -e`, or runs `vite build` on the fixture |
+| Command | Now |
+| --- | --- |
+| `vos generate` | the plugin, on any Vite run (`configResolved`); `packages/docker` writes the kit's types with `writeKitTypes` |
+| `vos typecheck`, Luau backend | `bun run lint:luau` (`scripts/lint-luau.ts`), over `apps/*/server` and `e2e/apps/*/server`, each with its generated `types/vos.d.luau` |
+| `vos typecheck`, TypeScript backend | `vite build`: compiling the backend with TypeScriptToLua is the check |
+| `vos lint`, `vos format` | `bun run lint:luau`, `bun run lint:stylua` and the root `bun run format` |
+| `vos bundle <out>` | the app's own `vite build` (`dist/app.luau`); the TypeScript fixture of `crates/vos-lua` is a small app project built that way |
 
-What has to come back, so nothing is lost:
-
-1. **`types/` without a full build.** `svelte-check` and the editor need the generated client before anything builds.
-   The plugin generates in `buildStart`, which only `vite build` / `vite dev` reach. Move generation to the plugin's
-   `configResolved`, so every Vite command generates; an app's `typecheck` becomes `vite build && svelte-check` (the
-   gate builds the apps anyway), or `bun run dev` for the editor.
-2. **The handler check in the build goes.** Today `vite build` runs luau-lsp strict over the backend (`check: true`);
-   that is the toolchain role, so it moves out with the CLI: the `check` option and luau-lsp leave the plugin. The
-   guarantee stays: the generated `Handlers` type is checked by `bun run lint:luau` in the gate and by luau-lsp in the
-   editor, and the host refuses at load a backend missing a method.
-3. **Kit editor types.** `kitDeclarations` copies `kit-svelte.d.ts` / `kit-react.d.ts` into the generated folder per project. They are
-   the same in every project, so `@vos/kit` ships them as its own types (`@vos/kit/svelte`, `@vos/kit/react`) and
-   nothing generates them; `packages/docker` drops its `vos generate`. (Done for now with `writeKitTypes` from
-   `@vos/vite-plugin-v2`, which writes them into the package's `types/`.)
-4. **Scripts.** Every app's `package.json` loses `generate`, `lint`, `format` and the `vos typecheck` half of
-   `typecheck`; the plugin's `bin` entry goes. Root `lint` / `format` already run the repo-wide Luau and StyLua passes.
-
-Linting, formatting and checking Luau are the individual tools' (luau-lsp, StyLua), run by the repo's scripts; a
-Luau toolchain is neoc's to grow into later (linter, formatter, checker, bundler), not the plugin's. `vite build` does
-not type check a Luau backend.
-
-Stays in the plugin, as build output rather than toolchain, until neoc bundles: bundling the Luau backend into `app.luau` (darklua) and
-compiling a TypeScript backend (TypeScriptToLua). Both are what `vite build` ships.
+Linting, formatting and checking Luau are the individual tools' (luau-lsp, StyLua), run by the repo's scripts; a Luau
+toolchain is neoc's to grow into later, not the plugin's. What stays in the plugin, as build output: bundling the Luau
+backend into `app.luau` (darklua) and compiling a TypeScript backend (TypeScriptToLua). `vite build` does not type check a
+Luau backend.
 
 ## Open questions
 

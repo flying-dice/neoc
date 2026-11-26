@@ -34,7 +34,7 @@
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^6.3.0",
-    "@vos/vite-plugin-v2": "workspace:*",
+    "@vos/vite-plugin": "workspace:*",
     "typescript": "^5.9.3",
     "vite": "^8.3.4"
   }

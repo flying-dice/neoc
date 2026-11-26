@@ -5,7 +5,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
-import { parseApp, type AppMeta } from '../../packages/vite-plugin-v2/src/app'
+import { parseApp, type AppMeta } from '../../packages/vite-plugin/src/app'
 import { HOST_PORT } from '../../scripts/ports'
 
 export const ROOT = resolve(import.meta.dirname, '../..')

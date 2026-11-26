@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration tests
 #![allow(clippy::cast_possible_truncation)] // offsets and base64 digits: small numbers
 #![cfg(unix)] // the commands typed here are a Unix shell's
-//! The Terminal (`apps/terminal`, a Vite project on the v2 plugin) under the real runtime: its sessions on the bus
+//! The Terminal (`apps/terminal`, a Vite project on the vos plugin) under the real runtime: its sessions on the bus
 //! (private to the page: `_open`, `_write`, ...), each a real shell on a pseudo-terminal (`vnd:portable_pty`), held to
 //! the app's contract (`openrpc.json`), and its output as the notifications the shell records.
 //!

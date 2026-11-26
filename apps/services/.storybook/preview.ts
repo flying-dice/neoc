@@ -1,5 +1,5 @@
 /**
- * What the Services app's stories run in. The host's frame gives a real app three things (`HOST_TAGS` in @vos/vite-plugin-v2):
+ * What the Services app's stories run in. The host's frame gives a real app three things (`HOST_TAGS` in @vos/vite-plugin):
  * the kit's tokens, the kit's elements and the bridge. Here:
  *  - the tokens come with the shared preview (`@vos/ui/styles.css`, the sheet `/kit/tokens.css` is generated from);
  *  - the `ui-*` elements are defined from the kit's source, before any story is imported (the frame's `/kit/kit.js` is

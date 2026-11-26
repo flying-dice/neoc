@@ -122,28 +122,15 @@ pub fn built_package(entry: &Path) -> AppPackage {
     AppPackage { entry: "app.luau".into(), files }
 }
 
-/// Whether the project in `project` is on `@vos/vite-plugin-v2` (its `devDependencies` say so).
-fn is_v2(project: &Path) -> bool {
-    let Ok(text) = std::fs::read_to_string(project.join("package.json")) else { return false };
-    let package: Value = serde_json::from_str(&text).unwrap();
-    package["devDependencies"].get("@vos/vite-plugin-v2").is_some()
-}
-
 /// The backend of the app project in `dir` (relative to the repository root: `apps/calculator`,
 /// `e2e/apps/tasks-svelte`), built, as an app package of the one file the host ships.
 ///
-/// A project on `@vos/vite-plugin-v2` is built by its own `bun run build` (`vite build`), once per process, and its
-/// `dist/app.luau` is the package: Luau or TypeScript, bundled by the plugin. The one exception is the TypeScript
-/// fixture of `typescript.rs` (a project of the deprecated v1 plugin that has no package.json): it is compiled by the
-/// v1 `vos bundle`, as [`built_typescript`] says.
+/// A project is built by its own `bun run build` (`vite build` with `@vos/vite-plugin`), once per process, and its
+/// `dist/app.luau` is the package: Luau or TypeScript, bundled by the plugin.
 pub fn built_project(dir: &str) -> AppPackage {
     use std::sync::Mutex;
     static BUILT: Mutex<Vec<String>> = Mutex::new(Vec::new());
     let project = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(dir);
-    if !is_v2(&project) {
-        assert!(project.join("server/main.ts").exists(), "{dir} is not a project on @vos/vite-plugin-v2");
-        return built_typescript(&project);
-    }
     // the lock is held while building: a second test of the same project waits for the first one's build
     let mut built = BUILT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if !built.iter().any(|done| done == dir) {
@@ -236,31 +223,6 @@ impl Served {
     pub fn handlers(&self) -> Vec<HandlerInfo> {
         self.rt.handlers(&self.app)
     }
-}
-
-/// The backend of a v1 project written in TypeScript, as the deprecated plugin bundles it: `vos bundle`
-/// (`packages/vite-plugin/bin/vos.ts`) generates the project's `.app/` and compiles the backend to one Luau chunk. Only
-/// the v1 `typescript` fixture of `typescript.rs` is built this way (no app is on the v1 plugin any more). Needs bun; no
-/// darklua.
-fn built_typescript(project: &Path) -> AppPackage {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let out = tempfile::Builder::new().prefix("vos-lua-test-").suffix(".luau").tempfile().unwrap();
-    let run = Command::new("bun")
-        .arg(root.join("packages/vite-plugin/bin/vos.ts"))
-        .arg("bundle")
-        .arg(out.path())
-        .current_dir(project)
-        .output()
-        .expect("bun is needed to build the apps these tests run (https://bun.sh)");
-    assert!(
-        run.status.success(),
-        "compiling the TypeScript backend of {} failed:\n{}{}",
-        project.display(),
-        String::from_utf8_lossy(&run.stdout),
-        String::from_utf8_lossy(&run.stderr)
-    );
-    let files = BTreeMap::from([("app.luau".to_owned(), std::fs::read(out.path()).unwrap())]);
-    AppPackage { entry: "app.luau".into(), files }
 }
 
 /// The real database, except that a statement whose SQL contains `stall` never finishes (so a test can hold a

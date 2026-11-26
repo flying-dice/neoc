@@ -4,12 +4,12 @@
 // wrapper) over postMessage, as JSON-RPC 2.0 in a dialect of MCP Apps (SEP-1865, 2026-01-26):
 //
 //   app  -> host   ui/initialize (request), ui/notifications/initialized, ui/request-display-mode, ui/open-link,
-//                  ping, vos/failed (the page could not start), and any other method as the app's own backend call
+//                  ping, vos/failed (the page could not start), and the bus and tracing (`vos/...`)
 //   host -> app    ui/notifications/host-context-changed, ui/resource-teardown (request), and vos/event
 //
-// `ui/` names are the specification's; what is vos's own is under `vos/`; the app's own methods (its OpenRPC
-// contract) are plain names the host forwards to the app's backend. The host knows which app a frame is from the
-// frame itself, never from a message.
+// `ui/` names are the specification's; what is vos's own is under `vos/`; a page reaches its backend (and another
+// app's) through the bus, `vos/request`. The host knows which app a frame is from the frame itself, never from a
+// message.
 //
 // This script defines two globals, the page's whole API, with nothing to import. An app's build only adds types for
 // them (the apps' requests and notifications, by app id). `RPC` is the RPC bus, the same four functions, in the same
@@ -31,21 +31,8 @@
 //
 //   vos.host                 the host page: theme, context, capabilities, hosted, ready, on('host:...'), on_context,
 //                            on_teardown, open_link(url), request_display_mode(mode)
-//   vos.tracing              spans and events, after Rust's `tracing`
-//
-// and underneath, deprecated: what the v1 plugin's generated modules (`@<app id>/rpc`, `@vos/host`, `@vos/tracing`)
-// read. It goes with v1:
-//
-//   vos.ready                a promise: the handshake is done (`vos.context` and `vos.capabilities` are set)
-//   vos.call(method, params) a JSON-RPC request to the host; rejects with an Error that carries `code` and `data`
-//   vos.on(name, fn)         hear a `vos/event` (what the backend sent with `app.emit`); returns a function to stop
-//   vos.onApp(app, name, fn) hear a public notification of another app (its backend's `app.emit` of a name without a
-//                            leading `_`); the first listener for an app asks the host for its events (`vos/subscribe`)
-//   vos.onContext(fn)        hear a change of the host context; returns a function to stop
-//   vos.onTeardown(fn)       run `fn` (may return a promise) when the host is about to remove the frame
-//   vos.context              the host context now (theme, displayMode, locale, timeZone, ...)
-//   vos.capabilities         what the host offers (MCP Apps' hostCapabilities)
-//   vos.tracing              spans and events, after Rust's `tracing`: what the generated `@vos/tracing` module reads
+//   vos.tracing              spans and events, after Rust's `tracing`, and `query(params)`: the Telemetry app's read of
+//                            what was recorded (the host answers that app's frame only)
 //
 // Tracing (NEOC-521 POC): each request (`RPC.send_request`) is a span, a child of the span the page is in when it makes the call (else
 // the root of a trace of its own), and its W3C `traceparent` goes with the call (`_meta`, next to `params`) so the
@@ -79,16 +66,17 @@
   var started = false
   var resolveReady
   var rejectReady
-  var vos = {
-    context: {},
-    capabilities: {},
-    ready: new Promise(function (resolve, reject) {
-      resolveReady = resolve
-      rejectReady = reject
-    })
-  }
+  // the host context now (theme, displayMode, locale, timeZone, ...) and what the host offers (MCP Apps' hostCapabilities)
+  var context = {}
+  var capabilities = {}
+  // the handshake is done (`context` and `capabilities` are set)
+  var ready = new Promise(function (resolve, reject) {
+    resolveReady = resolve
+    rejectReady = reject
+  })
   // an app that never reads `ready` must not report an unhandled rejection for it
-  vos.ready.catch(function () {})
+  ready.catch(function () {})
+  var vos = {}
   // the RPC bus
   var RPC = {}
 
@@ -248,9 +236,6 @@
     return result
   }
 
-  /** Deprecated: the v1 plugin's generated `@vos/tracing` calls it by this name. It goes with v1. */
-  Span.prototype.inScope = Span.prototype.in_scope
-
   vos.tracing = {
     span: function (name, fields, options) {
       return new Span(name, fields, options)
@@ -283,6 +268,10 @@
     },
     error: function (message, fields) {
       vos.tracing.event('error', message, fields)
+    },
+    // what was recorded, for the Telemetry app (the host refuses every other app's frame)
+    query: function (params) {
+      return callHost('vos/telemetry/query', params)
     }
   }
   window.addEventListener('pagehide', flush)
@@ -342,16 +331,14 @@
     }
   }
 
-  vos.call = function (method, params) {
+  function callHost(method, params) {
     var name = String(method)
-    // requests are traced, each a child of the span the page is in: a bus request (`vos/request`) and a v1 call of the
-    // app's own backend (a plain name); the rest of the dialect (`ui/...`, `vos/...`) is not
+    // a request of the bus (`vos/request`) is traced, a child of the span the page is in; the rest of the dialect
+    // (`ui/...`, `vos/...`) is not
     var bus = name === 'vos/request' && params && typeof params === 'object' ? params : null
     var span = bus
       ? new Span('rpc ' + bus.method, { 'rpc.service': String(bus.app), 'rpc.method': String(bus.method) })
-      : name.indexOf('/') < 0
-        ? new Span('rpc ' + name, { 'rpc.method': name })
-        : null
+      : null
     function end(error) {
       if (!span) return
       lastCall = { traceId: span.traceId, spanId: span.spanId, endMs: nowMs() }
@@ -367,7 +354,7 @@
         reject: function (error) { end(error); reject(error) }
       })
       try {
-        var message = { id: id, method: name, params: plainParams(name, params) }
+        var message = { id: id, method: name, params: plainParams(bus ? String(bus.method) : name, params) }
         if (span) message._meta = { traceparent: '00-' + span.traceId + '-' + span.spanId + '-01' }
         post(message)
       } catch (error) {
@@ -388,10 +375,12 @@
     }
   }
 
-  vos.on = function (name, fn) {
+  // an event of the page's own app (a `host:...` one too): `vos.host.on`
+  function onEvent(name, fn) {
     return listen(eventListeners, name, fn)
   }
-  vos.onApp = function (app, name, fn) {
+  // a public notification of another app (or this one's): the first listener for an app asks the host for its events
+  function onApp(app, name, fn) {
     app = String(app)
     if (!subscribed.has(app)) {
       subscribed.add(app)
@@ -405,21 +394,21 @@
     requestHandlers.set(method, fn)
     var handle = { method: method }
     if (about !== undefined) handle.about = about
-    vos.call('vos/handle', handle).catch(function () {})
+    callHost('vos/handle', handle).catch(function () {})
     return function () {
       if (requestHandlers.get(method) !== fn) return
       requestHandlers.delete(method)
-      vos.call('vos/unhandle', { method: method }).catch(function () {})
+      callHost('vos/unhandle', { method: method }).catch(function () {})
     }
   }
   RPC.send_notification = function (name, params) {
-    return vos.call('vos/notify', { name: String(name), params: params === undefined ? {} : params })
+    return callHost('vos/notify', { name: String(name), params: params === undefined ? {} : params })
   }
   RPC.send_request = function (app, method, params) {
-    return vos.call('vos/request', { app: String(app), method: String(method), params: params === undefined ? {} : params })
+    return callHost('vos/request', { app: String(app), method: String(method), params: params === undefined ? {} : params })
   }
   RPC.on_notification = function (app, name, fn) {
-    return vos.onApp(app, name, function (params) {
+    return onApp(app, name, function (params) {
       fn(params === undefined || params === null ? {} : params)
     })
   }
@@ -427,35 +416,35 @@
   // the host page that holds the app
   vos.host = {
     on: function (name, fn) {
-      return vos.on(name, fn)
+      return onEvent(name, fn)
     },
     get theme() {
       // before the handshake the context is empty: the page's own data-theme (set before first paint) is the answer
-      return (vos.context.theme || document.documentElement.dataset.theme) === 'dark' ? 'dark' : 'light'
+      return (context.theme || document.documentElement.dataset.theme) === 'dark' ? 'dark' : 'light'
     },
     get context() {
-      return vos.context
+      return context
     },
     get capabilities() {
-      return vos.capabilities
+      return capabilities
     },
     get hosted() {
-      return Boolean(vos.capabilities.experimental && vos.capabilities.experimental.vos && vos.capabilities.experimental.vos.ui)
+      return Boolean(capabilities.experimental && capabilities.experimental.vos && capabilities.experimental.vos.ui)
     },
     get ready() {
-      return vos.ready.then(function () {})
+      return ready.then(function () {})
     },
     on_context: function (fn) {
-      return vos.onContext(fn)
+      return onContext(fn)
     },
     on_teardown: function (fn) {
-      return vos.onTeardown(fn)
+      return onTeardown(fn)
     },
     open_link: function (url) {
-      return vos.call('ui/open-link', { url: url }).then(function () {})
+      return callHost('ui/open-link', { url: url }).then(function () {})
     },
     request_display_mode: function (mode) {
-      return vos.call('ui/request-display-mode', { mode: mode }).then(function (r) {
+      return callHost('ui/request-display-mode', { mode: mode }).then(function (r) {
         return r.mode
       })
     }
@@ -467,7 +456,7 @@
     var fn = requestHandlers.get(params.method)
     var answer = function (body) {
       body.call = call
-      return vos.call('vos/answer', body).catch(function (error) {
+      return callHost('vos/answer', body).catch(function (error) {
         // too late: another handler answered first, or the request was cancelled
         var running = serving.get(call)
         if (running) running.abort(error)
@@ -496,13 +485,13 @@
       )
   }
 
-  vos.onContext = function (fn) {
+  function onContext(fn) {
     contextListeners.add(fn)
     return function () {
       contextListeners.delete(fn)
     }
   }
-  vos.onTeardown = function (fn) {
+  function onTeardown(fn) {
     teardownListeners.add(fn)
     return function () {
       teardownListeners.delete(fn)
@@ -521,9 +510,9 @@
 
   function mergeContext(change) {
     if (typeof change !== 'object' || change === null) return
-    vos.context = Object.assign({}, vos.context, change)
+    context = Object.assign({}, context, change)
     if (change.theme !== undefined) setTheme(change.theme)
-    each(contextListeners, vos.context)
+    each(contextListeners, context)
   }
 
   window.addEventListener('message', function (e) {
@@ -536,8 +525,8 @@
       if (!hasId) {
         if (m.method === 'ui/notifications/host-context-changed') mergeContext(params)
         else if (m.method === 'vos/event' && params && typeof params.name === 'string') {
-          // an app's event carries its `app` (the page's own app's too, marked `own`): heard by `onNotification`, and
-          // the own app's by `on` as well
+          // an app's event carries its `app` (the page's own app's too, marked `own`): heard by `RPC.on_notification`,
+          // and the own app's by `vos.host.on` as well
           if (typeof params.app === 'string') {
             var heard = appListeners.get(params.app + ' ' + params.name)
             if (heard) each(heard, params.data)
@@ -659,24 +648,22 @@
   function start() {
     // opened in a tab of its own rather than in a frame: there is no host page to hold the app
     if (parent === window) return fail('This page needs its host page: open the app at ' + location.pathname.replace(/static\/.*$/, ''))
-    vos
-      .call('ui/initialize', {
-        protocolVersion: PROTOCOL_VERSION,
-        appInfo: { name: document.title || location.pathname, version: '1' },
-        appCapabilities: { availableDisplayModes: ['inline', 'fullscreen'] }
-      })
-      .then(
-        function (result) {
-          started = true
-          vos.capabilities = (result && result.hostCapabilities) || {}
-          mergeContext(result && result.hostContext)
-          post({ method: 'ui/notifications/initialized', params: {} })
-          resolveReady({ hostInfo: result && result.hostInfo })
-        },
-        function (error) {
-          fail(error && error.message ? error.message : 'the host did not accept the page')
-        }
-      )
+    callHost('ui/initialize', {
+      protocolVersion: PROTOCOL_VERSION,
+      appInfo: { name: document.title || location.pathname, version: '1' },
+      appCapabilities: { availableDisplayModes: ['inline', 'fullscreen'] }
+    }).then(
+      function (result) {
+        started = true
+        capabilities = (result && result.hostCapabilities) || {}
+        mergeContext(result && result.hostContext)
+        post({ method: 'ui/notifications/initialized', params: {} })
+        resolveReady({ hostInfo: result && result.hostInfo })
+      },
+      function (error) {
+        fail(error && error.message ? error.message : 'the host did not accept the page')
+      }
+    )
   }
 
   Object.defineProperty(window, 'vos', { value: vos, configurable: false, writable: false })

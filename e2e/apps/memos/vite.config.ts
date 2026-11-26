@@ -1,5 +1,5 @@
 import { svelte } from '@sveltejs/vite-plugin-svelte'
-import { vos } from '@vos/vite-plugin-v2'
+import { vos } from '@vos/vite-plugin'
 import { defineConfig } from 'vite'
 
 // `vos()` reads package.json (what the app is) and openrpc.json (its API), writes their types into types/, puts the host's

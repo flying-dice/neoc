@@ -1,233 +1,234 @@
 /**
- * DEPRECATED: @vos/vite-plugin-v2 replaces this plugin (the global `RPC` and `vos` instead of generated modules, types
- * only, package.json for what the app is). To move an app: docs/plans/unified-rpc.md, "Migrating a v1 app". It stays
- * until nothing builds on it, and gets no new features.
+ * The vos Vite plugin. An app is one Vite project:
  *
- * The vos Vite plugin. An app is one Vite project: its client in any framework, its backend beside it (Luau, or TypeScript
- * that the build compiles to Luau: `typescript-backend.ts`), and one contract (`openrpc.json`: OpenRPC, JSON-RPC 2.0) that
- * both sides are generated from.
+ *   - `package.json` says what the app is: its id (the package name without its scope), version, description, and under
+ *     `vos` its title, icon, tint and window (`app.ts`);
+ *   - `openrpc.json` (OpenRPC 1.4) types everything the backend serves and sends (`contract.ts`);
+ *   - `server/main.luau`, or `server/main.ts` (exactly one), is the backend: it serves and sends on the bus through the
+ *     global `RPC` the host gives it (`RPC.on_request`, `RPC.send_notification`, ...): nothing to require;
+ *   - the page is a normal Vite page whose API is the globals `RPC` and `vos` (the host's bridge defines them): nothing
+ *     to import.
  *
  *     // vite.config.ts
  *     import { vos } from '@vos/vite-plugin'
  *     export default defineConfig({ plugins: [svelte(), vos()] })
  *
- * The client is a normal Vite app: an `index.html` at the project root, its scripts, styles and assets, built into
- * `dist/static/` with relative URLs (code splitting works as in any Vite app). There is no `mount(el)`: the page starts
- * itself: `import { api } from '@<app id>/rpc'` is the app's backend, and `import { host } from '@vos/host'` the host page that
- * holds it.
+ * Another app it talks to is a dependency, by where it is (`vos({ dependencies: ['../app1'] })`): a folder holding that
+ * app's package.json and openrpc.json. The types then cover that app's public requests and notifications, by its id.
  *
- * What the plugin does:
- *   - generates `.app/` from the contract when the build starts (and whenever the contract changes, in watch mode):
- *     `rpc.d.ts` and `rpc.js` (the `@<app id>/rpc` module), `host.d.ts` and `host.js` (the `@vos/host` module), `tracing.d.ts` and `tracing.js` (the `@vos/tracing` module: spans
- *     and events, after Rust's `tracing`), `rpc.luau` (the types, the `Handlers` interface the developer
- *     implements, the router) and `entry.luau` (the backend's entry: the handlers behind the router);
- *   - fails the build when `server/main.luau` does not implement the generated `Handlers` interface (a declared method with
- *     no handler, or one of the wrong shape): luau-lsp's strict check of the backend, so valid Luau of any shape passes;
- *   - puts the host's tags first in `index.html`'s head at build time: the kit's stylesheet and script (`/kit/tokens.css`,
- *     `/kit/kit.js`) and the bridge (`/apps/bridge.js`), one copy each served by the host, never bundled (`hostTags`);
- *   - writes the kit's editor types for the framework the project depends on (`.app/kit-svelte.d.ts`, `.app/kit-react.d.ts`);
- *   - for a backend in TypeScript (`server/main.ts`), generates `.app/server/` instead of the two Luau files (the host's
- *     declarations, the types and the router of the contract, the entry) and compiles it: a type error fails the build;
- *   - bundles the backend into `dist/app.luau` and writes `dist/app-ref.json`, the app ref the host installs: the
- *     manifest, the backend, and every file of `dist/static/` with its sha256.
- *
- * Everything it generates is a list of `{ path, contents }` (`generate.ts`).
+ * The plugin writes `types/` (types only: `vos.d.ts` and `<id>.d.ts` for the page, `vos.d.luau` for a Luau backend,
+ * `vos.backend.d.ts` and `tsconfig.backend.json` for a TypeScript one) whenever Vite resolves its config, so every Vite
+ * command leaves it current; puts the host's tags first in the page; and on `vite build` bundles the backend into
+ * `dist/app.luau` (a TypeScript one is type checked and compiled to Luau by TypeScriptToLua, `typescript-backend.ts`) and
+ * writes `dist/app-ref.json`, the app ref the host installs. Checking, linting and formatting Luau are the Luau tools'
+ * (luau-lsp, StyLua), not the plugin's.
  */
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
-import { join, resolve } from 'node:path'
-import type { HtmlTagDescriptor, Logger, Plugin } from 'vite'
-import { backendBundle, promote, writeApp } from './backend.ts'
-import { rpcModule } from './emit-client.ts'
-import { DEFAULTS, TYPESCRIPT_BACKEND, generate, isTypeScript, readDefinition, removeOtherBackend, resolveOptions, write, type Options } from './generate.ts'
-import { analyze, ToolMissing } from './luau-tools.ts'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { dirname, join, relative, resolve } from 'node:path'
+import type { HtmlTagDescriptor, Plugin } from 'vite'
+import { parseApp, type AppMeta } from './app.ts'
+import { bundleLuau, writeApp } from './build.ts'
+import { parseContract } from './contract.ts'
+import { emitAppTypes, emitVosTypes, type Dependency } from './emit-ts.ts'
+import { frameworksOf, kitTypes, type Manifest } from './kit-types.ts'
+import { createRequire } from 'node:module'
+import { emitLuauDefinitions } from './emit-luau.ts'
+import { emitBackendTsconfig, emitBackendTypes } from './emit-backend-ts.ts'
+import { BACKEND_DECLARATIONS, BACKEND_TS, BACKEND_TSCONFIG, compileBackend, posix, typeRoot } from './typescript-backend.ts'
 
-export type { Options } from './generate.ts'
-export { DefinitionError, parseDefinition } from './definition.ts'
+export { parseApp, AppError, type AppMeta } from './app.ts'
+export { parseContract, ContractError, type Contract } from './contract.ts'
+export type { Dependency } from './emit-ts.ts'
 
-/** Where the built client goes, under the build's output folder: the app ref lists it as the app's static content. */
+export const CONTRACT = 'openrpc.json'
+export const BACKEND_LUAU = 'server/main.luau'
+export { BACKEND_TS } from './typescript-backend.ts'
+/** Where the build writes its types (and nothing else): `types/`, beside the app's sources. */
+export const GENERATED = 'types'
+/** Where the built page goes, under the build's output folder: the app ref lists it as the app's static content. */
 export const STATIC_DIR = 'static'
 
-/** The host's bridge script: the host serves one copy to every app's page. */
-const BRIDGE = '/apps/bridge.js'
-/** The kit (NEOC-252): its tokens and base styles, and its web components. The host serves one copy of each to every app. */
-const KIT_CSS = '/kit/tokens.css'
-const KIT_JS = '/kit/kit.js'
+/** The host serves one copy of each to every app's page: the kit's stylesheet and script, and the bridge. */
+const HOST_TAGS: HtmlTagDescriptor[] = [
+  { tag: 'link', attrs: { rel: 'stylesheet', href: '/kit/tokens.css', crossorigin: '' }, injectTo: 'head-prepend' },
+  { tag: 'script', attrs: { src: '/kit/kit.js' }, injectTo: 'head-prepend' },
+  { tag: 'script', attrs: { src: '/apps/bridge.js' }, injectTo: 'head-prepend' }
+]
 
-/**
- * The tags the plugin puts first in every app's head, in this order: the kit's stylesheet (before first paint, and before the
- * app's own styles, which then win over the kit's base), the kit's script (a classic script, so it runs before the app's
- * module and the kit's elements are defined when the app first renders), then the host's bridge. The stylesheet is
- * loaded `crossorigin`, as Vite loads the app's own: the page has an opaque origin, and the host lets it read `/kit/` so
- * the page (and a checker such as axe running in it) can read the rules. Every app gets them, whether it uses the kit or not.
- */
-export function hostTags(): HtmlTagDescriptor[] {
+export interface Options {
+  /** The apps this one talks to, by where they are: paths relative to the project, each a folder holding an app. */
+  dependencies?: string[]
+}
+
+/** An app's id and contract, from the folder that holds it. */
+function readApp(folder: string, label: string): { app: AppMeta; contract: Dependency['contract'] } {
+  for (const file of ['package.json', CONTRACT]) {
+    if (!existsSync(join(folder, file))) throw new Error(`${label}: ${file} not found in ${folder} (an app is a folder with package.json and ${CONTRACT})`)
+  }
+  return {
+    app: parseApp(readFileSync(join(folder, 'package.json'), 'utf8'), `${label}/package.json`),
+    contract: parseContract(readFileSync(join(folder, CONTRACT), 'utf8'), `${label}/${CONTRACT}`)
+  }
+}
+
+/** The kit's Custom Elements Manifest, read once: what the editor types of its tags are made from. */
+let kitManifest: Manifest | undefined
+function readKitManifest(): Manifest {
+  kitManifest ??= JSON.parse(readFileSync(createRequire(import.meta.url).resolve('@vos/kit/custom-elements.json'), 'utf8')) as Manifest
+  return kitManifest
+}
+
+/** The host's Luau declarations: `VOS_DEFINITIONS`, else `types/generated/vos.d.luau` of the repository the project is in. */
+export function findHostDefinitions(project: string): string {
+  const fromEnv = process.env.VOS_DEFINITIONS
+  if (fromEnv) return resolve(fromEnv)
+  for (let dir = resolve(project); ; dir = dirname(dir)) {
+    const candidate = join(dir, 'types/generated/vos.d.luau')
+    if (existsSync(candidate)) return candidate
+    if (dirname(dir) === dir) break
+  }
+  throw new Error("types/generated/vos.d.luau not found above the project: set VOS_DEFINITIONS to the host's declarations")
+}
+
+/** The host's TypeScript declarations: next to the Luau ones. */
+export function findHostTypeScript(project: string): string {
+  const file = join(dirname(findHostDefinitions(project)), 'vos.d.ts')
+  if (!existsSync(file)) throw new Error(`${file} not found: the host's TypeScript declarations are generated next to its Luau ones (bun run codegen)`)
+  return file
+}
+
+/** The app's backend: `server/main.luau` or `server/main.ts`, one of them. */
+export function backendOf(project: string): { language: 'luau' | 'typescript'; path: string } {
+  const luau = existsSync(resolve(project, BACKEND_LUAU))
+  const typescript = existsSync(resolve(project, BACKEND_TS))
+  if (luau && typescript) throw new Error(`${BACKEND_LUAU} and ${BACKEND_TS} are both there: the backend is one of them`)
+  if (!luau && !typescript) throw new Error(`${BACKEND_LUAU} (or ${BACKEND_TS}, for a backend in TypeScript) not found: it is the app's backend`)
+  return luau ? { language: 'luau', path: BACKEND_LUAU } : { language: 'typescript', path: BACKEND_TS }
+}
+
+/** The files of a backend's types: for Luau, `vos.d.luau`; for TypeScript, its declarations and the config that checks it. */
+function backendTypes(project: string, app: AppMeta, contract: Dependency['contract'], dependencies: Dependency[]): { path: string; contents: string }[] {
+  if (backendOf(project).language === 'luau') {
+    // the host's declarations, with the global `RPC` typed for this app and its dependencies
+    return [{ path: `${GENERATED}/vos.d.luau`, contents: emitLuauDefinitions(readFileSync(findHostDefinitions(project), 'utf8'), app.id, contract, dependencies) }]
+  }
   return [
-    { tag: 'link', attrs: { rel: 'stylesheet', href: KIT_CSS, crossorigin: '' }, injectTo: 'head-prepend' },
-    { tag: 'script', attrs: { src: KIT_JS }, injectTo: 'head-prepend' },
-    { tag: 'script', attrs: { src: BRIDGE }, injectTo: 'head-prepend' }
+    { path: `${GENERATED}/${BACKEND_DECLARATIONS}`, contents: emitBackendTypes(readFileSync(findHostTypeScript(project), 'utf8'), app.id, contract, dependencies) },
+    { path: `${GENERATED}/${BACKEND_TSCONFIG}`, contents: emitBackendTsconfig(typeRoot(), posix(relative(join(project, GENERATED), project))) }
   ]
 }
 
-/**
- * The page without any tag of its own that loads what the plugin injects (the kit's two files, the bridge): an app that
- * added them by hand gets them once. `removed` names what was taken out, for the build's message.
- */
-export function withoutHostTags(html: string): { page: string; removed: string[] } {
-  const removed: string[] = []
-  let page = html
-  for (const url of [KIT_CSS, KIT_JS, BRIDGE]) {
-    const escaped = url.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')
-    const tag = new RegExp(`[ \\t]*<(?:link|script)\\b[^>]*\\b(?:href|src)=["']${escaped}["'][^>]*>(?:\\s*</script>)?[ \\t]*\\r?\\n?`, 'gi')
-    if (tag.test(page)) {
-      removed.push(url)
-      page = page.replace(tag, '')
-    }
-  }
-  return { page, removed }
+/** The kit's editor types (`types/kit-<framework>.d.ts`) for the frameworks the project's package.json depends on. */
+function kitFiles(project: string): { path: string; contents: string }[] {
+  return frameworksOf(JSON.parse(readFileSync(join(project, 'package.json'), 'utf8')) as Parameters<typeof frameworksOf>[0]).map((framework) => ({
+    path: `${GENERATED}/kit-${framework}.d.ts`,
+    contents: kitTypes(readKitManifest(), framework)
+  }))
 }
 
-/** Every `.luau` and `.ts` file under `dir` (the backend's modules: the build bundles them, so a change to one rebuilds). */
-function sourcesUnder(dir: string): string[] {
+/**
+ * Write the kit's editor types into `types/` of a project that is not an app (a package of kit-based components, such as
+ * `@vos/docker`): only `kit-<framework>.d.ts`, for the frameworks its package.json depends on. An app gets them with the
+ * rest of its types from any Vite command.
+ */
+export function writeKitTypes(project: string): void {
+  write(resolve(project), kitFiles(resolve(project)))
+}
+
+/** The files `types/` holds, from the project's package.json and contract and those of its dependencies. */
+export function generate(project: string, options: Options = {}): { app: AppMeta; files: { path: string; contents: string }[] } {
+  const { app, contract } = readApp(project, '.')
+  const dependencies: Dependency[] = []
+  for (const path of options.dependencies ?? []) {
+    const dependency = readApp(resolve(project, path), path)
+    const id = dependency.app.id
+    if (id === app.id) throw new Error(`dependency ${path} is this app (${id})`)
+    if (dependencies.some((d) => d.id === id)) throw new Error(`dependency ${path} is ${id}, which another dependency is too`)
+    dependencies.push({ id, contract: dependency.contract })
+  }
+  return {
+    app,
+    files: [
+      // types only, for the page's globals `RPC` and `vos`: nothing here runs
+      { path: `${GENERATED}/vos.d.ts`, contents: emitVosTypes() },
+      { path: `${GENERATED}/${app.id}.d.ts`, contents: emitAppTypes(app.id, contract, true) },
+      // the backend's
+      ...backendTypes(project, app, contract, dependencies),
+      // the kit's tags (`<ui-button>`, ...), for the frameworks the page uses
+      ...kitFiles(project),
+      ...dependencies.map((d) => ({ path: `${GENERATED}/${d.id}.d.ts`, contents: emitAppTypes(d.id, d.contract, false) }))
+    ]
+  }
+}
+
+/** Write what changed (an unchanged file is not touched, so a watcher does not loop). */
+function write(project: string, files: { path: string; contents: string }[]): void {
+  for (const { path, contents } of files) {
+    const target = join(project, path)
+    mkdirSync(dirname(target), { recursive: true })
+    if (existsSync(target) && readFileSync(target, 'utf8') === contents) continue
+    writeFileSync(target, contents)
+  }
+}
+
+/** The backend's sources under `dir`: its language's files. */
+function sourcesUnder(dir: string, extension: string): string[] {
   if (!existsSync(dir)) return []
   return readdirSync(dir).flatMap((name) => {
     const path = join(dir, name)
-    return statSync(path).isDirectory() ? sourcesUnder(path) : name.endsWith('.luau') || name.endsWith('.ts') ? [path] : []
+    return statSync(path).isDirectory() ? sourcesUnder(path, extension) : name.endsWith(extension) ? [path] : []
   })
 }
 
-/** What the deprecation warning says to do. */
-export const DEPRECATED = 'move the app to @vos/vite-plugin-v2: docs/plans/unified-rpc.md, "Migrating a v1 app"'
-
-export function vos(options: Partial<Options> = {}): Plugin {
-  // the backend's language is read from the project once its root is known (`config`)
-  let settings: Options = { ...DEFAULTS, ...options }
+export function vos(options: Options = {}): Plugin {
   let root = process.cwd()
-  let distDir = resolve(process.cwd(), 'dist')
-  /**
-   * Where this build is made: a folder of its own (a unique name from the platform's own routine for temporary directories, inside
-   * the project so the move into `dist/` stays on one file system), so two builds at once (the watcher and a one-off build) never
-   * share it. `dist/` is only touched once every step has succeeded.
-   */
-  let staging = resolve(process.cwd(), settings.generated)
-  // a build that failed must not write an app ref: the one on disk (if any) is the last build that worked
+  let outDir = resolve(root, 'dist')
+  let app: AppMeta | undefined
   let failed = false
-  let logger: Logger | undefined
   /** A TypeScript backend as this build compiled it when it started (the compiler runs once per build). */
   let compiled: string | undefined
-  /** The name this app's typed client is imported by (`@<app id>/rpc`), once the contract has been read. */
-  let ownRpc: string | undefined
 
-  /**
-   * Generate, and check the backend against the contract. The check is a type checker's (luau-lsp for a backend in Luau,
-   * the TypeScript compiler for one in TypeScript, whose compiled bundle is kept in `compiled`), not a pattern over the
-   * source: the generated `Handlers` type has one function per declared method, so a missing handler, a handler of the
-   * wrong shape, or one that is not declared is a type error in the backend, and valid code of any shape (a handler
-   * defined in another module, assigned from a local function, added to the table later) never fails.
-   */
   const regenerate = (): void => {
-    write(root, generate(root, settings))
-    removeOtherBackend(root, settings)
-    const backend = resolve(root, settings.backend)
-    if (!existsSync(backend)) {
-      const either = options.backend === undefined ? ` (or ${TYPESCRIPT_BACKEND}, for a backend in TypeScript)` : ''
-      throw new Error(`${settings.backend}${either} not found: the backend returns one handler per method of ${settings.definition}`)
-    }
-    // a backend in TypeScript is checked by compiling it: the generated entry passes its handlers to the router, whose
-    // parameter is the `Handlers` of the definition. What it compiles to is kept for the end of the build.
-    if (isTypeScript(settings)) {
-      compiled = backendBundle(root, settings)
-      return
-    }
-    if (!settings.check) return
-    let result: ReturnType<typeof analyze>
-    try {
-      result = analyze(root, 'throw')
-    } catch (error) {
-      // a build that cannot check the backend cannot say the app will load, so it stops, as it does without darklua
-      if (error instanceof ToolMissing) {
-        throw new Error(`${error.message}\n  (to build without the check: vos({ check: false }), and the host refuses an app whose handlers do not match its contract when it loads it)`)
-      }
-      throw error
-    }
-    if (result.findings.length > 0) {
-      const shown = result.findings.slice(0, 8).join('\n')
-      const more = result.findings.length > 8 ? `\n... and ${result.findings.length - 8} more` : ''
-      throw new Error(
-        `${settings.backend} does not match ${settings.definition} (luau-lsp, strict): every declared method needs a handler of the shape the contract gives it.\n${shown}${more}\nRun \`bun run typecheck\` for the whole report.`
-      )
-    }
+    const generated = generate(root, options)
+    write(root, generated.files)
+    app = generated.app
   }
 
   return {
     name: 'vos',
-    configResolved(config) {
-      logger = config.logger
-      logger.warn(`@vos/vite-plugin is deprecated: ${DEPRECATED}`)
-    },
     config(config) {
       root = resolve(config.root ?? process.cwd())
-      settings = resolveOptions(root, options)
-      distDir = resolve(root, config.build?.outDir ?? 'dist')
-      mkdirSync(resolve(root, settings.generated), { recursive: true })
-      staging = mkdtempSync(join(resolve(root, settings.generated), 'build-'))
-      // whatever happens to the build, the folder does not outlive the process
-      process.once('exit', () => rmSync(staging, { recursive: true, force: true }))
+      outDir = resolve(root, config.build?.outDir ?? 'dist')
       return {
         // relative URLs: the page is served at `/apps/<id>/static/`, wherever the host mounts it
         base: './',
-        build: {
-          // built next to `dist/`, in the generated folder: a build that fails midway leaves `dist/` as it was
-          outDir: join(staging, STATIC_DIR),
-          emptyOutDir: true,
-          // the browsers vos runs on have `modulepreload`: no polyfill to ship in every app
-          modulePreload: { polyfill: false }
-        }
+        build: { outDir: join(outDir, STATIC_DIR), emptyOutDir: true, modulePreload: { polyfill: false } }
       }
+    },
+    configResolved() {
+      regenerate()
     },
     transformIndexHtml: {
-      // after Vite's own pass over the page, so it does not try to bundle (and warn about) the host's classic scripts
       order: 'post',
-      handler(html) {
-        const { page, removed } = withoutHostTags(html)
-        if (removed.length > 0)
-          logger?.warn(`vos: index.html names ${removed.join(' and ')} itself; the plugin puts the host's tags into every page, so remove yours (it was left out, not loaded twice)`)
-        return { html: page, tags: hostTags() }
-      }
-    },
-    resolveId(id) {
-      // the app's own typed client: `@<its id>/rpc`, read from the contract once
-      ownRpc ??= rpcModule(readDefinition(root, settings).app.id)
-      if (id === ownRpc) return resolve(root, settings.generated, 'rpc.js')
-      if (id === '@vos/host') return resolve(root, settings.generated, 'host.js')
-      return id === '@vos/tracing' ? resolve(root, settings.generated, 'tracing.js') : null
+      handler: (html) => ({ html, tags: HOST_TAGS })
     },
     buildStart() {
       failed = false
       compiled = undefined
-      rmSync(staging, { recursive: true, force: true })
-      // a build that does not check the backend says so, every time: nothing else will
-      if (!settings.check && !isTypeScript(settings)) this.warn(`vos: the check is off (check: false): nothing verifies that ${settings.backend} implements every method of ${settings.definition}`)
-      if (options.backend === undefined && !isTypeScript(settings) && existsSync(resolve(root, TYPESCRIPT_BACKEND)))
-        this.warn(`vos: ${settings.backend} and ${TYPESCRIPT_BACKEND} are both there: the backend is ${settings.backend}, and ${TYPESCRIPT_BACKEND} is not built or checked`)
-      // watched before anything can fail: a watching build whose first run stops on an error is rebuilt by the fix
-      this.addWatchFile(resolve(root, settings.definition))
-      for (const file of sourcesUnder(resolve(root, settings.backend, '..'))) this.addWatchFile(file)
+      for (const file of [CONTRACT, 'package.json']) this.addWatchFile(resolve(root, file))
+      for (const path of options.dependencies ?? []) for (const file of [CONTRACT, 'package.json']) this.addWatchFile(resolve(root, path, file))
+      const backend = backendOf(root)
+      for (const file of sourcesUnder(resolve(root, 'server'), backend.language === 'luau' ? '.luau' : '.ts')) this.addWatchFile(file)
       regenerate()
+      // a TypeScript backend is checked by compiling it, before the page is built: a type error is a failed build
+      if (backend.language === 'typescript') compiled = compileBackend(root, GENERATED)
     },
     buildEnd(error) {
       if (error) failed = true
     },
     closeBundle() {
-      try {
-        const staticDir = join(staging, STATIC_DIR)
-        // a build that failed has no page: its own error is the one to read
-        if (failed || !existsSync(join(staticDir, 'index.html'))) return
-        writeApp(root, staging, readDefinition(root, settings), compiled ?? backendBundle(root, settings), STATIC_DIR)
-        promote(staging, distDir)
-      } finally {
-        // whatever happened, nothing of this build stays behind in the generated folder
-        rmSync(staging, { recursive: true, force: true })
-      }
+      if (failed || app === undefined || !existsSync(join(outDir, STATIC_DIR, 'index.html'))) return
+      writeApp(app, outDir, compiled ?? bundleLuau(resolve(root, backendOf(root).path)), STATIC_DIR, readFileSync(resolve(root, CONTRACT)))
     }
   }
 }
