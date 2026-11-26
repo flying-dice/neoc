@@ -1,4 +1,5 @@
-import type { PressParams, Screen } from '@calculator/rpc'
+type PressParams = VosApp.Calculator.PressParams
+type Screen = VosApp.Calculator.Screen
 
 /** A key of the keypad, as `press` takes it. */
 export type Key = PressParams['key']

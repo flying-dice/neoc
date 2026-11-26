@@ -9562,7 +9562,10 @@ type vos_app_ToolCallError =
   /** The host could not run it. */
   | { kind: "internal"; message: string; op: string }
 
-/** The builders of a tool's input fields: `app.t.string { description = "..." }`. Each returns a `Schema`. */
+/**
+ * The builders of a tool's input fields: `app.t.string { description = "..." }`. Each returns a `Schema`.
+ * Deprecated, with `app.tool`: a public method's params are typed in the app's `openrpc.json`.
+ */
 interface vos_app_t {
 }
 
@@ -9628,6 +9631,9 @@ declare module "vos:app" {
   export const t: vos_app_tStatics
   export const tools: vos_app_toolsStatics
   /**
+   * Deprecated: a public method of the app's contract, served with `RPC.on_request`, is the agent tool
+   * `<app>__<method>` (the v1 plugin's apps declare tools with this).
+   *
    * Declare a tool an agent can call: `app.tool { name = "search", input = { ... }, run = function(input, ctx) ... end }`.
    * Raises when the definition is refused (a name that is not `[a-z][a-z0-9_]*`, one already registered) and
    * inside a `readOnly` tool.
@@ -9660,6 +9666,9 @@ declare module "vos:app" {
   /** Write a line to the host's log, with the app's id. */
   export function log(this: void, message: string): void
   /**
+   * Deprecated: declare a notification in the app's contract and send it with `RPC.send_notification` (the v1
+   * plugin's apps emit with this).
+   *
    * Tell the app's open pages something changed outside them (`host.on(name, fn)` in the page): after an
    * agent's tool changed data, or from a background task. `name` is 1 to 64 letters, digits and `. _ : -` (not
    * `host:...`), `data` is JSON of at most 64 KiB. A change to the world like `notify`: a `readOnly` tool may not.

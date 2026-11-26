@@ -1,4 +1,8 @@
 /**
+ * DEPRECATED: @vos/vite-plugin-v2 replaces this plugin (the global `RPC` and `vos` instead of generated modules, types
+ * only, package.json for what the app is). To move an app: docs/plans/unified-rpc.md, "Migrating a v1 app". It stays
+ * until nothing builds on it, and gets no new features.
+ *
  * The vos Vite plugin. An app is one Vite project: its client in any framework, its backend beside it (Luau, or TypeScript
  * that the build compiles to Luau: `typescript-backend.ts`), and one contract (`openrpc.json`: OpenRPC, JSON-RPC 2.0) that
  * both sides are generated from.
@@ -91,6 +95,9 @@ function sourcesUnder(dir: string): string[] {
   })
 }
 
+/** What the deprecation warning says to do. */
+export const DEPRECATED = 'move the app to @vos/vite-plugin-v2: docs/plans/unified-rpc.md, "Migrating a v1 app"'
+
 export function vos(options: Partial<Options> = {}): Plugin {
   // the backend's language is read from the project once its root is known (`config`)
   let settings: Options = { ...DEFAULTS, ...options }
@@ -155,6 +162,7 @@ export function vos(options: Partial<Options> = {}): Plugin {
     name: 'vos',
     configResolved(config) {
       logger = config.logger
+      logger.warn(`@vos/vite-plugin is deprecated: ${DEPRECATED}`)
     },
     config(config) {
       root = resolve(config.root ?? process.cwd())

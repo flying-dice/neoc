@@ -276,6 +276,60 @@ Pre-release, so no compatibility shims: each step lands with the old path remove
    `app.emit` into declared notifications. Keychain is the first, as the duplication example.
 8. `cargo test -p neoc-vm`, `bun run codegen`, `bun run gate`, e2e.
 
+## Migrating a v1 app
+
+`@vos/vite-plugin` (v1: the generated `@<id>/rpc`, `@vos/host`, `@vos/tracing` and `.app/rpc`, and the `vos` CLI) is
+deprecated. Keychain (`apps/keychain`, commit `26724ea6`) is the worked example. Behaviour stays the same: agents see
+the same tools under the same names, and the person sees the same app.
+
+**package.json and the contract**
+
+- `x-app` leaves `openrpc.json` for package.json: its `description` becomes the package `description`, and `vos`
+  gets `{ title: info.title, icon, tint, window }`. The package name without its scope must be the old `x-app.id`.
+- `openrpc` becomes `"1.4.0"`. Drop `info.description` if it only repeated `x-app.description`.
+- Each v1 page method (a key of the `Handlers` table the entry returned) becomes **private**: `foo` → `_foo`. A public
+  method is an agent tool, so a page method left public would hand agents what only the person had (Keychain's
+  `reveal`).
+- Each `app.tool { name, title, description, input, readOnly, run }` becomes a **public** request of the same `name`:
+  `summary` = title, `description` = description, `params` from `input` (each `t.*` builder as a JSON Schema, with
+  `required` as the builder had it), `"x-readOnly": true` for `readOnly`. Write the `result` schema from what `run`
+  returns: the bus checks answers against it.
+- Each `app.emit(name, data)` becomes a notification (a method without `result`) of the same name, with `data`'s
+  fields as `params` (`[]` for none). A name that is not `[a-z][a-zA-Z0-9_]*` is renamed to snake case.
+- Scripts: drop `generate`, `lint`, `format` (the root `lint:luau`, `lint:stylua` and `format` cover the app);
+  `typecheck` is `vite build && svelte-check --tsconfig ./tsconfig.json`. `@vos/vite-plugin` → `@vos/vite-plugin-v2`.
+  `.gitignore`: `types` and `dist` (no `.app`); delete the `.app/` folder. `tsconfig.json` includes
+  `"types/**/*.d.ts"` instead of `".app/*.d.ts"`. `vite.config.ts` imports from `@vos/vite-plugin-v2`.
+
+**Backend (`server/`)**
+
+- No `require("vos:app")` or `require("../.app/rpc")`: `app` and `RPC` are globals.
+- Each handler: `RPC.on_request("_foo", function(params: <id>_FooParams, ctx: vos_app_Context): <id>_FooResult ... end)`
+  (v1 was `(ctx, args)`: the order swaps). A method without params takes `_params: {}` or nothing.
+- Each tool: `RPC.on_request("<name>", function(params, ctx) ... end)` with the body of `run`.
+- `app.emit(name, data)` → `RPC.send_notification(name, data)`. The entry returns nothing.
+- Types: `rpc.Foo` → `<id>_Foo` (the id with `-` as `_`): every component and every `<Method>Params`/`<Method>Result`.
+- `ctx:fail(message)`, `app.db`, `app.kv`, `app.files`, `app.notify`, `app.log`, `app.tools` stay as they are.
+- `bun run lint:luau` checks it (strict, both passes) against the app's own `types/vos.d.luau`.
+
+**Page (`src/`)**
+
+- `import type { Foo } from '@<id>/rpc'` → `type Foo = VosApp.<Ns>.Foo` (`<Ns>` is the id in PascalCase).
+- The generated `Api` type goes: the state module declares the interface it needs (same method names as before,
+  typed from `VosApp.<Ns>.*`), so its fakes, tests and stories do not change. `App.svelte` (the composition root) is the
+  one place that meets the bus: `foo: (params) => RPC.send_request('<id>', '_foo', params)`.
+- `host.on(name, fn)` for a backend event → `RPC.on_notification('<id>', name, fn)`; `host:...` events stay on
+  `vos.host.on`. `import { host } from '@vos/host'` → the global `vos.host` (`on_context`, `on_teardown`, `open_link`,
+  `request_display_mode`); the `Host` type → `VosHost`. `RpcError` → `RPC.RpcError` (type `VosRpcError`).
+- `@vos/tracing` → the global `vos.tracing` (`span(...).in_scope(fn)`).
+- Stories read the window from package.json (`import pkg from '../../package.json'`, `pkg.vos.window`, `pkg.vos.title`)
+  instead of `definition['x-app']`.
+- Tests, e2e journeys and agent tool names (`<id>__<tool>`) do not change; a journey that named a page method
+  directly follows its rename.
+
+**Done when** `vite build`, `svelte-check`, `bun test ./src`, `bun run lint:luau` and `bun scripts/stylua.ts check` pass,
+and `grep -rn "@<id>/rpc\|@vos/host\|@vos/tracing\|\.app/\|x-app\|app\.tool\|app\.emit\|app\.t\b" src server` is empty.
+
 ## Retiring the `vos` CLI
 
 `@vos/vite-plugin` grew a Luau toolchain it was never meant to be: the `vos` bin (`packages/vite-plugin/bin/vos.ts`)

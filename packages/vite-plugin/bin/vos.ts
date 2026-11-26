@@ -1,5 +1,8 @@
 #!/usr/bin/env bun
 /**
+ * DEPRECATED, with the plugin it belongs to (`@vos/vite-plugin`): a v2 app has no `vos` scripts; the repository's
+ * `lint:luau`, `lint:stylua` and `format` check and format its Luau.
+ *
  * `vos`: what an app project's scripts call.
  *
  *   vos generate       write .app/ (the typed client, and the router and types of the backend's language) from openrpc.json;
@@ -15,9 +18,11 @@ import { join, resolve } from 'node:path'
 import { backendBundle } from '../src/backend.ts'
 import { DefinitionError } from '../src/definition.ts'
 import { generate, isTypeScript, kitDeclarations, removeOtherBackend, resolveOptions, write } from '../src/generate.ts'
+import { DEPRECATED } from '../src/index.ts'
 import { analyze, stylua } from '../src/luau-tools.ts'
 
 const [command, argument] = process.argv.slice(2)
+console.warn(`vos is deprecated, with @vos/vite-plugin: ${DEPRECATED}`)
 const project = resolve(process.cwd())
 const settings = resolveOptions(project)
 
