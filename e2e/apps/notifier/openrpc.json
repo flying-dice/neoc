@@ -1,25 +1,12 @@
 {
-  "openrpc": "1.3.2",
+  "openrpc": "1.4.0",
   "info": {
     "title": "Notifier",
-    "version": "0.1.0",
-    "description": "Buttons that raise notifications, for the notification journeys."
-  },
-  "x-app": {
-    "id": "notifier",
-    "icon": "bell",
-    "tint": "pink",
-    "description": "Buttons that raise notifications, for the notification journeys.",
-    "window": {
-      "w": 360,
-      "h": 320,
-      "minW": 320,
-      "minH": 240
-    }
+    "version": "0.1.0"
   },
   "methods": [
     {
-      "name": "sent",
+      "name": "_sent",
       "summary": "How many notifications the backend has raised.",
       "params": [],
       "result": {
@@ -30,7 +17,7 @@
       }
     },
     {
-      "name": "notify",
+      "name": "_notify",
       "summary": "Start background work that raises a notification a moment later, and answer at once.",
       "params": [
         {
@@ -54,6 +41,19 @@
           "type": "string"
         }
       }
+    },
+    {
+      "name": "sent_changed",
+      "summary": "The backend raised notifications: how many it has raised in all.",
+      "params": [
+        {
+          "name": "count",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ]
     }
   ]
 }

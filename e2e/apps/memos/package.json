@@ -3,18 +3,26 @@
   "private": true,
   "type": "module",
   "version": "0.1.0",
-  "description": "A fixture app: a short list of memos, which the Discover journeys install, open and remove. `bun run build` writes the app ref (dist/app-ref.json, app.luau, static/); `bun run dev` rebuilds on a change.",
+  "description": "Memos that you and your agents can both write in.",
+  "vos": {
+    "title": "Memos",
+    "icon": "note.text",
+    "tint": "yellow",
+    "window": {
+      "w": 960,
+      "h": 640,
+      "minW": 480,
+      "minH": 360
+    }
+  },
   "scripts": {
-    "generate": "vos generate",
     "build": "vite build",
     "dev": "vite build --watch",
-    "typecheck": "vos typecheck && svelte-check --tsconfig ./tsconfig.json",
-    "lint": "vos lint",
-    "format": "vos format"
+    "typecheck": "vite build && svelte-check --tsconfig ./tsconfig.json"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
-    "@vos/vite-plugin": "workspace:*",
+    "@vos/vite-plugin-v2": "workspace:*",
     "svelte": "^5.57.2",
     "svelte-check": "^4.7.6",
     "typescript": "^5.9.3",

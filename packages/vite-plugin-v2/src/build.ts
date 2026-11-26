@@ -71,7 +71,13 @@ export function appRef(app: AppMeta, outDir: string, bundle: string, staticDir: 
       name: app.title,
       version: app.version,
       main: 'app.luau',
-      ui: { root: staticDir, entry: 'index.html' },
+      // what the page needs (MCP Apps' `_meta.ui`): the host turns it into the page's content security policy and the frame's `allow`
+      ui: {
+        root: staticDir,
+        entry: 'index.html',
+        ...(app.csp ? { csp: app.csp } : {}),
+        ...(app.permissions ? { permissions: app.permissions } : {})
+      },
       ...(contract ? { contract: CONTRACT_FILE } : {}),
       migrations: [],
       ...(app.icon ? { icon: app.icon } : {}),

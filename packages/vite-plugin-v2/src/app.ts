@@ -9,6 +9,9 @@
  *     }
  *
  * `vos.title` is the name a person sees (the id when absent). Its API is the contract's (`openrpc.json`, `contract.ts`).
+ * `vos.csp` and `vos.permissions` are what its page needs, in the shape of MCP Apps' `_meta.ui`: the host builds the page's
+ * content security policy from `csp` (nothing external when it is absent: `resourceDomains` are origins images, media,
+ * fonts and styles may come from; the other lists are parsed, not applied) and the frame's `allow` from `permissions`.
  */
 
 export interface AppMeta {
@@ -20,7 +23,23 @@ export interface AppMeta {
   icon?: string
   tint?: string
   window?: { w: number; h: number; minW: number; minH: number }
+  csp?: Csp
+  permissions?: Partial<Record<(typeof PERMISSIONS)[number], Record<string, never>>>
 }
+
+export interface Csp {
+  connectDomains?: string[]
+  resourceDomains?: string[]
+  frameDomains?: string[]
+  baseUriDomains?: string[]
+}
+
+/** The permissions MCP Apps names. */
+export const PERMISSIONS = ['camera', 'microphone', 'geolocation', 'clipboardWrite'] as const
+
+/** An origin an app declares: `https://host[:port]`, or `https://*.domain.tld` for the subdomains of one domain. Never a bare scheme or `*`. */
+const ORIGIN = /^https?:\/\/(\*\.)?(([a-z0-9]([a-z0-9-]*[a-z0-9])?)\.)+[a-z]{2,}(:\d{1,5})?$|^https?:\/\/(localhost|\d{1,3}(\.\d{1,3}){3})(:\d{1,5})?$/i
+const KEYS = ['title', 'icon', 'tint', 'window', 'csp', 'permissions']
 
 export class AppError extends Error {
   override name = 'AppError'
@@ -54,8 +73,8 @@ export function parseApp(source: string, file = 'package.json'): AppMeta {
   }
   const vos = pkg.vos
   if (vos === undefined) return meta
-  if (!isObject(vos)) return fail('vos', 'must be an object ({ "title", "icon", "tint", "window" })')
-  for (const key of Object.keys(vos)) if (!['title', 'icon', 'tint', 'window'].includes(key)) fail(`vos.${key}`, 'is not supported (title, icon, tint, window)')
+  if (!isObject(vos)) return fail('vos', `must be an object (${KEYS.join(', ')})`)
+  for (const key of Object.keys(vos)) if (!KEYS.includes(key)) fail(`vos.${key}`, `is not supported (${KEYS.join(', ')})`)
   if (vos.title !== undefined) {
     if (typeof vos.title !== 'string' || vos.title.trim() === '' || vos.title.length > 60) fail('vos.title', 'must be the name a person sees, at most 60 characters')
     meta.title = vos.title as string
@@ -78,6 +97,37 @@ export function parseApp(source: string, file = 'package.json'): AppMeta {
       return n as number
     }
     meta.window = { w: size('w'), h: size('h'), minW: size('minW'), minH: size('minH') }
+  }
+  if (vos.csp !== undefined) {
+    const given = vos.csp
+    if (!isObject(given)) return fail('vos.csp', 'must be { resourceDomains, connectDomains, frameDomains, baseUriDomains }')
+    const keys = ['connectDomains', 'resourceDomains', 'frameDomains', 'baseUriDomains'] as const
+    for (const key of Object.keys(given)) if (!(keys as readonly string[]).includes(key)) fail(`vos.csp.${key}`, `is not supported (${keys.join(', ')})`)
+    const csp: Csp = {}
+    for (const key of keys) {
+      const list = given[key]
+      if (list === undefined) continue
+      if (!Array.isArray(list)) return fail(`vos.csp.${key}`, 'must be a list of origins')
+      csp[key] = list.map((origin, i) => {
+        if (typeof origin !== 'string' || !ORIGIN.test(origin))
+          fail(`vos.csp.${key}[${i}]`, 'must be an origin such as https://cdn.example.com or https://*.example.com (no bare scheme, no `*`)')
+        return origin as string
+      })
+    }
+    meta.csp = csp
+  }
+  if (vos.permissions !== undefined) {
+    const given = vos.permissions
+    if (!isObject(given)) return fail('vos.permissions', 'must be an object such as { "camera": {} }')
+    for (const key of Object.keys(given)) if (!(PERMISSIONS as readonly string[]).includes(key)) fail(`vos.permissions.${key}`, `is not supported (${PERMISSIONS.join(', ')})`)
+    const permissions: NonNullable<AppMeta['permissions']> = {}
+    for (const name of PERMISSIONS) {
+      const one = given[name]
+      if (one === undefined) continue
+      if (!isObject(one) || Object.keys(one).length > 0) fail(`vos.permissions.${name}`, 'must be {}')
+      permissions[name] = {}
+    }
+    meta.permissions = permissions
   }
   return meta
 }

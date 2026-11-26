@@ -1,6 +1,13 @@
 <script lang="ts">
-  import { api, type Count } from '@ticker/rpc'
-  import { host } from '@vos/host'
+  type Count = VosApp.Ticker.Count
+
+  // the page's methods are the app's private ones on the bus
+  const api = {
+    read: (): Promise<Count> => RPC.send_request('ticker', '_read'),
+    toggle: (): Promise<Count> => RPC.send_request('ticker', '_toggle'),
+    reset: (): Promise<Count> => RPC.send_request('ticker', '_reset'),
+    fail: (): Promise<string> => RPC.send_request('ticker', '_fail')
+  }
 
   let count = $state<Count | null>(null)
   let notice = $state<string | null>(null)
@@ -22,9 +29,9 @@
   $effect(() => {
     void show(api.read())
     const stops = [
-      host.on('count', (data) => (count = data as Count)),
+      RPC.on_notification('ticker', 'count', (data) => (count = data)),
       // the host connection came back: the ticks made while it was away reached nobody
-      host.on('host:reconnected', () => void show(api.read()))
+      vos.host.on('host:reconnected', () => void show(api.read()))
     ]
     return () => stops.forEach((stop) => stop())
   })

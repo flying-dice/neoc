@@ -1,6 +1,11 @@
 <script lang="ts">
-  import { api, type NotifyParams } from '@notifier/rpc'
-  import { host } from '@vos/host'
+  type NotifyParams = VosApp.Notifier.NotifyParams
+
+  // the page's methods are the app's private ones on the bus
+  const api = {
+    sent: (): Promise<number> => RPC.send_request('notifier', '_sent'),
+    notify: (params: NotifyParams): Promise<string> => RPC.send_request('notifier', '_notify', params)
+  }
 
   let sent = $state(0)
 
@@ -15,7 +20,10 @@
   $effect(() => {
     const read = (): Promise<void> => api.sent().then((count) => void (sent = count))
     void read()
-    const stops = [host.on('sent', (data) => (sent = data as number)), host.on('host:reconnected', () => void read())]
+    const stops = [
+      RPC.on_notification('notifier', 'sent_changed', (data) => (sent = data.count)),
+      vos.host.on('host:reconnected', () => void read())
+    ]
     return () => stops.forEach((stop) => stop())
   })
 </script>

@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration tests
 //! A backend written in TypeScript under the real runtime. The fixture (`fixtures/typescript`, an app project with an
-//! `openrpc.json` and `server/main.ts`) is built by the product's own pipeline: `@vos/vite-plugin` generates its types
+//! `openrpc.json` and `server/main.ts`) is built by the product's own pipeline: `@vos/vite-plugin` (v1) generates its types
 //! and router and compiles it with `TypeScriptToLua`. What is held here is that the compiler's output runs in an app's
 //! environment, which is Luau without `debug`, `os` and `print`: its runtime library, the bitwise operators, an
 //! `Error`, and the host's modules and `app` API called the way the generated declarations say.

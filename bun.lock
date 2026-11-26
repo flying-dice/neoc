@@ -360,7 +360,7 @@
       "version": "0.1.0",
       "devDependencies": {
         "@sveltejs/vite-plugin-svelte": "^7.3.1",
-        "@vos/vite-plugin": "workspace:*",
+        "@vos/vite-plugin-v2": "workspace:*",
         "svelte": "^5.57.2",
         "svelte-check": "^4.7.6",
         "typescript": "^5.9.3",
@@ -372,7 +372,7 @@
       "version": "0.1.0",
       "devDependencies": {
         "@sveltejs/vite-plugin-svelte": "^7.3.1",
-        "@vos/vite-plugin": "workspace:*",
+        "@vos/vite-plugin-v2": "workspace:*",
         "svelte": "^5.57.2",
         "svelte-check": "^4.7.6",
         "typescript": "^5.9.3",
@@ -390,7 +390,7 @@
         "@types/react": "^19.2.0",
         "@types/react-dom": "^19.2.0",
         "@vitejs/plugin-react": "^6.3.0",
-        "@vos/vite-plugin": "workspace:*",
+        "@vos/vite-plugin-v2": "workspace:*",
         "typescript": "^5.9.3",
         "vite": "^8.3.4",
       },
@@ -400,7 +400,7 @@
       "version": "0.1.0",
       "devDependencies": {
         "@sveltejs/vite-plugin-svelte": "^7.3.1",
-        "@vos/vite-plugin": "workspace:*",
+        "@vos/vite-plugin-v2": "workspace:*",
         "svelte": "^5.57.2",
         "svelte-check": "^4.7.6",
         "typescript": "^5.9.3",
@@ -412,7 +412,7 @@
       "version": "0.1.0",
       "devDependencies": {
         "@sveltejs/vite-plugin-svelte": "^7.3.1",
-        "@vos/vite-plugin": "workspace:*",
+        "@vos/vite-plugin-v2": "workspace:*",
         "svelte": "^5.57.2",
         "svelte-check": "^4.7.6",
         "typescript": "^5.9.3",
@@ -432,7 +432,7 @@
         "@types/bun": "1.4.4",
         "@vos/kit": "workspace:*",
         "@vos/storybook": "workspace:*",
-        "@vos/vite-plugin": "workspace:*",
+        "@vos/vite-plugin-v2": "workspace:*",
         "storybook": "10.6.7",
         "svelte": "^5.57.2",
         "svelte-check": "^4.7.6",

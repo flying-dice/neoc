@@ -1,8 +1,9 @@
 import { svelte } from '@sveltejs/vite-plugin-svelte'
-import { vos } from '@vos/vite-plugin'
+import { vos } from '@vos/vite-plugin-v2'
 import { defineConfig } from 'vite'
 
-// `vos()` reads openrpc.json, generates the typed client and the Luau router into .app/, and builds the app ref into dist/.
+// `vos()` reads package.json (what the app is) and openrpc.json (its API), writes their types into types/, puts the host's
+// tags (the kit and the bridge) into the page, and builds the app ref into dist/.
 export default defineConfig({
   plugins: [svelte({ configFile: false }), vos()]
 })

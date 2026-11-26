@@ -116,7 +116,7 @@ fn nonce() -> u64 {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
-/// An app package of the one built file: `entry` is a Luau file (an app's generated `.app/entry.luau`), bundled.
+/// An app package of the one built file: `entry` is a Luau file, bundled.
 pub fn built_package(entry: &Path) -> AppPackage {
     let files = BTreeMap::from([("app.luau".to_owned(), build_luau(entry))]);
     AppPackage { entry: "app.luau".into(), files }
@@ -133,62 +133,38 @@ fn is_v2(project: &Path) -> bool {
 /// `e2e/apps/tasks-svelte`), built, as an app package of the one file the host ships.
 ///
 /// A project on `@vos/vite-plugin-v2` is built by its own `bun run build` (`vite build`), once per process, and its
-/// `dist/app.luau` is the package: Luau or TypeScript, bundled by the plugin. A project still on the deprecated v1
-/// plugin has its generated files (not committed) generated first, once per project, as its own scripts do. The v1
-/// path goes when the last v1 app has moved.
+/// `dist/app.luau` is the package: Luau or TypeScript, bundled by the plugin. The one exception is the TypeScript
+/// fixture of `typescript.rs` (a project of the deprecated v1 plugin that has no package.json): it is compiled by the
+/// v1 `vos bundle`, as [`built_typescript`] says.
 pub fn built_project(dir: &str) -> AppPackage {
     use std::sync::Mutex;
     static BUILT: Mutex<Vec<String>> = Mutex::new(Vec::new());
     let project = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(dir);
-    // the lock is held while building: a second test of the same project waits for the first one's build
-    let mut built = BUILT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if is_v2(&project) {
-        if !built.iter().any(|done| done == dir) {
-            let run = Command::new("bun")
-                .args(["run", "build"])
-                .current_dir(&project)
-                .output()
-                .expect("bun is needed to build the app (https://bun.sh)");
-            assert!(
-                run.status.success(),
-                "bun run build failed in {dir}:\n{}{}",
-                String::from_utf8_lossy(&run.stdout),
-                String::from_utf8_lossy(&run.stderr)
-            );
-            built.push(dir.to_owned());
-        }
-        let bundle = std::fs::read(project.join("dist/app.luau"))
-            .unwrap_or_else(|e| panic!("{dir} built no dist/app.luau: {e}"));
-        return AppPackage {
-            entry: "app.luau".into(),
-            files: BTreeMap::from([("app.luau".to_owned(), bundle)]),
-        };
-    }
-    drop(built);
-    if project.join("server/main.ts").exists() {
+    if !is_v2(&project) {
+        assert!(project.join("server/main.ts").exists(), "{dir} is not a project on @vos/vite-plugin-v2");
         return built_typescript(&project);
     }
-    {
-        let mut generated = GENERATED.lock().unwrap();
-        if !generated.iter().any(|done| done == dir) {
-            let run = Command::new("bun")
-                .args(["run", "generate"])
-                .current_dir(&project)
-                .output()
-                .expect("bun is needed to generate the app's router (https://bun.sh)");
-            assert!(
-                run.status.success(),
-                "bun run generate failed in {dir}:\n{}",
-                String::from_utf8_lossy(&run.stderr)
-            );
-            generated.push(dir.to_owned());
-        }
+    // the lock is held while building: a second test of the same project waits for the first one's build
+    let mut built = BUILT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !built.iter().any(|done| done == dir) {
+        let run = Command::new("bun")
+            .args(["run", "build"])
+            .current_dir(&project)
+            .output()
+            .expect("bun is needed to build the app (https://bun.sh)");
+        assert!(
+            run.status.success(),
+            "bun run build failed in {dir}:
+{}{}",
+            String::from_utf8_lossy(&run.stdout),
+            String::from_utf8_lossy(&run.stderr)
+        );
+        built.push(dir.to_owned());
     }
-    built_package(&project.join(".app/entry.luau"))
+    let bundle = std::fs::read(project.join("dist/app.luau"))
+        .unwrap_or_else(|e| panic!("{dir} built no dist/app.luau: {e}"));
+    AppPackage { entry: "app.luau".into(), files: BTreeMap::from([("app.luau".to_owned(), bundle)]) }
 }
-
-/// Generated v1 projects (see [`built_project`]).
-static GENERATED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
 /// The contract (`openrpc.json`) of the app project in `dir`, as the RPC bus holds it.
 pub fn contract(dir: &str) -> AppContract {
@@ -264,8 +240,8 @@ impl Served {
 
 /// The backend of a v1 project written in TypeScript, as the deprecated plugin bundles it: `vos bundle`
 /// (`packages/vite-plugin/bin/vos.ts`) generates the project's `.app/` and compiles the backend to one Luau chunk. Only
-/// the v1 `typescript` fixture is built this way; it goes with the v1 path when the last v1 app has moved. Needs bun;
-/// no darklua.
+/// the v1 `typescript` fixture of `typescript.rs` is built this way (no app is on the v1 plugin any more). Needs bun; no
+/// darklua.
 fn built_typescript(project: &Path) -> AppPackage {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let out = tempfile::Builder::new().prefix("vos-lua-test-").suffix(".luau").tempfile().unwrap();

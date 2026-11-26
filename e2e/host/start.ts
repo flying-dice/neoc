@@ -21,18 +21,17 @@
  *      app's journeys (apps/services/e2e) start, stop and remove services of the host's memory, never of the machine that runs the specs.
  */
 import { spawn, spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { CONFIG, DATA, DIR, FIXTURE_APPS, HIDDEN_APPS, HOST_BIN, PORT, REGISTRY, REGISTRY_APPS, ROOT, fileUrl, fixtureAppRef, portable } from './config'
+import { CONFIG, DATA, DIR, FIXTURE_APPS, HIDDEN_APPS, HOST_BIN, INSTALLED_REPO_APPS, PORT, REGISTRY, REGISTRY_APPS, ROOT, appMeta, fileUrl, fixtureAppRef, portable } from './config'
 
 const run = (cmd: string, args: string[]): void => {
   const r = spawnSync(cmd, args, { cwd: ROOT, stdio: 'inherit' })
   if (r.status !== 0) process.exit(r.status ?? 1)
 }
 
-/** The version a repo app ships (its contract's `info.version`), so a bump needs no change here. */
-const versionOf = (id: string): string =>
-  (JSON.parse(readFileSync(join(ROOT, 'apps', id, 'openrpc.json'), 'utf8')) as { info: { version: string } }).info.version
+/** The version a repo app ships (its package.json's `version`), so a bump needs no change here. */
+const versionOf = (id: string): string => appMeta(`apps/${id}`).version
 
 rmSync(DIR, { recursive: true, force: true })
 mkdirSync(DIR, { recursive: true })
@@ -61,7 +60,7 @@ writeFileSync(
     `client_dir = "${portable(join(ROOT, 'client/dist'))}"`,
     `registries = ["${fileUrl(REGISTRY)}"]`,
     `install = [${[
-      ...['calculator', 'agents', 'todos', 'notes', 'notebooks', 'containers', 'dns', 'keychain', 'services', 'pages', 'processes', 'projects', 'terminal'].map((id) => fileUrl(join(DIR, 'registry', id, versionOf(id), 'app-ref.json'))),
+      ...INSTALLED_REPO_APPS.map((id) => fileUrl(join(DIR, 'registry', id, versionOf(id), 'app-ref.json'))),
       ...FIXTURE_APPS.map(fixtureAppRef)
     ]
       .map((url) => `"${url}"`)

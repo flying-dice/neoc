@@ -118,6 +118,23 @@ function backendTypes(project: string, app: AppMeta, contract: Dependency['contr
   ]
 }
 
+/** The kit's editor types (`types/kit-<framework>.d.ts`) for the frameworks the project's package.json depends on. */
+function kitFiles(project: string): { path: string; contents: string }[] {
+  return frameworksOf(JSON.parse(readFileSync(join(project, 'package.json'), 'utf8')) as Parameters<typeof frameworksOf>[0]).map((framework) => ({
+    path: `${GENERATED}/kit-${framework}.d.ts`,
+    contents: kitTypes(readKitManifest(), framework)
+  }))
+}
+
+/**
+ * Write the kit's editor types into `types/` of a project that is not an app (a package of kit-based components, such as
+ * `@vos/docker`): only `kit-<framework>.d.ts`, for the frameworks its package.json depends on. An app gets them with the
+ * rest of its types from any Vite command.
+ */
+export function writeKitTypes(project: string): void {
+  write(resolve(project), kitFiles(resolve(project)))
+}
+
 /** The files `types/` holds, from the project's package.json and contract and those of its dependencies. */
 export function generate(project: string, options: Options = {}): { app: AppMeta; files: { path: string; contents: string }[] } {
   const { app, contract } = readApp(project, '.')
@@ -138,10 +155,7 @@ export function generate(project: string, options: Options = {}): { app: AppMeta
       // the backend's
       ...backendTypes(project, app, contract, dependencies),
       // the kit's tags (`<ui-button>`, ...), for the frameworks the page uses
-      ...frameworksOf(JSON.parse(readFileSync(join(project, 'package.json'), 'utf8')) as Parameters<typeof frameworksOf>[0]).map((framework) => ({
-        path: `${GENERATED}/kit-${framework}.d.ts`,
-        contents: kitTypes(readKitManifest(), framework)
-      })),
+      ...kitFiles(project),
       ...dependencies.map((d) => ({ path: `${GENERATED}/${d.id}.d.ts`, contents: emitAppTypes(d.id, d.contract, false) }))
     ]
   }

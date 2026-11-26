@@ -214,6 +214,54 @@ mod tests {
         assert!(c.check_notification("add", &json!({})).is_err(), "a request is no notification");
     }
 
+    /// The contract of the task-list fixtures (`e2e/apps/tasks-svelte`): what a page or an agent may send them.
+    const TASKS: &str = r#"{
+      "openrpc": "1.4.0", "info": { "title": "Tasks", "version": "0.1.0" },
+      "methods": [
+        { "name": "_list", "params": [], "result": { "name": "tasks", "schema": { "type": "array", "items": { "type": "object" } } } },
+        { "name": "_add", "params": [{ "name": "title", "required": true, "schema": { "type": "string", "maxLength": 200 } }],
+          "result": { "name": "tasks", "schema": { "type": "array", "items": { "type": "object" } } } },
+        { "name": "_toggle", "params": [{ "name": "id", "required": true, "schema": { "type": "integer", "minimum": 1 } }],
+          "result": { "name": "tasks", "schema": { "type": "array", "items": { "type": "object" } } } }
+      ]
+    }"#;
+
+    #[test]
+    fn params_the_contract_does_not_allow_are_refused_whatever_is_wrong_with_them() {
+        let c = AppContract::parse(TASKS.as_bytes()).unwrap();
+        let long = "x".repeat(201);
+        for (method, params, said) in [
+            ("_add", json!({}), "\"title\" is a required property"),
+            ("_add", Value::Null, "\"title\" is a required property"),
+            ("_add", json!({ "title": 5 }), "/title: 5 is not of type \"string\""),
+            ("_add", json!({ "title": long }), "is longer than 200 characters"),
+            (
+                "_add",
+                json!({ "title": "ok", "extra": true }),
+                "Additional properties are not allowed ('extra' was unexpected)",
+            ),
+            ("_add", json!(["ok"]), "[\"ok\"] is not of type \"object\""),
+            ("_toggle", json!({ "id": 0 }), "/id: 0 is less than the minimum of 1"),
+            ("_toggle", json!({ "id": 1.5 }), "/id: 1.5 is not of type \"integer\""),
+            ("_toggle", json!({ "id": "1" }), "/id: \"1\" is not of type \"integer\""),
+            (
+                "_list",
+                json!({ "unexpected": 1 }),
+                "Additional properties are not allowed ('unexpected' was unexpected)",
+            ),
+        ] {
+            let problem = c.check_params(method, &params).unwrap_err();
+            assert!(problem.contains(said), "{method} {params}: {problem}");
+        }
+        assert!(
+            c.check_params("_add", &json!({ "title": "  Buy milk " })).is_ok(),
+            "blanks are the handler's business"
+        );
+        assert!(c.check_params("_add", &json!({ "title": "x".repeat(200) })).is_ok());
+        assert!(c.check_params("_toggle", &json!({ "id": 1 })).is_ok());
+        assert!(c.check_params("_list", &Value::Null).is_ok());
+    }
+
     #[test]
     fn a_request_is_described_as_an_agent_is_shown_it() {
         let c = AppContract::parse(CONTRACT.as_bytes()).unwrap();

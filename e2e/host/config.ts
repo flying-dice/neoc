@@ -5,6 +5,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
+import { parseApp, type AppMeta } from '../../packages/vite-plugin-v2/src/app'
 import { HOST_PORT } from '../../scripts/ports'
 
 export const ROOT = resolve(import.meta.dirname, '../..')
@@ -24,6 +25,11 @@ export const CONFIG = join(DIR, 'vos.toml')
  */
 export const FILES_DIR = join(DIR, 'files')
 export const REGISTRY = join(DIR, 'registry/registry.json')
+/**
+ * The apps of `apps/` the host installs at start (e2e/host/start.ts). The rest of `apps/`
+ * is built into the test registry but installed by nobody (`app1` and `app2` are the examples of an app that depends on another).
+ */
+export const INSTALLED_REPO_APPS = ['calculator', 'agents', 'todos', 'notes', 'notebooks', 'containers', 'dns', 'keychain', 'services', 'pages', 'processes', 'projects', 'terminal'] as const
 /** The framework fixtures (e2e/apps): a task list with a Svelte client and one with a React client, installed at start. */
 export const FIXTURE_APPS = ['tasks-svelte', 'tasks-react'] as const
 export type FixtureApp = (typeof FIXTURE_APPS)[number]
@@ -47,10 +53,16 @@ export const portable = (path: string): string => path.split(sep).join('/')
  */
 export const fileUrl = (path: string): string => `file://${portable(path)}`
 
-/** The app ref of an app of e2e/apps, built under `folder` of the host's directory (e2e/host/start.ts) at its contract's version. */
-const appRef = (folder: 'fixtures' | 'registry', id: string): string => {
-  const { info } = JSON.parse(readFileSync(join(ROOT, 'e2e/apps', id, 'openrpc.json'), 'utf8')) as { info: { version: string } }
-  return fileUrl(join(DIR, folder, id, info.version, 'app-ref.json'))
+/**
+ * What an app is (its id, version, title, icon), from its `package.json`, read with the plugin's own parser as
+ * `scripts/build-apps.ts` reads it: `dir` is the app's folder, relative to the repository (`apps/calculator`, `e2e/apps/memos`).
+ */
+export const appMeta = (dir: string): AppMeta => parseApp(readFileSync(join(ROOT, dir, 'package.json'), 'utf8'), `${dir}/package.json`)
+
+/** The app ref of an app of e2e/apps, built under `folder` of the host's directory (e2e/host/start.ts) at its package's version. */
+const appRef = (folder: 'fixtures' | 'registry', dir: string): string => {
+  const { id, version } = appMeta(`e2e/apps/${dir}`)
+  return fileUrl(join(DIR, folder, id, version, 'app-ref.json'))
 }
 
 /** The app ref a fixture is installed from: built outside the registry (e2e/host/start.ts), so Discover never offers it. */

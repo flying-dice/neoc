@@ -1,9 +1,13 @@
 import { expect, test } from 'bun:test'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import ts from 'typescript'
 import { parseContract } from './contract.ts'
 import { emitLuauDefinitions } from './emit-luau.ts'
 import { emitBackendTsconfig, emitBackendTypes } from './emit-backend-ts.ts'
 import { emitAppTypes, emitVosTypes } from './emit-ts.ts'
+import { writeKitTypes } from './index.ts'
 
 const contract = (methods: unknown[], schemas: Record<string, unknown> = {}) =>
   parseContract(JSON.stringify({ openrpc: '1.4.0', info: { title: 'T', version: '1.0.0' }, methods, components: { schemas } }))
@@ -186,4 +190,17 @@ test("the TypeScript compiler takes what the contract says and refuses what it d
   expect(bad("RPC.send_notification('nothing')")).not.toEqual([])
   expect(bad("RPC.send_notification('added', { item: { id: 'one' } })")).not.toEqual([])
   expect(bad("RPC.on_notification('app-one', '_saved', () => {})")).not.toEqual([])
+})
+
+test('writeKitTypes writes the kit types of a package that is not an app, for the frameworks it depends on', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vos-kit-types-'))
+  try {
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'components', devDependencies: { svelte: '^5.0.0' } }))
+    writeKitTypes(dir)
+    expect(readFileSync(join(dir, 'types/kit-svelte.d.ts'), 'utf8')).toContain("declare module 'svelte/elements'")
+    expect(existsSync(join(dir, 'types/kit-react.d.ts'))).toBe(false)
+    expect(existsSync(join(dir, 'types/vos.d.ts'))).toBe(false)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

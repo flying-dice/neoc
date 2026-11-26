@@ -285,7 +285,7 @@ the same tools under the same names, and the person sees the same app.
 **package.json and the contract**
 
 - `x-app` leaves `openrpc.json` for package.json: its `description` becomes the package `description`, and `vos`
-  gets `{ title: info.title, icon, tint, window }`. The package name without its scope must be the old `x-app.id`.
+  gets `{ title: info.title, icon, tint, window }`, and `csp` and `permissions` when the app declared them. The package name without its scope must be the old `x-app.id`.
 - `openrpc` becomes `"1.4.0"`. Drop `info.description` if it only repeated `x-app.description`.
 - Each v1 page method (a key of the `Handlers` table the entry returned) becomes **private**, in snake case: `foo` → `_foo`, `addFolder` → `_add_folder` (the house style; one that would be the twin of a tool, `_add_record` beside `add_record`, takes another name). A public
   method is an agent tool, so a page method left public would hand agents what only the person had (Keychain's
@@ -345,7 +345,7 @@ where it goes:
 
 | Command | Used by | Replaced by |
 | --- | --- | --- |
-| `vos generate` | every app's `generate` script; `packages/docker`'s `typecheck` (kit editor types only) | the plugin, on any Vite run (it already generates in `buildStart`); `packages/docker` gets the kit's types from `@vos/kit` itself (below) |
+| `vos generate` | every app's `generate` script; `packages/docker`'s `typecheck` (kit editor types only) | the plugin, on any Vite run (it already generates in `buildStart`); `packages/docker` writes the kit's types with the plugin's `writeKitTypes` in its `typecheck` |
 | `vos typecheck`, Luau backend | every app's `typecheck` | the repo's `bun run lint:luau` (`scripts/lint-luau.ts`), widened to `apps/*/server`, each checked with its generated `types/vos.d.luau` as definitions; it skips `apps/` today only because `vos` covered it |
 | `vos typecheck`, TypeScript backend | the same | `vite build`: compiling the backend with TypeScriptToLua is the check, and the build already does it |
 | `vos lint` (typecheck + StyLua check) | every app's `lint` | `bun run lint:luau` + `bun run lint:stylua` (`scripts/stylua.ts`, which already covers `apps/`) |
@@ -364,7 +364,8 @@ What has to come back, so nothing is lost:
    editor, and the host refuses at load a backend missing a method.
 3. **Kit editor types.** `kitDeclarations` copies `kit-svelte.d.ts` / `kit-react.d.ts` into the generated folder per project. They are
    the same in every project, so `@vos/kit` ships them as its own types (`@vos/kit/svelte`, `@vos/kit/react`) and
-   nothing generates them; `packages/docker` drops its `vos generate`.
+   nothing generates them; `packages/docker` drops its `vos generate`. (Done for now with `writeKitTypes` from
+   `@vos/vite-plugin-v2`, which writes them into the package's `types/`.)
 4. **Scripts.** Every app's `package.json` loses `generate`, `lint`, `format` and the `vos typecheck` half of
    `typecheck`; the plugin's `bin` entry goes. Root `lint` / `format` already run the repo-wide Luau and StyLua passes.
 

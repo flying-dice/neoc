@@ -145,7 +145,9 @@ async fn agent_tools_are_the_public_handlers_on_the_bus_and_a_call_is_a_request_
 
 /// An app with a contract and handlers that say nothing about themselves: the bus holds it to the contract.
 const HELD: &str = r#"
-RPC.on_request("add", function(p) return { id = #p.text } end)
+local ran = 0
+RPC.on_request("add", function(p) ran += 1 return { id = #p.text } end)
+RPC.on_request("_ran", function() return { id = ran } end)
 RPC.on_request("wrong", function() return { id = "not a number" } end)
 RPC.on_request("shout", function()
   local ok = pcall(function() RPC.send_notification("undeclared", {}) end)
@@ -160,6 +162,7 @@ const CONTRACT: &str = r##"{
     { "name": "add", "summary": "Add", "description": "Add a thing.", "x-readOnly": true,
       "params": [{ "name": "text", "required": true, "schema": { "type": "string", "minLength": 1 } }],
       "result": { "name": "item", "schema": { "$ref": "#/components/schemas/Item" } } },
+    { "name": "_ran", "params": [], "result": { "name": "item", "schema": { "$ref": "#/components/schemas/Item" } } },
     { "name": "wrong", "params": [], "result": { "name": "item", "schema": { "$ref": "#/components/schemas/Item" } } },
     { "name": "shout", "params": [], "result": { "name": "item", "schema": { "$ref": "#/components/schemas/Item" } } },
     { "name": "added", "params": [{ "name": "id", "required": true, "schema": { "type": "integer" } }] }
@@ -190,6 +193,12 @@ async fn the_bus_holds_every_request_answer_and_notification_to_the_installed_co
     assert_eq!(extra["error"]["code"], -32602, "{extra}");
     let unknown = rpc(&mut page, 4, "app.call", call("nope", json!({}))).await;
     assert_eq!(unknown["error"]["code"], -32601, "{unknown}");
+    let ran = rpc(&mut page, 8, "app.call", call("_ran", json!({}))).await;
+    assert_eq!(
+        ran["result"],
+        json!({ "id": 1 }),
+        "only the call the contract allowed ran the handler: {ran}"
+    );
 
     // an answer the contract refuses is the handler's failure
     let wrong = rpc(&mut page, 5, "app.call", call("wrong", json!({}))).await;

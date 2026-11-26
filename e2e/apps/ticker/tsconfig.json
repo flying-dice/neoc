@@ -9,5 +9,5 @@
     "noEmit": true,
     "types": []
   },
-  "include": ["src", ".app/*.d.ts"]
+  "include": ["src", "types/**/*.d.ts"]
 }

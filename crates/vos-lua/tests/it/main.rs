@@ -18,7 +18,6 @@ mod modules;
 mod panics;
 mod peers;
 mod poison;
-mod router;
 mod runtime;
 mod streams;
 mod surface;

@@ -3,14 +3,28 @@
   "private": true,
   "type": "module",
   "version": "0.1.0",
-  "description": "A fixture app: a task list whose client is written in React. `bun run build` writes the app ref (dist/app-ref.json, app.luau, static/); `bun run dev` rebuilds on a change.",
+  "description": "A fixture: a task list whose client is written in React, on a Luau backend.",
+  "vos": {
+    "title": "Tasks (React)",
+    "icon": "checkmark",
+    "tint": "blue",
+    "window": {
+      "w": 420,
+      "h": 480,
+      "minW": 320,
+      "minH": 320
+    },
+    "csp": {
+      "resourceDomains": ["https://cdn.example.com", "https://*.images.example.org"]
+    },
+    "permissions": {
+      "camera": {}
+    }
+  },
   "scripts": {
-    "generate": "vos generate",
     "build": "vite build",
     "dev": "vite build --watch",
-    "typecheck": "vos typecheck && tsc --noEmit -p tsconfig.json",
-    "lint": "vos lint",
-    "format": "vos format"
+    "typecheck": "vite build && tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "react": "^19.3.1",
@@ -20,7 +34,7 @@
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^6.3.0",
-    "@vos/vite-plugin": "workspace:*",
+    "@vos/vite-plugin-v2": "workspace:*",
     "typescript": "^5.9.3",
     "vite": "^8.3.4"
   }
