@@ -34,15 +34,7 @@ RPC.on_request("summarize", function(input: { numbers: { number } })
     size = size,
     encoded = base64.encode(size :: string),
   }
-end, {
-  title = "Summarize",
-  read_only = true,
-  input_schema = {
-    type = "object",
-    properties = { numbers = { type = "array", items = { type = "number" } } },
-    required = { "numbers" },
-  },
-})
+end)
 
 -- what the page calls: the context is typed by the declarations
 RPC.on_request("_greet", function(args: { name: string }, ctx: vos_app_Context)

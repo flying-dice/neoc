@@ -37,7 +37,7 @@ use std::{
 };
 use tokio::sync::Notify;
 use vos_application::{
-    ports::{AgentCard, AgentRoster, AppData, AppPackage, AppTools, CallContext, HandlerInfo, PortResult},
+    ports::{AgentCard, AgentRoster, AppData, AppPackage, AppTools, CallContext, PortResult},
     AppFiles, Files, NoFiles,
 };
 use vos_domain::{Actor, AppId, Notification, QualifiedToolName, ToolSpec};
@@ -194,14 +194,6 @@ pub enum Effect {
     HandlersChanged,
 }
 
-/// A backend handler on the bus, from `RPC.on_request(method, fn, about?)`: `run(params, ctx)`, as a listener and a
-/// page's handler take them, and what it said about itself (an agent is shown it when the method is public).
-#[derive(Clone)]
-pub(crate) struct Handler {
-    pub run: Function,
-    pub info: HandlerInfo,
-}
-
 /// Everything the `app` API closures share with the VM's owner.
 pub(crate) struct Shared {
     pub app: AppId,
@@ -221,7 +213,7 @@ pub(crate) struct Shared {
     /// What `hook(name, fn)` registered (only with [`VmConfig::test_hooks`]).
     pub handlers: Mutex<HashMap<String, Function>>,
     /// The app's backend handlers on the bus, by method (`RPC.on_request`).
-    pub rpc_handlers: Mutex<HashMap<String, Handler>>,
+    pub rpc_handlers: Mutex<HashMap<String, Function>>,
     pub test_hooks: bool,
     pub effects: Mutex<Vec<Effect>>,
     /// How many of the notifications in `effects` each call queued, by its turn id ([`lifecycle::turn_id`]).
@@ -780,7 +772,7 @@ impl AppVm {
             let convert = |e: mlua::Error| VmError::BadValue(e.to_string());
             let arg = json_to_lua(&self.lua, &args).map_err(convert)?;
             let ctx = self.ctx_value(ctx).map_err(convert)?;
-            let out: LuaValue = handler.run.call_async((arg, ctx)).await.map_err(|e| script(&e))?;
+            let out: LuaValue = handler.call_async((arg, ctx)).await.map_err(|e| script(&e))?;
             lua_to_json(&out).map_err(|e| VmError::BadValue(e.to_string()))
         })
         .await
@@ -791,13 +783,12 @@ impl AppVm {
         self.shared.rpc_handlers.lock().contains_key(method)
     }
 
-    /// The backend's handlers on the bus (`RPC.on_request`), as each described itself: what its agent tools are made
-    /// from.
-    pub fn handlers(&self) -> Vec<HandlerInfo> {
-        let mut infos: Vec<HandlerInfo> =
-            self.shared.rpc_handlers.lock().values().map(|handler| handler.info.clone()).collect();
-        infos.sort_by(|a, b| a.method.cmp(&b.method));
-        infos
+    /// The methods the backend serves on the bus (`RPC.on_request`), in name order: its public ones are its agent
+    /// tools.
+    pub fn handlers(&self) -> Vec<String> {
+        let mut methods: Vec<String> = self.shared.rpc_handlers.lock().keys().cloned().collect();
+        methods.sort();
+        methods
     }
 
     /// Whether the app listens to `name` of `from` (`RPC.on_notification`): the runtime delivers only to those that do.

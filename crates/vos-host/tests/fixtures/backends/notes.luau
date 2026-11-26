@@ -1,6 +1,6 @@
 --!strict
 -- Sample backend for the host end-to-end tests: a small Notes data model, the handlers its page calls (private, `_`)
--- and the tools an agent calls (public). Whoever changes a note tells the open pages with a notification, so a page
+-- and the tools an agent calls (public, described by `notes.openrpc.json`). Whoever changes a note tells the open pages with a notification, so a page
 -- reads again.
 local app = require("vos:app")
 local RPC = require("vos:rpc")
@@ -31,15 +31,7 @@ RPC.on_request("add_note", function(input: { body: string }, ctx)
   app.notify { title = "Note added", body = input.body }
   changed(r.last_insert_id)
   return { id = r.last_insert_id }
-end, {
-  title = "Add Note",
-  description = "Add a note",
-  input_schema = {
-    type = "object",
-    properties = { body = { type = "string", description = "The note text" } },
-    required = { "body" },
-  },
-})
+end)
 
 RPC.on_request("append", function(input: { id: number, text: string }, ctx)
   local r = db:exec(
@@ -52,31 +44,14 @@ RPC.on_request("append", function(input: { id: number, text: string }, ctx)
   end
   changed(input.id)
   return { id = input.id }
-end, {
-  title = "Append to Note",
-  description = "Append text on a new line at the end of a note",
-  input_schema = {
-    type = "object",
-    properties = { id = { type = "integer", description = "Note id" }, text = { type = "string" } },
-    required = { "id", "text" },
-  },
-})
+end)
 
 RPC.on_request("search", function(input: { query: string, limit: number? })
   return db:all(
     "select id, substr(body, 1, 60) as title from notes where body like '%' || :q || '%' order by id limit :n",
     { q = input.query, n = input.limit or 10 }
   )
-end, {
-  title = "Search Notes",
-  description = "Find notes whose text contains the query",
-  read_only = true,
-  input_schema = {
-    type = "object",
-    properties = { query = { type = "string" }, limit = { type = "integer", minimum = 1, maximum = 50, default = 10 } },
-    required = { "query" },
-  },
-})
+end)
 
 -- what the page calls
 RPC.on_request("_list", function()

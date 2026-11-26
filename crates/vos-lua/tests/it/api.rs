@@ -20,6 +20,11 @@ async fn call(vm: &AppVm, tool: &str, args: Value) -> Result<Value, VmError> {
     common::serve(vm, tool, args, &agent_ctx(1_763_457_120_000)).await
 }
 
+/// [`call`], read-only: every write the call tries is refused.
+async fn call_ro(vm: &AppVm, tool: &str, args: Value) -> Result<Value, VmError> {
+    common::serve_ro(vm, tool, args, &agent_ctx(1_763_457_120_000)).await
+}
+
 // ---- require ----------------------------------------------------------------------------------------------
 
 #[tokio::test]
@@ -199,43 +204,18 @@ async fn params_with_whole_numbers_bind_as_integers() {
 
 const TOOLS: &str = r#"
     RPC.on_request("search",
-      function(input, ctx) return { q = input.query, folder = input.folder, who = ctx.actor.name, kind = ctx.actor.kind, id = ctx.actor.id, now = ctx.now } end,
-      {
-        title = "Search Notes", description = "Find notes", read_only = true,
-        input_schema = {
-          type = "object",
-          properties = {
-            query = { type = "string", description = "text" },
-            limit = { type = "integer", minimum = 1, maximum = 50, default = 10 },
-            folder = { type = "string" },
-          },
-          required = { "query" },
-        },
-      })
-    RPC.on_request("fails", function(_, ctx) return ctx:fail("No note with id 9") end, { description = "x" })
+      function(input, ctx) return { q = input.query, folder = input.folder, who = ctx.actor.name, kind = ctx.actor.kind, id = ctx.actor.id, now = ctx.now } end)
+    RPC.on_request("fails", function(_, ctx) return ctx:fail("No note with id 9") end)
     RPC.on_request("bug", function() local x = nil; return x.y end)
     RPC.on_request("nothing", function() end)
     RPC.on_request("plain", function(i) return i.n end)
 "#;
 
 #[tokio::test]
-async fn handlers_are_registered_with_what_they_say_of_themselves_and_run_as_the_calling_actor() {
+async fn handlers_are_registered_by_method_name_and_run_as_the_calling_actor() {
     let vm = load(&app(TOOLS)).await;
-    let handlers = vm.handlers();
-    let search = handlers.iter().find(|h| h.method == "search").unwrap();
-    assert_eq!(search.title.as_deref(), Some("Search Notes"));
-    assert_eq!(search.description.as_deref(), Some("Find notes"));
-    assert!(search.read_only);
-    let schema = search.input_schema.as_ref().unwrap();
-    assert_eq!(schema["required"], json!(["query"]));
-    assert_eq!(schema["properties"]["limit"]["maximum"], 50);
-    let fails = handlers.iter().find(|h| h.method == "fails").unwrap();
-    assert!(!fails.read_only);
-    assert_eq!(fails.description.as_deref(), Some("x"));
-    // a handler that said nothing of itself is listed all the same, with nothing said
-    let plain = handlers.iter().find(|h| h.method == "plain").unwrap();
-    assert_eq!((plain.title.as_deref(), plain.description.as_deref(), plain.read_only), (None, None, false));
-    assert!(plain.input_schema.is_none());
+    // the app lists only the methods it serves, sorted: what a method says of itself is its contract's
+    assert_eq!(vm.handlers(), ["bug", "fails", "nothing", "plain", "search"]);
 
     // the app does not fill defaults or check the params: they are the contract's, checked before the handler is
     // reached (`AppService::request_with`)
@@ -274,10 +254,6 @@ async fn bad_handler_registrations_fail_the_load() {
     // what is not a function is no handler
     fails("RPC.on_request('x')", "argument #2 'handler'").await;
     fails("RPC.on_request('x', 'not a function')", "argument #2 'handler'").await;
-    // what `about` says is read by its shape: a key it does not have is refused, not dropped
-    fails("RPC.on_request('x', function() end, { input = { a = 5 } })", "unknown field `input`").await;
-    fails("RPC.on_request('x', function() end, { readOnly = true })", "unknown field `readOnly`").await;
-    fails("RPC.on_request('x', function() end, { read_only = 'yes' })", "read_only").await;
     // one handler for a method
     fails(
         "RPC.on_request('x', function() end) RPC.on_request('x', function() end)",
@@ -293,7 +269,7 @@ async fn a_write_made_by_a_handler_is_visible_to_the_next_read() {
         RPC.on_request("add", function(i, ctx)
             return app.db:exec("insert into notes(body) values (:b)", { b = i.body .. " by " .. ctx.actor.name })
         end)
-        RPC.on_request("list", function() return app.db:all("select body from notes") end, { read_only = true })
+        RPC.on_request("list", function() return app.db:all("select body from notes") end)
     "#);
     let vm = load(&src).await;
     call(&vm, "add", json!({"body": "milk"})).await.unwrap();
@@ -524,22 +500,22 @@ const READ_ONLY: &str = r#"
     db:migrate { [1] = "create table log(id integer primary key, msg text)" }
     db:exec("insert into log(msg) values ('seed')")
     local function try(f) local ok, err = pcall(f); return { ok = ok, err = (not ok) and tostring(err) or nil } end
-    RPC.on_request("count", function() return { n = db:one("select count(*) as n from log").n } end, { read_only = true })
-    RPC.on_request("write_exec", function() return try(function() db:exec("insert into log(msg) values ('x')") end) end, { read_only = true })
-    RPC.on_request("write_returning", function() return try(function() db:all("insert into log(msg) values ('y') returning id") end) end, { read_only = true })
-    RPC.on_request("write_tx", function() return try(function() db:tx(function() db:exec("delete from log") end) end) end, { read_only = true })
-    RPC.on_request("write_ddl", function() return try(function() db:all("drop table log") end) end, { read_only = true })
-    RPC.on_request("lift_it", function() return try(function() db:all("pragma query_only = 0") end) end, { read_only = true })
-    RPC.on_request("write_kv", function() return try(function() app.kv:set("k", 1) end) end, { read_only = true })
-    RPC.on_request("delete_kv", function() return try(function() app.kv:delete("k") end) end, { read_only = true })
-    RPC.on_request("write_migrate", function() return try(function() db:migrate { [1] = "create table log(id integer primary key, msg text)", [2] = "create table z(a)" } end) end, { read_only = true })
+    RPC.on_request("count", function() return { n = db:one("select count(*) as n from log").n } end)
+    RPC.on_request("write_exec", function() return try(function() db:exec("insert into log(msg) values ('x')") end) end)
+    RPC.on_request("write_returning", function() return try(function() db:all("insert into log(msg) values ('y') returning id") end) end)
+    RPC.on_request("write_tx", function() return try(function() db:tx(function() db:exec("delete from log") end) end) end)
+    RPC.on_request("write_ddl", function() return try(function() db:all("drop table log") end) end)
+    RPC.on_request("lift_it", function() return try(function() db:all("pragma query_only = 0") end) end)
+    RPC.on_request("write_kv", function() return try(function() app.kv:set("k", 1) end) end)
+    RPC.on_request("delete_kv", function() return try(function() app.kv:delete("k") end) end)
+    RPC.on_request("write_migrate", function() return try(function() db:migrate { [1] = "create table log(id integer primary key, msg text)", [2] = "create table z(a)" } end) end)
     RPC.on_request("add", function(_, ctx) db:exec("insert into log(msg) values (:m)", { m = ctx.actor.name }); app.kv:set("k", 1); return { n = db:one("select count(*) as n from log").n } end)
 "#;
 
 #[tokio::test]
 async fn a_read_only_tool_cannot_write_by_any_route_and_a_normal_tool_still_can() {
     let vm = load(&app(READ_ONLY)).await;
-    assert_eq!(call(&vm, "count", json!({})).await.unwrap(), json!({"n": 1}), "reads work");
+    assert_eq!(call_ro(&vm, "count", json!({})).await.unwrap(), json!({"n": 1}), "reads work");
 
     for tool in [
         "write_exec",
@@ -551,7 +527,7 @@ async fn a_read_only_tool_cannot_write_by_any_route_and_a_normal_tool_still_can(
         "delete_kv",
         "write_migrate",
     ] {
-        let out = call(&vm, tool, json!({})).await.unwrap();
+        let out = call_ro(&vm, tool, json!({})).await.unwrap();
         assert_eq!(out["ok"], false, "{tool} must be refused: {out}");
         let why = out["err"].as_str().unwrap().to_lowercase();
         assert!(
@@ -559,11 +535,11 @@ async fn a_read_only_tool_cannot_write_by_any_route_and_a_normal_tool_still_can(
             "{tool}: {why}"
         );
     }
-    assert_eq!(call(&vm, "count", json!({})).await.unwrap(), json!({"n": 1}), "nothing was written");
+    assert_eq!(call_ro(&vm, "count", json!({})).await.unwrap(), json!({"n": 1}), "nothing was written");
 
     // the VM is writable again for the next, non-read-only call (even after the failures above)
     assert_eq!(call(&vm, "add", json!({})).await.unwrap(), json!({"n": 2}));
-    assert_eq!(call(&vm, "count", json!({})).await.unwrap(), json!({"n": 2}));
+    assert_eq!(call_ro(&vm, "count", json!({})).await.unwrap(), json!({"n": 2}));
 }
 
 /// `vos:docker` is Luau the host carries, run in the app's own VM: one table per app, which keeps the app's choice of

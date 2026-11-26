@@ -47,12 +47,7 @@ rpc.send_notification('notes.changed', { id: 1 })
 rpc.on_request(
   'count_notes',
   // the declarations cannot know the shape of the params: the handler says it (the contract holds them to it)
-  (params, ctx) => (ctx.actor.kind === 'agent' ? { n: total, folder: (params as { folder?: string }).folder } : ctx.fail('Agents only.')),
-  {
-    description: 'How many notes there are',
-    read_only: true,
-    input_schema: { type: 'object', properties: { folder: { type: 'string', description: 'Only this folder' } } }
-  }
+  (params, ctx) => (ctx.actor.kind === 'agent' ? { n: total, folder: (params as { folder?: string }).folder } : ctx.fail('Agents only.'))
 )
 
 // a private method (`_`) is the app's page's alone

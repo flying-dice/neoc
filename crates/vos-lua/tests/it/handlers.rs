@@ -77,11 +77,10 @@ RPC.on_request("loop", function() local t = {} t.t = t return t end)
 async fn a_client_call_runs_the_handler_with_a_context_and_the_arguments() {
     let rig = rig();
     load(&rig, "tasks", TASKS).await.unwrap();
-    // the app's handlers are the ones it served on the bus, and a handler that said nothing of itself says nothing
-    let handlers = rig.runtime.handlers(&id("tasks"));
-    let names: Vec<_> = handlers.iter().map(|h| h.method.as_str()).collect();
-    assert!(names.contains(&"add") && names.contains(&"who") && !names.contains(&"nope"), "{names:?}");
-    assert!(handlers.iter().all(|h| h.title.is_none() && h.description.is_none() && !h.read_only));
+    // the app's handlers are the ones it served on the bus
+    let names = rig.runtime.handlers(&id("tasks"));
+    assert!(names.iter().any(|n| n == "add") && names.iter().any(|n| n == "who"), "{names:?}");
+    assert!(!names.iter().any(|n| n == "nope"), "{names:?}");
 
     let added = call(&rig, "tasks", "add", json!({ "title": "Buy milk" })).await.unwrap();
     assert_eq!(
@@ -176,7 +175,7 @@ async fn each_app_answers_from_its_own_vm() {
 const NOTIFIER: &str = r#"
 local task = require("std:task")
 RPC.on_request("poke", function() RPC.send_notification("poked") return "ok" end)
-RPC.on_request("peek", function() RPC.send_notification("peeked") return "ok" end, { read_only = true })
+RPC.on_request("peek", function() RPC.send_notification("peeked") return "ok" end)
 RPC.on_request("save", function()
   RPC.send_notification("tasks.changed", { n = 1 })
   RPC.send_notification("plain")
@@ -222,7 +221,7 @@ async fn an_agents_tool_can_send_a_notification_and_a_read_only_call_cannot() {
     assert_eq!(events(&rig), vec![("tasks".into(), "poked".into(), Value::Null)]);
 
     let PortError::Rejected(message) =
-        common::serve_rt(&rig.runtime, &id("tasks"), "peek", json!({}), agent).await.unwrap_err()
+        common::serve_rt_with(&rig.runtime, &id("tasks"), "peek", json!({}), agent, true).await.unwrap_err()
     else {
         panic!("rejected");
     };
@@ -410,10 +409,10 @@ async fn a_panic_on_one_notification_of_a_batch_leaves_the_others_delivered_once
 
 const OPENER: &str = r#"
 local app = require("vos:app")
-RPC.on_request("open", function() app.open_window() return {} end, { description = "open" })
-RPC.on_request("open_main", function() app.open_window({ tab = "all" }) return {} end, { description = "open main" })
-RPC.on_request("open_other", function() app.open_window("settings") return {} end, { description = "open another" })
-RPC.on_request("peek", function() app.open_window() return {} end, { description = "read only", read_only = true })
+RPC.on_request("open", function() app.open_window() return {} end)
+RPC.on_request("open_main", function() app.open_window({ tab = "all" }) return {} end)
+RPC.on_request("open_other", function() app.open_window("settings") return {} end)
+RPC.on_request("peek", function() app.open_window() return {} end)
 RPC.on_request("show", function() app.open_window() return "ok" end)
 "#;
 
@@ -446,6 +445,6 @@ async fn an_app_with_a_client_opens_its_one_window_without_naming_it() {
     };
     assert!(message.contains("an app has one window: it takes no name"), "{message}");
     // nor may a read-only tool ask
-    assert!(common::serve_rt(&rig.runtime, &id("calc"), "peek", json!({}), agent).await.is_err());
+    assert!(common::serve_rt_with(&rig.runtime, &id("calc"), "peek", json!({}), agent, true).await.is_err());
     assert_eq!(windows(&rig).len(), 3, "nothing more was asked");
 }

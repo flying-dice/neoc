@@ -37,14 +37,7 @@ RPC.on_request("append", function(input, ctx)
   app.notify { title = "Note changed", body = ctx.actor.name }
   RPC.send_notification("notes.changed", { changes = r.changes })
   return { id = input.id }
-end, {
-  title = "Append to a note",
-  input_schema = {
-    type = "object",
-    properties = { id = { type = "integer" }, text = { type = "string" } },
-    required = { "id", "text" },
-  },
-})
+end)
 RPC.on_request("add_two", function(_, ctx)
   db:tx(function()
     db:exec("insert into notes(folder_id, body) values (1, 'a')")
@@ -99,14 +92,7 @@ async fn loading_reports_what_the_app_declared() {
     let rig = rig();
     load(&rig, NOTES).await.unwrap();
     let handlers = rig.runtime.handlers(&id("notes"));
-    assert_eq!(
-        handlers.iter().map(|h| h.method.as_str()).collect::<Vec<_>>(),
-        ["_edit", "_list", "add_two", "append"]
-    );
-    let append = handlers.iter().find(|h| h.method == "append").unwrap();
-    assert_eq!(append.title.as_deref(), Some("Append to a note"));
-    assert_eq!(append.input_schema.as_ref().unwrap()["required"], json!(["id", "text"]));
-    assert!(handlers.iter().all(|h| !h.read_only));
+    assert_eq!(handlers, ["_edit", "_list", "add_two", "append"]);
 }
 
 #[tokio::test]

@@ -51,9 +51,5 @@ RPC.on_request(
     r.cacheRead = sized(app.files.cache:read("thumb.bin"))
     r.tempEmpty = step(app.files.temp:list())
     return r
-  end,
-  {
-    title = "Run the file workflow",
-    description = "Creates, lists, reads, writes, moves, copies, inspects and deletes files in the app's documents.",
-  }
+  end
 )

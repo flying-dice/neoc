@@ -22,9 +22,6 @@ local _live = app.db:query("select 1 as id", { key = "id" }) -- expect-error: Ke
 app.open_window(5) -- expect-error: Expected this to be '{ [string]: any }?', but got 'number'
 app:notify { title = "a method call passes app first" } -- expect-error: not compatible with type 'vos_app_Notification' -- expect-error: Function 'app.notify' expects 1 argument, but 2 are specified
 RPC.send_notification(5) -- expect-error: Expected this to be 'string', but got 'number'
-RPC.on_request("y", function()
-  return 1
-end, { read_only = "yes" }) -- expect-error: Expected this to be 'vos_rpc_About?'
 local _name: string = json.nope -- expect-error: Key 'nope' not found in table 'lib_json'
 app.files.documents:write("a.txt") -- expect-error: expects 3 arguments, but only 2 are specified
 app.files.documents:remove("a", { recursive = "yes" }) -- expect-error: Expected this to be 'vos_app_RemoveOptions?' but got
@@ -40,12 +37,7 @@ app.open_window()
 RPC.send_notification("fine", { changed = true })
 RPC.on_request("fine", function(_, ctx)
   return ctx:fail("never returns")
-end, { description = "a tool", input_schema = { type = "object" }, read_only = true })
-
--- what a handler says of itself is `about`: a title is text
-RPC.on_request("z", function()
-  return 1
-end, { title = 5 }) -- expect-error: Expected this to be 'vos_rpc_About?'
+end)
 
 -- a handler of the app's page: a private method, `fn(params, ctx)`
 RPC.on_request("_fine", function(args, ctx)

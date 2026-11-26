@@ -8,7 +8,7 @@ use crate::{
     files::FileStore,
     ports::{
         AppBus, AppData, AppPackage, AppRuntime, AppTools, CallContext, Clock, DataStore, EventSink, Fetcher,
-        HandlerInfo, InstalledApp, InstalledAppStore, PageHandlers, ServerEvent, SqlMigration, ToolRegistry,
+        InstalledApp, InstalledAppStore, PageHandlers, ServerEvent, SqlMigration, ToolRegistry,
     },
     AppError, PortError,
 };
@@ -175,7 +175,7 @@ struct Active {
     data: Arc<dyn AppData>,
     name: String,
     display: Display,
-    /// The app's agent tools: every public handler on the bus.
+    /// The app's agent tools: every public method it serves on the bus, described by its contract.
     tools: Vec<ToolSpec>,
     /// The method each tool is: tool name to method. An agent's call is a request on the bus.
     methods: HashMap<String, String>,
@@ -270,26 +270,19 @@ impl AppService {
         Self { p: ports, apps: Mutex::default(), pages: std::sync::OnceLock::new() }
     }
 
-    /// The public handlers of `app` on the bus, the backend's then the open pages', as agent tools: one per method,
-    /// named for it in snake case, described as the handler described itself.
+    /// The public methods `app` serves on the bus, the backend's then the open pages', as agent tools: one per method,
+    /// named for it in snake case and described by the app's contract (a method it does not declare is a tool with
+    /// no description, any object for params, and not read-only).
     fn bus_tools(
         &self,
         app: &AppId,
         contract: Option<&crate::contract::AppContract>,
     ) -> Vec<(ToolSpec, String)> {
         let pages = self.pages.get().and_then(std::sync::Weak::upgrade);
-        let page_handlers = pages.map_or_else(Vec::new, |p| p.handlers(app));
+        let page_methods = pages.map_or_else(Vec::new, |p| p.handlers(app));
         let mut seen = std::collections::HashSet::new();
         let mut out = Vec::new();
-        for info in self.p.runtime.handlers(app).into_iter().chain(page_handlers) {
-            let HandlerInfo { method, mut title, mut description, mut input_schema, mut read_only } = info;
-            // the contract describes the method, whatever the handler said about itself
-            if let Some(declared) = contract.and_then(|c| c.request(&method)) {
-                title.clone_from(&declared.summary);
-                description = declared.description.clone().or_else(|| declared.summary.clone());
-                input_schema = Some(declared.input_schema.clone());
-                read_only = declared.read_only;
-            }
+        for method in self.p.runtime.handlers(app).into_iter().chain(page_methods) {
             if method.starts_with('_') || !seen.insert(method.clone()) {
                 continue;
             }
@@ -297,13 +290,16 @@ impl AppService {
             if QualifiedToolName::new(app.clone(), &name).is_err() {
                 continue;
             }
-            let input_schema = input_schema.unwrap_or_else(|| serde_json::json!({ "type": "object" }));
+            let declared = contract.and_then(|c| c.request(&method));
             let spec = ToolSpec {
                 name,
-                title,
-                description: description.unwrap_or_default(),
-                input_schema,
-                read_only,
+                title: declared.and_then(|d| d.summary.clone()),
+                description: declared
+                    .and_then(|d| d.description.clone().or_else(|| d.summary.clone()))
+                    .unwrap_or_default(),
+                input_schema: declared
+                    .map_or_else(|| serde_json::json!({ "type": "object" }), |d| d.input_schema.clone()),
+                read_only: declared.is_some_and(|d| d.read_only),
             };
             out.push((spec, method));
         }
@@ -611,8 +607,8 @@ impl AppService {
         self.call_bus_tool(Actor::from(caller), name, args).await
     }
 
-    /// An agent's call of a tool is a request on the bus, as a page's or an app's is; read-only when the contract (or
-    /// the handler's `about`) says the method changes nothing.
+    /// An agent's call of a tool is a request on the bus, as a page's or an app's is; read-only when the contract says
+    /// the method changes nothing (`x-readOnly`).
     async fn call_bus_tool(
         &self,
         caller: Actor,
@@ -772,7 +768,7 @@ impl AppService {
         self.apps.lock().contains_key(app)
     }
 
-    /// Whether the app's tool is read-only (its contract's `x-readOnly`, or its handler's `about`); `None` when the app
+    /// Whether the app's tool is read-only (its contract's `x-readOnly`); `None` when the app
     /// is not running or has no such tool.
     #[must_use]
     pub fn tool_is_read_only(&self, tool: &QualifiedToolName) -> Option<bool> {

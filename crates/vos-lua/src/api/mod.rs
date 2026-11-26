@@ -132,7 +132,7 @@ pub mod app {
 pub mod rpc {
     use super::json::Json;
     use super::peers::{
-        self, About, Listener, NotificationParams, Params, RequestError, RequestHandler, RequestResult,
+        self, Listener, NotificationParams, Params, RequestError, RequestHandler, RequestResult,
     };
     use mlua_ir::Unknown;
     use neoc_vm::mlua::{self, Lua};
@@ -154,16 +154,11 @@ pub mod rpc {
     }
 
     /// Serve one of this app's methods on the RPC bus: `fn(params, ctx)` answers a request for `method`, from the
-    /// app's page, another app or an agent. An open page of the app may serve it too: the first answer wins. `about`
-    /// describes the handler: a public method (no leading `_`) is an agent tool, shown with it. Raises for a method
+    /// app's page, another app or an agent. An open page of the app may serve it too: the first answer wins. A public
+    /// method (no leading `_`) is an agent tool too, described by the app's contract. Raises for a method
     /// this backend already serves, and inside a read-only call.
-    pub fn on_request(
-        lua: &Lua,
-        method: String,
-        handler: RequestHandler,
-        about: Option<About>,
-    ) -> mlua::Result<()> {
-        peers::on_request(lua, method, handler, about)
+    pub fn on_request(lua: &Lua, method: String, handler: RequestHandler) -> mlua::Result<()> {
+        peers::on_request(lua, method, handler)
     }
 
     /// Send one of this app's notifications on the RPC bus: to the app's open pages and backend listeners and, unless

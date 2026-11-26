@@ -95,7 +95,7 @@ async fn wait_for(n: &Arc<AtomicUsize>, at_least: usize) {
 async fn an_agent_lists_only_the_tools_of_its_granted_apps_and_a_grant_change_reaches_only_that_agent() {
     let h = harness().await;
     for (app, tools) in
-        [("notes", [("search?", "x"), ("append", "x")]), ("todo-list", [("add", "x"), ("done", "x")])]
+        [("notes", [("search", "x"), ("append", "x")]), ("todo-list", [("add", "x"), ("done", "x")])]
     {
         let url = h.fakes.add_app(app, &tools);
         h.svc.install_from_url(&url).await.unwrap();

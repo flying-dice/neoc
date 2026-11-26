@@ -139,7 +139,7 @@ fn probe(ir: &Ir) -> String {
         ctx = has(ctx, {{ "actor", "now", "fail" }}),
         {asked}
       }}
-    end, {{ read_only = true }})
+    end)
 "#
     )
 }

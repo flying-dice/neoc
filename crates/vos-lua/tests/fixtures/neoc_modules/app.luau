@@ -18,4 +18,4 @@ RPC.on_request("probe", function()
     has_fs = type(fs.read) == "function",
     yaml = type(yaml) == "table",
   }
-end, { read_only = true })
+end)

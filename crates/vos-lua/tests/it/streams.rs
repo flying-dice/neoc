@@ -41,7 +41,7 @@ async fn a_task_waiting_for_a_streams_next_item_lends_the_app_to_other_calls() {
             end)
             RPC.on_request("ask", function()
               return "answered"
-            end, {{ read_only = true }})
+            end)
             "#
         ))
         .await,

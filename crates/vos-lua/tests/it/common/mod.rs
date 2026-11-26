@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use std::{collections::BTreeMap, path::Path, process::Command, sync::Arc, time::Duration};
 use vos_application::contract::AppContract;
 use vos_application::data::{ExecOutcome, Params, PortResult, SqlMigration};
-use vos_application::ports::{AppData, AppPackage, AppRuntime, CallContext, HandlerInfo};
+use vos_application::ports::{AppData, AppPackage, AppRuntime, CallContext};
 use vos_application::PortError;
 use vos_domain::{Actor, ActorKind, AppId};
 use vos_lua::{AppVm, LuaRuntime, VmConfig};
@@ -55,8 +55,8 @@ pub fn user_ctx(now_ms: u64) -> CallContext {
     CallContext { actor: Actor::user("You"), now_ms }
 }
 
-/// Call the handler `name` on the bus as the app service does: the call is read-only when the handler said
-/// (`about.read_only`) it changes nothing, or when `require_read_only` says so (the caller can only tighten).
+/// Call the handler `name` on the bus as the app service does: the call is read-only only when `require_read_only`
+/// says so (the caller decides; the VM no longer knows what a handler changes).
 pub async fn serve_with(
     vm: &AppVm,
     name: &str,
@@ -64,23 +64,41 @@ pub async fn serve_with(
     ctx: &CallContext,
     require_read_only: bool,
 ) -> vos_lua::Result<Value> {
-    let declared = vm.handlers().iter().any(|h| h.method == name && h.read_only);
-    vm.call_handler_with(name, args, ctx, declared || require_read_only).await
+    vm.call_handler_with(name, args, ctx, require_read_only).await
 }
 
-/// [`serve_with`], with nothing more required than the handler said.
+/// [`serve_with`], with nothing required: the call may write.
 pub async fn serve(vm: &AppVm, name: &str, args: Value, ctx: &CallContext) -> vos_lua::Result<Value> {
     serve_with(vm, name, args, ctx, false).await
+}
+
+/// [`serve_with`], read-only: every write the call tries is refused.
+pub async fn serve_ro(vm: &AppVm, name: &str, args: Value, ctx: &CallContext) -> vos_lua::Result<Value> {
+    serve_with(vm, name, args, ctx, true).await
 }
 
 /// Run the handler `name` (no arguments) as an agent, giving up after `secs`. The error names what went wrong: the
 /// call failed (the script raised), never finished (the app is wedged), or the host panicked (a panic in a call is a
 /// failed join).
 pub async fn timed_tool(vm: &Arc<AppVm>, name: &str, secs: u64) -> Result<Value, String> {
+    timed_tool_with(vm, name, secs, false).await
+}
+
+/// [`timed_tool`], read-only when `require_read_only` says so.
+pub async fn timed_tool_with(
+    vm: &Arc<AppVm>,
+    name: &str,
+    secs: u64,
+    require_read_only: bool,
+) -> Result<Value, String> {
     let name = name.to_owned();
     let vm = vm.clone();
     let call = tokio::spawn(async move {
-        tokio::time::timeout(Duration::from_secs(secs), serve(&vm, &name, json!({}), &agent_ctx(0))).await
+        tokio::time::timeout(
+            Duration::from_secs(secs),
+            serve_with(&vm, &name, json!({}), &agent_ctx(0), require_read_only),
+        )
+        .await
     });
     match call.await {
         Err(e) => Err(format!("(f) the call panicked or was aborted: {e}")),
@@ -234,7 +252,7 @@ impl Served {
     }
 
     /// The methods the backend has on the bus, in the order it registered them.
-    pub fn handlers(&self) -> Vec<HandlerInfo> {
+    pub fn handlers(&self) -> Vec<String> {
         self.rt.handlers(&self.app)
     }
 }
@@ -296,8 +314,8 @@ impl AppData for Stalling {
     }
 }
 
-/// [`serve_with`] for the runtime (`AppRuntime`'s calls, as the app service makes them): a handler that said it
-/// changes nothing is called with `call_handler_read_only`, any other with `call_handler`.
+/// [`serve_with`] for the runtime (`AppRuntime`'s calls, as the app service makes them): a call that must be
+/// read-only is made with `call_handler_read_only`, any other with `call_handler`.
 pub async fn serve_rt_with(
     rt: &LuaRuntime,
     app: &AppId,
@@ -306,15 +324,14 @@ pub async fn serve_rt_with(
     ctx: CallContext,
     require_read_only: bool,
 ) -> PortResult<Value> {
-    let declared = rt.handlers(app).iter().any(|h| h.method == method && h.read_only);
-    if declared || require_read_only {
+    if require_read_only {
         rt.call_handler_read_only(app, method, args, ctx).await
     } else {
         rt.call_handler(app, method, args, ctx).await
     }
 }
 
-/// [`serve_rt_with`], with nothing more required than the handler said.
+/// [`serve_rt_with`], with nothing required: the call may write.
 pub async fn serve_rt(
     rt: &LuaRuntime,
     app: &AppId,

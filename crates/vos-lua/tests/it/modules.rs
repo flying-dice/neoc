@@ -98,6 +98,10 @@ impl Rig {
     async fn tool(&self, name: &str, tool: &str) -> Value {
         common::serve_rt(&self.runtime, &id(name), tool, json!({}), agent_ctx(0)).await.unwrap()
     }
+    /// [`Rig::tool`], read-only: every write the call tries is refused.
+    async fn tool_ro(&self, name: &str, tool: &str) -> Value {
+        common::serve_rt_with(&self.runtime, &id(name), tool, json!({}), agent_ctx(0), true).await.unwrap()
+    }
 }
 
 // ---- the modules ------------------------------------------------------------------------------------------
@@ -595,10 +599,10 @@ async fn a_call_waiting_in_a_read_only_tool_keeps_its_read_only_guarantee_while_
           task.wait(0.25)
           local wrote, why = pcall(function() app.kv:set("v", 2) end)
           return { tool_write = wrote, why = tostring(why), task_write = from_task, v = app.kv:get("v") }
-        end, { read_only = true })
+        end)
     "#;
     let vm = load(src).await;
-    let out = common::serve(&vm, "ro", json!({}), &agent_ctx(0)).await.unwrap();
+    let out = common::serve_ro(&vm, "ro", json!({}), &agent_ctx(0)).await.unwrap();
     assert_eq!(out["task_write"], "true", "another call may write while the read-only one waits: {out}");
     assert_eq!(out["tool_write"], false, "the read-only tool still cannot: {out}");
     assert!(out["why"].as_str().unwrap().contains("read-only"), "{out}");
@@ -749,41 +753,40 @@ const READ_ONLY_REACH: &str = r#"
     end)
     local function poke() return hyper.get("http://" .. server:addr() .. "/").body end
     -- route 1: a read-only tool asks the app's own server to write while the tool waits for the answer
-    RPC.on_request("poke_ro", poke, { read_only = true })
     RPC.on_request("poke", poke)
     -- route 2: a read-only tool leaves a task behind that writes after the tool has returned
     RPC.on_request("spawn_ro", function()
       task.spawn(function() task.wait(0.05) insert("spawned") end)
       return "returned"
-    end, { read_only = true })
-    RPC.on_request("defer_ro", function() task.defer(function() insert("deferred") end) return "returned" end, { read_only = true })
-    RPC.on_request("delay_ro", function() task.delay(0.05, function() insert("delayed") end) return "returned" end, { read_only = true })
+    end)
+    RPC.on_request("defer_ro", function() task.defer(function() insert("deferred") end) return "returned" end)
+    RPC.on_request("delay_ro", function() task.delay(0.05, function() insert("delayed") end) return "returned" end)
     RPC.on_request("yield_ro", function()
       task.spawn(function() coroutine.yield() insert("yielded") end)
       return "returned"
-    end, { read_only = true })
+    end)
     -- a task spawned by a read-only tool spawns another from inside: both stay read-only
     RPC.on_request("nested_ro", function()
       task.spawn(function() task.wait(0.01) task.spawn(function() task.wait(0.01) insert("nested") end) end)
       return "returned"
-    end, { read_only = true })
+    end)
     RPC.on_request("spawn", function() task.spawn(function() task.wait(0.05) insert("writable") end) return "returned" end)
     RPC.on_request("report", function()
       return { outcome = outcome, n = app.db:one("select count(*) as n from log").n }
-    end, { read_only = true })
+    end)
 "#;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_read_only_tool_cannot_write_through_a_request_to_its_own_server() {
     let r = rig();
     r.load("probe", &format!("{MANIFEST}\n{READ_ONLY_REACH}")).await;
-    let body = r.tool("probe", "poke_ro").await;
+    let body = r.tool_ro("probe", "poke").await;
     assert!(
         body.as_str().unwrap().contains("read-only") || body.as_str().unwrap().contains("read-only"),
         "{body}"
     );
     assert_ne!(body, "wrote");
-    assert_eq!(r.tool("probe", "report").await["n"], 0, "nothing was written");
+    assert_eq!(r.tool_ro("probe", "report").await["n"], 0, "nothing was written");
     // the same request outside a read-only call writes, as the app's own code may
     assert_eq!(r.tool("probe", "poke").await, "wrote");
     assert_eq!(r.tool("probe", "report").await["n"], 1);
@@ -794,10 +797,10 @@ async fn what_a_read_only_tool_starts_stays_read_only_after_the_tool_returns() {
     let r = rig();
     r.load("probe", &format!("{MANIFEST}\n{READ_ONLY_REACH}")).await;
     for tool in ["spawn_ro", "defer_ro", "delay_ro", "yield_ro", "nested_ro"] {
-        assert_eq!(r.tool("probe", tool).await, "returned", "{tool}");
+        assert_eq!(r.tool_ro("probe", tool).await, "returned", "{tool}");
     }
     tokio::time::sleep(Duration::from_millis(400)).await;
-    let report = r.tool("probe", "report").await;
+    let report = r.tool_ro("probe", "report").await;
     assert_eq!(report["n"], 0, "no task a read-only call left behind wrote: {report}");
     for who in ["spawned", "deferred", "delayed", "yielded", "nested"] {
         let said = report["outcome"][who].as_str().unwrap_or_else(|| panic!("{who} never ran: {report}"));
@@ -818,20 +821,20 @@ async fn a_read_only_tool_cannot_register_or_change_the_apps_wiring() {
     let src = r#"
         local function try(f) local ok, err = pcall(f) return { ok = ok, err = (not ok) and tostring(err) or nil } end
         RPC.on_request("register", function()
-          return try(function() RPC.on_request("late", function() end) end) end, { read_only = true })
+          return try(function() RPC.on_request("late", function() end) end) end)
         RPC.on_request("reads", function()
-          return { one = app.db:one("select 1 as n").n } end, { read_only = true })
+          return { one = app.db:one("select 1 as n").n } end)
         RPC.on_request("wire", function()
           RPC.on_request("late", function() return "late" end)
           return "wired"
         end)
     "#;
     r.load("probe", &format!("{MANIFEST}\n{src}")).await;
-    let out = r.tool("probe", "register").await;
+    let out = r.tool_ro("probe", "register").await;
     assert_eq!(out["ok"], false, "register must be refused: {out}");
     assert!(out["err"].as_str().unwrap().contains("read-only"), "{out}");
     // reads stay allowed, and a writable tool may still wire the app
-    let reads = r.tool("probe", "reads").await;
+    let reads = r.tool_ro("probe", "reads").await;
     assert_eq!(reads["one"], 1, "{reads}");
     assert_eq!(r.tool("probe", "wire").await, "wired");
     assert_eq!(r.tool("probe", "late").await, "late", "the handler it registered is there");

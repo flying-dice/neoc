@@ -17,8 +17,7 @@ use vos_host::startup::prepare_data_dir;
 const BACKEND: &str = r#"
 local task = require("std:task")
 local generation = 0
-RPC.on_request("release_all", function() generation += 1 return { released = true } end,
-  { input_schema = { type = "object", properties = {} } })
+RPC.on_request("release_all", function() generation += 1 return { released = true } end)
 RPC.on_request("_hang", function()
   local mine = generation
   while generation == mine do task.wait(0.05) end

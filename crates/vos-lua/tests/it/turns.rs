@@ -131,15 +131,15 @@ async fn a_read_only_tool_stays_read_only_across_every_wait_inside_luas_own_mach
           local out = {{}}
           {attempts}
           return out
-        end, {{ read_only = true }})
-        RPC.on_request("rows", function() return {{ n = app.db:one("select count(*) as n from t").n, v = state.v }} end, {{ read_only = true }})
+        end)
+        RPC.on_request("rows", function() return {{ n = app.db:one("select count(*) as n from t").n, v = state.v }} end)
         "#
     );
     let vm = Arc::new(load(&src).await);
     // a writable tool is queued behind the read-only one for the whole run: it must not interleave with it
     let ro = {
         let vm = vm.clone();
-        tokio::spawn(async move { common::serve(&vm, "ro", json!({}), &agent_ctx(0)).await })
+        tokio::spawn(async move { common::serve_ro(&vm, "ro", json!({}), &agent_ctx(0)).await })
     };
     tokio::time::sleep(Duration::from_millis(20)).await;
     let bump = {
@@ -169,7 +169,7 @@ async fn a_read_only_tool_stays_read_only_across_every_wait_inside_luas_own_mach
         assert_eq!(r["kv_write"], true, "{name}: {r}");
         assert_eq!(r["read"], 0, "{name}: {r}");
     }
-    let after = common::serve(&vm, "rows", json!({}), &agent_ctx(0)).await.unwrap();
+    let after = common::serve_ro(&vm, "rows", json!({}), &agent_ctx(0)).await.unwrap();
     assert_eq!(after, json!({ "n": 0, "v": 0 }), "nothing was written");
 }
 
@@ -252,9 +252,9 @@ async fn stale_lend_case(container: &str, wait: &str, later: &str, url: &str) ->
           }}
         end
         RPC.on_request("bump", function() counter = counter + 1 return counter end)
-        RPC.on_request("ro", function() {container} end, {{ read_only = true }})
-        RPC.on_request("result", function() return result or "none" end, {{ read_only = true }})
-        RPC.on_request("v", function() return state.v end, {{ read_only = true }})
+        RPC.on_request("ro", function() {container} end)
+        RPC.on_request("result", function() return result or "none" end)
+        RPC.on_request("v", function() return state.v end)
         "#,
         later = later.replace("HEAVY", &format!("{HEAVY:?}")),
         wait = wait.replace("URL", &format!("{url:?}")),
@@ -262,7 +262,7 @@ async fn stale_lend_case(container: &str, wait: &str, later: &str, url: &str) ->
     let vm = Arc::new(load(&src).await);
     let ro = {
         let vm = vm.clone();
-        tokio::spawn(async move { common::serve(&vm, "ro", json!({}), &agent_ctx(0)).await })
+        tokio::spawn(async move { common::serve_ro(&vm, "ro", json!({}), &agent_ctx(0)).await })
     };
     // a writable tool is queued behind the read-only work for as long as it runs
     tokio::time::sleep(Duration::from_millis(30)).await;
@@ -277,14 +277,14 @@ async fn stale_lend_case(container: &str, wait: &str, later: &str, url: &str) ->
             break;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
-        out = common::serve(&vm, "result", json!({}), &agent_ctx(0)).await.unwrap();
+        out = common::serve_ro(&vm, "result", json!({}), &agent_ctx(0)).await.unwrap();
         if out == json!("none") {
             out = json!("scheduled");
         }
     }
     tokio::time::timeout(Duration::from_secs(10), bump).await.expect("bump ran").unwrap().unwrap();
     assert_eq!(
-        common::serve(&vm, "v", json!({}), &agent_ctx(0)).await.unwrap(),
+        common::serve_ro(&vm, "v", json!({}), &agent_ctx(0)).await.unwrap(),
         json!(0),
         "nothing was written"
     );
@@ -357,7 +357,7 @@ async fn detached_hold_case(resumer: &str, leaf: &str) -> serde_json::Value {
           return outcome
         end
         RPC.on_request("go", function() {resumer} end)
-        RPC.on_request("outcome", function() return outcome or "none" end, {{ read_only = true }})
+        RPC.on_request("outcome", function() return outcome or "none" end)
         RPC.on_request("ping", function() return "pong" end)
         "#
     );
@@ -365,10 +365,13 @@ async fn detached_hold_case(resumer: &str, leaf: &str) -> serde_json::Value {
     let call = |tool: &'static str| {
         let vm = vm.clone();
         async move {
-            tokio::time::timeout(Duration::from_secs(5), common::serve(&vm, tool, json!({}), &agent_ctx(0)))
-                .await
-                .unwrap_or_else(|_| panic!("{tool} never finished: the app is wedged"))
-                .unwrap()
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                common::serve_with(&vm, tool, json!({}), &agent_ctx(0), tool == "outcome"),
+            )
+            .await
+            .unwrap_or_else(|_| panic!("{tool} never finished: the app is wedged"))
+            .unwrap()
         }
     };
     let mut out = call("go").await;
@@ -421,13 +424,17 @@ async fn a_write_a_task_could_not_suspend_at_is_never_run_by_a_later_read_only_c
             RPC.on_request("finish", function()
               local ok, err = coroutine.resume(co)
               return {{ ok = ok, err = tostring(err), untouched = {check} }}
-            end, {{ read_only = true }})
+            end)
             "#
         );
         let vm = load(&src).await;
-        let call = |tool: &'static str| async {
-            tokio::time::timeout(Duration::from_secs(5), common::serve(&vm, tool, json!({}), &agent_ctx(0)))
-                .await
+        let vm = &vm;
+        let call = |tool: &'static str| async move {
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                common::serve_with(vm, tool, json!({}), &agent_ctx(0), tool == "finish"),
+            )
+            .await
         };
         call("start").await.expect("start finished").unwrap();
         let out = call("finish").await.expect("finish did not wedge the app").unwrap();
@@ -462,16 +469,19 @@ async fn a_task_spawned_in_a_transaction_waits_for_it_instead_of_deadlocking() {
         end)
         RPC.on_request("unrelated", function()
           return { rows = #app.db:all("select a from t"), seen = seen }
-        end, { read_only = true })
+        end)
     "#;
     let vm = load(src).await;
     let patience = Duration::from_secs(5);
     let run = |tool: &'static str| {
         let vm = &vm;
         async move {
-            let r = tokio::time::timeout(patience, common::serve(vm, tool, json!({}), &agent_ctx(0)))
-                .await
-                .unwrap_or_else(|_| panic!("{tool} deadlocked"));
+            let r = tokio::time::timeout(
+                patience,
+                common::serve_with(vm, tool, json!({}), &agent_ctx(0), tool == "unrelated"),
+            )
+            .await
+            .unwrap_or_else(|_| panic!("{tool} deadlocked"));
             r.unwrap()
         }
     };
@@ -502,7 +512,7 @@ async fn a_task_spawned_in_a_transaction_that_writes_waits_for_it_too() {
           end)
           return "done"
         end)
-        RPC.on_request("rows", function() return app.db:all("select a from t order by rowid") end, { read_only = true })
+        RPC.on_request("rows", function() return app.db:all("select a from t order by rowid") end)
     "#;
     let vm = load(src).await;
     tokio::time::timeout(Duration::from_secs(5), common::serve(&vm, "w", json!({}), &agent_ctx(0)))
@@ -510,7 +520,7 @@ async fn a_task_spawned_in_a_transaction_that_writes_waits_for_it_too() {
         .expect("no deadlock")
         .unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
-    let rows = common::serve(&vm, "rows", json!({}), &agent_ctx(0)).await.unwrap();
+    let rows = common::serve_ro(&vm, "rows", json!({}), &agent_ctx(0)).await.unwrap();
     assert_eq!(rows, json!([{ "a": 1 }, { "a": 2 }, { "a": 100 }]), "the task's write came after the commit");
 }
 
@@ -526,13 +536,13 @@ async fn a_task_spawned_by_a_read_only_tool_in_a_transaction_stays_read_only() {
             task.spawn(function() seen = tostring(select(2, pcall(function() app.db:exec("insert into t values (9)") end))) end)
           end)
           return "done"
-        end, { read_only = true })
-        RPC.on_request("report", function() return { seen = seen, n = app.db:one("select count(*) as n from t").n } end, { read_only = true })
+        end)
+        RPC.on_request("report", function() return { seen = seen, n = app.db:one("select count(*) as n from t").n } end)
     "#;
     let vm = load(src).await;
-    common::serve(&vm, "ro", json!({}), &agent_ctx(0)).await.unwrap();
+    common::serve_ro(&vm, "ro", json!({}), &agent_ctx(0)).await.unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
-    let report = common::serve(&vm, "report", json!({}), &agent_ctx(0)).await.unwrap();
+    let report = common::serve_ro(&vm, "report", json!({}), &agent_ctx(0)).await.unwrap();
     assert_eq!(report["n"], 0, "{report}");
     assert!(report["seen"].as_str().unwrap().to_lowercase().contains("read"), "{report}");
 }
@@ -548,19 +558,19 @@ async fn a_read_only_poller_does_not_make_a_writable_tools_delayed_write_read_on
         RPC.on_request("ro", function()
           task.spawn(function() while true do task.wait(0.02) end end) -- lives for as long as the app does
           return "ok"
-        end, { read_only = true })
+        end)
         RPC.on_request("w", function()
           task.delay(0.05, function() delayed = tostring(pcall(function() state.v = 7 end)) end)
           task.defer(function() deferred = tostring(pcall(function() state.v = 8 end)) end)
           return "ok"
         end)
-        RPC.on_request("report", function() return { delayed = delayed, deferred = deferred, v = state.v } end, { read_only = true })
+        RPC.on_request("report", function() return { delayed = delayed, deferred = deferred, v = state.v } end)
     "#;
     let vm = load(src).await;
-    common::serve(&vm, "ro", json!({}), &agent_ctx(0)).await.unwrap();
+    common::serve_ro(&vm, "ro", json!({}), &agent_ctx(0)).await.unwrap();
     common::serve(&vm, "w", json!({}), &agent_ctx(0)).await.unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
-    let report = common::serve(&vm, "report", json!({}), &agent_ctx(0)).await.unwrap();
+    let report = common::serve_ro(&vm, "report", json!({}), &agent_ctx(0)).await.unwrap();
     assert_eq!(report, json!({ "delayed": "true", "deferred": "true", "v": 7 }), "{report}");
 }
 
@@ -574,13 +584,13 @@ async fn work_started_by_a_read_only_tool_stays_read_only_whenever_it_runs() {
           task.delay(0.05, function() results.delay = tostring(pcall(function() state.v = 1 end)) end)
           task.defer(function() results.defer = tostring(pcall(function() state.v = 2 end)) end)
           return "ok"
-        end, { read_only = true })
-        RPC.on_request("report", function() return { results = results, v = state.v } end, { read_only = true })
+        end)
+        RPC.on_request("report", function() return { results = results, v = state.v } end)
     "#;
     let vm = load(src).await;
-    common::serve(&vm, "ro", json!({}), &agent_ctx(0)).await.unwrap();
+    common::serve_ro(&vm, "ro", json!({}), &agent_ctx(0)).await.unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
-    let report = common::serve(&vm, "report", json!({}), &agent_ctx(0)).await.unwrap();
+    let report = common::serve_ro(&vm, "report", json!({}), &agent_ctx(0)).await.unwrap();
     assert_eq!(report, json!({ "results": { "delay": "false", "defer": "false" }, "v": 0 }), "{report}");
 }
 
@@ -599,7 +609,7 @@ async fn a_request_to_the_apps_own_server_is_read_only_while_a_read_only_call_wa
         RPC.on_request("ro_calls_itself", function()
           local res = hyper.get("http://" .. server:addr() .. "/")
           return res.body
-        end, { read_only = true })
+        end)
     "#;
     let vm = Arc::new(load(src).await);
     let addr = common::serve(&vm, "addr", json!({}), &agent_ctx(0)).await.unwrap();
@@ -607,7 +617,7 @@ async fn a_request_to_the_apps_own_server_is_read_only_while_a_read_only_call_wa
     // nothing read-only is alive: a request from outside may write
     assert_eq!(get(&addr).await, "true");
     // a read-only tool is alive and made the request: it may not
-    let own = common::serve(&vm, "ro_calls_itself", json!({}), &agent_ctx(0)).await.unwrap();
+    let own = common::serve_ro(&vm, "ro_calls_itself", json!({}), &agent_ctx(0)).await.unwrap();
     assert_eq!(own, json!("false"));
     // and the restriction ended with the tool
     assert_eq!(get(&addr).await, "true");
@@ -634,35 +644,35 @@ const OWN_SERVER_REACH: &str = r#"
     end)
     RPC.on_request("addr", function() return server:addr() end)
     -- the tool asks the server to write and waits at the network for the answer
-    RPC.on_request("ro_asks", function() return hyper.get(own("/asked")).body end, { read_only = true })
+    RPC.on_request("ro_asks", function() return hyper.get(own("/asked")).body end)
     -- the same through a handler that asks again (the second request is made by a read-only handler)
-    RPC.on_request("ro_chain", function() return hyper.get(own("/chain")).body end, { read_only = true })
+    RPC.on_request("ro_chain", function() return hyper.get(own("/chain")).body end)
     -- the tool holds a slow request open (its handler sleeps at a timer) while others arrive
-    RPC.on_request("ro_slow", function() return hyper.get(own("/slow")).body end, { read_only = true })
+    RPC.on_request("ro_slow", function() return hyper.get(own("/slow")).body end)
     -- a task it started sleeps, wakes and asks the server to write after the tool has returned
     RPC.on_request("ro_task_wakes", function()
       task.spawn(function() task.wait(0.1) hyper.get(own("/woken")) end)
       return "returned"
-    end, { read_only = true })
+    end)
     -- a task whose first slice already has the request in flight, and the tool then sleeps at a timer
     RPC.on_request("ro_spawn_then_sleep", function()
       task.spawn(function() hyper.get(own("/in_flight")) end)
       task.wait(0.3)
       return "slept"
-    end, { read_only = true })
+    end)
     -- a task that waits at the network on the server for a long time, then asks again
     RPC.on_request("ro_task_chain", function()
       task.spawn(function() hyper.get(own("/slow")) hyper.get(own("/after_slow")) end)
       return "returned"
-    end, { read_only = true })
+    end)
     -- a forever poller that waits on a timer alone, with an interval far wider than the test, so it is never inside
     -- its wake-up window while a request arrives (a poller that also makes requests does taint them: documented)
     RPC.on_request("ro_poller", function()
       task.spawn(function() while true do task.wait(3600) end end)
       return "returned"
-    end, { read_only = true })
-    RPC.on_request("ro_sleeps", function() task.wait(0.6) return "slept" end, { read_only = true })
-    RPC.on_request("report", function() return { seen = seen, v = state.v } end, { read_only = true })
+    end)
+    RPC.on_request("ro_sleeps", function() task.wait(0.6) return "slept" end)
+    RPC.on_request("report", function() return { seen = seen, v = state.v } end)
 "#;
 
 async fn own_server() -> (Arc<vos_lua::AppVm>, String) {
@@ -671,8 +681,9 @@ async fn own_server() -> (Arc<vos_lua::AppVm>, String) {
     (vm, addr.as_str().unwrap().to_owned())
 }
 
+/// A read-only call: the own server's tools are the ones a read-only call might write through.
 async fn call(vm: &vos_lua::AppVm, tool: &str) -> serde_json::Value {
-    common::serve(vm, tool, json!({}), &agent_ctx(0)).await.unwrap()
+    common::serve_ro(vm, tool, json!({}), &agent_ctx(0)).await.unwrap()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

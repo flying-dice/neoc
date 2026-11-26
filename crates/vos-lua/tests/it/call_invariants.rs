@@ -19,7 +19,7 @@
 
 use crate::common;
 
-use common::{load, timed_tool, try_load_with, Stalling};
+use common::{load, timed_tool, timed_tool_with, try_load_with, Stalling};
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
 use vos_application::{data::Params, ports::AppData};
@@ -28,9 +28,20 @@ async fn call(vm: &Arc<vos_lua::AppVm>, tool: &str) -> Value {
     timed_tool(vm, tool, 10).await.unwrap_or_else(|why| panic!("{tool}: {why}"))
 }
 
+/// [`call`], read-only: every write the call tries is refused.
+async fn call_ro(vm: &Arc<vos_lua::AppVm>, tool: &str) -> Value {
+    timed_tool_with(vm, tool, 10, true).await.unwrap_or_else(|why| panic!("{tool}: {why}"))
+}
+
 fn spawn_call(vm: &Arc<vos_lua::AppVm>, tool: &'static str) -> tokio::task::JoinHandle<Value> {
     let vm = vm.clone();
     tokio::spawn(async move { call(&vm, tool).await })
+}
+
+/// [`spawn_call`], read-only.
+fn spawn_call_ro(vm: &Arc<vos_lua::AppVm>, tool: &'static str) -> tokio::task::JoinHandle<Value> {
+    let vm = vm.clone();
+    tokio::spawn(async move { call_ro(&vm, tool).await })
 }
 
 /// A database call that Lua cannot suspend at must not keep the database's write gate. The statement inside the
@@ -99,17 +110,17 @@ async fn a_transaction_that_reports_success_committed_what_the_body_started() {
               end)
               return { ok = ok, ret = tostring(err) }
             end)
-            RPC.on_request("rows", function() return app.db:all("select a from t order by a") end, { read_only = true })
+            RPC.on_request("rows", function() return app.db:all("select a from t order by a") end)
             "#,
         )
         .await,
     );
     let out = call(&vm, "txloss").await;
-    let rows = call(&vm, "rows").await;
+    let rows = call_ro(&vm, "rows").await;
     assert_eq!(out["ok"], true, "{out}");
     assert_eq!(rows, json!([{ "a": 1 }]), "success means the statement the body started committed");
     let out = call(&vm, "txloss2").await;
-    let rows = call(&vm, "rows").await;
+    let rows = call_ro(&vm, "rows").await;
     assert_eq!(out["ok"], true, "{out}");
     assert_eq!(rows, json!([{ "a": 1 }, { "a": 2 }, { "a": 3 }]));
 }
@@ -146,14 +157,14 @@ async fn a_transaction_body_continued_by_another_call_is_all_or_nothing() {
               local r = { coroutine.resume(co) }
               return { ok = r[1], v = tostring(r[2]), status = coroutine.status(co) }
             end)
-            RPC.on_request("rows", function() return app.db:all("select a from t order by a") end, { read_only = true })
+            RPC.on_request("rows", function() return app.db:all("select a from t order by a") end)
             "#,
         )
         .await,
     );
     call(&vm, "a").await;
     let b = call(&vm, "b").await;
-    let rows = call(&vm, "rows").await;
+    let rows = call_ro(&vm, "rows").await;
     let all = rows == json!([{ "a": 1 }, { "a": 2 }]);
     assert!(rows == json!([]) || all, "a transaction is all or nothing, got {rows}");
     assert!(all || b["v"] != json!("tx body done"), "no success without the commit: {b} {rows}");
@@ -177,13 +188,13 @@ async fn a_plain_yield_after_a_failed_wait_does_not_lend_a_read_only_call() {
               local ok, e = pcall(function() state.v = 42 end)
               local nok = pcall(function() app.notify { title = "from read-only" } end)
               return { failed_wait = failed, state_write_ok = ok, e = tostring(e), notify_ok = nok, interleaved = counter ~= before }
-            end, { read_only = true })
-            RPC.on_request("v", function() return state.v end, { read_only = true })
+            end)
+            RPC.on_request("v", function() return state.v end)
             "#,
         )
         .await,
     );
-    let ro = spawn_call(&vm, "ro");
+    let ro = spawn_call_ro(&vm, "ro");
     tokio::time::sleep(Duration::from_millis(5)).await;
     let bump = spawn_call(&vm, "bump");
     let out = ro.await.unwrap();
@@ -192,7 +203,7 @@ async fn a_plain_yield_after_a_failed_wait_does_not_lend_a_read_only_call() {
     assert_eq!(out["state_write_ok"], false, "{out}");
     assert_eq!(out["notify_ok"], false, "{out}");
     assert_eq!(out["interleaved"], false, "{out}");
-    assert_eq!(call(&vm, "v").await, json!(0));
+    assert_eq!(call_ro(&vm, "v").await, json!(0));
     assert!(common::take_effects(&vm).is_empty(), "nothing was queued");
 }
 
@@ -218,7 +229,7 @@ async fn a_wait_resumed_inside_a_transaction_does_not_lend_it() {
               return { ok = ok, e = tostring(e) }
             end)
             RPC.on_request("other", function() return app.db:exec("insert into t values (99)").changes end)
-            RPC.on_request("rows", function() return app.db:all("select a from t order by a") end, { read_only = true })
+            RPC.on_request("rows", function() return app.db:all("select a from t order by a") end)
             "#,
         )
         .await,
@@ -230,7 +241,7 @@ async fn a_wait_resumed_inside_a_transaction_does_not_lend_it() {
     assert_eq!(txw["ok"], false, "{txw}");
     assert_eq!(other, 1, "the other call's write was acknowledged");
     assert_eq!(
-        call(&vm, "rows").await,
+        call_ro(&vm, "rows").await,
         json!([{ "a": 99 }]),
         "the acknowledged write is there and the aborted transaction's is not"
     );
@@ -286,22 +297,22 @@ async fn the_top_level_thread_of_a_parked_call_cannot_be_resumed_by_another_call
               local ok, e = coroutine.resume(t)
               local ok2, e2 = coroutine.resume(t, "with an argument")
               return { ok = ok, e = tostring(e), ok2 = ok2, e2 = tostring(e2) }
-            end, { read_only = true })
-            RPC.on_request("ping", function() return "pong" end, { read_only = true })
+            end)
+            RPC.on_request("ping", function() return "pong" end)
             "#,
         )
         .await,
     );
     let a = spawn_call(&vm, "a");
     tokio::time::sleep(Duration::from_millis(50)).await;
-    let b = call(&vm, "b").await;
+    let b = call_ro(&vm, "b").await;
     assert_eq!(b["ok"], false, "{b}");
     assert_eq!(b["ok2"], false, "{b}");
     for e in [&b["e"], &b["e2"]] {
         assert!(e.as_str().unwrap().contains("non-suspended"), "{b}");
     }
     assert_eq!(a.await.unwrap(), json!("a done"), "the parked call was not disturbed");
-    assert_eq!(call(&vm, "ping").await, json!("pong"));
+    assert_eq!(call_ro(&vm, "ping").await, json!("pong"));
 }
 
 /// A protected call's coroutine is a host thread like any other: another call that resumes the one a `pcall` runs its
@@ -325,19 +336,19 @@ async fn the_thread_of_a_pcall_cannot_be_resumed_by_another_call() {
                 log[#log + 1] = { state = w, notify = n }
               end)
               return { "a done", ok, tostring(e) }
-            end, { read_only = true })
+            end)
             RPC.on_request("b", function()
               local ok, e = coroutine.resume(t)
               local ok2, e2 = coroutine.resume(t, "with an argument")
               return { ok = ok, e = tostring(e), ok2 = ok2, e2 = tostring(e2) }
             end)
-            RPC.on_request("report", function() return { v = state.v, log = log } end, { read_only = true })
-            RPC.on_request("ping", function() return "pong" end, { read_only = true })
+            RPC.on_request("report", function() return { v = state.v, log = log } end)
+            RPC.on_request("ping", function() return "pong" end)
             "#,
         )
         .await,
     );
-    let a = spawn_call(&vm, "a");
+    let a = spawn_call_ro(&vm, "a");
     tokio::time::sleep(Duration::from_millis(50)).await;
     let b = call(&vm, "b").await;
     for ok in ["ok", "ok2"] {
@@ -347,11 +358,11 @@ async fn the_thread_of_a_pcall_cannot_be_resumed_by_another_call() {
         assert_eq!(e, "cannot resume non-suspended coroutine", "{b}");
     }
     assert_eq!(a.await.unwrap(), json!(["a done", true, "nil"]), "the parked call finished its own way");
-    let report = call(&vm, "report").await;
+    let report = call_ro(&vm, "report").await;
     assert_eq!(report["v"], 0, "{report}");
     assert_eq!(report["log"], json!([{ "state": false, "notify": false }]), "{report}");
     assert!(common::take_effects(&vm).is_empty(), "nothing was queued from a read-only call");
-    assert_eq!(call(&vm, "ping").await, json!("pong"));
+    assert_eq!(call_ro(&vm, "ping").await, json!("pong"));
 }
 
 /// The same for the protected coroutine of an `xpcall` inside a task: a task handle never fails to complete because
@@ -375,19 +386,19 @@ async fn the_thread_of_an_xpcall_in_a_task_cannot_be_resumed_and_the_task_comple
                 return { ok, tostring(e) }
               end)
               return "spawned"
-            end, { read_only = true })
+            end)
             RPC.on_request("r", function()
               local ok, e = coroutine.resume(T)
               local ok2, e2 = coroutine.resume(T, "with an argument")
               return { ok = ok, e = tostring(e), ok2 = ok2, e2 = tostring(e2) }
             end)
             RPC.on_request("aw", function() return { h:await() } end)
-            RPC.on_request("report", function() return steps end, { read_only = true })
+            RPC.on_request("report", function() return steps end)
             "#,
         )
         .await,
     );
-    assert_eq!(call(&vm, "s").await, json!("spawned"));
+    assert_eq!(call_ro(&vm, "s").await, json!("spawned"));
     tokio::time::sleep(Duration::from_millis(30)).await;
     let r = call(&vm, "r").await;
     assert_eq!(
@@ -395,7 +406,7 @@ async fn the_thread_of_an_xpcall_in_a_task_cannot_be_resumed_and_the_task_comple
         json!({ "ok": false, "e": "cannot resume non-suspended coroutine", "ok2": false, "e2": "cannot resume non-suspended coroutine" })
     );
     assert_eq!(call(&vm, "aw").await, json!([[true, "nil"]]), "the task completed with its own result");
-    assert_eq!(call(&vm, "report").await, json!(["after wait", "false"]), "read-only came with the task");
+    assert_eq!(call_ro(&vm, "report").await, json!(["after wait", "false"]), "read-only came with the task");
     assert!(common::take_effects(&vm).is_empty(), "nothing was queued from a read-only task");
 }
 
@@ -600,7 +611,7 @@ async fn a_read_only_call_is_still_read_only_after_another_call_tried_to_resume_
               local notified = pcall(function() app.notify { title = "from read-only" } end)
               log[#log + 1] = { state = ok, notify = notified }
               return "a done"
-            end, { read_only = true })
+            end)
             RPC.on_request("b", function()
               local x = 0
               for i = 1, 5000000 do x = x + i end
@@ -608,17 +619,17 @@ async fn a_read_only_call_is_still_read_only_after_another_call_tried_to_resume_
               task.wait(0.2)
               return { ok = ok, e = tostring(e) }
             end)
-            RPC.on_request("report", function() return { v = state.v, log = log } end, { read_only = true })
+            RPC.on_request("report", function() return { v = state.v, log = log } end)
             "#,
         )
         .await,
     );
-    let a = spawn_call(&vm, "a");
+    let a = spawn_call_ro(&vm, "a");
     tokio::time::sleep(Duration::from_millis(5)).await;
     let b = call(&vm, "b").await;
     assert_eq!(b["ok"], false, "{b}");
     assert_eq!(a.await.unwrap(), json!("a done"));
-    let report = call(&vm, "report").await;
+    let report = call_ro(&vm, "report").await;
     assert_eq!(report["v"], 0, "{report}");
     assert_eq!(report["log"], json!([{ "state": false, "notify": false }]), "{report}");
     assert!(common::take_effects(&vm).is_empty(), "nothing was queued from a read-only call");
@@ -643,7 +654,7 @@ async fn a_task_thread_made_from_a_function_cannot_be_resumed_by_a_script() {
               return { ok = ok, e = tostring(e) }
             end)
             RPC.on_request("aw", function() return { h:await() } end)
-            RPC.on_request("report", function() return steps end, { read_only = true })
+            RPC.on_request("report", function() return steps end)
             "#,
         )
         .await,
@@ -654,7 +665,7 @@ async fn a_task_thread_made_from_a_function_cannot_be_resumed_by_a_script() {
     assert_eq!(r["ok"], false, "{r}");
     assert!(r["e"].as_str().unwrap().contains("non-suspended"), "{r}");
     assert_eq!(call(&vm, "aw").await, json!(["task done"]), "the task was not wedged");
-    assert_eq!(call(&vm, "report").await, json!(["after wait"]));
+    assert_eq!(call_ro(&vm, "report").await, json!(["after wait"]));
 }
 
 /// A resume value that is not the executor's "terminate" signal changes nothing: `coroutine.resume(t, "x")` of a
@@ -828,7 +839,7 @@ async fn a_coroutine_whose_resumer_was_dropped_is_the_scripts_again_and_finds_it
               for i = 1, 400 do keep[i % 8] = { string.rep("x", 2048), i } end
               return #keep
             end)
-            RPC.on_request("ran", function() return ran end, { read_only = true })
+            RPC.on_request("ran", function() return ran end)
             "#,
         )
         .await,
@@ -857,5 +868,5 @@ async fn a_coroutine_whose_resumer_was_dropped_is_the_scripts_again_and_finds_it
     let direct = call(&vm, "probe_direct").await;
     assert_eq!(direct["ok"], false, "{direct}");
     // nothing of the dropped call's script ran, and nothing woke from the dropped wait
-    assert_eq!(call(&vm, "ran").await, json!([]), "the dropped call ran script code after the drop");
+    assert_eq!(call_ro(&vm, "ran").await, json!([]), "the dropped call ran script code after the drop");
 }

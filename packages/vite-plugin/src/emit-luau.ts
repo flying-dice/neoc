@@ -118,7 +118,7 @@ function busFunctions(apps: Known[]): Record<'send_request' | 'on_request' | 'se
   const serve = own
     ? own.contract.requests.map(
         (r) =>
-          `((method: ${luauString(r.name)}, handler: (params: ${paramsOf(own.id, r)}, ctx: vos_app_Context) -> ${typePrefix(own.id)}${pascal(r.name)}Result, about: vos_rpc_About?) -> ())`
+          `((method: ${luauString(r.name)}, handler: (params: ${paramsOf(own.id, r)}, ctx: vos_app_Context) -> ${typePrefix(own.id)}${pascal(r.name)}Result) -> ())`
       )
     : []
   const notify = own

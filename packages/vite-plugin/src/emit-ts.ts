@@ -206,16 +206,6 @@ interface VosTracing {
   query(params: VosFields): Promise<unknown>
 }
 
-/** What a page's handler says about itself: an agent is shown it when the method is public (a tool). */
-interface VosAbout {
-  title?: string
-  description?: string
-  /** The JSON Schema of its params. */
-  input_schema?: { readonly [key: string]: unknown }
-  /** It changes nothing. */
-  read_only?: boolean
-}
-
 /** The RPC bus: the same four functions, in the same house style (snake case), as an app's backend has. */
 declare const RPC: {
   /** Send a request to an app (this one's id too): its backend or an open page answers, the first to answer wins. */
@@ -227,15 +217,14 @@ declare const RPC: {
   /**
    * Serve one of this app's methods from the page, beside its backend: every handler registered for it is asked and the
    * first answer wins; \`signal\` aborts when another answered first. A public method's handler is an agent tool while
-   * it is registered. Returns a function that stops serving.
+   * it is registered, described by the app's contract. Returns a function that stops serving.
    */
   on_request<M extends keyof VosRequests<VosOwnId>>(
     method: M,
     handler: (
       params: VosHandlerParams<VosParams<VosRequests<VosOwnId>[M]>>,
       context: { signal: AbortSignal }
-    ) => VosResult<VosRequests<VosOwnId>[M]> | Promise<VosResult<VosRequests<VosOwnId>[M]>>,
-    about?: VosAbout
+    ) => VosResult<VosRequests<VosOwnId>[M]> | Promise<VosResult<VosRequests<VosOwnId>[M]>>
   ): () => void
   /** Send one of this app's notifications: to its pages and backend and, unless \`_name\`, other apps that listen. */
   send_notification<N extends keyof VosNotifications<VosOwnId>>(name: N, ...params: VosArgs<VosParams<VosNotifications<VosOwnId>[N]>>): Promise<void>

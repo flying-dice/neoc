@@ -57,6 +57,10 @@ impl Rig {
     async fn tool(&self, app: &str, tool: &str) -> PortResult<Value> {
         common::serve_rt(&self.runtime, &id(app), tool, json!({}), agent_ctx(0)).await
     }
+    /// [`Rig::tool`], read-only: every write the call tries is refused.
+    async fn tool_ro(&self, app: &str, tool: &str) -> PortResult<Value> {
+        common::serve_rt_with(&self.runtime, &id(app), tool, json!({}), agent_ctx(0), true).await
+    }
 }
 
 /// The first line of every source here: the line numbers the tests name are the body's plus one.
@@ -101,18 +105,18 @@ async fn a_tool_result_that_expands_to_gigabytes_is_an_error_not_an_allocation()
           local t = {{ 1 }}
           for i = 1, 30 do t = {{ t, t }} end
           return t
-        end, {{ read_only = true }})
+        end)
         RPC.on_request("text", function()
           local s = string.rep("x", 1000000)
           local t = {{}}
           for i = 1, 40 do t[i] = s end
           return t
-        end, {{ read_only = true }})
+        end)
         RPC.on_request("cycle", function()
           local t = {{}}
           t.me = t
           return t
-        end, {{ read_only = true }})"#
+        end)"#
     );
     rig.load("probe", &src).await.unwrap();
     for (tool, why) in
@@ -185,9 +189,9 @@ const READ_ONLY_APP: &str = r#"
     app.db:migrate { [1] = "create table log(id integer primary key, msg text)" }
     local n = 0
     local function try(f) local ok, err = pcall(f); return { ok = ok, err = (not ok) and tostring(err) or nil } end
-    RPC.on_request("open", function() return try(function() app.open_window() end) end, { read_only = true })
-    RPC.on_request("notify", function() return try(function() app.notify { title = "hi" } end) end, { read_only = true })
-    RPC.on_request("emit", function() return try(function() RPC.send_notification("changed") end) end, { read_only = true })
+    RPC.on_request("open", function() return try(function() app.open_window() end) end)
+    RPC.on_request("notify", function() return try(function() app.notify { title = "hi" } end) end)
+    RPC.on_request("emit", function() return try(function() RPC.send_notification("changed") end) end)
     -- not read-only: allowed to do all of it (but the caller may still require a read-only run)
     RPC.on_request("everything", function()
       app.open_window()
@@ -197,7 +201,7 @@ const READ_ONLY_APP: &str = r#"
       n = n + 1
       return n
     end)
-    RPC.on_request("count", function() return app.db:one("select count(*) as n from log").n end, { read_only = true })
+    RPC.on_request("count", function() return app.db:one("select count(*) as n from log").n end)
 "#;
 
 #[tokio::test]
@@ -205,23 +209,23 @@ async fn a_read_only_call_cannot_open_the_window_notify_or_send_a_notification()
     let rig = rig();
     rig.load("probe", &format!("{MANIFEST}\n{READ_ONLY_APP}")).await.unwrap();
     for tool in ["open", "notify", "emit"] {
-        let out = rig.tool("probe", tool).await.unwrap();
+        let out = rig.tool_ro("probe", tool).await.unwrap();
         assert_eq!(out["ok"], false, "{tool} must be refused: {out}");
         assert!(out["err"].as_str().unwrap().contains("read-only"), "{tool}: {out}");
     }
     assert!(rig.shell.windows.lock().unwrap().is_empty(), "the shell was not asked for the window");
     assert!(rig.shell.events.lock().unwrap().is_empty(), "no notification reached the app's pages");
-    assert_eq!(rig.tool("probe", "count").await.unwrap(), json!(0), "the table is unchanged");
+    assert_eq!(rig.tool_ro("probe", "count").await.unwrap(), json!(0), "the table is unchanged");
 
     // and a call that is not read-only still can
     assert_eq!(rig.tool("probe", "everything").await.unwrap(), json!(1));
     assert_eq!(rig.shell.windows.lock().unwrap().len(), 1);
     assert_eq!(rig.shell.events.lock().unwrap().len(), 1);
-    assert_eq!(rig.tool("probe", "count").await.unwrap(), json!(1));
+    assert_eq!(rig.tool_ro("probe", "count").await.unwrap(), json!(1));
 }
 
 #[tokio::test]
-async fn a_caller_can_require_a_read_only_run_of_a_handler_that_is_not_described_read_only() {
+async fn a_caller_can_require_a_read_only_run_of_a_handler_that_writes() {
     let rig = rig();
     rig.load("probe", &format!("{MANIFEST}\n{READ_ONLY_APP}")).await.unwrap();
     let ctx = agent_ctx(0);

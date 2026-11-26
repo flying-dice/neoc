@@ -18,10 +18,10 @@
 //   RPC.send_request(app, method, params?)  a request to an app (this one's id too): every handler registered for
 //                            the method, its backend's or an open page's, is asked; the first answer wins. Rejects
 //                            with an `RPC.RpcError`
-//   RPC.on_request(method, fn, about?)  serve one of this app's methods from the page: `fn(params, { signal })`
-//                            answers (it may return a promise); `signal` aborts when another handler answered first.
-//                            `about` ({ title, description, input_schema, read_only }) is what an agent is shown when
-//                            the method is public (a tool). Returns a function that stops serving
+//   RPC.on_request(method, fn)  serve one of this app's methods from the page: `fn(params, { signal })` answers (it
+//                            may return a promise); `signal` aborts when another handler answered first. A public
+//                            method is an agent tool too, described by the app's contract. Returns a function that
+//                            stops serving
 //   RPC.send_notification(name, params?)  send one of this app's notifications, to whoever listens
 //   RPC.on_notification(app, name, fn)  hear an app's notification (this one's, or another app's public one); returns
 //                            a function that stops listening
@@ -388,13 +388,11 @@
     }
     return listen(appListeners, app + ' ' + name, fn)
   }
-  RPC.on_request = function (method, fn, about) {
+  RPC.on_request = function (method, fn) {
     method = String(method)
     if (requestHandlers.has(method)) throw new Error('This page already serves "' + method + '"')
     requestHandlers.set(method, fn)
-    var handle = { method: method }
-    if (about !== undefined) handle.about = about
-    callHost('vos/handle', handle).catch(function () {})
+    callHost('vos/handle', { method: method }).catch(function () {})
     return function () {
       if (requestHandlers.get(method) !== fn) return
       requestHandlers.delete(method)

@@ -44,7 +44,7 @@
 
 use crate::common;
 
-use common::{agent_ctx, db, id, package, timed_tool as tool, try_load_with};
+use common::{agent_ctx, db, id, package, timed_tool as tool, timed_tool_with, try_load_with};
 use serde_json::{json, Value};
 use std::{
     collections::BTreeSet,
@@ -396,17 +396,17 @@ RPC.on_request("peek", function()
   steal("a read-only call")
   resume_scripts()
   return app.db:one("select count(*) as n from t").n
-end, { read_only = true })
+end)
 RPC.on_request("other", function()
   local v = 1000 + #others
   local r = app.db:exec("insert into t(v) values (:v)", { v = v })
   others[#others + 1] = v
   return { v = v, changes = r.changes }
 end)
-RPC.on_request("ping", function() return "pong" end, { read_only = true })
+RPC.on_request("ping", function() return "pong" end)
 RPC.on_request("report", function()
   return { A = A, X = X, V = V, pending = pending, state = state.v }
-end, { read_only = true })
+end)
 "#;
 
 const SERVER: &str = r#"
@@ -430,6 +430,7 @@ fn generate(seed: u64, index: usize, url: &str) -> Case {
     let mut rng = Rng(seed ^ (u64::try_from(index).unwrap().wrapping_mul(0xD1B5_4A32_D192_ED03)));
     let kind = *rng.pick(&[Kind::ReadOnly, Kind::Writable, Kind::Concurrent, Kind::OwnServer]);
     let steps: Vec<Step> = (0..2 + rng.below(4)).map(|i| step(&mut rng, 1 + i, kind)).collect();
+    // RO tells the program whether its caller runs it read-only (`drive` and `run_disturbed` do)
     let mut source = format!("local RO = {}\nlocal URL = {url:?}\nlocal OWN\n", kind.read_only());
     source.push_str(HEADER);
     if kind == Kind::OwnServer {
@@ -440,7 +441,7 @@ fn generate(seed: u64, index: usize, url: &str) -> Case {
     for step in &steps {
         let _ = writeln!(source, "  -- {}\n  {}", step.describe, step.code);
     }
-    source.push_str("  task.wait(0.001)\n  return 'done'\nend, { read_only = RO })\n");
+    source.push_str("  task.wait(0.001)\n  return 'done'\nend)\n");
     Case { index, kind, source, steps }
 }
 
@@ -478,6 +479,11 @@ async fn run(case: &Case) -> Vec<String> {
     failures
 }
 
+/// [`tool`], read-only: every write the call tries is refused.
+async fn tool_ro(vm: &Arc<vos_lua::AppVm>, name: &str, secs: u64) -> Result<Value, String> {
+    timed_tool_with(vm, name, secs, true).await
+}
+
 /// The calls that try to get in beside a program of this kind.
 fn side_tools(kind: Kind) -> &'static [&'static str] {
     if kind == Kind::Concurrent {
@@ -494,7 +500,9 @@ async fn drive(case: &Case, vm: &Arc<vos_lua::AppVm>) -> (Vec<String>, BTreeSet<
     let mut failures = vec![];
     let prog = {
         let vm = vm.clone();
-        tokio::spawn(async move { tool(&vm, "prog", 20).await })
+        // the program is read-only when its kind is: the caller asks for it
+        let read_only = case.kind.read_only();
+        tokio::spawn(async move { timed_tool_with(&vm, "prog", 20, read_only).await })
     };
     let over = Arc::new(AtomicBool::new(false));
     let side: Vec<_> = (0..2)
@@ -508,7 +516,8 @@ async fn drive(case: &Case, vm: &Arc<vos_lua::AppVm>) -> (Vec<String>, BTreeSet<
                     }
                     let tools = side_tools(kind);
                     let name = tools[(i + lane) % tools.len()];
-                    done.push((name, tool(&vm, name, 20).await));
+                    // `peek` is the read-only side call
+                    done.push((name, timed_tool_with(&vm, name, 20, name == "peek").await));
                 }
                 done
             })
@@ -544,7 +553,7 @@ async fn drive(case: &Case, vm: &Arc<vos_lua::AppVm>) -> (Vec<String>, BTreeSet<
 async fn settle(vm: &Arc<vos_lua::AppVm>) -> Result<Value, String> {
     let settled = Instant::now();
     while settled.elapsed() < Duration::from_secs(10) {
-        match tool(vm, "report", 10).await {
+        match tool_ro(vm, "report", 10).await {
             Ok(report) if report["pending"] == 0 => return Ok(report),
             Ok(_) => tokio::time::sleep(Duration::from_millis(10)).await,
             Err(e) => return Err(format!("report: {e}")),
@@ -563,7 +572,7 @@ async fn verify(
 ) -> Vec<String> {
     let mut failures = vec![];
     // (e) nothing is wedged: the app answers, and so does the database (a window query does not go through the VM)
-    match tool(vm, "ping", 5).await {
+    match tool_ro(vm, "ping", 5).await {
         Ok(v) if v == "pong" => {}
         other => failures.push(format!("(e) ping: {other:?}")),
     }
@@ -711,12 +720,16 @@ const MANIFEST: &str = "-- chaos\n";
 
 /// A call through the runtime, as the host makes it; the error names what went wrong (a call that ended with an
 /// error because the app was unloaded is not a failure: one that never ends is).
-async fn runtime_tool(runtime: &Arc<LuaRuntime>, name: &'static str) -> Result<Value, String> {
+async fn runtime_tool(
+    runtime: &Arc<LuaRuntime>,
+    name: &'static str,
+    read_only: bool,
+) -> Result<Value, String> {
     let runtime = runtime.clone();
     let call = tokio::spawn(async move {
         tokio::time::timeout(
             Duration::from_secs(20),
-            common::serve_rt(&runtime, &id("chaos"), name, json!({}), agent_ctx(0)),
+            common::serve_rt_with(&runtime, &id("chaos"), name, json!({}), agent_ctx(0), read_only),
         )
         .await
     });
@@ -748,7 +761,8 @@ async fn run_disturbed(case: &Case, disturbance: Disturbance, after_ms: u64) -> 
     let over = Arc::new(AtomicBool::new(false));
     let prog = {
         let runtime = runtime.clone();
-        tokio::spawn(async move { runtime_tool(&runtime, "prog").await })
+        let read_only = case.kind.read_only();
+        tokio::spawn(async move { runtime_tool(&runtime, "prog", read_only).await })
     };
     let side: Vec<_> = (0..2)
         .map(|lane| {
@@ -761,7 +775,7 @@ async fn run_disturbed(case: &Case, disturbance: Disturbance, after_ms: u64) -> 
                     }
                     let name = ["bump", "meddle", "peek"][(i + lane) % 3];
                     // an error is the app going away; only a call that never ends or panics is a failure
-                    if let Err(e) = runtime_tool(&runtime, name).await {
+                    if let Err(e) = runtime_tool(&runtime, name, name == "peek").await {
                         if e.starts_with("(e)") || e.starts_with("(f)") {
                             failures.push(format!("{name}: {e}"));
                         }
@@ -803,13 +817,13 @@ async fn run_disturbed(case: &Case, disturbance: Disturbance, after_ms: u64) -> 
         failures.push("(e) the database's write gate is held by something that is gone".into());
     }
     match disturbance {
-        Disturbance::Reload => match runtime_tool(&runtime, "ping").await {
+        Disturbance::Reload => match runtime_tool(&runtime, "ping", true).await {
             Ok(v) if v == "pong" => {}
             other => failures.push(format!("(e) the new version does not answer: {other:?}")),
         },
         Disturbance::Unload => {
             // an unloaded app is gone: asking it is an error, quickly
-            if runtime_tool(&runtime, "ping").await.is_ok() {
+            if runtime_tool(&runtime, "ping", true).await.is_ok() {
                 failures.push("an unloaded app still answers".into());
             }
         }
@@ -984,8 +998,8 @@ RPC.on_request("churn", function()
   for i = 1, 400 do keep[i % 8] = {{ string.rep("x", 2048), i }} end
   return #keep
 end)
-RPC.on_request("ping", function() return "pong" end, {{ read_only = true }})
-RPC.on_request("ran", function() return {{ n = #ran }} end, {{ read_only = true }})
+RPC.on_request("ping", function() return "pong" end)
+RPC.on_request("ran", function() return {{ n = #ran }} end)
 "#
     )
 }
@@ -1070,7 +1084,7 @@ async fn run_dropped(seed: u64, index: usize, url: &str) -> Vec<String> {
     if !settled && failures.is_empty() {
         failures.push("what a dropped call left behind stayed refused for ever".into());
     }
-    match tool(&vm, "ran", 10).await {
+    match tool_ro(&vm, "ran", 10).await {
         Ok(v) if v["n"] == 0 => {}
         other => failures.push(format!("script code ran after the drop: {other:?}")),
     }
@@ -1079,7 +1093,7 @@ async fn run_dropped(seed: u64, index: usize, url: &str) -> Vec<String> {
         Ok(other) => failures.push(format!("a write after the dropped wait was made: {other:?}")),
         Err(_) => failures.push("(e) the database's write gate is held by a dropped call".into()),
     }
-    match tool(&vm, "ping", 5).await {
+    match tool_ro(&vm, "ping", 5).await {
         Ok(v) if v == "pong" => {}
         other => failures.push(format!("(e) ping: {other:?}")),
     }

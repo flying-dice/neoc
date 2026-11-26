@@ -168,9 +168,7 @@ async fn an_agent_reads_adds_and_completes_todos() {
     let todos = Todos::open().await;
     // the agent's tools are the backend's public handlers (a `_name` is the page's); each is in the contract
     let handlers = todos.app.handlers();
-    let mut public: Vec<&str> =
-        handlers.iter().map(|h| h.method.as_str()).filter(|m| !m.starts_with('_')).collect();
-    public.sort_unstable();
+    let public: Vec<&str> = handlers.iter().map(String::as_str).filter(|m| !m.starts_with('_')).collect();
     assert_eq!(public, ["add_todo", "complete_todo", "list_todos"]);
     for method in &public {
         assert!(todos.app.contract.request(method).is_some(), "{method} is declared by the contract");

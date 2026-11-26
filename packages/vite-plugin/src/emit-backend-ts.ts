@@ -57,7 +57,7 @@ function busFunctions(apps: Known[]): Record<'send_request' | 'on_request' | 'se
   )
   const serve = own
     ? own.contract.requests.map((r) =>
-        overload('on_request', docOf(r), `method: ${jsString(r.name)}, handler: (this: void, params: ${paramsOf(own.id, r)}, ctx: vos_app_Context) => ${resultOf(own.id, r)}, about?: vos_rpc_About): void`)
+        overload('on_request', docOf(r), `method: ${jsString(r.name)}, handler: (this: void, params: ${paramsOf(own.id, r)}, ctx: vos_app_Context) => ${resultOf(own.id, r)}): void`)
       )
     : []
   const notify = own

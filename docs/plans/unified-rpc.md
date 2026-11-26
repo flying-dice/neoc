@@ -21,7 +21,7 @@ tool call is a request on the bus; the sections below are the plan as it was wri
   found. A notification reaches the app's pages, other apps' subscribed pages (public names only) and every listening
   backend; nothing waits for it. No marker in the contract says who serves what: registration does.
 - **The same four functions everywhere, in the house style (snake case)**: the global `RPC`, with `RPC.send_request`,
-  `RPC.on_request`, `RPC.send_notification` and `RPC.on_notification`, in the page and in the backend (`vos:rpc`). A backend handler is `fn(params, ctx)`, `ctx.actor` saying who asked (the person, an agent, or an app).
+  `RPC.on_request`, `RPC.send_notification` and `RPC.on_notification`, in the page and in the backend (`vos:rpc`). A backend handler is `fn(params, ctx)`, `ctx.actor` saying who asked (the person, an agent, or an app). A handler says nothing of itself (`RPC.on_request(method, fn)`, in the page and in the backend): what an agent is shown of a tool, and whether it is read-only, is the contract's.
 - **Ambient, no generated runtime.** The page's whole API is two globals the host's bridge script defines
   (`/apps/bridge.js`): `RPC.send_request(app, method, params)`, `RPC.on_request(method, fn)`,
   `RPC.send_notification(name, params)`, `RPC.on_notification(app, name, fn)`, plus `vos.host`, `vos.tracing` and
@@ -42,7 +42,8 @@ tool call is a request on the bus; the sections below are the plan as it was wri
   bus (a backend's or an open page's) as the MCP tool
   `<app>__<method in snake case>`, described by the contract (summary, description, params schema, `x-readOnly`), again
   whenever handlers come or go. An agent's tool call is a bus request from that
-  agent: the first answer wins, as for any request; a read-only handler of the backend runs with writes refused.
+  agent: the first answer wins, as for any request; a handler of the backend runs with writes refused when the contract marks
+  the method `x-readOnly` (the runtime itself does not know what a handler changes).
 - **Wire**: page → host `app.call`, `app.notify`, `app.handle` / `app.unhandle`, `app.answer`; host → page
   `app.event`, `app.request`, `app.requestSettled`. Frame ↔ shell: `vos/handle`, `vos/answer`, `vos/notify`,
   `vos/serve`, `vos/settled`, `vos/subscribe`, `vos/request` (`client/src/shell/hostBridge.ts`, `bridge.js`).

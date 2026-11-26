@@ -193,26 +193,14 @@ for _, card in ipairs(app.agents:list()) do
   local _name: string = card.name
 end
 
--- ── the handlers: a public one is an agent tool, a private one (`_`) is the app's page's alone ───────────────────
+-- ── the handlers: a public one is an agent tool (its contract describes it), a private one (`_`) is the app's page's alone ──
 rpc.on_request("add", function(input: { name: string, n: number? }, ctx)
   if (input.n or 1) > 3 then
     return ctx:fail("too many")
   end
   local added = { added = input.name, by = ctx.actor.name, at = ctx.now }
   return added
-end, {
-  title = "Add",
-  description = "Add an item",
-  read_only = false,
-  input_schema = {
-    type = "object",
-    properties = {
-      name = { type = "string", description = "The name" },
-      n = { type = "integer", minimum = 1, maximum = 5, default = 1 },
-    },
-    required = { "name" },
-  },
-})
+end)
 
 rpc.on_request("_list", function(_params: any, _ctx: vos_app_Context)
   return app.db:all("select id, name from items order by id")

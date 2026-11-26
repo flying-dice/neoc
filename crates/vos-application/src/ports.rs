@@ -61,29 +61,14 @@ pub trait AppRuntime: Send + Sync {
     ) -> PortResult<Value>;
     /// Whether the app's backend has a handler for `method` on the bus (`RPC.on_request`).
     fn has_handler(&self, app: &AppId, method: &str) -> bool;
-    /// The handlers the app's backend has on the bus, as each described itself when it registered.
-    fn handlers(&self, app: &AppId) -> Vec<HandlerInfo>;
+    /// The methods the app's backend serves on the bus (`RPC.on_request`), in name order.
+    fn handlers(&self, app: &AppId) -> Vec<String>;
     /// An app's notification, from its page or its backend: to its open pages and every other app's that listens
     /// (through the shell), and to every backend that listens (`RPC.on_notification`). A `_name` never leaves the app.
     async fn deliver_notification(&self, from: &AppId, name: &str, params: Value) -> PortResult<()>;
 }
 
 // ---- the RPC bus ------------------------------------------------------------------------------
-
-/// A handler on the bus, as it described itself when it registered: what an agent is shown of it when it is public (a
-/// method without a leading `_` is an agent tool, `<app>__<method in snake case>`).
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct HandlerInfo {
-    pub method: String,
-    /// The name a person is shown.
-    pub title: Option<String>,
-    /// What it does: an agent decides from it when to call it.
-    pub description: Option<String>,
-    /// The JSON Schema of its params.
-    pub input_schema: Option<Value>,
-    /// It changes nothing: an agent's call of the backend's handler runs with every write refused.
-    pub read_only: bool,
-}
 
 /// The one RPC bus: every app request and notification, from a page or a backend, goes through it. A request reaches
 /// every handler registered for its method, a backend's and the open pages' alike, and the first answer wins (the
@@ -104,8 +89,8 @@ pub trait AppBus: Send + Sync {
 pub trait PageHandlers: Send + Sync {
     /// Whether some open page serves `method` of `app`.
     fn handles(&self, app: &AppId, method: &str) -> bool;
-    /// The handlers the open pages registered for `app`, as each described itself (one per method).
-    fn handlers(&self, app: &AppId) -> Vec<HandlerInfo>;
+    /// The methods the open pages serve for `app`, in name order.
+    fn handlers(&self, app: &AppId) -> Vec<String>;
     /// Ask every page that serves it; the first answer wins and the others are told the request is settled.
     async fn request(&self, app: &AppId, method: &str, params: Value) -> PortResult<Value>;
 }

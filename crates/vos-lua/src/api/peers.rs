@@ -13,14 +13,13 @@
 //! method can still be called (the host logs it), but a private notification never leaves its app.
 
 use super::{context::Context, json::Json, shared};
-use crate::vm::{Effect, Handler};
-use mlua_ir::{Callback, LuaError, Options, Registry, Shape, Unknown};
+use crate::vm::Effect;
+use mlua_ir::{Callback, LuaError, Unknown};
 use neoc_vm::mlua;
 use neoc_vm::mlua::Lua;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use vos_application::ports::HandlerInfo;
 use vos_application::PortError;
 use vos_domain::AppId;
 
@@ -45,38 +44,6 @@ mlua_ir::unknown_reason!(
     /// Why the params of a notification an app sends have no declared shape here.
     NotificationData = "the params of the app's notification: their shape is its contract's"
 );
-
-mlua_ir::unknown_reason!(
-    /// Why a JSON Schema has no declared shape here.
-    SchemaWords = "a JSON Schema: its keywords are the schema's own"
-);
-
-/// The JSON Schema of a handler's params.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct InputSchema(Value);
-
-impl Shape for InputSchema {
-    fn shape(reg: &mut Registry) -> mlua_ir::ir::Ty {
-        BTreeMap::<String, Unknown<SchemaWords>>::shape(reg)
-    }
-}
-
-/// What a handler says about itself when it registers: an agent is shown it when the method is public (a method
-/// without a leading `_` is an agent tool, `<app>__<method in snake case>`, answered on the bus).
-#[derive(Clone, Debug, Default, Serialize, Deserialize, Options)]
-#[serde(default, deny_unknown_fields)]
-#[shape(module = "vos:rpc")]
-pub struct About {
-    /// The name a person is shown.
-    pub title: Option<String>,
-    /// What it does: an agent decides from it when to call it.
-    pub description: Option<String>,
-    /// The JSON Schema of its params.
-    pub input_schema: Option<InputSchema>,
-    /// It changes nothing: an agent's call runs with every write refused.
-    pub read_only: bool,
-}
 
 /// The named params a request is sent with.
 pub type Params = Json<BTreeMap<String, Unknown<RequestParams>>>;
@@ -179,12 +146,7 @@ pub(super) async fn send_request(
     Ok(out.map(Json::new).map_err(RequestError::from))
 }
 
-pub(super) fn on_request(
-    lua: &Lua,
-    method: String,
-    handler: RequestHandler,
-    about: Option<About>,
-) -> mlua::Result<()> {
+pub(super) fn on_request(lua: &Lua, method: String, handler: RequestHandler) -> mlua::Result<()> {
     let sh = shared(lua)?;
     // serving a method changes the app's wiring, so a read-only call may not
     sh.writable("RPC.on_request")?;
@@ -195,15 +157,7 @@ pub(super) fn on_request(
             "RPC.on_request: `{method}` already has a handler in this backend"
         )));
     }
-    let about = about.unwrap_or_default();
-    let info = HandlerInfo {
-        method: method.clone(),
-        title: about.title,
-        description: about.description,
-        input_schema: about.input_schema.map(|s| s.0),
-        read_only: about.read_only,
-    };
-    handlers.insert(method, Handler { run: handler.into_function(), info });
+    handlers.insert(method, handler.into_function());
     drop(handlers);
     // the app's agent tools follow its handlers
     sh.push_effect(Effect::HandlersChanged)

@@ -27,7 +27,7 @@ RPC.on_request("add_task", function(input)
   db:exec("insert into tasks(title) values (:t)", {{ t = input.title }})
   RPC.send_notification("tasks.changed", {{ title = input.title }})
   return {{ ok = true }}
-end, {{ input_schema = {{ type = "object", properties = {{ title = {{ type = "string" }} }}, required = {{ "title" }} }} }})
+end)
 RPC.on_request("_whose", function(args) return {{ app = "{name}", args = args }} end)
 RPC.on_request("_add", function(args, ctx)
   if type(args) ~= "table" or args.title == nil then return ctx:fail("A task needs a title.") end

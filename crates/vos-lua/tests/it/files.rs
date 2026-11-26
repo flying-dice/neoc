@@ -29,6 +29,11 @@ async fn tool(vm: &AppVm, name: &str) -> Value {
     common::serve(vm, name, json!({}), &agent_ctx(0)).await.unwrap()
 }
 
+/// [`tool`], read-only: every write the call tries is refused.
+async fn tool_ro(vm: &AppVm, name: &str) -> Value {
+    common::serve_ro(vm, name, json!({}), &agent_ctx(0)).await.unwrap()
+}
+
 fn check_workflow(out: &Value) {
     let ok = |step: &str| assert_eq!(out[step]["ok"], true, "{step}: {out}");
     let failed = |step: &str, kind: &str| {
@@ -247,31 +252,31 @@ async fn a_read_only_tool_reads_files_and_cannot_write_them_nor_can_the_tasks_it
             copy = refused(function() return docs:copy("d/a.txt", "b.txt") end),
             cache = refused(function() return app.files.cache:write("x", "x") end),
           }
-        end, { read_only = true })
-        RPC.on_request("seen", function() return seen end, { read_only = true })
+        end)
+        RPC.on_request("seen", function() return seen end)
     "#;
     let vm = load_in(root.path(), "probe", src, &[]).await;
     assert_eq!(tool(&vm, "seed").await, json!(true));
-    let out = tool(&vm, "ro").await;
+    let out = tool_ro(&vm, "ro").await;
     assert_eq!((&out["read"], &out["listed"], &out["size"]), (&json!("kept"), &json!(1), &json!(4)), "{out}");
     for write in ["write", "create_dir", "remove", "move", "copy", "cache"] {
         assert_eq!(out[write]["ok"], false, "{write}: {out}");
         assert!(out[write]["err"].as_str().unwrap().contains("read-only"), "{write}: {out}");
     }
-    let mut seen = tool(&vm, "seen").await;
+    let mut seen = tool_ro(&vm, "seen").await;
     for _ in 0..200 {
         if seen.get("task").is_some() {
             break;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
-        seen = tool(&vm, "seen").await;
+        seen = tool_ro(&vm, "seen").await;
     }
     assert_eq!(seen["task"]["ok"], false, "the task inherits the read-only call: {seen}");
     assert!(seen["task"]["err"].as_str().unwrap().contains("read-only"), "{seen}");
     let docs = root.path().join("probe.files/documents");
     assert_eq!(std::fs::read_to_string(docs.join("d/a.txt")).unwrap(), "kept");
     assert!(!docs.join("from-task.txt").exists() && !docs.join("e").exists() && !docs.join("b.txt").exists());
-    // a caller can require a read-only run of a writable tool too
+    // a tool that writes, called read-only, is refused
     let err = common::serve_with(&vm, "seed", json!({}), &agent_ctx(0), true).await.unwrap_err().to_string();
     assert!(err.contains("read-only"), "{err}");
 }

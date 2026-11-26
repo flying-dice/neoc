@@ -7,7 +7,7 @@
 //! this host first ran on turned the same recursion into a catchable "C stack overflow" error). On Luau the engine
 //! answers `error in error handling` once, so the value reaches the caller as an ordinary error, whichever path it
 //! takes: the entry chunk, a tool, a handler of the app's page, an event or request handler, a task, a transaction
-//! body. A table the app hands over (given to `RPC.on_request` or `app.notify`, or returned from a handler) is read raw,
+//! body. A table the app hands over (given to `app.notify`, or returned from a handler) is read raw,
 //! so its `__index` never runs.
 //!
 //! Each case runs in a child process (this test binary again, `poison::poison_case_child`) so that an abort would kill the
@@ -107,15 +107,6 @@ async fn run_case(name: &str) -> String {
             Ok(_) => panic!("the app loaded"),
             Err(e) => poisoned(&e),
         },
-        // a table handed to `RPC.on_request` as what the handler says of itself would raise the value if the host
-        // ran its `__index`: it is read raw, so the app's code does not run and the table says what it holds (nothing)
-        "tool_spec_index" => {
-            let vm = try_load("probe", &app("RPC.on_request('x', function() end, booby)")).await.unwrap();
-            let said = vm.handlers().into_iter().find(|h| h.method == "x").unwrap();
-            assert!(said.title.is_none() && said.description.is_none() && !said.read_only, "{said:?}");
-            ping(&vm).await;
-            "it holds nothing".into()
-        }
         // a tool body raises the value
         "tool_body" => failing_tool("RPC.on_request('boom', function() error(poison) end)", "boom").await,
         // an event handler raises the value
@@ -253,11 +244,6 @@ fn survives(case: &str) {
 #[test]
 fn entry_chunk_raising_the_poison_fails_the_load() {
     survives("entry_chunk");
-}
-
-#[test]
-fn a_table_given_to_rpc_on_request_that_would_raise_the_poison_on_a_field_read_is_read_raw() {
-    survives("tool_spec_index");
 }
 
 #[test]

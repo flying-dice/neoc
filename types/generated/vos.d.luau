@@ -8203,19 +8203,6 @@ export type vos_docker = {
 
 -- ===== vos:rpc =====
 
---- What a handler says about itself when it registers: an agent is shown it when the method is public (a method
---- without a leading `_` is an agent tool, `<app>__<method in snake case>`, answered on the bus).
-export type vos_rpc_About = {
-	--- The name a person is shown.
-	title: string?,
-	--- What it does: an agent decides from it when to call it.
-	description: string?,
-	--- The JSON Schema of its params.
-	input_schema: { [string]: any }?,
-	--- It changes nothing: an agent's call runs with every write refused. Default: `false`.
-	read_only: boolean?,
-}
-
 --- The kinds of `vos_rpc_RequestError`.
 export type vos_rpc_RequestErrorKind = "not_found" | "failed" | "internal"
 
@@ -8241,10 +8228,10 @@ export type vos_rpc = {
 	--- Yields the calling coroutine while it waits.
 	send_request: (app: string, method: string, params: { [string]: any }?) -> (any, vos_rpc_RequestError?),
 	--- Serve one of this app's methods on the RPC bus: `fn(params, ctx)` answers a request for `method`, from the
-	--- app's page, another app or an agent. An open page of the app may serve it too: the first answer wins. `about`
-	--- describes the handler: a public method (no leading `_`) is an agent tool, shown with it. Raises for a method
+	--- app's page, another app or an agent. An open page of the app may serve it too: the first answer wins. A public
+	--- method (no leading `_`) is an agent tool too, described by the app's contract. Raises for a method
 	--- this backend already serves, and inside a read-only call.
-	on_request: (method: string, handler: (arg1: any, arg2: vos_app_Context) -> any, about: vos_rpc_About?) -> (),
+	on_request: (method: string, handler: (arg1: any, arg2: vos_app_Context) -> any) -> (),
 	--- Send one of this app's notifications on the RPC bus: to the app's open pages and backend listeners and, unless
 	--- it is a `_name`, to every other app that listens. Nothing waits for it. `name` is 1 to 64 letters, digits and `. _ : -` (not
 	--- `host:...`), `params` is JSON of at most 64 KiB. A change to the world like `app.notify`: a read-only call may not.

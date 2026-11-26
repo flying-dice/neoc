@@ -4,8 +4,8 @@ use crate::{
     files::{AppFiles, FileStore},
     ports::{
         AgentDirectory, AgentStore, AppData, AppPackage, AppRuntime, CallContext, Clock, DataStore, DataTx,
-        DeviceRegistry, EventSink, ExecOutcome, Fetcher, HandlerInfo, InstalledApp, InstalledAppStore,
-        Params, PortResult, RandomSource, ServerEvent, Shell, SqlMigration, ToolRegistry,
+        DeviceRegistry, EventSink, ExecOutcome, Fetcher, InstalledApp, InstalledAppStore, Params, PortResult,
+        RandomSource, ServerEvent, Shell, SqlMigration, ToolRegistry,
     },
     services::{AppService, Ports},
     PortError,
@@ -176,7 +176,7 @@ impl DataStore for MemStore {
 #[derive(Default)]
 pub struct FakeRuntime {
     /// The handlers each loaded app serves on the bus.
-    apps: Mutex<HashMap<String, Vec<HandlerInfo>>>,
+    apps: Mutex<HashMap<String, Vec<String>>>,
     calls: Mutex<Vec<(String, String, CallContext)>>,
     /// `(app, handler, args)` of every call of a handler, in order.
     handler_calls: Mutex<Vec<(String, String, Value)>>,
@@ -243,16 +243,8 @@ impl AppRuntime for FakeRuntime {
         }
         // the fake "app source" is a comma separated list of the methods the backend serves
         let main = package.files.get(&package.entry).cloned().unwrap_or_default();
-        let handlers: Vec<HandlerInfo> = String::from_utf8_lossy(&main)
-            .split(',')
-            .filter(|s| !s.is_empty())
-            .map(|n| HandlerInfo {
-                // a trailing `?` says the method changes nothing: "search?,add"
-                method: n.trim_end_matches('?').into(),
-                read_only: n.ends_with('?'),
-                ..HandlerInfo::default()
-            })
-            .collect();
+        let handlers: Vec<String> =
+            String::from_utf8_lossy(&main).split(',').filter(|s| !s.is_empty()).map(str::to_owned).collect();
         self.apps.lock().unwrap().insert(app.to_string(), handlers);
         self.packages.lock().unwrap().insert(app.to_string(), package);
         Ok(())
@@ -282,7 +274,7 @@ impl AppRuntime for FakeRuntime {
     fn has_handler(&self, _: &AppId, _: &str) -> bool {
         true
     }
-    fn handlers(&self, app: &AppId) -> Vec<HandlerInfo> {
+    fn handlers(&self, app: &AppId) -> Vec<String> {
         self.apps.lock().unwrap().get(app.as_str()).cloned().unwrap_or_default()
     }
     async fn deliver_notification(&self, _: &AppId, _: &str, _: Value) -> PortResult<()> {

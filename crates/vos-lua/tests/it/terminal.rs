@@ -185,9 +185,7 @@ fn refusal(result: PortResult<Value>) -> String {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn every_method_is_the_pages_and_no_tool_is_offered_to_agents() {
     let rig = terminal().await;
-    let handlers = rig.served.handlers();
-    let mut methods: Vec<&str> = handlers.iter().map(|h| h.method.as_str()).collect();
-    methods.sort_unstable();
+    let methods = rig.served.handlers();
     assert_eq!(
         methods,
         ["_ack", "_close", "_open", "_replay", "_resize", "_write"],

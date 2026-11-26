@@ -30,9 +30,10 @@ test('the globals RPC and vos are declared once, typed over VosApps and VosSelf,
   expect(d).toContain('declare const RPC: {')
   expect(d).toContain('declare const vos: {')
   expect(d).not.toMatch(/sendRequest|onRequest|sendNotification|onNotification/)
-  for (const verb of ['send_request<A extends keyof VosApps', 'on_request<M extends keyof VosRequests<VosOwnId>>', 'send_notification<', 'on_notification<A extends keyof VosApps', 'about?: VosAbout']) {
+  for (const verb of ['send_request<A extends keyof VosApps', 'on_request<M extends keyof VosRequests<VosOwnId>>', 'send_notification<', 'on_notification<A extends keyof VosApps']) {
     expect(d).toContain(verb)
   }
+  expect(d).not.toContain('about')
   expect(d).toContain('readonly host: VosHost')
   expect(d).toContain('readonly tracing: VosTracing')
   expect(d).not.toMatch(/^(import|export) /m)
@@ -61,7 +62,7 @@ test("an app this one depends on adds only its public methods, and is not this p
 /** The lines of the host's declarations the generator types: the global `app`'s bus functions, as the host writes them. */
 const HOST = `export type vos_rpc = {
 	send_request: (app: string, method: string, params: { [string]: any }?) -> (any, vos_rpc_RequestError?),
-	on_request: (method: string, handler: (arg1: any, arg2: vos_app_Context) -> any, about: vos_rpc_About?) -> (),
+	on_request: (method: string, handler: (arg1: any, arg2: vos_app_Context) -> any) -> (),
 	send_notification: (name: string, params: any?) -> (),
 	on_notification: (app: string, name: string, listener: (arg1: any, arg2: vos_app_Context) -> ()) -> (),
 }
@@ -83,7 +84,7 @@ test("the backend's globals are typed: the host's declarations with each app's t
   expect(d).toContain('((app: "notes", method: "_peek", params: {}?) -> (notes_PeekResult?, vos_rpc_RequestError?))')
   expect(d).toContain('((app: "app-one", method: "add", params: app_one_AddParams) -> (app_one_AddResult?, vos_rpc_RequestError?))')
   expect(d).not.toContain('method: "_peek", params: {}?) -> (app_one')
-  expect(d).toContain('on_request: ((method: "add", handler: (params: notes_AddParams, ctx: vos_app_Context) -> notes_AddResult, about: vos_rpc_About?) -> ())')
+  expect(d).toContain('on_request: ((method: "add", handler: (params: notes_AddParams, ctx: vos_app_Context) -> notes_AddResult) -> ())')
   expect(d).toContain('send_notification: ((name: "added", params: notes_AddedParams) -> ()) & ((name: "_saved", params: {}?) -> ()),')
   expect(d).toContain('((app: "app-one", name: "added", listener: (params: app_one_AddedParams, ctx: vos_app_Context) -> ()) -> ())')
   expect(d).toContain('declare RPC: vos_rpc')
@@ -102,7 +103,7 @@ type vos_rpc_RequestError = { kind: "not_found" | "failed" | "internal"; message
 declare module "vos:rpc" {
   /** Send a request. */
   export function send_request(this: void, app: string, method: string, params?: { [key: string]: unknown }): LuaMultiReturn<[unknown, undefined] | [undefined, vos_rpc_RequestError]>
-  export function on_request(this: void, method: string, handler: (this: void, arg1: unknown, arg2: vos_app_Context) => unknown, about?: vos_rpc_About): void
+  export function on_request(this: void, method: string, handler: (this: void, arg1: unknown, arg2: vos_app_Context) => unknown): void
   export function send_notification(this: void, name: string, params?: unknown): void
   export function on_notification(this: void, app: string, name: string, listener: (this: void, arg1: unknown, arg2: vos_app_Context) => void): void
 }
@@ -125,7 +126,7 @@ test("a TypeScript backend's globals are typed: the host's declarations with eac
   expect(d).toContain('export function send_request(this: void, app: "notes", method: "_peek", params?: { [key: string]: never }): LuaMultiReturn<[notes_PeekResult, undefined]')
   expect(d).toContain('export function send_request(this: void, app: "app-one", method: "add", params: app_one_AddParams)')
   expect(d).not.toContain('app: "app-one", method: "_peek"')
-  expect(d).toContain('export function on_request(this: void, method: "add", handler: (this: void, params: notes_AddParams, ctx: vos_app_Context) => notes_AddResult, about?: vos_rpc_About): void')
+  expect(d).toContain('export function on_request(this: void, method: "add", handler: (this: void, params: notes_AddParams, ctx: vos_app_Context) => notes_AddResult): void')
   expect(d).toContain('export function send_notification(this: void, name: "added", params: notes_AddedParams): void')
   expect(d).toContain('export function send_notification(this: void, name: "_saved"): void')
   expect(d).toContain('export function on_notification(this: void, app: "app-one", name: "added", listener: (this: void, params: app_one_AddedParams, ctx: vos_app_Context) => void): void')

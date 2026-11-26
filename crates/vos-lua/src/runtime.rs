@@ -419,7 +419,7 @@ impl AppRuntime for LuaRuntime {
         self.vm(app).is_ok_and(|vm| vm.has_handler(method))
     }
 
-    fn handlers(&self, app: &AppId) -> Vec<vos_application::ports::HandlerInfo> {
+    fn handlers(&self, app: &AppId) -> Vec<String> {
         self.vm(app).map_or_else(|_| Vec::new(), |vm| vm.handlers())
     }
 

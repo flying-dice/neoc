@@ -89,35 +89,43 @@ async fn a_pages_notification_reaches_the_backend_and_the_pages() {
     assert_eq!(typed["result"], json!("hel"));
 }
 
-/// A backend whose public handlers describe themselves: they are agent tools, answered on the bus.
+/// A backend whose public handlers are agent tools, answered on the bus. Its contract describes them.
 const TOOLS: &str = r#"
 RPC.on_request("lookup", function(p, ctx)
   local wrote = pcall(function() app.kv:set("seen", p.q) end)
   return { q = p.q, who = ctx.actor.kind .. ":" .. ctx.actor.id, wrote = wrote }
-end, {
-  title = "Look up",
-  description = "Look a thing up.",
-  input_schema = { type = "object", properties = { q = { type = "string" } }, required = { "q" } },
-  read_only = true,
-})
-RPC.on_request("_secret", function() return "no" end, { description = "Private: never a tool." })
+end)
+RPC.on_request("_secret", function() return "no" end)
 "#;
+
+/// The contract of [`TOOLS`]: `lookup` is read-only, `pickOne` is a method a page serves, `_secret` is private.
+const TOOLS_CONTRACT: &str = r#"{
+  "openrpc": "1.4.0", "info": { "title": "Tools", "version": "1.0.0" },
+  "methods": [
+    { "name": "lookup", "summary": "Look up", "description": "Look a thing up.", "x-readOnly": true,
+      "params": [{ "name": "q", "required": true, "schema": { "type": "string" } }],
+      "result": { "name": "found", "schema": { "type": "object" } } },
+    { "name": "_secret", "params": [], "result": { "name": "no", "schema": {} } },
+    { "name": "pickOne", "summary": "Pick one", "description": "Pick one.", "params": [],
+      "result": { "name": "picked", "schema": {} } }
+  ]
+}"#;
 
 #[tokio::test]
 async fn agent_tools_are_the_public_handlers_on_the_bus_and_a_call_is_a_request_on_it() {
     let r = start(|c| c.agents = vec![crate::common::claude()]).await;
-    let url = publish_package(
+    let manifest = json!({ "id": "tools", "name": "tools", "main": "app.luau", "ui": { "root": "static" }, "contract": "openrpc.json" });
+    let url = crate::common::publish_app_ref(
         &temp("bus-tools").join("tools"),
-        "tools",
-        "app.luau",
-        &[("app.luau", TOOLS.as_bytes().to_vec())],
+        manifest,
+        &[("app.luau", TOOLS.as_bytes().to_vec()), ("openrpc.json", TOOLS_CONTRACT.as_bytes().to_vec())],
     );
     r.host.service.install_from_url(&url).await.unwrap();
     let (agent, _) = crate::common::connect_agent(r.addr, "tok-claude").await;
     let names =
         |names: Vec<String>| names.into_iter().filter(|n| n.starts_with("tools__")).collect::<Vec<_>>();
 
-    // the backend's public handler is a tool, its private one is not; the call runs read-only, as the agent
+    // the backend's public handler is a tool, its private one is not; the call runs read-only, as the contract says
     assert_eq!(names(crate::common::tool_names(&agent).await), ["tools__lookup"]);
     let out = crate::common::call(&agent, "tools__lookup", json!({ "q": "tea" })).await;
     let text = crate::common::text_of(&out);
@@ -125,8 +133,7 @@ async fn agent_tools_are_the_public_handlers_on_the_bus_and_a_call_is_a_request_
 
     // a page's public handler is a tool too, while the page serves it, and the agent's call is answered by the page
     let mut page = browser(&r).await;
-    let about = json!({ "description": "Pick one.", "input_schema": { "type": "object" } });
-    rpc(&mut page, 1, "app.handle", json!({ "app": "tools", "method": "pickOne", "about": about })).await;
+    rpc(&mut page, 1, "app.handle", json!({ "app": "tools", "method": "pickOne" })).await;
     assert_eq!(names(crate::common::tool_names(&agent).await), ["tools__lookup", "tools__pick_one"]);
     let calling =
         tokio::spawn(async move { crate::common::call(&agent, "tools__pick_one", json!({})).await });

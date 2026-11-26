@@ -22,12 +22,7 @@ end)
 
 RPC.on_request("ticks", function()
   return { ticks = ticks, running = running }
-end, {
-  title = "Ticks",
-  description = "How many ticks the background loop has counted.",
-  read_only = true,
-  input_schema = { type = "object", properties = {} },
-})
+end)
 
 -- what the page calls
 RPC.on_request("_state", function()

@@ -527,9 +527,7 @@ async fn a_state_that_makes_no_sense_is_an_error_on_the_display_never_a_failed_c
 #[tokio::test]
 async fn the_keypad_is_the_pages_and_calculate_is_the_one_tool_an_agent_gets() {
     let rt = calculator().await;
-    let handlers = rt.handlers();
-    let mut methods: Vec<&str> = handlers.iter().map(|h| h.method.as_str()).collect();
-    methods.sort_unstable();
+    let methods = rt.handlers();
     assert_eq!(methods, ["_press", "calculate"], "a `_name` is the page's, the rest are the agent's tools");
     assert!(rt.contract.request("calculate").unwrap().read_only, "reading changes nothing");
     assert!(!rt.contract.request("_press").unwrap().read_only);

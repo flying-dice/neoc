@@ -47,7 +47,7 @@ RPC.on_request("caught_in_tx", function()
   db:exec("insert into t values (3)")
   return { ok = ok, n = count() }
 end)
-RPC.on_request("read_only", function() return app.agents:list() end, { read_only = true })
+RPC.on_request("read_only", function() return app.agents:list() end)
 RPC.on_request("in_task", function()
   local task = require("std:task")
   local h = task.spawn(function() task.wait(0) return app.agents:list() end)

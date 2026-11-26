@@ -18,7 +18,7 @@ use std::{
 use tokio::sync::oneshot;
 use tracing::Instrument;
 use vos_application::{
-    ports::{EventSink, HandlerInfo, Notifier, PageHandlers, PortResult, ServerEvent, Shell},
+    ports::{EventSink, Notifier, PageHandlers, PortResult, ServerEvent, Shell},
     AgentError, AgentPatch, AgentService, AppError, AppInfo, AppService, AppStatus, DeviceService,
     FilesService, Listed, NewAgent, Place, PortError,
 };
@@ -49,16 +49,15 @@ pub struct RpcHub {
     agents: OnceLock<Arc<AgentService>>,
     files: OnceLock<Arc<FilesService>>,
     peers: Mutex<Vec<RpcPeer>>,
-    /// The handlers the pages registered on the RPC bus (`RPC.on_request`), by connection: `(app, method)`, and what
-    /// each said about itself.
+    /// The handlers the pages registered on the RPC bus (`RPC.on_request`), by connection: `(app, method)`.
     handlers: Mutex<HashMap<u64, PageHandlerMap>>,
     /// Requests on the bus waiting for a page's answer, by call id.
     calls: Mutex<HashMap<u64, PendingCall>>,
     next_call: AtomicU64,
 }
 
-/// One connection's handlers on the bus: `(app, method)` to what the handler said about itself.
-type PageHandlerMap = HashMap<(String, String), HandlerInfo>;
+/// One connection's handlers on the bus: `(app, method)`.
+type PageHandlerMap = std::collections::HashSet<(String, String)>;
 
 /// A request the bus put to the pages that serve its method: the first answer settles it.
 struct PendingCall {
@@ -297,15 +296,7 @@ impl RpcHub {
             let mut handlers = self.handlers.lock();
             let mine = handlers.entry(peer.connection_id()).or_default();
             if serves {
-                let about = p.about.unwrap_or_default();
-                let info = HandlerInfo {
-                    method: p.method,
-                    title: about.title,
-                    description: about.description,
-                    input_schema: about.input_schema,
-                    read_only: about.read_only,
-                };
-                mine.insert(key, info);
+                mine.insert(key);
             } else {
                 mine.remove(&key);
             }
@@ -635,17 +626,6 @@ struct NotifyParams {
 struct HandleParams {
     app: AppId,
     method: String,
-    #[serde(default)]
-    about: Option<About>,
-}
-/// What a page's handler says about itself (as a backend's does with `RPC.on_request`).
-#[derive(Default, Deserialize)]
-struct About {
-    title: Option<String>,
-    description: Option<String>,
-    input_schema: Option<Value>,
-    #[serde(default)]
-    read_only: bool,
 }
 #[derive(Deserialize)]
 struct AnswerParams {
@@ -687,7 +667,7 @@ impl RpcHandler for RpcHub {
         self.decline_all(conn);
         // the apps whose handlers went with the connection: their agent tools follow
         if let (Some(gone), Some(app)) = (gone, self.app.get()) {
-            let apps: HashSet<String> = gone.into_keys().map(|(app, _)| app).collect();
+            let apps: HashSet<String> = gone.into_iter().map(|(app, _)| app).collect();
             for id in apps.iter().filter_map(|id| AppId::parse(id).ok()) {
                 app.handlers_changed(&id).await;
             }
@@ -843,20 +823,20 @@ impl Shell for RpcHub {
 impl PageHandlers for RpcHub {
     fn handles(&self, app: &AppId, method: &str) -> bool {
         let key = (app.to_string(), method.to_owned());
-        self.handlers.lock().values().any(|mine| mine.contains_key(&key))
+        self.handlers.lock().values().any(|mine| mine.contains(&key))
     }
 
-    fn handlers(&self, app: &AppId) -> Vec<HandlerInfo> {
-        let mut infos: Vec<HandlerInfo> = Vec::new();
+    fn handlers(&self, app: &AppId) -> Vec<String> {
+        let mut methods: Vec<String> = Vec::new();
         for mine in self.handlers.lock().values() {
-            for ((of, method), info) in mine {
-                if of == app.as_str() && !infos.iter().any(|i| &i.method == method) {
-                    infos.push(info.clone());
+            for (of, method) in mine {
+                if of == app.as_str() && !methods.contains(method) {
+                    methods.push(method.clone());
                 }
             }
         }
-        infos.sort_by(|a, b| a.method.cmp(&b.method));
-        infos
+        methods.sort();
+        methods
     }
 
     async fn request(&self, app: &AppId, method: &str, params: Value) -> PortResult<Value> {
@@ -865,7 +845,7 @@ impl PageHandlers for RpcHub {
             .handlers
             .lock()
             .iter()
-            .filter(|(_, mine)| mine.contains_key(&key))
+            .filter(|(_, mine)| mine.contains(&key))
             .map(|(conn, _)| *conn)
             .collect();
         if asked.is_empty() {

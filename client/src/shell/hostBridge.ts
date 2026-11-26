@@ -233,7 +233,7 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
   /** The other apps whose public notifications the frame asked for (`vos/subscribe`). */
   const subscriptions = new Set<string>()
   /** The app's methods the frame serves on the bus (`vos/handle`), and the requests it was handed, by call id. */
-  const handled = new Map<string, unknown>()
+  const handled = new Set<string>()
   const served = new Set<number>()
   /** Tell the host, without waiting: a lost registration is made again when the connection comes back. */
   const tellHost = (method: string, params: Record<string, unknown>): void => {
@@ -332,12 +332,9 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
     if (name === 'vos/handle' || name === 'vos/unhandle') {
       const method = p.method
       if (typeof method !== 'string' || method.length < 1 || method.length > MAX_METHOD) return fail(`${name} needs a method name`)
-      const about = typeof p.about === 'object' && p.about !== null ? p.about : undefined
-      if (name === 'vos/handle') handled.set(method, about)
+      if (name === 'vos/handle') handled.add(method)
       else handled.delete(method)
-      const body: Record<string, unknown> = { app: appId, method }
-      if (name === 'vos/handle' && about !== undefined) body.about = about
-      answer(callId, () => options.call(name === 'vos/handle' ? 'app.handle' : 'app.unhandle', body, { timeoutMs: 10_000 }))
+      answer(callId, () => options.call(name === 'vos/handle' ? 'app.handle' : 'app.unhandle', { app: appId, method }, { timeoutMs: 10_000 }))
       return
     }
     if (name === 'vos/answer') {
@@ -504,7 +501,7 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
       post({ jsonrpc: '2.0', method: 'vos/settled', params: { call } })
     },
     rehandle() {
-      for (const [method, about] of handled) tellHost('app.handle', about === undefined ? { app: appId, method } : { app: appId, method, about })
+      for (const method of handled) tellHost('app.handle', { app: appId, method })
     },
     appEvent(app, name, data) {
       if (!subscriptions.has(app) || name.startsWith('_') || name.startsWith('host:')) return
@@ -526,7 +523,7 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
     },
     dispose() {
       // the frame no longer serves anything on the bus, and answers nothing it was handed
-      for (const method of handled.keys()) tellHost('app.unhandle', { app: appId, method })
+      for (const method of handled) tellHost('app.unhandle', { app: appId, method })
       for (const call of served) tellHost('app.answer', { call, error: { code: METHOD_NOT_FOUND, message: 'The window closed' } })
       handled.clear()
       served.clear()
