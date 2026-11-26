@@ -9,13 +9,21 @@
  *   `ui/notifications/initialized`  the page is up (the host's cue to show it)
  *   `ui/...`, `vos/...`             a host service of the registry, if the host offers it; else "method not found"
  *   any other method                the app's own backend call: forwarded as `app.call` for the frame's own app
+ *   `vos/request`                   a request to another app's backend (`{ app, method, params }`): forwarded as
+ *                                   `app.call` for that app, held to the same limits as the frame's own calls
  *   `vos/failed`                    the page could not start
  *   `vos/shortcut`                  the shell's search chord was pressed in the frame
  *   `vos/telemetry`                 what the frame recorded (its calls' spans, its errors): passed on as `host.telemetry.ingest`
  *   `vos/telemetry/query`           the Telemetry app reads what was recorded (that app's frame only)
+ *   `vos/subscribe`                 the page listens to another app's public notifications (`{ app }`)
+ *   `vos/handle`, `vos/unhandle`    the page serves (or stops serving) one of its app's methods on the RPC bus
+ *   `vos/answer`                    the page's answer to a request of the bus (`{ call, result }` or `{ call, error }`):
+ *                                   the host takes the first answer and refuses a late one as expired
+ *   `vos/notify`                    the page sends one of its app's notifications on the bus (`{ name, params }`)
  *
  * and to the frame: `ui/notifications/host-context-changed` (a change of the host context), `vos/event` (what the
- * app's backend sent with `app.emit`) and the request `ui/resource-teardown` (the frame is about to go).
+ * app's backend sent with `app.emit`, and the public notifications of the apps it subscribed to, with their `app`),
+ * `vos/serve` (a request of the bus for a method the page serves) and `vos/settled` (another handler answered it) and the request `ui/resource-teardown` (the frame is about to go).
  *
  * **The app is the frame's, never the message's.** Each frame has a bridge made for its own app id and its own
  * `contentWindow`: a message is only the frame's when `event.source` is that window, and `app.call` is always sent
@@ -125,6 +133,17 @@ export interface HostBridge {
   contextChanged(change: Partial<HostContext>): void
   /** The app's backend sent an event: tell the frame (`vos/event`). */
   event(name: string, data: unknown): void
+  /**
+   * Another app's backend sent an event: tell the frame (`vos/event` with its `app`) when the frame subscribed to that app
+   * and the event is public. A `_name` is that app's own page's alone, and a `host:` name is the host's: neither leaves.
+   */
+  appEvent(app: string, name: string, data: unknown): void
+  /** A request of the bus for one of the app's methods (`app.request`): to the frame if it serves the method. */
+  serve(call: number, method: string, params: unknown): void
+  /** Another handler answered the request (`app.requestSettled`): the frame drops what it shows for it. */
+  settled(call: number): void
+  /** The connection came back: the host forgot the frame's handlers, so they are registered again. */
+  rehandle(): void
   /** Ask the frame to wrap up before it is removed (`ui/resource-teardown`); settles when it answers or `ms` pass. */
   teardown(reason: string, ms?: number): Promise<void>
   /** The frame is going away: answers still on their way are dropped. */
@@ -211,6 +230,15 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
   const frameKey = appId
   let nextId = 1
   const waiting = new Map<number | string, () => void>()
+  /** The other apps whose public notifications the frame asked for (`vos/subscribe`). */
+  const subscriptions = new Set<string>()
+  /** The app's methods the frame serves on the bus (`vos/handle`), and the requests it was handed, by call id. */
+  const handled = new Map<string, unknown>()
+  const served = new Set<number>()
+  /** Tell the host, without waiting: a lost registration is made again when the connection comes back. */
+  const tellHost = (method: string, params: Record<string, unknown>): void => {
+    options.call(method, params, { timeoutMs: 10_000 }).catch(() => {})
+  }
   const post = (m: ToFrame): void => {
     if (!disposed) options.post(m)
   }
@@ -267,6 +295,14 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
       post({ jsonrpc: '2.0', id: callId, result: {} })
       return
     }
+    if (name === 'vos/request') {
+      otherAppRequest(callId, params, traceparent)
+      return
+    }
+    if (name === 'vos/handle' || name === 'vos/unhandle' || name === 'vos/answer' || name === 'vos/notify') {
+      busMessage(callId, name, params)
+      return
+    }
     if (name === 'vos/telemetry/query' && appId === TELEMETRY_APP) {
       const p = (typeof params === 'object' && params !== null ? params : {}) as Record<string, unknown>
       const { kind, ...rest } = p
@@ -289,6 +325,52 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
       })
       return
     }
+    forward(callId, appId, name, params, traceparent)
+  }
+
+  /** The page's side of the RPC bus: its handlers, its answers and its notifications, always for its own app. */
+  const busMessage = (callId: number | string, name: string, params: unknown): void => {
+    const p = (typeof params === 'object' && params !== null ? params : {}) as Record<string, unknown>
+    const fail = (message: string): void => post({ jsonrpc: '2.0', id: callId, error: { code: INVALID_PARAMS, message } })
+    if (name === 'vos/handle' || name === 'vos/unhandle') {
+      const method = p.method
+      if (typeof method !== 'string' || method.length < 1 || method.length > MAX_METHOD) return fail(`${name} needs a method name`)
+      const about = typeof p.about === 'object' && p.about !== null ? p.about : undefined
+      if (name === 'vos/handle') handled.set(method, about)
+      else handled.delete(method)
+      const body: Record<string, unknown> = { app: appId, method }
+      if (name === 'vos/handle' && about !== undefined) body.about = about
+      answer(callId, () => options.call(name === 'vos/handle' ? 'app.handle' : 'app.unhandle', body, { timeoutMs: 10_000 }))
+      return
+    }
+    if (name === 'vos/answer') {
+      if (typeof p.call !== 'number') return fail('vos/answer needs the call it answers')
+      served.delete(p.call)
+      const body: Record<string, unknown> = { call: p.call }
+      if (p.error !== undefined) body.error = p.error
+      else body.result = p.result ?? null
+      answer(callId, () => options.call('app.answer', body, { timeoutMs: 10_000 }))
+      return
+    }
+    // vos/notify
+    if (typeof p.name !== 'string' || p.name.length < 1) return fail('vos/notify needs the notification name')
+    const refusal = refuseArgs(p.params)
+    if (refusal) return fail(refusal)
+    answer(callId, () => options.call('app.notify', { app: appId, name: p.name, params: p.params ?? {} }, { timeoutMs: 10_000 }))
+  }
+
+  /** Another app's request (`vos/request`): checked, then forwarded as that app's `app.call`. */
+  const otherAppRequest = (callId: number | string, params: unknown, traceparent?: string): void => {
+    const p = (typeof params === 'object' && params !== null ? params : {}) as { app?: unknown; method?: unknown; params?: unknown }
+    const fail = (message: string): void => post({ jsonrpc: '2.0', id: callId, error: { code: INVALID_PARAMS, message } })
+    if (typeof p.app !== 'string' || !APP_ID.test(p.app)) return fail('vos/request needs the id of the app to call (`app`)')
+    if (typeof p.method !== 'string' || p.method.length < 1 || p.method.length > MAX_METHOD || p.method.includes('/'))
+      return fail(`vos/request needs the name of a method of ${p.app} (\`method\`)`)
+    forward(callId, p.app, p.method, p.params, traceparent)
+  }
+
+  /** A call of an app's backend, through the gate: the frame's own app's, or (`vos/request`) another app's. */
+  const forward = (callId: number | string, app: string, name: string, params: unknown, traceparent?: string): void => {
     const refusal = refuseArgs(params)
     if (refusal) {
       post({ jsonrpc: '2.0', id: callId, error: { code: INVALID_PARAMS, message: refusal } })
@@ -316,7 +398,7 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
           .call(
             'app.call',
             {
-              app: appId,
+              app,
               method: name,
               args: params ?? null,
               ...(traceparent && TRACEPARENT.test(traceparent) ? { traceparent } : {})
@@ -350,6 +432,9 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
       if (spans.length + logs.length === 0) return
       // a failure to record is never the app's problem
       options.call('host.telemetry.ingest', { app: appId, spans, logs }).catch(() => {})
+    } else if (name === 'vos/subscribe') {
+      const app = typeof params === 'object' && params !== null ? (params as { app?: unknown }).app : null
+      if (typeof app === 'string' && APP_ID.test(app) && app !== appId) subscriptions.add(app)
     } else if (name === 'vos/shortcut') {
       const chord =
         typeof params === 'object' && params !== null ? (params as Record<string, unknown>) : {}
@@ -400,7 +485,33 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
       post({ jsonrpc: '2.0', method: 'ui/notifications/host-context-changed', params: change })
     },
     event(name, data) {
-      post({ jsonrpc: '2.0', method: 'vos/event', params: { name, data } })
+      // the app's own event: with its app (as another app's carries), and marked as the frame's own; a host event
+      // (`host:...`) is nobody's app's
+      post({
+        jsonrpc: '2.0',
+        method: 'vos/event',
+        params: name.startsWith('host:') ? { name, data } : { app: appId, own: true, name, data }
+      })
+    },
+    serve(call, method, params) {
+      if (!handled.has(method)) {
+        // the frame stopped serving it before the request reached it: that is no answer
+        tellHost('app.answer', { call, error: { code: METHOD_NOT_FOUND, message: `${appId}'s page no longer serves ${method}` } })
+        return
+      }
+      served.add(call)
+      post({ jsonrpc: '2.0', method: 'vos/serve', params: { call, method, params } })
+    },
+    settled(call) {
+      if (!served.delete(call)) return
+      post({ jsonrpc: '2.0', method: 'vos/settled', params: { call } })
+    },
+    rehandle() {
+      for (const [method, about] of handled) tellHost('app.handle', about === undefined ? { app: appId, method } : { app: appId, method, about })
+    },
+    appEvent(app, name, data) {
+      if (!subscriptions.has(app) || name.startsWith('_') || name.startsWith('host:')) return
+      post({ jsonrpc: '2.0', method: 'vos/event', params: { app, name, data } })
     },
     teardown(reason, ms = 1000) {
       if (disposed) return Promise.resolve()
@@ -417,6 +528,11 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
       })
     },
     dispose() {
+      // the frame no longer serves anything on the bus, and answers nothing it was handed
+      for (const method of handled.keys()) tellHost('app.unhandle', { app: appId, method })
+      for (const call of served) tellHost('app.answer', { call, error: { code: METHOD_NOT_FOUND, message: 'The window closed' } })
+      handled.clear()
+      served.clear()
       disposed = true
       // closing the window ends the calls the host is still running for it, and frees their places
       running.abort()
@@ -424,6 +540,9 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
     }
   }
 }
+
+/** An app id, as the host makes them. */
+const APP_ID = /^[a-z0-9][a-z0-9-]{2,39}$/
 
 /** The `app.event` notification of the host (`AppEvent` in the generated types): which app, and what its backend sent. */
 const appEvent = z.object({
@@ -443,4 +562,29 @@ export function eventFor(
   return parsed.success && parsed.data.app === appId
     ? { name: parsed.data.name, data: parsed.data.data }
     : null
+}
+
+/** The event of an `app.event` notification when it is another app's than `appId` (for {@link HostBridge.appEvent}), else `null`. */
+export function otherAppEventFor(
+  appId: string,
+  method: string,
+  params: Record<string, unknown>
+): { app: string; name: string; data: HostAppEvent['data'] } | null {
+  if (method !== 'app.event') return null
+  const parsed = appEvent.safeParse(params)
+  return parsed.success && parsed.data.app !== appId ? parsed.data : null
+}
+
+/**
+ * Hand a host notification to the frame's bridge when it is the frame's: its app's events and the public events of the
+ * apps it subscribed to, the requests of the bus for its app (`app.request`) and their settling (`app.requestSettled`).
+ */
+export function routeToFrame(bridge: HostBridge, appId: string, method: string, params: Record<string, unknown>): void {
+  const event = eventFor(appId, method, params)
+  if (event) return bridge.event(event.name, event.data)
+  const other = otherAppEventFor(appId, method, params)
+  if (other) return bridge.appEvent(other.app, other.name, other.data)
+  if (method === 'app.request' && params.app === appId && typeof params.call === 'number' && typeof params.method === 'string')
+    return bridge.serve(params.call, params.method, params.params)
+  if (method === 'app.requestSettled' && typeof params.call === 'number') bridge.settled(params.call)
 }

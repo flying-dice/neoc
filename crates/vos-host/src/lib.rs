@@ -190,6 +190,12 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     // every app can list and call the tools of the running apps (the Agents app offers them to its agents)
     let app_tools: Arc<dyn AppTools> = service.clone();
     lua.bind_tools(Arc::downgrade(&app_tools));
+    // the one RPC bus: every app's backend sends its requests and notifications through it, and the pages' handlers
+    // (kept by the `/rpc` adapter) answer requests on it beside the backends'
+    let bus: Arc<dyn vos_application::ports::AppBus> = service.clone();
+    lua.bind_bus(Arc::downgrade(&bus));
+    let pages: Arc<dyn vos_application::ports::PageHandlers> = hub.clone();
+    service.bind_pages(Arc::downgrade(&pages));
     hub.bind(service.clone(), devices.clone());
     hub.bind_agents(contacts.clone());
     // the Files page: every installed app's Documents, and this machine's own file system

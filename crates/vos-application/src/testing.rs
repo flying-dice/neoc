@@ -4,8 +4,8 @@ use crate::{
     files::{AppFiles, FileStore},
     ports::{
         AgentDirectory, AgentStore, AppData, AppPackage, AppRuntime, CallContext, Clock, DataStore, DataTx,
-        DeviceRegistry, EventSink, ExecOutcome, Fetcher, InstalledApp, InstalledAppStore, LoadedApp, Params,
-        PortResult, RandomSource, ServerEvent, Shell, SqlMigration, ToolRegistry,
+        DeviceRegistry, EventSink, ExecOutcome, Fetcher, HandlerInfo, InstalledApp, InstalledAppStore,
+        LoadedApp, Params, PortResult, RandomSource, ServerEvent, Shell, SqlMigration, ToolRegistry,
     },
     services::{AppService, Ports},
     PortError,
@@ -272,6 +272,24 @@ impl AppRuntime for FakeRuntime {
     ) -> PortResult<Value> {
         self.handler_calls.lock().unwrap().push((app.to_string(), method.to_owned(), args.clone()));
         Ok(json!({ "app": app.as_str(), "method": method, "args": args }))
+    }
+    async fn call_handler_read_only(
+        &self,
+        app: &AppId,
+        method: &str,
+        args: Value,
+        ctx: CallContext,
+    ) -> PortResult<Value> {
+        self.call_handler(app, method, args, ctx).await
+    }
+    fn has_handler(&self, _: &AppId, _: &str) -> bool {
+        true
+    }
+    fn handlers(&self, _: &AppId) -> Vec<HandlerInfo> {
+        Vec::new()
+    }
+    async fn deliver_notification(&self, _: &AppId, _: &str, _: Value) -> PortResult<()> {
+        Ok(())
     }
 }
 

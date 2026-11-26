@@ -9,7 +9,11 @@
 //! app.tools.all() / .call(...)    the tools of every running app, for an agent of the app's own
 //! app.t.string { ... } ...        input schema builders
 //! app.notify { ... }              a notification
-//! app.emit(name, data)            an event for the app's open pages
+//! app.emit(name, data)            an event for the app's open pages (and, unless `_name`, other apps' listeners)
+//! app.sendRequest(app, method, p?)     a request on the RPC bus: the first handler to answer wins
+//! app.onRequest(method, fn)            serve one of this app's methods on the bus
+//! app.sendNotification(name, p?)       one of this app's notifications, to whoever listens
+//! app.onNotification(app, name, fn)    hear an app's notification
 //! app.openWindow(params?)         the app's window, opened or brought forward
 //! app.agents:list()               the agent contacts
 //! app.log(message)                a line in the host's log
@@ -35,6 +39,7 @@ mod data;
 mod files;
 mod json;
 mod misc;
+mod peers;
 mod schema;
 mod tools;
 
@@ -62,9 +67,12 @@ pub(crate) const MODULE: &str = "vos:app";
 pub mod app {
     use super::data::{Db, Kv};
     use super::files::Files;
+    use super::json::Json;
     use super::misc::{self, Agents, EventData, Notification, ThisApp, WindowParams};
+    use super::peers::{self, About, Listener, Params, RequestError, RequestHandler, RequestResult};
     use super::tools::{self as registry, Tool};
     use mlua_ir::Object;
+    use mlua_ir::Unknown;
     use neoc_vm::mlua::{self, Lua};
 
     /// The app's id.
@@ -136,6 +144,49 @@ pub mod app {
     /// `host:...`), `data` is JSON of at most 64 KiB. A change to the world like `notify`: a `readOnly` tool may not.
     pub fn emit(lua: &Lua, name: String, data: Option<EventData>) -> mlua::Result<()> {
         misc::emit(&*super::shared(lua)?, name, data)
+    }
+
+    /// Send a request on the RPC bus to `app` (this one's id included): every handler registered for `method`, a
+    /// backend's (`onRequest`, or the entry's table) or an open page's, is asked, and the first answer wins (the others
+    /// are cancelled). The handler is told this app called (`ctx.actor.kind` is `"app"`). The result is
+    /// `(result, nil)`, or `(nil, err)` when the app is not running, nothing handles the method, or the handler
+    /// failed. Raises for an id that is not an app's, a method name that is not 1 to 128 characters, and inside a
+    /// `readOnly` tool. It waits without the app's turn.
+    #[host("Wait")]
+    pub async fn sendRequest(
+        lua: Lua,
+        app: String,
+        method: String,
+        params: Option<Params>,
+    ) -> mlua::Result<Result<Json<Unknown<RequestResult>>, RequestError>> {
+        peers::send_request(lua, app, method, params).await
+    }
+
+    /// Serve one of this app's methods on the RPC bus: `fn(params, ctx)` answers a request for `method`, from the
+    /// app's page, another app or an agent. An open page of the app may serve it too: the first answer wins. `about`
+    /// describes the handler: a public method (no leading `_`) is an agent tool, shown with it. Raises for a method
+    /// this backend already serves, and inside a `readOnly` tool.
+    pub fn onRequest(
+        lua: &Lua,
+        method: String,
+        handler: RequestHandler,
+        about: Option<About>,
+    ) -> mlua::Result<()> {
+        peers::on_request(lua, method, handler, about)
+    }
+
+    /// Send one of this app's notifications on the RPC bus: to the app's open pages and backend listeners and, unless
+    /// it is a `_name`, to every other app that listens. Nothing waits for it. As `emit` takes it.
+    pub fn sendNotification(lua: &Lua, name: String, params: Option<EventData>) -> mlua::Result<()> {
+        peers::send_notification(lua, name, params)
+    }
+
+    /// Hear an app's notification (this one's too: what its page sends): `fn(params, ctx)` runs, as a call of this
+    /// app's own, each time `app` sends `name`, with `ctx.actor` that app. Listeners run in the order they were added.
+    /// Raises for an id that is not an app's, another app's `_name` (private: it never leaves that app) or a `host:`
+    /// name, and inside a `readOnly` tool.
+    pub fn onNotification(lua: &Lua, app: String, name: String, listener: Listener) -> mlua::Result<()> {
+        peers::on_notification(lua, app, name, listener)
     }
 }
 

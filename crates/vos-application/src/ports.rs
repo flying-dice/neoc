@@ -70,6 +70,64 @@ pub trait AppRuntime: Send + Sync {
         args: Value,
         ctx: CallContext,
     ) -> PortResult<Value>;
+    /// `call_handler` with every write refused (data, `app.kv`, `app.files`, notifications, events, windows): an agent's
+    /// call of a handler the app described as read-only.
+    async fn call_handler_read_only(
+        &self,
+        app: &AppId,
+        method: &str,
+        args: Value,
+        ctx: CallContext,
+    ) -> PortResult<Value>;
+    /// Whether the app's backend has a handler for `method` on the bus (`app.onRequest`, or its entry's table).
+    fn has_handler(&self, app: &AppId, method: &str) -> bool;
+    /// The handlers the app's backend has on the bus, as each described itself when it registered.
+    fn handlers(&self, app: &AppId) -> Vec<HandlerInfo>;
+    /// An app's notification, from its page or its backend: to its open pages and every other app's that listens
+    /// (through the shell), and to every backend that listens (`app.onNotification`). A `_name` never leaves the app.
+    async fn deliver_notification(&self, from: &AppId, name: &str, params: Value) -> PortResult<()>;
+}
+
+// ---- the RPC bus ------------------------------------------------------------------------------
+
+/// A handler on the bus, as it described itself when it registered: what an agent is shown of it when it is public (a
+/// method without a leading `_` is an agent tool, `<app>__<method in snake case>`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct HandlerInfo {
+    pub method: String,
+    /// The name a person is shown.
+    pub title: Option<String>,
+    /// What it does: an agent decides from it when to call it.
+    pub description: Option<String>,
+    /// The JSON Schema of its params.
+    pub input_schema: Option<Value>,
+    /// It changes nothing: an agent's call of the backend's handler runs with every write refused.
+    pub read_only: bool,
+}
+
+/// The one RPC bus: every app request and notification, from a page or a backend, goes through it. A request reaches
+/// every handler registered for its method, a backend's and the open pages' alike, and the first answer wins (the
+/// others are cancelled); a notification reaches every subscriber, and nothing waits for it.
+#[async_trait]
+pub trait AppBus: Send + Sync {
+    /// `sendRequest`: `caller` asks `app` for `method`. Method not found when no handler is registered anywhere.
+    async fn request(&self, caller: Actor, app: &AppId, method: &str, params: Value) -> PortResult<Value>;
+    /// `sendNotification`: `from`'s notification, to whoever listens.
+    async fn publish(&self, from: &AppId, name: &str, params: Value) -> PortResult<()>;
+    /// The handlers of `app` on the bus changed (one registered or went away): its agent tools follow.
+    async fn handlers_changed(&self, app: &AppId);
+}
+
+/// The handlers the open pages registered on the bus (`rpc.onRequest` in a page). The `/rpc` adapter keeps them per
+/// connection.
+#[async_trait]
+pub trait PageHandlers: Send + Sync {
+    /// Whether some open page serves `method` of `app`.
+    fn handles(&self, app: &AppId, method: &str) -> bool;
+    /// The handlers the open pages registered for `app`, as each described itself (one per method).
+    fn handlers(&self, app: &AppId) -> Vec<HandlerInfo>;
+    /// Ask every page that serves it; the first answer wins and the others are told the request is settled.
+    async fn request(&self, app: &AppId, method: &str, params: Value) -> PortResult<Value>;
 }
 
 // ---- tools / notifications / clients --------------------------------------------------------

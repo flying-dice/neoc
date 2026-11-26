@@ -1,0 +1,31 @@
+{
+  "name": "@vos-apps/app1",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Add and clear items; every change is a notification other apps (and agents) can act on.",
+  "vos": {
+    "title": "App 1",
+    "icon": "square.and.pencil",
+    "tint": "orange",
+    "window": {
+      "w": 380,
+      "h": 560,
+      "minW": 320,
+      "minH": 420
+    }
+  },
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite build --watch",
+    "typecheck": "vite build && svelte-check --tsconfig ./tsconfig.json"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@vos/vite-plugin-v2": "workspace:*",
+    "svelte": "^5.57.2",
+    "svelte-check": "^4.7.6",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.4"
+  }
+}

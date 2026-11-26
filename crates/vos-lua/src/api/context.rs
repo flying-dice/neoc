@@ -8,7 +8,7 @@ use std::convert::Infallible;
 use vos_application::ports::CallContext;
 use vos_domain::{time, ActorKind as DomainActorKind};
 
-/// What makes a call: the person, from the app's page, or an agent, through a tool.
+/// What makes a call: the person, from the app's page, an agent, through a tool, or another app's backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Shape)]
 #[serde(rename_all = "snake_case")]
 #[shape(module = "vos:app")]
@@ -17,15 +17,17 @@ pub enum ActorKind {
     User,
     /// An agent, through a tool.
     Agent,
+    /// Another app's backend: a request it sent (`app.request`), or its notification reaching a listener (`app.on`).
+    App,
 }
 
 /// Who is calling.
 #[derive(Clone, Debug, Serialize, Shape)]
 #[shape(module = "vos:app")]
 pub struct Actor {
-    /// The person or an agent.
+    /// The person, an agent or another app.
     pub kind: ActorKind,
-    /// The caller's id: `"user"` for the person, the agent's id for an agent.
+    /// The caller's id: `"user"` for the person, the agent's id for an agent, the app's id for an app.
     pub id: String,
     /// The name to show for the caller.
     pub name: String,
@@ -44,6 +46,7 @@ impl Context {
         let kind = match ctx.actor.kind {
             DomainActorKind::User => ActorKind::User,
             DomainActorKind::Agent => ActorKind::Agent,
+            DomainActorKind::App => ActorKind::App,
         };
         Self {
             actor: Actor { kind, id: ctx.actor.id.clone(), name: ctx.actor.name.clone() },

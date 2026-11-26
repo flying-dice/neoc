@@ -76,7 +76,11 @@ mod tests {
                 "kv",
                 "log",
                 "notify",
+                "onNotification",
+                "onRequest",
                 "openWindow",
+                "sendNotification",
+                "sendRequest",
                 "t",
                 "tool",
                 "tools"

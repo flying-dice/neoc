@@ -6,6 +6,7 @@ mod agents;
 mod app_call_limits;
 mod app_frames;
 mod apps;
+mod bus;
 mod cli;
 mod common;
 mod e2e;

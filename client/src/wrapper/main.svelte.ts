@@ -10,7 +10,7 @@
  * The app id is the path this page was served on (`/apps/<id>`), never anything a message says.
  */
 import { settings } from '../lib/settings.svelte'
-import { createHostBridge, eventFor, type HostBridge } from '../shell/hostBridge'
+import { createHostBridge, routeToFrame, type HostBridge } from '../shell/hostBridge'
 import { callWhenConnected, createHostChannel, type CallOptions } from '../shell/channel'
 import { contextChange, hostContextOf, type HostContext } from '../shell/hostContext'
 import { focusFrame } from '../shell/frameFocus'
@@ -87,8 +87,7 @@ export function start(root: Document = document): void {
   })
   window.addEventListener('message', (e) => bridge.receive(e))
   channel.onNotification((method, params) => {
-    const event = eventFor(appId, method, params)
-    if (event) bridge.event(event.name, event.data)
+    routeToFrame(bridge, appId, method, params)
   })
 
   // the connection dropped and came back (a restart, the network): a change made while it was away reached nobody, so the
@@ -97,7 +96,10 @@ export function start(root: Document = document): void {
   let dropped = false
   channel.transport.onStatus((status) => {
     if (status === 'open') {
-      if (dropped) bridge.event('host:reconnected', null)
+      if (dropped) {
+        bridge.rehandle()
+        bridge.event('host:reconnected', null)
+      }
       wasOpen = true
       dropped = false
     } else if (wasOpen) dropped = true

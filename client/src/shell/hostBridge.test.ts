@@ -4,6 +4,7 @@ import {
   createHostBridge,
   eventFor,
   jsonDepth,
+  otherAppEventFor,
   MAX_ARGS_BYTES,
   PROTOCOL_VERSION,
   refuseArgs,
@@ -143,6 +144,64 @@ describe('the handshake', () => {
     const { bridge, posted } = rig()
     bridge.receive({ source: FRAME, data: request('p', 'ping') })
     expect(posted).toEqual([{ jsonrpc: '2.0', id: 'p', result: {} }])
+  })
+})
+
+describe('requests to another app', () => {
+  test('vos/request becomes an app.call for the app it names, and its answer comes back', async () => {
+    const { bridge, posted, calls, flush } = rig(async () => ({ id: 1, text: 'milk' }))
+    bridge.receive({ source: FRAME, data: request(4, 'vos/request', { app: 'ledger', method: 'add', params: { text: 'milk' } }) })
+    await flush()
+    expect(calls).toEqual([{ method: 'app.call', params: { app: 'ledger', method: 'add', args: { text: 'milk' } } }])
+    expect(posted).toEqual([{ jsonrpc: '2.0', id: 4, result: { id: 1, text: 'milk' } }])
+  })
+
+  test('a vos/request without an app id or a method name is refused before the host hears of it', async () => {
+    const { bridge, posted, calls, flush } = rig()
+    bridge.receive({ source: FRAME, data: request(1, 'vos/request', { app: 'Not An Id', method: 'add' }) })
+    bridge.receive({ source: FRAME, data: request(2, 'vos/request', { app: 'ledger' }) })
+    bridge.receive({ source: FRAME, data: request(3, 'vos/request', { app: 'ledger', method: 'ui/open-link' }) })
+    await flush()
+    expect(calls).toEqual([])
+    expect(posted.map((m) => (m as { error: { code: number } }).error.code)).toEqual([-32602, -32602, -32602])
+  })
+})
+
+describe('the page on the RPC bus', () => {
+  test('handling, answering and notifying are forwarded to the host for the frame’s own app', async () => {
+    const { bridge, calls, flush } = rig()
+    bridge.receive({ source: FRAME, data: request(1, 'vos/handle', { method: '_client_confirm' }) })
+    bridge.receive({ source: FRAME, data: request(2, 'vos/answer', { call: 7, result: true }) })
+    bridge.receive({ source: FRAME, data: request(3, 'vos/notify', { name: '_typing', params: { text: 'hi' } }) })
+    bridge.receive({ source: FRAME, data: request(4, 'vos/unhandle', { method: '_client_confirm' }) })
+    await flush()
+    expect(calls).toEqual([
+      { method: 'app.handle', params: { app: 'notes', method: '_client_confirm' } },
+      { method: 'app.answer', params: { call: 7, result: true } },
+      { method: 'app.notify', params: { app: 'notes', name: '_typing', params: { text: 'hi' } } },
+      { method: 'app.unhandle', params: { app: 'notes', method: '_client_confirm' } }
+    ])
+  })
+
+  test('a request reaches the frame only for a method it serves, and its settling only once it was handed one', async () => {
+    const { bridge, posted, calls, flush } = rig()
+    bridge.receive({ source: FRAME, data: request(1, 'vos/handle', { method: '_client_confirm' }) })
+    await flush()
+    posted.length = 0
+    calls.length = 0
+    bridge.serve(5, '_client_confirm', { question: 'Sure?' })
+    bridge.settled(5)
+    bridge.settled(5)
+    bridge.serve(6, 'other', {})
+    await flush()
+    expect(posted).toEqual([
+      { jsonrpc: '2.0', method: 'vos/serve', params: { call: 5, method: '_client_confirm', params: { question: 'Sure?' } } },
+      { jsonrpc: '2.0', method: 'vos/settled', params: { call: 5 } }
+    ])
+    // a method the frame does not serve is declined for it, which is no answer
+    expect(calls).toEqual([
+      { method: 'app.answer', params: { call: 6, error: { code: -32601, message: "notes's page no longer serves other" } } }
+    ])
   })
 })
 
@@ -404,9 +463,29 @@ describe('what comes from the page and what goes into the frame', () => {
     bridge.contextChanged({ theme: 'dark' })
     bridge.contextChanged({})
     expect(posted).toEqual([
-      { jsonrpc: '2.0', method: 'vos/event', params: { name: 'tasks.changed', data: { n: 1 } } },
+      { jsonrpc: '2.0', method: 'vos/event', params: { app: 'notes', own: true, name: 'tasks.changed', data: { n: 1 } } },
       { jsonrpc: '2.0', method: 'ui/notifications/host-context-changed', params: { theme: 'dark' } }
     ])
+  })
+
+  test("another app's public events reach the frame once it subscribed to that app, its private ones never", () => {
+    const { bridge, posted } = rig()
+    bridge.appEvent('ledger', 'added', { n: 1 })
+    expect(posted, 'not subscribed: nothing').toEqual([])
+    bridge.receive({ source: FRAME, data: { jsonrpc: '2.0', method: 'vos/subscribe', params: { app: 'ledger' } } })
+    bridge.receive({ source: FRAME, data: { jsonrpc: '2.0', method: 'vos/subscribe', params: { app: 'Not An Id' } } })
+    bridge.appEvent('ledger', 'added', { n: 2 })
+    bridge.appEvent('ledger', '_tick', { n: 3 })
+    bridge.appEvent('ledger', 'host:reconnected', null)
+    bridge.appEvent('other', 'added', { n: 4 })
+    expect(posted).toEqual([{ jsonrpc: '2.0', method: 'vos/event', params: { app: 'ledger', name: 'added', data: { n: 2 } } }])
+  })
+
+  test("otherAppEventFor: an app.event of another app than the frame's", () => {
+    const params = { app: 'ledger', name: 'added', data: 1 }
+    expect(otherAppEventFor('notes', 'app.event', params)).toEqual(params)
+    expect(otherAppEventFor('ledger', 'app.event', params)).toBeNull()
+    expect(otherAppEventFor('notes', 'app.installed', params)).toBeNull()
   })
 
   test('the first thing the page says, ui/initialize, is its hello, whether or not it was a good one', () => {

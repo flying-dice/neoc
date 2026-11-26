@@ -11,11 +11,36 @@
 // contract) are plain names the host forwards to the app's backend. The host knows which app a frame is from the
 // frame itself, never from a message.
 //
-// This script defines one global, `vos`, that the generated modules read (an app's `@<app id>/rpc`, and `@vos/host` and `@vos/tracing`):
+// This script defines one global, `vos`: the page's whole API, with nothing to import. An app's build only adds types for
+// it (the apps' requests and notifications, by app id). The RPC bus, with the same four verbs an app's backend has:
+//
+//   vos.sendRequest(app, method, params?)  a request to an app (this one's id too): every handler registered for the
+//                            method, its backend's or an open page's, is asked; the first answer wins. Rejects with a
+//                            `vos.RpcError`
+//   vos.onRequest(method, fn) serve one of this app's methods from the page: `fn(params, { signal })` answers (it may
+//                            return a promise); `signal` aborts when another handler answered first. Returns a function
+//                            that stops serving
+//   vos.sendNotification(name, params?)  send one of this app's notifications, to whoever listens
+//   vos.onNotification(app, name, fn)  hear an app's notification (this one's, or another app's public one); returns a
+//                            function that stops listening
+//   vos.host                 the host page: theme, context, capabilities, hosted, ready, on('host:...'), onContext,
+//                            onTeardown, openLink(url), requestDisplayMode(mode)
+//   vos.tracing              spans and events, after Rust's `tracing`
+//   vos.RpcError             what a failed request rejects with: `code`, `message`, `data`
+//
+// and underneath, which the older generated modules (`@<app id>/rpc`, `@vos/host`, `@vos/tracing`) read:
 //
 //   vos.ready                a promise: the handshake is done (`vos.context` and `vos.capabilities` are set)
 //   vos.call(method, params) a JSON-RPC request to the host; rejects with an Error that carries `code` and `data`
 //   vos.on(name, fn)         hear a `vos/event` (what the backend sent with `app.emit`); returns a function to stop
+//   vos.onApp(app, name, fn) hear a public notification of another app (its backend's `app.emit` of a name without a
+//                            leading `_`); the first listener for an app asks the host for its events (`vos/subscribe`)
+//   vos.onRequest(method, fn, about?) serve one of the app's methods on the RPC bus, beside its backend:
+//                            `fn(params, { signal })` answers (it may return a promise); the first handler to answer
+//                            wins, `signal` aborts when another answered first. `about` ({ title, description,
+//                            inputSchema, readOnly }) is what an agent is shown when the method is public (a tool).
+//                            Returns a function that stops serving.
+//   vos.sendNotification(name, params) send one of the app's notifications on the bus, to whoever listens
 //   vos.onContext(fn)        hear a change of the host context; returns a function to stop
 //   vos.onTeardown(fn)       run `fn` (may return a promise) when the host is about to remove the frame
 //   vos.context              the host context now (theme, displayMode, locale, timeZone, ...)
@@ -42,6 +67,12 @@
   var PROTOCOL_VERSION = '2026-01-26'
   var pending = new Map()
   var eventListeners = new Map()
+  // another app's notifications, by `<app> <name>`, and the apps the host was asked for
+  var appListeners = new Map()
+  var subscribed = new Set()
+  // the app's methods this page serves on the bus, and the requests it is answering, by call id
+  var requestHandlers = new Map()
+  var serving = new Map()
   var contextListeners = new Set()
   var teardownListeners = new Set()
   var next = 1
@@ -232,6 +263,21 @@
     event: function (level, message, fields) {
       if (level === 'error' && message instanceof Error) recordError(message, fields)
       else recordEvent(level, message, fields)
+    },
+    trace: function (message, fields) {
+      vos.tracing.event('trace', message, fields)
+    },
+    debug: function (message, fields) {
+      vos.tracing.event('debug', message, fields)
+    },
+    info: function (message, fields) {
+      vos.tracing.event('info', message, fields)
+    },
+    warn: function (message, fields) {
+      vos.tracing.event('warn', message, fields)
+    },
+    error: function (message, fields) {
+      vos.tracing.event('error', message, fields)
     }
   }
   window.addEventListener('pagehide', flush)
@@ -261,12 +307,20 @@
         : 'light'
   )
 
+  // what a failed request rejects with: a JSON-RPC error's `code`, `message` and `data`
+  class RpcError extends Error {
+    constructor(code, message, data) {
+      super(message)
+      this.name = 'RpcError'
+      this.code = code
+      this.data = data
+    }
+  }
+  vos.RpcError = RpcError
+
   function failureOf(error) {
     var message = error && typeof error.message === 'string' ? error.message : 'the call failed'
-    var failure = new Error(message)
-    failure.code = error && typeof error.code === 'number' ? error.code : -32603
-    failure.data = error ? error.data : undefined
-    return failure
+    return new RpcError(error && typeof error.code === 'number' ? error.code : -32603, message, error ? error.data : undefined)
   }
 
   // What goes over `postMessage` is structured-cloned, and a framework's reactive object (a Svelte 5 `$state` proxy, a Vue `reactive`)
@@ -327,6 +381,111 @@
   vos.on = function (name, fn) {
     return listen(eventListeners, name, fn)
   }
+  vos.onApp = function (app, name, fn) {
+    app = String(app)
+    if (!subscribed.has(app)) {
+      subscribed.add(app)
+      post({ method: 'vos/subscribe', params: { app: app } })
+    }
+    return listen(appListeners, app + ' ' + name, fn)
+  }
+  vos.onRequest = function (method, fn, about) {
+    method = String(method)
+    if (requestHandlers.has(method)) throw new Error('This page already serves "' + method + '"')
+    requestHandlers.set(method, fn)
+    var handle = { method: method }
+    if (about !== undefined) handle.about = about
+    vos.call('vos/handle', handle).catch(function () {})
+    return function () {
+      if (requestHandlers.get(method) !== fn) return
+      requestHandlers.delete(method)
+      vos.call('vos/unhandle', { method: method }).catch(function () {})
+    }
+  }
+  vos.sendNotification = function (name, params) {
+    return vos.call('vos/notify', { name: String(name), params: params === undefined ? {} : params })
+  }
+  vos.sendRequest = function (app, method, params) {
+    return vos.call('vos/request', { app: String(app), method: String(method), params: params === undefined ? {} : params })
+  }
+  vos.onNotification = function (app, name, fn) {
+    return vos.onApp(app, name, function (params) {
+      fn(params === undefined || params === null ? {} : params)
+    })
+  }
+
+  // the host page that holds the app
+  vos.host = {
+    on: function (name, fn) {
+      return vos.on(name, fn)
+    },
+    get theme() {
+      // before the handshake the context is empty: the page's own data-theme (set before first paint) is the answer
+      return (vos.context.theme || document.documentElement.dataset.theme) === 'dark' ? 'dark' : 'light'
+    },
+    get context() {
+      return vos.context
+    },
+    get capabilities() {
+      return vos.capabilities
+    },
+    get hosted() {
+      return Boolean(vos.capabilities.experimental && vos.capabilities.experimental.vos && vos.capabilities.experimental.vos.ui)
+    },
+    get ready() {
+      return vos.ready.then(function () {})
+    },
+    onContext: function (fn) {
+      return vos.onContext(fn)
+    },
+    onTeardown: function (fn) {
+      return vos.onTeardown(fn)
+    },
+    openLink: function (url) {
+      return vos.call('ui/open-link', { url: url }).then(function () {})
+    },
+    requestDisplayMode: function (mode) {
+      return vos.call('ui/request-display-mode', { mode: mode }).then(function (r) {
+        return r.mode
+      })
+    }
+  }
+
+  // a request of the bus for a method this page serves: answer it, unless another handler does first
+  function serve(params) {
+    var call = params.call
+    var fn = requestHandlers.get(params.method)
+    var answer = function (body) {
+      body.call = call
+      return vos.call('vos/answer', body).catch(function (error) {
+        // too late: another handler answered first, or the request was cancelled
+        var running = serving.get(call)
+        if (running) running.abort(error)
+      })
+    }
+    if (!fn) return answer({ error: { code: -32601, message: 'This page no longer serves ' + params.method } })
+    var control = new AbortController()
+    serving.set(call, control)
+    var settle = function () {
+      serving.delete(call)
+    }
+    Promise.resolve()
+      .then(function () {
+        return fn(params.params === undefined ? {} : params.params, { signal: control.signal })
+      })
+      .then(
+        function (result) {
+          if (control.signal.aborted) return settle()
+          return answer({ result: result === undefined ? null : result }).then(settle)
+        },
+        function (error) {
+          if (control.signal.aborted) return settle()
+          var code = error && typeof error.code === 'number' ? error.code : -32010
+          return answer({ error: { code: code, message: String((error && error.message) || error) } }).then(settle)
+        }
+      )
+  }
+
   vos.onContext = function (fn) {
     contextListeners.add(fn)
     return function () {
@@ -367,8 +526,22 @@
       if (!hasId) {
         if (m.method === 'ui/notifications/host-context-changed') mergeContext(params)
         else if (m.method === 'vos/event' && params && typeof params.name === 'string') {
-          var set = eventListeners.get(params.name)
-          if (set) each(set, params.data)
+          // an app's event carries its `app` (the page's own app's too, marked `own`): heard by `onNotification`, and
+          // the own app's by `on` as well
+          if (typeof params.app === 'string') {
+            var heard = appListeners.get(params.app + ' ' + params.name)
+            if (heard) each(heard, params.data)
+          }
+          if (params.own === true || typeof params.app !== 'string') {
+            var set = eventListeners.get(params.name)
+            if (set) each(set, params.data)
+          }
+        } else if (m.method === 'vos/serve' && params && typeof params.method === 'string') serve(params)
+        else if (m.method === 'vos/settled' && params) {
+          // another handler answered first: what this page shows for the request goes
+          var running = serving.get(params.call)
+          if (running) running.abort(new Error('Answered elsewhere'))
+          serving.delete(params.call)
         }
         return
       }

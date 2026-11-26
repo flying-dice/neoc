@@ -1,0 +1,143 @@
+{
+  "openrpc": "1.4.0",
+  "info": {
+    "title": "App 1",
+    "version": "0.1.0"
+  },
+  "methods": [
+    {
+      "name": "add",
+      "summary": "Add an item",
+      "description": "Add an item to App 1's list. Every app listening to App 1 hears it (the `added` notification).",
+      "params": [
+        {
+          "name": "text",
+          "required": true,
+          "description": "What the item says.",
+          "schema": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      ],
+      "result": {
+        "name": "item",
+        "schema": {
+          "$ref": "#/components/schemas/Item"
+        }
+      }
+    },
+    {
+      "name": "clear",
+      "summary": "Clear the items",
+      "description": "Remove every item from App 1's list, once the person confirms it in an open App 1 window. Every app listening to App 1 hears it (the `cleared` notification).",
+      "params": [],
+      "result": {
+        "name": "count",
+        "schema": {
+          "type": "integer",
+          "description": "How many items were removed."
+        }
+      }
+    },
+    {
+      "name": "_items",
+      "summary": "The items, oldest first: for App 1's own page.",
+      "x-readOnly": true,
+      "params": [],
+      "result": {
+        "name": "items",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Item"
+          }
+        }
+      }
+    },
+    {
+      "name": "_client_confirm",
+      "summary": "Ask the person to confirm something: App 1's open windows serve it, and the first answer wins.",
+      "params": [
+        {
+          "name": "question",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "ok",
+        "schema": {
+          "type": "boolean"
+        }
+      }
+    },
+    {
+      "name": "added",
+      "summary": "An item was added, by App 1's page, another app or an agent.",
+      "params": [
+        {
+          "name": "item",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Item"
+          }
+        }
+      ]
+    },
+    {
+      "name": "cleared",
+      "summary": "The items were cleared.",
+      "params": [
+        {
+          "name": "count",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ]
+    },
+    {
+      "name": "_saved",
+      "summary": "The list changed: how many items it holds now. Private: only App 1's own page hears it.",
+      "params": [
+        {
+          "name": "total",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ]
+    }
+  ],
+  "components": {
+    "schemas": {
+      "Item": {
+        "type": "object",
+        "description": "One item of the list.",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "text": {
+            "type": "string"
+          },
+          "by": {
+            "type": "string",
+            "description": "Who added it: `you`, `app:<id>` for another app, `agent:<name>` for an agent."
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "by"
+        ]
+      }
+    }
+  }
+}

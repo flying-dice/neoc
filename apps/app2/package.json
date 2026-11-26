@@ -1,0 +1,31 @@
+{
+  "name": "@vos-apps/app2",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Talks to App 1: adds to it from its page or its backend, and logs what App 1 announces.",
+  "vos": {
+    "title": "App 2",
+    "icon": "bell",
+    "tint": "teal",
+    "window": {
+      "w": 400,
+      "h": 640,
+      "minW": 320,
+      "minH": 420
+    }
+  },
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite build --watch",
+    "typecheck": "vite build && svelte-check --tsconfig ./tsconfig.json"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@vos/vite-plugin-v2": "workspace:*",
+    "svelte": "^5.57.2",
+    "svelte-check": "^4.7.6",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.4"
+  }
+}

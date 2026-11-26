@@ -222,6 +222,8 @@ pub mod codes {
     pub const APP_ERROR: i32 = -32010;
     /// The client's `proto` is not served by this host.
     pub const UNSUPPORTED_PROTO: i32 = -32012;
+    /// An answer to a request on the bus that no longer waits: another handler answered first, or it was cancelled.
+    pub const EXPIRED: i32 = -32013;
     /// JSON-RPC: the method does not exist.
     pub const METHOD_NOT_FOUND: i32 = -32601;
     /// JSON-RPC: the params are malformed.

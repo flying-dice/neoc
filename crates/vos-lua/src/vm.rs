@@ -37,7 +37,7 @@ use std::{
 };
 use tokio::sync::Notify;
 use vos_application::{
-    ports::{AgentCard, AgentRoster, AppData, AppPackage, AppTools, CallContext, PortResult},
+    ports::{AgentCard, AgentRoster, AppData, AppPackage, AppTools, CallContext, HandlerInfo, PortResult},
     AppFiles, Files, NoFiles,
 };
 use vos_domain::{tool_schema, Actor, AppId, Notification, QualifiedToolName, ToolSpec};
@@ -120,6 +120,8 @@ pub struct VmConfig {
     pub files: Arc<dyn AppFiles>,
     /// The tools of every running app (`app.tools.all`, `app.tools.call`); none unless the host gives them.
     pub host_tools: Arc<dyn AppTools>,
+    /// The other apps' backends (`app.request`); none unless the host gives them.
+    pub peers: Arc<dyn AppPeers>,
     /// Library modules this VM does not offer, on top of [`crate::NOT_FOR_APPS`] (its `std:thread` workers neither).
     /// The host leaves it empty and there is no setting for it: a test uses it to show that a capability works
     /// for an app that cannot `require` a module (`app.files` without `std:fs`).
@@ -156,12 +158,29 @@ impl AppTools for NoTools {
     }
 }
 
+/// The other apps' backends, as one app's backend reaches them: `app.request(app, method, params)` runs a handler of
+/// another app's entry, told that this app called (`ctx.actor` is the app).
+#[async_trait::async_trait]
+pub trait AppPeers: Send + Sync {
+    async fn request(&self, from: &AppId, to: &AppId, method: &str, params: Value) -> PortResult<Value>;
+}
+
+/// No other apps: what an app sees when the host gives none (tests of other things).
+struct NoPeers;
+#[async_trait::async_trait]
+impl AppPeers for NoPeers {
+    async fn request(&self, _from: &AppId, to: &AppId, _method: &str, _params: Value) -> PortResult<Value> {
+        Err(vos_application::PortError::NotFound(format!("app `{to}` is not running")))
+    }
+}
+
 impl Default for VmConfig {
     fn default() -> Self {
         Self {
             roster: Arc::new(NoRoster),
             files: Arc::new(NoFiles),
             host_tools: Arc::new(NoTools),
+            peers: Arc::new(NoPeers),
             refused_modules: Vec::new(),
             test_hooks: false,
         }
@@ -187,6 +206,18 @@ pub enum Effect {
         name: String,
         data: Value,
     },
+    /// `app.onRequest`: the app's handlers on the bus changed, so its agent tools follow.
+    HandlersChanged,
+}
+
+/// A backend handler on the bus, and the order it takes its arguments in.
+#[derive(Clone)]
+pub(crate) enum Handler {
+    /// From the entry's table: `handler(ctx, args)`.
+    Returned(Function),
+    /// From `app.onRequest(method, fn, about?)`: `fn(params, ctx)`, as a listener and a page's handler take them, and
+    /// what it said about itself (an agent is shown it when the method is public).
+    Registered(Function, HandlerInfo),
 }
 
 pub(crate) struct ToolDecl {
@@ -206,11 +237,16 @@ pub(crate) struct Shared {
     pub roster: Arc<dyn AgentRoster>,
     /// Every running app's tools: what `app.tools.all` lists and `app.tools.call` runs.
     pub host_tools: Arc<dyn AppTools>,
+    /// The other apps' backends: where `app.request` sends.
+    pub peers: Arc<dyn AppPeers>,
+    /// What `app.on(app, name, fn)` registered: listeners of other apps' public notifications, by app and name.
+    pub listeners: Mutex<HashMap<(String, String), Vec<Function>>>,
     pub tools: Mutex<Vec<ToolDecl>>,
     /// What `hook(name, fn)` registered (only with [`VmConfig::test_hooks`]).
     pub handlers: Mutex<HashMap<String, Function>>,
-    /// The app's backend: the functions its entry returned, by name. Its page's `rpc(name, args)` calls one.
-    pub rpc_handlers: Mutex<HashMap<String, Function>>,
+    /// The app's backend handlers on the bus, by method: the functions its entry returned (`handler(ctx, args)`) and
+    /// those `app.onRequest` registered (`handler(params, ctx)`).
+    pub rpc_handlers: Mutex<HashMap<String, Handler>>,
     pub test_hooks: bool,
     pub effects: Mutex<Vec<Effect>>,
     /// How many of the notifications in `effects` each call queued, by its turn id ([`lifecycle::turn_id`]).
@@ -614,7 +650,7 @@ impl AppVm {
         db: Arc<dyn AppData>,
         config: VmConfig,
     ) -> Result<Self> {
-        let VmConfig { roster, files, host_tools, refused_modules, test_hooks } = config;
+        let VmConfig { roster, files, host_tools, peers, refused_modules, test_hooks } = config;
         let offered = Arc::new(crate::require::offered_modules(&refused_modules));
         let load_err =
             |e: &mlua::Error| VmError::Load { app: app.to_string(), error: ScriptError::from_lua(e) };
@@ -646,6 +682,8 @@ impl AppVm {
             offered,
             roster,
             host_tools,
+            peers,
+            listeners: Mutex::default(),
             tools: Mutex::default(),
             handlers: Mutex::default(),
             rpc_handlers: Mutex::default(),
@@ -701,6 +739,8 @@ impl AppVm {
     fn keep_handlers(&self, returned: LuaValue) -> std::result::Result<(), VmError> {
         let table = match returned {
             LuaValue::Table(t) => t,
+            // an app that registered its handlers on the bus (`app.onRequest`) need not return them too
+            LuaValue::Nil if !self.shared.rpc_handlers.lock().is_empty() => return Ok(()),
             LuaValue::Nil => return Err(VmError::BadHandlers("it returned nothing".to_owned())),
             other => return Err(VmError::BadHandlers(format!("it returned a {}", lua_type(&other)))),
         };
@@ -722,9 +762,13 @@ impl AppVm {
                     "a handler name is 1 to {MAX_HANDLER_NAME} characters"
                 )));
             }
-            handlers.insert(name, handler);
+            handlers.insert(name, Handler::Returned(handler));
         }
-        *self.shared.rpc_handlers.lock() = handlers;
+        // what `app.onRequest` registered while the entry ran stays: the table only adds to it
+        let mut registered = self.shared.rpc_handlers.lock();
+        for (name, handler) in handlers {
+            registered.entry(name).or_insert(handler);
+        }
         Ok(())
     }
 
@@ -813,6 +857,18 @@ impl AppVm {
     /// as a call of its own. It is the person's own client asking, so the call may write (an agent's tool is the
     /// one that can be `readOnly`).
     pub async fn call_handler(&self, name: &str, args: Value, ctx: &CallContext) -> Result<Value> {
+        self.call_handler_with(name, args, ctx, false).await
+    }
+
+    /// `call_handler`, with every write refused when `read_only` (an agent's call of a handler that said it changes
+    /// nothing).
+    pub async fn call_handler_with(
+        &self,
+        name: &str,
+        args: Value,
+        ctx: &CallContext,
+        read_only: bool,
+    ) -> Result<Value> {
         let handler = self
             .shared
             .rpc_handlers
@@ -820,12 +876,60 @@ impl AppVm {
             .get(name)
             .cloned()
             .ok_or_else(|| VmError::NoSuchHandler(name.chars().take(MAX_HANDLER_NAME).collect()))?;
-        self.in_call(false, async {
+        self.in_call(read_only, async {
             let convert = |e: mlua::Error| VmError::BadValue(e.to_string());
             let arg = json_to_lua(&self.lua, &args).map_err(convert)?;
             let ctx = self.ctx_value(ctx).map_err(convert)?;
-            let out: LuaValue = handler.call_async((ctx, arg)).await.map_err(|e| script(&e))?;
+            let out: LuaValue = match handler {
+                Handler::Returned(f) => f.call_async((ctx, arg)).await,
+                Handler::Registered(f, _) => f.call_async((arg, ctx)).await,
+            }
+            .map_err(|e| script(&e))?;
             lua_to_json(&out).map_err(|e| VmError::BadValue(e.to_string()))
+        })
+        .await
+    }
+
+    /// Whether the backend has a handler for `method` on the bus.
+    pub fn has_handler(&self, method: &str) -> bool {
+        self.shared.rpc_handlers.lock().contains_key(method)
+    }
+
+    /// The backend's handlers on the bus, as each described itself (a handler of the entry's table says nothing).
+    pub fn handlers(&self) -> Vec<HandlerInfo> {
+        let mut infos: Vec<HandlerInfo> = self
+            .shared
+            .rpc_handlers
+            .lock()
+            .iter()
+            .map(|(method, handler)| match handler {
+                Handler::Registered(_, info) => info.clone(),
+                Handler::Returned(_) => HandlerInfo { method: method.clone(), ..HandlerInfo::default() },
+            })
+            .collect();
+        infos.sort_by(|a, b| a.method.cmp(&b.method));
+        infos
+    }
+
+    /// Whether the app listens to `name` of `from` (`app.on`): the runtime delivers only to those that do.
+    pub fn listens(&self, from: &AppId, name: &str) -> bool {
+        self.shared.listeners.lock().contains_key(&(from.to_string(), name.to_owned()))
+    }
+
+    /// Another app's public notification: run every listener the app registered for it (`app.on(from, name, fn)`)
+    /// as `fn(params, ctx)`, in the order they were registered, as one call of its own. `ctx.actor` is the app that
+    /// sent it. A listener that raises ends the delivery with its error; the ones before it have run.
+    pub async fn deliver(&self, from: &AppId, name: &str, params: Value, ctx: &CallContext) -> Result<()> {
+        let listeners = self.shared.listeners.lock().get(&(from.to_string(), name.to_owned())).cloned();
+        let Some(listeners) = listeners else { return Ok(()) };
+        self.in_call(false, async {
+            let convert = |e: mlua::Error| VmError::BadValue(e.to_string());
+            for listener in listeners {
+                let arg = json_to_lua(&self.lua, &params).map_err(convert)?;
+                let ctx = self.ctx_value(ctx).map_err(convert)?;
+                listener.call_async::<()>((arg, ctx)).await.map_err(|e| script(&e))?;
+            }
+            Ok(())
         })
         .await
     }

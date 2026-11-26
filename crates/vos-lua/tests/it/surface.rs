@@ -182,7 +182,24 @@ async fn the_app_api_an_app_gets_is_the_one_the_schema_and_the_declarations_desc
     let app: Vec<String> = strings(&live["app"]).into_iter().collect();
     assert_eq!(
         app,
-        ["agents", "db", "emit", "files", "id", "kv", "log", "notify", "openWindow", "t", "tool", "tools"]
+        [
+            "agents",
+            "db",
+            "emit",
+            "files",
+            "id",
+            "kv",
+            "log",
+            "notify",
+            "onNotification",
+            "onRequest",
+            "openWindow",
+            "sendNotification",
+            "sendRequest",
+            "t",
+            "tool",
+            "tools"
+        ]
     );
     let db: Vec<String> = strings(&live["db"]).into_iter().collect();
     assert_eq!(db, ["all", "exec", "migrate", "one", "tx"]);

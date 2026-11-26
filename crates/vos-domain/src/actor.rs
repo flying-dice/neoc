@@ -1,4 +1,4 @@
-//! Who is acting: the human at a client, or an agent. Attribution for writes (`ctx.actor` in Lua),
+//! Who is acting: the human at a client, an agent, or another app. Attribution for writes (`ctx.actor` in Lua),
 //! revisions and notifications.
 
 use crate::AgentIdentity;
@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 pub enum ActorKind {
     User,
     Agent,
+    /// Another app's backend (`app.request`, or delivering its notification to a listener).
+    App,
 }
 
 impl ActorKind {
@@ -17,6 +19,7 @@ impl ActorKind {
         match self {
             Self::User => "user",
             Self::Agent => "agent",
+            Self::App => "app",
         }
     }
 }
@@ -38,6 +41,12 @@ impl Actor {
     #[must_use]
     pub fn agent(id: &str, name: &str) -> Self {
         Self { kind: ActorKind::Agent, id: id.to_owned(), name: name.to_owned() }
+    }
+
+    /// Another app's backend: its id is the app's id, and so is its name.
+    #[must_use]
+    pub fn app(id: &str) -> Self {
+        Self { kind: ActorKind::App, id: id.to_owned(), name: id.to_owned() }
     }
 
     #[must_use]

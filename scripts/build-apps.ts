@@ -17,6 +17,7 @@
  * with `dev_reload` it rebuilds an app's VM when its files change, so `bun run build:apps` is the dev loop.
  */
 import { DefinitionError, parseDefinition } from '../packages/vite-plugin/src/definition.ts'
+import { AppError, parseApp } from '../packages/vite-plugin-v2/src/app.ts'
 import { spawnSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join, relative, resolve } from 'node:path'
@@ -32,15 +33,21 @@ const only = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--out
 const isApp = (dir: string): boolean => existsSync(join(dir, 'openrpc.json'))
 
 /**
- * The id and version of an app: `x-app.id` and `info.version` of its contract, read with the plugin's own parser so that
- * they are the validated ones (an id and a version become directory names under the output folder).
+ * The id and version of an app, read with its plugin's own parser so that they are the validated ones (an id and a
+ * version become directory names under the output folder): a v2 app's from its `package.json` (its contract has no
+ * `x-app`), a v1 app's from `x-app.id` and `info.version` of its contract.
  */
 function appIdentity(dir: string): { id: string; version: string } {
   try {
+    const contract = JSON.parse(readFileSync(join(dir, 'openrpc.json'), 'utf8')) as Record<string, unknown>
+    if (contract['x-app'] === undefined) {
+      const app = parseApp(readFileSync(join(dir, 'package.json'), 'utf8'), `${relative(root, dir)}/package.json`)
+      return { id: app.id, version: app.version }
+    }
     const definition = parseDefinition(readFileSync(join(dir, 'openrpc.json'), 'utf8'), `${relative(root, dir)}/openrpc.json`)
     return { id: definition.app.id, version: definition.version }
   } catch (error) {
-    if (!(error instanceof DefinitionError)) throw error
+    if (!(error instanceof DefinitionError) && !(error instanceof AppError)) throw error
     console.error(`✗ ${error.message}`)
     process.exit(1)
   }

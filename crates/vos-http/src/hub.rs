@@ -8,12 +8,17 @@ use parking_lot::Mutex;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::{
-    sync::{Arc, OnceLock},
+    collections::{HashMap, HashSet},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, OnceLock,
+    },
     time::Duration,
 };
+use tokio::sync::oneshot;
 use tracing::Instrument;
 use vos_application::{
-    ports::{EventSink, Notifier, PortResult, ServerEvent, Shell},
+    ports::{EventSink, HandlerInfo, Notifier, PageHandlers, PortResult, ServerEvent, Shell},
     AgentError, AgentPatch, AgentService, AppError, AppInfo, AppService, AppStatus, DeviceService,
     FilesService, Listed, NewAgent, Place, PortError,
 };
@@ -44,6 +49,40 @@ pub struct RpcHub {
     agents: OnceLock<Arc<AgentService>>,
     files: OnceLock<Arc<FilesService>>,
     peers: Mutex<Vec<RpcPeer>>,
+    /// The handlers the pages registered on the RPC bus (`rpc.onRequest`), by connection: `(app, method)`, and what
+    /// each said about itself.
+    handlers: Mutex<HashMap<u64, PageHandlerMap>>,
+    /// Requests on the bus waiting for a page's answer, by call id.
+    calls: Mutex<HashMap<u64, PendingCall>>,
+    next_call: AtomicU64,
+}
+
+/// One connection's handlers on the bus: `(app, method)` to what the handler said about itself.
+type PageHandlerMap = HashMap<(String, String), HandlerInfo>;
+
+/// A request the bus put to the pages that serve its method: the first answer settles it.
+struct PendingCall {
+    reply: oneshot::Sender<Result<Value, RpcError>>,
+    /// The connections asked and not yet answered or gone: when none is left, nothing will answer.
+    asked: HashSet<u64>,
+}
+
+/// Ends a page request however it ends (answered, or the caller gone): it no longer waits, and the pages that were
+/// asked are told, so they drop what they show for it (`app.requestSettled`).
+struct Settle<'a> {
+    hub: &'a RpcHub,
+    call: u64,
+    asked: Vec<u64>,
+}
+
+impl Drop for Settle<'_> {
+    fn drop(&mut self) {
+        self.hub.calls.lock().remove(&self.call);
+        let note = json!({ "call": self.call });
+        for peer in self.hub.peers.lock().iter().filter(|p| self.asked.contains(&p.connection_id())) {
+            let _ = peer.notify("app.requestSettled", note.clone());
+        }
+    }
 }
 
 impl RpcHub {
@@ -248,6 +287,78 @@ impl RpcHub {
                 Ok(Value::Null)
             }
             _ => Err(method_not_found(method)),
+        }
+    }
+
+    /// A page serves (or stops serving) one of its app's methods on the bus; the app's agent tools follow.
+    async fn handle(&self, peer: &RpcPeer, serves: bool, p: HandleParams, app: &AppService) {
+        let key = (p.app.to_string(), p.method.clone());
+        {
+            let mut handlers = self.handlers.lock();
+            let mine = handlers.entry(peer.connection_id()).or_default();
+            if serves {
+                let about = p.about.unwrap_or_default();
+                let info = HandlerInfo {
+                    method: p.method,
+                    title: about.title,
+                    description: about.description,
+                    input_schema: about.input_schema,
+                    read_only: about.read_only,
+                };
+                mine.insert(key, info);
+            } else {
+                mine.remove(&key);
+            }
+        }
+        app.handlers_changed(&p.app).await;
+    }
+
+    /// A page's answer to a request the bus put to it. The first answer settles the request; an answer to one that no
+    /// longer waits (another handler answered first, or the caller went away) is refused as expired. A page whose
+    /// handler is gone answers method-not-found: that is no answer, and when no page is left to answer, the request
+    /// ends as method not found.
+    fn answer(&self, conn: u64, p: AnswerParams) -> Result<Value, RpcError> {
+        let expired = || {
+            RpcError {
+            code: codes::EXPIRED,
+            message: "That request no longer waits for an answer: another handler answered first, or it was cancelled"
+                .to_owned(),
+            data: None,
+        }
+        };
+        let mut calls = self.calls.lock();
+        let Some(pending) = calls.get_mut(&p.call) else { return Err(expired()) };
+        if !pending.asked.contains(&conn) {
+            return Err(expired());
+        }
+        if p.error.as_ref().is_some_and(|e| e.code == codes::METHOD_NOT_FOUND) {
+            pending.asked.remove(&conn);
+            if pending.asked.is_empty() {
+                if let Some(pending) = calls.remove(&p.call) {
+                    let _ = pending.reply.send(Err(no_page_handler()));
+                }
+            }
+            return Ok(Value::Null);
+        }
+        if let Some(pending) = calls.remove(&p.call) {
+            let _ = pending.reply.send(p.error.map_or(Ok(p.result), Err));
+        }
+        Ok(Value::Null)
+    }
+
+    /// A connection that went away answers nothing it was asked.
+    fn decline_all(&self, conn: u64) {
+        let mut calls = self.calls.lock();
+        let done: Vec<u64> = calls
+            .iter_mut()
+            .filter_map(|(call, pending)| {
+                (pending.asked.remove(&conn) && pending.asked.is_empty()).then_some(*call)
+            })
+            .collect();
+        for call in done {
+            if let Some(pending) = calls.remove(&call) {
+                let _ = pending.reply.send(Err(no_page_handler()));
+            }
         }
     }
 
@@ -514,6 +625,38 @@ struct CallParams {
     traceparent: Option<String>,
 }
 #[derive(Deserialize)]
+struct NotifyParams {
+    app: AppId,
+    name: String,
+    #[serde(default)]
+    params: Value,
+}
+#[derive(Deserialize)]
+struct HandleParams {
+    app: AppId,
+    method: String,
+    #[serde(default)]
+    about: Option<About>,
+}
+/// What a page's handler says about itself (as a backend's does with `app.onRequest`).
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct About {
+    title: Option<String>,
+    description: Option<String>,
+    input_schema: Option<Value>,
+    #[serde(default)]
+    read_only: bool,
+}
+#[derive(Deserialize)]
+struct AnswerParams {
+    call: u64,
+    #[serde(default)]
+    result: Value,
+    #[serde(default)]
+    error: Option<RpcError>,
+}
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct UninstallParams {
     app: AppId,
@@ -540,6 +683,16 @@ impl RpcHandler for RpcHub {
 
     async fn disconnected(&self, peer: &RpcPeer) {
         self.peers.lock().retain(|p| !p.is_same_connection(peer));
+        let conn = peer.connection_id();
+        let gone = self.handlers.lock().remove(&conn);
+        self.decline_all(conn);
+        // the apps whose handlers went with the connection: their agent tools follow
+        if let (Some(gone), Some(app)) = (gone, self.app.get()) {
+            let apps: HashSet<String> = gone.into_keys().map(|(app, _)| app).collect();
+            for id in apps.iter().filter_map(|id| AppId::parse(id).ok()) {
+                app.handlers_changed(&id).await;
+            }
+        }
     }
 
     /// `session.bye` (the client is going away) needs nothing done: the socket closing is what ends a connection.
@@ -607,6 +760,20 @@ impl RpcHandler for RpcHub {
                 };
                 out
             }
+            // the page's side of the RPC bus: its app's notification, its handlers, and its answers
+            "app.notify" => {
+                let p: NotifyParams = parse(params)?;
+                app.publish(&p.app, &p.name, p.params).await.map_err(|e| handler_err(&e))?;
+                Ok(Value::Null)
+            }
+            "app.handle" | "app.unhandle" => {
+                self.handle(peer, method == "app.handle", parse(params)?, app).await;
+                Ok(Value::Null)
+            }
+            "app.answer" => {
+                let p: AnswerParams = parse(params)?;
+                self.answer(peer.connection_id(), p)
+            }
             "app.enable" | "app.disable" | "app.deleteData" | "app.reload" => {
                 let p: AppParams = parse(params)?;
                 match method {
@@ -669,6 +836,72 @@ impl Shell for RpcHub {
             // behind everything else until the byte bound closes its connection
             self.deliver("app.event", &event, Some(EVENT_QUEUE_BYTES));
         }
+    }
+}
+
+/// The handlers the open pages registered on the RPC bus.
+#[async_trait]
+impl PageHandlers for RpcHub {
+    fn handles(&self, app: &AppId, method: &str) -> bool {
+        let key = (app.to_string(), method.to_owned());
+        self.handlers.lock().values().any(|mine| mine.contains_key(&key))
+    }
+
+    fn handlers(&self, app: &AppId) -> Vec<HandlerInfo> {
+        let mut infos: Vec<HandlerInfo> = Vec::new();
+        for mine in self.handlers.lock().values() {
+            for ((of, method), info) in mine {
+                if of == app.as_str() && !infos.iter().any(|i| &i.method == method) {
+                    infos.push(info.clone());
+                }
+            }
+        }
+        infos.sort_by(|a, b| a.method.cmp(&b.method));
+        infos
+    }
+
+    async fn request(&self, app: &AppId, method: &str, params: Value) -> PortResult<Value> {
+        let key = (app.to_string(), method.to_owned());
+        let asked: Vec<u64> = self
+            .handlers
+            .lock()
+            .iter()
+            .filter(|(_, mine)| mine.contains_key(&key))
+            .map(|(conn, _)| *conn)
+            .collect();
+        if asked.is_empty() {
+            return Err(PortError::Rpc {
+                code: codes::METHOD_NOT_FOUND,
+                message: no_page_handler().message,
+                data: None,
+            });
+        }
+        let call = self.next_call.fetch_add(1, Ordering::Relaxed) + 1;
+        let (reply, answered) = oneshot::channel();
+        self.calls.lock().insert(call, PendingCall { reply, asked: asked.iter().copied().collect() });
+        // however this ends, the request stops waiting and the pages asked are told
+        let _settle = Settle { hub: self, call, asked: asked.clone() };
+        let note = json!({ "call": call, "app": app, "method": method, "params": params });
+        let peers: Vec<RpcPeer> =
+            self.peers.lock().iter().filter(|p| asked.contains(&p.connection_id())).cloned().collect();
+        for peer in &peers {
+            if peer.notify("app.request", note.clone()).is_err() {
+                self.decline_all(peer.connection_id());
+            }
+        }
+        match answered.await {
+            Ok(Ok(result)) => Ok(result),
+            Ok(Err(e)) => Err(PortError::Rpc { code: e.code, message: e.message, data: e.data }),
+            Err(_) => Err(PortError::Rejected("the request ended before a page answered".to_owned())),
+        }
+    }
+}
+
+fn no_page_handler() -> RpcError {
+    RpcError {
+        code: codes::METHOD_NOT_FOUND,
+        message: "No open page serves that method any more".to_owned(),
+        data: None,
     }
 }
 

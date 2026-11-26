@@ -16,6 +16,7 @@ mod host_files;
 mod luau;
 mod modules;
 mod panics;
+mod peers;
 mod poison;
 mod router;
 mod runtime;

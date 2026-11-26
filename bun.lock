@@ -34,6 +34,30 @@
         "vite": "^8.3.4",
       },
     },
+    "apps/app1": {
+      "name": "@vos-apps/app1",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@sveltejs/vite-plugin-svelte": "^7.3.1",
+        "@vos/vite-plugin-v2": "workspace:*",
+        "svelte": "^5.57.2",
+        "svelte-check": "^4.7.6",
+        "typescript": "^5.9.3",
+        "vite": "^8.3.4",
+      },
+    },
+    "apps/app2": {
+      "name": "@vos-apps/app2",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@sveltejs/vite-plugin-svelte": "^7.3.1",
+        "@vos/vite-plugin-v2": "workspace:*",
+        "svelte": "^5.57.2",
+        "svelte-check": "^4.7.6",
+        "typescript": "^5.9.3",
+        "vite": "^8.3.4",
+      },
+    },
     "apps/calculator": {
       "name": "@vos-apps/calculator",
       "version": "0.1.0",
@@ -509,6 +533,21 @@
         "vite": "^8.0.0",
       },
     },
+    "packages/vite-plugin-v2": {
+      "name": "@vos/vite-plugin-v2",
+      "version": "0.1.0",
+      "dependencies": {
+        "@vos/kit": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/bun": "1.4.4",
+        "typescript": "^5.9.3",
+        "vite": "^8.3.4",
+      },
+      "peerDependencies": {
+        "vite": "^8.0.0",
+      },
+    },
   },
   "trustedDependencies": [
     "esbuild",
@@ -868,6 +907,10 @@
 
     "@vos-apps/agents": ["@vos-apps/agents@workspace:apps/agents"],
 
+    "@vos-apps/app1": ["@vos-apps/app1@workspace:apps/app1"],
+
+    "@vos-apps/app2": ["@vos-apps/app2@workspace:apps/app2"],
+
     "@vos-apps/calculator": ["@vos-apps/calculator@workspace:apps/calculator"],
 
     "@vos-apps/containers": ["@vos-apps/containers@workspace:apps/containers"],
@@ -915,6 +958,8 @@
     "@vos/ui": ["@vos/ui@workspace:packages/ui"],
 
     "@vos/vite-plugin": ["@vos/vite-plugin@workspace:packages/vite-plugin"],
+
+    "@vos/vite-plugin-v2": ["@vos/vite-plugin-v2@workspace:packages/vite-plugin-v2"],
 
     "@web/config-loader": ["@web/config-loader@0.1.3", "", { "dependencies": { "semver": "^7.3.4" } }, "sha512-XVKH79pk4d3EHRhofete8eAnqto1e8mCRAqPV00KLNFzCWSe8sWmLnqKCqkPNARC6nksMaGrATnA5sPDRllMpQ=="],
 

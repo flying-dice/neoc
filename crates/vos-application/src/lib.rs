@@ -12,6 +12,7 @@
 pub mod agents;
 #[cfg(test)]
 mod agents_tests;
+pub mod contract;
 pub mod data;
 pub mod devices;
 pub mod error;
