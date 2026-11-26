@@ -1,9 +1,9 @@
 --!strict
 -- A representative file workflow through `app.files` alone, with no `std:fs`: create, list, read, write, move,
 -- copy, inspect and delete. `crates/vos-lua/tests/it/files.rs` runs it, also in a VM that refuses `std:fs`, and
--- checks what each step returned. The test loads it followed by `return {}` (and, in one case, by one more tool
--- first): the handlers a backend returns, here none.
+-- checks what each step returned (in one case after one more handler).
 local app = require("vos:app")
+local RPC = require("vos:rpc")
 
 local docs = app.files.documents
 
@@ -19,12 +19,10 @@ local function sized(data: string?, err: vos_app_FileError?): Step
   return step(if data then #data else nil, err)
 end
 
-app.tool {
-  name = "workflow",
-  title = "Run the file workflow",
-  description = "Creates, lists, reads, writes, moves, copies, inspects and deletes files in the app's documents.",
+RPC.on_request(
+  "workflow",
   -- writes the app's files
-  run = function()
+  function()
     local r: { [string]: Step } = {}
     r.create_dir = step(docs:create_dir("notes/2026"))
     r.createAgain = step(docs:create_dir("notes/2026"))
@@ -54,4 +52,8 @@ app.tool {
     r.tempEmpty = step(app.files.temp:list())
     return r
   end,
-}
+  {
+    title = "Run the file workflow",
+    description = "Creates, lists, reads, writes, moves, copies, inspects and deletes files in the app's documents.",
+  }
+)

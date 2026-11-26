@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
-//! The `app` API from Lua: require, db, kv, tools, notify, events, the window.
+//! The `app` API from Lua: require, db, kv, handlers, notify, notifications, the window.
 
 use crate::common;
 
@@ -17,7 +17,7 @@ fn app(body: &str) -> String {
 }
 
 async fn call(vm: &AppVm, tool: &str, args: Value) -> Result<Value, VmError> {
-    vm.call_tool(tool, args, &agent_ctx(1_763_457_120_000), false).await
+    common::serve(vm, tool, args, &agent_ctx(1_763_457_120_000)).await
 }
 
 // ---- require ----------------------------------------------------------------------------------------------
@@ -32,7 +32,7 @@ async fn require_gives_the_app_table_and_one_table_per_library_module() {
           return { app = app2 == app, rpc = type(rpc2.send_request) == "function" and type(RPC.on_request) == "function",
             same = json == again, t = type(json) }
         end)
-        return {}
+        RPC.on_request("_ping", function() end)
     "#;
     let vm = AppVm::load(&id("probe"), package(src, &[]), db(), common::config()).await.unwrap();
     assert_eq!(
@@ -195,100 +195,105 @@ async fn params_with_whole_numbers_bind_as_integers() {
     assert_eq!(vm.emit("go", json!(null)).await.unwrap(), json!({"t": "integer", "v": 7, "s": "text"}));
 }
 
-// ---- tools ------------------------------------------------------------------------------------------------
+// ---- handlers ------------------------------------------------------------------------------------------------
 
 const TOOLS: &str = r#"
-    local t = app.t
-    app.tool {
-      name = "search", title = "Search Notes", readOnly = true,
-      description = "Find notes",
-      input = { query = t.string { description = "text" }, limit = t.integer { default = 10, min = 1, max = 50 }, folder = t.string { optional = true } },
-      run = function(input, ctx) return { q = input.query, n = input.limit, folder = input.folder, who = ctx.actor.name, kind = ctx.actor.kind, id = ctx.actor.id, now = ctx.now } end,
-    }
-    app.tool {
-      name = "fails", description = "x", input = {},
-      run = function(_, ctx) return ctx:fail("No note with id 9") end,
-    }
-    app.tool { name = "bug", run = function() local x = nil; return x.y end }
-    app.tool { name = "nothing", run = function() end }
-    app.tool { name = "plain", input = { n = t.integer {} }, run = function(i) return i.n end }
+    RPC.on_request("search",
+      function(input, ctx) return { q = input.query, folder = input.folder, who = ctx.actor.name, kind = ctx.actor.kind, id = ctx.actor.id, now = ctx.now } end,
+      {
+        title = "Search Notes", description = "Find notes", read_only = true,
+        input_schema = {
+          type = "object",
+          properties = {
+            query = { type = "string", description = "text" },
+            limit = { type = "integer", minimum = 1, maximum = 50, default = 10 },
+            folder = { type = "string" },
+          },
+          required = { "query" },
+        },
+      })
+    RPC.on_request("fails", function(_, ctx) return ctx:fail("No note with id 9") end, { description = "x" })
+    RPC.on_request("bug", function() local x = nil; return x.y end)
+    RPC.on_request("nothing", function() end)
+    RPC.on_request("plain", function(i) return i.n end)
 "#;
 
 #[tokio::test]
-async fn tools_are_registered_with_a_compiled_schema_and_run_as_the_calling_actor() {
+async fn handlers_are_registered_with_what_they_say_of_themselves_and_run_as_the_calling_actor() {
     let vm = load(&app(TOOLS)).await;
-    let tools = vm.tools();
-    let search = tools.iter().find(|t| t.name == "search").unwrap();
+    let handlers = vm.handlers();
+    let search = handlers.iter().find(|h| h.method == "search").unwrap();
     assert_eq!(search.title.as_deref(), Some("Search Notes"));
+    assert_eq!(search.description.as_deref(), Some("Find notes"));
     assert!(search.read_only);
-    assert_eq!(search.input_schema["required"], json!(["query"]));
-    assert_eq!(search.input_schema["properties"]["limit"]["maximum"], 50);
-    assert!(!tools.iter().find(|t| t.name == "fails").unwrap().read_only);
+    let schema = search.input_schema.as_ref().unwrap();
+    assert_eq!(schema["required"], json!(["query"]));
+    assert_eq!(schema["properties"]["limit"]["maximum"], 50);
+    let fails = handlers.iter().find(|h| h.method == "fails").unwrap();
+    assert!(!fails.read_only);
+    assert_eq!(fails.description.as_deref(), Some("x"));
+    // a handler that said nothing of itself is listed all the same, with nothing said
+    let plain = handlers.iter().find(|h| h.method == "plain").unwrap();
+    assert_eq!((plain.title.as_deref(), plain.description.as_deref(), plain.read_only), (None, None, false));
+    assert!(plain.input_schema.is_none());
 
+    // the app does not fill defaults or check the params: they are the contract's, checked before the handler is
+    // reached (`AppService::request_with`)
     let out = call(&vm, "search", json!({"query": "milk"})).await.unwrap();
     assert_eq!(
         out,
-        json!({"q": "milk", "n": 10, "who": "Claude", "kind": "agent", "id": "claude", "now": "2025-11-18T09:12:00.000Z"}),
-        "defaults filled, optional folder absent"
+        json!({"q": "milk", "who": "Claude", "kind": "agent", "id": "claude", "now": "2025-11-18T09:12:00.000Z"}),
+        "the optional folder is absent"
     );
     assert_eq!(call(&vm, "nothing", json!({})).await.unwrap(), Value::Null);
     assert_eq!(call(&vm, "plain", json!({"n": 3})).await.unwrap(), json!(3));
 }
 
 #[tokio::test]
-async fn bad_tool_input_is_rejected_before_any_app_code_runs() {
-    let vm = load(&app(TOOLS)).await;
-    for (args, needle) in [
-        (json!({}), "input.query is required"),
-        (json!({"query": 5}), "must be a string"),
-        (json!({"query": "x", "limit": 99}), "between 1 and 50"),
-        (json!({"query": "x", "bogus": 1}), "unknown field `bogus`"),
-    ] {
-        let e = call(&vm, "search", args).await.unwrap_err();
-        assert!(matches!(&e, VmError::InvalidInput(m) if m.contains(needle)), "{e:?}");
-    }
-    assert!(matches!(call(&vm, "ghost", json!({})).await, Err(VmError::NoSuchTool(_))));
-}
-
-#[tokio::test]
-async fn ctx_fail_is_a_tool_failure_and_a_bug_is_a_script_error_with_its_line() {
+async fn ctx_fail_is_a_failure_and_a_bug_is_a_script_error_with_its_line() {
     let vm = load(&app(TOOLS)).await;
     let e = call(&vm, "fails", json!({})).await.unwrap_err();
     assert!(matches!(&e, VmError::ToolFailed(m) if m == "No note with id 9"), "{e:?}");
     let e = call(&vm, "bug", json!({})).await.unwrap_err();
     assert!(matches!(&e, VmError::Script(s) if s.summary.starts_with("probe/app.lua:")), "{e:?}");
+    // a method nothing serves is no handler, and no app code ran
+    assert!(matches!(call(&vm, "ghost", json!({})).await, Err(VmError::NoSuchHandler(_))));
 }
 
 #[tokio::test]
-async fn bad_tool_declarations_fail_the_load() {
-    let fails = |tool: &'static str, needle: &'static str| async move {
-        let e = try_load("probe", &app(tool)).await.err().unwrap().to_string();
+async fn bad_handler_registrations_fail_the_load() {
+    let fails = |src: &'static str, needle: &'static str| async move {
+        let e = try_load("probe", &app(src)).await.err().unwrap().to_string();
         assert!(e.contains(needle), "wanted `{needle}` in `{e}`");
     };
-    fails("app.tool { run = function() end }", "argument #1 'def': name: expected a string, got nil").await;
-    fails("app.tool { name = 'bad name', run = function() end }", "invalid tool name").await;
-    fails("app.tool { name = 'x' }", "run: expected a function, got nil").await;
-    fails("app.tool { name = 'x', run = function() end, input = { a = 5 } }", "app.t").await;
-    fails("app.tool { name = 'x', run = function() end, readOnly = 'yes' }", "readOnly").await;
+    // a method name is 1 to 128 characters, without a `/`
+    fails("RPC.on_request('', function() end)", "a method name is 1 to 128 characters").await;
+    fails("RPC.on_request('a/b', function() end)", "a method name is 1 to 128 characters").await;
+    fails("RPC.on_request(string.rep('m', 129), function() end)", "a method name is 1 to 128 characters")
+        .await;
+    // what is not a function is no handler
+    fails("RPC.on_request('x')", "argument #2 'handler'").await;
+    fails("RPC.on_request('x', 'not a function')", "argument #2 'handler'").await;
+    // what `about` says is read by its shape: a key it does not have is refused, not dropped
+    fails("RPC.on_request('x', function() end, { input = { a = 5 } })", "unknown field `input`").await;
+    fails("RPC.on_request('x', function() end, { readOnly = true })", "unknown field `readOnly`").await;
+    fails("RPC.on_request('x', function() end, { read_only = 'yes' })", "read_only").await;
+    // one handler for a method
     fails(
-        "app.tool { name = 'x', run = function() end } app.tool { name = 'x', run = function() end }",
-        "already registered",
+        "RPC.on_request('x', function() end) RPC.on_request('x', function() end)",
+        "`x` already has a handler in this backend",
     )
     .await;
-    // a key a tool does not have is refused, not dropped: a raw JSON schema is not a way to declare the input
-    fails("app.tool { name = 'x', run = function() end, input_schema = {} }", "unknown key `input_schema`")
-        .await;
-    fails("app.tool('x')", "expected a tool definition (a table)").await;
 }
 
 #[tokio::test]
-async fn a_write_made_by_a_tool_is_visible_to_the_next_read() {
+async fn a_write_made_by_a_handler_is_visible_to_the_next_read() {
     let src = app(r#"
         app.db:migrate { [1] = "create table notes(id integer primary key, body text)" }
-        app.tool { name = "add", input = { body = app.t.string {} }, run = function(i, ctx)
+        RPC.on_request("add", function(i, ctx)
             return app.db:exec("insert into notes(body) values (:b)", { b = i.body .. " by " .. ctx.actor.name })
-        end }
-        app.tool { name = "list", readOnly = true, run = function() return app.db:all("select body from notes") end }
+        end)
+        RPC.on_request("list", function() return app.db:all("select body from notes") end, { read_only = true })
     "#);
     let vm = load(&src).await;
     call(&vm, "add", json!({"body": "milk"})).await.unwrap();
@@ -311,16 +316,16 @@ async fn a_call_that_is_not_read_only_may_write_data_notify_and_read() {
     assert_eq!(vm.emit("read", json!(null)).await.unwrap(), json!([{"a": 1}]));
 }
 
-// ---- notify, emit and the window ---------------------------------------------------------------------------------------
+// ---- notify, notifications and the window ---------------------------------------------------------------------------------------
 
 #[tokio::test]
 async fn notify_emit_and_open_window_become_effects_for_the_host() {
     let src = r#"
         app.notify { title = "Reminder", body = "Call mum" }
         app.notify { title = "No body" }
-        app.emit("notes.changed", { id = 12 })
+        RPC.send_notification("notes.changed", { id = 12 })
         app.open_window({ noteId = 12 })
-        return {}
+        RPC.on_request("_ping", function() end)
     "#;
     let vm = AppVm::load(&id("probe"), package(src, &[]), db(), VmConfig::default()).await.unwrap();
     let n = |title: &str, body: Option<&str>| {
@@ -333,6 +338,8 @@ async fn notify_emit_and_open_window_become_effects_for_the_host() {
             n("No body", None),
             Effect::Emit { name: "notes.changed".into(), data: json!({"id": 12}) },
             Effect::OpenWindow { name: "main".into(), params: json!({"noteId": 12}) },
+            // serving a method on the bus: the host re-lists the app's agent tools
+            Effect::HandlersChanged,
         ]
     );
     assert!(vm.take_effects().is_empty());
@@ -354,7 +361,7 @@ async fn notify_and_emit_are_validated() {
             "app.notify { title = 't', body = string.rep('b', 2001) }",
             "app.notify: `body` must be at most 2000 characters",
         ),
-        ("app.emit('')", "an event name is 1 to 64"),
+        ("RPC.send_notification('')", "name is 1 to 64"),
     ] {
         let src = app(call);
         let e = try_load("probe", &src).await.err().unwrap().to_string();
@@ -386,7 +393,7 @@ async fn notify_refuses_a_key_it_does_not_have() {
     }
     // the longest title and body, and an empty body, are fine
     let vm = load(&app("app.notify { title = string.rep('t', 200), body = string.rep('b', 2000) }\napp.notify { title = 't', body = '' }")).await;
-    assert_eq!(vm.take_effects().len(), 2);
+    assert_eq!(common::take_effects(&vm).len(), 2);
     // it is a function of the module, not a method: a colon call passes `app` first, which is one argument too many
     for (call, needle) in [
         ("app.notify()", "argument #1 'notification': expected"),
@@ -408,12 +415,12 @@ async fn one_call_queues_at_most_64_notifications() {
         load(&app(r#"hook("burst", function(n) for i = 1, n do app.notify { title = "n" .. i } end end)"#))
             .await;
     vm.emit("burst", json!(64)).await.unwrap();
-    assert_eq!(vm.take_effects().len(), 64);
+    assert_eq!(common::take_effects(&vm).len(), 64);
     let e = vm.emit("burst", json!(65)).await.unwrap_err().to_string();
     assert!(e.contains("app.notify: this call already has 64 notifications waiting to be delivered; combine them into one notification"), "{e}");
-    assert_eq!(vm.take_effects().len(), 64);
+    assert_eq!(common::take_effects(&vm).len(), 64);
     vm.emit("burst", json!(1)).await.unwrap();
-    assert_eq!(vm.take_effects().len(), 1);
+    assert_eq!(common::take_effects(&vm).len(), 1);
 }
 
 /// The cap is each call's own: what another call queued while this one was parked at a wait does not count
@@ -453,7 +460,7 @@ async fn a_parked_call_does_not_use_up_another_calls_notifications() {
     // nothing took the queue, so `a`'s own 40 are still waiting: its 25th after the wait is its 65th, and raises
     let e = a.await.unwrap().unwrap_err().to_string();
     assert!(e.contains("app.notify: this call already has 64 notifications waiting to be delivered; combine them into one notification"), "{e}");
-    assert_eq!(vm.take_effects().len(), 64 + 64);
+    assert_eq!(common::take_effects(&vm).len(), 64 + 64);
 }
 
 /// A tool that notifies and then works for a while does not hold the notification back until it returns: the
@@ -479,7 +486,7 @@ async fn a_call_that_notifies_and_then_waits_has_its_notification_taken_at_the_w
     let quiet = std::time::Duration::from_millis(300);
     // what loading left behind
     let _ = tokio::time::timeout(quiet, signal.notified()).await;
-    let _ = vm.take_effects();
+    let _ = common::take_effects(&vm);
 
     // waiting without having notified is silent
     vm.emit("quiet", json!(null)).await.unwrap();
@@ -497,7 +504,7 @@ async fn a_call_that_notifies_and_then_waits_has_its_notification_taken_at_the_w
         .await
         .expect("the host was never woken at the wait");
     assert!(!slow.is_finished(), "the call is still waiting");
-    let taken = vm.take_effects();
+    let taken = common::take_effects(&vm);
     assert_eq!(taken.len(), 1);
     assert!(
         matches!(&taken[0], Effect::Notify(n) if n.title == "half way" && n.body.as_deref() == Some("still working"))
@@ -506,7 +513,7 @@ async fn a_call_that_notifies_and_then_waits_has_its_notification_taken_at_the_w
     // the rest goes when the call ends, as before
     vm.emit("go", json!(null)).await.unwrap();
     slow.await.unwrap().unwrap();
-    let rest = vm.take_effects();
+    let rest = common::take_effects(&vm);
     assert!(matches!(rest.as_slice(), [Effect::Notify(n)] if n.title == "done"), "{rest:?}");
 }
 
@@ -517,16 +524,16 @@ const READ_ONLY: &str = r#"
     db:migrate { [1] = "create table log(id integer primary key, msg text)" }
     db:exec("insert into log(msg) values ('seed')")
     local function try(f) local ok, err = pcall(f); return { ok = ok, err = (not ok) and tostring(err) or nil } end
-    app.tool { name = "count", readOnly = true, run = function() return { n = db:one("select count(*) as n from log").n } end }
-    app.tool { name = "write_exec", readOnly = true, run = function() return try(function() db:exec("insert into log(msg) values ('x')") end) end }
-    app.tool { name = "write_returning", readOnly = true, run = function() return try(function() db:all("insert into log(msg) values ('y') returning id") end) end }
-    app.tool { name = "write_tx", readOnly = true, run = function() return try(function() db:tx(function() db:exec("delete from log") end) end) end }
-    app.tool { name = "write_ddl", readOnly = true, run = function() return try(function() db:all("drop table log") end) end }
-    app.tool { name = "lift_it", readOnly = true, run = function() return try(function() db:all("pragma query_only = 0") end) end }
-    app.tool { name = "write_kv", readOnly = true, run = function() return try(function() app.kv:set("k", 1) end) end }
-    app.tool { name = "delete_kv", readOnly = true, run = function() return try(function() app.kv:delete("k") end) end }
-    app.tool { name = "write_migrate", readOnly = true, run = function() return try(function() db:migrate { [1] = "create table log(id integer primary key, msg text)", [2] = "create table z(a)" } end) end }
-    app.tool { name = "add", run = function(_, ctx) db:exec("insert into log(msg) values (:m)", { m = ctx.actor.name }); app.kv:set("k", 1); return { n = db:one("select count(*) as n from log").n } end }
+    RPC.on_request("count", function() return { n = db:one("select count(*) as n from log").n } end, { read_only = true })
+    RPC.on_request("write_exec", function() return try(function() db:exec("insert into log(msg) values ('x')") end) end, { read_only = true })
+    RPC.on_request("write_returning", function() return try(function() db:all("insert into log(msg) values ('y') returning id") end) end, { read_only = true })
+    RPC.on_request("write_tx", function() return try(function() db:tx(function() db:exec("delete from log") end) end) end, { read_only = true })
+    RPC.on_request("write_ddl", function() return try(function() db:all("drop table log") end) end, { read_only = true })
+    RPC.on_request("lift_it", function() return try(function() db:all("pragma query_only = 0") end) end, { read_only = true })
+    RPC.on_request("write_kv", function() return try(function() app.kv:set("k", 1) end) end, { read_only = true })
+    RPC.on_request("delete_kv", function() return try(function() app.kv:delete("k") end) end, { read_only = true })
+    RPC.on_request("write_migrate", function() return try(function() db:migrate { [1] = "create table log(id integer primary key, msg text)", [2] = "create table z(a)" } end) end, { read_only = true })
+    RPC.on_request("add", function(_, ctx) db:exec("insert into log(msg) values (:m)", { m = ctx.actor.name }); app.kv:set("k", 1); return { n = db:one("select count(*) as n from log").n } end)
 "#;
 
 #[tokio::test]
@@ -584,7 +591,7 @@ async fn the_container_framework_is_required_like_the_app_table_and_answers_with
             out.back = docker.use("") == nil and docker.host() == "" and app.kv:get("host") == nil
             return out
         end)
-        return {}
+        RPC.on_request("_ping", function() end)
     "#;
     let vm = AppVm::load(&id("probe"), package(src, &[]), db(), common::config()).await.unwrap();
     let out = vm.emit("t", json!(null)).await.unwrap();

@@ -306,7 +306,7 @@ local task = require("std:task")
 local time = require("std:time")
 local hyper = require("vnd:hyper")
 local net = require("std:net")
-local state = setmetatable({}, { __index = { v = 0 }, __newindex = function(t, k, x) app.emit("state") getmetatable(t).__index[k] = x end })
+local state = setmetatable({}, { __index = { v = 0 }, __newindex = function(t, k, x) RPC.send_notification("state") getmetatable(t).__index[k] = x end })
 local counter, PROG = 0, 0
 local A, X, V, keep, pending, txp = {}, {}, {}, {}, 0, nil
 -- what the program leaves behind for another call to find: the threads it did not make (its top-level thread, the
@@ -353,7 +353,7 @@ app.db:migrate { [1] = "create table t(a integer primary key autoincrement, v in
 
 const TOOLS: &str = r#"
 local others = {}
-app.tool { name = "bump", run = function() counter = counter + 1 return counter end }
+RPC.on_request("bump", function() counter = counter + 1 return counter end)
 -- the program's threads that are not the script's own: resuming one, from any call, must be refused (g)
 local function steal(label)
   -- nothing in here waits, so no other call can run: any progress is a thread that should have been refused
@@ -376,15 +376,15 @@ local function resume_scripts()
   for _, w in ipairs(WR) do pcall(w) pcall(w, "x") end
   MEDDLING = false
 end
-app.tool { name = "meddle", run = function()
+RPC.on_request("meddle", function()
   counter = counter + 1
   steal("a meddling call")
   -- a program that is read-only is not to be written for by another call's turn
   if not RO then resume_scripts() end
   return counter
-end }
+end)
 -- a read-only call beside the program: every write is refused, and what it reads is consistent
-app.tool { name = "peek", readOnly = true, run = function()
+RPC.on_request("peek", function()
   counter = counter + 1
   local function refused(what, f) if pcall(f) then viol("a readOnly side call: " .. what .. " changed the world") end end
   refused("db", function() app.db:exec("insert into t(v) values (97)") end)
@@ -396,17 +396,17 @@ app.tool { name = "peek", readOnly = true, run = function()
   steal("a readOnly call")
   resume_scripts()
   return app.db:one("select count(*) as n from t").n
-end }
-app.tool { name = "other", run = function()
+end, { read_only = true })
+RPC.on_request("other", function()
   local v = 1000 + #others
   local r = app.db:exec("insert into t(v) values (:v)", { v = v })
   others[#others + 1] = v
   return { v = v, changes = r.changes }
-end }
-app.tool { name = "ping", readOnly = true, run = function() return "pong" end }
-app.tool { name = "report", readOnly = true, run = function()
+end)
+RPC.on_request("ping", function() return "pong" end, { read_only = true })
+RPC.on_request("report", function()
   return { A = A, X = X, V = V, pending = pending, state = state.v }
-end }
+end, { read_only = true })
 "#;
 
 const SERVER: &str = r#"
@@ -436,14 +436,11 @@ fn generate(seed: u64, index: usize, url: &str) -> Case {
         source.push_str(SERVER);
     }
     source.push_str(TOOLS);
-    let _ = writeln!(
-        source,
-        "app.tool {{ name = \"prog\", readOnly = RO, run = function()\n  SH[#SH + 1] = coroutine.running()"
-    );
+    let _ = writeln!(source, "RPC.on_request(\"prog\", function()\n  SH[#SH + 1] = coroutine.running()");
     for step in &steps {
         let _ = writeln!(source, "  -- {}\n  {}", step.describe, step.code);
     }
-    source.push_str("  task.wait(0.001)\n  return 'done'\nend }\n");
+    source.push_str("  task.wait(0.001)\n  return 'done'\nend, { read_only = RO })\n");
     Case { index, kind, source, steps }
 }
 
@@ -609,7 +606,7 @@ async fn verify(
         if kv[0]["n"] != 0 {
             failures.push("(a) a readOnly call wrote to app.kv".into());
         }
-        let effects = vm.take_effects();
+        let effects = common::take_effects(vm);
         if !effects.is_empty() {
             failures.push(format!("(a) a readOnly call queued effects: {effects:?}"));
         }
@@ -693,7 +690,7 @@ async fn generated_scripts_leave_every_invariant_intact() {
             broken.len(),
             list.join("\n"),
             case.index,
-            case.source.split("app.tool { name = \"prog\"").nth(1).unwrap_or(&case.source),
+            case.source.split("RPC.on_request(\"prog\"").nth(1).unwrap_or(&case.source),
         );
     }
 }
@@ -719,7 +716,7 @@ async fn runtime_tool(runtime: &Arc<LuaRuntime>, name: &'static str) -> Result<V
     let call = tokio::spawn(async move {
         tokio::time::timeout(
             Duration::from_secs(20),
-            runtime.call_tool(&id("chaos"), name, json!({}), agent_ctx(0), false),
+            common::serve_rt(&runtime, &id("chaos"), name, json!({}), agent_ctx(0)),
         )
         .await
     });
@@ -970,25 +967,25 @@ local keep, WR, ran = {{}}, {{}}, {{}}
 app.db:migrate {{ [1] = "create table t(a integer primary key autoincrement, v integer)" }}
 -- what only runs if the dropped wait was resumed: it is recorded and written
 local function after(n) ran[#ran + 1] = n app.db:exec("insert into t(v) values (:v)", {{ v = n }}) end
-app.tool {{ name = "prog", run = function()
+RPC.on_request("prog", function()
   {body}
   after(3) -- the dropped call never gets here
   return "never"
-end }}
+end)
 -- another call resumes everything the program left behind, and calls its wrap functions
-app.tool {{ name = "meddle", run = function()
+RPC.on_request("meddle", function()
   local out = {{}}
   for _, co in ipairs(keep) do local ok, why = coroutine.resume(co) out[#out + 1] = {{ ok = ok, why = tostring(why) }} end
   for _, w in ipairs(WR) do local ok, why = pcall(w) out[#out + 1] = {{ ok = ok, why = tostring(why) }} end
   return out
-end }}
-app.tool {{ name = "churn", run = function()
+end)
+RPC.on_request("churn", function()
   local keep = {{}}
   for i = 1, 400 do keep[i % 8] = {{ string.rep("x", 2048), i }} end
   return #keep
-end }}
-app.tool {{ name = "ping", readOnly = true, run = function() return "pong" end }}
-app.tool {{ name = "ran", readOnly = true, run = function() return {{ n = #ran }} end }}
+end)
+RPC.on_request("ping", function() return "pong" end, {{ read_only = true }})
+RPC.on_request("ran", function() return {{ n = #ran }} end, {{ read_only = true }})
 "#
     )
 }
@@ -1031,7 +1028,7 @@ async fn run_dropped(seed: u64, index: usize, url: &str) -> Vec<String> {
         let vm = vm.clone();
         tokio::spawn(async move {
             let ctx = agent_ctx(0);
-            let call = vm.call_tool("prog", json!({}), &ctx, false);
+            let call = common::serve(&vm, "prog", json!({}), &ctx);
             if by_timeout {
                 let _ = tokio::time::timeout(Duration::from_millis(wait_ms + 150), call).await;
             } else {

@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
 //! The backend's side of the RPC bus, over the real Lua adapter with no bus bound (the runtime is its own bus):
-//! `RPC.send_request` reaches the handler another app serves (`RPC.on_request`, or its entry's table), told which app
+//! `RPC.send_request` reaches the handler another app serves (`RPC.on_request`), told which app
 //! called; `RPC.on_notification` hears an app's notifications, told which app sent them; a `_name` never leaves its app.
 
 use crate::common;
@@ -33,7 +33,7 @@ RPC.on_request("saved", function() return saved end)
 RPC.on_notification("ledger", "_saved", function(p) saved = p.n end)
 "#;
 
-/// An app that asks the ledger for things and hears what it adds; its entry returns its handlers, the older way.
+/// An app that asks the ledger for things and hears what it adds.
 const WATCHER: &str = r#"
 local heard = {}
 RPC.on_notification("ledger", "added", function(p, ctx)
@@ -45,16 +45,14 @@ local function ask(method, params)
   if err then return { err = err.kind } end
   return result
 end
-return {
-  relay = function(_, p) return ask("add", { text = p.text }) end,
-  missing = function() return ask("nope", {}) end,
-  failing = function() return ask("fail", {}) end,
-  ghost = function()
-    local _, err = RPC.send_request("ghost", "add", {})
-    return { err = err and err.kind }
-  end,
-  heard = function() return heard end,
-}
+RPC.on_request("relay", function(p) return ask("add", { text = p.text }) end)
+RPC.on_request("missing", function() return ask("nope", {}) end)
+RPC.on_request("failing", function() return ask("fail", {}) end)
+RPC.on_request("ghost", function()
+  local _, err = RPC.send_request("ghost", "add", {})
+  return { err = err and err.kind }
+end)
+RPC.on_request("heard", function() return heard end)
 "#;
 
 struct NoNotifier;
@@ -130,8 +128,8 @@ async fn a_request_that_cannot_be_answered_is_an_error_value_that_says_why() {
 async fn another_apps_private_notification_and_a_second_handler_are_refused() {
     let runtime = LuaRuntime::new(Arc::new(NoNotifier), Arc::new(RecordingShell::default()));
     for (src, expected) in [
-        (r#"RPC.on_notification("ledger", "_saved", function() end) return {}"#, "never leaves ledger"),
-        (r#"RPC.on_notification("Not An Id", "added", function() end) return {}"#, "is not an app id"),
+        (r#"RPC.on_notification("ledger", "_saved", function() end)"#, "never leaves ledger"),
+        (r#"RPC.on_notification("Not An Id", "added", function() end)"#, "is not an app id"),
         (
             r#"RPC.on_request("a", function() end) RPC.on_request("a", function() end)"#,
             "already has a handler",

@@ -26,7 +26,7 @@ async fn load_in(root: &Path, name: &str, src: &str, refused: &[&str]) -> AppVm 
 }
 
 async fn tool(vm: &AppVm, name: &str) -> Value {
-    vm.call_tool(name, json!({}), &agent_ctx(0), false).await.unwrap()
+    common::serve(vm, name, json!({}), &agent_ctx(0)).await.unwrap()
 }
 
 fn check_workflow(out: &Value) {
@@ -90,7 +90,7 @@ async fn the_fixture_app_completes_its_file_workflow_through_app_files_alone() {
 async fn the_workflow_works_for_an_app_that_is_refused_std_fs() {
     let root = TempDir::new().unwrap();
     let src = format!(
-        "{FIXTURE}\napp.tool {{ name = \"fs\", run = function() local ok, err = pcall(require, \"std:fs\") return {{ ok = ok, err = tostring(err) }} end }}"
+        "{FIXTURE}\nRPC.on_request(\"fs\", function() local ok, err = pcall(require, \"std:fs\") return {{ ok = ok, err = tostring(err) }} end)"
     );
     let vm = load_in(root.path(), "files-demo", &src, &["std:fs"]).await;
     let fs = tool(&vm, "fs").await;
@@ -117,7 +117,7 @@ async fn no_path_leaves_the_apps_location() {
     let src = format!(
         r#"
         local docs = app.files.documents
-        app.tool {{ name = "escapes", run = function()
+        RPC.on_request("escapes", function()
           local out = {{}}
           local function try(label, value, err) out[label] = {{ ok = value ~= nil, kind = (err and err.kind), err = err }} end
           local long = string.rep("a", 256)
@@ -155,7 +155,7 @@ async fn no_path_leaves_the_apps_location() {
           local removed, why = docs:remove("file_link")
           out.remove_link = {{ ok = removed, err = why }}
           return out
-        end }}
+        end)
         "#
     );
     let vm = load_in(root.path(), "probe", &src, &[]).await;
@@ -227,11 +227,11 @@ async fn a_read_only_tool_reads_files_and_cannot_write_them_nor_can_the_tasks_it
         local docs = app.files.documents
         local seen = {}
         local function refused(f) local ok, e = pcall(f) return { ok = ok, err = tostring(e) } end
-        app.tool { name = "seed", run = function()
+        RPC.on_request("seed", function()
           assert(docs:create_dir("d"))
           return assert(docs:write("d/a.txt", "kept"))
-        end }
-        app.tool { name = "ro", readOnly = true, run = function()
+        end)
+        RPC.on_request("ro", function()
           task.spawn(function()
             task.wait(0.01)
             seen.task = refused(function() return docs:write("from-task.txt", "x") end)
@@ -247,8 +247,8 @@ async fn a_read_only_tool_reads_files_and_cannot_write_them_nor_can_the_tasks_it
             copy = refused(function() return docs:copy("d/a.txt", "b.txt") end),
             cache = refused(function() return app.files.cache:write("x", "x") end),
           }
-        end }
-        app.tool { name = "seen", readOnly = true, run = function() return seen end }
+        end, { read_only = true })
+        RPC.on_request("seen", function() return seen end, { read_only = true })
     "#;
     let vm = load_in(root.path(), "probe", src, &[]).await;
     assert_eq!(tool(&vm, "seed").await, json!(true));
@@ -272,7 +272,7 @@ async fn a_read_only_tool_reads_files_and_cannot_write_them_nor_can_the_tasks_it
     assert_eq!(std::fs::read_to_string(docs.join("d/a.txt")).unwrap(), "kept");
     assert!(!docs.join("from-task.txt").exists() && !docs.join("e").exists() && !docs.join("b.txt").exists());
     // a caller can require a read-only run of a writable tool too
-    let err = vm.call_tool("seed", json!({}), &agent_ctx(0), true).await.unwrap_err().to_string();
+    let err = common::serve_with(&vm, "seed", json!({}), &agent_ctx(0), true).await.unwrap_err().to_string();
     assert!(err.contains("readOnly"), "{err}");
 }
 

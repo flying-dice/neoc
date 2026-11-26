@@ -101,7 +101,7 @@ const OBJECTS: [(&str, &str, &str); 5] = [
     ("agents", "app.agents", "vos_app_Agents"),
 ];
 
-/// An app whose tool lists the keys of `app` and of `app.t`, and which of the names it is given each object has.
+/// An app whose handler lists the keys of `app` and of `app.t`, and which of the names it is given each object has.
 fn probe(ir: &Ir) -> String {
     let asked = OBJECTS
         .iter()
@@ -132,15 +132,14 @@ fn probe(ir: &Ir) -> String {
       end
       return out
     end
-    app.tool {{ name = "keys", readOnly = true, run = function(_, ctx)
+    RPC.on_request("keys", function(_, ctx)
       return {{
         app = keys(app), t = keys(app.t), tools = keys(app.tools), same = require("vos:app") == app,
         kinds = {{ db = typeof(app.db), id = typeof(app.id), ctx = typeof(ctx), documents = typeof(app.files.documents) }},
         ctx = has(ctx, {{ "actor", "now", "fail" }}),
         {asked}
       }}
-    end }}
-    return {{}}
+    end, {{ read_only = true }})
 "#
     )
 }
@@ -150,7 +149,7 @@ async fn the_app_api_an_app_gets_is_the_one_the_schema_and_the_declarations_desc
     let ir = vos_lua::declarations::schema();
     // the host's config: no test hooks
     let vm = AppVm::load(&id("probe"), package(&probe(&ir), &[]), db(), VmConfig::default()).await.unwrap();
-    let live = vm.call_tool("keys", Value::Object(Map::new()), &agent_ctx(0), false).await.unwrap();
+    let live = common::serve(&vm, "keys", Value::Object(Map::new()), &agent_ctx(0)).await.unwrap();
 
     // the module: every key of the live table is a constant, an exported type or a function of the schema
     let module = ir.modules.iter().find(|m| m.name == "vos:app").unwrap();

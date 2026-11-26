@@ -86,17 +86,17 @@ fn rig() -> Rig {
 }
 
 impl Rig {
-    /// Load `src` as a backend with no handlers (`common::backend`).
+    /// Load `src` as a backend (`common::backend`).
     async fn load(&self, name: &str, src: &str) {
         let data: Arc<dyn AppData> = db();
         self.runtime.load(&id(name), package(&common::backend(src), &[]), data).await.unwrap();
     }
-    /// The names of the events the app has emitted to its pages so far (`app.emit`).
+    /// The names of the events the app has emitted to its pages so far (`RPC.send_notification`).
     fn events(&self) -> Vec<String> {
         self.shell.events.lock().unwrap().iter().map(|(_, name, _)| name.clone()).collect()
     }
     async fn tool(&self, name: &str, tool: &str) -> Value {
-        self.runtime.call_tool(&id(name), tool, json!({}), agent_ctx(0), false).await.unwrap()
+        common::serve_rt(&self.runtime, &id(name), tool, json!({}), agent_ctx(0)).await.unwrap()
     }
 }
 
@@ -266,7 +266,7 @@ async fn the_modules_work_inside_an_app_data_formats_time_hashes_and_the_filesys
         local yaml = require("vnd:serde_yaml")
         local fs = require("std:fs")
         local collections = require("std:collections")
-        app.tool {{ name = "go", run = function()
+        RPC.on_request("go", function()
           local path = {path:?}
           fs.write(path, "from the app")
           local text = fs.read(path)
@@ -281,11 +281,11 @@ async fn the_modules_work_inside_an_app_data_formats_time_hashes_and_the_filesys
             yaml = type(yaml),
             json = type(json),
           }}
-        end }}
+        end)
         "#,
         path = dir.join("note.txt").display().to_string()
     );
-    let out = load(&src).await.call_tool("go", json!({}), &agent_ctx(0), false).await.unwrap();
+    let out = common::serve(&load(&src).await, "go", json!({}), &agent_ctx(0)).await.unwrap();
     assert_eq!(out["b64"], "aGk=", "{out}");
     assert_eq!(out["sha"], "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "{out}");
     assert_eq!(out["file"], "from the app", "{out}");
@@ -300,25 +300,25 @@ async fn a_modules_typed_error_is_read_by_the_app_and_reaches_the_caller_as_its_
     let src = r#"
         local fs = require("std:fs")
         local missing = "no-such-dir-of-the-modules-test/file.txt"
-        app.tool { name = "read", run = function()
+        RPC.on_request("read", function()
           local text, err = fs.read(missing)
           return { text = text == nil, kind = err.kind, op = err.op, said = tostring(err) }
-        end }
-        app.tool { name = "raise", run = function()
+        end)
+        RPC.on_request("raise", function()
           local text, err = fs.read(missing)
           if not text then error(err) end
           return text
-        end }
+        end)
     "#;
     let vm = load(src).await;
-    let out = vm.call_tool("read", json!({}), &agent_ctx(0), false).await.unwrap();
+    let out = common::serve(&vm, "read", json!({}), &agent_ctx(0)).await.unwrap();
     assert_eq!(
         (&out["text"], &out["kind"], &out["op"]),
         (&json!(true), &json!("not_found"), &json!("std:fs.read"))
     );
     let said = out["said"].as_str().unwrap();
     assert!(said.starts_with("std:fs.read: not_found: "), "{said}");
-    let raised = vm.call_tool("raise", json!({}), &agent_ctx(0), false).await.unwrap_err().to_string();
+    let raised = common::serve(&vm, "raise", json!({}), &agent_ctx(0)).await.unwrap_err().to_string();
     assert!(raised.starts_with("probe/app.lua:10: std:fs.read: not_found: "), "{raised}");
 }
 
@@ -326,7 +326,7 @@ async fn a_modules_typed_error_is_read_by_the_app_and_reaches_the_caller_as_its_
 async fn a_worker_gets_the_same_modules_and_lib_log_goes_to_tracing_not_stdout() {
     let src = r#"
         local thread = require("std:thread")
-        app.tool { name = "work", run = function()
+        RPC.on_request("work", function()
           local worker = assert(thread.spawn([[
             local json = require("lib:json")
             local hash, hex = require("lib:hash"), require("lib:hex")
@@ -335,17 +335,17 @@ async fn a_worker_gets_the_same_modules_and_lib_log_goes_to_tracing_not_stdout()
             return { sha = hex.encode((hash.hash("sha256", "abc"))), hyper = type(hyper.serve), json = type(json) }
           ]]))
           return assert(worker:await())
-        end }
-        app.tool { name = "log", run = function()
+        end)
+        RPC.on_request("log", function()
           require("lib:log").info("hello from the app", { k = 1 })
           return true
-        end }
+        end)
     "#;
     let vm = load(src).await;
-    let out = vm.call_tool("work", json!({}), &agent_ctx(0), false).await.unwrap();
+    let out = common::serve(&vm, "work", json!({}), &agent_ctx(0)).await.unwrap();
     assert_eq!(out["hyper"], "function", "{out}");
     assert_eq!(out["sha"], "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "{out}");
-    assert_eq!(vm.call_tool("log", json!({}), &agent_ctx(0), false).await.unwrap(), json!(true));
+    assert_eq!(common::serve(&vm, "log", json!({}), &agent_ctx(0)).await.unwrap(), json!(true));
     // the worker's OS thread is released with the app, not left to the end of the process
     vm.shutdown();
 }
@@ -368,15 +368,15 @@ async fn a_worker_is_refused_what_its_app_is_refused() {
     let src = format!(
         r#"
         local thread = require("std:thread")
-        app.tool {{ name = "probe", run = function()
+        RPC.on_request("probe", function()
           local app_side = (function() {probe} end)()
           local worker = assert(thread.spawn([[ {probe} ]]))
           return {{ app = app_side, worker = assert(worker:await()) }}
-        end }}
+        end)
     "#
     );
     let vm = load(&src).await;
-    let out = vm.call_tool("probe", json!({}), &agent_ctx(0), false).await.unwrap();
+    let out = common::serve(&vm, "probe", json!({}), &agent_ctx(0)).await.unwrap();
     let expected: Value = asked
         .iter()
         .map(|n| ((*n).to_owned(), json!(!REFUSED.contains(n))))
@@ -389,13 +389,13 @@ async fn a_worker_is_refused_what_its_app_is_refused() {
     // the `app` API is the app's own: its worker, which runs in another engine, is not offered it
     let src = r#"
         local thread = require("std:thread")
-        app.tool { name = "probe", run = function()
+        RPC.on_request("probe", function()
           local worker = assert(thread.spawn([[ return { offered = (pcall(require, "vos:app")) } ]]))
           return { app = (pcall(require, "vos:app")), worker = assert(worker:await()).offered }
-        end }
+        end)
     "#;
     let vm = load(src).await;
-    let out = vm.call_tool("probe", json!({}), &agent_ctx(0), false).await.unwrap();
+    let out = common::serve(&vm, "probe", json!({}), &agent_ctx(0)).await.unwrap();
     assert_eq!(out, json!({"app": true, "worker": false}));
     vm.shutdown();
 }
@@ -407,17 +407,17 @@ async fn a_worker_is_refused_what_its_app_is_refused() {
 async fn an_app_and_its_workers_are_not_offered_buffer_yet() {
     let src = r#"
         local thread = require("std:thread")
-        app.tool { name = "probe", run = function()
+        RPC.on_request("probe", function()
           local worker = assert(thread.spawn([[
             local inner = assert(require("std:thread").spawn("return type(buffer)"))
             return { type(buffer), (assert(inner:await())) }
           ]]))
           local out = assert(worker:await())
           return { app = type(buffer), worker = out[1], nested = out[2] }
-        end }
+        end)
     "#;
     let vm = load(src).await;
-    let out = vm.call_tool("probe", json!({}), &agent_ctx(0), false).await.unwrap();
+    let out = common::serve(&vm, "probe", json!({}), &agent_ctx(0)).await.unwrap();
     assert_eq!(out, json!({ "app": "nil", "worker": "nil", "nested": "nil" }));
     vm.shutdown();
 }
@@ -430,16 +430,16 @@ async fn a_background_loop_does_not_stop_the_app_and_tools_can_wait_too() {
         local task = require("std:task")
         local ticks = 0
         task.spawn(function() while true do task.wait(0.01) ticks = ticks + 1 end end)
-        app.tool { name = "ticks", run = function() return ticks end }
-        app.tool { name = "slow", run = function() local before = ticks task.wait(0.15) return ticks - before end }
+        RPC.on_request("ticks", function() return ticks end)
+        RPC.on_request("slow", function() local before = ticks task.wait(0.15) return ticks - before end)
     "#;
     let vm = load(src).await;
-    let first = vm.call_tool("ticks", json!({}), &agent_ctx(0), false).await.unwrap().as_i64().unwrap();
+    let first = common::serve(&vm, "ticks", json!({}), &agent_ctx(0)).await.unwrap().as_i64().unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
-    let second = vm.call_tool("ticks", json!({}), &agent_ctx(0), false).await.unwrap().as_i64().unwrap();
+    let second = common::serve(&vm, "ticks", json!({}), &agent_ctx(0)).await.unwrap().as_i64().unwrap();
     assert!(second > first, "the task ran between calls: {first} -> {second}");
     // a tool that waits hands the VM back while it waits: the loop kept ticking meanwhile
-    let during = vm.call_tool("slow", json!({}), &agent_ctx(0), false).await.unwrap().as_i64().unwrap();
+    let during = common::serve(&vm, "slow", json!({}), &agent_ctx(0)).await.unwrap().as_i64().unwrap();
     assert!(during >= 3, "{during}");
 }
 
@@ -457,7 +457,7 @@ async fn long_running_work_started_with_task_spawn_does_not_hold_up_the_load() {
         task.spawn(function() while true do task.wait(3600) end end)
         task.delay(3600, function() ticks = -1 end)
         task.spawn(function() while true do ticks = ticks + 1 task.wait(0.01) end end)
-        app.tool {{ name = "ticks", run = function() return ticks end }}"#
+        RPC.on_request("ticks", function() return ticks end)"#
     );
     let data: Arc<dyn AppData> = db();
     let app = id("probe");
@@ -478,7 +478,7 @@ async fn a_loop_that_emits_is_heard_at_every_pause_not_only_when_it_ends() {
         r#"{MANIFEST}
         local task = require("std:task")
         local n = 0
-        task.spawn(function() while true do n = n + 1 app.emit("tick", {{ n = n }}) task.wait(0.01) end end)"#
+        task.spawn(function() while true do n = n + 1 RPC.send_notification("tick", {{ n = n }}) task.wait(0.01) end end)"#
     );
     r.load("probe", &src).await;
     // the loop never ends, so only a pause can send its events: they keep coming while it runs
@@ -495,7 +495,7 @@ async fn a_background_call_that_ends_after_emitting_is_heard() {
         r#"{MANIFEST}
         local task = require("std:task")
         -- emits and ends without ever waiting
-        task.spawn(function() app.emit("done") end)"#
+        task.spawn(function() RPC.send_notification("done") end)"#
     );
     r.load("probe", &src).await;
     eventually(5, "the ended task's event", || r.events() == ["done"]).await;
@@ -510,7 +510,7 @@ async fn a_pause_that_asked_nothing_of_the_host_sends_nothing() {
         local polls = 0
         -- works on its own: nothing for a page or the person to hear
         task.spawn(function() while true do polls = polls + 1 task.wait(0.01) end end)
-        app.tool {{ name = "polls", run = function() return polls end }}"#
+        RPC.on_request("polls", function() return polls end)"#
     );
     r.load("probe", &src).await;
     let polls = || async { r.tool("probe", "polls").await.as_i64().unwrap() };
@@ -529,7 +529,7 @@ async fn nothing_is_sent_for_an_app_after_it_is_unloaded() {
     let src = format!(
         r#"{MANIFEST}
         local task = require("std:task")
-        task.spawn(function() while true do app.emit("tick") task.wait(0.01) end end)"#
+        task.spawn(function() while true do RPC.send_notification("tick") task.wait(0.01) end end)"#
     );
     r.load("probe", &src).await;
     eventually(5, "the loop's first event", || !r.events().is_empty()).await;
@@ -556,11 +556,11 @@ async fn requests_to_the_apps_server_run_one_at_a_time_in_the_vm() {
           count = seen + 1
           return { status = 200, body = tostring(count) }
         end)
-        app.tool { name = "addr", run = function() return server:addr() end }
-        app.tool { name = "count", run = function() return count end }
+        RPC.on_request("addr", function() return server:addr() end)
+        RPC.on_request("count", function() return count end)
     "#;
     let vm = Arc::new(load(src).await);
-    let addr = vm.call_tool("addr", json!({}), &agent_ctx(0), false).await.unwrap();
+    let addr = common::serve(&vm, "addr", json!({}), &agent_ctx(0)).await.unwrap();
     let addr = addr.as_str().unwrap().to_owned();
     let mut requests = vec![];
     for _ in 0..24 {
@@ -576,7 +576,7 @@ async fn requests_to_the_apps_server_run_one_at_a_time_in_the_vm() {
     seen.sort_unstable();
     assert_eq!(seen, (1..=24).collect::<Vec<_>>(), "every request saw its own turn");
     // and the app's own tools queue with them
-    assert_eq!(vm.call_tool("count", json!({}), &agent_ctx(0), false).await.unwrap(), json!(24));
+    assert_eq!(common::serve(&vm, "count", json!({}), &agent_ctx(0)).await.unwrap(), json!(24));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -591,14 +591,14 @@ async fn a_call_waiting_in_a_read_only_tool_keeps_its_read_only_guarantee_while_
           task.wait(0.05)
           from_task = tostring(pcall(function() app.kv:set("v", 1) end))
         end)
-        app.tool { name = "ro", readOnly = true, run = function()
+        RPC.on_request("ro", function()
           task.wait(0.25)
           local wrote, why = pcall(function() app.kv:set("v", 2) end)
           return { tool_write = wrote, why = tostring(why), task_write = from_task, v = app.kv:get("v") }
-        end }
+        end, { read_only = true })
     "#;
     let vm = load(src).await;
-    let out = vm.call_tool("ro", json!({}), &agent_ctx(0), false).await.unwrap();
+    let out = common::serve(&vm, "ro", json!({}), &agent_ctx(0)).await.unwrap();
     assert_eq!(out["task_write"], "true", "another call may write while the read-only one waits: {out}");
     assert_eq!(out["tool_write"], false, "the read-only tool still cannot: {out}");
     assert!(out["why"].as_str().unwrap().contains("readOnly"), "{out}");
@@ -610,14 +610,14 @@ async fn a_call_cannot_wait_inside_a_transaction() {
     let src = r#"
         local task = require("std:task")
         app.db:migrate { [1] = "create table t(a)" }
-        app.tool { name = "tx", run = function()
+        RPC.on_request("tx", function()
           local ok, why = pcall(function() app.db:tx(function() app.db:exec("insert into t values (1)") task.wait(0.01) end) end)
           local n = app.db:one("select count(*) as n from t").n
           task.wait(0.01) -- outside a transaction waiting is fine
           return { ok = ok, why = tostring(why), n = n }
-        end }
+        end)
     "#;
-    let out = load(src).await.call_tool("tx", json!({}), &agent_ctx(0), false).await.unwrap();
+    let out = common::serve(&load(src).await, "tx", json!({}), &agent_ctx(0)).await.unwrap();
     assert_eq!(out["ok"], false, "{out}");
     assert!(out["why"].as_str().unwrap().contains("cannot wait inside db:tx"), "{out}");
     assert_eq!(out["n"], 0, "the transaction was rolled back: {out}");
@@ -631,10 +631,10 @@ async fn what_a_request_handler_asks_of_the_host_is_forwarded() {
         local net, hyper = require("std:net"), require("vnd:hyper")
         local server = hyper.serve(net.TcpListener.bind("127.0.0.1:0"), function(req)
           app.notify {{ title = "webhook " .. req.path }}
-          app.emit("hook.called", req.path)
+          RPC.send_notification("hook.called", req.path)
           return "ok"
         end)
-        app.tool {{ name = "addr", run = function() return server:addr() end }}"#
+        RPC.on_request("addr", function() return server:addr() end)"#
     );
     r.load("probe", &src).await;
     let addr = r.tool("probe", "addr").await;
@@ -655,7 +655,7 @@ async fn port_is_free(addr: &str) -> bool {
 const SERVER_APP: &str = r#"
     local net, hyper = require("std:net"), require("vnd:hyper")
     local server = hyper.serve(net.TcpListener.bind("127.0.0.1:0"), function(req) return "up" end)
-    app.tool { name = "addr", run = function() return server:addr() end }
+    RPC.on_request("addr", function() return server:addr() end)
 "#;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -749,28 +749,28 @@ const READ_ONLY_REACH: &str = r#"
     end)
     local function poke() return hyper.get("http://" .. server:addr() .. "/").body end
     -- route 1: a readOnly tool asks the app's own server to write while the tool waits for the answer
-    app.tool { name = "poke_ro", readOnly = true, run = poke }
-    app.tool { name = "poke", run = poke }
+    RPC.on_request("poke_ro", poke, { read_only = true })
+    RPC.on_request("poke", poke)
     -- route 2: a readOnly tool leaves a task behind that writes after the tool has returned
-    app.tool { name = "spawn_ro", readOnly = true, run = function()
+    RPC.on_request("spawn_ro", function()
       task.spawn(function() task.wait(0.05) insert("spawned") end)
       return "returned"
-    end }
-    app.tool { name = "defer_ro", readOnly = true, run = function() task.defer(function() insert("deferred") end) return "returned" end }
-    app.tool { name = "delay_ro", readOnly = true, run = function() task.delay(0.05, function() insert("delayed") end) return "returned" end }
-    app.tool { name = "yield_ro", readOnly = true, run = function()
+    end, { read_only = true })
+    RPC.on_request("defer_ro", function() task.defer(function() insert("deferred") end) return "returned" end, { read_only = true })
+    RPC.on_request("delay_ro", function() task.delay(0.05, function() insert("delayed") end) return "returned" end, { read_only = true })
+    RPC.on_request("yield_ro", function()
       task.spawn(function() coroutine.yield() insert("yielded") end)
       return "returned"
-    end }
+    end, { read_only = true })
     -- a task spawned by a readOnly tool spawns another from inside: both stay read-only
-    app.tool { name = "nested_ro", readOnly = true, run = function()
+    RPC.on_request("nested_ro", function()
       task.spawn(function() task.wait(0.01) task.spawn(function() task.wait(0.01) insert("nested") end) end)
       return "returned"
-    end }
-    app.tool { name = "spawn", run = function() task.spawn(function() task.wait(0.05) insert("writable") end) return "returned" end }
-    app.tool { name = "report", readOnly = true, run = function()
+    end, { read_only = true })
+    RPC.on_request("spawn", function() task.spawn(function() task.wait(0.05) insert("writable") end) return "returned" end)
+    RPC.on_request("report", function()
       return { outcome = outcome, n = app.db:one("select count(*) as n from log").n }
-    end }
+    end, { read_only = true })
 "#;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -817,14 +817,14 @@ async fn a_read_only_tool_cannot_register_or_change_the_apps_wiring() {
     let r = rig();
     let src = r#"
         local function try(f) local ok, err = pcall(f) return { ok = ok, err = (not ok) and tostring(err) or nil } end
-        app.tool { name = "register", readOnly = true, run = function()
-          return try(function() app.tool { name = "late", run = function() end } end) end }
-        app.tool { name = "reads", readOnly = true, run = function()
-          return { one = app.db:one("select 1 as n").n } end }
-        app.tool { name = "wire", run = function()
-          app.tool { name = "late", run = function() return "late" end }
+        RPC.on_request("register", function()
+          return try(function() RPC.on_request("late", function() end) end) end, { read_only = true })
+        RPC.on_request("reads", function()
+          return { one = app.db:one("select 1 as n").n } end, { read_only = true })
+        RPC.on_request("wire", function()
+          RPC.on_request("late", function() return "late" end)
           return "wired"
-        end }
+        end)
     "#;
     r.load("probe", &format!("{MANIFEST}\n{src}")).await;
     let out = r.tool("probe", "register").await;
@@ -834,7 +834,7 @@ async fn a_read_only_tool_cannot_register_or_change_the_apps_wiring() {
     let reads = r.tool("probe", "reads").await;
     assert_eq!(reads["one"], 1, "{reads}");
     assert_eq!(r.tool("probe", "wire").await, "wired");
-    assert_eq!(r.tool("probe", "late").await, "late", "the tool it registered is there");
+    assert_eq!(r.tool("probe", "late").await, "late", "the handler it registered is there");
 }
 
 // ---- a task that stopped at a plain yield takes its turn before it runs -------------------------------------
@@ -844,24 +844,24 @@ async fn a_task_continuation_does_not_interleave_with_the_call_that_spawned_it()
     let src = r#"
         local task = require("std:task")
         local log = {}
-        app.tool { name = "a", run = function()
+        RPC.on_request("a", function()
           log = { "a-start" }
           task.spawn(function() coroutine.yield() log[#log + 1] = "continuation" end)
           for _ = 1, 40 do app.kv:get("x") end
           log[#log + 1] = "a-end"
           local during = table.concat(log, ",")
           return during
-        end }
-        app.tool { name = "log", run = function() return table.concat(log, ",") end }
+        end)
+        RPC.on_request("log", function() return table.concat(log, ",") end)
     "#;
     let vm = Arc::new(load(src).await);
     for _ in 0..20 {
-        let during = vm.call_tool("a", json!({}), &agent_ctx(0), false).await.unwrap();
+        let during = common::serve(&vm, "a", json!({}), &agent_ctx(0)).await.unwrap();
         assert_eq!(during, "a-start,a-end", "the continuation ran in the middle of the call");
         // it runs once the call is over (the next call queues behind it or after it, never inside)
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            let log = vm.call_tool("log", json!({}), &agent_ctx(0), false).await.unwrap();
+            let log = common::serve(&vm, "log", json!({}), &agent_ctx(0)).await.unwrap();
             if log == json!("a-start,a-end,continuation") {
                 break;
             }
@@ -880,13 +880,13 @@ async fn effects_queued_after_the_app_was_unloaded_are_dropped_not_flushed() {
     let src = format!(
         r#"{MANIFEST}
         local task = require("std:task")
-        app.tool {{ name = "late", run = function()
+        RPC.on_request("late", function()
           task.wait(0.3) -- the call is still in flight when the app is unloaded
           app.notify {{ title = "from a ghost" }}
-          app.emit("ghost")
+          RPC.send_notification("ghost")
           return "done"
-        end }}
-        app.tool {{ name = "now", run = function() app.notify {{ title = "from a live app" }} return "done" end }}"#
+        end)
+        RPC.on_request("now", function() app.notify {{ title = "from a live app" }} return "done" end)"#
     );
     r.load("probe", &src).await;
     // control: a live app's effects are delivered
@@ -894,10 +894,9 @@ async fn effects_queued_after_the_app_was_unloaded_are_dropped_not_flushed() {
     assert_eq!(r.notes.0.lock().len(), 1);
 
     let runtime = r.runtime.clone();
-    let call =
-        tokio::spawn(
-            async move { runtime.call_tool(&id("probe"), "late", json!({}), agent_ctx(0), false).await },
-        );
+    let call = tokio::spawn(async move {
+        common::serve_rt(&runtime, &id("probe"), "late", json!({}), agent_ctx(0)).await
+    });
     tokio::time::sleep(Duration::from_millis(100)).await;
     r.runtime.unload(&id("probe")).await.unwrap();
     let _ = call.await.unwrap(); // the call ends (done or abandoned), either way
@@ -915,11 +914,11 @@ async fn effects_queued_after_the_app_was_unloaded_are_dropped_not_flushed() {
 async fn an_app_built_by_the_real_pipeline_requires_the_neoc_modules() {
     let package = built_package(&fixture("neoc_modules"));
     let bundle = String::from_utf8(package.files["app.luau"].clone()).unwrap();
-    for required in ["vos:app", "std:fs", "lib:json", "vnd:serde_yaml"] {
+    for required in ["vos:rpc", "std:fs", "lib:json", "vnd:serde_yaml"] {
         assert!(bundle.contains(&format!("require(\"{required}\")")), "{required} stays a runtime require");
     }
     assert!(!bundle.contains("./helpers"), "the relative module is bundled in");
     let vm = vos_lua::AppVm::load(&id("neoc-modules"), package, db(), common::config()).await.unwrap();
-    let out = vm.call_tool("probe", json!({}), &agent_ctx(0), false).await.unwrap();
+    let out = common::serve(&vm, "probe", json!({}), &agent_ctx(0)).await.unwrap();
     assert_eq!(out, json!({"encoded": "aGk=", "same_module": true, "n": 6, "has_fs": true, "yaml": true}));
 }

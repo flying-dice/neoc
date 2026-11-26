@@ -19,8 +19,7 @@ pub fn id(name: &str) -> AppId {
     AppId::parse(name).unwrap()
 }
 
-/// A package whose entry is `app.lua` plus extra modules. The entry is taken as it is: it must return the app's
-/// handlers itself (see [`backend`]).
+/// A package whose entry is `app.lua` plus extra modules. The entry is taken as it is.
 pub fn package(entry: &str, modules: &[(&str, &str)]) -> AppPackage {
     let mut files = BTreeMap::new();
     files.insert("app.lua".to_owned(), entry.as_bytes().to_vec());
@@ -30,11 +29,11 @@ pub fn package(entry: &str, modules: &[(&str, &str)]) -> AppPackage {
     AppPackage { entry: "app.lua".into(), files }
 }
 
-/// `src` as a whole backend: what it declares (tools, hooks, tasks), then the handlers an entry must return, here
-/// none. The return is on a line of its own after the source, so the line numbers of `src` are its own. For a
-/// source that says nothing about handlers; one that returns its own is loaded with [`try_load_entry`].
+/// `src` as a whole backend: what it declares (handlers, hooks, tasks), then one private handler that does nothing,
+/// so that a source that serves nothing of its own still has a backend on the bus (an entry that serves nothing
+/// does not load). The line is after the source, so the line numbers of `src` are its own.
 pub fn backend(src: &str) -> String {
-    format!("{src}\nreturn {{}}\n")
+    format!("{src}\nRPC.on_request(\"_nothing\", function() end)\n")
 }
 
 /// The config of these tests: the host's, plus the `hook(name, fn)` global `AppVm::emit` calls.
@@ -42,14 +41,9 @@ pub fn config() -> VmConfig {
     VmConfig { test_hooks: true, ..VmConfig::default() }
 }
 
-/// Load `src` followed by `return {}` ([`backend`]): an app with tools or hooks and no handlers.
+/// Load `src` followed by a handler of nothing ([`backend`]): an app with handlers or hooks.
 pub async fn try_load_with(name: &str, src: &str, db: Arc<dyn AppData>) -> vos_lua::Result<AppVm> {
     AppVm::load(&id(name), package(&backend(src), &[]), db, config()).await
-}
-
-/// Load `src` exactly as it is: an entry that returns its handlers (or shows what happens when it does not).
-pub async fn try_load_entry(name: &str, src: &str) -> vos_lua::Result<AppVm> {
-    AppVm::load(&id(name), package(src, &[]), db(), config()).await
 }
 
 pub async fn try_load(name: &str, src: &str) -> vos_lua::Result<AppVm> {
@@ -68,15 +62,32 @@ pub fn user_ctx(now_ms: u64) -> CallContext {
     CallContext { actor: Actor::user("You"), now_ms }
 }
 
-/// Run the tool `name` (no arguments) as an agent, giving up after `secs`. The error names what went wrong: the
+/// Call the handler `name` on the bus as the app service does: the call is read-only when the handler said
+/// (`about.read_only`) it changes nothing, or when `require_read_only` says so (the caller can only tighten).
+pub async fn serve_with(
+    vm: &AppVm,
+    name: &str,
+    args: Value,
+    ctx: &CallContext,
+    require_read_only: bool,
+) -> vos_lua::Result<Value> {
+    let declared = vm.handlers().iter().any(|h| h.method == name && h.read_only);
+    vm.call_handler_with(name, args, ctx, declared || require_read_only).await
+}
+
+/// [`serve_with`], with nothing more required than the handler said.
+pub async fn serve(vm: &AppVm, name: &str, args: Value, ctx: &CallContext) -> vos_lua::Result<Value> {
+    serve_with(vm, name, args, ctx, false).await
+}
+
+/// Run the handler `name` (no arguments) as an agent, giving up after `secs`. The error names what went wrong: the
 /// call failed (the script raised), never finished (the app is wedged), or the host panicked (a panic in a call is a
 /// failed join).
 pub async fn timed_tool(vm: &Arc<AppVm>, name: &str, secs: u64) -> Result<Value, String> {
     let name = name.to_owned();
     let vm = vm.clone();
     let call = tokio::spawn(async move {
-        tokio::time::timeout(Duration::from_secs(secs), vm.call_tool(&name, json!({}), &agent_ctx(0), false))
-            .await
+        tokio::time::timeout(Duration::from_secs(secs), serve(&vm, &name, json!({}), &agent_ctx(0))).await
     });
     match call.await {
         Err(e) => Err(format!("(f) the call panicked or was aborted: {e}")),
@@ -280,4 +291,39 @@ impl AppData for Stalling {
     fn read_only(&self) -> Arc<dyn AppData> {
         self.0.read_only()
     }
+}
+
+/// [`serve_with`] for the runtime (`AppRuntime`'s calls, as the app service makes them): a handler that said it
+/// changes nothing is called with `call_handler_read_only`, any other with `call_handler`.
+pub async fn serve_rt_with(
+    rt: &LuaRuntime,
+    app: &AppId,
+    method: &str,
+    args: Value,
+    ctx: CallContext,
+    require_read_only: bool,
+) -> PortResult<Value> {
+    let declared = rt.handlers(app).iter().any(|h| h.method == method && h.read_only);
+    if declared || require_read_only {
+        rt.call_handler_read_only(app, method, args, ctx).await
+    } else {
+        rt.call_handler(app, method, args, ctx).await
+    }
+}
+
+/// [`serve_rt_with`], with nothing more required than the handler said.
+pub async fn serve_rt(
+    rt: &LuaRuntime,
+    app: &AppId,
+    method: &str,
+    args: Value,
+    ctx: CallContext,
+) -> PortResult<Value> {
+    serve_rt_with(rt, app, method, args, ctx, false).await
+}
+
+/// What the app asked the host to do since the last call, except that its handlers changed: every handler an app
+/// registers says so (the host re-lists its agent tools), so each of these apps has said it once, at load.
+pub fn take_effects(vm: &AppVm) -> Vec<vos_lua::Effect> {
+    vm.take_effects().into_iter().filter(|e| !matches!(e, vos_lua::Effect::HandlersChanged)).collect()
 }
