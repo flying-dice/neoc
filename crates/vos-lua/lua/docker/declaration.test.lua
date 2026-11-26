@@ -78,9 +78,10 @@ describe("a declaration", function()
 end)
 
 describe("what Docker is asked for", function()
-  test("is what was declared, under the name and the labels given", function()
-    local body = declaration.body(nginx(), "vos-pages", { ["vos.app"] = "pages" })
-    expect(body.name):toBe("vos-pages")
+  test("is what was declared, under the labels given", function()
+    local body = declaration.body(nginx(), { ["vos.app"] = "pages" })
+    -- the name is the create call's option, not a field of the body (Docker's API, and vnd:bollard, refuse it there)
+    expect(body.name):toBeNil()
     expect(body.Image):toBe("nginx:1.30.0-alpine")
     expect(body.Entrypoint[3]):toBe("exec nginx")
     expect(body.Cmd):toBeNil()
@@ -90,7 +91,7 @@ describe("what Docker is asked for", function()
   end)
 
   test("publishes the declared ports and no other, TCP unless UDP is said", function()
-    local bindings = declaration.body(nginx(), "c", {}).HostConfig.PortBindings
+    local bindings = declaration.body(nginx(), {}).HostConfig.PortBindings
     local keys = {}
     for key in bindings do
       table.insert(keys, key)
@@ -102,7 +103,7 @@ describe("what Docker is asked for", function()
   end)
 
   test("gives the declared folders and no other, each only to read", function()
-    local host = declaration.body(nginx(), "c", {}).HostConfig
+    local host = declaration.body(nginx(), {}).HostConfig
     expect(#host.Mounts):toBe(1)
     expect(host.Mounts[1].Type):toBe("bind")
     expect(host.Mounts[1].Source):toBe("/srv/sites/blog")
@@ -114,7 +115,7 @@ describe("what Docker is asked for", function()
         error(`the container was given {key}`)
       end
     end
-    expect(#declaration.body({ image = "nginx" }, "c", {}).HostConfig.Mounts):toBe(0)
+    expect(#declaration.body({ image = "nginx" }, {}).HostConfig.Mounts):toBe(0)
   end)
 end)
 
