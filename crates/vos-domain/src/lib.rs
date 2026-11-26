@@ -19,7 +19,6 @@ pub mod notification;
 pub mod protocol;
 pub mod time;
 pub mod tool;
-pub mod tool_schema;
 pub mod version;
 
 pub use actor::{Actor, ActorKind};

@@ -9243,7 +9243,7 @@ interface vos_app_Actor {
  * What makes a call: the person, from the app's page, an agent, through a tool, or another app's backend.
  * - `user`: The person, from the app's page.
  * - `agent`: An agent, through a tool.
- * - `app`: Another app's backend: a request it sent (`app.request`), or its notification reaching a listener (`app.on`).
+ * - `app`: Another app's backend: a request it sent (`RPC.send_request`), or its notification reaching a listener (`RPC.on_notification`).
  */
 type vos_app_ActorKind = "user" | "agent" | "app"
 
@@ -9269,7 +9269,7 @@ interface vos_app_Caller {
   name: string
 }
 
-/** What a handler of the app's backend, or a tool's `run`, is called with: who is calling and when. */
+/** What a handler of the app's backend is called with: who is calling and when. */
 interface vos_app_Context {
   /** Who is calling. From the app's page it is the person (`kind` is `"user"`). */
   readonly actor: vos_app_Actor
@@ -9278,7 +9278,7 @@ interface vos_app_Context {
   /**
    * End the call with `message`, which the caller is shown as it is: no file or line. A handler's caller is the
    * page, whose `rpc` rejects with an application error (-32010) carrying the message; to fail with another
-   * JSON-RPC code, raise `error("RPC-32602 Title cannot be empty", 0)`. A tool's caller is the agent. It never
+   * JSON-RPC code, raise `error("RPC-32602 Title cannot be empty", 0)`. An agent's tool call is a request too: its caller is the agent. It never
    * returns (it is declared `never`), so `return ctx:fail(...)` fits a handler whatever its result is.
    */
   fail(message: string): never
@@ -9294,7 +9294,7 @@ interface vos_app_Db {
    */
   migrate(steps: string[]): void
   /**
-   * Run a statement that writes. Raises when the statement fails, and inside a `readOnly` tool.
+   * Run a statement that writes. Raises when the statement fails, and inside a read-only call.
    *
    * Yields the calling coroutine while it waits.
    */
@@ -9392,13 +9392,6 @@ interface vos_app_Files {
   readonly temp: vos_app_Location
 }
 
-/**
- * What an app's entry returns: the handlers its page reaches with `rpc(name, args)`, as
- * `handler(ctx, args)`. An entry that returns anything else (nothing included) does not load; an
- * app with nothing to call returns `{}`.
- */
-type vos_app_Handlers = { [key: string]: (this: void, ctx: vos_app_Context, args: unknown) => unknown }
-
 /** A tool of a running app, as an agent is shown it. */
 interface vos_app_HostTool {
   /** `<appId>__<tool>`: what `app.tools.call` takes. */
@@ -9424,13 +9417,13 @@ interface vos_app_Kv {
    */
   get(key: string): unknown | undefined
   /**
-   * Store `value` (any JSON value) under `key`; `nil` deletes the key. Raises inside a `readOnly` tool.
+   * Store `value` (any JSON value) under `key`; `nil` deletes the key. Raises inside a read-only call.
    *
    * Yields the calling coroutine while it waits.
    */
   set(key: string, value: unknown): void
   /**
-   * Delete `key`. Raises inside a `readOnly` tool.
+   * Delete `key`. Raises inside a read-only call.
    *
    * Yields the calling coroutine while it waits.
    */
@@ -9441,7 +9434,7 @@ interface vos_app_Kv {
  * One managed location of the app (`app.files.documents`, `.cache`, `.temp`). A path is relative to it, written
  * with `/` (`"notes/a.txt"`; `""` is the location itself); an absolute path, `..`, `:`, a backslash, NUL or a name
  * over 255 bytes is `invalid_input`, and a symbolic link inside it is never followed. A failure is returned as
- * `nil, err` with the kinds of `std:fs` (`err.kind`). A write inside a `readOnly` tool raises. A call holds the
+ * `nil, err` with the kinds of `std:fs` (`err.kind`). A write inside a read-only call raises. A call holds the
  * app's turn until it ends. Scoped to the app by convention: not a sandbox.
  */
 interface vos_app_Location {
@@ -9509,47 +9502,6 @@ interface vos_app_RemoveOptions {
   recursive?: boolean
 }
 
-/** The type of one input field of a tool, made by a builder of `app.t`. */
-interface vos_app_Schema {
-}
-
-/** What a builder takes. A field is required unless it is `optional` or has a `default`. */
-interface vos_app_SchemaOptions {
-  /** What the field is for: an agent reads it. */
-  description?: string
-  /** The value the field takes when a call leaves it out. */
-  default?: unknown
-  /** The least a number may be. */
-  min?: number
-  /** The most a number may be. */
-  max?: number
-  /** The fewest characters a string may have. */
-  minLength?: number
-  /** The most characters a string may have. */
-  maxLength?: number
-  /** A call may leave the field out. @default false */
-  optional?: boolean
-}
-
-/** A tool an agent can call. */
-interface vos_app_Tool {
-  /** A local identifier: `[a-z][a-z0-9_]*` (agents see it as `<appId>__<name>`). */
-  name: string
-  /** The name a person is shown. */
-  title?: string
-  /** What the tool does: the agent decides from it when to call the tool. */
-  description?: string
-  /** The fields of the tool's input, each built with `app.t`. A call is checked against them before `run`. */
-  input?: { [key: string]: vos_app_Schema }
-  /**
-   * Enforced: the tool runs with app writes blocked (db writes, `app.kv` set/delete, `db:migrate`,
-   * `app.files` writes raise) and an agent may run it without a permission prompt.
-   */
-  readOnly?: boolean
-  /** The tool: `run(input, ctx)`. What it returns (JSON) is the answer. */
-  run: (this: void, input: unknown, ctx: vos_app_Context) => unknown
-}
-
 /** The kinds of `vos_app_ToolCallError`. */
 type vos_app_ToolCallErrorKind = "not_found" | "failed" | "internal"
 
@@ -9561,31 +9513,6 @@ type vos_app_ToolCallError =
   | { kind: "failed"; message: string; op: string }
   /** The host could not run it. */
   | { kind: "internal"; message: string; op: string }
-
-/**
- * The builders of a tool's input fields: `app.t.string { description = "..." }`. Each returns a `Schema`.
- * Deprecated, with `app.tool`: a public method's params are typed in the app's `openrpc.json`.
- */
-interface vos_app_t {
-}
-
-/** The statics of `vos_app_t`. */
-interface vos_app_tStatics {
-  /** Text. */
-  string(this: void, options?: vos_app_SchemaOptions): vos_app_Schema
-  /** A whole number. */
-  integer(this: void, options?: vos_app_SchemaOptions): vos_app_Schema
-  /** A number. */
-  number(this: void, options?: vos_app_SchemaOptions): vos_app_Schema
-  /** `true` or `false`. */
-  boolean(this: void, options?: vos_app_SchemaOptions): vos_app_Schema
-  /** A list whose items are `items`. */
-  array(this: void, items: vos_app_Schema, options?: vos_app_SchemaOptions): vos_app_Schema
-  /** A table with these fields: they are required or optional as a tool's `input` fields are. */
-  object(this: void, fields: { [key: string]: vos_app_Schema }, options?: vos_app_SchemaOptions): vos_app_Schema
-  /** One of `values`. */
-  enum(this: void, values: string[], options?: vos_app_SchemaOptions): vos_app_Schema
-}
 
 /**
  * The tools of every running app, for an app that offers them to an agent of its own: `app.tools.all()` and
@@ -9603,7 +9530,7 @@ interface vos_app_toolsStatics {
    * the tool is told called it (its `ctx.actor`). Nothing checks what that agent may call: the app decides whom it offers the tools to. The
    * result is `(result, nil)`, or `(nil, err)` when the tool failed, does not exist or its app is not running.
    * Raises for a name that is not `<appId>__<tool>`, an agent whose `id` or `name` is not 1 to 200 bytes, and
-   * inside a `readOnly` tool. It waits without the app's turn: the tool runs in another app's VM, or in this
+   * inside a read-only call. It waits without the app's turn: the tool runs in another app's VM, or in this
    * one's as any other call.
    *
    * Yields the calling coroutine while it waits.
@@ -9615,7 +9542,7 @@ interface vos_app_toolsStatics {
  * The `app` API.
  *
  * `local app = require("vos:app")` in an app's backend; it is also the global `app`. The host provides it (one VM
- * per app). The backend's entry returns the handlers its page calls (`Handlers`).
+ * per app). The backend serves its methods on the bus (`RPC.on_request`).
  */
 declare module "vos:app" {
   /** The app's id. */
@@ -9628,21 +9555,11 @@ declare module "vos:app" {
   export const files: vos_app_Files
   /** The agent contacts. */
   export const agents: vos_app_Agents
-  export const t: vos_app_tStatics
   export const tools: vos_app_toolsStatics
-  /**
-   * Deprecated: a public method of the app's contract, served with `RPC.on_request`, is the agent tool
-   * `<app>__<method>` (the v1 plugin's apps declare tools with this).
-   *
-   * Declare a tool an agent can call: `app.tool { name = "search", input = { ... }, run = function(input, ctx) ... end }`.
-   * Raises when the definition is refused (a name that is not `[a-z][a-z0-9_]*`, one already registered) and
-   * inside a `readOnly` tool.
-   */
-  export function tool(this: void, def: vos_app_Tool): void
   /**
    * Open the app's window on the person's screen, or bring it forward if it is open (every connected shell is
    * asked; with none connected nothing happens). An app has one window, the frame of its page; `params` is
-   * JSON handed to it. A change to the world like `notify`: a `readOnly` tool may not.
+   * JSON handed to it. A change to the world like `notify`: a read-only call may not.
    */
   export function open_window(this: void, params?: { [key: string]: unknown }): void
   /**
@@ -9656,7 +9573,7 @@ declare module "vos:app" {
    * and both are text, never markup.
    *
    * Raises: a key other than `title` and `body`, no title, a title that is blank or over 200 characters, a body
-   * over 2000, a value that is not a string, a call in a `readOnly` tool, and a 65th while 64 from the same
+   * over 2000, a value that is not a string, a call inside a read-only call, and a 65th while 64 from the same
    * call are still waiting. The host delivers waiting notifications whenever a call of the app ends, and when a
    * call waits (`task.wait`, a request, a task or request handler pausing, or a tool that has notified and then
    * works on), so a tool that notifies half way is heard then, not when it returns. The limit guards against a
@@ -9665,15 +9582,6 @@ declare module "vos:app" {
   export function notify(this: void, notification: vos_app_Notification): void
   /** Write a line to the host's log, with the app's id. */
   export function log(this: void, message: string): void
-  /**
-   * Deprecated: declare a notification in the app's contract and send it with `RPC.send_notification` (the v1
-   * plugin's apps emit with this).
-   *
-   * Tell the app's open pages something changed outside them (`host.on(name, fn)` in the page): after an
-   * agent's tool changed data, or from a background task. `name` is 1 to 64 letters, digits and `. _ : -` (not
-   * `host:...`), `data` is JSON of at most 64 KiB. A change to the world like `notify`: a `readOnly` tool may not.
-   */
-  export function emit(this: void, name: string, data?: unknown): void
   export type Actor = vos_app_Actor
   export type ActorKind = vos_app_ActorKind
   export type AgentCard = vos_app_AgentCard
@@ -9686,17 +9594,12 @@ declare module "vos:app" {
   export type FileInfo = vos_app_FileInfo
   export type FileKind = vos_app_FileKind
   export type Files = vos_app_Files
-  export type Handlers = vos_app_Handlers
   export type HostTool = vos_app_HostTool
   export type Kv = vos_app_Kv
   export type Location = vos_app_Location
   export type Notification = vos_app_Notification
   export type RemoveOptions = vos_app_RemoveOptions
-  export type Schema = vos_app_Schema
-  export type SchemaOptions = vos_app_SchemaOptions
-  export type Tool = vos_app_Tool
   export type ToolCallError = vos_app_ToolCallError
-  export type t = vos_app_t
   export type tools = vos_app_tools
 }
 
@@ -9901,11 +9804,11 @@ type vos_rpc_RequestError =
 declare module "vos:rpc" {
   /**
    * Send a request on the RPC bus to `app` (this one's id included): every handler registered for `method`, a
-   * backend's (`on_request`, or the entry's table) or an open page's, is asked, and the first answer wins (the others
+   * backend's (`on_request`) or an open page's, is asked, and the first answer wins (the others
    * are cancelled). The handler is told this app called (`ctx.actor.kind` is `"app"`). The result is
    * `(result, nil)`, or `(nil, err)` when the app is not running, nothing handles the method, or the handler
    * failed. Raises for an id that is not an app's, a method name that is not 1 to 128 characters, and inside a
-   * `readOnly` tool. It waits without the app's turn.
+   * read-only call. It waits without the app's turn.
    *
    * Yields the calling coroutine while it waits.
    */
@@ -9914,19 +9817,20 @@ declare module "vos:rpc" {
    * Serve one of this app's methods on the RPC bus: `fn(params, ctx)` answers a request for `method`, from the
    * app's page, another app or an agent. An open page of the app may serve it too: the first answer wins. `about`
    * describes the handler: a public method (no leading `_`) is an agent tool, shown with it. Raises for a method
-   * this backend already serves, and inside a `readOnly` tool.
+   * this backend already serves, and inside a read-only call.
    */
   export function on_request(this: void, method: string, handler: (this: void, arg1: unknown, arg2: vos_app_Context) => unknown, about?: vos_rpc_About): void
   /**
    * Send one of this app's notifications on the RPC bus: to the app's open pages and backend listeners and, unless
-   * it is a `_name`, to every other app that listens. Nothing waits for it. As `app.emit` takes it.
+   * it is a `_name`, to every other app that listens. Nothing waits for it. `name` is 1 to 64 letters, digits and `. _ : -` (not
+   * `host:...`), `params` is JSON of at most 64 KiB. A change to the world like `app.notify`: a read-only call may not.
    */
   export function send_notification(this: void, name: string, params?: unknown): void
   /**
    * Hear an app's notification (this one's too: what its page sends): `fn(params, ctx)` runs, as a call of this
    * app's own, each time `app` sends `name`, with `ctx.actor` that app. Listeners run in the order they were added.
    * Raises for an id that is not an app's, another app's `_name` (private: it never leaves that app) or a `host:`
-   * name, and inside a `readOnly` tool.
+   * name, and inside a read-only call.
    */
   export function on_notification(this: void, app: string, name: string, listener: (this: void, arg1: unknown, arg2: vos_app_Context) => void): void
   export type About = vos_rpc_About

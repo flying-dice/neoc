@@ -12,7 +12,7 @@
 //! Only an app serves its own methods and sends its own notifications. A `_name` is private: another app's private
 //! method can still be called (the host logs it), but a private notification never leaves its app.
 
-use super::{context::Context, json::Json, misc::EventData, shared};
+use super::{context::Context, json::Json, shared};
 use crate::vm::{Effect, Handler};
 use mlua_ir::{Callback, LuaError, Options, Registry, Shape, Unknown};
 use neoc_vm::mlua;
@@ -39,6 +39,11 @@ mlua_ir::unknown_reason!(
 mlua_ir::unknown_reason!(
     /// Why a handler's answer has no declared shape here.
     HandlerResult = "what the handler answers: its shape is the contract's"
+);
+
+mlua_ir::unknown_reason!(
+    /// Why the params of a notification an app sends have no declared shape here.
+    NotificationData = "the params of the app's notification: their shape is its contract's"
 );
 
 mlua_ir::unknown_reason!(
@@ -79,6 +84,9 @@ pub type Params = Json<BTreeMap<String, Unknown<RequestParams>>>;
 /// A handler of one of this app's methods: `fn(params, ctx)`, answering with the result.
 pub type RequestHandler =
     Callback<fn(params: Json<Unknown<MessageParams>>, ctx: Context) -> Json<Unknown<HandlerResult>>>;
+
+/// The params of a notification an app sends: any JSON value.
+pub type NotificationParams = Json<Unknown<NotificationData>>;
 
 /// A listener of a notification: `fn(params, ctx)`, where `ctx.actor` is the app that sent it.
 pub type Listener = Callback<fn(params: Json<Unknown<MessageParams>>, ctx: Context)>;
@@ -122,8 +130,20 @@ impl From<PortError> for RequestError {
 
 /// The longest method name (the backend's own limit).
 const MAX_METHOD: usize = 128;
-/// The longest notification name (as `app.emit` takes).
+/// The longest notification name.
 const MAX_NAME: usize = 64;
+/// The most JSON bytes of params one notification carries: it travels to every open client of the app.
+pub const MAX_NOTIFICATION_BYTES: usize = 64 * 1024;
+/// The most notifications that may wait to be sent: a loop that sends faster than the host delivers gets an error,
+/// not an unbounded queue.
+const MAX_QUEUED_NOTIFICATIONS: usize = 256;
+
+/// Whether `name` is a notification name: letters, digits and `. _ : -`.
+fn valid_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= MAX_NAME
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'-'))
+}
 
 fn app_id(what: &str, id: &str) -> mlua::Result<AppId> {
     AppId::parse(id).map_err(|_| mlua::Error::runtime(format!("{what}: `{id}` is not an app id")))
@@ -145,7 +165,7 @@ pub(super) async fn send_request(
     params: Option<Params>,
 ) -> mlua::Result<Result<Json<Unknown<RequestResult>>, RequestError>> {
     let sh = shared(&lua)?;
-    // a handler may write, so a `readOnly` tool may not ask for one
+    // a handler may write, so a read-only call may not ask for one
     sh.writable("RPC.send_request")?;
     let to = app_id("RPC.send_request", &app)?;
     method_name("RPC.send_request", &method)?;
@@ -166,7 +186,7 @@ pub(super) fn on_request(
     about: Option<About>,
 ) -> mlua::Result<()> {
     let sh = shared(lua)?;
-    // serving a method changes the app's wiring, as `app.tool` does
+    // serving a method changes the app's wiring, so a read-only call may not
     sh.writable("RPC.on_request")?;
     method_name("RPC.on_request", &method)?;
     let mut handlers = sh.rpc_handlers.lock();
@@ -183,26 +203,54 @@ pub(super) fn on_request(
         input_schema: about.input_schema.map(|s| s.0),
         read_only: about.read_only,
     };
-    handlers.insert(method, Handler::Registered(handler.into_function(), info));
+    handlers.insert(method, Handler { run: handler.into_function(), info });
     drop(handlers);
     // the app's agent tools follow its handlers
     sh.push_effect(Effect::HandlersChanged)
 }
 
-pub(super) fn send_notification(lua: &Lua, name: String, params: Option<EventData>) -> mlua::Result<()> {
-    // the same as `app.emit`: the runtime takes it to the bus when the call ends or pauses
-    super::misc::emit(&*shared(lua)?, name, params)
+/// `RPC.send_notification(name, params?)`: a change to the world like `app.notify`, so a read-only call may not. The
+/// runtime takes it to the bus when the call ends or pauses.
+pub(super) fn send_notification(
+    lua: &Lua,
+    name: String,
+    params: Option<NotificationParams>,
+) -> mlua::Result<()> {
+    let sh = shared(lua)?;
+    sh.writable("RPC.send_notification")?;
+    if !valid_name(&name) {
+        return Err(mlua::Error::runtime(format!(
+            "RPC.send_notification: a notification name is 1 to {MAX_NAME} letters, digits, . _ : or -"
+        )));
+    }
+    if name.starts_with("host:") {
+        return Err(mlua::Error::runtime(
+            "RPC.send_notification: names starting with `host:` are the host's own",
+        ));
+    }
+    let params = params.map_or(Value::Null, |params| params.value);
+    if params.to_string().len() > MAX_NOTIFICATION_BYTES {
+        return Err(mlua::Error::runtime(format!(
+            "RPC.send_notification: the params of a notification are at most {MAX_NOTIFICATION_BYTES} bytes of JSON"
+        )));
+    }
+    let mut effects = sh.effects.lock();
+    let waiting = effects.iter().filter(|e| matches!(e, Effect::Publish { .. })).count();
+    if waiting >= MAX_QUEUED_NOTIFICATIONS {
+        return Err(mlua::Error::runtime(format!(
+            "RPC.send_notification: {MAX_QUEUED_NOTIFICATIONS} notifications are already waiting to be sent"
+        )));
+    }
+    effects.push(Effect::Publish { name, params });
+    Ok(())
 }
 
 pub(super) fn on_notification(lua: &Lua, app: String, name: String, listener: Listener) -> mlua::Result<()> {
     let sh = shared(lua)?;
-    // listening changes the app's wiring, as `app.tool` does
+    // listening changes the app's wiring, so a read-only call may not
     sh.writable("RPC.on_notification")?;
     let from = app_id("RPC.on_notification", &app)?;
-    let valid = !name.is_empty()
-        && name.len() <= MAX_NAME
-        && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'-'));
-    if !valid {
+    if !valid_name(&name) {
         return Err(mlua::Error::runtime(format!(
             "RPC.on_notification: a notification name is 1 to {MAX_NAME} letters, digits, . _ : or -"
         )));

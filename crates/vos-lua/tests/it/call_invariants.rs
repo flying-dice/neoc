@@ -15,7 +15,7 @@
 //! `chaos.rs` generates scripts that combine these ingredients and checks the same invariants over all of them.
 //!
 //! `state` in these apps is an in-memory value whose every assignment also sends an event to the app's pages (`RPC.send_notification`),
-//! which is a change to the world: a call that is read-only cannot assign it, and the error says `readOnly`.
+//! which is a change to the world: a call that is read-only cannot assign it, and the error says `read-only`.
 
 use crate::common;
 
@@ -175,7 +175,7 @@ async fn a_plain_yield_after_a_failed_wait_does_not_lend_a_read_only_call() {
               local before = counter
               for _ = 1, 200 do coroutine.yield() end
               local ok, e = pcall(function() state.v = 42 end)
-              local nok = pcall(function() app.notify { title = "from readOnly" } end)
+              local nok = pcall(function() app.notify { title = "from read-only" } end)
               return { failed_wait = failed, state_write_ok = ok, e = tostring(e), notify_ok = nok, interleaved = counter ~= before }
             end, { read_only = true })
             RPC.on_request("v", function() return state.v end, { read_only = true })
@@ -306,7 +306,7 @@ async fn the_top_level_thread_of_a_parked_call_cannot_be_resumed_by_another_call
 
 /// A protected call's coroutine is a host thread like any other: another call that resumes the one a `pcall` runs its
 /// body in (stashed by `coroutine.running()`) is refused, the parked call finishes with its own result, and a
-/// `readOnly` call never writes or notifies.
+/// `read-only` call never writes or notifies.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_thread_of_a_pcall_cannot_be_resumed_by_another_call() {
     let vm = Arc::new(
@@ -321,7 +321,7 @@ async fn the_thread_of_a_pcall_cannot_be_resumed_by_another_call() {
                 t = coroutine.running()
                 task.wait(0.3)
                 local w = pcall(function() state.v = 42 end)
-                local n = pcall(function() app.notify { title = "from readOnly" } end)
+                local n = pcall(function() app.notify { title = "from read-only" } end)
                 log[#log + 1] = { state = w, notify = n }
               end)
               return { "a done", ok, tostring(e) }
@@ -350,7 +350,7 @@ async fn the_thread_of_a_pcall_cannot_be_resumed_by_another_call() {
     let report = call(&vm, "report").await;
     assert_eq!(report["v"], 0, "{report}");
     assert_eq!(report["log"], json!([{ "state": false, "notify": false }]), "{report}");
-    assert!(common::take_effects(&vm).is_empty(), "nothing was queued from a readOnly call");
+    assert!(common::take_effects(&vm).is_empty(), "nothing was queued from a read-only call");
     assert_eq!(call(&vm, "ping").await, json!("pong"));
 }
 
@@ -395,8 +395,8 @@ async fn the_thread_of_an_xpcall_in_a_task_cannot_be_resumed_and_the_task_comple
         json!({ "ok": false, "e": "cannot resume non-suspended coroutine", "ok2": false, "e2": "cannot resume non-suspended coroutine" })
     );
     assert_eq!(call(&vm, "aw").await, json!([[true, "nil"]]), "the task completed with its own result");
-    assert_eq!(call(&vm, "report").await, json!(["after wait", "false"]), "readOnly came with the task");
-    assert!(common::take_effects(&vm).is_empty(), "nothing was queued from a readOnly task");
+    assert_eq!(call(&vm, "report").await, json!(["after wait", "false"]), "read-only came with the task");
+    assert!(common::take_effects(&vm).is_empty(), "nothing was queued from a read-only task");
 }
 
 /// Any thread a script can reach with `coroutine.running()` that it did not make is refused, wherever the call was:
@@ -581,7 +581,7 @@ async fn the_scheduler_takes_no_coroutine() {
     assert_eq!((&own["first"], &own["last"]), (&json!("first"), &json!("mine done")), "{own}");
 }
 
-/// A `readOnly` call whose thread another call tried to resume stays read-only: it never runs without the turn, and
+/// A `read-only` call whose thread another call tried to resume stays read-only: it never runs without the turn, and
 /// the restriction goes with the turn.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_read_only_call_is_still_read_only_after_another_call_tried_to_resume_it() {
@@ -597,7 +597,7 @@ async fn a_read_only_call_is_still_read_only_after_another_call_tried_to_resume_
               task.wait(0.02)
               coroutine.yield()
               local ok = pcall(function() state.v = 42 end)
-              local notified = pcall(function() app.notify { title = "from readOnly" } end)
+              local notified = pcall(function() app.notify { title = "from read-only" } end)
               log[#log + 1] = { state = ok, notify = notified }
               return "a done"
             end, { read_only = true })
@@ -621,7 +621,7 @@ async fn a_read_only_call_is_still_read_only_after_another_call_tried_to_resume_
     let report = call(&vm, "report").await;
     assert_eq!(report["v"], 0, "{report}");
     assert_eq!(report["log"], json!([{ "state": false, "notify": false }]), "{report}");
-    assert!(common::take_effects(&vm).is_empty(), "nothing was queued from a readOnly call");
+    assert!(common::take_effects(&vm).is_empty(), "nothing was queued from a read-only call");
 }
 
 /// A thread `task.spawn(fn)` makes is the scheduler's from its first instruction: another call resuming it is

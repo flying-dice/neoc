@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
 //! A host function that panics during a call into an app (a module's Rust code, a port behind the `app` API) fails
 //! that call with an error, never the task that polled it, and leaves the app answering with nothing of the call
-//! left open: its turn, its transaction and its `readOnly` restriction end with it. The panicking host function
+//! left open: its turn, its transaction and its `read-only` restriction end with it. The panicking host function
 //! here is the agent roster behind `app.agents:list()`, a port the app API calls synchronously, as a module's
 //! function is called.
 
@@ -70,7 +70,7 @@ RPC.on_request("values", function() return db:all("select a from t order by a") 
 async fn panicking_app() -> Arc<AppVm> {
     let config = VmConfig { roster: Arc::new(PanickingRoster), ..VmConfig::default() };
     let src = format!("{MANIFEST}\n{APP}");
-    Arc::new(AppVm::load(&id("probe"), package(&common::backend(&src), &[]), db(), config).await.unwrap())
+    Arc::new(AppVm::load(&id("probe"), package(&src, &[]), db(), config).await.unwrap())
 }
 
 async fn call(vm: &AppVm, tool: &str) -> vos_lua::Result<Value> {
@@ -160,10 +160,7 @@ async fn the_port_reports_a_panic_as_an_internal_error_and_keeps_the_app_loaded(
     let runtime = LuaRuntime::new(Arc::new(Quiet), Arc::new(RecordingShell::default()))
         .with_roster(Arc::new(PanickingRoster));
     let data: Arc<dyn AppData> = db();
-    runtime
-        .load(&id("probe"), package(&common::backend(&format!("{MANIFEST}\n{APP}")), &[]), data)
-        .await
-        .unwrap();
+    runtime.load(&id("probe"), package(&format!("{MANIFEST}\n{APP}"), &[]), data).await.unwrap();
     let app = id("probe");
     let call = |tool: &'static str| common::serve_rt(&runtime, &app, tool, json!({}), agent_ctx(0));
     match call("uncaught").await {
@@ -211,7 +208,7 @@ async fn a_panic_forwarding_background_effects_leaves_the_pump_running() {
         "#
     );
     let data: Arc<dyn AppData> = db();
-    runtime.load(&id("probe"), package(&common::backend(&src), &[]), data).await.unwrap();
+    runtime.load(&id("probe"), package(&src, &[]), data).await.unwrap();
     common::serve_rt(&runtime, &id("probe"), "later", json!({}), agent_ctx(0)).await.unwrap();
     for _ in 0..200 {
         if notifier.titles.lock().len() >= 2 {

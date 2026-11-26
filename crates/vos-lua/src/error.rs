@@ -19,7 +19,7 @@ impl fmt::Display for ScriptError {
 }
 impl std::error::Error for ScriptError {}
 
-/// `ctx:fail(message)`: the tool reports a problem to the caller. Not a bug in the app, so it carries
+/// `ctx:fail(message)`: the handler reports a problem to the caller. Not a bug in the app, so it carries
 /// no file and line.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToolFailure(pub String);

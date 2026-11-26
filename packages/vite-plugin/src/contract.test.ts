@@ -47,10 +47,6 @@ describe('parseContract', () => {
     expect(() => parseContract(doc([request('add_site_x'), request('addSiteX')]))).toThrow()
   })
 
-  test('a component may not take a generated name', () => {
-    expect(() => parseContract(doc([], { Handlers: { type: 'string' } }))).toThrow('a name the generated code uses itself')
-  })
-
   test('an unknown extension and an unknown schema keyword are errors that say where', () => {
     expect(() => parseContract(doc([request('add', { 'x-other': 1 })]))).toThrow('methods[0].x-other')
     expect(() => parseContract(doc([request('add', { result: { name: 'r', schema: { type: 'string', format: 'email' } } })]))).toThrow(

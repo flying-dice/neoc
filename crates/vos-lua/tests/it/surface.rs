@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
 //! The app API an app gets is the one its schema describes and `types/generated/vos.d.luau` declares: every key of the
-//! live `app` table and of `app.t` is declared, every declared key is there, and every declared member of the values
+//! live `app` table and of `app.tools` is declared, every declared key is there, and every declared member of the values
 //! under it (`app.db`, `app.kv`, `app.files`, a location, `app.agents`, a call's `ctx`) is there, so a call that
 //! type-checks and then fails (declared, missing) or works unseen by the checker (present, undeclared) fails here.
 
@@ -101,7 +101,7 @@ const OBJECTS: [(&str, &str, &str); 5] = [
     ("agents", "app.agents", "vos_app_Agents"),
 ];
 
-/// An app whose handler lists the keys of `app` and of `app.t`, and which of the names it is given each object has.
+/// An app whose handler lists the keys of `app` and of `app.tools`, and which of the names it is given each object has.
 fn probe(ir: &Ir) -> String {
     let asked = OBJECTS
         .iter()
@@ -134,7 +134,7 @@ fn probe(ir: &Ir) -> String {
     end
     RPC.on_request("keys", function(_, ctx)
       return {{
-        app = keys(app), t = keys(app.t), tools = keys(app.tools), same = require("vos:app") == app,
+        app = keys(app), tools = keys(app.tools), same = require("vos:app") == app,
         kinds = {{ db = typeof(app.db), id = typeof(app.id), ctx = typeof(ctx), documents = typeof(app.files.documents) }},
         ctx = has(ctx, {{ "actor", "now", "fail" }}),
         {asked}
@@ -164,8 +164,6 @@ async fn the_app_api_an_app_gets_is_the_one_the_schema_and_the_declarations_desc
     // and of the committed declarations, which are written from that schema
     let decls = declarations();
     assert_same("vos_app", &strings(&live["app"]), &declared_keys(&decls, "vos_app"));
-    assert_same("t", &strings(&live["t"]), &statics(&ir, "vos_app_t"));
-    assert_same("vos_app_tStatics", &strings(&live["t"]), &declared_keys(&decls, "vos_app_tStatics"));
     assert_same("tools", &strings(&live["tools"]), &statics(&ir, "vos_app_tools"));
     assert_same(
         "vos_app_toolsStatics",
@@ -179,14 +177,9 @@ async fn the_app_api_an_app_gets_is_the_one_the_schema_and_the_declarations_desc
 
     // the whole surface, spelled out: a member that comes back (or one that goes) changes this list
     let app: Vec<String> = strings(&live["app"]).into_iter().collect();
-    assert_eq!(
-        app,
-        ["agents", "db", "emit", "files", "id", "kv", "log", "notify", "open_window", "t", "tool", "tools"]
-    );
+    assert_eq!(app, ["agents", "db", "files", "id", "kv", "log", "notify", "open_window", "tools"]);
     let db: Vec<String> = strings(&live["db"]).into_iter().collect();
     assert_eq!(db, ["all", "exec", "migrate", "one", "tx"]);
-    let t: Vec<String> = strings(&live["t"]).into_iter().collect();
-    assert_eq!(t, ["array", "boolean", "enum", "integer", "number", "object", "string"]);
     // the module and the global are one table; the id is a plain string, the values under `app` are userdata, which
     // `typeof` names as the declarations do (what narrows a Luau extern type)
     assert_eq!(live["same"], true);

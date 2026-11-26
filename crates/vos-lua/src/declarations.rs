@@ -6,7 +6,7 @@
 
 use crate::{api, docker};
 use mlua_ir::ir::Ir;
-use mlua_ir::{Registry, Shape};
+use mlua_ir::Registry;
 
 /// The module the `app` API is: `require("vos:app")`, and the global `app`.
 pub const APP_MODULE: &str = api::MODULE;
@@ -23,14 +23,7 @@ pub const RPC_MODULE: &str = api::RPC_MODULE;
 /// The global the RPC bus also is.
 pub const RPC_GLOBAL: &str = "RPC";
 
-/// The type of what an app's entry returns (`vos_app_Handlers`): the one type of the contract that no function of
-/// the module mentions, because the host reads it instead of a script passing it.
-#[must_use]
-pub fn handlers_type() -> String {
-    Registry::qualify(Some(APP_MODULE), "Handlers")
-}
-
-/// The type a handler and a tool's `run` are called with (`vos_app_Context`).
+/// The type a handler is called with (`vos_app_Context`).
 #[must_use]
 pub fn context_type() -> String {
     Registry::qualify(Some(APP_MODULE), "Context")
@@ -40,14 +33,6 @@ pub fn context_type() -> String {
 #[must_use]
 pub fn schema() -> Ir {
     let mut ir = neoc_vm::declarations::schema();
-    // the entry's contract: reached by no function, so the registry of the modules does not have it
-    let mut contract = Registry::new();
-    api::Handlers::shape(&mut contract);
-    for def in contract.into_types() {
-        if ir.type_def(&def.name).is_none() {
-            ir.types.push(def);
-        }
-    }
     docker::declare(&mut ir);
     ir.types.sort_by(|a, b| a.name.cmp(&b.name));
     ir
@@ -56,7 +41,7 @@ pub fn schema() -> Ir {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mlua_ir::ir::{ModuleKind, Ty, TypeBody};
+    use mlua_ir::ir::{ModuleKind, TypeBody};
 
     #[test]
     fn the_schema_has_the_app_api_and_the_library() {
@@ -71,23 +56,7 @@ mod tests {
             .chain(app.functions.iter().map(|f| f.name.as_str()))
             .collect();
         members.sort_unstable();
-        assert_eq!(
-            members,
-            [
-                "agents",
-                "db",
-                "emit",
-                "files",
-                "id",
-                "kv",
-                "log",
-                "notify",
-                "open_window",
-                "t",
-                "tool",
-                "tools"
-            ]
-        );
+        assert_eq!(members, ["agents", "db", "files", "id", "kv", "log", "notify", "open_window", "tools"]);
         assert!(
             ir.modules.iter().any(|m| m.name == "std:fs") && ir.modules.iter().any(|m| m.name == "lib:json")
         );
@@ -104,13 +73,8 @@ mod tests {
     }
 
     #[test]
-    fn the_entrys_contract_is_declared_with_the_types_it_names() {
+    fn the_context_is_declared_with_its_type() {
         let ir = schema();
-        let handlers = ir.type_def(&handlers_type()).expect("Handlers");
-        let TypeBody::Alias { ty: Ty::Map { value, .. } } = &handlers.body else { panic!("{handlers:?}") };
-        let Ty::Function { params, .. } = &**value else { panic!("{value:?}") };
-        assert_eq!(params[0].name, "ctx");
-        assert_eq!(params[0].ty.name(), Some(context_type().as_str()));
         assert!(matches!(ir.type_def(&context_type()).expect("Context").body, TypeBody::Object { .. }));
     }
 

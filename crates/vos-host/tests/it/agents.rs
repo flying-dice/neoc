@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
 //! Per-agent identity and permissions across the real wiring: the roster, `/mcp` attribution and grants, the
-//! `readOnly` rule, and the `agents.*` methods on `/rpc`.
+//! `read-only` rule, and the `agents.*` methods on `/rpc`.
 
 use crate::common;
 
@@ -50,7 +50,7 @@ async fn an_agent_with_its_own_token_calls_a_granted_tool_attributed_and_is_deni
     assert!(text_of(&denied).contains("Other may not call"), "{}", text_of(&denied));
     assert_eq!(who(&r).await, json!(["agent:fake:Fake"]), "nothing was written for the denied agent");
 
-    // a readOnly tool reads, and cannot write by any route even though its code tries
+    // a read-only tool reads, and cannot write by any route even though its code tries
     let peek = call(&granted, "ledger__peek", json!({})).await;
     assert!(text_of(&peek).contains("agent:fake:Fake"), "{}", text_of(&peek));
     let sneaky = call(&granted, "ledger__sneaky", json!({})).await;
@@ -63,7 +63,7 @@ async fn an_agent_with_its_own_token_calls_a_granted_tool_attributed_and_is_deni
         report.to_lowercase().contains("readonly") || report.to_lowercase().contains("read-only"),
         "{report}"
     );
-    assert_eq!(who(&r).await, json!(["agent:fake:Fake"]), "the readOnly tool wrote nothing");
+    assert_eq!(who(&r).await, json!(["agent:fake:Fake"]), "the read-only tool wrote nothing");
     r.stop().await;
 }
 
@@ -206,16 +206,14 @@ local function names()
   end
   return out
 end
-return {
-  names = function() return names() end,
-  call = function(_, args)
-    local result, err = app.tools.call(args.tool, { id = "ada", name = "Ada" }, args.input)
-    return { result = result, err = err and err.message, kind = err and err.kind }
-  end,
-  bad = function(_, args)
-    return { raised = not pcall(app.tools.call, args.tool, args.agent, {}) }
-  end,
-}
+RPC.on_request("_names", function() return names() end)
+RPC.on_request("_call", function(args)
+  local result, err = app.tools.call(args.tool, { id = "ada", name = "Ada" }, args.input)
+  return { result = result, err = err and err.message, kind = err and err.kind }
+end)
+RPC.on_request("_bad", function(args)
+  return { raised = not pcall(app.tools.call, args.tool, args.agent, {}) }
+end)
 "#;
 
 #[tokio::test]
@@ -238,32 +236,32 @@ async fn an_app_lists_and_calls_the_tools_of_the_running_apps_for_an_agent_of_it
 
     // no grant is asked of the app's agent: every tool of every running app, in name order
     assert_eq!(
-        ask("names", json!({})).await,
+        ask("_names", json!({})).await,
         json!(["ledger__add", "ledger__peek (read)", "ledger__sneaky (read)"])
     );
 
     // the tool is told who called: the agent the app named, under the app's own id, so no app can speak as another's
-    let added = ask("call", json!({ "tool": "ledger__add", "input": {} })).await;
+    let added = ask("_call", json!({ "tool": "ledger__add", "input": {} })).await;
     assert_eq!(added, json!({ "result": { "count": 1 } }));
     assert_eq!(who(&r).await, json!(["agent:broker:ada:Ada"]));
 
-    // a readOnly tool still cannot write, whoever asks for it
-    let sneaky = ask("call", json!({ "tool": "ledger__sneaky", "input": {} })).await;
+    // a read-only tool still cannot write, whoever asks for it
+    let sneaky = ask("_call", json!({ "tool": "ledger__sneaky", "input": {} })).await;
     assert_eq!(sneaky["result"]["count"], 1, "{sneaky}");
 
     // a tool that is not there, and one of an app that is not running, are errors the app can read
-    let missing = ask("call", json!({ "tool": "ledger__nope", "input": {} })).await;
+    let missing = ask("_call", json!({ "tool": "ledger__nope", "input": {} })).await;
     assert!(missing["err"].as_str().is_some_and(|e| !e.is_empty()), "{missing}");
-    let nowhere = ask("call", json!({ "tool": "ghost__add", "input": {} })).await;
+    let nowhere = ask("_call", json!({ "tool": "ghost__add", "input": {} })).await;
     assert!(nowhere["err"].as_str().unwrap().contains("not installed"), "{nowhere}");
 
     // a name that is not `<app>__<tool>` and an agent without a name are the app's own mistakes
     assert_eq!(
-        ask("bad", json!({ "tool": "nope", "agent": { "id": "a", "name": "A" } })).await,
+        ask("_bad", json!({ "tool": "nope", "agent": { "id": "a", "name": "A" } })).await,
         json!({ "raised": true })
     );
     assert_eq!(
-        ask("bad", json!({ "tool": "ledger__add", "agent": { "id": "a" } })).await,
+        ask("_bad", json!({ "tool": "ledger__add", "agent": { "id": "a" } })).await,
         json!({ "raised": true })
     );
     assert_eq!(

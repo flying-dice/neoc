@@ -29,21 +29,14 @@ pub fn package(entry: &str, modules: &[(&str, &str)]) -> AppPackage {
     AppPackage { entry: "app.lua".into(), files }
 }
 
-/// `src` as a whole backend: what it declares (handlers, hooks, tasks), then one private handler that does nothing,
-/// so that a source that serves nothing of its own still has a backend on the bus (an entry that serves nothing
-/// does not load). The line is after the source, so the line numbers of `src` are its own.
-pub fn backend(src: &str) -> String {
-    format!("{src}\nRPC.on_request(\"_nothing\", function() end)\n")
-}
-
 /// The config of these tests: the host's, plus the `hook(name, fn)` global `AppVm::emit` calls.
 pub fn config() -> VmConfig {
     VmConfig { test_hooks: true, ..VmConfig::default() }
 }
 
-/// Load `src` followed by a handler of nothing ([`backend`]): an app with handlers or hooks.
+/// Load `src`: an app with handlers or hooks.
 pub async fn try_load_with(name: &str, src: &str, db: Arc<dyn AppData>) -> vos_lua::Result<AppVm> {
-    AppVm::load(&id(name), package(&backend(src), &[]), db, config()).await
+    AppVm::load(&id(name), package(src, &[]), db, config()).await
 }
 
 pub async fn try_load(name: &str, src: &str) -> vos_lua::Result<AppVm> {
@@ -136,32 +129,42 @@ pub fn built_package(entry: &Path) -> AppPackage {
 /// The backend of the app project in `dir` (relative to the repository root: `apps/calculator`,
 /// `e2e/apps/tasks-svelte`), built, as an app package of the one file the host ships.
 ///
-/// A project is built by its own `bun run build` (`vite build` with `@vos/vite-plugin`), once per process, and its
-/// `dist/app.luau` is the package: Luau or TypeScript, bundled by the plugin.
+/// A project is built by `vite build` with `@vos/vite-plugin`, once per process, into a directory of this process's
+/// own (`--outDir`): every test of `cargo nextest` is a process of its own, and two of them building the same
+/// project into its `dist/` would write over each other. The built `app.luau` is the package: Luau or TypeScript,
+/// bundled by the plugin.
 pub fn built_project(dir: &str) -> AppPackage {
+    use std::collections::HashMap;
     use std::sync::Mutex;
-    static BUILT: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    static BUILT: Mutex<Option<HashMap<String, Vec<u8>>>> = Mutex::new(None);
     let project = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(dir);
     // the lock is held while building: a second test of the same project waits for the first one's build
     let mut built = BUILT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if !built.iter().any(|done| done == dir) {
-        let run = Command::new("bun")
-            .args(["run", "build"])
+    let bundle = built.get_or_insert_with(HashMap::new).entry(dir.to_owned()).or_insert_with(|| {
+        let out = std::env::temp_dir().join(format!(
+            "vos-lua-test-{}-{}",
+            std::process::id(),
+            dir.replace(['/', '\\'], "-")
+        ));
+        let run = Command::new("bunx")
+            .args(["vite", "build", "--outDir"])
+            .arg(&out)
             .current_dir(&project)
             .output()
             .expect("bun is needed to build the app (https://bun.sh)");
         assert!(
             run.status.success(),
-            "bun run build failed in {dir}:
+            "vite build failed in {dir}:
 {}{}",
             String::from_utf8_lossy(&run.stdout),
             String::from_utf8_lossy(&run.stderr)
         );
-        built.push(dir.to_owned());
-    }
-    let bundle = std::fs::read(project.join("dist/app.luau"))
-        .unwrap_or_else(|e| panic!("{dir} built no dist/app.luau: {e}"));
-    AppPackage { entry: "app.luau".into(), files: BTreeMap::from([("app.luau".to_owned(), bundle)]) }
+        let bundle = std::fs::read(out.join("app.luau"))
+            .unwrap_or_else(|e| panic!("{dir} built no app.luau in {}: {e}", out.display()));
+        let _ = std::fs::remove_dir_all(&out);
+        bundle
+    });
+    AppPackage { entry: "app.luau".into(), files: BTreeMap::from([("app.luau".to_owned(), bundle.clone())]) }
 }
 
 /// The contract (`openrpc.json`) of the app project in `dir`, as the RPC bus holds it.

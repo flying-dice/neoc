@@ -39,7 +39,7 @@ use vos_domain::{
 const SELF_REVOKE_GRACE: Duration = Duration::from_millis(250);
 
 /// An app's event is not queued for a client that already has more than this many bytes waiting (1 MiB, 1/32 of the bound that
-/// closes a connection): an app that emits faster than a client's link can take it costs that client its events, not its connection.
+/// closes a connection): an app that notifies faster than a client's link can take it costs that client its events, not its connection.
 pub const EVENT_QUEUE_BYTES: usize = 1 << 20;
 
 #[derive(Default)]
@@ -813,7 +813,7 @@ impl EventSink for RpcHub {
     }
 }
 
-/// What apps ask of the shell: opening a window and an event both go to every connected client.
+/// What apps ask of the shell: opening a window and a notification both go to every connected client.
 #[async_trait]
 impl Shell for RpcHub {
     async fn open_window(&self, app: &AppId, window: &str, params: Map<String, Value>) {
@@ -825,8 +825,8 @@ impl Shell for RpcHub {
         let (method, params) = note.to_rpc();
         self.broadcast(method, &params);
     }
-    /// `app.emit`: every connected shell hears it and hands it to the frames of that app. The frames of other
-    /// apps never see it: the shell routes by the app named here.
+    /// An app's notification: every connected shell hears it and hands it to the frames of that app (and, unless it is
+    /// a `_name`, to the frames that subscribed to the app). The shell routes by the app named here.
     async fn emit_event(&self, app: &AppId, name: &str, data: Value) {
         if let Ok(event) =
             serde_json::to_value(AppEvent { app: app.to_string(), name: name.to_owned(), data })

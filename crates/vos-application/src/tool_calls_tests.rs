@@ -1,4 +1,5 @@
-//! `AppService::call_tool` hands the runtime the `readOnly` requirement of the tool it runs.
+//! `AppService::call_tool` asks the runtime for a read-only run of a tool the contract (or the handler's `about`)
+//! says changes nothing.
 
 use crate::testing::Fakes;
 use serde_json::json;
@@ -13,7 +14,7 @@ fn agent() -> AgentIdentity {
 }
 
 #[tokio::test]
-async fn a_tool_the_app_declared_read_only_reaches_the_runtime_as_read_only_and_a_writing_one_does_not() {
+async fn a_tool_described_as_read_only_reaches_the_runtime_as_read_only_and_a_writing_one_does_not() {
     let f = Fakes::new();
     let url = f.add_app("notes", &[("search?", "x"), ("append", "x")]);
     let svc = f.service();

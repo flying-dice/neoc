@@ -9,14 +9,12 @@ use serde_json::json;
 const ASKER: &str = r#"
 local typed = ""
 RPC.on_notification("asker", "_typing", function(p) typed = p.text end)
-return {
-  clear = function()
-    local ok, err = RPC.send_request("asker", "_client_confirm", { question = "Clear everything?" })
-    if err then return { err = err.kind } end
-    return { ok = ok }
-  end,
-  typed = function() return typed end,
-}
+RPC.on_request("clear", function()
+  local ok, err = RPC.send_request("asker", "_client_confirm", { question = "Clear everything?" })
+  if err then return { err = err.kind } end
+  return { ok = ok }
+end)
+RPC.on_request("typed", function() return typed end)
 "#;
 
 #[tokio::test]

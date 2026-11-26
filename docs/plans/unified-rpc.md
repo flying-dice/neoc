@@ -2,6 +2,10 @@
 
 Status: plan, not started. Branch `plan/unified-rpc`.
 
+Done: `app.tool`, `app.t`, `app.emit` and the entry table (what a backend's entry returned) are gone from the host (`vos-lua`,
+`vos-application`). A backend serves its methods with `RPC.on_request`, notifies with `RPC.send_notification`, and an agent's
+tool call is a request on the bus; the sections below are the plan as it was written, with its v1 vocabulary.
+
 ## Proof of concept on this branch
 
 - `packages/vite-plugin`: the plugin of this plan (the v1 plugin is deleted). package.json is the app, `openrpc.json` (1.4) its API;
@@ -11,7 +15,7 @@ Status: plan, not started. Branch `plan/unified-rpc`.
   (`vos({ dependencies: ['../app1'] })`) and logs what it hears.
 - **One RPC bus** (`AppService::request` / `publish`, the `AppBus` port). Every app request and notification, from a
   page or a backend, goes through it. A request reaches every handler registered for its method, the app's backend's
-  (`RPC.on_request`, or its entry's table) and its open pages' (`RPC.on_request` in a page, kept per connection by the
+  (`RPC.on_request`) and its open pages' (`RPC.on_request` in a page, kept per connection by the
   `/rpc` adapter, the `PageHandlers` port); the first answer wins, the others are dropped or told it is settled
   (`app.requestSettled`), and a late answer is refused as expired (`-32013`). With no handler anywhere it is method not
   found. A notification reaches the app's pages, other apps' subscribed pages (public names only) and every listening

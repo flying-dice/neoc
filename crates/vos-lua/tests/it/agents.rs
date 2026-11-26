@@ -35,9 +35,7 @@ impl AgentRoster for Cards {
 
 async fn with_roster(body: &str) -> AppVm {
     let config = VmConfig { roster: Arc::new(Cards), ..VmConfig::default() };
-    AppVm::load(&id("probe"), package(&common::backend(&format!("{MANIFEST}\n{body}")), &[]), db(), config)
-        .await
-        .unwrap()
+    AppVm::load(&id("probe"), package(&format!("{MANIFEST}\n{body}"), &[]), db(), config).await.unwrap()
 }
 
 #[tokio::test]

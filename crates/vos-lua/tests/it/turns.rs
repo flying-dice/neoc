@@ -2,7 +2,7 @@
 //! Whose turn it is in the VM, and what the call that holds it may do. Every test here failed before its fix.
 //!
 //! - a wait Lua cannot yield from (a `string.gsub` callback, a sort comparator, an `xpcall` handler: see `SPELLINGS`) fails
-//!   with a Lua error and must not lend the turn: the call keeps it, and a `readOnly` tool stays read-only;
+//!   with a Lua error and must not lend the turn: the call keeps it, and a `read-only` tool stays read-only;
 //! - a wait that failed to yield must not make the call give up the turn at the *next* thing it waits for: a host
 //!   call Lua could not suspend at is abandoned the moment the script goes on (every async host function is a
 //!   leaf, see `lifecycle`), so a coroutine resumed later gets an error from it, not a stale suspension;
@@ -16,7 +16,7 @@
 //! - an emit that is cancelled mid-call hands the turn on.
 //!
 //! `state` in these apps is an in-memory value whose every assignment also sends an event to the app's pages (`RPC.send_notification`),
-//! which is a change to the world: a call that is read-only cannot assign it, and the error says `readOnly`. It is
+//! which is a change to the world: a call that is read-only cannot assign it, and the error says `read-only`. It is
 //! how a test sees, without a wait, whether the call that is running is still restricted.
 
 use crate::common;
@@ -108,7 +108,7 @@ async fn a_read_only_tool_stays_read_only_across_every_wait_inside_luas_own_mach
                   -- host calls give any other call the chance to run, if the turn had been lent
                   for _ = 1, 3 do app.db:one("select 1 as one") end
                   result.interleaved = counter ~= before
-                  local function refused(f) local ok, e = pcall(f) return (not ok) and tostring(e):find("readOnly", 1, true) ~= nil end
+                  local function refused(f) local ok, e = pcall(f) return (not ok) and tostring(e):find("read-only", 1, true) ~= nil end
                   result.db_write = refused(function() app.db:exec("insert into t values (1)") end)
                   result.state_write = refused(function() state.v = 5 end)
                   result.kv_write = refused(function() app.kv:set("k", "v") end)
@@ -231,7 +231,7 @@ async fn stale_lend_case(container: &str, wait: &str, later: &str, url: &str) ->
         local state = setmetatable({{}}, {{ __index = {{ v = 0 }}, __newindex = function(t, k, x) RPC.send_notification("state") getmetatable(t).__index[k] = x end }})
         local counter = 0
         local result
-        local function refused(f) local ok, e = pcall(f) return (not ok) and tostring(e):find("readOnly", 1, true) ~= nil end
+        local function refused(f) local ok, e = pcall(f) return (not ok) and tostring(e):find("read-only", 1, true) ~= nil end
         local function body()
           -- `late` is left with its query in flight, `failing` with a wait: both resumes fail at the C boundary
           local late = coroutine.create(function() return {later} end)
@@ -248,7 +248,7 @@ async fn stale_lend_case(container: &str, wait: &str, later: &str, url: &str) ->
             n = row and row.n,
             interleaved = counter ~= before,
             state_write_refused = refused(function() state.v = 42 end),
-            notify_refused = refused(function() app.notify {{ title = "from a readOnly call" }} end),
+            notify_refused = refused(function() app.notify {{ title = "from a read-only call" }} end),
           }}
         end
         RPC.on_request("bump", function() counter = counter + 1 return counter end)
@@ -397,7 +397,7 @@ async fn a_host_call_a_detached_call_could_not_suspend_at_is_over_when_someone_r
     }
 }
 
-/// A write that a writable call's task could not suspend at is never run: a `readOnly` call that resumes the
+/// A write that a writable call's task could not suspend at is never run: a `read-only` call that resumes the
 /// coroutine gets the abandoned call's error, and the write did not happen.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_write_a_task_could_not_suspend_at_is_never_run_by_a_later_read_only_call() {
@@ -595,7 +595,7 @@ async fn a_request_to_the_apps_own_server_is_read_only_while_a_read_only_call_wa
           return { status = 200, body = tostring(ok) }
         end)
         RPC.on_request("addr", function() return server:addr() end)
-        -- a readOnly tool that calls the app's own listener (and waits for the answer): the handler is its request
+        -- a read-only tool that calls the app's own listener (and waits for the answer): the handler is its request
         RPC.on_request("ro_calls_itself", function()
           local res = hyper.get("http://" .. server:addr() .. "/")
           return res.body
@@ -606,7 +606,7 @@ async fn a_request_to_the_apps_own_server_is_read_only_while_a_read_only_call_wa
     let addr = addr.as_str().unwrap().to_owned();
     // nothing read-only is alive: a request from outside may write
     assert_eq!(get(&addr).await, "true");
-    // a readOnly tool is alive and made the request: it may not
+    // a read-only tool is alive and made the request: it may not
     let own = common::serve(&vm, "ro_calls_itself", json!({}), &agent_ctx(0)).await.unwrap();
     assert_eq!(own, json!("false"));
     // and the restriction ended with the tool
@@ -616,7 +616,7 @@ async fn a_request_to_the_apps_own_server_is_read_only_while_a_read_only_call_wa
 // ---- the taint on requests to the app's own server lasts while a read-only call acts, not while it is alive -----
 
 /// An app whose server writes (`state`, see the top of this file) on every request and reports whether it could, by path, and the
-/// readOnly tools that reach the server in the ways a readOnly call might try to write through it.
+/// read-only tools that reach the server in the ways a read-only call might try to write through it.
 const OWN_SERVER_REACH: &str = r#"
     local task, net, hyper = require("std:task"), require("std:net"), require("vnd:hyper")
     local state = setmetatable({}, { __index = { v = 0 }, __newindex = function(t, k, x) RPC.send_notification("state") getmetatable(t).__index[k] = x end })
@@ -717,7 +717,7 @@ async fn a_request_that_arrives_while_a_read_only_call_holds_one_open_is_read_on
 async fn an_unrelated_request_can_write_while_a_read_only_poller_sleeps_and_after_the_tool_that_made_it_ended(
 ) {
     let (vm, addr) = own_server().await;
-    // a readOnly tool leaves a poller behind that lives as long as the app does
+    // a read-only tool leaves a poller behind that lives as long as the app does
     assert_eq!(call(&vm, "ro_poller").await, json!("returned"));
     tokio::time::sleep(Duration::from_millis(100)).await;
     for path in ["/webhook_1", "/webhook_2", "/webhook_3"] {
@@ -728,7 +728,7 @@ async fn an_unrelated_request_can_write_while_a_read_only_poller_sleeps_and_afte
         );
         tokio::time::sleep(Duration::from_millis(30)).await;
     }
-    // and a readOnly call that is itself asleep at a timer sends and starts nothing
+    // and a read-only call that is itself asleep at a timer sends and starts nothing
     let sleeper = {
         let vm = vm.clone();
         tokio::spawn(async move { call(&vm, "ro_sleeps").await })

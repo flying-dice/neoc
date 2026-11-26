@@ -22,7 +22,7 @@
  *   `vos/notify`                    the page sends one of its app's notifications on the bus (`{ name, params }`)
  *
  * and to the frame: `ui/notifications/host-context-changed` (a change of the host context), `vos/event` (what the
- * app's backend sent with `app.emit`, and the public notifications of the apps it subscribed to, with their `app`),
+ * app's backend sent with `RPC.send_notification`, and the public notifications of the apps it subscribed to, with their `app`),
  * `vos/serve` (a request of the bus for a method the page serves) and `vos/settled` (another handler answered it) and the request `ui/resource-teardown` (the frame is about to go).
  *
  * **The app is the frame's, never the message's.** Each frame has a bridge made for its own app id and its own

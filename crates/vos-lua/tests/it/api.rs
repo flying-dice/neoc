@@ -319,7 +319,7 @@ async fn a_call_that_is_not_read_only_may_write_data_notify_and_read() {
 // ---- notify, notifications and the window ---------------------------------------------------------------------------------------
 
 #[tokio::test]
-async fn notify_emit_and_open_window_become_effects_for_the_host() {
+async fn notify_send_notification_and_open_window_become_effects_for_the_host() {
     let src = r#"
         app.notify { title = "Reminder", body = "Call mum" }
         app.notify { title = "No body" }
@@ -336,7 +336,7 @@ async fn notify_emit_and_open_window_become_effects_for_the_host() {
         vec![
             n("Reminder", Some("Call mum")),
             n("No body", None),
-            Effect::Emit { name: "notes.changed".into(), data: json!({"id": 12}) },
+            Effect::Publish { name: "notes.changed".into(), params: json!({"id": 12}) },
             Effect::OpenWindow { name: "main".into(), params: json!({"noteId": 12}) },
             // serving a method on the bus: the host re-lists the app's agent tools
             Effect::HandlersChanged,
@@ -346,7 +346,7 @@ async fn notify_emit_and_open_window_become_effects_for_the_host() {
 }
 
 #[tokio::test]
-async fn notify_and_emit_are_validated() {
+async fn notify_and_send_notification_are_validated() {
     for (call, needle) in [
         (
             "app.notify { body = 'no title' }",
@@ -517,7 +517,7 @@ async fn a_call_that_notifies_and_then_waits_has_its_notification_taken_at_the_w
     assert!(matches!(rest.as_slice(), [Effect::Notify(n)] if n.title == "done"), "{rest:?}");
 }
 
-// ---- readOnly tools cannot write ----------------------------------------------------------------------------
+// ---- read-only tools cannot write ----------------------------------------------------------------------------
 
 const READ_ONLY: &str = r#"
     local db = app.db
@@ -561,7 +561,7 @@ async fn a_read_only_tool_cannot_write_by_any_route_and_a_normal_tool_still_can(
     }
     assert_eq!(call(&vm, "count", json!({})).await.unwrap(), json!({"n": 1}), "nothing was written");
 
-    // the VM is writable again for the next, non-readOnly call (even after the failures above)
+    // the VM is writable again for the next, non-read-only call (even after the failures above)
     assert_eq!(call(&vm, "add", json!({})).await.unwrap(), json!({"n": 2}));
     assert_eq!(call(&vm, "count", json!({})).await.unwrap(), json!({"n": 2}));
 }

@@ -22,7 +22,7 @@ async fn load_in(root: &Path, name: &str, src: &str, refused: &[&str]) -> AppVm 
         refused_modules: refused.iter().map(|m| (*m).to_owned()).collect(),
         ..common::config()
     };
-    AppVm::load(&id(name), package(&common::backend(src), &[]), db(), config).await.unwrap()
+    AppVm::load(&id(name), package(src, &[]), db(), config).await.unwrap()
 }
 
 async fn tool(vm: &AppVm, name: &str) -> Value {
@@ -256,7 +256,7 @@ async fn a_read_only_tool_reads_files_and_cannot_write_them_nor_can_the_tasks_it
     assert_eq!((&out["read"], &out["listed"], &out["size"]), (&json!("kept"), &json!(1), &json!(4)), "{out}");
     for write in ["write", "create_dir", "remove", "move", "copy", "cache"] {
         assert_eq!(out[write]["ok"], false, "{write}: {out}");
-        assert!(out[write]["err"].as_str().unwrap().contains("readOnly"), "{write}: {out}");
+        assert!(out[write]["err"].as_str().unwrap().contains("read-only"), "{write}: {out}");
     }
     let mut seen = tool(&vm, "seen").await;
     for _ in 0..200 {
@@ -267,13 +267,13 @@ async fn a_read_only_tool_reads_files_and_cannot_write_them_nor_can_the_tasks_it
         seen = tool(&vm, "seen").await;
     }
     assert_eq!(seen["task"]["ok"], false, "the task inherits the read-only call: {seen}");
-    assert!(seen["task"]["err"].as_str().unwrap().contains("readOnly"), "{seen}");
+    assert!(seen["task"]["err"].as_str().unwrap().contains("read-only"), "{seen}");
     let docs = root.path().join("probe.files/documents");
     assert_eq!(std::fs::read_to_string(docs.join("d/a.txt")).unwrap(), "kept");
     assert!(!docs.join("from-task.txt").exists() && !docs.join("e").exists() && !docs.join("b.txt").exists());
     // a caller can require a read-only run of a writable tool too
     let err = common::serve_with(&vm, "seed", json!({}), &agent_ctx(0), true).await.unwrap_err().to_string();
-    assert!(err.contains("readOnly"), "{err}");
+    assert!(err.contains("read-only"), "{err}");
 }
 
 #[tokio::test]
@@ -334,7 +334,7 @@ async fn purging_removes_the_apps_files_and_a_host_without_a_data_directory_keep
     let none = DiskFiles::new(None);
     let config = VmConfig { files: none.files(&id("probe")), ..common::config() };
     let src = r#"hook("probe", function() local _, err = app.files.documents:list() return (err and err.kind) end)"#;
-    let vm = AppVm::load(&id("probe"), package(&common::backend(src), &[]), db(), config).await.unwrap();
+    let vm = AppVm::load(&id("probe"), package(src, &[]), db(), config).await.unwrap();
     assert_eq!(vm.emit("probe", json!(null)).await.unwrap(), json!("unsupported"));
     none.purge(&id("probe")).await.unwrap();
 }

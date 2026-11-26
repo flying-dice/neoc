@@ -26,43 +26,23 @@ pub struct CallContext {
     pub now_ms: u64,
 }
 
-/// What the runtime learned from running an app's entry point.
-#[derive(Clone, Debug, PartialEq)]
-pub struct LoadedApp {
-    pub tools: Vec<ToolSpec>,
-}
-
 #[async_trait]
 pub trait AppRuntime: Send + Sync {
-    /// Compile + run the package's entry, which returns the table of handlers the app's page calls (anything else
-    /// is an error). Loading an app
+    /// Compile + run the package's entry, which serves the app's methods on the bus (`RPC.on_request`). Loading an app
     /// that is already loaded replaces it (hot reload): the database handle is the caller's, so data is kept.
     ///
     /// A hot reload stops the old version's background work (listeners, tasks, workers) before the new version
-    /// is known to load. If the new version fails to load, the old one keeps serving its tools and handlers
+    /// is known to load. If the new version fails to load, the old one keeps serving its handlers
     /// without that background work, and if it starts a server again, requests to that server run read-only
     /// until the next successful reload or a host restart. That fails safe and is the accepted behaviour
     /// (Jira AGOS-64); restarting the previous version in full is the option to revisit if failed reloads
     /// become common.
-    async fn load(&self, app: &AppId, package: AppPackage, data: Arc<dyn AppData>) -> PortResult<LoadedApp>;
+    async fn load(&self, app: &AppId, package: AppPackage, data: Arc<dyn AppData>) -> PortResult<()>;
     /// Stop the app and free its VM. A call still running in it is stopped too (it does not keep the app
     /// alive), so an uninstalled app never runs on.
     async fn unload(&self, app: &AppId) -> PortResult<()>;
-    /// Run one of the app's tools. `read_only` is the caller's requirement: the call runs with every write
-    /// refused (data, `app.kv`, `app.files`, notifications, events, windows) even if the tool itself is not
-    /// declared `readOnly`. The use case sets it for a tool the app declared `readOnly`, so the guarantee that
-    /// lets an agent run such a tool without a prompt holds whatever the adapter does with its own bookkeeping;
-    /// an adapter may only tighten it (a tool it knows is `readOnly` runs read-only regardless).
-    async fn call_tool(
-        &self,
-        app: &AppId,
-        tool: &str,
-        args: Value,
-        ctx: CallContext,
-        read_only: bool,
-    ) -> PortResult<Value>;
-    /// A client's `rpc(method, args)`: run the handler the app's entry returned under that name as
-    /// `handler(ctx, args)`. The person's own client is calling, so unlike an agent's tool the call may write.
+    /// A request on the bus for the app's backend handler of `method`: `handler(params, ctx)`. The person's own client
+    /// is calling, so unlike an agent's call of a read-only method the call may write.
     async fn call_handler(
         &self,
         app: &AppId,
@@ -70,8 +50,8 @@ pub trait AppRuntime: Send + Sync {
         args: Value,
         ctx: CallContext,
     ) -> PortResult<Value>;
-    /// `call_handler` with every write refused (data, `app.kv`, `app.files`, notifications, events, windows): an agent's
-    /// call of a handler the app described as read-only.
+    /// `call_handler` with every write refused (data, `app.kv`, `app.files`, notifications, windows): an agent's call of
+    /// a handler the app described as read-only.
     async fn call_handler_read_only(
         &self,
         app: &AppId,
@@ -79,7 +59,7 @@ pub trait AppRuntime: Send + Sync {
         args: Value,
         ctx: CallContext,
     ) -> PortResult<Value>;
-    /// Whether the app's backend has a handler for `method` on the bus (`RPC.on_request`, or its entry's table).
+    /// Whether the app's backend has a handler for `method` on the bus (`RPC.on_request`).
     fn has_handler(&self, app: &AppId, method: &str) -> bool;
     /// The handlers the app's backend has on the bus, as each described itself when it registered.
     fn handlers(&self, app: &AppId) -> Vec<HandlerInfo>;
@@ -141,14 +121,15 @@ pub trait ToolRegistry: Send + Sync {
     async fn visibility_changed(&self, agent: &AgentId) -> PortResult<()>;
 }
 
-/// The tools of every running app, for an app that offers them to an agent of its own (the Agents app gives an
-/// agent it talks to the same tools an MCP agent has). It is not checked against any grant: an app is the person's
-/// own code, and the agent it speaks for is one the person added to it. The call is attributed to that agent.
+/// The tools of every running app (the public handlers on the bus), for an app that offers them to an agent of its
+/// own (the Agents app gives an agent it talks to the same tools an MCP agent has). It is not checked against any
+/// grant: an app is the person's own code, and the agent it speaks for is one the person added to it. The call is
+/// attributed to that agent.
 #[async_trait]
 pub trait AppTools: Send + Sync {
     /// Every tool of every running app, under its qualified name (`<app>__<tool>`), in name order.
     fn all(&self) -> Vec<(QualifiedToolName, ToolSpec)>;
-    /// Run a tool as `caller` (the agent the app speaks for), as an MCP `tools/call` does: a `readOnly` tool runs
+    /// Run a tool as `caller` (the agent the app speaks for), as an MCP `tools/call` does: a read-only tool runs
     /// read-only, and a tool of an app that is not running is an error.
     async fn call(&self, caller: Actor, name: &QualifiedToolName, args: Value) -> PortResult<Value>;
 }
@@ -252,14 +233,14 @@ pub trait InstalledAppStore: Send + Sync {
 
 // ---- shell -------------------------------------------------------------------------------------
 
-/// What an app asks of the desktop shell: `app.open_window` (an agent's tool bringing an app forward) and
-/// `app.emit` (an event for the app's open clients). Both are delivered to the connected clients.
+/// What an app asks of the desktop shell: `app.open_window` (an agent's tool bringing an app forward) and its
+/// notifications (`RPC.send_notification`, for the app's open clients). Both are delivered to the connected clients.
 #[async_trait]
 pub trait Shell: Send + Sync {
     /// `app.open_window(params)`: the connected shells open the window or bring the app's forward.
     async fn open_window(&self, app: &AppId, window: &str, params: Map<String, Value>);
-    /// `app.emit(name, data)`: the app's backend tells its open clients something changed. The connected shells
-    /// hand it to the frames of that app.
+    /// An app's notification (`RPC.send_notification`, or its page's): the connected shells hand it to the frames of
+    /// that app, and to those that subscribed to it.
     async fn emit_event(&self, app: &AppId, name: &str, data: Value);
 }
 

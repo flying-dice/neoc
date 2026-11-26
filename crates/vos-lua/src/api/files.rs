@@ -17,7 +17,7 @@
 //! A path is relative to its location, written with `/`; the rules are the use case's (`vos_application::Files`)
 //! and the adapter's (`crate::files`, which says how links and races are handled). A failure is returned as
 //! `nil, err`, a [`FileError`] with the kinds of `std:fs`; a wrong argument type, an unknown option, and a write
-//! inside a `readOnly` tool raise, as everywhere in `app.*`. A file call holds the app's turn while it runs
+//! inside a read-only call raise, as everywhere in `app.*`. A file call holds the app's turn while it runs
 //! (`Role::Vm`, like `app.db`): the app's other calls wait for it, and none of them sees it half done. It does not
 //! need `std:fs`: the host does the work.
 
@@ -168,7 +168,7 @@ impl Files {
 /// One managed location of the app (`app.files.documents`, `.cache`, `.temp`). A path is relative to it, written
 /// with `/` (`"notes/a.txt"`; `""` is the location itself); an absolute path, `..`, `:`, a backslash, NUL or a name
 /// over 255 bytes is `invalid_input`, and a symbolic link inside it is never followed. A failure is returned as
-/// `nil, err` with the kinds of `std:fs` (`err.kind`). A write inside a `readOnly` tool raises. A call holds the
+/// `nil, err` with the kinds of `std:fs` (`err.kind`). A write inside a read-only call raises. A call holds the
 /// app's turn until it ends. Scoped to the app by convention: not a sandbox.
 #[derive(Clone, Copy, Debug, Object)]
 #[shape(module = "vos:app")]
@@ -249,8 +249,8 @@ impl Location {
     }
 }
 
-/// One file call, holding the turn (`Role::Vm`). A write is refused first inside a `readOnly` call
-/// (it raises, like `app.kv:set`); the files are the read-only handle inside a `readOnly` call either way.
+/// One file call, holding the turn (`Role::Vm`). A write is refused first inside a read-only call
+/// (it raises, like `app.kv:set`); the files are the read-only handle inside a read-only call either way.
 async fn call<T, Fut>(
     s: &Sh,
     method: &str,

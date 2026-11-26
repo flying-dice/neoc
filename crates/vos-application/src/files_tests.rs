@@ -111,7 +111,7 @@ async fn a_read_only_handle_reads_and_refuses_every_write() {
     ];
     for e in refused {
         assert_eq!(e.kind, FileErrorKind::PermissionDenied, "{e}");
-        assert!(e.message.contains("readOnly"), "{e}");
+        assert!(e.message.contains("read-only"), "{e}");
     }
     assert_eq!(port.take(), ["read documents a", "list documents ", "info documents a"]);
     // the handle it came from still writes

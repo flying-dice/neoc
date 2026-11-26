@@ -7,11 +7,8 @@
 //! app.id                          the app's id
 //! app.db / app.kv                 data (migrations, statements, transactions) and a small key-value store
 //! app.files.documents:read(path)  the app's managed files (documents, cache, temp)
-//! app.tool { ... }                an agent tool
 //! app.tools.all() / .call(...)    the tools of every running app, for an agent of the app's own
-//! app.t.string { ... } ...        input schema builders
 //! app.notify { ... }              a notification
-//! app.emit(name, data)            an event for the app's open pages (and, unless `_name`, other apps' listeners)
 //! app.open_window(params?)         the app's window, opened or brought forward
 //! app.agents:list()               the agent contacts
 //! app.log(message)                a line in the host's log
@@ -43,7 +40,6 @@ mod files;
 mod json;
 mod misc;
 mod peers;
-mod schema;
 mod tools;
 
 use crate::{require, vm::Shared};
@@ -54,7 +50,6 @@ use std::{future::Future, sync::Arc};
 use vos_application::PortError;
 
 pub(crate) use context::Context;
-pub(crate) use tools::Handlers;
 
 type Sh = Arc<Shared>;
 
@@ -67,14 +62,13 @@ pub(crate) const RPC_MODULE: &str = "vos:rpc";
 /// The `app` API.
 ///
 /// `local app = require("vos:app")` in an app's backend; it is also the global `app`. The host provides it (one VM
-/// per app). The backend's entry returns the handlers its page calls (`Handlers`).
+/// per app). The backend serves its methods on the bus (`RPC.on_request`).
 #[mlua_ir::module("vos:app")]
-#[allow(non_upper_case_globals, non_camel_case_types)] // the names are the script's: `app.db`, `app.t`
+#[allow(non_upper_case_globals, non_camel_case_types)] // the names are the script's: `app.db`, `app.kv`
 pub mod app {
     use super::data::{Db, Kv};
     use super::files::Files;
-    use super::misc::{self, Agents, EventData, Notification, ThisApp, WindowParams};
-    use super::tools::{self as registry, Tool};
+    use super::misc::{self, Agents, Notification, ThisApp, WindowParams};
     use mlua_ir::Object;
     use neoc_vm::mlua::{self, Lua};
 
@@ -93,29 +87,14 @@ pub mod app {
     /// The agent contacts.
     pub const agents: Agents = Agents;
 
-    /// The builders of a tool's input fields: `app.t.string { description = "..." }`. Each returns a `Schema`.
-    /// Deprecated, with `app.tool`: a public method's params are typed in the app's `openrpc.json`.
-    #[derive(Clone, Copy, Debug, Object)]
-    pub struct t;
-
     /// The tools of every running app, for an app that offers them to an agent of its own: `app.tools.all()` and
     /// `app.tools.call(name, agent, args)`.
     #[derive(Clone, Copy, Debug, Object)]
     pub struct tools;
 
-    /// Deprecated: a public method of the app's contract, served with `RPC.on_request`, is the agent tool
-    /// `<app>__<method>` (the v1 plugin's apps declare tools with this).
-    ///
-    /// Declare a tool an agent can call: `app.tool { name = "search", input = { ... }, run = function(input, ctx) ... end }`.
-    /// Raises when the definition is refused (a name that is not `[a-z][a-z0-9_]*`, one already registered) and
-    /// inside a `readOnly` tool.
-    pub fn tool(lua: &Lua, def: Tool) -> mlua::Result<()> {
-        registry::register(&*super::shared(lua)?, def)
-    }
-
     /// Open the app's window on the person's screen, or bring it forward if it is open (every connected shell is
     /// asked; with none connected nothing happens). An app has one window, the frame of its page; `params` is
-    /// JSON handed to it. A change to the world like `notify`: a `readOnly` tool may not.
+    /// JSON handed to it. A change to the world like `notify`: a read-only call may not.
     pub fn open_window(lua: &Lua, params: Option<WindowParams>) -> mlua::Result<()> {
         misc::open_window(&*super::shared(lua)?, params)
     }
@@ -130,7 +109,7 @@ pub mod app {
     /// and both are text, never markup.
     ///
     /// Raises: a key other than `title` and `body`, no title, a title that is blank or over 200 characters, a body
-    /// over 2000, a value that is not a string, a call in a `readOnly` tool, and a 65th while 64 from the same
+    /// over 2000, a value that is not a string, a call inside a read-only call, and a 65th while 64 from the same
     /// call are still waiting. The host delivers waiting notifications whenever a call of the app ends, and when a
     /// call waits (`task.wait`, a request, a task or request handler pausing, or a tool that has notified and then
     /// works on), so a tool that notifies half way is heard then, not when it returns. The limit guards against a
@@ -145,16 +124,6 @@ pub mod app {
         tracing::info!(app = %sh.app, "{message}");
         Ok(())
     }
-
-    /// Deprecated: declare a notification in the app's contract and send it with `RPC.send_notification` (the v1
-    /// plugin's apps emit with this).
-    ///
-    /// Tell the app's open pages something changed outside them (`host.on(name, fn)` in the page): after an
-    /// agent's tool changed data, or from a background task. `name` is 1 to 64 letters, digits and `. _ : -` (not
-    /// `host:...`), `data` is JSON of at most 64 KiB. A change to the world like `notify`: a `readOnly` tool may not.
-    pub fn emit(lua: &Lua, name: String, data: Option<EventData>) -> mlua::Result<()> {
-        misc::emit(&*super::shared(lua)?, name, data)
-    }
 }
 
 /// The RPC bus: `local RPC = require("vos:rpc")`, and the global `RPC`. A page has the same four functions on its
@@ -162,17 +131,18 @@ pub mod app {
 #[mlua_ir::module("vos:rpc")]
 pub mod rpc {
     use super::json::Json;
-    use super::misc::EventData;
-    use super::peers::{self, About, Listener, Params, RequestError, RequestHandler, RequestResult};
+    use super::peers::{
+        self, About, Listener, NotificationParams, Params, RequestError, RequestHandler, RequestResult,
+    };
     use mlua_ir::Unknown;
     use neoc_vm::mlua::{self, Lua};
 
     /// Send a request on the RPC bus to `app` (this one's id included): every handler registered for `method`, a
-    /// backend's (`on_request`, or the entry's table) or an open page's, is asked, and the first answer wins (the others
+    /// backend's (`on_request`) or an open page's, is asked, and the first answer wins (the others
     /// are cancelled). The handler is told this app called (`ctx.actor.kind` is `"app"`). The result is
     /// `(result, nil)`, or `(nil, err)` when the app is not running, nothing handles the method, or the handler
     /// failed. Raises for an id that is not an app's, a method name that is not 1 to 128 characters, and inside a
-    /// `readOnly` tool. It waits without the app's turn.
+    /// read-only call. It waits without the app's turn.
     #[host("Wait")]
     pub async fn send_request(
         lua: Lua,
@@ -186,7 +156,7 @@ pub mod rpc {
     /// Serve one of this app's methods on the RPC bus: `fn(params, ctx)` answers a request for `method`, from the
     /// app's page, another app or an agent. An open page of the app may serve it too: the first answer wins. `about`
     /// describes the handler: a public method (no leading `_`) is an agent tool, shown with it. Raises for a method
-    /// this backend already serves, and inside a `readOnly` tool.
+    /// this backend already serves, and inside a read-only call.
     pub fn on_request(
         lua: &Lua,
         method: String,
@@ -197,15 +167,20 @@ pub mod rpc {
     }
 
     /// Send one of this app's notifications on the RPC bus: to the app's open pages and backend listeners and, unless
-    /// it is a `_name`, to every other app that listens. Nothing waits for it. As `app.emit` takes it.
-    pub fn send_notification(lua: &Lua, name: String, params: Option<EventData>) -> mlua::Result<()> {
+    /// it is a `_name`, to every other app that listens. Nothing waits for it. `name` is 1 to 64 letters, digits and `. _ : -` (not
+    /// `host:...`), `params` is JSON of at most 64 KiB. A change to the world like `app.notify`: a read-only call may not.
+    pub fn send_notification(
+        lua: &Lua,
+        name: String,
+        params: Option<NotificationParams>,
+    ) -> mlua::Result<()> {
         peers::send_notification(lua, name, params)
     }
 
     /// Hear an app's notification (this one's too: what its page sends): `fn(params, ctx)` runs, as a call of this
     /// app's own, each time `app` sends `name`, with `ctx.actor` that app. Listeners run in the order they were added.
     /// Raises for an id that is not an app's, another app's `_name` (private: it never leaves that app) or a `host:`
-    /// name, and inside a `readOnly` tool.
+    /// name, and inside a read-only call.
     pub fn on_notification(lua: &Lua, app: String, name: String, listener: Listener) -> mlua::Result<()> {
         peers::on_notification(lua, app, name, listener)
     }
@@ -241,7 +216,7 @@ pub(crate) fn rpc_table(lua: &Lua) -> mlua::Result<mlua::Table> {
 }
 
 /// `hook(name, fn)`, for the adapter's tests ([`crate::VmConfig::test_hooks`]): a function `AppVm::emit` calls.
-/// Registering one changes the app's wiring, so a `readOnly` call may not.
+/// Registering one changes the app's wiring, so a read-only call may not.
 fn install_test_hook(lua: &Lua, sh: &Arc<Shared>, env: &mlua::Table) -> mlua::Result<()> {
     let s = sh.clone();
     env.set(

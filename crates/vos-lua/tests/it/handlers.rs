@@ -43,7 +43,7 @@ fn backend(src: &str) -> AppPackage {
     }
 }
 
-async fn load(rig: &Rig, name: &str, src: &str) -> PortResult<vos_application::ports::LoadedApp> {
+async fn load(rig: &Rig, name: &str, src: &str) -> PortResult<()> {
     let data: Arc<dyn AppData> = db();
     rig.runtime.load(&id(name), backend(src), data).await
 }
@@ -173,7 +173,7 @@ async fn each_app_answers_from_its_own_vm() {
     assert_eq!(call(&rig, "beta", "whose", Value::Null).await.unwrap(), json!("beta"));
 }
 
-const EMITTER: &str = r#"
+const NOTIFIER: &str = r#"
 local task = require("std:task")
 RPC.on_request("poke", function() RPC.send_notification("poked") return "ok" end)
 RPC.on_request("peek", function() RPC.send_notification("peeked") return "ok" end, { read_only = true })
@@ -200,9 +200,9 @@ fn events(rig: &Rig) -> Vec<(String, String, Value)> {
 }
 
 #[tokio::test]
-async fn emit_sends_an_event_to_the_apps_clients_after_the_call() {
+async fn send_notification_tells_the_apps_clients_after_the_call() {
     let rig = rig();
-    load(&rig, "tasks", EMITTER).await.unwrap();
+    load(&rig, "tasks", NOTIFIER).await.unwrap();
     call(&rig, "tasks", "save", Value::Null).await.unwrap();
     assert_eq!(
         events(&rig),
@@ -214,9 +214,9 @@ async fn emit_sends_an_event_to_the_apps_clients_after_the_call() {
 }
 
 #[tokio::test]
-async fn an_agents_tool_can_emit_and_a_read_only_tool_cannot() {
+async fn an_agents_tool_can_send_a_notification_and_a_read_only_call_cannot() {
     let rig = rig();
-    load(&rig, "tasks", EMITTER).await.unwrap();
+    load(&rig, "tasks", NOTIFIER).await.unwrap();
     let agent = common::agent_ctx(1);
     common::serve_rt(&rig.runtime, &id("tasks"), "poke", json!({}), agent.clone()).await.unwrap();
     assert_eq!(events(&rig), vec![("tasks".into(), "poked".into(), Value::Null)]);
@@ -226,19 +226,19 @@ async fn an_agents_tool_can_emit_and_a_read_only_tool_cannot() {
     else {
         panic!("rejected");
     };
-    assert!(message.contains("is not allowed in a tool declared readOnly"), "{message}");
+    assert!(message.contains("RPC.send_notification is not allowed in a read-only call"), "{message}");
     assert_eq!(events(&rig).len(), 1, "nothing was sent");
 }
 
 #[tokio::test]
-async fn emit_refuses_a_bad_name_the_hosts_own_names_big_data_and_a_flood() {
+async fn send_notification_refuses_a_bad_name_the_hosts_own_names_big_data_and_a_flood() {
     let rig = rig();
-    load(&rig, "tasks", EMITTER).await.unwrap();
+    load(&rig, "tasks", NOTIFIER).await.unwrap();
     for (handler, why) in [
         ("bad_name", "name is 1 to 64"),
         ("host_name", "`host:`"),
         ("huge", "65536 bytes"),
-        ("flood", "256 events"),
+        ("flood", "256 notifications"),
     ] {
         let PortError::Rejected(message) = call(&rig, "tasks", handler, Value::Null).await.unwrap_err()
         else {
@@ -262,9 +262,9 @@ async fn a_handler_that_raises_a_value_that_is_not_a_message_never_sends_its_add
 }
 
 #[tokio::test]
-async fn a_background_task_can_emit_after_the_call_that_started_it() {
+async fn a_background_task_can_send_a_notification_after_the_call_that_started_it() {
     let rig = rig();
-    load(&rig, "tasks", EMITTER).await.unwrap();
+    load(&rig, "tasks", NOTIFIER).await.unwrap();
     assert_eq!(call(&rig, "tasks", "later", Value::Null).await.unwrap(), json!("started"));
     assert!(events(&rig).is_empty(), "the task has not run yet");
     for _ in 0..200 {
@@ -383,7 +383,7 @@ impl Shell for PanicsOnFirstEmit {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_panic_on_one_emit_of_a_batch_leaves_the_others_delivered_once_each() {
+async fn a_panic_on_one_notification_of_a_batch_leaves_the_others_delivered_once_each() {
     let shell = Arc::new(PanicsOnFirstEmit::default());
     let runtime = LuaRuntime::new(Arc::new(Quiet), shell.clone());
     let data: Arc<dyn AppData> = db();

@@ -14,9 +14,9 @@
 //! `app.open_window`), put inside a **context** where the host
 //! call cannot suspend (or none), and wrapped in **controls** (`pcall`, `xpcall`, coroutines, a plain yield, tasks,
 //! a nested `db:tx`, an error thrown mid-body, a wait left in flight and resumed inside a transaction). It runs as a
-//! tool of one of four kinds: `readOnly`, writable, writable with concurrent second tools, or `readOnly` calling the
+//! tool of one of four kinds: `read-only`, writable, writable with concurrent second tools, or `read-only` calling the
 //! app's own server. Beside it run side calls that get in whenever the VM is free: a counter bump, a second writer, a
-//! `readOnly` peek that tries every write, and a *meddler* that resumes the threads the program left behind (its own
+//! `read-only` peek that tries every write, and a *meddler* that resumes the threads the program left behind (its own
 //! top-level thread, the threads its tasks run in, the thread a protected call runs in when the script is inside one,
 //! its coroutines), with and without arguments, from another call.
 //! Per case, within a timeout:
@@ -36,7 +36,7 @@
 //!   resumed.
 //!
 //! A second test runs the same programs and reloads or unloads the app in the middle: nothing may be wedged, no VM may
-//! keep the database, and a `readOnly` program still left nothing behind.
+//! keep the database, and a `read-only` program still left nothing behind.
 //!
 //! The scripts are generated from a seed, so a failure names the case and prints the program. Environment:
 //! `CHAOS_CASES` (default 1500), `CHAOS_DISTURBED_CASES` (300), `CHAOS_SEED` (default fixed), `CHAOS_ONLY=<case>` to run one case
@@ -323,11 +323,11 @@ local function viol(msg) V[#V + 1] = msg end
 -- an acknowledged database write: it must be there at the end, unless the transaction it was in failed
 local function rec(n)
   if MEDDLING then return end
-  if RO then viol("a db write was acknowledged in a readOnly call") end
+  if RO then viol("a db write was acknowledged in a read-only call") end
   if txp then txp[#txp + 1] = n else A[#A + 1] = n end
 end
-local function wrote(what) if RO and not MEDDLING then viol("a " .. what .. " write was acknowledged in a readOnly call") end end
-local function attempt(what, f) if pcall(f) and RO and not MEDDLING then viol("app." .. what .. " changed the world in a readOnly call") end end
+local function wrote(what) if RO and not MEDDLING then viol("a " .. what .. " write was acknowledged in a read-only call") end end
+local function attempt(what, f) if pcall(f) and RO and not MEDDLING then viol("app." .. what .. " changed the world in a read-only call") end end
 -- a task is counted until its body ends, so the test knows when everything the program started is over
 local function task_start(start, f)
   pending = pending + 1
@@ -386,14 +386,14 @@ end)
 -- a read-only call beside the program: every write is refused, and what it reads is consistent
 RPC.on_request("peek", function()
   counter = counter + 1
-  local function refused(what, f) if pcall(f) then viol("a readOnly side call: " .. what .. " changed the world") end end
+  local function refused(what, f) if pcall(f) then viol("a read-only side call: " .. what .. " changed the world") end end
   refused("db", function() app.db:exec("insert into t(v) values (97)") end)
   refused("kv", function() app.kv:set("k1", 97) end)
   refused("state", function() state.v = 97 end)
   refused("notify", function() app.notify { title = "peek" } end)
   refused("window", function() app.open_window() end)
   refused("tx", function() app.db:tx(function() app.db:exec("insert into t(v) values (96)") end) end)
-  steal("a readOnly call")
+  steal("a read-only call")
   resume_scripts()
   return app.db:one("select count(*) as n from t").n
 end, { read_only = true })
@@ -411,7 +411,7 @@ end, { read_only = true })
 
 const SERVER: &str = r#"
 local server = hyper.serve(net.TcpListener.bind("127.0.0.1:0"), function(req)
-  -- a request made while a readOnly call is acting is read-only too
+  -- a request made while a read-only call is acting is read-only too
   attempt("state", function() state.v = 99 end)
   attempt("db", function() app.db:exec("insert into t(v) values (98)") end)
   return { status = 200, body = "ok" }
@@ -597,18 +597,18 @@ async fn verify(
     // (a) in a read-only call nothing was written, by any means
     if case.kind.read_only() {
         if let Some(v) = have.iter().find(|v| **v < 1000) {
-            failures.push(format!("(a) a readOnly call left the row {v} in the database"));
+            failures.push(format!("(a) a read-only call left the row {v} in the database"));
         }
         if report["state"] != 0 {
-            failures.push(format!("(a) a readOnly call changed the app's state: {}", report["state"]));
+            failures.push(format!("(a) a read-only call changed the app's state: {}", report["state"]));
         }
         let kv = data.query("select count(*) as n from _kv".into(), vec![]).await.unwrap();
         if kv[0]["n"] != 0 {
-            failures.push("(a) a readOnly call wrote to app.kv".into());
+            failures.push("(a) a read-only call wrote to app.kv".into());
         }
         let effects = common::take_effects(vm);
         if !effects.is_empty() {
-            failures.push(format!("(a) a readOnly call queued effects: {effects:?}"));
+            failures.push(format!("(a) a read-only call queued effects: {effects:?}"));
         }
     }
     failures
@@ -740,7 +740,7 @@ async fn run_disturbed(case: &Case, disturbance: Disturbance, after_ms: u64) -> 
     let runtime = Arc::new(LuaRuntime::new(Arc::new(Quiet), Arc::new(RecordingShell::default())));
     let source = format!("{MANIFEST}{}", case.source);
     let load = |runtime: Arc<LuaRuntime>, data: Arc<dyn AppData>, source: String| async move {
-        runtime.load(&id("chaos"), package(&common::backend(&source), &[]), data).await
+        runtime.load(&id("chaos"), package(&source, &[]), data).await
     };
     if let Err(e) = load(runtime.clone(), data.clone(), source.clone()).await {
         return vec![format!("the generated program did not load: {e}")];
@@ -818,7 +818,7 @@ async fn run_disturbed(case: &Case, disturbance: Disturbance, after_ms: u64) -> 
     if case.kind.read_only() {
         if let Ok(rows) = data.query("select v from t where v < 1000".into(), vec![]).await {
             if !rows.is_empty() {
-                failures.push(format!("(a) a readOnly call left rows in the database: {rows:?}"));
+                failures.push(format!("(a) a read-only call left rows in the database: {rows:?}"));
             }
         }
     }

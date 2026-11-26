@@ -5,7 +5,7 @@ use crate::{
     ports::{
         AgentDirectory, AgentStore, AppData, AppPackage, AppRuntime, CallContext, Clock, DataStore, DataTx,
         DeviceRegistry, EventSink, ExecOutcome, Fetcher, HandlerInfo, InstalledApp, InstalledAppStore,
-        LoadedApp, Params, PortResult, RandomSource, ServerEvent, Shell, SqlMigration, ToolRegistry,
+        Params, PortResult, RandomSource, ServerEvent, Shell, SqlMigration, ToolRegistry,
     },
     services::{AppService, Ports},
     PortError,
@@ -175,11 +175,12 @@ impl DataStore for MemStore {
 
 #[derive(Default)]
 pub struct FakeRuntime {
-    apps: Mutex<HashMap<String, Vec<ToolSpec>>>,
+    /// The handlers each loaded app serves on the bus.
+    apps: Mutex<HashMap<String, Vec<HandlerInfo>>>,
     calls: Mutex<Vec<(String, String, CallContext)>>,
-    /// `(app, handler, args)` of every client `rpc` call, in order.
+    /// `(app, handler, args)` of every call of a handler, in order.
     handler_calls: Mutex<Vec<(String, String, Value)>>,
-    /// The `read_only` requirement each tool call arrived with, in call order.
+    /// Whether each call of a handler was a read-only one, in call order.
     read_only_calls: Mutex<Vec<bool>>,
     loads: Mutex<HashMap<String, usize>>,
     packages: Mutex<HashMap<String, AppPackage>>,
@@ -193,11 +194,11 @@ impl FakeRuntime {
     pub fn calls(&self) -> usize {
         self.calls.lock().unwrap().len()
     }
-    /// Whether each tool call asked the runtime for a read-only run, in call order.
+    /// Whether each call of a handler asked the runtime for a read-only run, in call order.
     pub fn read_only_calls(&self) -> Vec<bool> {
         self.read_only_calls.lock().unwrap().clone()
     }
-    /// The context of the most recent tool call.
+    /// The context of the most recent call of a handler.
     pub fn last_ctx(&self) -> Option<CallContext> {
         self.calls.lock().unwrap().last().map(|c| c.2.clone())
     }
@@ -217,61 +218,57 @@ impl FakeRuntime {
             set.remove(app);
         }
     }
-    /// `(app, handler, args)` of every client `rpc` call so far.
+    /// `(app, handler, args)` of every call of a handler so far.
     pub fn handler_calls(&self) -> Vec<(String, String, Value)> {
         self.handler_calls.lock().unwrap().clone()
     }
 }
+impl FakeRuntime {
+    /// A call of a handler: remembered, and answered with what it was asked.
+    fn record(&self, app: &AppId, method: &str, args: Value, ctx: CallContext, read_only: bool) -> Value {
+        let answer = json!({ "app": app.as_str(), "method": method, "args": args });
+        self.calls.lock().unwrap().push((app.to_string(), method.to_owned(), ctx));
+        self.handler_calls.lock().unwrap().push((app.to_string(), method.to_owned(), args));
+        self.read_only_calls.lock().unwrap().push(read_only);
+        answer
+    }
+}
+
 #[async_trait]
 impl AppRuntime for FakeRuntime {
-    async fn load(&self, app: &AppId, package: AppPackage, _: Arc<dyn AppData>) -> PortResult<LoadedApp> {
+    async fn load(&self, app: &AppId, package: AppPackage, _: Arc<dyn AppData>) -> PortResult<()> {
         *self.loads.lock().unwrap().entry(app.to_string()).or_default() += 1;
         if self.fail_load.lock().unwrap().contains(app.as_str()) {
             return Err(PortError::Rejected(format!("{app}/app.lua:3: boom")));
         }
-        // the fake "app source" is a comma separated list of tool names
+        // the fake "app source" is a comma separated list of the methods the backend serves
         let main = package.files.get(&package.entry).cloned().unwrap_or_default();
-        let tools: Vec<ToolSpec> = String::from_utf8_lossy(&main)
+        let handlers: Vec<HandlerInfo> = String::from_utf8_lossy(&main)
             .split(',')
             .filter(|s| !s.is_empty())
-            .map(|n| ToolSpec {
-                // a trailing `?` declares the tool readOnly: "search?,add"
-                name: n.trim_end_matches('?').into(),
-                title: None,
-                description: String::new(),
-                input_schema: json!({"type":"object"}),
+            .map(|n| HandlerInfo {
+                // a trailing `?` says the method changes nothing: "search?,add"
+                method: n.trim_end_matches('?').into(),
                 read_only: n.ends_with('?'),
+                ..HandlerInfo::default()
             })
             .collect();
-        self.apps.lock().unwrap().insert(app.to_string(), tools.clone());
+        self.apps.lock().unwrap().insert(app.to_string(), handlers);
         self.packages.lock().unwrap().insert(app.to_string(), package);
-        Ok(LoadedApp { tools })
+        Ok(())
     }
     async fn unload(&self, app: &AppId) -> PortResult<()> {
         self.apps.lock().unwrap().remove(app.as_str());
         Ok(())
-    }
-    async fn call_tool(
-        &self,
-        app: &AppId,
-        tool: &str,
-        args: Value,
-        ctx: CallContext,
-        read_only: bool,
-    ) -> PortResult<Value> {
-        self.calls.lock().unwrap().push((app.to_string(), tool.to_owned(), ctx));
-        self.read_only_calls.lock().unwrap().push(read_only);
-        Ok(json!({ "echo": args }))
     }
     async fn call_handler(
         &self,
         app: &AppId,
         method: &str,
         args: Value,
-        _: CallContext,
+        ctx: CallContext,
     ) -> PortResult<Value> {
-        self.handler_calls.lock().unwrap().push((app.to_string(), method.to_owned(), args.clone()));
-        Ok(json!({ "app": app.as_str(), "method": method, "args": args }))
+        Ok(self.record(app, method, args, ctx, false))
     }
     async fn call_handler_read_only(
         &self,
@@ -280,13 +277,13 @@ impl AppRuntime for FakeRuntime {
         args: Value,
         ctx: CallContext,
     ) -> PortResult<Value> {
-        self.call_handler(app, method, args, ctx).await
+        Ok(self.record(app, method, args, ctx, true))
     }
     fn has_handler(&self, _: &AppId, _: &str) -> bool {
         true
     }
-    fn handlers(&self, _: &AppId) -> Vec<HandlerInfo> {
-        Vec::new()
+    fn handlers(&self, app: &AppId) -> Vec<HandlerInfo> {
+        self.apps.lock().unwrap().get(app.as_str()).cloned().unwrap_or_default()
     }
     async fn deliver_notification(&self, _: &AppId, _: &str, _: Value) -> PortResult<()> {
         Ok(())

@@ -116,7 +116,7 @@ async fn tool_calls_are_permission_checked_per_agent_and_run_as_that_agent() {
     f.clock.advance(500);
     let ok =
         svc.call_tool(&agent(vec![ToolGrant::CallTools(id.clone())]), &name, json!({"a":1})).await.unwrap();
-    assert_eq!(ok, json!({"echo": {"a":1}}));
+    assert_eq!(ok, json!({"app": "notes", "method": "add_note", "args": {"a": 1}}));
     let ctx = f.runtime.last_ctx().unwrap();
     assert_eq!((ctx.actor, ctx.now_ms), (Actor::agent("claude", "Claude"), 1_500));
     let denied = svc.call_tool(&agent(vec![]), &name, json!({})).await.unwrap_err();

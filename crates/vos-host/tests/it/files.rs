@@ -13,17 +13,15 @@ use vos_host::startup::prepare_data_dir;
 /// A backend whose `seed` handler writes a few Documents (one of them a hostile page) and a cache file.
 const BACKEND: &str = r#"
 local docs = app.files.documents
-return {
-  seed = function()
-    assert(docs:create_dir("notes/2026"))
-    assert(docs:write("notes/2026/todo.txt", "buy milk"))
-    assert(docs:write("report.csv", "a,b\n1,2\n"))
-    assert(docs:write("evil.html", "<script>alert(document.cookie)</script>"))
-    assert(docs:write("été \"1\".txt", "x"))
-    assert(app.files.cache:write("thumb.bin", "cache"))
-    return true
-  end,
-}
+RPC.on_request("seed", function()
+  assert(docs:create_dir("notes/2026"))
+  assert(docs:write("notes/2026/todo.txt", "buy milk"))
+  assert(docs:write("report.csv", "a,b\n1,2\n"))
+  assert(docs:write("evil.html", "<script>alert(document.cookie)</script>"))
+  assert(docs:write("été \"1\".txt", "x"))
+  assert(app.files.cache:write("thumb.bin", "cache"))
+  return true
+end)
 "#;
 
 /// A host with `notes` installed and seeded (and `empty` installed with no files), one paired browser, and its cookie.

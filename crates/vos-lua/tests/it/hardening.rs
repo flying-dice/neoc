@@ -4,7 +4,7 @@
 //! - an unload or a reload ends what the app was doing at its next host call;
 //! - bounded conversion of what the app hands back (tool results, handler results): a cyclic or exponentially
 //!   shared table is an error, not a stack overflow or an allocation;
-//! - a `readOnly` call changes nothing: no data, no window, no notifications, no events;
+//! - a `read-only` call changes nothing: no data, no window, no notifications, no events;
 //! - the SQL sandbox holds against `VACUUM INTO` and `ATTACH` through `db:all`.
 
 use crate::common;
@@ -50,9 +50,9 @@ fn rig() -> Rig {
 
 impl Rig {
     /// Load `src` as a backend (`common::backend`).
-    async fn load(&self, app: &str, src: &str) -> PortResult<vos_application::ports::LoadedApp> {
+    async fn load(&self, app: &str, src: &str) -> PortResult<()> {
         let data: Arc<dyn AppData> = self.db.clone();
-        self.runtime.load(&id(app), package(&common::backend(src), &[]), data).await
+        self.runtime.load(&id(app), package(src, &[]), data).await
     }
     async fn tool(&self, app: &str, tool: &str) -> PortResult<Value> {
         common::serve_rt(&self.runtime, &id(app), tool, json!({}), agent_ctx(0)).await
@@ -179,7 +179,7 @@ async fn open_window_asks_for_the_apps_one_window_and_refuses_any_other_name() {
     assert_eq!(rig.shell.windows.lock().unwrap().len(), 1, "nothing was asked of the shell");
 }
 
-// ---- blocker 4 and major 15: a readOnly call changes nothing -------------------------------------------------
+// ---- blocker 4 and major 15: a read-only call changes nothing -------------------------------------------------
 
 const READ_ONLY_APP: &str = r#"
     app.db:migrate { [1] = "create table log(id integer primary key, msg text)" }
@@ -188,7 +188,7 @@ const READ_ONLY_APP: &str = r#"
     RPC.on_request("open", function() return try(function() app.open_window() end) end, { read_only = true })
     RPC.on_request("notify", function() return try(function() app.notify { title = "hi" } end) end, { read_only = true })
     RPC.on_request("emit", function() return try(function() RPC.send_notification("changed") end) end, { read_only = true })
-    -- not declared readOnly: allowed to do all of it (but the caller may still require a read-only run)
+    -- not read-only: allowed to do all of it (but the caller may still require a read-only run)
     RPC.on_request("everything", function()
       app.open_window()
       app.notify { title = "hi" }
@@ -201,19 +201,19 @@ const READ_ONLY_APP: &str = r#"
 "#;
 
 #[tokio::test]
-async fn a_read_only_tool_cannot_open_the_window_notify_or_emit() {
+async fn a_read_only_call_cannot_open_the_window_notify_or_send_a_notification() {
     let rig = rig();
     rig.load("probe", &format!("{MANIFEST}\n{READ_ONLY_APP}")).await.unwrap();
     for tool in ["open", "notify", "emit"] {
         let out = rig.tool("probe", tool).await.unwrap();
         assert_eq!(out["ok"], false, "{tool} must be refused: {out}");
-        assert!(out["err"].as_str().unwrap().contains("readOnly"), "{tool}: {out}");
+        assert!(out["err"].as_str().unwrap().contains("read-only"), "{tool}: {out}");
     }
     assert!(rig.shell.windows.lock().unwrap().is_empty(), "the shell was not asked for the window");
-    assert!(rig.shell.events.lock().unwrap().is_empty(), "no event reached the app's pages");
+    assert!(rig.shell.events.lock().unwrap().is_empty(), "no notification reached the app's pages");
     assert_eq!(rig.tool("probe", "count").await.unwrap(), json!(0), "the table is unchanged");
 
-    // and a tool that is not readOnly still can
+    // and a call that is not read-only still can
     assert_eq!(rig.tool("probe", "everything").await.unwrap(), json!(1));
     assert_eq!(rig.shell.windows.lock().unwrap().len(), 1);
     assert_eq!(rig.shell.events.lock().unwrap().len(), 1);
@@ -221,7 +221,7 @@ async fn a_read_only_tool_cannot_open_the_window_notify_or_emit() {
 }
 
 #[tokio::test]
-async fn a_caller_can_require_a_read_only_run_of_a_tool_that_is_not_declared_read_only() {
+async fn a_caller_can_require_a_read_only_run_of_a_handler_that_is_not_described_read_only() {
     let rig = rig();
     rig.load("probe", &format!("{MANIFEST}\n{READ_ONLY_APP}")).await.unwrap();
     let ctx = agent_ctx(0);
@@ -229,7 +229,7 @@ async fn a_caller_can_require_a_read_only_run_of_a_tool_that_is_not_declared_rea
         .await
         .unwrap_err()
         .to_string();
-    assert!(err.contains("readOnly"), "the port's requirement is enforced by the adapter: {err}");
+    assert!(err.contains("read-only"), "the port's requirement is enforced by the adapter: {err}");
     assert!(rig.shell.windows.lock().unwrap().is_empty());
     // the requirement lasts one call
     let ok = common::serve_rt(&rig.runtime, &id("probe"), "everything", json!({}), ctx).await.unwrap();

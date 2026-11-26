@@ -72,7 +72,8 @@ wire! {
         pub permissions: Vec<String>,
     }
 
-    /// The `app.event` notification: an app's backend sent `name` and `data` to its open clients (`app.emit`).
+    /// The `app.event` notification: an app sent the notification `name` with `data` (`RPC.send_notification`), for its
+    /// open clients.
     pub struct AppEvent {
         pub app: String,
         pub name: String,

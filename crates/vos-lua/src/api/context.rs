@@ -1,4 +1,4 @@
-//! What a handler or a tool is called with: who is calling and when, and `ctx:fail(message)`.
+//! What a handler is called with: who is calling and when, and `ctx:fail(message)`.
 
 use crate::error::ToolFailure;
 use mlua_ir::{Object, Shape};
@@ -17,7 +17,7 @@ pub enum ActorKind {
     User,
     /// An agent, through a tool.
     Agent,
-    /// Another app's backend: a request it sent (`app.request`), or its notification reaching a listener (`app.on`).
+    /// Another app's backend: a request it sent (`RPC.send_request`), or its notification reaching a listener (`RPC.on_notification`).
     App,
 }
 
@@ -33,7 +33,7 @@ pub struct Actor {
     pub name: String,
 }
 
-/// What a handler of the app's backend, or a tool's `run`, is called with: who is calling and when.
+/// What a handler of the app's backend is called with: who is calling and when.
 #[derive(Clone, Debug, Object)]
 #[shape(module = "vos:app")]
 pub struct Context {
@@ -71,7 +71,7 @@ impl Context {
 
     /// End the call with `message`, which the caller is shown as it is: no file or line. A handler's caller is the
     /// page, whose `rpc` rejects with an application error (-32010) carrying the message; to fail with another
-    /// JSON-RPC code, raise `error("RPC-32602 Title cannot be empty", 0)`. A tool's caller is the agent. It never
+    /// JSON-RPC code, raise `error("RPC-32602 Title cannot be empty", 0)`. An agent's tool call is a request too: its caller is the agent. It never
     /// returns (it is declared `never`), so `return ctx:fail(...)` fits a handler whatever its result is.
     pub fn fail(&self, message: String) -> mlua::Result<Infallible> {
         Err(mlua::Error::external(ToolFailure(message)))

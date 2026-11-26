@@ -112,9 +112,6 @@ const COMPONENT_NAME = /^[A-Z][A-Za-z0-9]{0,63}$/
 const PARAM_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/
 const COMPONENT_REF = /^#\/components\/schemas\/(.+)$/
 
-/** The names the generated modules declare themselves: a component may not take one. */
-export const GENERATED_NAMES = new Set(['Context', 'Handlers', 'Requests', 'Notifications', 'Rpc', 'Host', 'RpcError', 'SendNotification', 'Args'])
-
 const SCHEMA_KEYS = ['type', 'description', 'enum', 'minLength', 'maxLength', 'minimum', 'maximum', 'items', 'properties', 'required', '$ref', 'title']
 
 function schema(raw: Json | undefined, path: string, refs: { name: string; path: string }[]): Schema {
@@ -268,7 +265,6 @@ function contract(document: Json): Contract {
     for (const [name, raw] of Object.entries(schemas as JsonObject)) {
       const path = `components.schemas.${name}`
       if (!COMPONENT_NAME.test(name)) fail(path, 'must be a type name: a capital letter, then letters and digits')
-      if (GENERATED_NAMES.has(name)) fail(path, `is a name the generated code uses itself (${[...GENERATED_NAMES].join(', ')})`)
       components[name] = schema(raw, path, refs)
     }
   }

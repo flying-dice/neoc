@@ -89,7 +89,7 @@ impl Rig {
     /// Load `src` as a backend (`common::backend`).
     async fn load(&self, name: &str, src: &str) {
         let data: Arc<dyn AppData> = db();
-        self.runtime.load(&id(name), package(&common::backend(src), &[]), data).await.unwrap();
+        self.runtime.load(&id(name), package(src, &[]), data).await.unwrap();
     }
     /// The names of the events the app has emitted to its pages so far (`RPC.send_notification`).
     fn events(&self) -> Vec<String> {
@@ -461,7 +461,7 @@ async fn long_running_work_started_with_task_spawn_does_not_hold_up_the_load() {
     );
     let data: Arc<dyn AppData> = db();
     let app = id("probe");
-    let load = r.runtime.load(&app, package(&common::backend(&src), &[]), data);
+    let load = r.runtime.load(&app, package(&src, &[]), data);
     tokio::time::timeout(Duration::from_secs(5), load).await.expect("the load returned").unwrap();
     let ticks = || async { r.tool("probe", "ticks").await.as_i64().unwrap() };
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -581,7 +581,7 @@ async fn requests_to_the_apps_server_run_one_at_a_time_in_the_vm() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_call_waiting_in_a_read_only_tool_keeps_its_read_only_guarantee_while_others_run() {
-    // the readOnly tool waits; while it does, a task of the app writes (allowed: it is not the tool);
+    // the read-only tool waits; while it does, a task of the app writes (allowed: it is not the tool);
     // when the tool goes on, its own write is refused again
     let src = r#"
         local task = require("std:task")
@@ -601,7 +601,7 @@ async fn a_call_waiting_in_a_read_only_tool_keeps_its_read_only_guarantee_while_
     let out = common::serve(&vm, "ro", json!({}), &agent_ctx(0)).await.unwrap();
     assert_eq!(out["task_write"], "true", "another call may write while the read-only one waits: {out}");
     assert_eq!(out["tool_write"], false, "the read-only tool still cannot: {out}");
-    assert!(out["why"].as_str().unwrap().contains("readOnly"), "{out}");
+    assert!(out["why"].as_str().unwrap().contains("read-only"), "{out}");
     assert_eq!(out["v"], 1, "{out}");
 }
 
@@ -718,8 +718,8 @@ async fn replacing_an_app_frees_the_port_of_the_version_it_replaces_for_the_new_
     // an instant later: the new version's bind may have to be tried again
     loop {
         let data: Arc<dyn AppData> = db();
-        match r.runtime.load(&id("probe"), package(&common::backend(&second_src), &[]), data).await {
-            Ok(_) => break,
+        match r.runtime.load(&id("probe"), package(&second_src, &[]), data).await {
+            Ok(()) => break,
             Err(e) => {
                 tries += 1;
                 assert!(tries < 100, "the old version never released its port: {e}");
@@ -732,7 +732,7 @@ async fn replacing_an_app_frees_the_port_of_the_version_it_replaces_for_the_new_
     r.runtime.unload(&id("probe")).await.unwrap();
 }
 
-// ---- a readOnly call and everything it starts change nothing ------------------------------------------------
+// ---- a read-only call and everything it starts change nothing ------------------------------------------------
 
 const READ_ONLY_REACH: &str = r#"
     local task, net, hyper = require("std:task"), require("std:net"), require("vnd:hyper")
@@ -748,10 +748,10 @@ const READ_ONLY_REACH: &str = r#"
       return { status = 200, body = outcome.handler }
     end)
     local function poke() return hyper.get("http://" .. server:addr() .. "/").body end
-    -- route 1: a readOnly tool asks the app's own server to write while the tool waits for the answer
+    -- route 1: a read-only tool asks the app's own server to write while the tool waits for the answer
     RPC.on_request("poke_ro", poke, { read_only = true })
     RPC.on_request("poke", poke)
-    -- route 2: a readOnly tool leaves a task behind that writes after the tool has returned
+    -- route 2: a read-only tool leaves a task behind that writes after the tool has returned
     RPC.on_request("spawn_ro", function()
       task.spawn(function() task.wait(0.05) insert("spawned") end)
       return "returned"
@@ -762,7 +762,7 @@ const READ_ONLY_REACH: &str = r#"
       task.spawn(function() coroutine.yield() insert("yielded") end)
       return "returned"
     end, { read_only = true })
-    -- a task spawned by a readOnly tool spawns another from inside: both stay read-only
+    -- a task spawned by a read-only tool spawns another from inside: both stay read-only
     RPC.on_request("nested_ro", function()
       task.spawn(function() task.wait(0.01) task.spawn(function() task.wait(0.01) insert("nested") end) end)
       return "returned"
@@ -779,12 +779,12 @@ async fn a_read_only_tool_cannot_write_through_a_request_to_its_own_server() {
     r.load("probe", &format!("{MANIFEST}\n{READ_ONLY_REACH}")).await;
     let body = r.tool("probe", "poke_ro").await;
     assert!(
-        body.as_str().unwrap().contains("readOnly") || body.as_str().unwrap().contains("read-only"),
+        body.as_str().unwrap().contains("read-only") || body.as_str().unwrap().contains("read-only"),
         "{body}"
     );
     assert_ne!(body, "wrote");
     assert_eq!(r.tool("probe", "report").await["n"], 0, "nothing was written");
-    // the same request outside a readOnly call writes, as the app's own code may
+    // the same request outside a read-only call writes, as the app's own code may
     assert_eq!(r.tool("probe", "poke").await, "wrote");
     assert_eq!(r.tool("probe", "report").await["n"], 1);
 }
@@ -798,11 +798,11 @@ async fn what_a_read_only_tool_starts_stays_read_only_after_the_tool_returns() {
     }
     tokio::time::sleep(Duration::from_millis(400)).await;
     let report = r.tool("probe", "report").await;
-    assert_eq!(report["n"], 0, "no task a readOnly tool left behind wrote: {report}");
+    assert_eq!(report["n"], 0, "no task a read-only call left behind wrote: {report}");
     for who in ["spawned", "deferred", "delayed", "yielded", "nested"] {
         let said = report["outcome"][who].as_str().unwrap_or_else(|| panic!("{who} never ran: {report}"));
         assert!(
-            said.contains("readOnly") || said.contains("read-only") || said.contains("read only"),
+            said.contains("read-only") || said.contains("read-only") || said.contains("read only"),
             "{who}: {said}"
         );
     }
@@ -829,7 +829,7 @@ async fn a_read_only_tool_cannot_register_or_change_the_apps_wiring() {
     r.load("probe", &format!("{MANIFEST}\n{src}")).await;
     let out = r.tool("probe", "register").await;
     assert_eq!(out["ok"], false, "register must be refused: {out}");
-    assert!(out["err"].as_str().unwrap().contains("readOnly"), "{out}");
+    assert!(out["err"].as_str().unwrap().contains("read-only"), "{out}");
     // reads stay allowed, and a writable tool may still wire the app
     let reads = r.tool("probe", "reads").await;
     assert_eq!(reads["one"], 1, "{reads}");

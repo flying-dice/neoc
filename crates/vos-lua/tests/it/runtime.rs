@@ -89,7 +89,7 @@ fn rig() -> Rig {
     Rig { runtime, notifier, shell, db: db() }
 }
 
-async fn load(rig: &Rig, src: &str) -> PortResult<vos_application::ports::LoadedApp> {
+async fn load(rig: &Rig, src: &str) -> PortResult<()> {
     let data: Arc<dyn AppData> = rig.db.clone();
     rig.runtime.load(&id("notes"), package(src, &[]), data).await
 }

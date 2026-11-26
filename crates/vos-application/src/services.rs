@@ -175,11 +175,9 @@ struct Active {
     data: Arc<dyn AppData>,
     name: String,
     display: Display,
-    /// The app's agent tools: what it declared (`app.tool`), then every public handler on the bus.
+    /// The app's agent tools: every public handler on the bus.
     tools: Vec<ToolSpec>,
-    /// The tools the app declared itself (`app.tool`): run in its VM as tools.
-    declared: Vec<ToolSpec>,
-    /// The tools that are handlers on the bus: tool name to method. An agent's call is a request on the bus.
+    /// The method each tool is: tool name to method. An agent's call is a request on the bus.
     methods: HashMap<String, String>,
     /// The app's contract (`openrpc.json`): every request, answer and notification of the app on the bus is held to it.
     contract: Option<Arc<crate::contract::AppContract>>,
@@ -200,14 +198,11 @@ fn tool_name(method: &str) -> String {
     name
 }
 
-/// The declared tools, then each public handler on the bus that is not one of them by name.
-fn combine(declared: &[ToolSpec], bus: Vec<(ToolSpec, String)>) -> (Vec<ToolSpec>, HashMap<String, String>) {
-    let mut tools = declared.to_vec();
+/// The tools (and the method each is) of the public handlers on the bus.
+fn tools_of(bus: Vec<(ToolSpec, String)>) -> (Vec<ToolSpec>, HashMap<String, String>) {
+    let mut tools = Vec::new();
     let mut methods = HashMap::new();
     for (spec, method) in bus {
-        if tools.iter().any(|t| t.name == spec.name) {
-            continue;
-        }
         methods.insert(spec.name.clone(), method);
         tools.push(spec);
     }
@@ -322,7 +317,7 @@ impl AppService {
         let tools = {
             let mut apps = self.apps.lock();
             let Some(active) = apps.get_mut(app).and_then(|entry| entry.active.as_mut()) else { return };
-            let (tools, methods) = combine(&active.declared, bus);
+            let (tools, methods) = tools_of(bus);
             if tools == active.tools {
                 return;
             }
@@ -604,7 +599,7 @@ impl AppService {
 
     // ---- running apps -------------------------------------------------------------------------------
 
-    /// MCP `tools/call`: authorize the calling agent, then run the tool in the app's VM as that agent.
+    /// MCP `tools/call`: authorize the calling agent, then ask the app's handler of that tool on the bus as that agent.
     pub async fn call_tool(
         &self,
         caller: &AgentIdentity,
@@ -613,15 +608,22 @@ impl AppService {
     ) -> Result<Value, AppError> {
         caller.authorize_tool_call(name)?;
         self.require_running(name.app())?;
+        self.call_bus_tool(Actor::from(caller), name, args).await
+    }
+
+    /// An agent's call of a tool is a request on the bus, as a page's or an app's is; read-only when the contract (or
+    /// the handler's `about`) says the method changes nothing.
+    async fn call_bus_tool(
+        &self,
+        caller: Actor,
+        name: &QualifiedToolName,
+        args: Value,
+    ) -> Result<Value, AppError> {
         let read_only = self.tool_is_read_only(name).unwrap_or(false);
-        if let Some(method) = self.with_active(name.app(), |a| a.methods.get(name.tool()).cloned())? {
-            // a handler on the bus: the agent's call is a request on the bus, as a page's or an app's is
-            return self.request_with(Actor::from(caller), name.app(), &method, args, read_only).await;
-        }
-        let ctx = CallContext { actor: Actor::from(caller), now_ms: self.p.clock.now_unix_ms() };
-        // the runtime enforces `readOnly` too, but the guarantee must not rest on the adapter alone: it is
-        // handed the requirement for every tool the app declared `readOnly`
-        Ok(self.p.runtime.call_tool(name.app(), name.tool(), args, ctx, read_only).await?)
+        let Some(method) = self.with_active(name.app(), |a| a.methods.get(name.tool()).cloned())? else {
+            return Err(PortError::NotFound(format!("tool `{name}`")).into());
+        };
+        self.request_with(caller, name.app(), &method, args, read_only).await
     }
 
     /// An app page's `rpc(method, args)`: run the app's handler of that name in the app's VM. The call is the
@@ -770,7 +772,8 @@ impl AppService {
         self.apps.lock().contains_key(app)
     }
 
-    /// Whether the app's tool is declared `readOnly`; `None` when the app is not running or has no such tool.
+    /// Whether the app's tool is read-only (its contract's `x-readOnly`, or its handler's `about`); `None` when the app
+    /// is not running or has no such tool.
     #[must_use]
     pub fn tool_is_read_only(&self, tool: &QualifiedToolName) -> Option<bool> {
         self.with_active(tool.app(), |a| a.tools.iter().find(|t| t.name == tool.tool()).map(|t| t.read_only))
@@ -1029,9 +1032,9 @@ impl AppService {
             None => self.p.data.open(&m.id, migrations).await?,
         };
         // a failed load leaves the data in place (it is the user's) and the previous VM, if any, untouched
-        let loaded = self.p.runtime.load(&m.id, package, data.clone()).await?;
-        // its tools: what it declared, and the public handlers on the bus (its backend's, and any open page's)
-        let (tools, methods) = combine(&loaded.tools, self.bus_tools(&m.id, contract.as_deref()));
+        self.p.runtime.load(&m.id, package, data.clone()).await?;
+        // its tools: the public handlers on the bus (its backend's, and any open page's)
+        let (tools, methods) = tools_of(self.bus_tools(&m.id, contract.as_deref()));
         if let Err(e) = self.p.tools.publish(&m.id, tools.clone()).await {
             self.p.runtime.unload(&m.id).await.ok();
             return Err(e.into());
@@ -1042,7 +1045,6 @@ impl AppService {
             name: m.name.clone(),
             display: Display::of(m),
             tools,
-            declared: loaded.tools,
             methods,
             contract,
             site,
@@ -1125,15 +1127,7 @@ impl AppTools for AppService {
     async fn call(&self, caller: Actor, name: &QualifiedToolName, args: Value) -> Result<Value, PortError> {
         let run = async {
             self.require_running(name.app())?;
-            // as in `call_tool`: the requirement is handed to the runtime, not left to it
-            let read_only = self.tool_is_read_only(name).unwrap_or(false);
-            if let Some(method) = self.with_active(name.app(), |a| a.methods.get(name.tool()).cloned())? {
-                return self.request_with(caller, name.app(), &method, args, read_only).await;
-            }
-            let ctx = CallContext { actor: caller, now_ms: self.p.clock.now_unix_ms() };
-            Ok::<Value, AppError>(
-                self.p.runtime.call_tool(name.app(), name.tool(), args, ctx, read_only).await?,
-            )
+            self.call_bus_tool(caller, name, args).await
         };
         run.await.map_err(|e| match e {
             AppError::Port(e) => e,
