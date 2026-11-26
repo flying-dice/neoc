@@ -49,7 +49,7 @@ pub struct RpcHub {
     agents: OnceLock<Arc<AgentService>>,
     files: OnceLock<Arc<FilesService>>,
     peers: Mutex<Vec<RpcPeer>>,
-    /// The handlers the pages registered on the RPC bus (`rpc.onRequest`), by connection: `(app, method)`, and what
+    /// The handlers the pages registered on the RPC bus (`RPC.on_request`), by connection: `(app, method)`, and what
     /// each said about itself.
     handlers: Mutex<HashMap<u64, PageHandlerMap>>,
     /// Requests on the bus waiting for a page's answer, by call id.
@@ -638,9 +638,8 @@ struct HandleParams {
     #[serde(default)]
     about: Option<About>,
 }
-/// What a page's handler says about itself (as a backend's does with `app.onRequest`).
+/// What a page's handler says about itself (as a backend's does with `RPC.on_request`).
 #[derive(Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct About {
     title: Option<String>,
     description: Option<String>,

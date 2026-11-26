@@ -11,22 +11,27 @@
 // contract) are plain names the host forwards to the app's backend. The host knows which app a frame is from the
 // frame itself, never from a message.
 //
-// This script defines one global, `vos`: the page's whole API, with nothing to import. An app's build only adds types for
-// it (the apps' requests and notifications, by app id). The RPC bus, with the same four verbs an app's backend has:
+// This script defines two globals, the page's whole API, with nothing to import. An app's build only adds types for
+// them (the apps' requests and notifications, by app id). `RPC` is the RPC bus, the same four functions, in the same
+// house style (snake case), as the global `RPC` of an app's backend:
 //
-//   vos.sendRequest(app, method, params?)  a request to an app (this one's id too): every handler registered for the
-//                            method, its backend's or an open page's, is asked; the first answer wins. Rejects with a
-//                            `vos.RpcError`
-//   vos.onRequest(method, fn) serve one of this app's methods from the page: `fn(params, { signal })` answers (it may
-//                            return a promise); `signal` aborts when another handler answered first. Returns a function
-//                            that stops serving
-//   vos.sendNotification(name, params?)  send one of this app's notifications, to whoever listens
-//   vos.onNotification(app, name, fn)  hear an app's notification (this one's, or another app's public one); returns a
-//                            function that stops listening
+//   RPC.send_request(app, method, params?)  a request to an app (this one's id too): every handler registered for
+//                            the method, its backend's or an open page's, is asked; the first answer wins. Rejects
+//                            with an `RPC.RpcError`
+//   RPC.on_request(method, fn, about?)  serve one of this app's methods from the page: `fn(params, { signal })`
+//                            answers (it may return a promise); `signal` aborts when another handler answered first.
+//                            `about` ({ title, description, input_schema, read_only }) is what an agent is shown when
+//                            the method is public (a tool). Returns a function that stops serving
+//   RPC.send_notification(name, params?)  send one of this app's notifications, to whoever listens
+//   RPC.on_notification(app, name, fn)  hear an app's notification (this one's, or another app's public one); returns
+//                            a function that stops listening
+//   RPC.RpcError             what a failed request rejects with: `code`, `message`, `data`
+//
+// `vos` is the rest:
+//
 //   vos.host                 the host page: theme, context, capabilities, hosted, ready, on('host:...'), onContext,
 //                            onTeardown, openLink(url), requestDisplayMode(mode)
 //   vos.tracing              spans and events, after Rust's `tracing`
-//   vos.RpcError             what a failed request rejects with: `code`, `message`, `data`
 //
 // and underneath, which the older generated modules (`@<app id>/rpc`, `@vos/host`, `@vos/tracing`) read:
 //
@@ -35,12 +40,6 @@
 //   vos.on(name, fn)         hear a `vos/event` (what the backend sent with `app.emit`); returns a function to stop
 //   vos.onApp(app, name, fn) hear a public notification of another app (its backend's `app.emit` of a name without a
 //                            leading `_`); the first listener for an app asks the host for its events (`vos/subscribe`)
-//   vos.onRequest(method, fn, about?) serve one of the app's methods on the RPC bus, beside its backend:
-//                            `fn(params, { signal })` answers (it may return a promise); the first handler to answer
-//                            wins, `signal` aborts when another answered first. `about` ({ title, description,
-//                            inputSchema, readOnly }) is what an agent is shown when the method is public (a tool).
-//                            Returns a function that stops serving.
-//   vos.sendNotification(name, params) send one of the app's notifications on the bus, to whoever listens
 //   vos.onContext(fn)        hear a change of the host context; returns a function to stop
 //   vos.onTeardown(fn)       run `fn` (may return a promise) when the host is about to remove the frame
 //   vos.context              the host context now (theme, displayMode, locale, timeZone, ...)
@@ -89,6 +88,8 @@
   }
   // an app that never reads `ready` must not report an unhandled rejection for it
   vos.ready.catch(function () {})
+  // the RPC bus
+  var rpc = {}
 
   function post(message) {
     parent.postMessage(Object.assign({ jsonrpc: '2.0' }, message), '*')
@@ -316,7 +317,7 @@
       this.data = data
     }
   }
-  vos.RpcError = RpcError
+  RPC.RpcError = RpcError
 
   function failureOf(error) {
     var message = error && typeof error.message === 'string' ? error.message : 'the call failed'
@@ -389,7 +390,7 @@
     }
     return listen(appListeners, app + ' ' + name, fn)
   }
-  vos.onRequest = function (method, fn, about) {
+  RPC.on_request = function (method, fn, about) {
     method = String(method)
     if (requestHandlers.has(method)) throw new Error('This page already serves "' + method + '"')
     requestHandlers.set(method, fn)
@@ -402,13 +403,13 @@
       vos.call('vos/unhandle', { method: method }).catch(function () {})
     }
   }
-  vos.sendNotification = function (name, params) {
+  RPC.send_notification = function (name, params) {
     return vos.call('vos/notify', { name: String(name), params: params === undefined ? {} : params })
   }
-  vos.sendRequest = function (app, method, params) {
+  RPC.send_request = function (app, method, params) {
     return vos.call('vos/request', { app: String(app), method: String(method), params: params === undefined ? {} : params })
   }
-  vos.onNotification = function (app, name, fn) {
+  RPC.on_notification = function (app, name, fn) {
     return vos.onApp(app, name, function (params) {
       fn(params === undefined || params === null ? {} : params)
     })
@@ -670,6 +671,7 @@
   }
 
   Object.defineProperty(window, 'vos', { value: vos, configurable: false, writable: false })
+  Object.defineProperty(window, 'RPC', { value: rpc, configurable: false, writable: false })
 
   // The first thing the page says is `ui/initialize`, now, before any of the app's own scripts run: the host page takes it as the
   // page's hello (a document that never says it is a page the frame navigated itself to), however busy the app is after.

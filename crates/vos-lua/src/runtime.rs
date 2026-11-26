@@ -73,7 +73,7 @@ impl LateBus {
 }
 
 /// The running apps, and where what they ask for goes: shared by the runtime and, weakly, by every app's VM (its
-/// `app.sendRequest`), so the apps' backends reach the bus through it.
+/// `RPC.send_request`), so the apps' backends reach the bus through it.
 struct Hub {
     vms: RwLock<HashMap<AppId, Arc<AppVm>>>,
     notifier: Arc<dyn Notifier>,
@@ -149,7 +149,7 @@ impl Hub {
         })
     }
 
-    /// `app.sendNotification` (and `app.emit`): onto the bus. A bus that refuses it (the app is still loading, say)
+    /// `RPC.send_notification` (and `app.emit`): onto the bus. A bus that refuses it (the app is still loading, say)
     /// leaves it to the runtime, which delivers it the same way.
     async fn publish(&self, from: &AppId, name: &str, params: Value) {
         if let Some(bus) = self.bus.bound() {
@@ -171,7 +171,7 @@ impl Hub {
 
     /// An app's notification, from its page or its backend: to the open pages (the shell hands it to the app's frames
     /// and, unless it is a `_name`, to the frames that subscribed to the app), then to every backend that listens
-    /// (`app.onNotification`), one app after the other in id order, each told it came from `from`. A `_name` reaches
+    /// (`RPC.on_notification`), one app after the other in id order, each told it came from `from`. A `_name` reaches
     /// only `from`'s own listeners. A listener that fails is logged; it costs the others nothing.
     async fn deliver_notification(&self, from: &AppId, name: &str, params: Value) {
         self.shell.emit_event(from, name, params.clone()).await;
@@ -199,7 +199,7 @@ impl Hub {
         }
     }
 
-    /// `app.sendRequest`: onto the bus, as `from`. With no bus bound, the handler of `to`'s backend answers, if it has one.
+    /// `RPC.send_request`: onto the bus, as `from`. With no bus bound, the handler of `to`'s backend answers, if it has one.
     async fn request(&self, from: &AppId, to: &AppId, method: &str, params: Value) -> PortResult<Value> {
         if let Some(bus) = self.bus.bound() {
             return bus.request(Actor::app(from.as_str()), to, method, params).await;
@@ -247,7 +247,7 @@ impl LuaRuntime {
 
     /// Give every app the tools of every running app (`app.tools.all`, `app.tools.call`). Once: a second call is
     /// ignored.
-    /// Put every app's backend on the RPC bus (`app.sendRequest`, `app.sendNotification`). Once: a second call is
+    /// Put every app's backend on the RPC bus (`RPC.send_request`, `RPC.send_notification`). Once: a second call is
     /// ignored.
     pub fn bind_bus(&self, bus: std::sync::Weak<dyn AppBus>) {
         let _ = self.hub.bus.0.set(bus);

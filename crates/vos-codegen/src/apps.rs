@@ -19,7 +19,7 @@ use std::fmt::Write as _;
 
 use mlua_ir::ir::{Function, Ir, Module, ModuleKind, Returns, Ty, TypeBody, TypeDef};
 use vos_domain::{GLOBALS_NOT_FOR_APPS, NOT_FOR_APPS};
-use vos_lua::declarations::{APP_GLOBAL, APP_MODULE};
+use vos_lua::declarations::{APP_GLOBAL, APP_MODULE, RPC_GLOBAL, RPC_MODULE};
 
 /// What an app is offered of a schema.
 #[derive(Debug, Clone, PartialEq)]
@@ -247,13 +247,20 @@ fn unusable(offered: &Offered) -> String {
     out
 }
 
-fn luau_globals() -> String {
+fn luau_globals(ir: &Ir) -> String {
     let mut out = String::from("-- ===== globals =====\n\n");
     let _ = writeln!(
         out,
         "--- The `app` API, the same as `require(\"{APP_MODULE}\")`.\ndeclare {APP_GLOBAL}: {}\n",
         module_type(APP_MODULE)
     );
+    if ir.modules.iter().any(|m| m.name == RPC_MODULE) {
+        let _ = writeln!(
+            out,
+            "--- The RPC bus, the same as `require(\"{RPC_MODULE}\")`.\ndeclare {RPC_GLOBAL}: {}\n",
+            module_type(RPC_MODULE)
+        );
+    }
     for global in GLOBALS_NOT_FOR_APPS {
         let _ = writeln!(out, "declare {global}: {}", not_for_apps_type(global));
     }
@@ -302,7 +309,7 @@ fn luau_of(offered: &Offered) -> String {
         out.push_str(&mlua_ir_gen::luau::module_section(&offered.ir, module));
     }
     out.push_str(&unusable(offered));
-    out.push_str(&luau_globals());
+    out.push_str(&luau_globals(&offered.ir));
     out.push_str(&luau_require(offered));
     out
 }
@@ -357,6 +364,13 @@ fn typescript_of(offered: &Offered) -> String {
         "\n// ===== globals =====\n\n/** The `app` API, the same as `require(\"{APP_MODULE}\")`. */\n\
 declare const {APP_GLOBAL}: typeof import(\"{APP_MODULE}\")\n"
     );
+    if ir.modules.iter().any(|m| m.name == RPC_MODULE) {
+        let _ = write!(
+            out,
+            "\n/** The RPC bus, the same as `require(\"{RPC_MODULE}\")`. */\n\
+declare const {RPC_GLOBAL}: typeof import(\"{RPC_MODULE}\")\n"
+        );
+    }
     out
 }
 

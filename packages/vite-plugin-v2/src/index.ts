@@ -4,20 +4,22 @@
  *   - `package.json` says what the app is: its id (the package name without its scope), version, description, and under
  *     `vos` its title, icon, tint and window (`app.ts`);
  *   - `openrpc.json` (OpenRPC 1.4) types everything the backend serves and sends (`contract.ts`);
- *   - `server/main.luau` is the backend: it returns `rpc.serve(handlers)`;
- *   - the page is a normal Vite page whose API is the global `vos` (the host's bridge defines it): nothing to import.
+ *   - `server/main.luau` is the backend: it serves and sends on the bus through the global `RPC` the host gives it
+ *     (`RPC.on_request`, `RPC.send_notification`, ...): nothing to require;
+ *   - the page is a normal Vite page whose API is the globals `RPC` and `vos` (the host's bridge defines them): nothing
+ *     to import.
  *
  *     // vite.config.ts
  *     import { vos } from '@vos/vite-plugin-v2'
  *     export default defineConfig({ plugins: [svelte(), vos()] })
  *
  * Another app it talks to is a dependency, by where it is (`vos({ dependencies: ['../app1'] })`): a folder holding that
- * app's package.json and openrpc.json. The page's client then types that app's public notifications under its id.
+ * app's package.json and openrpc.json. The types then cover that app's public requests and notifications, by its id.
  *
- * The plugin writes `types/` (`rpc.d.ts` and `rpc.js` for the page, `rpc.luau` for the backend) whenever Vite resolves
- * its config, so every Vite command leaves it current; puts the host's tags first in the page; and on `vite build`
- * bundles the backend into `dist/app.luau` and writes `dist/app-ref.json`, the app ref the host installs. Checking,
- * linting and formatting the Luau are the Luau tools' (luau-lsp, StyLua), not the plugin's.
+ * The plugin writes `types/` (types only: `vos.d.ts` and `<id>.d.ts` for the page, `vos.d.luau` for the backend)
+ * whenever Vite resolves its config, so every Vite command leaves it current; puts the host's tags first in the page;
+ * and on `vite build` bundles the backend into `dist/app.luau` and writes `dist/app-ref.json`, the app ref the host
+ * installs. Checking, linting and formatting the Luau are the Luau tools' (luau-lsp, StyLua), not the plugin's.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -28,7 +30,7 @@ import { parseContract } from './contract.ts'
 import { emitAppTypes, emitVosTypes, type Dependency } from './emit-ts.ts'
 import { frameworksOf, kitTypes, type Manifest } from './kit-types.ts'
 import { createRequire } from 'node:module'
-import { emitDependencyLuau, emitLuau } from './emit-luau.ts'
+import { emitLuauDefinitions } from './emit-luau.ts'
 
 export { parseApp, AppError, type AppMeta } from './app.ts'
 export { parseContract, ContractError, type Contract } from './contract.ts'
@@ -71,6 +73,18 @@ function readKitManifest(): Manifest {
   return kitManifest
 }
 
+/** The host's Luau declarations: `VOS_DEFINITIONS`, else `types/generated/vos.d.luau` of the repository the project is in. */
+export function findHostDefinitions(project: string): string {
+  const fromEnv = process.env.VOS_DEFINITIONS
+  if (fromEnv) return resolve(fromEnv)
+  for (let dir = resolve(project); ; dir = dirname(dir)) {
+    const candidate = join(dir, 'types/generated/vos.d.luau')
+    if (existsSync(candidate)) return candidate
+    if (dirname(dir) === dir) break
+  }
+  throw new Error("types/generated/vos.d.luau not found above the project: set VOS_DEFINITIONS to the host's declarations")
+}
+
 /** The files `types/` holds, from the project's package.json and contract and those of its dependencies. */
 export function generate(project: string, options: Options = {}): { app: AppMeta; files: { path: string; contents: string }[] } {
   const { app, contract } = readApp(project, '.')
@@ -85,20 +99,17 @@ export function generate(project: string, options: Options = {}): { app: AppMeta
   return {
     app,
     files: [
-      // types only: the page's global `vos` and the apps it knows (its own, each it depends on), and the backend's
-      // modules of types (its own app's, each it depends on); nothing here runs
+      // types only, for the page's globals `RPC` and `vos`: nothing here runs
       { path: `${GENERATED}/vos.d.ts`, contents: emitVosTypes() },
       { path: `${GENERATED}/${app.id}.d.ts`, contents: emitAppTypes(app.id, contract, true) },
-      { path: `${GENERATED}/${app.id}.luau`, contents: emitLuau(contract, CONTRACT, app.id) },
+      // the backend's: the host's declarations, with the global `RPC` typed for this app and its dependencies
+      { path: `${GENERATED}/vos.d.luau`, contents: emitLuauDefinitions(readFileSync(findHostDefinitions(project), 'utf8'), app.id, contract, dependencies) },
       // the kit's tags (`<ui-button>`, ...), for the frameworks the page uses
       ...frameworksOf(JSON.parse(readFileSync(join(project, 'package.json'), 'utf8')) as Parameters<typeof frameworksOf>[0]).map((framework) => ({
         path: `${GENERATED}/kit-${framework}.d.ts`,
         contents: kitTypes(readKitManifest(), framework)
       })),
-      ...dependencies.flatMap((d) => [
-        { path: `${GENERATED}/${d.id}.d.ts`, contents: emitAppTypes(d.id, d.contract, false) },
-        { path: `${GENERATED}/${d.id}.luau`, contents: emitDependencyLuau(d) }
-      ])
+      ...dependencies.map((d) => ({ path: `${GENERATED}/${d.id}.d.ts`, contents: emitAppTypes(d.id, d.contract, false) }))
     ]
   }
 }
@@ -157,7 +168,7 @@ export function vos(options: Options = {}): Plugin {
       for (const path of options.dependencies ?? []) for (const file of [CONTRACT, 'package.json']) this.addWatchFile(resolve(root, path, file))
       for (const file of sourcesUnder(resolve(root, 'server'))) this.addWatchFile(file)
       regenerate()
-      if (!existsSync(resolve(root, BACKEND))) throw new Error(`${BACKEND} not found: the backend returns rpc.serve(handlers)`)
+      if (!existsSync(resolve(root, BACKEND))) throw new Error(`${BACKEND} not found: it is the app's backend`)
     },
     buildEnd(error) {
       if (error) failed = true

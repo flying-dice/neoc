@@ -1,5 +1,7 @@
 //! The `app` API: the only way an app reaches the host. It is the mlua-ir module `vos:app` ([`app`]), so its Luau
-//! and TypeScript declarations are read from this Rust (`crate::declarations`), and it is also the global `app`.
+//! and TypeScript declarations are read from this Rust (`crate::declarations`), and it is also the global `app`. The
+//! RPC bus is its own module beside it, `vos:rpc` ([`rpc`]), the global `RPC`: the same four functions an app's page
+//! has, in the house style (snake case).
 //!
 //! ```text
 //! app.id                          the app's id
@@ -10,13 +12,14 @@
 //! app.t.string { ... } ...        input schema builders
 //! app.notify { ... }              a notification
 //! app.emit(name, data)            an event for the app's open pages (and, unless `_name`, other apps' listeners)
-//! app.sendRequest(app, method, p?)     a request on the RPC bus: the first handler to answer wins
-//! app.onRequest(method, fn)            serve one of this app's methods on the bus
-//! app.sendNotification(name, p?)       one of this app's notifications, to whoever listens
-//! app.onNotification(app, name, fn)    hear an app's notification
 //! app.openWindow(params?)         the app's window, opened or brought forward
 //! app.agents:list()               the agent contacts
 //! app.log(message)                a line in the host's log
+//!
+//! RPC.send_request(app, method, p?)     a request on the RPC bus: the first handler to answer wins
+//! RPC.on_request(method, fn)            serve one of this app's methods on the bus
+//! RPC.send_notification(name, p?)       one of this app's notifications, to whoever listens
+//! RPC.on_notification(app, name, fn)    hear an app's notification
 //! ```
 //!
 //! The module is stateless: every function finds the app it belongs to in its Lua state ([`shared`]), which is one
@@ -58,6 +61,9 @@ type Sh = Arc<Shared>;
 /// The name the `app` API is required under.
 pub(crate) const MODULE: &str = "vos:app";
 
+/// The name the RPC bus is required under (it is also the global `RPC`).
+pub(crate) const RPC_MODULE: &str = "vos:rpc";
+
 /// The `app` API.
 ///
 /// `local app = require("vos:app")` in an app's backend; it is also the global `app`. The host provides it (one VM
@@ -67,12 +73,9 @@ pub(crate) const MODULE: &str = "vos:app";
 pub mod app {
     use super::data::{Db, Kv};
     use super::files::Files;
-    use super::json::Json;
     use super::misc::{self, Agents, EventData, Notification, ThisApp, WindowParams};
-    use super::peers::{self, About, Listener, Params, RequestError, RequestHandler, RequestResult};
     use super::tools::{self as registry, Tool};
     use mlua_ir::Object;
-    use mlua_ir::Unknown;
     use neoc_vm::mlua::{self, Lua};
 
     /// The app's id.
@@ -145,15 +148,26 @@ pub mod app {
     pub fn emit(lua: &Lua, name: String, data: Option<EventData>) -> mlua::Result<()> {
         misc::emit(&*super::shared(lua)?, name, data)
     }
+}
+
+/// The RPC bus: `local RPC = require("vos:rpc")`, and the global `RPC`. A page has the same four functions on its
+/// global `RPC`. Every call names its app; only an app serves its own methods and sends its own notifications.
+#[mlua_ir::module("vos:rpc")]
+pub mod rpc {
+    use super::json::Json;
+    use super::misc::EventData;
+    use super::peers::{self, About, Listener, Params, RequestError, RequestHandler, RequestResult};
+    use mlua_ir::Unknown;
+    use neoc_vm::mlua::{self, Lua};
 
     /// Send a request on the RPC bus to `app` (this one's id included): every handler registered for `method`, a
-    /// backend's (`onRequest`, or the entry's table) or an open page's, is asked, and the first answer wins (the others
+    /// backend's (`on_request`, or the entry's table) or an open page's, is asked, and the first answer wins (the others
     /// are cancelled). The handler is told this app called (`ctx.actor.kind` is `"app"`). The result is
     /// `(result, nil)`, or `(nil, err)` when the app is not running, nothing handles the method, or the handler
     /// failed. Raises for an id that is not an app's, a method name that is not 1 to 128 characters, and inside a
     /// `readOnly` tool. It waits without the app's turn.
     #[host("Wait")]
-    pub async fn sendRequest(
+    pub async fn send_request(
         lua: Lua,
         app: String,
         method: String,
@@ -166,7 +180,7 @@ pub mod app {
     /// app's page, another app or an agent. An open page of the app may serve it too: the first answer wins. `about`
     /// describes the handler: a public method (no leading `_`) is an agent tool, shown with it. Raises for a method
     /// this backend already serves, and inside a `readOnly` tool.
-    pub fn onRequest(
+    pub fn on_request(
         lua: &Lua,
         method: String,
         handler: RequestHandler,
@@ -176,8 +190,8 @@ pub mod app {
     }
 
     /// Send one of this app's notifications on the RPC bus: to the app's open pages and backend listeners and, unless
-    /// it is a `_name`, to every other app that listens. Nothing waits for it. As `emit` takes it.
-    pub fn sendNotification(lua: &Lua, name: String, params: Option<EventData>) -> mlua::Result<()> {
+    /// it is a `_name`, to every other app that listens. Nothing waits for it. As `app.emit` takes it.
+    pub fn send_notification(lua: &Lua, name: String, params: Option<EventData>) -> mlua::Result<()> {
         peers::send_notification(lua, name, params)
     }
 
@@ -185,7 +199,7 @@ pub mod app {
     /// app's own, each time `app` sends `name`, with `ctx.actor` that app. Listeners run in the order they were added.
     /// Raises for an id that is not an app's, another app's `_name` (private: it never leaves that app) or a `host:`
     /// name, and inside a `readOnly` tool.
-    pub fn onNotification(lua: &Lua, app: String, name: String, listener: Listener) -> mlua::Result<()> {
+    pub fn on_notification(lua: &Lua, app: String, name: String, listener: Listener) -> mlua::Result<()> {
         peers::on_notification(lua, app, name, listener)
     }
 }
@@ -206,10 +220,17 @@ pub(crate) fn install(lua: &Lua, sh: &Arc<Shared>, env: &mlua::Table) -> mlua::R
         .ok_or_else(|| mlua::Error::runtime("the app API is not linked into this binary"))??;
     *sh.app_table.lock() = Some(table.clone());
     env.set("app", table)?;
+    env.set("RPC", rpc_table(lua)?)?;
     if sh.test_hooks {
         install_test_hook(lua, sh, env)?;
     }
     require::install(lua, sh, env)
+}
+
+/// The `RPC` table: the module holds nothing, so each build is the same API.
+pub(crate) fn rpc_table(lua: &Lua) -> mlua::Result<mlua::Table> {
+    modules::build(lua, RPC_MODULE)
+        .ok_or_else(|| mlua::Error::runtime("the RPC bus is not linked into this binary"))?
 }
 
 /// `hook(name, fn)`, for the adapter's tests ([`crate::VmConfig::test_hooks`]): a function `AppVm::emit` calls.

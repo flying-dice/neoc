@@ -9229,21 +9229,6 @@ declare module "vnd:toml" {
 
 // ===== vos:app =====
 
-/**
- * What a handler says about itself when it registers: an agent is shown it when the method is public (a method
- * without a leading `_` is an agent tool, `<app>__<method in snake case>`, answered on the bus).
- */
-interface vos_app_About {
-  /** The name a person is shown. */
-  title?: string
-  /** What it does: an agent decides from it when to call it. */
-  description?: string
-  /** The JSON Schema of its params. */
-  inputSchema?: { [key: string]: unknown }
-  /** It changes nothing: an agent's call runs with every write refused. @default false */
-  readOnly?: boolean
-}
-
 /** Who is calling. */
 interface vos_app_Actor {
   /** The person, an agent or another app. */
@@ -9524,18 +9509,6 @@ interface vos_app_RemoveOptions {
   recursive?: boolean
 }
 
-/** The kinds of `vos_app_RequestError`. */
-type vos_app_RequestErrorKind = "not_found" | "failed" | "internal"
-
-/** Why a request gave no result. */
-type vos_app_RequestError =
-  /** The app is not running, or nothing on the bus handles the method. */
-  | { kind: "not_found"; message: string; op: string }
-  /** The handler refused the params, raised, or said it could not (`ctx:fail`). */
-  | { kind: "failed"; message: string; op: string }
-  /** The host could not run it. */
-  | { kind: "internal"; message: string; op: string }
-
 /** The type of one input field of a tool, made by a builder of `app.t`. */
 interface vos_app_Schema {
 }
@@ -9692,37 +9665,6 @@ declare module "vos:app" {
    * `host:...`), `data` is JSON of at most 64 KiB. A change to the world like `notify`: a `readOnly` tool may not.
    */
   export function emit(this: void, name: string, data?: unknown): void
-  /**
-   * Send a request on the RPC bus to `app` (this one's id included): every handler registered for `method`, a
-   * backend's (`onRequest`, or the entry's table) or an open page's, is asked, and the first answer wins (the others
-   * are cancelled). The handler is told this app called (`ctx.actor.kind` is `"app"`). The result is
-   * `(result, nil)`, or `(nil, err)` when the app is not running, nothing handles the method, or the handler
-   * failed. Raises for an id that is not an app's, a method name that is not 1 to 128 characters, and inside a
-   * `readOnly` tool. It waits without the app's turn.
-   *
-   * Yields the calling coroutine while it waits.
-   */
-  export function sendRequest(this: void, app: string, method: string, params?: { [key: string]: unknown }): LuaMultiReturn<[unknown, undefined] | [undefined, vos_app_RequestError]>
-  /**
-   * Serve one of this app's methods on the RPC bus: `fn(params, ctx)` answers a request for `method`, from the
-   * app's page, another app or an agent. An open page of the app may serve it too: the first answer wins. `about`
-   * describes the handler: a public method (no leading `_`) is an agent tool, shown with it. Raises for a method
-   * this backend already serves, and inside a `readOnly` tool.
-   */
-  export function onRequest(this: void, method: string, handler: (this: void, arg1: unknown, arg2: vos_app_Context) => unknown, about?: vos_app_About): void
-  /**
-   * Send one of this app's notifications on the RPC bus: to the app's open pages and backend listeners and, unless
-   * it is a `_name`, to every other app that listens. Nothing waits for it. As `emit` takes it.
-   */
-  export function sendNotification(this: void, name: string, params?: unknown): void
-  /**
-   * Hear an app's notification (this one's too: what its page sends): `fn(params, ctx)` runs, as a call of this
-   * app's own, each time `app` sends `name`, with `ctx.actor` that app. Listeners run in the order they were added.
-   * Raises for an id that is not an app's, another app's `_name` (private: it never leaves that app) or a `host:`
-   * name, and inside a `readOnly` tool.
-   */
-  export function onNotification(this: void, app: string, name: string, listener: (this: void, arg1: unknown, arg2: vos_app_Context) => void): void
-  export type About = vos_app_About
   export type Actor = vos_app_Actor
   export type ActorKind = vos_app_ActorKind
   export type AgentCard = vos_app_AgentCard
@@ -9741,7 +9683,6 @@ declare module "vos:app" {
   export type Location = vos_app_Location
   export type Notification = vos_app_Notification
   export type RemoveOptions = vos_app_RemoveOptions
-  export type RequestError = vos_app_RequestError
   export type Schema = vos_app_Schema
   export type SchemaOptions = vos_app_SchemaOptions
   export type Tool = vos_app_Tool
@@ -9915,7 +9856,78 @@ declare module "vos:docker" {
   export type Status = vos_docker_Status
 }
 
+// ===== vos:rpc =====
+
+/**
+ * What a handler says about itself when it registers: an agent is shown it when the method is public (a method
+ * without a leading `_` is an agent tool, `<app>__<method in snake case>`, answered on the bus).
+ */
+interface vos_rpc_About {
+  /** The name a person is shown. */
+  title?: string
+  /** What it does: an agent decides from it when to call it. */
+  description?: string
+  /** The JSON Schema of its params. */
+  input_schema?: { [key: string]: unknown }
+  /** It changes nothing: an agent's call runs with every write refused. @default false */
+  read_only?: boolean
+}
+
+/** The kinds of `vos_rpc_RequestError`. */
+type vos_rpc_RequestErrorKind = "not_found" | "failed" | "internal"
+
+/** Why a request gave no result. */
+type vos_rpc_RequestError =
+  /** The app is not running, or nothing on the bus handles the method. */
+  | { kind: "not_found"; message: string; op: string }
+  /** The handler refused the params, raised, or said it could not (`ctx:fail`). */
+  | { kind: "failed"; message: string; op: string }
+  /** The host could not run it. */
+  | { kind: "internal"; message: string; op: string }
+
+/**
+ * The RPC bus: `local RPC = require("vos:rpc")`, and the global `RPC`. A page has the same four functions on its
+ * global `RPC`. Every call names its app; only an app serves its own methods and sends its own notifications.
+ */
+declare module "vos:rpc" {
+  /**
+   * Send a request on the RPC bus to `app` (this one's id included): every handler registered for `method`, a
+   * backend's (`on_request`, or the entry's table) or an open page's, is asked, and the first answer wins (the others
+   * are cancelled). The handler is told this app called (`ctx.actor.kind` is `"app"`). The result is
+   * `(result, nil)`, or `(nil, err)` when the app is not running, nothing handles the method, or the handler
+   * failed. Raises for an id that is not an app's, a method name that is not 1 to 128 characters, and inside a
+   * `readOnly` tool. It waits without the app's turn.
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  export function send_request(this: void, app: string, method: string, params?: { [key: string]: unknown }): LuaMultiReturn<[unknown, undefined] | [undefined, vos_rpc_RequestError]>
+  /**
+   * Serve one of this app's methods on the RPC bus: `fn(params, ctx)` answers a request for `method`, from the
+   * app's page, another app or an agent. An open page of the app may serve it too: the first answer wins. `about`
+   * describes the handler: a public method (no leading `_`) is an agent tool, shown with it. Raises for a method
+   * this backend already serves, and inside a `readOnly` tool.
+   */
+  export function on_request(this: void, method: string, handler: (this: void, arg1: unknown, arg2: vos_app_Context) => unknown, about?: vos_rpc_About): void
+  /**
+   * Send one of this app's notifications on the RPC bus: to the app's open pages and backend listeners and, unless
+   * it is a `_name`, to every other app that listens. Nothing waits for it. As `app.emit` takes it.
+   */
+  export function send_notification(this: void, name: string, params?: unknown): void
+  /**
+   * Hear an app's notification (this one's too: what its page sends): `fn(params, ctx)` runs, as a call of this
+   * app's own, each time `app` sends `name`, with `ctx.actor` that app. Listeners run in the order they were added.
+   * Raises for an id that is not an app's, another app's `_name` (private: it never leaves that app) or a `host:`
+   * name, and inside a `readOnly` tool.
+   */
+  export function on_notification(this: void, app: string, name: string, listener: (this: void, arg1: unknown, arg2: vos_app_Context) => void): void
+  export type About = vos_rpc_About
+  export type RequestError = vos_rpc_RequestError
+}
+
 // ===== globals =====
 
 /** The `app` API, the same as `require("vos:app")`. */
 declare const app: typeof import("vos:app")
+
+/** The RPC bus, the same as `require("vos:rpc")`. */
+declare const RPC: typeof import("vos:rpc")

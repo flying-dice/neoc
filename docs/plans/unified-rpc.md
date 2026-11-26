@@ -5,29 +5,30 @@ Status: plan, not started. Branch `plan/unified-rpc`.
 ## Proof of concept on this branch
 
 - `packages/vite-plugin-v2`: the plugin of this plan, beside v1. package.json is the app, `openrpc.json` (1.4) its API;
-  it generates the page's `rpc` (`sendRequest`, `onNotification`, `app(id).onNotification`) and the backend's typed
-  `Handlers`, `serve` and `sendNotification`; public requests become agent tools through today's `app.tool`.
+  it writes types only (below). The sections after this one are the plan as it was written, with its earlier names
+  (`sendRequest`, a generated `rpc` per app); what is built is this section.
 - `apps/app1` acts (add, clear) and notifies (`added`, `cleared` public; `_saved` private); `apps/app2` depends on it
   (`vos({ dependencies: ['../app1'] })`) and logs what it hears.
 - **One RPC bus** (`AppService::request` / `publish`, the `AppBus` port). Every app request and notification, from a
   page or a backend, goes through it. A request reaches every handler registered for its method, the app's backend's
-  (`app.onRequest`, or its entry's table) and its open pages' (`rpc.onRequest` in a page, kept per connection by the
+  (`RPC.on_request`, or its entry's table) and its open pages' (`RPC.on_request` in a page, kept per connection by the
   `/rpc` adapter, the `PageHandlers` port); the first answer wins, the others are dropped or told it is settled
   (`app.requestSettled`), and a late answer is refused as expired (`-32013`). With no handler anywhere it is method not
   found. A notification reaches the app's pages, other apps' subscribed pages (public names only) and every listening
   backend; nothing waits for it. No marker in the contract says who serves what: registration does.
-- **The same four verbs everywhere**: `sendRequest`, `onRequest`, `sendNotification`, `onNotification`, in the page and
-  in the backend. A backend handler is `fn(params, ctx)`, `ctx.actor` saying who asked (the person, an agent, or an app).
-- **Ambient, no generated runtime.** The page's whole API is the global `vos` that the host's bridge script defines
-  (`/apps/bridge.js`): `vos.sendRequest(app, method, params)`, `vos.onRequest(method, fn)`,
-  `vos.sendNotification(name, params)`, `vos.onNotification(app, name, fn)`, plus `vos.host`, `vos.tracing` and
-  `vos.RpcError`. The page talks only to its window (`parent.postMessage`, MCP Apps' dialect); the host page puts it on
-  the bus. The backend's is the global `app`, with the same four functions and arguments. Every call names its app, its
+- **The same four functions everywhere, in the house style (snake case)**: the global `RPC`, with `RPC.send_request`,
+  `RPC.on_request`, `RPC.send_notification` and `RPC.on_notification`, in the page and in the backend (`vos:rpc`). A backend handler is `fn(params, ctx)`, `ctx.actor` saying who asked (the person, an agent, or an app).
+- **Ambient, no generated runtime.** The page's whole API is two globals the host's bridge script defines
+  (`/apps/bridge.js`): `RPC.send_request(app, method, params)`, `RPC.on_request(method, fn)`,
+  `RPC.send_notification(name, params)`, `RPC.on_notification(app, name, fn)`, plus `vos.host`, `vos.tracing` and
+  `RPC.RpcError`. The page talks only to its window (`parent.postMessage`, MCP Apps' dialect); the host page puts it on
+  the bus. The backend's is the global `RPC` too (beside `app`), with the same four functions and arguments. Every call names its app, its
   own included. Nothing generated runs on either side: the build writes types only, into the app's `types/` (which replaces
   `.app/`):
-  `types/vos.d.ts` (the global `vos`, typed over the `VosApps` and `VosSelf` interfaces) and `types/<id>.d.ts` per app (its own with every method,
-  each dependency with its public ones, types under `VosApp.<Id>`), and for the backend `types/<id>.luau` per app
-  (modules of types for annotating handlers and listeners: `local app1 = require("../types/app1")`). Dependencies are
+  `types/vos.d.ts` (the globals `RPC` and `vos`, typed over the `VosApps` and `VosSelf` interfaces) and `types/<id>.d.ts` per app (its own with every method,
+  each dependency with its public ones, types under `VosApp.<Id>`), and for the backend `types/vos.d.luau`: a luau-lsp
+  definitions file, the host's declarations with the global `RPC`'s functions overloaded by app and method and each
+  app's types as globals (`app1_Item`, `app1_AddParams`). The backend requires nothing. Dependencies are
   `vos({ dependencies: ['../app1'] })`, and only decide which apps get types.
 - **The host owns the contract.** The app ref carries `openrpc.json` (manifest `contract`); the bus compiles each
   method's params and result into JSON Schema validators (components become `$defs`) and holds every request, answer and
@@ -157,40 +158,32 @@ sendRequest<M extends keyof Requests>(method: M, ...params: ParamsArg<Requests[M
 The page's `rpc` has `sendRequest` and `onNotification` only. `host` keeps the non-RPC surface (`theme`, `context`, `openLink`, `onTeardown`, `host:reconnected`). `api` and
 `host.on` go.
 
-### Backend (Luau, the global `app`; types in `types/<id>.luau`)
+### Backend (Luau, the global `RPC`; types in `types/vos.d.luau`)
 
-The generator keeps today's guarantee: it writes a `Handlers` type with one entry per method the backend serves
-(public and private), so a missing or misspelt handler, or a wrong param or result
-shape, is a type error before anything runs. What it does not generate is a per-method API (`rpc.onRequest.add(...)`,
-`api.add(...)`): the developer writes a plain table of the contract's shape, and generated `rpc.serve` binds it.
+The backend uses the globals the host's VM gives it and requires nothing. The build types those globals: it writes
+`types/vos.d.luau`, the host's own declarations (`types/generated/vos.d.luau`) with
+
+- each known app's types as global types under its id, as the host names its own (`vos_app_Context`): `app1_Item`,
+  `app1_AddParams`, `app1_AddResult`. The app's own every method, a dependency's its public ones;
+- `RPC.send_request`, `RPC.on_request`, `RPC.send_notification` and `RPC.on_notification` overloaded by app id and method,
+  so a wrong app, method, params or result is a type error.
 
 ```luau
-local rpc = require("../types/keychain")
-
-local handlers: rpc.Handlers = {
-  overview = function(ctx) return items.overview() end,
-  add = function(ctx, params)
-    local problem = items.add(params.service, params.account, params.password)
-    if problem then return ctx:fail(problem) end
-    rpc.sendNotification("changed")
-    return items.overview()
-  end,
-  _reveal = function(ctx, params) return items.reveal(params.item) end,
-}
-
-return rpc.serve(handlers)
+RPC.on_request("add", function(params: app1_AddParams, ctx: vos_app_Context): app1_AddResult
+  local item: app1_Item = { id = nextId, text = params.text, by = by(ctx) }
+  RPC.send_notification("added", { item = item })
+  return item
+end)
 ```
 
-- `rpc.serve` is generated: for each entry it calls the runtime's `onRequest(method, fn)` behind the validating router
-  (today's `router(implementation)`, renamed). `onRequest` is the primitive; the typed table is how an app uses it. The
-  runtime refuses an `onRequest` for a method the app's own contract does not declare, so there is no way to name
-  another app's method.
-- One handler serves every caller; `ctx.caller` says who (`{ kind = "page" }`, `{ kind = "app", id = "ledger" }`,
-  `{ kind = "agent", ... }`), so a handler can refuse a kind it does not want.
-- The host still refuses at load (`ServerEvent::AppFailed`) an entry that returns a `Handlers` table missing a method,
-  as a backstop for untyped code (`:: any`, TypeScript backends compiled with errors ignored).
-- `sendNotification` checks params against the contract before sending (the router already validates inbound).
-  Private notifications reach only the app's own pages; public ones also reach other apps (backends and pages) that listen with `onNotification`.
+Check it with `luau-lsp analyze --definitions:@vos=types/vos.d.luau server/main.luau` (an editor points luau-lsp's
+definitions at the same file). Handlers are optional: a method nobody serves is method not found on the bus.
+
+- One handler serves every caller; `ctx.actor` says who (the page's person, `{ kind = "app", id = "app2" }`, an agent),
+  so a handler can refuse a kind it does not want.
+- The bus checks params, results and notifications against the installed contract whatever the types say.
+- Private notifications reach only the app's own pages and backend; public ones also reach other apps (backends and
+  pages) that listen with `RPC.on_notification`.
 
 ### Other apps (inter-app)
 
@@ -216,11 +209,10 @@ const stop = ledger.onNotification('changed', () => refresh())
 ```
 
 ```luau
--- backend
-local ledger = require("../types/ledger")
-local total = ledger.sendRequest("add", { amount = 3 })
-ledger.onNotification("changed", function() ... end)
-ledger.sendRequest("_audit" :: any, {})                   -- private: no types, host logs it
+-- backend: globals only, typed by types/vos.d.luau
+local total, err = RPC.send_request("ledger", "add", { amount = 3 })
+RPC.on_notification("ledger", "changed", function(params: ledger_ChangedParams, ctx: vos_app_Context) ... end)
+RPC.send_request("ledger", "_audit" :: any, {})           -- private: not typed, the host logs it
 ```
 
 - From another app's contract only the public part is typed: its `foo` requests and `foo` notifications.
@@ -294,7 +286,7 @@ where it goes:
 | Command | Used by | Replaced by |
 | --- | --- | --- |
 | `vos generate` | every app's `generate` script; `packages/docker`'s `typecheck` (kit editor types only) | the plugin, on any Vite run (it already generates in `buildStart`); `packages/docker` gets the kit's types from `@vos/kit` itself (below) |
-| `vos typecheck`, Luau backend | every app's `typecheck` | the repo's `bun run lint:luau` (`scripts/lint-luau.ts`), widened to `apps/*/server` and their generated `types/*.luau`; it skips `apps/` today only because `vos` covered it |
+| `vos typecheck`, Luau backend | every app's `typecheck` | the repo's `bun run lint:luau` (`scripts/lint-luau.ts`), widened to `apps/*/server`, each checked with its generated `types/vos.d.luau` as definitions; it skips `apps/` today only because `vos` covered it |
 | `vos typecheck`, TypeScript backend | the same | `vite build`: compiling the backend with TypeScriptToLua is the check, and the build already does it |
 | `vos lint` (typecheck + StyLua check) | every app's `lint` | `bun run lint:luau` + `bun run lint:stylua` (`scripts/stylua.ts`, which already covers `apps/`) |
 | `vos format` | every app's `format` | root `bun run format` (already runs `scripts/stylua.ts format`) |

@@ -79,12 +79,12 @@ pub trait AppRuntime: Send + Sync {
         args: Value,
         ctx: CallContext,
     ) -> PortResult<Value>;
-    /// Whether the app's backend has a handler for `method` on the bus (`app.onRequest`, or its entry's table).
+    /// Whether the app's backend has a handler for `method` on the bus (`RPC.on_request`, or its entry's table).
     fn has_handler(&self, app: &AppId, method: &str) -> bool;
     /// The handlers the app's backend has on the bus, as each described itself when it registered.
     fn handlers(&self, app: &AppId) -> Vec<HandlerInfo>;
     /// An app's notification, from its page or its backend: to its open pages and every other app's that listens
-    /// (through the shell), and to every backend that listens (`app.onNotification`). A `_name` never leaves the app.
+    /// (through the shell), and to every backend that listens (`RPC.on_notification`). A `_name` never leaves the app.
     async fn deliver_notification(&self, from: &AppId, name: &str, params: Value) -> PortResult<()>;
 }
 
@@ -110,15 +110,15 @@ pub struct HandlerInfo {
 /// others are cancelled); a notification reaches every subscriber, and nothing waits for it.
 #[async_trait]
 pub trait AppBus: Send + Sync {
-    /// `sendRequest`: `caller` asks `app` for `method`. Method not found when no handler is registered anywhere.
+    /// `send_request`: `caller` asks `app` for `method`. Method not found when no handler is registered anywhere.
     async fn request(&self, caller: Actor, app: &AppId, method: &str, params: Value) -> PortResult<Value>;
-    /// `sendNotification`: `from`'s notification, to whoever listens.
+    /// `send_notification`: `from`'s notification, to whoever listens.
     async fn publish(&self, from: &AppId, name: &str, params: Value) -> PortResult<()>;
     /// The handlers of `app` on the bus changed (one registered or went away): its agent tools follow.
     async fn handlers_changed(&self, app: &AppId);
 }
 
-/// The handlers the open pages registered on the bus (`rpc.onRequest` in a page). The `/rpc` adapter keeps them per
+/// The handlers the open pages registered on the bus (`RPC.on_request` in a page). The `/rpc` adapter keeps them per
 /// connection.
 #[async_trait]
 pub trait PageHandlers: Send + Sync {

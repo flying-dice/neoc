@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
 //! The backend's side of the RPC bus, over the real Lua adapter with no bus bound (the runtime is its own bus):
-//! `app.sendRequest` reaches the handler another app serves (`app.onRequest`, or its entry's table), told which app
-//! called; `app.onNotification` hears an app's notifications, told which app sent them; a `_name` never leaves its app.
+//! `RPC.send_request` reaches the handler another app serves (`RPC.on_request`, or its entry's table), told which app
+//! called; `RPC.on_notification` hears an app's notifications, told which app sent them; a `_name` never leaves its app.
 
 use crate::common;
 
@@ -22,26 +22,26 @@ const LEDGER: &str = r#"
 local items = {}
 local saved = 0
 local function who(ctx) return ctx.actor.kind .. ":" .. ctx.actor.id end
-app.onRequest("add", function(p, ctx)
+RPC.on_request("add", function(p, ctx)
   table.insert(items, p.text)
-  app.sendNotification("added", { text = p.text, by = who(ctx) })
-  app.sendNotification("_saved", { n = #items })
+  RPC.send_notification("added", { text = p.text, by = who(ctx) })
+  RPC.send_notification("_saved", { n = #items })
   return { n = #items, by = who(ctx) }
 end)
-app.onRequest("fail", function(_, ctx) return ctx:fail("the ledger says no") end)
-app.onRequest("saved", function() return saved end)
-app.onNotification("ledger", "_saved", function(p) saved = p.n end)
+RPC.on_request("fail", function(_, ctx) return ctx:fail("the ledger says no") end)
+RPC.on_request("saved", function() return saved end)
+RPC.on_notification("ledger", "_saved", function(p) saved = p.n end)
 "#;
 
 /// An app that asks the ledger for things and hears what it adds; its entry returns its handlers, the older way.
 const WATCHER: &str = r#"
 local heard = {}
-app.onNotification("ledger", "added", function(p, ctx)
+RPC.on_notification("ledger", "added", function(p, ctx)
   table.insert(heard, ctx.actor.kind .. ":" .. ctx.actor.id .. " " .. p.text .. " by " .. p.by)
-  app.sendNotification("heard", { n = #heard })
+  RPC.send_notification("heard", { n = #heard })
 end)
 local function ask(method, params)
-  local result, err = app.sendRequest("ledger", method, params)
+  local result, err = RPC.send_request("ledger", method, params)
   if err then return { err = err.kind } end
   return result
 end
@@ -50,7 +50,7 @@ return {
   missing = function() return ask("nope", {}) end,
   failing = function() return ask("fail", {}) end,
   ghost = function()
-    local _, err = app.sendRequest("ghost", "add", {})
+    local _, err = RPC.send_request("ghost", "add", {})
     return { err = err and err.kind }
   end,
   heard = function() return heard end,
@@ -130,9 +130,12 @@ async fn a_request_that_cannot_be_answered_is_an_error_value_that_says_why() {
 async fn another_apps_private_notification_and_a_second_handler_are_refused() {
     let runtime = LuaRuntime::new(Arc::new(NoNotifier), Arc::new(RecordingShell::default()));
     for (src, expected) in [
-        (r#"app.onNotification("ledger", "_saved", function() end) return {}"#, "never leaves ledger"),
-        (r#"app.onNotification("Not An Id", "added", function() end) return {}"#, "is not an app id"),
-        (r#"app.onRequest("a", function() end) app.onRequest("a", function() end)"#, "already has a handler"),
+        (r#"RPC.on_notification("ledger", "_saved", function() end) return {}"#, "never leaves ledger"),
+        (r#"RPC.on_notification("Not An Id", "added", function() end) return {}"#, "is not an app id"),
+        (
+            r#"RPC.on_request("a", function() end) RPC.on_request("a", function() end)"#,
+            "already has a handler",
+        ),
     ] {
         let data: Arc<dyn AppData> = db();
         let e = runtime.load(&id("spy"), package(src, &[]), data).await.unwrap_err();

@@ -1,4 +1,4 @@
-<!-- App 2: talks to App 1 on the RPC bus. Its API is the global `vos` (the host's bridge): nothing to import; `types/` types it. -->
+<!-- App 2: talks to App 1 on the RPC bus. Its bus is the global `RPC` (the host's bridge): nothing to import; `types/` types it. -->
 <script lang="ts">
   type Line = { at: string; text: string }
   let text = $state('')
@@ -13,11 +13,11 @@
 
   // this page hears App 1 itself (page to app), and hears what App 2's backend heard (app to app, then to this page)
   $effect(() => {
-    void vos.sendRequest('app2', '_heard').then((lines) => (backend = lines))
+    void RPC.send_request('app2', '_heard').then((lines) => (backend = lines))
     const stops = [
-      vos.onNotification('app1', 'added', ({ item }) => say(`Added “${item.text}” (${item.by})`)),
-      vos.onNotification('app1', 'cleared', ({ count }) => say(`Cleared ${count} item${count === 1 ? '' : 's'}`)),
-      vos.onNotification('app2', '_overheard', ({ line }) => (backend = [line, ...backend].slice(0, 50)))
+      RPC.on_notification('app1', 'added', ({ item }) => say(`Added “${item.text}” (${item.by})`)),
+      RPC.on_notification('app1', 'cleared', ({ count }) => say(`Cleared ${count} item${count === 1 ? '' : 's'}`)),
+      RPC.on_notification('app2', '_overheard', ({ line }) => (backend = [line, ...backend].slice(0, 50)))
     ]
     return () => stops.forEach((stop) => stop())
   })
@@ -61,7 +61,7 @@
         hit
         label="Add from this page"
         disabled={text.trim() === ''}
-        onclick={() => run(() => vos.sendRequest('app1', 'add', { text }))}
+        onclick={() => run(() => RPC.send_request('app1', 'add', { text }))}
         data-testid="app2-add-page">From this page</ui-button
       >
       <!-- ui-button is a button (its own role and keys); Svelte cannot see inside it -->
@@ -71,7 +71,7 @@
         hit
         label="Add from App 2's backend"
         disabled={text.trim() === ''}
-        onclick={() => run(() => vos.sendRequest('app2', '_relay', { text }))}
+        onclick={() => run(() => RPC.send_request('app2', '_relay', { text }))}
         data-testid="app2-add-backend">From the backend</ui-button
       >
     </div>

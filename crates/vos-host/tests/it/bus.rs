@@ -8,10 +8,10 @@ use serde_json::json;
 /// A backend that asks its own pages to confirm, and hears what its page says it is typing.
 const ASKER: &str = r#"
 local typed = ""
-app.onNotification("asker", "_typing", function(p) typed = p.text end)
+RPC.on_notification("asker", "_typing", function(p) typed = p.text end)
 return {
   clear = function()
-    local ok, err = app.sendRequest("asker", "_client_confirm", { question = "Clear everything?" })
+    local ok, err = RPC.send_request("asker", "_client_confirm", { question = "Clear everything?" })
     if err then return { err = err.kind } end
     return { ok = ok }
   end,
@@ -93,16 +93,16 @@ async fn a_pages_notification_reaches_the_backend_and_the_pages() {
 
 /// A backend whose public handlers describe themselves: they are agent tools, answered on the bus.
 const TOOLS: &str = r#"
-app.onRequest("lookup", function(p, ctx)
+RPC.on_request("lookup", function(p, ctx)
   local wrote = pcall(function() app.kv:set("seen", p.q) end)
   return { q = p.q, who = ctx.actor.kind .. ":" .. ctx.actor.id, wrote = wrote }
 end, {
   title = "Look up",
   description = "Look a thing up.",
-  inputSchema = { type = "object", properties = { q = { type = "string" } }, required = { "q" } },
-  readOnly = true,
+  input_schema = { type = "object", properties = { q = { type = "string" } }, required = { "q" } },
+  read_only = true,
 })
-app.onRequest("_secret", function() return "no" end, { description = "Private: never a tool." })
+RPC.on_request("_secret", function() return "no" end, { description = "Private: never a tool." })
 "#;
 
 #[tokio::test]
@@ -127,7 +127,7 @@ async fn agent_tools_are_the_public_handlers_on_the_bus_and_a_call_is_a_request_
 
     // a page's public handler is a tool too, while the page serves it, and the agent's call is answered by the page
     let mut page = browser(&r).await;
-    let about = json!({ "description": "Pick one.", "inputSchema": { "type": "object" } });
+    let about = json!({ "description": "Pick one.", "input_schema": { "type": "object" } });
     rpc(&mut page, 1, "app.handle", json!({ "app": "tools", "method": "pickOne", "about": about })).await;
     assert_eq!(names(crate::common::tool_names(&agent).await), ["tools__lookup", "tools__pick_one"]);
     let calling =
@@ -145,11 +145,11 @@ async fn agent_tools_are_the_public_handlers_on_the_bus_and_a_call_is_a_request_
 
 /// An app with a contract and handlers that say nothing about themselves: the bus holds it to the contract.
 const HELD: &str = r#"
-app.onRequest("add", function(p) return { id = #p.text } end)
-app.onRequest("wrong", function() return { id = "not a number" } end)
-app.onRequest("shout", function()
-  local ok = pcall(function() app.sendNotification("undeclared", {}) end)
-  app.sendNotification("added", { id = 1 })
+RPC.on_request("add", function(p) return { id = #p.text } end)
+RPC.on_request("wrong", function() return { id = "not a number" } end)
+RPC.on_request("shout", function()
+  local ok = pcall(function() RPC.send_notification("undeclared", {}) end)
+  RPC.send_notification("added", { id = 1 })
   return { id = if ok then 1 else 0 }
 end)
 "#;

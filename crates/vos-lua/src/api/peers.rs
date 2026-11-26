@@ -1,11 +1,12 @@
-//! The backend's side of the one RPC bus, with the same four verbs an app's page has:
+//! The backend's side of the one RPC bus (`vos:rpc`, the global `RPC`), with the same four functions an app's page
+//! has:
 //!
 //! ```text
-//! app.sendRequest(app, method, params?)    a request to an app (this one or another): every handler registered for
-//!                                          the method, a backend's or an open page's, may answer; the first does
-//! app.onRequest(method, fn)                serve one of this app's methods on the bus: fn(params, ctx)
-//! app.sendNotification(name, params?)      one of this app's notifications, to whoever listens; nothing waits
-//! app.onNotification(app, name, fn)        hear an app's notification (this one's too): fn(params, ctx)
+//! RPC.send_request(app, method, params?)    a request to an app (this one or another): every handler registered
+//!                                           for the method, a backend's or an open page's, may answer; the first does
+//! RPC.on_request(method, fn)                serve one of this app's methods on the bus: fn(params, ctx)
+//! RPC.send_notification(name, params?)      one of this app's notifications, to whoever listens; nothing waits
+//! RPC.on_notification(app, name, fn)        hear an app's notification (this one's too): fn(params, ctx)
 //! ```
 //!
 //! Only an app serves its own methods and sends its own notifications. A `_name` is private: another app's private
@@ -60,17 +61,15 @@ impl Shape for InputSchema {
 /// without a leading `_` is an agent tool, `<app>__<method in snake case>`, answered on the bus).
 #[derive(Clone, Debug, Default, Serialize, Deserialize, Options)]
 #[serde(default, deny_unknown_fields)]
-#[shape(module = "vos:app")]
+#[shape(module = "vos:rpc")]
 pub struct About {
     /// The name a person is shown.
     pub title: Option<String>,
     /// What it does: an agent decides from it when to call it.
     pub description: Option<String>,
     /// The JSON Schema of its params.
-    #[serde(rename = "inputSchema")]
     pub input_schema: Option<InputSchema>,
     /// It changes nothing: an agent's call runs with every write refused.
-    #[serde(rename = "readOnly")]
     pub read_only: bool,
 }
 
@@ -87,7 +86,7 @@ pub type Listener = Callback<fn(params: Json<Unknown<MessageParams>>, ctx: Conte
 /// Why a request gave no result.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error, LuaError)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-#[shape(module = "vos:app")]
+#[shape(module = "vos:rpc")]
 pub enum RequestError {
     /// The app is not running, or nothing on the bus handles the method.
     #[error("{text}")]
@@ -147,9 +146,9 @@ pub(super) async fn send_request(
 ) -> mlua::Result<Result<Json<Unknown<RequestResult>>, RequestError>> {
     let sh = shared(&lua)?;
     // a handler may write, so a `readOnly` tool may not ask for one
-    sh.writable("app.sendRequest")?;
-    let to = app_id("app.sendRequest", &app)?;
-    method_name("app.sendRequest", &method)?;
+    sh.writable("RPC.send_request")?;
+    let to = app_id("RPC.send_request", &app)?;
+    method_name("RPC.send_request", &method)?;
     let params = match params.map(|params| params.value) {
         Some(params @ Value::Object(_)) => params,
         _ => json!({}),
@@ -168,12 +167,12 @@ pub(super) fn on_request(
 ) -> mlua::Result<()> {
     let sh = shared(lua)?;
     // serving a method changes the app's wiring, as `app.tool` does
-    sh.writable("app.onRequest")?;
-    method_name("app.onRequest", &method)?;
+    sh.writable("RPC.on_request")?;
+    method_name("RPC.on_request", &method)?;
     let mut handlers = sh.rpc_handlers.lock();
     if handlers.contains_key(&method) {
         return Err(mlua::Error::runtime(format!(
-            "app.onRequest: `{method}` already has a handler in this backend"
+            "RPC.on_request: `{method}` already has a handler in this backend"
         )));
     }
     let about = about.unwrap_or_default();
@@ -198,19 +197,19 @@ pub(super) fn send_notification(lua: &Lua, name: String, params: Option<EventDat
 pub(super) fn on_notification(lua: &Lua, app: String, name: String, listener: Listener) -> mlua::Result<()> {
     let sh = shared(lua)?;
     // listening changes the app's wiring, as `app.tool` does
-    sh.writable("app.onNotification")?;
-    let from = app_id("app.onNotification", &app)?;
+    sh.writable("RPC.on_notification")?;
+    let from = app_id("RPC.on_notification", &app)?;
     let valid = !name.is_empty()
         && name.len() <= MAX_NAME
         && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'-'));
     if !valid {
         return Err(mlua::Error::runtime(format!(
-            "app.onNotification: a notification name is 1 to {MAX_NAME} letters, digits, . _ : or -"
+            "RPC.on_notification: a notification name is 1 to {MAX_NAME} letters, digits, . _ : or -"
         )));
     }
     if name.starts_with("host:") || (name.starts_with('_') && from != sh.app) {
         return Err(mlua::Error::runtime(format!(
-            "app.onNotification: `{name}` never leaves {from}: a `_name` is its own, a `host:` name the host's"
+            "RPC.on_notification: `{name}` never leaves {from}: a `_name` is its own, a `host:` name the host's"
         )));
     }
     sh.listeners.lock().entry((from.to_string(), name)).or_default().push(listener.into_function());

@@ -105,7 +105,8 @@ impl Rig {
 /// The modules of the VM library: every module linked into the program but the adapter's own (`vos:app`, the `app`
 /// API, which is an mlua-ir module like them and so is in the same registry).
 fn library() -> impl Iterator<Item = &'static str> {
-    modules::names().filter(|name| *name != "vos:app")
+    // the host's own (`vos:app`, `vos:rpc`) are an app VM's, not the library's
+    modules::names().filter(|name| !name.starts_with("vos:"))
 }
 
 /// The `(module, type)` of every `require` overload of the generated app declarations, in order.
@@ -124,8 +125,8 @@ fn declared_overloads() -> Vec<(String, String)> {
 }
 
 /// What luau-lsp checks an app against (`types/generated/vos.d.luau`) and what the host gives it are one list: every
-/// module the VM library has, less `NOT_FOR_APPS`, is typed by its own type, `vos:app` and `vos:docker` are the
-/// host's own, and every refused module is typed as unusable; nothing else is declared.
+/// module the VM library has, less `NOT_FOR_APPS`, is typed by its own type, `vos:app`, `vos:rpc` and `vos:docker`
+/// are the host's own, and every refused module is typed as unusable; nothing else is declared.
 #[test]
 fn the_declared_require_offers_exactly_what_the_host_offers() {
     let declared = declared_overloads();
@@ -136,6 +137,7 @@ fn the_declared_require_offers_exactly_what_the_host_offers() {
         .collect();
     let mut offered: Vec<&str> = library().filter(|name| !REFUSED.contains(name)).collect();
     offered.push("vos:app");
+    offered.push("vos:rpc");
     offered.push("vos:docker");
     let mut expected = offered.clone();
     expected.sort_unstable();

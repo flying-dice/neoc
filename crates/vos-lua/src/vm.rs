@@ -206,7 +206,7 @@ pub enum Effect {
         name: String,
         data: Value,
     },
-    /// `app.onRequest`: the app's handlers on the bus changed, so its agent tools follow.
+    /// `RPC.on_request`: the app's handlers on the bus changed, so its agent tools follow.
     HandlersChanged,
 }
 
@@ -215,7 +215,7 @@ pub enum Effect {
 pub(crate) enum Handler {
     /// From the entry's table: `handler(ctx, args)`.
     Returned(Function),
-    /// From `app.onRequest(method, fn, about?)`: `fn(params, ctx)`, as a listener and a page's handler take them, and
+    /// From `RPC.on_request(method, fn, about?)`: `fn(params, ctx)`, as a listener and a page's handler take them, and
     /// what it said about itself (an agent is shown it when the method is public).
     Registered(Function, HandlerInfo),
 }
@@ -245,7 +245,7 @@ pub(crate) struct Shared {
     /// What `hook(name, fn)` registered (only with [`VmConfig::test_hooks`]).
     pub handlers: Mutex<HashMap<String, Function>>,
     /// The app's backend handlers on the bus, by method: the functions its entry returned (`handler(ctx, args)`) and
-    /// those `app.onRequest` registered (`handler(params, ctx)`).
+    /// those `RPC.on_request` registered (`handler(params, ctx)`).
     pub rpc_handlers: Mutex<HashMap<String, Handler>>,
     pub test_hooks: bool,
     pub effects: Mutex<Vec<Effect>>,
@@ -739,7 +739,7 @@ impl AppVm {
     fn keep_handlers(&self, returned: LuaValue) -> std::result::Result<(), VmError> {
         let table = match returned {
             LuaValue::Table(t) => t,
-            // an app that registered its handlers on the bus (`app.onRequest`) need not return them too
+            // an app that registered its handlers on the bus (`RPC.on_request`) need not return them too
             LuaValue::Nil if !self.shared.rpc_handlers.lock().is_empty() => return Ok(()),
             LuaValue::Nil => return Err(VmError::BadHandlers("it returned nothing".to_owned())),
             other => return Err(VmError::BadHandlers(format!("it returned a {}", lua_type(&other)))),
@@ -764,7 +764,7 @@ impl AppVm {
             }
             handlers.insert(name, Handler::Returned(handler));
         }
-        // what `app.onRequest` registered while the entry ran stays: the table only adds to it
+        // what `RPC.on_request` registered while the entry ran stays: the table only adds to it
         let mut registered = self.shared.rpc_handlers.lock();
         for (name, handler) in handlers {
             registered.entry(name).or_insert(handler);

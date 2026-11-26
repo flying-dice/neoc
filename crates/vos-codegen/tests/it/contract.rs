@@ -92,24 +92,7 @@ fn the_app_api_has_exactly_the_members_the_runtime_installs() {
     members.sort_unstable();
     assert_eq!(
         members,
-        [
-            "agents",
-            "db",
-            "emit",
-            "files",
-            "id",
-            "kv",
-            "log",
-            "notify",
-            "onNotification",
-            "onRequest",
-            "openWindow",
-            "sendNotification",
-            "sendRequest",
-            "t",
-            "tool",
-            "tools"
-        ]
+        ["agents", "db", "emit", "files", "id", "kv", "log", "notify", "openWindow", "t", "tool", "tools"]
     );
     let db = defs.find("declare extern type vos_app_Db with").unwrap();
     let db = &defs[db..db + defs[db..].find("\nend\n").unwrap()];

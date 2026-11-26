@@ -1,4 +1,4 @@
-<!-- App 1: a list on the RPC bus. Its API is the global `vos` (the host's bridge): nothing to import; `types/` types it. -->
+<!-- App 1: a list on the RPC bus. Its bus is the global `RPC` (the host's bridge): nothing to import; `types/` types it. -->
 <script lang="ts">
   type Item = VosApp.App1.Item
 
@@ -10,7 +10,7 @@
   let asking = $state<{ question: string; answer: (ok: boolean) => void } | null>(null)
 
   const load = async (): Promise<void> => {
-    items = await vos.sendRequest('app1', '_items')
+    items = await RPC.send_request('app1', '_items')
     total = items.length
   }
 
@@ -18,7 +18,7 @@
   $effect(() => {
     void load()
     const stops = [
-      vos.onRequest(
+      RPC.on_request(
         '_client_confirm',
         ({ question }, { signal }) =>
           new Promise<boolean>((resolve) => {
@@ -27,10 +27,10 @@
             signal.addEventListener('abort', () => (asking = null))
           })
       ),
-      vos.onNotification('app1', 'added', ({ item }) => (items = [...items, item])),
-      vos.onNotification('app1', 'cleared', () => (items = [])),
+      RPC.on_notification('app1', 'added', ({ item }) => (items = [...items, item])),
+      RPC.on_notification('app1', 'cleared', () => (items = [])),
       // private: only this app hears it
-      vos.onNotification('app1', '_saved', ({ total: now }) => (total = now)),
+      RPC.on_notification('app1', '_saved', ({ total: now }) => (total = now)),
       vos.host.on('host:reconnected', () => void load())
     ]
     return () => stops.forEach((stop) => stop())
@@ -47,7 +47,7 @@
 
   const add = (): Promise<void> =>
     run(async () => {
-      await vos.sendRequest('app1', 'add', { text })
+      await RPC.send_request('app1', 'add', { text })
       text = ''
     })
 
@@ -98,7 +98,7 @@
       <div class="actions">
         <!-- ui-button is a button (its own role and keys); Svelte cannot see inside it -->
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-        <ui-button variant="gray" destructive label="Clear" onclick={() => run(() => vos.sendRequest('app1', 'clear'))} data-testid="app1-clear">
+        <ui-button variant="gray" destructive label="Clear" onclick={() => run(() => RPC.send_request('app1', 'clear'))} data-testid="app1-clear">
           Clear
         </ui-button>
       </div>

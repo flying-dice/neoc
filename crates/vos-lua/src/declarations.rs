@@ -17,6 +17,12 @@ pub const DOCKER_MODULE: &str = docker::MODULE;
 /// The global the `app` API also is.
 pub const APP_GLOBAL: &str = "app";
 
+/// The module the RPC bus is: `require("vos:rpc")`, and the global `RPC`.
+pub const RPC_MODULE: &str = api::RPC_MODULE;
+
+/// The global the RPC bus also is.
+pub const RPC_GLOBAL: &str = "RPC";
+
 /// The type of what an app's entry returns (`vos_app_Handlers`): the one type of the contract that no function of
 /// the module mentions, because the host reads it instead of a script passing it.
 #[must_use]
@@ -76,11 +82,7 @@ mod tests {
                 "kv",
                 "log",
                 "notify",
-                "onNotification",
-                "onRequest",
                 "openWindow",
-                "sendNotification",
-                "sendRequest",
                 "t",
                 "tool",
                 "tools"
@@ -89,6 +91,16 @@ mod tests {
         assert!(
             ir.modules.iter().any(|m| m.name == "std:fs") && ir.modules.iter().any(|m| m.name == "lib:json")
         );
+    }
+
+    #[test]
+    fn the_rpc_bus_is_its_own_module_in_snake_case() {
+        let ir = schema();
+        let rpc = ir.modules.iter().find(|m| m.name == RPC_MODULE).expect("vos:rpc");
+        assert_eq!(rpc.kind, ModuleKind::Require);
+        let mut names: Vec<&str> = rpc.functions.iter().map(|f| f.name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, ["on_notification", "on_request", "send_notification", "send_request"]);
     }
 
     #[test]

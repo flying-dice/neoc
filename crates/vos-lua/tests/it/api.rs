@@ -26,20 +26,30 @@ async fn call(vm: &AppVm, tool: &str, args: Value) -> Result<Value, VmError> {
 async fn require_gives_the_app_table_and_one_table_per_library_module() {
     let src = r#"
         local app2 = require("vos:app")
+        local rpc2 = require("vos:rpc")
         local json, again = require("lib:json"), require("lib:json")
-        hook("t", function() return { app = app2 == app, same = json == again, t = type(json) } end)
+        hook("t", function()
+          return { app = app2 == app, rpc = type(rpc2.send_request) == "function" and type(RPC.on_request) == "function",
+            same = json == again, t = type(json) }
+        end)
         return {}
     "#;
     let vm = AppVm::load(&id("probe"), package(src, &[]), db(), common::config()).await.unwrap();
-    assert_eq!(vm.emit("t", json!(null)).await.unwrap(), json!({"app": true, "same": true, "t": "table"}));
+    assert_eq!(
+        vm.emit("t", json!(null)).await.unwrap(),
+        json!({"app": true, "rpc": true, "same": true, "t": "table"})
+    );
 }
 
-/// `vos:app` and `vos:docker` are the only `vos:` names an app can require: there is no way to register another.
+/// `vos:app`, `vos:rpc` and `vos:docker` are the only `vos:` names an app can require: there is no way to register another.
 #[tokio::test]
 async fn the_host_offers_no_vos_module_but_its_own() {
     let e = try_load("probe", "local ui = require('vos:ui')").await.err().unwrap().to_string();
     assert!(e.contains("unknown host module \"vos:ui\""), "{e}");
-    assert!(e.contains("only \"vos:app\", \"vos:docker\" and the std:, lib: and vnd: modules"), "{e}");
+    assert!(
+        e.contains("only \"vos:app\", \"vos:rpc\", \"vos:docker\" and the std:, lib: and vnd: modules"),
+        "{e}"
+    );
 }
 
 #[tokio::test]
