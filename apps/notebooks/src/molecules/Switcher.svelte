@@ -1,6 +1,6 @@
 <!-- @molecule Switcher — the quick switcher: a field a note's name is typed in over the window, the notes it could mean under it (the arrow keys move through them, Return opens the one marked), and a last row that makes a note of that name when there is none -->
 <script lang="ts">
-  import type { Summary } from '@notebooks/rpc'
+  type Summary = VosApp.Notebooks.Summary
   import { matching, named } from '../lib/library'
 
   interface Props {

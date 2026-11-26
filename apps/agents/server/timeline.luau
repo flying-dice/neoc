@@ -1,9 +1,7 @@
 --!strict
 -- What was said and done in a chat, in order: the items. Each change is written to the database and sent to the open
--- window: a whole item as an `item` event, a piece of text added to one as a `piece` event (an answer arrives in
+-- window: a whole item as an `item` notification, a piece of text added to one as a `piece` notification (an answer arrives in
 -- hundreds of pieces, and the item is not sent again for each).
-local app = require("vos:app")
-local rpc = require("../.app/rpc")
 local db = app.db
 
 export type Kind =
@@ -28,7 +26,7 @@ local function rowOf(r: { [string]: any }): Row
   return { id = r.id, key = r.key, kind = r.kind, text = r.text, name = r.name, data = r.data, done = r.done == 1 }
 end
 
-local function itemOf(chat: string, r: Row): rpc.Item
+local function itemOf(chat: string, r: Row): agents_Item
   return { id = r.id, chat = chat, kind = r.kind, text = r.text, name = r.name, data = r.data, done = r.done }
 end
 
@@ -42,8 +40,8 @@ function timeline.rows(chat: string): { Row }
   return list
 end
 
-function timeline.items(chat: string): { rpc.Item }
-  local list: { rpc.Item } = {}
+function timeline.items(chat: string): { agents_Item }
+  local list: { agents_Item } = {}
   for _, row in timeline.rows(chat) do
     table.insert(list, itemOf(chat, row))
   end
@@ -75,7 +73,7 @@ end
 local function announce(chat: string, id: number)
   local row = timeline.get(chat, id)
   if row then
-    app.emit("item", { chat = chat, item = itemOf(chat, row) })
+    RPC.send_notification("_item", { chat = chat, item = itemOf(chat, row) })
   end
 end
 
@@ -131,7 +129,7 @@ function timeline.append(chat: string, id: number, piece: string)
     return
   end
   db:exec("update items set text = text || :p where thread_id = :c and id = :id", { p = piece, c = chat, id = id })
-  app.emit("piece", { chat = chat, item = id, text = piece })
+  RPC.send_notification("_piece", { chat = chat, item = id, text = piece })
 end
 
 -- Nothing in the chat is still coming: a run that ended, however it ended, leaves no spinner behind.

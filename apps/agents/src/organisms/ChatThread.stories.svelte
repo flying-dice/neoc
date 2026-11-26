@@ -1,7 +1,8 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
-  import type { Conversation, Item } from '@agents/rpc'
+  type Conversation = VosApp.Agents.Conversation
+  type Item = VosApp.Agents.Item
   import type { UserAction } from '../lib/a2ui'
   import ChatThread from './ChatThread.svelte'
   import { SURFACE, conversation } from '../lib/fakeApi'

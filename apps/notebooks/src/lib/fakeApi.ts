@@ -4,14 +4,18 @@
  * notebook, whatever its capitals; a note's links, tags and first line are read from its text; renaming a note rewrites
  * the links to it; a new library has one notebook called Notebook, and the last notebook cannot be deleted.
  */
-import type { Hit, Library, Note, Notebook, Summary } from '@notebooks/rpc'
+type Hit = VosApp.Notebooks.Hit
+type Library = VosApp.Notebooks.Library
+type Note = VosApp.Notebooks.Note
+type Notebook = VosApp.Notebooks.Notebook
+type Summary = VosApp.Notebooks.Summary
 import type { NotebooksEvents, NotebooksRpc } from './notebooks.svelte'
 import { excerptOf, keyOf, lineWith, linksOf, mentionOf, retarget, tagsOf, titleProblem } from './wiki'
 
 export interface FakeBackend {
   readonly rpc: NotebooksRpc
   readonly events: NotebooksEvents
-  /** Send an event to the window, as the backend (`notebooks.changed`) or the host (`host:reconnected`) does. */
+  /** Send an event to the window, as the backend (`notebooks_changed`) or the host (`host:reconnected`) does. */
   emit(name: string, data?: unknown): void
 }
 

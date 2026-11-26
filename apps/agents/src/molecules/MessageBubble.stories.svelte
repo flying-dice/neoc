@@ -1,7 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect } from 'storybook/test'
-  import type { Item } from '@agents/rpc'
+  type Item = VosApp.Agents.Item
   import MessageBubble from './MessageBubble.svelte'
 
   const item = (kind: 'user' | 'assistant', text: string, done = true): Item => ({ id: 1, chat: 'c', kind, text, name: '', data: '', done })

@@ -6,7 +6,6 @@
 -- tools (the tools of the apps on this machine, offered in every run as AG-UI client tools), the turn runs them and
 -- starts another run with their results, until the agent asks for no more.
 local agui = require("lib:agui")
-local app = require("vos:app")
 local codec = require("./codec")
 local random = require("lib:random")
 local strings = require("lib:text")
@@ -132,7 +131,7 @@ local function saveState(chat: string, state: any)
     return
   end
   db:exec("update threads set state = :s where id = :id", { s = text, id = chat })
-  app.emit("state", { chat = chat, state = text })
+  RPC.send_notification("_state", { chat = chat, state = text })
 end
 
 local function loadState(chat: string): any

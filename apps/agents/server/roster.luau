@@ -2,10 +2,8 @@
 -- The agents the person added: a name and an AG-UI endpoint each, in the app's database. An agent's bearer token is
 -- not there: it is in the operating system's keychain (`vnd:keyring`), read when a run starts and at no other time,
 -- and the database only says whether there is one.
-local app = require("vos:app")
 local keyring = require("vnd:keyring")
 local random = require("lib:random")
-local rpc = require("../.app/rpc")
 local url = require("lib:url")
 local db = app.db
 
@@ -20,8 +18,8 @@ local function agentOf(row: { [string]: any }): Agent
   return { id = row.id, name = row.name, url = row.url, token = row.has_token == 1 }
 end
 
-function roster.all(): { rpc.Agent }
-  local list: { rpc.Agent } = {}
+function roster.all(): { agents_Agent }
+  local list: { agents_Agent } = {}
   for _, row in db:all("select id, name, url, has_token from agents order by name collate nocase, id") do
     table.insert(list, agentOf(row))
   end

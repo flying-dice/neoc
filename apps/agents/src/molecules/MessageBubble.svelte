@@ -1,6 +1,6 @@
 <!-- @molecule MessageBubble — one thing said in a chat: the person's on the right, the agent's on the left, with a spinner while it is still coming -->
 <script lang="ts">
-  import type { Item } from '@agents/rpc'
+  type Item = VosApp.Agents.Item
 
   interface Props {
     /** A `user` or an `assistant` item. */

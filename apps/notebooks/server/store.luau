@@ -7,8 +7,6 @@
 -- so a link (`[[Title]]`) names one note at most. What a note links to is kept beside it (`links`), as the keys of
 -- the titles its text names, whether or not there is such a note yet: a link to a note that is made later leads to it
 -- from then on.
-local app = require("vos:app")
-local rpc = require("../.app/rpc")
 local strings = require("lib:text")
 local text = require("./text")
 local unicode = require("lib:unicode")
@@ -51,7 +49,7 @@ db:migrate {
   ]],
 }
 
-local function summaryOf(row: { [string]: any }): rpc.Summary
+local function summaryOf(row: { [string]: any }): notebooks_Summary
   return {
     id = row.id,
     notebook = row.notebook_id,
@@ -64,8 +62,8 @@ local function summaryOf(row: { [string]: any }): rpc.Summary
   }
 end
 
-function store.notebooks(): { rpc.Notebook }
-  local notebooks: { rpc.Notebook } = {}
+function store.notebooks(): { notebooks_Notebook }
+  local notebooks: { notebooks_Notebook } = {}
   for _, row in db:all("select id, name from notebooks order by id") do
     table.insert(notebooks, { id = row.id, name = row.name })
   end
@@ -73,7 +71,7 @@ function store.notebooks(): { rpc.Notebook }
 end
 
 -- the notebook called `name`, whatever its capitals: how an agent names a notebook
-function store.notebookNamed(name: string): rpc.Notebook?
+function store.notebookNamed(name: string): notebooks_Notebook?
   local wanted = strings.trim(name)
   for _, notebook in store.notebooks() do
     if unicode.caseless_eq(notebook.name, wanted) then
@@ -88,8 +86,8 @@ local function hasNotebook(id: number): boolean
 end
 
 -- The notes without their text, the most recently changed first; of one notebook when it is given.
-function store.summaries(notebook: number?): { rpc.Summary }
-  local notes: { rpc.Summary } = {}
+function store.summaries(notebook: number?): { notebooks_Summary }
+  local notes: { notebooks_Summary } = {}
   local rows = if notebook ~= nil
     then db:all(SUMMARY .. " where notebook_id = :nb order by updated_at desc, id desc", { nb = notebook })
     else db:all(SUMMARY .. " order by updated_at desc, id desc")
@@ -99,8 +97,8 @@ function store.summaries(notebook: number?): { rpc.Summary }
   return notes
 end
 
-function store.library(): rpc.Library
-  local links: { rpc.Link } = {}
+function store.library(): notebooks_Library
+  local links: { notebooks_Link } = {}
   -- a link leads to the note of the same notebook whose title it names; a note's link to itself is not drawn
   local rows = db:all([[
     select l.note_id as src, t.id as dst
@@ -116,13 +114,13 @@ function store.library(): rpc.Library
   return { notebooks = store.notebooks(), notes = store.summaries(nil), links = links }
 end
 
-function store.note(id: number): rpc.Note?
+function store.note(id: number): notebooks_Note?
   local row =
     db:one("select id, notebook_id, title, title_key, body, pinned, updated_at from notes where id = :id", { id = id })
   if not row then
     return nil
   end
-  local backlinks: { rpc.Backlink } = {}
+  local backlinks: { notebooks_Backlink } = {}
   local linking = db:all(
     [[select n.id, n.title, n.body from notes n join links l on l.note_id = n.id
       where l.target = :key and n.notebook_id = :nb and n.id <> :id
@@ -307,9 +305,9 @@ end
 
 -- The notes of a notebook with `query` in their title or their text, the ones with it in their title first. Each
 -- comes with the line the words are in.
-function store.search(notebook: number, query: string): { rpc.Hit }
+function store.search(notebook: number, query: string): { notebooks_Hit }
   local words = strings.trim(query)
-  local hits: { rpc.Hit } = {}
+  local hits: { notebooks_Hit } = {}
   if words == "" then
     return hits
   end

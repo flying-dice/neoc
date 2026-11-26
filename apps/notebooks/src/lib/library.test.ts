@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { Summary } from '@notebooks/rpc'
+type Summary = VosApp.Notebooks.Summary
 import { listed, matching, named, tagCounts } from './library'
 
 const summary = (id: number, title: string, given: Partial<Summary> = {}): Summary => ({

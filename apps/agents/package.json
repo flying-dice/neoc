@@ -3,15 +3,23 @@
   "private": true,
   "type": "module",
   "version": "0.3.0",
-  "description": "Agents: chats with AG-UI agents the person adds, a Svelte client on the kit, the agents, chats and turns in Luau. `bun run build` writes the app ref (dist/app-ref.json, app.luau, static/).",
+  "description": "Chat with agents: add one by its AG-UI endpoint, write to it, and watch what it answers and does.",
+  "vos": {
+    "title": "Agents",
+    "icon": "sparkles",
+    "tint": "orange",
+    "window": {
+      "w": 960,
+      "h": 640,
+      "minW": 480,
+      "minH": 420
+    }
+  },
   "scripts": {
-    "generate": "vos generate",
     "build": "vite build",
     "dev": "vite build --watch",
-    "typecheck": "vos typecheck && svelte-check --tsconfig ./tsconfig.json",
+    "typecheck": "vite build && svelte-check --tsconfig ./tsconfig.json",
     "test": "bun test ./src ./tests",
-    "lint": "vos lint",
-    "format": "vos format",
     "storybook": "storybook dev -p 6010 --no-open",
     "build-storybook": "storybook build -o storybook-static --quiet"
   },
@@ -25,7 +33,7 @@
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@types/bun": "1.4.4",
     "@vos/storybook": "workspace:*",
-    "@vos/vite-plugin": "workspace:*",
+    "@vos/vite-plugin-v2": "workspace:*",
     "storybook": "10.6.7",
     "svelte": "^5.57.2",
     "svelte-check": "^4.7.6",

@@ -3,13 +3,13 @@
   import { expect, fn, waitFor } from 'storybook/test'
   import { alertButton, pickerSelect, textArea } from '@vos/storybook/kit'
   import AppWindow from '@vos/storybook/AppWindow.svelte'
-  import definition from '../../openrpc.json'
+  import pkg from '../../package.json'
   import NotebooksPage from './NotebooksPage.svelte'
   import { Notebooks } from '../lib/notebooks.svelte'
   import { NOTEBOOK, SAMPLE, createFailingBackend, createFakeBackend, type FakeBackend } from '../lib/fakeApi'
 
-  // the window the contract asks for, and the smallest it allows
-  const app = definition['x-app']
+  // the window the app asks for (package.json), and the smallest it allows
+  const app = pkg.vos
 
   interface Args {
     width: number
@@ -69,7 +69,7 @@
   <!-- one state per story, as each window has one -->
   {@const backend = args.backend()}
   {@const notebooks = new Notebooks(backend.rpc, backend.events, { now: NOW, autosave: 50 })}
-  <AppWindow title={definition.info.title} width={args.width} height={args.height} minWidth={app.window.minW} minHeight={app.window.minH}>
+  <AppWindow title={app.title} width={args.width} height={args.height} minWidth={app.window.minW} minHeight={app.window.minH}>
     <NotebooksPage {notebooks} {onlink} />
   </AppWindow>
 {/snippet}

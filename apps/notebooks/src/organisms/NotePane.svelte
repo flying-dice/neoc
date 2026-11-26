@@ -1,6 +1,7 @@
 <!-- @organism NotePane — one note: its title (typed over to rename it, with what is wrong with a title said under it), whether it is written or read, its bookmark, the way to delete it after an alert asks, its text as Markdown to write or as it reads, and the notes that link to it -->
 <script lang="ts">
-  import type { Backlink, Note } from '@notebooks/rpc'
+  type Backlink = VosApp.Notebooks.Backlink
+  type Note = VosApp.Notebooks.Note
   import Markdown from '../molecules/Markdown.svelte'
   import type { Mode, Status } from '../lib/notebooks.svelte'
 

@@ -1,7 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
-  import type { Item } from '@agents/rpc'
+  type Item = VosApp.Agents.Item
   import QuestionCard from './QuestionCard.svelte'
 
   const onanswer = fn<(answer: string | null) => void>()

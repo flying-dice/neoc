@@ -1,6 +1,8 @@
 <!-- @organism Sidebar — one notebook's contents: the notebook itself (picked, added, deleted after an alert asks), what can be started from it (a note, today's note, the quick switcher, the graph), the search, the tags, and its notes or what the search found -->
 <script lang="ts">
-  import type { Hit, Notebook, Summary } from '@notebooks/rpc'
+  type Hit = VosApp.Notebooks.Hit
+  type Notebook = VosApp.Notebooks.Notebook
+  type Summary = VosApp.Notebooks.Summary
   import Composer from '../molecules/Composer.svelte'
   import { changedLabel } from '../lib/dates'
   import type { TagCount } from '../lib/library'
