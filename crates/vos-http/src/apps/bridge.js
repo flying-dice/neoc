@@ -63,7 +63,6 @@
   var contextListeners = new Set()
   var teardownListeners = new Set()
   var next = 1
-  var started = false
   var resolveReady
   var rejectReady
   // the host context now (theme, displayMode, locale, timeZone, ...) and what the host offers (MCP Apps' hostCapabilities)
@@ -594,7 +593,7 @@
     rejectReady(new Error(message))
   }
 
-  // a page that throws before the handshake has not started: say so rather than sit there. The app's scripts are loaded with
+  // a page that throws before it has loaded has not started: say so rather than sit there. The app's scripts are loaded with
   // `crossorigin` from the host, which answers with the header that lets the browser report the real message and place; a script
   // loaded without it is reported as `Script error.`, which says nothing, so say where to look instead.
   // The host's shortcut for search (Cmd+K, Ctrl+K) pressed while the keys are in this page: a key pressed in a frame
@@ -609,9 +608,17 @@
     }
   }, true)
 
-  // after the start: an error or a rejection nobody handled is recorded (before it, `fail` says the page could not start)
+  // The page has loaded once its scripts have run (`load`). The handshake goes out before they run and may be answered
+  // first, so it says nothing of whether they ran: an error before `load` is a page that could not start, whenever the
+  // host answered.
+  var loaded = false
+  window.addEventListener('load', function () {
+    loaded = true
+  })
+
+  // after the load: an error or a rejection nobody handled is recorded (before it, `fail` says the page could not start)
   window.addEventListener('error', function (e) {
-    if (!started) return
+    if (!loaded) return
     recordError(e.error || e.message, { filename: e.filename, lineno: e.lineno, colno: e.colno })
   })
   window.addEventListener('unhandledrejection', function (e) {
@@ -619,7 +626,7 @@
   })
 
   window.addEventListener('error', function (e) {
-    if (started || failed) return
+    if (loaded || failed) return
     var hidden = !e.message || e.message === 'Script error.'
     var where = e.filename
       ? ' (' + e.filename.split('/').slice(-2).join('/') + (e.lineno ? ':' + e.lineno : '') + ')'
@@ -652,7 +659,6 @@
       appCapabilities: { availableDisplayModes: ['inline', 'fullscreen'] }
     }).then(
       function (result) {
-        started = true
         capabilities = (result && result.hostCapabilities) || {}
         mergeContext(result && result.hostContext)
         post({ method: 'ui/notifications/initialized', params: {} })

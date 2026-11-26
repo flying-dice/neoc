@@ -478,7 +478,7 @@ test('AF15: a page whose script throws while it loads is reported with its own m
   const dir = mkdtempSync(join(tmpdir(), 'vos-broken-'))
   try {
     const files: Record<string, string> = {
-      'app.luau': 'return { ping = function() return "pong" end }\n',
+      'app.luau': 'RPC.on_request("ping", function() return "pong" end)\n',
       'static/index.html':
         '<!doctype html>\n<html lang="en"><head><title>Broken</title><script src="/apps/bridge.js"></script></head>' +
         '<body><div id="root"></div><script type="module" src="./boom.js"></script></body></html>\n',

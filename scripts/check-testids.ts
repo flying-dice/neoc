@@ -16,7 +16,7 @@
  * Usage: bun scripts/check-testids.ts
  */
 import { Glob } from 'bun'
-import { join, resolve } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 
 const ROOT = resolve(import.meta.dir, '..')
 const SOURCE_GLOBS = ['packages/*/src/**/*.svelte', 'client/src/**/*.svelte']
@@ -82,7 +82,9 @@ const errors: string[] = []
 let checked = 0
 
 for (const pattern of SOURCE_GLOBS) {
-  for await (const rel of new Glob(pattern).scan({ cwd: ROOT })) {
+  for await (const scanned of new Glob(pattern).scan({ cwd: ROOT })) {
+    // Bun's glob answers with the platform's separator; every rule here reads `/`
+    const rel = scanned.split(sep).join('/')
     if (rel.includes('node_modules')) continue
     if (/\.stories\.svelte$/.test(rel)) continue
     checked++

@@ -154,20 +154,33 @@ describe('the handshake', () => {
 describe('requests to another app', () => {
   test('vos/request becomes an app.call for the app it names, and its answer comes back', async () => {
     const { bridge, posted, calls, flush } = rig(async () => ({ id: 1, text: 'milk' }))
-    bridge.receive({ source: FRAME, data: request(4, 'vos/request', { app: 'ledger', method: 'add', params: { text: 'milk' } }) })
+    bridge.receive({
+      source: FRAME,
+      data: request(4, 'vos/request', { app: 'ledger', method: 'add', params: { text: 'milk' } })
+    })
     await flush()
-    expect(calls).toEqual([{ method: 'app.call', params: { app: 'ledger', method: 'add', args: { text: 'milk' } } }])
+    expect(calls).toEqual([
+      { method: 'app.call', params: { app: 'ledger', method: 'add', args: { text: 'milk' } } }
+    ])
     expect(posted).toEqual([{ jsonrpc: '2.0', id: 4, result: { id: 1, text: 'milk' } }])
   })
 
   test('a vos/request without an app id or a method name is refused before the host hears of it', async () => {
     const { bridge, posted, calls, flush } = rig()
-    bridge.receive({ source: FRAME, data: request(1, 'vos/request', { app: 'Not An Id', method: 'add' }) })
+    bridge.receive({
+      source: FRAME,
+      data: request(1, 'vos/request', { app: 'Not An Id', method: 'add' })
+    })
     bridge.receive({ source: FRAME, data: request(2, 'vos/request', { app: 'ledger' }) })
-    bridge.receive({ source: FRAME, data: request(3, 'vos/request', { app: 'ledger', method: 'ui/open-link' }) })
+    bridge.receive({
+      source: FRAME,
+      data: request(3, 'vos/request', { app: 'ledger', method: 'ui/open-link' })
+    })
     await flush()
     expect(calls).toEqual([])
-    expect(posted.map((m) => (m as { error: { code: number } }).error.code)).toEqual([-32602, -32602, -32602])
+    expect(posted.map((m) => (m as { error: { code: number } }).error.code)).toEqual([
+      -32602, -32602, -32602
+    ])
   })
 })
 
@@ -176,8 +189,14 @@ describe('the page on the RPC bus', () => {
     const { bridge, calls, flush } = rig()
     bridge.receive({ source: FRAME, data: request(1, 'vos/handle', { method: '_client_confirm' }) })
     bridge.receive({ source: FRAME, data: request(2, 'vos/answer', { call: 7, result: true }) })
-    bridge.receive({ source: FRAME, data: request(3, 'vos/notify', { name: '_typing', params: { text: 'hi' } }) })
-    bridge.receive({ source: FRAME, data: request(4, 'vos/unhandle', { method: '_client_confirm' }) })
+    bridge.receive({
+      source: FRAME,
+      data: request(3, 'vos/notify', { name: '_typing', params: { text: 'hi' } })
+    })
+    bridge.receive({
+      source: FRAME,
+      data: request(4, 'vos/unhandle', { method: '_client_confirm' })
+    })
     await flush()
     expect(calls).toEqual([
       { method: 'app.handle', params: { app: 'notes', method: '_client_confirm' } },
@@ -199,12 +218,19 @@ describe('the page on the RPC bus', () => {
     bridge.serve(6, 'other', {})
     await flush()
     expect(posted).toEqual([
-      { jsonrpc: '2.0', method: 'vos/serve', params: { call: 5, method: '_client_confirm', params: { question: 'Sure?' } } },
+      {
+        jsonrpc: '2.0',
+        method: 'vos/serve',
+        params: { call: 5, method: '_client_confirm', params: { question: 'Sure?' } }
+      },
       { jsonrpc: '2.0', method: 'vos/settled', params: { call: 5 } }
     ])
     // a method the frame does not serve is declined for it, which is no answer
     expect(calls).toEqual([
-      { method: 'app.answer', params: { call: 6, error: { code: -32601, message: "notes's page no longer serves other" } } }
+      {
+        method: 'app.answer',
+        params: { call: 6, error: { code: -32601, message: "notes's page no longer serves other" } }
+      }
     ])
   })
 })
@@ -475,7 +501,11 @@ describe('what comes from the page and what goes into the frame', () => {
     bridge.contextChanged({ theme: 'dark' })
     bridge.contextChanged({})
     expect(posted).toEqual([
-      { jsonrpc: '2.0', method: 'vos/event', params: { app: 'notes', own: true, name: 'tasks.changed', data: { n: 1 } } },
+      {
+        jsonrpc: '2.0',
+        method: 'vos/event',
+        params: { app: 'notes', own: true, name: 'tasks.changed', data: { n: 1 } }
+      },
       { jsonrpc: '2.0', method: 'ui/notifications/host-context-changed', params: { theme: 'dark' } }
     ])
   })
@@ -484,13 +514,25 @@ describe('what comes from the page and what goes into the frame', () => {
     const { bridge, posted } = rig()
     bridge.appEvent('ledger', 'added', { n: 1 })
     expect(posted, 'not subscribed: nothing').toEqual([])
-    bridge.receive({ source: FRAME, data: { jsonrpc: '2.0', method: 'vos/subscribe', params: { app: 'ledger' } } })
-    bridge.receive({ source: FRAME, data: { jsonrpc: '2.0', method: 'vos/subscribe', params: { app: 'Not An Id' } } })
+    bridge.receive({
+      source: FRAME,
+      data: { jsonrpc: '2.0', method: 'vos/subscribe', params: { app: 'ledger' } }
+    })
+    bridge.receive({
+      source: FRAME,
+      data: { jsonrpc: '2.0', method: 'vos/subscribe', params: { app: 'Not An Id' } }
+    })
     bridge.appEvent('ledger', 'added', { n: 2 })
     bridge.appEvent('ledger', '_tick', { n: 3 })
     bridge.appEvent('ledger', 'host:reconnected', null)
     bridge.appEvent('other', 'added', { n: 4 })
-    expect(posted).toEqual([{ jsonrpc: '2.0', method: 'vos/event', params: { app: 'ledger', name: 'added', data: { n: 2 } } }])
+    expect(posted).toEqual([
+      {
+        jsonrpc: '2.0',
+        method: 'vos/event',
+        params: { app: 'ledger', name: 'added', data: { n: 2 } }
+      }
+    ])
   })
 
   test("otherAppEventFor: an app.event of another app than the frame's", () => {
@@ -533,8 +575,7 @@ describe('what comes from the page and what goes into the frame', () => {
       now -= 1
       return 'ok'
     })
-    for (let id = 0; id < 200; id++)
-      bridge.receive({ source: FRAME, data: bus(id, 'echo', {}) })
+    for (let id = 0; id < 200; id++) bridge.receive({ source: FRAME, data: bus(id, 'echo', {}) })
     for (let i = 0; i < 200 && posted.length < 200; i++) await new Promise((r) => setTimeout(r, 5))
     expect(posted.length).toBe(200)
     expect(posted.every((m) => 'result' in m)).toBe(true)

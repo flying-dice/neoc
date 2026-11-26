@@ -78,6 +78,19 @@ export const SERVICES: readonly Service[] = [
   service('systemd-logind', { description: 'Login management', state: 'running', autostart: undefined })
 ]
 
+/** What a manager may leave out of a service it reports, by the name its `reported` list gives it. */
+const FIELDS: Record<string, 'description' | 'stateDetail' | 'autostart' | 'args' | 'workingDirectory' | 'environment' | 'restart' | 'restartDelaySecs' | 'user'> = {
+  description: 'description',
+  state_detail: 'stateDetail',
+  autostart: 'autostart',
+  args: 'args',
+  working_directory: 'workingDirectory',
+  environment: 'environment',
+  restart: 'restart',
+  restart_delay_secs: 'restartDelaySecs',
+  user: 'user'
+}
+
 export const NO_MANAGER = 'This machine has no service manager the app can use: systemd is not running on this machine.'
 
 /** The backend answered no, in its own words. */
@@ -93,7 +106,13 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
   const listeners = new Map<string, Set<() => void>>()
   const calls: string[] = []
 
-  const overview = (): Overview => ({ manager, services: manager.available ? services.map((s) => ({ ...s })).sort((a, b) => a.label.localeCompare(b.label)) : [] })
+  // a manager says only what it reports: a launchd-like one has no description to give
+  const reported = (s: Service): Service => {
+    const out: Service = { ...s }
+    for (const [field, key] of Object.entries(FIELDS)) if (!manager.reported.includes(field)) delete out[key]
+    return out
+  }
+  const overview = (): Overview => ({ manager, services: manager.available ? services.map(reported).sort((a, b) => a.label.localeCompare(b.label)) : [] })
   const outcome = (status: Status, message = ''): Outcome => ({ status, message, overview: overview() })
   const later = async <T>(call: () => T): Promise<T> => {
     await new Promise((resolve) => setTimeout(resolve, options.pace ?? 0))

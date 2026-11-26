@@ -31,7 +31,8 @@ const SOURCE_GLOBS = ['packages/*/src/**/*.{svelte,ts}', 'apps/*/src/**/*.{svelt
 const isCompositionRoot = (rel: string): boolean => rel === 'client/src/App.svelte' || /^apps\/[^/]+\/src\/App\.svelte$/.test(rel)
 
 function layerOfPath(path: string): Layer | null {
-  const parts = path.split(sep)
+  // a repo path has `/`, a resolved one the platform's separator
+  const parts = path.split(/[\\/]/)
   // Use the innermost layer segment, inside the package's `src`: a folder above it is a package's name, not a layer
   // (the Pages app lives in apps/pages).
   for (let i = parts.length - 2; i > parts.lastIndexOf('src'); i--) {
@@ -64,7 +65,9 @@ const errors: string[] = []
 let checked = 0
 
 for (const pattern of SOURCE_GLOBS) {
-  for await (const rel of new Glob(pattern).scan({ cwd: ROOT })) {
+  for await (const scanned of new Glob(pattern).scan({ cwd: ROOT })) {
+    // Bun's glob answers with the platform's separator; every rule here reads `/`
+    const rel = scanned.split(sep).join('/')
     if (rel.includes('node_modules')) continue
     // Stories document components; they may compose anything and carry no layer.
     if (/\.stories\.(svelte|ts)$/.test(rel)) continue

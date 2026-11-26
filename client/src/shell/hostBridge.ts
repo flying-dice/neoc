@@ -299,12 +299,20 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
       otherAppRequest(callId, params, traceparent)
       return
     }
-    if (name === 'vos/handle' || name === 'vos/unhandle' || name === 'vos/answer' || name === 'vos/notify') {
+    if (
+      name === 'vos/handle' ||
+      name === 'vos/unhandle' ||
+      name === 'vos/answer' ||
+      name === 'vos/notify'
+    ) {
       busMessage(callId, name, params)
       return
     }
     if (name === 'vos/telemetry/query' && appId === TELEMETRY_APP) {
-      const p = (typeof params === 'object' && params !== null ? params : {}) as Record<string, unknown>
+      const p = (typeof params === 'object' && params !== null ? params : {}) as Record<
+        string,
+        unknown
+      >
       const { kind, ...rest } = p
       answer(callId, () =>
         options.call(kind === 'traces' ? 'host.telemetry.traces' : 'host.telemetry.query', rest)
@@ -327,14 +335,25 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
 
   /** The page's side of the RPC bus: its handlers, its answers and its notifications, always for its own app. */
   const busMessage = (callId: number | string, name: string, params: unknown): void => {
-    const p = (typeof params === 'object' && params !== null ? params : {}) as Record<string, unknown>
-    const fail = (message: string): void => post({ jsonrpc: '2.0', id: callId, error: { code: INVALID_PARAMS, message } })
+    const p = (typeof params === 'object' && params !== null ? params : {}) as Record<
+      string,
+      unknown
+    >
+    const fail = (message: string): void =>
+      post({ jsonrpc: '2.0', id: callId, error: { code: INVALID_PARAMS, message } })
     if (name === 'vos/handle' || name === 'vos/unhandle') {
       const method = p.method
-      if (typeof method !== 'string' || method.length < 1 || method.length > MAX_METHOD) return fail(`${name} needs a method name`)
+      if (typeof method !== 'string' || method.length < 1 || method.length > MAX_METHOD)
+        return fail(`${name} needs a method name`)
       if (name === 'vos/handle') handled.add(method)
       else handled.delete(method)
-      answer(callId, () => options.call(name === 'vos/handle' ? 'app.handle' : 'app.unhandle', { app: appId, method }, { timeoutMs: 10_000 }))
+      answer(callId, () =>
+        options.call(
+          name === 'vos/handle' ? 'app.handle' : 'app.unhandle',
+          { app: appId, method },
+          { timeoutMs: 10_000 }
+        )
+      )
       return
     }
     if (name === 'vos/answer') {
@@ -347,24 +366,52 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
       return
     }
     // vos/notify
-    if (typeof p.name !== 'string' || p.name.length < 1) return fail('vos/notify needs the notification name')
+    if (typeof p.name !== 'string' || p.name.length < 1)
+      return fail('vos/notify needs the notification name')
     const refusal = refuseArgs(p.params)
     if (refusal) return fail(refusal)
-    answer(callId, () => options.call('app.notify', { app: appId, name: p.name, params: p.params ?? {} }, { timeoutMs: 10_000 }))
+    answer(callId, () =>
+      options.call(
+        'app.notify',
+        { app: appId, name: p.name, params: p.params ?? {} },
+        { timeoutMs: 10_000 }
+      )
+    )
   }
 
   /** Another app's request (`vos/request`): checked, then forwarded as that app's `app.call`. */
-  const otherAppRequest = (callId: number | string, params: unknown, traceparent?: string): void => {
-    const p = (typeof params === 'object' && params !== null ? params : {}) as { app?: unknown; method?: unknown; params?: unknown }
-    const fail = (message: string): void => post({ jsonrpc: '2.0', id: callId, error: { code: INVALID_PARAMS, message } })
-    if (typeof p.app !== 'string' || !APP_ID.test(p.app)) return fail('vos/request needs the id of the app to call (`app`)')
-    if (typeof p.method !== 'string' || p.method.length < 1 || p.method.length > MAX_METHOD || p.method.includes('/'))
+  const otherAppRequest = (
+    callId: number | string,
+    params: unknown,
+    traceparent?: string
+  ): void => {
+    const p = (typeof params === 'object' && params !== null ? params : {}) as {
+      app?: unknown
+      method?: unknown
+      params?: unknown
+    }
+    const fail = (message: string): void =>
+      post({ jsonrpc: '2.0', id: callId, error: { code: INVALID_PARAMS, message } })
+    if (typeof p.app !== 'string' || !APP_ID.test(p.app))
+      return fail('vos/request needs the id of the app to call (`app`)')
+    if (
+      typeof p.method !== 'string' ||
+      p.method.length < 1 ||
+      p.method.length > MAX_METHOD ||
+      p.method.includes('/')
+    )
       return fail(`vos/request needs the name of a method of ${p.app} (\`method\`)`)
     forward(callId, p.app, p.method, p.params, traceparent)
   }
 
   /** A call of an app's backend, through the gate: the frame's own app's, or (`vos/request`) another app's. */
-  const forward = (callId: number | string, app: string, name: string, params: unknown, traceparent?: string): void => {
+  const forward = (
+    callId: number | string,
+    app: string,
+    name: string,
+    params: unknown,
+    traceparent?: string
+  ): void => {
     const refusal = refuseArgs(params)
     if (refusal) {
       post({ jsonrpc: '2.0', id: callId, error: { code: INVALID_PARAMS, message: refusal } })
@@ -419,7 +466,8 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
       )
     } else if (name === 'vos/telemetry') {
       // what the frame recorded: passed on for this frame's app; a batch that is not one, or too heavy, is dropped
-      const batch = typeof params === 'object' && params !== null ? (params as Record<string, unknown>) : null
+      const batch =
+        typeof params === 'object' && params !== null ? (params as Record<string, unknown>) : null
       if (!batch || JSON.stringify(batch).length > MAX_TELEMETRY_BYTES) return
       const spans = Array.isArray(batch.spans) ? batch.spans : []
       const logs = Array.isArray(batch.logs) ? batch.logs : []
@@ -427,7 +475,8 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
       // a failure to record is never the app's problem
       options.call('host.telemetry.ingest', { app: appId, spans, logs }).catch(() => {})
     } else if (name === 'vos/subscribe') {
-      const app = typeof params === 'object' && params !== null ? (params as { app?: unknown }).app : null
+      const app =
+        typeof params === 'object' && params !== null ? (params as { app?: unknown }).app : null
       if (typeof app === 'string' && APP_ID.test(app) && app !== appId) subscriptions.add(app)
     } else if (name === 'vos/shortcut') {
       const chord =
@@ -467,7 +516,8 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
       }
       const m = parsed.data
       if ('method' in m) {
-        if ('id' in m) request(m.id, m.method, m.params, '_meta' in m ? m._meta?.traceparent : undefined)
+        if ('id' in m)
+          request(m.id, m.method, m.params, '_meta' in m ? m._meta?.traceparent : undefined)
         else notification(m.method, m.params)
       } else {
         // an answer to a request the host made (`ui/resource-teardown`)
@@ -490,7 +540,10 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
     serve(call, method, params) {
       if (!handled.has(method)) {
         // the frame stopped serving it before the request reached it: that is no answer
-        tellHost('app.answer', { call, error: { code: METHOD_NOT_FOUND, message: `${appId}'s page no longer serves ${method}` } })
+        tellHost('app.answer', {
+          call,
+          error: { code: METHOD_NOT_FOUND, message: `${appId}'s page no longer serves ${method}` }
+        })
         return
       }
       served.add(call)
@@ -524,7 +577,11 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
     dispose() {
       // the frame no longer serves anything on the bus, and answers nothing it was handed
       for (const method of handled) tellHost('app.unhandle', { app: appId, method })
-      for (const call of served) tellHost('app.answer', { call, error: { code: METHOD_NOT_FOUND, message: 'The window closed' } })
+      for (const call of served)
+        tellHost('app.answer', {
+          call,
+          error: { code: METHOD_NOT_FOUND, message: 'The window closed' }
+        })
       handled.clear()
       served.clear()
       disposed = true
@@ -573,12 +630,23 @@ export function otherAppEventFor(
  * Hand a host notification to the frame's bridge when it is the frame's: its app's events and the public events of the
  * apps it subscribed to, the requests of the bus for its app (`app.request`) and their settling (`app.requestSettled`).
  */
-export function routeToFrame(bridge: HostBridge, appId: string, method: string, params: Record<string, unknown>): void {
+export function routeToFrame(
+  bridge: HostBridge,
+  appId: string,
+  method: string,
+  params: Record<string, unknown>
+): void {
   const event = eventFor(appId, method, params)
   if (event) return bridge.event(event.name, event.data)
   const other = otherAppEventFor(appId, method, params)
   if (other) return bridge.appEvent(other.app, other.name, other.data)
-  if (method === 'app.request' && params.app === appId && typeof params.call === 'number' && typeof params.method === 'string')
+  if (
+    method === 'app.request' &&
+    params.app === appId &&
+    typeof params.call === 'number' &&
+    typeof params.method === 'string'
+  )
     return bridge.serve(params.call, params.method, params.params)
-  if (method === 'app.requestSettled' && typeof params.call === 'number') bridge.settled(params.call)
+  if (method === 'app.requestSettled' && typeof params.call === 'number')
+    bridge.settled(params.call)
 }

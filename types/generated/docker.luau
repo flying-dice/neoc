@@ -435,7 +435,7 @@ end
 
 
 
-function declaration.body(declared, name, labels)  
+function declaration.body(declared, labels)  
 local _, bindings = published(declared)
   
   local mounts= {}
@@ -444,7 +444,6 @@ local _, bindings = published(declared)
     table.insert(mounts, { Type = "bind", Source = mount.source, Target = mount.target, ReadOnly = true })
   end
   return {
-    name = name,
     Image = declared.image,
     Entrypoint = declared.entrypoint,
     Cmd = declared.command,
@@ -592,8 +591,8 @@ local wrong = declaration.refused(declared)
     if stale then
       return stale
     end
-    local made, err =
-      api:create_container(declaration.body(declared, name, { [OWNER] = app.id, [SIGNATURE] = signature }))
+    local body = declaration.body(declared, { [OWNER] = app.id, [SIGNATURE] = signature })
+    local made, err = api:create_container(body, { name = name })
     if not made then
       return engine.sentence(err)
     end

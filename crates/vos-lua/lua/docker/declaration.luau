@@ -158,7 +158,7 @@ end
 
 -- Docker's create body for the container: what was declared and nothing else. Every folder is read-only, and
 -- nothing is published that is not a declared port.
-function declaration.body(declared: Declaration, name: string, labels: { [string]: string }): { [string]: any }
+function declaration.body(declared: Declaration, labels: { [string]: string }): { [string]: any }
   local _, bindings = published(declared)
   -- the folders are only read: nothing the container does can change the person's files
   local mounts: { any } = {}
@@ -167,7 +167,6 @@ function declaration.body(declared: Declaration, name: string, labels: { [string
     table.insert(mounts, { Type = "bind", Source = mount.source, Target = mount.target, ReadOnly = true })
   end
   return {
-    name = name,
     Image = declared.image,
     Entrypoint = declared.entrypoint,
     Cmd = declared.command,

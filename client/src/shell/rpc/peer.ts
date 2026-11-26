@@ -139,7 +139,11 @@ export function createRpcPeer(options: RpcPeerOptions): RpcPeer {
   /** Tell the other side a request is no longer wanted (best effort: a closed connection has nothing left to stop). */
   function cancelRemote(id: JsonRpcId, reason: string): void {
     try {
-      write({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: id, reason } })
+      write({
+        jsonrpc: '2.0',
+        method: 'notifications/cancelled',
+        params: { requestId: id, reason }
+      })
     } catch {
       // the connection is gone: whatever it ran is stopped with it
     }

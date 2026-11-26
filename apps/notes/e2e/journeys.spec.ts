@@ -33,6 +33,9 @@ async function openNotes(page: Page): Promise<void> {
 /** Start a note, type it, and wait until the list has it under its title: it is saved. */
 async function write(page: Page, body: string): Promise<void> {
   await part(page, 'new').click()
+  // the new note is open once its text is empty: until then the text is the note that was open, and what is typed
+  // there is lost when the new one opens
+  await expect(text(page)).toHaveValue('')
   await expect(text(page)).toBeEditable()
   await text(page).fill(body)
   await expect(row(page, body.split('\n')[0] ?? body)).toBeVisible()

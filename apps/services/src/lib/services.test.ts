@@ -177,7 +177,7 @@ describe('changing settings', () => {
     const services = await opened(createFakeBackend({ manager: LAUNCHD }))
     expect(await services.configure(named(services, 'nginx'), { description: 'x' })).toBe(false)
     expect(services.notice?.status).toBe('unsupported')
-    expect(named(services, 'nginx').description).toBe('A web server')
+    expect(named(services, 'nginx').description).toBeUndefined()
     expect(services.changes('autostart')).toBe(true)
     expect(services.changes('description')).toBe(false)
   })

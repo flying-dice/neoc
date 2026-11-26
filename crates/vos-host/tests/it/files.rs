@@ -18,7 +18,7 @@ RPC.on_request("seed", function()
   assert(docs:write("notes/2026/todo.txt", "buy milk"))
   assert(docs:write("report.csv", "a,b\n1,2\n"))
   assert(docs:write("evil.html", "<script>alert(document.cookie)</script>"))
-  assert(docs:write("été \"1\".txt", "x"))
+  assert(docs:write("été (1).txt", "x"))
   assert(app.files.cache:write("thumb.bin", "cache"))
   return true
 end)
@@ -51,9 +51,13 @@ async fn host(tmp: &Path) -> (Running, Ws, String) {
     (r, ws, cookie)
 }
 
-/// The absolute path of the test's home directory, as the wire has it (`/private/var/.../home`).
+/// The absolute path of the test's home directory, as the wire has it (`/private/var/.../home`, `/C:/Users/...`):
+/// `/` between names and at the start, whatever form `canonicalize` answers in (`\\?\C:\...` on Windows).
 fn home(tmp: &Path) -> String {
-    tmp.join("home").canonicalize().unwrap().to_str().unwrap().to_owned()
+    let native = tmp.join("home").canonicalize().unwrap();
+    let text = native.to_str().unwrap();
+    let text = text.strip_prefix(r"\\?\").unwrap_or(text).replace('\\', "/");
+    format!("/{}", text.trim_start_matches('/'))
 }
 
 async fn get(r: &Running, path: &str, cookie: Option<&str>) -> reqwest::Response {
@@ -74,7 +78,7 @@ async fn an_apps_documents_are_listed_folder_by_folder_and_nothing_else_of_its_f
     let (r, mut ws, _) = host(&tmp).await;
 
     let top = rpc(&mut ws, 2, "host.files.list", json!({"app": "notes", "path": ""})).await;
-    assert_eq!(names(&top), ["evil.html", "notes", "report.csv", "été \"1\".txt"], "sorted by name: {top}");
+    assert_eq!(names(&top), ["evil.html", "notes", "report.csv", "été (1).txt"], "sorted by name: {top}");
     let entries = top["result"]["entries"].as_array().unwrap();
     let report = entries.iter().find(|e| e["name"] == "report.csv").unwrap();
     assert_eq!((&report["kind"], &report["size"]), (&json!("file"), &json!(8)), "{report}");
@@ -129,7 +133,7 @@ async fn removing_an_entry_takes_a_file_or_a_whole_folder_and_never_documents_it
     let folder = rpc(&mut ws, 3, "host.files.remove", params).await;
     assert_eq!(folder.get("error"), None, "{folder}");
     let left = rpc(&mut ws, 4, "host.files.list", json!({"app": "notes", "path": ""})).await;
-    assert_eq!(names(&left), ["evil.html", "été \"1\".txt"]);
+    assert_eq!(names(&left), ["evil.html", "été (1).txt"]);
 
     let again = rpc(&mut ws, 5, "host.files.remove", json!({"app": "notes", "path": "report.csv"})).await;
     assert_eq!(again["error"]["code"], -32002, "{again}");
@@ -215,12 +219,13 @@ async fn a_file_downloads_as_an_attachment_that_can_never_run_as_a_page_of_the_h
     assert_eq!(header(&evil, "x-content-type-options"), "nosniff");
     assert_eq!(header(&evil, "content-security-policy"), "sandbox; default-src 'none'");
 
-    // a name with spaces, quotes and accents: the path is percent-encoded, the header is safe
-    let named = get(&r, "/files/app/notes/%C3%A9t%C3%A9%20%221%22.txt", Some(&cookie)).await;
+    // a name with spaces, brackets and accents: the path is percent-encoded, the header is safe (a quote is no name
+    // on Windows; the header keeping one out is `vos-http`'s own test)
+    let named = get(&r, "/files/app/notes/%C3%A9t%C3%A9%20%281%29.txt", Some(&cookie)).await;
     assert_eq!(named.status(), 200);
     assert_eq!(
         header(&named, "content-disposition"),
-        "attachment; filename=\"_t_ _1_.txt\"; filename*=UTF-8''%C3%A9t%C3%A9%20%221%22.txt"
+        "attachment; filename=\"_t_ _1_.txt\"; filename*=UTF-8''%C3%A9t%C3%A9%20%281%29.txt"
     );
 
     for (path, status) in [

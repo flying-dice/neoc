@@ -93,7 +93,9 @@
       </ui-banner>
     </div>
   {/if}
-  <div class="scroll">
+  <!-- the pane scrolls and may have nothing to focus (every control is disabled while a change is in flight): the keyboard scrolls it -->
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+  <div class="scroll" tabindex="0" role="region" aria-label="Details of {service.label}">
     <ui-list variant="inset" label="Settings">
       <ui-section header="Settings" footer={canChange('autostart') ? undefined : 'This service manager does not change these settings.'}>
         <ui-row heading="Start automatically">

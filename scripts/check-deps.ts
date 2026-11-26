@@ -6,7 +6,8 @@
  * (and, for the framework crates in FRAMEWORK_HOMES, its build dependencies too; a dev-dependency is exempt):
  *
  *   domain      -> nothing internal; external: serde, serde_json, sha2, thiserror (+ ts-rs)
- *   application -> domain; external: async-trait, futures-util (its runtime-free `FutureExt::catch_unwind`), parking_lot, serde_json, sha2, thiserror, tracing
+ *   application -> domain; external: async-trait, futures-util (its runtime-free `FutureExt::catch_unwind`), jsonschema (the
+ *                  bus holds every message to the app's contract), parking_lot, serde_json, sha2, thiserror, tracing
  *   adapters    -> application, domain; never each other (but codegen, below)
  *   codegen     -> domain, lua (dev-time: it writes the declarations from the schema of the modules the Lua adapter links)
  *   lua         -> application, domain, neoc-vm (the one vos crate that may use the Lua VM library)
@@ -68,7 +69,7 @@ const VM_ALLOWED = ['neoc-agui']
 /** Crates whose EXTERNAL dependencies are restricted too (the pure core). */
 const CORE_EXTERNAL: Record<string, Set<string>> = {
   'vos-domain': new Set(['serde', 'serde_json', 'sha2', 'thiserror', 'ts-rs']),
-  'vos-application': new Set(['async-trait', 'futures-util', 'parking_lot', 'serde_json', 'sha2', 'thiserror', 'tracing'])
+  'vos-application': new Set(['async-trait', 'futures-util', 'jsonschema', 'parking_lot', 'serde_json', 'sha2', 'thiserror', 'tracing'])
 }
 
 /**
